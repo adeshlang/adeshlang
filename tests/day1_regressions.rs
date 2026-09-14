@@ -11,6 +11,9 @@ struct CmdResult {
 }
 
 fn resolve_adesh_exe() -> PathBuf {
+    if let Ok(exe) = std::env::var("CARGO_BIN_EXE_adesh") {
+        return PathBuf::from(exe);
+    }
     if let Ok(exe) = std::env::var("CARGO_BIN_EXE_adeshlang") {
         return PathBuf::from(exe);
     }
@@ -18,6 +21,14 @@ fn resolve_adesh_exe() -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push("target");
     path.push("debug");
+    let candidate = if cfg!(windows) {
+        path.join("adesh.exe")
+    } else {
+        path.join("adesh")
+    };
+    if candidate.exists() {
+        return candidate;
+    }
     if cfg!(windows) {
         path.push("adeshlang.exe");
     } else {

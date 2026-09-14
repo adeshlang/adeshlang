@@ -169,6 +169,7 @@ fn link_with_llvm_toolchain(
                 link_with_clang_lld(
                     options,
                     &clang_path,
+                    &lld_path,
                     obj_path,
                     runtime_obj,
                     output,
@@ -182,6 +183,7 @@ fn link_with_llvm_toolchain(
             link_with_clang_lld(
                 options,
                 &clang_path,
+                &lld_path,
                 obj_path,
                 runtime_obj,
                 output,
@@ -338,6 +340,7 @@ fn link_with_lld_link(
 fn link_with_clang_lld(
     options: &AotOptions,
     clang_path: &Path,
+    lld_path: &Path,
     obj_path: &Path,
     runtime_obj: &Path,
     output: &Path,
@@ -348,8 +351,11 @@ fn link_with_clang_lld(
 
     let mut cmd = Command::new(clang_path);
 
-    // Force lld linker (GNU-compatible mode)
-    cmd.arg("-fuse-ld=lld");
+    // Force lld linker if available, otherwise let clang use system default linker
+    let lld_name = lld_path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    if lld_name.contains("lld") {
+        cmd.arg("-fuse-ld=lld");
+    }
 
     // Add target triple
     cmd.arg(format!("--target={}", target_triple));
@@ -539,36 +545,58 @@ fn find_clang() -> Result<std::path::PathBuf, String> {
     )
 }
 
-/// Validate lld is available from the same LLVM installation and return its path
+/// Validate lld is available from the same LLVM installation or system and return its path
 fn validate_lld_available(clang_path: &Path) -> Result<std::path::PathBuf, String> {
+    let mut lld_candidates = Vec::new();
+
     // Get LLVM bin directory from clang path
-    let llvm_bin = clang_path.parent().ok_or("Invalid clang path")?;
+    if let Some(llvm_bin) = clang_path.parent() {
+        lld_candidates.extend(vec![
+            llvm_bin.join("lld-link.exe"),
+            llvm_bin.join("lld-link"),
+            llvm_bin.join("lld.exe"),
+            llvm_bin.join("lld"),
+            llvm_bin.join("ld.lld.exe"),
+            llvm_bin.join("ld.lld"),
+        ]);
+    }
 
-    // Check for lld-link first (MSVC-compatible), then lld, then ld.lld
-    let lld_candidates = vec![
-        llvm_bin.join("lld-link.exe"),
-        llvm_bin.join("lld-link"),
-        llvm_bin.join("lld.exe"),
-        llvm_bin.join("lld"),
-        llvm_bin.join("ld.lld.exe"),
-        llvm_bin.join("ld.lld"),
-    ];
-
-    for lld_path in lld_candidates {
-        if lld_path.exists() {
-            eprintln!("   ✓ Found lld: {}", lld_path.display());
-            return Ok(lld_path);
+    // System PATH fallbacks for lld
+    let exe_suffix = if cfg!(windows) { ".exe" } else { "" };
+    for name in ["lld-link", "lld", "ld.lld"] {
+        let full = format!("{}{}", name, exe_suffix);
+        if let Ok(path) = std::env::var("PATH") {
+            for dir in std::env::split_paths(&path) {
+                let candidate = dir.join(&full);
+                if candidate.is_file() {
+                    lld_candidates.push(candidate);
+                }
+            }
         }
     }
 
-    Err("❌ lld linker not found!\n\n\
-        Adesh requires lld (LLVM linker) for AOT compilation.\n\n\
-        Your LLVM installation is incomplete or lld is missing.\n\n\
-        Solutions:\n\
-        • Reinstall LLVM (make sure to include 'lld' component)\n\
-        • Windows: Download complete LLVM from https://github.com/llvm/llvm-project/releases\n\
-        • Ensure clang and lld are from the SAME LLVM version\n\n\
-        ⚠️  Do NOT use MinGW's ld — Adesh uses LLVM exclusively."
+    for lld_path in &lld_candidates {
+        if lld_path.exists() {
+            eprintln!("   ✓ Found lld: {}", lld_path.display());
+            return Ok(lld_path.clone());
+        }
+    }
+
+    // System ld fallback if lld is not installed
+    let system_ld = if cfg!(windows) { "ld.exe" } else { "ld" };
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path) {
+            let candidate = dir.join(system_ld);
+            if candidate.is_file() {
+                eprintln!("   ✓ Fallback to system linker: {}", candidate.display());
+                return Ok(candidate);
+            }
+        }
+    }
+
+    Err("❌ Linker not found!\n\n\
+        Adesh requires a linker (lld or system ld) for AOT compilation.\n\n\
+        Please install LLVM/lld or binutils."
         .to_string())
 }
 
