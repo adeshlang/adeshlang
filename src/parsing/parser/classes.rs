@@ -201,7 +201,9 @@ impl Parser {
                 if self.matchk(&[TokenKind::Operator]) {
                     is_operator = true;
                     operator_symbol = Some(self.parse_operator_symbol()?);
-                } else if self.check(TokenKind::Identifier) && self.peek().lexeme == "init" {
+                } else if self.check(TokenKind::Identifier)
+                    && (self.peek().lexeme == "init" || self.peek().lexeme == name)
+                {
                     is_constructor = true;
                     self.advance();
                 }
