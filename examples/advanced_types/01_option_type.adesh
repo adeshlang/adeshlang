@@ -1,0 +1,50 @@
+// Struct Type Example
+// Demonstrates a simple executable advanced-type example
+
+struct Point {
+    x: i32;
+    y: i32;
+};
+
+struct Size {
+    width: i32;
+    height: i32;
+};
+
+fn make_point(x: i32, y: i32): Point {
+    return Point {
+        x: x,
+        y: y,
+    };
+}
+
+fn make_size(width: i32, height: i32): Size {
+    return Size {
+        width: width,
+        height: height,
+    };
+}
+
+fn describe_size(size: Size) {
+    print(`Size: ${size.width} x ${size.height}`);
+}
+
+fn main() {
+    print("╔══════════════════════════════════════════╗");
+    print("║  AdeshLang - Advanced Types Demo          ║");
+    print("║  Struct construction and field access    ║");
+    print("╚══════════════════════════════════════════╝");
+    print("");
+
+    let origin = make_point(0, 0);
+    let point = make_point(3, 4);
+    let box_size = make_size(8, 5);
+
+    print(`Origin x: ${origin.x}`);
+    print(`Origin y: ${origin.y}`);
+    print(`Point x: ${point.x}`);
+    print(`Point y: ${point.y}`);
+    describe_size(box_size);
+    print("Demo complete.");
+}
+

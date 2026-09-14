@@ -1,0 +1,32 @@
+// Example: threads do not share unsynchronized locals.
+// Cross-thread sharing must go through thread.Mutex / channels.
+
+import thread;
+
+print("=== Thread-aware sharing ===");
+
+print("1. Each thread owns its own data");
+thread.spawn(fn() {
+    let local = 42;
+    print(local);
+}).join();
+
+print("2. Mutex-protected shared counter");
+let m = thread.Mutex.new(0);
+thread.spawn(fn() {
+    m.with(fn(v) { return v + 1; });
+}).join();
+m.with(fn(v) { return v + 1; });
+let g = m.lock();
+print(g.value.get());
+g.value.unlock();
+
+print("3. Channel ownership transfer");
+let pair = thread.Channel.bounded(1);
+let tx = pair[0];
+let rx = pair[1];
+thread.spawn(fn() {
+    tx.send(100);
+    tx.close();
+}).join();
+print(rx.recv().value);

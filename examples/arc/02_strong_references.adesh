@@ -1,0 +1,53 @@
+// examples/arc/02_strong_references.adesh
+// Deep-dive into `strong` references: counting, reassignment, and
+// the scope lifetime rules that govern deterministic cleanup.
+
+print("=== Strong References ===\n");
+
+share counter = { value: 0 };
+
+// ── Single owner ───────────────────────────────────────────────────────────
+print("Phase 1 – single owner");
+print("strong_count:", counter.strong_count());  // 1
+
+// ── Multiple owners across nested scopes ──────────────────────────────────
+print("\nPhase 2 – nested scopes");
+{
+    strong outer = counter;
+    print("outer taken, count:", counter.strong_count()); // 2
+
+    {
+        strong inner_a = counter;
+        strong inner_b = counter;
+        print("inner_a + inner_b, count:", counter.strong_count()); // 4
+    }
+    // inner_a, inner_b dropped
+    print("after inner scope, count:", counter.strong_count()); // 2
+}
+// outer dropped
+print("after outer scope, count:", counter.strong_count()); // 1
+
+// ── Strong ref from a function parameter ─────────────────────────────────
+fn observe(val) {
+    // `val` is a strong reference; count bumps while inside this call.
+    print("inside observe(), count:", val.strong_count());
+}
+
+print("\nPhase 3 – function call");
+observe(counter);
+// count is back to 1 after the call returns
+print("after observe(), count:", counter.strong_count());
+
+// ── Reassignment ──────────────────────────────────────────────────────────
+print("\nPhase 4 – reassignment");
+share second = { label: "second" };
+
+strong handle = counter;
+print("handle -> counter, counter count:", counter.strong_count()); // 2
+
+// Re-pointing handle to `second` releases the previous strong hold on counter
+handle = second;
+print("handle -> second , counter count:", counter.strong_count()); // 1
+print("                   second  count:", handle.strong_count());  // 2 (handle now holds second)
+
+print("\nAll done – strong references cleaned up deterministically.");

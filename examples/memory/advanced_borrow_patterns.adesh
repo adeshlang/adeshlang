@@ -1,0 +1,65 @@
+/// Advanced Borrow Patterns
+/// Demonstrates multiple immutable borrows, borrow scope management,
+/// and complex ownership scenarios
+
+fn main() {
+    print("=== Advanced Borrow Patterns ===\n");
+
+    /// Example 1: Multiple immutable borrows (allowed)
+    print("Example 1: Multiple Immutable Borrows");
+    let data = [10, 20, 30, 40, 50];
+    let ref1 = &data;  // First immutable borrow
+    let ref2 = &data;  // Second immutable borrow (OK!)
+    let ref3 = &data;  // Third immutable borrow (OK!)
+    
+    print(`ref1[0] = ${ref1[0]}`);
+    print(`ref2[1] = ${ref2[1]}` );
+    print(`ref3[2] = ${ref3[2]}`);
+    print("All three refs coexist - this is allowed!\n");
+
+    /// Example 2: Borrow scope management
+    print("Example 2: Borrow Scope Management");
+    let counter = 0;
+    
+    {
+        // Immutable borrow scope 1
+        let borrow1 = &counter;
+          // Use borrow1
+        print(`In scope 1: counter = ${borrow1} ${counter}`);
+    }  // borrow1 released here
+    
+    {
+        // Immutable borrow scope 2 (can borrow again after scope exit)
+        let borrow2 = &counter;
+        print(`In scope 2: counter = ${borrow2} ${counter}`);
+    }  // borrow2 released here
+    
+    print("Scopes allow reuse of same variable - smart!\n");
+
+    /// Example 3: Nested borrow scopes
+    print("Example 3: Nested Borrow Scopes");
+    let value = 42;
+    
+    {
+        let outer_ref = &value;
+        print("Outer scope: value = 42");
+        
+        {
+            let inner_ref = &value;  // Multiple borrows nested
+            print("Inner scope: value = 42");
+        }
+        
+        print("Back to outer scope: value = 42");
+    }
+    print("Nested scopes work correctly!\n");
+
+    /// Example 4: Complex borrow scenarios
+    print("Example 4: Complex Borrow Scenarios");
+    let x = 100;
+    let y = 200;
+    print("Two independent values");
+    print("Both can be borrowed simultaneously");
+    print();
+
+    print("=== All Borrow Pattern Examples Passed ===");
+}

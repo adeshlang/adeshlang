@@ -1,0 +1,18 @@
+try {
+  throw Error("Boom!");
+} catch(e) {
+  print(`Caught: ${e}`);
+}
+
+class MyError {
+  fn init(msg){ this.name = msg; }
+}
+
+try {
+  throw MyError("Ouch");
+} catch(e) {
+  print(`Custom: ${e}`);
+}
+
+let le = Error("Inline");
+print(`Inline: ${le}`);

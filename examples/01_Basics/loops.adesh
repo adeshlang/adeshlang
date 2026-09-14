@@ -1,0 +1,60 @@
+// 1. Classic C-style 3-part for loop (for (init; cond; post))
+print("--- 1. Classic C-style for loop ---");
+for (let i = 0; i < 5; i = i + 1) {
+    print("i =", i);
+}
+
+// 2. Multi-variable C-style for loop
+print("--- 2. Multi-variable for loop ---");
+for (let i = 0, j = 10; i < j; i = i + 1, j = j - 1) {
+    print("i =", i, "| j =", j);
+}
+
+// 3. For loop with continue (post-expression executes on continue)
+print("--- 3. For loop with continue ---");
+for (let k = 0; k < 6; k = k + 1) {
+    if (k % 2 == 0) {
+        continue;
+    }
+    print("odd k =", k);
+}
+
+// 4. Guaranteed-execution do-while loop
+print("--- 4. do-while loop (runs at least once) ---");
+let count = 0;
+do {
+    count = count + 1;
+    print("do-while iteration =", count);
+} while (false);
+
+// 5. do-while loop with continue and condition evaluation
+print("--- 5. do-while loop with continue ---");
+let n = 0;
+do {
+    n = n + 1;
+    if (n % 2 == 0) {
+        continue;
+    }
+    print("odd n =", n);
+} while (n < 5);
+
+// 6. Collection for-in loop
+print("--- 6. Collection for-in loop ---");
+let items = ["apple", "banana", "cherry"];
+for (item in items) {
+    print("item =", item);
+}
+
+// 7. Functional array forEach method
+print("--- 7. Functional array forEach method ---");
+items.forEach(fn(fruit) {
+    print("Fruit via forEach:", fruit);
+});
+
+// 8. Parallel worker thread forEach loop
+import Parallel;
+print("--- 8. Parallel worker thread forEach ---");
+Parallel.forEach(0, 3, fn(idx) {
+    print("Parallel worker index:", idx);
+});
+

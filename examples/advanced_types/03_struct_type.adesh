@@ -1,0 +1,43 @@
+// Struct Type Example
+// Demonstrates struct literals, field access, and test integration
+
+struct Point {
+    x: i32;
+    y: i32;
+};
+
+struct Size {
+    width: i32;
+    height: i32;
+};
+
+fn make_origin(): Point {
+    return Point {
+        x: 0,
+        y: 0,
+    };
+}
+
+fn make_point(x: i32, y: i32): Point {
+    return Point {
+        x: x,
+        y: y,
+    };
+}
+
+test fn test_origin_point() {
+    let origin = make_origin();
+    assert_eq(origin.x, 0);
+    assert_eq(origin.y, 0);
+}
+
+test fn test_point_creation() {
+    let point = make_point(3, 4);
+    assert_eq(point.x, 3);
+    assert_eq(point.y, 4);
+}
+
+fn main() {
+    print("Struct Type Example");
+    print("Run with: adesh run --test examples/advanced_types/03_struct_type.adesh");
+}

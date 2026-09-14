@@ -1,0 +1,23 @@
+// Single variable declaration & mutation
+let a = 10;
+print("a =", a, "| type =", typeof a, "| size =", sizeof(a));
+
+a = 1000;
+print("a =", a, "| type =", typeof a, "| size =", sizeof(a));
+let _b = a;
+print(a);
+// Unparenthesized multi-variable declaration
+let x, y, z = 10, 20, 30;
+print("Multi-var declaration: x =", x, "y =", y, "z =", z);
+
+// Per-variable type annotations
+let p: i32, q: f64 = 42, 3.14159;
+print("Typed multi-var: p =", p, "q =", q);
+
+// Variable swapping without temporary variables (x, y = y, x)
+x, y = y, x;
+print("Swapped x and y: x =", x, "y =", y);
+
+// Multi-variable reassignment
+x, y, z = 100, 200, 300;
+print("Reassigned: x =", x, "y =", y, "z =", z);

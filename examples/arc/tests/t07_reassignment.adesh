@@ -1,0 +1,57 @@
+// examples/arc/tests/t07_reassignment.adesh
+// T07 – Reassigning a strong ref: old target loses one, new target gains one
+
+
+export fn run() {
+    let PASS = 0;
+    let FAIL = 0;
+
+    fn check(cond, msg) {
+        if (cond) {
+            print("  ✓ PASS:", msg);
+            PASS = PASS + 1;
+        } else {
+            print("  ✗ FAIL:", msg);
+            FAIL = FAIL + 1;
+        }
+    }
+
+print("=== T07: Strong ref reassignment ===\n");
+
+share obj_a = { name: "A" };
+share obj_b = { name: "B" };
+
+check(obj_a.strong_count() == 1, "obj_a baseline count 1");
+check(obj_b.strong_count() == 1, "obj_b baseline count 1");
+
+strong handle = obj_a;
+check(obj_a.strong_count() == 2, "obj_a count 2 after handle assigned");
+check(obj_b.strong_count() == 1, "obj_b count unchanged");
+
+// Reassign handle → obj_b
+handle = obj_b;
+check(obj_a.strong_count() == 1, "obj_a count drops to 1 after reassign");
+check(obj_b.strong_count() == 2, "obj_b count rises to 2 after reassign");
+
+// Reassign handle back → obj_a
+handle = obj_a;
+check(obj_a.strong_count() == 2, "obj_a count back to 2");
+check(obj_b.strong_count() == 1, "obj_b count back to 1");
+
+// Chain: rapidly reassign 3 times
+share obj_c = { name: "C" };
+
+handle = obj_b;
+handle = obj_c;
+handle = obj_a;
+
+check(obj_a.strong_count() == 2, "obj_a count 2 at end of chain");
+check(obj_b.strong_count() == 1, "obj_b count 1 at end of chain");
+check(obj_c.strong_count() == 1, "obj_c count 1 at end of chain");
+
+print("\nPASS:", PASS, " FAIL:", FAIL);
+
+    return { pass: PASS, fail: FAIL };
+}
+
+run();

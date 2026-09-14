@@ -1,0 +1,12 @@
+{
+  "hash": "a0a5c46e51d96ca6",
+  "source_path": null,
+  "output_path": "concurrent_demo.o",
+  "opt_level": 2,
+  "fast_compile": false,
+  "output_format": "Object",
+  "target_triple": null,
+  "debug_info": false,
+  "timestamp_secs": 1788891593,
+  "output_file_size": 4518
+}

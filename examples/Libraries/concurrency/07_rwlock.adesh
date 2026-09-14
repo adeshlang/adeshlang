@@ -1,0 +1,8 @@
+// 07 — rwlock
+import thread;
+
+let rw = thread.RwLock.new(1);
+print(rw.read());
+rw.write(2);
+print(rw.read());
+rw.with_read(fn(v) { print(v); return v; });

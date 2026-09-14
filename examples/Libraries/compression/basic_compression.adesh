@@ -1,0 +1,28 @@
+import Compression;
+import Encoding;
+
+print("=== AdeshLang Basic Compression Example ===");
+
+// 1. Small input payload (82 bytes)
+let smallText = "Hello AdeshLang Compression Standard Library! " + "World class performance and safety. ";
+let smallCompressed = Compression.compress(smallText);
+
+print("--- Small Payload (Header Overhead Notice) ---");
+print("Original size:", len(smallText));
+print("Compressed size:", len(smallCompressed));
+print("Note: Zstd includes a 12-18 byte frame header (magic: 0x28 0xB5 0x2F 0xFD), so tiny inputs show fixed header overhead.");
+
+let decompressedSmall = Encoding.utf8Decode(Compression.decompress(smallCompressed));
+print("Small payload match:", decompressedSmall == smallText);
+
+// 2. Larger repetitive payload (2,050 bytes)
+let largeText = smallText + smallText + smallText + smallText + smallText + smallText + smallText + smallText + smallText + smallText + smallText + smallText + smallText + smallText + smallText + smallText + smallText + smallText + smallText + smallText + smallText + smallText + smallText + smallText + smallText;
+let largeCompressed = Compression.compress(largeText);
+
+print("\n--- Larger Payload Compression ---");
+print("Original size:", len(largeText));
+print("Compressed size:", len(largeCompressed));
+print("Space saved:", len(largeText) - len(largeCompressed), "bytes");
+
+let decompressedLarge = Encoding.utf8Decode(Compression.decompress(largeCompressed));
+print("Large payload match:", decompressedLarge == largeText);

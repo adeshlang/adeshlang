@@ -1,0 +1,46 @@
+// Example: Borrow Enforcement in AdeshLang
+// Demonstrates compile-time borrow checking with:
+// - owned values
+// - immutable borrows
+// - mutable borrows
+// - move semantics
+// - free-while-borrowed prevention
+
+fn main() {
+    // === Example 1: Owned Values ===
+    let x = 42;
+    let y = x;  // x is copied (primitive types)
+    print(x);   // OK: x still accessible
+    print(y);   // OK: y has the value
+    
+    // === Example 2: Immutable Borrows ===
+    let data = [1, 2, 3, 4, 5];
+    let ref1 = &data;  // Immutable borrow
+    let ref2 = &data;  // Multiple immutable borrows OK
+    print(ref1);       // OK: borrowing still active
+    print(ref2);       // OK: both references alive
+    // data is still accessible after borrows end
+    
+    // === Example 3: Exclusive Borrows (Auto-Inferred) ===
+    let counter = 0;
+    let excl_ref = &counter;   // Borrow - compiler sees mutation below
+    excl_ref = 42;             // Mutation detected -> exclusive access inferred
+    print(counter);            // OK: 42 (exclusive borrow ended)
+    
+    // === Example 4: Move Semantics ===
+    let string_val = "hello";
+    let moved = string_val;  // Move: string_val is moved to moved
+    // print(string_val);    // ERROR: moved value cannot be used
+    print(moved);            // OK: moved still valid
+    
+    // === Example 5: Function Parameter Ownership ===
+    let item = "apple";
+    process_item(item);  // item moved into function
+    // print(item);      // ERROR: item was moved
+    
+    print("=== All Borrow Enforcement Examples Passed ===");
+}
+
+fn process_item(s: String) {
+    print("Processing: " + s);
+}

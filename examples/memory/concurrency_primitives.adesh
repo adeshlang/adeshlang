@@ -1,0 +1,50 @@
+// Example: Concurrency-Safe Memory Primitives
+// Demonstrates:
+// - shared<T>: safely shared immutable data
+// - atomic<T>: atomic operations on u64/bool
+// - mutex<T>: mutual exclusion locks
+// - rwlock<T>: reader-writer locks
+// - thread-safe primitives
+
+fn main() {
+    // === Example 1: Atomic Values ===
+    let atomic_counter = atomic_u64(0);
+    atomic_counter.store(10);
+    let val = atomic_counter.load();
+    print("Atomic counter: " + val);
+    
+    // === Example 2: Atomic Boolean ===
+    let atomic_flag = atomic_bool(false);
+    atomic_flag.store(true);
+    let is_set = atomic_flag.load();
+    print("Atomic flag: " + is_set);
+    
+    // === Example 3: Mutex for Thread-Safe Access ===
+    let protected_value = mutex(42);
+    let guard = protected_value.lock();
+    if guard != null {
+        print("Mutex locked value: " + guard);
+    }
+    
+    // === Example 4: RwLock for Read-Heavy Access ===
+    let data = rwlock([1, 2, 3]);
+    let read_guard = data.read();
+    if read_guard != null {
+        print("RwLock read access: OK");
+    }
+    
+    // === Example 5: Shared Immutable Data ===
+    let shared_data = shared(100);
+    let ref1 = &shared_data;
+    let ref2 = &shared_data;  // Can create multiple references
+    print("Shared refs active");
+    
+    // === Example 6: Compare-Exchange (CAS) ===
+    let atomic_val = atomic_u64(5);
+    let old_val = atomic_val.compare_exchange(5, 10);
+    if old_val == 5 {
+        print("CAS succeeded: 5 -> 10");
+    }
+    
+    print("=== All Concurrency Primitives Passed ===");
+}

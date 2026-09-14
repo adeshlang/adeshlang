@@ -1,0 +1,10 @@
+export fn calculate_factorial(n) {
+    if (n <= 1) {
+        return 1;
+    }
+    return n * calculate_factorial(n - 1);
+}
+
+export fn get_welcome_message(username) {
+    return "Hello, " + username + "! Welcome to the AdeshLang ecosystem!";
+}

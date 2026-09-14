@@ -1,0 +1,48 @@
+// Shared Borrowing Example
+// Multiple shared borrows can exist simultaneously
+
+fn main() {
+    let data = [1, 2, 3, 4, 5];
+    
+    // Create multiple shared borrows - all allowed simultaneously
+    let r1 = &data;
+    let r2 = &data;
+    let r3 = &data;
+    
+    // All can read the data
+    print("r1[0]: ", r1[0]);
+    print("r2[0]: ", r2[0]);
+    print("r3[0]: ", r3[0]);
+    
+    // Pass owned data to function (workaround for current runtime handling)
+    print_first(data);
+    
+    // Original still accessible after borrows end
+    print("data: ", data);
+    borrow_prevents_move();
+}
+
+fn print_first(arr) {
+    if (len(arr) > 0) {
+        print("First element: ", arr[0]);
+    }
+}
+// Example: Borrowing prevents moving
+fn borrow_prevents_move() {
+    let x = [1, 2, 3];
+    // Scope the borrow inside try/catch so its lifetime ends before we move `x`.
+    // Note: compile-time borrow/move errors are enforced by the compiler and
+    // cannot be caught; this pattern ensures the borrow ends prior to moving.
+    try {
+        let r = &x;  // Borrow x
+        print("Borrowed:", r);
+        // r's lifetime ends at the end of this block
+    } catch (e) {
+        // Runtime errors (if any) can be handled here
+        print("Caught runtime error:", e);
+    }
+
+    // Now we can move x safely
+    let y = x;
+    print("Moved to y:", y);
+}

@@ -1,0 +1,128 @@
+// data_structures_combined.ind — Comprehensive data structures examples
+// Combining arrays_and_lists.ind and map.ind
+
+print("Comprehensive data structures demo start");
+
+// Section 1: Arrays and lists (from arrays_and_lists.ind)
+print("\n--- Arrays and Lists ---");
+
+// Multi-dimensional arrays
+let matrix = [
+    [1, 2, 3],
+    [4, 5, 6],
+    [7, 8, 9]
+];
+
+print("matrix[0][1] =", matrix[0][1]);      // 2
+print("matrix[2][2] =", matrix[2][2]);      // 9
+
+// List-style operations
+let a = [1, 2, 3];
+
+print("start a =", a);
+print("append 4 ->", a.append(4));
+let myarr = [5,6];
+print("extend [5, 6] ->", a.extend(myarr));
+print("insert(0, 0) ->", a.insert(0, 0));
+print("remove(2) ->", a.remove(2));
+print("set_index(1, 42) ->", a.set_index(1, 42));
+print("pop() ->", a.pop());
+print("pop(0) ->", a.pop(0));
+
+let b = [1, 2, 1, 3, 1];
+print("b =", b);
+print("b.count(1) =", b.count(1));
+print("b.index(3) =", b.index(3));
+
+print("clear b ->", b.clear());
+
+let c = ["banana", "apple", "cherry"];
+print("c =", c);
+print("sorted c ->", c.sort());
+print("reversed c ->", c.reverse());
+
+// Section 2: Map function (from map.ind)
+print("\n--- Map Function ---");
+
+let nums = [1, 2, 3];
+let doubled = nums.map(fn(x) {
+    return x * 2;
+});
+print("Doubled:", doubled);
+
+// Section 3: Filter and Reduce functions (built-ins)
+print("\n--- Filter and Reduce Functions ---");
+
+let numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+// Filter even numbers
+let evens = numbers.filter(fn(x) {
+    return x % 2 == 0;
+});
+print("Even numbers:", evens);
+
+// Filter numbers greater than 5
+let greaterThan5 = numbers.filter(fn(x) {
+    return x > 5;
+});
+print("Numbers > 5:", greaterThan5);
+
+// Reduce to sum
+let sum = numbers.reduce(fn(acc, x) {
+    return acc + x;
+}, 0);
+print("Sum of all numbers:", sum);
+
+// Reduce to product
+let product = numbers.reduce(fn(acc, x) {
+    return acc * x;
+}, 1);
+print("Product of all numbers:", product);
+
+// Reduce to find maximum
+let max = numbers.reduce(fn(acc, x) {
+    if (x > acc) {
+        return x;
+    } else {
+        return acc;
+    }
+}, numbers[0]);
+print("Maximum number:", max);
+
+// Section 4: Additional data structure examples
+print("\n--- Additional Examples ---");
+
+// Objects/Dictionaries
+let obj = {name: "Alice", age: 30};
+print("Object:", obj,{pretty:true});
+print("obj.name:", obj.name);
+print("obj.age:", obj.age);
+
+// Nested structures
+let nested = {
+    users: [
+        {id: 1, name: "User1"},
+        {id: 2, name: "User2"}
+    ],
+    settings: {
+        theme: "dark",
+        notifications: true
+    }
+};
+print("Nested structure:", nested,{pretty:true});
+
+// Set-like operations (using arrays)
+let set1 = {1, 2, 3, 4};
+let set2 = {3, 4, 5, 6};
+
+// Union simulation
+let union = set1.union(set2);
+print("Union:", union);
+
+// Intersection simulation
+let intersection = set1.intersection(set2);
+print("Intersection:", intersection);
+
+print("Comprehensive data structures demo complete.");
+
+

@@ -1,0 +1,16 @@
+fn sum(data: &[i32]) : i32 {
+    let total = 0;
+    for (value in data) {
+        total = total + value;
+    }
+    return total;
+}
+
+fn main() {
+    let numbers: [i32] = [1, 2, 3];
+    let first = &numbers;
+    let second = &numbers; // multiple immutable borrows are OK
+
+    print("Sum 1: " + str(sum(first)));
+    print("Sum 2: " + str(sum(second)));
+}

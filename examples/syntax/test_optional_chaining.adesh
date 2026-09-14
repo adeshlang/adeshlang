@@ -1,0 +1,22 @@
+// Comprehensive Optional Chaining Tests
+
+// Basic optional chaining - property access
+let obj = { user: { name: "Alice", age: 30 } };
+print("Optional access (valid):", obj?.user?.name); // Should be "Alice"
+
+// Optional chaining on null
+let nullObj = null;
+print("Optional access (null):", nullObj?.field); // Should be null/undefined
+
+// Nested optional chaining
+let deepObj = { a: { b: { c: 42 } } };
+print("Deep optional access:", deepObj?.a?.b?.c); // Should be 42
+
+let partialObj = { a: { b: null } };
+print("Partial optional access:", partialObj?.a?.b?.c); // Should be null/undefined
+
+// Mixed with regular access
+let mix = { data: { values: [1, 2, 3] } };
+print("Mixed access 1:", mix?.data.values); // Should be [1, 2, 3]
+
+print("All optional chaining tests complete!");

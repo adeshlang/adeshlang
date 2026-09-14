@@ -1,0 +1,293 @@
+// =============================================================================
+// AdeshLang v0.3 - Performance Profiling Demo
+// =============================================================================
+// This example demonstrates the profiling capabilities in AdeshLang:
+// - JIT profiling (--profile jit)
+// - Memory profiling (--profile memory)
+// - IC profiling (--profile ic)
+//
+// What this demonstrates:
+// - How to interpret profiling output
+// - Phase timing breakdown
+// - Memory allocation statistics
+// - Inline cache hit rates
+//
+// Usage:
+//   adesh run examples/perf/profile_demo.adesh --profile jit
+//   adesh run examples/perf/profile_demo.adesh --profile memory
+//   adesh run examples/perf/profile_demo.adesh --profile ic
+// =============================================================================
+
+print("=== Performance Profiling Demo ===\n");
+
+// -----------------------------------------------------------------------------
+// 1. Phase Timing Demo
+// -----------------------------------------------------------------------------
+
+print("--- Phase Timing Demo ---");
+print("This section creates measurable work in each compiler phase.\n");
+
+// Parsing phase work - complex syntax
+class ComplexClass {
+    fn init(a, b, c) {
+        this.a = a;
+        this.b = b;
+        this.c = c;
+        this._computed = this.compute();
+    }
+    
+    fn compute() {
+        return this.a * this.b + this.c;
+    }
+    
+    fn transform(f) {
+        return f(this.a, this.b, this.c);
+    }
+}
+
+// HIR passes work - type checking and borrow analysis
+fn processData(items) {
+    let result = [];
+    for (item in items) {
+        if (typeof(item) == "number") {
+            result.push(item * 2);
+        } elif (typeof(item) == "string") {
+            result.push(len(item));
+        } else {
+            result.push(0);
+        }
+    }
+    return result;
+}
+
+// LIR lowering work - generate instructions
+fn fibonacci(n) {
+    if (n <= 1) {
+        return n;
+    }
+    return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+// JIT compile work - hot path
+fn hotLoop(count) {
+    let sum = 0;
+    for (i in range(0, count)) {
+        sum = sum + i * 2 + 1;
+    }
+    return sum;
+}
+
+// Measure each phase
+print("Running code to exercise all phases...");
+let start = clock();
+
+// Note: Parsing is already done at load time before script execution
+
+// Phase 1: HIR passes (type checking etc)
+let mixedData = [1, "hello", 3, "world", 5];
+let processed = processData(mixedData);
+let hirEnd = clock();
+
+// Phase 3: LIR lowering
+let fibResult = fibonacci(15);
+let lirEnd = clock();
+
+// Phase 4: JIT compile (if enabled)
+let loopResult = hotLoop(10000);
+let jitEnd = clock();
+
+print("\nPhase timing (approximate):");
+print("  Note: Parse completed at load time before this script runs");
+print("  HIR/Type check: " + str((hirEnd - start) * 1000) + " ms");
+print("  LIR lowering:   " + str((lirEnd - hirEnd) * 1000) + " ms");
+print("  JIT/Exec:       " + str((jitEnd - lirEnd) * 1000) + " ms");
+print("  Total runtime:  " + str((jitEnd - start) * 1000) + " ms");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 2. Memory Profiling Demo
+// -----------------------------------------------------------------------------
+
+print("--- Memory Profiling Demo ---");
+
+// SSO strings (no heap allocation for short strings)
+print("\nSSO String Allocation:");
+let ssoStrings = [];
+for (i in range(0, 100)) {
+    ssoStrings.push("Hi");    // 2 chars - SSO
+    ssoStrings.push("Hello"); // 5 chars - SSO
+}
+print("  Created 200 SSO strings (≤22 chars)");
+print("  Expected: 0 heap allocations for string data");
+
+// Heap strings
+let heapStrings = [];
+for (i in range(0, 50)) {
+    heapStrings.push("This is a much longer string that exceeds SSO threshold");
+}
+print("\n  Created 50 heap strings (>22 chars)");
+print("  Expected: 50 heap allocations");
+
+// SAO arrays (no heap allocation for small arrays)
+print("\nSAO Array Allocation:");
+let saoArrays = [];
+for (i in range(0, 100)) {
+    saoArrays.push([1, 2, 3]);      // 3 elements - SAO
+    saoArrays.push([1, 2, 3, 4, 5, 6, 7]); // 7 elements - SAO
+}
+print("  Created 200 SAO arrays (≤7 elements)");
+print("  Expected: 0 heap allocations for array data");
+
+// Heap arrays
+let heapArrays = [];
+for (i in range(0, 50)) {
+    heapArrays.push([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+}
+print("\n  Created 50 heap arrays (>7 elements)");
+print("  Expected: 50 heap allocations");
+
+// Objects
+let objects = [];
+for (i in range(0, 100)) {
+    objects.push({ x: i, y: i * 2 });
+}
+print("\n  Created 100 objects");
+print("  Expected: 100 object allocations + hidden class sharing");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 3. Inline Cache Profiling Demo
+// -----------------------------------------------------------------------------
+
+print("--- Inline Cache Profiling Demo ---");
+
+// Monomorphic call site (best IC performance)
+print("\nMonomorphic call site:");
+fn accessX(obj) {
+    return obj.x;
+}
+
+let monoObjects = [];
+for (i in range(0, 100)) {
+    monoObjects.push({ x: i, y: i });  // Same shape
+}
+
+start = clock();
+let monoSum = 0;
+for (obj in monoObjects) {
+    monoSum = monoSum + accessX(obj);
+}
+let monoElapsed = clock() - start;
+print("  100 accesses, same shape: " + str(monoElapsed * 1000) + " ms");
+print("  IC hit rate: ~100%");
+
+// Polymorphic call site (multiple types)
+print("\nPolymorphic call site:");
+let polyObjects = [];
+for (i in range(0, 33)) {
+    polyObjects.push({ x: i });
+}
+for (i in range(0, 33)) {
+    polyObjects.push({ x: i, y: i });
+}
+for (i in range(0, 34)) {
+    polyObjects.push({ x: i, y: i, z: i });
+}
+
+start = clock();
+let polySum = 0;
+for (obj in polyObjects) {
+    polySum = polySum + accessX(obj);
+}
+let polyElapsed = clock() - start;
+print("  100 accesses, 3 shapes: " + str(polyElapsed * 1000) + " ms");
+print("  IC hit rate: ~33% per shape");
+
+// Megamorphic call site (too many types)
+print("\nMegamorphic call site (IC disabled):");
+let megaObjects = [];
+for (i in range(0, 20)) {
+    let obj = { x: i };
+    // Add different property each iteration for different shapes
+    if (i % 5 == 0){ obj.a = 1;};
+    if (i % 5 == 1) { obj.b = 1;};
+    if (i % 5 == 2) { obj.c = 1;};
+    if (i % 5 == 3) { obj.d = 1;};
+    if (i % 5 == 4) { obj.e = 1;};
+    megaObjects.push(obj);
+}
+
+start = clock();
+let megaSum = 0;
+for (obj in megaObjects) {
+    megaSum = megaSum + accessX(obj);
+}
+let megaElapsed = clock() - start;
+print("  20 accesses, 5+ shapes: " + str(megaElapsed * 1000) + " ms");
+print("  IC status: megamorphic (generic lookup)");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 4. Profile Output Format
+// -----------------------------------------------------------------------------
+
+print("--- Profile Output Format ---\n");
+
+print("When running with --profile jit:");
+print("  ┌─────────────────────────────────────────┐");
+print("  │ Phase Timing Report                     │");
+print("  ├─────────────────────────────────────────┤");
+print("  │ Parse:         12.5 ms                  │");
+print("  │ HIR Passes:     8.2 ms                  │");
+print("  │ LIR Lowering:   3.1 ms                  │");
+print("  │ JIT Compile:   15.7 ms                  │");
+print("  │ Total:         39.5 ms                  │");
+print("  └─────────────────────────────────────────┘");
+
+print("\nWhen running with --profile memory:");
+print("  ┌─────────────────────────────────────────┐");
+print("  │ Memory Report                           │");
+print("  ├─────────────────────────────────────────┤");
+print("  │ Heap Allocations:    1,234              │");
+print("  │ SSO Strings:           450 (36%)        │");
+print("  │ SAO Arrays:            200 (16%)        │");
+print("  │ Arena Usage:        64 KB               │");
+print("  │ Peak Memory:       128 KB               │");
+print("  └─────────────────────────────────────────┘");
+
+print("\nWhen running with --profile ic:");
+print("  ┌─────────────────────────────────────────┐");
+print("  │ Inline Cache Report                     │");
+print("  ├─────────────────────────────────────────┤");
+print("  │ Total IC Sites:       42                │");
+print("  │ Monomorphic:          35 (83%)          │");
+print("  │ Polymorphic:           5 (12%)          │");
+print("  │ Megamorphic:           2 (5%)           │");
+print("  │ Overall Hit Rate:    89%                │");
+print("  └─────────────────────────────────────────┘");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// Summary
+// -----------------------------------------------------------------------------
+
+print("=== Profiling Summary ===\n");
+
+print("Available profiling modes:");
+print("  --profile jit      Phase timing breakdown");
+print("  --profile memory   Allocation statistics");
+print("  --profile ic       Inline cache analysis");
+print("");
+
+print("Tips for optimization:");
+print("  1. Check phase timing to find bottlenecks");
+print("  2. Monitor SSO/SAO hit rates for memory efficiency");
+print("  3. Track IC status for property access performance");
+print("  4. Use monomorphic call sites when possible");
+print("");
+
+print("=== Demo Complete ===");

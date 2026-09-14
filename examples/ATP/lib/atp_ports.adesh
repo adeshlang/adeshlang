@@ -1,0 +1,7 @@
+// ATP port constants — safe to import from any example.
+export const DEFAULT_HOST = "127.0.0.1";
+export const BASE_PORT = 19300;
+
+export fn port(n: any): any {
+    return BASE_PORT + n;
+}

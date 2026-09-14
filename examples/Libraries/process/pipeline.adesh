@@ -1,0 +1,12 @@
+// Executable Example: Process Pipelines
+import Process;
+import Env;
+
+let isWin = Env.isWindows();
+
+let pipelineResult = isWin 
+    ? Process.pipeline([["cmd.exe", "/C", "dir"], ["findstr", "Cargo"]])
+    : Process.pipeline([["ls", "-l"], ["grep", "Cargo"]]);
+
+print("Pipeline success: " + str(pipelineResult.success()));
+print("Filtered output:\n" + pipelineResult.stdoutText());

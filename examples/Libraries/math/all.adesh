@@ -1,0 +1,49 @@
+import Math;
+
+let r = Math.random();
+print("random:", r);
+
+print("floor:", Math.floor(3.7));
+print("ceil:", Math.ceil(3.1));
+print("round:", Math.round(3.5));
+
+print("abs:", Math.abs(-42));
+print("min:", Math.min(3, -10, 20));
+print("max:", Math.max(3, -10, 20));
+
+print("pow:", Math.pow(2, 8));
+print("sqrt:", Math.sqrt(81));
+
+print("sin0:", Math.sin(0));
+print("cos0:", Math.cos(0));
+print("tan0:", Math.tan(0));
+print("asin0:", Math.asin(0));
+print("acos1:", Math.acos(1));
+print("atan1:", Math.atan(1));
+print("atan2:", Math.atan2(1, 1));
+
+print("exp1:", Math.exp(1));
+print("log1:", Math.log(1));
+print("log10:", Math.log10(10));
+print("log2:", Math.log2(8));
+
+print("trunc:", Math.trunc(3.9));
+print("truncNeg:", Math.trunc(-3.9));
+print("signNeg:", Math.sign(-10));
+print("signZero:", Math.sign(0));
+print("signPos:", Math.sign(10));
+
+print("\n--- New Math Extensions ---");
+print("SQRT1_2:", Math.SQRT1_2);
+print("gcd(24, 36, 60):", Math.gcd(24, 36, 60));
+print("lcm(24, 36, 10):", Math.lcm(24, 36, 10));
+print("factorial(5):", Math.factorial(5));
+print("comb(5, 2):", Math.comb(5, 2));
+print("perm(5, 2):", Math.perm(5, 2));
+print("isqrt(26):", Math.isqrt(26));
+print("fma(2, 3, 4):", Math.fma(2, 3, 4));
+print("fmod(5.3, 2.0):", Math.fmod(5.3, 2.0));
+print("erf(1.0):", Math.erf(1.0));
+print("gamma(5.0):", Math.gamma(5.0));
+print("formatDecimal(123.456, 1):", Math.formatDecimal(123.456, 1));
+

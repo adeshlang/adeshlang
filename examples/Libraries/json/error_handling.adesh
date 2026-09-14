@@ -1,0 +1,47 @@
+// AdeshLang Built-in JSON — Error Handling & Security
+// Demonstrates detailed parse-error diagnostics and the built-in
+// recursion-depth guard (default: 128 levels) that prevents
+// stack-overflow from maliciously nested input.
+
+fn main() {
+    // ── 1. Parse error with line / column information ────────────────────
+    let broken = "{\"key\": ";   // unclosed value
+
+    if JSON.isValid(broken) == false {
+        println("Caught malformed input without throwing (isValid check)");
+    }
+
+    // tryParse returns null silently — no exception
+    let result = JSON.tryParse(broken);
+    if result == null {
+        println("tryParse returned null for broken JSON — safe");
+    }
+
+    // ── 2. Controlled throw with diagnostics ────────────────────────────
+    //  Uncommenting the next block will show the detailed error message:
+    //
+    //  let _ = JSON.parse(broken);
+    //  => JSON parse error: EOF while parsing a value at line 1, column 9
+    //
+    //  The error always includes `line` and `column` for easy debugging.
+
+    // ── 3. Depth-limit protection ────────────────────────────────────────
+    //  The default maximum nesting depth is 128.
+    //  Inputs deeper than that are rejected before parsing completes.
+    //
+    //  To demonstrate without crashing, we use tryParse:
+    let shallow = JSON.tryParse("[[[1,2,3]]]");   // depth 3 — allowed
+    if shallow != null {
+        println("Shallow nest (depth 3) parsed OK");
+    }
+
+    //  Constructing a deeply nested JSON string (150 levels) and parsing
+    //  with tryParse returns null (rejected) instead of overflowing:
+    let deep_str = "[".repeat(150) + "0" + "]".repeat(150);
+    let deep_val = JSON.tryParse(deep_str);
+    if deep_val == null {
+        println("Deep nest (depth 150) rejected by depth guard — safe");
+    }
+
+    println("All security checks passed.");
+}

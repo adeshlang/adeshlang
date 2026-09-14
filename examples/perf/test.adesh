@@ -1,0 +1,190 @@
+// AdeshLang Comprehensive Benchmark Suite
+// Demonstrates three distinct execution profiles:
+// 1. Differential Correctness Verification (verifies mathematical equivalence)
+// 2. Loop SCEV / Periodic Algebraic Reduction
+// 3. Loop Runtime (Scope Elision + In-Place Iteration Throughput)
+// 4. Loop Raw (Dynamic Function Dispatch Throughput)
+
+fn dummy_work(x) {
+    return x * 3 + 1;
+}
+
+fn run_differential_verification() {
+    print("--------------------------------------------------");
+    print(" Tier 0: Correctness & Differential Validation");
+    print("--------------------------------------------------");
+
+    let boundary_points = [0, 1, 2, 17, 1008, 1009, 1010, 2018, 5000];
+    let all_passed = true;
+
+    // Test 1: Affine linear polynomial (i * 31 + 17) % 1009
+    for (n in boundary_points) {
+        let opt_sum = 0;
+        for (i in 0..n) {
+            opt_sum = opt_sum + ((i * 31 + 17) % 1009);
+        }
+
+        let ref_sum = 0;
+        for (i in 0..n) {
+            let _w = dummy_work(0);
+            ref_sum = ref_sum + ((i * 31 + 17) % 1009);
+        }
+
+        if (opt_sum != ref_sum) {
+            print("  FAIL [Affine] at N=" + str(n) + ": opt=" + str(opt_sum) + " ref=" + str(ref_sum));
+            all_passed = false;
+        }
+    }
+
+    // Test 2: Quadratic polynomial (i * i * 3 + i * 7 + 11) % 1009
+    let quad_points = [0, 1, 10, 500, 1009, 2018];
+    for (n in quad_points) {
+        let opt_sum = 0;
+        for (i in 0..n) {
+            opt_sum = opt_sum + ((i * i * 3 + i * 7 + 11) % 1009);
+        }
+
+        let ref_sum = 0;
+        for (i in 0..n) {
+            let _w = dummy_work(0);
+            ref_sum = ref_sum + ((i * i * 3 + i * 7 + 11) % 1009);
+        }
+
+        if (opt_sum != ref_sum) {
+            print("  FAIL [Quadratic] at N=" + str(n) + ": opt=" + str(opt_sum) + " ref=" + str(ref_sum));
+            all_passed = false;
+        }
+    }
+
+    // Test 3: Negative factor polynomial (-i * 13 + 71) % 1009
+    let neg_points = [0, 1, 10, 1009, 2018];
+    for (n in neg_points) {
+        let opt_sum = 0;
+        for (i in 0..n) {
+            opt_sum = opt_sum + ((-i * 13 + 71) % 1009);
+        }
+
+        let ref_sum = 0;
+        for (i in 0..n) {
+            let _w = dummy_work(0);
+            ref_sum = ref_sum + ((-i * 13 + 71) % 1009);
+        }
+
+        if (opt_sum != ref_sum) {
+            print("  FAIL [Negative] at N=" + str(n) + ": opt=" + str(opt_sum) + " ref=" + str(ref_sum));
+            all_passed = false;
+        }
+    }
+
+    if (all_passed) {
+        print("  ✓ All boundary, quadratic, negative, and cycle tests match reference calculation exactly!");
+    }
+    print("");
+}
+
+fn benchmark_scev(label, iterations) {
+    let checksum = 0;
+    let t0 = clock();
+
+    for (i in 0..iterations) {
+        checksum = checksum + ((i * 31 + 17) % 1009);
+    }
+
+    let t1 = clock();
+    let elapsed_ms = (t1 - t0) * 1000.0;
+
+    print(
+        "Scale: " + label +
+        " | Logical Iters: " + str(iterations) +
+        " | Checksum: " + str(checksum) +
+        " | Mode: SCEV (Period=1009)" +
+        " | Elapsed: " + str(elapsed_ms) + " ms"
+    );
+
+    return checksum;
+}
+
+fn benchmark_runtime_loop(label, iterations) {
+    let acc = 0;
+    let t0 = clock();
+
+    for (i in 0..iterations) {
+        let x = (i * 7) ^ 3;
+        acc = acc + (x % 97);
+    }
+
+    let t1 = clock();
+    let elapsed_ms = (t1 - t0) * 1000.0;
+
+    print(
+        "Scale: " + label +
+        " | Actual Iterations: " + str(iterations) +
+        " | Result: " + str(acc) +
+        " | Mode: Zero-Alloc Scope Elision" +
+        " | Elapsed: " + str(elapsed_ms) + " ms"
+    );
+}
+
+fn benchmark_raw_interpreter(label, iterations) {
+    let acc = 0;
+    let t0 = clock();
+
+    for (i in 0..iterations) {
+        acc = acc + dummy_work(i % 10);
+    }
+
+    let t1 = clock();
+    let elapsed_ms = (t1 - t0) * 1000.0;
+
+    print(
+        "Scale: " + label +
+        " | Dynamic Calls: " + str(iterations) +
+        " | Result: " + str(acc) +
+        " | Mode: Raw Function Dispatch" +
+        " | Elapsed: " + str(elapsed_ms) + " ms"
+    );
+}
+
+fn main() {
+    print("==================================================");
+    print("         AdeshLang Performance Benchmark          ");
+    print("==================================================");
+    print("");
+
+    run_differential_verification();
+
+    print("--------------------------------------------------");
+    print(" Tier 1: Algebraic Loop Optimization (SCEV)       ");
+    print("--------------------------------------------------");
+    benchmark_scev("1 Thousand     ", 1000);
+    benchmark_scev("10 Thousand    ", 10000);
+    benchmark_scev("100 Thousand   ", 100000);
+    benchmark_scev("1 Million      ", 1000000);
+    benchmark_scev("10 Million     ", 10000000);
+    benchmark_scev("100 Million    ", 100000000);
+    benchmark_scev("1 Billion      ", 1000000000);
+    print("");
+
+    print("--------------------------------------------------");
+    print(" Tier 2: Optimized Interpreter Throughput          ");
+    print("         (Scope Elision & Scope Recycling)        ");
+    print("--------------------------------------------------");
+    benchmark_runtime_loop("10 Thousand    ", 10000);
+    benchmark_runtime_loop("50 Thousand    ", 50000);
+    benchmark_runtime_loop("100 Thousand   ", 100000);
+    print("");
+
+    print("--------------------------------------------------");
+    print(" Tier 3: Dynamic Interpreter Throughput            ");
+    print("         (Function Dispatch & Dynamic Operations) ");
+    print("--------------------------------------------------");
+    benchmark_raw_interpreter("10 Thousand    ", 10000);
+    benchmark_raw_interpreter("50 Thousand    ", 50000);
+    print("");
+
+    print("==================================================");
+    print(" Benchmark Suite Complete");
+    print("==================================================");
+
+    return 0;
+}

@@ -1,0 +1,40 @@
+// wasm_functions.ind — Function compilation examples
+// Combining compile_wasm_fn.ind, compile_wasm_fn_expr_return.ind
+
+@compile wasm
+print("=== WASM Function Compilation Examples ===");
+
+// From compile_wasm_fn.ind
+fn double(x){ return x * 2; }
+print(double(21));
+
+// From compile_wasm_fn_expr_return.ind
+fn add(a,b){ a + b; }
+print(add(2,3));
+
+// Additional function examples
+fn factorial(n) {
+    if (n <= 1) { return 1; }
+    return n * factorial(n - 1);
+}
+print("Factorial of 5:", factorial(5));
+
+fn greet(name) {
+    "Hello, " + name;
+}
+print(greet("WASM"));
+
+fn max(a, b) {
+    if (a > b) { return a; } else { return b; }
+}
+print("Max of 10 and 20:", max(10, 20));
+
+fn sum_array(arr) {
+    let total = 0;
+    for (let i in arr) {
+        total = total + i;
+    }
+    return total;
+}
+let nums = [1, 2, 3, 4, 5];
+print("Sum of array:", sum_array(nums));

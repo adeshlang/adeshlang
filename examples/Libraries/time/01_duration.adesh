@@ -1,0 +1,63 @@
+// 01_duration.adesh - Duration creation, arithmetic, and display
+import Time;
+
+print("=== Duration Examples ===\n");
+
+// --- Factory constructors ---
+let d_ns   : Duration = Time.durationNanoseconds(500n);
+let d_us   : Duration = Time.durationMicroseconds(1000n);
+let d_ms   : Duration = Time.durationMilliseconds(250n);
+let d_s    : Duration = Time.durationSeconds(30n);
+let d_m    : Duration = Time.durationMinutes(5n);
+let d_h    : Duration = Time.durationHours(2n);
+let d_day  : Duration = Time.durationDays(1n);
+let d_week : Duration = Time.durationWeeks(1n);
+
+print("500 ns         :", d_ns.toString());
+print("1000 μs        :", d_us.toString());
+print("250 ms         :", d_ms.toString());
+print("30 s           :", d_s.toString());
+print("5 m            :", d_m.toString());
+print("2 h            :", d_h.toString());
+print("1 day          :", d_day.toString());
+print("1 week         :", d_week.toString());
+
+// --- Float-based constructors ---
+let d_f1 = Time.durationSecondsF64(1.5);
+let d_f2 = Time.durationMillisecondsF64(300.75);
+print("\n1.5s (float)   :", d_f1.toString());
+print("300.75ms(float):", d_f2.toString());
+
+// --- Unit accessors ---
+print("\n--- Unit Accessors ---");
+print("30s → nanoseconds :", d_s.wholeNanoseconds());
+print("30s → microseconds:", d_s.wholeMicroseconds());
+print("30s → milliseconds:", d_s.wholeMilliseconds());
+print("30s → seconds     :", d_s.wholeSeconds());
+print("5m  → minutes     :", d_m.wholeMinutes());
+print("2h  → hours       :", d_h.wholeHours());
+
+// --- Arithmetic ---
+print("\n--- Arithmetic ---");
+let sum  = d_s.checkedAdd(d_m);
+let diff = d_m.checkedSub(d_s);
+let mul  = d_s.checkedMul(3);
+let div  = d_m.checkedDiv(2);
+print("30s + 5m =", sum.toString());
+print("5m  - 30s=", diff.toString());
+print("30s × 3  =", mul.toString());
+print("5m  ÷ 2  =", div.toString());
+
+// --- Comparison ---
+print("\n--- Comparison ---");
+print("30s < 5m :", d_s.lt(d_m));
+print("5m  > 30s:", d_m.gt(d_s));
+print("30s == 30s:", d_s.eq(Time.durationSeconds(30n)));
+print("min(30s,5m):", d_s.min(d_m).toString());
+print("max(30s,5m):", d_s.max(d_m).toString());
+
+// --- Negation / absolute value ---
+print("\n--- Negation ---");
+let neg = d_s.negated();
+print("negated(30s) nanos:", neg.wholeNanoseconds());
+print("abs(negated):", neg.abs().toString());

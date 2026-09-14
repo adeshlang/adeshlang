@@ -1,0 +1,25 @@
+// Callbacks and transform example
+// Demonstrates onStart, validate, onSubmit, transform
+// input.mock([" ajay ", "invalid", "valid_user"]);
+
+let username = input("Username:", {
+  onStart: fn(){ print("[callbacks] prompting username"); },
+  validate: fn(s){
+    if (s == "") { throw "too short"; }
+  },
+  transform: fn(s){ return s.trim().toLowerCase(); },
+  onSubmit: fn(s){ print("[callbacks] submitted:", s); },
+  regex: "[a-z0-9_]{3,16}",
+  min: 3,
+  max: 16,
+  def: "guest"
+});
+print("Username:", username);
+
+let score = input<u8>("Score:", {
+  type: "u64",
+  allowed: [10, 20, 30],
+  onStart: fn(){ print("[callbacks] choose score (10/20/30)"); },
+  onSubmit: fn(s){ print("[callbacks] score submitted:", s); }
+});
+print("Score:", score);

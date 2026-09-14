@@ -1,0 +1,84 @@
+// AdeshLang Windows GUI Demo
+// Demonstrates creating windows and drawing shapes using FFI
+// Run with: adesh run demo_window.adesh -L . -l wingui
+
+extern "C" {
+    fn create_window(title: ptr<u8>, width: i32, height: i32) -> u64;
+    fn show_window(hwnd: u64) -> void;
+    fn run_message_loop(hwnd: u64) -> void;
+    fn close_window(hwnd: u64) -> void;
+    fn clear_window(hwnd: u64, color: u32) -> void;
+    fn draw_circle(hwnd: u64, x: i32, y: i32, radius: i32, color: u32) -> void;
+    fn draw_rectangle(hwnd: u64, x: i32, y: i32, width: i32, height: i32, color: u32) -> void;
+    fn draw_line(hwnd: u64, x1: i32, y1: i32, x2: i32, y2: i32, color: u32) -> void;
+    fn draw_ellipse(hwnd: u64, x: i32, y: i32, width: i32, height: i32, color: u32) -> void;
+    fn draw_pixel(hwnd: u64, x: i32, y: i32, color: u32) -> void;
+    fn refresh_window(hwnd: u64) -> void;
+}
+
+fn main() {
+    print("=== AdeshLang Windows GUI Demo ===\n");
+    print("Creating window with shapes...\n");
+    
+    // Create window (800x600)
+    let window = create_window("AdeshLang Graphics Demo", 1600, 1600);
+    
+    // Clear to white background
+    clear_window(window, 16777215);  // White
+    
+    // Draw various shapes
+    print("Drawing shapes...\n");
+    
+    // Draw circles
+    draw_circle(window, 150, 150, 50, 16711680);  // Red circle
+    draw_circle(window, 250, 150, 40, 65280);     // Green circle
+    draw_circle(window, 350, 150, 60, 255);       // Blue circle
+    draw_circle(window, 850, 250, 80, 255);       // Blue circle
+    
+    // Draw rectangles
+    draw_rectangle(window, 100, 250, 100, 80, 16776960);  // Yellow rectangle
+    draw_rectangle(window, 220, 250, 120, 60, 16711935);  // Magenta rectangle
+    draw_rectangle(window, 360, 250, 80, 100, 65535);     // Cyan rectangle
+    
+    // Draw ellipses
+    draw_ellipse(window, 500, 100, 150, 80, 16746496);   // Orange ellipse
+    draw_ellipse(window, 500, 250, 120, 120, 8913151);   // Purple ellipse
+    
+    // Draw lines to create a triangle
+    draw_line(window, 550, 400, 650, 500, 0);  // Black lines
+    draw_line(window, 650, 500, 450, 500, 0);
+    draw_line(window, 450, 500, 550, 400, 0);
+    
+    // Draw decorative pixels (stars)
+    let star_x = 50;
+    while star_x < 750 {
+        draw_pixel(window, star_x, 50, 16766720);  // Gold pixels
+        draw_pixel(window, star_x, 52, 16766720);
+        draw_pixel(window, star_x + 2, 51, 16766720);
+        star_x = star_x + 40;
+    }
+    
+    // Refresh window to show everything
+    refresh_window(window);
+    
+    // Show the window
+    show_window(window);
+    
+    print("Window displayed! Close window to exit.\n");
+    print("\nShapes drawn:\n");
+    print("  • 3 colored circles (red, green, blue)\n");
+    print("  • 3 colored rectangles (yellow, magenta, cyan)\n");
+    print("  • 2 ellipses (orange, purple)\n");
+    print("  • Triangle made with lines\n");
+    print("  • Decorative pixels at the top\n");
+    
+    // Blocking message loop - stays until window is closed
+    run_message_loop(window);
+    
+    print("\nWindow closed. Cleaning up...\n");
+    close_window(window);
+    print("Done!\n");
+}
+
+
+// adesh run demo_window.adesh -L . -l wingui 2>&1

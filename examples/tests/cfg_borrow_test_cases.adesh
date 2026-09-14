@@ -1,0 +1,212 @@
+// CFG-Based Borrow Checker Test Cases
+// These examples demonstrate the new CFG-based borrow merge algorithm
+
+// ============================================
+// TEST CASE 1: Consistent shared borrows across branches - OK
+// ============================================
+fn test_consistent_shared() {
+    let data = [1, 2, 3];
+    
+    if condition() {
+        let ref1 = &data;  // shared borrow
+        print(ref1);
+    } else {
+        let ref2 = &data;  // shared borrow
+        print(ref2);
+    }
+    
+    // After join: both branches had shared borrows
+    // Merge result: SharedBorrowed - OK to use
+    let ref3 = &data;
+    print(ref3);
+}
+
+// ============================================
+// TEST CASE 2: Conflicting borrow kinds - ERROR
+// ============================================
+fn test_conflicting_borrows() {
+    let x = Obj();
+
+    if condition() {
+        x.update();   // Compiler infers exclusive borrow (mutation)
+    } else {
+        x.read();     // Compiler infers shared borrow (read-only)
+    }
+
+    // ERROR: At join point, x has:
+    // - Exclusive borrow in 'then' branch
+    // - Shared borrow in 'else' branch
+    // These are incompatible - merge fails
+    x.read();  // ❌ Cannot use after conflicting borrows
+}
+
+// ============================================
+// TEST CASE 3: Move in one branch - conservative error
+// ============================================
+fn test_moved_in_branch() {
+    let resource = create_resource();
+    
+    if needs_transfer() {
+        consume(resource);  // Moves resource
+    } else {
+        use_temporarily(resource);  // Just borrows
+    }
+    
+    // ERROR: At join point, resource might be moved
+    // Moved in 'then' branch, borrowed in 'else'
+    // Conservative: treat as Moved after join
+    print(resource);  // ❌ Use after potential move
+}
+
+// ============================================
+// TEST CASE 4: Same exclusive borrow in all branches - OK
+// ============================================
+fn test_same_exclusive() {
+    let counter = 0;
+    let ref_counter = &counter;  // Borrow before branch
+    
+    if condition() {
+        ref_counter = 1;  // Use exclusive borrow
+    } else {
+        ref_counter = 2;  // Use same exclusive borrow
+    }
+    
+    // After join: same exclusive borrow in both branches
+    // Merge result: ExclusiveBorrowed (same id) - OK
+    ref_counter = 3;  // ✓ Continues same borrow
+}
+
+// ============================================
+// TEST CASE 5: Loop with borrow - fixpoint analysis
+// ============================================
+fn test_loop_borrow() {
+    let items = [1, 2, 3, 4, 5];
+    
+    while has_more(items) {
+        let item = &items;  // SharedBorrowed
+        process(item);
+        // Borrow released at end of loop body
+    }
+    
+    // After loop: items should be Unborrowed
+    // Fixpoint: SharedBorrowed -> Unborrowed (loop exits)
+    items.push(6);  // ✓ OK - no longer borrowed
+}
+
+// ============================================
+// TEST CASE 6: Free in branch - always error
+// ============================================
+fn test_free_in_branch() {
+    let ptr = alloc<i32>();
+    
+    if should_free() {
+        free(ptr);  // ptr is now Freed
+    } else {
+        *ptr = 42;  // ptr is used
+    }
+    
+    // ERROR: At join point, ptr might be freed
+    // Freed + Any = ERROR (cannot safely use)
+    print(ptr);  // ❌ Use after potential free
+}
+
+// ============================================
+// TEST CASE 7: Break/continue in loop
+// ============================================
+fn test_break_continue() {
+    let resource = Obj();
+    
+    while condition() {
+        if should_skip() {
+            continue;  // Back to loop header
+        }
+        
+        resource.process();  // Exclusive borrow
+        
+        if done() {
+            break;  // Exit loop
+        }
+    }
+    
+    // After loop exit: resource should be accessible
+    resource.finalize();  // ✓ OK
+}
+
+// ============================================
+// TEST CASE 8: Multiple shared borrows OK
+// ============================================
+fn test_multiple_shared_ok() {
+    let data = "hello";
+    
+    let r1 = &data;
+    let r2 = &data;
+    let r3 = &data;
+    
+    // Multiple shared borrows coexist
+    print(r1);
+    print(r2);
+    print(r3);
+    
+    // All released at scope end
+    // data becomes Unborrowed
+}
+
+// ============================================
+// TEST CASE 9: Nested if-else
+// ============================================
+fn test_nested_branches() {
+    let value = 42;
+    
+    if outer_cond() {
+        if inner_cond() {
+            let r = &value;
+            print(r);
+        } else {
+            let r = &value;
+            print(r);
+        }
+        // Inner join: both SharedBorrowed - OK
+    } else {
+        let r = &value;
+        print(r);
+    }
+    
+    // Outer join: all paths SharedBorrowed
+    // After join: SharedBorrowed (merged)
+    let final_ref = &value;
+    print(final_ref);  // ✓ OK
+}
+
+// ============================================
+// TEST CASE 10: try-catch blocks
+// ============================================
+fn test_try_catch() {
+    let resource = acquire_resource();
+    
+    try {
+        resource.use();  // Exclusive borrow
+    } catch(e) {
+        log_error(e);
+        // resource still accessible here
+    }
+    
+    // After try-catch join: resource borrowed in try
+    // Merge results consistent
+    resource.cleanup();  // ✓ OK
+}
+
+// Helper function stubs
+fn condition() -> bool { true }
+fn needs_transfer() -> bool { false }
+fn should_free() -> bool { false }
+fn should_skip() -> bool { false }
+fn done() -> bool { false }
+fn outer_cond() -> bool { true }
+fn inner_cond() -> bool { true }
+fn has_more(items) -> bool { false }
+fn create_resource() { return Obj(); }
+fn consume(r) { }
+fn use_temporarily(r) { }
+fn process(item) { }
+fn log_error(e) { }
+fn acquire_resource() { return Obj(); }

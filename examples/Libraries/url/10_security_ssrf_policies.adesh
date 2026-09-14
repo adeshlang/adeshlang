@@ -1,0 +1,13 @@
+import URL;
+
+let policy: URLSecurityPolicy = URL.SecurityPolicy()
+    .allowScheme("https")
+    .denyPrivateNetworks()
+    .denyCredentials();
+
+let safeTarget: URL = URL.parse("https://api.github.com/events");
+let ssrfTarget: URL = URL.parse("http://127.0.0.1/admin");
+
+print("--- 10 Security & SSRF Protection Example ---");
+print("Safe Target Allowed:", policy.validate(safeTarget));
+print("Security Report for SSRF Target:", URL.securityReport(ssrfTarget));

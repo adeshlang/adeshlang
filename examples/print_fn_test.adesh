@@ -1,0 +1,7 @@
+fn greet(name: string) : i32 {
+    print("Hello,", name);
+    return 0;
+}
+
+greet("World");
+print("Done!");

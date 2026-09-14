@@ -1,0 +1,56 @@
+// Pointer Arithmetic
+// Demonstrates pointer indexing operations
+
+print("=== Basic Pointer Arithmetic ===");
+
+unsafe {
+    let arr = alloc(40);
+    print("Allocated 40 bytes for array");
+    
+    arr[0] = 10;
+    arr[1] = 20;
+    arr[2] = 30;
+    arr[3] = 40;
+    arr[4] = 50;
+    
+    print("Wrote 5 values to array");
+    
+    print("Values:");
+    print(arr[0]);
+    print(arr[1]);
+    print(arr[2]);
+    print(arr[3]);
+    print(arr[4]);
+    
+    arr[10] = 100;
+    arr[15] = 200;
+    arr[20] = 250;
+    
+    print("Wrote at offsets 10, 15, 20");
+    print(arr[10]);
+    print(arr[15]);
+    print(arr[20]);
+    
+    print("All bounds within allocated space");
+    
+    free(arr);
+}
+
+print("=== Pointer Dereferencing ===");
+
+unsafe {
+    let data = alloc(12);
+    
+    data[0] = 111;
+    data[1] = 222;
+    data[2] = 255;
+    
+    print("Using indexed dereference:");
+    print(data[0]);
+    print(data[1]);
+    print(data[2]);
+    
+    free(data);
+}
+
+print("=== All Pointer Arithmetic Tests Passed ===");;;

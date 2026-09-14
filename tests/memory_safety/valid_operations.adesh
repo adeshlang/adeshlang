@@ -1,0 +1,24 @@
+// Test: Valid memory operations
+// Should pass all compile-time checks
+
+fn test_valid_operations() {
+    // Valid move
+    let x = alloc(100);
+    let y = x;
+    free(y);  // OK: y is the owner
+    
+    // Valid multiple immutable borrows
+    let arr = [1, 2, 3];
+    let a = &arr;
+    let b = &arr;
+    print(a, b);  // OK
+    
+    // Valid single mutable borrow
+    let mut list = [1, 2, 3];
+    let ptr = &mut list;
+    ptr.push(4);  // OK
+    
+    print("All operations valid!");
+}
+
+test_valid_operations();

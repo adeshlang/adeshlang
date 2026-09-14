@@ -1,0 +1,15 @@
+// Simple clock test with loop
+print("Testing clock() function with loop");
+
+let t1 = clock();
+print("First clock():", t1);
+
+let sum = 0;
+for (i in 0..100) {
+    sum = sum + i;
+}
+
+let t2 = clock();
+print("Second clock():", t2);
+print("Difference:", t2 - t1);
+print("Sum:", sum);

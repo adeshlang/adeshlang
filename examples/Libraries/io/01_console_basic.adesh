@@ -1,0 +1,14 @@
+// Example 01: Basic Console I/O Operations
+
+import IO;
+
+fn main() {
+    IO.print("=== Console I/O Example ===\n");
+    IO.print("Standard Output Print: ");
+    IO.println("42");
+
+    IO.eprintln("[LOG] Standard Error Log Message");
+}
+
+
+

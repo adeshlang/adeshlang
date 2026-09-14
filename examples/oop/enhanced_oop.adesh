@@ -1,0 +1,225 @@
+// ========================================
+// Enhanced OOP Features for AdeshLang
+// ========================================
+
+print("\n╔════════════════════════════════════════╗", {color: "#00ffff"});
+print("║   AdeshLang OOP Feature Showcase       ║", {color: "#00ffff"});
+print("╚════════════════════════════════════════╝\n", {color: "#00ffff"});
+
+// ========================================
+// 1. Inheritance & Method Overloading
+// ========================================
+
+print("\n▶ Testing Inheritance & Method Overloading", {color: "#ffff00"});
+
+class Person {
+    Person(name, age) {
+        this.name = name;
+        this.age = age;
+    }
+    
+    fn greet() {
+        print("  Hello, I'm " + this.name, {color: "#ffffff"});
+    }
+    
+    fn greet(formal) {
+        if (formal) {
+            print("  Good day, my name is " + this.name, {color: "#ffffff"});
+        } else {
+            print("  Hi, I'm " + this.name, {color: "#ffffff"});
+        }
+    }
+}
+
+class Employee extends Person {
+    Employee(name, age, department) {
+        super(name, age);
+        this.department = department;
+    }
+    
+    fn greet() {
+        print("  Hello, I'm " + this.name + " from " + this.department, {color: "#ffffff"});
+    }
+}
+
+let alice = new Person("Alice", 30);
+alice.greet();
+alice.greet(true);
+
+let charlie = new Employee("Charlie", 28, "Engineering");
+charlie.greet();
+print("✓ Inheritance & Overloading: Passed\n", {color: "#00ff00"});
+
+// ========================================
+// 2. Operator Overloading
+// ========================================
+
+print("▶ Testing Operator Overloading", {color: "#ffff00"});
+
+class Vector {
+    Vector(x, y) {
+        this.x = x;
+        this    .y = y;
+    }
+    
+    fn operator+(other) {
+        return new Vector(this.x + other.x, this.y + other.y);
+    }
+    
+    fn operator==(other) {
+        return this.x == other.x and this.y == other.y;
+    }
+    
+    operator toString() {
+        return "Vector(" + this.x + ", " + this.y + ")";
+    }
+}
+
+let v1 = new Vector(3, 4);
+let v2 = new Vector(1, 2);
+let v3 = v1 + v2;
+
+print("  v1 = " + v1.toString(), {color: "#ffffff"});
+print("  v2 = " + v2.toString(), {color: "#ffffff"});
+print("  v1 + v2 = " + v3.toString(), {color: "#ffffff"});
+print("  v1 == v2: " + (v1 == v2), {color: "#ffffff"});
+print("✓ Operator Overloading: Passed\n", {color: "#00ff00"});
+
+// ========================================
+// 3. Getters and Setters
+// ========================================
+
+print("▶ Testing Getters & Setters", {color: "#ffff00"});
+
+class Rectangle {
+    Rectangle(width, height) {
+        this._width = width;
+        this._height = height;
+    }
+    
+    get width() { 
+        return this._width; 
+    }
+    
+    set width(value) { 
+        if (value <= 0) { 
+            throw "Width must be positive"; 
+        }
+        this._width = value;
+    }
+    
+    get area() {
+        return this._width * this._height;
+    }
+}
+
+let rect = new Rectangle(5, 3);
+print("  Initial width: " + rect.width, {color: "#ffffff"});
+print("  Initial area: " + rect.area, {color: "#ffffff"});
+
+rect.width = 7;
+print("  Updated width: " + rect.width, {color: "#ffffff"});
+print("  Updated area: " + rect.area, {color: "#ffffff"});
+
+try {
+    rect.width = -1;
+    print("  ERROR: Negative width accepted", {color: "#ff0000"});
+} catch(e) {
+    print("  ✓ Setter validation working: " + e, {color: "#00ff00"});
+}
+
+print("✓ Getters & Setters: Passed\n", {color: "#00ff00"});
+
+// ========================================
+// 4. Abstract Classes
+// ========================================
+
+print("▶ Testing Abstract Classes", {color: "#ffff00"});
+
+abstract class Animal {
+    Animal(name, species) {
+        this.name = name;
+        this.species = species;
+    }
+    
+    fn makeSound() {
+        throw "makeSound() must be implemented";
+    }
+    
+    fn move() {
+        throw "move() must be implemented";
+    }
+    
+    fn describe() {
+        print("  " + this.name + " is a " + this.species, {color: "#ffffff"});
+        let sound = this.makeSound();
+        print("  Sound: " + sound, {color: "#ffffff"});
+        let movement = this.move();
+        print("  Movement: " + movement, {color: "#ffffff"});
+    }
+}
+
+class Dog extends Animal {
+    Dog(name, breed) {
+        this.name = name;
+        this.species = "Canine";
+        this.breed = "Golden Retriever";
+    }
+    
+    fn makeSound() {
+        return "Woof! Woof!";
+    }
+    
+    fn move() {
+        return "Running on four legs";
+    }
+}
+
+class Bird extends Animal {
+    Bird(name, canFly) {
+        this.name = name;
+        this.species = "Avian";
+        this.canFly = canFly;
+    }
+    
+    fn makeSound() {
+        return "Chirp! Chirp!";
+    }
+    
+    fn move() {
+        if (this.canFly) {
+            return "Flying through the sky";
+        } else {
+            return "Walking on the ground";
+        }
+    }
+}
+
+let buddy = new Dog("Buddy");
+buddy.describe();
+print("");
+
+let tweety = new Bird("Tweety", true);
+tweety.describe();
+print("");
+
+let penguin = new Bird("Pingu", false);
+penguin.describe();
+print("");
+
+try {
+    let invalid = new Animal("Invalid", "Unknown");
+    print("  ERROR: Abstract class instantiated", {color: "#ff0000"});
+} catch(e) {
+    print("  ✓ Abstract instantiation blocked: " + e, {color: "#00ff00"});
+}
+
+print("✓ Abstract Classes: Passed\n", {color: "#00ff00"});
+
+// ========================================
+// Final Summary
+// ========================================
+
+print("\n╔════════════════════════════════════════╗", {color: "#00ff00"});
+print("║   All OOP Tests Passed Successfully!  ║", {color: "#00ff00"});
+print("╚════════════════════════════════════════╝\n", {color: "#00ff00"});

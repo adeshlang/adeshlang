@@ -1,0 +1,8 @@
+// 09 — semaphore
+import thread;
+
+let sem = thread.Semaphore.new(2);
+sem.acquire();
+print(sem.available_permits());
+sem.release();
+print(sem.available_permits());

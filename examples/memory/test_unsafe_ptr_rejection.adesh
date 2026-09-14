@@ -1,0 +1,11 @@
+fn get_ptr() -> *u8 unsafe {
+    let p = alloc(4);
+    p[0] = 123;
+    return p;
+}
+
+let ptr = unsafe {
+    return get_ptr();
+};
+// Should fail because not in unsafe block!
+let val = ptr[0];

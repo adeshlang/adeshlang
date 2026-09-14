@@ -1,0 +1,104 @@
+// Simple Neural Network Forward Pass Simulation
+// Run: adeshlang run examples/ml/simple_nn.adesh
+// Note: This is a simplified demonstration using arrays
+
+import "Math" as Math;
+
+print("╔════════════════════════════════════════════════════╗");
+print("║  SIMPLE NEURAL NETWORK - Forward Pass Demo         ║");
+print("╚════════════════════════════════════════════════════╝");
+print("");
+
+// Network dimensions (simplified for demo)
+let input_dim = 4;
+let hidden_dim = 3;
+let output_dim = 2;
+
+print("Creating MLP(" + str(input_dim) + " -> " + str(hidden_dim) + " -> " + str(output_dim) + ")...");
+
+// Initialize weights (simplified random values)
+let w1_0 = 0.1;
+let w1_1 = 0.2;
+let w1_2 = -0.1;
+let w1_3 = 0.3;
+
+let b1_0 = 0.01;
+let b1_1 = -0.02;
+let b1_2 = 0.01;
+
+let w2_0 = 0.2;
+let w2_1 = -0.3;
+let w2_2 = 0.1;
+
+let b2_0 = 0.01;
+let b2_1 = 0.02;
+
+print("Model created!");
+print("");
+
+// Create input
+print("Creating input [" + str(input_dim) + "]...");
+let x0 = 0.5;
+let x1 = -0.3;
+let x2 = 0.8;
+let x3 = 0.1;
+print("Input: [" + str(x0) + ", " + str(x1) + ", " + str(x2) + ", " + str(x3) + "]");
+print("");
+
+// Forward pass
+print("Running forward pass...");
+let start = clock();
+
+// Layer 1: Linear + ReLU
+let h0_pre = x0 * w1_0 + x1 * w1_1 + x2 * w1_2 + x3 * w1_3 + b1_0;
+let h1_pre = x0 * w1_1 + x1 * w1_2 + x2 * w1_3 + x3 * w1_0 + b1_1;
+let h2_pre = x0 * w1_2 + x1 * w1_3 + x2 * w1_0 + x3 * w1_1 + b1_2;
+
+// ReLU activation
+let h0 = h0_pre;
+if (h0 < 0) { h0 = 0; }
+let h1 = h1_pre;
+if (h1 < 0) { h1 = 0; }
+let h2 = h2_pre;
+if (h2 < 0) { h2 = 0; }
+
+// Layer 2: Linear
+let o0 = h0 * w2_0 + h1 * w2_1 + h2 * w2_2 + b2_0;
+let o1 = h0 * w2_1 + h1 * w2_2 + h2 * w2_0 + b2_1;
+
+// Softmax (simplified normalization)
+let sum = Math.abs(o0) + Math.abs(o1) + 0.001;
+let p0 = (Math.abs(o0) + 0.0005) / sum;
+let p1 = (Math.abs(o1) + 0.0005) / sum;
+
+let elapsed = clock() - start;
+
+print("");
+print("Hidden layer (after ReLU): [" + str(h0) + ", " + str(h1) + ", " + str(h2) + "]");
+print("Output probabilities:");
+print("  Class 0: " + str(p0));
+print("  Class 1: " + str(p1));
+
+print("");
+print("Performance:");
+print("  Forward pass time: " + str(elapsed * 1000) + " ms");
+
+// Run multiple iterations for benchmarking
+let iterations = 1000;
+let start2 = clock();
+let iter = 0;
+let temp = 0.0;
+while (iter < iterations) {
+    // Simplified computation for benchmark
+    temp = x0 * w1_0 + x1 * w1_1 + x2 * w1_2 + x3 * w1_3;
+    if (temp < 0) { temp = 0; }
+    temp = temp * w2_0;
+    iter = iter + 1;
+}
+let elapsed2 = clock() - start2;
+
+print("  " + str(iterations) + " iterations in " + str(elapsed2) + "s");
+print("  " + str(iterations / elapsed2) + " ops/sec");
+
+print("");
+print("Neural network demo complete!");

@@ -1,0 +1,107 @@
+import thread;
+
+thread.watchdog(15000);
+
+print("Starting pipeline test");
+
+let stop = thread.CancellationSource.new();
+let tok = stop.token();
+let wg = thread.WaitGroup.new();
+let pool = thread.ThreadPool.new(2);
+
+let chan = thread.Channel.bounded(16);
+let tx = chan[0];
+let rx = chan[1];
+
+let ingested = thread.Atomic.AtomicI64.new(0);
+let computed = thread.Atomic.AtomicI64.new(0);
+
+let metrics = thread.Mutex.new({
+    ingested: 0,
+    computed: 0,
+    flushed: 0,
+    overflow: 0
+});
+let batch_ev = thread.Condvar.new();
+
+wg.add(3);
+
+let p1 = thread.spawn_named("prod", fn() {
+    let seq = 0;
+    while !tok.is_cancelled() {
+        let sent = tx.try_send({ id: seq, val: seq * 10 });
+        if (sent.ok) {
+            ingested.fetch_add(1, "Relaxed");
+            seq = seq + 1;
+        }
+        thread.sleep(10);
+    }
+    wg.done();
+    return seq;
+});
+
+let c1 = thread.spawn_named("cons", fn() {
+    let count = 0;
+    while !tok.is_cancelled() {
+        let msg = rx.recv_timeout(50);
+        if (msg.ok) {
+            let j = msg.value;
+            let val = j.val;
+            pool.execute(fn() {
+                let x = val * 2;
+                computed.fetch_add(1, "Relaxed");
+            });
+            count = count + 1;
+        }
+        thread.yield();
+    }
+    wg.done();
+    return count;
+});
+
+let f1 = thread.spawn_named("flusher", fn() {
+    let flushed = 0;
+    while !tok.is_cancelled() {
+        batch_ev.wait_timeout(100);
+        batch_ev.reset();
+        flushed = flushed + 1;
+        metrics.with(fn(m) {
+            m.flushed = m.flushed + 1;
+            return m;
+        });
+    }
+    wg.done();
+    return flushed;
+});
+
+let i = 0;
+while i < 4 {
+    let ing = ingested.load("Relaxed");
+    let cmp = computed.load("Relaxed");
+    print(`tick ${i}  ingested=${ing}  computed=${cmp}`);
+    thread.sleep(500);
+    i = i + 1;
+}
+
+print("shutting down...");
+stop.cancel();
+tx.close();
+batch_ev.notify_all();
+let wg_ok = wg.wait_timeout(5000);
+print(`wg done=${wg_ok}`);
+
+p1.join_timeout(2000);
+c1.join_timeout(2000);
+f1.join_timeout(2000);
+
+pool.shutdown();
+pool.join_timeout(3000);
+
+let snap = metrics.lock();
+if (snap.ok) {
+    let v = snap.value.get();
+    print(`flushed = ${v.flushed}`);
+    snap.value.unlock();
+}
+print("FINISHED PIPELINE TEST SUCCESSFULLY!");
+thread.disarm_watchdog();

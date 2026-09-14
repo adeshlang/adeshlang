@@ -1,0 +1,11 @@
+// 09 - Cryptographically Secure Random Tokens & Nonces (CSPRNG)
+import Crypto;
+
+let hexToken = Crypto.randomToken(32, "hex");
+print("32-byte Random Hex Token:   ", hexToken);
+
+let base64Token = Crypto.randomToken(32, "base64");
+print("32-byte Random Base64 Token:", base64Token);
+
+let uuid = Crypto.randomUuid();
+print("Secure UUID v4 Identifier:  ", uuid);

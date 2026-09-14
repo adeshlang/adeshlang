@@ -1,0 +1,26 @@
+// Phase 3 Example: Binary Non-UTF-8 Transport over TLS Stream
+import TLS;
+
+let host: String = "1.1.1.1";
+let port: i64 = 443;
+
+print("--- Binary Non-UTF-8 Stream Transfer ---");
+
+let tls: TLS = TLS.connect(host, port);
+
+// Write HTTP GET request payload
+tls.writeText("GET / HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n");
+
+// Read raw binary byte array (non-UTF8 safe)
+let rawBytes: Array<u8> = tls.readBytes(512);
+
+print("Raw Bytes Received Array Length: " + rawBytes.length);
+print("First 10 Byte Values: ");
+let i: i64 = 0;
+while (i < 10 && i < rawBytes.length) {
+    print("Byte[" + i + "]: " + rawBytes[i]);
+    i = i + 1;
+}
+
+tls.close();
+print("Binary TLS Transport Stream Closed.");

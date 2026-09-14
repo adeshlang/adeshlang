@@ -1,0 +1,128 @@
+// Dynamic Programming Fibonacci - Bottom-Up Approach
+// Run: adesh run examples/recursion/dp_fib.adesh
+
+// Iterative DP fibonacci - O(n) time, O(1) space
+// Uses bottom-up approach with constant space
+fn fib_dp(n: i64): int {
+    if n <= 0 {
+        return 0;
+    }
+    if n == 1 {
+        return 1;
+    }
+    
+    // Bottom-up DP with space optimization
+    // Only keep track of previous two values
+    let prev2 = 0;  // fib(i-2)
+    let prev1 = 1;  // fib(i-1)
+    let current:int = 0;
+    
+    let i = 2;
+    while i <= n {
+        current = prev1 + prev2;
+        prev2 = prev1;
+        prev1 = current;
+        i = i + 1;
+    }
+    
+    return current;
+}
+
+// Alternative: DP with explicit loop using for range (if supported)
+fn fib_dp_verbose(n: i64): int {
+    if n <= 0 {
+        return 0;
+    }
+    if n == 1 {
+        return 1;
+    }
+    
+    let a = 0;
+    let b = 1;
+    let temp = 0;
+    let count = 2;
+    
+    while count <= n {
+        temp = a + b;
+        a = b;
+        b = temp;
+        count = count + 1;
+    }
+    
+    return b;
+}
+
+// Benchmark function
+fn benchmark(n: i64) {
+    print(`Computing dp_fib(${n})...`);
+    let start = clock();
+    let result = fib_dp(n);
+    let elapsed = clock() - start;
+    print(`fib(${n}) = ${result}`);
+    print(`Time: ${elapsed}s`);
+    print("");
+}
+
+// Compare with verbose version
+fn benchmark_both(n: i64) {
+    print(`Testing n = ${n}`);
+    
+    let start1 = clock();
+    let r1 = fib_dp(n);
+    let t1 = clock() - start1;
+    
+    let start2 = clock();
+    let r2 = fib_dp_verbose(n);
+    let t2 = clock() - start2;
+    
+    print(`  fib_dp:         ${r1} (${t1}s)`);
+    print(`  fib_dp_verbose: ${r2} (${t2}s)`);
+    
+    if r1 == r2 {
+        print("  ✓ Results match!");
+    } else {
+        print("  ✗ Results differ!");
+    }
+    print("");
+}
+
+fn main() {
+    print("╔════════════════════════════════════════════════════╗");
+    print("║  DYNAMIC PROGRAMMING FIBONACCI - AdeshLang          ║");
+    print("║  O(n) time, O(1) space - Bottom-Up Approach        ║");
+    print("╚════════════════════════════════════════════════════╝");
+    print("");
+    
+    // Test correctness with small values
+    print("=== Correctness Tests ===");
+    print(`fib(0) = ${fib_dp(0)}`);   // Expected: 0
+    print(`fib(1) = ${fib_dp(1)}`);   // Expected: 1
+    print(`fib(2) = ${fib_dp(2)}`);   // Expected: 1
+    print(`fib(5) = ${fib_dp(5)}`);   // Expected: 5
+    print(`fib(10) = ${fib_dp(10)}`); // Expected: 55
+    print("");
+    
+    // Benchmark various sizes
+    print("=== Benchmarks ===");
+    benchmark(10);
+    benchmark(20);
+    benchmark(30);
+    benchmark(40);
+    benchmark(50);
+    
+    // DP can handle very large values efficiently!
+    print("=== Large Values (DP advantage) ===");
+    benchmark(100);
+    benchmark(500);
+    benchmark(1000);
+    
+    // Compare both implementations
+    print("=== Comparing Implementations ===");
+    benchmark_both(30);
+    benchmark_both(50);
+    
+    print("DP Fibonacci complete!");
+    print("Note: DP approach is O(n) vs O(2^n) for naive recursion");
+}
+
+main();

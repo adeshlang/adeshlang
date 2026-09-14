@@ -1,0 +1,35 @@
+// examples/arc/tests/t01_basic_share.adesh
+// T01 – Basic share: initial reference counts
+
+
+export fn run() {
+    let PASS = 0;
+    let FAIL = 0;
+
+    fn check(cond, msg) {
+        if (cond) {
+            print("  ✓ PASS:", msg);
+            PASS = PASS + 1;
+        } else {
+            print("  ✗ FAIL:", msg);
+            FAIL = FAIL + 1;
+        }
+    }
+
+print("=== T01: Basic share initial counts ===\n");
+
+share obj = { x: 1 };
+check(obj.strong_count() == 1, "strong_count starts at 1");
+check(obj.weak_count()   == 0, "weak_count starts at 0");
+
+// Adding a second strong ref
+strong s = obj;
+check(obj.strong_count() == 2, "strong_count is 2 after one strong ref");
+check(obj.weak_count()   == 0, "weak_count still 0 with only strong refs");
+
+print("\nPASS:", PASS, " FAIL:", FAIL);
+
+    return { pass: PASS, fail: FAIL };
+}
+
+run();

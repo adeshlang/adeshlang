@@ -1,0 +1,84 @@
+// Struct Field Access and Manipulation
+// Demonstrates accessing and working with struct fields
+
+print("=== Struct Field Access ===");
+
+struct Student {
+    name: String;
+    studentId: Int;
+    gpa: Float;
+};
+
+let student1 = Student {
+    name: "Emma",
+    studentId: 12345,
+    gpa: 3.8,
+};
+
+print("Student instance created");
+print("Accessing individual fields:");
+print(student1.name);
+print(student1.studentId);
+print(student1.gpa);
+
+print("=== Field Type Operations ===");
+
+struct Book {
+    title: String;
+    pages: Int;
+    published: Bool;
+};
+
+let book1 = Book {
+    title: "The Great Gatsby",
+    pages: 180,
+    published: true,
+};
+
+print("Book struct with multiple field types:");
+print("Title: ");
+print(book1.title);
+print("Pages: ");
+print(book1.pages);
+print("Published: ");
+print(book1.published);
+
+print("=== Numeric Field Operations ===");
+
+struct Product {
+    name: String;
+    price: Float;
+    quantity: Int;
+};
+
+let product1 = Product {
+    name: "Laptop",
+    price: 999.99,
+    quantity: 5,
+};
+
+print("Product details:");
+print(product1.name);
+print("Price: 999.99");
+print("Quantity: 5");
+
+print("=== String Field Operations ===");
+
+struct Company {
+    name: String;
+    ceo: String;
+    founded: Int;
+};
+
+let company1 = Company {
+    name: "TechCorp",
+    ceo: "John Smith",
+    founded: 2010,
+};
+
+print("Company information:");
+print(company1.name);
+print(company1.ceo);
+print(company1.founded);
+
+print("=== All Field Access Examples Passed ===");

@@ -1,0 +1,42 @@
+// Test while loop inside function
+
+fn test_loop(n) {
+    print("test_loop called with n =", n);
+    let i = 2;
+    print("Initial i =", i);
+    print("Testing: can we reassign?");
+    i = 5;
+    print("After i = 5, i is:", i);
+    i = i + 1;
+    print("After i = i + 1, i is:", i);
+    
+    let count = 0;
+    while (i <= n) {
+        print("Loop iteration: i =", i);
+        count = count + 1;
+        i = i + 1;
+        if (count > 20) {
+            break;
+        }
+    }
+    print("Loop ran", count, "times");
+    
+    // Try alternative formulation
+    print("\nTrying alternative while loop:");
+    let j = 2;
+    let count2 = 0;
+    while (j < n + 1) {
+        print("Alt loop iteration: j =", j);
+        count2 = count2 + 1;
+        j = j + 1;
+        if (count2 > 20) {
+            break;
+        }
+    }
+    print("Alt loop ran", count2, "times");
+    
+    return count;
+}
+
+let result = test_loop(10);
+print("Result:", result);

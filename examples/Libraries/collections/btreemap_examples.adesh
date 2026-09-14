@@ -1,0 +1,26 @@
+import Collections;
+
+print("========================================");
+print("3. BTreeMap - Ordered Key-Value Storage");
+print("========================================");
+
+let map = Collections.BTreeMap();
+
+map.insert("name", "AdeshLang");
+map.insert("version", "0.3.0");
+map.insert("backend", "JIT / VM / Interpreter");
+
+print("Get 'name': ", map.get("name"));
+print("Get 'version': ", map.get("version"));
+print("Get missing key: ", map.get("missing_key"));
+
+print("Overwriting 'version'...");
+map.insert("version", "0.4.0");
+print("New version: ", map.get("version"));
+
+print("\n--- Edge Case: Multiple key types formatted as keys ---");
+let map2 = Collections.BTreeMap();
+map2.insert("key_100", 100);
+map2.insert("key_200", 200);
+print("Map2 key_100: ", map2.get("key_100"));
+print("Map2 key_200: ", map2.get("key_200"));

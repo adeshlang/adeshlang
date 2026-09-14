@@ -1,0 +1,16 @@
+// Example 3: Handling TLS Failures and Edge Cases (Invalid Certificate / Port / Timeout)
+import TLS;
+
+print("--- Edge Case 1: Connecting to non-TLS port ---");
+try {
+    let handle = TLS.connect("1.1.1.1", 80);
+} catch (err) {
+    print("Caught expected TLS Handshake error: " + err);
+}
+
+print("\n--- Edge Case 2: Connecting to invalid host ---");
+try {
+    let handle = TLS.connect("invalid.nonexistent.domain.local", 443);
+} catch (err) {
+    print("Caught expected Transport/DNS error: " + err);
+}

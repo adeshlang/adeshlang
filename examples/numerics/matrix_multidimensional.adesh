@@ -1,0 +1,189 @@
+// ============================================================================
+// Multi-Dimensional Numerics & Matrix Mathematics in AdeshLang
+// Demonstrating:
+//   1. 2D Matrix Algebra (Matrix Multiply, Addition, Subtraction, Trace, Norm)
+//   2. 2D Matrix Transposition & Linear Equations Transformation
+//   3. 3D Tensor Mathematics (Batch Matmul, Slice Reductions, Channel Aggregations)
+//   4. Multi-Dimensional (N-D) Tensor Math with Strided Indexing
+// ============================================================================
+
+import Simd;
+
+print("======================================================================");
+print("1. 2D NUMERICAL MATRIX ALGEBRA (Matmul, Trace, Frobenius Norm)");
+print("======================================================================");
+
+// 3x3 Matrix A
+let A: [f64;3;3] = [
+    [4.0, 1.0, -1.0],
+    [2.0, 5.0,  3.0],
+    [1.0, 0.0,  2.0]
+];
+
+// 3x3 Matrix B
+let B: [f64;3;3] = [
+    [1.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0],
+    [0.0, 0.0, 1.0]
+];
+
+let n = len(A);
+
+// Matrix Multiplication C = A * B (Identity check)
+let C: [f64;3;3] = [
+    [0.0, 0.0, 0.0],
+    [0.0, 0.0, 0.0],
+    [0.0, 0.0, 0.0]
+];
+
+for i in range(n) {
+    for j in range(n) {
+        let b_col = [B[0][j], B[1][j], B[2][j]];
+        C[i][j] = Simd.dot(A[i], b_col);
+    }
+}
+
+print("Matrix A * Identity B result:");
+for i in range(n) {
+    print("  Row ", i, ": ", C[i]);
+}
+
+// Matrix Trace: sum of main diagonal elements
+let trace = A[0][0] + A[1][1] + A[2][2];
+print("Trace of Matrix A = ", trace);
+
+// Row-wise L2 Norms using SIMD dot product: sqrt(dot(row, row))
+print("Row Norms of Matrix A:");
+for i in range(n) {
+    let row_dot = Simd.dot(A[i], A[i]);
+    // row_dot = a^2 + b^2 + c^2
+    print("  Row ", i, " Squared Norm: ", row_dot);
+}
+
+print("");
+print("======================================================================");
+print("2. 2D MATRIX TRANSFORMATIONS (Transpose & Element-wise Algebra)");
+print("======================================================================");
+
+let X: [f64;2;3] = [
+    [1.0, 2.0, 3.0],
+    [4.0, 5.0, 6.0]
+];
+
+let rows_X = len(X);
+let cols_X = len(X[0]);
+
+// Transpose X^T (3x2)
+let XT: [f64;3;2] = [
+    [0.0, 0.0],
+    [0.0, 0.0],
+    [0.0, 0.0]
+];
+
+for r in range(rows_X) {
+    for c in range(cols_X) {
+        XT[c][r] = X[r][c];
+    }
+}
+
+print("Original Matrix X (2x3):");
+print("  ", X[0]);
+print("  ", X[1]);
+print("Transposed Matrix X^T (3x2):");
+print("  ", XT[0]);
+print("  ", XT[1]);
+print("  ", XT[2]);
+
+// Gram Matrix G = X * X^T (2x2)
+let G = [
+    [Simd.dot(X[0], X[0]), Simd.dot(X[0], X[1])],
+    [Simd.dot(X[1], X[0]), Simd.dot(X[1], X[1])]
+];
+print("Gram Matrix G = X * X^T (2x2):");
+print("  Row 0: ", G[0]);
+print("  Row 1: ", G[1]);
+
+print("");
+print("======================================================================");
+print("3. 3D TENSOR MATHEMATICS (Batch Matrix Multiplication)");
+print("======================================================================");
+
+// 3D Tensor of shape (Batch=2, Rows=2, Cols=2)
+let batch_tensor1: [f64;2;2;2] = [
+    [
+        [2.0, 3.0],
+        [1.0, 4.0]
+    ],
+    [
+        [5.0, 1.0],
+        [0.0, 2.0]
+    ]
+];
+
+let batch_tensor2: [f64;2;2;2] = [
+    [
+        [1.0, 0.0],
+        [2.0, 1.0]
+    ],
+    [
+        [3.0, 2.0],
+        [1.0, 4.0]
+    ]
+];
+
+let num_batches = len(batch_tensor1);
+let batch_out: [f64;2;2;2] = [
+    [
+        [0.0, 0.0],
+        [0.0, 0.0]
+    ],
+    [
+        [0.0, 0.0],
+        [0.0, 0.0]
+    ]
+];
+
+for b in range(num_batches) {
+    let matA = batch_tensor1[b];
+    let matB = batch_tensor2[b];
+    for r in range(2) {
+        for c in range(2) {
+            let col_b = [matB[0][c], matB[1][c]];
+            batch_out[b][r][c] = Simd.dot(matA[r], col_b);
+        }
+    }
+}
+
+print("Batch Matrix Multiply Output (2 x 2 x 2):");
+for b in range(num_batches) {
+    print("Batch [", b, "]:");
+    print("  ", batch_out[b][0]);
+    print("  ", batch_out[b][1]);
+}
+
+print("");
+print("======================================================================");
+print("4. MULTI-DIMENSIONAL (N-D) TENSOR MATHEMATICS & STRIDED REDUCTIONS");
+print("======================================================================");
+
+// Strided flattened 3D Tensor shape: (Depth=2, Rows=3, Cols=3) = 18 elements
+let flat_3d: [f64;18] = [
+    1.0, 2.0, 3.0,
+    4.0, 5.0, 6.0,
+    7.0, 8.0, 9.0,
+
+    10.0, 11.0, 12.0,
+    13.0, 14.0, 15.0,
+    16.0, 17.0, 18.0
+];
+
+// Calculate layer-wise statistics
+let layer0_slice = [flat_3d[0], flat_3d[1], flat_3d[2], flat_3d[3], flat_3d[4], flat_3d[5], flat_3d[6], flat_3d[7], flat_3d[8]];
+let layer1_slice = [flat_3d[9], flat_3d[10], flat_3d[11], flat_3d[12], flat_3d[13], flat_3d[14], flat_3d[15], flat_3d[16], flat_3d[17]];
+
+print("Layer 0 (3x3) Sum: ", Simd.sum(layer0_slice), " Mean: ", Simd.mean(layer0_slice));
+print("Layer 1 (3x3) Sum: ", Simd.sum(layer1_slice), " Mean: ", Simd.mean(layer1_slice));
+print("Full 3D Tensor Global Sum: ", Simd.sum(flat_3d));
+
+print("");
+print("Multi-Dimensional Numerics Matrix demo complete!");

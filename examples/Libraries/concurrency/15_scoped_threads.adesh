@@ -1,0 +1,9 @@
+// 15 — scoped threads
+import thread;
+
+thread.watchdog(15000);
+thread.scope(fn(scope) {
+    scope.spawn(fn() { print("a"); });
+    scope.spawn(fn() { print("b"); });
+});
+print("scope done");

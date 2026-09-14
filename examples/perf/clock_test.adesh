@@ -1,0 +1,31 @@
+// Simple clock test to verify clock() function behavior
+
+print("Testing clock() function");
+
+// Test 1: Basic clock reading
+let t1 = clock();
+print("First clock reading:", t1);
+
+// Do some work
+let sum = 0;
+for (i in 0..10000) {
+    sum = sum + i;
+}
+
+let t2 = clock();
+print("Second clock reading:", t2);
+
+let elapsed = t2 - t1;
+print("Elapsed:", elapsed, "seconds");
+print("Elapsed ms:", elapsed * 1000, "ms");
+
+// Test 2: More work
+let start = clock();
+let acc = 0;
+for (i in 0..100000) {
+    acc = acc + i * 2;
+}
+let end_time = clock();
+print("Loop result:", acc);
+print("Start:", start, "End:", end_time);
+print("Time for 100k ops:", (end_time - start) * 1000, "ms");

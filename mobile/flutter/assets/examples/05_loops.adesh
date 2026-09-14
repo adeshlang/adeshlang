@@ -1,0 +1,11 @@
+// Loops & Iteration
+
+let i = 1;
+let sum = 0;
+
+while (i <= 10) {
+    sum = sum + i;
+    i = i + 1;
+}
+
+print("Sum of numbers 1..10 is:", sum);

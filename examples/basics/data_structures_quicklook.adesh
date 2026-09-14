@@ -1,0 +1,16 @@
+// Test Arc<str> optimization
+let name:string = "FastMap Test";
+print("String test:", name);
+
+// Test Box<Vec> optimization
+let arr = [1, 2, 3, 4, 5];
+let tup = (10, 20, 30);
+print("Array:", arr);
+print("Tuple:", tup);
+
+// Test FastMap optimization (Object)
+let obj = {x: 100, y: 200};
+print("Object:", obj);
+
+// Test successful compilation
+print(" All optimizations working!", {color: "#00ff00"});

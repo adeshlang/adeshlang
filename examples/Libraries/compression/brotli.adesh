@@ -1,0 +1,13 @@
+import Compression;
+import Encoding;
+
+print("=== Brotli Web Asset Compression Example ===");
+
+let htmlAsset = "<html><body><h1>Welcome to AdeshLang</h1><p>High performance web apps.</p></body></html><html><body><h1>Welcome to AdeshLang</h1><p>High performance web apps.</p></body></html>";
+
+let compressed = Compression.brotli(htmlAsset, 6);
+print("Original:", len(htmlAsset), "Brotli:", len(compressed));
+
+let decompressedBytes = Compression.unbrotli(compressed);
+let decompressedText = Encoding.utf8Decode(decompressedBytes);
+print("Restored:", decompressedText == htmlAsset);

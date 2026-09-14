@@ -1,0 +1,19 @@
+import Collections;
+
+print("========================================");
+print("Set Operations Examples");
+print("========================================");
+
+let setA = Collections.HashSet();
+setA.insert("apple");
+setA.insert("banana");
+setA.insert("cherry");
+
+let setB = Collections.HashSet();
+setB.insert("banana");
+setB.insert("dragonfruit");
+
+print("SetA values: ", setA.values());
+print("SetB values: ", setB.values());
+print("SetA contains 'apple': ", setA.contains("apple"));
+print("SetA contains 'dragonfruit': ", setA.contains("dragonfruit"));

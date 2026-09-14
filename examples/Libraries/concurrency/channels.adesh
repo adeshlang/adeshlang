@@ -1,0 +1,53 @@
+// Concurrent Task Example
+// Run: adeshlang run examples/concurrency/channels.adesh --jit
+// Demonstrates basic async/spawn patterns
+
+async fn compute(id, value) {
+    print(`  Task ${id}: computing ${value}^2...`);
+    let result = value * value;
+    print(`  Task ${id}: result = ${result}`);
+    return result;
+}
+
+ async fn main() {
+    print("╔════════════════════════════════════════════════════╗");
+    print("║  CONCURRENT TASKS - spawn/await Demo               ║");
+    print("╚════════════════════════════════════════════════════╝");
+    print("");
+    
+    // Demo 1: Sequential execution
+    print("1. Sequential Execution:");
+    let r1 = await compute(1, 5);
+    let r2 = await compute(2, 10);
+    let r3 = await compute(3, 15);
+    print(`  Results: ${r1}, ${r2}, ${r3}`);
+    print("");
+    
+    // Demo 2: Parallel execution with spawn
+    print("2. Parallel Execution with spawn:");
+    let t1 = spawn compute(1, 2);
+    let t2 = spawn compute(2, 3);
+    let t3 = spawn compute(3, 4);
+    
+    // Tasks run concurrently
+    let a = await t1;
+    let b = await t2;
+    let c = await t3;
+    print(`  Parallel results: ${a}, ${b}, ${c}`);
+    print("");
+    
+    // Demo 3: Using Promise.all
+    print("3. Promise.all:");
+    let promises = [
+        compute(1, 6),
+        compute(2, 7),
+        compute(3, 8)
+    ];
+    let all_results = await Promise.all(promises);
+    print(`  All results: ${all_results}`);
+    print("");
+    
+    print("Concurrent demo complete!");
+}
+
+// main();

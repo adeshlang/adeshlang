@@ -1,0 +1,50 @@
+// AdeshLang HTTP Protocol Verification Server for curl Testing
+// Binds to 127.0.0.1:4040 and serves live HTTP requests
+
+import HTTP;
+
+let router = HTTP.Router();
+
+// [GET /] - Returns protocol version & request metadata
+router.get("/", fn(req, res) {
+    return res.json({
+        server: "AdeshLang HTTP/1.1 Engine",
+        protocol: req.version,
+        scheme: req.scheme,
+        host: req.host,
+        path: req.path,
+        user_agent: req.header("user-agent")
+    });
+});
+
+// [GET /http1] - Returns HTTP/1.1 header verification
+router.get("/http1", fn(req, res) {
+    return res
+        .header("X-Protocol-Version", req.version)
+        .json({
+            protocol: req.version,
+            message: "HTTP/1.1 direct wire request verified"
+        });
+});
+
+// [POST /json] - Verifies JSON body parsing over HTTP POST
+router.post("/json", fn(req, res) {
+    let bodyObj = req.json();
+    return res.status(201).json({
+        received: bodyObj,
+        contentLength: req.contentLength,
+        contentType: req.contentType,
+        protocol: req.version
+    });
+});
+
+// [GET /problem] - Verifies RFC 7807 Problem Details response
+router.get("/problem", fn(req, res) {
+    return res.problem(404, "User Not Found", "The requested user ID does not exist on this node.");
+});
+
+print("Starting AdeshLang HTTP Protocol Verification Server on http://127.0.0.1:4040...");
+let server = HTTP.Server("127.0.0.1:4040", router);
+server.listen(fn() {
+    print("✓ Server is listening on http://127.0.0.1:4040");
+});

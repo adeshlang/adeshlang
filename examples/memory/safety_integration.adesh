@@ -1,0 +1,62 @@
+// Example: Memory Safety Integration
+// Combines borrow checking, concurrency primitives, and allocators
+// in a realistic multi-threaded scenario
+
+fn main() {
+    print("=== Memory Safety Integration Example ===\n");
+    
+    // === Scenario: Multi-threaded Cache System ===
+    
+    // 1. Create shared, thread-safe cache
+    let cache = rwlock(map());
+    let cache_hits = atomic_u64(0);
+    let cache_misses = atomic_u64(0);
+    
+    // 2. Set up arena for cache allocations
+    let arena = arena_new(8192);
+    
+    // 3. Store cache entries (immutable, safely shared)
+    let entry1 = shared("user:123 -> Alice");
+    let entry2 = shared("user:456 -> Bob");
+    
+    // 4. Simulate cache operations with borrow rules
+    write_cache_entry("user:123", entry1, cache);
+    write_cache_entry("user:456", entry2, cache);
+    
+    // 5. Read cache with RwLock (multiple readers can coexist)
+    read_cache_entry("user:123", cache);
+    read_cache_entry("user:456", cache);
+    
+    // 6. Update statistics with atomic operations
+    cache_hits.store(10);
+    cache_misses.store(2);
+    
+    let hits = cache_hits.load();
+    let misses = cache_misses.load();
+    print("Cache hits: " + hits);
+    print("Cache misses: " + misses);
+    
+    // 7. Cleanup arena
+    arena_reset();
+    print("\n=== Integration Complete ===");
+}
+
+fn write_cache_entry(key: String, value, cache) {
+    // Acquire write lock
+    let guard = cache.write();
+    if guard != null {
+        print("Writing: " + key);
+    }
+}
+
+fn read_cache_entry(key: String, cache) {
+    // Acquire read lock (multiple readers allowed)
+    let guard = cache.read();
+    if guard != null {
+        print("Reading: " + key);
+    }
+}
+
+fn map() {
+    return {};
+}

@@ -1,0 +1,185 @@
+// ╔═══════════════════════════════════════════════════════════════════════════════╗
+// ║          ATP Endpoint Identity Authentication — Real Working Demo           ║
+// ║                                                                               ║
+// ║  Demonstrates:                                                                ║
+// ║    • Ed25519 cryptographic identity key generation                           ║
+// ║    • Mutual authentication (Client authenticates Server, Server authenticates ║
+// ║      Client)                                                                  ║
+// ║    • Handshake identity binding (anti-MITM)                                   ║
+// ║    • Rejection of untrusted / unauthorized peer identities                   ║
+// ║    • Secure encrypted data transmission after identity verification           ║
+// ║                                                                               ║
+// ║  Run: cargo run --bin adeshlang -- run examples/Libraries/atp/atp_identity.adesh
+// ╚═══════════════════════════════════════════════════════════════════════════════╝
+
+// @allow(warnings)
+import ATP;
+import Encoding;
+import Time;
+
+print("==================================================================");
+print("     ATP Endpoint Identity Authentication — Real Working Demo    ");
+print("==================================================================");
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 1. TYPE DEFINITIONS & STRUCTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+struct AtpEndpoint {
+    host: string,
+    port: int,
+    serverPort: int
+}
+
+struct AtpIdentityKey {
+    role: string,
+    publicKeyHex: string
+}
+
+fn printKeyInfo(info: AtpIdentityKey) {
+    print("[Identity] " + info.role + " Public Key: " + info.publicKeyHex);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 2. GENERATE CRYPTOGRAPHIC IDENTITIES (Ed25519)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+print("\n--- 1. Generating Long-Term Ed25519 Identity Keys ---");
+let serverIdentity = ATP.generateIdentityKey();
+let clientIdentity = ATP.generateIdentityKey();
+let impostorIdentity = ATP.generateIdentityKey();
+
+printKeyInfo(AtpIdentityKey { role: "Server", publicKeyHex: "" + serverIdentity.publicKeyHex });
+printKeyInfo(AtpIdentityKey { role: "Authorized Client", publicKeyHex: "" + clientIdentity.publicKeyHex });
+printKeyInfo(AtpIdentityKey { role: "Impostor Client", publicKeyHex: "" + impostorIdentity.publicKeyHex });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 3. START SERVER CONFIGURED WITH TRUSTED PEER KEYS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let testPort: int = 9101;
+print("\n--- 2. Starting ATP Server with Identity Requirement (Port " + testPort + ") ---");
+
+let serverConfig = {
+    identityKey: serverIdentity.privateKey,
+    trustedPeers: [clientIdentity.publicKey],
+    requireIdentity: true
+};
+
+let server = ATP.listen("127.0.0.1", testPort, serverConfig);
+print("[Server] Listening on 127.0.0.1:" + testPort);
+print("[Server] Configured to REQUIRE peer identity proof and trust ONLY client " + clientIdentity.publicKeyHex);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 4. CONNECT AUTHORIZED CLIENT (MUTUAL AUTHENTICATION)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+print("\n--- 3. Connecting Authorized Client ---");
+let clientConfig = {
+    identityKey: clientIdentity.privateKey,
+    trustedPeers: [serverIdentity.publicKey],
+    requireIdentity: true
+};
+
+let clientConn = ATP.connect("127.0.0.1", testPort, clientConfig);
+print("[Client] Connecting with authorized identity key...");
+
+fn delayMs(ms: int) {
+    let start = Time.epochMillis();
+    while (Time.epochMillis() - start < ms) {}
+}
+
+// Wait for connection handshake with timeout
+let established: bool = false;
+let serverConn = null;
+
+for (let attempt = 0; attempt < 50; attempt = attempt + 1) {
+    if (serverConn == null) {
+        serverConn = server.accept();
+    }
+    let msg = clientConn.receive();
+    if (msg != null && msg.type == "connected") {
+        established = true;
+    }
+    if (established && serverConn != null) {
+        break;
+    }
+    delayMs(20);
+}
+
+if (established && serverConn != null) {
+    print("[ok] Mutual Ed25519 Handshake Complete!");
+    print("     • Server verified client signature against trusted keys");
+    print("     • Client verified server signature against trusted keys");
+    print("     • Forward-secret ChaCha20-Poly1305 session keys derived");
+
+    // Send authenticated message from client to server
+    clientConn.send("SECURE_PAYLOAD: Authenticated transfer initiated by client", true, true);
+
+    // Server receives authenticated data
+    let receivedPayload: string = "";
+    for (let poll = 0; poll < 30; poll = poll + 1) {
+        let incoming = serverConn.receive();
+        if (incoming != null && incoming.type == "message") {
+            receivedPayload = incoming.text;
+            print("[Server] Received from authenticated peer: \"" + receivedPayload + "\"");
+            serverConn.send("ACK_SECURE: Identity confirmed, access granted.", true, true);
+            break;
+        }
+        delayMs(10);
+    }
+
+    // Client receives response
+    for (let poll = 0; poll < 30; poll = poll + 1) {
+        let reply = clientConn.receive();
+        if (reply != null && reply.type == "message") {
+            print("[Client] Received server response: \"" + reply.text + "\"");
+            break;
+        }
+        delayMs(10);
+    }
+} else {
+    print("[error] Authorized handshake failed to establish.");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 5. DEMONSTRATE SECURITY: REJECT UNTRUSTED IMPOSTOR IDENTITY
+// ═══════════════════════════════════════════════════════════════════════════════
+
+print("\n--- 4. Testing Impostor Client Rejection (Security Invariant) ---");
+let impostorConfig = {
+    identityKey: impostorIdentity.privateKey,
+    trustedPeers: [serverIdentity.publicKey],
+    requireIdentity: true
+};
+
+let impostorConn = ATP.connect("127.0.0.1", testPort, impostorConfig);
+print("[Impostor] Attempting unauthorized connection with rogue key...");
+
+let impostorConnected: bool = false;
+for (let attempt = 0; attempt < 15; attempt = attempt + 1) {
+    let msg = impostorConn.receive();
+    if (msg != null && msg.type == "connected") {
+        impostorConnected = true;
+        break;
+    }
+    delayMs(10);
+}
+
+if (!impostorConnected) {
+    print("[ok] PASS: Server rejected impostor handshake (untrusted identity).");
+    print("     -> Handshake failed closed before allocating session resources.");
+} else {
+    print("[error] FAIL: Impostor handshake succeeded unexpectedly!");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 6. CLEAN SHUTDOWN
+// ═══════════════════════════════════════════════════════════════════════════════
+
+print("\n--- 5. Clean Shutdown ---");
+clientConn.close();
+impostorConn.close();
+server.close();
+print("[ok] ATP Identity Authentication Demo finished successfully.\n");
+

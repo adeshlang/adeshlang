@@ -1,0 +1,110 @@
+// JIT Benchmark - Compare Interpreter vs JIT
+// Run: adesh run examples/jit/benchmark.adesh
+// Run: adesh run --jit examples/jit/benchmark.adesh
+
+print("JIT BENCHMARK - Performance Comparison");
+print("");
+
+// 1. Nested loops (200x200 integer multiply)
+print("1. Nested loops (200 x 200):");
+let t0 = clock();
+let r1 = 0;
+for (i in 0..200) {
+    for (j in 0..200) {
+        r1 = r1 + i * j;
+        if r1 > 100000000 {
+            r1 = r1 - 100000000;
+        }
+    }
+}
+let e1 = clock() - t0;
+print("  result:", r1);
+print("  time:", e1, "s");
+print("");
+
+// 2. Recursive sum (depth 15, 50 times)
+print("2. Recursive sum(15) x 50:");
+fn rsum(n) {
+    if n <= 0 {
+        return 0;
+    }
+    return n + rsum(n - 1);
+}
+let t2 = clock();
+let r2 = 0;
+for (i in 0..50) {
+    r2 = r2 + rsum(15);
+}
+let e2 = clock() - t2;
+print("  result:", r2);
+print("  time:", e2, "s");
+print("");
+
+// 3. Function call overhead (5000 calls through 3 functions)
+print("3. Function call overhead (5000 calls):");
+fn add3(a, b, c) {
+    return a + b + c;
+}
+fn wrapper1(x) {
+    return add3(x, 1, 2);
+}
+fn wrapper2(x) {
+    return wrapper1(x) + 1;
+}
+let t3 = clock();
+let r3 = 0;
+for (i in 0..5000) {
+    r3 = r3 + wrapper2(i);
+}
+let e3 = clock() - t3;
+print("  result:", r3);
+print("  time:", e3, "s");
+print("");
+
+// 4. String concatenation (2000 iterations)
+print("4. String operations (2000):");
+let t4 = clock();
+let cnt = 0;
+for (i in 0..2000) {
+    let s = "hello" + "_" + str(i);
+    cnt = cnt + len(s);
+}
+let e4 = clock() - t4;
+print("  total len:", cnt);
+print("  time:", e4, "s");
+print("");
+
+// 5. Bitwise operations (50000 iterations)
+print("5. Bitwise operations (50000):");
+let t5 = clock();
+let acc = 0;
+for (i in 0..50000) {
+    acc = acc + (i & 0xFF);
+    acc = acc + (i | 0x0F);
+    acc = acc + (i ^ 0xAA);
+    if acc > 10000000 {
+        acc = acc - 10000000;
+    }
+}
+let e5 = clock() - t5;
+print("  result:", acc);
+print("  time:", e5, "s");
+print("");
+
+// 6. Integer arithmetic (1M additions)
+print("6. Integer arithmetic (1M):");
+let t6 = clock();
+let r6 = 0;
+for (i in 0..1000000) {
+    r6 = r6 + i;
+    if r6 > 100000000 {
+        r6 = r6 - 100000000;
+    }
+}
+let e6 = clock() - t6;
+print("  result:", r6);
+print("  time:", e6, "s");
+print("");
+
+print("Benchmark complete!");
+print("Run with --jit to compare performance.");

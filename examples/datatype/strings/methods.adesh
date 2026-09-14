@@ -1,0 +1,7 @@
+let text: string = "  Hello, AdeshLang!  ";
+print(text.trim().toUpperCase());
+print(text.trim().replace("AdeshLang", "world"));
+print("one\ntwo".lines());
+print("abc".chars());
+print("hello".padStart(7, ".").reverse());
+print("12345".isNumeric());

@@ -1,0 +1,88 @@
+// Example: Pretty print demonstration
+// This demonstrates the new pretty parameter for the print function
+
+// Create a complex nested object
+let user = {
+    name: "Alice",
+    age: 30,
+    email: "alice@example.com",
+    address: {
+        street: "123 Main St",
+       city: "Springfield",
+        country: "USA",
+        coordinates: {
+            lat: 40.7128,
+            lng: -74.0060
+        }
+    },
+    hobbies: ["reading", "coding", "hiking"],
+    scores: [95, 87, 92, 88],
+    active: true,
+    metadata: null
+};
+
+// Regular print (default behavior)
+println("=== Regular Print ===");
+print(user);
+
+// Pretty print with full mode (default colors, types, indentation)
+println("\n=== Pretty Print (Full Mode) ===");
+print(user, { pretty: true });
+
+// Compact pretty print (no types, minimal formatting)
+println("\n=== Pretty Print (Compact Mode) ===");
+print(user, { pretty: "compact" });
+
+// Simple color pretty print
+println("\n=== Pretty Print (Simple Colors) ===");
+print(user, { pretty: "simple" });
+
+// Arrays with pretty print
+println("\n=== Pretty Printed Array ===");
+let numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+print(numbers, { pretty: true });
+
+// Nested arrays
+println("\n=== Pretty Printed Nested Structure ===");
+let matrix = [
+    [1, 2, 3],
+    [4, 5, 6],
+    [7, 8, 9]
+];
+print(matrix, { pretty: true });
+
+// Mixed types
+println("\n=== Pretty Printed Mixed Types ===");
+let mixed = {
+    string: "Hello",
+    number: 42,
+    boolean: true,
+    null_value: null,
+    array: [1, 2, 3],
+    nested: {
+        deep: {
+            value: "deeply nested"
+        }
+    }
+};
+print(mixed, { pretty: true });
+
+// Tuples
+println("\n=== Pretty Printed Tuple ===");
+let tuple = (1, "two", true, [4, 5, 6]);
+print(tuple, { pretty: true });
+
+println("\n=== Comparison: Regular vs Pretty ===");
+println("Regular:");
+print({ a: 1, b: [2, 3], c: { d: 4 } });
+println("\nPretty:");
+print({ a: 1, b: [2, 3], c: { d: 4 } }, { pretty: true });
+
+// Fixed-width integers
+println("\n=== Pretty Printed Fixed-Width Integers ===");
+let int_val: i32 = 42;
+let uint_val: u64 = 123456;
+print(int_val, { pretty: true });
+print(uint_val, { pretty: true });
+
+println("\n✨ Pretty printing demonstration complete!");

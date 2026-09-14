@@ -1,0 +1,34 @@
+let start = clock();
+let s = 0;
+for (i in 1..1001) { s = s + i; }
+let end = clock();
+
+print("Sum(1..10000) =", s);
+print("Elapsed seconds =", end - start);
+
+// char and string-as-array demo
+let ch = 'A';
+print(`Char: ${ch}`);
+let s2 = "hello";
+print(`s2[1] = ${s2.index(1)}`);
+for (c in s2) { print(c); }
+print(`s2.len = \n ${s2.len}\t(tab)`);
+print(`Escapes: A\nB\tC\rD\\E\"F\'G\a bell\b backspace\f form\v vertical`);
+
+// Classic for(init; cond; post) like JS
+let total = 0;
+for (i in 1..6) {
+  total = total + i;
+}
+print("classic total = ", total);
+
+// for-of style over string
+for (ch of "xyz") { print(ch); }
+
+// for-in over object keys (like JS and Python dict iteration)
+let obj = {a: 1, b: 2};
+for (k in obj) { print(k); }
+print(`\x42`); // B
+let var:string = "ok";
+print(`var = ${var}`);
+print("\a bell\a");

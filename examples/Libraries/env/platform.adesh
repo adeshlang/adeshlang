@@ -1,0 +1,19 @@
+import Env;
+
+print("OS: " + Env.os());
+print("Architecture: " + Env.architecture());
+print("Platform: " + Env.platform());
+print("Hostname: " + Env.hostname());
+print("Username: " + Env.username());
+print("User ID: " + str(Env.userId()));
+print("Process ID: " + str(Env.processId()));
+print("Shell: " + Env.shell());
+
+print("isWindows: " + str(Env.isWindows()));
+print("isLinux: " + str(Env.isLinux()));
+print("isMacOS: " + str(Env.isMacOS()));
+print("isWasm: " + str(Env.isWasm()));
+
+print("Path Separator: " + Env.pathSeparator());
+print("File Separator: " + Env.fileSeparator());
+print("Language Version: " + Env.languageVersion());

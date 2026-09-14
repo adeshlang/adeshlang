@@ -1,0 +1,558 @@
+{
+  "name": "adesh-vscode",
+  "displayName": "Adesh Language Support",
+  "description": "Visual Studio Code extension for AdeshLang — ALS Language Server, CFG ownership & borrow checking, type inference, ADL manifests, and smart auto-completion.",
+  "version": "0.3.0",
+  "publisher": "AdeshLang",
+  "author": {
+    "name": "Ajay Tainwala",
+    "url": "https://adeshlang.org"
+  },
+  "license": "MIT",
+  "homepage": "https://adeshlang.org",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ajaytainwala-dev/mylang"
+  },
+  "bugs": {
+    "url": "https://github.com/ajaytainwala-dev/mylang/issues"
+  },
+  "qna": "https://github.com/ajaytainwala-dev/mylang/discussions",
+  "pricing": "Free",
+  "galleryBanner": {
+    "color": "#161b22",
+    "theme": "dark"
+  },
+  "badges": [
+    {
+      "url": "https://img.shields.io/badge/AdeshLang-v0.3.0-blue.svg",
+      "href": "https://adeshlang.org",
+      "description": "AdeshLang Official Website"
+    },
+    {
+      "url": "https://img.shields.io/badge/License-MIT-green.svg",
+      "href": "https://github.com/ajaytainwala-dev/mylang/blob/main/LICENSE",
+      "description": "MIT License"
+    }
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true,
+      "description": "Syntax highlighting, snippets, and language configuration are available. Language server features require a trusted workspace."
+    },
+    "virtualWorkspaces": false
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Formatters",
+    "Snippets"
+  ],
+  "keywords": [
+    "adesh",
+    "adeshlang",
+    "als",
+    "adl",
+    "rust",
+    "systems-programming",
+    "borrow-checker",
+    "ownership",
+    "memory-safety",
+    "arc",
+    "language-server",
+    "lsp",
+    "formatter",
+    "linter",
+    "type-inference"
+  ],
+  "main": "./out/extension.js",
+  "icon": "icons/adesh.png",
+  "contributes": {
+    "languages": [
+      {
+        "id": "adesh",
+        "aliases": [
+          "Adesh",
+          "adesh",
+          "AdeshLang"
+        ],
+        "extensions": [
+          ".adesh",
+          ".vy"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/adesh-light.png",
+          "dark": "./icons/adesh-dark.png"
+        }
+      },
+      {
+        "id": "adl",
+        "aliases": [
+          "Adesh Package Manifest",
+          "adl"
+        ],
+        "extensions": [
+          ".adl"
+        ],
+        "filenames": [
+          "adesh.adl",
+          "adesh.lock.adl"
+        ],
+        "configuration": "./language-configuration-adl.json",
+        "icon": {
+          "light": "./icons/adesh-light.png",
+          "dark": "./icons/adesh-dark.png"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "adesh",
+        "scopeName": "source.adesh",
+        "path": "./syntaxes/adesh.tmLanguage.json"
+      },
+      {
+        "language": "adl",
+        "scopeName": "source.adl",
+        "path": "./syntaxes/adl.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "adesh",
+        "path": "./snippets/adesh.json"
+      },
+      {
+        "language": "adl",
+        "path": "./snippets/adl.json"
+      }
+    ],
+    "jsonValidation": [
+      {
+        "fileMatch": "adesh.adl",
+        "url": "./schemas/adl-schema.json"
+      },
+      {
+        "fileMatch": "*.adl",
+        "url": "./schemas/adl-schema.json"
+      }
+    ],
+    "semanticTokenTypes": [
+      {
+        "id": "borrowedVariable",
+        "superType": "variable",
+        "description": "A borrowed variable"
+      },
+      {
+        "id": "ownedVariable",
+        "superType": "variable",
+        "description": "An owned variable"
+      },
+      {
+        "id": "movedVariable",
+        "superType": "variable",
+        "description": "A moved (consumed) variable"
+      },
+      {
+        "id": "droppedVariable",
+        "superType": "variable",
+        "description": "A dropped variable"
+      },
+      {
+        "id": "unsafeFunction",
+        "superType": "function",
+        "description": "A function marked as unsafe"
+      },
+      {
+        "id": "region",
+        "superType": "namespace",
+        "description": "A memory region"
+      },
+      {
+        "id": "sharedVariable",
+        "superType": "variable",
+        "description": "An ARC shared variable (share)"
+      },
+      {
+        "id": "strongReference",
+        "superType": "variable",
+        "description": "An ARC strong reference (strong)"
+      },
+      {
+        "id": "weakReference",
+        "superType": "variable",
+        "description": "An ARC weak reference (weak)"
+      }
+    ],
+    "semanticTokenModifiers": [
+      {
+        "id": "borrowed",
+        "description": "Variable is borrowed"
+      },
+      {
+        "id": "owned",
+        "description": "Variable is owned"
+      },
+      {
+        "id": "moved",
+        "description": "Variable has been moved"
+      },
+      {
+        "id": "mutable",
+        "description": "Variable is mutable"
+      },
+      {
+        "id": "unsafe",
+        "description": "Marked as unsafe"
+      },
+      {
+        "id": "noalias",
+        "description": "Pointer marked as noalias"
+      },
+      {
+        "id": "shared",
+        "description": "ARC shared variable (share/strong)"
+      },
+      {
+        "id": "weak",
+        "description": "ARC weak reference (weak)"
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "adesh",
+        "scopes": {
+          "borrowedVariable": [
+            "variable.borrowed.adesh"
+          ],
+          "ownedVariable": [
+            "variable.owned.adesh"
+          ],
+          "movedVariable": [
+            "variable.moved.adesh"
+          ],
+          "droppedVariable": [
+            "variable.dropped.adesh"
+          ],
+          "unsafeFunction": [
+            "entity.name.function.unsafe.adesh"
+          ],
+          "region": [
+            "entity.name.region.adesh"
+          ],
+          "sharedVariable": [
+            "variable.shared.adesh"
+          ],
+          "strongReference": [
+            "variable.strong.adesh"
+          ],
+          "weakReference": [
+            "variable.weak.adesh"
+          ]
+        }
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Adesh",
+      "properties": {
+        "adesh.serverPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the ALS (Adesh Language Server) executable. If empty, will search in PATH."
+        },
+        "adesh.server.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the Adesh Language Server. Disable if experiencing issues."
+        },
+        "adesh.server.timeout": {
+          "type": "number",
+          "default": 30000,
+          "description": "Timeout in milliseconds for server startup."
+        },
+        "adesh.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Traces the communication between VS Code and the language server."
+        },
+        "adesh.format.indentSize": {
+          "type": "number",
+          "default": 4,
+          "description": "Number of spaces per indentation level."
+        },
+        "adesh.format.useTabs": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use tabs instead of spaces for indentation."
+        },
+        "adesh.format.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable formatting support for Adesh files."
+        },
+        "adesh.borrowChecker.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable CFG-based borrow checking diagnostics."
+        },
+        "adesh.borrowChecker.showOwnershipHints": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show ownership state hints on hover."
+        },
+        "adesh.borrowChecker.highlightBorrows": {
+          "type": "boolean",
+          "default": true,
+          "description": "Highlight borrowed and moved variables with semantic tokens."
+        },
+        "adesh.unsafe.warnOnUsage": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show warnings when using unsafe blocks."
+        },
+        "adesh.inlayHints.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable inlay hints for types and ownership."
+        },
+        "adesh.inlayHints.showOwnership": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show ownership status in inlay hints."
+        },
+        "adesh.inlayHints.showBorrowState": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show borrow state (Unborrowed, Shared, Exclusive) in inlay hints."
+        },
+        "adesh.completion.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable type-aware auto-completion (IntelliSense). Shows recommendations as you type."
+        },
+        "adesh.completion.includeKeywords": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include language keywords in completion suggestions."
+        },
+        "adesh.completion.includeBuiltins": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include built-in functions and namespaces (print, Math, etc.) in completions."
+        },
+        "adesh.diagnostics.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable real-time diagnostics (errors, warnings) shown inline in the editor."
+        },
+        "adesh.diagnostics.refreshOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Re-run full diagnostics on save."
+        },
+        "adesh.typeAssistance.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable TypeScript-like type assistance: type checking, type inference, and type-based completions."
+        },
+        "adesh.typeAssistance.showInferredTypes": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show inferred types as inlay hints on variables without explicit type annotations."
+        },
+        "adesh.typeAssistance.strictMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable strict type checking mode (report implicit any, untyped parameters, etc.)."
+        },
+        "adesh.adl.validate.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable validation for ADL manifest files"
+        },
+        "adesh.adl.validate.requireProjectSection": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require [project] section in manifests"
+        },
+        "adesh.adl.completion.suggestVersions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Suggest version numbers in dependency completions"
+        },
+        "adesh.adl.format.alignKeys": {
+          "type": "boolean",
+          "default": true,
+          "description": "Align key-value pairs within sections"
+        },
+        "adesh.adl.format.sortSections": {
+          "type": "boolean",
+          "default": false,
+          "description": "Sort sections alphabetically when formatting"
+        }
+      }
+    },
+    "configurationDefaults": {
+      "[adesh]": {
+        "editor.defaultFormatter": "adesh-lang.adesh-vscode",
+        "editor.formatOnSave": false,
+        "editor.tabSize": 4,
+        "editor.insertSpaces": true,
+        "editor.semanticHighlighting.enabled": true,
+        "editor.quickSuggestions": {
+          "other": true,
+          "comments": false,
+          "strings": true
+        },
+        "editor.suggestSelection": "first",
+        "editor.wordBasedSuggestions": "allDocuments",
+        "editor.parameterHints.enabled": true,
+        "editor.hover.enabled": true,
+        "editor.inlayHints.enabled": "all",
+        "editor.codeActionsOnSave": {},
+        "editor.formatOnType": true,
+        "editor.autoClosingBrackets": "languageDefined",
+        "editor.autoClosingQuotes": "languageDefined",
+        "editor.suggest.showWords": true,
+        "editor.suggest.showSnippets": true,
+        "editor.suggest.localityBonus": true,
+        "editor.suggest.showStatusBar": true,
+        "editor.inlineSuggest.enabled": true,
+        "editor.bracketPairColorization.enabled": true,
+        "editor.guides.bracketPairs": "active",
+        "editor.unicodeHighlight.ambiguousCharacters": false
+      },
+      "[adl]": {
+        "editor.tabSize": 2,
+        "editor.insertSpaces": true,
+        "editor.quickSuggestions": {
+          "other": true,
+          "comments": false,
+          "strings": true
+        },
+        "editor.suggestSelection": "first",
+        "editor.wordBasedSuggestions": "off",
+        "editor.hover.enabled": true,
+        "editor.autoClosingBrackets": "languageDefined",
+        "editor.autoClosingQuotes": "languageDefined",
+        "editor.suggest.showWords": true,
+        "editor.suggest.showSnippets": true,
+        "editor.bracketPairColorization.enabled": true,
+        "editor.guides.bracketPairs": "active"
+      }
+    },
+    "commands": [
+      {
+        "command": "adesh.restartServer",
+        "title": "Adesh: Restart Language Server"
+      },
+      {
+        "command": "adesh.formatDocument",
+        "title": "Adesh: Format Document"
+      },
+      {
+        "command": "adesh.stopServer",
+        "title": "Adesh: Stop Language Server"
+      },
+      {
+        "command": "adesh.showBorrowInfo",
+        "title": "Adesh: Show Borrow Information"
+      },
+      {
+        "command": "adesh.showOwnershipGraph",
+        "title": "Adesh: Show Ownership Graph"
+      },
+      {
+        "command": "adesh.runBorrowCheck",
+        "title": "Adesh: Run Borrow Checker"
+      },
+      {
+        "command": "adesh.showOutput",
+        "title": "Adesh: Show Server Output"
+      },
+      {
+        "command": "adesh.toggleCompletion",
+        "title": "Adesh: Toggle Auto-Completion"
+      },
+      {
+        "command": "adesh.toggleDiagnostics",
+        "title": "Adesh: Toggle Diagnostics"
+      },
+      {
+        "command": "adesh.validateAdl",
+        "title": "Adesh: Validate ADL Manifest"
+      },
+      {
+        "command": "adesh.createLockfile",
+        "title": "Adesh: Create Lockfile Template"
+      },
+      {
+        "command": "adesh.addDependency",
+        "title": "Adesh: Add Dependency"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "adesh.showBorrowInfo",
+          "when": "editorLangId == adesh",
+          "group": "adesh"
+        }
+      ]
+    },
+    "colors": [
+      {
+        "id": "adesh.borrowedVariable",
+        "description": "Color for borrowed variables",
+        "defaults": {
+          "dark": "#4EC9B0",
+          "light": "#008080",
+          "highContrast": "#4EC9B0"
+        }
+      },
+      {
+        "id": "adesh.movedVariable",
+        "description": "Color for moved (consumed) variables",
+        "defaults": {
+          "dark": "#808080",
+          "light": "#808080",
+          "highContrast": "#808080"
+        }
+      },
+      {
+        "id": "adesh.unsafeBlock",
+        "description": "Background tint for unsafe blocks",
+        "defaults": {
+          "dark": "#FF000010",
+          "light": "#FF000008",
+          "highContrast": "#FF000020"
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.0.0",
+    "@vscode/vsce": "^3.9.2"
+  }
+}

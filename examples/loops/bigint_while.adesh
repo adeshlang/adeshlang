@@ -1,0 +1,8 @@
+let i = 2n;
+let n = 5n;
+let cnt = 0n;
+while (i <= n) {
+  cnt = cnt + 1n;
+  i = i + 1n;
+}
+print("cnt=", cnt);

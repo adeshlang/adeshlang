@@ -1,0 +1,18 @@
+struct Buffer {
+  data: i32;
+  size: i32;
+};
+
+let buffer = Buffer { data: 42, size: 256 };
+
+fn read_buffer(b: object) {
+  return b.data;
+}
+
+fn modify_buffer(b: object) {
+  // Compiler auto-infers exclusive access due to mutation
+  let size = b.size;
+  let doubled = size * 2;
+}
+
+let value = read_buffer(buffer);

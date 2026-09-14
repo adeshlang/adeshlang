@@ -1,0 +1,30 @@
+let arr = [1, 2, "6", 4, true];
+print("Array:", sizeof(arr), "elements", arr);
+print(typeof arr);
+print(sizeof(arr));
+
+
+let obj = {
+    "name": "Adesh",
+    "age": 1,
+    "isAwesome": true,
+};
+print("Object:", sizeof(obj), "bytes has properties", obj);
+print(typeof obj);
+
+struct Person   {
+    isAwesome: bool,
+    age: u8,
+    name: string
+};
+
+extend on Person {
+  fn init(){
+    print("Hello World");
+  }   
+}
+
+let p = Person{isAwesome: true, age: 1, name: "Adesh"};
+print("Person Struct:", sizeof(p), "fields", p);
+print(typeof p);
+p.init();

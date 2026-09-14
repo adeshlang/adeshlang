@@ -1,0 +1,33 @@
+import Collections;
+
+print("========================================");
+print("Collection Iterator Integration Examples");
+print("========================================");
+
+let v = Collections.Vec();
+v.push("Alpha");
+v.push("Beta");
+v.push("Gamma");
+
+print("--- Iterating over Vec ---");
+for item in v.iter() {
+    print("Item: ", item);
+}
+
+let map = Collections.HashMap();
+map.insert("one", 1);
+map.insert("two", 2);
+
+print("--- Iterating over HashMap Entries ---");
+for entry in map.entries() {
+    print("Entry: ", entry);
+}
+
+let set = Collections.HashSet();
+set.insert("Apple");
+set.insert("Banana");
+
+print("--- Iterating over HashSet Values ---");
+for val in set.values() {
+    print("Value: ", val);
+}

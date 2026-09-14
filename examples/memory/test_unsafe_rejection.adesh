@@ -1,0 +1,6 @@
+unsafe fn dangerous() {
+    println("Dangerous!");
+}
+
+// Should fail because not in unsafe block!
+dangerous();

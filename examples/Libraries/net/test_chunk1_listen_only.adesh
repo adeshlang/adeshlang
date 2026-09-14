@@ -1,0 +1,14 @@
+// Chunk 1 Test: TCP Listen & Close without accept()
+import Net;
+
+fn main() {
+    print("Step 1: Bounding TCP Listener to 127.0.0.1:9099...");
+    let server = Net.tcpListen("127.0.0.1", 9099);
+    print("Step 2: Server successfully bound on:", server.localAddress());
+
+    print("Step 3: Closing server...");
+    server.close();
+    print("Step 4: Server closed cleanly! Program exiting.");
+}
+
+main();

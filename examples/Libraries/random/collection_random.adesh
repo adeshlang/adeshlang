@@ -1,0 +1,10 @@
+import Random;
+
+print("--- Collection Randomization Demo ---");
+let numbers = [10, 20, 30, 40, 50];
+
+let picked = Random.choice(numbers);
+print("Chosen item: " + picked);
+
+let sampled = Random.sample(numbers, 2);
+print("Sampled 2 unique items: " + sampled);

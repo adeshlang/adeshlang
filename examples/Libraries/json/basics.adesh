@@ -1,0 +1,39 @@
+// AdeshLang Built-in JSON — Basics
+// Demonstrates JSON.parse and JSON.stringify using clean multiline template strings (no \n or \" needed!)
+
+fn main() {
+    // ── 1. Parse multiline JSON text cleanly with backticks ───────────────
+    let text = `
+    {
+        "name": "AdeshLang",
+        "version": 3,
+        "stable": true
+    }
+    `;
+    let lang = JSON.parse(text);
+
+    println("name    : " + str(lang.name));
+    println("version : " + str(lang.version));
+    println("stable  : " + str(lang.stable));
+
+    // ── 2. Compact serialization ────────────────────────────────────────
+    let compact = JSON.stringify(lang);
+    println("compact : " + compact);
+
+    // ── 3. Pretty-printed serialization ────────────────────────────────
+    let pretty = JSON.stringifyPretty(lang);
+    println("pretty  :\n" + pretty);
+
+    // ── 4. Nested objects using multiline JSON ──────────────────────────
+    let nested_text = `
+    {
+        "user": {
+            "id": 1,
+            "tags": ["admin", "user"]
+        }
+    }
+    `;
+    let nested = JSON.parse(nested_text);
+    println("user.id : " + str(nested.user.id));
+    println("tags[0] : " + str(nested.user.tags[0]));
+}

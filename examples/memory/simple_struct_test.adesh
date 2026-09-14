@@ -1,0 +1,12 @@
+fn main() {
+    struct Point {
+        x: i32;
+        y: i32;
+    };
+    
+    let p = Point {
+        x: 10,
+        y: 20,
+    };
+    print("x=" + p.x.to_string() + ", y=" + p.y.to_string() + "\n");
+}

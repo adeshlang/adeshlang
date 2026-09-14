@@ -1,0 +1,102 @@
+// examples/arc/09_arc_with_classes.adesh
+// ARC used together with class instances.
+// Demonstrates shared ownership of objects and using weak refs
+// to implement an event-bus / observer pattern.
+
+print("=== ARC with Class Instances ===\n");
+
+// ── Cache entry ────────────────────────────────────────────────────────────
+class CacheEntry {
+    key: string;
+    value: i64;
+    hits: i64;
+
+    CacheEntry(k: string, v: i64) {
+        self.key   = k;
+        self.value = v;
+        self.hits  = 0;
+    }
+
+    fn read() {
+        self.hits = self.hits + 1;
+        return self.value;
+    }
+
+    fn info() {
+        print("  key:", self.key, " value:", self.value, " hits:", self.hits);
+    }
+}
+
+// ── Create a shared cache entry ────────────────────────────────────────────
+share entry = new CacheEntry("temperature", 72);
+print("Cache entry created:");
+entry.info();
+
+// ── Two readers hold strong refs ───────────────────────────────────────────
+strong reader1 = entry;
+strong reader2 = entry;
+
+print("\nstrong_count with 2 readers:", entry.strong_count()); // 3
+
+let v1 = reader1.read();
+let v2 = reader2.read();
+print("reader1 got:", v1);
+print("reader2 got:", v2);
+
+entry.info();  // hits = 2
+
+// ── Observer holds a weak ref ──────────────────────────────────────────────
+weak monitor = entry;
+
+print("\nmonitor.is_alive():", monitor.is_alive()); // true
+
+let live = monitor.upgrade();
+if (live != null) {
+    print("Monitor sees hits:", live.hits);
+}
+
+// ── EventBus pattern ──────────────────────────────────────────────────────
+print("\n--- Event Bus Pattern ---");
+
+class EventBus {
+    name: string;
+    eventCount: i64;
+
+    EventBus(n: string) {
+        self.name       = n;
+        self.eventCount = 0;
+    }
+
+    fn emit(event: string) {
+        self.eventCount = self.eventCount + 1;
+        print("  [" + self.name + "] event:", event,
+              "  (total:", self.eventCount + ")");
+    }
+}
+
+share bus = new EventBus("GlobalBus");
+
+// Multiple subsystems observe the bus weakly
+weak subsys_a = bus;
+weak subsys_b = bus;
+
+print("bus strong_count:", bus.strong_count()); // 1
+print("bus weak_count  :", bus.weak_count());   // 2
+
+// Subsystems emit events by upgrading their weak ref
+fn send_event(subsys, name, event) {
+    let live = subsys.upgrade();
+    if (live != null) {
+        live.emit(event);
+    } else {
+        print(name, "cannot emit – bus is gone");
+    }
+}
+
+send_event(subsys_a, "subsys_a", "INIT");
+send_event(subsys_b, "subsys_b", "READY");
+send_event(subsys_a, "subsys_a", "TICK");
+
+print("Total bus events:", bus.eventCount);
+
+print("\nARC + classes demonstrated.");

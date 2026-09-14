@@ -1,0 +1,19 @@
+import Collections;
+
+print("========================================");
+print("Collection Ownership & RAII Cleanup Example");
+print("========================================");
+
+let container = Collections.Vec();
+
+fn populate(c) {
+    let sub = Collections.HashMap();
+    sub.insert("key", "value");
+    c.push(sub);
+}
+
+populate(container);
+print("Container len after move into vec: ", container.len());
+let extracted = container.pop();
+print("Extracted map value: ", extracted.get("key"));
+print("Container len after pop: ", container.len());

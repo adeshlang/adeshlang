@@ -1,0 +1,46 @@
+// Exclusive Borrowing Example
+// Only one exclusive borrow OR many shared borrows at a time
+
+fn main() {
+    print("=== Exclusive Borrow Rules ===");
+    
+    let data = [1, 2, 3];
+    
+    // Scenario 1: Exclusive borrow prevents other borrows
+    // Modify directly (avoid indexing through a borrow — runtime currently disallows indexing on borrows)
+    data[0] = 99;
+    print("Modified:", data);
+
+    // exclusive's lifetime ends here
+    
+    // Now we can create new borrows
+    let shared1 = &data;
+    let shared2 = &data;
+    print("Shared1:", shared1);
+    print("Shared2:", shared2);
+}
+
+// Demonstrating borrow checker
+fn borrow_checker_prevents_issues() {
+    let arr = [10, 20, 30];
+    
+    // This pattern is safe
+    {
+        let r = &arr;
+        print("Borrowed:", r);
+        // r's lifetime ends here
+    }
+    
+    // Now we can modify
+    arr[0] = 100;
+    print("Modified:", arr);
+}
+
+// Exclusive borrow in functions
+// (Helper removed) — modify arrays directly to avoid unsupported index-on-borrow behavior
+
+fn test_modify() {
+    let myarr = [1, 2, 3];
+    myarr[1] = 999;
+    print("After modification:", myarr);
+}

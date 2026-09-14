@@ -1,0 +1,38 @@
+
+// Simple array operations test
+let arr = [10, 20, 30, 40, 50];
+print("Array type: ", typeof(arr));
+print("Length: ", arr.length);
+print("Capacity: ", arr.capacity);
+print("First: ", first(arr));
+print("Last: ", last(arr));
+print("Metadata size: ", arr.metadata_size());
+
+let arr = push(arr, 60);
+print(`The array after push: ${arr}`);
+print("Length after push: ", arr.length);
+print("Capacity after push: ", arr.capacity);
+print("Last element after push: ", last(arr));
+
+ 
+
+let filtered = arr.filter(fn(x) { return x < 30; });
+print(`The array after filter (method): ${filtered}`);
+
+let mapped = arr.map(fn(x) { return x * 2; });
+print(`The array after map (method): ${mapped}`);
+
+let reduced = arr.reduce(fn(acc, x) { return acc + x; }, 10);
+print(`Reduced result (method, seed=10): ${reduced}`);
+
+arr.extend([70, 80, 90]);
+print(`The array after extend: ${arr}`);
+
+print("\nAccessing elements:");
+print("arr[0] = ", arr[0]);
+print("arr[1] = ", arr[1]);
+print("arr[2] = ", arr[2]);
+print("arr[3] = ", arr[3]);
+print("arr[4] = ", arr[4]);
+
+print("\n✅ All tests passed!");

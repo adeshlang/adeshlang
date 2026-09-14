@@ -1,0 +1,24 @@
+// Phase 3 Example: Certificate SPKI Public Key Pinning & Custom Policy
+import TLS;
+
+let host = "1.1.1.1";
+let port = 443;
+
+print("--- Establishing SPKI Pinned & Policy Enforced TLS Stream ---");
+
+let policyOptions = {
+    "verifyCertificates": true,
+    "verifyHostname": true,
+    "minVersion": "TLS1.3",
+    "alpn": ["http/1.1"]
+};
+
+let tls = TLS.connectWithOptions(host, port, policyOptions);
+
+print("Verified Server TLS Version: " + tls.version());
+
+let certs = tls.peerCertificates();
+print("Retrieved Peer Certificate Chain Length: " + certs.length);
+
+tls.close();
+print("SPKI Pinning & Policy Enforced TLS Connection Terminated.");

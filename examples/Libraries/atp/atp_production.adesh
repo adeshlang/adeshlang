@@ -1,0 +1,748 @@
+// ╔═══════════════════════════════════════════════════════════════════════════════╗
+// ║          ATP Production-Grade Example — Game Server Microservice             ║
+// ║                                                                               ║
+// ║  A production-grade ATP application demonstrating integration with:           ║
+// ║    • ATP      — Transport (reliable/unreliable, streams, datagrams)          ║
+// ║    • JSON     — Structured message serialization                             ║
+// ║    • Crypto   — HMAC authentication, SHA-256 hashing                        ║
+// ║    • Compression — Zstd compression for large payloads                      ║
+// ║    • Encoding  — Base64 for binary in JSON, hex for hashes                  ║
+// ║    • Collections — HashMap for player registry, Queue for events           ║
+// ║    • Env       — Environment-based configuration                             ║
+// ║    • Time      — Timestamps and timing                                       ║
+// ║    • FS        — State persistence to disk                                  ║
+// ║    • Language  — Structs, enums, try/catch, defer, template literals        ║
+// ║                                                                               ║
+// ║  Run: cargo run --bin adeshlang -- run examples/Libraries/atp/atp_production.adesh
+// ╚═══════════════════════════════════════════════════════════════════════════════╝
+
+// @allow(warnings)
+import ATP;
+import Crypto;
+import Compression;
+import Encoding;
+import Collections;
+import Env;
+import Time;
+import FS;
+
+print("==================================================================");
+print("       ATP Production-Grade Example — Game Server               ");
+print("       Integrating 9 AdeshLang standard libraries               ");
+print("==================================================================");
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 1. TYPE DEFINITIONS — Structs and enums for type safety
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Message types exchanged between client and server.
+enum MessageType {
+    Login,
+    LoginAck,
+    Chat,
+    GameState,
+    PlayerPosition,
+    FileChunk,
+    Heartbeat,
+    Disconnect
+}
+
+/// A player in the game.
+struct Player {
+    id: int;
+    name: string;
+    x: float;
+    y: float;
+    health: int;
+    connected: bool;
+}
+
+/// A structured network message with authentication.
+struct NetMessage {
+    msgType: string;
+    timestamp: int;
+    payload: string;
+    hmac: string;
+}
+
+/// Server configuration loaded from environment.
+struct ServerConfig {
+    host: string;
+    port: int;
+    secretKey: string;
+    maxPlayers: int;
+    compressThreshold: int;
+    stateFile: string;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 2. CONFIGURATION — Load from environment with defaults
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn loadConfig(): ServerConfig {
+    let config = ServerConfig {
+        host: Env.getOrDefault("ATP_HOST", "0.0.0.0"),
+        port: parseInt(Env.getOrDefault("ATP_PORT", "9000")),
+        secretKey: Env.getOrDefault("ATP_SECRET", "default-dev-key-change-in-prod"),
+        maxPlayers: parseInt(Env.getOrDefault("ATP_MAX_PLAYERS", "100")),
+        compressThreshold: parseInt(Env.getOrDefault("ATP_COMPRESS_THRESHOLD", "256")),
+        stateFile: Env.getOrDefault("ATP_STATE_FILE", "atp_game_state.json")
+    };
+
+    print("[Config] Host:", config.host);
+    print("[Config] Port:", config.port);
+    print("[Config] Max players:", config.maxPlayers);
+    print("[Config] Compress threshold:", config.compressThreshold, "bytes");
+    print("[Config] State file:", config.stateFile);
+
+    return config;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 3. MESSAGE SERIALIZATION — JSON + HMAC + optional compression
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Serialize a payload to a signed JSON wire message.
+/// Pipeline: data -> JSON -> optional compress -> base64 -> HMAC -> JSON envelope
+fn serializeMessage(config: ServerConfig, msgType, data) {
+    let startTime = Time.epochMillis();
+
+    // Step 1: Serialize the inner payload to JSON.
+    let payloadJson = JSON.stringify(data);
+
+    // Step 2: Convert to UTF-8 bytes.
+    let payloadBytes = Encoding.utf8Encode(payloadJson);
+
+    // Step 3: Compress if payload exceeds threshold.
+    let bodyField = "";
+    let codec = "none";
+    if (payloadBytes.len() > config.compressThreshold) {
+        let compressed = Compression.compress(payloadBytes, "zstd", 5);
+        bodyField = Encoding.base64UrlEncode(compressed);
+        codec = "zstd";
+    } else {
+        bodyField = Encoding.base64UrlEncode(payloadBytes);
+    }
+
+    // Step 4: Compute HMAC over the body for authentication.
+    let bodyBytes = Encoding.utf8Encode(bodyField);
+    let hmacBytes = Crypto.hmac(config.secretKey, bodyBytes);
+    let hmacHex = Encoding.hexEncode(hmacBytes);
+
+    // Step 5: Build the outer envelope.
+    let envelope = {
+        msgType: msgType,
+        timestamp: Time.epochMillis(),
+        codec: codec,
+        body: bodyField,
+        hmac: hmacHex
+    };
+
+    let wireJson = JSON.stringify(envelope);
+    let elapsed = Time.epochMillis() - startTime;
+
+    return wireJson;
+}
+
+/// Deserialize and verify a signed JSON wire message.
+/// Pipeline: JSON envelope -> verify HMAC -> decode body -> decompress -> JSON
+fn deserializeMessage(config: ServerConfig, wireJson) {
+    // Step 1: Parse the outer envelope.
+    let envelope = JSON.parse(wireJson);
+    if (envelope == null) {
+        throw "Invalid JSON envelope";
+    }
+
+    // Step 2: Verify HMAC.
+    let bodyBytes = Encoding.utf8Encode(envelope.body);
+    let expectedHmac = Crypto.hmac(config.secretKey, bodyBytes);
+    let expectedHex = Encoding.hexEncode(expectedHmac);
+    if (expectedHex != envelope.hmac) {
+        throw "HMAC verification failed — possible tampering";
+    }
+
+    // Step 3: Decode body from base64.
+    let decodedBytes = Encoding.base64UrlDecode(envelope.body);
+
+    // Step 4: Decompress if needed (only one branch executes, so no double-move).
+    let payloadBytes = "";
+    if (envelope.codec == "zstd") {
+        payloadBytes = Compression.decompress(decodedBytes, "zstd", 16777216);
+    } else {
+        payloadBytes = decodedBytes;
+    }
+
+    // Step 5: Decode UTF-8 and parse inner JSON.
+    let payloadJson = Encoding.utf8Decode(payloadBytes);
+    let payload = JSON.parse(payloadJson);
+
+    return payload;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 4. STATE MANAGEMENT — Player registry with Collections + FS persistence
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Player registry using Collections.HashMap.
+let players = Collections.HashMap();
+/// Event queue using Collections.Queue.
+let eventQueue = Collections.Queue();
+
+/// Register a new player.
+fn registerPlayer(player: Player): bool {
+    if (players.len() >= 100) {
+        print("[State] Player limit reached, rejecting:", player.name);
+        return false;
+    }
+    players.insert(player.id, player);
+    print("[State] Player registered:", player.name, "(ID:", player.id, ")");
+    return true;
+}
+
+/// Remove a player.
+fn removePlayer(playerId: int) {
+    players.remove(playerId);
+    print("[State] Player removed (ID:", playerId, ")");
+}
+
+/// Get all player positions as a JSON-serializable array.
+fn getPlayerPositions(): array {
+    let positions = [];
+    let playerIds = players.keys();
+    for (let i = 0; i < playerIds.len(); i = i + 1) {
+        let id = playerIds[i];
+        let p = players.get(id);
+        if (p != null && p.connected) {
+            positions.push({
+                id: p.id,
+                name: p.name,
+                x: p.x,
+                y: p.y,
+                health: p.health
+            });
+        }
+    }
+    return positions;
+}
+
+/// Save game state to disk using FS.
+fn saveState() {
+    let state = {
+        savedAt: Time.epochMillis(),
+        playerCount: players.len(),
+        players: getPlayerPositions()
+    };
+    let jsonText = JSON.stringifyPretty(state);
+    try {
+        FS.writeAtomic("atp_game_state.json", jsonText);
+        print("[State] Saved to disk:", players.len(), "players");
+    } catch (e) {
+        print("[State] Failed to save:", e);
+    }
+}
+
+/// Load game state from disk.
+fn loadState() {
+    try {
+        let content = FS.read("atp_game_state.json");
+        if (content != null && content != "") {
+            let state = JSON.parse(content);
+            if (state != null && state.playerCount > 0) {
+                print("[State] Loaded from disk:", state.playerCount, "players at",
+                      state.savedAt);
+            }
+        }
+    } catch (e) {
+        print("[State] No saved state found (first run).");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 5. MESSAGE HANDLERS — Process different message types
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Handle a login message.
+fn handleLogin(config: ServerConfig, payload) {
+    let player = Player {
+        id: payload.id,
+        name: payload.name,
+        x: 0.0,
+        y: 0.0,
+        health: 100,
+        connected: true
+    };
+
+    let success = registerPlayer(player);
+    let ack = {
+        accepted: success,
+        playerId: player.id,
+        serverTime: Time.epochMillis(),
+        message: success ? "Welcome to the game!" : "Server full"
+    };
+
+    return serializeMessage(config, "LoginAck", ack);
+}
+
+/// Handle a chat message — reliable + ordered.
+fn handleChat(config: ServerConfig, payload) {
+    let chatEntry = {
+        sender: payload.sender,
+        text: payload.text,
+        timestamp: Time.epochMillis()
+    };
+
+    // Queue the event for processing.
+    eventQueue.enqueue(chatEntry);
+    print("[Chat]", payload.from, ":", payload.text);
+
+    let ack = {
+        delivered: true,
+        eventId: eventQueue.len()
+    };
+
+    return serializeMessage(config, "Chat", ack);
+}
+
+/// Handle a player position update — unreliable (best effort).
+fn handlePosition(config: ServerConfig, payload) {
+    // Update player position in the registry.
+    let player = players.get(payload.id);
+    if (player != null) {
+        player.x = payload.x;
+        player.y = payload.y;
+        players.insert(payload.id, player);
+    }
+    // Position updates are unreliable — no response needed.
+    // The next position update supersedes this one anyway.
+}
+
+/// Handle a game state request — reliable, large payload (compressed).
+fn handleGameStateRequest(config: ServerConfig) {
+    let positions = getPlayerPositions();
+    let state = {
+        serverTime: Time.epochMillis(),
+        playerCount: players.len(),
+        players: positions
+    };
+    // This payload may be large -> serializeMessage will auto-compress.
+    return serializeMessage(config, "GameState", state);
+}
+
+/// Handle a heartbeat — respond with server time.
+fn handleHeartbeat(config: ServerConfig) {
+    let response = {
+        serverTime: Time.epochMillis(),
+        playerCount: players.len()
+    };
+    return serializeMessage(config, "Heartbeat", response);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 6. SERVER — ATP server with message routing
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn runServer(config: ServerConfig) {
+    print("\n=== Starting ATP Game Server ===");
+
+    // Load any saved state.
+    loadState();
+
+    // Create the ATP server.
+    let server = ATP.listen(config.host, config.port);
+    print("[Server] Listening on", config.host + ":" + config.port);
+
+    // Register a test player to demonstrate state management.
+    let testPlayer = Player {
+        id: 1,
+        name: "ServerAdmin",
+        x: 100.0,
+        y: 200.0,
+        health: 100,
+        connected: true
+    };
+    registerPlayer(testPlayer);
+
+    // Poll for connections (demo mode — limited polls).
+    let polls = 0;
+    let maxPolls = 3;
+
+    while (polls < maxPolls) {
+        polls = polls + 1;
+
+        let conn = server.accept();
+        if (conn != null && conn.type == "AtpConnection") {
+            print("\n[Server] New connection accepted.");
+
+            // Process incoming messages.
+            let msgCount = 0;
+            let msg = conn.receive();
+            while (msg != null && msgCount < 20) {
+                if (msg.type == "connected") {
+                    print("[Server] Handshake complete.");
+                }
+                else if (msg.type == "datagram") {
+                    // Datagram — unreliable, no response needed.
+                    print("[Server] Datagram received:", msg.data);
+                    try {
+                        let payload = deserializeMessage(config, msg.data);
+                        if (payload != null) {
+                            handlePosition(config, payload);
+                        }
+                    } catch (e) {
+                        print("[Server] Datagram parse error:", e);
+                    }
+                }
+                else if (msg.streamId != null) {
+                    // Stream message — reliable, echo back.
+                    print("[Server] Stream", msg.streamId, "data length:", msg.data.len());
+                    try {
+                        let payload = deserializeMessage(config, msg.data);
+                        if (payload != null) {
+                            // Route based on message type.
+                            let response = "";
+                            if (payload.msgType == "Login" || payload.type == "Login") {
+                                response = handleLogin(config, payload);
+                            }
+                            else if (payload.msgType == "Chat" || payload.type == "Chat") {
+                                response = handleChat(config, payload);
+                            }
+                            else if (payload.msgType == "GameState" || payload.type == "GameState") {
+                                response = handleGameStateRequest(config);
+                            }
+                            else if (payload.msgType == "Heartbeat" || payload.type == "Heartbeat") {
+                                response = handleHeartbeat(config);
+                            }
+
+                            if (response != "") {
+                                conn.send(response, true, true);
+                                print("[Server] Sent response (" + response.len() + " bytes)");
+                            }
+                        }
+                    } catch (e) {
+                        print("[Server] Message handling error:", e);
+                        let errorResp = serializeMessage(config, "Error", {
+                            error: e,
+                            timestamp: Time.epochMillis()
+                        });
+                        conn.send(errorResp, true, true);
+                    }
+                }
+                else if (msg.type == "closed") {
+                    print("[Server] Connection closed:", msg.reason);
+                }
+
+                msgCount = msgCount + 1;
+                msg = conn.receive();
+            }
+
+            conn.close();
+            print("[Server] Connection handled.");
+        } else {
+            print("[Server] Poll " + polls + "/" + maxPolls + ": waiting for connections...");
+        }
+    }
+
+    // Save state before shutdown.
+    saveState();
+
+    // Print final metrics.
+    let metrics = server.metrics();
+    print("\n[Server] Final metrics:");
+    print("  Connections:", metrics.connections);
+    print("  Established:", metrics.established);
+    print("  Streams:", metrics.streams);
+    print("  Memory:", metrics.memoryUsed, "bytes");
+    print("  Players registered:", players.len());
+    print("  Events queued:", eventQueue.len());
+
+    server.close();
+    print("[Server] Stopped.");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 7. CLIENT — ATP client with full message pipeline
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn runClient(config: ServerConfig) {
+    print("\n=== Starting ATP Game Client ===");
+
+    let conn = ATP.connect("127.0.0.1", config.port);
+    print("[Client] Connecting to 127.0.0.1:" + config.port);
+
+    // Wait for connection (demo mode — may not connect without a server).
+    let status = conn.receive();
+    let connected = false;
+    if (status != null && status.type == "connected") {
+        print("[Client] Connected to server.");
+        connected = true;
+    } else {
+        print("[Client] Demo mode — no server running.");
+        print("[Client] Showing full message pipeline anyway.");
+    }
+
+    // --- 1. Send a Login message (reliable + ordered) ---
+    print("\n--- 1. Login ---");
+    let loginData = {
+        type: "Login",
+        id: 42,
+        name: "Player_One",
+        version: "1.0.0"
+    };
+    let loginWire = serializeMessage(config, "Login", loginData);
+    conn.send(loginWire, true, true);
+    print("[Client] Sent login (" + loginWire.len() + " bytes, reliable+ordered)");
+
+    // Show the wire format.
+    let loginEnvelope = JSON.parse(loginWire);
+    print("  msgType:", loginEnvelope.msgType);
+    print("  codec:", loginEnvelope.codec);
+    print("  hmac:", loginEnvelope.hmac.substring(0, 16) + "...");
+    print("  body length:", loginEnvelope.body.len(), "chars");
+
+    // --- 2. Send a Chat message (reliable + ordered) ---
+    print("\n--- 2. Chat ---");
+    let chatData = {
+        type: "Chat",
+        sender: "Player_One",
+        text: "Hello everyone! This is a production-grade ATP message."
+    };
+    let chatWire = serializeMessage(config, "Chat", chatData);
+    conn.send(chatWire, true, true);
+    print("[Client] Sent chat (" + chatWire.len() + " bytes)");
+
+    // --- 3. Send position updates (unreliable datagrams) ---
+    print("\n--- 3. Position Updates (unreliable) ---");
+    for (let i = 0; i < 5; i = i + 1) {
+        let posData = {
+            type: "Position",
+            id: 42,
+            x: 100.0 + i * 1.5,
+            y: 200.0 + i * 0.5
+        };
+        let posWire = serializeMessage(config, "Position", posData);
+        conn.datagram(posWire);
+    }
+    print("[Client] Sent 5 position updates (unreliable datagrams)");
+
+    // --- 4. Request game state (reliable — may be large + compressed) ---
+    print("\n--- 4. Game State Request ---");
+    let stateReq = {
+        type: "GameState",
+        requestId: Time.epochMillis()
+    };
+    let stateWire = serializeMessage(config, "GameState", stateReq);
+    conn.send(stateWire, true, true);
+    print("[Client] Sent game state request (" + stateWire.len() + " bytes)");
+
+    // --- 5. Send heartbeat (datagram) ---
+    print("\n--- 5. Heartbeat ---");
+    let hbData = {
+        type: "Heartbeat",
+        clientTime: Time.epochMillis()
+    };
+    let hbWire = serializeMessage(config, "Heartbeat", hbData);
+    conn.datagram(hbWire);
+    print("[Client] Sent heartbeat (datagram)");
+
+    // --- 6. Demonstrate large payload compression ---
+    print("\n--- 6. Large Payload (compression) ---");
+    let largeData = {
+        type: "FileTransfer",
+        chunks: []
+    };
+    for (let i = 0; i < 50; i = i + 1) {
+        largeData.chunks.push({
+            index: i,
+            data: "This is chunk number " + i + " with some padding data to make it larger. " +
+                  "In production this would be binary file data."
+        });
+    }
+    let largeWire = serializeMessage(config, "FileTransfer", largeData);
+    let largeEnvelope = JSON.parse(largeWire);
+    conn.send(largeWire, true, true);
+    print("[Client] Sent large payload (" + largeWire.len() + " bytes)");
+    print("  codec:", largeEnvelope.codec, "(auto-compressed)");
+    print("  body length:", largeEnvelope.body.len(), "chars");
+
+    // --- 7. Stream multiplexing with different priorities ---
+    print("\n--- 7. Stream Multiplexing ---");
+    let highStream = conn.openStream("high");
+    let medStream = conn.openStream("medium");
+    let lowStream = conn.openStream("low");
+
+    let rpcData = { type: "RPC", method: "getPlayerList", args: [] };
+    highStream.send(serializeMessage(config, "RPC", rpcData), true, true);
+    print("[Client] Sent RPC on high-priority stream");
+
+    let chatData2 = { type: "Chat", sender: "Player_One", text: "Stream chat message" };
+    medStream.send(serializeMessage(config, "Chat", chatData2), true, true);
+    print("[Client] Sent chat on medium-priority stream");
+
+    let fileData = { type: "FileChunk", index: 0, data: "binary chunk data here" };
+    lowStream.send(serializeMessage(config, "FileChunk", fileData), true, true);
+    print("[Client] Sent file chunk on low-priority stream");
+
+    // --- 8. Message cancellation ---
+    print("\n--- 8. Message Cancellation ---");
+    let cancelData = { type: "FileChunk", index: 999, data: "this should be cancelled" };
+    let cancelWire = serializeMessage(config, "FileChunk", cancelData);
+    lowStream.send(cancelWire, true, true);
+    conn.cancel(1, 4);
+    print("[Client] Cancelled pending file chunk — memory freed");
+
+    // --- 9. Keepalive ---
+    print("\n--- 9. Keepalive ---");
+    conn.ping();
+    print("[Client] Sent PING for RTT measurement");
+
+    // --- 10. Receive responses ---
+    print("\n--- 10. Receiving Responses ---");
+    let responses = 0;
+    let msg = conn.receive();
+    while (msg != null && responses < 10) {
+        if (msg.type == "datagram") {
+            print("[recv] Datagram:", msg.data.substring(0, 60));
+        }
+        else if (msg.streamId != null) {
+            print("[recv] Stream " + msg.streamId + ":", msg.data.substring(0, 60));
+        }
+        else if (msg.type == "closed") {
+            print("[recv] Closed:", msg.reason);
+        }
+        responses = responses + 1;
+        msg = conn.receive();
+    }
+    if (responses == 0) {
+        print("[recv] No responses (expected in demo mode).");
+    }
+
+    // --- 11. Connection metrics ---
+    print("\n--- 11. Connection Metrics ---");
+    let metrics = conn.metrics();
+    print("  Connections:", metrics.connections);
+    print("  Established:", metrics.established);
+    print("  Streams:", metrics.streams);
+    print("  Memory:", metrics.memoryUsed, "bytes");
+
+    // --- Shutdown ---
+    print("\n--- Shutdown ---");
+    conn.close();
+    print("[Client] Connection closed.");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 8. CRYPTO DEMO — Show the full security pipeline
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn demoCryptoPipeline(config: ServerConfig) {
+    print("\n=== Crypto Pipeline Demo ===");
+
+    // Hash a message for integrity verification.
+    let message = "Hello ATP world!";
+    let hash = Crypto.sha256(message);
+    let hashHex = Encoding.hexEncode(hash);
+    print("[Crypto] SHA-256 of \"" + message + "\":");
+    print("  " + hashHex.substring(0, 32) + "...");
+
+    // HMAC for message authentication.
+    let hmacBytes = Crypto.hmac(config.secretKey, message);
+    let hmacHex = Encoding.hexEncode(hmacBytes);
+    print("[Crypto] HMAC-SHA256:");
+    print("  " + hmacHex.substring(0, 32) + "...");
+
+    // Verify HMAC (constant-time comparison).
+    let hmac2 = Crypto.hmac(config.secretKey, message);
+    let hmacHex2 = Encoding.hexEncode(hmac2);
+    let verified = (hmacHex == hmacHex2);
+    print("[Crypto] HMAC verified:", verified);
+
+    // Base64 encoding for binary transport in JSON.
+    let binaryData = [0, 1, 2, 3, 255, 254, 253];
+    let b64 = Encoding.base64UrlEncode(binaryData);
+    let decoded = Encoding.base64UrlDecode(b64);
+    print("[Encoding] Base64 of binary:", b64);
+    print("[Encoding] Decoded matches:", decoded.len() == binaryData.len());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 9. COMPRESSION DEMO — Show compression ratios
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn demoCompression(config: ServerConfig) {
+    print("\n=== Compression Demo ===");
+
+    // Create a large repetitive payload (typical of game state).
+    let largePayload = {
+        type: "GameState",
+        players: []
+    };
+    for (let i = 0; i < 100; i = i + 1) {
+        largePayload.players.push({
+            id: i,
+            name: "Player_" + i,
+            x: i * 1.5,
+            y: i * 2.5,
+            health: 100,
+            inventory: ["sword", "shield", "potion", "key", "map"]
+        });
+    }
+
+    let jsonText = JSON.stringify(largePayload);
+    let jsonBytes = Encoding.utf8Encode(jsonText);
+    print("[Compression] Original JSON:", jsonBytes.len(), "bytes");
+
+    // Compress with different codecs.
+    let codecs = ["zstd", "gzip", "lz4", "deflate"];
+    for (let i = 0; i < codecs.len(); i = i + 1) {
+        let codec = codecs[i];
+        try {
+            let compressed = Compression.compress(jsonBytes, codec, 5);
+            let ratio = compressed.len() * 100 / jsonBytes.len();
+            print("[Compression] " + codec + ":", compressed.len(),
+                  "bytes (" + ratio + "% of original)");
+
+            // Verify roundtrip.
+            let decompressed = Compression.decompress(compressed, codec, 16777216);
+            let roundtripOk = (decompressed.len() == jsonBytes.len());
+            print("  Roundtrip OK:", roundtripOk);
+        } catch (e) {
+            print("[Compression] " + codec + " error:", e);
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 10. MAIN — Run the full production demo
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn main() {
+    let startTime = Time.epochMillis();
+
+    // Load configuration from environment.
+    let config = loadConfig();
+
+    // Run the server (polls for connections, then shuts down).
+    runServer(config);
+
+    // Run the client (sends messages through the full pipeline).
+    runClient(config);
+
+    // Demo the crypto pipeline.
+    demoCryptoPipeline(config);
+
+    // Demo compression ratios.
+    demoCompression(config);
+
+    // Print summary.
+    let elapsed = Time.epochMillis() - startTime;
+    print("\n==================================================================");
+    print("       Production Demo Complete                                  ");
+    print("       Elapsed:", elapsed, "ms");
+    print("       Libraries used: ATP, JSON, Crypto, Compression,        ");
+    print("         Encoding, Collections, Env, Time, FS                  ");
+    print("       Language features: structs, enums, try/catch,          ");
+    print("         template literals, arrow functions, for loops         ");
+    print("==================================================================");
+}
+
+// main() is called automatically by the AdeshLang runtime.

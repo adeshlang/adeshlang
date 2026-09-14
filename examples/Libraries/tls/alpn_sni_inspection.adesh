@@ -1,0 +1,21 @@
+// Example 2: Inspecting Negotiated TLS Version and ALPN Protocols
+import TLS;
+
+let host = "cloudflare.com";
+let port = 443;
+
+let handle = TLS.connect(host, port);
+
+let version = TLS.version(handle);
+let alpn = TLS.alpn(handle);
+
+print("Host: " + host);
+print("TLS Version: " + version);
+print("ALPN Protocol: " + (alpn == "" ? "None" : alpn));
+
+// Send a simple ping-like payload
+TLS.write(handle, "HEAD / HTTP/1.1\r\nHost: " + host + "\r\n\r\n");
+let data = TLS.read(handle, 1024);
+print("Received " + data.length + " bytes.");
+
+TLS.close(handle);

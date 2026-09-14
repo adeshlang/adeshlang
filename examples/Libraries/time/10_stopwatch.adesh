@@ -1,0 +1,52 @@
+// 10_stopwatch.adesh - Stopwatch for elapsed time measurement
+import Time;
+
+print("=== Stopwatch Examples ===\n");
+
+// --- Basic usage ---
+let sw: Stopwatch = Time.stopwatch();
+sw.start();
+print("Stopwatch started:", sw.isRunning());
+
+// Simulate some work
+let acc = 0;
+let i = 0;
+while (i < 2000000) { acc = acc + i; i = i + 1; }
+print("(work done, acc =", acc, ")");
+
+let lap1: Duration = sw.lap();
+print("Lap 1:", lap1.toString());
+
+// More work
+i = 0;
+while (i < 1000000) { acc = acc - i; i = i + 1; }
+
+let lap2: Duration = sw.lap();
+print("Lap 2:", lap2.toString());
+
+let total: Duration = sw.elapsed();
+print("Total elapsed:", total.toString());
+
+// --- Pause and resume ---
+sw.stop();
+print("\nAfter stop, isRunning:", sw.isRunning());
+let frozen: Duration = sw.elapsed();
+
+// Do more work while stopped (elapsed shouldn't change)
+i = 0;
+while (i < 500000) { acc = acc + i; i = i + 1; }
+let frozenAgain: Duration = sw.elapsed();
+print("Elapsed while stopped changed:", !frozen.eq(frozenAgain));
+
+// Resume
+sw.start();
+print("Resumed, isRunning:", sw.isRunning());
+i = 0;
+while (i < 500000) { acc = acc + i; i = i + 1; }
+let resumed: Duration = sw.elapsed();
+print("Elapsed after resume:", resumed.toString());
+
+// --- Reset ---
+sw.reset();
+print("\nAfter reset, elapsed nanos:", sw.elapsed().wholeNanoseconds());
+print("After reset, isRunning:", sw.isRunning());

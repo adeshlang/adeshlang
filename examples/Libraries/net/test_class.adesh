@@ -1,0 +1,21 @@
+// Test Class Execution
+interface IClient {
+    fn run();
+}
+
+class NetworkClient implements IClient {
+    NetworkClient(name: string) {
+        this.name = name;
+    }
+
+    fn run() {
+        print("Running client:", this.name);
+    }
+}
+
+fn main() {
+    let client = new NetworkClient("TestClient");
+    client.run();
+}
+
+main();

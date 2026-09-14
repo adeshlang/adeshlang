@@ -1,0 +1,31 @@
+// Module Import Examples
+// This file demonstrates various import syntaxes in AdeshLang
+
+// NOTE: Some examples below are commented out because they reference 
+// modules that don't exist in this example directory.
+
+// 1. Default import from string path
+import "./utils.adesh";
+print("add:", utils.add(2, 3));
+
+// 2. Named imports from path
+// from "./utils.adesh" import sum, PI;
+// print("sum:", sum(4, 5), "PI:", PI);
+
+// 3. Namespace import syntax (planned/future feature)
+// AdeshLang supports namespace:module syntax for stdlib imports
+// Example: import std:server;
+// Example: from std:server import http, tcp;
+// Note: std library modules are currently built-in via the runtime
+
+// 4. Working example with built-in Math module
+// Math is available globally without import
+let result = Math.floor(3.7);
+print("Math.floor(3.7):", result);
+
+let pi = Math.PI;
+print("Math.PI:", pi);
+
+print("");
+print("Import syntax demonstration complete!");
+print("See docs/cli.md for full module documentation.");

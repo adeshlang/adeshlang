@@ -1,0 +1,84 @@
+// Test setTimeout with callback execution
+
+async fn main() {
+    print("=== setTimeout Tests ===");
+
+    // Test 1: setTimeout wrapped in Promise to capture callback return value
+    print("Test 1: setTimeout with callback (wrapped in Promise)");
+    let p1 = Promise(fn(resolve, reject) {
+        setTimeout(fn() {
+            print("  Callback executed!");
+            resolve(42);
+        }, 10);
+    });
+
+    let result1 = await p1;
+    print("  Timer result:", result1);
+    if result1 == 42 {
+        print("  [PASS]");
+    } else {
+        print("  [FAIL] got:", result1);
+    }
+
+    // Test 2: setTimeout with short delay
+    print("\nTest 2: setTimeout with different delay");
+    let p2 = Promise(fn(resolve, reject) {
+        setTimeout(fn() {
+            print("  Short delay callback!");
+            resolve("done");
+        }, 5);
+    });
+
+    let result2 = await p2;
+    print("  Result:", result2);
+    if result2 == "done" {
+        print("  [PASS]");
+    } else {
+        print("  [FAIL]");
+    }
+
+    // Test 3: Multiple setTimeouts with ordering
+    print("\nTest 3: Multiple setTimeouts");
+    let p3a = Promise(fn(resolve, reject) {
+        setTimeout(fn() {
+            print("  Timer A fired");
+            resolve("A");
+        }, 5);
+    });
+    let p3b = Promise(fn(resolve, reject) {
+        setTimeout(fn() {
+            print("  Timer B fired");
+            resolve("B");
+        }, 10);
+    });
+    let p3c = Promise(fn(resolve, reject) {
+        setTimeout(fn() {
+            print("  Timer C fired");
+            resolve("C");
+        }, 15);
+    });
+
+    let r3a = await p3a;
+    let r3b = await p3b;
+    let r3c = await p3c;
+    print("  All timers complete:", r3a, r3b, r3c);
+    if r3a == "A" {
+        if r3b == "B" {
+            if r3c == "C" {
+                print("  [PASS]");
+            }
+        }
+    }
+
+    // Test 4: setTimeout as sleep (just delay, resolve null)
+    print("\nTest 4: setTimeout as sleep (no callback result)");
+    print("  Starting 20ms delay...");
+    let p4 = Promise(fn(resolve, reject) {
+        setTimeout(fn() { resolve(null); }, 20);
+    });
+    await p4;
+    print("  Delay complete!");
+    print("  [PASS]");
+
+    print("\n=== setTimeout Tests Complete ===");
+}

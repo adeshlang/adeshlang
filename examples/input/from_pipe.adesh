@@ -1,0 +1,9 @@
+// Pipe detection example
+// Run: echo "hello" | adeshlang examples/input/from_pipe.ind
+
+let data = input.fromPipe();
+if (data == null) {
+  print("No pipe detected");
+} else {
+  print("Piped:", data);
+}

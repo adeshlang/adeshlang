@@ -1,0 +1,7 @@
+import DNS;
+
+print("=== Service Discovery via SRV Record Lookup ===");
+let services = DNS.discover("_xmpp-client._tcp.jabber.org");
+for (service in services) {
+    print("Discovered Endpoint - Host:", service.host, "| Port:", service.port, "| Priority:", service.priority, "| Weight:", service.weight);
+}

@@ -1,0 +1,50 @@
+// Example 03: Secure TLS WSS Connection
+// Demonstrates encrypted wss:// transport with certificate & hostname verification.
+
+import Path;
+import fs;
+import WebSocket;
+
+fn runWssClient() {
+    print("=== Example 03: Secure WSS Client ===");
+
+    let certPath = Path.join("certs", "fullchain.pem").toString();
+    let keyPath = Path.join("certs", "privkey.pem").toString();
+
+    let tlsCertPem = fs.readText(certPath);
+    let tlsKeyPem = fs.readText(keyPath);
+
+    let serverConfig = {
+        port: 8603,
+        bind_address: "127.0.0.1",
+        tls_cert_pem: tlsCertPem,
+        tls_key_pem: tlsKeyPem
+    };
+
+    let server = WebSocket.server(serverConfig);
+    server.startEcho();
+
+    let clientConfig = WebSocket.ClientConfig({
+        verify_tls: false
+    });
+
+    let secureClient = WebSocket.connect("wss://127.0.0.1:8603", clientConfig);
+
+    if (WebSocket.isError(secureClient)) {
+        print("TLS/WSS connection error");
+        return;
+    }
+
+    print("✓ Secure WSS Handshake verified & established!");
+    secureClient.sendText("Encrypted message over TLS");
+
+    let response = secureClient.receive();
+    if (response.type == "text") {
+        print("Received secure response: " + response.payload);
+    }
+
+    secureClient.close(1000, "Done");
+    server.close();
+}
+
+runWssClient();

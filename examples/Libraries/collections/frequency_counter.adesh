@@ -1,0 +1,22 @@
+import Collections;
+
+print("========================================");
+print("Frequency Counter Example");
+print("========================================");
+
+let items = ["apple", "banana", "apple", "cherry", "banana", "apple"];
+let counts = Collections.HashMap();
+
+for item in items {
+    let cur = counts.get(item);
+    if (cur == null) {
+        counts.insert(item, 1);
+    } else {
+        counts.insert(item, cur + 1);
+    }
+}
+
+print("Item counts map: ", counts.entries());
+print("Count of 'apple': ", counts.get("apple"));
+print("Count of 'banana': ", counts.get("banana"));
+print("Count of 'cherry': ", counts.get("cherry"));

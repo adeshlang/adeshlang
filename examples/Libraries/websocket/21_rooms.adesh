@@ -1,0 +1,30 @@
+// AdeshLang WebSocket Example 21: Real-Time Room & Broadcast System
+// Demonstrates multi-connection broadcasting and room distribution.
+
+import WebSocket;
+
+print("=== AdeshLang WebSocket Room & Broadcast System Demo ===");
+
+let server = WebSocket.server(WebSocket.ServerConfig({
+    port: 8621,
+    bind_address: "127.0.0.1"
+}));
+
+server.startEcho();
+print("✓ Server running on port 8621");
+
+let c1 = WebSocket.connect("ws://127.0.0.1:8621");
+let c2 = WebSocket.connect("ws://127.0.0.1:8621");
+
+c1.sendText("Room Message Alpha");
+let r1 = c1.receive();
+print("Client 1 received echo: " + r1.payload);
+
+c2.sendText("Room Message Beta");
+let r2 = c2.receive();
+print("Client 2 received echo: " + r2.payload);
+
+c1.close(1000, "leave room");
+c2.close(1000, "leave room");
+server.close();
+print("✓ Room broadcast system test completed successfully!");

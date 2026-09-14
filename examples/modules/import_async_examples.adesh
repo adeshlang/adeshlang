@@ -1,0 +1,34 @@
+print("Testing import...");
+import "examples/modules/mod_a.adesh" as m;
+print("Import done, m =", m);
+
+print("start");
+print("checking m:", m);
+print("checking m.modAdd:", m.modAdd);
+
+let p = m.modAdd(10, 20);
+print("m.modAdd(10, 20) returned:", p);
+
+async fn do_await() {
+    print("do_await: about to await m.modAdd(2, 3)");
+    let result = await m.modAdd(2, 3);
+    print("do_await: got result:", result);
+    return result;
+}
+
+print("calling do_await");
+do_await().then(fn(v) {
+    print("do_await completed with:", v);
+});
+
+print("Test 1: Direct .then");
+m.modAdd(10, 5).then(fn(v) {
+    print("modAdd(10, 5) via .then:", v);
+});
+
+let promise = m.modAdd(5, 10);
+print("promise:", promise);
+let result = await promise;
+print("result:", result);
+
+print("done");

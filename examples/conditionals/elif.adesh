@@ -1,0 +1,15 @@
+// elif syntax example
+// Demonstrates Python-style elif desugared to nested if
+input.mock(-10);
+let x = int(input<int>("Value:"));
+
+if (x == 1) {
+  print("one");
+} elif (x == 2) {
+  print("two");
+} elif (x == 3) {
+  print("three");
+} else {
+  print("other");
+}
+print(typeof(x));

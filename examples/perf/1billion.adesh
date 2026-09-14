@@ -1,0 +1,9 @@
+// One billion count
+fn main() {
+    let count = 0;
+    for (i in 0..1000000000) {
+        count = count + 1;
+    }
+    print( count);
+    return 0;
+}

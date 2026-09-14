@@ -1,0 +1,30 @@
+// AdeshLang Net Example 13: Raw HTTP REST API Server over Net.tcpListen
+import Net;
+
+fn start_rest_api_server() {
+    print("=== 13. Raw HTTP REST API Server Endpoint ===");
+
+    let server = Net.tcpListen("127.0.0.1", 9094);
+    print("REST API Server listening on:", server.localAddress());
+
+    // Accept single request demonstration
+    let client = server.accept();
+    let stream = client.stream;
+    print("Client connected to REST API endpoint from:", client.remoteAddress);
+
+    let req = stream.read(2048);
+    print("Received REST HTTP request payload");
+
+    // Formulate JSON response
+    let jsonBody = "{\"status\":\"ok\",\"service\":\"AdeshLang-Net-API\",\"version\":\"1.0.0\"}";
+    let respHeader = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 62\r\nConnection: close\r\n\r\n" + jsonBody;
+
+    stream.writeText(respHeader);
+    print("Sent JSON HTTP/1.1 200 OK response");
+
+    stream.close();
+    server.close();
+    print("=== 13. Raw HTTP REST API Server Completed ===");
+}
+
+start_rest_api_server();

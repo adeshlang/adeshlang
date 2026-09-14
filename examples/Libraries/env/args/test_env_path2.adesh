@@ -1,0 +1,4 @@
+// Test different ways to print PATH
+import Env;
+print("PATH with label:", Env.env("PATH"));
+print(`PATH with template: ${Env.env("PATH")}`);

@@ -1,0 +1,29 @@
+import URL;
+
+fn isSafeWebhookTarget(rawUrlStr: String): Bool {
+    if (!URL.isValid(rawUrlStr)) {
+        return false;
+    }
+    
+    let url: URL = URL.parse(rawUrlStr);
+    let policy: URLSecurityPolicy = URL.SecurityPolicy()
+        .allowScheme("https")
+        .denyPrivateNetworks()
+        .denyCredentials();
+
+    let safe: Bool = false;
+    try {
+        policy.validate(url);
+        safe = true;
+    } catch(err) {
+        safe = false;
+    }
+    return safe;
+}
+
+let webhook1: String = "https://hooks.slack.com/services/T00/B00/X00";
+let webhook2: String = "http://169.254.169.254/latest/meta-data/";
+
+print("--- 16 Real-World Webhook Security Validation ---");
+print("Slack Webhook Valid & Safe:", isSafeWebhookTarget(webhook1));
+print("AWS Metadata SSRF Webhook Safe:", isSafeWebhookTarget(webhook2));

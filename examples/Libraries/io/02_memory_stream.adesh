@@ -1,0 +1,21 @@
+// Example 02: In-Memory Stream Reading and Writing
+
+import "IO";
+
+fn main() {
+    let writer = new IO.MemoryWriter();
+    writer.writeLine("AdeshLang Standard Library");
+    writer.writeLine("Production Grade IO Subsystem");
+
+    IO.println("Written Content:");
+    IO.println(writer.toString());
+
+    let reader = new IO.MemoryReader(writer.toString());
+    IO.println("Reading line by line:");
+    while (true) {
+        let line = reader.readLine();
+        if (line == null) { break; }
+        IO.println("-> " + line);
+    }
+}
+

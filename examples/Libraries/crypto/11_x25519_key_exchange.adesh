@@ -1,0 +1,15 @@
+// 11 - X25519 Diffie-Hellman Key Agreement Protocol
+import Crypto;
+
+let alice = Crypto.generateX25519();
+let bob = Crypto.generateX25519();
+
+let aliceShared = Crypto.exchangeX25519(alice.secretKey, bob.publicKey);
+let bobShared = Crypto.exchangeX25519(bob.secretKey, alice.publicKey);
+
+let aliceHex = Crypto.encodeHex(aliceShared);
+let bobHex = Crypto.encodeHex(bobShared);
+
+print("Alice Shared Secret Hex:", aliceHex);
+print("Bob Shared Secret Hex:  ", bobHex);
+print("Secrets Match:          ", aliceHex == bobHex);

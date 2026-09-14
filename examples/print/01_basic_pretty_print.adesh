@@ -1,0 +1,34 @@
+// Example 1: Basic Pretty Print Usage
+// Demonstrates the fundamental pretty print features
+
+// Simple object
+let person = {
+    name: "John Doe",
+    age: 28,
+    email: "john@example.com"
+};
+
+println("=== Basic Pretty Print ===");
+print(person, { pretty: true });
+
+println("\n=== Regular Print (for comparison) ===");
+print(person);
+
+// Array
+let numbers = [10, 20, 30, 40, 50];
+println("\n=== Pretty Printed Array ===");
+print(numbers, { pretty: true });
+
+// Nested structure
+let company = {
+    name: "Tech Corp",
+    employees: 150,
+    departments: ["Engineering", "Sales", "HR"],
+    headquarters: {
+        city: "San Francisco",
+        country: "USA"
+    }
+};
+
+println("\n=== Pretty Printed Nested Structure ===");
+print(company, { pretty: true });

@@ -1,0 +1,12 @@
+{
+  "hash": "fde2e35f827b8e4e",
+  "source_path": null,
+  "output_path": "advanced_math.o",
+  "opt_level": 2,
+  "fast_compile": false,
+  "output_format": "Object",
+  "target_triple": null,
+  "debug_info": false,
+  "timestamp_secs": 1788891618,
+  "output_file_size": 5551
+}

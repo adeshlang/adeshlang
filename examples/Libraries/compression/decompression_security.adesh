@@ -1,0 +1,14 @@
+import Compression;
+
+print("=== Decompression Bomb Protection & Security Limits Example ===");
+
+let payload = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+let compressed = Compression.zstd(payload, 5);
+
+print("Attempting decompression with 20 bytes maximum output limit...");
+try {
+    let result = Compression.decompress(compressed, "zstd", 20);
+    print("Result:", len(result));
+} catch (err) {
+    print("Security Safeguard Triggered Successfully:", err);
+}

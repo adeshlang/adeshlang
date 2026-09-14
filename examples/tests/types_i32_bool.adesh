@@ -1,0 +1,4 @@
+@compile wasm
+let n: int = 3;
+while n { print(n); n = n - 1; }
+print(true, " | ", "\n", null, false, "#00FF00");

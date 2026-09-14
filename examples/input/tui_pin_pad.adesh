@@ -1,0 +1,12 @@
+// World-First: Secure Masked PIN Pad
+// Fixed-width security PIN entry with visual digit boxes
+
+// input.mock(["9876"]);
+
+let user_pin = input.pin("Enter 4-Digit Master PIN:", 4);
+println(`PIN verified successfully! Value: "${user_pin}", Length: ${user_pin.length}`);
+if (user_pin == "9876") {
+    println("✅ Master Security Authorization Granted!");
+} else {
+    println(`ℹ️ Entered custom PIN: ${user_pin}`);
+}

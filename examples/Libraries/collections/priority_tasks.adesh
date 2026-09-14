@@ -1,0 +1,16 @@
+import Collections;
+
+print("========================================");
+print("Multi-Priority Processing Example");
+print("========================================");
+
+let pq = Collections.PriorityQueue();
+
+pq.push("Task Alpha", 15);
+pq.push("Task Beta", 45);
+pq.push("Task Gamma", 30);
+
+print("Initial queue len: ", pq.len());
+print("Pop highest priority (expect Task Beta): ", pq.pop());
+print("Pop next (expect Task Gamma): ", pq.pop());
+print("Pop lowest (expect Task Alpha): ", pq.pop());

@@ -1,0 +1,41 @@
+// Parallel Map/Reduce Operations
+// Run: adeshlang run examples/concurrency/parallel_ops.adesh
+import Parallel;
+
+fn expensive_computation(x) {
+    // Simulate CPU-intensive work
+    let result = 0;
+    for i in range(0, 1000) {
+        result = result + (x * i) % 1000;
+    }
+    return result;
+}
+
+fn main() {
+    print("╔════════════════════════════════════════════════════╗");
+    print("║  PARALLEL MAP - Concurrency Demo                   ║");
+    print("╚════════════════════════════════════════════════════╝");
+    print("");
+
+    let data = [1, 2, 3, 4, 5];
+
+    // Parallel map
+    print("1. Parallel Map:");
+    let results = Parallel.map(data, fn(x) { return expensive_computation(x); });
+    print("  Results: " + str(results));
+    print("");
+
+    // Parallel reduce (sum)
+    print("2. Parallel Reduce (Sum):");
+    let numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    let sum = Parallel.reduce(numbers, 0, fn(a, b) { return a + b; });
+    print("  Sum: " + str(sum));
+    print("");
+
+    // Parallel for
+    print("3. Parallel For (printing 0-9):");
+    Parallel.forEach(0, 10, fn(i) { print("  " + str(i)); });
+
+    print("");
+    print("Parallel operations demo complete!");
+}

@@ -1,0 +1,182 @@
+import Math;
+
+print("=== Abstract Classes, Generics, and Typed OOP ===");
+
+fn divider(title: String): String {
+    return "\n--- " + title + " ---";
+}
+
+print(divider("1. Typed Abstract Base Class"));
+
+abstract class Shape {
+    Shape(name: String) {
+        this.name = name;
+    }
+
+    abstract fn area(): f64;
+    abstract fn perimeter(): f64;
+
+    fn describe(): String {
+        return this.name + " area=" + this.area() + " perimeter=" + this.perimeter();
+    }
+}
+
+class Circle extends Shape {
+    Circle(radius: f64) {
+        super("Circle");
+        this.radius = radius;
+    }
+
+    fn area(): f64 {
+        return 3.14159 * this.radius * this.radius;
+    }
+
+    fn perimeter(): f64 {
+        return 2.0 * 3.14159 * this.radius;
+    }
+}
+
+class Rectangle extends Shape {
+    Rectangle(width: f64, height: f64) {
+        super("Rectangle");
+        this.width = width;
+        this.height = height;
+    }
+
+    fn area(): f64 {
+        return this.width * this.height;
+    }
+
+    fn perimeter(): f64 {
+        return 2.0 * (this.width + this.height);
+    }
+}
+
+let circle = new Circle(5.0);
+let rect = new Rectangle(4.0, 6.0);
+print(circle.describe());
+print(rect.describe());
+
+try {
+    let broken = new Shape("Broken");
+    print("ERROR: abstract class instantiated -> " + broken.describe());
+} catch (e) {
+    print("Abstract instantiation blocked: " + e);
+}
+
+print(divider("2. Abstract Workflow with Strict Return Types"));
+
+abstract class Payment {
+    Payment(amount: f64, channel: String) {
+        this.amount = amount;
+        this.channel = channel;
+    }
+
+    abstract fn validate(): bool;
+    abstract fn authorize(): String;
+
+    fn execute(): String {
+        if (!this.validate()) {
+            return "Validation failed for " + this.channel;
+        }
+        return this.authorize();
+    }
+}
+
+class CardPayment extends Payment {
+    CardPayment(amount: f64, last4: String) {
+        super(amount, "card");
+        this.last4 = last4;
+    }
+
+    fn validate(): bool {
+        return this.amount > 0.0;
+    }
+
+    fn authorize(): String {
+        return "Authorized card payment of " + this.amount + " using ****" + this.last4;
+    }
+}
+
+class WalletPayment extends Payment {
+    WalletPayment(amount: f64, email: String) {
+        super(amount, "wallet");
+        this.email = email;
+    }
+
+    fn validate(): bool {
+        return this.amount > 0.0;
+    }
+
+    fn authorize(): String {
+        return "Authorized wallet payment of " + this.amount + " for " + this.email;
+    }
+}
+
+let card = new CardPayment(150.0, "4532");
+let wallet = new WalletPayment(75.0, "user@example.com");
+print(card.execute());
+print(wallet.execute());
+
+print(divider("3. Generic Containers"));
+
+class Box<T> {
+    Box(value) {
+        this.value = value;
+    }
+
+    fn get() {
+        return this.value;
+    }
+
+    fn replace(next) {
+        let previous = this.value;
+        this.value = next;
+        return previous;
+    }
+}
+
+class Pair<T, U> {
+    Pair(left, right) {
+        this.left = left;
+        this.right = right;
+    }
+
+    fn describe(): String {
+        return "Pair(" + this.left + ", " + this.right + ")";
+    }
+}
+
+let numberBox = new Box(42);
+let nameBox = new Box("Adesh");
+print("numberBox=" + numberBox.get());
+print("nameBox before replace=" + nameBox.get());
+print("nameBox replaced old value=" + nameBox.replace("Ajay"));
+print("nameBox now=" + nameBox.get());
+
+let typedPair = new Pair("version", 3);
+print(typedPair.describe());
+
+print(divider("4. Ownership-Friendly Object Access"));
+
+class Profile {
+    Profile(name: String, title: String) {
+        this.name = name;
+        this.title = title;
+    }
+
+    fn label(): String {
+        return this.name + " -> " + this.title;
+    }
+}
+
+fn showProfile(profile): String {
+    return profile.label();
+}
+
+let owner = new Profile("Ajay", "Compiler Engineer");
+let ownerView = &owner;
+print("owned=" + owner.label());
+print("borrowed=" + showProfile(ownerView));
+
+print("\nAll abstract/generic OOP examples completed successfully.");

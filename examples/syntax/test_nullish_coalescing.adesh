@@ -1,0 +1,42 @@
+// Comprehensive Nullish Coalescing Tests
+
+// Basic nullish coalescing
+let n = null;
+let result1 = n ?? 42;
+print("Null coalescing:", result1); // Should be 42
+
+// Falsy values should NOT trigger coalescing
+let zero = 0;
+let result2 = zero ?? 99;
+print("Zero coalescing:", result2); // Should be 0, not 99
+
+let falseVal = false;
+let result3 = falseVal ?? true;
+print("False coalescing:", result3); // Should be false, not true
+
+let emptyStr = null;
+let result4 = emptyStr ?? "default";
+print("Empty string coalescing:", result4); // Should be "", not "default"
+
+// Chained coalescing
+let a = null;
+let b = null;
+let c = 100;
+let result5 = a ?? b ?? c;
+print("Chained coalescing:", result5); // Should be 100
+
+// With expressions
+let x = 5;
+let result6 = (x > 10 ? null : x) ?? 0;
+print("Expression coalescing:", result6); // Should be 5
+
+// Assignment form
+let keep = "existing";
+keep ??= "set-on-null";
+print("Keep ??= (no change):", keep); // Should be "existing"
+
+let replace = null;
+replace ??= "set-on-null";
+print("Replace ??= (changed):", replace); // Should be "set-on-null"
+
+print("All nullish coalescing tests complete!");

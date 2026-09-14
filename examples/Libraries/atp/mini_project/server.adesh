@@ -1,0 +1,216 @@
+// ╔═══════════════════════════════════════════════════════════════════════════════╗
+// ║      ATP Real-Time IoT & Fleet Telemetry Mini-Project — Command Server        ║
+// ║                                                                               ║
+// ║  A production-ready real-time fleet telemetry ingest and control server:      ║
+// ║    • High-throughput telemetry datagram ingestion without HoL blocking        ║
+// ║    • Anomaly detection (Over-speed, Low tire pressure, Over-temperature)      ║
+// ║    • Automated safety intervention via high-priority control streams          ║
+// ║    • Cryptographic HMAC command signing                                       ║
+// ║    • Real-time fleet dashboard metrics aggregation                            ║
+// ║                                                                               ║
+// ║  Run: cargo run --bin adeshlang -- run examples/Libraries/atp/mini_project/server.adesh
+// ╚═══════════════════════════════════════════════════════════════════════════════╝
+
+// @allow(warnings)
+import ATP;
+import JSON;
+import Crypto;
+import Time;
+import Collections;
+
+print("==================================================================");
+print("     Fleet Command Telemetry & Operations Center (ATP Engine)     ");
+print("==================================================================");
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 1. DATA MODELS & CONFIGURATION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+struct FleetServerConfig {
+    host: string,
+    port: int,
+    secretKey: string,
+    maxActiveNodes: int
+}
+
+struct VehicleRecord {
+    vehicleId: int,
+    lastSeen: int,
+    lat: float,
+    lon: float,
+    speedKmh: float,
+    batteryPct: float,
+    engineTempC: float,
+    tirePressurePsi: float,
+    status: string,
+    totalFrames: int
+}
+
+fn delayMs(ms: int) {
+    let start = Time.epochMillis();
+    while (Time.epochMillis() - start < ms) {}
+}
+
+let serverConfig = FleetServerConfig {
+    host: "127.0.0.1",
+    port: 9150,
+    secretKey: "fleet-command-secret-key-atp-2026",
+    maxActiveNodes: 128
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 2. START ATP COMMAND SERVER
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let atpOptions = {
+    maxStreams: 256,
+    idleTimeout: 30,
+    retryTokenTtl: 30,
+    rateLimit: 50
+};
+
+let server = ATP.listen(serverConfig.host, serverConfig.port, atpOptions);
+print("[Command Center] Active and listening on " + serverConfig.host + ":" + serverConfig.port);
+print("[Command Center] Ready to ingest high-frequency vehicle telemetry...\n");
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 3. TELEMETRY PROCESSING ENGINE & SAFETY INTERLOCK
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let vehicleRegistry = Collections.map();
+let totalIngested: int = 0;
+let totalAlerts: int = 0;
+let activeSessions = [];
+
+fn processTelemetryFrame(conn, rawData) {
+    totalIngested = totalIngested + 1;
+    let t = JSON.parse(rawData);
+    if (t == null) {
+        return;
+    }
+
+    let vId = t.vehicleId;
+    let record = VehicleRecord {
+        vehicleId: vId,
+        lastSeen: Time.epochMillis(),
+        lat: t.lat,
+        lon: t.lon,
+        speedKmh: t.speedKmh,
+        batteryPct: t.batteryPct,
+        engineTempC: t.engineTempC,
+        tirePressurePsi: t.tirePressurePsi,
+        status: t.status,
+        totalFrames: 1
+    };
+
+    let existing = vehicleRegistry.get(vId);
+    if (existing != null) {
+        record.totalFrames = existing.totalFrames + 1;
+    }
+    vehicleRegistry.insert(vId, record);
+
+    print("[Telemetry Ingest #" + totalIngested + "] Vehicle #" + vId + " (VIN: " + t.vin + "): "
+          + "Pos=(" + t.lat + ", " + t.lon + ") "
+          + "Speed=" + t.speedKmh + " km/h "
+          + "Bat=" + t.batteryPct + "% "
+          + "Temp=" + t.engineTempC + "°C "
+          + "Tire=" + t.tirePressurePsi + " PSI");
+
+    // ── SAFETY INTERVENTION CHECKS ──
+    if (t.engineTempC > 105) {
+        totalAlerts = totalAlerts + 1;
+        print("\n  ⚠️ [CRITICAL SAFETY ALERT] Vehicle #" + vId + " Overheating (" + t.engineTempC + "°C > 105°C)!");
+        
+        let sig = Crypto.hmac("sha256", serverConfig.secretKey, "CMD:EMERGENCY_COOL_DOWN:" + vId);
+        let cmd = {
+            type: "COMMAND",
+            commandId: 9000 + totalAlerts,
+            targetVehicleId: vId,
+            action: "EMERGENCY_COOL_DOWN",
+            speedLimit: 40,
+            destination: "Nearest Service Depot",
+            issuedAt: Time.epochMillis(),
+            authSignature: sig
+        };
+        
+        let cmdPayload = JSON.stringify(cmd);
+        conn.send(cmdPayload, true, true);
+        print("  -> Dispatched Authenticated Safety Intervention Command to Vehicle #" + vId + "\n");
+    } else if (t.tirePressurePsi < 28) {
+        totalAlerts = totalAlerts + 1;
+        print("\n  ⚠️ [SAFETY WARNING] Vehicle #" + vId + " Low Tire Pressure (" + t.tirePressurePsi + " PSI < 28 PSI)!");
+        let sig = Crypto.hmac("sha256", serverConfig.secretKey, "CMD:LIMIT_SPEED:" + vId);
+        let cmd = {
+            type: "COMMAND",
+            commandId: 8000 + totalAlerts,
+            targetVehicleId: vId,
+            action: "LIMIT_SPEED",
+            speedLimit: 60,
+            destination: "Tire Maintenance Hub",
+            issuedAt: Time.epochMillis(),
+            authSignature: sig
+        };
+        conn.send(JSON.stringify(cmd), true, true);
+        print("  -> Dispatched Speed Limitation Order to Vehicle #" + vId + "\n");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 4. SERVER EVENT LOOP (DEMO DURATION: 70 CYCLES)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+for (let cycle = 0; cycle < 70; cycle = cycle + 1) {
+    // 1. Accept incoming vehicle node connections
+    let newConn = server.accept();
+    while (newConn != null) {
+        activeSessions.push(newConn);
+        print("[Command Center] Connected to Edge Node (Session ID: " + newConn.id + ")");
+        newConn = server.accept();
+    }
+
+    // 2. Ingest telemetry and control stream responses
+    for (c in activeSessions) {
+        let d = c.receive();
+        while (d != null) {
+            if (d.type == "datagram" || d.type == "message") {
+                processTelemetryFrame(c, d.text);
+            } else if (d.type == "message") {
+                print("[Command Center <- Stream Recv] " + d.text);
+            }
+            d = c.receive();
+        }
+    }
+
+    delayMs(15);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 5. LIVE FLEET AGGREGATE DASHBOARD
+// ═══════════════════════════════════════════════════════════════════════════════
+
+print("\n==================================================================");
+print("               FLEET AGGREGATE OPERATIONS REPORT                  ");
+print("==================================================================");
+
+let metrics = server.metrics();
+print("[Operations] Total Telemetry Ingested: " + totalIngested + " frames");
+print("[Operations] Total Safety Alerts:      " + totalAlerts + " incidents");
+print("[Operations] Active Connected Nodes:   " + activeSessions.len() + " edge nodes");
+print("[Operations] Network Traffic:          " + metrics.bytesReceived + " bytes received / " + metrics.bytesSent + " bytes sent");
+
+print("\n--- Fleet Status Summary ---");
+let keys = vehicleRegistry.keys();
+for (let k = 0; k < keys.len(); k = k + 1) {
+    let rec = vehicleRegistry.get(keys[k]);
+    print("  • Vehicle #" + rec.vehicleId + " | Status: " + rec.status
+          + " | Speed: " + rec.speedKmh + " km/h | Bat: " + rec.batteryPct + "%"
+          + " | Temp: " + rec.engineTempC + "°C | Tire: " + rec.tirePressurePsi + " PSI"
+          + " | Ingested: " + rec.totalFrames + " frames");
+}
+
+// Clean shutdown
+for (vConn in activeSessions) {
+    vConn.close();
+}
+server.close();
+print("\n[ok] Fleet Command Center Server gracefully stopped.\n");

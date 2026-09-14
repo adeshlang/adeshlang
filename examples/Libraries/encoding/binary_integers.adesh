@@ -1,0 +1,18 @@
+import Encoding;
+
+// Binary Integer & Endianness Example
+let val = 305419896; // 0x12345678
+
+let bytesLE = Encoding.u32ToBytesLE(val);
+let hexLE = Encoding.hexEncode(bytesLE);
+print("u32 305419896 LE Hex:", hexLE);
+
+let bytesBE = Encoding.u32ToBytesBE(val);
+let hexBE = Encoding.hexEncode(bytesBE);
+print("u32 305419896 BE Hex:", hexBE);
+
+let restoredLE = Encoding.bytesToU32LE(bytesLE);
+print("Restored from LE:", restoredLE);
+
+let restoredBE = Encoding.bytesToU32BE(bytesBE);
+print("Restored from BE:", restoredBE);

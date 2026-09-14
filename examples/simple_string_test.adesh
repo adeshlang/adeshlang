@@ -1,0 +1,11 @@
+// Simple test
+print("Test 1: Basic string");
+let text = "hello";
+print("String:", text);
+
+print("\nTest 2: String length");
+print("Length:", len(text));
+
+print("\nTest 3: String split");
+let parts = text.split("");
+print("Parts:", parts);

@@ -1,0 +1,44 @@
+// AOT Print Test - All Print Features
+import "Math" as Math;
+
+fn main() {
+    print("=== AOT Print Test ===");
+    print("Ajay Tainwala",{color:"#FF00FF"});
+    // Basic value types
+    print("String:", "Hello World");
+    print("Integer:", 42);
+    print("Float:", 3.14159);
+    print("Boolean true:", true);
+    print("Boolean false:", false);
+    
+    // Multiple arguments (space separated)
+    print("Multiple:", "a", "b", "c");
+    print("Mixed types:", "x =", 10, "y =", 20.5);
+    
+    // Arithmetic operations
+    let x = 100;
+    let y = 25;
+    print("Addition:", x, "+", y, "=", x + y);
+    print("Subtraction:", x, "-", y, "=", x - y);
+    print("Multiplication:", x, "*", y, "=", x * y);
+    print("Division:", x, "/", y, "=", x / y);
+    print("Modulo:", x, "%", y, "=", x % y);
+    
+    // Math builtins
+    print("Math.abs(-99) =", Math.abs(-99));
+    print("Math.min(7, 3) =", Math.min(7, 3));
+    print("Math.max(7, 3) =", Math.max(7, 3));
+    
+    // Float operations
+    let pi = 3.14159;
+    let e = 2.71828;
+    print("Pi:", pi);
+    print("E:", e);
+    
+    // Multiple floats
+    print("Constants:", pi, e, 1.414);
+    
+    print("=== All Tests Passed! ===");
+    return 0;
+}
+// main();

@@ -1,0 +1,16 @@
+// Test pointer indexing with alloc/free
+// NOTE: Pointer reads not yet working (write works)
+
+fn main() {
+    unsafe {
+        let ptr = alloc<u8>(5);
+        
+        // Write works
+        ptr[0] = 65;
+        print("Wrote 65 to ptr[0]\n");
+        
+        // Try to read (this fails)
+        let val = ptr[0];
+        print("Read from ptr[0]: " + val + "\n");
+    }
+}

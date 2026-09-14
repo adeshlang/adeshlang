@@ -1,0 +1,141 @@
+// Real-World Struct Example: E-Commerce System
+// Demonstrates practical struct usage in a complete system
+
+print("=== E-Commerce System Example ===");
+
+print("Building a product catalog system with structs...");
+
+struct Price {
+    amount: f64;
+    currency: String;
+};
+
+struct Product {
+    id: Int;
+    name: String;
+    description: String;
+    price: Price;
+    inStock: Bool;
+    quantity: Int;
+};
+
+struct Customer {
+    customerId: Int;
+    name: String;
+    email: String;
+};
+
+struct Order {
+    orderId: Int;
+    customer: Customer;
+    product: Product;
+    quantity: Int;
+};
+
+print("=== Creating Products ===");
+
+let price1 = Price {
+    amount: 29.99,
+    currency: "USD",
+};
+
+let laptop = Product {
+    id: 1001,
+    name: "Premium Laptop",
+    description: "High-performance laptop",
+    price: price1,
+    inStock: true,
+    quantity: 15,
+};
+
+print("Product created: Premium Laptop");
+print("ID: 1001");
+print("Price: 29.99 USD");
+print("In Stock: Yes");
+print("Available: 15");
+
+let price2 = Price {
+    amount: 9.99,
+    currency: "USD",
+};
+
+let mouse = Product {
+    id: 1002,
+    name: "Wireless Mouse",
+    description: "Ergonomic design",
+    price: price2,
+    inStock: true,
+    quantity: 50,
+};
+
+print("Product created: Wireless Mouse");
+print("Price: 9.99 USD");
+print("Available: 50");
+
+print("=== Creating Customers ===");
+
+let customer1 = Customer {
+    customerId: 5001,
+    name: "Alice Johnson",
+    email: "alice@example.com",
+};
+
+print("Customer registered: Alice Johnson");
+print("Email: alice@example.com");
+
+let customer2 = Customer {
+    customerId: 5002,
+    name: "Bob Smith",
+    email: "bob@example.com",
+};
+
+print("Customer registered: Bob Smith");
+
+print("=== Processing Orders ===");
+
+let order1 = Order {
+    orderId: 10001,
+    customer: customer1,
+    product: laptop,
+    quantity: 1,
+};
+
+print("Order created:");
+print("Order ID: 10001");
+print("Customer: Alice Johnson");
+print("Product: Premium Laptop");
+print("Quantity: 1");
+
+let order2 = Order {
+    orderId: 10002,
+    customer: customer2,
+    product: mouse,
+    quantity: 3,
+};
+
+print("Order created:");
+print("Order ID: 10002");
+print("Customer: Bob Smith");
+print("Product: Wireless Mouse");
+print("Quantity: 3");
+
+print("=== Order Summary ===");
+
+print("Order 1 Details:");
+print(order1.customer.name,{color:"#00FF00"});
+print(order1.product.name,{color:"#00FF00"});
+print("Price: 29.99");
+
+print("Order 2 Details:");
+print(order2.customer.name,{color:"#00FF00"});
+print(order2.product.name,{color:"#00FF00"});
+print("Price: 9.99");
+
+print("=== System Summary ===");
+
+print("Products in catalog: 2");
+print("Registered customers: 2");
+print("Orders processed: 2");
+print("System status: Operational");
+
+print("=== E-Commerce Example Complete ===");

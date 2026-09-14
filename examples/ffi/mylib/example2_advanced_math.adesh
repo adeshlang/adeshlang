@@ -1,0 +1,59 @@
+// Example 2: Advanced Math Functions
+// Demonstrates trigonometry, logarithms, and other advanced math
+
+extern "C" {
+    fn power(base: f64, exp: f64) -> f64;
+    fn square_root(x: f64) -> f64;
+    fn sine(x: f64) -> f64;
+    fn cosine(x: f64) -> f64;
+    fn tangent(x: f64) -> f64;
+    fn logarithm(x: f64) -> f64;
+    fn factorial(n: i32) -> i32;
+}
+
+fn main() {
+    print("=== Advanced Math Functions ===\n");
+    
+    print("\nPower and Roots:\n");
+    print("  2^10 = ");
+    print(power(2.0, 10.0));
+    print("\n");
+    
+    print("  sqrt(144) = ");
+    print(square_root(144.0));
+    print("\n");
+    
+    print("\nTrigonometry (radians):\n");
+    let pi = 3.14159265359;
+    print("  sin(π/2) = ");
+    print(sine(pi / 2.0));
+    print("\n");
+    
+    print("  cos(0) = ");
+    print(cosine(0.0));
+    print("\n");
+    
+    print("  tan(π/4) = ");
+    print(tangent(pi / 4.0));
+    print("\n");
+    
+    print("\nLogarithm:\n");
+    print("  ln(e) ≈ ln(2.71828) = ");
+    print(logarithm(2.71828));
+    print("\n");
+    
+    print("  ln(10) = ");
+    print(logarithm(10.0));
+    print("\n");
+    
+    print("\nFactorials:\n");
+    print("  5! = ");
+    print(factorial(5));
+    print("\n");
+    
+    print("  10! = ");
+    print(factorial(10));
+    print("\n");
+}
+
+// To run: adesh run example2_advanced_math.adesh -L . -l mylib

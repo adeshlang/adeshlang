@@ -1,0 +1,19 @@
+// Test pointer type annotations
+unsafe {
+    let ptr: *u8 = alloc(10);
+    println("Allocated pointer");
+    
+    ptr[0] = 65;
+    println("Wrote 65 to ptr[0]");
+    
+    let val0 = ptr[0];
+    println("Read value from pointer");
+    println(val0);
+    
+
+    free(ptr);
+    print(ptr[0]); // Undefined behavior after free
+    println("Done");
+}
+
+

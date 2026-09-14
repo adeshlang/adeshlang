@@ -1,0 +1,13 @@
+import Compression;
+import Encoding;
+
+print("=== Zstd Compression Example ===");
+
+let payload = "Zstandard provides fast decompression and top-tier compression ratio. Zstandard provides fast decompression and top-tier compression ratio. Zstandard provides fast decompression and top-tier compression ratio.";
+
+let compressed = Compression.zstd(payload, 5);
+print("Original len:", len(payload), "Compressed len:", len(compressed));
+
+let decompressedBytes = Compression.unzstd(compressed);
+let decompressedText = Encoding.utf8Decode(decompressedBytes);
+print("Match:", decompressedText == payload);

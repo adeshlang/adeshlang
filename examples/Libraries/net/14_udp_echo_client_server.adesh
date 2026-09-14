@@ -1,0 +1,36 @@
+// AdeshLang Net Example 14: UDP Echo Client & Server Endpoints
+import Net;
+
+fn main() {
+    print("=== 14. UDP Echo Client & Server Endpoints ===");
+
+    // Server socket
+    let serverSocket = Net.udpBind("127.0.0.1", 9096);
+    print("UDP Server bound to:", serverSocket.localAddress());
+
+    // Client socket
+    let clientSocket = Net.udpBind("127.0.0.1", 0);
+    print("UDP Client bound to ephemeral port:", clientSocket.localAddress());
+
+    // Send UDP Datagram from Client to Server
+    clientSocket.sendTo("Ping from UDP Client!", "127.0.0.1", 9096);
+    print("UDP Client sent datagram");
+
+    // Server receives Datagram
+    let packet = serverSocket.receiveFrom(1024);
+    print("UDP Server received datagram from:", packet.remoteAddress, "port:", packet.remotePort);
+
+    // Server replies ACK back to Client
+    serverSocket.sendTo("Pong from UDP Server!", packet.remoteAddress, packet.remotePort);
+    print("UDP Server sent reply ACK");
+
+    // Client receives Reply ACK
+    let replyPacket = clientSocket.receiveFrom(1024);
+    print("UDP Client received reply ACK from Server!");
+
+    clientSocket.close();
+    serverSocket.close();
+    print("=== 14. UDP Echo Client & Server Completed ===");
+}
+
+main();

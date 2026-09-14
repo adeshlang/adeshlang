@@ -1,0 +1,13 @@
+// Functions in AdeshLang
+
+fn add(a, b) {
+    return a + b;
+}
+
+fn greet(person) {
+    print("Welcome,", person);
+}
+
+greet("Developer");
+let result = add(100, 250);
+print("100 + 250 =", result);

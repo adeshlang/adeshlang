@@ -1,0 +1,4 @@
+// module exporting async function
+export async fn modAdd(a, b){
+    return a + b;
+}

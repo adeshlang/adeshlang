@@ -1,0 +1,15 @@
+// Executable Example: Process Execution Timeout
+import Process;
+import Time;
+
+let result = Process.builder("git")
+    .args(["status"])
+    .stdoutPipe()
+    .runTimeout(Duration.seconds(5))
+    .run();
+
+if result.success() {
+    print("Process finished within timeout: " + result.stdoutText().trim());
+} else {
+    print("Process failed or timed out.");
+}

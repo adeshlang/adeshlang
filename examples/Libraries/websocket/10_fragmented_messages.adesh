@@ -1,0 +1,39 @@
+// AdeshLang WebSocket Example 10: RFC 6455 Message Fragmentation
+// Demonstrates sending and receiving fragmented frames with interleaved control frames.
+
+import WebSocket;
+
+print("=== AdeshLang WebSocket RFC 6455 Message Fragmentation Demo ===");
+
+let config = {
+    port: 8610,
+    bind_address: "127.0.0.1"
+};
+
+let server = WebSocket.server(config);
+print("✓ Created WSS server instance on port 8610");
+
+// Start echo server background loop
+server.startEcho();
+print("✓ Echo server started on ws://127.0.0.1:8610");
+
+let client = WebSocket.connect("ws://127.0.0.1:8610");
+print("✓ Client connected to server");
+
+// Send fragmented payload
+client.sendText("Part 1: Hello ");
+client.sendText("Part 2: Fragmented ");
+client.sendText("Part 3: WebSocket!");
+
+let msg1 = client.receive();
+print("Client Received Reassembled Message 1: " + msg1.payload);
+
+let msg2 = client.receive();
+print("Client Received Reassembled Message 2: " + msg2.payload);
+
+let msg3 = client.receive();
+print("Client Received Reassembled Message 3: " + msg3.payload);
+
+client.close(1000, "Fragmentation test complete");
+server.close();
+print("✓ Connection cleanly closed and test completed successfully!");

@@ -1,0 +1,493 @@
+// =============================================================================
+// AdeshLang Memory Management - Reference Cycles and Weak References
+// =============================================================================
+// This example demonstrates how to handle reference cycles using weak references:
+// - Parent-child relationships without cycles
+// - Observer patterns with weak references
+// - Cache implementations that don't prevent cleanup
+// - Breaking cycles in graph structures
+// =============================================================================
+
+print("=== Reference Cycles and Weak References Demo ===\n");
+
+// -----------------------------------------------------------------------------
+// 1. Parent-Child Relationship Problem
+// -----------------------------------------------------------------------------
+// Without weak references, parent-child relationships create cycles.
+
+print("--- Parent-Child Cycle Problem ---");
+
+class Node {
+    fn init(name) {
+        this.name = name;
+        this.children = [];
+        this.parent = null; // This will create a cycle if not weak
+        this.refCount = 1;  // Simulate reference counting
+        print("  Created node: " + name);
+    }
+    
+    fn addChild(child) {
+        this.children.push(child);
+        child.parent = this; // Creates cycle: parent -> child -> parent
+        child.refCount = child.refCount + 1; // Simulate ref count increase
+        print("  " + this.name + " adopted child: " + child.name);
+    }
+    
+    fn getPath() {
+        if (this.parent == null) {
+            return this.name;
+        }
+        return this.parent.getPath() + " -> " + this.name;
+    }
+    
+    fn simulateDestroy() {
+        this.refCount = this.refCount - 1;
+        if (this.refCount <= 0) {
+            print("  Destroyed node: " + this.name);
+            return true;
+        }
+        return false;
+    }
+}
+
+// Create problematic cycle
+let root = new Node("root");
+let child1 = new Node("child1");
+let child2 = new Node("child2");
+
+root.addChild(child1);
+root.addChild(child2);
+
+print("  Paths:");
+print("    " + child1.getPath());
+print("    " + child2.getPath());
+
+// Simulate reference counting issue
+print("  Reference counts:");
+print("    root: " + str(root.refCount));
+print("    child1: " + str(child1.refCount));
+print("    child2: " + str(child2.refCount));
+
+print("  Problem: Cycle prevents cleanup even when no external references exist");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 2. Weak Reference Solution
+// -----------------------------------------------------------------------------
+// Use weak references to break cycles while maintaining functionality.
+
+print("--- Weak Reference Solution ---");
+
+class WeakRef {
+    fn init(target) {
+        this.target = target;
+        this.isValid = true;
+        target.weakRefs = target.weakRefs || [];
+        target.weakRefs.push(this);
+    }
+    
+    fn get() {
+        if (!this.isValid) {
+            return null;
+        }
+        return this.target;
+    }
+    
+    fn invalidate() {
+        this.isValid = false;
+        this.target = null;
+    }
+}
+
+class SafeNode {
+    fn init(name) {
+        this.name = name;
+        this.children = [];
+        this.parentWeak = null; // Weak reference to parent
+        this.refCount = 1;
+        this.weakRefs = [];
+        print("  Created safe node: " + name);
+    }
+    
+    fn addChild(child) {
+        this.children.push(child); // Strong reference to children
+        child.parentWeak = new WeakRef(this); // Weak reference to parent
+        child.refCount = child.refCount + 1;
+        print("  " + this.name + " adopted child: " + child.name + " (weak parent ref)");
+    }
+    
+    fn getParent() {
+        if (this.parentWeak == null) {
+            return null;
+        }
+        return this.parentWeak.get();
+    }
+    
+    fn getPath() {
+        let parent = this.getParent();
+        if (parent == null) {
+            return this.name;
+        }
+        return parent.getPath() + " -> " + this.name;
+    }
+    
+    fn destroy() {
+        // Invalidate all weak references to this node
+        for (weakRef in this.weakRefs) {
+            weakRef.invalidate();
+        }
+        
+        // Destroy children
+        for (child in this.children) {
+            child.destroy();
+        }
+        
+        print("  Destroyed safe node: " + this.name);
+    }
+}
+
+// Create cycle-free structure
+let safeRoot = new SafeNode("safe-root");
+let safeChild1 = new SafeNode("safe-child1");
+let safeChild2 = new SafeNode("safe-child2");
+
+safeRoot.addChild(safeChild1);
+safeRoot.addChild(safeChild2);
+
+print("  Safe paths:");
+print("    " + safeChild1.getPath());
+print("    " + safeChild2.getPath());
+
+// Demonstrate cleanup
+print("  Cleaning up safe structure...");
+safeRoot.destroy();
+
+// Try to access after cleanup
+let parent = safeChild1.getParent();
+if (parent == null) {
+    print("  ✓ Parent weak reference correctly invalidated");
+}
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 3. Observer Pattern with Weak References
+// -----------------------------------------------------------------------------
+// Observers shouldn't prevent subject cleanup.
+
+print("--- Observer Pattern with Weak References ---");
+
+class Subject {
+    fn init(name) {
+        this.name = name;
+        this.observers = []; // Weak references to observers
+        this.value = 0;
+        print("  Created subject: " + name);
+    }
+    
+    fn addObserver(observer) {
+        let weakRef = new WeakRef(observer);
+        this.observers.push(weakRef);
+        print("  Added observer to " + this.name + " (weak reference)");
+    }
+    
+    fn removeObserver(observer) {
+        let newObservers = [];
+        for (weakRef in this.observers) {
+            let obs = weakRef.get();
+            if (obs != null && obs != observer) {
+                newObservers.push(weakRef);
+            }
+        }
+        this.observers = newObservers;
+        print("  Removed observer from " + this.name);
+    }
+    
+    fn setValue(newValue) {
+        this.value = newValue;
+        this.notifyObservers();
+    }
+    
+    fn notifyObservers() {
+        let validObservers = [];
+        for (weakRef in this.observers) {
+            let observer = weakRef.get();
+            if (observer != null) {
+                observer.notify(this.name, this.value);
+                validObservers.push(weakRef);
+            }
+        }
+        // Clean up invalid weak references
+        this.observers = validObservers;
+        print("  Notified " + str(len(validObservers)) + " observers");
+    }
+}
+
+class Observer {
+    fn init(name) {
+        this.name = name;
+        this.weakRefs = [];
+        print("  Created observer: " + name);
+    }
+    
+    fn notify(subjectName, value) {
+        print("  Observer " + this.name + " notified: " + subjectName + " = " + str(value));
+    }
+    
+    fn destroy() {
+        // Invalidate weak references
+        for (weakRef in this.weakRefs) {
+            weakRef.invalidate();
+        }
+        print("  Destroyed observer: " + this.name);
+    }
+}
+
+// Create subject and observers
+let subject = new Subject("temperature");
+let observer1 = new Observer("display");
+let observer2 = new Observer("logger");
+
+subject.addObserver(observer1);
+subject.addObserver(observer2);
+
+// Update value
+subject.setValue(25);
+
+// Destroy an observer
+observer1.destroy();
+
+// Update again - should only notify remaining observer
+subject.setValue(30);
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 4. Weak Cache Implementation
+// -----------------------------------------------------------------------------
+// Cache that doesn't prevent cached objects from being garbage collected.
+
+print("--- Weak Cache Implementation ---");
+
+class WeakCache {
+    fn init(name) {
+        this.name = name;
+        this.entries = {}; // key -> WeakRef
+        this.hits = 0;
+        this.misses = 0;
+        print("  Created weak cache: " + name);
+    }
+    
+    fn set(key, value) {
+        this.entries[key] = new WeakRef(value);
+        print("  Cached: " + key);
+    }
+    
+    fn get(key) {
+        if (!hasKey(this.entries, key)) {
+            this.misses = this.misses + 1;
+            return null;
+        }
+        
+        let weakRef = this.entries[key];
+        let value = weakRef.get();
+        
+        if (value == null) {
+            // Object was collected, remove stale entry
+            delete this.entries[key];
+            this.misses = this.misses + 1;
+            print("  Cache miss (collected): " + key);
+            return null;
+        }
+        
+        this.hits = this.hits + 1;
+        print("  Cache hit: " + key);
+        return value;
+    }
+    
+    fn cleanup() {
+        let oldSize = len(this.entries);
+        let newEntries = {};
+        
+        for (key in keys(this.entries)) {
+            let weakRef = this.entries[key];
+            if (weakRef.get() != null) {
+                newEntries[key] = weakRef;
+            }
+        }
+        
+        this.entries = newEntries;
+        let cleaned = oldSize - len(newEntries);
+        print("  Cache cleanup: removed " + str(cleaned) + " stale entries");
+    }
+    
+    fn getStats() {
+        return {
+            name: this.name,
+            entries: len(this.entries),
+            hits: this.hits,
+            misses: this.misses,
+            hitRate: (this.hits * 100) / (this.hits + this.misses)
+        };
+    }
+}
+
+class CacheableData {
+    fn init(id, data) {
+        this.id = id;
+        this.data = data;
+        this.weakRefs = [];
+        print("  Created cacheable data: " + id);
+    }
+    
+    fn destroy() {
+        for (weakRef in this.weakRefs) {
+            weakRef.invalidate();
+        }
+        print("  Destroyed cacheable data: " + this.id);
+    }
+}
+
+// Demonstrate weak cache
+let cache = new WeakCache("object-cache");
+
+// Create and cache some objects
+let obj1 = new CacheableData("obj1", "data1");
+let obj2 = new CacheableData("obj2", "data2");
+let obj3 = new CacheableData("obj3", "data3");
+
+cache.set("key1", obj1);
+cache.set("key2", obj2);
+cache.set("key3", obj3);
+
+// Access cached objects
+let retrieved1 = cache.get("key1");
+let retrieved2 = cache.get("key2");
+
+print("  Retrieved: " + retrieved1.id + ", " + retrieved2.id);
+
+// Simulate object destruction
+obj1.destroy();
+obj1 = null; // Remove strong reference
+
+// Try to access destroyed object
+let retrieved1Again = cache.get("key1");
+if (retrieved1Again == null) {
+    print("  ✓ Destroyed object correctly removed from cache");
+}
+
+// Cache stats
+print("  Cache stats: " + str(cache.getStats()));
+
+// Cleanup stale entries
+cache.cleanup();
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 5. Graph Structure with Cycle Breaking
+// -----------------------------------------------------------------------------
+// Complex graph where nodes can reference each other.
+
+print("--- Graph Structure with Cycle Breaking ---");
+
+class GraphNode {
+    fn init(id) {
+        this.id = id;
+        this.strongEdges = [];   // Strong references (ownership)
+        this.weakEdges = [];     // Weak references (non-owning)
+        this.weakRefs = [];
+        print("  Created graph node: " + id);
+    }
+    
+    fn addStrongEdge(target) {
+        this.strongEdges.push(target);
+        print("  " + this.id + " -> " + target.id + " (strong)");
+    }
+    
+    fn addWeakEdge(target) {
+        let weakRef = new WeakRef(target);
+        this.weakEdges.push(weakRef);
+        print("  " + this.id + " -> " + target.id + " (weak)");
+    }
+    
+    fn getConnections() {
+        let connections = [];
+        
+        // Strong connections
+        for (node in this.strongEdges) {
+            connections.push(node.id + "(strong)");
+        }
+        
+        // Weak connections (if still valid)
+        for (weakRef in this.weakEdges) {
+            let node = weakRef.get();
+            if (node != null) {
+                connections.push(node.id + "(weak)");
+            }
+        }
+        
+        return connections;
+    }
+    
+    fn destroy() {
+        // Invalidate weak references to this node
+        for (weakRef in this.weakRefs) {
+            weakRef.invalidate();
+        }
+        
+        print("  Destroyed graph node: " + this.id);
+    }
+}
+
+// Create graph with mixed strong/weak edges
+let nodeA = new GraphNode("A");
+let nodeB = new GraphNode("B");
+let nodeC = new GraphNode("C");
+
+// Create ownership hierarchy: A owns B, B owns C
+nodeA.addStrongEdge(nodeB);
+nodeB.addStrongEdge(nodeC);
+
+// Add weak back-references to avoid cycles
+nodeB.addWeakEdge(nodeA);  // B -> A (weak)
+nodeC.addWeakEdge(nodeB);  // C -> B (weak)
+nodeC.addWeakEdge(nodeA);  // C -> A (weak)
+
+print("  Graph connections:");
+print("    A: " + str(nodeA.getConnections()));
+print("    B: " + str(nodeB.getConnections()));
+print("    C: " + str(nodeC.getConnections()));
+
+// Destroy part of graph
+print("  Destroying node A...");
+nodeA.destroy();
+
+// Check remaining connections
+print("  After A destroyed:");
+print("    B: " + str(nodeB.getConnections()));
+print("    C: " + str(nodeC.getConnections()));
+
+print("");
+
+// -----------------------------------------------------------------------------
+// Summary
+// -----------------------------------------------------------------------------
+
+print("=== Reference Cycle Summary ===");
+print("1. Strong references create ownership and prevent cleanup");
+print("2. Weak references allow access without ownership");
+print("3. Use weak references for back-pointers in hierarchies");
+print("4. Observer patterns should use weak references");
+print("5. Caches can use weak references to avoid preventing cleanup");
+print("6. Graph structures need careful strong/weak edge design");
+print("");
+print("Best practices:");
+print("  - Parent -> Child: Strong reference");
+print("  - Child -> Parent: Weak reference");
+print("  - Observer -> Subject: Strong reference");
+print("  - Subject -> Observer: Weak reference");
+print("  - Cache -> Object: Weak reference");
+print("");
+print("=== Demo Complete ===");

@@ -1,0 +1,8 @@
+import Path;
+
+let rel = Path.new("src/main.adesh");
+print("IsRelative: " + str(rel.isRelative()));
+
+let abs = rel.absolute();
+print("Absolute: " + abs.toString());
+print("IsAbsolute: " + str(abs.isAbsolute()));

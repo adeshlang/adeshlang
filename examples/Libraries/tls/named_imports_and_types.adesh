@@ -1,0 +1,35 @@
+// Example 15: Named Specific Imports and Dedicated TLS Security Policy Types
+import { connectWithOptions, SecurityPolicy, TrustStore } from TLS;
+
+let host: String = "1.1.1.1";
+let port: i64 = 443;
+
+print("--- Establishing Dedicated Security Policy TLS Stream ---");
+
+// Step 1: Construct typed security policy
+let policy: Object = SecurityPolicy().strict();
+
+// Step 2: Construct trust store
+let trustStore: Object = TrustStore().systemAndWebpki();
+
+// Step 3: Establish connection using specific named imported functions
+let options: Object = {
+    "verifyCertificates": policy.verifyCertificates,
+    "verifyHostname": policy.verifyHostname,
+    "minVersion": policy.minVersion,
+    "alpn": ["http/1.1"]
+};
+
+let tls: Object = connectWithOptions(host, port, options);
+
+print("TLS Handshake Version: " + tls.version());
+print("ALPN Protocol: " + (tls.alpn() == "" ? "None" : tls.alpn()));
+
+let bytesWritten: i64 = tls.writeText("GET / HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n");
+print("Transmitted Request Bytes: " + bytesWritten);
+
+let response: String = tls.readText(1024);
+print("\nResponse Received:\n" + response);
+
+tls.close();
+print("Named Specific Import Session Closed.");

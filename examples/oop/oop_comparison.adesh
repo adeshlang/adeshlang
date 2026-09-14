@@ -1,0 +1,60 @@
+// Comparison: Old vs New OOP Syntax in AdeshLang
+
+print("=== OOP Syntax Comparison ===");
+
+// OLD SYNTAX (still supported)
+print("\n--- Old Syntax ---");
+class PersonOld {
+    PersonOld(name, age) {
+        this.name = name;
+        this.age = age;
+    }
+    
+    fn greet() {
+        print("Hello, I'm ", this.name, " My age is ", this.age);
+    }
+}
+
+let oldPerson = new PersonOld("John", 25);
+oldPerson.greet();
+
+// NEW ENHANCED SYNTAX
+print("\n--- New Enhanced Syntax ---");
+class PersonNew {
+    PersonNew(name, age) {
+        self.name = name;
+        self.age = age;
+    }
+    
+    // Method overloading
+    fn greet() {
+        print("Hello, I'm ", self.name);
+    }
+    
+    fn greet(formal) {
+        if (formal) {
+            print("Good day, my name is ", self.name);
+        } else {
+            self.greet();
+        }
+    }
+    
+    // Operator overloading
+    fn operator toString() {
+        return self.name + " (" + self.age + " years old)";
+    }
+}
+
+let newPerson = new PersonNew("Jane", 28);
+newPerson.greet();
+newPerson.greet(true);
+print("Person info:", newPerson.toString());
+
+print("\n=== Key Improvements ===");
+print("1. 'constructor' keyword instead of 'init'");
+print("2. 'self' keyword instead of 'this'");
+print("3. Method overloading support");
+print("4. Operator overloading");
+print("5. Static methods and properties");
+print("6. Property getters and setters");
+print("7. Enhanced inheritance with super()");

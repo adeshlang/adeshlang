@@ -1,0 +1,86 @@
+// RAII (Resource Acquisition Is Initialization)
+// Automatic cleanup when values go out of scope
+
+fn main() {
+    print("=== RAII Automatic Cleanup ===");
+    
+    // Resources are cleaned up automatically at scope end
+    {
+        let resource = [1, 2, 3, 4, 5];
+        print("Using resource:", resource);
+        // resource is automatically cleaned up here
+    }
+    print("Resource cleaned up");
+    
+    // Cleanup on function return
+    test_early_return();
+    
+    // Cleanup on all exit paths
+    test_multiple_paths(true);
+    test_multiple_paths(false);
+}
+
+fn test_early_return() {
+    let data = [10, 20, 30];
+    
+    if (data[0] > 5) {
+        print("Early return");
+        return;  // data is cleaned up here
+    }
+    
+    print("Normal path");
+    // data would be cleaned up here too
+}
+
+fn test_multiple_paths(condition) {
+    let resource1 = [1, 2, 3];
+    let resource2 = [4, 5, 6];
+    
+    if (condition) {
+        print("Path A");
+        // Both resources cleaned up on this path
+        return;
+    } else {
+        print("Path B");
+        // Both resources cleaned up on this path too
+    }
+    
+    // Resources cleaned up here if neither path taken
+}
+
+// Cleanup with loops
+fn cleanup_in_loops() {
+    for (i = 0; i < 3; i = i + 1) {
+        let temp = [i, i+1, i+2];
+        print("Iteration:", temp);
+        // temp is cleaned up at end of each iteration
+    }
+    
+    print("Loop done, all temps cleaned up");
+}
+
+// Nested scopes
+fn nested_cleanup() {
+    let outer = [1, 2, 3];
+    print("Outer:", outer);
+    
+    {
+        let inner = [4, 5, 6];
+        print("Inner:", inner);
+        // inner cleaned up here
+    }
+    
+    print("Outer still valid:", outer);
+    // outer cleaned up here
+}
+
+// Exception safety (cleanup on errors)
+fn cleanup_on_error() {
+    let important_resource = [100, 200, 300];
+    
+    // Even if an error occurs, cleanup is guaranteed
+    // (This is conceptual - actual error handling varies)
+    
+    print("Resource:", important_resource);
+    // Cleanup happens no matter what
+}

@@ -1,0 +1,14 @@
+// 22 — work stealing (pool workers steal from neighbor queues)
+import thread;
+
+thread.watchdog(15000);
+let pool = thread.ThreadPool.new(thread.hardware_concurrency());
+let i = 0;
+while i < 16 {
+    pool.execute(fn() { let x = 0; x = x + 1; });
+    i = i + 1;
+}
+thread.sleep(50);
+pool.shutdown();
+pool.join_timeout(3000);
+print("stolen work drained");

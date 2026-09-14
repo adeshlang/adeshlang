@@ -1,0 +1,56 @@
+// Basic Ownership Scenarios
+// Demonstrates ownership transfer through functions
+
+print("=== Function With Parameter ===");
+
+fn use_value(x) {
+    print("Function received value: ");
+    print(x);
+}
+
+let val1 = 42;
+print("Created value: 42");
+use_value(val1);
+print("Value used in function");
+
+print("=== Function Returning Value ===");
+
+fn create_value(a, b) {
+    return a + b;
+}
+
+let result = create_value(10, 20);
+print("Function returned:");
+print(result);
+
+print("=== Function With Borrowed Parameter ===");
+
+fn read_value(x) {
+    print("Borrowed function sees value: ");
+    print(x);
+}
+
+let val2 = 100;
+read_value(val2);
+print("val2 still accessible after call");
+print("val2 = ");
+print(val2);
+
+print("=== Sequential Function Calls ===");
+
+fn borrow1(x) {
+    print("borrow1: value = ");
+    print(x);
+}
+
+fn borrow2(x) {
+    print("borrow2: value = ");
+    print(x);
+}
+
+let val3 = 500;
+borrow1(val3);
+borrow2(val3);
+print("Multiple sequential calls completed");
+
+print("=== All Ownership Scenarios Passed ===");

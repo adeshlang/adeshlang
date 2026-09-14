@@ -1,0 +1,5 @@
+fn main() {
+    let critical = Obj();
+     share ab =  critical; // compile error in embedded mode: ARC disabled
+    print(ab);
+}

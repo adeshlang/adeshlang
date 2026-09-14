@@ -1,0 +1,84 @@
+/// Type Layout Advanced Examples
+/// Demonstrates complex type layouts and alignment behavior
+// .
+fn main() {
+    print("=== Advanced Type Layout Examples ===\n");
+
+    /// Example 1: Primitive type sizes
+    print("Example 1: Primitive Type Sizes");
+    print("u8  = 1 byte");
+    print("u16 = 2 bytes");
+    print("u32 = 4 bytes");
+    print("u64 = 8 bytes");
+    print("u128 = 16 bytes");
+    print("i32 = 4 bytes");
+    print("f32 = 4 bytes");
+    print("f64 = 8 bytes");
+    print();
+
+    /// Example 2: Pointer sizes
+    print("Example 2: Pointer Sizes (64-bit)");
+    print("All pointers = 8 bytes on 64-bit systems");
+    print();
+
+    /// Example 3: Array sizes (simplified)
+    print("Example 3: Array Sizes");
+    print("[i32; 10] = 40 bytes (10 * 4)");
+    print("[u8; 5] = 5 bytes");
+    print("[f64; 3] = 24 bytes (3 * 8)");
+    print();
+
+    /// Example 4: Tuple sizes with padding
+    print("Example 4: Tuple Layouts (with alignment)");
+    print("(u8, u32) = 8 bytes (1 + 3 padding + 4)");
+    print("(u8, u8, u32) = 8 bytes (1 + 1 + 2 padding + 4)");
+    print("(u64, u8) = 16 bytes (8 + 1 + 7 padding)");
+    print();
+
+    /// Example 5: Alignment requirements
+    print("Example 5: Type Alignments");
+    print("alignof(u8) = {}", alignof(u8));      // 1
+    print("alignof(u16) = {}", alignof(u16));    // 2
+    print("alignof(u32) = {}", alignof(u32));    // 4
+    print("alignof(u64) = {}", alignof(u64));    // 8
+    print("alignof(f32) = {}", alignof(f32));    // 4
+    print("alignof(f64) = {}", alignof(f64));    // 8
+    print();
+
+    /// Example 6: String type layout
+    print("Example 6: String Type Layout");
+    print("sizeof(string) = {} bytes (ptr:8 + len:8 + cap:8)", sizeof(string));
+    let s = "Hello";
+    print("String 'Hello' stored with metadata: ptr, len=5, cap\n");
+
+    /// Example 7: Size computation in allocations
+    print("Example 7: Computing Allocation Size");
+    let bytes_needed = 10 * sizeof(u32);  // 10 u32 elements
+    print("For 10 u32 elements, need {} bytes", bytes_needed);
+    
+    let p = alloc(bytes_needed);
+    print("Allocated pointer: {}", p);
+    free(p);
+    print("Freed allocation\n");
+
+    /// Example 8: Practical use of sizeof
+    print("Example 8: Practical Buffer Allocation");
+    let element_count = 100;
+    let element_size = sizeof(i32);  // 4
+    let total_size = element_count * element_size;
+    print("Allocating array of {} i32 elements = {} bytes", element_count, total_size);
+    
+    let buffer = alloc(total_size);
+    print("Buffer allocated at: {}", buffer);
+    
+    // Write some values
+    for i in 0..10 {
+        let index = i * element_size;
+        // Store at index (simplified)
+    }
+    
+    free(buffer);
+    print("Buffer freed\n");
+
+    print("=== All Type Layout Examples Passed ===");
+}

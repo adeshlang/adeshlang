@@ -1,0 +1,36 @@
+// Simple test to isolate the issue
+
+async fn test1() {
+    return 42;
+}
+
+async fn test2() {
+    let p = Promise(fn(res, _) { res(100); });
+    let v = await p;
+    return v + 5;
+}
+
+import "examples/modules/mod_a.adesh" as m;
+
+async fn main() {
+    print("=== Test 1: Basic async function ===");
+    let p1 = test1();
+    let r1 = await p1;
+    print("test1 result:", r1);
+
+    print("\n=== Test 2: Async with await inside ===");
+    let p2 = test2();
+    let r2 = await p2;
+    print("test2 result:", r2);
+
+    print("\n=== Test 3: Module import ===");
+    print("m is:", m);
+    print("m.modAdd is:", m.modAdd);
+
+    let p3 = m.modAdd(10, 20);
+    print("p3 is Promise?", p3);
+    let r3 = await p3;
+    print("modAdd result:", r3);
+
+    print("\n=== All tests done ===");
+}

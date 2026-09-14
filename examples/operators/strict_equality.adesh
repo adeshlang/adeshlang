@@ -1,0 +1,27 @@
+let a = 2;
+let b = "2";
+print("typeof a:", typeof a);
+print("typeof b:", typeof b);
+print("a==b:", a == b);
+print("a===b:", a === b);
+
+let x = [1];
+let y = [1];
+let z = &x;
+print("x==y:", x == y);
+print("x===y:", x === y);
+print("x===z:", x === z);
+
+let s1 = "hello";
+let s2 = "hello";
+print("s1==s2:", s1 == s2);
+print("s1===s2:", s1 === s2);
+
+let n1 = 2;
+let n2 = "2";
+print("n1==n2:", n1 == n2);
+print("n1===n2:", n1 === n2);
+
+let t = true;
+print("t===1:", t === 1);
+print("t==1:", t == 1);

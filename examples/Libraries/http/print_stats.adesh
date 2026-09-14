@@ -1,0 +1,13 @@
+import HTTP;
+let stats = HTTP.http3Stats();
+print("QUIC connections:       ", stats.totalConnections);
+print("Active connections:     ", stats.activeConnections);
+print("HTTP/3 streams:         ", stats.totalStreams);
+print("Max concurrent streams: ", stats.maxConcurrentStreams);
+print("Completed:              ", stats.completedStreams);
+print("Reset:                  ", stats.resetStreams);
+print("Cancelled:              ", stats.cancelledStreams);
+print("Connection errors:      ", stats.connectionErrors);
+print("Stream errors:          ", stats.streamErrors);
+print("Bytes sent:             ", stats.bytesSent);
+print("Bytes received:         ", stats.bytesReceived);

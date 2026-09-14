@@ -1,0 +1,21 @@
+// Test to verify f64 multiplication
+
+// Simple case: f64 * integer literal
+let x = 0.5;
+let r1 = x * 100;
+print("0.5 * 100 =", r1);  // Should be 50.0
+
+// From clock
+let t1 = clock();
+let t2 = t1 + 0.001;  // Add 0.001 seconds
+let elapsed = t2 - t1;
+print("elapsed:", elapsed);
+print("elapsed * 1000:", elapsed * 1000);  // Should be 1.0 ms
+
+// Direct calculation
+let direct = (t2 - t1) * 1000;
+print("direct calc:", direct);
+
+// Test with float literal
+let y = 0.039;
+print("0.039 * 1000 =", y * 1000);  // Should be 39.0

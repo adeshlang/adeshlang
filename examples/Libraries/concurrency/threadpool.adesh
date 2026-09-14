@@ -1,0 +1,73 @@
+// Thread Pool Example
+// Run: adeshlang run examples/concurrency/threadpool.adesh --jit
+
+// import std:concurrency;
+import thread;
+
+fn worker_task(id, work) {
+    print(`  Worker ${id} processing ${work}...`);
+    let result = 0;
+    for i in range(0, work * 100) {
+        result = result + i % 1000;
+    }
+    print(`  Worker ${id} completed: ${result}`);
+    return result;
+}
+
+fn main() {
+    print("╔════════════════════════════════════════════════════╗");
+    print("║  THREAD POOL - Parallel Task Execution             ║");
+    print("╚════════════════════════════════════════════════════╝");
+    print("");
+    
+    // Create thread pool with CPU count
+    let num_threads = thread.hardware_concurrency();
+    print(`Creating thread pool with ${num_threads} threads...`);
+    let pool = thread.ThreadPool.new(num_threads);
+    print("");
+    
+    // Submit tasks
+    print("1. Submitting Individual Tasks:");
+    let futures = [];
+    for i in range(0, 8) {
+        let work_amount = (i + 1) * 100;
+        let future = pool.submit(fn() { return worker_task(i, work_amount); });
+        futures.push(future);
+    }
+    print("");
+    
+    // Collect results
+    print("2. Collecting Results:");
+    let total = 0;
+    for i in range(0, futures.len()) {
+        let result = futures[i].get();
+        total = total + result;
+    }
+    print(`  Total: ${total}`);
+    print("");
+    
+    // Batch execution
+    print("3. Batch Execution:");
+    let batch = [];
+    for i in range(0, 20) {
+        batch.push(pool.submit(fn() { return i * i; }));
+    }
+    let start = clock();
+    let sq = 0;
+    for i in range(0, batch.len()) {
+        sq = sq + batch[i].get();
+    }
+    let elapsed = clock() - start;
+    
+    print(`  Processed 20 tasks in ${elapsed}s`);
+    print(`  Sum of squares: ${sq}`);
+    print("");
+    
+    // Shutdown
+    print("4. Shutting Down Pool:");
+    pool.shutdown();
+    print("  Pool shutdown complete");
+    
+    print("");
+    print("Thread pool demo complete!");
+}

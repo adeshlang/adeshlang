@@ -1,0 +1,42 @@
+// Advanced JSON Capabilities Demonstration in AdeshLang
+
+fn main() {
+    // 1. Validation & Safe Parsing
+    let valid_input = "{\"status\": 200, \"active\": true}";
+    let invalid_input = "{status: 200}";
+
+    println("Is valid_input valid JSON? " + str(JSON.isValid(valid_input)));
+    println("Is invalid_input valid JSON? " + str(JSON.isValid(invalid_input)));
+
+    let safe_val = JSON.tryParse(valid_input);
+    println("Safe parse result status: " + str(safe_val.status));
+
+    // 2. Formatting & Minification
+    let unformatted = "{\n  \"a\": 1,\n  \"b\": [2, 3]\n}";
+    let minified = JSON.minify(unformatted);
+    println("Minified: " + minified);
+
+    let prettified = JSON.pretty(minified);
+    println("Prettified:\n" + prettified);
+
+    // 3. Ergonomic JSON Object & Array Builders
+    let config = JSON.object();
+    config.host = "127.0.0.1";
+    config.port = 8080;
+    config.tags = JSON.array();
+    push(config.tags, "server");
+    push(config.tags, "production");
+
+    println("Constructed JSON Object: " + JSON.stringify(config));
+
+    // 4. File I/O Integration
+    let file_path = "tmp_config.json";
+    JSON.stringifyFile(file_path, config, true);
+    let loaded = JSON.parseFile(file_path);
+    println("Loaded from file host: " + str(loaded.host));
+
+    // 5. Byte Parsing & Serialization
+    let byte_arr = JSON.stringifyBytes(config);
+    let re_parsed = JSON.parseBytes(byte_arr);
+    println("Re-parsed from bytes port: " + str(re_parsed.port));
+}

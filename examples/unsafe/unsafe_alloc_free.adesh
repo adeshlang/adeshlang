@@ -1,0 +1,14 @@
+fn main() {
+    print("manual allocation demo");
+
+    unsafe {
+        let ptr = alloc(64);
+        for (i in range(0, 64)) {
+            ptr[i] = i;
+        }
+        print("first byte", ptr[0]);
+        // free(ptr);
+    }
+
+    print("caller responsible for safety");
+}

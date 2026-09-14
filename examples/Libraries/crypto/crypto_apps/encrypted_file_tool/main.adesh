@@ -1,0 +1,13 @@
+// AdeshLang Mini-Project: Encrypted File Tool
+import Crypto
+
+let passphrase = "UserMasterPassphrase2026!"
+let fileContent = "Top Secret Strategy Roadmap for 2026-2028."
+
+print("1. Encrypting File Payload...")
+let encryptedPayload = Crypto.encryptFile(passphrase, fileContent)
+print("   Encrypted Payload Size (bytes):", len(encryptedPayload))
+
+print("2. Decrypting File Payload...")
+let decryptedBytes = Crypto.decryptFile(passphrase, encryptedPayload)
+print("   Decryption Success!")

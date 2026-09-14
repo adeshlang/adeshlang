@@ -1,0 +1,61 @@
+// Test script for AdeshLang WebSocket Standard Library
+
+import WebSocket;
+
+fn testWebSocketConstants() {
+    print("Testing WebSocket Opcode & CloseCode constants...");
+
+    if (WebSocket.Opcode.Text == 1 && WebSocket.Opcode.Binary == 2) {
+        print("✓ Opcode constants valid");
+    } else {
+        print("✗ Opcode constants invalid");
+    }
+
+    if (WebSocket.CloseCode.NormalClosure == 1000 && WebSocket.CloseCode.ProtocolError == 1002) {
+        print("✓ CloseCode constants valid");
+    } else {
+        print("✗ CloseCode constants invalid");
+    }
+}
+
+fn testWebSocketFrameEncoding() {
+    print("Testing WebSocket Frame Encoding & Masking...");
+    let frame = new WebSocket.WebSocketFrame(true, WebSocket.Opcode.Text, null, [72, 101, 108, 108, 111]);
+    let encoded = frame.encode();
+
+    if (encoded.length == 7 && encoded[0] == 129 && encoded[1] == 5) {
+        print("✓ Frame encoding valid: " + encoded.toString());
+    } else {
+        print("✗ Frame encoding failed");
+    }
+}
+
+fn testWebSocketEchoRoundtrip() {
+    print("Testing local ws:// echo round-trip...");
+    let serverConfig = new WebSocket.ServerConfig();
+    serverConfig.port = 18099;
+    let server = WebSocket.server(serverConfig);
+    server.startEcho();
+
+    let client = WebSocket.connect("ws://127.0.0.1:18099", new WebSocket.ClientConfig());
+    if (WebSocket.isError(client)) {
+        print("✗ Echo connect failed: " + client.toString());
+        server.close();
+        return;
+    }
+
+    client.sendText("Hello from AdeshLang!");
+    let msg = client.receive();
+    if (msg.type == "text" && msg.payload == "Echo: Hello from AdeshLang!") {
+        print("✓ Echo round-trip valid");
+    } else {
+        print("✗ Echo round-trip failed");
+    }
+    client.close(WebSocket.CloseCode.NormalClosure, "done");
+    server.close();
+}
+
+testWebSocketConstants();
+testWebSocketFrameEncoding();
+testWebSocketEchoRoundtrip();
+print("WebSocket standard library test complete!");

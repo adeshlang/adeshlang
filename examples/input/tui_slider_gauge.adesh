@@ -1,0 +1,13 @@
+// World-First: Interactive Slider Gauge
+// Real-time slider with numerical step increment and visual gauge bar
+
+// input.mock(["75"]);
+
+let volume = input.slider("System Audio Volume:", {
+    min: 0,
+    max: 100,
+    step: 5,
+    default: 50
+});
+
+println(`Selected Volume Level: ${volume}%`);

@@ -1,0 +1,145 @@
+// Comprehensive examples of AdeshLang's Decorator Pipeline System
+// This file demonstrates all decorator phases and features
+     
+// =============================================================================
+// Example 1: OLD SYNTAX (Backward Compatible)
+// =============================================================================
+
+// Traditional decorator with (target, meta) parameters
+decorator simple_log(target, meta) {
+    return fn(x) {
+        print("[LOG] Calling:", meta.name, "with", x);
+        let result = target(x);
+        print("[LOG] Result:", result);
+        return result;
+    };
+}
+
+@simple_log
+fn double(x) {
+    return x * 2;
+}
+
+// =============================================================================
+// Example 2: NEW SYNTAX - Runtime Phase
+// =============================================================================
+
+// New syntax with explicit runtime phase
+decorator trace {
+    runtime(call) {
+        print("[TRACE] Entering function");
+        let result = call.proceed();
+        print("[TRACE] Exiting with result:", result);
+        return result;
+    }
+}
+
+// =============================================================================
+// Example 3: Compile-Time Contract Decorator
+// =============================================================================
+
+// Compile-time validation (executed during compilation)
+decorator pure {
+    compile(func) {
+        // In full implementation, this would check that function has no side effects
+        // For now, just mark it
+        print("[COMPILE] Marking", func.name, "as pure");
+    }
+}
+
+// =============================================================================
+// Example 4: Type Checking Decorator
+// =============================================================================
+
+decorator typed_number {
+    typecheck(func) {
+        // In full implementation, would validate return type is number
+        print("[TYPECHECK] Validating", func.name, "returns number");
+    }
+}
+
+// =============================================================================
+// Example 5: Decorator with Parameters
+// =============================================================================
+
+decorator retry(max_attempts) {
+    runtime(call) {
+        let attempts = 0;
+        let last_error = null;
+        
+        while (attempts < max_attempts) {
+            try {
+                return call.proceed();
+            } catch (e) {
+                last_error = e;
+                attempts = attempts + 1;
+                print("[RETRY] Attempt", attempts, "failed");
+            }
+        }
+        
+        throw last_error;
+    }
+}
+
+// =============================================================================
+// Example 6: Multiple Phases in One Decorator
+// =============================================================================
+
+decorator memoize_with_validation {
+    typecheck(func) {
+        print("[TYPECHECK] Validating", func.name, "is pure for memoization");
+    }
+    
+    compile(func) {
+        print("[COMPILE] Setting up cache for", func.name);
+    }
+    
+    runtime(call) {
+        // Simplified memoization (real impl would use proper cache)
+        print("[RUNTIME] Memoizing call");
+        return call.proceed();
+    }
+}
+
+// =============================================================================
+// Example 7: Stacking Multiple Decorators
+// =============================================================================
+
+@pure
+@typed_number
+fn add(a, b) {
+    return a + b;
+}
+
+@retry(3)
+fn risky_operation(x) {
+    print("Attempting risky operation with", x);
+    if (x < 5) {
+        throw "Value too small";
+    }
+    return x * 10;
+}
+
+// =============================================================================
+// Test Execution
+// =============================================================================
+
+print("=== Testing Decorator Pipeline ===\n");
+
+print("1. Testing old syntax decorator:");
+let result1 = double(5);
+print("Result:", result1, "\n");
+
+print("2. Testing pure + typed_number decorators:");
+let result2 = add(10, 20);
+print("Result:", result2, "\n");
+
+print("3. Testing retry decorator:");
+try {
+    let result3 = risky_operation(10);
+    print("Result:", result3);
+} catch (e) {
+    print("Error:", e);
+}
+
+print("\n=== All Tests Complete ===");

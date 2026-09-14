@@ -1,0 +1,53 @@
+// examples/arc/tests/t05_is_alive.adesh
+// T05 – is_alive(): true while any strong ref exists, false after all drop
+
+
+export fn run() {
+    let PASS = 0;
+    let FAIL = 0;
+
+    fn check(cond, msg) {
+        if (cond) {
+            print("  ✓ PASS:", msg);
+            PASS = PASS + 1;
+        } else {
+            print("  ✗ FAIL:", msg);
+            FAIL = FAIL + 1;
+        }
+    }
+
+print("=== T05: is_alive() behaviour ===\n");
+
+// Case A – weak ref while strong owner is in scope
+share alive_obj = { tag: "alive" };
+weak wk = alive_obj;
+
+check(wk.is_alive() == true, "is_alive true while owner in scope");
+
+// Case B – multiple weak refs, all see alive = true
+weak w2 = alive_obj;
+weak w3 = alive_obj;
+check(w2.is_alive() == true, "w2.is_alive true");
+check(w3.is_alive() == true, "w3.is_alive true");
+
+// Case C – adding/removing strong refs doesn't break is_alive for weaks
+{
+    strong tmp = alive_obj;
+    check(wk.is_alive() == true, "is_alive true while additional strong ref held");
+}
+check(wk.is_alive() == true, "is_alive still true after temp strong dropped (owner still in scope)");
+
+// Case D – is_alive on a weak obtained through upgrade
+let up = wk.upgrade();
+if (up != null) {
+    weak from_upgrade = up;
+    check(from_upgrade.is_alive() == true,
+          "is_alive true on weak made from upgraded value");
+}
+
+print("\nPASS:", PASS, " FAIL:", FAIL);
+
+    return { pass: PASS, fail: FAIL };
+}
+
+run();

@@ -1,0 +1,23 @@
+enum Direction {
+    North,
+    South,
+    East,
+    West
+}
+
+extend DirectionTest on Direction {
+    fn opposite() {
+        // Use if/else instead of match
+        if (this.tag == "North") {
+            return "returns North matched";
+        } elif (this.tag == "South") {
+            return "returns South matched";
+        }
+        return "other";
+    }
+}
+
+let d = Direction.North();
+print("tag:", d.tag);
+let result = d.opposite();
+print("result:", result);

@@ -1,0 +1,9 @@
+// 11 — atomic counter
+import thread;
+
+let a = thread.Atomic.AtomicI64.new(0);
+let h1 = thread.spawn(fn() { a.fetch_add(1); });
+let h2 = thread.spawn(fn() { a.fetch_add(1); });
+h1.join();
+h2.join();
+print(a.load());

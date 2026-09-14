@@ -1,0 +1,18 @@
+// Naive Fibonacci benchmark to test language performance
+import time as t;
+print("Starting...");
+fn fib(n:BigInt):BigInt {
+    if (n <= 1) {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+let start = t.nowUs();
+let n:BigInt = 18;
+let result = fib(n);
+let end = t.nowUs();
+
+print("Fibonacci(", n, ") =", result);
+print("Time taken:", end - start, "seconds");
+//print("Time taken:", end - start, "seconds");

@@ -1,0 +1,22 @@
+import Collections;
+
+print("========================================");
+print("Word Frequency Histogram Example");
+print("========================================");
+
+let words = ["adeshlang", "is", "fast", "adeshlang", "is", "safe", "adeshlang", "rocks"];
+let freq = Collections.HashMap();
+
+for w in words {
+    let current_count = freq.get(w);
+    if (current_count == null) {
+        freq.insert(w, 1);
+    } else {
+        freq.insert(w, current_count + 1);
+    }
+}
+
+print("Unique words count: ", freq.len());
+for entry in freq.entries() {
+    print("Word entry: ", entry);
+}

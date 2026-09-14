@@ -1,0 +1,731 @@
+// Production-Grade Process Standard Library for AdeshLang (Phase 2 Master Version)
+import Env;
+
+export class Signal {
+    let _code;
+    let _name;
+
+    Signal(code: int, name: string) {
+        self._code = code;
+        self._name = name;
+    }
+
+    static fn TERM(): Signal { return new Signal(15, "SIGTERM"); }
+    static fn KILL(): Signal { return new Signal(9, "SIGKILL"); }
+    static fn INT(): Signal { return new Signal(2, "SIGINT"); }
+    static fn HUP(): Signal { return new Signal(1, "SIGHUP"); }
+    static fn QUIT(): Signal { return new Signal(3, "SIGQUIT"); }
+    static fn USR1(): Signal { return new Signal(10, "SIGUSR1"); }
+    static fn USR2(): Signal { return new Signal(12, "SIGUSR2"); }
+    static fn STOP(): Signal { return new Signal(19, "SIGSTOP"); }
+    static fn CONT(): Signal { return new Signal(18, "SIGCONT"); }
+
+    fn code() { return self._code; }
+    fn name() { return self._name; }
+    fn toString() { return self._name; }
+}
+
+export class Stdio {
+    let _mode;
+    let _filePath;
+
+    Stdio(mode: int, filePath = null) {
+        self._mode = mode;
+        self._filePath = filePath;
+    }
+
+    static fn INHERIT() { return 0; }
+    static fn PIPE() { return 1; }
+    static fn NULL() { return 2; }
+    static fn FILE() { return 3; }
+
+    static fn inherit(): Stdio { return new Stdio(0, null); }
+    static fn pipe(): Stdio { return new Stdio(1, null); }
+    static fn nullStream(): Stdio { return new Stdio(2, null); }
+    static fn file(path): Stdio {
+        let p_str = typeof(path) == "string" ? path : path.toString();
+        return new Stdio(3, p_str);
+    }
+
+    fn mode() { return self._mode; }
+    fn filePath() { return self._filePath; }
+}
+
+export class ExitStatus {
+    let _code;
+    let _success;
+    let _signal;
+
+    ExitStatus(code, success, signal = 0) {
+        self._code = code;
+        self._success = success;
+        self._signal = signal;
+    }
+
+    fn code() { return self._code; }
+    fn success() { return self._success; }
+    fn isSuccess() { return self._success; }
+    fn signal() { return self._signal; }
+    fn exitedNormally() { return self._code >= 0 && self._signal == 0; }
+    fn killed() { return self._signal != 0; }
+    fn timedOut() { return self._code == -2; }
+    fn crashed() { return self._code < 0 && self._code != -2; }
+    fn toString() {
+        return "ExitStatus(code=" + str(self._code) + ", success=" + str(self._success) + ")";
+    }
+}
+
+export class ProcessError {
+    let _message;
+    let _code;
+
+    ProcessError(message, code = 1) {
+        self._message = message;
+        self._code = code;
+    }
+
+    fn message() { return self._message; }
+    fn code() { return self._code; }
+    fn toString() { return "ProcessError: " + self._message; }
+}
+
+export class ProcessHandle {
+    let _id;
+    let _pid;
+
+    ProcessHandle(id, pid) {
+        self._id = id;
+        self._pid = pid;
+    }
+
+    fn id() { return self._id; }
+    fn pid() { return self._pid; }
+    fn toString() { return "ProcessHandle(id=" + str(self._id) + ", pid=" + str(self._pid) + ")"; }
+}
+
+export class ProcessInfo {
+    let _pid;
+    let _parentId;
+    let _executable;
+    let _commandLine;
+    let _cpuTime;
+    let _memoryUsage;
+    let _startTime;
+
+    ProcessInfo(dict_info) {
+        self._pid = dict_info.pid;
+        self._parentId = dict_info.parentId;
+        self._executable = dict_info.executable;
+        self._commandLine = dict_info.commandLine;
+        self._cpuTime = dict_info.cpuTime;
+        self._memoryUsage = dict_info.memoryUsage;
+        self._startTime = dict_info.startTime;
+    }
+
+    fn pid() { return self._pid; }
+    fn parentId() { return self._parentId; }
+    fn parent() { return self._parentId; }
+    fn executable() { return self._executable; }
+    fn commandLine() { return self._commandLine; }
+    fn cpuTime() { return self._cpuTime; }
+    fn memoryUsage() { return self._memoryUsage; }
+    fn startTime() { return self._startTime; }
+}
+
+export class CommandResult {
+    let _exitStatus;
+    let _stdoutText;
+    let _stderrText;
+
+    CommandResult(exitStatus, stdoutText, stderrText) {
+        self._exitStatus = exitStatus;
+        self._stdoutText = stdoutText;
+        self._stderrText = stderrText;
+    }
+
+    fn exitStatus() { return self._exitStatus; }
+    fn success() { return self._exitStatus.success(); }
+    fn isSuccess() { return self._exitStatus.success(); }
+    fn code() { return self._exitStatus.code(); }
+    fn stdoutText() { return self._stdoutText; }
+    fn stderrText() { return self._stderrText; }
+    fn stdoutBytes() {
+        let b = [];
+        let i = 0;
+        let n = len(self._stdoutText);
+        while i < n {
+            b.push(self._stdoutText[i]);
+            i = i + 1;
+        }
+        return b;
+    }
+    fn stderrBytes() {
+        let b = [];
+        let i = 0;
+        let n = len(self._stderrText);
+        while i < n {
+            b.push(self._stderrText[i]);
+            i = i + 1;
+        }
+        return b;
+    }
+}
+
+export class ProcessStream {
+    let _handleId;
+    let _streamType;
+
+    ProcessStream(handleId: int, streamType: string) {
+        self._handleId = handleId;
+        self._streamType = streamType;
+    }
+
+    fn writeLine(text: string) {
+        return processWriteLine(self._handleId, text);
+    }
+
+    fn readLine() {
+        return processReadLine(self._handleId);
+    }
+
+    fn readBytes(count = 4096) {
+        return processReadBytes(self._handleId, count);
+    }
+
+    fn readAll() {
+        return processReadStdout(self._handleId);
+    }
+
+    fn lines() {
+        let lines_list = [];
+        while true {
+            let l = self.readLine();
+            if len(l) == 0 {
+                break;
+            }
+            lines_list.push(l);
+        }
+        return lines_list;
+    }
+}
+
+export class ChildProcess {
+    let _handle;
+    let _pid;
+    let _stdinStream;
+    let _stdoutStream;
+    let _stderrStream;
+
+    ChildProcess(handleId, pid) {
+        self._handle = new ProcessHandle(handleId, pid);
+        self._pid = pid;
+        self._stdinStream = new ProcessStream(handleId, "stdin");
+        self._stdoutStream = new ProcessStream(handleId, "stdout");
+        self._stderrStream = new ProcessStream(handleId, "stderr");
+    }
+
+    fn processId() { return self._pid; }
+    fn handle() { return self._handle; }
+
+    fn stdin() { return self._stdinStream; }
+    fn stdout() { return self._stdoutStream; }
+    fn stderr() { return self._stderrStream; }
+
+    fn wait() {
+        let res = processWait(self._handle.id());
+        return new ExitStatus(res.exitCode, res.success, res.signal);
+    }
+
+    fn waitTimeout(duration) {
+        let ms = (typeof(duration) == "number" || typeof(duration) == "int" || typeof(duration) == "bigint")
+            ? duration
+            : duration.wholeMilliseconds();
+        let res = processWaitTimeout(self._handle.id(), ms);
+        return new ExitStatus(res.exitCode, res.success, res.signal);
+    }
+
+    fn waitAsync() {
+        return self.wait();
+    }
+
+    fn terminate() {
+        return processTerminate(self._handle.id());
+    }
+
+    fn kill(sig = null) {
+        let sig_code = sig == null ? 9 : (typeof(sig) == "int" ? sig : sig.code());
+        return processKill(self._handle.id(), sig_code);
+    }
+
+    fn forceKill() {
+        return processKill(self._handle.id(), 9);
+    }
+
+    fn isRunning() {
+        let res = processWaitTimeout(self._handle.id(), 0);
+        return res.timedOut;
+    }
+
+    fn hasExited() {
+        return !self.isRunning();
+    }
+
+    fn exitStatus() {
+        return self.wait();
+    }
+
+    fn stdoutText() {
+        return processReadStdout(self._handle.id());
+    }
+
+    fn stderrText() {
+        return processReadStderr(self._handle.id());
+    }
+
+    fn writeStdin(data: string) {
+        return processWriteStdin(self._handle.id(), data);
+    }
+
+    fn info() {
+        let res = processGetInfo(self._pid);
+        return new ProcessInfo(res);
+    }
+
+    fn tree() {
+        let arr = processGetTree(self._pid);
+        return arr;
+    }
+
+    fn children() {
+        return self.tree();
+    }
+
+    fn onExit(callback) {
+        let status = self.wait();
+        callback(status);
+        return self;
+    }
+
+    fn onStdout(callback) {
+        let text = self.stdoutText();
+        callback(text);
+        return self;
+    }
+
+    fn onStderr(callback) {
+        let text = self.stderrText();
+        callback(text);
+        return self;
+    }
+}
+
+export class ProcessBuilder {
+    let _cmd;
+    let _args;
+    let _cwd;
+    let _env;
+    let _clearEnv;
+    let _stdinMode;
+    let _stdoutMode;
+    let _stderrMode;
+    let _stdinFile;
+    let _stdoutFile;
+    let _stderrFile;
+    let _timeoutMs;
+    let _isInteractive;
+    let _isDetached;
+    let _isDaemon;
+    let _pipeChains;
+    let _memLimitBytes;
+    let _cpuLimitSec;
+
+    ProcessBuilder(cmd: string) {
+        self._cmd = cmd;
+        self._args = [];
+        self._cwd = null;
+        self._env = {};
+        self._clearEnv = false;
+        self._stdinMode = 0;
+        self._stdoutMode = 0;
+        self._stderrMode = 0;
+        self._stdinFile = null;
+        self._stdoutFile = null;
+        self._stderrFile = null;
+        self._timeoutMs = null;
+        self._isInteractive = false;
+        self._isDetached = false;
+        self._isDaemon = false;
+        self._pipeChains = [];
+        self._memLimitBytes = null;
+        self._cpuLimitSec = null;
+    }
+
+    fn arg(a: string) {
+        self._args.push(a);
+        return self;
+    }
+
+    fn args(a_list: array) {
+        for a in a_list {
+            self._args.push(a);
+        }
+        return self;
+    }
+
+    fn clearArgs() {
+        self._args = [];
+        return self;
+    }
+
+    fn workingDirectory(path) {
+        self._cwd = typeof(path) == "string" ? path : path.toString();
+        return self;
+    }
+
+    fn environment(key: string, value: string) {
+        self._env[key] = value;
+        return self;
+    }
+
+    fn removeEnvironment(key: string) {
+        if self._env.has(key) {
+            self._env.remove(key);
+        }
+        return self;
+    }
+
+    fn clearEnvironment() {
+        self._clearEnv = true;
+        self._env = {};
+        return self;
+    }
+
+    fn inheritEnvironment() {
+        self._clearEnv = false;
+        return self;
+    }
+
+    fn interactive() {
+        self._isInteractive = true;
+        self._stdinMode = 1;
+        self._stdoutMode = 1;
+        self._stderrMode = 1;
+        return self;
+    }
+
+    fn detach() {
+        self._isDetached = true;
+        return self;
+    }
+
+    fn daemon() {
+        self._isDaemon = true;
+        self._isDetached = true;
+        return self;
+    }
+
+    fn newSession() {
+        self._isDetached = true;
+        return self;
+    }
+
+    fn memoryLimit(bytes) {
+        self._memLimitBytes = bytes;
+        return self;
+    }
+
+    fn cpuLimit(duration) {
+        let sec = (typeof(duration) == "number" || typeof(duration) == "int") ? duration : duration.wholeSeconds();
+        self._cpuLimitSec = sec;
+        return self;
+    }
+
+    fn stdinPipe() {
+        self._stdinMode = 1;
+        return self;
+    }
+
+    fn stdoutPipe() {
+        self._stdoutMode = 1;
+        return self;
+    }
+
+    fn stderrPipe() {
+        self._stderrMode = 1;
+        return self;
+    }
+
+    fn inheritStdin() {
+        self._stdinMode = 0;
+        return self;
+    }
+
+    fn inheritStdout() {
+        self._stdoutMode = 0;
+        return self;
+    }
+
+    fn inheritStderr() {
+        self._stderrMode = 0;
+        return self;
+    }
+
+    fn redirectToFile(path) {
+        self._stdoutMode = 3;
+        self._stdoutFile = typeof(path) == "string" ? path : path.toString();
+        return self;
+    }
+
+    fn redirectFromFile(path) {
+        self._stdinMode = 3;
+        self._stdinFile = typeof(path) == "string" ? path : path.toString();
+        return self;
+    }
+
+    fn redirectStdout(path) {
+        return self.redirectToFile(path);
+    }
+
+    fn redirectStderr(path) {
+        self._stderrMode = 3;
+        self._stderrFile = typeof(path) == "string" ? path : path.toString();
+        return self;
+    }
+
+    fn mergeStdoutStderr() {
+        self._stderrMode = self._stdoutMode;
+        return self;
+    }
+
+    fn discardOutput() {
+        self._stdoutMode = 2;
+        self._stderrMode = 2;
+        return self;
+    }
+
+    fn runTimeout(duration) {
+        self._timeoutMs = (typeof(duration) == "number" || typeof(duration) == "int" || typeof(duration) == "bigint")
+            ? duration
+            : duration.wholeMilliseconds();
+        return self;
+    }
+
+    fn pipe(nextCmd: string, nextArgs = []) {
+        self._pipeChains.push({ "cmd": nextCmd, "args": nextArgs });
+        return self;
+    }
+
+    fn spawn() {
+        let res = processSpawn(
+            self._cmd,
+            self._args,
+            self._cwd,
+            self._env,
+            self._clearEnv,
+            self._stdinMode,
+            self._stdoutMode,
+            self._stderrMode,
+            self._stdinFile,
+            self._stdoutFile,
+            self._stderrFile
+        );
+
+        if typeof(res) == "string" {
+            throw new ProcessError(res);
+        }
+
+        return new ChildProcess(res.handle, res.pid);
+    }
+
+    fn run() {
+        if len(self._pipeChains) > 0 {
+            let specs = [{ "cmd": self._cmd, "args": self._args }];
+            for p in self._pipeChains {
+                specs.push(p);
+            }
+            return Process.pipeline(specs, self._timeoutMs);
+        }
+
+        if self._stdoutMode == 0 {
+            self._stdoutMode = 1;
+        }
+        if self._stderrMode == 0 {
+            self._stderrMode = 1;
+        }
+
+        let child = self.spawn();
+        let status = self._timeoutMs != null ? child.waitTimeout(self._timeoutMs) : child.wait();
+        let outText = child.stdoutText();
+        let errText = child.stderrText();
+
+        return new CommandResult(status, outText, errText);
+    }
+}
+
+export class ProcessGraph {
+    let _nodes;
+    let _edges;
+
+    ProcessGraph() {
+        self._nodes = {};
+        self._edges = [];
+    }
+
+    fn node(nodeId: string, cmd: string, args = []) {
+        self._nodes[nodeId] = { "cmd": cmd, "args": args };
+        return self;
+    }
+
+    fn connect(fromNodeId: string, toNodeId: string) {
+        self._edges.push([fromNodeId, toNodeId]);
+        return self;
+    }
+
+    fn run() {
+        let res = processRunGraph(self._nodes, self._edges);
+        return res;
+    }
+}
+
+export class ProcessGroup {
+    let _children;
+
+    ProcessGroup() {
+        self._children = [];
+    }
+
+    fn spawn(builder) {
+        let child = builder.spawn();
+        self._children.push(child);
+        return child;
+    }
+
+    fn killAll() {
+        let handles = [];
+        for c in self._children {
+            handles.push(c.handle().id());
+        }
+        return processKillGroup(handles);
+    }
+
+    fn waitAll() {
+        let results = [];
+        for c in self._children {
+            results.push(c.wait());
+        }
+        return results;
+    }
+}
+
+export class ProcessPool {
+    let _workerCount;
+    let _group;
+
+    ProcessPool(workerCount = 4) {
+        self._workerCount = workerCount;
+        self._group = new ProcessGroup();
+    }
+
+    static fn new(workerCount = 4) {
+        return new ProcessPool(workerCount);
+    }
+
+    fn submit(builder) {
+        return self._group.spawn(builder);
+    }
+
+    fn killAll() {
+        return self._group.killAll();
+    }
+
+    fn join() {
+        return self._group.waitAll();
+    }
+}
+
+export class ProcessPipe {
+    let _mode;
+
+    ProcessPipe() {
+        self._mode = 1;
+    }
+
+    fn reader() { return Stdio.pipe(); }
+    fn writer() { return Stdio.pipe(); }
+}
+
+export class Process {
+    Process() {}
+
+    static fn builder(cmd: string) {
+        return new ProcessBuilder(cmd);
+    }
+
+    static fn run(cmd: string, args = []) {
+        return Process.builder(cmd).args(args).run();
+    }
+
+    static fn spawn(cmd: string, args = []) {
+        return Process.builder(cmd).args(args).spawn();
+    }
+
+    static fn exec(cmd: string, args = []) {
+        return Process.run(cmd, args);
+    }
+
+    static fn shell(commandString: string) {
+        let isWin = Env.isWindows();
+        let shellCmd = isWin ? "cmd.exe" : "sh";
+        let flag = isWin ? "/C" : "-c";
+        return Process.run(shellCmd, [flag, commandString]);
+    }
+
+    static fn pipeline(specs, timeout = null) {
+        let timeout_ms = timeout == null ? 0 : ((typeof(timeout) == "number" || typeof(timeout) == "int" || typeof(timeout) == "bigint") ? timeout : timeout.wholeMilliseconds());
+        let res = processRunPipeline(specs, timeout_ms);
+        let status = new ExitStatus(res.exitCode, res.success, res.signal);
+        return new CommandResult(status, res.stdoutText, res.stderrText);
+    }
+
+    static fn graph() {
+        return new ProcessGraph();
+    }
+
+    static fn group() {
+        return new ProcessGroup();
+    }
+
+    static fn pool(workerCount = 4) {
+        return ProcessPool.new(workerCount);
+    }
+
+    static fn pipe() {
+        return new ProcessPipe();
+    }
+
+    static fn pty(cmd: string, args = []) {
+        return Process.builder(cmd).args(args).interactive().spawn();
+    }
+
+    static fn processId() {
+        return processGetInfo().pid;
+    }
+
+    static fn pid() {
+        return Process.processId();
+    }
+
+    static fn parentId() {
+        let info = processGetInfo();
+        return info.parentId;
+    }
+
+    static fn executable() {
+        return processGetInfo().executable;
+    }
+
+    static fn info() {
+        let res = processGetInfo();
+        return new ProcessInfo(res);
+    }
+}

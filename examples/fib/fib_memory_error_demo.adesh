@@ -1,0 +1,30 @@
+// fib_memory_error_demo.adesh — Intentional memory safety violation example
+//
+// This file intentionally contains an ownership and borrow safety violation to
+// demonstrate AdeshLang's compile-time memory safety diagnostic system.
+//
+// To see the rich error diagnostic, run:
+//   adesh check examples/fib/fib_memory_error_demo.adesh
+//   adesh run examples/fib/fib_memory_error_demo.adesh
+
+fn fib_invalid_borrow(n) {
+    if (n <= 1) {
+        return n;
+    }
+
+    let prev = 0;
+    let curr = 1;
+    let i = 2;
+
+    while (i <= n) {
+        // ERROR: Cannot borrow 'curr' into 'prev' and then reassign 'curr' while borrowed
+        let next = prev + &curr;
+        prev = &curr;
+        curr = next;
+        i = i + 1;
+    }
+
+    return curr;
+}
+
+print(fib_invalid_borrow(10));

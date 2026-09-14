@@ -1,0 +1,47 @@
+// 12_parsing.adesh - Parsing date/time strings in various formats
+import Time;
+
+print("=== Date/Time Parsing Examples ===\n");
+
+// --- Parse DateTime ---
+print("--- Parse DateTime ---");
+let dt1: DateTime = Time.dateTimeParse("2024-03-15 10:30:00", "yyyy-MM-dd HH:mm:ss");
+print("Parsed dt1:", dt1.toIsoString());
+print("  year:", dt1.year(), "month:", dt1.month(), "day:", dt1.day());
+print("  hour:", dt1.hour(), "min:", dt1.minute(), "sec:", dt1.second());
+
+let dt2: DateTime = Time.dateTimeParse("25/12/2023 23:59:59", "dd/MM/yyyy HH:mm:ss");
+print("\nParsed dt2 (EU format):", dt2.toIsoString());
+
+// --- Parse UTC DateTime (RFC 3339) ---
+print("\n--- Parse UtcDateTime (RFC 3339) ---");
+let utc1: UtcDateTime = Time.utcDateTimeParse("2024-01-01T00:00:00Z");
+let utc2: UtcDateTime = Time.utcDateTimeParse("2023-07-04T12:30:00.500Z");
+print("UTC epoch 2024:", utc1.toIsoString());
+print("UTC mid-2023  :", utc2.toIsoString());
+print("Unix seconds  :", utc1.unixSeconds());
+
+// --- Parse OffsetDateTime ---
+print("\n--- Parse OffsetDateTime ---");
+let odt1: OffsetDateTime = Time.offsetDateTimeParse("2024-06-15T08:00:00+05:30");
+let odt2: OffsetDateTime = Time.offsetDateTimeParse("2024-06-15T08:00:00-07:00");
+print("IST datetime  :", odt1.toIsoString());
+print("PDT datetime  :", odt2.toIsoString());
+print("IST offset    :", odt1.offset().toString());
+print("PDT offset    :", odt2.offset().toString());
+
+// --- Convert parsed offsets to UTC for comparison ---
+let istUtc: UtcDateTime = odt1.toUtc();
+let pdtUtc: UtcDateTime = odt2.toUtc();
+print("\nIST as UTC    :", istUtc.toIsoString());
+print("PDT as UTC    :", pdtUtc.toIsoString());
+
+// --- Round-trip: format then parse ---
+print("\n--- Round-trip Format → Parse ---");
+let original: DateTime = Time.dateTimeNow();
+let formatted: string = original.format("yyyy-MM-dd HH:mm:ss");
+let reparsed: DateTime = Time.dateTimeParse(formatted, "yyyy-MM-dd HH:mm:ss");
+print("Original  :", original.format("yyyy-MM-dd HH:mm:ss"));
+print("Formatted :", formatted);
+print("Reparsed  :", reparsed.toIsoString());
+print("Year match:", original.year() == reparsed.year());

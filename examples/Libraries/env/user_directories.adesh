@@ -1,0 +1,14 @@
+import Env;
+
+// User directory shortcuts beyond the basics
+print("Home:      " + Env.home().toString());
+print("Desktop:   " + Env.desktop().toString());
+print("Documents: " + Env.documents().toString());
+print("Downloads: " + Env.downloads().toString());
+print("Pictures:  " + Env.pictures().toString());
+print("Music:     " + Env.music().toString());
+print("Videos:    " + Env.videos().toString());
+print("Public:    " + Env.public().toString());
+print("Temp:      " + Env.tempDirectory().toString());
+print("Cache:     " + Env.userCacheDirectory().toString());
+print("Config:    " + Env.userConfigDirectory().toString());

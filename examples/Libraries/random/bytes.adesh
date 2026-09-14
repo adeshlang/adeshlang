@@ -1,0 +1,11 @@
+import Random;
+
+print("--- Byte Randomness Demo ---");
+let singleByte = Random.byte();
+print("Single byte: " + singleByte);
+
+let byteBuf = Random.bytes(8);
+print("Generated 8 random bytes: " + byteBuf);
+
+let secureBuf = Random.secureBytes(16);
+print("Generated 16 secure OS entropy bytes: " + secureBuf);

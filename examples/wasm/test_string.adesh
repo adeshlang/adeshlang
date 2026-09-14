@@ -1,0 +1,24 @@
+// Test WASM string passing
+// This requires string.wasm which exports malloc, get_len, free, and memory
+import "./string.wasm" as strLib;
+
+fn main() {
+    print("Testing WASM string passing...");
+    
+    // Test 1: Get length of "Hello"
+    let len1 = strLib.get_len("Hello");
+    print("Length of 'Hello': " + len1);
+    
+    // Test 2: Get length of longer string  
+    let len2 = strLib.get_len("Hello, WASM World!");
+    print("Length of 'Hello, WASM World!': " + len2);
+    
+    // Verify results
+    if (len1 == 5 && len2 == 18) {
+        print("String WASM Test PASSED");
+    } else {
+        print("String WASM Test FAILED");
+        print("Expected: 5 and 18");
+        print("Got: " + len1 + " and " + len2);
+    }
+}

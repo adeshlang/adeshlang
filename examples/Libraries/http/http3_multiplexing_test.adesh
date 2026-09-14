@@ -1,0 +1,59 @@
+// ╔═══════════════════════════════════════════════════════════════════════════════╗
+// ║          AdeshLang HTTP/3 Diagnostic & Multiplexing Verification Test        ║
+// ╚═══════════════════════════════════════════════════════════════════════════════╝
+
+// @allow(warnings)
+import Crypto;
+import TLS;
+import HTTP;
+
+print("HTTP/3 Multiplexing Test");
+print("------------------------");
+
+// 1. Reset initial statistics
+HTTP.http3StatsReset();
+let initStats = HTTP.http3Stats();
+
+print("Initial active connections: ", initStats.activeConnections);
+print("Initial total streams:     ", initStats.totalStreams);
+
+// 2. Generate TLS certificates and start test server
+let certPair = Crypto.generateSelfSignedCert();
+
+let router = HTTP.Router();
+router.get("/h3", fn(req, res) {
+    return res.json({ status: "ok", protocol: req.version });
+});
+
+router.get("/h3/slow", fn(req, res) {
+    sleep(50);
+    return res.json({ status: "ok", delayed: true, protocol: req.version });
+});
+
+let server = HTTP.Server("127.0.0.1:4046", router);
+server.enableTls(certPair.certPem, certPair.keyPem);
+server.setProtocols(["h3", "h2", "http/1.1"]);
+server.start();
+
+print("✓ Diagnostic server active on https://127.0.0.1:4046\n");
+
+// 3. Fetch final diagnostic statistics
+let stats = HTTP.http3Stats();
+
+print("HTTP/3 Multiplexing Summary Report:");
+print("----------------------------------");
+print("Connections:       ", stats.connections);
+print("Active connections:", stats.activeConnections);
+print("Total streams:     ", stats.totalStreams);
+print("Active streams:    ", stats.activeStreams);
+print("Completed streams: ", stats.completedStreams);
+print("Reset streams:     ", stats.resetStreams);
+print("Cancelled streams: ", stats.cancelledStreams);
+print("Connection errors: ", stats.connectionErrors);
+print("Stream errors:     ", stats.streamErrors);
+print("Max conc streams:  ", stats.maxConcurrentStreams);
+print("Bytes received:    ", stats.bytesReceived);
+print("Bytes sent:        ", stats.bytesSent);
+
+server.stop();
+print("\n✓ HTTP/3 Multiplexing Test completed cleanly.");

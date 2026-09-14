@@ -1,0 +1,29 @@
+// Basic Spawn Test
+// Tests spawn keyword across all backends
+
+// Simple async function
+async fn compute(n: i64): i64 {
+    print(`  Computing ${n}...`);
+    return n * 2;
+}
+
+// Main async function that uses spawn
+async fn main_async() {
+    print("Starting spawn test...");
+    
+    // Spawn tasks
+    let task1 = spawn compute(5);
+    let task2 = spawn compute(10);
+    let task3 = spawn compute(15);
+    
+    // Await results
+    let r1 = await task1;
+    let r2 = await task2;
+    let r3 = await task3;
+    
+    print(`Results: ${r1}, ${r2}, ${r3}`);
+    print("Spawn test complete!");
+}
+
+// Entry point - properly call async main
+main_async();

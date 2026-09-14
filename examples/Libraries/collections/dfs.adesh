@@ -1,0 +1,43 @@
+import Collections;
+
+print("========================================");
+print("Depth-First Search (DFS) Example");
+print("========================================");
+
+let adj = Collections.HashMap();
+
+fn add_edge(adj, u, v) {
+    let list = adj.get(u);
+    if (list == null) {
+        list = Collections.Vec();
+        adj.insert(u, list);
+    }
+    list.push(v);
+}
+
+add_edge(adj, "1", "2");
+add_edge(adj, "1", "3");
+add_edge(adj, "2", "4");
+add_edge(adj, "3", "5");
+
+let s = Collections.Stack();
+let visited = Collections.HashSet();
+
+s.push("1");
+
+print("DFS Order:");
+while (!s.isEmpty()) {
+    let curr = s.pop();
+    if (!visited.contains(curr)) {
+        visited.insert(curr);
+        print("Visited: ", curr);
+        let neighbors = adj.get(curr);
+        if (neighbors != null) {
+            for nbr in neighbors.toArray() {
+                if (!visited.contains(nbr)) {
+                    s.push(nbr);
+                }
+            }
+        }
+    }
+}

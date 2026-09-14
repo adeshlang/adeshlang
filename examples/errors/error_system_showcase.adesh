@@ -1,0 +1,139 @@
+print("=== AdeshLang Error System Showcase ===\n");
+
+// 1. Creating error objects
+print("1. Creating Error Objects:");
+let e1 = error("This is a user-defined error");
+print("   error('message'):", e1);
+print("   type:", type(e1));
+print("   instanceof UserError:", (e1 instanceof "UserError"));
+print("   instanceof Error:", (e1 instanceof "Error"));
+
+let e2 = Error("Uppercase Error constructor");
+print("   Error('message'):", e2);
+print("   type:", type(e2));
+print("   instanceof checks:", (e2 instanceof "UserError"), (e2 instanceof "Error"));
+
+// 2. Throwing and catching errors
+print("\n2. Throwing and Catching Errors:");
+
+try {
+  print("   About to throw an error...");
+  throw error("Something went wrong!");
+} catch (err) {
+  print("   Caught error:", err);
+  print("   Error message access:", err.message);
+  print("   Type checks:", type(err), (err instanceof "UserError"));
+}
+
+// 3. Different error types and instanceof
+print("\n3. Error Type Checking:");
+
+let errors = [
+  error("User error"),
+  Error("Constructor error"),
+  "plain string error"
+];
+
+let i = 0;
+while (i < errors.length) {
+  let err = errors[i];
+  print("   Error", i, ":", err);
+  print("   Type:", type(err));
+  print("   instanceof UserError:", (err instanceof "UserError"));
+  print("   instanceof Error:", (err instanceof "Error"));
+  print("   instanceof 'UserError':", (err instanceof "UserError"));
+  print("   instanceof 'Error':", (err instanceof "Error"));
+  i = i + 1;
+}
+
+// 4. Error handling patterns
+print("\n4. Error Handling Patterns:");
+
+// Pattern 1: Basic try/catch
+try {
+  if (true) {
+    throw Error("Conditional error");
+  }
+  print("   This won't print");
+} catch (e) {
+  print("   Basic catch:", e.message);
+}
+
+// Pattern 2: Multiple error types
+try {
+  let x = 10;
+  if (x > 5) {
+    throw error("Value too high: " + x);
+  }
+} catch (e) {
+  if (e instanceof "UserError") {
+    print("   UserError caught:", e.message);
+  } else {
+    print("   Other error:", e);
+  }
+}
+
+// Pattern 3: Re-throwing
+try {
+  try {
+    throw Error("Inner error");
+  } catch (inner) {
+    print("   Inner catch:", inner.message);
+    throw error("Re-throwing with context");
+  }
+} catch (outer) {
+  print("   Outer catch:", outer.message);
+}
+
+// 5. Error object structure
+print("\n5. Error Object Structure:");
+let sampleError = error("Sample error message");
+print("   Error object:", sampleError);
+print("   Has __class__:", ("__class__" in sampleError));
+print("   Has message:", ("message" in sampleError));
+print("   __class__ value:", sampleError.__class__);
+print("   message value:", sampleError.message);
+
+// 6. Custom error scenarios
+print("\n6. Custom Error Scenarios:");
+
+// Validation error
+fn validateAge(age) {
+  if (age < 0) {
+    throw error("Age cannot be negative: " + age);
+  }
+  if (age > 150) {
+    throw error("Age seems unrealistic: " + age);
+  }
+  return true;
+}
+
+try {
+  validateAge(-5);
+} catch (e) {
+  print("   Validation error:", e.message);
+}
+
+try {
+  validateAge(25);
+  print("   Age validation passed");
+} catch (e) {
+  print("   Unexpected error:", e);
+}
+
+// Division by zero simulation
+fn safeDivide(a, b) {
+  if (b == 0) {
+    throw error("Division by zero: " + a + " / " + b);
+  }
+  return a / b;
+}
+
+try {
+  let result = safeDivide(10, 0);
+  print("   Result:", result);
+} catch (e) {
+  print("   Math error:", e.message);
+}
+
+print("\n=== Error System Showcase Complete ===");

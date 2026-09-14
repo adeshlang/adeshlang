@@ -1,0 +1,91 @@
+// Demonstration of array type syntax in AdeshLang
+// This file shows different array type annotations
+
+// Dynamic array with inferred type - elements are converted to smallest fitting type
+let arr1 = [2, 2, 3, 4, 5];
+print("Dynamic u8 array: ", arr1);
+print("Type: ", typeof arr1);
+print("Size: ", sizeof(arr1), " bytes");
+print("Metadata size: ", arr1.metadata_size(), " bytes");
+print("First element type: ", typeof arr1[0]);
+print("");
+
+// Fixed-size array: [T;N] - elements coerced to u8  
+let arr2: [u8;4] = [10, 20, 30, 40];
+print("Fixed-size u8 array: ", arr2);
+print("Element type: ", typeof arr2[0]);
+print("Array size: ", sizeof(arr2), " bytes");
+print("");
+
+// Signed integer array - elements coerced to i16
+let arr3: [i16] = [-100, 200, -300, 400];
+
+print("Signed i16 array: ", arr3);
+print("Element type: ", typeof arr3[0]);
+print("Element size: ", sizeof(arr3[0]), " bytes");
+print("Array size: ", sizeof(arr3), " bytes");
+print("");
+
+// Compare with default (inferred) array - would use smallest type that fits
+let arr_default = [1, 2, 3, 4, 5];
+print("Default inferred array: ", arr_default);
+print("Element type: ", typeof arr_default[0]);
+print("Element size: ", sizeof(arr_default[0]), " byte(s)");
+print("");
+
+// Raw array: [T;raw] - no metadata overhead, like C arrays
+let raw_arr: [u8;raw] = [1, 2, 3, 4, 5];
+print("Raw u8 array: ", raw_arr);
+print("Type: ", typeof raw_arr);
+print("Size: ", sizeof(raw_arr), " bytes (no metadata, just 5 * 1 byte)");
+print("");
+
+// Mixed values - infers larger type automatically
+let mixed_arr = [255, 300, 1000];
+print("Mixed values array: ", mixed_arr);
+print("Type: ", typeof mixed_arr, " (inferred to fit all values)");
+print("Element type: ", typeof mixed_arr[0]);
+print("");
+
+// Negative values - infers signed type
+let signed_arr = [-10, 20, -30];
+print("Signed values array: ", signed_arr);
+print("Type: ", typeof signed_arr, " (inferred signed type)");
+print("Element type: ", typeof signed_arr[0]);
+print("");
+
+// Readonly variable
+readonly let immutable_val = 42;
+print("Readonly value: ", immutable_val);
+
+// Readonly array
+readonly let readonly_arr = [1, 2, 3];
+print("Readonly array: ", readonly_arr);
+
+// Type annotation with readonly after type
+let another_arr: [i32] readonly = [100, 200, 300];
+print("Readonly i32 array: ", another_arr);
+print("Element type: ", typeof another_arr[0]);
+print("Element size: ", sizeof(another_arr[0]), " bytes");
+print("");
+
+// Basic array operations
+let nums = [5, 10, 15, 20, 25];
+print("Array length: ", nums.length);
+print("First element: ", nums[0]);
+print("Last element: ", nums[4]);
+
+// Tuple with mixed fixed-width types (inferred)
+let tup = (42, "hello", true);
+print("Tuple: ", tup);
+print("Tuple first element type: ", typeof tup[0]);
+
+// Object/record type
+let obj = {name: "AdeshLang", version: "0.2.0"};
+print("Object: ", obj);
+
+let (x,z,y) = (1, 2.5, "test");
+print("Destructured tuple values: x=", x, ", y=", y, ", z=", z);
+
+print("");
+print("Array types demo completed!");

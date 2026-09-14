@@ -1,0 +1,8 @@
+import URL;
+
+let dataUrlString: String = "data:text/plain;base64,SGVsbG8gV29ybGQh";
+let parsedData: DataURL = URL.parseData(dataUrlString);
+
+print("Media Type:", parsedData.mediaType);
+print("Is Base64:", parsedData.isBase64);
+print("Decoded Content:", parsedData.decodeString());

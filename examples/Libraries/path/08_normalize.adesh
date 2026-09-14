@@ -1,0 +1,7 @@
+import Path;
+
+let messy = Path.new("a/b/../c/./d/..");
+let norm = messy.normalize();
+
+print("Raw: " + messy.toString());
+print("Normalized: " + norm.toString());

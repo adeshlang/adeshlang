@@ -1,0 +1,32 @@
+// Test realistic inline nesting limits
+
+fn main() {
+    print("=== Testing Inline Nesting Limits ===");
+    
+    test_2_level();
+    test_3_level();
+}
+
+fn test_2_level() {
+    print("\n--- 2-Level ---");
+    let obj = {
+        a: {
+            b: 2
+        }
+    };
+    print("obj.a.b =", obj.a.b);
+    print("obj =", obj);
+}
+
+fn test_3_level() {
+    print("\n--- 3-Level ---");
+    let obj = {
+        a: {
+            b: {
+                c: 3
+            }
+        }
+    };
+    print("obj.a.b.c =", obj.a.b.c);
+    print("obj =", obj);
+}

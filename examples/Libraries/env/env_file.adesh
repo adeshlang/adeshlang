@@ -1,0 +1,24 @@
+import Env;
+
+// .env file support
+// Place a `.env` file next to this script (or adjust the path) to see it read.
+try {
+    let data = Env.fromFile("examples/Libraries/env/.env");
+    print("=== .env file ===");
+    for k in data {
+        print(k + " = " + str(data[k]));
+    }
+} catch (e) {
+    print("No .env file found, skipping file output (" + str(e) + ").");
+}
+
+print("=== Runtime environment ===");
+let n = Env.runtimeLoad({
+    "MY_APP_HOST": "127.0.0.1",
+    "MY_APP_PORT": "8080"
+});
+print("Loaded " + str(n) + " variable(s)");
+
+print("runtimeGet(MY_APP_HOST): " + str(Env.runtimeGet("MY_APP_HOST")));
+print("runtimeHas(MY_APP_PORT): " + str(Env.runtimeHas("MY_APP_PORT")));
+print("runtimeVariables: " + str(Env.runtimeVariables()));

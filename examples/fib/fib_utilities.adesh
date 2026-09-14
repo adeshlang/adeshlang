@@ -1,0 +1,75 @@
+// fib_utilities.ind — Fibonacci utility functions and additional examples
+
+print("=== Fibonacci Utilities and Additional Examples ===");
+
+// Fibonacci sequence generator
+fn fib_sequence(count) {
+    if (count <= 0) {
+        return [];
+    }
+    if (count == 1) {
+        return [0];
+    }
+    if (count == 2) {
+        return [0, 1];
+    }
+    let seq: Any = [0, 1];
+    let i = 2;
+    while (i < count) {
+        seq = seq.append(seq[i-1] + seq[i-2]);
+        i = i + 1;
+    }
+    return seq;
+}
+
+print("First 10 Fibonacci numbers:", fib_sequence(10));
+print("First 15 Fibonacci numbers:", fib_sequence(15));
+print("First 20 Fibonacci numbers:", fib_sequence(20));
+
+// Check if number is Fibonacci
+fn is_fibonacci(num) {
+    if (num < 0) {
+        return false;
+    }
+    let a = 0;
+    let b = 1;
+    while (b < num) {
+        a, b = b, a + b;
+    }
+    return b == num || a == num;
+}
+
+print("Is 13 a Fibonacci number?", is_fibonacci(13));
+print("Is 14 a Fibonacci number?", is_fibonacci(14));
+print("Is 21 a Fibonacci number?", is_fibonacci(21));
+print("Is 34 a Fibonacci number?", is_fibonacci(34));
+
+// Find the index of a Fibonacci number
+fn fib_index(num) {
+    if (num < 0) {
+        return -1;
+    }
+    if (num == 0) {
+        return 0;
+    }
+    if (num == 1) {
+        return 1;
+    }
+    let a = 0;
+    let b = 1;
+    let index = 1;
+    while (b < num) {
+        a, b = b, a + b;
+        index = index + 1;
+    }
+    if (b == num) {
+        return index;
+    }
+    return -1;
+}
+
+print("Index of 13 in Fibonacci sequence:", fib_index(13));
+print("Index of 21 in Fibonacci sequence:", fib_index(21));
+print("Index of 34 in Fibonacci sequence:", fib_index(34));
+
+print("=== Fibonacci Utilities Complete ===");

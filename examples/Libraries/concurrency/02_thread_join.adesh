@@ -1,0 +1,10 @@
+// 02 — join
+import thread;
+
+thread.watchdog(15000);
+let h = thread.spawn(fn() {
+    thread.sleep(5);
+    print("done");
+});
+h.join();
+print("parent continues");

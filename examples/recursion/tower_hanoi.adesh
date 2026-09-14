@@ -1,0 +1,77 @@
+// Tower of Hanoi - Classic recursive puzzle demonstration
+// Run with --tco flag for tail call optimization
+
+fn hanoi(n, source, dest, aux) {
+    if (n == 1) {
+        print("Move disk from", source, "to", dest);
+        return 1;
+    } else {
+        let moves1 = hanoi(n - 1, source, aux, dest);
+        print("Move disk from", source, "to", dest);
+        let moves2 = hanoi(n - 1, aux, dest, source);
+        return moves1 + 1 + moves2;
+    }
+}
+
+// Tail-recursive version (benefits from --tco flag)
+fn hanoi_tco_helper(n, source, dest, aux, moves, callback) {
+    if (n == 0) {
+        return moves;
+    }
+    
+    if (n == 1) {
+        if (callback) {
+            print("Move disk from", source, "to", dest);
+        }
+        return moves + 1;
+    }
+    
+    let moves1 = hanoi_tco_helper(n - 1, source, aux, dest, 0, callback);
+    if (callback) {
+        print("Move disk from", source, "to", dest);
+    }
+    let moves2 = hanoi_tco_helper(n - 1, aux, dest, source, 0, callback);
+    return moves1 + 1 + moves2 + moves;
+}
+
+fn hanoi_tco(n, source, dest, aux) {
+    return hanoi_tco_helper(n, source, dest, aux, 0, true);
+}
+
+print("╔════════════════════════════════════════════════════╗");
+print("║  TOWER OF HANOI - Recursion Benchmark             ║");
+print("╚════════════════════════════════════════════════════╝");
+print("");
+
+let n = 10;
+let source = "A";
+let dest = "C";
+let aux = "B";
+
+print("Solving Tower of Hanoi with", n, "disks...");
+print("Source:", source, "| Destination:", dest, "| Auxiliary:", aux);
+print("");
+
+// Run regular version
+print("--- Standard Recursion ---");
+let result1 = hanoi(n, source, dest, aux);
+print("\nTotal moves:", result1);
+let expected = 1;
+for (i in 0..n) {
+    expected = expected * 2;
+}
+expected = expected - 1;
+print("Expected:", expected);
+print("");
+
+// Run TCO version
+print("--- Tail-Call Optimized Version ---");
+let result2 = hanoi_tco(n, source, dest, aux);
+print("\nTotal moves:", result2);
+print("Expected:", expected);
+print("");
+
+print("╔════════════════════════════════════════════════════╗");
+print("║  TIP: Run with --tco or --fast-recursion          ║");
+print("║  for tail call optimization and better performance ║");
+print("╚════════════════════════════════════════════════════╝");

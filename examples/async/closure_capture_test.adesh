@@ -1,0 +1,91 @@
+// Closure capture test
+// Tests that lambdas properly capture outer variables
+
+async fn main() {
+    print("=== Closure Capture Tests ===");
+
+    // Test 1: Closure in Promise - capturing outer value
+    print("Test 1: Closure capture in Promise");
+    let outer_value = 20;
+    let p1 = Promise(fn(resolve, reject) {
+        let computed = outer_value * 2;  // Should capture outer_value
+        resolve(computed);
+    });
+    let result1 = await p1;
+    print("  20 * 2 =", result1);
+    if result1 == 40 {
+        print("  [PASS]");
+    } else {
+        print("  [FAIL] Expected 40, got", result1);
+    }
+
+    // Test 2: Multiple captures in Promise
+    print("Test 2: Multiple variable capture in Promise");
+    let a = 5;
+    let b = 10;
+    let c = 15;
+    let p2 = Promise(fn(resolve, reject) {
+        let total = a + b + c;  // Should capture a, b, c
+        resolve(total);
+    });
+    let result2 = await p2;
+    print("  5 + 10 + 15 =", result2);
+    if result2 == 30 {
+        print("  [PASS]");
+    } else {
+        print("  [FAIL] Expected 30, got", result2);
+    }
+
+    // Test 3: Closure with string capture
+    print("Test 3: Closure with string capture in Promise");
+    let greeting = "Hello";
+    let name = "World";
+    let p3 = Promise(fn(resolve, reject) {
+        let message = greeting + " " + name + "!";  // Captures greeting and name
+        resolve(message);
+    });
+    let result3 = await p3;
+    print("  Message:", result3);
+    if result3 == "Hello World!" {
+        print("  [PASS]");
+    } else {
+        print("  [FAIL] Expected 'Hello World!'");
+    }
+
+    // Test 4: Nested computation with capture
+    print("Test 4: Nested computation with capture");
+    let multiplier = 10;
+    let offset = 5;
+    let p4 = Promise(fn(resolve, reject) {
+        let step1 = 7 * multiplier;  // 70
+        let step2 = step1 + offset;  // 75
+        resolve(step2);
+    });
+    let result4 = await p4;
+    print("  7 * 10 + 5 =", result4);
+    if result4 == 75 {
+        print("  [PASS]");
+    } else {
+        print("  [FAIL] Expected 75, got", result4);
+    }
+
+    // Test 5: Promise chaining with capture
+    print("Test 5: Sequential promises with shared capture");
+    let shared = 100;
+    let p5a = Promise(fn(r, _) { r(shared + 1); });  // Captures shared
+    let p5b = Promise(fn(r, _) { r(shared + 2); });  // Captures shared
+    let r5a = await p5a;
+    let r5b = await p5b;
+    print("  Values:", r5a, r5b);
+    if r5a == 101 {
+        if r5b == 102 {
+            print("  [PASS]");
+        } else {
+            print("  [FAIL] Expected r5b=102");
+        }
+    } else {
+        print("  [FAIL] Expected r5a=101");
+    }
+
+    print("=== Closure Capture Tests Complete ===");
+}

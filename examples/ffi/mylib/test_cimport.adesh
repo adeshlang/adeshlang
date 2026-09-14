@@ -1,0 +1,69 @@
+// Test $cImport feature
+// This demonstrates automatic header parsing and extern declaration generation
+// Run with: adeshlang run -l mylib test_cimport.adesh
+
+$cImport("mylib.h")
+
+fn main() {
+    print("=== $cImport Feature Test ===\n",{color:"#00FF00"});
+    
+    print("Testing automatic function imports from mylib.h:\n",{color:"#0000FF"});
+    
+    // Test 1: Basic math
+    print("1. Basic Math Operations:",{color:"#FFA500"});
+    let a = 15;
+    let b = 7;
+    print(a," + ",b," = ", add_int(a, b));
+    
+    print(a," * ",b," = ", multiply_int(a, b),"\n");
+    
+    // Test 2: Advanced math
+    print("2. Advanced Math:",{color:"#FFA500"});
+    print(" Square Root:   sqrt(100) = ", square_root(100.0));
+    print("  Power 2^8 = ", power(2.0, 8.0),"\n");
+    
+    // Test 3: String operations
+    print("3. String Operations:",{color:"#FFA500"});
+    let text = "Hello, AdeshLang!";
+    print("   Length of '",text,"': ", string_length(text),"\n");
+    print("Uppercase '", text,"' -> '", string_to_upper(text),"'\n");
+    print("Lowercase '", text,"' -> '", string_to_lower(text),"'\n");
+
+    // Test 4: Boolean operations
+    print("4. Boolean Operations:",{color:"#FFA500"});
+    print("   Is 42 even? ",is_even(42) ? "Yes\n" : "No\n");
+    // if is_even(42) {
+    //     print("Yes\n");
+    // } else {
+    //     print("No\n");
+    // }
+    
+    print("   Is 13 prime? ",is_prime(13) ? "Yes\n" : "No\n");
+    // if is_prime(13) {
+    //     print("Yes\n");
+    // } else {
+    //     print("No\n");
+    // }
+    print("\n");
+    
+    // Test 5: Random numbers
+    print("5. Random Numbers:",{color:"#FFA500"});
+    random_seed(12);
+    print("   Random number (1-100): ", random_int(1, 100));
+    // print("\n");
+    print("   Another random: ", random_int(1, 100),"\n");
+    
+    // Test 6: Time
+    print("6. Time Functions:",{color:"#FFA500"});
+    print("   Current timestamp: ", get_timestamp());
+    print("   Formatted time: ", Date.now(),"\n");
+    print("\n\n");
+    
+    print("✅ All @cImport functions working correctly!\n");
+    print("   Header parsed: mylib.h\n");
+    print("   Functions imported automatically\n");
+}
+
+
+
+// D:\Projects\AdeshLang\target\release\adeshlang.exe run -l mylib test_cimport.adesh

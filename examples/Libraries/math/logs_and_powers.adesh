@@ -1,0 +1,7 @@
+import Math;
+print("exp:", Math.exp(1));
+print("log:", Math.log(1));
+print("log10:", Math.log10(100));
+print("log2:", Math.log2(32));
+print("pow:", Math.pow(3, 4));
+print("sqrt:", Math.sqrt(49));

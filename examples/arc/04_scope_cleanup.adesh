@@ -1,0 +1,41 @@
+// examples/arc/04_scope_cleanup.adesh
+// Shows how ARC cleans up deterministically as scopes exit.
+// No garbage collector needed — the runtime frees memory the instant
+// the last strong reference drops.
+
+print("=== Scope-Based Cleanup ===\n");
+
+// ── Level-0 allocation ────────────────────────────────────────────────────
+share data = { tag: "root", payload: 999 };
+print("L0 – data allocated,  strong_count:", data.strong_count()); // 1
+
+// ── Level-1 scope ─────────────────────────────────────────────────────────
+{
+    strong l1 = data;
+    print("L1 entered,           strong_count:", data.strong_count()); // 2
+
+    // ── Level-2 scope ─────────────────────────────────────────────────────
+    {
+        strong l2a = data;
+        strong l2b = data;
+        print("L2 entered,           strong_count:", data.strong_count()); // 4
+
+        // ── Level-3 scope ─────────────────────────────────────────────────
+        {
+            strong l3 = data;
+            print("L3 entered,           strong_count:", data.strong_count()); // 5
+        } // l3 dropped
+        print("L3 exited,            strong_count:", data.strong_count()); // 4
+
+    } // l2a, l2b dropped
+    print("L2 exited,            strong_count:", data.strong_count()); // 2
+
+} // l1 dropped
+print("L1 exited,            strong_count:", data.strong_count()); // 1
+
+// ── Verify the original is intact ─────────────────────────────────────────
+print("\ndata.tag    :", data.tag);
+print("data.payload:", data.payload);
+print("strong_count:", data.strong_count()); // 1
+
+print("\nObject freed when `data` goes out of scope at end of program.");

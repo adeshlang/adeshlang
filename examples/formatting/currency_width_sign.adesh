@@ -1,0 +1,6 @@
+let amt = 1234.5;
+print(`[${amt:>12+currency(INR)}]`);
+print(`[${amt:0>12currency(USD)}]`);
+print(`[${amt:^16currency(EUR)}]`);
+let neg = -987.65;
+print(`[${neg:>12currency(INR)}]`);

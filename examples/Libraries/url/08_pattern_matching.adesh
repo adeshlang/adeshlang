@@ -1,0 +1,12 @@
+import URL;
+
+let pat: URLPattern = URL.pattern("https://api.example.com/v1/users/:userId/posts/:postId");
+let targetUrl: URL = URL.parse("https://api.example.com/v1/users/99/posts/500");
+
+let patMatch: Option<URLPatternMatch> = pat.match(targetUrl);
+
+print("--- 08 Pattern Matching Example ---");
+if (patMatch != null) {
+    print("User ID:", patMatch.params.userId);
+    print("Post ID:", patMatch.params.postId);
+}

@@ -1,0 +1,175 @@
+// =============================================================================
+// AdeshLang v0.3 - String Standard Library Examples
+// =============================================================================
+// This example demonstrates string operations in AdeshLang, including:
+// - SSO-aware string handling
+// - String methods and functions
+// - Unicode support
+// - Consistent behavior across interpreter, JIT, and VM
+// =============================================================================
+
+print("=== String Standard Library Demo ===\n");
+
+// -----------------------------------------------------------------------------
+// 1. String Creation and SSO
+// -----------------------------------------------------------------------------
+
+print("--- String Creation ---");
+
+// SSO strings (inline, no heap)
+let short = "Hi";
+let medium = "Hello, World!";
+let maxSSO = "Exactly 21 characters"; // 21 chars - still SSO
+
+print("SSO strings (≤22 chars):");
+print("  short: '" + short + "' (" + str(len(short)) + " chars)");
+print("  medium: '" + medium + "' (" + str(len(medium)) + " chars)");
+print("  maxSSO: '" + maxSSO + "' (" + str(len(maxSSO)) + " chars)");
+
+// Heap strings
+let long = "This is a longer string that exceeds the SSO threshold";
+print("\nHeap string (>22 chars):");
+print("  long: '" + long + "' (" + str(len(long)) + " chars)");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 2. String Methods
+// -----------------------------------------------------------------------------
+
+print("--- String Methods ---");
+
+let text = "Hello, AdeshLang!";
+
+// Length
+print("\nLength:");
+print("  len('" + text + "') = " + str(len(text)));
+
+// Case conversion
+print("\nCase conversion:");
+print("  uppercase: " + text.toUpperCase());
+print("  lowercase: " + text.toLowerCase());
+
+// Substring
+print("\nSubstring:");
+print("  substring(0, 5): '" + text.substring(0, 5) + "'");
+print("  substring(7): '" + text.substring(7) + "'");
+
+// Split
+print("\nSplit:");
+let words = text.split(" ");
+print("  split(' '): " + str(words));
+
+// Join
+print("\nJoin:");
+let joined = words.join("-");
+print("  join('-'): '" + joined + "'");
+
+// Trim
+let padded = "   hello   ";
+print("\nTrim:");
+print("  trim('" + padded + "'): '" + padded.trim() + "'");
+
+// Contains
+print("\nContains:");
+print("  contains('Adesh'): " + str(text.contains("Adesh")));
+print("  contains('Python'): " + str(text.contains("Python")));
+
+// StartsWith / EndsWith
+print("\nStartsWith / EndsWith:");
+print("  startsWith('Hello'): " + str(text.startsWith("Hello")));
+print("  endsWith('!'): " + str(text.endsWith("!")));
+
+// IndexOf
+print("\nIndexOf:");
+print("  indexOf('Lang'): " + str(text.indexOf("Lang")));
+print("  indexOf('Java'): " + str(text.indexOf("Java")));
+
+// Replace
+print("\nReplace:");
+print("  replace('Adesh', 'My'): '" + text.replace("Adesh", "My") + "'");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 3. String Concatenation
+// -----------------------------------------------------------------------------
+
+print("--- String Concatenation ---");
+
+let a = "Hello";
+let b = "World";
+
+// Using + operator
+let concat1 = a + ", " + b + "!";
+print("\nUsing + operator:");
+print("  '" + a + "' + ', ' + '" + b + "' + '!' = '" + concat1 + "'");
+
+// SSO-aware concatenation
+let short1 = "Hi";
+let short2 = " there";
+let shortConcat = short1 + short2;
+print("\nSSO concatenation:");
+print("  '" + short1 + "' + '" + short2 + "' = '" + shortConcat + "' (still SSO if ≤22)");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 4. String Formatting
+// -----------------------------------------------------------------------------
+
+print("--- String Formatting ---");
+
+let name = "Alice";
+let age = 30;
+let score = 95.5;
+
+// Template strings
+print("\nTemplate strings:");
+let greeting = "Hello, " + name + "! You are " + str(age) + " years old.";
+print("  " + greeting);
+
+// Number to string
+print("\nNumber conversion:");
+print("  str(42) = '" + str(42) + "'");
+print("  str(3.14159) = '" + str(3.14159) + "'");
+print("  str(true) = '" + str(true) + "'");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 5. Unicode Support
+// -----------------------------------------------------------------------------
+
+print("--- Unicode Support ---");
+
+let unicode = "Hello 世界 🌍";
+print("\nUnicode string: " + unicode);
+print("  Length: " + str(len(unicode)));
+
+let emoji = "😀🎉✨";
+print("\nEmoji string: " + emoji);
+print("  Length: " + str(len(emoji)));
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 6. Performance Tips
+// -----------------------------------------------------------------------------
+
+print("--- Performance Tips ---");
+
+print("\n1. Prefer short strings (≤22 chars) for SSO:");
+print("   ✓ let id = 'user-123';         // SSO");
+print("   ✗ let data = 'very long...';   // heap");
+
+print("\n2. Build strings efficiently:");
+print("   ✓ let result = parts.join('');");
+print("   ✗ for loop with += concatenation");
+
+print("\n3. Use contains() before indexOf():");
+print("   ✓ if (s.contains(x)) { ... }");
+print("   ✗ if (s.indexOf(x) >= 0) { ... }");
+
+print("");
+print("=== Demo Complete ===");

@@ -1,0 +1,230 @@
+// =============================================================================
+// AdeshLang v0.2.0 - Type Narrowing and Union Types Demo
+// =============================================================================
+// This example demonstrates the type system improvements in AdeshLang v0.2.0:
+// - Type narrowing through typeof checks
+// - Null checks that narrow nullable types
+// - Truthiness-based type narrowing
+// - Union type handling (Number | String)
+// =============================================================================
+
+print("=== AdeshLang v0.2.0 Type Narrowing Demo ===\n");
+
+// -----------------------------------------------------------------------------
+// 1. typeof-based Type Narrowing
+// -----------------------------------------------------------------------------
+// When you check typeof(x), the type system narrows the type accordingly.
+
+print("--- typeof Type Narrowing ---");
+
+fn handleValue(value) {
+    // After typeof check, the value is narrowed to that specific type
+    if (typeof(value) == "number") {
+        // Inside this block: value is narrowed to Number
+        print("Number: " + value + " doubled = " + (value * 2));
+    } elif (typeof(value) == "string") {
+        // Inside this block: value is narrowed to String
+        print("String: '" + value + "' length = " + sizeof(value));
+    } elif (typeof(value) == "boolean") {
+        // Inside this block: value is narrowed to Boolean
+        print("Boolean: " + value + " negated = " + !value);
+    } else {
+        print("Unknown type: " + typeof(value));
+    }
+}
+
+// Test with different types
+handleValue(42);           // Number
+handleValue("hello");      // String
+handleValue(true);         // Boolean
+handleValue([1, 2, 3]);    // Array
+print("");
+
+// -----------------------------------------------------------------------------
+// 2. Null Check Type Narrowing
+// -----------------------------------------------------------------------------
+// Checking for null narrows nullable types (?Type) to their base type.
+// Note: Nullable type syntax is planned for future releases.
+// For now, use null checks at runtime.
+
+print("--- Null Check Type Narrowing ---");
+
+fn processOptional(value) {
+    // Before check: value could be String or null
+    
+    if (value != null) {
+        // Inside this block: value is narrowed to String (not nullable)
+        print("String value: '" + value + "'");
+        print("  Length: " + sizeof(value));
+        print("  Upper: " + value);  // In future: .toUpper()
+    } else {
+        // Inside this block: value is null
+        print("Value is null - using default");
+    }
+}
+
+processOptional("test");
+processOptional(null);
+print("");
+
+// -----------------------------------------------------------------------------
+// 3. Truthiness-based Type Narrowing
+// -----------------------------------------------------------------------------
+// Truthy checks narrow out null, undefined, and falsy values.
+
+print("--- Truthiness Narrowing ---");
+
+fn safePrint(value) {
+    // Truthy check narrows away null/undefined/empty
+    if (value) {
+        // Inside: value is known to be truthy
+        print("Truthy value: " + str(value));
+    } else {
+        // Inside: value is falsy (null, 0, "", false, etc.)
+        print("Falsy or empty value");
+    }
+}
+
+safePrint("hello");        // Truthy string
+safePrint("");             // Falsy (empty string)
+safePrint(42);             // Truthy number
+safePrint(0);              // Falsy (zero)
+safePrint(null);           // Falsy (null)
+safePrint([1, 2, 3]);      // Truthy array
+print("");
+
+// -----------------------------------------------------------------------------
+// 4. Union Type Patterns
+// -----------------------------------------------------------------------------
+// Handle values that could be multiple types (Number | String).
+// Note: Full union type syntax is planned for future releases.
+// For now, use dynamic typing with typeof checks.
+
+print("--- Union Type Patterns ---");
+
+fn formatPrice(price) {
+    // Use typeof to narrow the type at runtime
+    if (typeof(price) == "number") {
+        // Narrowed to Number
+        return "$" + str(price);
+    } else {
+        // Narrowed to String (already formatted)
+        return price;
+    }
+}
+
+print("Price 1: " + formatPrice(29.99));
+print("Price 2: " + formatPrice("$49.99 (sale)"));
+print("");
+
+// -----------------------------------------------------------------------------
+// 5. Chained Type Guards
+// -----------------------------------------------------------------------------
+// Multiple type checks can progressively narrow types.
+
+print("--- Chained Type Guards ---");
+
+fn analyzeInput(input) {
+    print("Analyzing: " + str(input));
+    
+    // First guard: array check
+    if (typeof(input) == "array") {
+        print("  Is array with " + len(input) + " elements");
+        
+        // Second guard: check first element type
+        if (len(input) > 0) {
+            if (typeof(input[0]) == "number") {
+                print("  Contains numbers");
+            } elif (typeof(input[0]) == "string") {
+                print("  Contains strings");
+            }
+        }
+    } elif (typeof(input) == "object") {
+        print("  Is object");
+    } else {
+        print("  Is primitive: " + typeof(input));
+    }
+}
+
+analyzeInput([1, 2, 3]);
+analyzeInput(["a", "b"]);
+analyzeInput({x: 1, y: 2});
+analyzeInput(42);
+print("");
+
+// -----------------------------------------------------------------------------
+// 6. Safe Property Access Pattern
+// -----------------------------------------------------------------------------
+// Combine null checks with property access.
+
+print("--- Safe Property Access ---");
+
+fn getLength(value) {
+    // Guard against null
+    if (value == null) {
+        return 0;
+    }
+    
+    // Now safe to access properties
+    if (typeof(value) == "string") {
+        return sizeof(value);
+    } elif (typeof(value) == "array") {
+        return len(value);
+    }
+    
+    return -1;  // Unknown type
+}
+
+print("Length of 'hello': " + getLength("hello"));
+print("Length of [1,2,3,4,5]: " + getLength([1, 2, 3, 4, 5]));
+print("Length of null: " + getLength(null));
+print("");
+
+// -----------------------------------------------------------------------------
+// 7. Early Return Pattern
+// -----------------------------------------------------------------------------
+// Use early returns for cleaner type narrowing.
+
+print("--- Early Return Pattern ---");
+
+fn processUser(user) {
+    // Early return for null
+    if (user == null) {
+        print("No user provided");
+        return;
+    }
+    
+    // After return: user is guaranteed non-null
+    print("User name: " + user.name);
+    
+    // Early return for missing age
+    if (user.age == null) {
+        print("  Age: unknown");
+        return;
+    }
+    
+    // After return: age is guaranteed non-null
+    if (user.age >= 18) {
+        print("  Age: " + user.age + " (adult)");
+    } else {
+        print("  Age: " + user.age + " (minor)");
+    }
+}
+
+processUser({name: "Alice", age: 30});
+processUser({name: "Bob", age: null});
+processUser(null);
+print("");
+
+// -----------------------------------------------------------------------------
+// Summary
+// -----------------------------------------------------------------------------
+
+print("=== Type Narrowing Summary ===");
+print("1. typeof checks narrow union types");
+print("2. Null checks narrow nullable types");
+print("3. Truthiness checks narrow away falsy values");
+print("4. Chained guards for progressive narrowing");
+print("5. Early returns simplify control flow");
+print("");
+print("=== Demo Complete ===");

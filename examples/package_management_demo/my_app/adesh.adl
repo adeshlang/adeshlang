@@ -1,0 +1,16 @@
+project {
+  name = "my_app"
+  version = 1.0.0
+  template = "app"
+}
+
+dependencies {
+  my_lib = { version = "^1.2.0", path = "../my_lib" }
+  my_native_lib = { version = "^1.0.0", path = "../my_native_lib" }
+}
+
+scripts {
+  build_c = "powershell -Command \"cd ../my_native_lib; gcc -shared -fPIC -o lib/libcustom_math.dll src/custom_math.c\""
+  install = "cargo run --bin adl --manifest-path ../../../Cargo.toml -- install"
+  run = "cargo run --bin adeshlang --manifest-path ../../../Cargo.toml -- run src/main.adesh"
+}

@@ -1,0 +1,31 @@
+import Collections;
+
+print("========================================");
+print("2. HashSet - Deduplication & Fast Lookup");
+print("========================================");
+
+let set = Collections.HashSet<string>();
+
+// Insert unique and duplicate elements
+print("Insert 'apple': ", set.insert("apple")); // true
+print("Insert 'banana': ", set.insert("banana")); // true
+print("Insert duplicate 'apple': ", set.insert("apple")); // false
+
+print("Set size: ", set.len());
+print("Contains 'apple': ", set.contains("apple")); // true
+print("Contains 'cherry': ", set.contains("cherry")); // false
+
+print("Remove 'apple': ", set.remove("apple")); // true
+print("Remove missing 'apple': ", set.remove("apple")); // false
+print("Contains 'apple' after remove: ", set.contains("apple")); // false
+print("Set size after remove: ", set.len());
+
+print("\n--- Edge Case: Stress loading 50 unique items ---");
+let stress_set = Collections.HashSet<string>();
+let i = 0;
+while (i < 50) {
+    stress_set.insert("item_" + i);
+    i = i + 1;
+}
+print("Stress set length: ", stress_set.len());
+print("Contains item_25: ", stress_set.contains("item_25"));

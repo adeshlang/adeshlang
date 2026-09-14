@@ -1,0 +1,22 @@
+// Test RAII automatic memory cleanup
+println("=== Testing RAII Deallocation ===");
+
+unsafe {
+    println("Allocating 10 bytes...");
+    let ptr: *u8 = alloc(10);
+    
+    println("Writing data to pointer...");
+    ptr[0] = 65;
+    ptr[1] = 66;
+    ptr[2] = 67;
+    
+    println("Reading from pointer...");
+    println(ptr[0]);
+    println(ptr[1]);
+    println(ptr[2]);
+    
+    println("Block about to end - free() should be automatically called");
+}
+
+println("Block ended - RAII should have cleaned up");
+println("=== RAII Test Complete ===");

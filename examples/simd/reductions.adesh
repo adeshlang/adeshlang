@@ -1,0 +1,34 @@
+// Reductions — import Simd; Simd.sum(data) or Simd.vector(data).sum()
+import Simd;
+import Parallel;
+
+let data = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0,
+            9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0];
+
+let total = Simd.sum(data);
+print("Simd.sum = ", total);
+
+let avg = Simd.mean(data);
+print("Simd.mean = ", avg);
+
+let mn = Simd.min(data);
+let mx = Simd.max(data);
+print("Simd.min = ", mn, " Simd.max = ", mx);
+
+let neg = [-1.0, -4.0, -9.0, -16.0];
+print("Simd.abs = ", Simd.abs(neg));
+
+let squares = [1.0, 4.0, 9.0, 16.0, 25.0];
+print("Simd.sqrt = ", Simd.sqrt(squares));
+
+// Vector instance methods
+let v = Simd.vector(data);
+print("v.sum() = ", v.sum());
+print("v.len() = ", v.len());
+
+// Parallel namespace
+let parallel_total = Parallel.sum(data);
+print("Parallel.sum = ", parallel_total);
+print("Parallel.workers() = ", Parallel.workers());
+
+print("Reductions demo complete!");

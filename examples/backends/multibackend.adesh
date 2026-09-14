@@ -1,0 +1,219 @@
+// Multi-Backend Example - Demonstrating Adesh's Backend Consistency
+// This file can be executed with any backend and produces identical results
+
+// ============================================================================
+// 1. PURE COMPUTATION - Same across all backends
+// ============================================================================
+
+fn fibonacci(n: i64): i64 {
+    if n <= 1 {
+        return n;
+    }
+    return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+fn factorial(n: i64): i64 {
+    if n <= 1 {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+// ============================================================================
+// 2. NUMERIC OPERATIONS - Testing all literal formats
+// ============================================================================
+
+fn test_numeric_literals() {
+    print("=== Numeric Literals Test ===");
+    
+    // Decimal
+    let dec = 255;
+    print("Decimal: ");
+    print(dec);
+    
+    // Binary
+    let bin = 0b11111111;
+    print("Binary: ");
+    print(bin);
+    
+    // Octal
+    let oct = 0o377;
+    print("Octal: ");
+    print(oct);
+    
+    // Hexadecimal
+    let hex = 0xFF;
+    print("Hexadecimal: ");
+    print(hex);
+    
+    // All should be equal
+    print("All equal: ");
+    print(dec == bin && bin == oct && oct == hex);
+}
+
+// ============================================================================
+// 3. SIMPLE ARITHMETIC - Pure functions
+// ============================================================================
+
+fn compute_sum_range(start: i64, end: i64): i64 {
+    // Using formula for sum of arithmetic sequence
+    let n = end - start + 1;
+    return n * (start + end) / 2;
+}
+
+// ============================================================================
+// 4. ARRAY OPERATIONS
+// ============================================================================
+
+fn test_arrays() {
+    print("=== Array Operations ===");
+    
+    let numbers = [1, 2, 3, 4, 5];
+    
+    // Access individual elements
+    print("First element: ");
+    print(numbers[0]);
+    
+    print("Third element: ");
+    print(numbers[2]);
+    
+    print("Last element: ");
+    print(numbers[4]);
+}
+
+// ============================================================================
+// 5. STRING OPERATIONS
+// ============================================================================
+
+fn test_strings() {
+    print("=== String Operations ===");
+    
+    let greeting = "Hello";
+    let target = "Adesh";
+    let message = greeting + " " + target + "!";
+    
+    print(message);  // "Hello Adesh!"
+}
+
+// ============================================================================
+// 6. TYPED OPERATIONS - Fixed-width integers
+// ============================================================================
+
+fn test_typed_integers() {
+    print("=== Typed Integer Operations ===");
+    
+    let byte: u8 = 255u8;
+    let word: u16 = 65535u16;
+    let dword: u32 = 4294967295u32;
+    
+    print("u8 max: ");
+    print(byte);
+    
+    print("u16 max: ");
+    print(word);
+    
+    print("u32 max: ");
+    print(dword);
+}
+
+// ============================================================================
+// 7. BITWISE OPERATIONS - Using different literal formats
+// ============================================================================
+
+fn test_comparison() {
+    print("=== Comparison Operations ===");
+    
+    let a = 100;
+    let b = 200;
+    
+    print("a < b: ");
+    print(a < b);
+    
+    print("a == b: ");
+    print(a == b);
+    
+    print("a != b: ");
+    print(a != b);
+}
+
+// ============================================================================
+// MAIN - Run all tests
+// ============================================================================
+
+print("╔════════════════════════════════════════════╗");
+print("║  AdeshLang Multi-Backend Example           ║");
+print("║  All backends produce identical output     ║");
+print("╚════════════════════════════════════════════╝");
+print("");
+
+// Test numeric literals
+test_numeric_literals();
+print("");
+
+// Test arrays
+test_arrays();
+print("");
+
+// Test strings
+test_strings();
+print("");
+
+// Test typed integers
+test_typed_integers();
+print("");
+
+// Test comparison operations
+test_comparison();
+print("");
+
+// Compute Fibonacci
+print("=== Fibonacci Test ===");
+print("Fibonacci(10): ");
+print(fibonacci(10));  // 55
+print("");
+
+// Compute Factorial
+print("=== Factorial Test ===");
+print("Factorial(5): ");
+print(factorial(5));  // 120
+print("");
+
+// Compute sum using formula
+print("=== Sum Test ===");
+print("Sum(1..100): ");
+print(compute_sum_range(1, 100));  // 5050
+print("");
+
+print("╔════════════════════════════════════════════╗");
+print("║  All tests completed successfully!        ║");
+print("║  Try running with different backends:     ║");
+print("║  --interpreter, --jit, --njit, --vm       ║");
+print("╚════════════════════════════════════════════╝");
+
+// ============================================================================
+// USAGE EXAMPLES:
+//
+// Interpreter (default, slowest but instant startup):
+//   adesh run multibackend.adesh
+//   adesh run --interpreter multibackend.adesh
+//
+// Bytecode VM (portable, moderate speed):
+//   adesh compile multibackend.adesh multibackend.adeshbc
+//   adesh run --vm multibackend.adeshbc
+//
+// JIT (fast, good for long-running):
+//   adesh run --jit multibackend.adesh
+//   adesh run --jit -O3 multibackend.adesh
+//
+// Native JIT (fastest, direct native code):
+//   adesh run --njit multibackend.adesh
+//   adesh run --native-jit multibackend.adesh
+//
+// AOT (compile to executable):
+//   adesh build multibackend.adesh
+//   ./multibackend
+//
+// Backend Comparison (test all backends):
+//   adesh run --test --backend-check multibackend.adesh
+//
+// ============================================================================

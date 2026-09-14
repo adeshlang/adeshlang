@@ -1,0 +1,22 @@
+import Collections;
+
+print("========================================");
+print("OrderedMap & OrderedSet Examples");
+print("========================================");
+
+let map = Collections.OrderedMap();
+map.insert("z", 100);
+map.insert("a", 200);
+map.insert("m", 300);
+
+print("OrderedMap keys (in insertion order): ", map.keys());
+print("Get 'a': ", map.get("a"));
+print("Len: ", map.len());
+
+let set = Collections.OrderedSet();
+set.insert("third");
+set.insert("first");
+set.insert("second");
+
+print("OrderedSet values (in insertion order): ", set.values());
+print("Contains 'first': ", set.contains("first"));

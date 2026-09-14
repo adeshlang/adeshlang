@@ -1,0 +1,9 @@
+// 08 - Software-Optimized ChaCha20-Poly1305 AEAD Cipher
+import Crypto;
+
+let key = Crypto.randomBytes(32);
+let message = "High-speed software cipher payload";
+
+let sealed = Crypto.seal(key, message);
+let decrypted = Crypto.decryptAead(key, sealed.nonce, sealed.ciphertext);
+print("ChaCha20-Poly1305 Decryption Success:", decrypted != null);

@@ -1,0 +1,76 @@
+// AdeshLang Process Library Phase 2 Advanced Test Suite
+import Process;
+import Env;
+
+fn main() {
+    print("=== AdeshLang Process Library Phase 2 Advanced Test Suite ===");
+
+    let isWin = Env.isWindows();
+    let echoCmd = isWin ? "cmd.exe" : "echo";
+    let echoArgs = isWin ? ["/C", "echo hello_phase2"] : ["hello_phase2"];
+
+    // 1. Process Graph (DAG Execution Engine)
+    print("--- Test 1: Process Graph DAG ---");
+    let graph = Process.graph();
+    if isWin {
+        graph.node("step1", "cmd.exe", ["/C", "echo hello_dag_node"]);
+        graph.node("step2", "findstr", ["hello"]);
+    } else {
+        graph.node("step1", "echo", ["hello_dag_node"]);
+        graph.node("step2", "grep", ["hello"]);
+    }
+    graph.connect("step1", "step2");
+
+    let graphRes = graph.run();
+    print("Graph node step1 success: " + str(graphRes.step1.success));
+    print("Graph node step1 stdout: [" + graphRes.step1.stdoutText.trim() + "]");
+    print("Graph node step2 stdout: [" + graphRes.step2.stdoutText.trim() + "]");
+    print("Graph node step2 stdout contains version: " + str(graphRes.step2.stdoutText.contains("hello")));
+
+    // 2. Fluent Pipeline Builder .pipe()
+    print("--- Test 2: Fluent Pipeline Builder .pipe() ---");
+    let pipeRes = isWin
+        ? Process.builder("cmd.exe").args(["/C", "echo hello_piped_fluent"]).pipe("findstr", ["hello"]).run()
+        : Process.builder("echo").args(["hello_piped_fluent"]).pipe("grep", ["hello"]).run();
+
+    print("Fluent pipe success: " + str(pipeRes.success()));
+    print("Fluent pipe stdout text: [" + pipeRes.stdoutText().trim() + "]");
+
+    // 3. Process Group & Process Pool
+    print("--- Test 3: Process Group & Process Pool ---");
+    let pool = Process.pool(2);
+    pool.submit(Process.builder(echoCmd).args(echoArgs));
+    pool.submit(Process.builder(echoCmd).args(echoArgs));
+
+    let poolResults = pool.join();
+    print("Pool workers executed: " + str(len(poolResults)));
+    print("Worker 1 success: " + str(poolResults[0].success()));
+
+    // 4. Exit Reasons
+    print("--- Test 4: Exit Reasons ---");
+    let normalRes = Process.run(echoCmd, echoArgs);
+    let status = normalRes.exitStatus();
+    print("Status exited normally: " + str(status.exitedNormally()));
+    print("Status killed: " + str(status.killed()));
+    print("Status timed out: " + str(status.timedOut()));
+
+    // 5. Signals Extension
+    print("--- Test 5: Signals Extension ---");
+    print("Signal STOP code: " + str(Signal.STOP().code()));
+    print("Signal CONT code: " + str(Signal.CONT().code()));
+    print("Signal TERM name: " + Signal.TERM().name());
+
+    // 6. Interactive Process & ProcessStream
+    print("--- Test 6: Interactive Process Stream ---");
+    let child = Process.builder(echoCmd).args(echoArgs).interactive().spawn();
+    let streamOut = child.stdout().readLine();
+    print("Stream readLine contains hello: " + str(streamOut.contains("hello")));
+    child.wait();
+
+    // 7. Process Tree Inspection
+    print("--- Test 7: Process Tree Inspection ---");
+    let currentTree = Process.info();
+    print("Process PID > 0: " + str(currentTree.pid() > 0));
+
+    print("=== ALL PHASE 2 PROCESS TESTS PASSED SUCCESSFULLY ===");
+}

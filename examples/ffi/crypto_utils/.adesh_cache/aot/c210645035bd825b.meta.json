@@ -1,0 +1,12 @@
+{
+  "hash": "c210645035bd825b",
+  "source_path": null,
+  "output_path": "crypto_utils.o",
+  "opt_level": 2,
+  "fast_compile": false,
+  "output_format": "Object",
+  "target_triple": null,
+  "debug_info": false,
+  "timestamp_secs": 1788891590,
+  "output_file_size": 4505
+}

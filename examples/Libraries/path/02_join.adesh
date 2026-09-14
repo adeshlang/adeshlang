@@ -1,0 +1,10 @@
+import Path;
+
+let file = Path.new("assets")
+    .join("images")
+    .join("logo.png");
+
+print("Joined path: " + file.toString());
+
+let pushed = Path.new("usr").push("local").push("bin");
+print("Pushed path: " + pushed.toString());

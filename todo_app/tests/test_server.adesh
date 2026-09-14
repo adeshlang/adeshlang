@@ -1,0 +1,5 @@
+// In-Memory TestClient Test Suite for todo_app backend server
+import HTTP;
+
+let mainApp = import "../src/main.adesh";
+print("Todo App Test Suite starting...");

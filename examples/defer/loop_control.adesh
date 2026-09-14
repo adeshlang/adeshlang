@@ -1,0 +1,47 @@
+// Defer with loops and break/continue
+
+fn test_loop_break() {
+    print("=== Test loop with break ===");
+    let i = 0;
+    while (i < 5) {
+        defer {
+            print("Defer in loop iteration:", i);
+        }
+        
+        print("Iteration:", i);
+        
+        if (i == 2) {
+            print("Breaking at:", i);
+            break;
+        }
+        
+        i = i + 1;
+    }
+    print("After loop");
+}
+
+fn test_loop_continue() {
+    print("\n=== Test loop with continue ===");
+    let i = 0;
+    while (i < 3) {
+        defer {
+            print("Defer in loop iteration:", i);
+        }
+        
+        print("Iteration:", i);
+        i = i + 1;
+        
+        if (i == 2) {
+            print("Continuing at:", i);
+            continue;
+        }
+        
+        print("After continue check");
+    }
+    print("After loop");
+}
+
+fn main() {
+    test_loop_break();
+    test_loop_continue();
+}

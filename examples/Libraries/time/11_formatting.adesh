@@ -1,0 +1,51 @@
+// 11_formatting.adesh - Date/time formatting patterns
+import Time;
+
+print("=== Date/Time Formatting Examples ===\n");
+
+let dt: DateTime = Time.dateTime(
+    Time.dateYmd(2024, 11, 5),
+    Time.timeOfDay(15, 8, 3, 750000000)
+);
+
+print("Base datetime :", dt.toIsoString());
+print();
+
+// --- Common patterns ---
+print("--- Common Patterns ---");
+print("ISO 8601          :", dt.format("yyyy-MM-dd'T'HH:mm:ss"));
+print("US date           :", dt.format("MM/dd/yyyy"));
+print("EU date           :", dt.format("dd.MM.yyyy"));
+print("Long date         :", dt.format("MMMM d, yyyy"));
+print("Short date        :", dt.format("MMM d yyyy"));
+print("Time 24h          :", dt.format("HH:mm:ss"));
+print("Date + time       :", dt.format("dd/MM/yyyy HH:mm"));
+print("Full timestamp    :", dt.format("yyyy-MM-dd HH:mm:ss"));
+
+// --- Padding ---
+print("\n--- Zero-padding ---");
+print("Single-digit month:", Time.dateTime(Time.dateYmd(2024, 3, 7), Time.timeOfDay(9, 5, 2, 0)).format("MM/dd/yyyy HH:mm:ss"));
+print("Month + day padded:", dt.format("MM dd"));
+print("Hour + min padded :", dt.format("HH mm ss"));
+
+// --- Year variants ---
+print("\n--- Year Variants ---");
+print("4-digit year :", dt.format("yyyy"));
+
+// --- Day of week ---
+print("\n--- Day of week ---");
+let mon = Time.dateYmd(2024, 7, 15);
+let dtMon: DateTime = Time.dateTime(mon, Time.timeOfDay(9, 0, 0, 0));
+print("2024-07-15 weekday index:", mon.weekday());
+
+// --- UTC datetime formatting ---
+print("\n--- UTC formatting ---");
+let utc: UtcDateTime = Time.utcDateTimeParse("2024-06-01T00:00:00Z");
+print("RFC 3339 :", utc.toRfc3339());
+print("ISO 8601 :", utc.toIsoString());
+
+// --- OffsetDateTime formatting ---
+print("\n--- OffsetDateTime formatting ---");
+let odt: OffsetDateTime = Time.offsetDateTimeParse("2024-06-01T12:00:00+05:30");
+print("Offset ISO:", odt.toIsoString());
+print("Offset RFC:", odt.toRfc3339());

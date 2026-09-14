@@ -1,0 +1,7 @@
+// 16 - RFC 7638 Compliant Canonical JWK Thumbprint Generation
+import Crypto;
+
+let jwkStr = "{\"kty\":\"RSA\",\"n\":\"0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lnt6skiFii754321654987\",\"e\":\"AQAB\"}";
+
+let thumbprint = Crypto.jwkThumbprint(jwkStr);
+print("RFC 7638 JWK Thumbprint (Base64Url):", thumbprint);

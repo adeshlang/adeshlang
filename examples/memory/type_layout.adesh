@@ -1,0 +1,64 @@
+// Example: Type layout and sizeof operations
+
+fn main() {
+    println("=== Type Layout Examples ===");
+    
+    // Primitive types
+    println("\nPrimitive types:");
+    println("sizeof(u8)  =", sizeof(u8), "bytes");
+    println("sizeof(u16) =", sizeof(u16), "bytes");
+    println("sizeof(u32) =", sizeof(u32), "bytes");
+    println("sizeof(u64) =", sizeof(u64), "bytes");
+    println("sizeof(f32) =", sizeof(f32), "bytes");
+    println("sizeof(f64) =", sizeof(f64), "bytes");
+    
+    // Pointer types
+    println("\nPointer types (all 8 bytes on 64-bit):");
+    println("sizeof(ptr<i32>)    =", sizeof(ptr<i32>), "bytes");
+    println("sizeof(ref<u8>)     =", sizeof(ref<u8>), "bytes");
+    println("sizeof(mutref<f64>) =", sizeof(mutref<f64>), "bytes");
+    
+    // String type
+    println("\nString type:");
+    println("sizeof(str) =", sizeof(str), "bytes");
+    println("alignof(str) =", alignof(str), "bytes");
+    
+    // Record types
+    println("\nRecord types:");
+    type Point {
+        x: f32,
+        y: f32,
+    }
+    println("sizeof(Point) =", sizeof(Point), "bytes");
+    println("alignof(Point) =", alignof(Point), "bytes");
+    
+    type Mixed {
+        a: u8,
+        b: u32,
+        c: u8,
+    }
+    println("sizeof(Mixed) =", sizeof(Mixed), "bytes");
+    println("alignof(Mixed) =", alignof(Mixed), "bytes");
+    
+    // Tuple types
+    println("\nTuple types:");
+    type Pair = (u8, u32);
+    println("sizeof(Pair) =", sizeof(Pair), "bytes");
+    println("alignof(Pair) =", alignof(Pair), "bytes");
+    
+    type Empty = ();
+    println("sizeof(Empty) =", sizeof(Empty), "bytes");
+    
+    // Memory allocation examples
+    println("\nMemory allocation with type information:");
+    let ptr_data = alloc<u32>(10);  // 10 * 4 = 40 bytes
+    println("Allocated 10 u32s: 40 bytes");
+    
+    let ptr_bytes = alloc<u8>(256);  // 256 bytes
+    println("Allocated 256 u8s: 256 bytes");
+    
+    free(ptr_data);
+    free(ptr_bytes);
+    
+    println("\n=== Type layout examples completed ===");
+}

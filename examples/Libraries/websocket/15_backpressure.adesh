@@ -1,0 +1,33 @@
+// AdeshLang WebSocket Example 15: Outbound Backpressure & Buffer Configuration
+// Demonstrates max frame size and max message size limits enforcement.
+
+import WebSocket;
+
+print("=== AdeshLang WebSocket Backpressure & Size Limits Demo ===");
+
+let clientConfig = WebSocket.ClientConfig({
+    max_frame_size: 1048576,
+    max_message_size: 4194304
+});
+
+let serverConfig = WebSocket.ServerConfig({
+    port: 8615,
+    bind_address: "127.0.0.1",
+    max_frame_size: 1048576,
+    max_message_size: 4194304
+});
+
+let server = WebSocket.server(serverConfig);
+server.startEcho();
+print("✓ Server configured with max_frame_size=1MB, max_message_size=4MB");
+
+let client = WebSocket.connect("ws://127.0.0.1:8615", clientConfig);
+print("✓ Client connected with bounded buffers");
+
+client.sendText("Testing backpressure bounded stream");
+let reply = client.receive();
+print("Received: " + reply.payload);
+
+client.close(1000, "Done");
+server.close();
+print("✓ Backpressure configuration test completed successfully!");

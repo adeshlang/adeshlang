@@ -1,0 +1,9 @@
+// 16 — thread local
+import thread;
+
+let tls = thread.ThreadLocal.new(0);
+tls.set(3);
+print(tls.get());
+thread.spawn(fn() {
+    print(tls.get());
+}).join();

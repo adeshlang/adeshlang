@@ -1,0 +1,15 @@
+fn divide(a, b) {
+    if (b == 0) {
+        print("branch: b==0");
+        throw "Division by zero!";
+    }
+    print("branch: dividing", a, b);
+    return a / b;
+}
+
+try {
+    let result = divide(10, 0);
+    print(result);
+} catch (err) {
+    print("Error:", err);
+}

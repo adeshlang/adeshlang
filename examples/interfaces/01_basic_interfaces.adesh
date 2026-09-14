@@ -1,0 +1,42 @@
+// 01_basic_interfaces.adesh
+// Shows basic interface declaration, class implementation, and polymorphism.
+
+print("=== 01: BASIC INTERFACES DEMO ===");
+
+interface Printable {
+    fn print_details();
+}
+
+class Book implements Printable {
+    Book(title: string, author: string) {
+        this.title = title;
+        this.author = author;
+    }
+
+    fn print_details(): void {
+        print("Book: '" + this.title + "' by " + this.author);
+    }
+}
+
+class Magazine implements Printable {
+    Magazine(name: string, issue: int) {
+        this.name = name;
+        this.issue = issue;
+    }
+
+    fn print_details(): void {
+        print("Magazine: " + this.name + " (Issue #" + this.issue + ")");
+    }
+}
+
+fn display(printable: Printable): void {
+    printable.print_details();
+}
+
+let book = new Book("The Rust Programming Language", "Steve Klabnik");
+let mag = new Magazine("Tech Monthly", 42);
+
+display(book);
+display(mag);
+
+print("✅ Basic Interfaces Demo Passed.\n");

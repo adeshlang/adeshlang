@@ -1,0 +1,198 @@
+// =============================================================================
+// AdeshLang v0.2.0 - JIT Optimization Features Demo
+// =============================================================================
+// This example demonstrates the JIT optimization features in AdeshLang v0.2.0:
+// - Fast paths for integer and float operations
+// - Inline caching for property access
+// - Type-specialized code generation
+// - Tiered JIT compilation (T0 → T1 → T2)
+//
+// Run with: adesh run --jit examples/features/jit_optimization.adesh
+//           adesh run --tiered examples/features/jit_optimization.adesh
+// =============================================================================
+
+print("=== AdeshLang v0.2.0 JIT Optimization Demo ===\n");
+
+// -----------------------------------------------------------------------------
+// 1. Fast Integer Operations
+// -----------------------------------------------------------------------------
+// AdeshLang v0.2.0 includes fast paths for common integer operations
+// that avoid unnecessary type checks for monomorphic code.
+
+print("--- Fast Integer Operations ---");
+
+fn sumRange(n) {
+    let sum = 0;
+    for (i in range(1, n + 1)) {
+        sum = sum + i;  // Fast integer addition path
+    }
+    return sum;
+}
+
+let start = clock();
+let result = sumRange(1000);
+let elapsed = clock() - start;
+
+print("Sum of 1 to 1000: " + result);
+print("Time: " + (elapsed * 1000) + "ms");
+print("");
+
+// -----------------------------------------------------------------------------
+// 2. Inline Caching for Property Access
+// -----------------------------------------------------------------------------
+// Property access is optimized using hidden classes and inline caches.
+// Objects with the same property layout share the same hidden class.
+
+print("--- Inline Caching Demo ---");
+
+// These objects share the same hidden class (same property order)
+fn createPoint(x, y) {
+    return {x: x, y: y};  // Properties: x, y (in that order)
+}
+
+let points = [];
+for (i in range(1, 6)) {
+    points = points + [createPoint(i, i * 2)];
+}
+
+// Property access is cached after first hit
+let sumX = 0;
+let sumY = 0;
+for (p in points) {
+    sumX = sumX + p.x;  // Inline cache hit after first access
+    sumY = sumY + p.y;  // Inline cache hit after first access
+}
+
+print("Points created: " + len(points));
+print("Sum of x values: " + sumX);
+print("Sum of y values: " + sumY);
+print("");
+
+// -----------------------------------------------------------------------------
+// 3. Type-Specialized Functions
+// -----------------------------------------------------------------------------
+// Functions called with consistent types get optimized code paths.
+
+print("--- Type Specialization ---");
+
+// This function will be specialized for Number type
+fn double(x) {
+    return x * 2;
+}
+
+// All calls with numbers - enables type specialization
+let results = [];
+results = results + [double(1)];
+results = results + [double(2)];
+results = results + [double(3)];
+results = results + [double(4)];
+results = results + [double(5)];
+
+print("Doubled values: " + str(results));
+print("");
+
+// -----------------------------------------------------------------------------
+// 4. String Concatenation Optimization
+// -----------------------------------------------------------------------------
+// String operations use SSO-aware fast paths when possible.
+
+print("--- String Optimization ---");
+
+fn buildMessage(name, count) {
+    // Short strings optimized with SSO
+    let prefix = "Hello, ";
+    let suffix = "!";
+    return prefix + name + " (" + str(count) + ")" + suffix;
+}
+
+for (i in range(1, 4)) {
+    print(buildMessage("User", i));
+}
+print("");
+
+// -----------------------------------------------------------------------------
+// 5. Array Indexing Fast Path
+// -----------------------------------------------------------------------------
+// Array indexing with integer indices uses optimized bounds checking.
+
+print("--- Array Indexing ---");
+
+let data = [10, 20, 30, 40, 50, 60, 70];
+
+// Forward iteration - optimized bounds check
+let total = 0;
+for (i in range(0, len(data))) {
+    total = total + data[i];  // Fast array indexing
+}
+print("Array sum: " + total);
+
+// Negative indexing is also supported with bounds checking
+print("Last element: " + data[len(data) - 1]);
+print("");
+
+// -----------------------------------------------------------------------------
+// 6. Hot Loop Optimization
+// -----------------------------------------------------------------------------
+// Loops executed many times get promoted to higher optimization tiers.
+
+print("--- Hot Loop Demo ---");
+
+fn countDown(n) {
+    let count = n;
+    while (count > 0) {
+        count = count - 1;  // Hot loop - gets optimized
+    }
+    return "Done";
+}
+
+let hotStart = clock();
+countDown(10000);
+let hotTime = clock() - hotStart;
+print("10000 iterations: " + (hotTime * 1000) + "ms");
+print("");
+
+// -----------------------------------------------------------------------------
+// 7. Closure Optimization
+// -----------------------------------------------------------------------------
+// Closures that capture variables are optimized for common patterns.
+
+print("--- Closure Optimization ---");
+
+fn makeCounter(start) {
+    let count = start;
+    return fn() {
+        count = count + 1;
+        return count;
+    };
+}
+
+let counter = makeCounter(0);
+print("Counter values: " + counter() + ", " + counter() + ", " + counter());
+print("");
+
+// -----------------------------------------------------------------------------
+// Performance Comparison Tips
+// -----------------------------------------------------------------------------
+
+print("=== Optimization Tips ===");
+print("1. Use consistent types for function arguments");
+print("2. Create objects with properties in consistent order");
+print("3. Use small strings (<22 chars) when possible");
+print("4. Use small arrays (<8 elements) when possible");
+print("5. Hot loops are automatically optimized");
+print("");
+
+// -----------------------------------------------------------------------------
+// Summary
+// -----------------------------------------------------------------------------
+
+print("=== JIT Features Summary ===");
+print("- Fast integer/float arithmetic paths");
+print("- Inline caching for property access");
+print("- Hidden class tracking for objects");
+print("- Type specialization for monomorphic code");
+print("- SSO-aware string operations");
+print("- Optimized array bounds checking");
+print("- Tiered compilation (T0 → T1 → T2)");
+print("");
+print("=== Demo Complete ===");

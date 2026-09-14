@@ -1,0 +1,30 @@
+// AdeshLang WebSocket Example 22: Permessage-Deflate Extension Framework Configuration
+// Demonstrates negotiated extension architecture configuration.
+
+import WebSocket;
+
+print("=== AdeshLang WebSocket Extension Architecture Demo ===");
+
+let clientConfig = WebSocket.ClientConfig({
+    extensions: ["permessage-deflate"]
+});
+
+let serverConfig = WebSocket.ServerConfig({
+    port: 8622,
+    bind_address: "127.0.0.1"
+});
+
+let server = WebSocket.server(serverConfig);
+server.startEcho();
+print("✓ Server listening on port 8622");
+
+let client = WebSocket.connect("ws://127.0.0.1:8622", clientConfig);
+print("✓ Client connected with extension requested: permessage-deflate");
+
+client.sendText("Extension negotiated test payload");
+let reply = client.receive();
+print("Server Response: " + reply.payload);
+
+client.close(1000, "Done extension test");
+server.close();
+print("✓ Permessage-deflate extension architecture test completed successfully!");

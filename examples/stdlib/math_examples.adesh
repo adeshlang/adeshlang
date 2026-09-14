@@ -1,0 +1,199 @@
+// =============================================================================
+// AdeshLang v0.3 - Math Standard Library Examples
+// =============================================================================
+// This example demonstrates math operations in AdeshLang, including:
+// - Basic math functions
+// - Number and BigInt support
+// - Constants and trigonometry
+// - Consistent behavior across interpreter, JIT, and VM
+// =============================================================================
+
+import "Math" as Math;
+
+print("=== Math Standard Library Demo ===\n");
+
+// -----------------------------------------------------------------------------
+// 1. Basic Arithmetic
+// -----------------------------------------------------------------------------
+
+print("--- Basic Arithmetic ---");
+
+let a = 10;
+let b = 3;
+
+print("\nOperations with a=" + str(a) + ", b=" + str(b) + ":");
+print("  a + b = " + str(a + b));
+print("  a - b = " + str(a - b));
+print("  a * b = " + str(a * b));
+print("  a / b = " + str(a / b));
+print("  a % b = " + str(a % b));
+// print("  a ** b = " + str(a ** b));
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 2. Math Functions
+// -----------------------------------------------------------------------------
+
+print("--- Math Functions ---");
+
+// Absolute value
+print("\nabs():");
+print("  Math.abs(-5) = " + str(Math.abs(-5)));
+print("  Math.abs(5) = " + str(Math.abs(5)));
+// print("  abs(-3.14) = " + str(abs(-3.14)));
+
+// Min and Max
+print("\nmin() and max():");
+print("  Math.min(3, 7, 2, 9) = " + str(Math.min(3, 7, 2, 9)));
+print("  Math.max(3, 7, 2, 9) = " + str(Math.max(3, 7, 2, 9)));
+
+// Rounding
+print("\nRounding:");
+let x = 3.7;
+print("  Math.floor(" + str(x) + ") = " + str(Math.floor(x)));
+print("  Math.ceil(" + str(x) + ") = " + str(Math.ceil(x)));
+print("  Math.round(" + str(x) + ") = " + str(Math.round(x)));
+print("  Math.trunc(" + str(x) + ") = " + str(Math.trunc(x)));
+
+x = -3.7;
+print("\n  Math.floor(" + str(x) + ") = " + str(Math.floor(x)));
+print("  Math.ceil(" + str(x) + ") = " + str(Math.ceil(x)));
+print("  Math.round(" + str(x) + ") = " + str(Math.round(x)));
+print("  Math.trunc(" + str(x) + ") = " + str(Math.trunc(x)));
+
+// Sign
+print("\nMath.sign():");
+print("  Math.sign(5) = " + str(Math.sign(5)));
+print("  Math.sign(-5) = " + str(Math.sign(-5)));
+print("  Math.sign(0) = " + str(Math.sign(0)));
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 3. Powers and Roots
+// -----------------------------------------------------------------------------
+
+print("--- Powers and Roots ---");
+
+print("\nPowers:");
+print("  Math.pow(2, 10) = " + str(Math.pow(2, 10)));
+print("  Math.pow(10, 3) = " + str(Math.pow(10, 3)));
+print("  Math.pow(2, 0.5) = " + str(Math.pow(2, 0.5)));
+
+print("\nRoots:");
+print("  Math.sqrt(16) = " + str(Math.sqrt(16)));
+print("  Math.sqrt(2) = " + str(Math.sqrt(2)));
+print("  Math.cbrt(27) = " + str(Math.cbrt(27)));
+
+print("\nLogarithms:");
+print("  Math.log(10) = " + str(Math.log(10)));
+print("  Math.log10(100) = " + str(Math.log10(100)));
+print("  Math.log2(8) = " + str(Math.log2(8)));
+print("  Math.exp(1) = " + str(Math.exp(1)));
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 4. Trigonometry
+// -----------------------------------------------------------------------------
+
+print("--- Trigonometry ---");
+
+let angle = Math.PI / 4;  // 45 degrees
+print("\nAngle = π/4 (45 degrees):");
+print("  Math.sin(π/4) = " + str(Math.sin(angle)));
+print("  Math.cos(π/4) = " + str(Math.cos(angle)));
+print("  Math.tan(π/4) = " + str(Math.tan(angle)));
+
+print("\nInverse trig:");
+print("  Math.asin(0.5) = " + str(Math.asin(0.5)));
+print("  Math.acos(0.5) = " + str(Math.acos(0.5)));
+print("  Math.atan(1) = " + str(Math.atan(1)));
+print("  Math.atan2(1, 1) = " + str(Math.atan2(1, 1)));
+
+print("\nHyperbolic:");
+print("  Math.sinh(1) = " + str(Math.sinh(1)));
+print("  Math.cosh(1) = " + str(Math.cosh(1)));
+print("  Math.tanh(1) = " + str(Math.tanh(1)));
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 5. Math Constants
+// -----------------------------------------------------------------------------
+
+print("--- Math Constants ---");
+
+print("\nConstants:");
+print("  Math.PI = " + str(Math.PI));
+print("  Math.E = " + str(Math.E));
+print("  Math.TAU = " + str(Math.TAU));
+print("  Math.SQRT2 = " + str(Math.SQRT2));
+print("  Math.LN2 = " + str(Math.LN2));
+print("  Math.LN10 = " + str(Math.LN10));
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 6. Random Numbers
+// -----------------------------------------------------------------------------
+
+print("--- Random Numbers ---");
+
+print("\nMath.random() - [0, 1):");
+for (i in range(0, 5)) {
+    print("  " + str(Math.random()));
+}
+
+print("\nMath.randomInt(1, 10):");
+for (i in range(0, 5)) {
+    print("  " + str(Math.randomInt(1, 10)));
+}
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 7. BigInt Support
+// -----------------------------------------------------------------------------
+
+print("--- BigInt Support ---");
+
+let big1 = 12345678901234567890;
+let big2 = 98765432109876543210;
+
+print("\nBigInt arithmetic:");
+print("  big1 = " + str(big1));
+print("  big2 = " + str(big2));
+print("  big1 + big2 = " + str(big1 + big2));
+print("  big1 * big2 = " + str(big1 * big2));
+print("  big2 / big1 = " + str(big2 / big1));
+print("  big2 % big1 = " + str(big2 % big1));
+
+print("\nBigInt functions:");
+print("  Math.abs(-100n) = " + str(Math.abs(-100)));
+print("  Math.pow(2n, 64n) = " + str(Math.pow(2, 64)));
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 8. Special Values
+// -----------------------------------------------------------------------------
+
+print("--- Special Values ---");
+
+print("\nInfinity:");
+print("  1 / 0 = " + str(1 / 0));
+print("  -1 / 0 = " + str(-1 / 0));
+
+print("\nNaN:");
+print("  0 / 0 = " + str(0 / 0));
+print("  Math.sqrt(-1) = " + str(Math.sqrt(-1)));
+
+print("\nChecks:");
+print("  Math.isNaN(0/0) = " + str(Math.isNaN(0/0)));
+print("  Math.isFinite(1/0) = " + str(Math.isFinite(1/0)));
+print("  Math.isFinite(42) = " + str(Math.isFinite(42)));
+
+print("");
+print("=== Demo Complete ===");

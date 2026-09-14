@@ -1,0 +1,212 @@
+// 04_performance_bench.adesh
+// Benchmarks comparing direct method calls vs extended method calls.
+// Also measures overhead of multiple extensions and static dispatch.
+
+import Math;
+
+print("=== 04: EXTEND PERFORMANCE BENCHMARK ===");
+print("");
+
+// ── Benchmark 1: Direct method vs Extended method call overhead ──
+
+class MathClass {
+    MathClass() {
+        this.value = 1;
+    }
+
+    // Inline method
+    fn inlineSquare(x) {
+        return x * x;
+    }
+
+    fn inlineCube(x) {
+        return x * x * x;
+    }
+}
+
+// Extended methods doing the same thing
+extend on MathClass {
+    fn extendedSquare(x) {
+        return x * x;
+    }
+
+    fn extendedCube(x) {
+        return x * x * x;
+    }
+}
+
+let mc = new MathClass();
+let start1 = clock();
+let s1 = 0;
+let i1 = 0;
+for (i1 = 0; i1 < 5000; i1 = i1 + 1) {
+    s1 = s1 + mc.inlineSquare(i1);
+}
+let time1 = clock() - start1;
+print("Inline method (5k calls):", time1, "s");
+
+let start2 = clock();
+let s2 = 0;
+let i2 = 0;
+for (i2 = 0; i2 < 5000; i2 = i2 + 1) {
+    s2 = s2 + mc.extendedSquare(i2);
+}
+let time2 = clock() - start2;
+print("Extended method (5k calls):", time2, "s");
+
+let overhead = time2 - time1;
+if (overhead < 0) {
+    overhead = 0 - overhead;
+}
+print("Absolute difference:", overhead, "s");
+print("");
+
+// ── Benchmark 2: One extension with many methods ──
+
+class DataProcessor {
+    DataProcessor(values) {
+        this.values = values;
+    }
+}
+
+extend DataProcessing on DataProcessor {
+    fn sum() {
+        let total = 0;
+        for (v in this.values) {
+            total = total + v;
+        }
+        return total;
+    }
+
+    fn min() {
+        let m = this.values[0];
+        for (v in this.values) {
+            if (v < m) {
+                m = v;
+            }
+        }
+        return m;
+    }
+
+    fn max() {
+        let m = this.values[0];
+        for (v in this.values) {
+            if (v > m) {
+                m = v;
+            }
+        }
+        return m;
+    }
+
+    fn average() {
+        return this.sum() / len(this.values);
+    }
+
+    fn variance() {
+        let avg = this.average();
+        let total = 0.0;
+        for (v in this.values) {
+            let diff = v - avg;
+            total = total + diff * diff;
+        }
+        return total / len(this.values);
+    }
+}
+
+let largeData = [];
+let di = 0;
+for (di = 1; di <= 100; di = di + 1) {
+    largeData = largeData + [di];
+}
+let dp = new DataProcessor(largeData);
+
+let start3 = clock();
+let j = 0;
+for (j = 0; j < 10; j = j + 1) {
+    let r1 = dp.sum();
+    let r2 = dp.average();
+    let r3 = dp.variance();
+}
+let time3 = clock() - start3;
+print("DataProcessor (10 iterations):", time3, "s");
+print("  Sum:", dp.sum(), "Avg:", dp.average(), "Var:", dp.variance());
+print("");
+
+// ── Benchmark 3: Many extensions on one type ──
+
+class BigType {
+    BigType() {
+        this.x = 42;
+    }
+}
+
+extend on BigType { fn m01() { return this.x + 1; } }
+extend on BigType { fn m02() { return this.x + 2; } }
+extend on BigType { fn m03() { return this.x + 3; } }
+extend on BigType { fn m04() { return this.x + 4; } }
+extend on BigType { fn m05() { return this.x + 5; } }
+extend on BigType { fn m06() { return this.x + 6; } }
+extend on BigType { fn m07() { return this.x + 7; } }
+extend on BigType { fn m08() { return this.x + 8; } }
+extend on BigType { fn m09() { return this.x + 9; } }
+extend on BigType { fn m10() { return this.x + 10; } }
+
+let bt = new BigType();
+let start4 = clock();
+let total = 0;
+let k = 0;
+for (k = 0; k < 1000; k = k + 1) {
+    total = total + bt.m01() + bt.m05() + bt.m10();
+}
+let time4 = clock() - start4;
+print("10 extensions on 1 type (1k iterations):", time4, "s");
+print("");
+
+// ── Benchmark 4: Class with extended vector methods ──
+
+class Vec3 {
+    Vec3(x, y, z) {
+        this.x = x;
+        this.y = y;
+        this.z = z;
+    }
+}
+
+extend on Vec3 {
+    fn length() {
+        return Math.sqrt(this.x * this.x + this.y * this.y + this.z * this.z);
+    }
+
+    fn normalize() {
+        let l = this.length();
+        if (l == 0.0) {
+            return new Vec3(0.0, 0.0, 0.0);
+        }
+        return new Vec3(this.x / l, this.y / l, this.z / l);
+    }
+
+    fn cross(other) {
+        return new Vec3(
+            this.y * other.z - this.z * other.y,
+            this.z * other.x - this.x * other.z,
+            this.x * other.y - this.y * other.x
+        );
+    }
+}
+
+let vA = new Vec3(3.0, 4.0, 0.0);
+let vB = new Vec3(1.0, 0.0, 0.0);
+
+let start5 = clock();
+let n = 0;
+for (n = 0; n < 5000; n = n + 1) {
+    let l = vA.length();
+    let c = vA.cross(vB);
+    let nv = vA.normalize();
+}
+let time5 = clock() - start5;
+print("Class extend methods (5k iterations):", time5, "s");
+print("  Length:", vA.length(), "Cross:", vA.cross(vB).x, vA.cross(vB).y, vA.cross(vB).z);
+print("");
+
+print("✅ Extend Performance Benchmark Completed.\n");

@@ -1,0 +1,94 @@
+// examples/arc/tests/t11_arc_with_classes.adesh
+// T11 – ARC applied to class instances: shared ownership, weak observers
+
+
+class Counter {
+    count: i64;
+    name: string;
+
+    fn init(n: string) {
+        self.name  = n;
+        self.count = 0;
+    }
+
+    fn increment() {
+        self.count = self.count + 1;
+    }
+
+    fn value() {
+        return self.count;
+    }
+}
+
+class Node {
+    value: i64;
+    tag: string;
+
+    fn init(v: i64, t: string) {
+        self.value = v;
+        self.tag   = t;
+    }
+}
+
+export fn run() {
+    let PASS = 0;
+    let FAIL = 0;
+
+    fn check(cond, msg) {
+        if (cond) {
+            print("  ✓ PASS:", msg);
+            PASS = PASS + 1;
+        } else {
+            print("  ✗ FAIL:", msg);
+            FAIL = FAIL + 1;
+        }
+    }
+
+print("=== T11: ARC with class instances ===\n");
+
+
+// ── Share a class instance ────────────────────────────────────────────────
+share ctr = new Counter("hits");
+check(ctr.strong_count() == 1, "shared class instance starts at count 1");
+
+// ── Two strong refs both mutate the same object ────────────────────────────
+strong r1 = ctr;
+strong r2 = ctr;
+check(ctr.strong_count() == 3, "count 3 with two strong readers");
+
+r1.increment();
+r2.increment();
+r1.increment();
+check(ctr.value() == 3, "both refs mutated the same counter (3 increments)");
+check(r1.value()  == 3, "r1 sees same counter value");
+check(r2.value()  == 3, "r2 sees same counter value");
+
+// ── Weak observer sees mutations ──────────────────────────────────────────
+weak monitor = ctr;
+{
+    let live = monitor.upgrade();
+    if (live != null) {
+        live.increment();
+        check(ctr.value() == 4, "weak observer's mutation visible through owner");
+    }
+}
+check(ctr.strong_count() == 3, "count back to 3 after upgrade released");
+
+// ── Class with nested shared ref ─────────────────────────────────────────
+
+share node = new Node(100, "root");
+{
+    strong child_a = node;
+    strong child_b = node;
+    check(node.strong_count() == 3, "node count 3 with two child refs");
+    check(child_a.value == 100, "child_a sees node value");
+    check(child_b.tag   == "root", "child_b sees node tag");
+}
+check(node.strong_count() == 1, "node count back to 1 after children drop");
+
+print("\nPASS:", PASS, " FAIL:", FAIL);
+
+    return { pass: PASS, fail: FAIL };
+}
+
+run();

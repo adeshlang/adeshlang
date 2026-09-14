@@ -1,0 +1,10 @@
+let arr = [1, 2, 3, 4];
+print("Length:", len(arr));
+
+let t = clock();
+print("Current timestamp:", t);
+
+let a = clock();
+for(i in 0..1000000) { let x = i; }
+let b = clock();
+print(b - a);

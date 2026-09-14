@@ -1,0 +1,16 @@
+type Ajay ={
+    name: String,
+    age?: u8 = 20 ,
+    isStudent: Bool,
+};
+// age: 20,
+let ajay1: Ajay = {
+    name: "Ajay",
+    isStudent: true,
+};
+
+print("Ajay1 Name:", ajay1.name);
+print("Ajay1 Age:", ajay1.age);
+print("Ajay1 isStudent:", ajay1.isStudent);
+print(typeof ajay1);
+print(sizeof(ajay1));

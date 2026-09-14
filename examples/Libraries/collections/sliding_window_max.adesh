@@ -1,0 +1,37 @@
+import Collections;
+
+print("========================================");
+print("LeetCode 239 - Sliding Window Maximum (VecDeque)");
+print("========================================");
+
+fn maxSlidingWindow(nums, k) {
+    let deque = Collections.VecDeque();
+    let result = [];
+    
+    let i = 0;
+    while (i < nums.len()) {
+        // Remove elements outside current window
+        while (deque.len() > 0 && deque.front() <= i - k) {
+            deque.popFront();
+        }
+        
+        // Remove smaller elements from back
+        while (deque.len() > 0 && nums[deque.back()] <= nums[i]) {
+            deque.popBack();
+        }
+        
+        deque.pushBack(i);
+        
+        if (i >= k - 1) {
+            result.push(nums[deque.front()]);
+        }
+        i = i + 1;
+    }
+    return result;
+}
+
+let nums = [1, 3, -1, -3, 5, 3, 6, 7];
+let k = 3;
+print("Input nums: ", nums);
+print("Window size k: ", k);
+print("Max sliding window output: ", maxSlidingWindow(nums, k));

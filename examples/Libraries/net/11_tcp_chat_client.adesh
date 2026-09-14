@@ -1,0 +1,26 @@
+// AdeshLang Net Example 11: TCP Client Endpoint
+import Net;
+
+fn start_tcp_chat_client() {
+    print("=== 11. TCP Client Endpoint ===");
+
+    print("Connecting to TCP Server on 127.0.0.1:9093...");
+    let stream = Net.tcpConnect("127.0.0.1", 9093);
+    print("Connected! Local Endpoint:", stream.localAddress());
+    print("Remote Endpoint:", stream.remoteAddress());
+
+    stream.setNoDelay(true);
+    stream.setReadTimeout(5.0);
+
+    // Send HTTP GET request over raw TCP stream
+    stream.writeText("GET /api/status HTTP/1.1\r\nHost: 127.0.0.1:9093\r\nUser-Agent: AdeshLang-NetClient/1.0\r\n\r\n");
+    print("Sent GET request payload");
+
+    let response = stream.read(2048);
+    print("Received HTTP Response from server (bytes):", response.len());
+
+    stream.close();
+    print("=== 11. TCP Client Endpoint Completed ===");
+}
+
+start_tcp_chat_client();

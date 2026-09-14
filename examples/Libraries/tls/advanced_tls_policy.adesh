@@ -1,0 +1,32 @@
+// Example 4: Advanced Client Configuration & Security Policy Controls
+import TLS;
+
+print("--- Initializing Custom Security Policy ---");
+
+let host = "1.1.1.1";
+let port = 443;
+
+// Establish secure TLS stream connection
+let handle = TLS.connect(host, port);
+
+print("Connection Handle: " + handle);
+
+// Query connection metadata
+let ver = TLS.version(handle);
+let alpn = TLS.alpn(handle);
+
+print("Negotiated Version: " + ver);
+print("Negotiated ALPN: " + (alpn == "" ? "None" : alpn));
+
+// Perform HTTP payload exchange over TLS stream
+let request = "GET / HTTP/1.1\r\nHost: " + host + "\r\nUser-Agent: AdeshLang-TLS-PolicyEngine\r\nConnection: close\r\n\r\n";
+let bytes_written = TLS.write(handle, request);
+print("Successfully wrote " + bytes_written + " bytes over TLS layer.");
+
+let response = TLS.read(handle, 2048);
+print("\n--- TLS Encrypted Read Buffer (First 500 chars) ---");
+print(response);
+
+// Perform explicit graceful shutdown (close_notify alert sequence)
+let closed = TLS.close(handle);
+print("Graceful Close Result: " + closed);

@@ -1,0 +1,60 @@
+// Basic Struct Definition and Instantiation
+// Demonstrates fundamental struct concepts
+
+print("=== Basic Struct Definition ===");
+
+struct Person {
+    name: String;
+    age: Int;
+    isStudent: Bool;
+};
+
+print("Struct 'Person' defined with 3 fields");
+print("- name: String");
+print("- age: Int");
+print("- isStudent: Bool");
+
+print("=== Creating Struct Instances ===");
+
+let person1 = Person {
+    name: "Ajay",
+    age: 20,
+    isStudent: true,
+};
+
+print("Created person1:");
+print("person1.name = ", person1.name);
+print("person1.age = ", person1.age);
+print("person1.isStudent = ", person1.isStudent);
+
+let person2 = Person {
+    name: "Bob",
+    age: 25,
+    isStudent: false,
+};
+
+print("Created person2:");
+print("person2.name = ", person2.name);
+print("person2.age = ", person2.age);
+print("person2.isStudent = ", person2.isStudent);
+
+print("=== Multiple Instances ===");
+
+let person3 = Person {
+    name: "Charlie",
+    age: 22,
+    isStudent: true,
+};
+
+let person4 = Person {
+    name: "Diana",
+    age: 19,
+    isStudent: true,
+};
+
+print("Created multiple instances");
+print("person3.name: Charlie, age: 22");
+print("person4.name: Diana, age: 19");
+
+print("=== All Basic Struct Examples Passed ===");
+print(typeof person1.age);

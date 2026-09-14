@@ -1,0 +1,35 @@
+{
+  "name": "adesh-coder-0.5b",
+  "version": "0.3.0",
+  "base_model": "Qwen/Qwen2.5-Coder-0.5B-Instruct",
+  "architecture": "qwen2",
+  "context_window": 32768,
+  "description": "Production fine-tuned AdeshLang v0.3.0 code generator and analyzer",
+  "created_at": "2026-09-14T09:05:00Z",
+  "artifacts": [
+    {
+      "filename": "adesh-coder-0.5b-f16.gguf",
+      "quantization": "F16",
+      "size_mb": 948.1,
+      "sha256": "b4db60791d984dba3641cd5055c85f2a68869f3701be2c2f651a899a8c3582a9",
+      "url": "https://huggingface.co/adeshlang/adesh-coder-0.5b/resolve/main/adesh-coder-0.5b-f16.gguf",
+      "recommended_for": "Reference FP16"
+    },
+    {
+      "filename": "adesh-coder-0.5b-q4_0.gguf",
+      "quantization": "Q4_0",
+      "size_mb": 274.98,
+      "sha256": "fdd91c75c948e167033ae5dc693212816df0c1220acc02659f189a71c9e16cbe",
+      "url": "https://huggingface.co/adeshlang/adesh-coder-0.5b/resolve/main/adesh-coder-0.5b-q4_0.gguf",
+      "recommended_for": "Ultra-Fast CPU Execution (Default)"
+    },
+    {
+      "filename": "adesh-coder-0.5b-q8_0.gguf",
+      "quantization": "Q8_0",
+      "size_mb": 510.51,
+      "sha256": "a42a6ed8a2676ce4efa67f79cb081f8c94f1ee3d861068821f461e237220374e",
+      "url": "https://huggingface.co/adeshlang/adesh-coder-0.5b/resolve/main/adesh-coder-0.5b-q8_0.gguf",
+      "recommended_for": "High Quality Precision (Servers / Workstations)"
+    }
+  ]
+}

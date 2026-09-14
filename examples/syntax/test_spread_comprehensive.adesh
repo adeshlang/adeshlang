@@ -1,0 +1,96 @@
+// Comprehensive Spread Operator Tests
+
+print("=== Array Spread Tests ===");
+
+// Basic array spread
+let arr1 = [1, 2, 3];
+let arr2 = [4, 5, 6];
+let combined = [...arr1, ...arr2];
+print("Combined arrays:", combined); // [1, 2, 3, 4, 5, 6]
+
+// Spread with literals
+let withLiterals = [0, ...arr1, 7, 8];
+print("With literals:", withLiterals); // [0, 1, 2, 3, 7, 8]
+
+// Multiple spreads and literals
+let complex = [0, ...arr1, 99, ...arr2, 100];
+print("Complex:", complex); // [0, 1, 2, 3, 99, 4, 5, 6, 100]
+
+// Array cloning
+let original = [10, 20, 30];
+let clone = [...original];
+print("Clone:", clone); // [10, 20, 30]
+
+print("\n=== Function Call Spread Tests ===");
+
+fn sum(...nums) {
+    let total = 0;
+    let i = 0;
+    while (i < len(nums)) {
+        total = total + nums[i];
+        i = i + 1;
+    }
+    return total;
+}
+
+print("Sum with rest:", sum(1, 2, 3, 4, 5)); // 15
+
+let numbers = [10, 20, 30];
+print("Sum with spread:", sum(...numbers)); // 60
+
+// Combined rest and spread
+fn describe(first, second, ...rest) {
+    print("First:", first);
+    print("Second:", second);
+    print("Rest:", rest);
+}
+
+describe(...[1, 2, 3, 4, 5]);
+
+print("\n=== Object Spread Tests ===");
+
+// Basic object spread
+let person = { name: "Alice", age: 30 };
+let personWithId = { id: 1, ...person };
+print("With ID:", personWithId); // {id: 1, name: "Alice", age: 30}
+
+// Override properties
+let defaults = { color: "red", size: "medium" };
+let custom = { ...defaults, color: "blue" };
+print("Override:", custom); // {color: "blue", size: "medium"}
+
+// Multiple spreads
+let part1 = { a: 1, b: 2 };
+let part2 = { c: 3, d: 4 };
+let merged = { ...part1, ...part2, e: 5 };
+print("Merged:", merged); // {a: 1, b: 2, c: 3, d: 4, e: 5}
+
+// Object cloning
+let obj = { value: 42, flag: true };
+let objClone = { ...obj };
+print("Object clone:", objClone); // {value: 42, flag: true}
+
+// Spread in middle
+let base = { x: 10 };
+let extended = { id: 1, ...base, y: 20 };
+print("Middle spread:", extended); // {id: 1, x: 10, y: 20}
+
+// Complex override scenario
+let config = { theme: "dark", lang: "en", cache: true };
+let userConfig = { ...config, theme: "light", debug: true };
+print("User config:", userConfig); // {theme: "light", lang: "en", cache: true, debug: true}
+
+print("\n=== Combined Patterns ===");
+
+// Spread and rest together
+let items = [1, 2, 3];
+let moreItems = [...items, 4, 5];
+
+fn processData(...data) {
+    let processed = [...data, 100];
+    return processed;
+}
+
+print("Processed:", processData(1, 2, 3)); // [1, 2, 3, 100]
+
+print("\nAll spread operator tests complete!");

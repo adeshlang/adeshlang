@@ -1,0 +1,19 @@
+import Encoding;
+
+// ============================================================================
+// Byte Order Mark (BOM) Detection & Manipulation
+// ============================================================================
+
+print("--- Adding BOM to UTF-8 Bytes ---");
+let rawBytes = Encoding.utf8Encode("Hello AdeshLang");
+let utf8WithBom = Encoding.addBom(rawBytes, "UTF-8");
+print("UTF-8 with BOM Length:", utf8WithBom.length);
+
+print("\n--- Detecting BOM ---");
+let detectedFormat = Encoding.detectBom(utf8WithBom);
+print("Detected BOM Format:", detectedFormat); // Output: "UTF-8"
+
+print("\n--- Stripping BOM ---");
+let strippedObj = Encoding.removeBom(utf8WithBom);
+print("Stripped BOM Type:", strippedObj.bom);
+print("Clean Bytes Decoded Text:", Encoding.utf8Decode(strippedObj.bytes));

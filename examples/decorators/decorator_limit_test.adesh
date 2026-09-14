@@ -1,0 +1,49 @@
+// Test decorator limits
+
+decorator d1(target, meta) {
+  return fn(x) { return target(x) + 1; };
+}
+
+decorator d2(target, meta) {
+  return fn(x) { return target(x) + 2; };
+}
+
+decorator d3(target, meta) {
+  return fn(x) { return target(x) + 3; };
+}
+
+decorator d4(target, meta) {
+  return fn(x) { return target(x) + 4; };
+}
+
+decorator d5(target, meta) {
+  return fn(x) { return target(x) + 5; };
+}
+
+decorator d6(target, meta) {
+  return fn(x) { return target(x) + 6; };
+}
+
+// Test with 3 decorators
+@d1 @d2 @d3
+fn test3(x) { return x; }
+
+print("3 decorators:", test3(0));
+
+// Test with 4 decorators
+@d1 @d2 @d3 @d4
+fn test4(x) { return x; }
+
+print("4 decorators:", test4(0));
+
+// Test with 5 decorators
+@d1 @d2 @d3 @d4 @d5
+fn test5(x) { return x; }
+
+print("5 decorators:", test5(0));
+
+// Test with 6 decorators
+@d1 @d2 @d3 @d4 @d5 @d6
+fn test6(x) { return x; }
+
+print("6 decorators:", test6(0));

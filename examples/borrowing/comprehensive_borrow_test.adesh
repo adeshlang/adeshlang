@@ -1,0 +1,41 @@
+// AdeshLang: Comprehensive Borrow Test
+// Tests auto-inferred exclusive and shared borrows across multiple values
+
+fn process_value(x, y) {
+    print("Processing: ");
+    print(x);
+    print(", ");
+    print(y);
+    return x + y;
+}
+
+fn read_only(val) {
+    print("Reading: ");
+    print(val);
+}
+
+fn modify_result(a, b, c) {
+    return a + b + c;
+}
+
+fn main() {
+    // Shared borrow - values used multiple times
+    let num1 = 5;
+    let num2 = 10;
+    
+    print("Test 1 - Shared Borrow:");
+    let sum = process_value(num1, num2);
+    print("Sum: ");
+    print(sum);
+    
+    // Use values again - demonstrates auto-inferred shared borrow
+    print("Test 2 - Multiple Reads:");
+    read_only(num1);
+    read_only(num2);
+    
+    // Complex expression - exercises borrow inference
+    print("Test 3 - Complex Computation:");
+    let total = modify_result(num1, num2, sum);
+    print("Total: ");
+    print(total);
+}

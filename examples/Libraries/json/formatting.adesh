@@ -1,0 +1,34 @@
+// AdeshLang Built-in JSON — Formatting & Minification
+// Demonstrates JSON.minify, JSON.pretty, JSON.stringifyPretty,
+// and JSON.stringifyCompact for controlling JSON output format.
+
+fn main() {
+    // Multiline JSON text defined naturally with backtick template string
+    let json_str = `
+    {
+        "host": "localhost",
+        "port": 5432,
+        "debug": false
+    }
+    `;
+
+    // ── minify ───────────────────────────────────────────────────────────
+    // Strips all insignificant whitespace from a JSON string
+    let compact = JSON.minify(json_str);
+    println("Minified : " + compact);
+
+    // ── pretty ───────────────────────────────────────────────────────────
+    // Re-formats a JSON string into human-readable form
+    let formatted = JSON.pretty(compact);
+    println("Pretty   :\n" + formatted);
+
+    // ── Via parsed values ────────────────────────────────────────────────
+    let obj = JSON.parse(json_str);
+
+    // stringifyPretty  — pretty-prints a Value
+    println("stringifyPretty :\n" + JSON.stringifyPretty(obj));
+
+    // stringifyCompact / stringify  — same as minify but from a parsed value
+    println("stringifyCompact: " + JSON.stringifyCompact(obj));
+    println("stringify       : " + JSON.stringify(obj));
+}

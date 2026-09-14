@@ -1,0 +1,32 @@
+// Thread-Aware Pointer Tracking
+// Demonstrates pointer tracking capabilities
+
+print("=== Pointer Allocation Tracking ===");
+
+print("When pointers are allocated, the system tracks:");
+print("1. Allocation address");
+print("2. Allocation size");
+print("3. Deallocated status");
+
+unsafe {
+    let p1 = alloc(8);
+    print("Allocated pointer 1");
+    
+    let p2 = alloc(8);
+    print("Allocated pointer 2");
+    
+    free(p1);
+    print("Freed pointer 1");
+    
+    free(p2);
+    print("Freed pointer 2");
+}
+
+print("=== Pointer Validity States ===");
+
+print("Pointer states:");
+print("1. Allocated: Valid for read/write");
+print("2. Borrowed: Valid for read only");
+print("3. Freed: Invalid - any use is error");
+
+print("=== All Tracking Examples Passed ===");

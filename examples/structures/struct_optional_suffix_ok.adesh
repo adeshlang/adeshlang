@@ -1,0 +1,17 @@
+// Optional suffix regression case: in-range integer literal should be accepted for u8.
+
+struct User {
+    username: String;
+    email: String;
+    age: u8;
+};
+
+let okUser = User {
+    username: "alice123",
+    email: "alice@example.com",
+    age: 28,
+};
+
+print(okUser.username);
+print(okUser.email);
+print(okUser.age);

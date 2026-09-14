@@ -1,0 +1,5 @@
+let a = 19;
+let b = a
+print(a);
+a = 20;
+print(a);

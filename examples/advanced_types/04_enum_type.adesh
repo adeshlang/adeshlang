@@ -1,0 +1,49 @@
+// Enum Type Example
+// Demonstrates custom enum variants and test integration
+
+enum Status {
+    Ready(code),
+    Failed(message)
+}
+
+fn status_code(status) {
+    return match status {
+        Ready(code) => code,
+        Failed(message) => -1
+    };
+}
+
+fn status_message(status) {
+    return match status {
+        Ready(code) => "ready",
+        Failed(message) => message
+    };
+}
+
+test fn test_ready_variant() {
+    let status = new Status.Ready(200);
+    assert_eq(status.tag, "Ready");
+    assert_eq(status_code(status), 200);
+    assert_eq(status_message(status), "ready");
+}
+
+test fn test_failed_variant() {
+    let status = new Status.Failed("missing file");
+    assert_eq(status.tag, "Failed");
+    assert_eq(status_code(status), -1);
+    assert_eq(status_message(status), "missing file");
+}
+
+test fn test_match_expression() {
+    let status = new Status.Ready(123);
+    let label = match status {
+        Ready(code) => "ok",
+        Failed(message) => "err"
+    };
+    assert_eq(label, "ok");
+}
+
+fn main() {
+    print("Enum Type Example");
+    print("Run with: adesh run --test examples/advanced_types/04_enum_type.adesh");
+}

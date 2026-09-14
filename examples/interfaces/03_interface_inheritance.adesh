@@ -1,0 +1,38 @@
+// 03_interface_inheritance.adesh
+// Shows inheritance between multiple interfaces.
+
+print("=== 03: INTERFACE INHERITANCE DEMO ===");
+
+interface Reader {
+    fn read();
+}
+
+interface Writer {
+    fn write(data: string);
+}
+
+interface ReadWriter implements Reader, Writer {
+    // inherits read() and write() methods
+    fn read();
+    fn write(data: string);
+}
+
+class Buffer implements ReadWriter {
+    Buffer() {
+        this.content = "";
+    }
+
+    fn read(): string {
+        return this.content;
+    }
+
+    fn write(data: string): void {
+        this.content = data;
+    }
+}
+
+let buf = new Buffer();
+buf.write("Interface inheritance data stream");
+print("Buffer content =", buf.read());
+
+print("✅ Interface Inheritance Demo Passed.\n");

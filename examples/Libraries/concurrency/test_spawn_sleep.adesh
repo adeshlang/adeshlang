@@ -1,0 +1,33 @@
+import thread;
+
+print("Starting test_spawn_sleep");
+
+let stop = thread.CancellationSource.new();
+let tok = stop.token();
+
+let h1 = thread.spawn_named("worker", fn() {
+    print("worker started");
+    let count = 0;
+    while !tok.is_cancelled() {
+        count = count + 1;
+        thread.sleep(10);
+    }
+    print("worker exiting");
+    return count;
+});
+
+let i = 0;
+while i < 3 {
+    print(`tick ${i}`);
+    print("before sleep");
+    thread.sleep(500);
+    print("after sleep");
+    i = i + 1;
+}
+
+print("cancelling...");
+stop.cancel();
+print("joining worker...");
+let res = h1.join();
+print(`worker result = ${res}`);
+print("FINISHED SUCCESSFULLY!");

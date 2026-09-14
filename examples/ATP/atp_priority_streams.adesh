@@ -1,0 +1,108 @@
+// ╔═══════════════════════════════════════════════════════════════════════════════╗
+// ║  ATP Priority Streams — critical / high / medium / low scheduling             ║
+// ║  Run: cargo run --bin adeshlang -- run examples/Libraries/atp/atp_priority_streams.adesh
+// ╚═══════════════════════════════════════════════════════════════════════════════╝
+
+import ATP;
+import thread;
+import "./lib/atp_ports.adesh" as Ports;
+
+fn waitConnected(conn: any, maxMs: any): any {
+    let elapsed = 0;
+    while elapsed < maxMs {
+        let ev = conn.receive();
+        if (ev != null && ev.type == "connected") { return ev; }
+        thread.sleep(10);
+        elapsed = elapsed + 10;
+    }
+    return null;
+}
+
+fn recvMessage(conn: any, maxMs: any): any {
+    let elapsed = 0;
+    while elapsed < maxMs {
+        let ev = conn.receive();
+        if (ev != null && ev.type == "message") { return ev; }
+        thread.sleep(10);
+        elapsed = elapsed + 10;
+    }
+    return null;
+}
+
+fn acceptConn(server: any, maxMs: any): any {
+    let elapsed = 0;
+    while elapsed < maxMs {
+        let c = server.accept();
+        if (c != null && c.type == "AtpConnection") { return c; }
+        thread.sleep(10);
+        elapsed = elapsed + 10;
+    }
+    return null;
+}
+
+let port = Ports.port(5);
+
+let serverThread = thread.spawn(fn() {
+    let server = ATP.listen(Ports.DEFAULT_HOST, port);
+    let conn = null;
+    let t = 0;
+    while (conn == null && t < 500) {
+        conn = server.accept();
+        t = t + 1;
+        thread.sleep(10);
+    }
+    if (conn != null) {
+        let count = 0;
+        let n = 0;
+        while (n < 80) {
+            let ev = conn.receive();
+            if (ev != null && ev.type == "message") {
+                print("[server] priority msg:", ev.data);
+                conn.send("ack:" + ev.data, true, true);
+                count = count + 1;
+            }
+            n = n + 1;
+            thread.sleep(10);
+        }
+        print("[server] collected " + count + " priority messages");
+        conn.close();
+    }
+    server.close();
+});
+
+thread.sleep(400);
+
+print("=== ATP Priority Streams ===\n");
+
+let conn = ATP.connect(Ports.DEFAULT_HOST, port);
+waitConnected(conn, 5000);
+
+let critical = conn.openStream("critical");
+let high = conn.openStream("high");
+let medium = conn.openStream("medium");
+let low = conn.openStream("low");
+thread.sleep(150);
+
+conn.send("prio:critical:alert", true, true);
+conn.send("prio:high:rpc", true, true);
+conn.send("prio:medium:chat", true, true);
+conn.send("prio:low:bulk", true, true);
+
+print("[client] sent on critical, high, medium, low streams");
+
+let acks = 0;
+while (acks < 4) {
+    let msg = recvMessage(conn, 3000);
+    if (msg != null) {
+        print("[client] ack:", msg.data);
+        acks = acks + 1;
+    } else {
+        break;
+    }
+}
+
+print("[client] received " + acks + "/4 priority acks");
+
+conn.close();
+serverThread.join();
+print("\n=== Priority streams demo complete ===");

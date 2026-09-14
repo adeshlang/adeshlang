@@ -1,0 +1,17 @@
+// Custom C Library Declarations (compiled from custom_math.c)
+extern "C" fn custom_multiply(a: f64, b: f64) -> f64;
+extern "C" fn custom_factorial(n: i32) -> i32;
+extern "C" fn custom_hypotenuse(a: f64, b: f64) -> f64;
+
+export fn calculate_hypotenuse(a, b) {
+    // Call our compiled C function
+    return custom_hypotenuse(a, b);
+}
+
+export fn multiply_native(a, b) {
+    return custom_multiply(a, b);
+}
+
+export fn factorial_native(n) {
+    return custom_factorial(n);
+}

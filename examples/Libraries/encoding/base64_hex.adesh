@@ -1,0 +1,17 @@
+import Encoding;
+
+// Base64 & Hex Encoding Example
+let text = "Hello World!";
+let bytes = Encoding.utf8Encode(text);
+
+let b64 = Encoding.base64Encode(bytes);
+print("Base64 Encoded:", b64);
+
+let b64Decoded = Encoding.base64Decode(b64);
+print("Base64 Decoded Text:", Encoding.utf8Decode(b64Decoded));
+
+let hex = Encoding.hexEncode(bytes);
+print("Hex Encoded:", hex);
+
+let hexDecoded = Encoding.hexDecode(hex);
+print("Hex Decoded Text:", Encoding.utf8Decode(hexDecoded));

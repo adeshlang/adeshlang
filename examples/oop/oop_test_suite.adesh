@@ -1,0 +1,309 @@
+// Comprehensive OOP Test Suite for AdeshLang Enhanced Features
+
+import Math;
+print("=== Enhanced OOP Features Test Suite ===");
+
+// Test 1: Constructor and self keyword
+print("\n1. Testing Constructor and self keyword:");
+class Person {
+    Person(name, age) {
+        self.name = name;
+        self.age = age;
+        self.id = Math.random();
+        print("Person created:", self.name);
+    }
+    
+    fn getInfo() {
+        return self.name + " (" + self.age + " years old)";
+    }
+}
+
+let person1 = new Person("Alice", 30);
+print("Person info:", person1.getInfo());
+
+// Test 2: Method Overloading
+print("\n2. Testing Method Overloading:");
+class Calculator {
+    fn add(a, b) {
+        print("Adding two numbers:", a, "+", b, "=", a + b);
+        return a + b;
+    }
+    
+    fn add(a, b, c) {
+        print("Adding three numbers:", a, "+", b, "+", c, "=", a + b + c);
+        return a + b + c;
+    }
+    
+    fn add(numbers) {
+        let sum = 0;
+        for (n in numbers) {
+            sum = sum + n;
+        }
+        print("Adding array:", numbers, "=", sum);
+        return sum;
+    }
+}
+
+let calc = new Calculator();
+calc.add(2, 3);
+calc.add(1, 2, 3);
+calc.add([1, 2, 3, 4, 5]);
+
+// Test 3: Operator Overloading
+print("\n3. Testing Operator Overloading:");
+class Vector {
+    Vector(x, y) {
+        self.x = x;
+        self.y = y;
+    }
+    
+    fn operator+(other) {
+        return new Vector(self.x + other.x, self.y + other.y);
+    }
+    
+    fn operator-(other) {
+        return new Vector(self.x - other.x, self.y - other.y);
+    }
+    
+    fn operator==(other) {
+        return self.x == other.x && self.y == other.y;
+    }
+    
+    fn operator[](index) {
+        if (index == 0) {return self.x;}
+        if (index == 1) {return self.y;}
+        throw "Index out of bounds";
+    }
+    
+    fn operator[]=(index, value) {
+        if (index == 0) {self.x = value;}
+        elif (index == 1) {self.y = value;}
+        else {throw "Index out of bounds";}
+    }
+    
+    fn toString() {
+        return "Vector(" + self.x + ", " + self.y + ")";
+    }
+}
+
+let v1 = new Vector(3, 4);
+let v2 = new Vector(1, 2);
+let v3 = v1 + v2;
+
+print("v1:", v1.toString());
+print("v2:", v2.toString());
+print("v1 + v2:", v3.toString());
+print("v1 == v2:", v1 == v2);
+print("v1[0]:", v1[0]);
+v1[1] = 10;
+print("After v1[1] = 10:", v1.toString());
+
+// Test 4: Inheritance and Method Overriding
+print("\n4. Testing Inheritance and Method Overriding:");
+class Animal {
+    Animal(name) {
+        self.name = name;
+    }
+    
+    fn speak() {
+        print(self.name + " makes a sound");
+    }
+    
+    fn speak(loud) {
+        if (loud) {
+            print(self.name.toUpperCase() + " MAKES A LOUD SOUND!");
+        } else {
+            self.speak();
+        }
+    }
+}
+
+class Dog extends Animal {
+    Dog(name, breed) {
+        super(name);
+        self.breed = breed;
+    }
+    
+    fn speak() {
+        print(self.name + " barks: Woof!");
+    }
+    
+    fn speak(loud) {
+        if (loud) {
+            print(self.name.toUpperCase() + " BARKS LOUDLY: WOOF WOOF!");
+        } else {
+            self.speak();
+        }
+    }
+    
+    fn wagTail() {
+        print(self.name + " wags tail happily");
+    }
+}
+
+let animal = new Animal("Generic Animal");
+animal.speak();
+animal.speak(true);
+
+let dog = new Dog("Buddy", "Golden Retriever");
+dog.speak();
+dog.speak(true);
+dog.wagTail();
+
+// Test 5: Static Methods and Properties
+print("\n5. Testing Static Methods and Properties:");
+class MathHelper {
+    static PI = 3.14159;
+    static version = "1.0";
+    
+    static fn add(a, b) {
+        return a + b;
+    }
+    
+
+    static fn multiply(a, b) {
+        return a * b;
+    }
+    
+    static fn circleArea(radius) {
+        return MathHelper.PI * radius * radius;
+    }
+}
+
+print("PI:", MathHelper.PI);
+print("Version:", MathHelper.version);
+print("Add 5 + 3:", MathHelper.add(5, 3));
+print("Circle area (r=5):", MathHelper.circleArea(5));
+
+// Test 6: Abstract Classes and Methods
+print("\n6. Testing Abstract Classes:");
+abstract class Shape {
+    Shape(name) {
+        self.name = name;
+    }
+    
+    abstract fn calculateArea();
+    
+    fn describe() {
+        print("This is a " + self.name + " with area " + self.calculateArea());
+    }
+}
+
+class Circle extends Shape {
+    Circle(radius) {
+        super("Circle");
+        self.radius = radius;
+    }
+    
+   fn calculateArea() {
+        return 3.14159 * self.radius * self.radius;
+    }
+}
+
+class Rectangle extends Shape {
+    Rectangle(width, height) {
+        super("Rectangle");
+        self.width = width;
+        self.height = height;
+    }
+    
+    fn calculateArea() {
+        return self.width * self.height;
+    }
+}
+
+let circle = new Circle(5);
+circle.describe();
+
+let rect = new Rectangle(4, 6);
+rect.describe();
+
+// Test 7: Property Getters and Setters
+print("\n7. Testing Property Getters and Setters:");
+class BankAccount {
+    BankAccount(initialBalance) {
+        self._balance = initialBalance;
+        self._transactions = 0;
+    }
+    
+    get balance() {
+        return self._balance;
+    }
+    
+    set balance(amount) {
+        if (amount < 0) {
+            throw "Balance cannot be negative";
+        }
+        self._balance = amount;
+        self._transactions = self._transactions + 1;
+    }
+    
+    get transactionCount() {
+        return self._transactions;
+    }
+    
+   fn deposit(amount) {
+        self.balance = self.balance + amount;
+        print("Deposited", amount, "- New balance:", self.balance);
+    }
+    
+    fn withdraw(amount) {
+        if (amount > self.balance) {
+            throw "Insufficient funds";
+        }
+        self.balance = self.balance - amount;
+        print("Withdrew", amount, "- New balance:", self.balance);
+    }
+}
+
+let account = new BankAccount(1000);
+print("Initial balance:", account.balance);
+account.deposit(500);
+account.withdraw(200);
+print("Transaction count:", account.transactionCount);
+
+// Test 8: Complex Inheritance with Operator Overloading
+print("\n8. Testing Complex Inheritance with Operators:");
+fn truncateToWhole(value: f64): f64 {
+    return value - (value % 1);
+}
+
+class ScalarValue {
+    ScalarValue(value: f64) {
+        self.value = value;
+    }
+    
+    operator+(other) {
+        return new ScalarValue(self.value + other.value);
+    }
+    
+    operator toString() {
+        return "ScalarValue(" + self.value + ")";
+    }
+}
+
+class WholeScalar extends ScalarValue {
+    WholeScalar(value: f64) {
+        super(truncateToWhole(value));
+    }
+    
+    operator+(other) {
+        return new WholeScalar(self.value + other.value);
+    }
+    
+    operator toString() {
+        return "WholeScalar(" + self.value + ")";
+    }
+}
+let num1 = new ScalarValue(3.7);
+let num2 = new ScalarValue(2.1);
+let sum1 = num1 + num2;
+print("Number sum:", sum1.toString());
+print("Creating Number and Integer instances:");
+
+let int1 = new WholeScalar(3.7);
+let int2 = new WholeScalar(2.9);
+let sum2 = int1 + int2;
+print("Integer sum:", sum2.toString());
+
+print("\n=== All OOP Tests Completed ===");

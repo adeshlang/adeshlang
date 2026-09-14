@@ -1,0 +1,21 @@
+import Collections;
+
+print("========================================");
+print("Sequence Deduplication Example");
+print("========================================");
+
+let raw_data = [10, 20, 10, 30, 20, 40, 50, 30, 10];
+let seen = Collections.HashSet();
+let unique_list = Collections.Vec();
+
+for x in raw_data {
+    let key_str = "" + x;
+    if (!seen.contains(key_str)) {
+        seen.insert(key_str);
+        unique_list.push(x);
+    }
+}
+
+print("Original count: ", raw_data.len());
+print("Deduplicated count: ", unique_list.len());
+print("Deduplicated array: ", unique_list.toArray());

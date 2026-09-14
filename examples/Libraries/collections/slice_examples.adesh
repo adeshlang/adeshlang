@@ -1,0 +1,15 @@
+import Collections;
+
+print("========================================");
+print("Slice Examples");
+print("========================================");
+
+let arr = [10, 20, 30, 40, 50];
+let slice = Collections.Slice(arr, 1, 4); // elements [20, 30, 40]
+
+print("Slice length: ", slice.len());
+print("Slice first: ", slice.first());
+print("Slice last: ", slice.last());
+print("Slice get(1): ", slice.get(1));
+print("Slice contains 30: ", slice.contains(30));
+print("Slice array: ", slice.toArray());

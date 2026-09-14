@@ -1,0 +1,63 @@
+// Example: Advanced Memory Allocators
+// Demonstrates:
+// - Arena allocators: fast bump allocation
+// - Region allocators: scope-based cleanup
+// - Stack allocators: LIFO allocation pattern
+// - Thread-local allocators: thread-local caching
+// .
+fn main() {
+    // === Example 1: Arena Allocator ===
+    let arena = arena_new(4096);  // 4KB arena
+    if arena != null {
+        let ptr1 = arena_alloc(64, 8);  // Allocate 64 bytes, align to 8
+        let ptr2 = arena_alloc(128, 8);
+        print("Arena allocations: OK");
+        let remaining = arena_remaining();
+        print("Arena remaining: " + remaining);
+    }
+    
+    // === Example 2: Arena Reset ===
+    arena_reset();  // Fast deallocation of all allocations
+    print("Arena reset: OK");
+    
+    // === Example 3: Region Allocator (Scope-Based) ===
+    begin_region();
+    {
+        let region_ptr1 = region_alloc(32, 4);
+        let region_ptr2 = region_alloc(64, 8);
+        print("Region allocations: OK");
+    }
+    end_region();  // Automatic cleanup
+    print("Region cleanup: OK");
+    
+    // === Example 4: Stack Allocator (LIFO) ===
+    let stack = stack_new();
+    stack_push_frame();  // Push new frame
+    {
+        let stack_ptr = stack_alloc(256);
+        print("Stack allocation: OK");
+    }
+    let freed = stack_pop_frame();  // Pop frame, deallocate
+    print("Stack freed: " + freed + " bytes");
+    
+    // === Example 5: Thread-Local Cache ===
+    let block1 = thread_local_alloc(128);
+    print("Thread-local alloc: " + block1.len() + " bytes");
+    thread_local_free(block1);  // Return to cache
+    
+    // === Example 6: Multi-Frame Stack Operations ===
+    stack_push_frame();
+    {
+        stack_push_frame();  // Nested frame
+        {
+            let inner_ptr = stack_alloc(512);
+            print("Inner frame alloc: OK");
+        }
+        let inner_freed = stack_pop_frame();
+        print("Inner freed: " + inner_freed + " bytes");
+    }
+    let outer_freed = stack_pop_frame();
+    print("Outer freed: " + outer_freed + " bytes");
+    
+    print("=== All Allocator Examples Passed ===");
+}

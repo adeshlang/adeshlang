@@ -1,0 +1,28 @@
+extern "C" {
+    fn is_even(n: i32) -> i32;
+}
+
+fn main() {
+    let result = is_even(4);
+    
+    print("Result value: ");
+    print(result);
+    print("\n");
+    
+    print("Result type: ");
+    print(typeof(result));
+    print("\n");
+    
+    // Try different comparison values
+    print("result == 0: ");
+    print(result == 0);
+    print("\n");
+    
+    print("result == 1: ");
+    print(result == 1);
+    print("\n");
+    
+    print("result == 1.0: ");
+    print(result == 1.0);
+    print("\n");
+}

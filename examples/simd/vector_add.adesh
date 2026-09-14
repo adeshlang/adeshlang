@@ -1,0 +1,40 @@
+// Vector Addition — import Simd; then use Simd.sum() or Simd.vector().sum()
+import Simd;
+
+let a = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+let b = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0];
+
+// Element-wise addition (SIMD-vectorized automatically via operators too)
+let c = a + b;
+print("a + b = ", c);
+
+// Broadcasting: array + scalar
+let d = a + 100.0;
+print("a + 100 = ", d);
+
+// Namespace methods
+let total = Simd.sum(a);
+print("Simd.sum(a) = ", total);
+
+let avg = Simd.mean(a);
+print("Simd.mean(a) = ", avg);
+
+let dot = Simd.dot(a, b);
+print("Simd.dot(a, b) = ", dot);
+
+// Vector instance object — object.method() pattern
+let v = Simd.vector(a);
+print("v.sum() = ", v.sum());
+print("v.mean() = ", v.mean());
+print("v.dot(b) = ", v.dot(b));
+
+// Fused expression (single pass, no temporaries)
+let d_arr = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
+let fused = Simd.fusedMulAdd(a, b, d_arr);
+print("Simd.fusedMulAdd(a, b, d) = ", fused);
+
+let c_arr = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+let fused_sqrt = Simd.fusedSqrtMulAdd(a, b, c_arr);
+print("Simd.fusedSqrtMulAdd(a, b, c) = ", fused_sqrt);
+
+print("Vector addition demo complete!");

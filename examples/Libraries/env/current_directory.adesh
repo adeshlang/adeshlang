@@ -1,0 +1,14 @@
+import Env;
+
+let cwd = Env.currentDirectory();
+print("Current Working Directory: " + cwd.toString());
+
+// Test setting current working directory to home and back
+let home = Env.home();
+let success = Env.setCurrentDirectory(home);
+print("Set CWD to home successful: " + str(success));
+print("New CWD: " + Env.currentDirectory().toString());
+
+// Restore original CWD
+Env.setCurrentDirectory(cwd);
+print("Restored CWD: " + Env.currentDirectory().toString());

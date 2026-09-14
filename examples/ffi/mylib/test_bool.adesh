@@ -1,0 +1,41 @@
+extern "C" {
+    fn is_even(n: i32) -> i32;
+    fn is_odd(n: i32) -> i32;
+}
+
+fn main() {
+    let n = 4;
+    let result_even = is_even(n);
+    let result_odd = is_odd(n);
+    
+    print("Testing n = ");
+    print(n);
+    print("\n");
+    
+    print("is_even(");
+    print(n);
+    print(") = ");
+    print(result_even);
+    print("\n");
+    
+    print("is_odd(");
+    print(n);
+    print(") = ");
+    print(result_odd);
+    print("\n");
+    
+    // Test comparisons
+    print("result_even == 1: ");
+    if result_even == 1 {
+        print("true\n");
+    } else {
+        print("false\n");
+    }
+    
+    print("result_even != 0: ");
+    if result_even != 0 {
+        print("true\n");
+    } else {
+        print("false\n");
+    }
+}

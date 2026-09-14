@@ -1,0 +1,31 @@
+// AdeshLang WebSocket Example 13: Origin Security Validation Policy
+// Demonstrates CORS/Origin security validation policy on WebSocket server.
+
+import WebSocket;
+
+print("=== AdeshLang WebSocket Origin Security Validation Demo ===");
+
+let serverConfig = WebSocket.ServerConfig({
+    port: 8613,
+    bind_address: "127.0.0.1",
+    origins: ["https://dashboard.mycompany.com"]
+});
+
+let server = WebSocket.server(serverConfig);
+server.startEcho();
+print("✓ Server running with restricted origin policy: ['https://dashboard.mycompany.com']");
+
+let clientConfig = WebSocket.ClientConfig({
+    origin: "https://dashboard.mycompany.com"
+});
+
+let client = WebSocket.connect("ws://127.0.0.1:8613", clientConfig);
+print("✓ Allowed Origin client connected successfully!");
+
+client.sendText("Authorized request");
+let reply = client.receive();
+print("Server Response: " + reply.payload);
+
+client.close(1000, "Done origin test");
+server.close();
+print("✓ Origin security policy test completed successfully!");

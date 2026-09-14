@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# AdeshLang "toolchain choice" marker postinstall
+# (package org.adeshlang.pkg.toolchain-trigger).
+#
+# Choice state cannot be passed to a package script as an environment
+# variable, so product builds use the standard flag-file trick:
+#
+#   - The Distribution file (scripts/choices.xml) exposes a "toolchain"
+#     choice (checked by default) whose ONLY payload is this empty package.
+#   - When the user leaves that choice checked, the Installer installs this
+#     package and runs this script as root, which writes
+#     /tmp/.adesh-install-toolchain.
+#   - The core package postinstall (scripts/postinstall) checks that flag
+#     file and, when present, runs `adesh toolchain install --system`.
+#
+# If the user unchecks the choice the package is not installed, no flag is
+# written, and the toolchain step is skipped.
+#
+# IMPORTANT (see choices.xml): this package's <pkg-ref> must be listed BEFORE
+# the core <pkg-ref> in the Distribution so that this postinstall runs before
+# the core postinstall reads the flag.
+set -euo pipefail
+
+FLAG_FILE="/tmp/.adesh-install-toolchain"
+
+# Create (or refresh) the marker. Running as root, an empty file suffices
+# — its mere existence signals "toolchain install requested".
+: > "$FLAG_FILE"
+
+echo "AdeshLang: toolchain install requested (flag written)."
+exit 0

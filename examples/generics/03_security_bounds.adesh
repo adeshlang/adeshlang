@@ -1,0 +1,50 @@
+// 03_security_bounds.adesh
+// Demonstrates how the type checker and memory safety systems enforce bounds,
+// validate nullability constraints, and verify ownership/borrow rules with generics.
+
+print("=== 03: SECURITY BOUNDS AND MEMORY SAFETY ===");
+
+// 1. Generic Option-like structure representing potential value presence (Nullability safe)
+class NullableBox<T> {
+    NullableBox(val: T?) {
+        this.value = val;
+    }
+
+    fn hasValue(): bool {
+        return this.value != null;
+    }
+
+    fn getValueOr(defaultVal: T): T {
+        if (this.value == null) {
+            return defaultVal;
+        }
+        return this.value;
+    }
+}
+
+let emptyBox = new NullableBox(null);
+let fullBox = new NullableBox("Secure Data String");
+
+print("Empty box has value?   =", emptyBox.hasValue());
+print("Empty box default val  =", emptyBox.getValueOr("Fallback Default"));
+
+print("Full box has value?    =", fullBox.hasValue());
+print("Full box value         =", fullBox.getValueOr("Fallback Default"));
+
+// 2. Ensuring RAII and Move checking are robust for generic wrappers.
+// Ownership/borrow safety verification:
+class ResourceWrapper<T> {
+    ResourceWrapper(res: T) {
+        this.resource = res;
+    }
+}
+
+// Since arrays are non-Copy, moving them into a generic class transfers ownership.
+let mySecretArray = [5, 10, 15];
+let wrapper = new ResourceWrapper(mySecretArray); // mySecretArray is moved here!
+
+// Attempting to read mySecretArray after moving it into the wrapper:
+// If uncommented, this triggers a compile-time ownership validation error:
+// print(mySecretArray); 
+
+print("✅ Generic security bounds and RAII safety checked.");

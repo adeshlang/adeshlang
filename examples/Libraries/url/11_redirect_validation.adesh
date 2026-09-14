@@ -1,0 +1,9 @@
+import URL;
+
+let initialUrl: URL = URL.parse("https://auth.example.com/login");
+let redirectUrl: URL = URL.parse("https://app.example.com/dashboard");
+
+let diffs: Vec<String> = URL.diff(initialUrl, redirectUrl);
+
+print("--- 11 Redirect Validation & Diff Example ---");
+print("Differences between initial and redirect URL:", diffs);

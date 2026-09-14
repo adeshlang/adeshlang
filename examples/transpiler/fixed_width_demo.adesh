@@ -1,0 +1,49 @@
+// Fixed-width Numeric Types Transpiler Demo
+// This file tests the transpilation of u8..u128, i8..i128, f32, f64
+
+// Unsigned integers
+let byte: u8 = 255u8;
+let short: u16 = 65535;
+let uint: u32 = 100;
+let ulong: u64 = 1000;
+
+print("byte:", byte);
+print("short:", short);
+print("uint:", uint);
+print("ulong:", ulong);
+
+// Signed integers (using explicit cast or positive values)
+let sbyte: i8 = 127i8;
+let sshort: i16 = 32767i16;
+let sint: i32 = 100i32;
+let slong: i64 = 1000i64;
+
+print("sbyte:", sbyte);
+print("sshort:", sshort);
+print("sint:", sint);
+print("slong:", slong);
+
+// Float types
+let float32: f32 = 3.14f32;
+let float64: f64 = 2.718281828f64;
+
+print("float32:", float32);
+print("float64:", float64);
+
+// Arithmetic with fixed-width types
+let a: u32 = 100u32;
+let b: u32 = 50u32;
+let sum = a + b;
+let diff = a - b;
+let prod = a * b;
+
+print("a + b =", sum);
+print("a - b =", diff);
+print("a * b =", prod);
+
+// Comparison with fixed-width types
+if (a > b) {
+    print("a is greater than b");
+}
+
+print("\n=== Fixed-width Types Demo Complete ===");

@@ -1,0 +1,11 @@
+// AdeshLang: Invalid Mutable Borrow Example
+// This example demonstrates the E0502 borrow check error.
+// We cannot borrow a variable as mutable (&mut) while an immutable borrow (&) is active.
+
+fn main() {
+    let numbers = [1, 2, 3];
+    let read_view = &numbers;       // Shared borrow
+    let write_view = &mut numbers;  // ERROR E0502: Cannot borrow as mutable while shared borrow is active
+
+    print(read_view);
+}

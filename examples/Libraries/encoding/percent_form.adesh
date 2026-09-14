@@ -1,0 +1,16 @@
+import Encoding;
+
+// Percent & Form URL Encoding Example
+let query = "name=Ajay Tainwala&city=New Delhi&symbol=🚀";
+
+let percentEnc = Encoding.percentEncode(query);
+print("Percent Encoded:", percentEnc);
+
+let percentDec = Encoding.percentDecode(percentEnc);
+print("Percent Decoded:", percentDec);
+
+let formEnc = Encoding.formEncode(query);
+print("Form Encoded:", formEnc);
+
+let formDec = Encoding.formDecode(formEnc);
+print("Form Decoded:", formDec);

@@ -1,0 +1,14 @@
+import Random;
+
+print("--- Seeded Deterministic RNG Demo ---");
+let rng1 = Random.seed(42);
+let val1_a = rng1.int(1, 100);
+let val1_b = rng1.float();
+
+let rng2 = Random.seed(42);
+let val2_a = rng2.int(1, 100);
+let val2_b = rng2.float();
+
+print("RNG 1 (seed 42): int = " + val1_a + ", float = " + val1_b);
+print("RNG 2 (seed 42): int = " + val2_a + ", float = " + val2_b);
+print("Identical outputs reproduced? " + (val1_a == val2_a && val1_b == val2_b));

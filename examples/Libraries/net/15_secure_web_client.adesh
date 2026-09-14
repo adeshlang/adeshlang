@@ -1,0 +1,54 @@
+// AdeshLang Net Example 15: Secure Web Client with URL, Crypto & Encoding
+import URL;
+import Net;
+import Crypto;
+import Encoding;
+
+fn send_secure_request(targetUrlStr) {
+    print("=== Secure Web Client Request ===");
+
+    // 1. Parse Target URL
+    let url = URL.parse(targetUrlStr);
+    print("Target URL parsed:", url.href);
+    print("  Host:", url.hostname);
+    print("  Port:", url.port);
+
+    // 2. Security Validation via NetworkPolicy
+    let policy = Net.NetworkPolicy()
+        .allowTcp()
+        .allowPort(8080)
+        .allowPort(9093);
+
+    let ip = Net.IPAddress.parse(url.hostname);
+    policy.validate(ip.address);
+    print("  Destination IP validated against security policy:", ip.address);
+
+    // 3. Generate HMAC / SHA-256 Digest Signature
+    let payload = "timestamp=1700000000&action=ping";
+    let signature = Crypto.sha256(payload);
+    print("  Request Signature (SHA-256):", signature);
+
+    // 4. Base64 Encode Authorization Token
+    let authToken = Encoding.base64Encode("client_id:secret_key_99");
+    print("  Base64 Authorization Token:", authToken);
+
+    // 5. Connect via Net.tcpConnect
+    let stream = Net.tcpConnect(url.hostname, 9093);
+    stream.setNoDelay(true);
+
+    let reqHeader = "GET /api/status HTTP/1.1\r\nHost: " + url.hostname + "\r\nAuthorization: Basic " + authToken + "\r\nX-Signature: " + signature + "\r\nConnection: close\r\n\r\n";
+    stream.writeText(reqHeader);
+    print("  Transmitted HTTP Request with Auth & Signature Headers");
+
+    let response = stream.read(2048);
+    print("  Received Response from Server");
+
+    stream.close();
+    print("=== Secure Web Client Request Completed ===");
+}
+
+fn main() {
+    send_secure_request("http://127.0.0.1:9093/api/status");
+}
+
+main();

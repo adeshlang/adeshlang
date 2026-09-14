@@ -1,0 +1,10 @@
+// Test case: detecting use-after-move with strings
+
+let x = "test";
+print(x);
+
+let y = x;  // move x into y
+print(y);
+
+// This should error - x was moved
+print(x);

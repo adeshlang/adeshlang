@@ -1,0 +1,63 @@
+// Example demonstrating nullable types in AdeshLang
+// AdeshLang now supports nullable types (?Type) and union types (Type1 | Type2)
+
+// Function with nullable parameter
+fn greetOptional(name) {
+    if (name != null) {
+        print("Hello, " + name + "!");
+    } else {
+        print("Hello, stranger!");
+    }
+}
+
+// Function with nullable return type
+fn findUser(id) {
+    let users = [
+        {id: 1, name: "Alice", age: 30},
+        {id: 2, name: "Bob", age: 25}
+    ];
+    
+    for (user in users) {
+        if (user.id == id) {
+            return user;
+        }
+    }
+    return null;
+}
+
+// Function with union type parameter (conceptual)
+// Note: Full union type enforcement is in development
+fn processValue(value) {
+    if (typeof(value) == "number") {
+        print("Processing number: " + value);
+    } else {
+        print("Processing string: " + value);
+    }
+}
+
+// Main demo
+print("=== Nullable Types Demo ===");
+
+// Test nullable parameters
+greetOptional("Alice");   // Hello, Alice!
+greetOptional(null);       // Hello, stranger!
+
+// Test nullable return types
+let user1 = findUser(1);
+let user3 = findUser(3);
+
+if (user1 != null) {
+    print("Found user: " + user1.name);
+} else {
+    print("User not found");
+}
+
+if (user3 == null) {
+    print("User 3 not found (as expected)");
+}
+
+// Test union types
+processValue(42);
+processValue("hello");
+
+print("=== Demo Complete ===");

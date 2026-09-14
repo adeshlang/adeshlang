@@ -1,0 +1,27 @@
+// World-First: Interactive Tree Navigator
+// Hierarchical directory/tree data selection
+
+// input.mock(["src_runtime"]);
+
+let chosen_node = input.tree("Select Workspace Component:", [
+    {
+        id: "src",
+        label: "src/",
+        children: [
+            { id: "src_backends", label: "backends/" },
+            { id: "src_execution", label: "execution/" },
+            { id: "src_runtime", label: "runtime/" },
+            { id: "src_types", label: "types/" }
+        ]
+    },
+    {
+        id: "tests",
+        label: "tests/"
+    },
+    {
+        id: "examples",
+        label: "examples/"
+    }
+]);
+
+println(`Selected Node ID: ${chosen_node}`);

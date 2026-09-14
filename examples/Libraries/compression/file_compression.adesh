@@ -1,0 +1,16 @@
+import Compression;
+
+print("=== AdeshLang Disk-to-Disk File Compression Example ===");
+
+// Stream compress file from disk to disk (no multi-gigabyte RAM allocation required)
+let inputPath = "server.log";
+let compressedPath = "server.log.zst";
+
+print("Compressing file via streaming pipeline...");
+let success = Compression.compressFile(inputPath, compressedPath, "zstd", 5);
+print("File compressed successfully:", success);
+
+// Atomic compression (writes to .tmp and renames atomically upon completion)
+let atomicPath = "server_atomic.log.zst";
+let atomicSuccess = Compression.compressFileAtomic(inputPath, atomicPath, "zstd", 5);
+print("Atomic compression completed:", atomicSuccess);

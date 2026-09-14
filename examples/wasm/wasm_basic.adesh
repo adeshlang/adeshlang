@@ -1,0 +1,48 @@
+// wasm_basic.ind — Basic WASM compilation examples
+// Combining compile_wasm_test.ind, compile_wasm_num.ind, compile_wasm_locals.ind, wasm_print_extended.ind
+
+@compile wasm
+print("=== Basic WASM Compilation Examples ===");
+
+// From compile_wasm_test.ind
+print("hello wasm");
+
+// From compile_wasm_num.ind
+print(1 + 2);
+
+// From compile_wasm_locals.ind
+let a = 1 + 2;
+print(a);
+
+// From wasm_print_extended.ind
+print("a", "b", " | ", "\n", null, false, "#00FF00");
+print(true, " ", "\n", null, false, "#0000FF");
+
+// Additional basic examples
+print("Additional basic operations:");
+let b = 10 - 3;
+print("Subtraction:", b);
+
+let c = 4 * 5;
+print("Multiplication:", c);
+
+let d = 20 / 4;
+print("Division:", d);
+
+let e = 7 % 3;
+print("Modulo:", e);
+
+let f = true && false;
+print("Boolean AND:", f);
+
+let g = true || false;
+print("Boolean OR:", g);
+
+let h = !true;
+print("Boolean NOT:", h);
+
+let arr = [1, 2, 3];
+print("Array:", arr);
+
+let obj = {key: "value"};
+print("Object:", obj);

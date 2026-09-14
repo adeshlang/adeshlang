@@ -1,0 +1,10 @@
+import URL;
+
+let unicodeDomain: String = "münich.de";
+let punycodeDomain: String = URL.domainToAscii(unicodeDomain);
+let decodedDomain: String = URL.domainToUnicode(punycodeDomain);
+
+print("--- 07 IDNA & Punycode Example ---");
+print("Unicode:", unicodeDomain);
+print("Punycode ASCII:", punycodeDomain);
+print("Decoded Back:", decodedDomain);

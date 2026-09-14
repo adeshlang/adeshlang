@@ -1,0 +1,197 @@
+// AdeshLang Crypto Standard Library
+// Complete production-grade Cryptography ecosystem for AdeshLang.
+// Secure by default, modern, strongly typed, and difficulty-of-misuse guided.
+
+// ============================================================================
+// Hash & Digest Facilities
+// ============================================================================
+
+export fn hash(algo, data) {
+    return Crypto.hash(algo, data);
+}
+
+export fn sha256(data) {
+    return Crypto.sha256(data);
+}
+
+export fn sha512(data) {
+    return Crypto.sha512(data);
+}
+
+export fn blake3(data) {
+    return Crypto.blake3(data);
+}
+
+export fn hashFile(path, algo) {
+    if (algo != null) {
+        return Crypto.hashFile(path, algo);
+    }
+    return Crypto.hashFile(path, "sha256");
+}
+
+export fn sha256File(path) {
+    return Crypto.hashFile(path, "sha256");
+}
+
+export fn blake3File(path) {
+    return Crypto.hashFile(path, "blake3");
+}
+
+// ============================================================================
+// HMAC & HKDF
+// ============================================================================
+
+export fn hmac(key, message) {
+    return Crypto.hmac(key, message);
+}
+
+export fn hmacVerify(key, message, tag) {
+    return Crypto.hmacVerify(key, message, tag);
+}
+
+export fn hkdf(ikm, salt, info, length) {
+    return Crypto.hkdfDerive(ikm, salt, info, length);
+}
+
+// ============================================================================
+// Passwords & Key Derivation (Argon2id default)
+// ============================================================================
+
+export fn hashPassword(password) {
+    return Crypto.passwordHash(password);
+}
+
+export fn verifyPassword(password, hash) {
+    return Crypto.passwordVerify(password, hash);
+}
+
+// ============================================================================
+// Authenticated Encryption (AEAD)
+// ============================================================================
+
+export fn encryptAead(key, nonce, plaintext) {
+    return Crypto.encryptAead(key, nonce, plaintext);
+}
+
+export fn decryptAead(key, nonce, ciphertext) {
+    return Crypto.decryptAead(key, nonce, ciphertext);
+}
+
+export fn seal(key, message) {
+    return Crypto.seal(key, message);
+}
+
+// ============================================================================
+// Secure Randomness & Tokens (CSPRNG)
+// ============================================================================
+
+export fn randomBytes(count) {
+    return Random.secureBytes(count);
+}
+
+export fn randomToken(length, encoding) {
+    let bytes = Random.secureBytes(length);
+    if (encoding == "hex") {
+        return Crypto.encodeHex(bytes);
+    }
+    if (encoding == "base64") {
+        return Crypto.encodeBase64(bytes);
+    }
+    return Crypto.encodeBase64(bytes);
+}
+
+export fn randomUuid() {
+    return Random.uuid4();
+}
+
+export fn uuid() {
+    return randomUuid();
+}
+
+// ============================================================================
+// Digital Signatures & Key Exchange
+// ============================================================================
+
+export fn generateEd25519() {
+    return Crypto.ed25519Generate();
+}
+
+export fn signEd25519(privateKey, message) {
+    return Crypto.ed25519Sign(privateKey, message);
+}
+
+export fn verifyEd25519(publicKey, message, signature) {
+    return Crypto.ed25519Verify(publicKey, message, signature);
+}
+
+export fn generateX25519() {
+    return Crypto.x25519Generate();
+}
+
+export fn exchangeX25519(secretKey, peerPublicKey) {
+    return Crypto.x25519Exchange(secretKey, peerPublicKey);
+}
+
+// ============================================================================
+// Constant-Time Operations
+// ============================================================================
+
+export fn constantTimeEquals(a, b) {
+    return Crypto.constantTimeEquals(a, b);
+}
+
+// ============================================================================
+// Encodings (Hex & Base64)
+// ============================================================================
+
+export fn encodeHex(bytes) {
+    return Crypto.encodeHex(bytes);
+}
+
+export fn decodeHex(hexStr) {
+    return Crypto.decodeHex(hexStr);
+}
+
+export fn encodeBase64(bytes) {
+    return Crypto.encodeBase64(bytes);
+}
+
+export fn decodeBase64(b64Str) {
+    return Crypto.decodeBase64(b64Str);
+}
+
+// ============================================================================
+// Certificates & JWT
+// ============================================================================
+
+export fn parseCertificate(pemStr) {
+    return Crypto.parseCert(pemStr);
+}
+
+export fn signJwt(claimsJsonStr, secret) {
+    return Crypto.signJwt(claimsJsonStr, secret);
+}
+
+export fn verifyJwt(token, secret, allowedAlgos) {
+    return Crypto.verifyJwt(token, secret, allowedAlgos);
+}
+
+export fn jwkThumbprint(jwkJsonStr) {
+    return Crypto.jwkThumbprint(jwkJsonStr);
+}
+
+// ============================================================================
+// Merkle Trees, Content IDs & File Encryption
+// ============================================================================
+
+export fn contentId(data) {
+    return Crypto.contentId(data);
+}
+
+export fn encryptFile(passphrase, plaintextBytes) {
+    return Crypto.encryptFile(passphrase, plaintextBytes);
+}
+
+export fn decryptFile(passphrase, payloadBytes) {
+    return Crypto.decryptFile(passphrase, payloadBytes);
+}

@@ -1,0 +1,15 @@
+// Simple argument test for bytecode
+// Run: adesh run examples/args/args_simple.adesh arg1 arg2 arg3
+import Env;
+
+// This example demonstrates basic argument functions
+
+// such as argc(), argv(), arg(), execName(), argsCount()
+// and shows how to access command-line arguments
+// passed to the Adesh program.
+// It prints out the total number of arguments,
+print("argc:", Env.argc());
+print("argv:", Env.argv());
+print("arg0:", Env.arg(0));
+print("exec:", Env.execName());
+print("argsCount:", Env.argsCount());

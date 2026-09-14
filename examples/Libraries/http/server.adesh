@@ -1,0 +1,91 @@
+// AdeshLang HTTP Server Example
+// Demonstrates: routing, multiple endpoints, JSON responses, error handling
+// Run: cargo run --bin adeshlang -- run examples/Libraries/http/server.adesh
+
+import HTTP;
+
+let PORT: string = "0.0.0.0:3000";
+
+// ─── In-memory data store ─────────────────────────────────────────────────────
+let users = [
+    { "id": 1, "name": "Alice", "email": "alice@example.com", "role": "admin" },
+    { "id": 2, "name": "Bob",   "email": "bob@example.com",   "role": "user"  },
+    { "id": 3, "name": "Carol", "email": "carol@example.com", "role": "user"  }
+];
+
+// ─── Router ───────────────────────────────────────────────────────────────────
+let router = HTTP.Router();
+
+// GET / — landing page
+router.get("/", fn(req, res) {
+    return res.json("{\"service\":\"AdeshLang HTTP Demo\",\"version\":\"1.0\",\"status\":\"ok\"}");
+});
+
+// GET /health — health check
+router.get("/health", fn(req, res) {
+    return res.json("{\"status\":\"healthy\",\"uptime\":true}");
+});
+
+// GET /api/users — list all users
+router.get("/api/users", fn(req, res) {
+    print("[GET] /api/users");
+    return res.json("[{\"id\":1,\"name\":\"Alice\"},{\"id\":2,\"name\":\"Bob\"},{\"id\":3,\"name\":\"Carol\"}]");
+});
+
+// GET /api/users/:id — get user by id (param via query string: /api/user?id=1)
+router.get("/api/user", fn(req, res) {
+    let id = req.query("id");
+    print("[GET] /api/user?id=", id);
+    if id == "1" {
+        return res.json("{\"id\":1,\"name\":\"Alice\",\"email\":\"alice@example.com\",\"role\":\"admin\"}");
+    }
+    if id == "2" {
+        return res.json("{\"id\":2,\"name\":\"Bob\",\"email\":\"bob@example.com\",\"role\":\"user\"}");
+    }
+    return res.send("User not found");
+});
+
+// POST /api/users — create a user (echo body back)
+router.post("/api/users", fn(req, res) {
+    print("[POST] /api/users");
+    return res.json("{\"id\":4,\"name\":\"New User\",\"created\":true}");
+});
+
+// PUT /api/users — update a user
+router.put("/api/users", fn(req, res) {
+    print("[PUT] /api/users");
+    return res.json("{\"updated\":true,\"id\":1}");
+});
+
+// DELETE /api/users — delete a user
+router.delete("/api/users", fn(req, res) {
+    print("[DELETE] /api/users");
+    return res.json("{\"deleted\":true}");
+});
+
+// GET /about — HTML response
+router.get("/about", fn(req, res) {
+    return res.send("AdeshLang HTTP Server - Production Grade HTTP for a Custom Language");
+});
+
+// ─── Server ───────────────────────────────────────────────────────────────────
+let server = HTTP.Server(PORT, router);
+
+server.listen(fn() {
+    print("");
+    print("╔══════════════════════════════════════════════╗");
+    print("║   AdeshLang HTTP Server                      ║");
+    print("║   Listening on http://127.0.0.1:3000         ║");
+    print("╠══════════════════════════════════════════════╣");
+    print("║  GET  /              → service info          ║");
+    print("║  GET  /health        → health check          ║");
+    print("║  GET  /api/users     → list users            ║");
+    print("║  GET  /api/user?id=1 → get user by id        ║");
+    print("║  POST /api/users     → create user           ║");
+    print("║  PUT  /api/users     → update user           ║");
+    print("║  DEL  /api/users     → delete user           ║");
+    print("║  GET  /about         → about page            ║");
+    print("╚══════════════════════════════════════════════╝");
+    print("  Press Ctrl+C to stop");
+    print("");
+});

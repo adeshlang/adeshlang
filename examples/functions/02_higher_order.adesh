@@ -1,0 +1,296 @@
+// Higher-Order Functions Example
+// Functions that take other functions as parameters or return functions
+
+print("╔══════════════════════════════════════════╗");
+print("║  AdeshLang - Higher-Order Functions       ║");
+print("╚══════════════════════════════════════════╝");
+print("");
+
+// ============================================================================
+// 1. FUNCTIONS AS PARAMETERS
+// ============================================================================
+
+fn apply_operation(a: i64, b: i64, operation: fn(i64, i64): i64): i64 {
+    let result: i64 = operation(a, b);
+    return result;
+}
+
+fn add_nums(x: i64, y: i64): i64 {
+    return x + y;
+}
+
+fn multiply_nums(x: i64, y: i64): i64 {
+    return x * y;
+}
+
+print("=== Functions as Parameters ===");
+print("apply_operation(10, 5, add) = ");
+print(apply_operation(10, 5, add_nums));  // 15
+
+print("apply_operation(10, 5, multiply) = ");
+print(apply_operation(10, 5, multiply_nums));  // 50
+print("");
+
+// ============================================================================
+// 2. FUNCTIONS THAT RETURN FUNCTIONS
+// ============================================================================
+
+fn make_multiplier(factor: i64): fn(i64): i64 {
+    return fn(x: i64): i64 {
+        return x * factor;
+    };
+}
+
+print("=== Functions Returning Functions ===");
+let times_two = make_multiplier(2);
+let times_five = make_multiplier(5);
+let times_ten = make_multiplier(10);
+
+print("times_two(7) = ");
+print(times_two(7));  // 14
+
+print("times_five(7) = ");
+print(times_five(7));  // 35
+
+print("times_ten(7) = ");
+print(times_ten(7));  // 70
+print("");
+
+// ============================================================================
+// 3. FUNCTION COMPOSITION
+// ============================================================================
+
+fn compose(f: fn(i64): i64, g: fn(i64): i64): fn(i64): i64 {
+    return fn(x: i64): i64 {
+        return f(g(x));
+    };
+}
+
+fn add_one(x: i64): i64 {
+    return x + 1;
+}
+
+fn double(x: i64): i64 {
+    return x * 2;
+}
+
+print("=== Function Composition ===");
+let add_one_then_double = compose(double, add_one);
+print("add_one_then_double(5) = ");
+print(add_one_then_double(5));  // (5 + 1) * 2 = 12
+
+let double_then_add_one = compose(add_one, double);
+print("double_then_add_one(5) = ");
+print(double_then_add_one(5));  // (5 * 2) + 1 = 11
+print("");
+
+// ============================================================================
+// 4. PREDICATE FUNCTIONS
+// ============================================================================
+
+fn is_even(n: i64): bool {
+    return n % 2 == 0;
+}
+
+fn is_positive(n: i64): bool {
+    return n > 0;
+}
+
+fn is_large(n: i64): bool {
+    return n > 100;
+}
+
+fn test_condition(value: i64, predicate: fn(i64): bool): bool {
+    return predicate(value);
+}
+
+print("=== Predicate Functions ===");
+print("test_condition(10, is_even) = ");
+print(test_condition(10, is_even));  // true
+
+print("test_condition(11, is_even) = ");
+print(test_condition(11, is_even));  // false
+
+print("test_condition(42, is_positive) = ");
+print(test_condition(42, is_positive));  // true
+
+print("test_condition(150, is_large) = ");
+print(test_condition(150, is_large));  // true
+print("");
+
+// ============================================================================
+// 5. TRANSFORMATION FUNCTIONS
+// ============================================================================
+
+fn apply_to_all(arr: [i64], transformer: fn(i64): i64): [i64] {
+    let result = [];
+    let i: i64;
+    i = 0;
+    while i < arr.length {
+        result.push(transformer(arr[i]));
+        i = i + 1;
+    }
+    return result;
+}
+
+fn square(x: i64): i64 {
+    return x * x;
+}
+
+fn negate(x: i64): i64 {
+    return -x;
+}
+
+print("=== Transformation Functions ===");
+let numbers = [1, 2, 3, 4, 5];
+print("Original array: [1, 2, 3, 4, 5]");
+
+// Note: Array operations shown conceptually
+print("Squared values would be: [1, 4, 9, 16, 25]");
+print("Negated values would be: [-1, -2, -3, -4, -5]");
+print("");
+
+// ============================================================================
+// 6. CURRYING
+// ============================================================================
+
+fn curry_add(a: i64): fn(i64): i64 {
+    return fn(b: i64): i64 {
+        return a + b;
+    };
+}
+
+fn curry_multiply(a: i64): fn(i64): fn(i64): i64 {
+    return fn(b: i64): fn(i64): i64 {
+        return fn(c: i64): i64 {
+            return a * b * c;
+        };
+    };
+}
+
+print("=== Currying ===");
+let add_5 = curry_add(5);
+print("add_5(10) = ");
+print(add_5(10));  // 15
+
+print("add_5(20) = ");
+print(add_5(20));  // 25
+
+let multiply_2 = curry_multiply(2);
+let multiply_2_3 = multiply_2(3);
+print("multiply_2_3(4) = ");
+print(multiply_2_3(4));  // 24 (2 * 3 * 4)
+print("");
+
+// ============================================================================
+// 7. FUNCTION FACTORIES
+// ============================================================================
+
+fn make_counter(): fn(): i64 {
+    let count: i64;
+    count = 0;
+    
+    return fn(): i64 {
+        count = count + 1;
+        return count;
+    };
+}
+
+fn make_accumulator(initial: i64): fn(i64): i64 {
+    let total: i64;
+    total = initial;
+    
+    return fn(value: i64): i64 {
+        total = total + value;
+        return total;
+    };
+}
+
+print("=== Function Factories ===");
+let counter1 = make_counter();
+let counter2 = make_counter();
+
+print("counter1() = ");
+print(counter1());  // 1
+
+print("counter1() = ");
+print(counter1());  // 2
+
+print("counter2() = ");
+print(counter2());  // 1 (independent counter)
+
+print("counter1() = ");
+print(counter1());  // 3
+
+let accumulator = make_accumulator(100);
+print("accumulator(10) = ");
+print(accumulator(10));  // 110
+
+print("accumulator(20) = ");
+print(accumulator(20));  // 130
+print("");
+
+// ============================================================================
+// 8. CONDITIONAL EXECUTION
+// ============================================================================
+
+fn execute_if(condition: bool, action: fn(): i64): i64 {
+    if condition {
+        return action();
+    }
+    return 0;
+}
+
+fn get_value(): i64 {
+    return 42;
+}
+
+print("=== Conditional Execution ===");
+print("execute_if(true, get_value) = ");
+print(execute_if(true, get_value));  // 42
+
+print("execute_if(false, get_value) = ");
+print(execute_if(false, get_value));  // 0
+print("");
+
+// ============================================================================
+// 9. NUMERIC LITERALS IN HIGHER-ORDER FUNCTIONS
+// ============================================================================
+
+fn make_hex_multiplier(): fn(i64): i64 {
+    let hex_factor = 0x10;  // 16 in hex
+    return fn(x: i64): i64 {
+        return x * hex_factor;
+    };
+}
+
+fn make_binary_adder(): fn(i64): i64 {
+    let binary_value = 0b1010;  // 10 in binary
+    return fn(x: i64): i64 {
+        return x + binary_value;
+    };
+}
+
+print("=== Numeric Literals in Higher-Order Functions ===");
+let hex_multiply = make_hex_multiplier();
+print("hex_multiply(5) = ");
+print(hex_multiply(5));  // 80 (5 * 16)
+
+let binary_add = make_binary_adder();
+print("binary_add(5) = ");
+print(binary_add(5));  // 15 (5 + 10)
+print("");
+
+print("╔══════════════════════════════════════════╗");
+print("║  Higher-order functions completed!       ║");
+print("╚══════════════════════════════════════════╝");
+
+// ============================================================================
+// USAGE:
+// 
+// Run with different backends:
+//
+// Interpreter:  adesh run examples/functions/02_higher_order.adesh
+// JIT:          adesh run --jit examples/functions/02_higher_order.adesh
+// Native JIT:   adesh run --njit examples/functions/02_higher_order.adesh
+// ============================================================================

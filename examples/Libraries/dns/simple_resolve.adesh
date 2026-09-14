@@ -1,0 +1,9 @@
+import DNS;
+
+print("=== Simple Domain Resolution ===");
+let addresses = DNS.resolve("192.168.1.1:3000");
+print("Resolved addresses for google.com:", addresses);
+
+print("=== A Records Query ===");
+let records = DNS.query("google.com", DNS.Type.A);
+print("A records query result for google.com:", records);

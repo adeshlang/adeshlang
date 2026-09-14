@@ -1,0 +1,225 @@
+// ╔═══════════════════════════════════════════════════════════════════════════════╗
+// ║                    ATP Client Example — Mixed Traffic Demo                   ║
+// ║                                                                               ║
+// ║  A practical, production-grade ATP client demonstrating:                      ║
+// ║    • Reliable ordered messages (chat / state sync)                            ║
+// ║    • Reliable unordered messages (independent RPC calls)                      ║
+// ║    • Unreliable best-effort datagrams (telemetry / game physics)             ║
+// ║    • Multi-stream multiplexing (File + RPC + Chat)                           ║
+// ║    • Dynamic message cancellation on active streams                           ║
+// ║    • Cryptographic session keepalive (PING / PONG)                            ║
+// ║    • Real-time transport telemetry & connection metrics                       ║
+// ║                                                                               ║
+// ║  Run: cargo run --bin adeshlang -- run examples/Libraries/atp/atp_client.adesh
+// ╚═══════════════════════════════════════════════════════════════════════════════╝
+
+// @allow(warnings)
+import ATP;
+import Time;
+
+print("==================================================================");
+print("          ATP Client — Full-Featured Real Working Demo           ");
+print("==================================================================");
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 1. TYPE DEFINITIONS & STRUCTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+struct ClientSummary {
+    chatMessagesSent: int,
+    rpcRequestsSent: int,
+    telemetrySent: int,
+    streamFramesSent: int,
+    cancelledMessages: int,
+    responsesReceived: int
+}
+
+fn delayMs(ms: int) {
+    let start = Time.epochMillis();
+    while (Time.epochMillis() - start < ms) {}
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 2. START RESPONSIVE TARGET SERVER (PORT 9106)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let testPort: int = 9106;
+let targetServer = ATP.listen("127.0.0.1", testPort);
+print("[Target Server] Started listener on 127.0.0.1:" + testPort);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 3. CONNECT ATP CLIENT (X25519 + ChaCha20-Poly1305 SESSION)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+print("\n--- 1. Connecting to ATP Server ---");
+let conn = ATP.connect("127.0.0.1", testPort);
+print("[Client] Connecting to 127.0.0.1:" + testPort + "...");
+
+let established: bool = false;
+let serverConn = null;
+
+for (let attempt = 0; attempt < 50; attempt = attempt + 1) {
+    if (serverConn == null) {
+        serverConn = targetServer.accept();
+    }
+    let msg = conn.receive();
+    if (msg != null && msg.type == "connected") {
+        established = true;
+    }
+    if (established && serverConn != null) {
+        break;
+    }
+    delayMs(20);
+}
+
+if (!established || serverConn == null) {
+    print("[error] Failed to establish connection.");
+    conn.close();
+    targetServer.close();
+} else {
+    print("[ok] Connection established (X25519 handshake & forward-secret ChaCha20 cipher ready)");
+
+    let summary = ClientSummary {
+        chatMessagesSent: 0,
+        rpcRequestsSent: 0,
+        telemetrySent: 0,
+        streamFramesSent: 0,
+        cancelledMessages: 0,
+        responsesReceived: 0
+    };
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 4. RELIABLE ORDERED MESSAGES (CHAT / TRANSACTION LOG)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    print("\n--- 2. Reliable Ordered Messages (Chat) ---");
+    let chatList = [
+        "Chat: Hello, ATP server!",
+        "Chat: Establishing high-speed multiplexed channel.",
+        "Chat: Ready for bidirectional data flow."
+    ];
+
+    for (let i = 0; i < chatList.len(); i = i + 1) {
+        let msgStr: string = chatList[i];
+        conn.send(msgStr, true, true);
+        summary.chatMessagesSent = summary.chatMessagesSent + 1;
+        print("  [Send Reliable Ordered] " + msgStr);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 5. RELIABLE UNORDERED MESSAGES (INDEPENDENT RPC QUERIES)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    print("\n--- 3. Reliable Unordered (Independent RPC Queries) ---");
+    conn.send("RPC: getUserProfile(userId=42)", true, false);
+    conn.send("RPC: getInventoryBalance(walletId=108)", true, false);
+    summary.rpcRequestsSent = summary.rpcRequestsSent + 2;
+    print("  [Send Reliable Unordered] RPC: getUserProfile(userId=42)");
+    print("  [Send Reliable Unordered] RPC: getInventoryBalance(walletId=108)");
+    print("  -> Independent RPCs do not block each other even under packet loss");
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 6. UNRELIABLE BEST-EFFORT DATAGRAMS (TELEMETRY / POSITIONS)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    print("\n--- 4. Unreliable Datagrams (Telemetry / Physics) ---");
+    for (let i = 0; i < 5; i = i + 1) {
+        let telem: string = "TELEMETRY: CPU=" + (35 + i * 3) + "% MEM=" + (120 + i * 5) + "MB FPS=" + (60 - i);
+        conn.datagram(telem);
+        summary.telemetrySent = summary.telemetrySent + 1;
+        print("  [Send Datagram] " + telem);
+    }
+    print("  -> Fire-and-forget: drops do not trigger retransmission or HoL blocking");
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 7. STREAM MULTIPLEXING (RPC, CHAT, FILE)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    print("\n--- 5. Multi-Stream Multiplexing with DRR Priority ---");
+    let rpcStream  = conn.openStream("high");
+    let chatStream = conn.openStream("medium");
+    let fileStream = conn.openStream("low");
+
+    rpcStream.send("RPC: queryMicroserviceMetrics()", true, true);
+    chatStream.send("CHAT: Real-time broadcast on dedicated stream", true, true);
+    fileStream.send("FILE_CHUNK_0: [Binary Firmware Block A]", true, true);
+    fileStream.send("FILE_CHUNK_1: [Binary Firmware Block B]", true, true);
+    summary.streamFramesSent = summary.streamFramesSent + 4;
+
+    print("  [Stream High]   RPC: queryMicroserviceMetrics()");
+    print("  [Stream Medium] CHAT: Real-time broadcast on dedicated stream");
+    print("  [Stream Low]    FILE_CHUNK_0 & FILE_CHUNK_1");
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 8. MESSAGE CANCELLATION
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    print("\n--- 6. Message Cancellation ---");
+    fileStream.send("FILE_CHUNK_OBSOLETE: [Stale texture tile]", true, true);
+    fileStream.cancel(3);
+    summary.cancelledMessages = summary.cancelledMessages + 1;
+    print("  [Cancel] Cancelled obsolete file chunk message #3 (freed send buffer)");
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 9. KEEPALIVE (PING / PONG)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    print("\n--- 7. Cryptographic Keepalive (PING) ---");
+    conn.ping();
+    print("  [PING] Keepalive frame dispatched to peer");
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 10. SERVER ECHO & CLIENT DRAIN
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    print("\n--- 8. Ingesting & Verifying Server Responses ---");
+    // Server echoes incoming requests
+    for (let poll = 0; poll < 40; poll = poll + 1) {
+        let req = serverConn.receive();
+        while (req != null) {
+            if (req.type == "message") {
+                serverConn.send("ECHO:" + req.text, true, true);
+            } else if (req.type == "datagram") {
+                serverConn.datagram("ECHO_DATAGRAM:" + req.text);
+            }
+            req = serverConn.receive();
+        }
+        delayMs(10);
+    }
+
+    // Client receives echoes
+    for (let poll = 0; poll < 40; poll = poll + 1) {
+        let resp = conn.receive();
+        while (resp != null) {
+            if (resp.type == "message" || resp.type == "datagram") {
+                summary.responsesReceived = summary.responsesReceived + 1;
+                print("  [Client Recv Echo #" + summary.responsesReceived + "] " + resp.text);
+            }
+            resp = conn.receive();
+        }
+        delayMs(10);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 11. TRANSPORT TELEMETRY & CLEAN SHUTDOWN
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    print("\n--- 9. Connection Telemetry & Metrics ---");
+    let metrics = conn.metrics();
+    print("[Metrics] Messages Sent:     " + metrics.messagesSent);
+    print("[Metrics] Packets Sent:      " + metrics.packetsSent);
+    print("[Metrics] Bytes Sent / Recv: " + metrics.bytesSent + " B / " + metrics.bytesReceived + " B");
+
+    print("\n--- 10. Clean Teardown ---");
+    rpcStream.close();
+    chatStream.close();
+    fileStream.close();
+    conn.close();
+    targetServer.close();
+    print("[ok] Connection closed. All resources and memory pools released.");
+
+    print("\n==================================================================");
+    print("            ATP Client Demo Finished Successfully                ");
+    print("==================================================================");
+}
+

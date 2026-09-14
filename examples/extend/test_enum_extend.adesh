@@ -1,0 +1,16 @@
+// Minimal test for extend on enum
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+extend ColorTest on Color {
+    fn describe() {
+        return "Color is " + this.tag;
+    }
+}
+
+let c = Color.Red();
+print("tag:", c.tag);
+print("desc:", c.describe());

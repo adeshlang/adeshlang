@@ -1,0 +1,91 @@
+// Structs in Functions
+// Demonstrates passing structs to functions and returning structs
+
+print("=== Function with Struct Parameter ===");
+
+struct User {
+    username: String;
+    email: String;
+    age: u8;
+};
+
+fn printUser(u: User) {
+    print("User: ");
+    print(u.username);
+    print("Email: ");
+    print(u.email);
+    print("Age: ");
+    print(u.age);
+}
+
+let user1 = User {
+    username: "alice123",
+    email: "alice@example.com",
+    age: 28,
+};
+
+print("Passing struct to function:");
+printUser(user1);
+
+print("=== Function Accepting Struct Reference ===");
+
+fn displayUserInfo(user: User) {
+    print("Username: ");
+    print(user.username);
+}
+
+let user2 = User {
+    username: "bob456",
+    email: "bob@example.com",
+    age: 32u8,
+};
+
+print("Function with struct parameter:");
+displayUserInfo(user2);
+
+print("=== Function Returning Struct ===");
+
+fn createUser(name: String, email: String, age: u8) {
+    return User {
+        username: name,
+        email: email,
+        age: age,
+    };
+}
+
+let newUser = createUser("charlie", "charlie@example.com", 25u8);
+print("Created user from function:");
+print(newUser.username);
+print(newUser.email);
+print(newUser.age);
+
+print("=== Multiple Struct Parameters ===");
+
+struct Profile {
+    bio: String;
+    location: String;
+};
+
+fn compareUsers(u1: User, u2: User) {
+    print("User 1: ");
+    print(u1.username);
+    print("User 2: ");
+    print(u2.username);
+}
+
+let user3 = User {
+    username: "diana",
+    email: "diana@example.com",
+    age: 30u8,
+};
+
+let user4 = User {
+    username: "eve",
+    email: "eve@example.com",
+    age: 27u8,
+};
+
+print("Comparing two users:");
+compareUsers(user3, user4);
+
+print("=== All Function Examples Passed ===");

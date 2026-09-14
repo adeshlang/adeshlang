@@ -1,0 +1,152 @@
+// AdeshLang - Built-in Decorators Example
+// Showcasing unique decorator features
+import Math;
+print("=== BUILT-IN DECORATORS DEMO ===\n");
+
+// ============================================
+// 1. @memoize - Automatic Result Caching
+// ============================================
+print("1. @memoize Decorator (Automatic Caching)");
+print("----------------------------------------");
+
+@memoize
+fn fibonacci(n) {
+    if (n <= 1) { return n; }
+    return fibonacci(n-1) + fibonacci(n-2);
+}
+
+print("Computing fibonacci(3)...");
+let start1 = clock();
+let result1 = fibonacci(3);
+let time1 = clock() - start1;
+print("First call: fibonacci(3) =", result1, "took", time1, "seconds");
+
+print("Computing fibonacci(3) again (cached)...");
+let start2 = clock();
+let result2 = fibonacci(3);
+let time2 = clock() - start2;
+print("Second call: fibonacci(3) =", result2, "took", time2, "seconds");
+print("Speed improvement:", (time1 / time2), "x faster!\n");
+
+// ============================================
+// 2. @trace - Automatic Call Tracing
+// ============================================
+print("2. @trace Decorator (Auto Logging)");
+// print("-" * 40);
+
+@trace
+fn complexCalculation(a, b, c) {
+    let step1 = a + b;
+    let step2 = step1 * c;
+    return step2 - 10;
+}
+
+let traced_result = complexCalculation(5, 3, 2);
+print("");
+
+// ============================================
+// 3. @deprecated - Deprecation Warnings
+// ============================================
+print("3. @deprecated Decorator (Warnings)");
+// print("-" * 40);
+
+@deprecated("Use newCalculate() instead")
+fn oldCalculate(x) {
+    return x * 2;
+}
+
+fn newCalculate(x) {
+    return x * 3;
+}
+
+print("Calling deprecated function:");
+let old_result = oldCalculate(10);
+print("Result:", old_result);
+print("");
+
+// ============================================
+// 4. @benchmark - Performance Measurement
+// ============================================
+print("4. @benchmark Decorator (Timing)");
+print("----------------------------------------");
+
+@benchmark
+fn sortNumbers() {
+    let arr = [];
+    for (i in 0..1000) {
+        arr.push(Math.random() * 1000);
+    }
+    return arr.sort();
+}
+
+let sorted = sortNumbers();
+print("Sorted", sorted.length, "numbers");
+print("");
+
+// ============================================
+// 5. @retry - Automatic Retry Logic
+// ============================================
+print("5. @retry Decorator (Auto Retry)");
+print("----------------------------------------");
+
+let attempt_count = 0;
+
+@retry(3, 500)
+fn unstableOperation() {
+    attempt_count = attempt_count + 1;
+    print("  Attempt", attempt_count);
+    
+    // Fail first 2 times, succeed on 3rd
+    if (attempt_count < 3) {
+        throw Error("Simulated failure");
+    }
+    
+    return "Success!";
+}
+
+try {
+    let retry_result = unstableOperation();
+    print("Final result:", retry_result);
+} catch (e) {
+    print("Failed:", e);
+}
+print("");
+
+// ============================================
+// 6. Stacking Built-in Decorators
+// ============================================
+print("6. Stacking Built-in Decorators");
+print("----------------------------------------");
+
+@trace
+@memoize
+@benchmark
+fn powerOperation(base:i32, exponent:i32):i32 {
+    let result:i32 = 1;
+    for (i in 0..exponent) {
+        result = result * base;
+    }
+    return result;
+}
+
+print("First call:");
+let power1 = powerOperation(2, 10);
+print("Result:", power1);
+
+print("\nSecond call (should use cache):");
+let power2 = powerOperation(2, 10);
+print("Result:", power2);
+print("");
+
+// ============================================
+// SUMMARY
+// ============================================
+print("=== SUMMARY ===");
+print("Built-in decorators provide unique features:");
+print("✅ @memoize - Automatic result caching");
+print("✅ @trace - Call logging with timing");
+print("✅ @deprecated - Deprecation warnings");
+print("✅ @benchmark - Performance measurement");
+print("✅ @retry - Automatic retry logic");
+print("✅ Can be stacked together!");
+print("\nThese features make decorators truly unique!");

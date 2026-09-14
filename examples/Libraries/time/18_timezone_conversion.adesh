@@ -1,0 +1,56 @@
+// 18_timezone_conversion.adesh - Convert times across timezones
+import Time;
+
+print("=== Timezone Conversion Examples ===\n");
+
+// --- Reference UTC time ---
+let utcNow: UtcDateTime = Time.utcDateTimeNow();
+print("Reference UTC :", utcNow.toIsoString());
+print();
+
+// --- Create offsets ---
+let tz_utc: UtcOffset = Time.utcOffsetZero();
+let tz_ist: UtcOffset = Time.utcOffsetHoursMinutes(5, 30);     // India
+let tz_jst: UtcOffset = Time.utcOffsetHours(9);                // Japan
+let tz_est: UtcOffset = Time.utcOffsetHours(-5);               // US East
+let tz_pst: UtcOffset = Time.utcOffsetHours(-8);               // US West
+let tz_cet: UtcOffset = Time.utcOffsetHours(1);                // Central Europe
+let tz_aest: UtcOffset = Time.utcOffsetHours(10);              // Australia East
+let tz_nst: UtcOffset = Time.utcOffsetHoursMinutes(-3, -30);   // Newfoundland
+let tz_npt: UtcOffset = Time.utcOffsetHoursMinutes(5, 45);     // Nepal
+
+// --- Convert to all offsets ---
+let odt_utc: OffsetDateTime = Time.offsetDateTimeFromUtc(utcNow, tz_utc);
+let odt_ist: OffsetDateTime = Time.offsetDateTimeFromUtc(utcNow, tz_ist);
+let odt_jst: OffsetDateTime = Time.offsetDateTimeFromUtc(utcNow, tz_jst);
+let odt_est: OffsetDateTime = Time.offsetDateTimeFromUtc(utcNow, tz_est);
+let odt_pst: OffsetDateTime = Time.offsetDateTimeFromUtc(utcNow, tz_pst);
+let odt_cet: OffsetDateTime = Time.offsetDateTimeFromUtc(utcNow, tz_cet);
+let odt_aest: OffsetDateTime = Time.offsetDateTimeFromUtc(utcNow, tz_aest);
+let odt_nst: OffsetDateTime = Time.offsetDateTimeFromUtc(utcNow, tz_nst);
+let odt_npt: OffsetDateTime = Time.offsetDateTimeFromUtc(utcNow, tz_npt);
+
+print("UTC   :", odt_utc.toIsoString());
+print("IST   :", odt_ist.toIsoString());
+print("JST   :", odt_jst.toIsoString());
+print("EST   :", odt_est.toIsoString());
+print("PST   :", odt_pst.toIsoString());
+print("CET   :", odt_cet.toIsoString());
+print("AEST  :", odt_aest.toIsoString());
+print("NST   :", odt_nst.toIsoString());
+print("NPT   :", odt_npt.toIsoString());
+
+// --- Verify all point to same UTC instant ---
+print("\n--- All same UTC instant? ---");
+let base: UtcDateTime = odt_utc.toUtc();
+print("IST → UTC == ref:", odt_ist.toUtc().eq(base));
+print("JST → UTC == ref:", odt_jst.toUtc().eq(base));
+print("EST → UTC == ref:", odt_est.toUtc().eq(base));
+print("NPT → UTC == ref:", odt_npt.toUtc().eq(base));
+
+// --- Cross-offset conversion ---
+print("\n--- Cross-offset: IST → PST ---");
+let ist_time: OffsetDateTime = Time.offsetDateTimeParse("2024-07-15T09:30:00+05:30");
+let pst_time: OffsetDateTime = ist_time.withOffset(tz_pst);
+print("IST :", ist_time.toIsoString());
+print("PST :", pst_time.toIsoString());

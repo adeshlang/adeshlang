@@ -1,0 +1,34 @@
+import cmath;
+import Math;
+
+print("--- AdeshLang CMath Library (Complex Math) Demo ---");
+
+// Complex number z = 0.0 + 2.0j
+let z = cmath.sqrt(-4);
+print("sqrt(-4):", z);
+
+// Constants
+print("cmath.pi:", cmath.pi);
+print("cmath.infj:", cmath.infj);
+
+// Trigonometric and Hyperbolic functions
+print("cmath.cos(2j):", cmath.cos(z));
+print("cmath.sin(2j):", cmath.sin(z));
+print("cmath.cosh(2j):", cmath.cosh(z));
+
+// Utility / conversion functions
+let pol = cmath.polar(z);
+print("polar(2j) -> (r, phi):", pol);
+print("rect(r, phi) ->", cmath.rect(pol[0], pol[1]));
+print("phase(2j):", cmath.phase(z));
+
+// Checks
+print("cmath.isfinite(2j):", cmath.isfinite(z));
+print("cmath.isinf(2j):", cmath.isinf(z));
+
+print("\n--- Decimal Formatting Demo ---");
+// Full decimal representation formatDecimal
+let num = 2.43290200817664e18;
+print("Scientific notation representation:", num);
+print("Full decimal format (precision = 0):", Math.formatDecimal(num, 0));
+print("Full decimal format (precision = 2):", Math.formatDecimal(Math.factorial(20), 2));

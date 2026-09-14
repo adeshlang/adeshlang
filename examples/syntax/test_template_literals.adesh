@@ -1,0 +1,49 @@
+// Comprehensive Template Literal Tests
+
+// Basic string interpolation
+let name = "Bob";
+print(`Hello, ${name}!`); // Should be "Hello, Bob!"
+
+// Multiple interpolations
+let firstName = "Jane";
+let lastName = "Doe";
+print(`Full name: ${firstName} ${lastName}`); // Should be "Full name: Jane Doe"
+
+// Expression interpolation
+let a = 5;
+let b = 10;
+print(`Sum: ${a + b}`); // Should be "Sum: 15"
+print(`Product: ${a * b}`); // Should be "Product: 50"
+
+// Nested expressions
+let x = 3;
+let y = 4;
+print(`Hypotenuse: ${(x ** 2 + y ** 2) ** 0.5}`); // Should be "Hypotenuse: 5"
+
+// With function calls
+fn double(n) { return n * 2; }
+print(`Doubled: ${double(21)}`); // Should be "Doubled: 42"
+
+// Nested template literals
+let inner = "world";
+print(`Outer ${inner}`); // Should be "Outer world"
+
+// With conditionals
+let age = 25;
+print(`Status: ${age >= 18 ? "adult" : "minor"}`); // Should be "Status: adult"
+
+// Multi-line (if supported)
+let multiline = `Line 1
+Line 2
+Line 3`;
+print(multiline);
+
+// With objects
+let person = { name: "Charlie", age: 35 };
+print(`Person: ${person.name}, Age: ${person.age}`); // Should be "Person: Charlie, Age: 35"
+
+// Format specifiers - basic interpolation works
+let num = 42.5678;
+print(`Formatted: ${num}`); // Basic number interpolation
+
+print("All template literal tests complete!");

@@ -1,0 +1,51 @@
+// Enums with payloads (Option, Result, Message)
+
+enum Message {
+    Quit,
+    Move(coords),
+    Write(text)
+}
+
+enum QueryResult {
+    Ok(data),
+    Err(reason)
+}
+
+print("--- Payload Enum Demo ---");
+
+// Option is pre-registered globally as Option/Some/None
+let user_name = Some("Ajay");
+let no_user = None();
+
+print("user_name.tag:", user_name.tag);
+print("user_name.value:", user_name.value);
+print("no_user.tag:", no_user.tag);
+
+// Constructing custom enums with single payload
+let res_ok = QueryResult.Ok("User Profile Loaded");
+let res_err = QueryResult.Err("Unauthorized Access");
+
+print("res_ok tag:", res_ok.tag, "| value:", res_ok.value);
+print("res_err tag:", res_err.tag, "| value:", res_err.value);
+
+// Constructing with multiple args in payload results in a Value::Array payload
+let move_msg = Message.Move(100, 200);
+print("move_msg tag:", move_msg.tag);
+print("move_msg value (coordinates array):", move_msg.value);
+
+// Matching logic for single & multiple payloads
+fn handle_message(msg) {
+    if (msg.tag == "Quit") {
+        print("Handling Quit message.");
+    } elif (msg.tag == "Move") {
+        let x = msg.value[0];
+        let y = msg.value[1];
+        print("Moving to X:", x, "Y:", y);
+    } elif (msg.tag == "Write") {
+        print("Writing content:", msg.value);
+    }
+}
+
+handle_message(Message.Quit());
+handle_message(move_msg);
+handle_message(Message.Write("Hello AdeshLang!"));

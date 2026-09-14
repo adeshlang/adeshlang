@@ -1,0 +1,11 @@
+// Test: Free while borrowed
+// Should fail with compile-time error
+
+fn test_free_while_borrowed() {
+    let x = alloc(100);
+    let ptr = &x;    // Borrow
+    free(x);         // ERROR: Cannot free while borrowed
+    print(ptr);
+}
+
+test_free_while_borrowed();

@@ -1,0 +1,10 @@
+import Env;
+
+print("Initial APP_MODE: " + str(Env.get("APP_MODE")));
+
+Env.set("APP_MODE", "production");
+print("Updated APP_MODE: " + str(Env.get("APP_MODE")));
+print("Contains APP_MODE: " + str(Env.contains("APP_MODE")));
+
+Env.remove("APP_MODE");
+print("After remove APP_MODE: " + str(Env.get("APP_MODE")));

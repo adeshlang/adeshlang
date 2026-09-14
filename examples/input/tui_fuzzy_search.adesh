@@ -1,0 +1,17 @@
+// World-First: Fuzzy Neural Search Input Widget
+// Live fuzzy filtering with keyboard navigation and instant autocomplete
+
+// input.mock(["Rust"]);
+
+let selected_lang = input.fuzzy("Search Programming Language:", [
+    "AdeshLang",
+    "Rust",
+    "TypeScript",
+    "Python",
+    "Go",
+    "C++",
+    "Zig",
+    "Kotlin"
+]);
+
+println(`Selected language: ${selected_lang}`);

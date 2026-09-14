@@ -1,0 +1,58 @@
+// Example 4: Random Numbers and Time
+// Demonstrates random number generation and timestamp operations
+
+extern "C" {
+    fn random_seed(seed: u32) -> void;
+    fn random_int(min: i32, max: i32) -> i32;
+    fn random_double() -> f64;
+    fn get_timestamp() -> i64;
+    fn print_timestamp() -> void;
+}
+
+fn main() {
+    print("=== Random Numbers and Time ===\n\n");
+    
+    // Get and display current timestamp
+    print("Current Time:\n");
+    let timestamp = get_timestamp();
+    print("  Unix timestamp: ");
+    print(timestamp);
+    print("\n  ");
+    print_timestamp();
+    
+    // Seed random number generator with current time
+    print("\nRandom Number Generation:\n");
+    random_seed(timestamp);
+    
+    // Generate random integers
+    print("  Random integers between 1 and 100:\n");
+    let i = 0;
+    while i < 10 {
+        print("    ");
+        print(random_int(1, 100));
+        print("\n");
+        i = i + 1;
+    }
+    
+    // Generate random doubles
+    print("\n  Random doubles between 0 and 1:\n");
+    let j = 0;
+    while j < 5 {
+        print("    ");
+        print(random_double());
+        print("\n");
+        j = j + 1;
+    }
+    
+    // Simulate dice rolls
+    print("\n  Simulating 20 dice rolls (1-6):\n  ");
+    let k = 0;
+    while k < 20 {
+        print(random_int(1, 6));
+        print(" ");
+        k = k + 1;
+    }
+    print("\n");
+}
+
+// To run: adesh run example4_random_time.adesh -L . -l mylib

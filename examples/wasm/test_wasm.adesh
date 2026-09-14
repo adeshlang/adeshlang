@@ -1,0 +1,20 @@
+// Test WASM module loading and execution
+import "./add.wasm" as adder;
+
+fn main() {
+    print("Loading WASM module...");
+    
+    // Call the exported 'add' function
+    // Note: The WASM module exports 'add(i32, i32) -> i32'
+    let result = adder.add(10, 20);
+    
+    print("10 + 20 from WASM = " + result);
+    
+    // Direct comparison - equals now handles i32 vs Number coercion
+    if (result == 30) {
+        print("WASM Test PASSED");
+    } else {
+        print("WASM Test FAILED");
+        print("Result was: " + result);
+    }
+}

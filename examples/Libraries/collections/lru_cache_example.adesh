@@ -1,0 +1,32 @@
+import Collections;
+
+print("========================================");
+print("LRU Cache Pattern Example (Using RingBuffer & HashMap)");
+print("========================================");
+
+let ring = Collections.RingBuffer(3);
+let cache = Collections.HashMap();
+
+// Function to simulate accessing a key in LRU cache
+fn put_cache(ring, cache, key, value) {
+    cache.insert(key, value);
+    let evicted = ring.push(key);
+    if (evicted != null) {
+        print("Evicted from LRU ring: ", evicted);
+        cache.remove(evicted);
+    }
+}
+
+put_cache(ring, cache, "A", 100);
+put_cache(ring, cache, "B", 200);
+put_cache(ring, cache, "C", 300);
+
+print("Cache size: ", cache.len());
+print("Get 'A': ", cache.get("A"));
+
+// Pushing 4th item triggers eviction of 'A'
+put_cache(ring, cache, "D", 400);
+
+print("Get 'A' after eviction: ", cache.get("A"));
+print("Get 'D': ", cache.get("D"));
+print("Cache final size: ", cache.len());

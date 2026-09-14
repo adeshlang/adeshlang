@@ -1,0 +1,20 @@
+import Random;
+
+print("--- Reproducible Simulation Demo ---");
+fn runSimulation(seedVal) {
+    let rng = Random.seed(seedVal);
+    let totalScore = 0;
+    for i in 0..5 {
+        let _step = i;
+        let roll = rng.int(1, 7);
+        totalScore = totalScore + roll;
+    }
+    return totalScore;
+}
+
+let scoreRun1 = runSimulation(999);
+let scoreRun2 = runSimulation(999);
+
+print("Simulation score Run 1 (seed 999): " + scoreRun1);
+print("Simulation score Run 2 (seed 999): " + scoreRun2);
+print("Deterministic match: " + (scoreRun1 == scoreRun2));

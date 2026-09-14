@@ -1,0 +1,5 @@
+// 19 — parallel reduce
+import thread;
+
+let s = thread.parallel_reduce([1, 2, 3, 4], 0, fn(a, b) { return a + b; });
+print(s);

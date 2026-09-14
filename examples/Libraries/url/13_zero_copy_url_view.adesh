@@ -1,0 +1,12 @@
+import URL;
+
+let buffer: String = "https://stream.example.com:8443/live/feed?token=xyz#player";
+let view: URLView = URL.parseView(buffer);
+
+print("--- 13 Zero-Copy URLView Example ---");
+print("View Scheme:", view.scheme);
+print("View Host:", view.host);
+print("View Path:", view.path);
+
+let owned: URL = view.toOwned();
+print("Owned URL Href:", owned.href);

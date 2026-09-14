@@ -1,0 +1,7 @@
+// Hello World in AdeshLang
+
+fn main() {
+    print("Hello, AdeshLang Mobile Editor!");
+}
+
+main();

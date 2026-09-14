@@ -1,0 +1,40 @@
+// 14_system_time.adesh - SystemTime (wall clock) operations
+import Time;
+
+print("=== SystemTime Examples ===\n");
+
+// --- Now ---
+let now: SystemTime = Time.systemTimeNow();
+print("SystemTime now      :", now.toString());
+print("Unix epoch seconds  :", now.epochSeconds());
+print("Unix epoch millis   :", now.epochMilliseconds());
+
+// --- Unix epoch reference ---
+let epoch: SystemTime = Time.systemTimeEpoch();
+print("\nUnix epoch reference:", epoch.toString());
+
+// --- Duration since epoch ---
+let since: Duration = now.durationSinceEpoch();
+print("Duration since epoch:", since.toString());
+print("Seconds since epoch :", since.wholeSeconds());
+
+// --- Arithmetic ---
+print("\n--- Arithmetic ---");
+let plus1h: SystemTime = now.add(Time.durationHours(1n));
+let minus5m: SystemTime = now.sub(Time.durationMinutes(5n));
+print("Now + 1h:", plus1h.toString());
+print("Now - 5m:", minus5m.toString());
+
+// --- Duration between two system times ---
+let diff: Duration = plus1h.durationSince(now);
+print("\nDiff between +1h and now:", diff.toString());
+
+// --- Comparison ---
+print("\n--- Comparison ---");
+print("epoch < now :", epoch.lt(now));
+print("now  > epoch:", now.gt(epoch));
+print("now == now  :", now.eq(now));
+
+// --- Convert to UtcDateTime ---
+let utcDt: UtcDateTime = now.toUtcDateTime();
+print("\nSystemTime as UtcDateTime:", utcDt.toIsoString());

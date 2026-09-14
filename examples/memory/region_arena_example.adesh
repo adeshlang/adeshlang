@@ -1,0 +1,41 @@
+
+// Region arena example: scoped allocations auto-free at region end
+// Demonstrates deterministic memory management without garbage collection
+
+unsafe {
+    // Allocate three pointers in a named region
+    region_begin("arena1");
+    
+    let ptr1 = alloc(10);
+    let ptr2 = alloc(20);
+    let ptr3 = alloc(30);
+    
+    print("Allocated three pointers in region 'arena1'");
+    print("ptr1:", ptr1);
+    print("ptr2:", ptr2);
+    print("ptr3:", ptr3);
+    
+    print("Pointers are valid and can be used within the region");
+    
+    // End region: all three allocations freed automatically
+    region_end("arena1");
+    print("Region 'arena1' ended - all allocations freed");
+    
+    // Nested regions
+    region_begin("outer");
+    let p_outer = alloc(8);
+    print("Outer region allocated:", p_outer);
+    
+    region_begin("inner");
+    let p_inner = alloc(16);
+    print("Inner region allocated:", p_inner);
+    region_end("inner");
+    print("Inner region ended - inner allocation freed");
+    
+    // p_outer still valid
+    print("Outer region pointer still valid:", p_outer);
+    region_end("outer");
+    print("Outer region ended - outer allocation freed");
+    
+    print("All regions cleaned up - memory deterministically released");
+}

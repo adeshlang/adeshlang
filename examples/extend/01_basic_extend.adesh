@@ -1,0 +1,158 @@
+// 01_basic_extend.adesh
+// Demonstrates the basic "extend on" syntax for attaching methods to types.
+// This is NOT class inheritance (extends) — it is Rust-impl/Dart-extension style
+// method addition on existing types.
+
+import Math;
+
+print("=== 01: BASIC EXTEND DEMO ===");
+print("");
+
+// ── Example 1: Anonymous extension on a class ──
+
+class Person {
+    Person(name, age) {
+        this.name = name;
+        this.age = age;
+    }
+
+    fn introduce() {
+        print("Hi, I'm", this.name, "and I'm", this.age);
+    }
+}
+
+// All Person extensions in a single block (named for clarity)
+extend PersonCore on Person {
+    fn greet() {
+        print("Hello from", this.name + "!");
+    }
+
+    fn isAdult() {
+        return this.age >= 18;
+    }
+
+    fn farewell() {
+        print("Goodbye from", this.name + "!");
+    }
+
+    fn birthday() {
+        this.age = this.age + 1;
+        print("Happy birthday", this.name + "! Now", this.age);
+    }
+
+    fn canVote() {
+        return this.age >= 18;
+    }
+
+    fn canDrink() {
+        return this.age >= 21;
+    }
+
+    fn toJSON() {
+        return "{name: \"" + this.name + "\", age: " + this.age + "}";
+    }
+}
+
+let p1 = new Person("Alice", 25);
+p1.introduce();
+p1.greet();
+print("Is adult:", p1.isAdult());
+print("");
+
+let p2 = new Person("Bob", 30);
+p2.farewell();
+p2.birthday();
+print("");
+
+let p3 = new Person("Charlie", 16);
+print(p3.name, "- Can vote:", p3.canVote(), "Can drink:", p3.canDrink());
+print("JSON:", p3.toJSON());
+print("");
+
+// ── Example 2: Extension adding vector math ──
+
+class Vector2 {
+    Vector2(x, y) {
+        this.x = x;
+        this.y = y;
+    }
+}
+
+// All Vector2 extensions in one named block
+extend Vector2Ops on Vector2 {
+    fn magnitude() {
+        return Math.sqrt(this.x * this.x + this.y * this.y);
+    }
+
+    fn dot(other) {
+        return this.x * other.x + this.y * other.y;
+    }
+
+    fn asString() {
+        return "Vector2(" + this.x + ", " + this.y + ")";
+    }
+
+    fn addVec(other) {
+        return new Vector2(this.x + other.x, this.y + other.y);
+    }
+
+    fn scaleBy(factor) {
+        return new Vector2(this.x * factor, this.y * factor);
+    }
+}
+
+let v = new Vector2(3.0, 4.0);
+print("Vector:", v.asString());
+print("Magnitude:", v.magnitude());
+
+let v2 = new Vector2(1.0, 0.0);
+print("Dot with (1,0):", v.dot(v2));
+
+let v3 = v.addVec(v2);
+print("v + v2:", v3.asString());
+let v4 = v.scaleBy(2.0);
+print("v * 2:", v4.asString());
+print("");
+
+// ── Example 3: Multiple anonymous extensions on the same type ──
+
+class Counter {
+    Counter(start) {
+        this.value = start;
+    }
+}
+
+extend on Counter {
+    fn increment() {
+        this.value = this.value + 1;
+    }
+}
+
+extend on Counter {
+    fn decrement() {
+        this.value = this.value - 1;
+    }
+}
+
+extend CounterUtils on Counter {
+    fn reset() {
+        this.value = 0;
+    }
+
+    fn getCount() {
+        return this.value;
+    }
+}
+
+let c = new Counter(0);
+c.increment();
+c.increment();
+c.increment();
+print("After 3 increments:", c.getCount());
+c.decrement();
+print("After 1 decrement:", c.getCount());
+c.reset();
+print("After reset:", c.getCount());
+print("");
+
+print("✅ Basic Extend Demo Passed.\n");

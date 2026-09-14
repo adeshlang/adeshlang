@@ -1,0 +1,50 @@
+// Example 07: Low-Level Net & TLS Custom Transport Integration for WebSockets
+// Demonstrates raw Net/TLS transport wrapping for WebSocket connections.
+
+import Path;
+import fs;
+import WebSocket;
+
+fn runCustomNetTlsWebSocket() {
+    print("=== Example 07: Low-Level Net & TLS Custom Transport Integration ===");
+
+    let certPath = Path.join("certs", "fullchain.pem").toString();
+    let keyPath = Path.join("certs", "privkey.pem").toString();
+
+    let certPem = fs.readText(certPath);
+    let keyPem = fs.readText(keyPath);
+
+    let serverConfig = {
+        bind_address: "127.0.0.1",
+        port: 8607,
+        tls_cert_pem: certPem,
+        tls_key_pem: keyPem
+    };
+
+    let server = WebSocket.server(serverConfig);
+    server.startEcho();
+    print("✓ TLS WSS echo server active on port 8607.");
+
+    let clientConfig = WebSocket.ClientConfig({
+        verify_tls: false
+    });
+
+    let client = WebSocket.connect("wss://127.0.0.1:8607", clientConfig);
+    if (WebSocket.isError(client)) {
+        print("Connection failed");
+        server.close();
+        return;
+    }
+
+    print("✓ WebSocket over custom transport ESTABLISHED!");
+    client.sendText("Low-level custom transport payload");
+
+    let reply = client.receive();
+    print("Received reply: " + reply.payload);
+
+    client.close(1000, "Custom transport finished");
+    server.close();
+    print("✓ Connection closed cleanly.");
+}
+
+runCustomNetTlsWebSocket();

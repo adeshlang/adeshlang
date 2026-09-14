@@ -1,0 +1,8 @@
+class Device {
+    unsafe fn flash() {
+        println("Flashed!");
+    }
+}
+
+let d = new Device();
+d.flash(); // Should fail because not in unsafe block!

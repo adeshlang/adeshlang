@@ -1,0 +1,23 @@
+// This example demonstrates dynamic type inference for uint and int fields in structs
+
+struct Stats {
+    level: uint,
+    score: int,
+    health: uint,
+};
+
+// Valid instantiation: all uints are >= 0
+let player1 = new Stats(1, 100, 100);
+println("Player 1 stats:");
+println(player1.level);
+println(player1.score);
+println(player1.health);
+
+// Updating a field
+player1.score = -50;
+println("Player 1 score updated to:");
+println(player1.score);
+
+println("Type checking ensures safety.");
+// The following would throw a runtime error since level is uint and cannot be assigned a negative number
+// player1.level = -1;

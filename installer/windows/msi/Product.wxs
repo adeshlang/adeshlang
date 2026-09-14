@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  WiX v4/v5 MSI for enterprise deployment.
+
+  The MSI installs AdeshLang itself and registers its machine environment.
+  It does not download LLVM. The commit custom action invokes the installed
+  CLI after InstallFinalize so the administrator can use the same pinned
+  manifest and toolchain contract as the classic installer. Organizations
+  that prohibit installer-launched downloads can remove that action and run
+  `adesh toolchain install` in system mode after deployment instead.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <?define ProductVersion = "0.3.0" ?>
+  <?define UpgradeCode = "{4F58AA4C-3B54-4D7E-86B9-8B43F7C5E1B8}" ?>
+
+  <Package Name="AdeshLang"
+           Manufacturer="AdeshLang Team"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="$(var.UpgradeCode)"
+           Scope="perMachine"
+           Compressed="yes">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of AdeshLang is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLDIR" Name="AdeshLang">
+        <Directory Id="BINDIR" Name="bin" />
+        <Directory Id="STDDIR" Name="std" />
+        <Directory Id="CONFIGDIR" Name="config" />
+        <Directory Id="LICENSEDIR" Name="licenses" />
+        <!-- Bundled AI model (ai\models\adesh-coder-0.5b-q4_0.gguf) and the
+             Ollama/OpenRouter deployment configs under ai\deploy. -->
+        <Directory Id="AIDIR" Name="ai">
+          <Directory Id="AIMODELSDIR" Name="models" />
+          <Directory Id="AIDEPLOYDIR" Name="deploy" />
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="AdeshLang" Level="1">
+      <ComponentGroupRef Id="ProductFiles" />
+      <ComponentRef Id="MachineEnvironment" />
+    </Feature>
+
+    <!-- The MSI runs this only after all files are committed. It is not a
+         bundled LLVM installer; adesh performs the pinned download and
+         verification using config\toolchain-manifest.json. -->
+    <CustomAction Id="InstallToolchain"
+                  FileRef="AdeshExecutable"
+                  ExeCommand="toolchain install --system --manifest &quot;[INSTALLDIR]config\toolchain-manifest.json&quot;"
+                  Execute="commit"
+                  Impersonate="no"
+                  Return="check" />
+    <InstallExecuteSequence>
+      <!-- ADESH_MSI_SKIP_TOOLCHAIN is set by the Burn bundle, which drives
+           the toolchain install itself; standalone MSI installs keep it. -->
+      <Custom Action="InstallToolchain" After="InstallFinalize" Condition="NOT Installed AND NOT ADESH_MSI_SKIP_TOOLCHAIN" />
+    </InstallExecuteSequence>
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="ProductFiles" Directory="INSTALLDIR">
+      <Files Include="$(var.SourceDir)\bin\**" Directory="BINDIR">
+        <Exclude Files="$(var.SourceDir)\bin\adesh.exe" />
+        <Exclude Files="$(var.SourceDir)\bin\**\*.pdb" />
+      </Files>
+      <Files Include="$(var.SourceDir)\std\**" Directory="STDDIR" />
+      <Files Include="$(var.SourceDir)\config\**" Directory="CONFIGDIR" />
+      <Files Include="$(var.SourceDir)\licenses\**" Directory="LICENSEDIR" />
+      <Files Include="$(var.SourceDir)\ai\**" Directory="AIDIR" />
+
+      <!-- Explicitly author the executable used by the deferred custom
+           action. The build script excludes it from the harvested bin set. -->
+      <Component Directory="BINDIR" Id="AdeshExecutableComponent" Guid="*">
+        <File Id="AdeshExecutable" Source="$(var.SourceDir)\bin\adesh.exe" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Explicit GUID: this component's keypath is the directory (no file),
+         so WiX cannot auto-generate its component GUID. -->
+    <Component Id="MachineEnvironment" Directory="INSTALLDIR" Guid="{9A2F3F1E-6B1D-4C4A-9C7B-2E8D5A0F4B71}">
+      <CreateFolder />
+      <Environment Id="AdeshHomeEnvironment"
+                   Name="ADESH_HOME"
+                   Value="[INSTALLDIR]"
+                   Part="all"
+                   Action="set"
+                   System="yes" />
+      <!-- The toolchain lives INSIDE the AdeshLang installation
+           ([INSTALLDIR]toolchain\llvm), so uninstalling AdeshLang removes it
+           entirely; a pre-existing system LLVM is reused without downloads
+           when `adesh toolchain install` finds it. -->
+      <Environment Id="AdeshToolchainEnvironment"
+                   Name="ADESH_TOOLCHAIN"
+                   Value="[INSTALLDIR]toolchain\llvm"
+                   Part="all"
+                   Action="set"
+                   System="yes" />
+      <Environment Id="AdeshClangEnvironment"
+                   Name="ADESH_CLANG"
+                   Value="[INSTALLDIR]toolchain\llvm\bin\clang.exe"
+                   Part="all"
+                   Action="set"
+                   System="yes" />
+      <Environment Id="AdeshLlcEnvironment"
+                   Name="ADESH_LLC"
+                   Value="[INSTALLDIR]toolchain\llvm\bin\llc.exe"
+                   Part="all"
+                   Action="set"
+                   System="yes" />
+      <Environment Id="AdeshMlirOptEnvironment"
+                   Name="ADESH_MLIR_OPT"
+                   Value="[INSTALLDIR]toolchain\llvm\bin\mlir-opt.exe"
+                   Part="all"
+                   Action="set"
+                   System="yes" />
+      <Environment Id="AdeshMlirTranslateEnvironment"
+                   Name="ADESH_MLIR_TRANSLATE"
+                   Value="[INSTALLDIR]toolchain\llvm\bin\mlir-translate.exe"
+                   Part="all"
+                   Action="set"
+                   System="yes" />
+      <Environment Id="AdeshBinPathEnvironment"
+                   Name="PATH"
+                   Value="[INSTALLDIR]bin"
+                   Part="last"
+                   Action="set"
+                   System="yes" />
+    </Component>
+  </Fragment>
+</Wix>

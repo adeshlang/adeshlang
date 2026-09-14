@@ -1,0 +1,5 @@
+// Simple test
+let x:[i32;6] = [1, 2, 3];
+print("x:", x);
+x = x.append(4);
+print("after append:", x);

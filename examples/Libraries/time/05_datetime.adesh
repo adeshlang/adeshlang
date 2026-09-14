@@ -1,0 +1,52 @@
+// 05_datetime.adesh - DateTime (local naive) construction, formatting, parsing
+import Time;
+
+print("=== DateTime Examples ===\n");
+
+// --- Construction ---
+let dt1: DateTime = Time.dateTime(
+    Time.dateYmd(2024, 6, 21),
+    Time.timeOfDay(10, 30, 0, 0)
+);
+let now: DateTime = Time.dateTimeNow();
+
+print("dt1 ISO     :", dt1.toIsoString());
+print("Now (local) :", now.toIsoString());
+
+// --- Accessors ---
+print("\n--- Accessors ---");
+print("Year   :", dt1.year());
+print("Month  :", dt1.month());
+print("Day    :", dt1.day());
+print("Hour   :", dt1.hour());
+print("Minute :", dt1.minute());
+print("Second :", dt1.second());
+
+// --- Formatting ---
+print("\n--- Formatting ---");
+print("Custom 1:", dt1.format("dd/MM/yyyy HH:mm:ss"));
+print("Custom 2:", dt1.format("MMMM d, yyyy"));
+print("Custom 3:", dt1.format("yyyy-MM-dd'T'HH:mm:ss"));
+
+// --- Parsing ---
+let parsed: DateTime = Time.dateTimeParse("2023-12-25 08:00:00", "yyyy-MM-dd HH:mm:ss");
+print("\nParsed :", parsed.toIsoString());
+print("Parsed year:", parsed.year());
+
+// --- Arithmetic ---
+print("\n--- Arithmetic ---");
+let nextWeek: DateTime = dt1.addDays(7);
+let lastHour: DateTime = dt1.subHours(1);
+let nextMonth: DateTime = dt1.addMonths(1);
+print("+ 7 days    :", nextWeek.toIsoString());
+print("- 1 hour    :", lastHour.toIsoString());
+print("+ 1 month   :", nextMonth.toIsoString());
+
+// --- Duration between ---
+let d: Duration = dt1.durationUntil(nextWeek);
+print("\nDuration until +7 days:", d.toString());
+
+// --- Comparison ---
+print("\n--- Comparison ---");
+print("dt1 < nextWeek:", dt1.lt(nextWeek));
+print("dt1 == dt1    :", dt1.eq(dt1));

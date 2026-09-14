@@ -1,0 +1,54 @@
+// examples/arc/tests/t04_scope_cleanup.adesh
+// T04 – Scope-based cleanup: counts track scope entry/exit precisely
+
+
+export fn run() {
+    let PASS = 0;
+    let FAIL = 0;
+
+    fn check(cond, msg) {
+        if (cond) {
+            print("  ✓ PASS:", msg);
+            PASS = PASS + 1;
+        } else {
+            print("  ✗ FAIL:", msg);
+            FAIL = FAIL + 1;
+        }
+    }
+
+print("=== T04: Scope-based cleanup ===\n");
+
+share root = { id: 0 };
+check(root.strong_count() == 1, "initial count is 1");
+
+// Depth 1
+{
+    strong l1 = root;
+    check(root.strong_count() == 2, "count 2 at depth 1");
+
+    // Depth 2
+    {
+        strong l2 = root;
+        check(root.strong_count() == 3, "count 3 at depth 2");
+
+        // Depth 3
+        {
+            strong l3a = root;
+            strong l3b = root;
+            check(root.strong_count() == 5, "count 5 at depth 3 with two refs");
+        }
+        check(root.strong_count() == 3, "count 3 after depth 3 exits");
+    }
+    check(root.strong_count() == 2, "count 2 after depth 2 exits");
+}
+check(root.strong_count() == 1, "count 1 after depth 1 exits");
+
+// Value must be intact throughout
+check(root.id == 0, "value intact after all scope changes");
+
+print("\nPASS:", PASS, " FAIL:", FAIL);
+
+    return { pass: PASS, fail: FAIL };
+}
+
+run();

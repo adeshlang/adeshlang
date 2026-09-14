@@ -1,0 +1,102 @@
+// ╔═══════════════════════════════════════════════════════════════════════════════╗
+// ║  ATP Retry Token Handshake — transparent DoS protection                       ║
+// ║  Every new client receives a Retry frame before state is allocated.           ║
+// ║  Run: cargo run --bin adeshlang -- run examples/Libraries/atp/atp_retry_handshake.adesh
+// ╚═══════════════════════════════════════════════════════════════════════════════╝
+
+import ATP;
+import thread;
+import "./lib/atp_ports.adesh" as Ports;
+
+fn waitConnected(conn: any, maxMs: any): any {
+    let elapsed = 0;
+    while elapsed < maxMs {
+        let ev = conn.receive();
+        if (ev != null && ev.type == "connected") { return ev; }
+        thread.sleep(10);
+        elapsed = elapsed + 10;
+    }
+    return null;
+}
+
+fn recvMessage(conn: any, maxMs: any): any {
+    let elapsed = 0;
+    while elapsed < maxMs {
+        let ev = conn.receive();
+        if (ev != null && ev.type == "message") { return ev; }
+        thread.sleep(10);
+        elapsed = elapsed + 10;
+    }
+    return null;
+}
+
+fn acceptConn(server: any, maxMs: any): any {
+    let elapsed = 0;
+    while elapsed < maxMs {
+        let c = server.accept();
+        if (c != null && c.type == "AtpConnection") { return c; }
+        thread.sleep(10);
+        elapsed = elapsed + 10;
+    }
+    return null;
+}
+
+let port = Ports.port(4);
+
+print("=== ATP Retry Token Handshake ===");
+print("");
+print("Flow (automatic, no app code needed):");
+print("  1. Client sends CONNECTION_INIT (no token)");
+print("  2. Server issues HMAC Retry token (no state allocated)");
+print("  3. Client resends CONNECTION_INIT with retry_token");
+print("  4. Server validates token, completes handshake");
+print("");
+
+let serverThread = thread.spawn(fn() {
+    let server = ATP.listen(Ports.DEFAULT_HOST, port);
+    let conn = null;
+    let t = 0;
+    while (conn == null && t < 500) {
+        conn = server.accept();
+        t = t + 1;
+        thread.sleep(10);
+    }
+    if (conn != null) {
+        print("[server] client accepted after retry-token validation");
+        let n = 0;
+        while (n < 40) {
+            let ev = conn.receive();
+            if (ev != null && ev.type == "connected") {
+                print("[server] handshake established");
+            } else if (ev != null && ev.type == "message") {
+                conn.send("retry-ok:" + ev.data, true, true);
+            }
+            n = n + 1;
+            thread.sleep(10);
+        }
+        conn.close();
+    }
+    server.close();
+});
+
+thread.sleep(400);
+
+print("[client] ATP.connect() — retry handled transparently by the engine");
+let conn = ATP.connect(Ports.DEFAULT_HOST, port);
+
+let connected = waitConnected(conn, 5000);
+if (connected == null) {
+    print("[client] ERROR: connect failed after retry");
+} else {
+    print("[client] connected successfully (retry token exchanged internally)");
+}
+
+conn.send("post-retry:hello", true, true);
+let reply = recvMessage(conn, 3000);
+if (reply != null) {
+    print("[client] echo:", reply.data);
+}
+
+conn.close();
+serverThread.join();
+print("\n=== Retry handshake demo complete ===");

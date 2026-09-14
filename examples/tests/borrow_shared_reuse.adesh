@@ -1,0 +1,7 @@
+
+// Multiple shared borrows of the same string; owner remains usable.
+let s = "hello";
+let b1 = &s;
+let b2 = &s;
+print(b1, b2, s);
+

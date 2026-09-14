@@ -1,0 +1,48 @@
+print("=== Ownership and Borrowing with Objects ===");
+
+class Profile {
+    Profile(name: String, role: String) {
+        this.name = name;
+        this.role = role;
+    }
+
+    fn describe(): String {
+        return this.name + " -> " + this.role;
+    }
+}
+
+class Team {
+    Team(title: String) {
+        this.title = title;
+        this.members = 0;
+    }
+
+    fn addMember(): i32 {
+        this.members = this.members + 1;
+        return this.members;
+    }
+
+    fn status(): String {
+        return this.title + " members=" + this.members;
+    }
+}
+
+fn inspect(profile): String {
+    return profile.describe();
+}
+
+let owner = new Profile("Ajay", "Language Designer");
+let borrow1 = &owner;
+let borrow2 = &owner;
+
+print("owned=" + owner.describe());
+print("borrow1=" + inspect(borrow1));
+print("borrow2=" + inspect(borrow2));
+
+let compilerTeam = new Team("Core Runtime");
+print(compilerTeam.status());
+print("after add=" + compilerTeam.addMember());
+print("after add again=" + compilerTeam.addMember());
+print(compilerTeam.status());
+
+print("=== Ownership and Borrowing Demo Complete ===");

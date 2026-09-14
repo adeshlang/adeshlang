@@ -1,0 +1,43 @@
+export fn char_to_lower(ch: i64): i64 {
+    if ch >= 65 && ch <= 90 {
+        return ch + 32;
+    }
+    return ch;
+}
+
+export fn sum_of_digits(n: i64): i64 {
+    let sum: i64;
+    sum = 0;
+    let num: i64;
+    num = n;
+    
+    if num < 0 {
+        num = -num;
+    }
+    
+    while num > 0 {
+        let digit: i64;
+        digit = num % 10;
+        sum = sum + digit;
+        num = num / 10;
+    }
+    
+    return sum;
+}
+
+export fn is_even(n: i64): i64 {
+    if n % 2 == 0 {
+        return 1;
+    }
+    return 0;
+}
+
+export fn is_odd(n: i64): i64 {
+    if n % 2 == 1 {
+        return 1;
+    }
+    return 0;
+}
+
+
+// ..\..\target\debug\adeshlang.exe compile-aot string_utils.adesh string_utils.o -c --emit-header string_utils.h ; gcc test_string.c string_utils.o -o test_string.exe ; .\test_string.exe

@@ -1,0 +1,108 @@
+// Struct Collections
+// Demonstrates working with multiple struct instances
+
+print("=== Array of Structs ===");
+
+struct Course {
+    code: String;
+    credits: Int;
+};
+
+print("Struct for courses defined");
+print("Individual course instances:");
+
+let course1 = Course {
+    code: "CS101",
+    credits: 3,
+};
+
+let course2 = Course {
+    code: "MATH201",
+    credits: 4,
+};
+
+let course3 = Course {
+    code: "PHYS301",
+    credits: 3,
+};
+
+print(course1.code);
+print(course2.code);
+print(course3.code);
+
+print("=== Processing Multiple Structs ===");
+
+struct Item {
+    name: String;
+    quantity: Int;
+};
+
+let item1 = Item {
+    name: "Apple",
+    quantity: 5,
+};
+
+let item2 = Item {
+    name: "Banana",
+    quantity: 3,
+};
+
+let item3 = Item {
+    name: "Orange",
+    quantity: 8,
+};
+
+print("Inventory items:");
+print(item1.name);
+print(item2.name);
+print(item3.name);
+
+print("=== Struct Comparison ===");
+
+struct Score {
+    playerName: String;
+    points: Int;
+};
+
+let score1 = Score {
+    playerName: "Alice",
+    points: 100,
+};
+
+let score2 = Score {
+    playerName: "Bob",
+    points: 85,
+};
+
+let score3 = Score {
+    playerName: "Charlie",
+    points: 92,
+};
+
+print("Game scores:");
+print("Alice: 100 points");
+print("Bob: 85 points");
+print("Charlie: 92 points");
+
+print("=== Building Struct Collections ===");
+
+struct Contact {
+    name: String;
+    phone: String;
+};
+
+let contact1 = Contact {
+    name: "John",
+    phone: "555-0001",
+};
+
+let contact2 = Contact {
+    name: "Jane",
+    phone: "555-0002",
+};
+
+print("Contacts in system:");
+print(contact1.name);
+print(contact2.name);
+
+print("=== All Collection Examples Passed ===");

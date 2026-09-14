@@ -1,0 +1,107 @@
+// AdeshLang TLS Standard Library wrapper module
+// Provides clean OO exports, named type exports, and handle compatibility for import TLS;
+
+export fn connect(host, port) {
+    return TLS.connect(host, port);
+}
+
+export fn connectWithOptions(host, port, options) {
+    return TLS.connectWithOptions(host, port, options);
+}
+
+export fn bindServer(tcpSocket, certPem, keyPem) {
+    return TLS.bindServer(tcpSocket, certPem, keyPem);
+}
+
+export fn Server(tcpListener, certPem, keyPem) {
+    return TLS.Server(tcpListener, certPem, keyPem);
+}
+
+export fn SecurityPolicy() {
+    return TLS.SecurityPolicy();
+}
+
+export fn TrustStore() {
+    return TLS.TrustStore();
+}
+
+export fn wrap(tcpSocket, hostname) {
+    return TLS.wrap(tcpSocket, hostname);
+}
+
+export fn write(handle, data) {
+    if (typeOf(handle) == "object" && handle.write != null) {
+        return handle.write(data);
+    }
+    return TLS.write(handle, data);
+}
+
+export fn writeBytes(handle, bytes) {
+    if (typeOf(handle) == "object" && handle.writeBytes != null) {
+        return handle.writeBytes(bytes);
+    }
+    return TLS.writeBytes(handle, bytes);
+}
+
+export fn writeText(handle, text) {
+    if (typeOf(handle) == "object" && handle.writeText != null) {
+        return handle.writeText(text);
+    }
+    return TLS.writeText(handle, text);
+}
+
+export fn read(handle, maxBytes) {
+    if (typeOf(handle) == "object" && handle.read != null) {
+        return handle.read(maxBytes);
+    }
+    return TLS.read(handle, maxBytes);
+}
+
+export fn readBytes(handle, maxBytes) {
+    if (typeOf(handle) == "object" && handle.readBytes != null) {
+        return handle.readBytes(maxBytes);
+    }
+    return TLS.readBytes(handle, maxBytes);
+}
+
+export fn readText(handle, maxBytes) {
+    if (typeOf(handle) == "object" && handle.readText != null) {
+        return handle.readText(maxBytes);
+    }
+    return TLS.readText(handle, maxBytes);
+}
+
+export fn version(handle) {
+    if (typeOf(handle) == "object" && handle.version != null) {
+        return handle.version();
+    }
+    return TLS.version(handle);
+}
+
+export fn alpn(handle) {
+    if (typeOf(handle) == "object" && handle.alpn != null) {
+        return handle.alpn();
+    }
+    return TLS.alpn(handle);
+}
+
+export fn peerCertificates(handle) {
+    if (typeOf(handle) == "object" && handle.peerCertificates != null) {
+        return handle.peerCertificates();
+    }
+    return TLS.peerCertificates(handle);
+}
+
+export fn trace(handle) {
+    if (typeOf(handle) == "object" && handle.trace != null) {
+        return handle.trace();
+    }
+    return TLS.trace(handle);
+}
+
+export fn close(handle) {
+    if (typeOf(handle) == "object" && handle.close != null) {
+        return handle.close();
+    }
+    return TLS.close(handle);
+}

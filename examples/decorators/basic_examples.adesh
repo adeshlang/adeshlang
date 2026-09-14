@@ -1,0 +1,104 @@
+// AdeshLang Decorator Examples - Performance-Aware Edition
+//
+// ⚠️ IMPORTANT: Decorator performance degrades O(n²) with count
+// Each decorator creates a new Exec instance with cloned globals
+// 
+// Performance Guidelines:
+// - 1-3 decorators: Fast ✅
+// - 4-5 decorators: Noticeable slowdown ⚠️
+// - 6+ decorators: Very slow 🐌
+//
+// Root Cause: src/execution/runtime/mod.rs:6816
+// call_user_with_this() creates fresh Exec for each decorator application
+
+print("=== DECORATOR EXAMPLES (Performance-Optimized) ===\n");
+
+// ============================================
+// Example 1: Simple Logging Decorator
+// ============================================
+print("Example 1: Logging Decorator");
+
+decorator log(target, meta) {
+    return fn (a, b) {
+        print("  → Calling:", meta.name);
+        let result1 = target(a, b);
+        print("  ← Result:", result1);
+        return result1;
+    };
+}
+
+@log
+fn add(x, y) {
+    return x + y;
+}
+
+print("add(2, 3) =", add(2, 3));
+print("");
+
+// ============================================
+// Example 2: Caching/Memoization
+// ============================================
+print("Example 2: Caching Decorator");
+
+decorator cache(target, meta) {
+    let cached = null;
+    let hasCached = false;
+    
+    return fn() {
+        if (hasCached) {
+            print("  (returning cached value)");
+            return cached;
+        }
+        
+        print("  (computing fresh value)");
+        cached = target();
+        hasCached = true;
+        return cached;
+    };
+}
+
+@cache
+fn expensive() {
+    print("    → Expensive computation running");
+    return 42 * 42;
+}
+
+print("First call:");
+print("Result:", expensive());
+print("Second call (should be cached):");
+print("Result:", expensive());
+print("");
+
+// ============================================
+// Example 3: Input Validation
+// ============================================
+print("Example 3: Validation Decorator");
+
+decorator validate(target, meta) {
+    return fn(x) {
+        if (x < 0) {
+            print("  ❌ Error: Input must be non-negative");
+            return null;
+        }
+        if (x > 100) {
+            print("  ❌ Error: Input must be <= 100");
+            return null;
+        }
+        return target(x);
+    };
+}
+
+@validate
+fn processNumber(n) {
+    return n * 2;
+}
+
+print("processNumber(50) =", processNumber(50));
+print("processNumber(-5) =", processNumber(-5));
+print("processNumber(150) =", processNumber(150));
+print("");
+
+print("✅ 3 decorators completed successfully!");
+print("\n💡 Performance Note:");
+print("   Adding more decorators will cause exponential slowdown");
+print("   due to nested Exec instance creation (O(n²) complexity)");

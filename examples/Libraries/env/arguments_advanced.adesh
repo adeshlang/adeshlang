@@ -1,0 +1,19 @@
+import Env;
+
+// Command-line argument helpers
+print("Executable name: " + Env.executableName());
+print("Argument count:  " + str(Env.argumentCount()));
+print("Arguments:       " + str(Env.arguments()));
+
+// Example invocation:
+//   adeshlang run arguments_advanced.adesh --name=Adesh
+// Note: flags consumed by the CLI itself (e.g. --run, --jit) never reach the script.
+print("argsSlice(1):    " + str(Env.argsSlice(1)));
+print("argsJoin('|'):   " + str(Env.argsJoin("|")));
+print("argsIndexOf('--name'): " + str(Env.argsIndexOf("--name")));
+
+// parseArgs: --key=value becomes { flags: { key: value } }, plain args become positionals
+let parsed = Env.parseArgs();
+print("parsed:          " + str(parsed));
+print("argGet('name'):  " + str(Env.argGet("name")));
+print("argHas('name'):  " + str(Env.argHas("name")));

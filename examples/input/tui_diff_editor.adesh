@@ -1,0 +1,8 @@
+// World-First: Interactive Diff Editor & Line Patcher
+// Live multi-line text diffing and patch application
+
+let original_config = "host = 127.0.0.1\nport = 3000\ndebug = false";
+// input.mock(["host = 0.0.0.0\nport = 8080\ndebug = true"]);
+
+let patched_config = input.diff("Edit Service Configuration:", original_config);
+println("Updated Configuration:\n" + patched_config);

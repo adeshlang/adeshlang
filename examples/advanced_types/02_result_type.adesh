@@ -1,0 +1,366 @@
+// Result Type Example
+// Demonstrates robust error handling with Result<T, E>
+
+enum Result {
+    Ok(value),
+    Err(error)
+}
+
+print("╔══════════════════════════════════════════╗");
+print("║  AdeshLang - Result Type Example         ║");
+print("║  Robust Error Handling                   ║");
+print("╚══════════════════════════════════════════╝");
+print("");
+
+// ============================================================================
+// 1. BASIC RESULT USAGE
+// ============================================================================
+
+print("=== Basic Result Usage ===");
+
+// Result represents either success (Ok) or failure (Err)
+let success = new Result.Ok(42);
+let failure = new Result.Err("Something went wrong");
+
+// Pattern matching to handle both cases
+match success {
+    Ok(value) => {
+        print("Success value: ");
+        print(value);
+    },
+    Err(error) => {
+        print("Error: ");
+        print(error);
+    }
+}
+
+match failure {
+    Ok(value) => {
+        print("Success value: ");
+        print(value);
+    },
+    Err(error) => {
+        print("Error: ");
+        print(error);
+    }
+}
+print("");
+
+// ============================================================================
+// 2. FUNCTIONS RETURNING RESULT
+// ============================================================================
+
+fn divide_safe(a: f64, b: f64) {
+    if b == 0.0 {
+        return new Result.Err("Division by zero");
+    }
+    return new Result.Ok(a / b);
+}
+
+fn parse_age(value: i64) {
+    if value < 0 {
+        return new Result.Err("Age cannot be negative");
+    }
+    if value > 150 {
+        return new Result.Err("Age too large");
+    }
+    return new Result.Ok(value);
+}
+
+print("=== Functions Returning Result ===");
+
+// Test divide_safe
+match divide_safe(10.0, 2.0) {
+    Ok(result) => {
+        print("10 / 2 = ");
+        print(result);
+    },
+    Err(error) => {
+        print("Error: ");
+        print(error);
+    }
+}
+
+match divide_safe(10.0, 0.0) {
+    Ok(result) => {
+        print("10 / 0 = ");
+        print(result);
+    },
+    Err(error) => {
+        print("Error: ");
+        print(error);
+    }
+}
+
+// Test parse_age
+match parse_age(25) {
+    Ok(age) => {
+        print("Valid age: ");
+        print(age);
+    },
+    Err(error) => {
+        print("Invalid age: ");
+        print(error);
+    }
+}
+
+match parse_age(-5) {
+    Ok(age) => {
+        print("Valid age: ");
+        print(age);
+    },
+    Err(error) => {
+        print("Invalid age: ");
+        print(error);
+    }
+}
+
+match parse_age(200) {
+    Ok(age) => {
+        print("Valid age: ");
+        print(age);
+    },
+    Err(error) => {
+        print("Invalid age: ");
+        print(error);
+    }
+}
+print("");
+
+// ============================================================================
+// 3. RESULT WITH DIFFERENT ERROR TYPES
+// ============================================================================
+
+fn validate_positive(n: i64) {
+    if n <= 0 {
+        return new Result.Err("Number must be positive");
+    }
+    return new Result.Ok(n);
+}
+
+fn validate_range(n: i64, min: i64, max: i64) {
+    if n < min {
+        return new Result.Err("Number below minimum");
+    }
+    if n > max {
+        return new Result.Err("Number above maximum");
+    }
+    return new Result.Ok(n);
+}
+
+print("=== Result with Validation ===");
+
+match validate_positive(42) {
+    Ok(n) => {
+        print("Valid positive: ");
+        print(n);
+    },
+    Err(error) => print(error)
+}
+
+match validate_positive(-10) {
+    Ok(n) => {
+        print("Valid positive: ");
+        print(n);
+    },
+    Err(error) => print(error)
+}
+
+match validate_range(50, 0, 100) {
+    Ok(n) => {
+        print("In range: ");
+        print(n);
+    },
+    Err(error) => print(error)
+}
+
+match validate_range(150, 0, 100) {
+    Ok(n) => {
+        print("In range: ");
+        print(n);
+    },
+    Err(error) => print(error)
+}
+print("");
+
+// ============================================================================
+// 4. CHAINING RESULT OPERATIONS
+// ============================================================================
+
+fn square_if_positive(n: i64) {
+    match validate_positive(n) {
+        Ok(value) => {
+            return new Result.Ok(value * value);
+        },
+        Err(error) => {
+            return new Result.Err(error);
+        }
+    }
+}
+
+fn divide_and_validate(a: f64, b: f64) {
+    match divide_safe(a, b) {
+        Ok(result) => {
+            if result < 0.0 {
+                return new Result.Err("Result is negative");
+            }
+            return new Result.Ok(result);
+        },
+        Err(error) => {
+            return new Result.Err(error);
+        }
+    }
+}
+
+print("=== Chaining Result Operations ===");
+
+match square_if_positive(5) {
+    Ok(result) => {
+        print("Square of 5: ");
+        print(result);  // 25
+    },
+    Err(error) => print(error)
+}
+
+match square_if_positive(-3) {
+    Ok(result) => {
+        print("Square of -3: ");
+        print(result);
+    },
+    Err(error) => print(error)
+}
+
+match divide_and_validate(10.0, 2.0) {
+    Ok(result) => {
+        print("10 / 2 (validated): ");
+        print(result);
+    },
+    Err(error) => print(error)
+}
+print("");
+
+// ============================================================================
+// 5. RESULT WITH NUMERIC LITERALS
+// ============================================================================
+
+fn parse_byte(valid: bool) {
+    if valid {
+        return new Result.Ok(0xFF);  // Hex: 255
+    }
+    return new Result.Err("Invalid byte");
+}
+
+fn parse_flags(valid: bool) {
+    if valid {
+        return new Result.Ok(0b1111_0000);  // Binary with underscore
+    }
+    return new Result.Err("Invalid flags");
+}
+
+print("=== Result with Numeric Literals ===");
+
+match parse_byte(true) {
+    Ok(byte) => {
+        print("Parsed byte (0xFF): ");
+        print(byte);
+    },
+    Err(error) => print(error)
+}
+
+match parse_flags(true) {
+    Ok(flags) => {
+        print("Parsed flags (0b1111_0000): ");
+        print(flags);
+    },
+    Err(error) => print(error)
+}
+
+match parse_byte(false) {
+    Ok(byte) => {
+        print("Parsed byte: ");
+        print(byte);
+    },
+    Err(error) => {
+        print("Error: ");
+        print(error);
+    }
+}
+print("");
+
+// ============================================================================
+// 6. PRACTICAL EXAMPLE: USER VALIDATION
+// ============================================================================
+
+fn validate_username(name: string) {
+    let len = name.length;
+    if len < 3 {
+        return new Result.Err("Username too short (min 3 chars)");
+    }
+    if len > 20 {
+        return new Result.Err("Username too long (max 20 chars)");
+    }
+    return new Result.Ok(name);
+}
+
+fn validate_score(score: i64) {
+    if score < 0 {
+        return new Result.Err("Score cannot be negative");
+    }
+    if score > 100 {
+        return new Result.Err("Score cannot exceed 100");
+    }
+    return new Result.Ok(score);
+}
+
+print("=== User Validation Example ===");
+
+match validate_username("alice") {
+    Ok(name) => {
+        print("Valid username: ");
+        print(name);
+    },
+    Err(error) => print(error)
+}
+
+match validate_username("ab") {
+    Ok(name) => {
+        print("Valid username: ");
+        print(name);
+    },
+    Err(error) => print(error)
+}
+
+match validate_score(85) {
+    Ok(score) => {
+        print("Valid score: ");
+        print(score);
+    },
+    Err(error) => print(error)
+}
+
+match validate_score(150) {
+    Ok(score) => {
+        print("Valid score: ");
+        print(score);
+    },
+    Err(error) => print(error)
+}
+print("");
+
+print("╔══════════════════════════════════════════╗");
+print("║  Result type examples completed!         ║");
+print("║  Robust error handling! ✨               ║");
+print("╚══════════════════════════════════════════╝");
+
+// ============================================================================
+// KEY TAKEAWAYS:
+//
+// 1. Result<T, E> represents either success (Ok) or error (Err)
+// 2. Use Ok(value) for successful operations
+// 3. Use Err(error) for failures
+// 4. Pattern matching handles both cases explicitly
+// 5. No exceptions - all errors are values!
+//
+// USAGE:
+// adesh run examples/advanced_types/02_result_type.adesh
+// ============================================================================

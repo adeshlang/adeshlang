@@ -1,0 +1,10 @@
+// Test that RAII properly cleans up
+unsafe {
+    println("Allocating memory...");
+    let ptr: *u8 = alloc(5);
+    ptr[0] = 42;
+    println("Allocated and wrote 42");
+}
+
+println("After block exit - memory should be freed");
+// The automatic free() should have been injected at the end of the unsafe block

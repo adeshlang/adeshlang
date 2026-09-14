@@ -1,0 +1,253 @@
+// =============================================================================
+// AdeshLang v0.2.0 - Fast Map/Reduce with JIT Optimizations
+// =============================================================================
+// This example demonstrates JIT fast-path optimizations for collection operations:
+// - Type-specialized map/filter/reduce
+// - Hidden class stability for objects
+// - Inline caching benefits
+//
+// What this demonstrates:
+// - Performance comparison between interpreter and JIT
+// - How to structure code for optimal JIT performance
+// - Timing and profiling patterns
+//
+// Run with: adesh run examples/perf/fast_map_reduce.adesh --jit
+// =============================================================================
+
+print("=== Fast Map/Reduce with JIT Optimizations ===\n");
+
+// -----------------------------------------------------------------------------
+// 1. Timing Utilities
+// -----------------------------------------------------------------------------
+
+fn benchmark(name, iterations, func) {
+    let start = clock();
+    let result = null;
+    
+    for (i in range(0, iterations)) {
+        result = func();
+    }
+    
+    let elapsed = clock() - start;
+    let avgMs = (elapsed * 1000) / iterations;
+    
+    print("  " + name + ":");
+    print("    Iterations: " + str(iterations));
+    print("    Total time: " + str(elapsed * 1000) + " ms");
+    print("    Avg per call: " + str(avgMs) + " ms");
+    
+    return result;
+}
+
+// -----------------------------------------------------------------------------
+// 2. Map Fast Path
+// -----------------------------------------------------------------------------
+
+print("--- Map Fast Path ---\n");
+
+// Create test data
+let numbers = [];
+for (i in range(0, 1000)) {
+    numbers.push(i);
+}
+print("Test array: 1000 integers\n");
+
+// Map with simple numeric operation (fast path)
+fn mapSquare() {
+    return numbers.map(x => x * x);
+}
+
+// Map with type conversion (slower)
+fn mapToString() {
+    return numbers.map(x => str(x));
+}
+
+print("Map operations:");
+benchmark("Square (numeric fast path)", 100, mapSquare);
+print("");
+benchmark("ToString (type conversion)", 100, mapToString);
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 3. Filter Fast Path
+// -----------------------------------------------------------------------------
+
+print("--- Filter Fast Path ---\n");
+
+// Filter with simple comparison (fast path)
+fn filterEven() {
+    return numbers.filter(x => x % 2 == 0);
+}
+
+// Filter with complex condition
+fn filterComplex() {
+    return numbers.filter(x => x % 2 == 0 && x % 3 == 0 && x > 100);
+}
+
+print("Filter operations:");
+benchmark("Even numbers (simple)", 100, filterEven);
+print("");
+benchmark("Complex condition", 100, filterComplex);
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 4. Reduce Fast Path
+// -----------------------------------------------------------------------------
+
+print("--- Reduce Fast Path ---\n");
+
+// Reduce with addition (fast path for int+int)
+fn reduceSum() {
+    return numbers.reduce((acc, x) => acc + x, 0);
+}
+
+// Reduce building array (slower, allocations)
+fn reduceBuild() {
+    return numbers.reduce((acc, x) => {
+        if (x % 10 == 0) {
+            acc.push(x);
+        }
+        return acc;
+    }, []);
+}
+
+print("Reduce operations:");
+let sumResult = benchmark("Sum (int+int fast path)", 100, reduceSum);
+print("    Result: " + str(sumResult));
+print("");
+benchmark("Build array", 100, reduceBuild);
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 5. Chained Operations
+// -----------------------------------------------------------------------------
+
+print("--- Chained Operations ---\n");
+
+// Chained map/filter/reduce
+fn chainedOperations() {
+    let data = numbers.map(x => x * 2);
+    data = data.filter(x => x % 4 == 0);
+    return data.reduce((acc, x) => acc + x, 0);
+}
+
+print("Chained map → filter → reduce:");
+let chainResult = benchmark("Full chain", 100, chainedOperations);
+print("    Result: " + str(chainResult));
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 6. Object Processing with Hidden Classes
+// -----------------------------------------------------------------------------
+
+print("--- Object Processing with Hidden Classes ---\n");
+
+// Create objects with consistent shape
+fn createUsers() {
+    let users = [];
+    for (i in range(0, 100)) {
+        users.push({
+            id: i,
+            name: "User" + str(i),
+            score: i * 10,
+            active: i % 2 == 0
+        });
+    }
+    return users;
+}
+
+let users = createUsers();
+print("Test array: 100 user objects (consistent shape)\n");
+
+// Map accessing properties (benefits from IC)
+fn mapScores() {
+    return users.map(u => u.score);
+}
+
+// Filter on object property
+fn filterActive() {
+    return users.filter(u => u.active);
+}
+
+// Reduce with object access
+fn reduceScoreSum() {
+    return users.reduce((acc, u) => acc + u.score, 0);
+}
+
+print("Object operations (benefit from hidden classes):");
+benchmark("Extract scores", 100, mapScores);
+print("");
+benchmark("Filter active", 100, filterActive);
+print("");
+let scoreSum = benchmark("Sum scores", 100, reduceScoreSum);
+print("    Total score: " + str(scoreSum));
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 7. Performance Tips
+// -----------------------------------------------------------------------------
+
+print("--- Performance Tips ---\n");
+
+print("For fastest map/filter/reduce:");
+print("");
+print("1. Use consistent types:");
+print("   ✓ nums.map(x => x * 2)      // int → int");
+print("   ✗ nums.map(x => x > 0 ? x : 'zero')  // mixed types");
+print("");
+
+print("2. Keep object shapes consistent:");
+print("   ✓ Always initialize all properties");
+print("   ✓ Add properties in same order");
+print("   ✗ Dynamically add/delete properties");
+print("");
+
+print("3. Prefer simple predicates:");
+print("   ✓ arr.filter(x => x > 0)");
+print("   ✗ arr.filter(x => expensiveCheck(x))");
+print("");
+
+print("4. Use JIT for hot paths:");
+print("   Run with --jit flag for ~10-100x speedup");
+print("");
+
+print("5. Avoid allocations in callbacks:");
+print("   ✓ arr.reduce((a,x) => a + x, 0)");
+print("   ✗ arr.reduce((a,x) => [...a, x], [])");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 8. Final Benchmark Summary
+// -----------------------------------------------------------------------------
+
+print("--- Benchmark Summary ---\n");
+
+fn fullBenchmark() {
+    // Simulate real workload - create array from range, not Type
+    let data = [];
+    for (i in range(0, 1000)) {
+        data.push(i);
+    }
+    
+    // Multiple operations
+    let squared = data.map(x => x * x);
+    let filtered = squared.filter(x => x % 100 == 0);
+    let sum = filtered.reduce((a, x) => a + x, 0);
+    
+    return sum;
+}
+
+print("Full pipeline benchmark:");
+let finalResult = benchmark("Complete workload", 100, fullBenchmark);
+print("    Final result: " + str(finalResult));
+
+print("");
+print("=== Demo Complete ===");
+print("");
+print("Run with --jit for best performance!");

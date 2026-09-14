@@ -1,0 +1,17 @@
+import Random;
+
+print("--- String & Token Randomness Demo ---");
+let str16 = Random.string(16);
+print("Alphanumeric string (16): " + str16);
+
+let hexStr = Random.hex(32);
+print("Hex string (32): " + hexStr);
+
+let customStr = Random.stringFrom("ACTG", 12);
+print("DNA sequence (12): " + customStr);
+
+let charVal = Random.charFrom("XYZ123!");
+print("Char from charset: " + charVal);
+
+let tok = Random.token(24);
+print("URL-safe token: " + tok);

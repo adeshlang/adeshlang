@@ -1,0 +1,14 @@
+import Encoding;
+
+// Demonstrating basic UTF-8 encoding and decoding
+let text = "AdeshLang 🚀 नमस्ते संस्कृत";
+print("Original Text:", text);
+
+let bytes = Encoding.utf8Encode(text);
+print("UTF-8 Bytes length:", bytes.length);
+
+let decoded = Encoding.utf8Decode(bytes);
+print("Decoded Text:", decoded);
+
+let isValid = Encoding.isValidUtf8(bytes);
+print("Is Valid UTF-8:", isValid);

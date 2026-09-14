@@ -1,0 +1,12 @@
+// 12 — channels
+import thread;
+
+thread.watchdog(15000);
+let pair = thread.Channel.bounded(8);
+let tx = pair[0];
+let rx = pair[1];
+thread.spawn(fn() {
+    tx.send(42);
+    tx.close();
+}).join();
+print(rx.recv().value);

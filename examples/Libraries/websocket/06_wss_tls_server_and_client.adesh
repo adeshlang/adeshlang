@@ -1,0 +1,56 @@
+// Example 06: Production-Grade WSS (Secure WebSocket) Server & Client
+// Demonstrates TLS certificate, WSS server binding, and secure client handshake.
+
+import Path;
+import fs;
+import WebSocket;
+
+fn runWssServerAndClient() {
+    print("=== Example 06: Production-Grade Secure WSS Server & Client ===");
+
+    let certPath = Path.join("certs", "fullchain.pem").toString();
+    let keyPath = Path.join("certs", "privkey.pem").toString();
+
+    let certPem = fs.readText(certPath);
+    let keyPem = fs.readText(keyPath);
+
+    let serverConfig = {
+        bind_address: "127.0.0.1",
+        port: 8606,
+        protocols: ["wss-chat"],
+        tls_cert_pem: certPem,
+        tls_key_pem: keyPem
+    };
+
+    print("Binding WSS Listener on wss://127.0.0.1:8606...");
+    let server = WebSocket.server(serverConfig);
+    server.startEcho();
+    print("✓ TLS WSS echo server active.");
+
+    let clientConfig = WebSocket.ClientConfig({
+        protocols: ["wss-chat"],
+        verify_tls: false
+    });
+
+    print("Client initiating secure WSS handshake to wss://127.0.0.1:8606...");
+    let client = WebSocket.connect("wss://127.0.0.1:8606", clientConfig);
+    if (WebSocket.isError(client)) {
+        print("WSS Client error");
+        server.close();
+        return;
+    }
+
+    print("✓ WSS Client connected securely! Negotiated protocol: " + client.subprotocol);
+    client.sendText("Hello Secure WSS World over TLS!");
+
+    let response = client.receive();
+    if (response.type == "text") {
+        print("Received secure response over WSS: " + response.payload);
+    }
+
+    client.close(1000, "WSS session complete");
+    server.close();
+    print("✓ WSS Client session closed cleanly.");
+}
+
+runWssServerAndClient();

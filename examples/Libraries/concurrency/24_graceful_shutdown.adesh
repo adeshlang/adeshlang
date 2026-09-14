@@ -1,0 +1,17 @@
+// 24 — graceful shutdown
+import thread;
+
+thread.watchdog(15000);
+let src = thread.CancellationSource.new();
+let wg = thread.WaitGroup.new();
+wg.add(1);
+let w = thread.spawn(fn() {
+    while !src.token().is_cancelled() {
+        thread.sleep(5);
+    }
+    wg.done();
+});
+src.cancel();
+wg.wait_timeout(3000);
+w.join_timeout(2000);
+print("shutdown complete");

@@ -1,0 +1,347 @@
+// ⚠️  CONCEPTUAL/ASPIRATIONAL FEATURE
+// GPU compilation is a planned feature for Adesh.
+// This file demonstrates high-level patterns that Adesh code could use for GPU computing.
+// Actual GPU kernel generation (CUDA, HIP, OpenCL) is not yet implemented.
+// Currently, use CUDA C++, HIP, or other GPU frameworks for GPU code.
+//
+// ================================================
+// ADESH FOR GPU COMPUTING
+// ================================================
+// Target: CUDA (NVIDIA), HIP (AMD), OpenCL (Generic)
+// Use: Machine learning, scientific computing, data parallel tasks
+//
+// Characteristics:
+//   - Massive parallelism (thousands of threads)
+//   - SIMD width: 256-1024 bits (Tesla: 512 threads per block)
+//   - Hierarchical memory: registers → shared (48KB) → global (GB)
+//   - Requires explicit data transfer between CPU and GPU
+//   - Best for data-parallel algorithms
+//   - Memory bandwidth: 100GB/s+ (vs 10GB/s PCIe)
+//
+// Adesh expressions of GPU patterns:
+//   - Loop iterations become GPU threads (vectorized)
+//   - Array operations => GPU kernels
+//   - Nested loops => blocks/threads hierarchy
+//
+// GPU Characteristics:
+//   - NVIDIA Tesla V100: 5,120 CUDA cores, 125 TFLOPS (f32)
+//   - NVIDIA RTX 4090: 16,384 cores, 661 TFLOPS
+//   - AMD MI300X: 304 TFLOPS matrix, 1,215 tensor TFLOPS
+//   - Intel Data Center GPU: 128 ray tracing cores
+
+fn gpu_matrix_multiply_naive(a: [f64], b: [f64], size: i64): [f64] {
+    // Standard matrix multiply
+    // GPU: Parallelize outer loops (each thread = one output element)
+    // Data: 3 * size^2 elements loaded from global memory
+    // Performance: ~500 GFLOPS on Tesla V100 (naive, non-optimized)
+    
+    let result = [];
+    let i = 0;
+    
+    // GPU: These outer iterations become GPU thread blocks
+    while (i < size) {
+        let j = 0;
+        while (j < size) {
+            let sum = 0.0;
+            let k = 0;
+            
+            // GPU: Each thread computes this inner reduction
+            while (k < size) {
+                let a_elem = a[i * size + k];
+                let b_elem = b[k * size + j];
+                sum = sum + (a_elem * b_elem);
+                k = k + 1;
+            };
+            
+            result[i * size + j] = sum;
+            j = j + 1;
+        };
+        i = i + 1;
+    };
+    
+    return result;
+}
+
+fn gpu_matrix_multiply_tiled(a: [f64], b: [f64], size: i64, tile_size: i64): [f64] {
+    // Tiled matrix multiply (GPU-optimized)
+    // GPU: Use shared memory for tiles (48KB on Tesla)
+    // Reduces global memory bandwidth by 8-16x
+    // Performance: ~1.5 TFLOPS on Tesla V100 (vs 500 GFLOPS naive)
+    
+    let result = [];
+    let bi = 0;
+    
+    // Outer loop: tile blocks
+    while (bi < size) {
+        let bj = 0;
+        while (bj < size) {
+            let ti = 0;
+            
+            // Inner loop: tile computation
+            while (ti < tile_size) {
+                let tj = 0;
+                while (tj < tile_size) {
+                    let sum = 0.0;
+                    let bk = 0;
+                    
+                    // Reduction within tile
+                    while (bk < size) {
+                        let i_idx = bi + ti;
+                        let j_idx = bj + tj;
+                        let k_idx = bk;
+                        
+                        let a_elem = a[i_idx * size + k_idx];
+                        let b_elem = b[k_idx * size + j_idx];
+                        sum = sum + (a_elem * b_elem);
+                        bk = bk + 1;
+                    };
+                    
+                    result[i_idx * size + j_idx] = sum;
+                    tj = tj + 1;
+                };
+                ti = ti + 1;
+            };
+            
+            bj = bj + tile_size;
+        };
+        bi = bi + tile_size;
+    };
+    
+    return result;
+}
+
+fn gpu_tensor_convolution(input: [f64], kernel: [f64], h: i64, w: i64, kh: i64, kw: i64): [f64] {
+    // 2D Convolution (core operation in CNNs)
+    // GPU: Each output pixel computed by one GPU thread
+    // Data: Broadcast kernel to thousands of threads
+    // Tesla V100: ~2 TFLOPS INT8, ~1 TFLOPS FP32
+    // Tensor cores: ~8 TFLOPS FP32 (with special instructions)
+    
+    let output_h = h - kh + 1;
+    let output_w = w - kw + 1;
+    let output = [];
+    let y = 0;
+    
+    // GPU: Each iteration becomes a GPU thread
+    while (y < output_h) {
+        let x = 0;
+        while (x < output_w) {
+            let sum = 0.0;
+            let ky = 0;
+            
+            while (ky < kh) {
+                let kx = 0;
+                while (kx < kw) {
+                    let input_val = input[(y + ky) * w + (x + kx)];
+                    let kernel_val = kernel[ky * kw + kx];
+                    sum = sum + (input_val * kernel_val);
+                    kx = kx + 1;
+                };
+                ky = ky + 1;
+            };
+            
+            output[y * output_w + x] = sum;
+            x = x + 1;
+        };
+        y = y + 1;
+    };
+    
+    return output;
+}
+
+fn gpu_parallel_reduction(data: [f64]): f64 {
+    // Parallel reduction (e.g., sum all elements)
+    // GPU pattern: Divide into blocks, each reduces partial sum
+    // Adesh: Sequential, but GPU compiler parallelizes
+    // Communication: LogN synchronization barriers
+    
+    let sum = 0.0;
+    let i = 0;
+    
+    while (i < data.len()) {
+        sum = sum + data[i];
+        i = i + 1;
+    };
+    
+    return sum;
+}
+
+fn gpu_scan_exclusive(data: [f64]): [f64] {
+    // Exclusive scan (prefix sum)
+    // GPU: Kogge-Stone or Blelloch algorithm
+    // Output: [0, data[0], data[0]+data[1], ...]
+    
+    let result = [];
+    let i = 0;
+    let sum = 0.0;
+    
+    while (i < data.len()) {
+        result[i] = sum;
+        sum = sum + data[i];
+        i = i + 1;
+    };
+    
+    return result;
+}
+
+fn gpu_monte_carlo_pi(samples: i64): f64 {
+    // Monte Carlo: Estimate Pi using random points
+    // GPU: Embarrassingly parallel (each thread independent)
+    // Perfect GPU fit: thousands of threads, minimal communication
+    
+    let inside_circle = 0;
+    let i = 0;
+    
+    while (i < samples) {
+        // Simulated random numbers (0-1 range)
+        let x = (i * 1103515245 + 12345) % 1000000;
+        let y = (i * 7654321) % 1000000;
+        let x_norm = x / 1000000.0;
+        let y_norm = y / 1000000.0;
+        
+        let distance_sq = (x_norm * x_norm) + (y_norm * y_norm);
+        if (distance_sq <= 1.0) {
+            inside_circle = inside_circle + 1;
+        };
+        i = i + 1;
+    };
+    
+    let pi_estimate = (4.0 * inside_circle) / samples;
+    return pi_estimate;
+}
+
+fn gpu_vectorized_activation(data: [f64]): [f64] {
+    // Activation function (ReLU, Sigmoid, etc.)
+    // GPU: Vectorized element-wise operation (trivially parallel)
+    // Tesla V100: ~10 TFLOPS for such kernels
+    
+    let result = [];
+    let i = 0;
+    
+    while (i < data.len()) {
+        let val = data[i];
+        // ReLU: max(0, x)
+        if (val < 0.0) {
+            result[i] = 0.0;
+        } else {
+            result[i] = val;
+        };
+        i = i + 1;
+    };
+    
+    return result;
+}
+
+fn gpu_neural_network_layer(input: [f64], weights: [f64], bias: [f64], 
+                            input_size: i64, output_size: i64): [f64] {
+    // Neural network fully connected layer: output = input @ weights + bias
+    // GPU: Matrix-vector multiply (optimized path)
+    // Pattern: Each output computed by summing input * weights
+    
+    let output = [];
+    let i = 0;
+    
+    while (i < output_size) {
+        let sum = bias[i];
+        let j = 0;
+        
+        while (j < input_size) {
+            let input_val = input[j];
+            let weight_val = weights[i * input_size + j];
+            sum = sum + (input_val * weight_val);
+            j = j + 1;
+        };
+        
+        output[i] = sum;
+        i = i + 1;
+    };
+    
+    return output;
+}
+
+fn gpu_sorted_search(sorted_data: [i64], search_values: [i64]): [i64] {
+    // Binary search in GPU (each search = independent thread)
+    // GPU: Massively parallel search operations
+    
+    let results = [];
+    let i = 0;
+    
+    while (i < search_values.len()) {
+        let target = search_values[i];
+        let left = 0;
+        let right = sorted_data.len();
+        let found = -1;
+        
+        while (left < right) {
+            let mid = (left + right) / 2;
+            if (sorted_data[mid] == target) {
+                found = mid;
+                left = right;  // Exit
+            } else {
+                if (sorted_data[mid] < target) {
+                    left = mid + 1;
+                } else {
+                    right = mid;
+                };
+            };
+        };
+        
+        results[i] = found;
+        i = i + 1;
+    };
+    
+    return results;
+}
+
+fn main_gpu() {
+    print("\n=== Adesh for GPU Computing ===\n");
+    
+    // Test 1: Matrix multiply
+    let matrix_size = 4;
+    let a = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0];
+    let b = [16.0, 15.0, 14.0, 13.0, 12.0, 11.0, 10.0, 9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0];
+    let result = gpu_matrix_multiply_naive(a, b, matrix_size);
+    print("Matrix multiply result (first 4): ");
+    print(result[0], ", ", result[1], ", ", result[2], ", ", result[3], "\n");
+    
+    // Test 2: Reduction
+    let data = [1.0, 2.0, 3.0, 4.0, 5.0];
+    let sum = gpu_parallel_reduction(data);
+    print("Parallel reduction sum: ", sum, "\n");
+    
+    // Test 3: Scan
+    let scan = gpu_scan_exclusive(data);
+    print("Exclusive scan result: ", scan, "\n");
+    
+    // Test 4: Monte Carlo Pi
+    let pi = gpu_monte_carlo_pi(10000);
+    print("Estimated Pi: ", pi, "\n");
+    
+    // Test 5: Activation
+    let activations = gpu_vectorized_activation([-2.0, -1.0, 0.0, 1.0, 2.0]);
+    print("ReLU activation: ", activations, "\n");
+    
+    // Test 6: Neural network layer
+    let nn_input = [1.0, 2.0, 3.0];
+    let nn_weights = [0.5, 0.2, 0.1, 0.3, 0.7, 0.4];
+    let nn_bias = [0.1, 0.2];
+    let nn_output = gpu_neural_network_layer(nn_input, nn_weights, nn_bias, 3, 2);
+    print("Neural network layer output: ", nn_output, "\n");
+    
+    print("\nGPU Architecture Comparison:");
+    print("  NVIDIA Tesla V100:");
+    print("    - Cores: 5,120 CUDA");
+    print("    - Memory: 32GB HBM2 (900 GB/s bandwidth)");
+    print("    - Peak: 125 TFLOPS (FP64)");
+    print("    - Tensor cores: 1 TFLOPS matrix ops");
+    print("\n  NVIDIA RTX 4090:");
+    print("    - Cores: 16,384 CUDA");
+    print("    - Memory: 24GB GDDR6X");
+    print("    - Peak: 661 TFLOPS");
+    print("\n  AMD MI300X:");
+    print("    - Cores: 304 TFLOPS matrix");
+    print("    - Memory: 192GB HBM3");
+    print("    - Peak: 1,215 TFLOPS tensor");
+    
+    return 0;
+}

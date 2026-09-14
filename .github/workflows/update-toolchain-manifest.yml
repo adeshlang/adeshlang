@@ -1,0 +1,190 @@
+name: Update Toolchain Manifest
+
+on:
+  schedule:
+    - cron: "0 4 1 * *"
+  workflow_dispatch:
+
+# Repository migration: origin is currently ajaytainwala-dev/mylang; this
+# workflow keeps the official destination in one overridable variable.
+env:
+  ADESH_REPO: adeshlang/adeshlang
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-toolchain-manifest
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Validate and refresh checksums
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Download components and update checksum fields
+        shell: bash
+        env:
+          MANIFEST_PATH: installer/manifests/toolchain-manifest.json
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import sys
+          import tempfile
+          from pathlib import Path
+          from urllib.error import HTTPError, URLError
+          from urllib.request import Request, urlopen
+
+          manifest_path = Path(os.environ["MANIFEST_PATH"])
+          data = json.loads(manifest_path.read_text(encoding="utf-8"))
+          original_data = json.loads(json.dumps(data))
+          original_urls = {}
+          components = []
+
+          for platform, platform_data in data.get("platforms", {}).items():
+              for component, metadata in platform_data.items():
+                  if not isinstance(metadata, dict) or "url" not in metadata:
+                      continue
+                  url = metadata.get("url") or ""
+                  original_urls[(platform, component)] = url
+                  if url:
+                      components.append((platform, component, url))
+                  else:
+                      print(f"Skipping {platform}/{component}: no upstream URL.")
+
+          dead = []
+          failures = []
+          checksums = {}
+          cache = {}
+
+          def request(url, method):
+              return Request(
+                  url,
+                  method=method,
+                  headers={
+                      "User-Agent": "AdeshLang-toolchain-manifest-updater",
+                      "Accept": "*/*",
+                  },
+              )
+
+          for platform, component, url in components:
+              label = f"{platform}/{component}"
+              try:
+                  with urlopen(request(url, "HEAD"), timeout=90) as response:
+                      status = response.getcode()
+                  if status != 200:
+                      dead.append((label, url, f"HTTP {status}"))
+                      continue
+              except (HTTPError, URLError, TimeoutError, OSError) as exc:
+                  dead.append((label, url, str(exc)))
+                  continue
+
+              if url in cache:
+                  checksums[(platform, component)] = cache[url]
+                  continue
+
+              digest = hashlib.sha256()
+              size = 0
+              try:
+                  with urlopen(request(url, "GET"), timeout=180) as response:
+                      status = response.getcode()
+                      if status != 200:
+                          dead.append((label, url, f"download HTTP {status}"))
+                          continue
+                      while True:
+                          chunk = response.read(1024 * 1024)
+                          if not chunk:
+                              break
+                          digest.update(chunk)
+                          size += len(chunk)
+              except (HTTPError, URLError, TimeoutError, OSError) as exc:
+                  failures.append((label, url, str(exc)))
+                  continue
+
+              cache[url] = (digest.hexdigest(), size)
+              checksums[(platform, component)] = cache[url]
+              print(f"{label}: {size} bytes, {digest.hexdigest()}")
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as summary:
+                  summary.write("## Toolchain manifest URL validation\n\n")
+                  if dead:
+                      summary.write("### Dead URLs\n")
+                      for label, url, reason in dead:
+                          summary.write(f"- `{label}` — `{url}` ({reason})\n")
+                  if failures:
+                      summary.write("### Download failures\n")
+                      for label, url, reason in failures:
+                          summary.write(f"- `{label}` — `{url}` ({reason})\n")
+                  if not dead and not failures:
+                      summary.write("All non-empty component URLs returned HTTP 200 and downloaded successfully.\n")
+
+          if dead or failures:
+              print("Toolchain manifest validation failed.", file=sys.stderr)
+              for label, url, reason in dead:
+                  print(f"DEAD URL: {label}: {url} ({reason})", file=sys.stderr)
+              for label, url, reason in failures:
+                  print(f"DOWNLOAD FAILURE: {label}: {url} ({reason})", file=sys.stderr)
+              sys.exit(1)
+
+          # IMPORTANT SAFETY: URLs are never changed by this updater. Only the
+          # sha256 and size fields are assigned below, after all URLs pass.
+          for platform, component, url in components:
+              metadata = data["platforms"][platform][component]
+              metadata["sha256"], metadata["size"] = checksums[(platform, component)]
+
+          for key, url in original_urls.items():
+              platform, component = key
+              if data["platforms"][platform][component].get("url", "") != url:
+                  raise RuntimeError(f"Safety check failed: URL changed for {platform}/{component}")
+
+          if data == original_data:
+              print("All manifest checksum and size fields are already current.")
+              sys.exit(0)
+
+          rendered = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+          with tempfile.NamedTemporaryFile(
+              "w", encoding="utf-8", dir=manifest_path.parent, delete=False
+          ) as temporary:
+              temporary.write(rendered)
+              temporary_path = Path(temporary.name)
+          temporary_path.replace(manifest_path)
+          PY
+
+      - name: Detect manifest changes
+        id: diff
+        shell: bash
+        run: |
+          if git diff --quiet -- installer/manifests/toolchain-manifest.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "The manifest checksums are already current."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git diff --check
+            git diff -- installer/manifests/toolchain-manifest.json
+          fi
+
+      - name: Open manifest update pull request
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: automation/update-toolchain-manifest
+          delete-branch: true
+          commit-message: "chore: refresh toolchain manifest checksums"
+          title: "chore: refresh toolchain manifest checksums"
+          body: |
+            Updates `installer/manifests/toolchain-manifest.json` with SHA-256
+            checksums and byte sizes downloaded from the existing upstream URLs.
+
+            Safety check: this automation never changes manifest URLs.
+          add-paths: |
+            installer/manifests/toolchain-manifest.json

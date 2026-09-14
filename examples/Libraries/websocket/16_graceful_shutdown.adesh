@@ -1,0 +1,28 @@
+// AdeshLang WebSocket Example 16: Server Lifecycle & Graceful Shutdown
+// Demonstrates clean server shutdown with close code dispatch to active connections.
+
+import WebSocket;
+
+print("=== AdeshLang WebSocket Graceful Shutdown Demo ===");
+
+let server = WebSocket.server(WebSocket.ServerConfig({
+    port: 8616,
+    bind_address: "127.0.0.1"
+}));
+
+server.startEcho();
+print("✓ Server running on port 8616");
+
+let client = WebSocket.connect("ws://127.0.0.1:8616");
+print("✓ Active connection established");
+
+client.sendText("Pre-shutdown ping");
+let reply = client.receive();
+print("Echo reply: " + reply.payload);
+
+// Shutdown server gracefully
+server.close();
+print("✓ Server shutdown executed gracefully");
+
+client.close(1000, "Clean client close");
+print("✓ Graceful shutdown test completed successfully!");

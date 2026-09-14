@@ -1,0 +1,12 @@
+// Test automatic main() execution across all backends
+// Standard execution order: top-level statements run first (global init),
+// then main() is automatically called.
+// Expected output:
+//   Top-level init
+//   Main function executed
+
+fn main() {
+    print("Main function executed");
+}
+
+print("Top-level init");

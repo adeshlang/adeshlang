@@ -1,0 +1,18 @@
+// Executable Example: Custom Working Directory
+import Process;
+import Env;
+import Path;
+
+let workDir = Env.tempDirectory();
+
+let isWin = Env.isWindows();
+let cmd = isWin ? "cmd.exe" : "pwd";
+let args = isWin ? ["/C", "cd"] : [];
+
+let result = Process.builder(cmd)
+    .args(args)
+    .workingDirectory(workDir)
+    .stdoutPipe()
+    .run();
+
+print("Execution directory: " + result.stdoutText().trim());

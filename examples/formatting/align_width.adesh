@@ -1,0 +1,10 @@
+let msg = "left";
+print(`[${msg:<20}]`);
+msg = "center";
+print(`[${msg:^20}]`);
+msg = "right";
+print(`[${msg:>20}]`);
+let n = 10;
+print(`[${n:+}]`);
+let num = 1234;
+print(`[${num:08}]`);

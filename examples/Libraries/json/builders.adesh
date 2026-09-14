@@ -1,0 +1,32 @@
+// AdeshLang Built-in JSON — Builders (JSON.object / JSON.array)
+// Shows how to construct JSON values programmatically without
+// writing raw JSON strings.
+
+fn main() {
+    // ── Create an empty object and assign fields ──────────────────────────
+    let server = JSON.object();
+    server.host    = "127.0.0.1";
+    server.port    = 8080;
+    server.tls     = false;
+    server.workers = 4;
+
+    // ── Create an array and assign items ─────────────────────────────────
+    server.methods = ["GET", "POST", "PUT", "DELETE"];
+
+    // ── Nested objects ───────────────────────────────────────────────────
+    let db = JSON.object();
+    db.host = "localhost";
+    db.port = 5432;
+    db.name = "mydb";
+    server.database = db;
+
+    // ── Serialise & display ──────────────────────────────────────────────
+    println("Server config (compact):\n" + JSON.stringify(server));
+    println("\nServer config (pretty):\n"  + JSON.stringifyPretty(server));
+
+    // ── Introspect individual fields ─────────────────────────────────────
+    println("host    : " + str(server.host));
+    println("port    : " + str(server.port));
+    println("method0 : " + str(server.methods[0]));
+    println("db.name : " + str(server.database.name));
+}

@@ -1,0 +1,28 @@
+// Enum edge cases and nuances
+
+enum EdgeCase {
+    Empty,
+    Single(val),
+    Multi(args)
+}
+
+print("--- Enum Edge Cases & Nuances ---");
+
+// 1. Instantiating with constructor call vs 'new'
+let ec1 = EdgeCase.Empty();
+let ec2 = new EdgeCase.Empty();
+print("ec1 tag:", ec1.tag, "| ec2 tag:", ec2.tag);
+print("Are they equivalent:", ec1.tag == ec2.tag && ec1.__enum == ec2.__enum);
+
+// 2. Multi-payload parsing as Array
+let ec_multi = EdgeCase.Multi(1, 2, 3);
+print("ec_multi.value type:", typeof(ec_multi.value));
+print("ec_multi.value elements:", ec_multi.value);
+
+// 3. Optional Single vs None payload
+let ec_single = EdgeCase.Single();
+print("ec_single value when no arg provided:", ec_single.value);
+
+// 4. Overlapping tags check
+let result = new EdgeCase.Single(42);
+print("result tag:", result.tag, "| result value:", result.value);

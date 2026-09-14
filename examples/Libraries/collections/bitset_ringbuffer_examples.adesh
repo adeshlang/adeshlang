@@ -1,0 +1,32 @@
+import Collections;
+
+print("========================================");
+print("5. BitSet & RingBuffer Advanced Examples");
+print("========================================");
+
+print("--- BitSet Operations ---");
+let bitset = Collections.BitSet();
+
+bitset.set(0);
+bitset.set(63);
+bitset.set(64);
+bitset.set(1000);
+
+print("Bit 0 set: ", bitset.test(0));       // true
+print("Bit 63 set: ", bitset.test(63));     // true
+print("Bit 64 set: ", bitset.test(64));     // true
+print("Bit 1000 set: ", bitset.test(1000)); // true
+print("Bit 50 set (expect false): ", bitset.test(50)); // false
+
+print("\n--- RingBuffer Overwriting Behavior ---");
+let ring = Collections.RingBuffer(3);
+
+ring.push("Event A");
+ring.push("Event B");
+ring.push("Event C");
+
+print("Push when full (evicts Event A): ", ring.push("Event D")); // Event A
+print("Pop oldest remaining (expect Event B): ", ring.pop());    // Event B
+print("Pop next (expect Event C): ", ring.pop());               // Event C
+print("Pop next (expect Event D): ", ring.pop());               // Event D
+print("Pop empty (expect null): ", ring.pop());                 // null

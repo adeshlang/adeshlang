@@ -1,0 +1,12 @@
+// Unicode printing demo
+#hello
+print("Hello, 世界 🌍");
+print("Emoji: 😀 😎 🚀");
+print("Hindi: नमस्ते भारत");
+print("Arabic: مرحبا بالعالم");
+print("Hebrew: שלום עולם");
+print("Thai: สวัสดีโลก");
+print("Korean: 안녕하세요 세계");
+print("Japanese: こんにちは世界");
+print("Russian: Привет, мир");
+print(["Mix", "混合", "🧪", "δοκιμή", "тест"]);

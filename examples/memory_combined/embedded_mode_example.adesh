@@ -1,0 +1,27 @@
+let x = 1;
+let y = 2;
+let z = x + y;
+
+print("Embedded-safe code:");
+print("No heap allocation");
+print("No ARC overhead");
+print("No garbage collection");
+print("Deterministic memory layout");
+
+struct Sensor {
+  id: i32,
+  value: i32,
+};
+
+let sensor = Sensor { id: 1, value: 42 };
+
+fn process_sensor(s: Sensor) : i32 {
+  return s.value * 2;
+}
+
+let result = process_sensor(sensor);
+print(sensor);
+print("Sensor result: ");
+print(result);
+
+print("Embedded systems can safely use AdeshLang");

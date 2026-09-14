@@ -1,0 +1,30 @@
+// Test embedded mode - this should work with --embedded flag
+fn main() {
+    print("Testing embedded mode...");
+    
+    // Stack allocation - should work
+    let x = 42;
+    let y = 3.14;
+    let s = "hello";
+    
+    print("Stack variables:");
+    print(x);
+    print(y);
+    print(s);
+    
+    // Array on stack - should work
+    let arr = [1, 2, 3, 4, 5];
+    print("Array:");
+    print(arr);
+    
+    // Function calls - should work
+    let result = add(x, 8);
+    print("Function result:");
+    print(result);
+    
+    print("✅ Embedded mode test passed!");
+}
+
+fn add(a, b) {
+    return a + b;
+}

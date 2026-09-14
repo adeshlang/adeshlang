@@ -1,0 +1,32 @@
+// Log Parser Example
+import "std:Regex" as Regex;
+
+fn parse_log_line(line) {
+    // Structured regex pattern with named capture groups to match format:
+    // [TIMESTAMP] [LEVEL] MESSAGE
+    let pattern = r"^\[(?P<timestamp>[^\]]+)\]\s+\[(?P<level>[^\]]+)\]\s+(?P<message>.*)$";
+    let re = Regex.new(pattern);
+    
+    let caps_res = re.captures(line);
+    if caps_res.isSome() {
+        let caps = caps_res.unwrap();
+        let timestamp = caps.name("timestamp").unwrap().text();
+        let level = caps.name("level").unwrap().text();
+        let message = caps.name("message").unwrap().text();
+        
+        print("Timestamp: " + timestamp);
+        print("Level:     " + level);
+        print("Message:   " + message);
+        print("--------------------------------------");
+    } else {
+        print("Warning: Log line did not match expected format.");
+        print("Line: " + line);
+        print("--------------------------------------");
+    }
+}
+
+print("--- Log Parser Example ---");
+parse_log_line("[2026-07-13 23:14:16] [INFO] Starting AdeshLang regular expression system demonstration.");
+parse_log_line("[2026-07-13 23:15:02] [WARNING] Deprecated API called.");
+parse_log_line("[2026-07-13 23:16:11] [ERROR] Connection timed out after 30 seconds.");
+parse_log_line("Malformatted log line.");

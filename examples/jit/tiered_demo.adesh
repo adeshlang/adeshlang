@@ -1,0 +1,83 @@
+// Tiered JIT Demo - Progressive Optimization
+// Run: adeshlang run examples/jit/tiered_demo.adesh --tiered
+
+fn hot_function(x: i64): i64 {
+    // This function will be called many times
+    // Tiered JIT will progressively optimize it
+    let result = x * x + x;
+    return result;
+}
+
+fn warm_function(x: i64): i64 {
+    // Called moderately often
+    return x * 2 + 1;
+}
+
+fn cold_function(x: i64): i64 {
+    // Called rarely, stays in interpreter
+    let result = 0;
+    for i in range(0, x) {
+        result = result + i;
+    }
+    return result;
+}
+
+fn main() {
+    print("╔════════════════════════════════════════════════════╗");
+    print("║  TIERED JIT DEMO - Progressive Optimization        ║");
+    print("║  T0 (Interpreter) -> T1 (Baseline) -> T2 (Opt)     ║");
+    print("╚════════════════════════════════════════════════════╝");
+    print("");
+    
+    // Hot function: many calls -> promotes to T2
+    print("1. Hot Function (100,000 calls):");
+    print("   Expected: T0 -> T1 (after ~100) -> T2 (after ~1000)");
+    let start = clock();
+    let sum = 0;
+    for i in range(0, 100000) {
+        sum = sum + hot_function(i);
+    }
+    let elapsed = clock() - start;
+    print(`   Result: ${sum}`);
+    print(`   Time: ${elapsed}s`);
+    print("");
+    
+    // Warm function: moderate calls -> promotes to T1
+    print("2. Warm Function (1,000 calls):");
+    print("   Expected: T0 -> T1 (stays in baseline)");
+    let start = clock();
+    let sum = 0;
+    for i in range(0, 1000) {
+        sum = sum + warm_function(i);
+    }
+    let elapsed = clock() - start;
+    print(`   Result: ${sum}`);
+    print(`   Time: ${elapsed}s`);
+    print("");
+    
+    // Cold function: few calls -> stays in T0
+    print("3. Cold Function (10 calls):");
+    print("   Expected: Stays in T0 (interpreter)");
+    let start = clock();
+    let sum = 0;
+    for i in range(1, 11) {
+        sum = sum + cold_function(i * 10);
+    }
+    let elapsed = clock() - start;
+    print(`   Result: ${sum}`);
+    print(`   Time: ${elapsed}s`);
+    print("");
+    
+    // Show tier statistics
+    if is_tiered_enabled() {
+        print("4. Tier Statistics:");
+        let stats = get_tier_stats();
+        print(`   hot_function: Tier ${stats.hot_function.tier}, calls: ${stats.hot_function.calls}`);
+        print(`   warm_function: Tier ${stats.warm_function.tier}, calls: ${stats.warm_function.calls}`);
+        print(`   cold_function: Tier ${stats.cold_function.tier}, calls: ${stats.cold_function.calls}`);
+    }
+    
+    print("");
+    print("Tiered JIT demo complete!");
+    print("Use --stats for detailed tier information.");
+}

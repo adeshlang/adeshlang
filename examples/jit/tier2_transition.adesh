@@ -1,0 +1,270 @@
+// =============================================================================
+// AdeshLang v0.3 - JIT Tier-2 Transition Demo
+// =============================================================================
+// This example demonstrates JIT tier promotion from T0 → T1 → T2:
+// - T0: Quick compilation, basic optimizations
+// - T1: Inline caching, type specialization
+// - T2: Full optimization with stable type profiles
+//
+// What this demonstrates:
+// - How functions get promoted through JIT tiers
+// - Inline cache stability and IC counters
+// - Hidden class transitions and their impact
+// - Type-stable vs polymorphic call sites
+//
+// Run with: adesh run examples/jit/tier2_transition.adesh --jit --verbose
+// Debug mode: RUST_LOG=debug adesh run examples/jit/tier2_transition.adesh --jit
+// =============================================================================
+
+print("=== JIT Tier-2 Transition Demo ===\n");
+
+// -----------------------------------------------------------------------------
+// 1. Hot Function for Tier Promotion
+// -----------------------------------------------------------------------------
+
+print("--- Hot Function Tier Promotion ---\n");
+
+// This function will be called many times to trigger tier promotion
+fn hotMath(a, b) {
+    return a * b + a - b;
+}
+
+// Warm up the function to trigger T0 → T1
+print("Warming up function (T0 → T1)...");
+let warmupResult = 0;
+for (i in range(0, 100)) {
+    warmupResult = hotMath(i, i + 1);
+}
+print("  After 100 calls: result = " + str(warmupResult));
+
+// More calls to trigger T1 → T2
+print("\nPushing to T2 optimization...");
+for (i in range(0, 1000)) {
+    warmupResult = hotMath(i, i + 1);
+}
+print("  After 1100 calls: result = " + str(warmupResult));
+print("  Function should now be at T2 optimization level");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 2. Type-Stable Inline Cache
+// -----------------------------------------------------------------------------
+
+print("--- Type-Stable Inline Cache ---");
+
+// Create objects with consistent shape (same hidden class)
+fn createPoint(x, y) {
+    return { x: x, y: y };
+}
+
+// This function has a monomorphic call site (single type)
+fn sumPointX(points) {
+    let sum = 0;
+    for (p in points) {
+        sum = sum + p.x;  // IC will cache property access
+    }
+    return sum;
+}
+
+let points = [];
+for (i in range(0, 100)) {
+    points.push(createPoint(i, i * 2));
+}
+
+print("\nMonomorphic IC (same object shape):");
+let start = clock();
+let xSum = 0;
+for (i in range(0, 100)) {
+    xSum = sumPointX(points);
+}
+let elapsed = clock() - start;
+print("  Sum of x: " + str(xSum));
+print("  Time for 100 iterations: " + str(elapsed * 1000) + " ms");
+print("  IC status: monomorphic (single hidden class)");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 3. Polymorphic Fallback
+// -----------------------------------------------------------------------------
+
+print("--- Polymorphic IC Fallback ---");
+
+// Create objects with different shapes (different hidden classes)
+fn createPoint2D(x, y) {
+    return { x: x, y: y };
+}
+
+fn createPoint3D(x, y, z) {
+    return { x: x, y: y, z: z };
+}
+
+fn createColoredPoint(x, y, color) {
+    return { x: x, y: y, color: color };
+}
+
+// Mix of object shapes
+let mixedPoints = [];
+for (i in range(0, 30)) {
+    mixedPoints.push(createPoint2D(i, i));
+}
+for (i in range(0, 30)) {
+    mixedPoints.push(createPoint3D(i, i, i));
+}
+for (i in range(0, 30)) {
+    mixedPoints.push(createColoredPoint(i, i, "red"));
+}
+
+print("\nPolymorphic IC (3 object shapes):");
+start = clock();
+xSum = 0;
+for (i in range(0, 100)) {
+    xSum = sumPointX(mixedPoints);
+}
+elapsed = clock() - start;
+print("  Sum of x: " + str(xSum));
+print("  Time for 100 iterations: " + str(elapsed * 1000) + " ms");
+print("  IC status: polymorphic (3 hidden classes)");
+print("  Note: Polymorphic is slower than monomorphic");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 4. Hidden Class Transitions
+// -----------------------------------------------------------------------------
+
+print("--- Hidden Class Transitions ---");
+
+// Start with empty object
+let obj = {};
+print("\n1. Empty object: HiddenClass0");
+
+// Add properties in sequence
+obj.name = "test";
+print("2. After adding 'name': HiddenClass1");
+
+obj.value = 42;
+print("3. After adding 'value': HiddenClass2");
+
+obj.active = true;
+print("4. After adding 'active': HiddenClass3");
+
+// Adding in same order creates same hidden class
+let obj2 = {};
+obj2.name = "test2";
+obj2.value = 100;
+obj2.active = false;
+print("\nObject with same property order: shares HiddenClass3");
+
+// Different order = different hidden class
+let obj3 = {};
+obj3.value = 50;  // Different order!
+obj3.name = "test3";
+obj3.active = true;
+print("Object with different order: HiddenClass4 (different!)");
+
+print("\nTip: Always add properties in the same order for best IC performance");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 5. IC Stability Counter
+// -----------------------------------------------------------------------------
+
+print("--- IC Stability Counter ---");
+
+fn accessProperty(obj) {
+    return obj.value;
+}
+
+// Stable call site
+print("\nStable call site (same type repeatedly):");
+let stableObj = { value: 10 };
+for (i in range(0, 100)) {
+    accessProperty(stableObj);
+}
+print("  100 calls with same object → IC stable → T2 eligible");
+
+// Unstable call site
+print("\nUnstable call site (type changes):");
+let objects = [
+    { value: 1 },
+    { value: 2, extra: true },
+    { value: 3, extra: true, more: "data" }
+];
+for (i in range(0, 30)) {
+    for (obj in objects) {
+        accessProperty(obj);  // Different hidden classes
+    }
+}
+print("  90 calls with varying types → IC unstable → stays at T1");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 6. Numeric Specialization
+// -----------------------------------------------------------------------------
+
+print("--- Numeric Specialization ---");
+
+fn numericOps(a, b) {
+    let result = a + b;
+    result = result * 2;
+    result = result - 1;
+    result = result / 2;
+    return result;
+}
+
+// Integer path
+print("\nInteger-only path:");
+start = clock();
+let intResult = 0;
+for (i in range(0, 10000)) {
+    intResult = numericOps(i, i + 1);
+}
+elapsed = clock() - start;
+print("  10000 iterations: " + str(elapsed * 1000) + " ms");
+print("  Type specialized: int + int → int");
+
+// Mixed path
+print("\nMixed int/float path:");
+start = clock();
+let mixedResult = 0;
+for (i in range(0, 10000)) {
+    if (i % 2 == 0) {
+        mixedResult = numericOps(i, i + 0.5);
+    } else {
+        mixedResult = numericOps(i, i + 1);
+    }
+}
+elapsed = clock() - start;
+print("  10000 iterations: " + str(elapsed * 1000) + " ms");
+print("  Type mixed: slower due to type checks");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// Summary
+// -----------------------------------------------------------------------------
+
+print("=== JIT Tier-2 Summary ===\n");
+
+print("Tier Promotion:");
+print("  T0 (baseline):  Quick compile, minimal optimization");
+print("  T1 (optimized): Inline caching, type feedback");
+print("  T2 (hot):       Full optimization, stable ICs");
+print("");
+
+print("Best Practices for T2 Eligibility:");
+print("  1. Call functions repeatedly (>1000 times)");
+print("  2. Use consistent object shapes");
+print("  3. Avoid mixing types at call sites");
+print("  4. Add properties in consistent order");
+print("");
+
+print("Debug JIT behavior:");
+print("  RUST_LOG=debug adesh run file.adesh --jit");
+print("");
+
+print("=== Demo Complete ===");

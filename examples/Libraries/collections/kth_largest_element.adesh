@@ -1,0 +1,27 @@
+import Collections;
+
+print("========================================");
+print("LeetCode 215 - Kth Largest Element in an Array (BinaryHeap)");
+print("========================================");
+
+fn findKthLargest(nums, k) {
+    let heap = Collections.BinaryHeap();
+    let i = 0;
+    while (i < nums.len()) {
+        heap.push(nums[i]);
+        i = i + 1;
+    }
+    
+    let result = null;
+    let j = 0;
+    while (j < k) {
+        result = heap.pop();
+        j = j + 1;
+    }
+    return result;
+}
+
+let numbers = [3, 2, 1, 5, 6, 4];
+let k = 2;
+print("Numbers: ", numbers, " k: ", k);
+print("Kth largest element: ", findKthLargest(numbers, k)); // Expect 5

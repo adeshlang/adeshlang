@@ -1,0 +1,55 @@
+// wasm_control.ind — Control flow compilation examples
+// Combining compile_wasm_if.ind, compile_wasm_while.ind
+
+@compile wasm
+print("=== WASM Control Flow Compilation Examples ===");
+
+// From compile_wasm_if.ind
+let a = 1 + 2;
+if a { print(10); } else { print(20); }
+
+// From compile_wasm_while.ind
+let b = 3;
+while b { print(b); b = b - 1; }
+
+// Additional control flow examples
+print("For loop:");
+for (let i = 1; i <= 5; i = i + 1) {
+    print("i =", i);
+}
+
+print("Nested if-else:");
+let x = 15;
+if (x < 10) {
+    print("Less than 10");
+} elif (x < 20) {
+    print("Between 10 and 20");
+} else {
+    print("20 or more");
+}
+
+print("Do-while simulation:");
+let counter = 0;
+while (true) {
+    counter = counter + 1;
+    print("Counter:", counter);
+    if (counter >= 3) { break; }
+}
+
+print("Switch-like with if:");
+let val = 2;
+if (val == 1) {
+    print("One");
+} elif (val == 2) {
+    print("Two");
+} elif (val == 3) {
+    print("Three");
+} else {
+    print("Other");
+}
+
+print("Loop with continue:");
+for (let j = 1; j <= 5; j = j + 1) {
+    if (j == 3) { continue; }
+    print("j =", j);
+}

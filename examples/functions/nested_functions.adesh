@@ -1,0 +1,8 @@
+fn outer(a) {
+    fn inner(b) {
+        return b * 2;
+    }
+    return inner(a) + 10;
+}
+
+print("Result:", outer(5));

@@ -1,0 +1,31 @@
+// AdeshLang WebSocket Example 12: Subprotocol Negotiation
+// Demonstrates client and server subprotocol negotiation (e.g. wss-enterprise-v1).
+
+import WebSocket;
+
+print("=== AdeshLang WebSocket Subprotocol Negotiation Demo ===");
+
+let clientConfig = WebSocket.ClientConfig({
+    protocols: ["wss-enterprise-v1", "json"]
+});
+
+let serverConfig = WebSocket.ServerConfig({
+    port: 8612,
+    bind_address: "127.0.0.1",
+    protocols: ["wss-enterprise-v1"]
+});
+
+let server = WebSocket.server(serverConfig);
+server.startEcho();
+print("✓ Server configured with subprotocols: ['wss-enterprise-v1']");
+
+let client = WebSocket.connect("ws://127.0.0.1:8612", clientConfig);
+print("✓ Client connected with negotiated subprotocol!");
+
+client.sendText("Hello with negotiated subprotocol!");
+let reply = client.receive();
+print("Server Echo: " + reply.payload);
+
+client.close(1000, "Done subprotocol test");
+server.close();
+print("✓ Subprotocol negotiation test completed successfully!");

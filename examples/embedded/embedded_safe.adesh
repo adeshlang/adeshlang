@@ -1,0 +1,10 @@
+fn main() {
+    // Embedded mode: heap and ARC are disabled; stack + arena only.
+    region Frame {
+        let sensor = [0, 1, 2];   // SAO inline
+        let status = Obj();       // arena-allocated inside region
+        process(&sensor, &status);
+    }
+
+    print("frame processed with arena-only allocations");
+}

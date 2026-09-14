@@ -1,0 +1,33 @@
+// AdeshLang Net Example 03: Robust TCP Server Architecture
+import Net;
+
+fn run_tcp_server() {
+    print("=== 03. Robust TCP Server Example ===");
+
+    // Listen on localhost port 9092
+    let server = Net.tcpListen("127.0.0.1", 9092);
+    print("TCP Listener bound to:", server.localAddress());
+
+    print("Accepting incoming client connection...");
+    let client = server.accept();
+    let stream = client.stream;
+
+    print("Client connected from:", client.remoteAddress);
+
+    // Tune socket options on client stream
+    stream.setNoDelay(true);
+
+    // Read payload from client
+    let payload = stream.read(4096);
+    print("Received client request");
+
+    // Echo payload back
+    stream.writeAll(payload);
+    print("Echoed request back to client");
+
+    stream.close();
+    server.close();
+    print("=== 03. TCP Server Example Completed ===");
+}
+
+run_tcp_server();

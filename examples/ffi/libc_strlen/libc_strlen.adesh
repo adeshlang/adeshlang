@@ -1,0 +1,19 @@
+// Example: Call C's strlen function from libc
+// Demonstrates basic FFI with string parameter
+
+extern "C" fn strlen(s: ptr<u8>) -> usize;
+
+fn main() {
+    let text = "Hello, FFI!";
+    let len = strlen(text);
+    print("Length of '");
+    print(text);
+    print("': ");
+    print(len);
+    print("\n");
+}
+
+// To run:
+// adesh run libc_strlen.adesh
+// No additional flags needed on Unix (libc is automatically loaded)
+// On Windows, may need: adesh run libc_strlen.adesh -l msvcrt

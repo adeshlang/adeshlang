@@ -1,0 +1,350 @@
+// =============================================================================
+// AdeshLang v0.2.0 - Safe I/O Examples
+// =============================================================================
+import "fs";
+// This example demonstrates safe file and I/O operations with:
+// - Path sanitization to prevent traversal attacks
+// - Bounds checking for all operations
+// - Safe error handling patterns
+//
+// What this demonstrates:
+// - Path validation before file operations
+// - Safe reading and writing patterns
+// - Error handling for I/O operations
+//
+// Security Notes:
+// - All paths are validated before use
+// - Parent directory traversal (../) is rejected
+// - Absolute paths outside allowed directories are blocked
+// =============================================================================
+
+print("=== Safe I/O Examples ===\n");
+
+// -----------------------------------------------------------------------------
+// 1. Path Sanitization
+// -----------------------------------------------------------------------------
+
+print("--- Path Sanitization ---\n");
+
+// Safe path validation function
+fn isPathSafe(path) {
+    // Check for directory traversal attempts
+    if (path.contains("..")) {
+        print("  ✗ Rejected: contains '..' (traversal attempt)");
+        return false;
+    }
+    
+    // Check for null bytes
+    if (path.contains("\0")) {
+        print("  ✗ Rejected: contains null byte");
+        return false;
+    }
+    
+    // Check for absolute paths (platform-specific)
+    if (path.startsWith("/") || path.contains("://")) {
+        print("  ✗ Rejected: absolute path not allowed");
+        return false;
+    }
+    
+    return true;
+}
+
+// Test path validation
+print("Path validation examples:");
+print("");
+
+let testPaths = [
+    "data/file.txt",           // Safe
+    "../etc/passwd",           // Unsafe - traversal
+    "data/../secrets.txt",     // Unsafe - hidden traversal
+    "/etc/passwd",             // Unsafe - absolute
+    "file:///etc/passwd",      // Unsafe - file URI
+    "normal_file.json",        // Safe
+    "folder/subfolder/doc.md"  // Safe
+];
+
+for (path in testPaths) {
+    print("  Testing: '" + path + "'");
+    if (isPathSafe(path)) {
+        print("    ✓ Safe");
+    }
+}
+
+print("");
+
+// Setup test files and directories for the demo
+try {
+    fs.mkdir("data");
+    fs.write("data/config.json", "{\"port\": 8080, \"host\": \"localhost\"}");
+    fs.mkdir("project/src");
+    fs.write("project/src/file1.txt", "File 1 contents");
+    fs.write("project/src/file2.txt", "File 2 contents");
+    fs.write("project/src/data.json", "{}");
+} catch (e) {}
+
+// -----------------------------------------------------------------------------
+// 2. Safe File Reading Pattern
+// -----------------------------------------------------------------------------
+
+print("--- Safe File Reading Pattern ---\n");
+
+// Safe file read function using real fs functions
+fn safeReadFile(basePath, filename) {
+    // 1. Validate the filename
+    if (!isPathSafe(filename)) {
+        return { error: "Invalid path", data: null };
+    }
+    
+    // 2. Construct full path within allowed base
+    let fullPath = basePath + "/" + filename;
+    print("  Reading from: " + fullPath);
+    
+    // 3. Check if path exists
+    if (!fs.exists(fullPath)) {
+        return { error: "File not found", data: null };
+    }
+
+    // 4. Ensure it's a file
+    if (!fs.isFile(fullPath)) {
+        return { error: "Path is not a file", data: null };
+    }
+    
+    // 5. Read content
+    let content = fs.read(fullPath);
+    let size = len(content);
+    
+    // 6. Check size limits
+    let maxSize = 1024 * 1024; // 1MB limit
+    if (size > maxSize) {
+        return { error: "File too large", data: null };
+    }
+    
+    // 7. Return result
+    return { 
+        error: null, 
+        data: content,
+        size: size
+    };
+}
+
+// Example usage
+print("Reading file safely:");
+let result = safeReadFile("./data", "config.json");
+if (result.error == null) {
+    print("  ✓ Success: " + str(result.size) + " bytes read");
+} else {
+    print("  ✗ Error: " + result.error);
+}
+
+print("");
+print("Attempting unsafe path:");
+result = safeReadFile("./data", "../../../etc/passwd");
+if (result.error != null) {
+    print("  ✓ Blocked: " + result.error);
+}
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 3. Safe File Writing Pattern
+// -----------------------------------------------------------------------------
+
+print("--- Safe File Writing Pattern ---\n");
+
+fn safeWriteFile(basePath, filename, content) {
+    // 1. Validate filename
+    if (!isPathSafe(filename)) {
+        return { error: "Invalid path", written: 0 };
+    }
+    
+    // 2. Validate content
+    if (content == null) {
+        return { error: "Content cannot be null", written: 0 };
+    }
+    
+    // 3. Check content size
+    let maxSize = 10 * 1024 * 1024; // 10MB limit
+    if (len(content) > maxSize) {
+        return { error: "Content exceeds size limit", written: 0 };
+    }
+    
+    // 4. Ensure base path exists
+    if (!fs.exists(basePath)) {
+        fs.mkdir(basePath);
+    }
+    
+    let fullPath = basePath + "/" + filename;
+    
+    // 5. Write atomically
+    print("  Writing to: " + fullPath);
+    print("  Content size: " + str(len(content)) + " bytes");
+    fs.writeAtomic(fullPath, content);
+    
+    return { error: null, written: len(content) };
+}
+
+print("Writing file safely:");
+let writeResult = safeWriteFile("./output", "result.txt", "Hello, World!");
+if (writeResult.error == null) {
+    print("  ✓ Wrote " + str(writeResult.written) + " bytes");
+}
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 4. Directory Listing Safety
+// -----------------------------------------------------------------------------
+
+print("--- Directory Listing Safety ---\n");
+
+fn safeListDirectory(basePath, subdir) {
+    // 1. Validate subdirectory
+    if (!isPathSafe(subdir)) {
+        return { error: "Invalid path", files: [] };
+    }
+    
+    // 2. Ensure we stay within base
+    let fullPath = basePath + "/" + subdir;
+    print("  Listing: " + fullPath);
+    
+    if (!fs.exists(fullPath) || !fs.isDir(fullPath)) {
+        return { error: "Directory not found", files: [] };
+    }
+    
+    // 3. Read directory contents
+    let files = fs.readDir(fullPath);
+    
+    return { error: null, files: files };
+}
+
+print("Listing directory:");
+let listResult = safeListDirectory("./project", "src");
+if (listResult.error == null) {
+    print("  ✓ Found " + str(len(listResult.files)) + " files");
+    for (file in listResult.files) {
+        print("    - " + file);
+    }
+}
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 5. Safe Temporary Files
+// -----------------------------------------------------------------------------
+
+print("--- Safe Temporary Files ---\n");
+
+fn createTempFile(prefix) {
+    // Real temp file API
+    let fullPath = fs.tempFile(prefix);
+    print("  Created temp file: " + fullPath);
+    
+    return { error: null, path: fullPath };
+}
+
+print("Creating temporary file:");
+let tempResult = createTempFile("adesh_cache");
+if (tempResult.error == null) {
+    print("  ✓ Temp file ready");
+    // Write to the temp path so it exists before deleting
+    fs.write(tempResult.path, "temp content");
+    fs.delete(tempResult.path);
+}
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 6. Error Handling Patterns
+// -----------------------------------------------------------------------------
+
+print("--- Error Handling Patterns ---\n");
+
+fn robustFileOperation(path) {
+    try {
+        if (!isPathSafe(path)) {
+            throw { code: "PATH_UNSAFE", message: "Path validation failed" };
+        }
+        
+        // Real operation simulation
+        if (path.contains("missing")) {
+            // Trigger actual missing file error
+            let _ = fs.read(path);
+        }
+        
+        if (path.contains("locked")) {
+            // Simulate lock error
+            throw { code: "LOCKED", message: "File is locked" };
+        }
+        
+        fs.write(path, "test");
+        fs.delete(path);
+        print("  ✓ Operation succeeded for: " + path);
+        return { success: true };
+        
+    } catch (e) {
+        let msg = "";
+        let code = "UNKNOWN";
+        if (typeof(e) == "object") {
+            msg = e.message;
+            code = e.code;
+        } else {
+            msg = str(e);
+            if (msg.contains("cannot read") || msg.contains("not found") || msg.contains("No such file")) {
+                code = "NOT_FOUND";
+            }
+        }
+        print("  ✗ Error [" + code + "]: " + msg);
+        return { success: false, error: e };
+    }
+}
+
+print("Error handling examples:");
+robustFileOperation("data/valid.txt");
+robustFileOperation("../invalid.txt");
+robustFileOperation("missing_file.txt");
+robustFileOperation("locked_file.txt");
+
+print("");
+
+// Cleanup demo files and directories
+try {
+    fs.delete("data/config.json");
+    fs.delete("data");
+    fs.delete("project/src/file1.txt");
+    fs.delete("project/src/file2.txt");
+    fs.delete("project/src/data.json");
+    fs.delete("project/src");
+    fs.delete("project");
+    fs.delete("output/result.txt");
+    fs.delete("output");
+} catch(e) {}
+// 7. Security Best Practices
+// -----------------------------------------------------------------------------
+
+print("--- Security Best Practices ---\n");
+
+print("1. Always validate paths:");
+print("   • Check for '..' traversal");
+print("   • Reject absolute paths");
+print("   • Sanitize filenames");
+print("");
+
+print("2. Use allowlists over blocklists:");
+print("   • Define allowed directories");
+print("   • Define allowed extensions");
+print("   • Reject everything else");
+print("");
+
+print("3. Set resource limits:");
+print("   • Maximum file size");
+print("   • Maximum directory depth");
+print("   • Rate limiting");
+print("");
+
+print("4. Handle errors gracefully:");
+print("   • Never expose internal paths");
+print("   • Log security events");
+print("   • Fail securely");
+
+print("");
+print("=== Demo Complete ===");

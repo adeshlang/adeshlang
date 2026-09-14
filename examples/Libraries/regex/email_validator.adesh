@@ -1,0 +1,22 @@
+// Email Address Validator Example
+import "std:Regex" as Regex;
+
+fn validate_email(email) {
+    // Regex pattern for typical email validation
+    let pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$";
+    let re = Regex.new(pattern);
+    
+    if re.test(email) {
+        print("✓ Email '" + email + "' is VALID.");
+    } else {
+        print("✗ Email '" + email + "' is INVALID.");
+    }
+}
+
+print("--- Email Validator Example ---");
+validate_email("test@example.com");
+validate_email("user.name+tag@domain.co.uk");
+validate_email("invalid-email@");
+validate_email("@domain.com");
+validate_email("just_text");
+validate_email("spaces in@email.com");

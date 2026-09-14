@@ -1,0 +1,28 @@
+// Stacking decorators: cache then log
+
+decorator log(target, meta) {
+  return fn(a){
+    print("LOG:", meta.name, a);
+    return target(a);
+  };
+}
+
+decorator cache(target, meta) {
+  let store = {};
+  return fn(a){
+    let key = "" + a;
+    if (store[key]) { return store[key]; }
+    let r = target(a);
+    store[key] = r;
+    return r;
+  };
+}
+
+@log
+@cache
+fn square(a){
+  return a * a;
+}
+
+print(square(5));
+print(square(5));

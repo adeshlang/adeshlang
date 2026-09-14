@@ -1,0 +1,21 @@
+import Encoding;
+
+// ============================================================================
+// ASCII Strict Encoding & Validation
+// ============================================================================
+
+print("--- Valid ASCII String ---");
+let asciiText = "HTTP/1.1 200 OK";
+print("isAscii:", Encoding.isAscii(asciiText));
+
+let asciiBytes = Encoding.asciiEncode(asciiText);
+print("ASCII Encoded Bytes:", asciiBytes);
+print("ASCII Decoded String:", Encoding.asciiDecode(asciiBytes));
+
+print("\n--- Non-ASCII Rejection (Strict Behavior) ---");
+let nonAsciiText = "Café & 🚀";
+print("isAscii for 'Café & 🚀':", Encoding.isAscii(nonAsciiText));
+
+// Non-ASCII bytes check
+let nonAsciiBytes = [72, 101, 108, 108, 111, 200]; // 200 is > 127
+print("isAscii for bytes containing 200:", Encoding.isAscii(nonAsciiBytes));

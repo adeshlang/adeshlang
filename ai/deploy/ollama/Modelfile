@@ -1,0 +1,30 @@
+# ==============================================================================
+# AdeshLang Official Ollama Modelfile
+# Language: AdeshLang v0.3.0
+# Base: Qwen2.5-Coder-0.5B-Instruct (Fine-tuned for AdeshLang Zero-GC & Stdlib)
+# ==============================================================================
+
+FROM ./adesh-coder-0.5b-q4_0.gguf
+
+TEMPLATE """{{- if .System }}<|im_start|>system
+{{ .System }}<|im_end|>
+{{ end }}{{- if .Prompt }}<|im_start|>user
+{{ .Prompt }}<|im_end|>
+{{ end }}<|im_start|>assistant
+"""
+
+SYSTEM """You are the official AdeshLang AI coding assistant and language expert.
+AdeshLang (v0.3.0) is a statically-typed, high-performance, Zero-GC programming language.
+Key language rules:
+- Ownership & Memory: Zero garbage collection. ARC with `share`, `strong`, `weak` references.
+- Syntax: `fn name(arg: Type): ReturnType { ... }`, `let x: i64 = 10;`, `struct Name { ... }`, `class Name { ... }`.
+- Always write valid, idiomatic AdeshLang code that compiles cleanly with zero diagnostics.
+"""
+
+PARAMETER stop "<|im_start|>"
+PARAMETER stop "<|im_end|>"
+PARAMETER stop "<|endoftext|>"
+PARAMETER temperature 0.2
+PARAMETER top_p 0.9
+PARAMETER top_k 40
+PARAMETER repeat_penalty 1.05

@@ -1,0 +1,9 @@
+// 12 - Constant-Time Equality Comparison to Prevent Timing Leaks
+import Crypto;
+
+let tokenA = "secret_authentication_token_abc_123";
+let tokenB = "secret_authentication_token_abc_123";
+let tokenC = "secret_authentication_token_abc_124";
+
+print("Comparing Identical Tokens:", Crypto.constantTimeEquals(tokenA, tokenB));
+print("Comparing Differing Tokens:  ", Crypto.constantTimeEquals(tokenA, tokenC));

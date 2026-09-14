@@ -1,0 +1,13 @@
+fn divide(a, b) {
+    if (b == 0) {
+        throw "Division by zero!";
+    }
+    return a / b;
+}
+let a = 10;
+try {
+    result = divide(a, 0);
+    print(result);
+} catch (err) {
+    print("Error:", err,{color:"#ff0000"});
+}

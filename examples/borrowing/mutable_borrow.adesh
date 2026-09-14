@@ -1,0 +1,16 @@
+// AdeshLang: Mutable Borrow Example
+// All variables are mutable by default
+// Borrow checker auto-infers exclusive vs shared access based on usage
+
+fn increment_by_ref(val) {
+    return val + 1;
+}
+
+fn main() {
+    let x = 10;
+    let result = increment_by_ref(x);
+    print("Original: ");
+    print(x);
+    print("Incremented: ");
+    print(result);
+}

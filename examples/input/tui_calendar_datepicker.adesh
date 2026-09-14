@@ -1,0 +1,7 @@
+// World-First: Visual Calendar Datepicker
+// Full terminal calendar with year/month grid navigation
+
+// input.mock(["2026-09-08"]);
+
+let release_date = input.datepicker("Select Deployment Release Date:");
+println(`Scheduled Release: ${release_date}`);

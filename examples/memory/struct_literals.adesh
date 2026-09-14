@@ -1,0 +1,111 @@
+// Test struct literals
+// Demonstrates the struct literal syntax: Type { field: value }
+
+struct Point {
+    x: i32;
+    y: i32;
+};
+
+struct Person {
+    name: str;
+    age: i32;
+};
+
+struct Config {
+    enabled: bool;
+    count: i32;
+    label: str;
+};
+
+// Basic struct literal creation
+fn test_basic_struct_literal() {
+    let p = Point {
+        x: 10,
+        y: 20,
+    };
+    print("Point created with x=" + p.x.to_string() + ", y=" + p.y.to_string() + "\n");
+}
+
+// Struct literal with expressions
+fn test_struct_with_expressions() {
+    let a = 5;
+    let b = 15;
+    let p = Point {
+        x: a + 10,
+        y: b * 2,
+    };
+    print("Point with expressions: x=" + p.x.to_string() + ", y=" + p.y.to_string() + "\n");
+}
+
+// Struct literal in assignment
+fn test_assignment() {
+    let alice = Person {
+        name: "Alice",
+        age: 30,
+    };
+    let bob = Person {
+        name: "Bob",
+        age: 25,
+    };
+    
+    print("Alice: " + alice.name + ", age: " + alice.age.to_string() + "\n");
+    print("Bob: " + bob.name + ", age: " + bob.age.to_string() + "\n");
+}
+
+// Struct literal in function returns
+fn create_config(enabled: bool, count: i32) {
+    let cfg = Config {
+        enabled: enabled,
+        count: count,
+        label: "default",
+    };
+    print("Config: enabled=" + cfg.enabled.to_string() + ", count=" + cfg.count.to_string() + ", label=" + cfg.label + "\n");
+}
+
+// Struct literal with nested field access
+fn test_nested_access() {
+    let cfg = Config {
+        enabled: true,
+        count: 42,
+        label: "test",
+    };
+    if cfg.enabled {
+        print("Config is enabled, count=" + cfg.count.to_string() + "\n");
+    }
+}
+
+// Struct literal with mutation
+fn test_struct_mutation() {
+    let mut p = Point {
+        x: 1,
+        y: 2,
+    };
+    p.x = 100;
+    p.y = 200;
+    print("Mutated point: x=" + p.x.to_string() + ", y=" + p.y.to_string() + "\n");
+}
+
+// Main test execution
+fn main() {
+    print("=== Testing Struct Literals ===\n");
+    
+    print("1. Basic struct literal:\n");
+    test_basic_struct_literal();
+    
+    print("2. Struct with expressions:\n");
+    test_struct_with_expressions();
+    
+    print("3. Multiple structs:\n");
+    test_assignment();
+    
+    print("4. Struct in function:\n");
+    create_config(true, 100);
+    
+    print("5. Nested access:\n");
+    test_nested_access();
+    
+    print("6. Struct mutation:\n");
+    test_struct_mutation();
+    
+    print("=== All struct literal tests passed ===\n");
+}

@@ -1,0 +1,35 @@
+// Filesystem module - re-exports for compatibility
+import "fs";
+
+export fn read(path) { return fs.read(path); }
+export fn write(path, text) { return fs.write(path, text); }
+export fn writeAtomic(path, text) { return fs.writeAtomic(path, text); }
+export fn delete(path) { return fs.delete(path); }
+export fn copy(src, dst) { return fs.copy(src, dst); }
+export fn move(src, dst) { return fs.move(src, dst); }
+export fn exists(path) { return fs.exists(path); }
+export fn isFile(path) { return fs.isFile(path); }
+export fn isDir(path) { return fs.isDir(path); }
+export fn readDir(path) { return fs.readDir(path); }
+export fn mkdir(path) { return fs.mkdir(path); }
+export fn tempFile(prefix) { return fs.tempFile(prefix); }
+export fn tempDir(prefix) { return fs.tempDir(prefix); }
+export fn lock(path) { return fs.lock(path); }
+export fn unlock(lockPath) { return fs.unlock(lockPath); }
+export fn mmapRead(path) { return fs.mmapRead(path); }
+export fn crc32(data) { return fs.crc32(data); }
+export fn sha256(data) { return fs.sha256(data); }
+export fn symlinkFile(src, link) { return fs.symlinkFile(src, link); }
+export fn symlinkDir(src, link) { return fs.symlinkDir(src, link); }
+export fn readLink(path) { return fs.readLink(path); }
+export fn path_join(a, b) { return fs.path.join(a, b); }
+export fn path_basename(p) { return fs.path.basename(p); }
+export fn path_dirname(p) { return fs.path.dirname(p); }
+export fn path_extname(p) { return fs.path.extname(p); }
+export fn path_normalize(p) { return fs.path.normalize(p); }
+export async fn async_read(path) { return await fs.async.read(path); }
+export async fn async_write(path, text) { return await fs.async.write(path, text); }
+export fn fsql(path, ext) { return fs.fsql(path, ext); }
+export fn tx(fncb) { return fs.tx(fncb); }
+export fn snapshot(name) { return fs.snapshot(name); }
+export fn batch(ops) { return fs.batch(ops); }

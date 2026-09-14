@@ -1,0 +1,13 @@
+// Static property decorator: prefix value
+
+decorator prefix(target, meta) {
+  return "Mr. " + target;
+}
+
+class Person {
+  @prefix
+  static name = "Ajay";
+}
+
+let p = new Person();
+print(p.name);

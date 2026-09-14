@@ -1,0 +1,367 @@
+// =============================================================================
+// Real World Example: Task Manager CLI Tool
+// =============================================================================
+// A practical command-line task management application demonstrating:
+// - CLI argument parsing and command handling
+// - Data structures (arrays, objects)
+// - Error handling with validation
+// - User input validation
+// - Text formatting and output
+// =============================================================================
+
+print("╔══════════════════════════════════════════╗");
+print("║     AdeshLang Task Manager v1.0           ║");
+print("╚══════════════════════════════════════════╝");
+print("");
+
+// =============================================================================
+// DATA STRUCTURES
+// =============================================================================
+
+// Task structure
+type Task = {
+    id: i32,
+    title: string,
+    description: string,
+    completed: bool,
+    priority: string,  // "low", "medium", "high"
+    createdAt: f64,
+    completedAt: f64?
+};
+
+// Task list manager
+class TaskManager {
+    fn init() {
+        this.tasks = [];
+        this.nextId = 1;
+    }
+    
+    // Add a new task
+    fn addTask(title: string, description: string, priority: string): Task {
+        let task: Task = {
+            id: this.nextId,
+            title: title,
+            description: description,
+            completed: false,
+            priority: priority,
+            createdAt: clock(),
+            completedAt: null
+        };
+        
+        this.tasks.push(task);
+        this.nextId = this.nextId + 1;
+        return task;
+    }
+    
+    // List all tasks
+    fn listTasks(filter: string?) {
+        if (len(this.tasks) == 0) {
+            print("  No tasks found. Add one with: add <title>");
+            return;
+        }
+        
+        print("  ID  | Status | Priority | Title");
+        print("  ────┼────────┼──────────┼─────────────────────");
+        
+        for task in this.tasks {
+            // Apply filter if provided
+            if (filter != null) {
+                if (filter == "completed" && !task.completed) {
+                    continue;
+                }
+                if (filter == "pending" && task.completed) {
+                    continue;
+                }
+            }
+            
+            let status = task.completed ? "✓ Done" : "○ Todo";
+            let priority = this._formatPriority(task.priority);
+            let id = this._padNumber(task.id, 4);
+            
+            print("  " + id + " | " + status + " | " + priority + " | " + task.title);
+        }
+    }
+    
+    // Complete a task
+    fn completeTask(id: i32): bool {
+        for i in range(len(this.tasks)) {
+            if (this.tasks[i].id == id) {
+                this.tasks[i].completed = true;
+                this.tasks[i].completedAt = clock();
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    // Delete a task
+    fn deleteTask(id: i32): bool {
+        let newTasks = [];
+        let found = false;
+        
+        for task in this.tasks {
+            if (task.id != id) {
+                newTasks.push(task);
+            } else {
+                found = true;
+            }
+        }
+        
+        if (found) {
+            this.tasks = newTasks;
+        }
+        return found;
+    }
+    
+    // Get task by ID
+    fn getTask(id: i32): Task? {
+        for task in this.tasks {
+            if (task.id == id) {
+                return task;
+            }
+        }
+        return null;
+    }
+    
+    // Show statistics
+    fn showStats() {
+        let total = len(this.tasks);
+        let completed = 0;
+        let highPriority = 0;
+        
+        for task in this.tasks {
+            if (task.completed) {
+                completed = completed + 1;
+            }
+            if (task.priority == "high") {
+                highPriority = highPriority + 1;
+            }
+        }
+        
+        let pending = total - completed;
+        let completionRate = total > 0 ? (completed * 100) / total : 0;
+        
+        print("  📊 Statistics:");
+        print("     Total tasks: " + str(total));
+        print("     Completed: " + str(completed));
+        print("     Pending: " + str(pending));
+        print("     High priority: " + str(highPriority));
+        print("     Completion rate: " + str(completionRate) + "%");
+    }
+    
+    // Helper: Format priority
+    fn _formatPriority(priority: string): string {
+        if (priority == "high") {
+            return "🔴 High  ";
+        } elif (priority == "medium") {
+            return "🟡 Medium";
+        } else {
+            return "🟢 Low   ";
+        }
+    }
+    
+    // Helper: Pad number with spaces
+    fn _padNumber(num: i32, width: i32): string {
+        let s = str(num);
+        while (len(s) < width) {
+            s = " " + s;
+        }
+        return s;
+    }
+}
+
+// =============================================================================
+// CLI COMMAND HANDLERS
+// =============================================================================
+
+fn handleAdd(manager: TaskManager, args: [string]) {
+    if (len(args) < 1) {
+        print("❌ Error: Task title required");
+        print("   Usage: add <title> [description] [priority]");
+        return;
+    }
+    
+    let title = args[0];
+    let description = len(args) > 1 ? args[1] : "";
+    let priority = len(args) > 2 ? args[2] : "medium";
+    
+    // Validate priority
+    if (priority != "low" && priority != "medium" && priority != "high") {
+        print("❌ Error: Priority must be 'low', 'medium', or 'high'");
+        return;
+    }
+    
+    let task = manager.addTask(title, description, priority);
+    print("✅ Task added successfully!");
+    print("   ID: " + str(task.id));
+    print("   Title: " + task.title);
+    print("   Priority: " + priority);
+}
+
+fn handleList(manager: TaskManager, args: [string]) {
+    let filter = len(args) > 0 ? args[0] : null;
+    
+    if (filter != null && filter != "completed" && filter != "pending" && filter != "all") {
+        print("❌ Error: Filter must be 'all', 'completed', or 'pending'");
+        return;
+    }
+    
+    print("📋 Task List" + (filter != null ? " (" + filter + ")" : ""));
+    print("");
+    manager.listTasks(filter);
+}
+
+fn handleComplete(manager: TaskManager, args: [string]) {
+    if (len(args) < 1) {
+        print("❌ Error: Task ID required");
+        print("   Usage: complete <id>");
+        return;
+    }
+    
+    let id = parseInt(args[0]);
+    if (manager.completeTask(id)) {
+        print("✅ Task #" + str(id) + " marked as completed!");
+    } else {
+        print("❌ Error: Task #" + str(id) + " not found");
+    }
+}
+
+fn handleDelete(manager: TaskManager, args: [string]) {
+    if (len(args) < 1) {
+        print("❌ Error: Task ID required");
+        print("   Usage: delete <id>");
+        return;
+    }
+    
+    let id = parseInt(args[0]);
+    if (manager.deleteTask(id)) {
+        print("✅ Task #" + str(id) + " deleted successfully!");
+    } else {
+        print("❌ Error: Task #" + str(id) + " not found");
+    }
+}
+
+fn handleShow(manager: TaskManager, args: [string]) {
+    if (len(args) < 1) {
+        print("❌ Error: Task ID required");
+        print("   Usage: show <id>");
+        return;
+    }
+    
+    let id = parseInt(args[0]);
+    let task = manager.getTask(id);
+    
+    if (task == null) {
+        print("❌ Error: Task #" + str(id) + " not found");
+        return;
+    }
+    
+    print("📝 Task Details:");
+    print("   ID: " + str(task.id));
+    print("   Title: " + task.title);
+    print("   Description: " + (task.description != "" ? task.description : "(none)"));
+    print("   Status: " + (task.completed ? "✓ Completed" : "○ Pending"));
+    print("   Priority: " + task.priority);
+    print("   Created: " + str(task.createdAt) + " ms ago");
+    if (task.completedAt != null) {
+        print("   Completed: " + str(task.completedAt) + " ms ago");
+    }
+}
+
+fn handleStats(manager: TaskManager, args: [string]) {
+    manager.showStats();
+}
+
+fn handleHelp() {
+    print("📖 Available Commands:");
+    print("");
+    print("  add <title> [desc] [priority]  - Add a new task");
+    print("                                   Priority: low, medium, high");
+    print("  list [filter]                   - List tasks (all/completed/pending)");
+    print("  complete <id>                   - Mark task as completed");
+    print("  delete <id>                     - Delete a task");
+    print("  show <id>                       - Show task details");
+    print("  stats                           - Show statistics");
+    print("  help                            - Show this help");
+    print("");
+    print("Examples:");
+    print("  add 'Buy groceries' 'Milk and eggs' high");
+    print("  list pending");
+    print("  complete 1");
+    print("  show 1");
+}
+
+// =============================================================================
+// MAIN APPLICATION
+// =============================================================================
+
+fn main() {
+    let manager = new TaskManager();
+    
+    // Demo: Add some sample tasks
+    print("📚 Demo Mode: Adding sample tasks...");
+    print("");
+    
+    manager.addTask("Write documentation", "Complete the API docs", "high");
+    manager.addTask("Fix bug #42", "Memory leak in parser", "high");
+    manager.addTask("Code review", "Review PR #123", "medium");
+    manager.addTask("Update dependencies", "Bump package versions", "low");
+    manager.addTask("Refactor tests", "Improve test coverage", "medium");
+    
+    // Complete some tasks
+    manager.completeTask(1);
+    manager.completeTask(3);
+    
+    print("✅ Sample tasks added!");
+    print("");
+    
+    // Show help
+    handleHelp();
+    print("");
+    
+    // List all tasks
+    handleList(manager, []);
+    print("");
+    
+    // Show stats
+    handleStats(manager, []);
+    print("");
+    
+    // Interactive demo commands
+    print("╔══════════════════════════════════════════╗");
+    print("║     Interactive Demo                     ║");
+    print("╚══════════════════════════════════════════╝");
+    print("");
+    
+    print("➜ Command: add 'Deploy to production' 'Version 2.0 release' high");
+    handleAdd(manager, ["Deploy to production", "Version 2.0 release", "high"]);
+    print("");
+    
+    print("➜ Command: list pending");
+    handleList(manager, ["pending"]);
+    print("");
+    
+    print("➜ Command: complete 2");
+    handleComplete(manager, ["2"]);
+    print("");
+    
+    print("➜ Command: show 6");
+    handleShow(manager, ["6"]);
+    print("");
+    
+    print("➜ Command: stats");
+    handleStats(manager, []);
+    print("");
+    
+    print("╔══════════════════════════════════════════╗");
+    print("║     Demo Complete!                       ║");
+    print("║                                          ║");
+    print("║  This demonstrates:                      ║");
+    print("║  ✓ CLI command handling                  ║");
+    print("║  ✓ Data structure management             ║");
+    print("║  ✓ Error handling                        ║");
+    print("║  ✓ User input validation                 ║");
+    print("║  ✓ Text formatting & output              ║");
+    print("╚══════════════════════════════════════════╝");
+}
+

@@ -1,0 +1,43 @@
+// Basic Enums demonstration (variants without payloads)
+
+enum Direction {
+    North,
+    South,
+    East,
+    West
+}
+
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+print("--- Basic Enum Demo ---");
+
+// Instantiating enum variants
+let my_dir = Direction.North();
+print("my_dir value type:", typeof(my_dir));
+print("my_dir.tag:", my_dir.tag);
+print("my_dir.__enum:", my_dir.__enum);
+
+let my_color = Color.Green();
+print("my_color.tag:", my_color.tag);
+print("my_color.__enum:", my_color.__enum);
+
+// Control flow using tag matching (simulating match/switch)
+fn get_direction_offset(dir) {
+    if (dir.tag == "North") {
+        return (0, 1);
+    } elif (dir.tag == "South") {
+        return (0, -1);
+    } elif (dir.tag == "East") {
+        return (1, 0);
+    } elif (dir.tag == "West") {
+        return (-1, 0);
+    }
+    return (0, 0);
+}
+
+let offset = get_direction_offset(my_dir);
+print("Offset for North:", offset);

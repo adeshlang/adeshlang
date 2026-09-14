@@ -1,0 +1,20 @@
+// Primitive annotations
+let count: i32 = 5;
+let ratio: f64 = 2.5;
+let title: string = "AdeshLang";
+let enabled: bool = true;
+
+// Collection annotations
+let values: [i32] = [1, 2, 3];
+let pair: (string, i32) = ("port", 8080);
+let tags: set = {"language", "native", "methods"};
+let config: object = {port: 8080};
+
+// Complex annotation and imaginary literal syntax
+let z1: complex = complex(3, 4);
+let z2: complex = 5j;
+let z3: complex = 5j + 2;
+
+print(count, ratio, title, enabled);
+print(values, pair, tags, config);
+print(z1, z2, z3);

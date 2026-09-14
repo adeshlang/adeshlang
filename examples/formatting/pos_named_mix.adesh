@@ -1,0 +1,7 @@
+// Template strings with multiple interpolations
+let name = "Ajay";
+let age = 22;
+print(`Name: ${name}, Age: ${age}`);
+
+let who = "C";
+print(`Path: A B ${who}`);

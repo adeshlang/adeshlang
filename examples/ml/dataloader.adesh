@@ -1,0 +1,79 @@
+// DataLoader Example - Batching and Shuffling
+// Run: adeshlang run examples/ml/dataloader.adesh --jit
+
+import std:ml;
+
+fn main() {
+    print("╔════════════════════════════════════════════════════╗");
+    print("║  DATALOADER - Batching and Shuffling Demo          ║");
+    print("╚════════════════════════════════════════════════════╝");
+    print("");
+    
+    // Create synthetic dataset
+    print("1. Creating Synthetic Dataset:");
+    let num_samples = 1000;
+    let features = 784;
+    let num_classes = 10;
+    
+    let X = Tensor.randn([num_samples, features], dtype="f32");
+    let y = Tensor.randint(0, num_classes, [num_samples]);
+    
+    print(`  X shape: [${num_samples}, ${features}]`);
+    print(`  y shape: [${num_samples}]`);
+    print("");
+    
+    // Create DataLoader
+    print("2. Creating DataLoader:");
+    let batch_size = 32;
+    let dataset = Dataset.new(X, y);
+    let loader = DataLoader.new(dataset, batch_size=batch_size, shuffle=true);
+    
+    print(`  Batch size: ${batch_size}`);
+    print(`  Num batches: ${loader.num_batches()}`);
+    print("  Shuffle: enabled");
+    print("");
+    
+    // Iterate through batches
+    print("3. Iterating through batches:");
+    let batch_num = 0;
+    for batch in loader {
+        let (batch_x, batch_y) = batch;
+        if batch_num < 3 {
+            print(`  Batch ${batch_num}: X=${batch_x.shape()}, y=${batch_y.shape()}`);
+        }
+        batch_num = batch_num + 1;
+    }
+    print(`  ... (${batch_num} total batches)`);
+    print("");
+    
+    // Training loop simulation
+    print("4. Simulated Training Loop:");
+    let epochs = 3;
+    let start = clock();
+    
+    for epoch in range(0, epochs) {
+        let epoch_loss = 0.0;
+        let num_batches = 0;
+        
+        for batch in loader {
+            let (batch_x, batch_y) = batch;
+            // Simulate forward pass
+            let dummy_loss = Tensor.rand([1]).item();
+            epoch_loss = epoch_loss + dummy_loss;
+            num_batches = num_batches + 1;
+        }
+        
+        let avg_loss = epoch_loss / num_batches;
+        print(`  Epoch ${epoch + 1}/${epochs}: avg_loss = ${avg_loss}`);
+    }
+    
+    let elapsed = clock() - start;
+    print("");
+    print(`  Total time: ${elapsed}s`);
+    print(`  Time per epoch: ${elapsed / epochs}s`);
+    
+    print("");
+    print("DataLoader demo complete!");
+}
+
+main();

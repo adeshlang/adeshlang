@@ -1,0 +1,12 @@
+// 14 - X.509 Certificate Metadata & Fingerprint Inspection
+import Crypto;
+
+// Sample self-signed certificate PEM
+let certPem = "-----BEGIN CERTIFICATE-----\nMIIBtzCCASwCCQD5y6064x2JzTANBgkqhkiG9w0BAQsFADANMQswCQYDVQQDDAJh\nZGgwHhcNMjYwODExMDYwMDAwWhcNMjcwODExMDYwMDAwWjANMQswCQYDVQQDDAJh\nZGgwXDANBgkqhkiG9w0BAQEFAANLADBIAkEA02f1u2d123456789abcdef012345\n6789abcdef0123456789abcdef0123456789abcdef0123456789abcdefIDAQAB\nMA0GCSqGSIb3DQEBCwUAA0EANx123456789abcdef0123456789abcdef0123456\n789abcdef0123456789abcdef0123456789abcdef\n-----END CERTIFICATE-----";
+
+let cert = Crypto.parseCertificate(certPem);
+if (cert != null) {
+    print("Subject:           ", cert.subject);
+    print("Issuer:            ", cert.issuer);
+    print("SHA-256 Fingerprint:", cert.fingerprintSha256);
+}

@@ -1,0 +1,30 @@
+// Example: TLS Specific Type Annotations Demo
+import TLS;
+
+let host: String = "1.1.1.1";
+let port: i64 = 443;
+
+print("--- Demonstrating Dedicated TLS Type Annotations ---");
+
+let policyOptions: Object = {
+    "verifyCertificates": true,
+    "verifyHostname": true,
+    "minVersion": "TLS1.3",
+    "alpn": ["http/1.1"]
+};
+
+// Explicit type annotation: let tls: TLS = ...
+let tls: TLS = TLS.connectWithOptions(host, port, policyOptions);
+
+print("Verified TLS Protocol Version: " + tls.version());
+print("Negotiated ALPN: " + (tls.alpn() == "" ? "None" : tls.alpn()));
+
+let request: String = "GET / HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n";
+let written: i64 = tls.writeText(request);
+print("Bytes Transmitted: " + written);
+
+let response: String = tls.readText(1024);
+print("\nEncrypted Response Received:\n" + response);
+
+tls.close();
+print("Dedicated TLS Type Session Closed Cleanly.");

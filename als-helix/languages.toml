@@ -1,0 +1,106 @@
+# Helix languages.toml configuration for AdeshLang
+# Production-grade LSP configuration with full IDE features.
+#
+# Installation:
+# 1. Build ALS: `cargo build --release` in the als/ directory
+# 2. Copy this file to ~/.config/helix/languages.toml (or merge with existing config)
+# 3. Ensure `als` binary is in PATH or set command to absolute path below
+
+# AdeshLang language definition
+[[language]]
+name = "adesh"
+scope = "source.adesh"
+injection-regex = "adesh"
+file-types = ["adesh", "vy"]
+comment-token = "//"
+comment-tokens = ["//"]
+block-comment-tokens = { start = "/*", end = "*/" }
+indent = { tab-width = 4, unit = "    " }
+language-servers = ["als"]
+auto-format = false
+
+# Roots for project detection
+roots = [".git", "Cargo.toml", "package.json", ".adesh", "adesh.adl"]
+
+# Adesh Package Manifest (ADL) language definition
+[[language]]
+name = "adl"
+scope = "source.adl"
+injection-regex = "adl"
+file-types = ["adl"]
+comment-token = "//"
+comment-tokens = ["//", "#"]
+block-comment-tokens = { start = "/*", end = "*/" }
+indent = { tab-width = 2, unit = "  " }
+language-servers = ["als"]
+auto-format = true
+roots = ["adesh.adl"]
+
+# ADL-specific file-type associations
+# Files: adesh.adl (manifest), adesh.lock.adl (lockfile)
+# The ALS provides: completion, hover, diagnostics, code actions,
+# formatting, semantic tokens, document links, folding ranges, selection ranges
+
+# ADL configuration options (shared with Adesh language)
+[language-server.als.config.adl]
+validate = { enabled = true, requireProjectSection = true }
+completion = { suggestVersions = true }
+format = { alignKeys = true, sortSections = false }
+
+# ALS Language Server Configuration
+[language-server.als]
+command = "als"
+# Change to absolute path if ALS is not in PATH:
+# command = "/path/to/AdeshLang/als/target/release/als"
+
+# ALS Configuration Options
+[language-server.als.config]
+
+# Formatting options
+[language-server.als.config.format]
+indentSize = 4
+useTabs = false
+enable = true
+
+# Borrow checker options
+[language-server.als.config.borrowChecker]
+enabled = true
+showOwnershipHints = true
+highlightBorrows = true
+
+# Unsafe block warnings
+[language-server.als.config.unsafe]
+warnOnUsage = true
+
+# Inlay hints
+[language-server.als.config.inlayHints]
+enabled = true
+showOwnership = true
+showBorrowState = false
+
+# Completion / IntelliSense
+[language-server.als.config.completion]
+enabled = true
+includeKeywords = true
+includeBuiltins = true
+
+# Diagnostics (inline errors, warnings)
+[language-server.als.config.diagnostics]
+enabled = true
+refreshOnSave = true
+
+# Type assistance (TypeScript-like type checking)
+[language-server.als.config.typeAssistance]
+enabled = true
+showInferredTypes = true
+strictMode = false
+
+# Server behavior
+[language-server.als.config.server]
+enabled = true
+timeout = 30000
+
+# Optional: Treesitter grammar (if available)
+# [[grammar]]
+# name = "adesh"
+# source = { git = "https://github.com/ajaytainwala-dev/mylang", rev = "main", subpath = "tree-sitter-adesh" }

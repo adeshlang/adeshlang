@@ -1,0 +1,200 @@
+// 02_use_cases.adesh
+// Real-world use cases for the "extend on" feature.
+// Shows how extend enables clean separation of data from behavior,
+// module-like organization, and utility method injection.
+
+import Math;
+
+print("=== 02: EXTEND USE CASES ===");
+print("");
+
+// ── Use Case 1: Adding computed properties / derived data ──
+// Using class instead of struct because extend on only works with classes at runtime.
+
+class Rectangle {
+    Rectangle(width, height) {
+        this.width = width;
+        this.height = height;
+    }
+}
+
+extend on Rectangle {
+    fn area() {
+        return this.width * this.height;
+    }
+
+    fn perimeter() {
+        return 2.0 * (this.width + this.height);
+    }
+
+    fn isSquare() {
+        return this.width == this.height;
+    }
+
+    fn scale(ratio) {
+        return new Rectangle(this.width * ratio, this.height * ratio);
+    }
+}
+
+let rect = new Rectangle(10.0, 5.0);
+print("Rectangle", rect.width, "x", rect.height);
+print("  Area:", rect.area());
+print("  Perimeter:", rect.perimeter());
+print("  Is square:", rect.isSquare());
+let big = rect.scale(2.0);
+print("  Scaled x2:", big.width, "x", big.height);
+print("");
+
+// ── Use Case 2: Utility methods on existing types ──
+
+class Order {
+    Order(id, item, price, qty) {
+        this.id = id;
+        this.item = item;
+        this.price = price;
+        this.qty = qty;
+    }
+
+    fn total() {
+        return this.price * this.qty;
+    }
+}
+
+extend OrderSerialization on Order {
+    fn toJSON() {
+        return "{ \"id\": " + this.id
+             + ", \"item\": \"" + this.item
+             + "\", \"price\": " + this.price
+             + ", \"qty\": " + this.qty
+             + " }";
+    }
+
+    fn toCSV() {
+        return this.id + "," + this.item + "," + this.price + "," + this.qty;
+    }
+
+    fn summary() {
+        return "Order #" + this.id + ": " + this.qty + "x " + this.item
+             + " @ $" + this.price + " = $" + this.total();
+    }
+}
+
+let order = new Order(101, "Widget", 9.99, 3);
+print(order.summary());
+print("  JSON:", order.toJSON());
+print("  CSV:", order.toCSV());
+print("");
+
+// ── Use Case 3: Separating concerns ──
+
+class User {
+    User(id, username, email, role) {
+        this.id = id;
+        this.username = username;
+        this.email = email;
+        this.role = role;
+    }
+}
+
+extend UserValidation on User {
+    fn isValid() {
+        return this.username != null && len(this.username) > 0
+            && this.email != null && len(this.email) > 0;
+    }
+
+    fn isAdmin() {
+        return this.role == "admin";
+    }
+
+    fn canAccess(requiredRole) {
+        if (this.isAdmin()) {
+            return true;
+        }
+        return this.role == requiredRole;
+    }
+}
+
+extend UserDisplay on User {
+    fn displayName() {
+        return this.username + " (" + this.role + ")";
+    }
+
+    fn printProfile() {
+        print("User: " + this.displayName());
+        print("  Email: " + this.email);
+        print("  Valid: " + this.isValid());
+    }
+}
+
+let admin = new User(1, "root", "admin@example.com", "admin");
+let guest = new User(2, "guest", "", "viewer");
+
+admin.printProfile();
+print("  Can access 'admin':", admin.canAccess("admin"));
+print("  Can access 'viewer':", admin.canAccess("viewer"));
+print("");
+guest.printProfile();
+print("  Is valid:", guest.isValid());
+print("  Can access 'admin':", guest.canAccess("admin"));
+print("");
+
+// ── Use Case 4: Type-specific operations via extend on a class ──
+// Note: 'extend on' works with classes. Enum method extension is done
+// by adding methods directly to a class that wraps the enum behavior.
+
+class Color {
+    Color(tag, value) {
+        this.tag = tag;
+        this.value = value;
+    }
+}
+
+extend on Color {
+    fn hexString() {
+        match this.tag {
+            "Red"    => "#FF0000",
+            "Green"  => "#00FF00",
+            "Blue"   => "#0000FF",
+            "Custom" => "#" + this.value
+        };
+    }
+
+    fn isPrimary() {
+        return this.tag == "Red" || this.tag == "Green" || this.tag == "Blue";
+    }
+}
+
+let c1 = new Color("Red", null);
+print("Red hex:", c1.hexString(), "| Primary:", c1.isPrimary());
+let c2 = new Color("Custom", "808080");
+print("Gray hex:", c2.hexString(), "| Primary:", c2.isPrimary());
+print("");
+
+// ── Use Case 5: Class with static factory-style extended methods ──
+
+class Point {
+    Point(x, y) {
+        this.x = x;
+        this.y = y;
+    }
+}
+
+extend on Point {
+    fn distanceTo(other) {
+        let dx = this.x - other.x;
+        let dy = this.y - other.y;
+        return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    fn asString() {
+        return "(" + this.x + ", " + this.y + ")";
+    }
+}
+
+let origin = new Point(0.0, 0.0);
+let pt = new Point(3.0, 4.0);
+print("Distance from origin to (3,4):", origin.distanceTo(pt));
+print("Point:", pt.asString());
+print("");
+
+print("✅ Extend Use Cases Passed.\n");

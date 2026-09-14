@@ -1,0 +1,25 @@
+// Basic argument access via the Env standard library
+// Run: adesh run examples/args/args_basic.adesh arg1 arg2 arg3
+import Env;
+
+print("argc:", Env.argc());
+print("argv:", Env.argv());
+print("arg0:", Env.arg(0));
+print("exec:", Env.execName());
+let pathVar = Env.env("PATH");
+let sepPath = pathVar.split(";");
+for (i in 0..len(sepPath)) {
+    if ((i % 2 == 0)) {
+        print("PATH part " + i + ":", sepPath[i], { color: "#e0d60e" });
+    } else {
+        print("PATH part " + i + ":", sepPath[i], { color: "#00FF00" });
+    }
+}
+print("argsCount:", Env.argsCount());
+print("argsSlice(1):", Env.argsSlice(1));
+print("argsJoin(', '):", Env.argsJoin(", "));
+let de = Env.envFromFile("examples/args/.env");
+print("dotenv DB_HOST:", de.DB_HOST);
+print("dotenv API_KEY via get:", Env.envFileGet("API_KEY", "none", "examples/args/.env"));
+Env.envRuntimeLoad(de);
+print("env(API_KEY) after runtime load:", Env.env("API_KEY"));

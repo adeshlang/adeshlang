@@ -1,0 +1,13 @@
+import DNS;
+
+print("=== 1. CNAME Record Query ===");
+let cname_records = DNS.query("www.github.com", DNS.Type.CNAME);
+for (rec in cname_records) {
+    print("CNAME Record - Name:", rec.name, "| Target:", rec.data);
+}
+
+print("=== 2. SOA (Start of Authority) Record Query ===");
+let soa_records = DNS.query("cloudflare.com", DNS.Type.SOA);
+for (rec in soa_records) {
+    print("SOA Record - Name:", rec.name, "| Data:", rec.data);
+}

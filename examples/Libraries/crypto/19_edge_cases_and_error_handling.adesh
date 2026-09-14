@@ -1,0 +1,15 @@
+// 19 - Edge Cases, Invalid Keys, and Security Exception Handling
+import Crypto;
+
+let validKey = Crypto.randomBytes(32);
+let validNonce = Crypto.randomBytes(12);
+let message = "Test Payload";
+
+// Correct AEAD Encryption
+let ciphertext = Crypto.encryptAead(validKey, validNonce, message);
+print("1. AEAD Encryption Succeeded.");
+
+// Edge Case: Incorrect Decryption Key
+let wrongKey = Crypto.randomBytes(32);
+let result = Crypto.decryptAead(wrongKey, validNonce, ciphertext);
+print("2. Decryption Result with Wrong Key (null expected on failure):", result == null);

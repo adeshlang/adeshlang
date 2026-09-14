@@ -1,0 +1,29 @@
+// Test without type annotation - check if Array vs DynArray
+import "./array.wasm" as arrLib;
+
+fn main() {
+    print("=== Array Marshalling Debug ===");
+    
+    // Test 1: Without type annotation (might be Value::Array)
+    let arr1 = [10, 20, 30];
+    print("arr1 = [10, 20, 30] (no type)");
+    print("typeof arr1: " + typeof arr1);
+    let s1 = arrLib.sum_array(arr1, 3);
+    print("sum_array(arr1, 3) = " + s1 + " (expected 60)");
+    
+    print("");
+    
+    // Test 2: With type annotation (should be DynArray)  
+    let arr2: [i32] = [10, 20, 30];
+    print("arr2: [i64] = [10, 20, 30]");
+    print("typeof arr2: " + typeof arr2);
+    let s2 = arrLib.sum_array(arr2, 3);
+    print("sum_array(arr2, 3) = " + s2 + " (expected 60)");
+    
+    print("");
+    if (s1 == 60 || s2 == 60) {
+        print("PASSED");
+    } else {
+        print("FAILED - neither array type works");
+    }
+}

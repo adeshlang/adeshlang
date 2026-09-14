@@ -1,0 +1,344 @@
+// =============================================================================
+// AdeshLang Memory Management - Ownership Patterns
+// =============================================================================
+// This example demonstrates ownership patterns in AdeshLang's memory model:
+// - Unique ownership and move semantics
+// - Borrowing and lifetime management
+// - Ownership transfer patterns
+// - Memory safety through ownership tracking
+// =============================================================================
+// .
+print("=== Ownership Patterns Demo ===\n");
+
+// -----------------------------------------------------------------------------
+// 1. Unique Ownership Pattern
+// -----------------------------------------------------------------------------
+// Unique ownership means only one variable can own a resource at a time.
+// When ownership is transferred (moved), the original becomes invalid.
+
+print("--- Unique Ownership ---");
+
+class Resource {
+    fn init(name, data) {
+        this.name = name;
+        this.data = data;
+        this.isValid = true;
+        print("  Created resource: " + name);
+    }
+    
+    fn use() {
+        if (!this.isValid) {
+            throw Error("Use of moved/invalid resource: " + this.name);
+        }
+        print("  Using resource: " + this.name);
+        return this.data;
+    }
+    
+    fn invalidate() {
+        this.isValid = false;
+        print("  Resource invalidated: " + this.name);
+    }
+}
+
+// Create a unique resource
+let uniqueResource = new Resource("database-connection", "connection-data");
+uniqueResource.use();
+
+// Transfer ownership (move semantics)
+fn takeOwnership(resource) {
+    print("  Taking ownership of: " + resource.name);
+    return resource;
+}
+
+let newOwner = takeOwnership(uniqueResource);
+// In strict ownership system: uniqueResource is now invalid
+uniqueResource.invalidate(); // Simulate move invalidation
+
+// Only the new owner can use the resource
+newOwner.use();
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 2. Borrowing Pattern
+// -----------------------------------------------------------------------------
+// Borrowing allows temporary access without transferring ownership.
+// Multiple immutable borrows are allowed, but only one mutable borrow.
+
+print("--- Borrowing Pattern ---");
+
+class BorrowTracker {
+    fn init(name) {
+        this.name = name;
+        this.borrowCount = 0;
+        this.mutBorrowCount = 0;
+        this.data = [1, 2, 3, 4, 5];
+    }
+    
+    fn borrowImmutable() {
+        this.borrowCount = this.borrowCount + 1;
+        print("  Immutable borrow #" + str(this.borrowCount) + " of " + this.name);
+        return this.data; // Read-only access
+    }
+    
+    fn releaseBorrow() {
+        if (this.borrowCount > 0) {
+            this.borrowCount = this.borrowCount - 1;
+            print("  Released immutable borrow of " + this.name + 
+                  " (remaining: " + str(this.borrowCount) + ")");
+        }
+    }
+    
+    fn borrowMutable() {
+        if (this.borrowCount > 0) {
+            throw Error("Cannot borrow mutably while immutably borrowed");
+        }
+        if (this.mutBorrowCount > 0) {
+            throw Error("Cannot borrow mutably more than once");
+        }
+        this.mutBorrowCount = 1;
+        print("  Mutable borrow of " + this.name);
+        return this.data; // Read-write access
+    }
+    
+    fn releaseMutBorrow() {
+        this.mutBorrowCount = 0;
+        print("  Released mutable borrow of " + this.name);
+    }
+}
+
+let tracker = new BorrowTracker("shared-array");
+
+// Multiple immutable borrows are OK
+let borrow1 = tracker.borrowImmutable();
+let borrow2 = tracker.borrowImmutable();
+print("  Both borrows see: " + str(borrow1));
+
+// Release immutable borrows
+tracker.releaseBorrow();
+tracker.releaseBorrow();
+
+// Now mutable borrow is allowed
+let mutBorrow = tracker.borrowMutable();
+mutBorrow.push(6);
+print("  Modified through mutable borrow: " + str(mutBorrow));
+tracker.releaseMutBorrow();
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 3. RAII Pattern (Resource Acquisition Is Initialization)
+// -----------------------------------------------------------------------------
+// Resources are acquired in constructor and released in destructor.
+// This ensures proper cleanup even if exceptions occur.
+
+print("--- RAII Pattern ---");
+
+class FileHandle {
+    fn init(filename) {
+        this.filename = filename;
+        this.isOpen = true;
+        print("  Opened file: " + filename);
+    }
+    
+    fn read() {
+        if (!this.isOpen) {
+            throw Error("File is closed: " + this.filename);
+        }
+        return "file contents of " + this.filename;
+    }
+    
+    fn write(data) {
+        if (!this.isOpen) {
+            throw Error("File is closed: " + this.filename);
+        }
+        print("  Writing to " + this.filename + ": " + data);
+    }
+    
+    fn close() {
+        if (this.isOpen) {
+            this.isOpen = false;
+            print("  Closed file: " + this.filename);
+        }
+    }
+}
+
+// RAII ensures cleanup
+fn processFile(filename) {
+    let file = new FileHandle(filename);
+    try {
+        let content = file.read();
+        file.write("processed: " + content);
+        return "success";
+    } catch(e){
+        print(e);
+    }
+    
+}
+
+let result = processFile("data.txt");
+print("  Process result: " + result);
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 4. Ownership Transfer Chain
+// -----------------------------------------------------------------------------
+// Demonstrate how ownership can be transferred through a chain of functions.
+
+print("--- Ownership Transfer Chain ---");
+
+class Token {
+    fn init(id, value) {
+        this.id = id;
+        this.value = value;
+        this.owner = "creator";
+    }
+    
+    fn transferTo(newOwner) {
+        let oldOwner = this.owner;
+        this.owner = newOwner;
+        print("  Token " + this.id + " transferred: " + oldOwner + " -> " + newOwner);
+        return this;
+    }
+    
+    fn getValue() {
+        return this.value + " (owned by " + this.owner + ")";
+    }
+}
+
+// Create token
+let token = new Token("AUTH-001", "access-token");
+print("  Initial: " + token.getValue());
+
+// Transfer through chain
+fn authenticate(tok) {
+    return tok.transferTo("auth-service");
+}
+
+fn authorize(tok) {
+    return tok.transferTo("auth-manager");
+}
+
+fn processRequest(tok) {
+    return tok.transferTo("request-handler");
+}
+
+// Chain of ownership transfers
+token = authenticate(token);
+token = authorize(token);
+token = processRequest(token);
+
+print("  Final: " + token.getValue());
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 5. Scope-Based Lifetime Management
+// -----------------------------------------------------------------------------
+// Resources are automatically cleaned up when they go out of scope.
+
+print("--- Scope-Based Lifetime ---");
+
+class ScopedResource {
+    fn init(name) {
+        this.name = name;
+        this.active = true;
+        print("  Created scoped resource: " + name);
+    }
+    
+    fn use() {
+        if (this.active) {
+            print("  Using scoped resource: " + this.name);
+        }
+    }
+    
+    fn cleanup() {
+        if (this.active) {
+            this.active = false;
+            print("  Cleaned up scoped resource: " + this.name);
+        }
+    }
+}
+
+fn demonstrateScoping() {
+    print("  Entering scope...");
+    
+    let resource1 = new ScopedResource("temp-1");
+    let resource2 = new ScopedResource("temp-2");
+    
+    resource1.use();
+    resource2.use();
+    
+    // Simulate scope exit cleanup
+    resource1.cleanup();
+    resource2.cleanup();
+    
+    print("  Exiting scope...");
+}
+
+demonstrateScoping();
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 6. Memory Safety Validation
+// -----------------------------------------------------------------------------
+// Demonstrate how ownership tracking prevents common memory errors.
+
+print("--- Memory Safety Validation ---");
+
+class SafetyDemo {
+    fn init() {
+        this.data = "sensitive data";
+        this.moved = false;
+    }
+    
+    fn move() {
+        if (this.moved) {
+            throw Error("Double move detected!");
+        }
+        this.moved = true;
+        print("  Value moved, original invalidated");
+        return new SafetyDemo(); // Return new instance
+    }
+    
+    fn access() {
+        if (this.moved) {
+            throw Error("Use after move detected!");
+        }
+        return this.data;
+    }
+}
+
+let safeValue = new SafetyDemo();
+print("  Initial access: " + safeValue.access());
+
+// Move the value
+let movedValue = safeValue.move();
+
+// Try to access moved value (should error in strict system)
+try {
+    safeValue.access();
+} catch (e) {
+    print("  Caught safety error: " + e);
+}
+
+// New owner can access
+print("  New owner access: " + movedValue.access());
+
+print("");
+
+// -----------------------------------------------------------------------------
+// Summary
+// -----------------------------------------------------------------------------
+
+print("=== Ownership Pattern Summary ===");
+print("1. Unique ownership: Only one owner at a time");
+print("2. Move semantics: Transfer ownership, invalidate original");
+print("3. Borrowing: Temporary access without ownership transfer");
+print("4. RAII: Automatic resource cleanup");
+print("5. Scope-based: Resources cleaned up when scope exits");
+print("6. Safety validation: Prevent use-after-move and double-free");
+print("");
+print("=== Demo Complete ===");

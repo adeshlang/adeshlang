@@ -1,0 +1,17 @@
+import URL;
+
+let builtUrl: URL = URL.builder()
+    .scheme("https")
+    .host("services.example.io")
+    .port(443)
+    .path("/api/v2")
+    .appendPathSegment("orders")
+    .queryParam("status", "pending")
+    .queryParam("limit", 25)
+    .fragment("summary")
+    .build();
+
+let href: String = builtUrl.href;
+
+print("--- 03 URL Builder Example ---");
+print("Built Href:", href);

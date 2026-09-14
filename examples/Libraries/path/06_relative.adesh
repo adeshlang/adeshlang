@@ -1,0 +1,9 @@
+import Path;
+
+let base = Path.new("/home/ajay");
+let target = Path.new("/home/ajay/docs/file.txt");
+
+let rel = target.relativeTo(base);
+print("Base: " + base.toString());
+print("Target: " + target.toString());
+print("Relative: " + rel.toString());

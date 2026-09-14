@@ -1,0 +1,32 @@
+// Example 6: Stream Protocol Wrapping (HTTPS / Custom Protocol Over TLS)
+import TLS;
+
+// Connect to a secure server host
+let host = "1.1.1.1";
+let port = 443;
+
+print("Wrapping raw TCP connection in TLS stream...");
+let stream = TLS.connect(host, port);
+
+// Stream method invocations
+let ver = TLS.version(stream);
+let alpn = TLS.alpn(stream);
+
+print("Protocol: " + ver);
+print("ALPN: " + alpn);
+
+// Perform multiple stream writes (simulating custom pipeline or HTTP/1.1 chunking)
+let chunk1 = "GET / HTTP/1.1\r\n";
+let chunk2 = "Host: " + host + "\r\n";
+let chunk3 = "Connection: close\r\n\r\n";
+
+TLS.write(stream, chunk1);
+TLS.write(stream, chunk2);
+TLS.write(stream, chunk3);
+
+// Read until EOF
+let data = TLS.read(stream, 4096);
+print("Read " + data.length + " bytes of response payload.");
+
+TLS.close(stream);
+print("Stream closed.");

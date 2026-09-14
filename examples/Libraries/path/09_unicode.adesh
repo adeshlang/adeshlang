@@ -1,0 +1,9 @@
+import Path;
+
+let hindi_path = Path.new("C:/Users/अजय/projects/AdeshLang");
+let japanese_path = Path.new("/home/日本/documents/ノート.txt");
+let kannada_path = Path.new("/home/ಕನ್ನಡ/ಫೈಲ್.txt");
+
+print("Hindi: " + hindi_path.normalize().toString());
+print("Japanese: " + japanese_path.normalize().toString());
+print("Kannada: " + kannada_path.normalize().toString());

@@ -1,0 +1,54 @@
+// 09_weekday_month.adesh - Weekday and Month enumerations
+import Time;
+
+print("=== Weekday & Month Examples ===\n");
+
+// --- Weekday from integer (0 = Monday) ---
+print("--- Weekday ---");
+let w0 = Time.weekdayFromInt(0);
+let w1 = Time.weekdayFromInt(1);
+let w4 = Time.weekdayFromInt(4);
+let w6 = Time.weekdayFromInt(6);
+
+print("0 → ", w0.name(), "(", w0.shortName(), ")");
+print("1 → ", w1.name(), "(", w1.shortName(), ")");
+print("4 → ", w4.name(), "(", w4.shortName(), ")");
+print("6 → ", w6.name(), "(", w6.shortName(), ")");
+
+// --- From date ---
+let d1 = Time.dateYmd(2024, 7, 15);   // Known Monday
+let d2 = Time.dateYmd(2024, 7, 20);   // Known Saturday
+let wd1 = Time.weekdayFromDate(d1);
+let wd2 = Time.weekdayFromDate(d2);
+print("\n2024-07-15 is:", wd1.name());
+print("2024-07-20 is:", wd2.name());
+
+// --- Is weekend ---
+print("2024-07-20 is weekend:", wd2.isWeekend());
+print("2024-07-15 is weekend:", wd1.isWeekend());
+
+// --- Next / previous weekday ---
+let nextMon = wd2.next();
+let prevDay = wd2.previous();
+print("\nAfter Saturday  →", nextMon.name());
+print("Before Saturday →", prevDay.name());
+
+// --- Month from integer (1 = January) ---
+print("\n--- Month ---");
+let m1  = Time.monthFromInt(1);
+let m6  = Time.monthFromInt(6);
+let m12 = Time.monthFromInt(12);
+
+print("1  → ", m1.name(), "(", m1.shortName(), ")");
+print("6  → ", m6.name(), "(", m6.shortName(), ")");
+print("12 → ", m12.name(), "(", m12.shortName(), ")");
+
+// --- Days in month ---
+print("\nDays in Feb 2024 (leap):", Time.monthFromInt(2).daysInYear(2024));
+print("Days in Feb 2023 (norm):", Time.monthFromInt(2).daysInYear(2023));
+print("Days in Jan:", m1.days());
+print("Days in Jun:", m6.days());
+
+// --- Next / previous month ---
+print("\nAfter December →", m12.next().name());
+print("Before January →", m1.previous().name());

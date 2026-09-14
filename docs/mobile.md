@@ -1,0 +1,1 @@
+$env:ANDROID_NDK_HOME="C:\Android\Sdk\ndk\27.0.11902837"; cargo ndk -t arm64-v8a -o mobile/flutter/android/app/src/main/jniLibs --manifest-path mobile/bridge/Cargo.toml build --release

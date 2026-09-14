@@ -1,0 +1,19 @@
+import URL;
+
+let matrixUrls = [
+    "https://example.com:443/default-port",
+    "http://[::1]/ipv6-loopback",
+    "file:///C:/Windows/System32/drivers/etc/hosts",
+    "data:text/plain;base64,QWRlc2hMYW5n",
+    "https://user:pass@192.168.1.50:8080/private"
+];
+
+print("--- 17 Edge Cases & Parsing Matrix ---");
+let i: Int = 0;
+while (i < matrixUrls.len()) {
+    let rawStr: String = matrixUrls[i];
+    let parsed: URL = URL.parse(rawStr);
+    print("URL [", i, "]:", parsed.href);
+    print("  Scheme:", parsed.scheme, "| Host:", parsed.host, "| Is Secure:", parsed.isSecure());
+    i = i + 1;
+}

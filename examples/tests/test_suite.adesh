@@ -1,0 +1,237 @@
+export fn run() {
+    let passed = 0;
+    let failed = 0;
+    let t1 = 2 + 3;
+    if ((t1 == 5)) {
+        print("PASS", "number add");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "number add", 5, t1);
+        failed ?= failed + 1;
+    }
+    let t2 = 4 * 5;
+    if ((t2 == 20)) {
+        print("PASS", "number mul");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "number mul", 20, t2);
+        failed ?= failed + 1;
+    }
+    print("DBG number mul value:", t2, " eq? ", t2 == 20);
+    print("DBG types:", ?(t2), ?(20));
+    let b1 = 2 + 3;
+    if ((b1 == 5)) {
+        print("PASS", "bigint add");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "bigint add", 5, b1);
+        failed ?= failed + 1;
+    }
+    let b2 = 10 * 20;
+    if ((b2 == 200)) {
+        print("PASS", "bigint mul");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "bigint mul", 200, b2);
+        failed ?= failed + 1;
+    }
+    if ((10 > 9)) {
+        print("PASS", "bigint cmp");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "bigint cmp", true, false);
+        failed ?= failed + 1;
+    }
+    let bt = ?(1);
+    if ((bt == "bigint")) {
+        print("PASS", "type bigint");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "type bigint", "bigint", bt);
+        failed ?= failed + 1;
+    }
+    let s1 = "a" + "b";
+    if ((s1 == "ab")) {
+        print("PASS", "string concat");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "string concat", "ab", s1);
+        failed ?= failed + 1;
+    }
+    let st = ?("x");
+    if ((st == "string")) {
+        print("PASS", "type string");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "type string", "string", st);
+        failed ?= failed + 1;
+    }
+    if ((true == true)) {
+        print("PASS", "bool eq");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "bool eq", true, false);
+        failed ?= failed + 1;
+    }
+    let nt = ?(null);
+    if ((nt == "null")) {
+        print("PASS", "type null");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "type null", "null", nt);
+        failed ?= failed + 1;
+    }
+    let arr = [1, 2, 3];
+    let al = len(arr);
+    if ((al == 3)) {
+        print("PASS", "array len");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "array len", 3, al);
+        failed ?= failed + 1;
+    }
+    let arr2 = [...arr, 4, 5];
+    let arr2elem = arr2[3];
+    if ((arr2elem == 4)) {
+        print("PASS", "array spread");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "array spread", 4, arr2elem);
+        failed ?= failed + 1;
+    }
+    let tup = (1, 2);
+    let tl = len(tup);
+    if ((tl == 2)) {
+        print("PASS", "tuple len");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "tuple len", 2, tl);
+        failed ?= failed + 1;
+    }
+    let o = { a: 1, b: 2 };
+    let op = o.a;
+    if ((op == 1)) {
+        print("PASS", "object prop");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "object prop", 1, op);
+        failed ?= failed + 1;
+    }
+    let s = set([1, 1, 2]);
+    let sl = len(s);
+    if ((sl == 2)) {
+        print("PASS", "set unique len");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "set unique len", 2, sl);
+        failed ?= failed + 1;
+    }
+    let z = complex(3, 4);
+    let ct = ?(z);
+    if ((ct == "complex")) {
+        print("PASS", "type complex");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "type complex", "complex", ct);
+        failed ?= failed + 1;
+    }
+    let r1 = 1..5;
+    if ((len(r1) == 4)) {
+        print("PASS", "range len excl");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "range len excl", 4, len(r1));
+        failed ?= failed + 1;
+    }
+    let r2 = 1..=5;
+    if ((len(r2) == 5)) {
+        print("PASS", "range len incl");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "range len incl", 5, len(r2));
+        failed ?= failed + 1;
+    }
+    fn pack(...xs) {
+        return xs;
+    }
+    let packed = pack(...[7, 8, 9]);
+    let pl = len(packed);
+    if ((pl == 3)) {
+        print("PASS", "rest/spread len");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "rest/spread len", 3, pl);
+        failed ?= failed + 1;
+    }
+    class Box {
+        fn init(v) {
+            this.v ?= v;
+        }
+        fn get() {
+            return this.v;
+        }
+    }
+    print("DBG type(Box):", ?(Box));
+    let b = new Box(42);
+    print("DBG type(b):", ?(b));
+    let gm = b.get;
+    print("DBG type(b.get):", ?(gm));
+    let bg = b.get();
+    if ((bg == 42)) {
+        print("PASS", "class get");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "class get", 42, bg);
+        failed ?= failed + 1;
+    }
+    enum Res {
+        Ok(v),
+        Err(e),
+    }
+    let ok = new Res.Ok(10);
+    print("DBG enum ok type:", ?(ok));
+    if ((ok.tag == "Ok")) {
+        print("PASS", "enum tag");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "enum tag", "Ok", ok.tag);
+        failed ?= failed + 1;
+    }
+    if ((ok.value == 10)) {
+        print("PASS", "enum val");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "enum val", 10, ok.value);
+        failed ?= failed + 1;
+    }
+    if ((alloc(1) == "inline")) {
+        print("PASS", "alloc number");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "alloc number", "inline", alloc(1));
+        failed ?= failed + 1;
+    }
+    if ((alloc("s") == "heap")) {
+        print("PASS", "alloc string");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "alloc string", "heap", alloc("s"));
+        failed ?= failed + 1;
+    }
+    if ((alloc(1) == "heap")) {
+        print("PASS", "alloc bigint");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "alloc bigint", "heap", alloc(1));
+        failed ?= failed + 1;
+    }
+    if ((alloc([1]) == "heap")) {
+        print("PASS", "alloc array");
+        passed ?= passed + 1;
+    } else {
+        print("FAIL", "alloc array", "heap", alloc([1]));
+        failed ?= failed + 1;
+    }
+    print("Tests passed:", passed, "failed:", failed);
+    return failed;
+}

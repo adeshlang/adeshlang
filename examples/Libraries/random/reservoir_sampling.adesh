@@ -1,0 +1,7 @@
+import Random;
+
+print("--- Reservoir Sampling Demo ---");
+let stream = [100, 200, 300, 400, 500, 600, 700, 800];
+
+let reservoir = Random.reservoirSample(stream, 3);
+print("Reservoir sampled 3 elements from stream: " + reservoir);

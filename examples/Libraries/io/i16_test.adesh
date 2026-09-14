@@ -1,0 +1,11 @@
+import IO;
+let mw = new IO.MemoryWriter();
+let bw = new IO.BinaryWriter(mw, "little");
+bw.writeI16(-1024);
+bw.flush();
+let bytes = mw.getBytes();
+print("bytes len: " + len(bytes) + "\n");
+print("byte 0: " + bytes[0] + "\n");
+print("byte 1: " + bytes[1] + "\n");
+let result = io_unpack_number("i16", bytes, "little");
+print("result: " + result + "\n");

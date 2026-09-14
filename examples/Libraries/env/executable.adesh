@@ -1,0 +1,7 @@
+import Env;
+
+let exePath = Env.executable();
+print("Executable Path: " + exePath.toString());
+
+let exeDir = Env.executableDirectory();
+print("Executable Parent Directory: " + exeDir.toString());

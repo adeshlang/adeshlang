@@ -1,0 +1,13 @@
+import Compression;
+import Encoding;
+
+print("=== LZ4 Ultra Fast Compression Example ===");
+
+let telemetry = "sensor_id:402, temp:23.5, humidity:45, status:OK\nsensor_id:403, temp:24.1, humidity:46, status:OK\nsensor_id:404, temp:22.9, humidity:44, status:OK\n";
+
+let compressed = Compression.lz4(telemetry);
+print("Original:", len(telemetry), "LZ4:", len(compressed));
+
+let decompressedBytes = Compression.unlz4(compressed);
+let decompressedText = Encoding.utf8Decode(decompressedBytes);
+print("Match:", decompressedText == telemetry);

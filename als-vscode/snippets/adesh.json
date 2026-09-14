@@ -1,0 +1,98 @@
+{
+  "Test Function": {
+    "prefix": "testfn",
+    "body": [
+      "test fn ${1:test_name}() {",
+      "    ${0}",
+      "}"
+    ],
+    "description": "Create a test function"
+  },
+  "Test Block": {
+    "prefix": "testblock",
+    "body": [
+      "test ${1:group} {",
+      "    test fn ${2:test_name}() {",
+      "        ${0}",
+      "    }",
+      "}"
+    ],
+    "description": "Create a test block with a grouped test"
+  },
+  "assert": {
+    "prefix": "assert",
+    "body": "assert(${1:condition}${2:, \"message\"});",
+    "description": "Assert a condition"
+  },
+  "assert_eq": {
+    "prefix": "assert_eq",
+    "body": "assert_eq(${1:left}, ${2:right});",
+    "description": "Assert equality"
+  },
+  "assert_ne": {
+    "prefix": "assert_ne",
+    "body": "assert_ne(${1:left}, ${2:right});",
+    "description": "Assert inequality"
+  },
+  "Share declaration": {
+    "prefix": "share",
+    "body": "share ${1:name} = ${2:value};",
+    "description": "Create a reference-counted shared value"
+  },
+  "Strong reference": {
+    "prefix": "strong",
+    "body": "strong ${1:name} = ${2:shared_value};",
+    "description": "Create an additional strong reference"
+  },
+  "Weak reference": {
+    "prefix": "weak",
+    "body": "weak ${1:name} = ${2:shared_value};",
+    "description": "Create a non-owning weak reference"
+  },
+  "Share with object": {
+    "prefix": "shareobj",
+    "body": [
+      "share ${1:name} = {",
+      "    ${2}: ${3}",
+      "};"
+    ],
+    "description": "Create a shared value with an object literal"
+  },
+  "Unsafe block": {
+    "prefix": "unsafe",
+    "body": [
+      "unsafe {",
+      "    ${0}",
+      "}"
+    ],
+    "description": "Create an unsafe block for raw pointers and low-level memory operations"
+  },
+  "Unsafe function": {
+    "prefix": "unsafefn",
+    "body": [
+      "unsafe fn ${1:function_name}(${2:params}) {",
+      "    ${0}",
+      "}"
+    ],
+    "description": "Create an unsafe function"
+  },
+  "Memory allocation": {
+    "prefix": "alloc",
+    "body": "let ${1:ptr} = alloc(${2:size});\n${0}\nfree(${1:ptr});",
+    "description": "Allocate heap buffer with manual or RAII cleanup"
+  },
+  "Typed memory allocation": {
+    "prefix": "alloctyped",
+    "body": "let ${1:ptr} = alloc_typed(${2:count}, ${3:elem_size});\n${0}\nfree(${1:ptr});",
+    "description": "Allocate typed heap buffer"
+  },
+  "Region block": {
+    "prefix": "region",
+    "body": [
+      "region ${1:arena_name} {",
+      "    ${0}",
+      "}"
+    ],
+    "description": "Create an arena memory region"
+  }
+}

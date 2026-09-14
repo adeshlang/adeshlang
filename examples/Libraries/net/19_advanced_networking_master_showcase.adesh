@@ -1,0 +1,53 @@
+// AdeshLang Net Master Showcase: defer, class, interface, URL, Crypto, Encoding & Net integration
+import Net;
+import URL;
+import Crypto;
+import Encoding;
+
+fn run_master_showcase() {
+    print("=== 19. AdeshLang Net Master Showcase ===");
+
+    // 1. IP & Socket Address Inspections
+    let ip4 = Net.IPAddress.parse("127.0.0.1");
+    print("IP Check:", ip4.address, "| Loopback?", ip4.isLoopback, "| Version:", ip4.version);
+
+    let socketAddr = Net.SocketAddress.parse("127.0.0.1:9099");
+    print("SocketAddress Check:", socketAddr.address, "| Port:", socketAddr.port);
+
+    // 2. Security Policy Defense Validation
+    let policy = Net.NetworkPolicy()
+        .allowTcp()
+        .allowPort(8080)
+        .allowPort(9099)
+        .denyPrivateNetworks()
+        .denyLoopback();
+
+    let targetUrl = URL.parse("http://192.168.1.1:8080/admin");
+    print("Parsed Target Host:", targetUrl.hostname);
+
+    try {
+        policy.validate(targetUrl.hostname);
+        print("  Security Check: PASSED");
+    } catch (err) {
+        print("  Security Check: BLOCKED ->", err);
+    }
+
+    // 3. Crypto & Base64 Auth Tokens
+    let payload = "client=AdeshLangClient&timestamp=1700000000";
+    let signature = Crypto.sha256(payload);
+    let authToken = Encoding.base64Encode("client_id:secret_key_999");
+    let metaObj = JSON.stringify({ "auth": authToken, "sig": signature });
+
+    print("SHA-256 Signature:", signature);
+    print("Base64 Auth Token:", authToken);
+    print("JSON Metadata Payload:", metaObj);
+
+    // 4. Defer Block Execution
+    defer {
+        print("[DEFER]: Master Showcase execution finished cleanly - RAII resources freed!");
+    }
+
+    print("=== 19. Master Showcase Completed ===");
+}
+
+run_master_showcase();

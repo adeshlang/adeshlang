@@ -1,0 +1,19 @@
+// Dot Product — import Simd; Simd.dot(a, b)
+import Simd;
+
+let a = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0,
+         9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0];
+let b = [16.0, 15.0, 14.0, 13.0, 12.0, 11.0, 10.0, 9.0,
+         8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0];
+
+let result = Simd.dot(a, b);
+print("Simd.dot(a, b) = ", result);
+
+let v = Simd.vector(a);
+print("v.dot(b) = ", v.dot(b));
+
+let small_a = [1.0, 2.0, 3.0, 4.0];
+let small_b = [4.0, 3.0, 2.0, 1.0];
+print("small dot = ", Simd.dot(small_a, small_b));
+
+print("Dot product demo complete!");

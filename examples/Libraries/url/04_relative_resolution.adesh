@@ -1,0 +1,14 @@
+import URL;
+
+let base: URL = URL.parse("https://docs.example.com/en/v1/overview.html");
+
+let relativePath1: String = "../tutorials/getting_started.html";
+let resolved1: URL = base.resolve(relativePath1);
+
+let relativePath2: String = "/search?q=url";
+let resolved2: URL = base.resolve(relativePath2);
+
+print("--- 04 Relative Resolution Example ---");
+print("Base:", base.href);
+print("Resolved 1:", resolved1.href);
+print("Resolved 2:", resolved2.href);

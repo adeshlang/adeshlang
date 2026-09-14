@@ -1,0 +1,11 @@
+// 10 — barrier
+import thread;
+
+thread.watchdog(15000);
+let bar = thread.Barrier.new(2);
+let h = thread.spawn(fn() {
+    bar.wait();
+});
+bar.wait();
+h.join();
+print("both arrived");

@@ -1,0 +1,62 @@
+// RAII cleanup with control flow
+// Demonstrates automatic cleanup on early exit, break, continue
+
+print("=== RAII with Early Return ===");
+
+fn process_data(should_exit: bool) -> i32 {
+    unsafe {
+        let buffer = alloc(100);
+        buffer[0] = 42;
+        
+        if should_exit {
+            print("Exiting early - RAII will free buffer");
+            return buffer[0] as i32;  // free(buffer) inserted here
+        }
+        
+        buffer[1] = 99;
+        print("Normal path - RAII will free buffer");
+        return buffer[1] as i32;  // free(buffer) inserted here
+    }
+}
+
+let result1 = process_data(true);
+print(result1);  // 42
+
+let result2 = process_data(false);
+print(result2);  // 99
+
+print("=== RAII with Break/Continue ===");
+
+unsafe {
+    for i in 0..5 {
+        let temp = alloc(10);
+        temp[0] = i as u8;
+        
+        if i == 2 {
+            print("Breaking at i=2 - RAII frees temp");
+            break;  // free(temp) inserted here
+        }
+        
+        if i % 2 == 0 {
+            print("Continuing at i=" + str(i) + " - RAII frees temp");
+            continue;  // free(temp) inserted here
+        }
+        
+        print("Loop iteration i=" + str(i) + " complete");
+        // free(temp) inserted here at end of iteration
+    }
+}
+
+print("All allocations cleaned up by RAII");
+
+// Expected output:
+// === RAII with Early Return ===
+// Exiting early - RAII will free buffer
+// 42
+// Normal path - RAII will free buffer
+// 99
+// === RAII with Break/Continue ===
+// Continuing at i=0 - RAII frees temp
+// Loop iteration i=1 complete
+// Breaking at i=2 - RAII frees temp
+// All allocations cleaned up by RAII

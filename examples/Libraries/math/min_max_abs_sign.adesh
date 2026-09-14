@@ -1,0 +1,8 @@
+import Math;
+print("abs:", Math.abs(-123.45));
+print("min:", Math.min(7, -3, 2, 9));
+print("max:", Math.max(7, -3, 2, 9));
+print("trunc:", Math.trunc(12.987));
+print("sign-:", Math.sign(-0.01));
+print("sign0:", Math.sign(0));
+print("sign+:", Math.sign(0.01));

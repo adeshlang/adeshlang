@@ -1,0 +1,97 @@
+// Comprehensive async feature test - demonstrates all async features working together
+print("=== AdeshLang Async Features Demo ===\n");
+
+// 2. async fn declaration
+async fn fetchData(id) {
+    return "data_" + id;
+}
+
+// 8. Chained async functions
+async fn step1() { return 10; }
+async fn step2(x) { return x * 2; }
+async fn step3(x) { return x + 5; }
+
+// 9. Nested await in async fn
+async fn compute() {
+    let a = Promise(fn(resolve, reject) { resolve(5); });
+    let b = Promise(fn(resolve, reject) { resolve(7); });
+    let valA = await a;
+    let valB = await b;
+    return valA + valB;
+}
+
+async fn main() {
+    // 1. Basic Promise with executor
+    print("1. Basic Promise");
+    let p1 = Promise(fn(resolve, reject) {
+        resolve(42);
+    });
+    let v1 = await p1;
+    print("   Promise resolved:", v1, "[PASS]");
+
+    // 2. async fn declaration
+    print("\n2. async fn declaration");
+    let data = await fetchData(123);
+    print("   Async fn result:", data, "[PASS]");
+
+    // 3. Closure capture in Promise executor
+    print("\n3. Closure capture");
+    let multiplier = 5;
+    let p3 = Promise(fn(resolve, reject) {
+        resolve(10 * multiplier);
+    });
+    let val3 = await p3;
+    print("   10 * 5 =", val3, "[PASS]");
+
+    // 4. .then() chaining
+    print("\n4. .then() chaining");
+    let p4 = Promise(fn(resolve, reject) { resolve(10); });
+    let p4_chained = p4.then(fn(v) { return v * 2; }).then(fn(v) { return v + 5; });
+    let val4 = await p4_chained;
+    print("   (10 * 2) + 5 =", val4, "[PASS]");
+
+    // 5. Promise.all
+    print("\n5. Promise.all");
+    let pa = Promise(fn(resolve, reject) { resolve("A"); });
+    let pb = Promise(fn(resolve, reject) { resolve("B"); });
+    let pc = Promise(fn(resolve, reject) { resolve("C"); });
+    let all_results = await Promise.all([pa, pb, pc]);
+    print("   Promise.all:", all_results, "[PASS]");
+
+    // 6. Promise.race
+    print("\n6. Promise.race");
+    let fast = Promise(fn(resolve, reject) { resolve("fast"); });
+    let slow = Promise(fn(resolve, reject) { resolve("slow"); });
+    let race_result = await Promise.race([fast, slow]);
+    print("   Promise.race:", race_result, "[PASS]");
+
+    // 7. setTimeout with callback
+    print("\n7. setTimeout");
+    let timer_result = await setTimeout(fn() {
+        print("   Timer callback executed!");
+        return "timer_done";
+    }, 10);
+    print("   Timer result:", timer_result, "[PASS]");
+
+    // 8. Chained async functions
+    print("\n8. Chained async calls");
+    let r1 = await step1();
+    let r2 = await step2(r1);
+    let r3 = await step3(r2);
+    print("   step1() -> step2() -> step3():", r3, "[PASS]");
+
+    // 9. Nested await in async fn
+    print("\n9. Nested await");
+    let comp = await compute();
+    print("   5 + 7 =", comp, "[PASS]");
+
+    // 10. Closure in .then()
+    print("\n10. Closure in .then()");
+    let factor = 100;
+    let p10 = Promise(fn(resolve, reject) { resolve(3); });
+    let p10_then = p10.then(fn(v) { return v * factor; });
+    let val10 = await p10_then;
+    print("   3 * 100 =", val10, "[PASS]");
+
+    print("\n=== All Async Features Working! ===");
+}

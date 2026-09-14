@@ -1,0 +1,10 @@
+import URL;
+
+let url: URL = URL.parse("https://user:secret@example.com:8443/users?page=2&limit=50#results");
+
+print(url.scheme);   // "https"
+print(url.host);     // "example.com"
+print(url.port);     // 8443
+print(url.path);     // "/users"
+print(url.query);    // "page=2&limit=50"
+print(url.redacted); // "https://user:***@example.com:8443/users?page=2&limit=50#results"

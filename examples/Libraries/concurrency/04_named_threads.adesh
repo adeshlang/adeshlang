@@ -1,0 +1,8 @@
+// 04 — named threads
+import std:thread;
+
+let h = thread.spawn_named("worker-1", fn() {
+    print(thread.name());
+    print(thread.id());
+});
+h.join();

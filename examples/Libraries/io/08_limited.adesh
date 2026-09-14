@@ -1,0 +1,10 @@
+// Example 08: Limited Reader Boundary Enforcement
+
+import { MemoryReader, limit, IO } from "IO";
+
+fn main() {
+    let src = new MemoryReader("Unlimited stream payload sample");
+    let lim = limit(src, 13);
+    IO.println("Limited Output: " + lim.readToEnd());
+}
+

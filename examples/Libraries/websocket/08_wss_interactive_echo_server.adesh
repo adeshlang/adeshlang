@@ -1,0 +1,75 @@
+// Example 08: Production WSS (Secure WebSocket) Listening & Echo Server
+// Demonstrates TLS certificate setup, WSS server binding, accepting incoming client messages,
+// logging accepted messages on the server console, and returning/echoing them back over TLS.
+
+import Crypto;
+import WebSocket;
+
+fn runInteractiveWssServer() {
+    print("==================================================================");
+    print("  Production WSS (Secure WebSocket) Listening & Echo Server Demo  ");
+    print("==================================================================");
+
+    print("\n[STEP 1] Generating X.509 TLS Certificate & Key via Crypto stdlib...");
+    let certPair = Crypto.generateSelfSignedCert();
+    let certPem = certPair.certPem;
+    let keyPem = certPair.keyPem;
+    print("✓ TLS X.509 certificate and private key generated.");
+
+    print("\n[STEP 2] Configuring & Binding Secure WSS Listener on wss://127.0.0.1:8443...");
+    let serverConfig = new WebSocket.ServerConfig();
+    serverConfig.bind_address = "127.0.0.1";
+    serverConfig.port = 8443;
+    serverConfig.protocols = ["wss-echo", "json-stream"];
+    serverConfig.tls_cert_pem = certPem;
+    serverConfig.tls_key_pem = keyPem;
+
+    let server = WebSocket.server(serverConfig);
+    server.startEcho();
+    print("✓ WSS Server active and listening for incoming TLS WebSocket connections.");
+
+    print("\n[STEP 3] Connecting Secure WSS Client to wss://127.0.0.1:8443...");
+    let clientConfig = new WebSocket.ClientConfig();
+    clientConfig.protocols = ["wss-echo"];
+    clientConfig.tls_ca_pem = certPem;
+    clientConfig.verify_tls = false;
+    clientConfig.connect_timeout = 10000;
+
+    let client = WebSocket.connect("wss://127.0.0.1:8443", clientConfig);
+    if (WebSocket.isError(client)) {
+        print("❌ WSS Client error: " + client.toString());
+        server.close();
+        return;
+    }
+    print("✓ WSS Client connected securely! Negotiated protocol: " + client.subprotocol);
+
+    print("\n[STEP 4] Sending test messages over WSS secure channel...");
+
+    let messages = [
+        "Hello WSS Server! Requesting secure connection status.",
+        "Payload #2: Sensitive transactional telemetry data over TLS 1.3.",
+        "Payload #3: Real-time bi-directional message handshake test."
+    ];
+
+    let i = 0;
+    while (i < 3) {
+        let textToSend = messages[i];
+        print("\n[CLIENT] Outgoing message (" + (i + 1).toString() + "/3): " + textToSend);
+        client.sendText(textToSend);
+
+        let response = client.receive();
+        if (response.type == "text") {
+            print("[CLIENT] Received Echo Response: " + response.payload);
+        } else {
+            print("[CLIENT] Received message of type: " + response.type);
+        }
+        i = i + 1;
+    }
+
+    print("\n[STEP 5] Closing WSS session cleanly...");
+    client.close(WebSocket.CloseCode.NormalClosure, "Session complete");
+    server.close();
+    print("✓ WSS session and server closed cleanly.");
+}
+
+runInteractiveWssServer();

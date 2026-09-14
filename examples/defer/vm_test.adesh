@@ -1,0 +1,25 @@
+// Test defer with VM backend
+// This file tests basic defer functionality when compiled to bytecode
+
+fn main() {
+    print("Start");
+    
+    defer {
+        print("Defer 1");
+    }
+    
+    print("Middle");
+    
+    defer {
+        print("Defer 2");
+    }
+    
+    print("End");
+}
+
+// Expected output:
+// Start
+// Middle
+// End
+// Defer 2
+// Defer 1

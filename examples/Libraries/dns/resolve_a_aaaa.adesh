@@ -1,0 +1,17 @@
+import DNS;
+
+print("=== 1. Basic Hostname Resolution ===");
+let addresses = DNS.resolve("google.com");
+print("google.com IPs:", addresses);
+
+print("=== 2. Querying A Records ===");
+let a_records = DNS.query("google.com", DNS.Type.A);
+for (rec in a_records) {
+    print("Name:", rec.name, "| Type:", rec.type, "| TTL:", rec.ttl, "| IP:", rec.data);
+}
+
+print("=== 3. Querying AAAA (IPv6) Records ===");
+let aaaa_records = DNS.query("google.com", DNS.Type.AAAA);
+for (rec in aaaa_records) {
+    print("Name:", rec.name, "| Type:", rec.type, "| TTL:", rec.ttl, "| IP:", rec.data);
+}

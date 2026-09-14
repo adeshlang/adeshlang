@@ -1,0 +1,8 @@
+import Math;
+print("sin:", Math.sin(10));
+print("cos:", Math.cos(10));
+print("tan:", Math.tan(10));
+print("asin:", Math.asin(10));
+print("acos:", Math.acos(1));
+print("atan:", Math.atan(1));
+print("atan2:", Math.atan2(1, 1));

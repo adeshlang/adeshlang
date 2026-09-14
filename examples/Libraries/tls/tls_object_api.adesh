@@ -1,0 +1,25 @@
+// Example 8: First-Class Object-Oriented & RAII TLS Connection API
+import TLS;
+
+let host: String = "1.1.1.1";
+let port: i64 = 443;
+
+print("--- Establishing First-Class OO TLS Connection ---");
+
+let tls: TLS = TLS.connect(host, port);
+
+// Direct method invocations on connection object
+print("Negotiated Version: " + tls.version());
+print("Negotiated ALPN: " + (tls.alpn() == "" ? "None" : tls.alpn()));
+
+tls.writeText("GET / HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n");
+
+let res: String = tls.readText(1024);
+print("\nReceived Payload (First 300 chars):\n" + res);
+
+// Connection tracing diagnostics
+let events: Array<String> = tls.trace();
+print("Handshake Trace Events Count: " + events.length);
+
+tls.close();
+print("Object-Oriented TLS Session Closed Cleanly.");

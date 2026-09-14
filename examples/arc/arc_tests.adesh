@@ -1,0 +1,279 @@
+// examples/arc/arc_tests.adesh
+// ─────────────────────────────────────────────────────────────────────────────
+// AdeshLang built-in test suite for the ARC (Automatic Reference Counting)
+// memory model.  Run with:
+//
+//   adesh run examples/arc/arc_tests.adesh
+//
+// Each @test function:
+//   • Prints PASS / FAIL with a descriptive message.
+//   • Uses adesh_assert(condition, message) to validate invariants.
+//   • Is completely self-contained (no shared mutable state).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Tiny assertion helpers ─────────────────────────────────────────────────
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+fn section(name) {
+    print("\n══════════════════════════════════════");
+    print("  TEST:", name);
+    print("══════════════════════════════════════");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T01 – Basic share: initial count is 1
+// ─────────────────────────────────────────────────────────────────────────────
+section("T01 – Basic share initial count");
+
+share t01 = { x: 1 };
+adesh_assert(t01.strong_count() == 1, "strong_count starts at 1");
+adesh_assert(t01.weak_count()   == 0, "weak_count starts at 0");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T02 – Strong ref increments strong_count
+// ─────────────────────────────────────────────────────────────────────────────
+section("T02 – Strong ref increments count");
+
+share t02 = { y: 2 };
+strong s1 = t02;
+adesh_assert(t02.strong_count() == 2, "strong_count is 2 after one strong ref");
+
+strong s2 = t02;
+adesh_assert(t02.strong_count() == 3, "strong_count is 3 after two strong refs");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T03 – Scope release decrements strong_count
+// ─────────────────────────────────────────────────────────────────────────────
+section("T03 – Scope release decrements count");
+
+share t03 = { z: 3 };
+{
+    strong tmp = t03;
+    adesh_assert(t03.strong_count() == 2, "count is 2 inside scope");
+}
+adesh_assert(t03.strong_count() == 1, "count is 1 after scope exit");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T04 – Weak ref does NOT increment strong_count
+// ─────────────────────────────────────────────────────────────────────────────
+section("T04 – Weak ref leaves strong_count unchanged");
+
+share t04 = { w: 4 };
+weak wk = t04;
+adesh_assert(t04.strong_count() == 1, "strong_count unchanged after weak ref");
+adesh_assert(t04.weak_count()   == 1, "weak_count is 1");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T05 – is_alive returns true while strong owners exist
+// ─────────────────────────────────────────────────────────────────────────────
+section("T05 – is_alive while owner exists");
+
+share t05 = { alive: true };
+weak observer = t05;
+adesh_assert(observer.is_alive() == true, "is_alive() true while owner in scope");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T06 – upgrade() succeeds while strong owners exist
+// ─────────────────────────────────────────────────────────────────────────────
+section("T06 – upgrade succeeds while alive");
+
+share t06 = { val: 99 };
+weak wk06 = t06;
+
+let upgraded = wk06.upgrade();
+adesh_assert(upgraded != null, "upgrade() returns non-null while alive");
+if (upgraded != null) {
+    adesh_assert(upgraded.val == 99, "upgraded value is correct");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T07 – upgrade() temporarily increments strong_count
+// ─────────────────────────────────────────────────────────────────────────────
+section("T07 – upgrade increments strong_count temporarily");
+
+share t07 = { n: 7 };
+weak wk07 = t07;
+
+{
+    let tmp = wk07.upgrade();
+    if (tmp != null) {
+        adesh_assert(t07.strong_count() == 2,
+                    "strong_count is 2 while upgrade result is held");
+    }
+}
+adesh_assert(t07.strong_count() == 1,
+            "strong_count back to 1 after upgrade result released");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T08 – Multiple strong refs across nested scopes
+// ─────────────────────────────────────────────────────────────────────────────
+section("T08 – Nested scope reference tracking");
+
+share t08 = { depth: 0 };
+{
+    strong l1 = t08;
+    adesh_assert(t08.strong_count() == 2, "count 2 at depth 1");
+    {
+        strong l2 = t08;
+        adesh_assert(t08.strong_count() == 3, "count 3 at depth 2");
+        {
+            strong l3 = t08;
+            adesh_assert(t08.strong_count() == 4, "count 4 at depth 3");
+        }
+        adesh_assert(t08.strong_count() == 3, "count 3 after depth 3 exit");
+    }
+    adesh_assert(t08.strong_count() == 2, "count 2 after depth 2 exit");
+}
+adesh_assert(t08.strong_count() == 1, "count 1 after depth 1 exit");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T09 – Multiple weak refs accumulate weak_count
+// ─────────────────────────────────────────────────────────────────────────────
+section("T09 – Multiple weak refs accumulate weak_count");
+
+share t09 = { data: "hello" };
+weak w09a = t09;
+weak w09b = t09;
+weak w09c = t09;
+
+adesh_assert(t09.strong_count() == 1, "strong_count still 1 with 3 weak refs");
+adesh_assert(t09.weak_count()   == 3, "weak_count is 3");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T10 – Repeated upgrade() produces independent strong refs
+// ─────────────────────────────────────────────────────────────────────────────
+section("T10 – Repeated upgrade produces correct counts");
+
+share t10 = { x: 10 };
+weak wk10 = t10;
+
+{
+    let u1 = wk10.upgrade();
+    let u2 = wk10.upgrade();
+    if (u1 != null && u2 != null) {
+        // t10 + u1 + u2 = 3
+        adesh_assert(t10.strong_count() == 3,
+                    "strong_count is 3 holding 2 upgrades");
+    }
+}
+adesh_assert(t10.strong_count() == 1, "count back to 1 after upgrades released");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T11 – Reassignment of strong ref adjusts counts correctly
+// ─────────────────────────────────────────────────────────────────────────────
+section("T11 – Strong ref reassignment");
+
+share t11a = { id: 11 };
+share t11b = { id: 22 };
+
+strong handle = t11a;
+adesh_assert(t11a.strong_count() == 2, "t11a count 2 before reassign");
+
+handle = t11b;
+adesh_assert(t11a.strong_count() == 1, "t11a count 1 after reassign");
+adesh_assert(t11b.strong_count() == 2, "t11b count 2 after reassign");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T12 – Weak ref on an empty-field object
+// ─────────────────────────────────────────────────────────────────────────────
+section("T12 – Empty object ARC");
+
+share t12 = { };
+weak wk12 = t12;
+adesh_assert(wk12.is_alive() == true, "empty object is alive");
+let up12 = wk12.upgrade();
+adesh_assert(up12 != null, "upgrade of empty object succeeds");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T13 – Cycle-breaking: strong + weak back-pointer
+// ─────────────────────────────────────────────────────────────────────────────
+section("T13 – Cycle-breaking with weak back-pointer");
+
+share t13_parent = { name: "parent" };
+share t13_child  = { name: "child"  };
+
+strong parent_owns_child = t13_child;  // parent -> child (strong)
+weak child_sees_parent   = t13_parent; // child  -> parent (weak)
+
+// parent count: only t13_parent holds it strongly
+adesh_assert(t13_parent.strong_count() == 1, "parent strong_count 1 (no cycle)");
+// child count: t13_child + parent_owns_child
+adesh_assert(t13_child.strong_count()  == 2, "child strong_count 2");
+adesh_assert(t13_parent.weak_count()   == 1, "parent weak_count 1");
+
+let seen = child_sees_parent.upgrade();
+if (seen != null) {
+    adesh_assert(seen.name == "parent", "child navigates to parent via weak upgrade");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T14 – ARC through function calls
+// ─────────────────────────────────────────────────────────────────────────────
+section("T14 – ARC through function calls");
+
+fn bump_and_check(obj) {
+    // Inside the function, count is elevated by 1 (the `obj` parameter)
+    return obj.strong_count();
+}
+
+share t14 = { val: 14 };
+let count_inside = bump_and_check(t14);
+adesh_assert(count_inside == 2, "count inside fn is 2");
+adesh_assert(t14.strong_count() == 1, "count back to 1 after fn returns");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T15 – is_alive on a weak ref obtained from multiple sources
+// ─────────────────────────────────────────────────────────────────────────────
+section("T15 – is_alive with multiple weak refs");
+
+share t15 = { v: 15 };
+weak wa = t15;
+weak wb = t15;
+weak wc = t15;
+
+adesh_assert(wa.is_alive() == true, "wa.is_alive true");
+adesh_assert(wb.is_alive() == true, "wb.is_alive true");
+adesh_assert(wc.is_alive() == true, "wc.is_alive true");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T16 – Diamond sharing: same base through two paths
+// ─────────────────────────────────────────────────────────────────────────────
+section("T16 – Diamond sharing pattern");
+
+share t16_base = { id: 0 };
+strong left  = t16_base;
+strong right = t16_base;
+// base + left + right = 3
+adesh_assert(t16_base.strong_count() == 3, "diamond: base count is 3");
+
+strong joined_l = left;
+strong joined_r = right;
+// + joined_l + joined_r = 5
+adesh_assert(t16_base.strong_count() == 5, "diamond: after joining count is 5");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Summary
+// ─────────────────────────────────────────────────────────────────────────────
+print("\n══════════════════════════════════════");
+print("  RESULTS");
+print("══════════════════════════════════════");
+print("  PASS:", PASS_COUNT);
+print("  FAIL:", FAIL_COUNT);
+if (FAIL_COUNT == 0) {
+    print("  ✓ All ARC tests PASSED");
+} else {
+    print("  ✗", FAIL_COUNT, "test(s) FAILED");
+}
+print("══════════════════════════════════════\n");

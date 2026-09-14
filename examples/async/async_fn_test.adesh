@@ -1,0 +1,70 @@
+// Test async fn syntax
+print("=== async fn Tests ===");
+
+// Test 1: Simple async function
+async fn getNumber() {
+    return 42;
+}
+
+// Test 2: Async function with parameters
+async fn addAsync(a, b) {
+    return a + b;
+}
+
+// Test 3: Async function with await inside
+async fn doubleAsync(x) {
+    let p = Promise(fn(resolve, reject) { resolve(x); });
+    let val = await p;
+    return val * 2;
+}
+
+// Test 4: Chaining async functions
+async fn step1() {
+    return 5;
+}
+
+async fn step2(x) {
+    return x * 3;
+}
+
+async fn main() {
+    print("Test 1: Simple async function");
+    let result1 = await getNumber();
+    print("  Awaited value:", result1);
+    if result1 == 42 {
+        print("  [PASS]");
+    } else {
+        print("  [FAIL] Expected 42, got", result1);
+    }
+
+    print("\nTest 2: Async function with parameters");
+    let p2 = addAsync(10, 20);
+    let result2 = await p2;
+    print("  addAsync(10, 20) =", result2);
+    if result2 == 30 {
+        print("  [PASS]");
+    } else {
+        print("  [FAIL] Expected 30, got", result2);
+    }
+
+    print("\nTest 3: Async function with nested await");
+    let result3 = await doubleAsync(5);
+    print("  doubleAsync(5) =", result3);
+    if result3 == 10 {
+        print("  [PASS]");
+    } else {
+        print("  [FAIL] Expected 10, got", result3);
+    }
+
+    print("\nTest 4: Chaining async functions");
+    let v1 = await step1();
+    let v2 = await step2(v1);
+    print("  step1() -> step2() =", v2);
+    if v2 == 15 {
+        print("  [PASS]");
+    } else {
+        print("  [FAIL] Expected 15, got", v2);
+    }
+
+    print("\n=== async fn Tests Complete ===");
+}

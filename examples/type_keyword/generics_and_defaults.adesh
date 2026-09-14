@@ -1,0 +1,29 @@
+// =============================================================================
+// AdeshLang - Generic Type Aliases and Parameter Defaults Demo
+// =============================================================================
+
+// 1. Define a generic type alias with a default value
+type Box<T> = {
+    value: T,
+    tag?: String = "generic-box",
+};
+
+// 2. Instantiate generic type alias
+let intBox: Box<Int> = {
+    value: 42,
+};
+
+print("intBox value:", intBox.value);
+print("intBox tag (should default to generic-box):", intBox.tag);
+
+// 3. Define a function with type annotations and parameter default values
+fn greet(name: String, age: u8 = 18, isMember: Bool = false) {
+    print("Greeting user: name=" + name + ", age=" + str(age) + ", isMember=" + str(isMember));
+}
+
+// Call function using defaults
+greet("Ajay");
+// Call function overriding some defaults
+greet("Ajay", 25, true);
+
+print("\n--- Test Complete ---");

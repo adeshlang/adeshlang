@@ -1,0 +1,9 @@
+// Test if main is defined
+fn main() {
+    print("Main function executed");
+}
+
+print("Top-level init");
+
+// Try manually calling main to see if it works
+main();

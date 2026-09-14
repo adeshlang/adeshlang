@@ -1,0 +1,56 @@
+// AdeshLang Net Example 17: Reverse Proxy & SSRF Target Validator
+import URL;
+import Net;
+import Crypto;
+import Encoding;
+
+fn audit_proxy_target(targetUrlStr) {
+    print("=== Proxy Audit for Target:", targetUrlStr, "===");
+
+    // 1. Parse Target URL
+    let url = URL.parse(targetUrlStr);
+    print("Parsed Host:", url.hostname, "Port:", url.port, "Scheme:", url.protocol);
+
+    // 2. Security Policy Validation (SSRF Defense)
+    let policy = Net.NetworkPolicy()
+        .allowTcp()
+        .allowPort(80)
+        .allowPort(443)
+        .denyPrivateNetworks()
+        .denyLoopback();
+
+    let targetIp = Net.IPAddress.parse(url.hostname);
+
+    try {
+        policy.validate(targetIp.address);
+        print("  SSRF Security Check: PASSED");
+    } catch (err) {
+        print("  SSRF Security Check: BLOCKED -> Reason:", err);
+        return;
+    }
+
+    // 3. Compute Audit Token and Signature
+    let urlHash = Crypto.sha256(url.href);
+    let auditToken = Encoding.base64Encode("proxy_user:audit_id_1001");
+
+    print("  Audit Hash (SHA-256):", urlHash);
+    print("  Base64 Audit Token:", auditToken);
+    print("  Proxy Target Ready for Secure Forwarding!");
+}
+
+fn main() {
+    print("=== 17. Reverse Proxy & SSRF Target Validator ===");
+
+    // Test 1: Untrusted Private Network Target (SSRF Attack)
+    audit_proxy_target("http://192.168.1.1/admin/config");
+
+    // Test 2: Untrusted Loopback Target (SSRF Attack)
+    audit_proxy_target("http://127.0.0.1:8080/internal/metrics");
+
+    // Test 3: Public Internet Target (Legitimate)
+    audit_proxy_target("https://8.8.8.8/dns-query");
+
+    print("=== 17. Proxy Validator Completed ===");
+}
+
+main();

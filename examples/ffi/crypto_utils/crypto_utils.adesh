@@ -1,0 +1,73 @@
+export fn xor_values(a: i64, b: i64): i64 {
+    return a ^ b;
+}
+
+export fn and_values(a: i64, b: i64): i64 {
+    return a & b;
+}
+
+export fn or_values(a: i64, b: i64): i64 {
+    return a | b;
+}
+
+export fn left_shift(value: i64, bits: i64): i64 {
+    return value << bits;
+}
+
+export fn right_shift(value: i64, bits: i64): i64 {
+    return value >> bits;
+}
+
+export fn count_set_bits(n: i64): i64 {
+    let count: i64;
+    count = 0;
+    let num: i64;
+    num = n;
+    while num > 0 {
+        if num % 2 == 1 {
+            count = count + 1;
+        }
+        num = num >> 1;
+    }
+    return count;
+}
+
+export fn fibonacci(n: i64): i64 {
+    if n <= 0 {
+        return 0;
+    }
+    if n == 1 {
+        return 1;
+    }
+    let prev: i64;
+    prev = 0;
+    let curr: i64;
+    curr = 1;
+    let i: i64;
+    i = 2;
+    while i <= n {
+        let next: i64;
+        next = prev + curr;
+        prev = next - prev;
+        curr = next;
+        i = i + 1;
+    }
+    return curr;
+}
+
+export fn gcd(a: i64, b: i64): i64 {
+    let x: i64;
+    x = a;
+    let y: i64;
+    y = b;
+    while y != 0 {
+        let r: i64;
+        r = x % y;
+        x = y;
+        y = r;
+    }
+    return x;
+}
+
+
+// ..\..\target\debug\adeshlang.exe compile-aot crypto_utils.adesh crypto_utils.o -c --emit-header crypto_utils.h ; gcc test_crypto.c crypto_utils.o -o test_crypto.exe ; .\test_crypto.exe

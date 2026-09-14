@@ -1,0 +1,41 @@
+import Encoding;
+
+// ============================================================================
+// Real-World Use Case: Cross-Platform File Transcoding & Transport Pipeline
+// Pipeline:
+// 1. Source: UTF-8 Text
+// 2. Transcode to UTF-16 BE with BOM header
+// 3. Encode to Base64URL for API payload transfer
+// 4. Receive at Destination
+// 5. Decode Base64URL
+// 6. Detect and strip BOM header
+// 7. Decode UTF-16 BE back to UTF-8 string
+// ============================================================================
+
+print("=== 1. Source Document (UTF-8) ===");
+let sourceDoc = "AdeshLang Encoding Engine Transcode Pipeline 🚀";
+print("Source Document:", sourceDoc);
+
+print("\n=== 2. Transcoding to UTF-16 BE & Adding BOM ===");
+let utf16BeBytes = Encoding.utf16BEEncode(sourceDoc);
+let payloadWithBom = Encoding.addBom(utf16BeBytes, "UTF-16BE");
+print("Payload Size with UTF-16BE BOM (bytes):", payloadWithBom.length);
+
+print("\n=== 3. Encoding for Web Transport (Base64URL) ===");
+let transportToken = Encoding.base64UrlEncode(payloadWithBom);
+print("Base64URL Transport Token:", transportToken);
+
+print("\n=== 4. Receiving & Processing Transport Token ===");
+let receivedPayloadBytes = Encoding.base64UrlDecode(transportToken);
+
+print("\n=== 5. Detecting & Removing BOM Header ===");
+let bomAnalysis = Encoding.removeBom(receivedPayloadBytes);
+print("Detected BOM Encoding Format:", bomAnalysis.bom);
+
+print("\n=== 6. Reconstructing Original String ===");
+let restoredDoc = Encoding.utf16BEDecode(bomAnalysis.bytes);
+print("Restored Document:", restoredDoc);
+
+if (restoredDoc == sourceDoc) {
+    print("\nSUCCESS: End-to-End Transcode Pipeline Roundtrip Verified!");
+}

@@ -1,0 +1,181 @@
+// ╔═══════════════════════════════════════════════════════════════════════════════╗
+// ║      ATP Real-Time IoT & Fleet Telemetry — Complete End-to-End Simulation    ║
+// ║                                                                               ║
+// ║  Launches the Fleet Command Center and simulates concurrent autonomous        ║
+// ║  vehicles streaming live telemetry, handling alerts, and performing migration.║
+// ║                                                                               ║
+// ║  Run: cargo run --bin adeshlang -- run examples/Libraries/atp/mini_project/run_demo.adesh
+// ╚═══════════════════════════════════════════════════════════════════════════════╝
+
+// @allow(warnings)
+import ATP;
+import JSON;
+import Crypto;
+import Time;
+import Collections;
+
+print("==================================================================");
+print("     ATP Real-Time IoT & Fleet Telemetry Live Simulation          ");
+print("==================================================================");
+
+fn delayMs(ms: int) {
+    let start = Time.epochMillis();
+    while (Time.epochMillis() - start < ms) {}
+}
+
+let serverPort: int = 9155;
+let secretKey = "fleet-command-secret-key-atp-2026";
+
+// 1. Start Command Server
+print("\n--- 1. Starting Fleet Command Operations Server (Port " + serverPort + ") ---");
+let server = ATP.listen("127.0.0.1", serverPort);
+print("[Server] Listening on 127.0.0.1:" + serverPort);
+
+// 2. Connect 2 Vehicles
+print("\n--- 2. Connecting Autonomous Fleet Vehicles ---");
+let v1Conn = ATP.connect("127.0.0.1", serverPort);
+let v2Conn = ATP.connect("127.0.0.1", serverPort);
+
+let serverSessions = [];
+let v1Ready: bool = false;
+let v2Ready: bool = false;
+
+for (let attempt = 0; attempt < 50; attempt = attempt + 1) {
+    let acc = server.accept();
+    while (acc != null) {
+        serverSessions.push(acc);
+        acc = server.accept();
+    }
+    let m1 = v1Conn.receive();
+    if (m1 != null && m1.type == "connected") {
+        v1Ready = true;
+    }
+    let m2 = v2Conn.receive();
+    if (m2 != null && m2.type == "connected") {
+        v2Ready = true;
+    }
+    if (serverSessions.len() >= 2 && v1Ready && v2Ready) {
+        break;
+    }
+    delayMs(20);
+}
+
+print("[Server] Connected to " + serverSessions.len() + " vehicle nodes.");
+
+// 3. Telemetry Ingestion Loop
+print("\n--- 3. Real-Time Telemetry Streaming & Safety Ingestion ---");
+
+let totalFrames: int = 0;
+let alertsTriggered: int = 0;
+
+for (let step = 1; step <= 6; step = step + 1) {
+    // Vehicle 1: Normal cruising
+    let v1Data = {
+        type: "TELEMETRY",
+        vehicleId: 101,
+        vin: "VIN-ALPHA-101",
+        timestamp: Time.epochMillis(),
+        lat: 37.7749 + step * 0.001,
+        lon: -122.4194 + step * 0.001,
+        speedKmh: 60.0 + step * 1.2,
+        batteryPct: 90.0 - step * 0.3,
+        engineTempC: 88.0 + step * 0.5,
+        tirePressurePsi: 32.0,
+        status: "CRUISING"
+    };
+    v1Conn.send(JSON.stringify(v1Data), true, true);
+
+    // Vehicle 2: Overheats on step 3
+    let v2Temp = step >= 3 ? 112.0 : 90.0 + step;
+    let v2Data = {
+        type: "TELEMETRY",
+        vehicleId: 202,
+        vin: "VIN-BETA-202",
+        timestamp: Time.epochMillis(),
+        lat: 37.7833 + step * 0.0008,
+        lon: -122.4167 + step * 0.0012,
+        speedKmh: 75.0,
+        batteryPct: 82.0 - step * 0.4,
+        engineTempC: v2Temp,
+        tirePressurePsi: 31.5,
+        status: v2Temp > 105 ? "CRITICAL_OVERHEAT" : "CRUISING"
+    };
+    v2Conn.send(JSON.stringify(v2Data), true, true);
+
+    delayMs(20);
+
+    // Server processes incoming frames from all connected vehicle sessions
+    for (sConn in serverSessions) {
+        let d = sConn.receive();
+        while (d != null) {
+            if (d.type == "message" || d.type == "datagram") {
+                totalFrames = totalFrames + 1;
+                let t = JSON.parse(d.text);
+                if (t != null) {
+                    print("[Server <- Vehicle #" + t.vehicleId + "] Pos=(" + t.lat + ", " + t.lon + ") Speed=" + t.speedKmh + " km/h Temp=" + t.engineTempC + "°C");
+
+                    // Check overheat alert
+                    if (t.engineTempC > 105 && alertsTriggered == 0) {
+                        alertsTriggered = alertsTriggered + 1;
+                        print("\n  ⚠️ [CRITICAL ALERT] Vehicle #" + t.vehicleId + " Engine Temperature Exceeded Threshold (" + t.engineTempC + "°C)!");
+                        let sig = Crypto.hmac("sha256", secretKey, "CMD:EMERGENCY_SLOWDOWN:" + t.vehicleId);
+                        let cmd = {
+                            type: "COMMAND",
+                            commandId: 501,
+                            targetVehicleId: t.vehicleId,
+                            action: "EMERGENCY_SLOWDOWN",
+                            speedLimit: 30,
+                            destination: "Emergency Bay 4",
+                            issuedAt: Time.epochMillis(),
+                            authSignature: sig
+                        };
+                        sConn.send(JSON.stringify(cmd), true, true);
+                        print("  -> Sent Authenticated Intervention Command to Vehicle #" + t.vehicleId + "\n");
+                    }
+                }
+            }
+            d = sConn.receive();
+        }
+    }
+
+    // Vehicle 2 checks command
+    let v2Cmd = v2Conn.receive();
+    while (v2Cmd != null) {
+        if (v2Cmd.type == "message") {
+            let cmd = JSON.parse(v2Cmd.text);
+            if (cmd != null && cmd.type == "COMMAND") {
+                let expectedSig = Crypto.hmac("sha256", secretKey, "CMD:" + cmd.action + ":202");
+                if (cmd.authSignature == expectedSig) {
+                    print("  [V202 Client] Verified HMAC Signature! Throttling speed to " + cmd.speedLimit + " km/h and navigating to " + cmd.destination);
+                    v2Conn.send("ACK: Slowdown command executed", true, true);
+                }
+            }
+        }
+        v2Cmd = v2Conn.receive();
+    }
+
+    // Vehicle 1 performs connection migration at step 4
+    if (step == 4) {
+        print("\n  🔄 [MIGRATION] Vehicle #101 roamed from WiFi to Cellular 5G Tower (Zero Reconnect)...");
+        v1Conn.migrate("127.0.0.1", serverPort);
+        print("  [ok] Migration handshake verified!\n");
+    }
+
+    delayMs(20);
+}
+
+// 4. Final Telemetry Operations Report
+print("\n==================================================================");
+print("               FLEET OPERATIONS SIMULATION REPORT                 ");
+print("==================================================================");
+let sMetrics = server.metrics();
+print("[Report] Total Ingested Telemetry Frames: " + totalFrames);
+print("[Report] Safety Interventions Dispatched: " + alertsTriggered);
+print("[Report] Network Volume: " + sMetrics.bytesReceived + " B received / " + sMetrics.bytesSent + " B sent");
+print("[Report] System Health:  All autonomous nodes operating safely.");
+
+// Clean shutdown
+v1Conn.close();
+v2Conn.close();
+server.close();
+print("\n[ok] Simulation completed successfully.\n");

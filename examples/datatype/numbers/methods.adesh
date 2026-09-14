@@ -1,0 +1,5 @@
+let value: f64 = -12.75;
+print(value.abs(), value.floor(), value.ceil(), value.round());
+print(value.fract(), value.sqrt(), 4.pow(2));
+print(12.isEven(), 13.isOdd(), 12.5.isInteger());
+print(15.clamp(0, 10), 3.14159.toFixed(2));

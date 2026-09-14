@@ -1,0 +1,256 @@
+// Basic Functions Example
+// Demonstrates fundamental function concepts in AdeshLang
+
+print("╔══════════════════════════════════════════╗");
+print("║  AdeshLang - Basic Functions Example     ║");
+print("╚══════════════════════════════════════════╝");
+print("");
+
+// ============================================================================
+// 1. SIMPLE FUNCTIONS
+// ============================================================================
+
+fn add(a: i64, b: i64): i64 {
+    return a + b;
+}
+
+fn subtract(a: i64, b: i64): i64 {
+    return a - b;
+}
+
+fn multiply(a: i64, b: i64): i64 {
+    return a * b;
+}
+
+fn divide(a: i64, b: i64): i64 {
+    if b == 0 {
+        print("Error: Division by zero!");
+        return 0;
+    }
+    return a / b;
+}
+
+print("=== Simple Functions ===");
+print("10 + 5 = ");
+print(add(10, 5));
+
+print("10 - 5 = ");
+print(subtract(10, 5));
+
+print("10 * 5 = ");
+print(multiply(10, 5));
+
+print("10 / 5 = ");
+print(divide(10, 5));
+print("");
+
+// ============================================================================
+// 2. FUNCTIONS WITH MULTIPLE RETURN TYPES
+// ============================================================================
+
+fn absolute(x: i64): i64 {
+    if x < 0 {
+        return -x;
+    }
+    return x;
+}
+
+fn max(a: i64, b: i64): i64 {
+    if a > b {
+        return a;
+    }
+    return b;
+}
+
+fn min(a: i64, b: i64): i64 {
+    if a < b {
+        return a;
+    }
+    return b;
+}
+
+print("=== Math Functions ===");
+print("absolute(-42) = ");
+print(absolute(-42));
+
+print("max(10, 20) = ");
+print(max(10, 20));
+
+print("min(10, 20) = ");
+print(min(10, 20));
+print("");
+
+// ============================================================================
+// 3. RECURSIVE FUNCTIONS
+// ============================================================================
+
+fn factorial(n: i64): i64 {
+    if n <= 1 {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+fn fibonacci(n: i64): i64 {
+    if n <= 1 {
+        return n;
+    }
+    return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+print("=== Recursive Functions ===");
+print("factorial(5) = ");
+print(factorial(5));  // 120
+
+print("factorial(10) = ");
+print(factorial(10));  // 3628800
+
+print("fibonacci(10) = ");
+print(fibonacci(10));  // 55
+
+print("fibonacci(15) = ");
+print(fibonacci(15));  // 610
+print("");
+
+// ============================================================================
+// 4. FUNCTIONS WITH NUMERIC LITERALS
+// ============================================================================
+
+fn hex_to_decimal(hex: i64): i64 {
+    // Demonstrate that hex literals work in functions
+    return hex;
+}
+
+fn binary_operations(a: i64, b: i64): i64 {
+    // Using binary and hex literals
+    let mask = 0xFF;  // Hex literal
+    let flag = 0b1010;  // Binary literal
+    return (a & mask) + (b & flag);
+}
+
+print("=== Functions with Numeric Literals ===");
+print("Hex 0xFF in decimal: ");
+print(hex_to_decimal(0xFF));  // 255
+
+print("Hex 0xDEAD in decimal: ");
+print(hex_to_decimal(0xDEAD));  // 57005
+
+print("Binary 0b1010 in decimal: ");
+print(hex_to_decimal(0b1010));  // 10
+print("");
+
+// ============================================================================
+// 5. HELPER FUNCTIONS
+// ============================================================================
+
+fn is_even(n: i64): bool {
+    return n % 2 == 0;
+}
+
+fn is_positive(n: i64): bool {
+    return n > 0;
+}
+
+fn sign(n: i64): i64 {
+    if n > 0 {
+        return 1;
+    }
+    if n < 0 {
+        return -1;
+    }
+    return 0;
+}
+
+print("=== Helper Functions ===");
+print("is_even(10) = ");
+print(is_even(10));  // true
+
+print("is_even(11) = ");
+print(is_even(11));  // false
+
+print("is_positive(42) = ");
+print(is_positive(42));  // true
+
+print("is_positive(-42) = ");
+print(is_positive(-42));  // false
+
+print("sign(42) = ");
+print(sign(42));  // 1
+
+print("sign(-42) = ");
+print(sign(-42));  // -1
+
+print("sign(0) = ");
+print(sign(0));  // 0
+print("");
+
+// ============================================================================
+// 6. FUNCTION COMPOSITION
+// ============================================================================
+
+fn double(x: i64): i64 {
+    return x * 2;
+}
+
+fn triple(x: i64): i64 {
+    return x * 3;
+}
+
+fn add_ten(x: i64): i64 {
+    return x + 10;
+}
+
+// Compose functions manually
+fn process_value(x: i64): i64 {
+    let step1 = double(x);      // Multiply by 2
+    let step2 = add_ten(step1);  // Add 10
+    let step3 = triple(step2);   // Multiply by 3
+    return step3;
+}
+
+print("=== Function Composition ===");
+print("process_value(5) = ");
+print(process_value(5));  // (5 * 2 + 10) * 3 = 60
+print("");
+
+// ============================================================================
+// 7. FUNCTIONS WITH TYPED PARAMETERS
+// ============================================================================
+
+fn typed_addition(a: u8, b: u8): u16 {
+    // Convert to u16 to avoid overflow
+    let result = (a as u16) + (b as u16);
+    return result;
+}
+
+fn safe_multiply(a: i32, b: i32): i64 {
+    // Convert to i64 to avoid overflow
+    let result = (a as i64) * (b as i64);
+    return result;
+}
+
+print("=== Typed Functions ===");
+let byte1 = 200u8;
+let byte2 = 100u8;
+print("typed_addition(200u8, 100u8) = ");
+print(typed_addition(byte1, byte2));  // 300
+
+let int1 = 1000000i32;
+let int2 = 1000000i32;
+print("safe_multiply(1000000i32, 1000000i32) = ");
+print(safe_multiply(int1, int2));  // 1000000000000
+print("");
+
+print("╔══════════════════════════════════════════╗");
+print("║  All function examples completed!        ║");
+print("╚══════════════════════════════════════════╝");
+
+// ============================================================================
+// USAGE:
+// 
+// Run with different backends to see consistent behavior:
+//
+// Interpreter:  adesh run examples/functions/01_basic_functions.adesh
+// JIT:          adesh run --jit examples/functions/01_basic_functions.adesh
+// Native JIT:   adesh run --njit examples/functions/01_basic_functions.adesh
+// ============================================================================

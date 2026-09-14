@@ -1,0 +1,7 @@
+// World-First: Interactive Key Chord & Hotkey Listener
+// Captures raw key combinations and modifiers (Ctrl, Alt, Shift)
+
+// input.mock(["Ctrl+S"]);
+
+let captured = input.hotkey("Press Hotkey to Bind to Save Action:");
+println(`Captured Key: ${captured.key}, Chord Combination: ${captured.chord}`);

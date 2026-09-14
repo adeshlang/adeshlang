@@ -1,0 +1,38 @@
+// Matrix Multiplication on GPU
+// Run: adeshlang run examples/gpu/matmul_gpu.adesh --device=cuda
+// Or:  adeshlang run examples/gpu/matmul_gpu.adesh --device=metal
+//
+// NOTE: This example demonstrates planned GPU API functionality.
+// GPU support is currently under development.
+
+// Placeholder stubs for GPU functions
+fn sync_device(device_name) { return null; }
+fn clock() { return 0; }
+fn get_default_device() { return "cpu"; }
+
+fn main() {
+    print("╔════════════════════════════════════════════════════╗");
+    print("║  GPU MATRIX MULTIPLICATION BENCHMARK               ║");
+    print("╚════════════════════════════════════════════════════╝");
+    print("");
+    
+    print("NOTE: GPU support is currently under development.");
+    print("This example demonstrates the planned API.");
+    print("");
+    
+    let device = get_default_device();
+    print("Using device: " + device);
+    print("");
+    
+    print("Planned API example:");
+    print("  let a = Tensor.randn([1024, 1024], dtype='f32', device='cuda');");
+    print("  let b = Tensor.randn([1024, 1024], dtype='f32', device='cuda');");
+    print("  let c = a.matmul(b);");
+    print("");
+    
+    print("Expected speedup with GPU: 10-50x for large matrices");
+    print("");
+    print("GPU matmul benchmark (placeholder) complete!");
+}
+
+main();

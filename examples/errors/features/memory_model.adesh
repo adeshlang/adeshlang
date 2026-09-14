@@ -1,0 +1,130 @@
+// =============================================================================
+// AdeshLang v0.2.0 - Memory Model Features Demo
+// =============================================================================
+// This example demonstrates the new memory model features in AdeshLang v0.2.0:
+// - Small String Optimization (SSO) for strings under 22 bytes
+// - Small Array Optimization (SAO) for arrays under 8 elements
+// - Reference tracking and ownership concepts
+// =============================================================================
+
+print("=== AdeshLang v0.2.0 Memory Model Demo ===\n");
+
+// -----------------------------------------------------------------------------
+// 1. Small String Optimization (SSO)
+// -----------------------------------------------------------------------------
+// Strings under 22 bytes are stored inline without heap allocation,
+// providing faster access and reduced memory overhead.
+
+print("--- Small String Optimization (SSO) ---");
+
+// These strings benefit from SSO (under 22 bytes)
+let shortStr1 = "Hello";           // 5 bytes - inline
+let shortStr2 = "AdeshLang";        // 8 bytes - inline
+let shortStr3 = "Hello, World!";   // 13 bytes - inline
+
+// String concatenation that stays within SSO limit
+let combined = shortStr1 + "!";    // 6 bytes - still inline
+print("Short strings optimized:");
+print("  '" + shortStr1 + "' length: " + sizeof(shortStr1));
+print("  '" + shortStr2 + "' length: " + sizeof(shortStr2));
+print("  '" + shortStr3 + "' length: " + sizeof(shortStr3));
+
+// This string exceeds SSO limit (22+ bytes) - uses heap allocation
+let longStr = "This is a longer string that exceeds SSO";
+print("  Long string length: " + sizeof(longStr));
+print("");
+
+// -----------------------------------------------------------------------------
+// 2. Small Array Optimization (SAO)
+// -----------------------------------------------------------------------------
+// Arrays with fewer than 8 elements are stored inline for better performance.
+
+print("--- Small Array Optimization (SAO) ---");
+
+// These arrays benefit from SAO (under 8 elements)
+let smallArray1 = [1, 2, 3];                    // 3 elements - inline
+let smallArray2 = [1, 2, 3, 4, 5, 6, 7];        // 7 elements - inline
+
+// Array that exceeds SAO limit (8+ elements)
+let largeArray = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+print("Small arrays optimized:");
+print("  Array of 3 elements: " + len(smallArray1) + " elements");
+print("  Array of 7 elements: " + len(smallArray2) + " elements");
+print("  Array of 10 elements: " + len(largeArray) + " elements (heap-allocated)");
+print("");
+
+// -----------------------------------------------------------------------------
+// 3. Reference Semantics Demo
+// -----------------------------------------------------------------------------
+// AdeshLang uses reference counting for complex types
+
+print("--- Reference Semantics ---");
+
+// Objects are reference types
+let obj1 = {name: "Alice", age: 30};
+let obj2 = obj1;  // obj2 references the same object
+
+obj2.age = 31;
+print("After modifying obj2.age:");
+print("  obj1.age = " + obj1.age);  // Also 31 (same reference)
+print("  obj2.age = " + obj2.age);  // 31
+
+// To create a copy, use spread or manual copying
+let obj3 = {name: obj1.name, age: 25};  // New object
+print("After creating obj3 as copy:");
+print("  obj1.age = " + obj1.age);  // Still 31
+print("  obj3.age = " + obj3.age);  // 25
+print("");
+
+// -----------------------------------------------------------------------------
+// 4. Efficient String Operations
+// -----------------------------------------------------------------------------
+
+print("--- Efficient String Operations ---");
+
+// String building with SSO awareness
+fn buildGreeting(name) {
+    // Short strings benefit from SSO
+    return "Hi, " + name + "!";
+}
+
+let greeting1 = buildGreeting("Bob");    // ~8 bytes - inline
+let greeting2 = buildGreeting("Alice");  // ~10 bytes - inline
+
+print("Greetings:");
+print("  " + greeting1);
+print("  " + greeting2);
+print("");
+
+// -----------------------------------------------------------------------------
+// 5. Memory-Efficient Collections
+// -----------------------------------------------------------------------------
+
+print("--- Memory-Efficient Collections ---");
+
+// Stack of small arrays - all benefit from SAO
+let stack = [];
+for (i in range(1, 4)) {
+    let batch = [i * 10, i * 10 + 1, i * 10 + 2];
+    stack.push(batch);
+}
+
+print("Stack of arrays:");
+for (item in stack) {
+    print("  " + str(item));
+}
+print("");
+
+// -----------------------------------------------------------------------------
+// Summary
+// -----------------------------------------------------------------------------
+
+print("=== Memory Model Features Summary ===");
+print("1. SSO: Strings under 22 bytes stored inline");
+print("2. SAO: Arrays under 8 elements stored inline");
+print("3. Reference counting for complex types");
+print("4. Automatic memory management");
+print("5. No manual memory allocation needed");
+print("");
+print("=== Demo Complete ===");

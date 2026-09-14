@@ -1,0 +1,22 @@
+// Debug test
+class Test {
+    Test() {
+        this.val = 10;
+    }
+    
+    private fn priv() {
+        print("In private method");
+        return 42;
+    }
+    
+    public fn pub() {
+        print("Calling private from public:");
+        let result = this.priv();
+        print("Got result:", result);
+        return result;
+    }
+}
+
+let t = new Test();
+print("Calling public method:");
+t.pub();

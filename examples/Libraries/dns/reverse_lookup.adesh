@@ -1,0 +1,8 @@
+import DNS;
+
+print("=== Reverse DNS Lookup ===");
+let host_v4 = DNS.reverseLookup("8.8.8.8");
+print("8.8.8.8 reverse lookup host:", host_v4);
+
+let host_v4_quad9 = DNS.reverseLookup("9.9.9.9");
+print("9.9.9.9 reverse lookup host:", host_v4_quad9);

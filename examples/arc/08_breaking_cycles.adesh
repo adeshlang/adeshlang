@@ -1,0 +1,85 @@
+// examples/arc/08_breaking_cycles.adesh
+// Circular / cyclic reference patterns and how `weak` breaks them.
+//
+// Problem: if two objects hold strong refs to each other, their counts
+// never reach zero and the memory leaks.
+//
+// Solution: one side of the cycle uses a `weak` reference instead.
+// That side does NOT contribute to the refcount, so when external
+// owners drop, the counts can reach zero naturally.
+
+print("=== Breaking Reference Cycles ===\n");
+
+// ── Pattern 1: Parent → Child  (strong),  Child → Parent  (weak) ─────────
+// This is the canonical tree / ownership hierarchy pattern.
+print("--- Pattern 1: tree node with weak back-pointer ---\n");
+
+share parent = { name: "parent", childCount: 1 };
+share child  = { name: "child",  value: 10    };
+
+// parent "owns" child strongly
+strong parentOwnsChild = child;
+
+// child back-references parent *weakly* to avoid a cycle
+weak childRefParent = parent;
+
+print("parent strong_count:", parent.strong_count()); // 1 (parent var only)
+print("child  strong_count:", child.strong_count());  // 2 (child + parentOwnsChild)
+print("parent weak_count  :", parent.weak_count());   // 1
+
+// child can safely navigate to parent
+let p = childRefParent.upgrade();
+if (p != null) {
+    print("child sees parent.name:", p.name);
+}
+
+// ── Pattern 2: Observer list  ─────────────────────────────────────────────
+// Multiple observers hold weak refs; the subject holds none of them strongly.
+print("\n--- Pattern 2: subject with weak observers ---\n");
+
+share subject = { topic: "events", count: 0 };
+weak obs1 = subject;
+weak obs2 = subject;
+weak obs3 = subject;
+
+print("subject strong_count:", subject.strong_count()); // 1
+print("subject weak_count  :", subject.weak_count());   // 3
+
+// Each observer checks liveness before using the subject
+fn notify(observer, idx) {
+    let live = observer.upgrade();
+    if (live != null) {
+        print("observer", idx, "got topic:", live.topic);
+    } else {
+        print("observer", idx, "subject is gone");
+    }
+}
+
+notify(obs1, 1);
+notify(obs2, 2);
+notify(obs3, 3);
+
+// ── Pattern 3: Doubly-linked-list node (conceptual) ───────────────────────
+// Each node owns `next` strongly and holds `prev` weakly.
+print("\n--- Pattern 3: doubly-linked list node layout ---\n");
+
+share nodeA = { value: 100 };
+share nodeB = { value: 200 };
+
+// A → B (strong)
+strong a_next = nodeB;
+
+// B → A (weak) — breaks the cycle
+weak b_prev = nodeA;
+
+print("nodeA strong:", nodeA.strong_count()); // 1
+print("nodeB strong:", nodeB.strong_count()); // 2 (nodeB + a_next)
+print("nodeA weak  :", nodeA.weak_count());   // 1
+
+// B can navigate back to A
+let prev = b_prev.upgrade();
+if (prev != null) {
+    print("nodeB.prev.value:", prev.value);   // 100
+}
+
+print("\nCycle-breaking patterns demonstrated – no memory leaks.");

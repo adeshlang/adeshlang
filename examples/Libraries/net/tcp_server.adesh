@@ -1,0 +1,26 @@
+// AdeshLang TCP Echo Server Example
+import Net;
+
+fn start_server() {
+    print("Starting TCP Server on 127.0.0.1:9090...");
+    let server = Net.tcpListen("127.0.0.1", 9090);
+    print("Server listening on:", server.localAddress());
+
+    // Accept incoming connection
+    let client_info = server.accept();
+    let stream = client_info.stream;
+    print("Accepted client connection from:", client_info.remoteAddress);
+
+    // Echo back received data
+    let data = stream.read(1024);
+    print("Received data from client");
+
+    stream.writeAll(data);
+    print("Echoed data back to client");
+
+    stream.close();
+    server.close();
+    print("TCP Server closed");
+}
+
+start_server();

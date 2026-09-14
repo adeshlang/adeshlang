@@ -1,0 +1,43 @@
+import Env;
+
+// Comprehensive system metadata via Env.systemInfo()
+let info = Env.systemInfo();
+
+print("=== System Information ===");
+print("OS:            " + info.os);
+print("OS Type:       " + info.osType);
+print("OS Version:    " + info.osVersion);
+print("OS Family:     " + info.osFamily);
+print("OS Release:    " + info.osRelease);
+print("Description:   " + info.osDescription);
+print("Architecture:  " + info.arch);
+print("Platform:      " + info.platform);
+print("Hostname:      " + info.hostname);
+print("Username:      " + info.username);
+print("User ID:       " + str(info.userId));
+print("User GID:      " + str(info.userGid));
+print("Process ID:    " + str(info.pid));
+print("Parent PID:    " + str(info.ppid));
+print("Shell:         " + info.shell);
+print("CPU Count:     " + str(info.cpuCount));
+print("Page Size:     " + str(info.pagesize));
+print("Endianness:    " + info.endianness);
+print("Machine ID:    " + info.machineId);
+print("Process Uptime: " + str(info.processUptime) + "s");
+print("System Uptime: " + str(info.systemUptime) + "s");
+print("Load Average:  " + str(info.loadavg));
+print("Process Title: " + info.processTitle);
+print("Home:          " + info.userHome);
+print("Cache Dir:     " + info.userCache);
+print("Config Dir:    " + info.userConfig);
+print("Temp Dir:      " + info.tempDir);
+print("Current Dir:   " + info.currentDir);
+print("Executable:    " + info.currentExe);
+
+print("");
+print("=== Memory Usage ===");
+let mem = Env.memoryUsage();
+print("Total:  " + str(mem.total) + " bytes");
+print("Free:   " + str(mem.free) + " bytes");
+print("Used:   " + str(mem.used) + " bytes");
+print("Used %: " + str(mem.percent));

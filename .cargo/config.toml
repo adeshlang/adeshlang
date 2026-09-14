@@ -1,0 +1,5 @@
+[alias]
+# Fast shortcut to compile Android .so libraries for Flutter (arm64-v8a & x86_64)
+mobile = "ndk -t arm64-v8a -t x86_64 -o ./mobile/flutter/android/app/src/main/jniLibs --manifest-path ./mobile/bridge/Cargo.toml build --release"
+build-mobile = "ndk -t arm64-v8a -t x86_64 -o ./mobile/flutter/android/app/src/main/jniLibs --manifest-path ./mobile/bridge/Cargo.toml build --release"
+build-bridge = "ndk -t arm64-v8a -t x86_64 -o ./mobile/flutter/android/app/src/main/jniLibs --manifest-path ./mobile/bridge/Cargo.toml build --release"

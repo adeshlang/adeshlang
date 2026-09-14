@@ -1,0 +1,23 @@
+// AdeshLang Net Example 07: Network Interface Discovery & Property Enumeration
+import Net;
+
+fn main() {
+    print("=== 07. Network Interfaces Discovery ===");
+
+    let interfaces = Net.interfaces();
+    print("Discovered Network Interfaces:", interfaces.len());
+
+    for iface in interfaces {
+        print("----------------------------------------");
+        print("Interface Name:   ", iface.name);
+        print("Index:            ", iface.index);
+        print("Up?               ", iface.isUp);
+        print("Loopback?         ", iface.isLoopback);
+        print("Multicast?        ", iface.isMulticast);
+        print("Assigned Addresses:", iface.addresses);
+    }
+
+    print("=== 07. Interface Discovery Completed ===");
+}
+
+main();

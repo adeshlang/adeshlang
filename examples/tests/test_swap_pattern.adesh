@@ -1,0 +1,21 @@
+// Test the exact pattern that fails
+
+fn test() {
+    let a = 0;
+    let b = 1;
+    print("Step 1: a =", a, ", b =", b);
+    
+    let temp = a + b;
+    print("Step 2: temp = a + b =", temp);
+    
+    a = b;
+    print("Step 3: After 'a = b', a =", a, "b =", b);
+    
+    b = temp;
+    print("Step 4: After 'b = temp', b =", b, "temp =", temp);
+    
+    return b;
+}
+
+let result = test();
+print("Result:", result, "(expected 1)");

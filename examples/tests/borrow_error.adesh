@@ -1,0 +1,9 @@
+// This example shows the runtime error when trying to use a value after it's moved.
+
+let data = "important";
+let moved_data = data;   // data is moved into moved_data
+
+print(moved_data);       // ✓ OK: using the new owner
+
+// ❌ ERROR: trying to use `data` after it was moved
+print(data);             // This triggers "use of moved value 'data'" error

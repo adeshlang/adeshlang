@@ -1,0 +1,15 @@
+import URL;
+
+let url: URL = URL.parse("https://admin:supersecret@cluster.example.org:9443/internal/dashboard?ref=mail#settings");
+
+let username: Option<String> = url.username;
+let password: Option<String> = url.password;
+let authority: String = url.authority;
+let origin: String = url.origin;
+let isSecure: Bool = url.isSecure();
+
+print("--- 02 URL Components Example ---");
+print("Username:", username);
+print("Authority:", authority);
+print("Origin:", origin);
+print("Is Secure:", isSecure);

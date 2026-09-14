@@ -1,0 +1,96 @@
+// Dynamic array with fixed capacity: [i32;6] means capacity of 6, allows mutations. within capacity
+// NOTE: Using union with Any so that `a = a.append(...)` type-checks correctly
+// on older release builds where `append` was inferred as `Any`. The type-system
+// fix in `src/typesystem/type_system/expression_inference.rs` now infers
+// `append`/`pop`/`set_index` as `[i32]` properly, so this workaround will
+// also pass on rebuilt binaries.
+let a: [i32;6] | null = [1,2,3,4];
+print("Start a:", a);
+print("metadata size", a.metadata_size());
+print("Capacity", a.capacity);
+print("len(a): ", a.length);
+print("first(a): ", first(a));
+print("last(a): ", last(a));
+
+// Try appending to dynamic array with fixed capacity (should work until capacity)
+try {
+  print("\nTrying to append to dynamic array...");
+  a = a.append(30);
+  print("After append:", a);
+  print("len(a): ", a.length);
+} catch(e) {
+  print("Caught error on append:", e);
+}
+
+// Try appending beyond capacity (should throw)
+try {
+  print("\nTrying to append beyond capacity...");
+  let b = a.append(40);
+  b = b.append(50);
+  print("After two more appends:", b);
+} catch(e) {
+  print("Caught error on append beyond capacity:", e);
+}
+
+// Try set_index (should work and return new array)
+try {
+  print("\nTrying set_index(1, 20)...");
+  let a2 = a.set_index(1, 20);
+  print("set_index returned:", a2);
+  print("Original a:", a);
+  print("a2[1] =", a2[1]);
+} catch(e) {
+  print("Error in set_index:", e);
+}
+
+// Try pop (should work)
+try {
+  print("\nTrying pop()...");
+  let a_popped = a.pop();
+  print("After pop, array:", a_popped);
+} catch(e) {
+  print("Caught error on pop:", e);
+}
+
+// Test with raw array [i32;3;raw] - fixed size, rejects all size-changing operations
+let raw_arr:[i32;4;raw] = [10, 20, 30, 40];
+print("\n--- Testing Raw Array ---");
+print("Raw array:", raw_arr);
+
+try {
+  print("Trying to append to raw array...");
+  raw_arr.append(50);
+  print("This should not happen");
+} catch(e) {
+  print("Caught error on raw array append:", e);
+}
+
+try {
+  print("Trying to pop from raw array...");
+  raw_arr.pop();
+  print("This should not happen");
+} catch(e) {
+  print("Caught error on raw array pop:", e);
+}
+
+// Direct index access on dynamic array (should work within bounds)
+try {
+  print("\nTrying direct index access on dynamic array...");
+  a[3] = 99;
+  print("After a[3] = 99:", a);
+} catch(e) {
+  print("Error in direct index access:", e);
+}
+
+// Try out of bounds access (should throw)
+try {
+  print("\nTrying out of bounds access...");
+  a[10] = 100;  // Out of bounds
+  print("This should not be reached");
+} catch(e) {
+  print("Caught out of bounds error:", e);
+}
+
+print("\nFinal dynamic array:", a);
+print("Final raw array:", raw_arr);
+print("Done advanced array ops");

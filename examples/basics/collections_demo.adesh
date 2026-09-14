@@ -1,0 +1,42 @@
+import Collections;
+
+print("--- VecDeque Example ---");
+let deque = Collections.VecDeque();
+deque.pushBack("World");
+deque.pushFront("Hello");
+print("Front: ", deque.popFront());
+print("Back: ", deque.popBack());
+
+print("--- HashSet Example ---");
+let set = Collections.HashSet();
+set.insert("Adesh");
+print("Has Adesh: ", set.contains("Adesh"));
+
+print("--- BTreeMap Example ---");
+let map = Collections.BTreeMap();
+map.insert("key", "value");
+print("Value: ", map.get("key"));
+
+print("--- BinaryHeap Example ---");
+let heap = Collections.BinaryHeap();
+heap.push(10);
+heap.push(5);
+print("Max: ", heap.pop());
+
+print("--- PriorityQueue Example ---");
+let pq = Collections.PriorityQueue();
+pq.push("low", 1);
+pq.push("high", 100);
+print("Priority Max: ", pq.pop());
+
+print("--- BitSet Example ---");
+let bs = Collections.BitSet();
+bs.set(10);
+print("Bit 10: ", bs.test(10));
+
+print("--- RingBuffer Example ---");
+let ring = Collections.RingBuffer(3);
+ring.push(1);
+ring.push(2);
+ring.push(3);
+print("Pop: ", ring.pop());

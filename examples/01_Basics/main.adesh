@@ -1,0 +1,25 @@
+// Pyramid Pattern
+
+fn pyramid(n: i32,s:string,color:string) : i32 {
+    let i = 0;
+    while(i < n){
+        let j = 0;
+        while(j < n - i){
+            print(" ",{end:" "});
+            j = j + 1;
+        }
+        let k = 0;
+        while(k < 2 * i + 1){
+            print(s,{end:" ",color:color});
+            k = k + 1;
+        }
+        print("\n");
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn main(){
+
+    pyramid(10,"#","#FF00FF");    
+}

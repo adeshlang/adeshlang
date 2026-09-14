@@ -1,0 +1,11 @@
+import Random;
+
+print("--- Boolean & Bernoulli Demo ---");
+let coinFlip = Random.bool();
+print("Fair coin flip (50/50): " + coinFlip);
+
+let bernoulliHigh = Random.bernoulli(0.8);
+print("Bernoulli test with 80% probability: " + bernoulliHigh);
+
+let bernoulliLow = Random.bernoulli(0.1);
+print("Bernoulli test with 10% probability: " + bernoulliLow);

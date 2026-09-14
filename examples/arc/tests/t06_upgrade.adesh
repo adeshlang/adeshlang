@@ -1,0 +1,71 @@
+// examples/arc/tests/t06_upgrade.adesh
+// T06 – upgrade(): converts weak → strong; returns null when object gone
+
+
+export fn run() {
+    let PASS = 0;
+    let FAIL = 0;
+
+    fn check(cond, msg) {
+        if (cond) {
+            print("  ✓ PASS:", msg);
+            PASS = PASS + 1;
+        } else {
+            print("  ✗ FAIL:", msg);
+            FAIL = FAIL + 1;
+        }
+    }
+
+print("=== T06: upgrade() ===\n");
+
+// ── Successful upgrade ────────────────────────────────────────────────────
+share sensor = { kind: "temp", reading: 23 };
+weak w = sensor;
+
+{
+    let got = w.upgrade();
+    check(got != null, "upgrade() returns non-null while owner alive");
+    if (got != null) {
+        check(got.kind    == "temp", "upgraded value.kind is correct");
+        check(got.reading == 23,     "upgraded value.reading is correct");
+    }
+}
+
+// ── upgrade() temporarily bumps strong_count ─────────────────────────────
+{
+    let tmp = w.upgrade();
+    if (tmp != null) {
+        // sensor (1) + tmp (1) = 2
+        check(sensor.strong_count() == 2,
+              "strong_count is 2 while upgrade result is held");
+    }
+}
+check(sensor.strong_count() == 1,
+      "strong_count back to 1 after upgrade result released");
+
+// ── Repeated upgrade() calls each produce independent strong refs ─────────
+{
+    let u1 = w.upgrade();
+    let u2 = w.upgrade();
+    let u3 = w.upgrade();
+    // sensor(1) + u1(1) + u2(1) + u3(1) = 4
+    if (u1 != null && u2 != null && u3 != null) {
+        check(sensor.strong_count() == 4,
+              "three simultaneous upgrades give count 4");
+    }
+}
+check(sensor.strong_count() == 1,
+      "count back to 1 after all upgrades released");
+
+// ── upgrade() on a dead ref (simulated via is_alive guard) ───────────────
+// We can't truly kill the ref in this scope, but we verify the guard:
+check(w.is_alive() == true, "is_alive true before null-check");
+let guard = w.upgrade();
+check(guard != null, "upgrade on live object is non-null");
+
+print("\nPASS:", PASS, " FAIL:", FAIL);
+
+    return { pass: PASS, fail: FAIL };
+}
+
+run();

@@ -1,0 +1,12 @@
+let t = (10, 20, 30);
+print("tuple t:", t);
+print("len(t): ", t.length);
+print("first(t): ", first(t));
+print("last(t): ", last(t));
+
+print("t[1] = ", t[1]);
+
+let (x, y, z) = t;
+print("destructured:", x, y, z);
+
+print("Done tuple examples");

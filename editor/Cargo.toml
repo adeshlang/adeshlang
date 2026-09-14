@@ -1,0 +1,27 @@
+[package]
+name = "adesh-editor"
+version = "0.1.0"
+edition = "2024"
+description = "Cross-Platform TUI Code Editor for AdeshLang"
+authors = ["Adesh Team"]
+
+[[bin]]
+name = "adesh-editor"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.30"
+crossterm = "0.27"
+tokio = { version = "1.38", features = ["rt-multi-thread", "macros", "io-util", "process", "sync", "time"] }
+lsp-types = "0.95"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+dirs = "5.0"
+regex = "1.9"
+unicode-width = "0.2"
+crossbeam-channel = "0.5"
+once_cell = "1.19"
+
+[dev-dependencies]
+tempfile = "3"

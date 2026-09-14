@@ -1,0 +1,10 @@
+// Simple test file
+print("Hello World");
+let x = (-1000, 20, 30); //48
+print("First element:", x[0]);
+print("Second element:", x[1]);
+print("Third element:", x[2]);
+print("Size of first element:", sizeof(x[0]));
+print("Type of first element:", typeof(x[0]));
+print("Size of tuple:", sizeof(x));
+print("Type of tuple:", typeof(x));

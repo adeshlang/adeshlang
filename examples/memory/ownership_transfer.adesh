@@ -1,0 +1,79 @@
+// Example: Ownership patterns and transfer semantics
+// .
+struct DataHolder {
+    data: ptr<i32>,
+}
+
+fn owns_data(p: ptr<i32>) {
+    // This function takes ownership
+    println("Taking ownership of data...");
+    *p = 999;
+    free(p);
+    // p is freed here - caller cannot use it anymore
+}
+
+fn borrows_data(r: ref<i32>) {
+    // This function borrows for reading only
+    println("Reading borrowed data:", *r);
+    // Reference ends here, caller still owns p
+}
+
+fn mutates_data(mr: mutref<i32>) {
+    // This function borrows for mutation
+    *mr = 555;
+    // Mutable reference ends here
+}
+
+fn main() {
+    println("=== Ownership and Transfer Examples ===");
+    
+    // Pattern 1: Full ownership transfer
+    println("\n1. Ownership transfer to function:");
+    let p1 = alloc<i32>();
+    *p1 = 100;
+    owns_data(p1);
+    // p1 is now invalid - ownership transferred
+    // Cannot use p1 after this point
+    
+    // Pattern 2: Borrowing for reading
+    println("\n2. Borrowing for reading:");
+    let p2 = alloc<i32>();
+    *p2 = 200;
+    borrows_data(p2);
+    println("Still own p2, can use it:", *p2);
+    
+    // Pattern 3: Borrowing for mutation
+    println("\n3. Borrowing for mutation:");
+    mutates_data(p2);
+    println("After mutation:", *p2);
+    
+    free(p2);
+    
+    // Pattern 4: Sequential borrows (same pointer)
+    println("\n4. Sequential borrows:");
+    let p3 = alloc<i32>();
+    *p3 = 300;
+    
+    {
+        borrows_data(p3);
+    }  // First borrow ends
+    
+    {
+        mutates_data(p3);
+    }  // Second borrow ends
+    
+    println("Final value:", *p3);
+    free(p3);
+    
+    // Pattern 5: Explicit transfer for special cases
+    println("\n5. Explicit transfer (for globals/closures):");
+    let p4 = alloc<i32>();
+    *p4 = 400;
+    
+    // Error without transfer: global.store(p4);
+    // Correct with transfer:
+    global.sensitive_data = transfer p4;
+    // p4 is now invalid - ownership transferred to global
+    
+    println("\n=== Ownership examples completed ===");
+}

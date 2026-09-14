@@ -1,0 +1,49 @@
+// Test array metadata and bound methods
+// Run with: adesh run --memory examples/arrays/test_array_metadata.adesh
+
+// Create arrays of different types
+let numbers = [1, 2, 3, 4, 5];
+let small_numbers: [u8] = [10, 20, 30, 40, 50];
+let strings = ["hello", "world", "test"];
+
+// Test array bound methods
+print("=== Array Bound Methods ===");
+print("numbers:", numbers);
+print("len(numbers):", numbers.length);
+print("capacity(numbers):", numbers.capacity);
+print("first(numbers):", first(numbers));
+print("last(numbers):", last(numbers));
+
+// Test insert and remove
+let arr = [1, 2, 3];
+print("\nOriginal array:", arr);
+let with_insert = insert(arr, 1, 99);
+print("After insert(arr, 1, 99):", with_insert);
+
+// remove returns (removed_element, new_array) tuple
+let result = remove(with_insert, 1);
+print("remove(with_insert, 1) result:", result);
+
+// Test reverse
+print("\nReverse operations:");
+print("reverse([1, 2, 3, 4, 5]):", reverse([1, 2, 3, 4, 5]));
+print("reverse('hello'):", reverse("hello"));
+
+// Test push and pop
+print("\nPush and pop:");
+let stack = [10, 20];
+let pushed = push(stack, 30);
+print("push([10, 20], 30):", pushed);
+print("pop(pushed):", pop(pushed));
+
+// Type checking
+print("\n=== Type Information ===");
+print("type(numbers):", type(numbers));
+print("type(strings):", type(strings));
+
+// Metadata size (will show when --memory flag is used)
+print("\n=== Metadata Sizes ===");
+print("metadata_size(numbers):", numbers.metadata_size());
+print("metadata_size(strings):", strings.metadata_size());
+
+print("\n=== Test Complete ===");

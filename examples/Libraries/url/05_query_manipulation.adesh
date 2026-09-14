@@ -1,0 +1,11 @@
+import URL;
+
+let url: URL = URL.parse("https://shop.example.com/items?category=books&sort=price&tag=fiction&tag=bestseller");
+
+let updated: URL = url
+    .withQueryParam("page", "1")
+    .removeQueryParam("sort");
+
+print("--- 05 Query Manipulation Example ---");
+print("Original Query:", url.query);
+print("Updated Query:", updated.query);

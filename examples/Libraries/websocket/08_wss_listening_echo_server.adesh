@@ -1,0 +1,43 @@
+// Example 08: Production-Grade Secure WSS Listening Server
+// Demonstrates TLS certificate, WSS listener binding, and echo handling.
+
+import Path;
+import fs;
+import WebSocket;
+
+fn runWssListeningServer() {
+    print("=== Example 08: Production WSS Listening Server ===");
+
+    let certPath = Path.join("certs", "fullchain.pem").toString();
+    let keyPath = Path.join("certs", "privkey.pem").toString();
+
+    let certPem = fs.readText(certPath);
+    let keyPem = fs.readText(keyPath);
+
+    let config = {
+        bind_address: "127.0.0.1",
+        port: 8608,
+        tls_cert_pem: certPem,
+        tls_key_pem: keyPem
+    };
+
+    let wsServer = WebSocket.server(config);
+    wsServer.startEcho();
+    print("✓ Starting WSS listener on wss://127.0.0.1:8608...");
+
+    let clientConfig = WebSocket.ClientConfig({
+        verify_tls: false
+    });
+
+    let client = WebSocket.connect("wss://127.0.0.1:8608", clientConfig);
+    client.sendText("Listening server test payload");
+
+    let msg = client.receive();
+    print("[SERVER ECHOED]: " + msg.payload);
+
+    client.close(1000, "Done");
+    wsServer.close();
+    print("✓ WSS Listening Server test complete.");
+}
+
+runWssListeningServer();

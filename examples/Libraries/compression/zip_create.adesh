@@ -1,0 +1,11 @@
+import Compression;
+
+print("=== ZIP Archive Creation & Extraction Example ===");
+
+let files = [
+    { "name": "config.json", "content": "{\"appName\": \"AdeshLang\"}" },
+    { "name": "docs/readme.txt", "content": "Welcome to AdeshLang Compression ZIP support!" }
+];
+
+let zipArchive = Compression.createZip(files);
+print("Generated ZIP archive length:", len(zipArchive));

@@ -1,0 +1,13 @@
+import Compression;
+import Encoding;
+
+print("=== GZIP Compression Example ===");
+
+let text = "GZIP standard compressed payload in AdeshLang. Maximum cross-platform compatibility.";
+
+let gzipped = Compression.gzip(text, 6);
+print("GZIP output length:", len(gzipped));
+
+let unzippedBytes = Compression.gunzip(gzipped);
+let unzippedText = Encoding.utf8Decode(unzippedBytes);
+print("Gunzip success:", unzippedText == text);

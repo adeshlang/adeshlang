@@ -1,0 +1,40 @@
+// 07_utc_offset.adesh - UtcOffset creation, accessors, formatting
+import Time;
+
+print("=== UtcOffset Examples ===\n");
+
+// --- Construction ---
+let utc     : UtcOffset = Time.utcOffsetZero();
+let ist     : UtcOffset = Time.utcOffsetHoursMinutes(5, 30);
+let est     : UtcOffset = Time.utcOffsetHours(-5);
+let nst     : UtcOffset = Time.utcOffsetHoursMinutes(-3, -30);
+let kathmandu: UtcOffset = Time.utcOffsetHoursMinutes(5, 45);
+
+print("UTC         :", utc.toString());
+print("IST (+05:30):", ist.toString());
+print("EST (-05:00):", est.toString());
+print("NST (-03:30):", nst.toString());
+print("NPT (+05:45):", kathmandu.toString());
+
+// --- Accessors ---
+print("\n--- Accessors ---");
+print("IST hours          :", ist.hours());
+print("IST minutes        :", ist.minutes());
+print("IST total seconds  :", ist.totalSeconds());
+print("EST total seconds  :", est.totalSeconds());
+print("NST is negative?   :", nst.isNegative());
+print("UTC is UTC?        :", utc.isUtc());
+
+// --- Apply to UTC time ---
+print("\n--- Apply offset to UTC timestamp ---");
+let utcNow: UtcDateTime = Time.utcDateTimeNow();
+let odt: OffsetDateTime = Time.offsetDateTimeFromUtc(utcNow, ist);
+print("UTC Now      :", utcNow.toIsoString());
+print("IST Now      :", odt.toIsoString());
+print("IST Date     :", odt.date().toIsoString());
+print("IST Time     :", odt.time().toIsoString());
+
+// --- Comparison ---
+print("\n--- Comparison ---");
+print("IST > UTC :", ist.gt(utc));
+print("EST < UTC :", est.lt(utc));

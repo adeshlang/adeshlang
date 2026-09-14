@@ -1,0 +1,58 @@
+// GCD - Greatest Common Divisor (Euclidean Algorithm)
+// Run: adesh run examples/recursion/gcd.adesh --jit --fast-recursion
+
+// Classic recursive GCD
+fn gcd(a, b) {
+    if b == 0 {
+        return a;
+    }
+    return gcd(b, a % b);
+}
+
+// Extended GCD (returns gcd, x, y such that ax + by = gcd)
+fn extended_gcd(a, b) {
+    if b == 0 {
+        return (a, 1, 0);
+    }
+    // Using tuple destructuring!
+    let (g, x1, y1) = extended_gcd(b, a % b);
+    
+    let x = y1;
+    let y = x1 - (a / b) * y1;
+    return (g, x, y);
+}
+
+// LCM using GCD
+fn lcm(a, b){
+    return (a * b) / gcd(a, b);
+}
+
+fn main() {
+    print("╔════════════════════════════════════════════════════╗");
+    print("║  GCD/LCM ALGORITHMS - Recursion Demo               ║");
+    print("╚════════════════════════════════════════════════════╝");
+    print("");
+    
+    // Basic GCD
+    print("GCD Examples:");
+    print(`  gcd(48, 18) = ${gcd(48, 18)}`);
+    print(`  gcd(1071, 462) = ${gcd(1071, 462)}`);
+    print(`  gcd(270, 192) = ${gcd(270, 192)}`);
+    print("");
+    
+    // LCM
+    print("LCM Examples:");
+    print(`  lcm(4, 6) = ${lcm(4, 6)}`);
+    print(`  lcm(21, 6) = ${lcm(21, 6)}`);
+    print("");
+    
+    // Performance test
+    print("Performance Test:");
+    let start = clock();
+    let iterations = 10000;
+    for i in range(0, iterations) {
+        gcd(1000000007, 998244353);
+    }
+    let elapsed = clock() - start;
+    print(`  ${iterations} GCD computations in ${elapsed}s`);
+}

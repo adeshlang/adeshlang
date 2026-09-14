@@ -1,0 +1,64 @@
+// Simple Promise test for JIT - Native async/await support
+
+// Test 2: Await on promise resolving to 100 (type safety)
+async fn getOneHundred() {
+    return 100;
+}
+
+async fn main() {
+    print("=== Native Promise Test (JIT) ===");
+
+    // Test 1: Create Promise with immediate resolve
+    print("\n1. Testing Promise with immediate resolve:");
+    let p1 = Promise(fn(resolve, reject) {
+        print("  Executor running...");
+        resolve(42);
+    });
+    print("  Promise created, awaiting...");
+    let v1 = await p1;
+    print("  Resolved value:", v1);
+
+    // Test 2: Await on non-promise type-safe alternative
+    print("\n2. Testing await on async function:");
+    let v2 = await getOneHundred();
+    print("  Awaited value:", v2);
+
+    // Test 3: sleep function (synchronous blocking sleep)
+    print("\n3. Testing sleep:");
+    let start = clock();
+    sleep(100);
+    let elapsed = clock() - start;
+    print("  Waited for ~100ms, elapsed:", elapsed * 1000, "ms");
+
+    // Test 4: Multiple sequential promises  
+    print("\n4. Testing multiple sequential promises:");
+    let p2 = Promise(fn(res, _) { res("first"); });
+    let p3 = Promise(fn(res, _) { res("second"); });
+    let r2 = await p2;
+    let r3 = await p3;
+    print("  Results:", r2, r3);
+
+    // Test 5: Promise with computation
+    print("\n5. Testing Promise with computation:");
+    let p4 = Promise(fn(resolve, reject) {
+        let sum = 0;
+        let i = 1;
+        while i <= 10 {
+            sum = sum + i;
+            i = i + 1;
+        }
+        resolve(sum);
+    });
+    let result = await p4;
+    print("  Sum 1-10:", result);
+
+    // Test 6: Chained promises
+    print("\n6. Testing chained promise computation:");
+    let p5 = Promise(fn(res, _) { res(10); });
+    let v5 = await p5;
+    print("  First value:", v5);
+    let doubled = v5 * 2;  // Compute outside the promise
+    print("  Doubled:", doubled);
+
+    print("\n=== All tests complete ===");
+}

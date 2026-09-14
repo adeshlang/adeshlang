@@ -1,0 +1,30 @@
+// Validate and authorize decorators
+
+decorator validateNumber(target, meta) {
+  return fn(a){
+    if (typeof a != "number") { throw "invalid"; }
+    return target(a);
+  };
+}
+
+decorator authorize(role) {
+  return fn (target, meta) {
+    return fn(){
+      // For demo, always allowed
+      return target();
+    };
+  };
+}
+
+@validateNumber
+fn inc(a){
+  return a + 1;
+}
+
+@authorize("admin")
+fn secret(){
+  return "top";
+}
+
+print(inc(10));
+print(secret());

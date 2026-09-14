@@ -1,0 +1,96 @@
+// Transpiler Demo Example
+// This file demonstrates Adesh→Rust transpilation
+// Run with: cargo run -- compile-native-rust examples/transpiler/demo.adesh output.rs
+
+// Simple variables
+let x = 10;
+let y = 20;
+let name = "Adesh";
+
+// Print statements
+print("Hello from Adesh!");
+print("x + y =", x + y);
+
+// Arithmetic
+let sum = x + y;
+let diff = y - x;
+let prod = x * y;
+let quot = y / x;
+
+print("sum:", sum);
+print("diff:", diff);
+print("prod:", prod);
+print("quot:", quot);
+
+// Conditionals
+if (x < y) {
+    print("x is less than y");
+} else {
+    print("x is not less than y");
+}
+
+// Loops
+let counter = 0;
+while (counter < 5) {
+    print("counter:", counter);
+    counter = counter + 1;
+}
+
+// For-in loop
+let nums = [1, 2, 3, 4, 5];
+for (n in nums) {
+    print("number:", n);
+}
+
+// Functions
+fn greet(person) {
+    return "Hello, " + person + "!";
+}
+
+let greeting = greet("World");
+print(greeting);
+
+fn add(a, b) {
+    return a + b;
+}
+
+print("add(3, 4):", add(3, 4));
+
+// Arrays
+let fruits = ["apple", "banana", "cherry"];
+print("fruits:", fruits);
+print("first fruit:", fruits[0]);
+
+// Objects
+let person = {
+    name: "John",
+    age: 30,
+    city: "NYC"
+};
+print("person:", person);
+
+// Tuple
+let coords = (10, 20, 30);
+print("coords:", coords);
+
+// Classes (basic)
+class Point {
+    Point(x, y) {
+        this.x = x;
+        this.y = y;
+    }
+    
+    fn distance() {
+        return Math.sqrt(this.x * this.x + this.y * this.y);
+    }
+    
+    fn toString() {
+        return "Point(" + this.x + ", " + this.y + ")";
+    }
+}
+
+let p = new Point(3, 4);
+print("point:", p.toString());
+print("distance:", p.distance());
+
+print("\n=== Transpiler Demo Complete ===");

@@ -1,0 +1,11 @@
+import URL;
+
+let policy: URLSecurityPolicy = URL.SecurityPolicy()
+    .allowScheme("https")
+    .denyPrivateNetworks()
+    .denyCredentials();
+
+let targetUrl: URL = URL.parse("https://example.com/api");
+policy.validate(targetUrl);
+
+print("Target URL is valid under security policy:", targetUrl.href());

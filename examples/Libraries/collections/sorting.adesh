@@ -1,0 +1,18 @@
+import Collections;
+
+print("========================================");
+print("In-place Sorting Example on Vec");
+print("========================================");
+
+let v = Collections.Vec();
+v.push(42);
+v.push(12);
+v.push(89);
+v.push(7);
+v.push(23);
+
+print("Unsorted Vec: ", v.toArray());
+v.sort();
+print("Sorted Vec: ", v.toArray());
+v.reverse();
+print("Reverse Sorted Vec: ", v.toArray());

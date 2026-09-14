@@ -1,0 +1,7 @@
+// World-First: Terminal Color Palette & RGB Picker
+// Truecolor swatch preview and hex code selection
+
+// input.mock(["#00ffcc"]);
+
+let theme_accent = input.color("Choose Terminal Accent Color:");
+print(`Theme Accent Color Chosen: ${theme_accent}`);

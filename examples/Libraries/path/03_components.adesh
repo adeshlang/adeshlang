@@ -1,0 +1,9 @@
+import Path;
+
+let p = Path.new("/home/ajay/projects/app/main.adesh");
+let comps = p.components();
+
+print("Components count: " + str(len(comps)));
+for part in comps {
+    print("[" + part.kind + "] " + part.value);
+}

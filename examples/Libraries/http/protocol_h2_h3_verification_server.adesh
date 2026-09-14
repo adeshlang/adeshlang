@@ -1,0 +1,40 @@
+// AdeshLang HTTP/2 & HTTP/3 Verification Server for Live curl Testing
+
+import HTTP;
+
+let router = HTTP.Router();
+
+router.get("/", fn(req, res) {
+    return res.json({
+        server: "AdeshLang Multi-Protocol Engine",
+        protocol: req.version,
+        binaryFraming: req.version == "HTTP/2.0" || req.version == "HTTP/3.0",
+        host: req.host
+    });
+});
+
+router.get("/h2", fn(req, res) {
+    return res
+        .header("X-HTTP2-Framing", "enabled")
+        .json({
+            protocol: req.version,
+            message: "HTTP/2 Binary Multiplexed Request Verified"
+        });
+});
+
+router.get("/h3", fn(req, res) {
+    return res
+        .header("Alt-Svc", "h3=\":4042\"; ma=86400")
+        .json({
+            protocol: req.version,
+            quic: true,
+            message: "HTTP/3 QUIC UDP Stream Verified"
+        });
+});
+
+print("Starting AdeshLang HTTP/2 & HTTP/3 Server on http://127.0.0.1:4042...");
+let server = HTTP.Server("127.0.0.1:4042", router);
+server.setProtocols(["h3", "h2", "http/1.1"]);
+server.listen(fn() {
+    print("✓ Server listening on http://127.0.0.1:4042 with HTTP/1.1, HTTP/2, and HTTP/3 support.");
+});

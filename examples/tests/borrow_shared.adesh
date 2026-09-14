@@ -1,0 +1,14 @@
+// Shared borrowing keeps the original value usable.
+// Primitives (like numbers) are Copy so assignments duplicate them.
+
+let n = 42;
+let n_copy = n;              // numbers are Copy; n is still valid
+print(n);
+print(n_copy);
+
+// Strings are move-only, but a shared borrow (`&`) lets us read without moving.
+let msg = "hello";
+let alias = &msg;            // create a shared borrow of msg
+print(alias);                // prints through the borrow
+let alias = null;            // drop the borrow by shadowing
+print(msg);                  // original is usable once no borrows are active

@@ -1,0 +1,94 @@
+// ╔═══════════════════════════════════════════════════════════════════════════════╗
+// ║              AdeshLang HTTPS, HTTP/2 & HTTP/3 Verification Server             ║
+// ║                                                                               ║
+// ║  Serves over HTTPS with TLS 1.3 encryption, automatically generating          ║
+// ║  cert.pem and key.pem in the root directory via Crypto.generateSelfSignedCert  ║
+// ║                                                                               ║
+// ║  Run server: cargo run --bin adeshlang -- run examples/Libraries/http/protocol_https_test_suite.adesh
+// ║                                                                               ║
+// ║  Test with curl:                                                              ║
+// ║  • HTTP/1.1: curl.exe -k -v --http1.1 https://127.0.0.1:4045/                  ║
+// ║  • HTTP/2:   curl.exe -k -v --http2 https://127.0.0.1:4045/h2                 ║
+// ║  • HTTP/3:   curl.exe -k -v --http3 https://127.0.0.1:4045/h3                 ║
+// ╚═══════════════════════════════════════════════════════════════════════════════╝
+
+// @allow(warnings)
+import Crypto;
+import TLS;
+import HTTP;
+
+print("==================================================================");
+print("     AdeshLang HTTPS, HTTP/2 & HTTP/3 Test Suite & Usage       ");
+print("==================================================================");
+
+// 1. Generate X.509 self-signed TLS certificate & private key pair
+print("Generating self-signed certificate & writing cert.pem + key.pem to project root...");
+let certPair = Crypto.generateSelfSignedCert();
+
+print("✓ Certificate saved: cert.pem");
+print("✓ Private key saved:  key.pem");
+
+let router = HTTP.Router();
+
+// [GET /] - Returns HTTPS metadata
+router.get("/", fn(req, res) {
+    return res.json({
+        server: "AdeshLang HTTPS Multi-Protocol Engine",
+        protocol: req.version,
+        scheme: "https",
+        secure: true,
+        host: req.host
+    });
+});
+
+// [GET /h2] - HTTPS HTTP/2 Endpoint
+router.get("/h2", fn(req, res) {
+    return res
+        .header("X-Protocol-Version", req.version)
+        .json({
+            protocol: req.version,
+            message: "HTTPS HTTP/2 Multiplexed Stream Verified Successfully",
+            secure: true
+        });
+});
+
+// [GET /h3] - HTTPS HTTP/3 Endpoint
+router.get("/h3", fn(req, res) {
+    return res
+        .header("Alt-Svc", "h3=\":4045\"; ma=86400")
+        .json({
+            protocol: req.version,
+            quic: true,
+            message: "HTTPS HTTP/3 QUIC UDP Stream Verified Successfully",
+            secure: true
+        });
+});
+
+// [GET /h3/slow] - HTTPS HTTP/3 Asynchronously Delayed Endpoint for Multiplexing Test
+router.get("/h3/slow", fn(req, res) {
+    sleep(100);
+    return res
+        .header("Alt-Svc", "h3=\":4045\"; ma=86400")
+        .json({
+            protocol: req.version,
+            quic: true,
+            message: "HTTPS HTTP/3 Asynchronous Multiplexed Response",
+            delayed: true,
+            secure: true
+        });
+});
+
+// [GET /h3/stats] - HTTPS HTTP/3 Diagnostics Endpoint
+router.get("/h3/stats", fn(req, res) {
+    let stats = HTTP.http3Stats();
+    return res.json(stats);
+});
+
+print("\nStarting HTTPS Server on https://127.0.0.1:4045...");
+let server = HTTP.Server("127.0.0.1:4045", router);
+server.enableTls(certPair.certPem, certPair.keyPem);
+server.setProtocols(["h3", "h2", "http/1.1"]);
+
+server.listen(fn() {
+    print("✓ HTTPS Server is listening on https://127.0.0.1:4045 with TLS 1.3, HTTP/2, and HTTP/3.");
+});

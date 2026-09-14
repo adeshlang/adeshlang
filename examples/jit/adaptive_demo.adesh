@@ -1,0 +1,159 @@
+// Adaptive JIT Demo - Speculative Optimization
+// Run: adeshlang run examples/jit/adaptive_demo.adesh --adaptive
+
+// Function with stable type profile
+fn stable_add(a, b) {
+    return a + b;
+}
+
+// Function with changing type profile
+fn polymorphic_add(a, b) {
+    return a + b;
+}
+
+// Class hierarchy for inline cache demo
+class Shape {
+    fn area() {
+        return 0.0;
+    }
+}
+
+class Circle extends Shape {
+    fn init(r) {
+        self.radius = r;
+    }
+    
+    fn area() {
+        return 3.14159 * self.radius * self.radius;
+    }
+}
+
+class Rectangle extends Shape {
+    width: f64;
+    height: f64;
+    
+    fn init(w, h) {
+        self.width = w;
+        self.height = h;
+    }
+    
+    fn area() {
+        return self.width * self.height;
+    }
+}
+
+fn compute_areas(shapes) {
+    // Inline cache optimizes method dispatch
+    let total = 0.0;
+    for shape in shapes {
+        total = total + shape.area();
+    }
+    return total;
+}
+
+fn main() {
+    print("╔════════════════════════════════════════════════════╗");
+    print("║  ADAPTIVE JIT DEMO - Speculative Optimization      ║");
+    print("╚════════════════════════════════════════════════════╝");
+    print("");
+    
+    // 1. Stable type speculation
+    print("1. Stable Type Speculation:");
+    print("   Function always called with integers -> specialize for int");
+    let start = clock();
+    let sum = 0;
+    for i in range(0, 1000) {
+        sum = sum + stable_add(i, i + 1);  // Always int + int
+    }
+    let elapsed = clock() - start;
+    print(`   Result: ${sum}`);
+    print(`   Time: ${elapsed}s`);
+    print("");
+    
+    // 2. Type profile change -> deoptimization
+    print("2. Type Change (Deoptimization):");
+    print("   Start with ints, then switch to floats");
+    
+    let start = clock();
+    let sum = 0;
+    
+    // First phase: integers
+    for i in range(0, 100) {
+        sum = sum + polymorphic_add(i, i);
+    }
+    print(`   After int phase: ${sum}`);
+    
+    // Second phase: floats (triggers deopt)
+    let fsum = 0.0;
+    for i in range(0, 100) {
+        fsum = fsum + polymorphic_add(i * 1.0, i * 2.0);
+    }
+    let elapsed = clock() - start;
+    print(`   After float phase: ${fsum}`);
+    print(`   Time: ${elapsed}s`);
+    print("   (Note: deoptimization occurred when types changed)");
+    print("");
+    
+    // 3. Inline caches for method calls
+    print("3. Inline Caches (Method Dispatch):");
+    
+    // Monomorphic case: all same type
+    let circles = [];
+    for i in range(1, 101) {
+         circles = circles.push(new Circle(i * 1.0));
+    }
+    
+    let start = clock();
+    let total = compute_areas(circles);
+    let mono_elapsed = clock() - start;
+    print(`   Monomorphic (all Circle): ${total}`);
+    print(`   Time: ${mono_elapsed}s`);
+    
+    // Polymorphic case: mixed types
+    let mixed = [];
+    for i in range(1, 51) {
+        mixed = mixed.push(new Circle(i * 1.0));
+        mixed = mixed.push(new Rectangle(i * 1.0, i * 2.0));
+    }
+    
+    let start = clock();
+    let total = compute_areas(mixed);
+    let poly_elapsed = clock() - start;
+    print(`   Polymorphic (mixed): ${total}`);
+    print(`   Time: ${poly_elapsed}s`);
+    print("   (Polymorphic is slower due to cache misses)");
+    print("");
+    
+    // 4. Hidden classes
+    print("4. Hidden Classes (Property Access):");
+    
+    class Point {
+        x: f64;
+        y: f64;
+        
+        fn init(x, y) {
+            self.x = x;
+            self.y = y;
+        }
+    }
+    
+    let points = [];
+    for i in range(0, 200) {
+        points = points.push(new Point(i * 1.0, i * 2.0));
+    }
+    
+    let start = clock();
+    let sum_x = 0.0;
+    for p in points {
+        sum_x = sum_x + p.x;  // Hidden class enables O(1) lookup
+    }
+    let elapsed = clock() - start;
+    print(`   Sum of x coordinates: ${sum_x}`);
+    print(`   Time: ${elapsed}s`);
+    
+    print("");
+    print("Adaptive JIT demo complete!");
+    print("Use --verbose to see deoptimization events.");
+}
+
+main();

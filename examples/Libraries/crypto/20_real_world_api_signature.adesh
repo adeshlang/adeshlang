@@ -1,0 +1,20 @@
+// 20 - Real-World API Request Signature Authentication System
+import Crypto;
+
+// Simulated API Server Secret
+let apiSecret = "sk_live_99887766554433221100";
+
+fn signApiRequest(path, method, body, secret) {
+    let canonicalRequest = method + "\n" + path + "\n" + body;
+    return Crypto.hmac(secret, canonicalRequest);
+}
+
+let path = "/v1/transfers";
+let method = "POST";
+let body = "{\"amount\":1000,\"currency\":\"USD\"}";
+
+let signature = signApiRequest(path, method, body, apiSecret);
+print("API Request HMAC Signature (Hex):", Crypto.encodeHex(signature));
+
+let isValid = Crypto.hmacVerify(apiSecret, method + "\n" + path + "\n" + body, signature);
+print("API Request Verification:       ", isValid);

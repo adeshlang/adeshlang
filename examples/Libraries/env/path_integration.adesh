@@ -1,0 +1,16 @@
+import Env;
+import FS;
+
+let home = Env.home();
+let cwd = Env.currentDirectory();
+let exe = Env.executable();
+
+let config = Env.home()
+    .join(".adesh")
+    .join("config.toml");
+
+print("Config Path: " + config.toString());
+print("Config Parent: " + config.parent().toString());
+print("FS Exists Check: " + str(FS.exists(config)));
+
+print("Executable Dir: " + Env.executableDirectory().toString());

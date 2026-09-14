@@ -1,0 +1,15 @@
+import Path;
+import FS;
+
+let config = Path.current()
+    .join("demo_config.json");
+
+FS.writeText(config, "{\"env\": \"production\", \"version\": \"1.0.0\"}");
+
+if config.exists() {
+    print("Config file exists at: " + config.toString());
+    let text = FS.readText(config);
+    print("Content: " + text);
+    FS.delete(config);
+    print("Config file deleted cleanly.");
+}

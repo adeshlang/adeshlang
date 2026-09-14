@@ -1,0 +1,202 @@
+// ============================================================================
+// SIMD Matrix Mathematics & Multi-Dimensional Operations in AdeshLang
+// Demonstrating:
+//   1. 2D Matrix Multiplication (General M x K by K x N) using SIMD Dot Product
+//   2. 2D Matrix Math Operations (Addition, Scaling, Transpose, Fused Ops)
+//   3. 3D Batch Matrix Multiplication (Batch of 2D Matrices)
+//   4. Multi-Dimensional (N-D) Tensor Operations (Strided representation & transforms)
+// ============================================================================
+
+import Simd;
+
+print("======================================================================");
+print("1. 2D MATRIX MULTIPLICATION USING SIMD ACCELERATION");
+print("======================================================================");
+
+// Define Matrix A (3x4) and Matrix B (4x2)
+let A: [f64;3;4] = [
+    [1.0, 2.0, 3.0, 4.0],
+    [5.0, 6.0, 7.0, 8.0],
+    [9.0, 10.0, 11.0, 12.0]
+];
+
+let B: [f64;4;2] = [
+    [1.0, 2.0],
+    [3.0, 4.0],
+    [5.0, 6.0],
+    [7.0, 8.0]
+];
+
+// Matrix multiplication C = A * B using SIMD vector dot products
+// Shape: (3x4) * (4x2) -> (3x2)
+let m = len(A);
+let k = len(B);
+let n = len(B[0]);
+
+let C: [f64;3;2] = [
+    [0.0, 0.0],
+    [0.0, 0.0],
+    [0.0, 0.0]
+];
+
+for i in range(m) {
+    for j in range(n) {
+        // Extract column j from B as a contiguous SIMD vector
+        let b_col = [B[0][j], B[1][j], B[2][j], B[3][j]];
+        // Accelerated SIMD Dot Product: dot(row_i, col_j)
+        C[i][j] = Simd.dot(A[i], b_col);
+    }
+}
+
+print("Matrix A (3x4):");
+for i in range(m) {
+    print("  Row ", i, ": ", A[i]);
+}
+
+print("Matrix B (4x2):");
+for i in range(k) {
+    print("  Row ", i, ": ", B[i]);
+}
+
+print("Result Matrix C = A * B (3x2):");
+for i in range(m) {
+    print("  Row ", i, ": ", C[i]);
+}
+
+print("");
+print("======================================================================");
+print("2. 2D MATRIX MATH OPERATIONS (SIMD Element-wise, Scaling & FMA)");
+print("======================================================================");
+
+let M1: [f64;2;3] = [
+    [10.0, 20.0, 30.0],
+    [40.0, 50.0, 60.0]
+];
+
+let M2: [f64;2;3] = [
+    [1.0, 2.0, 3.0],
+    [4.0, 5.0, 6.0]
+];
+
+let M3_bias: [f64;2;3] = [
+    [0.5, 0.5, 0.5],
+    [1.0, 1.0, 1.0]
+];
+
+// SIMD Matrix Addition: M1 + M2 (row by row)
+let M_sum = [
+    Simd.add(M1[0], M2[0]),
+    Simd.add(M1[1], M2[1])
+];
+print("M1 + M2 (SIMD row addition):");
+print("  Row 0: ", M_sum[0]);
+print("  Row 1: ", M_sum[1]);
+
+// SIMD Fused Multiply-Add on Matrices: alpha * M1 + M3_bias
+let alpha = 2.0;
+let M_fma = [
+    Simd.fusedMulAdd(M1[0], [alpha, alpha, alpha], M3_bias[0]),
+    Simd.fusedMulAdd(M1[1], [alpha, alpha, alpha], M3_bias[1])
+];
+print("2.0 * M1 + M3_bias (SIMD Fused Multiply Add):");
+print("  Row 0: ", M_fma[0]);
+print("  Row 1: ", M_fma[1]);
+
+// Matrix Transpose (2x3 -> 3x2)
+let M1_T: [f64;3;2] = [
+    [M1[0][0], M1[1][0]],
+    [M1[0][1], M1[1][1]],
+    [M1[0][2], M1[1][2]]
+];
+print("Transpose of M1 (3x2):");
+print("  Row 0: ", M1_T[0]);
+print("  Row 1: ", M1_T[1]);
+print("  Row 2: ", M1_T[2]);
+
+print("");
+print("======================================================================");
+print("3. 3D BATCH MATRIX MULTIPLICATION (B x M x K by B x K x N)");
+print("======================================================================");
+
+// Batch of two (2x2) matrices: Batch Shape = (2, 2, 2)
+let batch_A: [f64;2;2;2] = [
+    [
+        [1.0, 2.0],
+        [3.0, 4.0]
+    ],
+    [
+        [2.0, 0.0],
+        [1.0, 2.0]
+    ]
+];
+
+let batch_B: [f64;2;2;2] = [
+    [
+        [5.0, 6.0],
+        [7.0, 8.0]
+    ],
+    [
+        [1.0, 3.0],
+        [2.0, 4.0]
+    ]
+];
+
+let batch_size = len(batch_A);
+let b_rows = len(batch_A[0]);
+let b_cols = len(batch_B[0][0]);
+
+let batch_C: [f64;2;2;2] = [
+    [
+        [0.0, 0.0],
+        [0.0, 0.0]
+    ],
+    [
+        [0.0, 0.0],
+        [0.0, 0.0]
+    ]
+];
+
+// Perform Batch Matrix Multiplication with SIMD inner products
+for b in range(batch_size) {
+    for r in range(b_rows) {
+        for c in range(b_cols) {
+            let col_vec = [batch_B[b][0][c], batch_B[b][1][c]];
+            batch_C[b][r][c] = Simd.dot(batch_A[b][r], col_vec);
+        }
+    }
+}
+
+print("Batch 3D Matrix Multiplication Result (2 x 2 x 2):");
+for b in range(batch_size) {
+    print("Batch Item ", b, ":");
+    print("  Row 0: ", batch_C[b][0]);
+    print("  Row 1: ", batch_C[b][1]);
+}
+
+print("");
+print("======================================================================");
+print("4. MULTI-DIMENSIONAL (N-D) TENSOR OPERATIONS VIA STRIDED SIMD");
+print("======================================================================");
+
+// 4D Tensor shape: (Batch=2, Channels=2, Height=2, Width=2) = 16 elements
+// Represented as a high-performance contiguous flat buffer with SIMD vector ops
+let tensor_4d: [f64;16] = [
+    1.0, 2.0, 3.0, 4.0,   // Batch 0, Channel 0
+    5.0, 6.0, 7.0, 8.0,   // Batch 0, Channel 1
+    9.0, 10.0, 11.0, 12.0,// Batch 1, Channel 0
+    13.0, 14.0, 15.0, 16.0// Batch 1, Channel 1
+];
+
+// Vectorized SIMD scaling across the entire 4D tensor
+let v_tensor = Simd.vector(tensor_4d);
+let scaled_tensor = v_tensor.scale(0.5);
+print("4D Tensor Global Sum: ", v_tensor.sum());
+print("4D Tensor Global Mean: ", v_tensor.mean());
+print("4D Tensor Scaled (x0.5): ", scaled_tensor);
+
+// Strided slice: compute sum of Batch 1 Channel 0 [elements 8..12]
+let b1_c0_slice = [tensor_4d[8], tensor_4d[9], tensor_4d[10], tensor_4d[11]];
+print("4D Tensor Slice [Batch 1, Channel 0] SIMD sum = ", Simd.sum(b1_c0_slice));
+
+print("");
+print("SIMD Matrix Math and Multi-Dimensional demo complete!");

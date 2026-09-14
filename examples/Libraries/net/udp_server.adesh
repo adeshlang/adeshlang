@@ -1,0 +1,19 @@
+// AdeshLang UDP Server Example
+import Net;
+
+fn start_udp_server() {
+    print("Binding UDP socket on 127.0.0.1:9091...");
+    let socket = Net.udpBind("127.0.0.1", 9091);
+    print("UDP socket bound on:", socket.localAddress());
+
+    let packet = socket.receiveFrom(1024);
+    print("Received UDP datagram from:", packet.remoteAddress, "port:", packet.remotePort);
+
+    socket.sendTo("ACK from UDP Server", packet.remoteAddress, packet.remotePort);
+    print("Sent ACK response");
+
+    socket.close();
+    print("UDP Server closed");
+}
+
+start_udp_server();

@@ -1,0 +1,52 @@
+// Example 4: Type Hints and Formatting
+// Shows how pretty print displays type information for different value types
+
+println("=== NUMBER TYPES ===");
+let num = 42;
+let float = 3.14159;
+print(num, { pretty: true });
+println();
+print(float, { pretty: true });
+
+println("\n\n=== STRING AND CHAR ===");
+let text = "Hello, World!";
+let ch = 'A';
+print(text, { pretty: true });
+println();
+print(ch, { pretty: true });
+
+println("\n\n=== BOOLEAN AND NULL ===");
+let flag = true;
+let empty = null;
+print(flag, { pretty: true });
+println();
+print(empty, { pretty: true });
+
+println("\n\n=== FIXED-WIDTH INTEGERS ===");
+let int32: i32 = 2147483647;
+let uint64: u64 = 18446744073709551615;
+print(int32, { pretty: true });
+println();
+print(uint64, { pretty: true });
+
+println("\n\n=== COLLECTIONS ===");
+
+// Array
+let arr = [1, 2, 3];
+print("Array: ");
+print(arr, { pretty: true });
+
+// Tuple
+let tuple = (1, "two", true);
+println("\n\nTuple: ");
+print(tuple, { pretty: true });
+
+// Set
+let set = {1, 2, 3, 4, 5};
+println("\n\nSet: ");
+print(set, { pretty: true });
+
+// Object
+let obj = { a: 1, b: 2 };
+println("\n\nObject: ");
+print(obj, { pretty: true });

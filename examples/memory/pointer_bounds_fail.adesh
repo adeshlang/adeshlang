@@ -1,0 +1,41 @@
+// Bounds check failure example
+// This program demonstrates runtime bounds checking
+// /
+print("=== Bounds Check Failure ===");
+
+unsafe {
+    let p: *u8 = alloc(10);  // Only 10 bytes allocated
+    
+    // Valid accesses
+    p[0] = 1;
+    p[9] = 10;
+    print("Valid accesses to indices 0 and 9");
+    
+    // This line will cause a runtime error:
+    // "Pointer load out of bounds: offset 10 >= size 10"
+    let x = p[10];  // ❌ RUNTIME ERROR - index 10 exceeds size
+    
+    print("This line should never execute");
+}
+
+print("=== Typed Pointer Bounds Check ===");
+
+unsafe {
+    let ints: *i32 = alloc(8);  // 8 bytes = 2 i32 elements
+    
+    // Valid accesses
+    ints[0] = 100;
+    ints[1] = 200;
+    print("Valid accesses to elements 0 and 1");
+    
+    // This line will cause a runtime error:
+    // "Typed pointer load out of bounds: index 2 (offset 8..12) exceeds size 8"
+    ints[2] = 300;  // ❌ RUNTIME ERROR - element 2 requires bytes 8-11
+    
+    print("This line should never execute");
+}
+
+// Expected output (before error):
+// === Bounds Check Failure ===
+// Valid accesses to indices 0 and 9
+// ERROR: Pointer load out of bounds: offset 10 >= size 10

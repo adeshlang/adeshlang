@@ -1,0 +1,98 @@
+// AdeshLang URL Standard Library
+// World-Class URL Parsing, Construction, Normalization, Routing, Security & Query Processing
+
+export fn parse(urlString) {
+    return URL.parse(urlString);
+}
+
+export fn parseRelative(relativeUrlString, baseUrl) {
+    return URL.parseRelative(relativeUrlString, baseUrl);
+}
+
+export fn builder() {
+    return URL.builder();
+}
+
+export fn resolve(baseUrl, relativeUrlString) {
+    return URL.resolve(baseUrl, relativeUrlString);
+}
+
+export fn join(baseUrl, relativeUrlString) {
+    return URL.join(baseUrl, relativeUrlString);
+}
+
+export fn pattern(patternString) {
+    return URL.pattern(patternString);
+}
+
+export fn template(templateString) {
+    return URL.template(templateString);
+}
+
+export fn SecurityPolicy() {
+    return URL.SecurityPolicy();
+}
+
+export fn fromFilePath(pathString) {
+    return URL.fromFilePath(pathString);
+}
+
+export fn toFilePath(urlObject) {
+    return URL.toFilePath(urlObject);
+}
+
+export fn parseData(dataUrlString) {
+    return URL.parseData(dataUrlString);
+}
+
+export fn parseView(urlString) {
+    return URL.parseView(urlString);
+}
+
+export fn domainToAscii(domainString) {
+    return URL.domainToAscii(domainString);
+}
+
+export fn domainToUnicode(domainString) {
+    return URL.domainToUnicode(domainString);
+}
+
+export fn diff(urlA, urlB) {
+    return URL.diff(urlA, urlB);
+}
+
+export fn securityReport(urlObject) {
+    return URL.securityReport(urlObject);
+}
+
+export fn isValid(urlString) {
+    return URL.isValid(urlString);
+}
+
+export fn isAbsolute(urlString) {
+    return URL.isAbsolute(urlString);
+}
+
+export fn isRelative(urlString) {
+    return URL.isRelative(urlString);
+}
+
+export fn percentEncode(text) {
+    return URL.percentEncode(text);
+}
+
+export fn percentDecode(text) {
+    return URL.percentDecode(text);
+}
+
+export fn formEncode(text) {
+    return URL.formEncode(text);
+}
+
+export fn formDecode(text) {
+    return URL.formDecode(text);
+}
+
+export fn toDataUrl(mediaType, payload, isBase64) {
+    return URL.toDataUrl(mediaType, payload, isBase64);
+}

@@ -1,0 +1,33 @@
+project {
+  name = "adl-sample-app"
+  version = 0.1.0
+  kind = app
+  description = "Sample ADL ecosystem application"
+  authors = ["AdeshLang Team"]
+}
+
+package {
+  name = "adl-sample-app"
+  edition = 2026
+  license = "MIT"
+}
+
+compiler {
+  backend = interpreter
+  profile = debug
+  opt-level = O1
+}
+
+workspace {
+  members = ["."]
+}
+
+dependencies {
+  core = ^1.0.0
+  util = { version = "~2.1.0", path = "./packages/util" }
+}
+
+scripts {
+  build = { command = "adl build", description = "Build the sample app" }
+  test = { command = "adl test", description = "Run the sample test suite" }
+}

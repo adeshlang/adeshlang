@@ -1,0 +1,14 @@
+// 17 — cancellation
+import thread;
+
+thread.watchdog(15000);
+let src = thread.CancellationSource.new();
+let tok = src.token();
+let w = thread.spawn(fn() {
+    while !tok.is_cancelled() {
+        thread.yield();
+    }
+    return 1;
+});
+src.cancel();
+print(w.join());

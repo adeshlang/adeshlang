@@ -1,0 +1,12 @@
+// Class decorator example
+
+decorator sealing(target, meta) {
+  // Attach a marker by returning the same class
+  return target;
+}
+
+sealed class User {
+  // empty class
+}
+
+print("Class decorated: User");

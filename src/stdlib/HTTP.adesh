@@ -1,0 +1,491 @@
+// AdeshLang HTTP Standard Library
+// Production-grade HTTP/1.1, HTTP/2, HTTP/3 networking subsystem
+// Usage: import HTTP; then use HTTP.get(), HTTP.Server(), HTTP.Router(), etc.
+
+// ─── Status Codes ─────────────────────────────────────────────────────────────
+export class Status {
+    // 1xx Informational
+    static const Continue: int = 100;
+    static const SwitchingProtocols: int = 101;
+    static const Processing: int = 102;
+    static const EarlyHints: int = 103;
+
+    // 2xx Success
+    static const OK: int = 200;
+    static const Created: int = 201;
+    static const Accepted: int = 202;
+    static const NoContent: int = 204;
+    static const PartialContent: int = 206;
+
+    // 3xx Redirection
+    static const MovedPermanently: int = 301;
+    static const Found: int = 302;
+    static const NotModified: int = 304;
+    static const PermanentRedirect: int = 308;
+
+    // 4xx Client Error
+    static const BadRequest: int = 400;
+    static const Unauthorized: int = 401;
+    static const Forbidden: int = 403;
+    static const NotFound: int = 404;
+    static const MethodNotAllowed: int = 405;
+    static const Conflict: int = 409;
+    static const Gone: int = 410;
+    static const UnprocessableContent: int = 422;
+    static const TooManyRequests: int = 429;
+
+    // 5xx Server Error
+    static const InternalServerError: int = 500;
+    static const NotImplemented: int = 501;
+    static const BadGateway: int = 502;
+    static const ServiceUnavailable: int = 503;
+    static const GatewayTimeout: int = 504;
+
+    static fn isSuccess(code: int): bool {
+        return code >= 200 && code < 300;
+    }
+
+    static fn isError(code: int): bool {
+        return code >= 400 && code < 600;
+    }
+
+    static fn isClientError(code: int): bool {
+        return code >= 400 && code < 500;
+    }
+
+    static fn isServerError(code: int): bool {
+        return code >= 500 && code < 600;
+    }
+
+    static fn isInformational(code: int): bool {
+        return code >= 100 && code < 200;
+    }
+
+    static fn isRedirection(code: int): bool {
+        return code >= 300 && code < 400;
+    }
+
+    static fn isRetryable(code: int): bool {
+        return code == 408 || code == 425 || code == 429
+            || code == 500 || code == 502 || code == 503 || code == 504;
+    }
+}
+
+// ─── HTTP Methods ─────────────────────────────────────────────────────────────
+export class Method {
+    static const GET: string = "GET";
+    static const HEAD: string = "HEAD";
+    static const POST: string = "POST";
+    static const PUT: string = "PUT";
+    static const DELETE: string = "DELETE";
+    static const CONNECT: string = "CONNECT";
+    static const OPTIONS: string = "OPTIONS";
+    static const TRACE: string = "TRACE";
+    static const PATCH: string = "PATCH";
+
+    static fn isSafe(method: string): bool {
+        let m: string = method.toUpperCase();
+        return m == "GET" || m == "HEAD" || m == "OPTIONS" || m == "TRACE";
+    }
+
+    static fn isIdempotent(method: string): bool {
+        let m: string = method.toUpperCase();
+        return m == "GET" || m == "HEAD" || m == "PUT" || m == "DELETE"
+            || m == "OPTIONS" || m == "TRACE";
+    }
+
+    static fn isCacheable(method: string): bool {
+        let m: string = method.toUpperCase();
+        return m == "GET" || m == "HEAD" || m == "POST";
+    }
+
+    static fn isStandard(method: string): bool {
+        let m: string = method.toUpperCase();
+        return m == "GET" || m == "HEAD" || m == "POST" || m == "PUT"
+            || m == "DELETE" || m == "CONNECT" || m == "OPTIONS"
+            || m == "TRACE" || m == "PATCH";
+    }
+}
+
+// ─── HTTP Version Constants ───────────────────────────────────────────────────
+export class HttpVersion {
+    static const HTTP_1_0: string = "HTTP/1.0";
+    static const HTTP_1_1: string = "HTTP/1.1";
+    static const HTTP_2_0: string = "HTTP/2.0";
+    static const HTTP_3_0: string = "HTTP/3.0";
+}
+
+// ─── HTTP Error Types ─────────────────────────────────────────────────────────
+export class HttpError {
+    static const InvalidUri: string = "InvalidUri";
+    static const InvalidMethod: string = "InvalidMethod";
+    static const InvalidHeader: string = "InvalidHeader";
+    static const HeaderTooLarge: string = "HeaderTooLarge";
+    static const BodyTooLarge: string = "BodyTooLarge";
+    static const Timeout: string = "Timeout";
+    static const Cancelled: string = "Cancelled";
+    static const DnsError: string = "DnsError";
+    static const ConnectError: string = "ConnectError";
+    static const TlsError: string = "TlsError";
+    static const Http1Error: string = "Http1Error";
+    static const Http2Error: string = "Http2Error";
+    static const Http3Error: string = "Http3Error";
+    static const QuicError: string = "QuicError";
+    static const ProtocolError: string = "ProtocolError";
+    static const RedirectError: string = "RedirectError";
+    static const ProxyError: string = "ProxyError";
+    static const CacheError: string = "CacheError";
+    static const CompressionError: string = "CompressionError";
+    static const MultipartError: string = "MultipartError";
+    static const AuthenticationError: string = "AuthenticationError";
+    static const IoError: string = "IoError";
+    static const SecurityViolation: string = "SecurityViolation";
+    static const RateLimited: string = "RateLimited";
+    static const CircuitBroken: string = "CircuitBroken";
+}
+
+// ─── Convenience Functions ─────────────────────────────────────────────────────
+
+/// Send a GET request to the given URL.
+/// Returns a response object with .status, .ok, .text(), .json(), .headers
+export fn get(url: string) {
+    return HTTP.get(url);
+}
+
+/// Send an asynchronous GET request returning a Promise.
+export fn getAsync(url: string) {
+    return HTTP.getAsync(url);
+}
+
+/// Send a POST request with an optional body string.
+export fn post(url: string, body: string) {
+    return HTTP.post(url, body);
+}
+
+/// Send an asynchronous POST request returning a Promise.
+export fn postAsync(url: string, body: string) {
+    return HTTP.postAsync(url, body);
+}
+
+/// Send a PUT request with an optional body string.
+export fn put(url: string, body: string) {
+    return HTTP.put(url, body);
+}
+
+/// Send an asynchronous PUT request returning a Promise.
+export fn putAsync(url: string, body: string) {
+    return HTTP.putAsync(url, body);
+}
+
+/// Send a DELETE request.
+export fn del(url: string) {
+    return HTTP.delete(url);
+}
+
+/// Send an asynchronous DELETE request returning a Promise.
+export fn delAsync(url: string) {
+    return HTTP.deleteAsync(url);
+}
+
+/// Send an asynchronous DELETE request returning a Promise.
+export fn deleteAsync(url: string) {
+    return HTTP.deleteAsync(url);
+}
+
+/// Send a PATCH request with an optional body string.
+export fn patch(url: string, body: string) {
+    return HTTP.patch(url, body);
+}
+
+/// Send an asynchronous PATCH request returning a Promise.
+export fn patchAsync(url: string, body: string) {
+    return HTTP.patchAsync(url, body);
+}
+
+/// Send a HEAD request (headers only, no body).
+export fn head(url: string) {
+    return HTTP.head(url);
+}
+
+/// Send an asynchronous HEAD request returning a Promise.
+export fn headAsync(url: string) {
+    return HTTP.headAsync(url);
+}
+
+/// Send an OPTIONS request.
+export fn options(url: string) {
+    return HTTP.options(url);
+}
+
+/// Send an asynchronous OPTIONS request returning a Promise.
+export fn optionsAsync(url: string) {
+    return HTTP.optionsAsync(url);
+}
+
+/// Send a QUERY request (RFC 9110) with a body.
+export fn query(url: string, body: string) {
+    return HTTP.query(url, body);
+}
+
+/// Send an asynchronous QUERY request returning a Promise.
+export fn queryAsync(url: string, body: string) {
+    return HTTP.queryAsync(url, body);
+}
+
+/// Send a TRACE request.
+export fn trace(url: string) {
+    return HTTP.trace(url);
+}
+
+/// Send a CONNECT request.
+export fn connect(url: string) {
+    return HTTP.connect(url);
+}
+
+/// Send an asynchronous CONNECT request returning a Promise.
+export fn connectAsync(url: string) {
+    return HTTP.connectAsync(url);
+}
+
+/// Send a custom HTTP method request.
+export fn custom(method: string, url: string, body: string) {
+    return HTTP.custom(method, url, body);
+}
+
+/// Send an asynchronous custom HTTP method request returning a Promise.
+export fn customAsync(method: string, url: string, body: string) {
+    return HTTP.customAsync(method, url, body);
+}
+
+/// Send a request asynchronously returning a Promise.
+export fn sendAsync(req) {
+    return HTTP.sendAsync(req);
+}
+
+/// Resolve host IP addresses asynchronously.
+export fn resolve(host: string) {
+    return HTTP.resolve(host);
+}
+
+/// Resolve host IP addresses asynchronously.
+export fn resolveAsync(host: string) {
+    return HTTP.resolveAsync(host);
+}
+
+/// Join multiple promises concurrently.
+export fn join(p1, p2, p3) {
+    return HTTP.join(p1, p2, p3);
+}
+
+/// Await all promises in an array concurrently.
+export fn all(promises) {
+    return HTTP.all(promises);
+}
+
+/// Explain a URL — returns diagnostic info without sending a request.
+export fn explain(url: string) {
+    return HTTP.explain(url);
+}
+
+/// Create a persistent HTTP client with configurable settings.
+/// The client object exposes .get(), .post(), .put(), .delete(), .patch(), .head(), .options()
+export fn Client() {
+    return HTTP.Client();
+}
+
+/// Create an asynchronous HTTP client.
+export fn AsyncClient() {
+    return HTTP.AsyncClient();
+}
+
+/// Create an asynchronous HTTP client builder.
+export fn AsyncClientBuilder() {
+    return HTTP.AsyncClientBuilder();
+}
+
+/// Create an HTTP server bound to the given address with the provided router.
+/// Call server.listen(fn() { ... }) to start accepting connections.
+///
+/// Example:
+///   let router = HTTP.Router();
+///   router.get("/", fn(req, res) { return res.send("Hello!"); });
+///   let server = HTTP.Server("127.0.0.1:3000", router);
+///   server.listen(fn() { print("Listening on port 3000"); });
+export fn Server(addr: string, router) {
+    return HTTP.Server(addr, router);
+}
+
+/// Create a router for registering route handlers.
+/// Supports: .get(), .post(), .put(), .delete(), .patch(), .head(), .options()
+///
+/// Example:
+///   let router = HTTP.Router();
+///   router.get("/hello", fn(req, res) {
+///       return res.send("Hello, World!");
+///   });
+export fn Router() {
+    return HTTP.Router();
+}
+
+/// Create an HTTP security policy object.
+export fn Policy() {
+    return HTTP.Policy();
+}
+
+/// Create a request budget for rate-limiting / budget tracking.
+export fn Budget() {
+    return HTTP.Budget();
+}
+
+/// Create a response cache.
+export fn Cache() {
+    return HTTP.Cache();
+}
+
+/// Create a reverse proxy with a list of upstream backend URLs.
+/// Supports round-robin, least-connections, and random load balancing.
+///
+/// Example:
+///   let proxy = HTTP.ReverseProxy(["http://backend1:8080", "http://backend2:8080"]);
+export fn ReverseProxy(upstreams) {
+    return HTTP.ReverseProxy(upstreams);
+}
+
+/// Phase 4 Extensions
+
+/// Create a response builder object.
+/// Example: HTTP.Response().status(201).header("X-Request-ID", "123").json(data);
+export fn Response() {
+    return HTTP.Response();
+}
+
+/// Create an advanced HTTP client builder with profile & policy options.
+export fn ClientBuilder() {
+    return HTTP.ClientBuilder();
+}
+
+/// Client configuration profiles.
+export class ClientProfile {
+    static const Balanced: string = "Balanced";
+    static const LowLatency: string = "LowLatency";
+    static const HighThroughput: string = "HighThroughput";
+    static const StrictSecurity: string = "StrictSecurity";
+    static const Mobile: string = "Mobile";
+    static const InternalService: string = "InternalService";
+}
+
+/// Create a request builder object.
+export fn RequestBuilder() {
+    return HTTP.RequestBuilder();
+}
+
+/// Create an HTTP Context wrapper object.
+export fn Context(req, res) {
+    return HTTP.Context(req, res);
+}
+
+/// Create an HTTP Middleware chain container.
+export fn Middleware() {
+    return HTTP.Middleware();
+}
+
+/// Request parameter / body validator.
+export fn Validator() {
+    return HTTP.Validator();
+}
+
+/// CORS middleware helper.
+export fn CORS(opts) {
+    return HTTP.CORS(opts);
+}
+
+/// Security headers middleware helper (HSTS, CSP, X-Content-Type-Options, COOP).
+export fn SecurityHeaders() {
+    return HTTP.SecurityHeaders();
+}
+
+/// CSRF protection middleware helper.
+export fn CSRF() {
+    return HTTP.CSRF();
+}
+
+/// Authentication middleware helper.
+export fn Auth(opts) {
+    return HTTP.Auth(opts);
+}
+
+/// Role-based authorization middleware helper.
+export fn requireRole(role: string) {
+    return HTTP.requireRole(role);
+}
+
+/// Rate limiting middleware helper.
+export fn RateLimit(opts) {
+    return HTTP.RateLimit(opts);
+}
+
+/// Concurrency limiting middleware helper.
+export fn ConcurrencyLimit(maxConnections: int) {
+    return HTTP.ConcurrencyLimit(maxConnections);
+}
+
+/// Circuit breaker middleware helper.
+export fn CircuitBreaker(serviceName: string) {
+    return HTTP.CircuitBreaker(serviceName);
+}
+
+/// Compression middleware helper.
+export fn Compression() {
+    return HTTP.Compression();
+}
+
+/// Static file server middleware.
+export fn Static(dirPath: string) {
+    return HTTP.Static(dirPath);
+}
+
+/// Create a WebSocket connection/server helper.
+export fn WebSocket() {
+    return HTTP.WebSocket();
+}
+
+/// Create a WebSocket broadcast room.
+export fn WebSocketRoom(name: string) {
+    return HTTP.WebSocketRoom(name);
+}
+
+/// SSE event emitter helper.
+export fn SSE() {
+    return HTTP.SSE();
+}
+
+/// API Gateway router & proxy abstraction.
+export fn Gateway() {
+    return HTTP.Gateway();
+}
+
+/// Problem details generator (RFC 7807 application/problem+json).
+export fn Problem(status: int, title: string, detail: string) {
+    return HTTP.Problem(status, title, detail);
+}
+
+/// In-memory testing client (no TCP socket required).
+export fn TestClient(app) {
+    return HTTP.TestClient(app);
+}
+
+/// Client mocking utility for unit testing.
+export fn MockClient() {
+    return HTTP.MockClient();
+}
+
+/// Report security posture of a target URL.
+export fn securityPosture(url: string) {
+    return HTTP.securityPosture(url);
+}
+
+/// Discover HTTP capabilities of a target URL.
+export fn discover(url: string) {
+    return HTTP.discover(url);
+}
+

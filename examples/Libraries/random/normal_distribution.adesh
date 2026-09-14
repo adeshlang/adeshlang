@@ -1,0 +1,8 @@
+import Random;
+
+print("--- Normal Distribution Object Demo ---");
+let normDist = Random.Normal(100.0, 15.0);
+
+print("Sample 1 (mean 100, stdDev 15): " + normDist.sample());
+print("Sample 2 (mean 100, stdDev 15): " + normDist.sample());
+print("Sample 3 (mean 100, stdDev 15): " + normDist.sample());

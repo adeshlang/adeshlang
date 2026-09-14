@@ -1,0 +1,265 @@
+// features.ind — example demonstrating key language features
+
+print("literals and arithmetic");
+let a = 1;
+let b = 2.5;
+let c = a + b;         // numeric addition
+print(c);
+
+// strings and concatenation via +
+let s1 = "hello";
+let s2 = " world";
+print(s1 + s2);
+
+// boolean and null
+let flag = true;
+print(flag);
+let n = null;
+print(n);
+
+// top-level let without initializer (becomes null)
+let x;
+print(x);
+
+// simple function (interpreter path supports functions)
+fn add(x, y) {
+    return x + y;
+}
+print(add(10, 20));
+
+// if / while
+let i = 0;
+while (i < 3) {
+    print(i);
+    i = i + 1;
+}
+
+// arrays and objects (some ops are runtime/interpreter-only)
+let arr = [1, 2, 3];
+print(arr[0]);
+let obj = { name: "Test", value: 42 };
+print(obj.name);
+
+
+class Person {
+    fn init(name, age) {
+        this.name = name;
+        this.age = age;
+    }
+
+    fn greet() {
+        print("Hi, I'm", this.name, "and I'm", this.age, "years old.");
+    }
+}
+
+// extension example: anonymous extension
+extend on Person {
+    fn salute() { print("Salute " + this.name); }
+}
+
+// named extension
+extend HelloExt on Person {
+    fn hello() { print("Hello " + this.name); }
+}
+
+let p2 = new Person("Anita", 28);
+p2.salute();
+p2.hello();
+
+// Tuples (Python-style)
+let t = (1, 2, 3);
+print(t);
+let single = (42,);
+print(single);
+let empty_tuple = ();
+print(empty_tuple);
+print(len(t));
+
+// Sets: brace form without ':' is a set; duplicates are removed
+let s = {1, 2, 2, 3};
+print(s);
+print(len(s));
+let from_arr = set([1, 2, 2, 4]);
+print(from_arr);
+
+// -------------------------
+// Async / Promise / Timers examples (added)
+
+// Promise constructor and then chaining
+let p = Promise(fn(res, rej){ res(2); });
+let q = p.then(fn(x){ return x * 3; }).then(fn(y){ return y + 1; });
+q.then(fn(v){ print("promise chain result:", v); });
+
+// Async function and await usage
+async fn delayedAdd(a, b) {
+    return a + b;
+}
+let ap = delayedAdd(5, 7);
+ap.then(fn(v){ print("async result:", v); });
+
+// setTimeout and setInterval
+setTimeout(fn(){ print("timeout fired"); }, 200);
+let iid = setInterval(fn(){ print("interval tick"); }, 10);
+// stop the interval after some time (illustrative only)
+setTimeout(fn(){ clearInterval(iid); print("interval cleared"); }, 80);
+
+// Complex numbers via builtin
+let z = complex(3, 4);
+print(z);
+
+// tuple() helper from array
+let t2 = tuple([9, 8, 7]);
+print(t2);
+
+// -------------------------
+// Default parameters (evaluated at call-time)
+// Defaults may reference surrounding bindings or expressions.
+let base = 10;
+fn incr(n = base + 5) {
+    return n + 1;
+}
+print(incr()); // prints 16
+
+// Defaults can be null/None and are evaluated when the function is called.
+fn welcome(name = "Guest", title = None) {
+    if (title == null) {
+        print("Hello " + name);
+    } else {
+        print(title + " " + name);
+    }
+}
+welcome();
+welcome("Suman", "Dr.");
+
+// -------------------------
+// Concise function literals (new)
+// JS-style arrow shorthand: single-identifier and parenthesized forms
+// Single-ident: x => x + 1
+let inc = x => x + 1;
+print(inc(5));
+
+// Parenthesized with defaults and expression body
+let add = (a, b = 2) => a + b;
+print(add(3));
+print(add(3, 4));
+
+// Parenthesized with block body
+let greet = (name) => { print("Hi " + name); };
+greet("Anita");
+
+// Use arrow with higher-order builtin `map`
+let nums = [1,2,3,4];
+let doubled = map(nums, fn(x) => x * 2); // concise `fn(...) => expr` also supported
+print(doubled);
+
+// Using JS-style arrow inline with map
+let tripled = map(nums, (x) => x * 3);
+print(tripled);
+
+// Closure capture example: arrow functions capture surrounding bindings
+let base2 = 100;
+let addBase = (x) => x + base2;
+print(addBase(5));
+base2 = 200;
+// calling again shows the function reflects updated outer binding (captured environment values are read at call time)
+print(addBase(5));
+
+// -------------------------
+// Set operations (immutable returns)
+let s1 = set([1,2,3]);
+let s2 = set([3,4]);
+let su = s1.union(s2);          // {1,2,3,4}
+print(su);
+let si = s1.intersection(set([2,3]));
+print(si);                      // {2,3}
+let s3 = s1.add(5);
+print(s3);
+
+// contains
+print(s1.contains(2));
+print(s1.contains(9));
+
+for (i in [1,2,3,4]){
+    if(i == 3){
+        break;
+    }
+    print(i);
+}
+for (i in [1,2,3,4]){
+    if(i == 2){
+        continue;
+    }
+    print(i);
+}
+for (i in [1,2,3,4]){
+    if(i == 2){
+        jump 4;
+    }
+    print(i);
+}
+
+// -------------------------
+// Structs (simple value aggregates)
+// Define a struct with named fields. Construct with `new` using positional args.
+struct Point {
+    x:u8;
+    y:u8;
+};
+
+let p = new Point(3, 4);
+print(p.x);
+print(p.y);
+
+// -------------------------
+// Enums (sum types) — lightweight constructors
+// Define an enum with variants (optional single payload name)
+enum Result {
+    Ok(value),
+    Err(msg)
+}
+
+let r1 = new Result.Ok(200);
+print(r1.tag);
+print(r1.value);
+
+let r2 = new Result.Err("not found");
+print(r2.tag);
+
+print(r2.value);
+
+// -------------------------
+// Interfaces and abstract classes
+// Define an interface and an abstract base class that declares a method
+interface Speakable {
+   public fn speak();
+}
+
+abstract class Animal {
+    fn init(name) { this.name = name; }
+    fn speak(){}
+}
+
+class Dog extends Animal implements Speakable {
+    fn init(name) { this.name = name; }
+    fn speak() { print("Woof " + this.name); }
+}
+
+let d = new Dog("Raju");
+d.speak();
+
+// Attempting to instantiate an abstract class will raise a runtime error.
+try {
+    let a = new Animal("X");
+} catch (e) {
+    print("cannot instantiate abstract class");
+}
+
+// Access modifiers (declaration only). Runtime enforcement of private/protected
+// lookups is planned; visibility metadata is carried on methods but not yet enforced.
+class Secret {
+    private fn secret() { print("secret"); }
+    fn reveal() { this.secret(); }
+}
+
+let s = new Secret();
+s.reveal();

@@ -1,0 +1,55 @@
+// 01_basic_generics.adesh
+// Demonstrates basic syntax for generic functions, generic type aliases,
+// and generic classes in AdeshLang.
+
+print("=== 01: BASIC GENERICS DEMO ===");
+
+// 1. Generic function returning the input value unmodified
+fn identity<T>(value: T): T {
+    return value;
+}
+
+// 2. Generic function constructing a pair (tuple-like structure)
+type Pair<A, B> = { first: A; second: B };
+
+fn makePair<A, B>(first: A, second: B): Pair<A, B> {
+    return { first: first, second: second };
+}
+
+// Test basic generic functions
+let numVal: int = identity<int>(100);
+let strVal: string = identity<string>("AdeshLang Generics");
+
+print("Identity(100)      =", numVal);
+print("Identity('Adesh')  =", strVal);
+
+let pair: Pair<int, string> = makePair<int, string>(1, "First Element");
+print("Pair: first =", pair.first, "| second =", pair.second);
+
+// 3. Generic class with a type parameter and a generic method
+class BoxHolder<T> {
+    BoxHolder(val: T) {
+        this.value = val;
+    }
+
+    fn getValue(): T {
+        return this.value;
+    }
+
+    // Generic method on a class instance
+    fn transform<U>(transformFn): U {
+        return transformFn(this.value);
+    }
+}
+
+let numBox = new BoxHolder(42);
+print("Boxed value        =", numBox.getValue());
+
+fn doubleVal(x) {
+    return x * 2;
+}
+
+let transformed: int = numBox.transform<int>(doubleVal);
+print("Transformed Box    =", transformed);
+
+print("✅ Basic Generics Demo Passed.\n");

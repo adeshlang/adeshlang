@@ -1,0 +1,25 @@
+// Example of async/await combined with Generics and OOP classes
+
+print("=== Starting Async Generics and OOP Demo ===");
+
+class Fetcher<T> {
+    Fetcher(val) {
+        this.val = val;
+    }
+
+    async fn fetch(): T {
+        // Returns the wrapped generic value asynchronously
+        return this.val;
+    }
+}
+
+async fn main() {
+    let intFetcher = new Fetcher(42);
+    let strFetcher = new Fetcher("Hello from Async Generics!");
+
+    let intResult = await intFetcher.fetch();
+    let strResult = await strFetcher.fetch();
+
+    print("Int Fetcher returned:", intResult);
+    print("String Fetcher returned:", strResult);
+}

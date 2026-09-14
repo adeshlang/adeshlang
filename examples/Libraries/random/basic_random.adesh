@@ -1,0 +1,14 @@
+import Random;
+
+print("--- Basic Random Demo ---");
+let num = Random.int(1, 100);
+print("Random integer (1..100): " + num);
+
+let f = Random.float();
+print("Random float (0..1): " + f);
+
+let b = Random.bool();
+print("Random bool: " + b);
+
+let uid = Random.uuid();
+print("Random UUID: " + uid);

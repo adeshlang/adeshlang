@@ -1,0 +1,138 @@
+// Long-running soak for native thread-count analysis.
+//
+// Holds a stable set of named OS threads for 90 seconds and prints the
+// runtime registry every 3s. Pair with Task Manager / Resource Monitor /
+// Process Explorer while this runs.
+//
+// Expected OS threads (approx):
+//   1  adesh-main
+//   N  adesh-pool-0 .. adesh-pool-(N-1)     N = hardware_concurrency()
+//   4  soak-worker-0 .. soak-worker-3
+//   1  soak-heartbeat
+//
+// Full write-up: examples/concurrency/PRODUCTION.md
+//
+// Run:  adeshlang run examples/concurrency/production_thread_soak.adesh --interpreter --timeout 120s
+
+import thread;
+
+const RUN_MS = 90000;
+const TICK_MS = 3000;
+const WORKERS = 4;
+
+thread.watchdog(RUN_MS + 20000);
+
+fn print_live(label) {
+    print(`-- ${label}`);
+    let listed = thread.list();
+    print(`   thread.list() = ${listed.len()}`);
+    let r = 0;
+    let row = { id: 0, name: null };
+    let nm = "";
+    while r < listed.len() {
+        row = listed[r];
+        nm = row.name;
+        if (nm == null) {
+            nm = "(unnamed)";
+        }
+        print(`    ${nm}  id=${row.id}`);
+        r = r + 1;
+    }
+}
+
+thread.name("adesh-main");
+let ncpu = thread.hardware_concurrency();
+let pool = thread.ThreadPool.new(ncpu);
+let stop = thread.CancellationSource.new();
+let tok = stop.token();
+let ticks_atomic = thread.Atomic.AtomicI64.new(0);
+let work_units = thread.Atomic.AtomicI64.new(0);
+
+print("╔══════════════════════════════════════════════════════════╗");
+print("║  THREAD SOAK — leave this running and inspect OS threads ║");
+print("╚══════════════════════════════════════════════════════════╝");
+print(`  pid-local name:     ${thread.name()}`);
+print(`  hardware_concurrency ${ncpu}`);
+print(`  pool workers         ${pool.size()}`);
+print(`  extra named workers  ${WORKERS} + heartbeat`);
+print(`  expected ~           ${1 + ncpu + WORKERS + 1} OS threads`);
+print(`  duration             ${RUN_MS / 1000} seconds`);
+print("");
+print("Windows: Task Manager → Details → adeshlang.exe → right-click header → Select columns → Threads");
+print("         Resource Monitor → CPU → Threads → filter adeshlang");
+print("");
+
+let wg = thread.WaitGroup.new();
+wg.add(WORKERS + 1);
+
+let i = 0;
+let handles = [];
+while i < WORKERS {
+    let id = i;
+    handles.push(thread.spawn_named(`soak-worker-${id}`, fn() {
+        while !tok.is_cancelled() {
+            pool.execute(fn() {
+                let x = 1;
+                let k = 0;
+                while k < 200 {
+                    x = (x * 1103515245 + 12345) % 2147483647;
+                    k = k + 1;
+                }
+                work_units.fetch_add(1, "Relaxed");
+            });
+            thread.sleep(25);
+        }
+        wg.done();
+    }));
+    i = i + 1;
+}
+
+let beat = thread.spawn_named("soak-heartbeat", fn() {
+    while !tok.is_cancelled() {
+        ticks_atomic.fetch_add(1, "Relaxed");
+        thread.park(200);
+    }
+    wg.done();
+});
+
+print_live("startup — begin native sampling");
+let deadline = clock() + (RUN_MS / 1000.0);
+let tick = 0;
+let listed = [];
+let r = 0;
+let row = { id: 0, name: null };
+let nm = "";
+while clock() < deadline {
+    tick = tick + 1;
+    listed = thread.list();
+    print(`t=${tick}  registry=${listed.len()}  pool_jobs=${work_units.load("Relaxed")}  heartbeats=${ticks_atomic.load("Relaxed")}`);
+    r = 0;
+    while r < listed.len() {
+        row = listed[r];
+        nm = row.name;
+        if (nm == null) {
+            nm = "(unnamed)";
+        }
+        print(`    ${nm}  id=${row.id}`);
+        r = r + 1;
+    }
+    thread.sleep(TICK_MS);
+}
+
+stop.cancel();
+beat.unpark();
+let wg_ok = wg.wait_timeout(5000);
+if (!wg_ok) {
+    print("waitgroup timed out during soak shutdown");
+}
+let h = 0;
+while h < handles.len() {
+    handles[h].join_timeout(2000);
+    h = h + 1;
+}
+beat.join_timeout(2000);
+pool.shutdown();
+pool.join_timeout(3000);
+print_live("after shutdown");
+print("soak complete.");
+thread.disarm_watchdog();

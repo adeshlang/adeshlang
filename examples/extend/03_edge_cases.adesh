@@ -1,0 +1,265 @@
+// 03_edge_cases.adesh
+// Edge cases, boundary conditions, and error scenarios for "extend on".
+// Tests how extend behaves in non-trivial situations.
+
+print("=== 03: EXTEND EDGE CASES ===");
+print("");
+
+// ── Edge Case 1: Extension on a class with only instance methods ──
+
+class Counter {
+    Counter(start) {
+        this.value = start;
+    }
+}
+
+extend CounterOps on Counter {
+    fn increment() {
+        this.value = this.value + 1;
+    }
+
+    fn decrement() {
+        this.value = this.value - 1;
+    }
+
+    fn reset() {
+        this.value = 0;
+    }
+
+    fn addN(n) {
+        let i = 0;
+        for (i = 0; i < n; i = i + 1) {
+            this.increment();
+        }
+    }
+}
+
+let c1 = new Counter(0);
+c1.addN(5);
+print("After addN(5):", c1.value);
+c1.decrement();
+print("After decrement:", c1.value);
+c1.reset();
+print("After reset:", c1.value);
+print("");
+
+// ── Edge Case 2: Extension calling another extended method ──
+// All Stack extensions merged into one block.
+
+class Stack {
+    Stack() {
+        this.items = [];
+    }
+
+    fn push(item) {
+        this.items = this.items + [item];
+    }
+}
+
+extend StackOps on Stack {
+    fn pop() {
+        let sz = len(this.items);
+        if (sz == 0) {
+            return null;
+        }
+        let last = this.items[sz - 1];
+        // Drop last item by slicing all but last
+        let newItems = this.items;
+        this.items = [];
+        let idx = 0;
+        for (item in newItems) {
+            if (idx < sz - 1) {
+                this.push(item);
+            }
+            idx = idx + 1;
+        }
+        return last;
+    }
+
+    fn isEmpty() {
+        return len(this.items) == 0;
+    }
+
+    fn peek() {
+        let sz = len(this.items);
+        if (sz == 0) {
+            return null;
+        }
+        return this.items[sz - 1];
+    }
+
+    fn popAll() {
+        while (!this.isEmpty()) {
+            print("  Popped:", this.pop());
+        }
+    }
+
+    fn pushAll(arr) {
+        for (item in arr) {
+            this.push(item);
+        }
+    }
+}
+
+let stack = new Stack();
+stack.pushAll([10, 20, 30, 40, 50]);
+print("Stack peek:", stack.peek());
+print("Popping all:");
+stack.popAll();
+print("Is empty:", stack.isEmpty());
+print("");
+
+// ── Edge Case 3: Extending a type that already has methods ──
+
+class Greeter {
+    Greeter(name) {
+        this.name = name;
+    }
+
+    fn hello() {
+        print("Hello", this.name);
+    }
+}
+
+extend GreeterExtra on Greeter {
+    fn hi() {
+        print("Hi", this.name);
+    }
+
+    fn hey() {
+        print("Hey", this.name);
+    }
+}
+
+let g = new Greeter("Dave");
+g.hello();
+g.hi();
+g.hey();
+print("");
+
+// ── Edge Case 4: Extending AFTER instances have been created ──
+
+class DataBag {
+    DataBag(label) {
+        this.label = label;
+        this.data = {};
+    }
+
+    fn set(key, value) {
+        this.data[key] = value;
+    }
+}
+
+let bag = new DataBag("test");
+bag.set("a", 1);
+bag.set("b", 2);
+
+// Extend the class AFTER instance was created — methods still work on existing instances
+extend DataBagRead on DataBag {
+    fn getKey(key) {
+        return this.data[key];
+    }
+
+    fn allKeys() {
+        let k = [];
+        for (key in this.data) {
+            k = k + [key];
+        }
+        return k;
+    }
+}
+
+print("Bag label:", bag.label);
+print("Bag keys:", bag.allKeys());
+print("Bag['a']:", bag.getKey("a"));
+print("Bag['b']:", bag.getKey("b"));
+print("");
+
+// ── Edge Case 5: Multiple anonymous extensions on same type ──
+
+class Store {
+    Store() {
+        this.count = 0;
+    }
+}
+
+// Anonymous extend 1
+extend on Store {
+    fn increment() {
+        this.count = this.count + 1;
+    }
+}
+
+// Anonymous extend 2
+extend on Store {
+    fn decrement() {
+        this.count = this.count - 1;
+    }
+}
+
+// Named extend 3
+extend StoreExtra on Store {
+    fn reset() {
+        this.count = 0;
+    }
+
+    fn getCount() {
+        return this.count;
+    }
+}
+
+let store = new Store();
+store.increment();
+store.increment();
+store.increment();
+print("After 3 increments:", store.getCount());
+store.decrement();
+print("After 1 decrement:", store.getCount());
+store.reset();
+print("After reset:", store.getCount());
+print("");
+
+// ── Edge Case 6: Empty extension block (valid syntax) ──
+
+class EmptyExt {}
+
+extend on EmptyExt {
+    // empty extension — valid syntax, no methods added
+}
+
+let ee = new EmptyExt();
+print("Empty extension created successfully");
+print("");
+
+// ── Edge Case 7: Status pattern via class extend ──
+// Note: 'extend on enum' is planned — currently extend only supports classes.
+
+class Status {
+    Status(tag, detail) {
+        this.tag = tag;
+        this.detail = detail;
+    }
+}
+
+extend StatusOps on Status {
+    fn description() {
+        return match this.tag {
+            "Active"   => "Currently active (detail: " + this.detail + ")",
+            "Inactive" => "Inactive: " + this.detail,
+            "Pending"  => "Pending approval (ETA: " + this.detail + ")"
+        };
+    }
+
+    fn isActive() {
+        return this.tag == "Active";
+    }
+}
+
+let s1 = new Status("Active", "running");
+let s2 = new Status("Inactive", "maintenance");
+print(s1.description());
+print("Is active:", s1.isActive());
+print(s2.description());
+print("");
+
+print("✅ Extend Edge Cases Passed.\n");

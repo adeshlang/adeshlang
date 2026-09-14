@@ -1,0 +1,45 @@
+// examples/arc/03_weak_references.adesh
+// `weak` references do NOT increase the strong count, so they never prevent
+// deallocation. Use them to observe a shared value without owning it.
+
+print("=== Weak References ===\n");
+
+share resource = { name: "DatabaseConnection", id: 42 };
+
+// ── Creating a weak reference ──────────────────────────────────────────────
+weak handle = resource;
+
+print("strong_count after weak:", resource.strong_count()); // 1 (unchanged)
+print("weak_count   after weak:", resource.weak_count());   // 1
+
+// ── Checking liveness ─────────────────────────────────────────────────────
+// `is_alive()` returns true as long as at least one strong ref exists.
+print("\nhandle.is_alive():", handle.is_alive());  // true
+
+// ── Upgrading a weak → strong ─────────────────────────────────────────────
+{
+    let maybe = handle.upgrade();
+    if (maybe != null) {
+        print("Upgraded successfully, name:", maybe.name);
+        print("strong_count during upgrade:", resource.strong_count()); // 2
+    }
+}
+// the temporary strong ref from upgrade() is released here
+
+print("strong_count after upgrade scope:", resource.strong_count()); // 1
+
+// ── Multiple weak references ───────────────────────────────────────────────
+weak w1 = resource;
+weak w2 = resource;
+weak w3 = resource;
+
+print("\nThree weak refs (plus original handle):");
+print("weak_count  :", resource.weak_count());   // 4 (handle + w1 + w2 + w3)
+print("strong_count:", resource.strong_count()); // still 1
+
+// ── Liveness after all strong refs are gone (simulation) ──────────────────
+// In real programs the last strong ref going out of scope would make
+// is_alive() return false.  Here `resource` itself is still in scope, so:
+print("\nhandle.is_alive() while resource in scope:", handle.is_alive()); // true
+
+print("\nWeak references demonstrated – they observe without owning.");

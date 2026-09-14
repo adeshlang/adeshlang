@@ -1,0 +1,46 @@
+// Example: Invalid borrow patterns (compile-time errors)
+// These examples show patterns that violate borrow rules
+// .
+// ERROR 1: Cannot get exclusive access while shared borrow active
+fn error_exclusive_during_shared() {
+    let p = alloc<i32>();
+    let r = &p;          // Shared borrow (read-only)
+    let mr = &p;         // Borrow attempt
+    *mr = 42;            // ERROR: exclusive access needed, but shared borrow exists
+    // Compiler infers mr needs exclusive access due to mutation
+}
+
+// ERROR 2: Cannot mutate through shared reference
+fn error_mutate_through_ref() {
+    let p = alloc<i32>();
+    let r = &p;
+    *r = 42;  // ERROR: cannot mutate through ref<T>
+}
+
+// ERROR 3: Cannot move while borrowed
+fn error_move_while_borrowed() {
+    let p = alloc<i32>();
+    let r = &p;
+    let q = p;  // ERROR: p is still borrowed
+}
+
+// ERROR 4: Cannot use after move
+fn error_use_after_move() {
+    let p = alloc<i32>();
+    let r = &p;
+    let q = p;  // Move p
+    let r2 = &p;  // ERROR: p was moved
+}
+
+// ERROR 5: Exclusive reference cannot escape scope
+fn error_ref_escape() {
+    let p = alloc<i32>();
+    let mr = &p;
+    *mr = 100;             // Mutation makes this exclusive
+    global.store(mr);      // ERROR: exclusive borrow cannot escape without transfer
+}
+
+fn main() {
+    println("These examples will NOT compile.");
+    println("They demonstrate borrow rule violations.");
+}

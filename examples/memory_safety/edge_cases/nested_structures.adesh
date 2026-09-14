@@ -1,0 +1,225 @@
+// Edge Cases: Nested Structures
+// Memory safety with complex nested data using objects and dictionaries
+// Similar to JavaScript/JSON structures
+
+fn main() {
+    print("=== Edge Case: Nested Structures (JSON/JavaScript-like) ===");
+    
+    // Demonstrate nested object/dictionary with multiple levels
+    json_like_structures();
+    config_objects();
+    api_response_simulation();
+    user_profiles_with_nested_data();
+}
+
+// JSON-like nested objects
+fn json_like_structures() {
+    print("\n--- JSON-like Structures ---");
+    
+    // Level 1
+    let ssl_cert = {
+        cert_file: "/etc/ssl/certs/server.crt",
+        key_file: "/etc/ssl/private/server.key"
+    };
+    
+    let ssl = {
+        enabled: true,
+        cert: ssl_cert
+    };
+    
+    let server = {
+        host: "0.0.0.0",
+        port: 8443,
+        ssl: ssl
+    };
+    
+    // Access deeply nested values
+    let cert_path = server.ssl.cert.cert_file;
+    print("SSL cert path:", cert_path);
+    print("Full server config:", server);
+}
+
+// Configuration object with multiple nesting levels
+fn config_objects() {
+    print("\n--- Configuration Objects ---");
+    
+    // Build level by level
+    let mysql_conn = {
+        host: "mysql.internal",
+        port: 3306,
+        user: "app_user"
+    };
+    
+    let redis_conn = {
+        host: "redis.internal",
+        port: 6379,
+        timeout: 5000
+    };
+    
+    let connections = {
+        database: mysql_conn,
+        cache: redis_conn
+    };
+    
+    let logging = {
+        level: "INFO",
+        file: "/var/log/app.log",
+        format: "json"
+    };
+    
+    let app_config = {
+        version: "2.0.1",
+        connections: connections,
+        logging: logging
+    };
+    
+    // Access nested values
+    let db_host = app_config.connections.database.host;
+    let db_port = app_config.connections.database.port;
+    let cache_timeout = app_config.connections.cache.timeout;
+    let log_level = app_config.logging.level;
+    
+    print("Database host:", db_host);
+    print("Database port:", db_port);
+    print("Cache timeout:", cache_timeout);
+    print("Log level:", log_level);
+    print("App config:", app_config);
+}
+
+// API response-like structure
+fn api_response_simulation() {
+    print("\n--- API Response Structure ---");
+    
+    // User object inside response
+    let user_meta = {
+        created_at: "2025-01-01",
+        updated_at: "2026-01-07"
+    };
+    
+    let user = {
+        id: 12345,
+        name: "Alice",
+        email: "alice@example.com",
+        meta: user_meta
+    };
+    
+    // Pagination info
+    let pagination = {
+        page: 1,
+        per_page: 50,
+        total: 150
+    };
+    
+    // Items in response
+    let item1 = {
+        id: 1,
+        title: "Item One",
+        price: 29.99
+    };
+    
+    let item2 = {
+        id: 2,
+        title: "Item Two",
+        price: 49.99
+    };
+    
+    let items = [item1, item2];
+    
+    // API response envelope
+    let response = {
+        status: 200,
+        user: user,
+        data: items,
+        pagination: pagination
+    };
+    
+    // Access various nested levels
+    let user_email = response.user.email;
+    let user_created = response.user.meta.created_at;
+    let first_item_price = response.data[0].price;
+    let page_size = response.pagination.per_page;
+    
+    print("User email:", user_email);
+    print("User created:", user_created);
+    print("First item price:", first_item_price);
+    print("Page size:", page_size);
+    print("API response:", response);
+}
+
+// Complex user profile with nested data
+fn user_profiles_with_nested_data() {
+    print("\n--- User Profiles with Nested Data ---");
+    
+    // Address structure
+    let address = {
+        street: "123 Main St",
+        city: "San Francisco",
+        state: "CA",
+        zip: "94102",
+        country: "USA"
+    };
+    
+    // Contact info
+    let contact = {
+        email: "bob@example.com",
+        phone: "555-1234",
+        address: address
+    };
+    
+    // Preferences at different levels
+    let email_prefs = {
+        marketing: true,
+        notifications: true,
+        digests: false
+    };
+    
+    let privacy_prefs = {
+        profile_public: false,
+        show_email: false
+    };
+    
+    let preferences = {
+        email: email_prefs,
+        privacy: privacy_prefs
+    };
+    
+    // Subscription details
+    let plan = {
+        name: "Premium",
+        price: 99.99,
+        renews: "2026-02-07"
+    };
+    
+    let subscription = {
+        active: true,
+        plan: plan
+    };
+    
+    // Complete user profile
+    let user_profile = {
+        id: 789,
+        username: "bob_smith",
+        contact: contact,
+        preferences: preferences,
+        subscription: subscription
+    };
+    
+    // Access from multiple nesting levels (5+ levels deep)
+    let user_street = user_profile.contact.address.street;
+    let user_city = user_profile.contact.address.city;
+    let user_email = user_profile.contact.email;
+    let marketing_enabled = user_profile.preferences.email.marketing;
+    let privacy_public = user_profile.preferences.privacy.profile_public;
+    let plan_name = user_profile.subscription.plan.name;
+    let renewal_date = user_profile.subscription.plan.renews;
+    
+    print("User street:", user_street);
+    print("User city:", user_city);
+    print("User email:", user_email);
+    print("Marketing enabled:", marketing_enabled);
+    print("Profile public:", privacy_public);
+    print("Plan name:", plan_name);
+    print("Renewal date:", renewal_date);
+    print("User profile:", user_profile);
+}
+

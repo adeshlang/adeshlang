@@ -1,0 +1,20 @@
+struct Message {
+  id: i32,
+  text: i32,
+};
+
+region MessageArena {
+  let msg1 = Message { id: 1, text: 100 };
+  let msg2 = Message { id: 2, text: 200 };
+  
+  print("Messages in arena:");
+  print(msg1.id);
+  print(msg2.id);
+  
+  let msg3 = msg1;
+  print("Move within region: ");
+  print(msg3.id);
+}
+
+print("Region exited - all owned values cleaned up automatically");
+print("No garbage collection needed");

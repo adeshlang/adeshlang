@@ -1,0 +1,55 @@
+// Non-Lexical Lifetimes (NLL) Example
+// In AdeshLang, borrows end at their last use, not at scope end
+// This is more flexible than lexical lifetimes
+
+fn main() {
+    let data = [1, 2, 3];
+    
+    // Borrow data in a nested scope so the borrow ends at scope exit
+    {
+        let r = &data;
+        print("Borrowed: ", r);
+    }
+    // r's lifetime ends at the closing brace above
+
+    // After the borrow ends we can still use `data` normally
+    print("Can still use data:", data);
+
+    // Demonstrate handling runtime errors with try/catch
+    try {
+        // simulate a runtime error (this is catchable at runtime)
+        throw error("Simulated runtime error during borrow-sensitive op");
+    } catch (e) {
+        print("Caught runtime error:", e.message);
+    }
+
+    // Note: compile-time borrow/move errors (like move-while-borrow) are enforced
+    // by the compiler and cannot be caught with try/catch. Use scoping to end
+    // borrows before moving values.
+    
+    // Another example: conditional borrowing
+    let x = 42;
+    if (x > 10) {
+        let r = &x;
+        print("x is large: ", r);
+        // r's lifetime ends here
+    }
+    
+    // Can reassign x now (no mut keyword needed)
+    x = 100;
+    print("x updated: ", x);
+}
+
+// Example: Mutable references (exclusive borrows)
+fn exclusive_borrow_example() {
+    let arr = [1, 2, 3];
+    
+    // Exclusive borrow - can modify through this reference
+    let r = &arr;
+    r[0] = 10;  // Modify through borrow
+    
+    print("Modified through borrow:", arr);
+    
+    // After r's last use, we can access arr again
+    print("Array:", arr);
+}

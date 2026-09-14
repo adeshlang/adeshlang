@@ -1,0 +1,45 @@
+﻿// Edge case: Multiple allocations, manual free in middle, RAII auto-cleanup of remainder
+// Verifies:
+// 1. Multiple allocations can coexist independently.
+// 2. Explicitly freeing one buffer in the middle marks it freed immediately (UAF detected).
+// 3. RAII automatically cleans up remaining active buffers on scope exit without double-freeing the manual one.
+
+unsafe {
+    let p1 = alloc(8);
+    let p2 = alloc(16);
+    let p3 = alloc(32);
+    let p4 = alloc(64);
+
+    // Populate each buffer
+    p1[0] = 10;
+    p2[0] = 20;
+    p3[0] = 30;
+    p4[0] = 40;
+
+    println("Allocated 4 buffers with values:", p1[0], p2[0], p3[0], p4[0]);
+
+    // Manually free p2 in the middle
+    println("Manually freeing p2...");
+    free(p2);
+
+    // Verify p2 is caught on access
+    try {
+        println("Attempting to access p2 after free...");
+        let val = p2[0];
+        println("FAILED: Should have thrown UAF, got:", val);
+    } catch (e) {
+        println("SUCCESS: Caught expected UAF error on p2:", e);
+    }
+
+    // Verify other buffers are completely intact
+    println("Verifying other buffers are intact:", p1[0], p3[0], p4[0]);
+    p1[7] = 11;
+    p3[31] = 33;
+    p4[63] = 44;
+    println("Successfully modified other buffers.");
+
+    // We let p1, p3, p4 fall out of scope here: RAII handles their cleanup!
+    println("Exiting scope (RAII auto-cleanup for p1, p3, p4)...");
+}
+
+println("Multi-alloc and selective manual free completed without errors!");

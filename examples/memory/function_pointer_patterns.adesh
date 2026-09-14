@@ -1,0 +1,132 @@
+/// Function Pointer Patterns
+/// Demonstrates safe parameter passing, ownership transfer,
+/// and pointer return patterns
+// 
+fn main() {
+    println!("=== Function Pointer Patterns ===\n");
+
+    /// Example 1: Borrowed parameter (immutable reference)
+    println!("Example 1: Borrowed Parameters");
+    let arr = [1, 2, 3, 4, 5];
+    print_array(&arr);
+    // arr still owns the data - no move happened
+    println!("Array still accessible after function call\n");
+
+    /// Example 2: Pointer as owning parameter
+    println!("Example 2: Owning Pointer Parameter");
+    let p = alloc(20);
+    println!("Allocated pointer: {}", p);
+    process_owned(p);
+    // Can't use 'p' anymore - ownership transferred!
+    println!("Ownership transferred to function\n");
+
+    /// Example 3: Return owning pointer
+    println!("Example 3: Returning Owning Pointer");
+    let p = create_buffer();
+    println!("Received pointer from function: {}", p);
+    free(p);
+    println!("Freed after use\n");
+
+    /// Example 4: Multiple parameters
+    println!("Example 4: Multiple Parameters");
+    let p1 = alloc(10);
+    let p2 = alloc(20);
+    println!("Allocated two pointers");
+    combine(p1, p2);
+    println!("Both transferred to function\n");
+
+    /// Example 5: Parameter and return value
+    println!("Example 5: Transform Pointer");
+    let p = alloc(30);
+    println!("Original pointer: {}", p);
+    let p_new = transform(p);
+    println!("Returned pointer: {}", p_new);
+    free(p_new);
+    println!("Freed transformed pointer\n");
+
+    /// Example 6: Conditional cleanup
+    println!("Example 6: Conditional Cleanup Patterns");
+    let maybe_pointer = create_conditional(true);
+    if maybe_pointer != 0 {
+        // Use pointer
+        free(maybe_pointer);
+    }
+    println!("Conditional pointers handled safely\n");
+
+    /// Example 7: Array function pattern
+    println!("Example 7: Array Processing Functions");
+    let buffer = alloc(100);
+    println!("Created buffer of 100 bytes");
+    process_buffer(buffer, 100);
+    println!("Buffer processed\n");
+
+    /// Example 8: Safe error pattern
+    println!("Example 8: Error-Safe Patterns");
+    let p = alloc(50);
+    let result = risky_operation(p);
+    // p might be freed by function, or returned
+    // But in either case, it's handled safely
+    println!("Risky operation completed safely\n");
+
+    println!("=== All Function Pointer Patterns Passed ===");
+}
+
+// Borrowed parameter - reference is temporary
+fn print_array(arr: &[i32]) {
+    println!("Array in function: [");
+    for val in arr {
+        println!("  {}", *val);
+    }
+    println!("]");
+}
+
+// Owning parameter - takes ownership
+fn process_owned(p: ptr<u8>) {
+    println!("Processing owned pointer: {}", p);
+    free(p);  // Takes responsibility for cleanup
+}
+
+// Return owning pointer
+fn create_buffer() -> ptr<u8> {
+    let p = alloc(50);
+    println!("Created buffer: {}", p);
+    return p;  // Transfer ownership to caller
+}
+
+// Multiple parameters
+fn combine(p1: ptr<u8>, p2: ptr<u8>) {
+    println!("Combining pointers:");
+    println!("  p1: {}", p1);
+    println!("  p2: {}", p2);
+    free(p1);
+    free(p2);
+}
+
+// Transform pointer
+fn transform(p: ptr<u8>) -> ptr<u8> {
+    println!("Transforming pointer");
+    // Could return same pointer or new one
+    return p;
+}
+
+// Conditional allocation
+fn create_conditional(condition: bool) -> ptr<u8> {
+    if condition {
+        return alloc(40);
+    }
+    return 0;  // null pointer
+}
+
+// Buffer processing
+fn process_buffer(buf: ptr<u8>, size: i32) {
+    println!("Processing buffer of {} bytes at {}", size, buf);
+    // Do work...
+    free(buf);
+}
+
+// Risky operation
+fn risky_operation(p: ptr<u8>) -> bool {
+    println!("Attempting risky operation");
+    free(p);  // Clean up
+    return true;  // Success
+}

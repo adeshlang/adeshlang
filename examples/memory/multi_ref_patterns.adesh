@@ -1,0 +1,41 @@
+// Multiple Reference Patterns
+// Demonstrates multiple immutable refs and interactions
+
+print("=== Multiple References ===");
+
+let x = 42;
+
+// Multiple immutable references are allowed
+let r1 = &x;
+let r2 = &x;
+let r3 = &x;
+
+print("Three immutable refs created");
+print("r1 references x");
+print("r2 references x");
+print("r3 references x");
+
+print("=== Reference Scope and Lifetime ===");
+
+{
+    let z = 50;
+    let ref_z = &z;
+    print("Inside inner scope, created reference");
+}
+
+print("z scope exited, reference invalidated");
+
+print("=== Ref to Struct Field ===");
+
+struct Point {
+    x: i32;
+    y: i32;
+};
+
+let p = Point { x: 10, y: 20 };
+let ref_x = &p.x;
+let ref_y = &p.y;
+
+print("References to struct fields created");
+
+print("=== All Multi-Ref Patterns Passed ===");

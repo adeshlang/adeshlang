@@ -1,0 +1,51 @@
+// 13_period.adesh - Period (calendar-level duration: years, months, days)
+import Time;
+
+print("=== Period Examples ===\n");
+
+// --- Construction ---
+let p1: Period = Time.period(1, 6, 15);   // 1 year, 6 months, 15 days
+let p2: Period = Time.periodYears(2);
+let p3: Period = Time.periodMonths(18);
+let p4: Period = Time.periodDays(100);
+let zero: Period = Time.period(0, 0, 0);
+
+print("1y 6m 15d    :", p1.toString());
+print("2 years      :", p2.toString());
+print("18 months    :", p3.toString());
+print("100 days     :", p4.toString());
+print("Zero period  :", zero.toString());
+
+// --- Accessors ---
+print("\n--- Accessors ---");
+print("p1 years :", p1.years());
+print("p1 months:", p1.months());
+print("p1 days  :", p1.days());
+
+// --- Arithmetic ---
+print("\n--- Arithmetic ---");
+let sum: Period = p1.add(p2);
+let diff: Period = p3.sub(Time.periodMonths(5));
+print("p1 + p2:", sum.toString());
+print("18m - 5m:", diff.toString());
+
+// --- Negation ---
+let neg: Period = p1.negated();
+print("negated p1:", neg.toString());
+print("abs negated:", neg.abs().toString());
+
+// --- Apply to a date ---
+print("\n--- Apply to Date ---");
+let base: Date = Time.dateYmd(2023, 1, 31);
+let applied: Date = p1.addToDate(base);
+let subtracted: Date = p2.subFromDate(base);
+print("Base date     :", base.toIsoString());
+print("+ 1y 6m 15d   :", applied.toIsoString());
+print("- 2 years     :", subtracted.toIsoString());
+
+// --- Between two dates ---
+print("\n--- Period between dates ---");
+let d1: Date = Time.dateYmd(2020, 3, 15);
+let d2: Date = Time.dateYmd(2024, 9, 20);
+let between: Period = Time.periodBetween(d1, d2);
+print("2020-03-15 to 2024-09-20:", between.toString());

@@ -1,0 +1,5 @@
+// 18 — parallel map
+import thread;
+
+let out = thread.parallel_map([1, 2, 3, 4], fn(x) { return x * 2; });
+print(out);

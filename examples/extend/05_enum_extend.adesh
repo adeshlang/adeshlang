@@ -1,0 +1,351 @@
+// 05_enum_extend.adesh
+// Extending enums with methods — inspired by extension patterns in Dart, Swift, and Kotlin.
+// AdeshLang supports `extend on EnumType { ... }` just like classes and structs.
+// Inside extended methods, `this` is the enum variant instance (has .tag, .value, .__enum).
+
+print("=== 05: ENUM EXTEND DEMO ===");
+print("");
+
+// ──────────────────────────────────────────────
+// Example 1: Computed properties via extend on a simple (payload-less) enum
+// Inspired by Swift extensions adding computed properties to enums.
+// ──────────────────────────────────────────────
+
+enum Direction {
+    North,
+    South,
+    East,
+    West
+}
+
+extend DirectionHelpers on Direction {
+    // Like Swift: extension Direction { var opposite: Direction { ... } }
+    fn opposite() {
+        return match this {
+            North => Direction.South(),
+            South => Direction.North(),
+            East  => Direction.West(),
+            West  => Direction.East()
+        };
+    }
+
+    // Like Kotlin: fun Direction.description(): String
+    fn description() {
+        return "Heading " + this.tag;
+    }
+
+    // Rotate clockwise
+    fn rotateCW() {
+        return match this {
+            North => Direction.East(),
+            East  => Direction.South(),
+            South => Direction.West(),
+            West  => Direction.North()
+        };
+    }
+
+    // Rotate counter-clockwise
+    fn rotateCCW() {
+        return match this {
+            North => Direction.West(),
+            West  => Direction.South(),
+            South => Direction.East(),
+            East  => Direction.North()
+        };
+    }
+
+    fn isCardinal() {
+        return true;
+    }
+}
+
+let dir = Direction.North();
+print(dir.description());
+print("  Opposite:", dir.opposite().tag);
+print("  CW:", dir.rotateCW().tag);
+print("  CCW:", dir.rotateCCW().tag);
+print("");
+
+let d2 = Direction.South();
+print(d2.description());
+print("  Opposite:", d2.opposite().tag);
+print("");
+
+// ──────────────────────────────────────────────
+// Example 2: Extend on enum with payloads — parsing & string conversion
+// Inspired by Dart extension methods on enums and Kotlin enum utility functions.
+// ──────────────────────────────────────────────
+
+enum Color {
+    Red(hex),
+    Green(hex),
+    Blue(hex),
+    Custom(name)
+}
+
+extend ColorUtils on Color {
+    fn hexString() {
+        return match this {
+            Red(_)  => "#FF0000",
+            Green(_) => "#00FF00",
+            Blue(_)  => "#0000FF",
+            Custom(n) => "#" + n
+        };
+    }
+
+    fn isPrimary() {
+        return match this {
+            Red(_) => true,
+            Green(_) => true,
+            Blue(_) => true,
+            _ => false
+        };
+    }
+
+    fn rgb() {
+        return match this {
+            Red(_)    => (255, 0, 0),
+            Green(_)  => (0, 255, 0),
+            Blue(_)   => (0, 0, 255),
+            Custom(_) => (128, 128, 128)
+        };
+    }
+
+    fn displayName() {
+        return this.tag + "(" + this.value + ")";
+    }
+}
+
+let c1 = Color.Red("ff0000");
+print("Color:", c1.displayName());
+print("  Hex:", c1.hexString());
+print("  Primary:", c1.isPrimary());
+print("  RGB:", c1.rgb());
+print("");
+
+let c2 = Color.Custom("808080");
+print("Color:", c2.displayName());
+print("  Hex:", c2.hexString());
+print("  Primary:", c2.isPrimary());
+print("  RGB:", c2.rgb());
+print("");
+
+// ──────────────────────────────────────────────
+// Example 3: Extending the globally-available Option enum (Some/None)
+// Demonstrates that extend works on built-in enums too.
+// Inspired by Swift's Optional extensions and Kotlin's .orElse() / .getOrElse().
+// ──────────────────────────────────────────────
+
+extend OptionUtils on Option {
+    fn orElse(defaultValue) {
+        return match this {
+            Some(v) => v,
+            None    => defaultValue
+        };
+    }
+
+    fn isDefined() {
+        return this.tag == "Some";
+    }
+
+    fn isEmpty() {
+        return this.tag == "None";
+    }
+
+    fn map(transform) {
+        return match this {
+            Some(v) => Some(transform(v)),
+            None    => None()
+        };
+    }
+
+    fn getOrNull() {
+        return match this {
+            Some(v) => v,
+            None    => null
+        };
+    }
+}
+
+let a = Some("hello");
+let b = None();
+print("Some orElse:", a.orElse("default"));
+print("None orElse:", b.orElse("default"));
+print("Some isDefined:", a.isDefined());
+print("None isEmpty:", b.isEmpty());
+print("Some map (upper):", a.map(fn(s) { return "**" + s + "**"; }));
+print("None getOrNull:", b.getOrNull());
+print("");
+
+// ──────────────────────────────────────────────
+// Example 4: Extend on enum for serialization patterns
+// ──────────────────────────────────────────────
+
+enum HttpStatus {
+    Ok(code),
+    NotFound(code),
+    ServerError(code),
+    Custom(info)
+}
+
+extend HttpSerialization on HttpStatus {
+    fn code() {
+        return match this {
+            Ok(c)       => c,
+            NotFound(c) => c,
+            ServerError(c) => c,
+            Custom(_) => this.value
+        };
+    }
+
+    fn reason() {
+        return match this {
+            Ok(_)           => "Success",
+            NotFound(_)     => "Not Found",
+            ServerError(_)  => "Internal Server Error",
+            Custom(_)       => this.value
+        };
+    }
+
+    fn toJSON() {
+        return "{ status: \"" + this.tag + "\", code: " + this.code() + " }";
+    }
+
+    fn isError() {
+        return match this {
+            Ok(_) => false,
+            _     => true
+        };
+    }
+
+    fn isSuccess() {
+        return this.tag == "Ok";
+    }
+}
+
+let resp1 = HttpStatus.Ok(200);
+let resp2 = HttpStatus.NotFound(404);
+let resp3 = HttpStatus.Custom("I'm a teapot");
+
+print(resp1.toJSON(), "| Error:", resp1.isError());
+print(resp2.reason(), "| Code:", resp2.code());
+print(resp3.toJSON(), "| Error:", resp3.isError());
+print("");
+
+// ──────────────────────────────────────────────
+// Example 5: Extending a simple Status enum for workflow transitions
+// Inspired by Kotlin sealed-class-like state machines with extension functions.
+// ──────────────────────────────────────────────
+
+enum TaskState {
+    Todo,
+    InProgress,
+    Done,
+    Blocked(reason)
+}
+
+extend TaskTransitions on TaskState {
+    fn label() {
+        return match this {
+            Todo       => "To Do",
+            InProgress => "In Progress",
+            Done       => "Completed",
+            Blocked(_) => "Blocked: " + this.value
+        };
+    }
+
+    fn canTransitionTo(nextState) {
+        return match this {
+            Todo       => nextState.tag == "InProgress" || nextState.tag == "Blocked",
+            InProgress => nextState.tag == "Done" || nextState.tag == "Blocked",
+            Done       => false,
+            Blocked(_) => nextState.tag == "Todo"
+        };
+    }
+
+    fn isFinished() {
+        return this.tag == "Done";
+    }
+}
+
+let s1 = TaskState.Todo();
+let s2 = TaskState.InProgress();
+let s3 = TaskState.Done();
+let s4 = TaskState.Blocked("waiting for review");
+
+print("State:", s1.label(), "| Can go to InProgress:", s1.canTransitionTo(s2));
+print("State:", s2.label(), "| Can go to Done:", s2.canTransitionTo(s3));
+print("State:", s3.label(), "| Finished:", s3.isFinished());
+print("State:", s4.label());
+print("  | Can go back to Todo:", s4.canTransitionTo(s1));
+print("");
+
+// ──────────────────────────────────────────────
+// Example 6: Multiple extensions on the same enum (like Dart & Swift)
+// ──────────────────────────────────────────────
+
+enum Planet {
+    Mercury,
+    Venus,
+    Earth,
+    Mars,
+    Jupiter,
+    Saturn,
+    Uranus,
+    Neptune
+}
+
+extend PlanetInfo on Planet {
+    fn orderFromSun() {
+        return match this {
+            Mercury => 1,
+            Venus   => 2,
+            Earth   => 3,
+            Mars    => 4,
+            Jupiter => 5,
+            Saturn  => 6,
+            Uranus  => 7,
+            Neptune => 8
+        };
+    }
+
+    fn isTerrestrial() {
+        return match this {
+            Mercury => true,
+            Venus => true,
+            Earth => true,
+            Mars => true,
+            _ => false
+        };
+    }
+}
+
+extend PlanetDisplay on Planet {
+    fn emoji() {
+        return match this {
+            Mercury => "☿",
+            Venus   => "♀",
+            Earth   => "🌍",
+            Mars    => "♂",
+            Jupiter => "♃",
+            Saturn  => "♄",
+            Uranus  => "♅",
+            Neptune => "♆"
+        };
+    }
+
+    fn summary() {
+        return "Planet #" + this.orderFromSun() + ": " + this.tag + " " + this.emoji();
+    }
+}
+
+let p = Planet.Earth();
+print(p.summary());
+print("  Terrestrial:", p.isTerrestrial());
+
+let p2 = Planet.Jupiter();
+print(p2.summary());
+print("  Terrestrial:", p2.isTerrestrial());
+print("");
+
+print("✅ Enum Extend Demo Passed.\n");

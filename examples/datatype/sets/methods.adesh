@@ -1,0 +1,8 @@
+let left: set = {1, 2, 3};
+let right: set = {3, 4, 5};
+print(left.length(), left.contains(2),{pretty: true});
+print(left.union(right),{pretty: true});
+print(left.intersection(right));
+print(left.difference(right));
+print(left.symmetricDifference(right));
+print(left.isSubsetOf(left));

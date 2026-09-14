@@ -1,0 +1,177 @@
+// Random standard library for AdeshLang
+// Implements complete, production-grade Randomness ecosystem, PRNG, Distributions, Sampling & Shuffling.
+
+// ============================================================================
+// Convenience Exports and Random Standard Library Interface
+// ============================================================================
+
+export fn int(a, b) {
+    if (a != null && b != null) {
+        return Random.int(a, b);
+    }
+    if (a != null) {
+        return Random.int(0, a);
+    }
+    return Random.int();
+}
+
+export fn intInclusive(min, max) {
+    return Random.intInclusive(min, max);
+}
+
+export fn intExclusive(min, max) {
+    return Random.intExclusive(min, max);
+}
+
+export fn float(min, max) {
+    if (min != null && max != null) {
+        return Random.float(min, max);
+    }
+    return Random.float();
+}
+
+export fn floatInclusive(min, max) {
+    return Random.floatInclusive(min, max);
+}
+
+export fn bool(p) {
+    if (p != null) {
+        return Random.bernoulli(p);
+    }
+    return Random.bool();
+}
+
+export fn byte() {
+    return Random.byte();
+}
+
+export fn bytes(count) {
+    return Random.bytes(count);
+}
+
+export fn fillBytes(buffer) {
+    return Random.fillBytes(buffer);
+}
+
+export fn string(len) {
+    return Random.string(len);
+}
+
+export fn alphanumeric(len) {
+    return Random.alphanumeric(len);
+}
+
+export fn ascii(len) {
+    return Random.ascii(len);
+}
+
+export fn hex(len) {
+    return Random.hex(len);
+}
+
+export fn stringFrom(charset, len) {
+    return Random.stringFrom(charset, len);
+}
+
+export fn char() {
+    return Random.char();
+}
+
+export fn charFrom(charset) {
+    return Random.charFrom(charset);
+}
+
+export fn choice(collection) {
+    return Random.choice(collection);
+}
+
+export fn shuffle(collection) {
+    return Random.shuffle(collection);
+}
+
+export fn shuffled(collection) {
+    return Random.shuffled(collection);
+}
+
+export fn sample(collection, count) {
+    return Random.sample(collection, count);
+}
+
+export fn sampleWithReplacement(collection, count) {
+    return Random.sampleWithReplacement(collection, count);
+}
+
+export fn weightedChoice(items, weights) {
+    if (weights != null) {
+        return Random.weightedChoice(items, weights);
+    }
+    return Random.weightedChoice(items);
+}
+
+export fn reservoirSample(stream, k) {
+    return Random.reservoirSample(stream, k);
+}
+
+export fn seed(s) {
+    return Random.seed(s);
+}
+
+export fn normal(mean, stdDev) {
+    return Random.normal(mean, stdDev);
+}
+
+export fn uniform(min, max) {
+    return Random.uniform(min, max);
+}
+
+export fn binomial(trials, p) {
+    return Random.binomial(trials, p);
+}
+
+export fn exponential(lambda) {
+    return Random.exponential(lambda);
+}
+
+export fn poisson(lambda) {
+    return Random.poisson(lambda);
+}
+
+export fn geometric(p) {
+    return Random.geometric(p);
+}
+
+export fn gamma(alpha, beta) {
+    return Random.gamma(alpha, beta);
+}
+
+export fn logNormal(mean, stdDev) {
+    return Random.logNormal(mean, stdDev);
+}
+
+export fn uuid() {
+    return Random.uuid();
+}
+
+export fn uuid4() {
+    return Random.uuid4();
+}
+
+export fn uuidString() {
+    return Random.uuidString();
+}
+
+export fn token(len) {
+    return Random.token(len);
+}
+
+export fn hexToken(len) {
+    return Random.hexToken(len);
+}
+
+export fn base64Token(len) {
+    return Random.base64Token(len);
+}
+
+export fn secureBytes(count) {
+    return Random.secureBytes(count);
+}

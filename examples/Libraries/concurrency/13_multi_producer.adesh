@@ -1,0 +1,14 @@
+// 13 — multi producer
+import thread;
+
+thread.watchdog(15000);
+let pair = thread.Channel.bounded(32);
+let tx = pair[0];
+let rx = pair[1];
+let a = thread.spawn(fn() { tx.clone().send(1); });
+let b = thread.spawn(fn() { tx.clone().send(2); });
+a.join();
+b.join();
+tx.close();
+print(rx.recv().value);
+print(rx.recv().value);

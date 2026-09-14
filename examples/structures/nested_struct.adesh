@@ -1,0 +1,79 @@
+// Nested Structures
+// Demonstrates structures containing other structures
+
+print("=== Nested Struct Definition ===");
+
+struct Address {
+    street: String;
+    city: String;
+    zipcode: String;
+};
+
+struct Employee {
+    name: String;
+    employeeId: Int;
+    address: Address;
+};
+
+print("Defined nested structures:");
+print("- Address (street, city, zipcode)");
+print("- Employee (name, employeeId, address)");
+
+print("=== Creating Nested Structures ===");
+
+let address1 = Address {
+    street: "123 Main St",
+    city: "New York",
+    zipcode: "10001",
+};
+
+let employee1 = Employee {
+    name: "John Doe",
+    employeeId: 501,
+    address: address1,
+};
+
+print("Created employee with nested address:");
+print(employee1.name);
+print(employee1.employeeId);
+print(employee1.address.street);
+print(employee1.address.city);
+print(employee1.address.zipcode);
+
+print("=== Multiple Nested Instances ===");
+
+let address2 = Address {
+    street: "456 Oak Ave",
+    city: "Los Angeles",
+    zipcode: "90001",
+};
+
+let employee2 = Employee {
+    name: "Jane Smith",
+    employeeId: 502,
+    address: address2,
+};
+
+print("Created second employee:");
+print(employee2.name);
+print("City: Los Angeles");
+
+print("=== Direct Nested Field Access ===");
+
+let address3 = Address {
+    street: "789 Pine Rd",
+    city: "Chicago",
+    zipcode: "60601",
+};
+
+let employee3 = Employee {
+    name: "Bob Johnson",
+    employeeId: 503,
+    address: address3,
+};
+
+print("Accessing nested fields directly:");
+print(employee3.address.city);
+print(employee3.address.zipcode);
+
+print("=== All Nested Structure Examples Passed ===");

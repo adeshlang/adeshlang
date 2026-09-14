@@ -1,0 +1,11 @@
+// Demonstrates moving a non-Copy value and using a shared borrow to avoid use-after-move errors.
+
+// Strings are move-only: assigning moves ownership.
+let greeting = "namaste";
+
+// Take a shared borrow; original remains usable.
+let greeting_owner = &greeting;
+print(greeting_owner);
+
+// Shared borrow doesn't consume the original; it remains usable.
+print(greeting);

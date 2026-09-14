@@ -1,0 +1,39 @@
+﻿// Edge case: Pointer allocations in loops with break and continue
+// Verifies:
+// 1. Loop iterations can repeatedly allocate raw buffers.
+// 2. Early continue or explicit free works correctly across iterations.
+// 3. Break terminates the loop cleanly.
+
+unsafe {
+    let mut i = 0;
+    let mut total_sum = 0;
+
+    println("Beginning allocation loop (10 iterations)...");
+    while (i < 10) {
+        let buf = alloc(8);
+        buf[0] = i * 2;
+        buf[1] = i * 3;
+
+        if (i == 3) {
+            println("Iteration 3: testing continue with explicit free...");
+            total_sum = total_sum + buf[0];
+            free(buf);
+            i = i + 1;
+            continue;
+        }
+
+        if (i == 7) {
+            println("Iteration 7: testing break with explicit free...");
+            total_sum = total_sum + buf[0];
+            free(buf);
+            break;
+        }
+
+        total_sum = total_sum + buf[0] + buf[1];
+        free(buf);
+        i = i + 1;
+    }
+
+    println("Loop completed successfully!");
+    println("Final total sum computed from heap buffers:", total_sum);
+}

@@ -1,0 +1,9 @@
+import URL;
+
+let template: URLTemplate = URL.template("https://api.example.com/users/{id}/posts/{postId}");
+let url: URL = template.expand({
+    "id": "10",
+    "postId": "50"
+});
+
+print("Expanded URL:", url.href());

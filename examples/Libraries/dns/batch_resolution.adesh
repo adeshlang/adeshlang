@@ -1,0 +1,9 @@
+import DNS;
+
+print("=== Batch Multi-Domain DNS Resolution ===");
+let domains = ["google.com", "github.com", "cloudflare.com", "microsoft.com"];
+
+for (domain in domains) {
+    let ips = DNS.resolve(domain);
+    print("Domain:", domain, "-> IPs:", ips);
+}

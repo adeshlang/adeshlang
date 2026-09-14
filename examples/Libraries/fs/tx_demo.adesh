@@ -1,0 +1,37 @@
+// Transactional filesystem demo
+import "fs";
+print("=== Transactional Filesystem Demo ===");
+
+// Note: Transactional operations are experimental
+// This demonstrates the concept but rollback may not work perfectly
+
+print("Creating temp file for transaction...");
+let tmp = fs.tempFile("tx");
+print("Temp file: " + tmp);
+
+fs.tx(fn(t){
+    print("Inside transaction - writing to temp file...");
+    t.write(tmp, "transactional data");
+    print("File written in transaction");
+    
+    // Check if file exists
+    if fs.exists(tmp) {
+        print("File exists during transaction");
+        let content = fs.read(tmp);
+        print("Content: " + content);
+    }
+    
+    print("Calling rollback...");
+    t.rollback();
+});
+
+print("After transaction - checking if file still exists...");
+if fs.exists(tmp) {
+    print("File still exists (rollback may have failed)");
+    fs.delete(tmp);
+    print("Cleaned up temp file");
+} else {
+    print("File was properly rolled back");
+}
+
+print("=== Demo completed ===");

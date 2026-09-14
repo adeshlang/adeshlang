@@ -1,0 +1,22 @@
+fn duplicate(arr:[int]):bool{
+    let sa:set = {} ;
+    for i in arr {
+        if sa.contains(i) {
+            print("Duplicate found: " + str(i));
+            return true;
+        }
+        sa.insert(i);
+
+    }
+    return false;
+}
+
+fn main() {
+    let arr = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 5];
+    let hasDuplicate = duplicate(arr);
+    if hasDuplicate {
+        print("The array contains duplicates.");
+    } else {
+        print("The array does not contain duplicates.");
+    }
+}

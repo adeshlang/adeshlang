@@ -1,0 +1,40 @@
+// AdeshLang Iteration Benchmark Suite
+// Tests execution performance across various iteration scales on the Interpreter
+
+fn benchmark_scale(label, iterations) {
+    let count = 0;
+    let t0 = clock();
+    for (i in 0..iterations) {
+        count = count + 1;
+    }
+    let t1 = clock();
+    let elapsed_ms = (t1 - t0) * 1000.0;
+    print("  Scale: " + label + " | Count: " + str(count) + " | Elapsed: " + str(elapsed_ms) + " ms");
+    return elapsed_ms;
+}
+
+fn main() {
+    print("==================================================");
+    print("      AdeshLang Interpreter Iteration Benchmark   ");
+    print("==================================================");
+    print("");
+
+    let t_start = clock();
+
+    benchmark_scale("1 Thousand    (1,000)       ", 1000);
+    benchmark_scale("10 Thousand   (10,000)      ", 10000);
+    benchmark_scale("100 Thousand  (100,000)     ", 100000);
+    benchmark_scale("1 Million     (1,000,000)   ", 1000000);
+    benchmark_scale("10 Million    (10,000,000)  ", 10000000);
+    benchmark_scale("100 Million   (100,000,000) ", 100000000);
+    benchmark_scale("1 Billion     (1,000,000,000)", 1000000000);
+
+    let t_end = clock();
+    let total_ms = (t_end - t_start) * 1000.0;
+
+    print("");
+    print("==================================================");
+    print("  Total Benchmark Suite Time: " + str(total_ms) + " ms");
+    print("==================================================");
+    return 0;
+}

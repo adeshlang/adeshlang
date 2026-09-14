@@ -1,0 +1,29 @@
+// Customizable form layout example
+// Uncomment the mock line to run non-interactively
+// input.mock(["Ajay","ajay@example.com","8080"]);
+let config:Object ;
+try{
+config = input.form({
+  name: { prompt: "Name", required: true },
+  port: { type: "int", min: 1, max: 65535 },
+  email: { regex: ".+@.+" },
+},{
+  title: "User Setup",
+  prefix: "[*] ",
+  separator: " => ",
+  style: { color: "#00AAFF" },
+  order: ["name","email","port"],
+  render: fn(key, meta) {
+    if (key == "email") { return "Email Address : "; }
+    if(key == "name"){ return " Name : ";}
+    if(key == "port"){ return " Port : ";}
+    return key + ":";
+  }
+});
+}
+catch(err){
+  print(`Form failed: ${err}`);
+}
+if (config != null) {
+  print(config.name, config.port, config.email, {color:"#00ff00"});
+}

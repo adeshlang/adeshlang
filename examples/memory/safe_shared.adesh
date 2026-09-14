@@ -1,0 +1,17 @@
+// Safe shared ownership example using ARC-like shared pointer
+// No unsafe blocks required; uses ownership rules
+
+fn main() {
+    let x = 42;
+    let s1 = SharedNew(x);
+    let s2 = SharedClone(s1);
+
+    let v1 = SharedGet(s1);
+    let v2 = SharedGet(s2);
+    print(v1);
+    print(v2);
+
+    // Drop references
+    SharedDrop(s1);
+    SharedDrop(s2);
+}

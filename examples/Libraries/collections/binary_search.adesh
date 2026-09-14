@@ -1,0 +1,36 @@
+import Collections;
+import Math;
+
+print("========================================");
+print("Binary Search Example on Sorted Vec");
+print("========================================");
+
+let v = Collections.Vec();
+v.push(10);
+v.push(20);
+v.push(30);
+v.push(40);
+v.push(50);
+v.push(60);
+
+fn binary_search(v, target) {
+    let low = 0;
+    let high = v.len() - 1;
+    while (low <= high) {
+        let mid = Math.floor((low + high) / 2);
+        let val = v.get(mid);
+        if (val == target) {
+            return mid;
+        } else {
+            if (val < target) {
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+    }
+    return -1;
+}
+
+print("Binary search 40: index ", binary_search(v, 40));
+print("Binary search 25: index ", binary_search(v, 25));

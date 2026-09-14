@@ -1,0 +1,5 @@
+let user: object = { name: "Ada", role: "engineer" };
+print(user.length(), user.has("name"));
+print(user.get("name"), user.getOr("missing", "guest"));
+print(user.keys(), user.values(), user.entries());
+print(user.merge({active: true}));

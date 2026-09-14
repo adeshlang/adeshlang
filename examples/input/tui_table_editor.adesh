@@ -1,0 +1,22 @@
+// World-First: Interactive Table Cell Selection & Data Grid
+// 2D matrix navigation with arrow keys and cell selection
+
+// input.mock(["0"]);
+
+let selection = input.table(
+    "Select Configuration Target:",
+    ["Backend", "Engine", "Status"],
+    [
+        ["Interpreter", "AST / FastEnv", "Ready"],
+        ["JIT", "LIR / Cranelift", "Active"],
+        ["AOT", "Cranelift Standalone", "Optimized"],
+        ["WASM", "Wasmtime Host", "Integrated"],
+        ["GPU", "MLIR Outlining", "Active"]
+    ]
+);
+
+println(`Selected Table Cell -> Row: ${selection.row}, Column: ${selection.col}`);
+println(`Selected Cell Value: "${selection.value}" (Column Header: "${selection.header}")`);
+println(`Entire Selected Row Data: ${selection.rowData}`);
+println(`Entire Selected Column Data: ${selection.colData}`);
+println(`Row Object Mapping: Status = ${selection.rowObject.Status}, Engine = ${selection.rowObject.Engine}`);

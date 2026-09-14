@@ -1,0 +1,7 @@
+// World-First: Live Input Stream Tokenizer
+// Stream token collector with live incremental chunk yield
+
+// input.mock(["token1 token2 token3"]);
+
+let stream_tokens = input.stream("Stream Tokens (Live Generator):");
+println(`Received stream tokens count: ${stream_tokens.length}`);

@@ -1,0 +1,8 @@
+import URL;
+
+let base: URL = URL.parse("https://example.com/docs/api/index.html");
+let relativePath: String = "../../images/logo.png";
+let resolved: URL = base.resolve(relativePath);
+
+print("Base URL:", base.href());
+print("Resolved URL:", resolved.href());

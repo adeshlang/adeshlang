@@ -1,0 +1,11 @@
+import Random;
+
+print("--- 1D Random Walk Simulation ---");
+let rng = Random.seed(101);
+let position = 0;
+
+for step in 0..10 {
+    let direction = rng.bool() ? 1 : -1;
+    position = position + direction;
+    print("Step " + (step + 1) + ": position = " + position);
+}

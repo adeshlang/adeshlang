@@ -1,0 +1,85 @@
+// Tensor Basics - NDArray Operations
+// Run: adeshlang run examples/ml/tensor_basics.adesh --jit
+
+// Import ML module
+import std:ml;
+
+fn main() {
+    print("╔════════════════════════════════════════════════════╗");
+    print("║  TENSOR BASICS - AdeshLang ML Module                ║");
+    print("╚════════════════════════════════════════════════════╝");
+    print("");
+    
+    // Create tensors
+    print("1. Creating Tensors:");
+    let a = Tensor.zeros([3, 3], dtype="f32");
+    print(`  zeros([3,3]): ${a}`);
+    
+    let b = Tensor.ones([2, 4], dtype="f32");
+    print(`  ones([2,4]): ${b}`);
+    
+    let c = Tensor.from_data([1.0, 2.0, 3.0, 4.0], [2, 2]);
+    print(`  from_data([1,2,3,4], [2,2]): ${c}`);
+    
+    print("");
+    
+    // Random tensors
+    print("2. Random Tensors:");
+    let uniform = Tensor.rand([3, 3]);
+    print(`  uniform random [3,3]: ${uniform}`);
+    
+    let normal = Tensor.randn([3, 3]);
+    print(`  normal random [3,3]: ${normal}`);
+    
+    print("");
+    
+    // Tensor operations
+    print("3. Element-wise Operations:");
+    let x = Tensor.from_data([1.0, 2.0, 3.0, 4.0], [2, 2]);
+    let y = Tensor.from_data([5.0, 6.0, 7.0, 8.0], [2, 2]);
+    
+    print(`  x = ${x}`);
+    print(`  y = ${y}`);
+    print(`  x + y = ${x + y}`);
+    print(`  x * y = ${x * y}`);
+    print(`  x * 2.0 = ${x * 2.0}`);
+    
+    print("");
+    
+    // Shape operations
+    print("4. Shape Operations:");
+    let flat = Tensor.from_data([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [6]);
+    print(`  original [6]: ${flat}`);
+    
+    let reshaped = flat.reshape([2, 3]);
+    print(`  reshaped [2,3]: ${reshaped}`);
+    
+    let transposed = reshaped.transpose();
+    print(`  transposed [3,2]: ${transposed}`);
+    
+    print("");
+    
+    // Reductions
+    print("5. Reductions:");
+    let data = Tensor.from_data([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [2, 3]);
+    print(`  data = ${data}`);
+    print(`  sum = ${data.sum()}`);
+    print(`  mean = ${data.mean()}`);
+    print(`  max = ${data.max()}`);
+    print(`  min = ${data.min()}`);
+    
+    print("");
+    
+    // Activation functions
+    print("6. Activation Functions:");
+    let vals = Tensor.from_data([-2.0, -1.0, 0.0, 1.0, 2.0], [5]);
+    print(`  input = ${vals}`);
+    print(`  relu(x) = ${vals.relu()}`);
+    print(`  sigmoid(x) = ${vals.sigmoid()}`);
+    print(`  tanh(x) = ${vals.tanh()}`);
+    
+    print("");
+    print("Tensor operations complete!");
+}
+
+main();

@@ -1,0 +1,52 @@
+import Encoding;
+
+// ============================================================================
+// Real-World Use Case: WebAssembly (WASM) Binary Module Inspector
+// WASM Specification:
+// - Magic Bytes: [0x00, 0x61, 0x73, 0x6D] ("\0asm")
+// - Version: u32 Little-Endian (1)
+// - Sections encoded with ULEB128 IDs and sizes
+// ============================================================================
+
+print("=== 1. Building Minimal WASM Binary Module Header ===");
+
+let wasmHeader = [0, 97, 115, 109]; // "\0asm"
+
+// Version 1 (u32 LE)
+let versionBytes = Encoding.u32ToBytesLE(1);
+let i = 0;
+while (i < versionBytes.length) {
+    wasmHeader.push(versionBytes[i]);
+    i = i + 1;
+}
+
+// Section 1 (Type Section ID = 1) encoded with ULEB128
+let sectionIdUleb = Encoding.uleb128Encode(1);
+i = 0;
+while (i < sectionIdUleb.length) {
+    wasmHeader.push(sectionIdUleb[i]);
+    i = i + 1;
+}
+
+// Section Size = 42 encoded with ULEB128
+let sectionSizeUleb = Encoding.uleb128Encode(42);
+i = 0;
+while (i < sectionSizeUleb.length) {
+    wasmHeader.push(sectionSizeUleb[i]);
+    i = i + 1;
+}
+
+print("Generated WASM Header Hex:", Encoding.hexEncode(wasmHeader));
+
+print("\n=== 2. Parsing WASM Header ===");
+let magicHex = Encoding.hexEncode([wasmHeader[0], wasmHeader[1], wasmHeader[2], wasmHeader[3]]);
+print("Magic Header (Hex):", magicHex); // "0061736d"
+
+let wasmVer = Encoding.readU32LE(wasmHeader, 4);
+print("WASM Specification Version:", wasmVer);
+
+let parsedSectionId = Encoding.uleb128Decode([wasmHeader[8]]);
+print("WASM Section ID (ULEB128 Decoded):", parsedSectionId);
+
+let parsedSectionSize = Encoding.uleb128Decode([wasmHeader[9]]);
+print("WASM Section Size (ULEB128 Decoded):", parsedSectionSize);

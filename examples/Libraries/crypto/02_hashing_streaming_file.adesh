@@ -1,0 +1,11 @@
+// 02 - Hashing Large Files using Streaming
+import Crypto;
+
+// Stream large files without loading the full file into RAM
+let filePath = "Cargo.toml";
+
+let sha256File = Crypto.hashFile(filePath, "sha256");
+print("Cargo.toml SHA-256 Digest:", sha256File);
+
+let blake3File = Crypto.hashFile(filePath, "blake3");
+print("Cargo.toml BLAKE3 Digest: ", blake3File);

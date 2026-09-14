@@ -1,0 +1,19 @@
+// Executable Example: Background Spawning & Monitoring
+import Process;
+import Env;
+
+let isWin = Env.isWindows();
+let cmd = isWin ? "cmd.exe" : "echo";
+let args = isWin ? ["/C", "echo", "background_task"] : ["background_task"];
+
+let child = Process.builder(cmd)
+    .args(args)
+    .stdoutPipe()
+    .spawn();
+
+print("Spawned child process with PID: " + str(child.processId()));
+print("Is running initially: " + str(child.isRunning()));
+
+let status = child.wait();
+print("Child completed with exit code: " + str(status.code()));
+print("Captured output: " + child.stdoutText().trim());

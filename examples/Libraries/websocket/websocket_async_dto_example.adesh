@@ -1,0 +1,109 @@
+// Production Example: Async/Await WebSockets with DTO Type Safety & Regex Validation
+// Demonstrates native RFC 6455 WebSockets, Promise futures, DTO Schemas, and Regex rules in AdeshLang.
+
+import Time;
+import WebSocket;
+
+fn runExample() {
+    print("=== AdeshLang Production Async WebSocket & DTO Example ===");
+
+    // 1. Define DTO Schemas with Type Safety and Regex Validation Rules
+    let UserRegistrationDTO = WebSocket.DTO.define("UserRegistration", {
+        "username": {
+            "type": "string",
+            "required": true,
+            "pattern": "^[a-zA-Z0-9_]{3,16}$"
+        },
+        "email": {
+            "type": "string",
+            "required": true,
+            "pattern": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"
+        },
+        "role": {
+            "type": "string",
+            "required": true,
+            "enum": ["admin", "developer", "user"]
+        }
+    });
+
+    let ChatMessageDTO = WebSocket.DTO.define("ChatMessage", {
+        "sender": {
+            "type": "string",
+            "required": true
+        },
+        "content": {
+            "type": "string",
+            "required": true,
+            "maxLength": 500
+        },
+        "client_uuid": {
+            "type": "string",
+            "required": true,
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        }
+    });
+
+    // 2. Validate DTO Payloads locally with Regex constraints
+    let validRegistrationPayload = {
+        "username": "adesh_dev",
+        "email": "dev@adeshlang.org",
+        "role": "developer"
+    };
+
+    let invalidRegistrationPayload = {
+        "username": "a", // Too short for regex ^[a-zA-Z0-9_]{3,16}$
+        "email": "invalid-email-format",
+        "role": "superadmin" // Not in enum
+    };
+
+    print("\n--- Testing DTO Validation ---");
+    let validResult = UserRegistrationDTO.validate(validRegistrationPayload);
+    print("Valid Registration Payload validation success:", validResult);
+
+    let invalidResult = UserRegistrationDTO.validate(invalidRegistrationPayload);
+    print("Invalid Registration Payload validation result:", invalidResult);
+
+    // 3. Start Async WebSocket Server with DTO Handler
+    let serverConfig: ServerConfig = new WebSocket.ServerConfig();
+    serverConfig.bind_address = "127.0.0.1";
+    serverConfig.port = 9099;
+
+    let server: WebSocketServer = WebSocket.server(serverConfig);
+
+    print("\n--- Starting WebSocket Server ---");
+    server.startEcho();
+    print("WebSocket Server initialized on ws://127.0.0.1:9099");
+
+    // Settle background server listener thread
+    Time.sleep(100);
+
+    // 4. Async Client Connection and Typed Message Exchange
+    print("\n--- Connecting Client Session ---");
+    let clientConfig: ClientConfig = new WebSocket.ClientConfig();
+    let conn: WebSocketConnection = WebSocket.connect("ws://127.0.0.1:9099", clientConfig);
+
+    if (WebSocket.isError(conn)) {
+        print("WebSocket Connection failed:", conn.toString());
+        server.close();
+        return;
+    }
+
+    let chatPayload = {
+        "sender": "Alice",
+        "content": "Hello via WebSockets and DTO Type Validation!",
+        "client_uuid": "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+    };
+
+    print("Sending ChatMessage DTO over WebSocket...");
+    conn.sendDTO(ChatMessageDTO, chatPayload);
+
+    print("Receiving reply DTO from server...");
+    let responseMessage = conn.receiveDTO(ChatMessageDTO);
+    print("Client received DTO response:", responseMessage);
+
+    conn.close(1000, "Client done");
+    server.close();
+    print("WebSocket Session completed successfully!");
+}
+
+runExample();

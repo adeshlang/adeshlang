@@ -1,0 +1,11 @@
+// 03 - HMAC Message Authentication Tag & Constant-Time Verification
+import Crypto;
+
+let secretKey = Crypto.randomBytes(32);
+let payload = "POST /api/v1/transfer HTTP/1.1";
+
+let tag = Crypto.hmac(secretKey, payload);
+print("HMAC-SHA256 Tag (Hex):", Crypto.encodeHex(tag));
+
+let isAuthentic = Crypto.hmacVerify(secretKey, payload, tag);
+print("HMAC Verification Result:", isAuthentic);

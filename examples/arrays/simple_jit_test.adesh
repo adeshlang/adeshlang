@@ -1,0 +1,11 @@
+// Simple JIT test
+print("Hello from JIT!");
+
+let x = 10;
+print("x =", x);
+
+let arr:[i32;5] = [1, 2, 3];
+print("Array:", arr);
+print("Length:", arr.length);
+
+print("Done!");

@@ -1,0 +1,258 @@
+// =============================================================================
+// AdeshLang v0.2.0 - Borrow Rules Demo
+// =============================================================================
+// This example demonstrates the borrow checking rules in AdeshLang's
+// lightweight borrow prepass. These rules help prevent memory safety issues.
+// =============================================================================
+
+print("=== Borrow Rules Demo ===\n");
+
+// -----------------------------------------------------------------------------
+// 1. Valid Shared (Immutable) Borrows
+// -----------------------------------------------------------------------------
+// Multiple immutable borrows are allowed simultaneously.
+
+print("--- Valid Shared Borrows ---");
+
+let data = [1, 2, 3, 4, 5];
+
+// Multiple immutable references are OK
+fn sum(arr) {
+    let total = 0;
+    for (x in arr) {
+        total = total + x;
+    }
+    return total;
+}
+
+fn average(arr) {
+    return sum(arr) / len(arr);
+}
+
+// Both functions borrow 'data' immutably - this is allowed
+let s = sum(data);
+let avg = average(data);
+
+print("Array: " + str(data));
+print("Sum: " + str(s));
+print("Average: " + str(avg));
+print("✓ Multiple immutable borrows succeeded");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 2. Valid Sequential Mutable Access
+// -----------------------------------------------------------------------------
+// Mutable access is allowed when there are no active borrows.
+
+print("--- Valid Sequential Mutation ---");
+
+let numbers = [10, 20, 30];
+print("Before: " + str(numbers));
+
+// Mutate the array
+numbers[0] = 100;
+numbers[1] = 200;
+
+// Now read again (previous mutation complete)
+print("After modification: " + str(numbers));
+
+// Mutate again
+numbers[2] = 300;
+print("After second modification: " + str(numbers));
+
+print("✓ Sequential mutations succeeded");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 3. Invalid: Double Mutable Borrow (Conceptual Error)
+// -----------------------------------------------------------------------------
+// Cannot have two mutable borrows at the same time.
+
+print("--- Invalid Double Exclusive Borrow ---");
+print("The following pattern would cause a borrow error:\n");
+
+print("  let arr = [1, 2, 3];");
+print("  let ref1 = &arr;  // Borrow");
+print("  *ref1 = 10;       // Mutation -> exclusive access");
+print("  let ref2 = &arr;  // Error! ref1 still has exclusive access");
+print("");
+print("Error: Cannot borrow 'arr' while exclusive borrow is active");
+print("Suggestion: Complete the first borrow before starting another");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 4. Invalid: Mutable While Immutable Borrow Active (Conceptual)
+// -----------------------------------------------------------------------------
+
+print("--- Invalid Exclusive + Shared Borrow ---");
+print("The following pattern would cause a borrow error:\n");
+
+print("  let data = [1, 2, 3];");
+print("  let ref1 = &data;      // Shared borrow");
+print("  let ref2 = &data;      // Borrow attempt");
+print("  *ref2 = 42;            // ERROR: exclusive access needed");
+print("  print(ref1);           // ... but ref1 has shared access");
+print("");
+print("Error: Cannot get exclusive access while shared borrow exists");
+print("Suggestion: Use ref1 before attempting exclusive access");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 5. Closure Capturing - Valid Pattern
+// -----------------------------------------------------------------------------
+// Closures can capture variables by reference or by move.
+
+print("--- Valid Closure Capture ---");
+
+let counter = 0;
+
+// Closure capturing by reference
+let increment = fn() {
+    counter = counter + 1;
+    return counter;
+};
+
+print("Counter with closure:");
+print("  " + str(increment()));  // 1
+print("  " + str(increment()));  // 2
+print("  " + str(increment()));  // 3
+print("✓ Closure capture by reference succeeded");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 6. Closure Capturing - Move Pattern
+// -----------------------------------------------------------------------------
+
+print("--- Closure Capture by Move ---");
+
+fn createCounter(start) {
+    let value = start;
+    return fn() {
+        value = value + 1;
+        return value;
+    };
+}
+
+let counter1 = createCounter(0);
+let counter2 = createCounter(100);
+
+print("Independent counters (each owns its value):");
+print("  Counter1: " + str(counter1()) + ", " + str(counter1()) + ", " + str(counter1()));
+print("  Counter2: " + str(counter2()) + ", " + str(counter2()));
+print("✓ Move capture creates independent ownership");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 7. Invalid: Closure Capturing Borrowed Local (Conceptual)
+// -----------------------------------------------------------------------------
+
+print("--- Invalid Closure Capturing Borrow ---");
+print("The following pattern would cause a borrow error:\n");
+
+print("  fn createBadClosure() {");
+print("      let local = [1, 2, 3];");
+print("      let borrowed = &local;");
+print("      return fn() {");
+print("          return borrowed;  // Error! borrowed outlives local");
+print("      };");
+print("  }");
+print("");
+print("Error: Closure captures 'borrowed' which references 'local'");
+print("       'local' does not live long enough");
+print("Suggestion: Use 'move' to transfer ownership, or restructure");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 8. Safe Pattern: Return Owned Data
+// -----------------------------------------------------------------------------
+
+print("--- Safe Pattern: Return Owned Data ---");
+
+fn createData() {
+    let myData = [1, 2, 3, 4, 5];
+    // Return owned data, not a borrow
+    return myData;
+}
+
+let original = createData();
+
+print("Original: " + str(original));
+print("✓ Returning owned data is always safe");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 9. Borrow Rules Summary
+// -----------------------------------------------------------------------------
+
+print("=== Borrow Rules Summary ===\n");
+
+print("✓ ALLOWED:");
+print("  • Multiple shared borrows (&T) simultaneously");
+print("  • One exclusive borrow (auto-inferred from mutation) at a time");
+print("  • Sequential borrows (one after another)");
+print("  • Closures capturing by move");
+print("  • Returning owned data from functions");
+print("");
+
+print("✗ NOT ALLOWED:");
+print("  • Multiple exclusive borrows simultaneously");
+print("  • Exclusive borrow while shared borrows exist");
+print("  • Returning borrows of local variables");
+print("  • Closures capturing borrows that outlive their source");
+print("");
+
+print("These rules prevent:");
+print("  • Data races");
+print("  • Use-after-free");
+print("  • Dangling references");
+print("  • Iterator invalidation");
+
+print("");
+print("=== Additional Error Examples ===");
+print("The following code patterns would cause borrow errors in a borrow-checked language:");
+print("");
+
+// Example 1: Double exclusive borrow
+print("1. Double Exclusive Borrow:");
+print("   let arr = [1, 2, 3];");
+print("   let ref1 = &arr;");
+print("   *ref1 = 10;            // Mutation -> exclusive access");
+print("   let ref2 = &arr;       // Error: cannot borrow while exclusive borrow active");
+print("");
+
+// Example 2: Exclusive borrow while shared exists
+print("2. Exclusive borrow during shared borrow:");
+print("   let data = [1, 2, 3];");
+print("   let immut = &data;");
+print("   let excl_ref = &data;     // Borrow attempt");
+print("   *excl_ref = 42;           // Error: exclusive access needed but shared borrow active");
+print("   print(immut);");
+print("");
+
+// Example 3: Returning reference to local
+print("3. Returning reference to local variable:");
+print("   fn bad() {");
+print("       let local = [1, 2, 3];");
+print("       return &local;  // Error: 'local' does not live long enough");
+print("   }");
+print("");
+
+// Example 4: Iterator invalidation
+print("4. Iterator invalidation:");
+print("   let vec = [1, 2, 3];");
+print("   for (x in vec) {");
+print("       if (x == 2) {");
+print("           vec.push(4);  // Error: cannot modify vec while iterating");
+print("       }");
+print("   }");
+print("");
+
+print("=== Demo Complete ===");

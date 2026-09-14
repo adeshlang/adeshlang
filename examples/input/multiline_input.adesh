@@ -1,0 +1,6 @@
+// Multiline input example
+// End on custom sequence
+// input.mock(["Line 1","Line 2","END"]);
+
+let desc = input("Description:", { multiline: true, end: "END" });
+print("Desc: \n" + desc);

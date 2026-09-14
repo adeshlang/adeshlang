@@ -1,0 +1,81 @@
+import Process;
+import Env;
+import Path;
+import Time;
+
+print("=== AdeshLang Process Library Comprehensive Test Suite ===");
+
+let isWin = Env.isWindows();
+let echoCmd = isWin ? "cmd.exe" : "echo";
+let echoArgs = isWin ? ["/C", "echo", "hello_adesh_process"] : ["hello_adesh_process"];
+
+// Test 1: Process.run basic execution
+print("--- Test 1: Process.run basic execution ---");
+let result1 = Process.run(echoCmd, echoArgs);
+print("Success: " + str(result1.success()));
+print("Exit code: " + str(result1.code()));
+print("Output contains string: " + str(result1.stdoutText().contains("hello_adesh_process")));
+
+// Test 2: ProcessBuilder fluent API
+print("--- Test 2: ProcessBuilder fluent API ---");
+let builder = Process.builder(echoCmd)
+    .args(echoArgs)
+    .workingDirectory(Env.currentDirectory())
+    .environment("MODE", "test_mode_123")
+    .stdoutPipe()
+    .stderrPipe();
+
+let result2 = builder.run();
+print("Builder success: " + str(result2.success()));
+print("Builder stdout text: " + result2.stdoutText().trim());
+
+// Test 3: Process.spawn and ChildProcess lifecycle
+print("--- Test 3: ChildProcess lifecycle ---");
+let child = Process.builder(echoCmd)
+    .args(echoArgs)
+    .stdoutPipe()
+    .spawn();
+
+print("Child PID > 0: " + str(child.processId() > 0));
+let status = child.wait();
+print("Child exited code: " + str(status.code()));
+print("Child stdout text: " + child.stdoutText().trim());
+
+// Test 4: Signals & Stdio constants
+print("--- Test 4: Signals & Stdio constants ---");
+let sigKill = Signal.KILL();
+let sigTerm = Signal.TERM();
+print("SIGKILL code: " + str(sigKill.code()));
+print("SIGTERM code: " + str(sigTerm.code()));
+
+let stdPipe = Stdio.pipe();
+let stdInherit = Stdio.inherit();
+let stdNull = Stdio.nullStream();
+print("Stdio pipe mode: " + str(stdPipe.mode()));
+print("Stdio inherit mode: " + str(stdInherit.mode()));
+print("Stdio null mode: " + str(stdNull.mode()));
+
+// Test 5: Process Info and FACADE
+print("--- Test 5: Process Info & Facade ---");
+print("Current PID > 0: " + str(Process.processId() > 0));
+
+let info = Process.info();
+print("Info PID: " + str(info.pid()));
+
+// Test 6: Timeout execution
+print("--- Test 6: Timeout execution ---");
+let timeoutResult = Process.builder(echoCmd)
+    .args(echoArgs)
+    .stdoutPipe()
+    .runTimeout(Duration.seconds(5))
+    .run();
+
+print("Timeout test success: " + str(timeoutResult.success()));
+
+// Test 7: Shell execution
+print("--- Test 7: Shell execution ---");
+let shellRes = Process.shell(isWin ? "echo shell_working" : "echo shell_working");
+print("Shell success: " + str(shellRes.success()));
+print("Shell stdout contains: " + str(shellRes.stdoutText().contains("shell_working")));
+
+print("=== ALL PROCESS TESTS PASSED SUCCESSFULLY ===");

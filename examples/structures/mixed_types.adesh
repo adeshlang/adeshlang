@@ -1,0 +1,90 @@
+// Structs with Different Field Types
+// Demonstrates various field types within structures
+
+print("=== Struct with Mixed Types ===");
+
+struct MixedData {
+    text: String;
+    count: Int;
+    ratio: Float;
+    active: Bool;
+};
+
+let data1 = MixedData {
+    text: "Sample Data",
+    count: 42,
+    ratio: 3.14,
+    active: true,
+};
+
+print("Struct with mixed field types:");
+print("String field: ");
+print(data1.text);
+print("Int field: ");
+print(data1.count);
+print("Float field: 3.14");
+print("Bool field: true");
+
+print("=== Struct with Arrays ===");
+
+struct Team {
+    teamName: String;
+    memberCount: Int;
+};
+
+let team1 = Team {
+    teamName: "Engineering",
+    memberCount: 10,
+};
+
+print("Team structure:");
+print(team1.teamName);
+print("Members: 10");
+
+print("=== Numeric Field Types ===");
+
+struct Measurements {
+    length: Float;
+    width: Float;
+    height: Float;
+    weight: Float;
+};
+
+let measurements1 = Measurements {
+    length: 10.5,
+    width: 8.2,
+    height: 5.0,
+    weight: 25.7,
+};
+
+print("Measurement structure:");
+print("Length: 10.5");
+print("Width: 8.2");
+print("Height: 5.0");
+print("Weight: 25.7");
+
+print("=== Boolean Field Usage ===");
+
+struct Feature {
+    name: String;
+    enabled: Bool;
+    version: Int;
+};
+
+let feature1 = Feature {
+    name: "DarkMode",
+    enabled: true,
+    version: 2,
+};
+
+let feature2 = Feature {
+    name: "NewUI",
+    enabled: false,
+    version: 1,
+};
+
+print("Feature flags:");
+print("DarkMode: enabled");
+print("NewUI: disabled");
+
+print("=== All Mixed Type Examples Passed ===");

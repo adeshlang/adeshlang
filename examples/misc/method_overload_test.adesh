@@ -1,0 +1,23 @@
+// Test method overloading
+
+class Calculator {
+    fn init(a, b) {
+        print("Adding two numbers:", a, "+", b, "=", a + b);
+        return a + b;
+    }
+    
+    fn init(a, b, c) {
+        print("Adding three numbers:", a, "+", b, "+", c, "=", a + b + c);
+        return a + b + c;
+    }
+    get result() {
+        return "Calculator instance";
+    }
+
+}
+
+
+//calc.add(5, 3);
+ let calc = new Calculator(1, 2, 3);
+
+print("Method overloading test completed!",calc.result);

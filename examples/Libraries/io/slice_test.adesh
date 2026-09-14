@@ -1,0 +1,22 @@
+import IO;
+let mw = new IO.MemoryWriter();
+let bw = new IO.BinaryWriter(mw, "little");
+bw.writeU8(255);
+bw.writeI16(-1024);
+bw.flush();
+let rawBytes = mw.getBytes();
+print("rawBytes len=" + len(rawBytes) + " [" + rawBytes[0] + "," + rawBytes[1] + "," + rawBytes[2] + "]\n");
+// Test io_slice_bytes directly
+let s0 = io_slice_bytes(rawBytes, 0, 3);
+print("slice(0,3): [" + s0[0] + "," + s0[1] + "," + s0[2] + "]\n");
+let s1 = io_slice_bytes(rawBytes, 1, 2);
+print("slice(1,2): [" + s1[0] + "," + s1[1] + "]\n");
+let pval = 1;
+let s2 = io_slice_bytes(rawBytes, pval, 2);
+print("slice(pval=1,2): [" + s2[0] + "," + s2[1] + "]\n");
+// Test via BinaryReader from array directly
+let br = new IO.BinaryReader(rawBytes, "little");
+let u8v = br.readU8();
+print("u8v=" + u8v + "\n");
+let i16v = br.readI16();
+print("i16v=" + i16v + "\n");

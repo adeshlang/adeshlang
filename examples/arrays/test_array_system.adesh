@@ -1,0 +1,52 @@
+// Test new array system
+// [type;capacity] = dynamic array with fixed capacity
+// [type;size;raw] = raw array with fixed size
+
+print("=== Dynamic Array with Fixed Capacity ===");
+let dyn:[i32;6] = [1, 2, 3];
+print("Initial:", dyn, "len:", dyn.length);
+
+dyn = dyn.append(4);
+print("After append(4):", dyn, "len:", dyn.length);
+
+dyn = dyn.append(5);
+print("After append(5):", dyn, "len:", dyn.length);
+
+dyn = dyn.append(6);
+print("After append(6):", dyn, "len:", dyn.length);
+
+// Try to exceed capacity
+try {
+  dyn = dyn.append(7);
+  print("ERROR: Should not reach here");
+} catch(e) {
+  print("Correctly rejected append beyond capacity:", e);
+}
+
+print("\n=== Raw Array (Fixed Size) ===");
+let raw_array:[i32;4;raw] = [10, 20, 30, 40];
+print("Raw array:", raw_array, "len:", raw_array.length);
+
+// Try operations that should fail
+try {
+  raw_array = raw_array.append(50);
+  print("ERROR: Should not allow append");
+} catch(e) {
+  print("Correctly rejected append on raw array:", e);
+}
+
+try {
+  raw_array = raw_array.pop();
+  print("ERROR: Should not allow pop");
+} catch(e) {
+  print("Correctly rejected pop on raw array:", e);
+}
+
+// Direct index assignment should work
+dyn[0] = 100;
+print("\nAfter dyn[0] = 100:", dyn);
+
+raw_array[0] = 999;
+print("After raw_array[0] = 999:", raw_array);
+
+print("\nDone!");

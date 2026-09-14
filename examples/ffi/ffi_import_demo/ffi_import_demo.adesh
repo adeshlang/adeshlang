@@ -1,0 +1,44 @@
+// Demonstrates calling native C runtime functions via FFI imports
+
+extern "C" fn strlen(s: string) -> u64;
+extern "C" fn getenv(name: string) -> string;
+extern "C" fn strcmp(a: string, b: string) -> i64;
+extern "C" fn atoi(num_text: string) -> i64;
+extern "C" fn llabs(value: i64) -> i64;
+
+let greeting = "Hello from Adesh FFI";
+
+let len = strlen(greeting);
+print("greeting length:");
+print(len);
+
+let env_name = "PATH";
+let path_val = getenv(env_name);
+
+if path_val == null {
+    print("PATH not found in environment");
+} else {
+    print("PATH value:");
+    print(path_val);
+    print("PATH sample length:");
+    let path_len = strlen(path_val);
+    print(path_len);
+}
+
+let cmp_same = strcmp(greeting, "Hello from Adesh FFI");
+print("strcmp with identical text:");
+print(cmp_same);
+
+let cmp_lower = strcmp(greeting, "hello from adesh ffi");
+print("strcmp with lowercase text:");
+print(cmp_lower);
+
+let numeric_text = "42";
+let parsed_val = atoi(numeric_text);
+print("atoi result for 42:");
+print(parsed_val);
+
+let negative_val = -987654321;
+let abs_val = llabs(negative_val);
+print("llabs(-987654321) result:");
+print(abs_val);

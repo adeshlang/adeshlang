@@ -1,0 +1,23 @@
+import Compression;
+
+print("=== AdeshLang Disk File ZIP Archive Creation & Extraction Example ===");
+
+let file1 = "server.log";
+let outputZip = "logs_and_scripts.zip";
+let targetExtractDir = "extracted_zip_files";
+
+// Guarantee input files exist for example execution
+Compression.compressFile(file1, "server_temp.zst", "zstd", 1);
+
+print("Creating ZIP file archive from disk files...");
+let zipMappings = [
+    { "name": "logs/server.log", "path": file1 },
+    { "name": "scripts/temp.zst", "path": "server_temp.zst" }
+];
+
+let entryCount = Compression.createZipFile(zipMappings, outputZip);
+print("ZIP file created successfully. Total entries packed:", entryCount);
+
+print("\nExtracting ZIP file archive from disk to target directory...");
+let extractedCount = Compression.extractZipFile(outputZip, targetExtractDir);
+print("ZIP file extracted successfully. Total files restored:", extractedCount);

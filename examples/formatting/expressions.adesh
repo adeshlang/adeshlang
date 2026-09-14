@@ -1,0 +1,6 @@
+let a = 10;
+let b = 20;
+print(`Sum = ${a + b}`);
+let pi = 3.14159;
+let r = 5;
+print(`Area = ${pi * r * r}`);

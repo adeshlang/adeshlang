@@ -1,0 +1,65 @@
+// 16_duration_arithmetic.adesh - Advanced Duration arithmetic and conversions
+import Time;
+import Math;
+
+print("=== Advanced Duration Arithmetic ===\n");
+
+// --- Building complex durations ---
+let twoHalfHours: Duration = Time.durationHours(2n).checkedAdd(Time.durationMinutes(30n));
+let oneDay: Duration = Time.durationDays(1n);
+let workWeek: Duration = Time.durationDays(5n);
+
+print("2h 30m   :", twoHalfHours.toString());
+print("1 day    :", oneDay.toString());
+print("Work week:", workWeek.toString());
+
+// --- Cross-unit conversions ---
+print("\n--- Cross-unit Conversions ---");
+print("2h30m → whole minutes   :", twoHalfHours.wholeMinutes());
+print("2h30m → whole seconds   :", twoHalfHours.wholeSeconds());
+print("2h30m → milliseconds    :", twoHalfHours.wholeMilliseconds());
+print("1 day → hours           :", oneDay.wholeHours());
+print("1 day → minutes         :", oneDay.wholeMinutes());
+print("5 days → hours          :", workWeek.wholeHours());
+
+// --- Float-precision durations ---
+print("\n--- Float-precision Durations ---");
+let piSeconds: Duration = Time.durationSecondsF64(3.14159);
+let halfSecond: Duration = Time.durationSecondsF64(0.5);
+let quarterMs: Duration = Time.durationMillisecondsF64(0.25);
+print("π seconds nanoseconds  :", piSeconds.wholeNanoseconds());
+print("0.5s nanoseconds       :", halfSecond.wholeNanoseconds());
+print("0.25ms nanoseconds     :", quarterMs.wholeNanoseconds());
+
+// --- Chained arithmetic ---
+print("\n--- Chained Arithmetic ---");
+let base: Duration = Time.durationHours(1n);
+let result: Duration = base
+    .checkedAdd(Time.durationMinutes(30n))
+    .checkedAdd(Time.durationSeconds(45n))
+    .checkedMul(2);
+print("(1h + 30m + 45s) × 2 =", result.toString());
+
+// --- Scaling ---
+let unit: Duration = Time.durationMinutes(1n);
+let scaled: Duration = unit.checkedMul(90);
+print("\n1 min × 90 =", scaled.toString());
+
+// --- Comparing durations ---
+print("\n--- Duration Comparison ---");
+let d1: Duration = Time.durationMinutes(60n);
+let d2: Duration = Time.durationHours(1n);
+print("60 min == 1 hour:", d1.eq(d2));
+print("60 min >= 1 hour:", d1.gte(d2));
+
+// --- Negation and absolute value ---
+print("\n--- Negation ---");
+let negative: Duration = Time.durationSeconds(30n).negated();
+print("Negated 30s nanos:", negative.wholeNanoseconds());
+print("Abs of negated   :", negative.abs().toString());
+
+// --- Min / Max ---
+let small: Duration = Time.durationSeconds(5n);
+let large: Duration = Time.durationSeconds(100n);
+print("\nmin(5s, 100s):", small.min(large).toString());
+print("max(5s, 100s):", small.max(large).toString());

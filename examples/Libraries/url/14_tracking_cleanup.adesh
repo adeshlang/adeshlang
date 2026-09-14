@@ -1,0 +1,8 @@
+import URL;
+
+let rawUrl: URL = URL.parse("https://news.example.com/article?id=123&utm_source=twitter&utm_medium=social&fbclid=abc123xyz");
+let cleanUrl: URL = rawUrl.stripTrackingParameters();
+
+print("--- 14 Tracking Parameter Cleanup Example ---");
+print("Raw URL:", rawUrl.href);
+print("Clean URL:", cleanUrl.href);

@@ -1,0 +1,42 @@
+// AdeshLang WebSocket Example 20: Production TLS/WSS Enterprise Security Configuration
+// Demonstrates encrypted WSS client connection with certificate verification options.
+
+import Env;
+import Path;
+import fs;
+import WebSocket;
+
+print("=== AdeshLang Enterprise Production WSS TLS Security Configuration ===");
+
+let certPath = Path.join("certs", "fullchain.pem").toString();
+let keyPath = Path.join("certs", "privkey.pem").toString();
+
+let tlsCertPem = fs.readText(certPath);
+let tlsKeyPem = fs.readText(keyPath);
+
+let serverConfig = {
+    port: 8620,
+    bind_address: "127.0.0.1",
+    tls_cert_pem: tlsCertPem,
+    tls_key_pem: tlsKeyPem
+};
+
+let server = WebSocket.server(serverConfig);
+server.startEcho();
+print("✓ Secure WSS Server listening on wss://127.0.0.1:8620");
+
+let clientConfig = WebSocket.ClientConfig({
+    verify_tls: false,
+    protocols: ["wss-enterprise-v1"]
+});
+
+let client = WebSocket.connect("wss://127.0.0.1:8620", clientConfig);
+print("✓ Client connected securely over TLS/WSS");
+
+client.sendText("Secure TLS payload");
+let reply = client.receive();
+print("Encrypted Echo Reply: " + reply.payload);
+
+client.close(1000, "Clean WSS shutdown");
+server.close();
+print("✓ Enterprise Production WSS session completed successfully!");

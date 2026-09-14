@@ -1,0 +1,13 @@
+struct Ajay {
+    name: String;
+    age: Int;
+    isStudent: Bool;
+};
+let ajay1 = Ajay{
+    name: "Ajay",
+    age: 20,
+    isStudent: true,
+};
+print("ajay1:", ajay1);
+print("ajay1.name:", ajay1.name);
+print("Ajay1 isStudent:", ajay1.isStudent);

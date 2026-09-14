@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AdeshLang Full-Stack Todo Enterprise App</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%);
+      --card-bg: rgba(30, 41, 59, 0.7);
+      --card-border: rgba(255, 255, 255, 0.1);
+      --primary: #6366f1;
+      --primary-hover: #4f46e5;
+      --accent: #06b6d4;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --danger: #ef4444;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --badge-high: rgba(239, 68, 68, 0.2);
+      --badge-medium: rgba(245, 158, 11, 0.2);
+      --badge-low: rgba(16, 185, 129, 0.2);
+      --radius: 16px;
+      --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      background: var(--bg-gradient);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 1000px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--card-bg);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--card-border);
+      padding: 1.25rem 2rem;
+      border-radius: var(--radius);
+      margin-bottom: 2rem;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .brand-logo {
+      width: 42px;
+      height: 42px;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 1.4rem;
+      color: white;
+      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+    }
+
+    .brand-title {
+      font-size: 1.35rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-subtitle {
+      font-size: 0.75rem;
+      color: var(--accent);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .user-panel {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .user-badge {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(255, 255, 255, 0.05);
+      padding: 0.5rem 1rem;
+      border-radius: 30px;
+      border: 1px solid var(--card-border);
+      font-size: 0.9rem;
+    }
+
+    .avatar {
+      width: 28px;
+      height: 28px;
+      background: var(--primary);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+
+    .btn {
+      padding: 0.65rem 1.25rem;
+      border-radius: 10px;
+      border: none;
+      font-family: inherit;
+      font-weight: 600;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: var(--transition);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--primary), var(--primary-hover));
+      color: white;
+      box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-main);
+      border: 1px solid var(--card-border);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.2);
+      color: #fca5a5;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+
+    .btn-danger:hover {
+      background: var(--danger);
+      color: white;
+    }
+
+    .btn-sm {
+      padding: 0.4rem 0.8rem;
+      font-size: 0.8rem;
+      border-radius: 6px;
+    }
+
+    /* Auth View */
+    .auth-card {
+      background: var(--card-bg);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius);
+      padding: 2.5rem;
+      max-width: 440px;
+      margin: 3rem auto;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    }
+
+    .auth-title {
+      font-size: 1.6rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+      text-align: center;
+    }
+
+    .auth-desc {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    .form-group {
+      margin-bottom: 1.25rem;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 0.4rem;
+    }
+
+    .form-input, .form-select, .form-textarea {
+      width: 100%;
+      padding: 0.75rem 1rem;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      color: white;
+      font-family: inherit;
+      font-size: 0.95rem;
+      transition: var(--transition);
+    }
+
+    .form-input:focus, .form-select:focus, .form-textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
+    }
+
+    /* Dashboard View */
+    .dashboard {
+      display: grid;
+      grid-template-columns: 1fr 2fr;
+      gap: 1.5rem;
+    }
+
+    @media (max-width: 768px) {
+      .dashboard {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .card {
+      background: var(--card-bg);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      box-shadow: 0 15px 30px -10px rgba(0, 0, 0, 0.3);
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.25rem;
+    }
+
+    .card-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+    }
+
+    /* Stats Grid */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .stat-card {
+      background: rgba(15, 23, 42, 0.5);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 1rem;
+      text-align: center;
+    }
+
+    .stat-num {
+      font-size: 1.5rem;
+      font-weight: 800;
+      color: var(--accent);
+    }
+
+    .stat-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      margin-top: 0.25rem;
+    }
+
+    /* Todo List */
+    .todo-item {
+      background: rgba(15, 23, 42, 0.4);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      transition: var(--transition);
+    }
+
+    .todo-item:hover {
+      border-color: rgba(99, 102, 241, 0.4);
+      transform: translateX(4px);
+    }
+
+    .todo-item.completed {
+      opacity: 0.6;
+      background: rgba(15, 23, 42, 0.2);
+    }
+
+    .todo-item.completed .todo-title {
+      text-decoration: line-through;
+      color: var(--text-muted);
+    }
+
+    .todo-left {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+      flex: 1;
+    }
+
+    .checkbox {
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      border: 2px solid var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: var(--transition);
+    }
+
+    .checkbox.checked {
+      background: var(--success);
+      border-color: var(--success);
+    }
+
+    .checkbox.checked::after {
+      content: '✓';
+      color: white;
+      font-size: 0.85rem;
+      font-weight: 800;
+    }
+
+    .todo-title {
+      font-weight: 600;
+      font-size: 0.95rem;
+      margin-bottom: 0.2rem;
+    }
+
+    .todo-desc {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .badge {
+      padding: 0.25rem 0.65rem;
+      border-radius: 20px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .badge-High {
+      background: var(--badge-high);
+      color: #fca5a5;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+
+    .badge-Medium {
+      background: var(--badge-medium);
+      color: #fcd34d;
+      border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+
+    .badge-Low {
+      background: var(--badge-low);
+      color: #6ee7b7;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .todo-actions {
+      display: flex;
+      gap: 0.4rem;
+    }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(15, 23, 42, 0.8);
+      backdrop-filter: blur(8px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      opacity: 0;
+      pointer-events: none;
+      transition: var(--transition);
+    }
+
+    .modal-overlay.active {
+      opacity: 1;
+      pointer-events: all;
+    }
+
+    .modal {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius);
+      padding: 2rem;
+      width: 100%;
+      max-width: 500px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    }
+
+    /* Console / Logs Overlay */
+    .console-panel {
+      margin-top: 2rem;
+      background: #090d16;
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 1rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+      color: #a7f3d0;
+      max-height: 180px;
+      overflow-y: auto;
+    }
+
+    .console-header {
+      display: flex;
+      justify-content: space-between;
+      color: var(--text-muted);
+      margin-bottom: 0.5rem;
+      font-weight: 600;
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 0.4rem;
+    }
+
+    .log-line {
+      margin-bottom: 0.25rem;
+      word-break: break-all;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="brand">
+        <div class="brand-logo">A</div>
+        <div>
+          <div class="brand-title">AdeshLang Todo</div>
+          <div class="brand-subtitle">Full-Stack Enterprise HTTP Engine</div>
+        </div>
+      </div>
+      <div class="user-panel" id="userPanel">
+        <!-- Rendered via JS -->
+      </div>
+    </header>
+
+    <!-- Auth View -->
+    <div id="authView" class="auth-card">
+      <h2 class="auth-title">Welcome Back</h2>
+      <p class="auth-desc">Sign in with your AdeshLang Enterprise account</p>
+      <form id="loginForm">
+        <div class="form-group">
+          <label class="form-label">Username</label>
+          <input type="text" id="loginUser" class="form-input" value="admin" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input type="password" id="loginPass" class="form-input" value="admin123" required />
+        </div>
+        <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">Sign In</button>
+      </form>
+    </div>
+
+    <!-- App Main View -->
+    <div id="appView" class="dashboard hidden">
+      <!-- Sidebar / Create Todo Form -->
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">New Task</h3>
+        </div>
+        <form id="createTodoForm">
+          <div class="form-group">
+            <label class="form-label">Title</label>
+            <input type="text" id="todoTitle" class="form-input" placeholder="Task title..." required />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Description</label>
+            <textarea id="todoDesc" class="form-textarea" rows="3" placeholder="Task details..."></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Priority</label>
+            <select id="todoPriority" class="form-select">
+              <option value="Low">Low</option>
+              <option value="Medium" selected>Medium</option>
+              <option value="High">High</option>
+            </select>
+          </div>
+          <button type="submit" class="btn btn-primary" style="width: 100%;">Create Task</button>
+        </form>
+      </div>
+
+      <!-- Main Todo List View -->
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Tasks</h3>
+          <button class="btn btn-secondary btn-sm" id="btnRefresh">Refresh</button>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-num" id="statTotal">0</div>
+            <div class="stat-label">Total</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-num" id="statCompleted">0</div>
+            <div class="stat-label">Completed</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-num" id="statPending">0</div>
+            <div class="stat-label">Pending</div>
+          </div>
+        </div>
+
+        <div id="todoList">
+          <!-- Todo Items Rendered Here -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Console Logs -->
+    <div class="console-panel">
+      <div class="console-header">
+        <span>ADESHLANG STDLIB HTTP REQUEST LOGS</span>
+        <span id="serverInfo">Status: Connected</span>
+      </div>
+      <div id="logOutput">
+        <div class="log-line">[SYSTEM]: Initializing AdeshLang Client Engine...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Task Modal -->
+  <div class="modal-overlay" id="editModal">
+    <div class="modal">
+      <div class="card-header">
+        <h3 class="card-title">Edit Task (PUT / PATCH)</h3>
+        <button class="btn btn-secondary btn-sm" onclick="closeEditModal()">✕</button>
+      </div>
+      <form id="editForm">
+        <input type="hidden" id="editId" />
+        <div class="form-group">
+          <label class="form-label">Title</label>
+          <input type="text" id="editTitle" class="form-input" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <textarea id="editDesc" class="form-textarea" rows="3"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Priority</label>
+          <select id="editPriority" class="form-select">
+            <option value="Low">Low</option>
+            <option value="Medium">Medium</option>
+            <option value="High">High</option>
+          </select>
+        </div>
+        <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.5rem;">
+          <button type="button" class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+          <button type="button" class="btn btn-secondary" onclick="submitPatch()">Patch Title</button>
+          <button type="submit" class="btn btn-primary">Save (PUT)</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    let authToken = localStorage.getItem('token') || '';
+    let currentUser = JSON.parse(localStorage.getItem('user') || 'null');
+
+    const authView = document.getElementById('authView');
+    const appView = document.getElementById('appView');
+    const userPanel = document.getElementById('userPanel');
+    const logOutput = document.getElementById('logOutput');
+
+    function log(msg) {
+      const line = document.createElement('div');
+      line.className = 'log-line';
+      line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      logOutput.appendChild(line);
+      logOutput.scrollTop = logOutput.scrollHeight;
+    }
+
+    function updateUI() {
+      if (authToken && currentUser) {
+        authView.classList.add('hidden');
+        appView.classList.remove('hidden');
+        userPanel.innerHTML = `
+          <div class="user-badge">
+            <div class="avatar">${currentUser.username.charAt(0).toUpperCase()}</div>
+            <span>${currentUser.username} (${currentUser.role})</span>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="logout()">Logout</button>
+        `;
+        fetchTodos();
+      } else {
+        authView.classList.remove('hidden');
+        appView.classList.add('hidden');
+        userPanel.innerHTML = '';
+      }
+    }
+
+    const API_BASE = 'http://localhost:4000';
+
+    async function apiCall(url, method = 'GET', body = null) {
+      const fullUrl = url.startsWith('http') ? url : `${API_BASE}${url}`;
+      log(`HTTP ${method} ${fullUrl}`);
+      const headers = { 'Content-Type': 'application/json' };
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+
+      const options = { method, headers };
+      if (body) options.body = JSON.stringify(body);
+
+      try {
+        const res = await fetch(fullUrl, options);
+        log(`HTTP ${res.status} ${res.statusText}`);
+        if (res.status === 401) {
+          logout();
+          return null;
+        }
+        const text = await res.text();
+        try {
+          return JSON.parse(text);
+        } catch {
+          log(`[HTTP ${res.status}]: ${text}`);
+          return { success: res.ok, error: text };
+        }
+      } catch (err) {
+        log(`[ERROR]: ${err.message}`);
+        return null;
+      }
+    }
+
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const u = document.getElementById('loginUser').value;
+      const p = document.getElementById('loginPass').value;
+
+      const res = await apiCall('/api/auth/login', 'POST', { username: u, password: p });
+      if (res && res.success) {
+        authToken = res.token;
+        currentUser = res.user;
+        localStorage.setItem('token', authToken);
+        localStorage.setItem('user', JSON.stringify(currentUser));
+        log(`User ${currentUser.username} authenticated cleanly via Crypto HMAC`);
+        updateUI();
+      } else {
+        alert(res ? res.error : 'Login failed');
+      }
+    });
+
+    function logout() {
+      apiCall('/api/auth/logout', 'POST');
+      authToken = '';
+      currentUser = null;
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      log('User logged out cleanly');
+      updateUI();
+    }
+
+    let localState = [];
+
+    async function fetchTodos() {
+      const data = await apiCall('/api/todos');
+      if (data && data.todos) {
+        localState = data.todos;
+        renderTodos(localState);
+      }
+    }
+
+    function renderTodos(todos) {
+      const todoList = document.getElementById('todoList');
+      todoList.innerHTML = '';
+
+      if (!todos || todos.length === 0) {
+        todoList.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 2rem;">No tasks found. Create one above!</div>';
+        document.getElementById('statTotal').textContent = '0';
+        document.getElementById('statCompleted').textContent = '0';
+        document.getElementById('statPending').textContent = '0';
+        return;
+      }
+
+      let completed = 0;
+      todos.forEach(t => {
+        const isDone = Boolean(t.completed);
+        if (isDone) completed++;
+
+        const item = document.createElement('div');
+        item.className = `todo-item ${isDone ? 'completed' : ''}`;
+        item.setAttribute('data-id', t.id);
+        
+        const priorityStr = String(t.priority || 'Medium');
+
+        item.innerHTML = `
+          <div class="todo-left">
+            <div class="checkbox ${isDone ? 'checked' : ''}"></div>
+            <div>
+              <div class="todo-title"></div>
+              <div class="todo-desc"></div>
+            </div>
+          </div>
+          <span class="badge badge-${priorityStr}">${priorityStr}</span>
+          <div class="todo-actions">
+            <button class="btn btn-secondary btn-sm edit-btn">Edit</button>
+            <button class="btn btn-danger btn-sm del-btn">Delete</button>
+          </div>
+        `;
+
+        item.querySelector('.todo-title').textContent = t.title || '';
+        item.querySelector('.todo-desc').textContent = t.description || 'No description';
+        item.querySelector('.checkbox').onclick = () => toggleTodo(t.id, !isDone);
+        item.querySelector('.edit-btn').onclick = () => openEditModal(t.id, t.title || '', t.description || '', priorityStr);
+        item.querySelector('.del-btn').onclick = () => deleteTodo(t.id);
+
+        todoList.appendChild(item);
+      });
+
+      document.getElementById('statTotal').textContent = todos.length;
+      document.getElementById('statCompleted').textContent = completed;
+      document.getElementById('statPending').textContent = todos.length - completed;
+    }
+
+    document.getElementById('createTodoForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const title = document.getElementById('todoTitle').value;
+      const description = document.getElementById('todoDesc').value;
+      const priority = document.getElementById('todoPriority').value;
+
+      // Optimistic Add
+      const tempId = Date.now();
+      const tempItem = { id: tempId, title, description, priority, completed: false };
+      localState.push(tempItem);
+      renderTodos(localState);
+
+      document.getElementById('todoTitle').value = '';
+      document.getElementById('todoDesc').value = '';
+
+      const res = await apiCall('/api/todos', 'POST', { title, description, priority });
+      if (res && res.success) {
+        fetchTodos();
+      } else {
+        alert('Failed to save todo on server');
+        fetchTodos();
+      }
+    });
+
+    async function toggleTodo(id, completed) {
+      // Optimistic local state update
+      const item = localState.find(t => String(t.id) === String(id));
+      if (item) {
+        item.completed = completed;
+        renderTodos(localState);
+      }
+
+      const res = await apiCall(`/api/todos/${id}`, 'PATCH', { completed });
+      if (res && res.success && res.todo) {
+        if (item) Object.assign(item, res.todo);
+        renderTodos(localState);
+      } else if (res && res.error) {
+        alert(`Server Error: ${res.error}`);
+        fetchTodos();
+      }
+    }
+
+    async function deleteTodo(id) {
+      if (confirm('Delete this task?')) {
+        // Optimistic delete
+        localState = localState.filter(t => String(t.id) !== String(id));
+        renderTodos(localState);
+
+        const res = await apiCall(`/api/todos/${id}`, 'DELETE');
+        if (res && res.error) {
+          alert(`Server Error: ${res.error}`);
+          fetchTodos();
+        }
+      }
+    }
+
+    function openEditModal(id, title, desc, priority) {
+      document.getElementById('editId').value = id;
+      document.getElementById('editTitle').value = title;
+      document.getElementById('editDesc').value = desc;
+      document.getElementById('editPriority').value = priority;
+      document.getElementById('editModal').classList.add('active');
+    }
+
+    function closeEditModal() {
+      document.getElementById('editModal').classList.remove('active');
+    }
+
+    document.getElementById('editForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const id = document.getElementById('editId').value;
+      const title = document.getElementById('editTitle').value;
+      const description = document.getElementById('editDesc').value;
+      const priority = document.getElementById('editPriority').value;
+
+      // Optimistic update
+      const item = localState.find(t => String(t.id) === String(id));
+      if (item) {
+        item.title = title;
+        item.description = description;
+        item.priority = priority;
+        renderTodos(localState);
+      }
+      closeEditModal();
+
+      const res = await apiCall(`/api/todos/${id}`, 'PUT', { title, description, priority });
+      if (res && res.success && res.todo) {
+        if (item) Object.assign(item, res.todo);
+        renderTodos(localState);
+      } else {
+        fetchTodos();
+      }
+    });
+
+    async function submitPatch() {
+      const id = document.getElementById('editId').value;
+      const title = document.getElementById('editTitle').value;
+      const item = localState.find(t => String(t.id) === String(id));
+      if (item) {
+        item.title = title;
+        renderTodos(localState);
+      }
+      closeEditModal();
+
+      const res = await apiCall(`/api/todos/${id}`, 'PATCH', { title });
+      if (res && res.success && res.todo) {
+        if (item) Object.assign(item, res.todo);
+        renderTodos(localState);
+      } else {
+        fetchTodos();
+      }
+    }
+
+    document.getElementById('btnRefresh').addEventListener('click', fetchTodos);
+    updateUI();
+  </script>
+</body>
+</html>

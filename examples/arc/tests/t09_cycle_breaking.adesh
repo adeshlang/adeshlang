@@ -1,0 +1,96 @@
+// examples/arc/tests/t09_cycle_breaking.adesh
+// T09 – Cycle breaking: strong parent→child, weak child→parent
+//        Verifies counts are correct and no "phantom" retention occurs.
+
+
+fn notify(obs, label) {
+    let live = obs.upgrade();
+    if (live != null) {
+        print("  " + label + " sees topic:", live.topic);
+        return true;
+    }
+    return false;
+}
+
+export fn run() {
+    let PASS = 0;
+    let FAIL = 0;
+
+    fn check(cond, msg) {
+        if (cond) {
+            print("  ✓ PASS:", msg);
+            PASS = PASS + 1;
+        } else {
+            print("  ✗ FAIL:", msg);
+            FAIL = FAIL + 1;
+        }
+    }
+
+print("=== T09: Cycle-breaking with weak back-pointers ===\n");
+
+// ── Tree node: parent owns child (strong); child references parent (weak) ──
+share parent = { name: "parent", level: 0 };
+share child  = { name: "child",  level: 1 };
+
+strong parent_owns_child = child;   // parent → child (strong)
+weak child_ref_parent    = parent;  // child  → parent (weak, breaks cycle)
+
+// parent is only owned by `parent` itself; no cycle inflating its count
+check(parent.strong_count() == 1, "parent strong_count is 1 (no cycle)");
+// child is owned by `child` var + `parent_owns_child`
+check(child.strong_count()  == 2, "child strong_count is 2");
+// parent has one weak observer
+check(parent.weak_count()   == 1, "parent weak_count is 1");
+
+// Child can navigate to parent via weak upgrade
+{
+    let p = child_ref_parent.upgrade();
+    check(p != null, "child navigates to parent via upgrade");
+    if (p != null) {
+        check(p.name  == "parent", "navigated parent.name is correct");
+        check(p.level == 0,        "navigated parent.level is correct");
+    }
+}
+// upgrade temporary released; parent count back to 1
+check(parent.strong_count() == 1, "parent count back to 1 after upgrade released");
+
+// ── Observer pattern: many weak observers, one strong subject ─────────────
+share subject = { topic: "status" };
+weak obs1 = subject;
+weak obs2 = subject;
+weak obs3 = subject;
+
+check(subject.strong_count() == 1, "subject strong_count 1 with 3 weak observers");
+check(subject.weak_count()   == 3, "subject weak_count 3");
+
+
+check(notify(obs1, "obs1"), "obs1 successfully notified");
+check(notify(obs2, "obs2"), "obs2 successfully notified");
+check(notify(obs3, "obs3"), "obs3 successfully notified");
+
+check(subject.strong_count() == 1, "subject count 1 after all notifications");
+
+// ── Doubly-linked node layout ─────────────────────────────────────────────
+share nodeA = { val: 1 };
+share nodeB = { val: 2 };
+
+strong a_to_b = nodeB;   // A → B (strong)
+weak   b_to_a = nodeA;   // B → A (weak)
+
+check(nodeA.strong_count() == 1, "nodeA strong 1 (only nodeA var)");
+check(nodeB.strong_count() == 2, "nodeB strong 2 (nodeB + a_to_b)");
+
+{
+    let prev = b_to_a.upgrade();
+    check(prev != null, "B can navigate back to A");
+    if (prev != null) {
+        check(prev.val == 1, "nodeB.prev.val is 1");
+    }
+}
+
+print("\nPASS:", PASS, " FAIL:", FAIL);
+
+    return { pass: PASS, fail: FAIL };
+}
+
+run();

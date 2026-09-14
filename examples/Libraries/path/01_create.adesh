@@ -1,0 +1,19 @@
+import Path;
+
+let path1 = Path.new("images/logo.png");
+print("Path.new: " + path1.toString());
+
+let path2 = Path.empty();
+print("Path.empty length: " + str(len(path2.toString())));
+
+let cwd = Path.current();
+print("Path.current: " + cwd.toString());
+
+let home = Path.home();
+print("Path.home: " + home.toString());
+
+let temp = Path.temp();
+print("Path.temp: " + temp.toString());
+
+let exe = Path.executable();
+print("Path.executable: " + exe.toString());

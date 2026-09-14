@@ -1,0 +1,14 @@
+import Random;
+
+print("--- Statistical Distributions Demo ---");
+let norm = Random.normal(0.0, 1.0);
+print("Sample from Normal(0, 1): " + norm);
+
+let exp = Random.exponential(2.0);
+print("Sample from Exp(2.0): " + exp);
+
+let binom = Random.binomial(10, 0.5);
+print("Sample from Binomial(10, 0.5): " + binom);
+
+let pois = Random.poisson(3.0);
+print("Sample from Poisson(3.0): " + pois);

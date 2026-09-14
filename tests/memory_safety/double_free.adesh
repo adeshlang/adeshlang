@@ -1,0 +1,10 @@
+// Test: Double free detection
+// Should fail with compile-time error
+
+fn test_double_free() {
+    let x = alloc(100);
+    free(x);
+    free(x);  // ERROR: Double free
+}
+
+test_double_free();

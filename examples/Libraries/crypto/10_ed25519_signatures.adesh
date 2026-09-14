@@ -1,0 +1,11 @@
+// 10 - Ed25519 High-Speed Edwards-Curve Digital Signatures
+import Crypto;
+
+let keypair = Crypto.generateEd25519();
+let document = "Legal Terms and Conditions Agreement v1.0";
+
+let signature = Crypto.signEd25519(keypair.privateKey, document);
+print("Ed25519 Signature (Hex):", Crypto.encodeHex(signature));
+
+let isSignatureValid = Crypto.verifyEd25519(keypair.publicKey, document, signature);
+print("Signature Valid:         ", isSignatureValid);

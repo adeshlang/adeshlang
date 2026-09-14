@@ -1,0 +1,35 @@
+extern "C" {
+    fn is_even(n: i32) -> i32;
+}
+
+fn main() {
+    let result = is_even(4);
+    
+    // Direct conditional
+    print("Direct if (result):\n");
+    if result {
+        print("  True branch taken\n");
+    } else {
+        print("  False branch taken\n");
+    }
+    
+    // Negation
+    print("Direct if (!result):\n");
+    if !result {
+        print("  True branch taken\n");
+    } else {
+        print("  False branch taken\n");
+    }
+    
+    // Try an arithmetic operation (before storing into x: moving result below)
+    let y = result + 0;
+    print("After y = result + 0, y == 1: ");
+    print(y == 1);
+    print("\n");
+    
+    // Try storing in a new variable
+    let x = result;
+    print("After storing in x, x == 1: ");
+    print(x == 1);
+    print("\n");
+}

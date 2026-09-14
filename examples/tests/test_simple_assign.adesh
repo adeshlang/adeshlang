@@ -1,0 +1,14 @@
+// Minimal assignment test
+
+fn test() {
+    let a = 5;
+    print("Initial a =", a);
+    
+    a = 10;
+    print("After assign a = 10, reading a:", a);
+    
+    return a;
+}
+
+let result = test();
+print("Returned:", result);

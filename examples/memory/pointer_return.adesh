@@ -1,0 +1,80 @@
+// Returning pointers from functions
+// Demonstrates ownership transfer from callee to caller
+
+print("=== Returning Pointers ===");
+
+fn alloc_buffer(size: u64) -> *u8 unsafe {
+    let p = alloc(size);
+    print("Allocated buffer of size " + str(size));
+    return p;  // Ownership transfers to caller
+}
+
+fn make_initialized_buffer(size: u64, init_value: u8) -> *u8 unsafe {
+    let buf = alloc(size);
+    for i in 0..size {
+        buf[i] = init_value;
+    }
+    print("Created initialized buffer");
+    return buf;  // RAII does NOT free here - ownership transferred
+}
+
+unsafe {
+    // Get buffer from function
+    let buffer1 = alloc_buffer(20);
+    buffer1[0] = 100;
+    print("Buffer1 first element:");
+    print(buffer1[0]);  // 100
+    
+    // Get initialized buffer
+    let buffer2 = make_initialized_buffer(15, 42);
+    print("Buffer2 first element:");
+    print(buffer2[0]);  // 42
+    print("Buffer2 last element:");
+    print(buffer2[14]);  // 42
+    
+    // Caller owns both buffers and must free them
+    free(buffer1);
+    free(buffer2);
+    print("Both buffers freed by caller");
+}
+
+print("=== Factory Pattern ===");
+
+fn create_config_buffer() -> *u8 unsafe {
+    let config = alloc(4);
+    config[0] = 1;   // version
+    config[1] = 255; // flags
+    config[2] = 0;   // reserved
+    config[3] = 42;  // magic number
+    return config;
+}
+
+unsafe {
+    let cfg = create_config_buffer();
+    print("Config buffer created:");
+    print("  Version: " + str(cfg[0]));
+    print("  Flags: " + str(cfg[1]));
+    print("  Magic: " + str(cfg[3]));
+    
+    // RAII will free cfg at scope exit
+}
+
+print("Config freed by RAII");
+
+// Expected output:
+// === Returning Pointers ===
+// Allocated buffer of size 20
+// Buffer1 first element:
+// 100
+// Created initialized buffer
+// Buffer2 first element:
+// 42
+// Buffer2 last element:
+// 42
+// Both buffers freed by caller
+// === Factory Pattern ===
+// Config buffer created:
+//   Version: 1
+//   Flags: 255
+//   Magic: 42
+// Config freed by RAII

@@ -1,0 +1,14 @@
+import Random;
+
+print("--- Integer Randomness Demo ---");
+let halfOpen = Random.int(10, 20);
+print("Half-open range [10, 20): " + halfOpen);
+
+let inclusive = Random.intInclusive(10, 20);
+print("Inclusive range [10, 20]: " + inclusive);
+
+let u32Val = Random.u32();
+print("Random u32: " + u32Val);
+
+let i64Val = Random.i64();
+print("Random i64: " + i64Val);

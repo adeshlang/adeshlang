@@ -1,0 +1,61 @@
+// Minimal IO debug - tests readLine with direct overrides
+import IO;
+
+fn main() {
+    // 1. MemoryReader.readLine()
+    let mr = new MemoryReader("Line 1\nLine 2\nLine 3\n");
+    let l1 = mr.readLine();
+    let l2 = mr.readLine();
+    let l3 = mr.readLine();
+    let l4 = mr.readLine();
+    print("MR readLine: '" + l1 + "' | '" + l2 + "' | '" + l3 + "'\n");
+    assert(l1 == "Line 1", "MR readLine l1 failed");
+    assert(l2 == "Line 2", "MR readLine l2 failed");
+    assert(l3 == "Line 3", "MR readLine l3 failed");
+    assert(l4 == null, "MR readLine l4 should be null");
+    print("[PASS] MemoryReader.readLine()\n");
+
+    // 2. MemoryReader.readLines()
+    let mr2 = new MemoryReader("A\nB\nC");
+    let lines = mr2.readLines();
+    print("MR readLines count: " + len(lines) + "\n");
+    assert(len(lines) == 3, "readLines count failed");
+    assert(lines[0] == "A", "readLines[0] failed");
+    assert(lines[2] == "C", "readLines[2] failed");
+    print("[PASS] MemoryReader.readLines()\n");
+
+    // 3. BufferedReader.readLine()
+    let mr3 = new MemoryReader("Line 1\nLine 2\nLine 3\n");
+    let br = new BufferedReader(mr3, 4);
+    let b1 = br.readLine();
+    let b2 = br.readLine();
+    let b3 = br.readLine();
+    let b4 = br.readLine();
+    print("BR readLine: '" + b1 + "' | '" + b2 + "' | '" + b3 + "'\n");
+    assert(b1 == "Line 1", "BR readLine b1 failed");
+    assert(b2 == "Line 2", "BR readLine b2 failed");
+    assert(b3 == "Line 3", "BR readLine b3 failed");
+    assert(b4 == null, "BR readLine b4 should be null");
+    print("[PASS] BufferedReader.readLine()\n");
+
+    // 4. MemoryReader.readToEnd()
+    let mr4 = new MemoryReader("Hello World");
+    let txt = mr4.readToEnd();
+    assert(txt == "Hello World", "readToEnd failed");
+    print("[PASS] MemoryReader.readToEnd()\n");
+
+    // 5. TextReader.readLine()
+    let tr = new TextReader("First\nSecond\nThird");
+    let t1 = tr.readLine();
+    let t2 = tr.readLine();
+    let t3 = tr.readLine();
+    print("TR readLine: '" + t1 + "' | '" + t2 + "' | '" + t3 + "'\n");
+    assert(t1 == "First", "TR readLine t1 failed");
+    assert(t2 == "Second", "TR readLine t2 failed");
+    assert(t3 == "Third", "TR readLine t3 failed");
+    print("[PASS] TextReader.readLine()\n");
+
+    print("ALL MINIMAL TESTS PASSED!\n");
+}
+
+main();

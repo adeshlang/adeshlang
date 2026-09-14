@@ -1,0 +1,19 @@
+// AdeshLang: Immutable Borrow Example
+// Multiple immutable borrows are allowed simultaneously
+
+let x = 100;
+let r1 = &x;
+let r2 = &x;
+let r3 = &x;
+
+print("Multiple immutable borrows allowed:");
+print(r1);
+print(r2);
+print(r3);
+
+fn borrow_and_return(val: i32) : i32 {
+  return val * 2;
+}
+
+let result = borrow_and_return(x);
+print("Borrow and return: " + str(result));

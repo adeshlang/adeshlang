@@ -1,0 +1,13 @@
+import DNS;
+
+print("=== 1. Security Policy Creation ===");
+let policy = DNS.Policy();
+print("Security Policy object:", policy);
+
+print("=== 2. Custom Resolver Configuration & Querying ===");
+let resolver = DNS.Resolver();
+let records = resolver.query("google.com", DNS.Type.A);
+print("Query result via Resolver:");
+for (rec in records) {
+    print("Host:", rec.name, "| IP:", rec.data, "| TTL:", rec.ttl);
+}

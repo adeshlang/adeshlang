@@ -1,0 +1,37 @@
+import Compression;
+
+print("=== Complete File Compression & Decompression Example ===");
+
+// -------------------------------------------------------------
+// Part A: Single File Stream Compression & Decompression
+// -------------------------------------------------------------
+let logInput = "server.log";
+let logZst = "server.log.zst";
+let logRestored = "server_restored.log";
+
+print("\n--- Part A: Zstd Single File Streaming ---");
+print("1. Stream compressing 'server.log' to 'server.log.zst'...");
+let compOk = Compression.compressFile(logInput, logZst, "zstd", 5);
+print("File stream compression status:", compOk);
+
+print("2. Stream decompressing 'server.log.zst' back to 'server_restored.log'...");
+let decompOk = Compression.decompressFile(logZst, logRestored, "zstd");
+print("File stream decompression status:", decompOk);
+
+// -------------------------------------------------------------
+// Part B: Multi-File ZIP Archive Creation & Decompression
+// -------------------------------------------------------------
+let archiveZip = "bundle_archive.zip";
+let extractFolder = "bundle_restored";
+
+print("\n--- Part B: Multi-File ZIP Archive Streaming ---");
+print("1. Packing files into ZIP archive file 'bundle_archive.zip'...");
+let zipCount = Compression.createZipFile([
+    { "name": "server.log", "path": logInput },
+    { "name": "restored.log", "path": logRestored }
+], archiveZip);
+print("Packed ZIP entries:", zipCount);
+
+print("2. Extracting ZIP archive file into 'bundle_restored/' directory...");
+let extractCount = Compression.extractZipFile(archiveZip, extractFolder);
+print("Extracted ZIP files count:", extractCount);

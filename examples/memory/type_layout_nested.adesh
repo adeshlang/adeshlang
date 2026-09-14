@@ -1,0 +1,71 @@
+// Type Layout Fundamentals
+// Demonstrates type sizes and alignment concepts
+
+print("=== Primitive Type Sizes ===");
+
+print("u8  = 1 byte");
+print("u16 = 2 bytes");
+print("u32 = 4 bytes");
+print("u64 = 8 bytes");
+print("u128 = 16 bytes");
+print("i32 = 4 bytes");
+print("f32 = 4 bytes");
+print("f64 = 8 bytes");
+
+print("=== Pointer Sizes ===");
+
+print("All pointers = 8 bytes on 64-bit systems");
+
+print("=== Array Sizes ===");
+
+print("[i32; 10] = 40 bytes (10 * 4)");
+print("[u8; 5] = 5 bytes");
+print("[f64; 3] = 24 bytes (3 * 8)");
+
+print("=== Type Alignment ===");
+
+print("alignof(u8) = 1");
+print("alignof(u16) = 2");
+print("alignof(u32) = 4");
+print("alignof(u64) = 8");
+print("alignof(f32) = 4");
+print("alignof(f64) = 8");
+
+print("=== String Type Layout ===");
+
+print("String consists of:");
+print("1. Pointer to character data (8 bytes)");
+print("2. Length field (8 bytes)");
+print("3. Capacity field (8 bytes)");
+print("Total: 24 bytes for string metadata");
+
+print("=== Computing Allocation Size ===");
+
+let bytes_needed = 40;
+print("For 10 u32 elements, need bytes");
+print(bytes_needed);
+
+unsafe {
+    let p = alloc(40);
+    print("Allocated 40 bytes");
+    free(p);
+}
+
+print("=== Practical Buffer Allocation ===");
+
+print("Allocating array of 5 i32 elements");
+print("Total bytes needed: 20");
+
+unsafe {
+    let buffer = alloc(20);
+    print("Buffer allocated");
+    
+    // Write some values
+    buffer[0] = 42;
+    buffer[1] = 43;
+    
+    free(buffer);
+    print("Buffer freed");
+}
+
+print("=== All Type Layout Examples Passed ===");

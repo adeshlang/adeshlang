@@ -1,0 +1,589 @@
+// =============================================================================
+// AdeshLang Memory Management - Memory Safety Demonstration
+// =============================================================================
+// This example demonstrates memory safety features in AdeshLang:
+// - Use-after-free detection
+// - Double-free prevention
+// - Borrow checking violations
+// - Memory poisoning in debug mode
+// - Ownership validation
+// =============================================================================
+// /
+print("=== Memory Safety Demonstration ===\n");
+
+// -----------------------------------------------------------------------------
+// 1. Use-After-Free Detection
+// -----------------------------------------------------------------------------
+// Accessing memory after it has been freed is a common bug.
+// AdeshLang's ownership system prevents this.
+
+print("--- Use-After-Free Detection ---");
+
+class SafeResource {
+    fn init(name) {
+        this.name = name;
+        this.isValid = true;
+        this.data = "resource data for " + name;
+        print("  Created resource: " + name);
+    }
+    
+    fn use() {
+        if (!this.isValid) {
+            throw Error("Use-after-free detected: " + this.name);
+        }
+        print("  Using resource: " + this.name);
+        return this.data;
+    }
+    
+    fn free() {
+        if (!this.isValid) {
+            throw Error("Double-free detected: " + this.name);
+        }
+        this.isValid = false;
+        this.data = null; // Clear data
+        print("  Freed resource: " + this.name);
+    }
+    
+    fn move() {
+        if (!this.isValid) {
+            throw Error("Move of invalid resource: " + this.name);
+        }
+        
+        // Create new resource with transferred data
+        let newResource = new SafeResource(this.name + "-moved");
+        newResource.data = this.data;
+        
+        // Invalidate original
+        this.isValid = false;
+        this.data = null;
+        print("  Moved resource: " + this.name + " -> " + newResource.name);
+        
+        return newResource;
+    }
+}
+
+// Demonstrate safe usage
+let resource = new SafeResource("file-handle");
+resource.use(); // OK
+
+// Move the resource
+let movedResource = resource.move();
+
+// Try to use original (should fail)
+try {
+    resource.use();
+} catch (e) {
+    print("  ✓ Caught use-after-move: " + e);
+}
+
+// Use moved resource (should work)
+movedResource.use();
+
+// Free the moved resource
+movedResource.free();
+
+// Try to use after free (should fail)
+try {
+    movedResource.use();
+} catch (e) {
+    print("  ✓ Caught use-after-free: " + e);
+}
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 2. Double-Free Prevention
+// -----------------------------------------------------------------------------
+// Freeing the same memory twice can corrupt the heap.
+
+print("--- Double-Free Prevention ---");
+
+class TrackedAllocation {
+    fn init(id, size) {
+        this.id = id;
+        this.size = size;
+        this.isAllocated = true;
+        this.freeCount = 0;
+        print("  Allocated " + str(size) + " bytes: " + id);
+    }
+    
+    fn free() {
+        if (!this.isAllocated) {
+            throw Error("Double-free detected for allocation: " + this.id);
+        }
+        
+        this.isAllocated = false;
+        this.freeCount = this.freeCount + 1;
+        print("  Freed allocation: " + this.id);
+    }
+    
+    fn getStatus() {
+        return {
+            id: this.id,
+            size: this.size,
+            allocated: this.isAllocated,
+            freeCount: this.freeCount
+        };
+    }
+}
+
+let allocation = new TrackedAllocation("buffer-001", 1024);
+print("  Status: " + str(allocation.getStatus()));
+
+// Free once (OK)
+allocation.free();
+print("  Status after free: " + str(allocation.getStatus()));
+
+// Try to free again (should fail)
+try {
+    allocation.free();
+} catch (e) {
+    print("  ✓ Caught double-free: " + e);
+}
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 3. Borrow Checking Violations
+// -----------------------------------------------------------------------------
+// Demonstrate runtime borrow checking to prevent aliasing bugs.
+
+print("--- Borrow Checking Violations ---");
+
+class BorrowChecker {
+    fn init(name) {
+        this.name = name;
+        this.data = [1, 2, 3, 4, 5];
+        this.immutableBorrows = 0;
+        this.mutableBorrows = 0;
+        print("  Created borrow-checked data: " + name);
+    }
+    
+    fn borrowImmutable() {
+        if (this.mutableBorrows > 0) {
+            throw Error("Cannot borrow immutably while mutably borrowed: " + this.name);
+        }
+        
+        this.immutableBorrows = this.immutableBorrows + 1;
+        print("  Immutable borrow #" + str(this.immutableBorrows) + ": " + this.name);
+        
+        return {
+            data: this.data,
+            checker: this,
+            type: "immutable"
+        };
+    }
+    
+    fn borrowMutable() {
+        if (this.immutableBorrows > 0) {
+            throw Error("Cannot borrow mutably while immutably borrowed: " + this.name);
+        }
+        if (this.mutableBorrows > 0) {
+            throw Error("Cannot borrow mutably more than once: " + this.name);
+        }
+        
+        this.mutableBorrows = 1;
+        print("  Mutable borrow: " + this.name);
+        
+        return {
+            data: this.data,
+            checker: this,
+            type: "mutable"
+        };
+    }
+    
+    fn releaseBorrow(borrow) {
+        if (borrow.type == "immutable") {
+            this.immutableBorrows = this.immutableBorrows - 1;
+            print("  Released immutable borrow: " + this.name + 
+                  " (remaining: " + str(this.immutableBorrows) + ")");
+        } elif (borrow.type == "mutable") {
+            this.mutableBorrows = 0;
+            print("  Released mutable borrow: " + this.name);
+        }
+    }
+    
+    fn getBorrowStatus() {
+        return {
+            name: this.name,
+            immutableBorrows: this.immutableBorrows,
+            mutableBorrows: this.mutableBorrows
+        };
+    }
+}
+
+let borrowData = new BorrowChecker("shared-array");
+
+// Multiple immutable borrows are OK
+let borrow1 = borrowData.borrowImmutable();
+let borrow2 = borrowData.borrowImmutable();
+print("  Both immutable borrows active: " + str(borrowData.getBorrowStatus()));
+
+// Try mutable borrow while immutable borrows exist (should fail)
+try {
+    let mutBorrow = borrowData.borrowMutable();
+} catch (e) {
+    print("  ✓ Caught borrow violation: " + e);
+}
+
+// Release immutable borrows
+borrowData.releaseBorrow(borrow1);
+borrowData.releaseBorrow(borrow2);
+
+// Now mutable borrow should work
+let mutBorrow = borrowData.borrowMutable();
+print("  Mutable borrow successful: " + str(borrowData.getBorrowStatus()));
+
+// Try another mutable borrow (should fail)
+try {
+    let mutBorrow2 = borrowData.borrowMutable();
+} catch (e) {
+    print("  ✓ Caught multiple mutable borrow: " + e);
+}
+
+borrowData.releaseBorrow(mutBorrow);
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 4. Memory Poisoning Simulation
+// -----------------------------------------------------------------------------
+// In debug mode, freed memory is filled with poison patterns.
+
+print("--- Memory Poisoning Simulation ---");
+
+class PoisonedMemory {
+    fn init(id, data) {
+        this.id = id;
+        this.data = data;
+        this.isValid = true;
+        this.poisonPattern = "0xDEADBEEF";
+        print("  Allocated memory: " + id);
+    }
+    
+    fn read() {
+        if (!this.isValid) {
+            throw Error("Reading poisoned memory: " + this.id + 
+                       " (pattern: " + this.poisonPattern + ")");
+        }
+        return this.data;
+    }
+    
+    fn write(newData) {
+        if (!this.isValid) {
+            throw Error("Writing to poisoned memory: " + this.id);
+        }
+        this.data = newData;
+        print("  Wrote to memory: " + this.id);
+    }
+    
+    fn poison() {
+        this.isValid = false;
+        this.data = this.poisonPattern; // Fill with poison pattern
+        print("  Poisoned memory: " + this.id + " (debug mode)");
+    }
+}
+
+let memory = new PoisonedMemory("buffer-A", "valid data");
+print("  Read: " + memory.read());
+
+// Poison the memory (simulate free in debug mode)
+memory.poison();
+
+// Try to read poisoned memory
+try {
+    memory.read();
+} catch (e) {
+    print("  ✓ Caught poisoned memory access: " + e);
+}
+
+// Try to write to poisoned memory
+try {
+    memory.write("new data");
+} catch (e) {
+    print("  ✓ Caught write to poisoned memory: " + e);
+}
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 5. Ownership Validation
+// -----------------------------------------------------------------------------
+// Validate ownership transfers and prevent invalid operations.
+
+print("--- Ownership Validation ---");
+
+class OwnershipValidator {
+    fn init(name) {
+        this.name = name;
+        this.owner = "creator";
+        this.transferCount = 0;
+        this.isValid = true;
+        print("  Created owned resource: " + name + " (owner: creator)");
+    }
+    
+    fn transferTo(newOwner) {
+        if (!this.isValid) {
+            throw Error("Cannot transfer invalid resource: " + this.name);
+        }
+        
+        let oldOwner = this.owner;
+        this.owner = newOwner;
+        this.transferCount = this.transferCount + 1;
+        
+        print("  Ownership transfer #" + str(this.transferCount) + 
+              ": " + oldOwner + " -> " + newOwner);
+        
+        return this;
+    }
+    
+    fn use(requiredOwner) {
+        if (!this.isValid) {
+            throw Error("Cannot use invalid resource: " + this.name);
+        }
+        
+        if (this.owner != requiredOwner) {
+            throw Error("Ownership violation: " + this.name + 
+                       " owned by " + this.owner + 
+                       ", not " + requiredOwner);
+        }
+        
+        print("  Resource used by valid owner: " + requiredOwner);
+        return "resource data";
+    }
+    
+    fn invalidate() {
+        this.isValid = false;
+        print("  Invalidated resource: " + this.name);
+    }
+    
+    fn getOwnershipInfo() {
+        return {
+            name: this.name,
+            owner: this.owner,
+            transferCount: this.transferCount,
+            isValid: this.isValid
+        };
+    }
+}
+
+let ownedResource = new OwnershipValidator("database-connection");
+
+// Use by creator (OK)
+ownedResource.use("creator");
+
+// Transfer ownership
+ownedResource.transferTo("service-A");
+
+// Try to use with old owner (should fail)
+try {
+    ownedResource.use("creator");
+} catch (e) {
+    print("  ✓ Caught ownership violation: " + e);
+}
+
+// Use with new owner (OK)
+ownedResource.use("service-A");
+
+// Transfer again
+ownedResource.transferTo("service-B");
+print("  Ownership info: " + str(ownedResource.getOwnershipInfo()));
+
+// Invalidate and try to use
+ownedResource.invalidate();
+try {
+    ownedResource.use("service-B");
+} catch (e) {
+    print("  ✓ Caught use of invalid resource: " + e);
+}
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 6. Comprehensive Safety Check
+// -----------------------------------------------------------------------------
+// Combine multiple safety mechanisms in a realistic scenario.
+
+print("--- Comprehensive Safety Check ---");
+
+class SafeBuffer {
+    fn init(id, size) {
+        this.id = id;
+        this.size = size;
+        this.data = [];
+        this.owner = "allocator";
+        this.borrowCount = 0;
+        this.isValid = true;
+        this.accessCount = 0;
+        
+        // Initialize buffer
+        for (i in range(0, size)) {
+            this.data.push(0);
+        }
+        
+        print("  Created safe buffer: " + id + " (" + str(size) + " bytes)");
+    }
+    
+    fn read(index, requiredOwner) {
+        this.validateAccess(requiredOwner);
+        
+        if (index < 0 || index >= this.size) {
+            throw Error("Buffer overflow: index " + str(index) + 
+                       " out of bounds [0, " + str(this.size) + ")");
+        }
+        
+        this.accessCount = this.accessCount + 1;
+        return this.data[index];
+    }
+    
+    fn write(index, value, requiredOwner) {
+        this.validateAccess(requiredOwner);
+        
+        if (this.borrowCount > 0) {
+            throw Error("Cannot write while buffer is borrowed");
+        }
+        
+        if (index < 0 || index >= this.size) {
+            throw Error("Buffer overflow: index " + str(index) + 
+                       " out of bounds [0, " + str(this.size) + ")");
+        }
+        
+        this.data[index] = value;
+        this.accessCount = this.accessCount + 1;
+        print("  Wrote " + str(value) + " to buffer[" + str(index) + "]");
+    }
+    
+    fn borrow(requiredOwner) {
+        this.validateAccess(requiredOwner);
+        this.borrowCount = this.borrowCount + 1;
+        print("  Buffer borrowed (count: " + str(this.borrowCount) + ")");
+        return this.data;
+    }
+    
+    fn releaseBorrow() {
+        if (this.borrowCount > 0) {
+            this.borrowCount = this.borrowCount - 1;
+            print("  Buffer borrow released (count: " + str(this.borrowCount) + ")");
+        }
+    }
+    
+    fn transferOwnership(newOwner) {
+        if (this.borrowCount > 0) {
+            throw Error("Cannot transfer ownership while borrowed");
+        }
+        
+        let oldOwner = this.owner;
+        this.owner = newOwner;
+        print("  Buffer ownership: " + oldOwner + " -> " + newOwner);
+    }
+    
+    fn free() {
+        if (!this.isValid) {
+            throw Error("Double-free of buffer: " + this.id);
+        }
+        
+        if (this.borrowCount > 0) {
+            throw Error("Cannot free borrowed buffer (count: " + str(this.borrowCount) + ")");
+        }
+        
+        this.isValid = false;
+        this.data = null;
+        print("  Freed buffer: " + this.id);
+    }
+    
+    fn validateAccess(requiredOwner) {
+        if (!this.isValid) {
+            throw Error("Use-after-free: buffer " + this.id);
+        }
+        
+        if (this.owner != requiredOwner) {
+            throw Error("Access denied: buffer owned by " + this.owner + 
+                       ", not " + requiredOwner);
+        }
+    }
+    
+    fn getStats() {
+        return {
+            id: this.id,
+            size: this.size,
+            owner: this.owner,
+            borrowCount: this.borrowCount,
+            isValid: this.isValid,
+            accessCount: this.accessCount
+        };
+    }
+}
+
+// Demonstrate comprehensive safety
+let safeBuffer = new SafeBuffer("secure-buffer", 10);
+
+// Normal usage
+safeBuffer.write(0, 42, "allocator");
+let value = safeBuffer.read(0, "allocator");
+print("  Read value: " + str(value));
+
+// Borrow buffer
+let borrowed = safeBuffer.borrow("allocator");
+
+// Try to write while borrowed (should fail)
+try {
+    safeBuffer.write(1, 99, "allocator");
+} catch (e) {
+    print("  ✓ Caught write while borrowed: " + e);
+}
+
+safeBuffer.releaseBorrow();
+
+// Transfer ownership
+safeBuffer.transferOwnership("service");
+
+// Try to access with old owner (should fail)
+try {
+    safeBuffer.read(0, "allocator");
+} catch (e) {
+    print("  ✓ Caught access with wrong owner: " + e);
+}
+
+// Access with new owner (OK)
+safeBuffer.write(1, 99, "service");
+
+// Try buffer overflow (should fail)
+try {
+    safeBuffer.read(15, "service");
+} catch (e) {
+    print("  ✓ Caught buffer overflow: " + e);
+}
+
+print("  Final buffer stats: " + str(safeBuffer.getStats()));
+
+// Free buffer
+safeBuffer.free();
+
+// Try to use after free (should fail)
+try {
+    safeBuffer.read(0, "service");
+} catch (e) {
+    print("  ✓ Caught use-after-free: " + e);
+}
+
+print("");
+
+// -----------------------------------------------------------------------------
+// Summary
+// -----------------------------------------------------------------------------
+
+print("=== Memory Safety Summary ===");
+print("1. Use-after-free: Prevented by ownership tracking");
+print("2. Double-free: Prevented by allocation state tracking");
+print("3. Borrow violations: Prevented by runtime borrow checking");
+print("4. Memory poisoning: Debug mode fills freed memory with poison");
+print("5. Ownership validation: Ensures only valid owners can access resources");
+print("6. Buffer overflows: Prevented by bounds checking");
+print("");
+print("Safety mechanisms work together to prevent:");
+print("  - Memory corruption bugs");
+print("  - Dangling pointer access");
+print("  - Data races from improper sharing");
+print("  - Resource leaks from improper cleanup");
+print("");
+print("=== Demo Complete ===");

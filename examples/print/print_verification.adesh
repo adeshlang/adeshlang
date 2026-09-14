@@ -1,0 +1,70 @@
+// Comprehensive Print Features Verification
+
+println("=== NATIVE JIT PRINT FEATURES VERIFICATION ===\n");
+
+// 1. Pretty Print Modes
+println("1. PRETTY PRINT MODES");
+let data = { name: "Test", count: 42, items: [1, 2, 3] };
+println("Full mode:");
+print(data, { pretty: true });
+println("\nCompact mode:");
+print(data, { pretty: "compact" });
+println("\nSimple mode:");
+print(data, { pretty: "simple" });
+
+// 2. Collections
+println("\n2. COLLECTIONS");
+let arr = [10, 20, 30];
+let obj = { x: 1, y: 2 };
+let tup = (true, "test", 3.14);
+println("Array:");
+print(arr, { pretty: true });
+println("\nObject:");
+print(obj, { pretty: true });
+println("\nTuple:");
+print(tup, { pretty: true });
+
+// 3. Styling Options
+println("\n3. STYLING OPTIONS");
+print("Bold", { bold: true });
+print("Italic", { italic: true });
+print("Underline", { underline: true });
+print("Strikethrough", { strikethrough: true });
+
+// 4. Color Options
+println("\n4. COLOR OPTIONS");
+print("Red", { color: "#FF0000" });
+print("Green", { color: "#00FF00" });
+print("Blue", { color: "#0000FF" });
+
+// 5. Print Options
+println("\n5. PRINT OPTIONS");
+print("With separator:", "a", "b", "c", { sep: " | " });
+print("No newline:", { end: "" });
+print(" continued!");
+println();
+
+// 6. Type Hints
+println("\n6. TYPE HINTS");
+let num = 42;
+let flt = 3.14159;
+let str_val = "hello";
+let bool_val = true;
+print(num, { pretty: true });
+println();
+print(flt, { pretty: true });
+println();
+print(str_val, { pretty: true });
+println();
+print(bool_val, { pretty: true });
+
+// 7. Nested Structures
+println("\n7. NESTED STRUCTURES");
+let complex = {
+  user: { name: "Alice", age: 30 },
+  items: [1, 2, 3],
+  active: true
+};
+print(complex, { pretty: true });
+
+println("\n=== ALL TESTS COMPLETED SUCCESSFULLY ===");

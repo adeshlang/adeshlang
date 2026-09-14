@@ -1,0 +1,100 @@
+// Edge Cases: Loops and Control Flow
+// Memory safety in complex control flow
+
+fn main() {
+    print("=== Edge Case: Loops and Control Flow ===");
+    
+    // Ownership transfer in loop
+    let i = 0;
+    for (i = 0; i < 3; i = i + 1) {
+        let temp = [i, i+1, i+2];
+        consume_in_loop(temp);
+        // temp is moved each iteration, new one created next
+    }
+}
+
+fn consume_in_loop(arr) {
+    print("Consumed:", arr);
+    // arr is cleaned up here
+}
+
+// Break and continue with ownership
+fn break_continue_safety() {
+    let data = [1, 2, 3, 4, 5];
+    
+    let i = 0;
+    for (i = 0; i < data.length; i = i + 1) {
+        if (data[i] == 3) {
+            break;  // Safe: no outstanding borrows
+        }
+        print("Value:", data[i]);
+    }
+    
+    // data is still valid after loop
+    print("After loop:", data);
+}
+
+// Nested loops with moves
+fn nested_loop_moves() {
+    let i = 0;
+    for (i = 0; i < 2; i = i + 1) {
+        let outer_data = [i, i+1];
+        
+        let j = 0;
+        for (j = 0; j < 2; j = j + 1) {
+            // Can borrow outer_data in inner loop
+            print("Outer:", &outer_data);
+            print("Inner index:", j);
+        }
+        
+        // outer_data cleaned up here
+    }
+}
+
+// Early returns with cleanup
+fn early_return_safety() {
+    let resource = [10, 20, 30];
+    
+    let i = 0;
+    for (i = 0; i < 10; i = i + 1) {
+        if (i == 5) {
+            // resource is cleaned up even on early return
+            return;
+        }
+        print("Iteration:", i);
+    }
+    
+    // resource cleaned up here too if loop completes
+}
+
+// Multiple exit points
+fn multiple_exits(condition1, condition2) {
+    let data = [1, 2, 3];
+    
+    if (condition1) {
+        print("Exit 1");
+        return;  // data cleaned up here
+    }
+    
+    if (condition2) {
+        print("Exit 2");
+        return;  // data cleaned up here too
+    }
+    
+    print("Exit 3");
+    // data cleaned up here
+}
+
+// While loop with borrows
+fn while_loop_safety() {
+    let counter = 0;
+    let data = [1, 2, 3];
+    
+    while (counter < 3) {
+        print("Data:", &data);  // Borrow in each iteration
+        counter = counter + 1;
+    }
+    
+    // data is still valid
+    print("Final data:", data);
+}

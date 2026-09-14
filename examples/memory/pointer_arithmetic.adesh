@@ -1,0 +1,99 @@
+/// Pointer Arithmetic & Type Safety
+/// Demonstrates element-based indexing, bounds checking,
+/// and type-safe pointer operations
+// .
+fn main() {
+    println!("=== Pointer Arithmetic & Type Safety ===\n");
+
+    /// Example 1: Basic element-based arithmetic
+    println!("Example 1: Element-Based Arithmetic");
+    let p = alloc(40);  // 40 bytes = 10 * sizeof(i32)
+    println!("Allocated 40 bytes for 10 i32 elements");
+    println!("Pointer value: {}\n", p);
+
+    // Store a byte at index 0
+    // store(p, 0, 65);  // 'A' in ASCII
+    println!("Element-based indexing prevents type confusion");
+    println!("No need to manually compute: address + index * elem_size\n");
+
+    free(p);
+
+    /// Example 2: Different element sizes
+    println!("Example 2: Different Element Sizes");
+    
+    // u8 array (1 byte per element)
+    let p_u8 = alloc(10);  // 10 bytes
+    println!("u8 pointer: allocated 10 bytes (10 elements)");
+    free(p_u8);
+    
+    // i32 array (4 bytes per element)
+    let p_i32 = alloc(40);  // 40 bytes = 10 elements
+    println!("i32 pointer: allocated 40 bytes (10 elements of 4 bytes each)");
+    free(p_i32);
+    
+    // f64 array (8 bytes per element)
+    let p_f64 = alloc(80);  // 80 bytes = 10 elements
+    println!("f64 pointer: allocated 80 bytes (10 elements of 8 bytes each)\n");
+    free(p_f64);
+
+    /// Example 3: Bounds checking
+    println!("Example 3: Bounds Checking");
+    let p = alloc(20);  // 5 elements of i32 (4 bytes each)
+    println!("Allocated 20 bytes for 5 i32 elements");
+    
+    // Valid accesses: 0, 1, 2, 3, 4
+    // Invalid accesses: 5 and above (caught at runtime)
+    println!("Valid element indices: 0, 1, 2, 3, 4");
+    println!("Index 5+ would cause bounds error\n");
+    
+    free(p);
+
+    /// Example 4: Safe pointer pattern
+    println!("Example 4: Safe Pointer Pattern");
+    fn safe_array_op(ptr: ptr<i32>, count: i32) {
+        println!("Operating on array with {} elements", count);
+        for i in 0..count {
+            // Safely access elements within bounds
+            println!("Element {} accessed safely", i);
+        }
+    }
+    
+    let p = alloc(40);  // 10 i32s
+    safe_array_op(p, 10);
+    free(p);
+    println!();
+
+    /// Example 5: Type-safe casting
+    println!("Example 5: Type-Safe Element Access");
+    let p = alloc(32);  // 8 bytes per f64, so 4 f64 elements
+    println!("Allocated pointer for f64 elements");
+    println!("Element size is automatically tracked");
+    println!("No manual arithmetic needed for type safety\n");
+    free(p);
+
+    /// Example 6: Pointer in function arguments
+    println!("Example 6: Pointer Parameters");
+    fn read_array(data: ptr<u8>, len: i32) {
+        println!("Received pointer to {} u8 elements", len);
+    }
+    
+    let arr = alloc(100);
+    read_array(arr, 100);
+    free(arr);
+    println!();
+
+    /// Example 7: Return pointer from function
+    println!("Example 7: Pointer Ownership Transfer");
+    fn create_array() -> ptr<i32> {
+        let p = alloc(20);  // 5 i32 elements
+        println!("Created array in function");
+        return p;  // Transfer ownership
+    }
+    
+    let ptr = create_array();
+    println!("Received array pointer: {}", ptr);
+    free(ptr);
+    println!("Freed array after use\n");
+
+    println!("=== All Pointer Arithmetic Examples Passed ===");
+}

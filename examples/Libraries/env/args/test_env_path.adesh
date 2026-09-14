@@ -1,0 +1,5 @@
+// Test env() function with PATH
+import Env;
+let pathVal = Env.env("PATH");
+print("PATH type check:", pathVal);
+print("PATH direct:", Env.env("PATH"));

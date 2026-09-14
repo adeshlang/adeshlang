@@ -1,0 +1,105 @@
+// timers_combined.ind — Comprehensive timer examples
+// Combining logic, use cases, and edge cases from timers.ind and timers_fixed.ind
+
+print("Comprehensive timers demo start");
+
+// Section 1: Basic setTimeout and setInterval (from timers.ind and timers_fixed.ind)
+print("\n--- Basic timers ---");
+
+let fired = 0;
+let id = setTimeout(fn(){ print("timeout fired"); fired = 1; }, 30);
+
+let count = 0;
+let iid = setInterval(fn(){ count = count + 1; print("interval tick", count); }, 10);
+
+// stop interval after a while
+setTimeout(fn(){ clearInterval(iid); print("interval stopped at", count); }, 80);
+
+// Create a Promise that resolves after a short delay so the top-level
+// script can `await` it and keep the interpreter running while timers fire.
+let done = Promise(fn(res, rej){
+    setTimeout(fn(){ res(true); }, 160);
+});
+
+// Top-level await: the interpreter uses a blocking await helper that
+// runs microtasks/timers until the promise settles.
+await done;
+
+// Section 2: Additional timer use cases and edge cases
+print("\n--- Additional timer examples ---");
+
+// Nested timeouts
+print("Nested timeouts:");
+setTimeout(fn(){
+    print("First timeout");
+    setTimeout(fn(){
+        print("Nested timeout");
+    }, 20);
+}, 10);
+
+// Clearing timeout before it fires
+let timeout_id = setTimeout(fn(){ print("This should not print"); }, 50);
+setTimeout(fn(){ clearTimeout(timeout_id); print("Cleared timeout"); }, 20);
+
+// Multiple intervals
+let interval1 = setInterval(fn(){ print("Interval 1"); }, 25);
+let interval2 = setInterval(fn(){ print("Interval 2"); }, 35);
+
+setTimeout(fn(){
+    clearInterval(interval1);
+    clearInterval(interval2);
+    print("Both intervals cleared");
+}, 100);
+
+// Timer with callback that takes arguments
+fn timer_callback(msg, num) {
+    print(msg, num);
+}
+
+setTimeout(timer_callback, 15, "Callback with args:", 42);
+
+// Recursive timeout (like setInterval but manual)
+let recursive_count = 0;
+fn recursive_timeout() {
+    recursive_count = recursive_count + 1;
+    print("Recursive timeout", recursive_count);
+    if (recursive_count < 5) {
+        setTimeout(recursive_timeout, 12);
+    }
+}
+setTimeout(recursive_timeout, 5);
+
+// Zero delay timeout (next tick)
+setTimeout(fn(){ print("Zero delay timeout"); }, 0);
+
+// Negative delay (treated as zero)
+setTimeout(fn(){ print("Negative delay timeout"); }, -10);
+
+// Timer inside a promise
+let timer_promise = Promise(fn(res, _rej){
+    setTimeout(fn(){
+        res("Timer resolved");
+    }, 25);
+});
+
+timer_promise.then(fn(v){ print("Promise with timer:", v); });
+
+// Combining timers with async/await
+async fn async_timer_demo() {
+    print("Async timer demo start");
+    let p = Promise(fn(res,_){
+        setTimeout(fn(){ res("async result"); }, 20);
+    });
+    let result = await p;
+    print("Async timer result:", result);
+}
+
+async_timer_demo();
+
+// Final wait to ensure all timers complete
+let final_done = Promise(fn(res,_){
+    setTimeout(fn(){ res("All timers done"); }, 200);
+});
+
+await final_done;
+print("Comprehensive timers demo complete.");

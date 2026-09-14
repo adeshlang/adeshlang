@@ -1,0 +1,59 @@
+// Example demonstrating Small String Optimization (SSO) benefits
+// AdeshLang optimizes small strings (under 22 bytes) by storing them inline
+
+// Short strings (< 22 bytes) - stored inline (no heap allocation)
+let short1 = "hello";
+let short2 = "world";
+let short3 = "AdeshLang";
+let short4 = "test";
+
+// Long strings (> 22 bytes) - stored on heap
+let long1 = "This is a much longer string that exceeds the SSO limit";
+let long2 = "Another long string that will be heap-allocated for storage";
+
+// Performance test: Many small string operations
+fn testSmallStrings(count) {
+    let start = now();
+    
+    for (i in range(count)) {
+        let s1 = "temp";
+        let s2 = "value";
+        let s3 = s1 + s2;  // Concatenation of small strings
+    }
+    
+    let elapsed = now() - start;
+    print("Created " + count + " small string pairs in " + elapsed + "ms");
+}
+
+// Performance test: Many large string operations
+fn testLargeStrings(count) {
+    let start = now();
+    
+    for (i in range(count)) {
+        let s1 = "This is a temporary string value";
+        let s2 = "And another temporary string value";
+        let s3 = s1 + s2;
+    }
+    
+    let elapsed = now() - start;
+    print("Created " + count + " large string pairs in " + elapsed + "ms");
+}
+
+print("=== String Optimization Demo ===");
+
+// Demo string operations
+print("Short strings:");
+print("  '" + short1 + "' (length: " + short1.length() + ")");
+print("  '" + short2 + "' (length: " + short2.length() + ")");
+
+print("\nLong strings:");
+print("  Length: " + long1.length() + " characters");
+
+// Run performance tests
+print("\nPerformance comparison:");
+testSmallStrings(10000);
+testLargeStrings(10000);
+
+// Note: Small strings should be faster due to SSO (no heap allocation)
+
+print("\n=== Demo Complete ===");

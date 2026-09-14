@@ -1,0 +1,32 @@
+// Simple test for rest parameters
+fn testSimple(...args) {
+    print("Args:", args);
+}
+
+// Test spread operator
+fn testSpread() {
+    let arr = [1, 2, 3];
+    testSimple(...arr);
+    
+    // Test array spread
+    let arr1 = [10, 20];
+    let arr2 = [...arr1, 30, 40];
+    print("Array spread:", arr2);
+}
+
+// Test range operator
+fn testRange() {
+    print("Range 1..5:");
+    for (i in 1..5) {
+        print(i);
+    }
+    
+    print("Range 1...5 (inclusive):");
+    for (i in 1...5) {
+        print(i);
+    }
+}
+
+testSimple(1, 2, 3);
+testSpread();
+testRange();

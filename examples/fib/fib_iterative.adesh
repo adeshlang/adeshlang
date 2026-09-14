@@ -1,0 +1,24 @@
+// fib_iterative.ind — Iterative Dynamic Programming Fibonacci approaches
+
+print("=== Iterative DP Fibonacci Approaches ===");
+
+// Simple DP with two variables - O(n)
+fn fib_dp_simple(n) {
+    if (n <= 1) {
+        return n;
+    }
+    let prev = 0;
+    let curr = 1;
+    let i = 2;
+    while (i <= n) {
+        prev, curr = curr, prev + curr;
+        i = i + 1;
+    }
+    return curr;
+}
+
+print("fib_dp_simple(10) =", fib_dp_simple(10));
+print("fib_dp_simple(20) =", fib_dp_simple(20));
+print("fib_dp_simple(30) =", fib_dp_simple(30));
+
+print("=== Iterative DP Fibonacci Complete ===");

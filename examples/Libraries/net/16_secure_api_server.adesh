@@ -1,0 +1,41 @@
+// AdeshLang Net Example 16: Secure API Server with Crypto & Encoding Verification
+import Net;
+import Crypto;
+import Encoding;
+
+
+fn start_secure_api_server() {
+    print("=== 16. Secure API Server Endpoint ===");
+
+    let server = Net.tcpListen("127.0.0.1", 9097);
+    print("Secure API Server listening on:", server.localAddress());
+
+    let client = server.accept();
+    let stream = client.stream;
+    print("Client connected from:", client.remoteAddress);
+
+    let reqPayload = stream.read(2048);
+    print("Received client request payload length:", reqPayload.len());
+
+    // Prepare JSON Response
+    let responseObj = {
+        "status": "authenticated",
+        "timestamp": 1700000000,
+        "server": "AdeshLang-SecureServer/1.0"
+    };
+
+    let jsonStr = JSON.stringify(responseObj);
+    let payloadHash = Crypto.sha256(jsonStr);
+    let encodedHeader = Encoding.base64Encode("Status=200");
+
+    let httpResp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Payload-Hash: " + payloadHash + "\r\nX-Server-Meta: " + encodedHeader + "\r\nConnection: close\r\n\r\n" + jsonStr;
+
+    stream.writeText(httpResp);
+    print("Sent signed & encoded HTTP response to client");
+
+    stream.close();
+    server.close();
+    print("=== 16. Secure API Server Completed ===");
+}
+
+start_secure_api_server();

@@ -1,0 +1,20 @@
+// Simple input example
+// Prompts for a name and prints a greeting
+// Uncomment the mock line to run non-interactively
+// input.mock(["Ajay"]);
+
+let name = input("Name:");
+print("Hello " + name);
+let username = input("Username:", { regex: "[a-zA-Z0-9_]{3,16}", notEmpty: true, min: 3, max: 16 });
+let score = input("Score:", { type: "int", allowed: [10, 20, 30], onSubmit: fn(s){ print("Score submitted:", s); } });
+print("Username:", username);
+print("Score:", score);
+let city = input("City:", { suggestions:[
+    "Mumbai", "Delhi", "Bangalore", "Hyderabad"
+], file: "city.txt", fileMode: "append", onStart: fn(){ print("City selection started"); } });
+print(city);
+let tests = input("Username:", { trim: false });
+print(tests);
+
+let note = input.voice("Say or type a note:", { onStart: fn(){ print("Voice prompt starting"); }, onSubmit: fn(s){ print("Captured:", s); } });
+print("Note:", note);

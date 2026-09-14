@@ -1,0 +1,9 @@
+// 04 - HKDF Key Derivation (Extract, Expand, Derive)
+import Crypto;
+
+let ikm = "HighEntropyInputKeyMaterialSecretBytes";
+let salt = "ApplicationSalt2026";
+let info = "database-encryption-key-v1";
+
+let derivedKey = Crypto.hkdf(ikm, salt, info, 32);
+print("Derived 256-bit AEAD Key (Hex):", Crypto.encodeHex(derivedKey));

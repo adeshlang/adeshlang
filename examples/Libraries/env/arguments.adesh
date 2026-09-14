@@ -1,0 +1,7 @@
+import Env;
+
+let args = Env.arguments();
+let count = Env.argumentCount();
+
+print("Argument Count: " + str(count));
+print("Command Line Arguments: " + str(args));

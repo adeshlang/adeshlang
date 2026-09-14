@@ -1,0 +1,10 @@
+import thread;
+print("Starting test loop");
+let i = 0;
+while i < 3 {
+    print(`tick ${i}`);
+    thread.sleep(1000);
+    print(`woke up ${i}`);
+    i = i + 1;
+}
+print("Done");

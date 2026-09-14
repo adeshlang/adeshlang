@@ -1,0 +1,19 @@
+import DNS;
+
+print("=== Querying MX (Mail Exchange) Records ===");
+let mx_records = DNS.query("shorindia.com", DNS.Type.MX);
+for (rec in mx_records) {
+    print("MX Record - Name:", rec.name, "| TTL:", rec.ttl, "| Priority & Exchange:", rec.data);
+}
+
+print("=== Querying TXT Records ===");
+let txt_records = DNS.query("google.com", DNS.Type.TXT);
+for (rec in txt_records) {
+    print("TXT Record - Data:", rec.data);
+}
+
+print("=== Querying NS (Name Server) Records ===");
+let ns_records = DNS.query("google.com", DNS.Type.NS);
+for (rec in ns_records) {
+    print("NS Record - Server:", rec.data);
+}

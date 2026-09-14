@@ -1,0 +1,18 @@
+import Encoding;
+
+// ============================================================================
+// Base64 vs Base64URL Tokens (JWT & URL Safety)
+// ============================================================================
+
+// Binary payload containing bytes that trigger '+' and '/' in Standard Base64
+let binaryPayload = [251, 255, 191, 186, 220, 240];
+
+print("--- Standard Base64 (contains '+' and '/') ---");
+let stdB64 = Encoding.base64Encode(binaryPayload);
+print("Standard Base64:", stdB64);
+print("Decoded Bytes:", Encoding.base64Decode(stdB64));
+
+print("\n--- URL-Safe Base64 (Replaces '+' with '-' and '/' with '_', removes '=') ---");
+let urlB64 = Encoding.base64UrlEncode(binaryPayload);
+print("Base64URL Token:", urlB64);
+print("Decoded Bytes:", Encoding.base64UrlDecode(urlB64));

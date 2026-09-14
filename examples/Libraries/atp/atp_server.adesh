@@ -1,0 +1,136 @@
+// ╔═══════════════════════════════════════════════════════════════════════════════╗
+// ║              ATP Server Example — Multi-Client Echo, RPC & Streams           ║
+// ║                                                                               ║
+// ║  A practical, production-grade ATP server demonstrating:                      ║
+// ║    • Non-blocking accept loop & connection lifecycle management               ║
+// ║    • Multi-client concurrent session handling                                 ║
+// ║    • Stream demultiplexing & selective reliability handling                   ║
+// ║    • Datagram ingestion & low-latency broadcast / echo                        ║
+// ║    • Transport metrics & resource monitoring                                  ║
+// ║                                                                               ║
+// ║  Run: cargo run --bin adeshlang -- run examples/Libraries/atp/atp_server.adesh
+// ╚═══════════════════════════════════════════════════════════════════════════════╝
+
+// @allow(warnings)
+import ATP;
+import Time;
+
+print("==================================================================");
+print("        ATP Server — Multi-Client Echo, RPC & Streams Demo        ");
+print("==================================================================");
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 1. TYPE DEFINITIONS & STRUCTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+struct ServerStats {
+    totalClientsAccepted: int,
+    reliableMessagesHandled: int,
+    datagramsHandled: int,
+    streamsHandled: int
+}
+
+fn delayMs(ms: int) {
+    let start = Time.epochMillis();
+    while (Time.epochMillis() - start < ms) {}
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 2. START ATP SERVER ON PORT 9107
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let testPort: int = 9107;
+let serverConfig = {
+    maxStreams: 128,
+    idleTimeout: 30,
+    retryTokenTtl: 30,
+    rateLimit: 20
+};
+
+let server = ATP.listen("127.0.0.1", testPort, serverConfig);
+print("[Server] Listening on 127.0.0.1:" + testPort);
+print("[Server] Initialized with maxStreams=128, idleTimeout=30s, rateLimit=20/win");
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 3. SPAWN TEST CLIENTS TO DEMONSTRATE CONCURRENT MULTI-CLIENT HANDLING
+// ═══════════════════════════════════════════════════════════════════════════════
+
+print("\n--- 1. Accepting Concurrent Client Sessions ---");
+
+let client1 = ATP.connect("127.0.0.1", testPort);
+let client2 = ATP.connect("127.0.0.1", testPort);
+
+let stats = ServerStats {
+    totalClientsAccepted: 0,
+    reliableMessagesHandled: 0,
+    datagramsHandled: 0,
+    streamsHandled: 0
+};
+
+let activeConns = [];
+
+// Event loop: Accept connections and process incoming frames
+for (let cycle = 0; cycle < 60; cycle = cycle + 1) {
+    // 1. Accept pending client connections
+    let newConn = server.accept();
+    while (newConn != null) {
+        stats.totalClientsAccepted = stats.totalClientsAccepted + 1;
+        activeConns.push(newConn);
+        print("[Server] -> Accepted Client #" + stats.totalClientsAccepted + " (Session ID: " + newConn.id + ")");
+        newConn = server.accept();
+    }
+
+    // Connect trigger: send payloads from clients
+    if (cycle == 5) {
+        client1.send("CLIENT1_MSG: Hello from Player Alpha!", true, true);
+        client1.datagram("CLIENT1_TELEMETRY: Pos=(10.5, 20.2, 0.0)");
+
+        let c2Stream = client2.openStream("high");
+        c2Stream.send("CLIENT2_STREAM: High priority telemetry payload", true, true);
+        client2.send("CLIENT2_RPC: getGameLobbyStatus()", true, false);
+    }
+
+    // 2. Poll and serve active client sessions
+    for (c in activeConns) {
+        let incoming = c.receive();
+        while (incoming != null) {
+            if (incoming.type == "message") {
+                stats.reliableMessagesHandled = stats.reliableMessagesHandled + 1;
+                print("[Server <- Client Msg] \"" + incoming.text + "\" (Stream: " + incoming.streamId + ")");
+                c.send("SERVER_ACK: Handled message", true, true);
+            } else if (incoming.type == "datagram") {
+                stats.datagramsHandled = stats.datagramsHandled + 1;
+                print("[Server <- Client Datagram] \"" + incoming.text + "\"");
+            }
+            incoming = c.receive();
+        }
+    }
+
+    delayMs(15);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 4. SERVER HEALTH METRICS & SHUTDOWN
+// ═══════════════════════════════════════════════════════════════════════════════
+
+print("\n--- 2. Server Performance & Resource Metrics ---");
+let m = server.metrics();
+print("[Metrics] Total Accepted Clients:  " + stats.totalClientsAccepted);
+print("[Metrics] Reliable Msg Processed:  " + stats.reliableMessagesHandled);
+print("[Metrics] Datagrams Ingested:      " + stats.datagramsHandled);
+print("[Metrics] Active Stream Channels:  " + m.streams);
+print("[Metrics] Total Sent / Received:   " + m.bytesSent + " B sent / " + m.bytesReceived + " B recv");
+
+print("\n--- 3. Graceful Server Teardown ---");
+client1.close();
+client2.close();
+for (c in activeConns) {
+    c.close();
+}
+server.close();
+print("[ok] All sessions closed and server port released.");
+
+print("\n==================================================================");
+print("            ATP Server Demo Completed Successfully               ");
+print("==================================================================");
+

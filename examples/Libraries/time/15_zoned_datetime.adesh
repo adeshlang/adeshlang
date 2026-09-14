@@ -1,0 +1,46 @@
+// 15_zoned_datetime.adesh - ZonedDateTime with named timezone support
+import Time;
+
+print("=== ZonedDateTime Examples ===\n");
+
+// --- Construction from a named timezone ---
+let tz_ist: TimeZone = Time.timeZone("Asia/Kolkata");
+let tz_utc: TimeZone = Time.timeZone("UTC");
+let tz_ny : TimeZone = Time.timeZone("America/New_York");
+let tz_tok: TimeZone = Time.timeZone("Asia/Tokyo");
+
+let utcNow: UtcDateTime = Time.utcDateTimeNow();
+
+let zdt_ist: ZonedDateTime = Time.zonedDateTimeFromUtc(utcNow, tz_ist);
+let zdt_utc: ZonedDateTime = Time.zonedDateTimeFromUtc(utcNow, tz_utc);
+let zdt_ny : ZonedDateTime = Time.zonedDateTimeFromUtc(utcNow, tz_ny);
+let zdt_tok: ZonedDateTime = Time.zonedDateTimeFromUtc(utcNow, tz_tok);
+
+print("UTC :", zdt_utc.toIsoString());
+print("IST :", zdt_ist.toIsoString());
+print("NY  :", zdt_ny.toIsoString());
+print("TOK :", zdt_tok.toIsoString());
+
+// --- Accessors ---
+print("\n--- IST Accessors ---");
+print("Year   :", zdt_ist.year());
+print("Month  :", zdt_ist.month());
+print("Day    :", zdt_ist.day());
+print("Hour   :", zdt_ist.hour());
+print("Minute :", zdt_ist.minute());
+print("TZ name:", zdt_ist.timeZoneName());
+print("Offset :", zdt_ist.offset().toString());
+
+// --- Convert between zones ---
+print("\n--- Convert IST → Tokyo ---");
+let zdt_to_tok: ZonedDateTime = zdt_ist.withTimeZone(tz_tok);
+print("IST  :", zdt_ist.toIsoString());
+print("TOK  :", zdt_to_tok.toIsoString());
+print("Same UTC instant:", zdt_ist.toUtc().eq(zdt_to_tok.toUtc()));
+
+// --- Arithmetic in zone ---
+print("\n--- Arithmetic (stays in zone) ---");
+let tomorrow: ZonedDateTime = zdt_ist.add(Time.durationDays(1n));
+let lastWeek: ZonedDateTime = zdt_ist.sub(Time.durationDays(7n));
+print("Tomorrow (IST) :", tomorrow.toIsoString());
+print("Last week (IST):", lastWeek.toIsoString());

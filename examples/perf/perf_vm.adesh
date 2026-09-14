@@ -1,0 +1,53 @@
+// Baseline performance benchmark (VM compatible)
+// Targets:
+// - 1M arithmetic ops: < 100 ms
+// - 100k loop + 1 print: < 10 ms
+
+print("============================================================");
+print("AdeshLang Performance Baseline (VM)");
+print("============================================================");
+
+// TEST 1: 100,000 loop iterations with single print at end (target: <10ms)
+print("Test 1: 100,000 loop iterations, print at end");
+let start1 = clock();
+let sum1 = 0;
+for (i in 0..100000) {
+    sum1 = sum1 + i;
+}
+let end1 = clock();
+let time1 = (end1 - start1) * 1000;
+print("Sum:", sum1);
+print("Time:", time1, "ms (target: <10ms)");
+
+// TEST 2: 1,000,000 arithmetic ops (target: <100ms)
+print("Test 2: 1,000,000 arithmetic ops");
+let start2 = clock();
+let acc2 = 0;
+for (i in 0..1000000) {
+    acc2 = acc2 + i * 2;
+}
+let end2 = clock();
+let time2 = (end2 - start2) * 1000;
+print("Accumulator:", acc2);
+print("Time:", time2, "ms (target: <100ms)");
+
+// TEST 3: Variable access and assignment in tight loop
+print("Test 3: Variable access test (100k iterations)");
+let start3 = clock();
+let x = 0;
+let y = 0;
+for (i in 0..100000) {
+    y = x;
+    x = i;
+}
+let end3 = clock();
+let time3 = (end3 - start3) * 1000;
+print("Final x:", x, "y:", y);
+print("Time:", time3, "ms");
+
+print("============================================================");
+print("SUMMARY");
+print("============================================================");
+print("100k loop + 1 print:", time1, "ms (target: <10ms)");
+print("1M arithmetic ops:", time2, "ms (target: <100ms)");
+print("100k variable access:", time3, "ms");

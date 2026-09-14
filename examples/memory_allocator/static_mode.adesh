@@ -1,0 +1,41 @@
+// static_mode.adesh
+// Demonstrates fixed-size heap; constructing large arrays triggers OOM.
+
+// This example shows how static allocation mode works:
+// - A fixed heap size is configured at startup
+// - Exceeding the heap limit causes an OOM error
+// - No dynamic growth is allowed
+
+print("=== Static Allocation Mode Demo ===");
+print("");
+
+// In static mode, we have a fixed memory budget
+// The allocator will reject allocations that exceed capacity
+
+// Small allocations work fine
+let numbers = [1, 2, 3, 4, 5];
+print("Small array allocated: ", numbers);
+
+let data = {
+    name: "test",
+    value: 42,
+    active: true
+};
+print("Object allocated: ", data);
+
+// Track memory usage
+print("");
+print("Current allocations are within static heap limits.");
+
+// In a real static mode scenario, attempting to allocate
+// a very large structure would trigger an OOM error:
+//
+// try {
+//     let huge = Array(10000000);  // Would trigger OOM
+// } catch (e) {
+//     print("OOM Error:", e.message);
+// }
+
+print("");
+print("Static mode ensures predictable memory usage.");
+print("Best for embedded systems or memory-constrained environments.");

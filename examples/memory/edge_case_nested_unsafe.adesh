@@ -1,0 +1,54 @@
+﻿// Edge case: Deeply nested unsafe blocks and functions
+// Verifies that:
+// 1. Unsafe blocks can be nested arbitrarily deep without leaking context on exit.
+// 2. Returning or exiting from nested unsafe blocks restores previous depth correctly.
+// 3. Once exiting all unsafe scopes, safe code cannot execute unsafe operations.
+
+unsafe fn level_3(p, val) {
+    p[2] = val;
+}
+
+unsafe fn level_2(p, val) {
+    p[1] = val;
+    level_3(p, val + 10);
+}
+
+unsafe fn level_1(p, val) {
+    p[0] = val;
+    level_2(p, val + 10);
+}
+
+let saved_ptr = 0;
+
+unsafe {
+    let buf = alloc(16);
+    saved_ptr = buf;
+    println("Level 0 -> Unsafe block entered");
+
+    unsafe {
+        println("  Level 1 -> Nested unsafe block entered");
+        unsafe {
+            println("    Level 2 -> Deeply nested unsafe block");
+            level_1(buf, 100);
+            println("    Values written:", buf[0], buf[1], buf[2]);
+        }
+        println("  Level 1 -> Still inside outer nested unsafe block");
+        buf[3] = 99;
+    }
+
+    println("Level 0 -> Back to first unsafe block");
+    println("Value at index 3:", buf[3]);
+    free(buf);
+}
+
+// Now we are outside all unsafe blocks
+println("Outside all unsafe blocks (Safe context restored)");
+try {
+    println("Attempting to access pointer outside unsafe blocks...");
+    let val = saved_ptr[0];
+    println("FAILED: Pointer access should have been rejected! Read:", val);
+} catch (e) {
+    println("SUCCESS: Caught expected rejection outside unsafe block:", e);
+}
+
+println("Nested unsafe edge case completed successfully!");

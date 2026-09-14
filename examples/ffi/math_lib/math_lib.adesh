@@ -1,0 +1,74 @@
+export fn add(a: i64, b: i64): i64 {
+    return a + b;
+}
+
+export fn subtract(a: i64, b: i64): i64 {
+    return a - b;
+}
+
+export fn multiply(a: i64, b: i64): i64 {
+    return a * b;
+}
+
+export fn divide(a: i64, b: i64): i64 {
+    return a / b;
+}
+
+export fn power(base: i64, exp: i64): i64 {
+    let result: i64;
+    result = 1;
+    let i: i64;
+    i = 0;
+    while i < exp {
+        result = result * base;
+        i = i + 1;
+    }
+    return result;
+}
+
+export fn abs_int(x: i64): i64 {
+    if x < 0 {
+        return -x;
+    }
+    return x;
+}
+
+export fn max(a: i64, b: i64): i64 {
+    if a > b {
+        return a;
+    }
+    return b;
+}
+
+export fn min(a: i64, b: i64): i64 {
+    if a < b {
+        return a;
+    }
+    return b;
+}
+
+export fn factorial(n: i64): i64 {
+    let result: i64;
+    result = 1;
+    let i: i64;
+    i = 2;
+    while i <= n {
+        result = result * i;
+        i = i + 1;
+    }
+    return result;
+}
+
+export fn add_floats(a: f64, b: f64): f64 {
+    let result: f64;
+    result = a + b;
+    return result;
+}
+
+export fn multiply_floats(a: f64, b: f64): f64 {
+    let result: f64;
+    result = a * b;
+    return result;
+}
+
+// ..\..\target\debug\adeshlang.exe compile-aot math_lib.adesh math_lib.o -c --emit-header math_lib.h ; gcc test_math.c math_lib.o -o test_math.exe ; .\test_math.exe

@@ -1,0 +1,12 @@
+// Test: Use after move detection
+// Should fail with compile-time error
+
+fn test_use_after_move() {
+    let x = alloc(100);
+    let y = x;  // Move ownership
+    
+    // This should cause compile-time error
+    print(x);  // ERROR: use after move
+}
+
+test_use_after_move();

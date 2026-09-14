@@ -1,0 +1,12 @@
+import Path;
+
+let file = Path.new("docs/report.final.pdf");
+print("FileName: " + file.fileName());
+print("Stem: " + file.stem());
+print("Extension: " + file.extension());
+
+let modified = file.withExtension("html");
+print("WithExtension html: " + modified.toString());
+
+let renamed = file.withFileName("summary.txt");
+print("WithFileName summary.txt: " + renamed.toString());

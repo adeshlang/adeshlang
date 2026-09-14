@@ -1,0 +1,26 @@
+import Collections;
+
+print("========================================");
+print("Graph Adjacency Map Example");
+print("========================================");
+
+let graph = Collections.HashMap();
+
+fn add_edge(graph, u, v) {
+    let list = graph.get(u);
+    if (list == null) {
+        list = Collections.Vec();
+        graph.insert(u, list);
+    }
+    list.push(v);
+}
+
+add_edge(graph, "NodeA", "NodeB");
+add_edge(graph, "NodeA", "NodeC");
+add_edge(graph, "NodeB", "NodeD");
+
+let neighborsA = graph.get("NodeA");
+print("NodeA neighbors: ", neighborsA.toArray());
+
+let neighborsB = graph.get("NodeB");
+print("NodeB neighbors: ", neighborsB.toArray());

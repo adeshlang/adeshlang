@@ -1,0 +1,106 @@
+// Nested Objects - Parser Guide
+// This example demonstrates practical limits and best practices for nested objects
+//
+// PARSER LIMITS:
+// - Inline nesting: 2-3 levels safe, avoid deeper
+// - Incremental building: 4-5+ levels possible
+// - Runtime: Arbitrary depth (limited by heap/stack, like Python/JS)
+//
+// BEST PRACTICE:
+// For complex nested structures, build incrementally from innermost to outer level.
+// This gives cleaner code and works reliably with the parser.
+
+fn main() {
+    print("=== Nested Objects - Practical Examples ===");
+    
+    json_config();
+    user_data_model();
+    api_response_model();
+}
+
+// Typical JSON-like config: 2-3 levels inline
+fn json_config() {
+    print("\n--- JSON Configuration (Inline) ---");
+    
+    let config = {
+        server: {
+            host: "localhost",
+            port: 8080
+        }
+    };
+    
+    let port = config.server.port;
+    let host = config.server.host;
+    print("Server config:", config);
+    print("Host:", host);
+    print("Port:", port);
+}
+
+// User data model: incremental building for clarity
+fn user_data_model() {
+    print("\n--- User Data Model (Incremental) ---");
+    
+    // Build from innermost
+    let contact = {
+        email: "alice@example.com",
+        phone: "555-1234"
+    };
+    
+    let profile = {
+        name: "Alice",
+        age: 30,
+        contact: contact
+    };
+    
+    let user = {
+        id: 123,
+        profile: profile,
+        active: true
+    };
+    
+    let email = user.profile.contact.email;
+    print("User:", user);
+    print("Email:", email);
+}
+
+// API response: mixed inline (2 levels) + variables for deeper
+fn api_response_model() {
+    print("\n--- API Response Model (Mixed) ---");
+    
+    // Build metadata object incrementally
+    let meta = {
+        timestamp: "2026-01-08",
+        version: "1.0"
+    };
+    
+    // Build items inline (safe with 2 levels)
+    let items = [
+        {
+            id: 1,
+            title: "Item One"
+        },
+        {
+            id: 2,
+            title: "Item Two"
+        }
+    ];
+    
+    // Build response inline with variables
+    let response = {
+        status: 200,
+        meta: meta,
+        data: items
+    };
+    
+    let status = response.status;
+    let timestamp = response.meta.timestamp;
+    let first_title = response.data[0].title;
+    print("Response:", response);
+    print("Status:", status);
+    print("Timestamp:", timestamp);
+    print("First item:", first_title);
+}
+
+
+
+

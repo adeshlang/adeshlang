@@ -1,0 +1,69 @@
+// hybrid_strategy.adesh
+// Illustrates hybrid allocation with doubling growth strategy.
+
+// Hybrid mode combines arena allocation with heap fallback:
+// - Short-lived objects use fast arena allocation
+// - Long-lived objects use heap allocation
+// - Arenas can be reset in bulk for efficiency
+
+print("=== Hybrid Allocation Strategy Demo ===");
+print("");
+
+// Simulate arena-style allocation patterns
+// In hybrid mode, function-local temporaries use arenas
+
+fn processData(input: Array<i32>): i32 {
+    // These would use arena allocation in hybrid mode
+    let step1: Array<i32> = [];
+    for (i in 0..len(input)) {
+        step1.append(input[i] * 2);
+    }
+    
+    let step2: Array<i32> = [];
+    for (i in 0..len(step1)) {
+        if (step1[i] > 10) {
+            step2.append(step1[i]);
+        }
+    }
+    
+    let result = 0;
+    for (i in 0..len(step2)) {
+        result = result + step2[i];
+    }
+    
+    // When function returns, arena is reset
+    return result;
+}
+
+print("Processing data with arena-friendly pattern...");
+
+// Process multiple batches
+let results = [];
+for (batch in 0..5) {
+    let data = [];
+    for (i in 0..20) {
+        data.append(batch * 10 + i);
+    }
+    let r = processData(data);
+    results.append(r);
+    print("Batch ", batch, " result: ", r);
+}
+
+print("");
+print("Arena-allocated temporaries are efficiently reused.");
+
+// Long-lived data uses heap
+let persistent = {
+    results: results,
+    timestamp: "2024-01-01",
+    processed: true
+};
+
+print("Persistent data stored on heap: ", persistent);
+
+print("");
+print("Hybrid mode benefits:");
+print("- Fast O(1) allocation for temporaries");
+print("- Reduced fragmentation");
+print("- Efficient bulk deallocation");
+print("- Heap fallback for large/long-lived objects");

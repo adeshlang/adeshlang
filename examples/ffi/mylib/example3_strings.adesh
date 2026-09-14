@@ -1,0 +1,61 @@
+// Example 3: String Operations
+// Demonstrates string manipulation via FFI
+
+extern "C" {
+    fn string_length(s: ptr<u8>) -> usize;
+    fn string_compare(s1: ptr<u8>, s2: ptr<u8>) -> i32;
+    fn print_message(msg: ptr<u8>) -> void;
+}
+
+fn main() {
+    print("=== String Operations ===\n\n");
+    
+    // String length
+    let text1 = "Hello, World!";
+    let len = string_length(text1);
+    print("Length of '");
+    print(text1);
+    print("': ");
+    print(len);
+    print("\n");
+    
+    let text2 = "AdeshLang FFI";
+    let len2 = string_length(text2);
+    print("Length of '");
+    print(text2);
+    print("': ");
+    print(len2);
+    print("\n");
+    
+    // String comparison
+    print("\nString Comparison:\n");
+    let str1 = "apple";
+    let str2 = "banana";
+    let str3 = "apple";
+    
+    let cmp1 = string_compare(str1, str2);
+    print("  compare('");
+    print(str1);
+    print("', '");
+    print(str2);
+    print("') = ");
+    print(cmp1);
+    print(" (negative means first < second)\n");
+    
+    let cmp2 = string_compare(str1, str3);
+    print("  compare('");
+    print(str1);
+    print("', '");
+    print(str3);
+    print("') = ");
+    print(cmp2);
+    print(" (zero means equal)\n");
+    
+    // Print messages from C
+    print("\nMessages from C library:\n");
+    print_message("Hello from AdeshLang!");
+    print_message("FFI is working perfectly!");
+    print_message("This message was printed by C code");
+}
+
+// To run: adesh run example3_strings.adesh -L . -l mylib

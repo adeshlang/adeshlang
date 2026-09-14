@@ -1,0 +1,8 @@
+const x = 5;
+print("x before:", x);
+try {
+  x = 6;
+} catch(e) {
+  print("assign error:", e);
+}
+print("x after:", x);

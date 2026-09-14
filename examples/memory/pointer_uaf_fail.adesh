@@ -1,0 +1,27 @@
+// Use-after-free detection example
+// This program demonstrates the runtime detection of use-after-free errors
+
+print("=== Use-After-Free Detection ===");
+
+unsafe {
+    let p = alloc(10);
+    p[0] = 100;
+    print("Allocated and wrote to pointer");
+    print(p[0]);  // 100 - valid access
+    
+    free(p);
+    print("Freed pointer");
+    
+    // This line will cause a runtime error:
+    // "Use-after-free: pointer X was already freed"
+    let x = p[0];  // ❌ RUNTIME ERROR
+    
+    print("This line should never execute");
+}
+
+// Expected output (before error):
+// === Use-After-Free Detection ===
+// Allocated and wrote to pointer
+// 100
+// Freed pointer
+// ERROR: Use-after-free: pointer 1 was already freed

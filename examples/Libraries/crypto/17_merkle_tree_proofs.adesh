@@ -1,0 +1,7 @@
+// 17 - Content Identifiers (sha256-<digest>)
+import Crypto;
+
+let payload = "Immutable Blockchain Block Transaction Dataset";
+
+let cid = Crypto.contentId(payload);
+print("Content Identifier (CID):", cid);

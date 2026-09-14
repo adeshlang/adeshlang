@@ -1,0 +1,16 @@
+// Executable Example: Custom Environment Variables
+import Process;
+import Env;
+
+let isWin = Env.isWindows();
+let cmd = isWin ? "cmd.exe" : "sh";
+let flag = isWin ? "/C" : "-c";
+let printVarCmd = isWin ? "echo %CUSTOM_CONFIG%" : "echo $CUSTOM_CONFIG";
+
+let result = Process.builder(cmd)
+    .args([flag, printVarCmd])
+    .environment("CUSTOM_CONFIG", "production_v2")
+    .stdoutPipe()
+    .run();
+
+print("Custom env variable printed: " + result.stdoutText().trim());

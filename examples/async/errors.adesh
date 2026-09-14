@@ -1,0 +1,71 @@
+// Async Error Handling Examples
+
+print("=== Async Error Handling Demo ===");
+
+// 1. Basic async function with success
+async fn successfulOp() {
+    return "Operation succeeded!";
+}
+
+// 2. Async function that returns after delay
+async fn delayedOp() {
+    await sleep(50);
+    return "Delayed result";
+}
+
+// 3. Multiple async operations with Promise.all
+async fn compute(n) {
+    await sleep(10);
+    return n * n;
+}
+
+// 4. Promise.race
+async fn slowTask() {
+    await sleep(100);
+    return "slow";
+}
+
+async fn fastTask() {
+    await sleep(10);
+    return "fast";
+}
+
+// 5. Simulated error handling with success path
+async fn maybeError(shouldFail) {
+    await sleep(10);
+    if shouldFail {
+        return { error: "Simulated error" };
+    }
+    return { success: "All good!" };
+}
+
+async fn main() {
+    print("\n1. Basic async success:");
+    let result1 = await successfulOp();
+    print("Result: " + result1);
+
+    print("\n2. Async with delay:");
+    let result2 = await delayedOp();
+    print("Result: " + result2);
+
+    print("\n3. Promise.all with multiple operations:");
+    let results = await Promise.all([
+        compute(2),
+        compute(3),
+        compute(4)
+    ]);
+    print("Results: " + results);
+
+    print("\n4. Promise.race:");
+    let winner = await Promise.race([slowTask(), fastTask()]);
+    print("Winner: " + winner);
+
+    print("\n5. Conditional error simulation:");
+    let r1 = await maybeError(false);
+    print("Success case: " + r1);
+
+    let r2 = await maybeError(true);
+    print("Error case: " + r2);
+
+    print("\n=== All tests completed ===");
+}

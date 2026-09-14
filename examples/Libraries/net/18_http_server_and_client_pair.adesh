@@ -1,0 +1,48 @@
+// AdeshLang Net Example 18: Non-blocking / Paired Server & Client Test
+import Net;
+
+
+fn main() {
+    print("=== 18. HTTP Server & Client Pair Example ===");
+
+    // 1. Start Server on port 9098
+    let server = Net.tcpListen("127.0.0.1", 9098);
+    print("Server bound and listening on:", server.localAddress());
+
+    // 2. Connect Client to Server
+    let clientStream = Net.tcpConnect("127.0.0.1", 9098);
+    print("Client connected from:", clientStream.localAddress());
+
+    // 3. Accept Connection on Server
+    let serverAccepted = server.accept();
+    let serverStream = serverAccepted.stream;
+    print("Server accepted connection from:", serverAccepted.remoteAddress);
+
+    // 4. Client sends HTTP GET Request
+    clientStream.writeText("GET /status HTTP/1.1\r\nHost: 127.0.0.1:9098\r\nConnection: close\r\n\r\n");
+    clientStream.flush();
+    print("Client sent HTTP GET Request");
+
+    // 5. Server reads Request and sends JSON Response
+    let serverRead = serverStream.read(1024);
+    print("Server received request bytes count:", serverRead.len());
+
+    let jsonResp = JSON.stringify({ "status": "online", "active": true });
+    let httpResp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 33\r\n\r\n" + jsonResp;
+
+    serverStream.writeText(httpResp);
+    serverStream.flush();
+    print("Server sent JSON Response");
+
+    // 6. Client reads Response
+    let clientRead = clientStream.read(1024);
+    print("Client received server response bytes count:", clientRead.len());
+
+    // Cleanup
+    clientStream.close();
+    serverStream.close();
+    server.close();
+    print("=== 18. Server & Client Pair Completed ===");
+}
+
+main();

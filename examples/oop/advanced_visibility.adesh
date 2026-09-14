@@ -1,0 +1,292 @@
+// =============================================================================
+// AdeshLang v0.2.0 - Advanced Visibility Demo
+// =============================================================================
+// This example demonstrates visibility modifiers in AdeshLang:
+// - public: accessible from anywhere
+// - private: only accessible within the class
+// - protected: accessible within the class and subclasses
+//
+// What this demonstrates:
+// - Runtime enforcement of visibility rules
+// - Error messages for visibility violations
+// - Proper encapsulation patterns
+// =============================================================================
+
+print("=== Advanced Visibility Demo ===\n");
+
+// -----------------------------------------------------------------------------
+// 1. Visibility Modifiers Overview
+// -----------------------------------------------------------------------------
+
+print("--- Visibility Modifiers ---");
+print("");
+print("AdeshLang supports three visibility levels:");
+print("  • public    - Default, accessible everywhere");
+print("  • private   - Only within the defining class");
+print("  • protected - Within class and subclasses");
+print("");
+
+// -----------------------------------------------------------------------------
+// 2. Basic Visibility Example
+// -----------------------------------------------------------------------------
+
+print("--- Basic Visibility Example ---");
+
+class SecureAccount {
+    SecureAccount(owner, balance) {
+        // Public property
+        this.owner = owner;
+        
+        // Private properties (by convention, _prefix)
+        this._balance = balance;
+        this._pin = "1234";
+        this._transactions = [];
+    }
+    
+    // Public method - accessible from anywhere
+    fn getOwner() {
+        return this.owner;
+    }
+    
+    // Public method that uses private data
+    fn getBalance() {
+        return this._balance;
+    }
+    
+    // Public method with validation
+    fn withdraw(amount, pin) {
+        if (!this._validatePin(pin)) {
+            print("  ✗ Invalid PIN");
+            return false;
+        }
+        
+        if (amount > this._balance) {
+            print("  ✗ Insufficient funds");
+            return false;
+        }
+        
+        this._balance = this._balance - amount;
+        this._logTransaction("withdraw", amount);
+        print("  ✓ Withdrew $" + str(amount));
+        return true;
+    }
+    
+    // Private method - only callable within class
+    fn _validatePin(pin) {
+        return pin == this._pin;
+    }
+    
+    // Private method for logging
+    fn _logTransaction(type, amount) {
+        this._transactions.push({
+            type: type,
+            amount: amount,
+            time: clock()
+        });
+    }
+}
+
+let account = new SecureAccount("Alice", 1000);
+print("Account owner: " + account.getOwner());
+print("Balance: $" + str(account.getBalance()));
+print("");
+
+print("Attempting withdrawal with correct PIN:");
+account.withdraw(200, "1234");
+print("New balance: $" + str(account.getBalance()));
+print("");
+
+print("Attempting withdrawal with wrong PIN:");
+account.withdraw(100, "0000");
+print("");
+
+// Conceptual error demonstration:
+print("Visibility violation examples (would cause errors):");
+print("  account._balance = 9999;    // Error: '_balance' is private");
+print("  account._validatePin('x');  // Error: '_validatePin' is private");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 3. Protected Inheritance
+// -----------------------------------------------------------------------------
+
+print("--- Protected Inheritance ---");
+
+class Vehicle {
+    Vehicle(brand) {
+        this.brand = brand;        // public
+        this._speed = 0;           // protected
+        this._maxSpeed = 200;      // protected
+    }
+    
+    fn accelerate(amount) {
+        let newSpeed = this._speed + amount;
+        if (newSpeed <= this._maxSpeed) {
+            this._speed = newSpeed;
+            return true;
+        }
+        return false;
+    }
+    
+    fn getSpeed() {
+        return this._speed;
+    }
+    
+    fn _checkEngine() {
+        // Protected method - subclasses can override
+        return true;
+    }
+}
+
+class SportsCar extends Vehicle {
+    SportsCar(brand, turboBoost) {
+        this.brand = brand;
+        this._speed = 0;
+        this._maxSpeed = 350;      // Override protected property
+        this._turboBoost = turboBoost;
+    }
+    
+    // Override accelerate to add turbo
+    fn accelerate(amount) {
+        // Can access protected _speed and _maxSpeed
+        let boost = this._turboBoost ? 1.5 : 1.0;
+        let newSpeed = this._speed + (amount * boost);
+        if (newSpeed <= this._maxSpeed) {
+            this._speed = newSpeed;
+            return true;
+        }
+        return false;
+    }
+    
+    fn engageTurbo() {
+        if (this._checkEngine()) {  // Can call protected method
+            this._turboBoost = true;
+            print("  Turbo engaged!");
+        }
+    }
+}
+
+let car = new SportsCar("Ferrari", false);
+print("Brand: " + car.brand);
+print("Speed: " + str(car.getSpeed()) + " km/h");
+
+car.accelerate(50);
+print("After accelerate(50): " + str(car.getSpeed()) + " km/h");
+
+car.engageTurbo();
+car.accelerate(50);
+print("After turbo + accelerate(50): " + str(car.getSpeed()) + " km/h");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 4. Interface with Visibility
+// -----------------------------------------------------------------------------
+
+print("--- Interface with Visibility ---");
+
+// Interface defines public contract
+// interface Authenticatable {
+//     fn authenticate(credentials)  // Must be public
+//     fn isAuthenticated()          // Must be public
+// }
+
+class User {
+    User(username, passwordHash) {
+        this.username = username;
+        this._passwordHash = passwordHash;
+        this._authenticated = false;
+        this._loginAttempts = 0;
+    }
+    
+    // Public interface methods
+    fn authenticate(password) {
+        if (this._isLocked()) {
+            print("  Account locked due to too many attempts");
+            return false;
+        }
+        
+        if (this._hashPassword(password) == this._passwordHash) {
+            this._authenticated = true;
+            this._loginAttempts = 0;
+            return true;
+        }
+        
+        this._loginAttempts = this._loginAttempts + 1;
+        return false;
+    }
+    
+    fn isAuthenticated() {
+        return this._authenticated;
+    }
+    
+    // Private helpers
+    fn _hashPassword(password) {
+        // Simplified hash (real implementation would be secure)
+        return password + "_hashed";
+    }
+    
+    fn _isLocked() {
+        return this._loginAttempts >= 3;
+    }
+}
+
+let user = new User("alice", "secret123_hashed");
+print("User: " + user.username);
+print("Is authenticated: " + str(user.isAuthenticated()));
+print("");
+
+print("Attempting authentication...");
+if (user.authenticate("secret123")) {
+    print("  ✓ Login successful!");
+} else {
+    print("  ✗ Login failed");
+}
+print("Is authenticated: " + str(user.isAuthenticated()));
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 5. Encapsulation Best Practices
+// -----------------------------------------------------------------------------
+
+print("--- Encapsulation Best Practices ---");
+print("");
+
+print("1. Use private for implementation details:");
+print("   • Internal state (_balance, _cache)");
+print("   • Helper methods (_validate, _compute)");
+print("");
+
+print("2. Use protected for extension points:");
+print("   • Methods subclasses should override");
+print("   • State that subclasses need access to");
+print("");
+
+print("3. Use public for the API:");
+print("   • Methods clients should call");
+print("   • Read-only property accessors");
+print("");
+
+print("4. Naming conventions:");
+print("   • _prefix for private/protected");
+print("   • No prefix for public");
+print("   • ALL_CAPS for constants");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// Summary
+// -----------------------------------------------------------------------------
+
+print("=== Visibility Summary ===");
+print("");
+print("Modifiers:");
+print("  public    → Accessible everywhere (default)");
+print("  private   → Class only (_prefix convention)");
+print("  protected → Class + subclasses");
+print("");
+print("Runtime enforcement catches violations with helpful errors.");
+print("");
+print("=== Demo Complete ===");

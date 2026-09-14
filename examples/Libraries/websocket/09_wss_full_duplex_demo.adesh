@@ -1,0 +1,66 @@
+// Example 09: Complete End-to-End Secure WSS Interactive Messaging Demo
+// Demonstrates WSS server listening, client connecting over TLS, sending text & JSON messages.
+
+import Path;
+import fs;
+import WebSocket;
+
+fn runFullDuplexWssDemo() {
+    print("=== Example 09: End-to-End Secure WSS Interactive Messaging ===");
+
+    let certPath = Path.join("certs", "fullchain.pem").toString();
+    let keyPath = Path.join("certs", "privkey.pem").toString();
+
+    let certPem = fs.readText(certPath);
+    let keyPem = fs.readText(keyPath);
+
+    let serverConfig = {
+        bind_address: "127.0.0.1",
+        port: 8609,
+        protocols: ["wss-chat"],
+        tls_cert_pem: certPem,
+        tls_key_pem: keyPem
+    };
+
+    let server = WebSocket.server(serverConfig);
+    server.startEcho();
+    print("✓ WSS Server listening on wss://127.0.0.1:8609");
+
+    let clientConfig = WebSocket.ClientConfig({
+        protocols: ["wss-chat"],
+        verify_tls: false
+    });
+
+    let client = WebSocket.connect("wss://127.0.0.1:8609", clientConfig);
+    if (WebSocket.isError(client)) {
+        print("❌ Client connection failed");
+        server.close();
+        return;
+    }
+    print("✓ Client connected securely over WSS.");
+
+    let testPayloads = [
+        "Hello Secure WSS Server!",
+        "Telemetry Data: { \"user\": \"Adesh\", \"status\": \"active\" }",
+        "Final sync message before closing TLS session."
+    ];
+
+    let index = 0;
+    while (index < 3) {
+        let msgToSend = testPayloads[index];
+        print("[CLIENT SENDING]: " + msgToSend);
+        client.sendText(msgToSend);
+
+        let response = client.receive();
+        if (response.type == "text") {
+            print("[CLIENT RECEIVED REPLY]: " + response.payload);
+        }
+        index = index + 1;
+    }
+
+    client.close(1000, "Session ended cleanly");
+    server.close();
+    print("✓ WSS session closed cleanly.");
+}
+
+runFullDuplexWssDemo();

@@ -1,0 +1,48 @@
+// Copy vs Move Semantics
+// Understanding when values are copied vs moved
+
+fn main() {
+    print("=== Copy Types (Primitives) ===");
+    
+    // Primitive types are copied, not moved
+    let x = 42;
+    let y = x;  // x is copied to y
+    print("x:", x);  // x is still valid
+    print("y:", y);  // y has a copy
+    
+    // Same with other primitives
+    let a = 3.14;
+    let b = a;
+    print("a:", a);  // Still valid
+    print("b:", b);
+    
+    print("\n=== Move Types (Complex Data) ===");
+    
+    // Arrays and objects are moved, not copied
+    let arr1 = [1, 2, 3];
+    let arr2 = arr1;  // arr1 is moved to arr2
+    // print("arr1:", arr1);  // ERROR: arr1 was moved
+    print("arr2:", arr2);  // OK
+    
+    // Objects are also moved
+    let obj1 = {name: "Alice", age: 30};
+    let obj2 = obj1;  // obj1 is moved to obj2
+    // print("obj1:", obj1);  // ERROR: obj1 was moved
+    print("obj2:", obj2);  // OK
+}
+
+// Copying complex data requires explicit clone (if available)
+fn explicit_copy_example() {
+    let original = [1, 2, 3];
+    
+    // To keep original, pass a borrow instead
+    let borrowed = &original;
+    process_data(borrowed);
+    
+    // original is still valid
+    print("Original still here:", original);
+}
+
+fn process_data(data) {
+    print("Processing:", data);
+}

@@ -1,0 +1,9 @@
+import URL;
+
+let policy: URLSecurityPolicy = URL.SecurityPolicy().denyPrivateNetworks();
+
+let safeUrl: URL = URL.parse("https://example.com/api");
+let unsafeUrl: URL = URL.parse("http://127.0.0.1/admin");
+
+print("Safe URL validation passed:", policy.validate(safeUrl));
+print("Unsafe URL security report:", URL.securityReport(unsafeUrl));

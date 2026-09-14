@@ -1,0 +1,157 @@
+// ╔═══════════════════════════════════════════════════════════════════════════════╗
+// ║  ATP Comprehensive Example — all features in one self-contained demo          ║
+// ║  Run: cargo run --bin adeshlang -- run examples/Libraries/atp/atp_examples.adesh
+// ╚═══════════════════════════════════════════════════════════════════════════════╝
+
+import ATP;
+import thread;
+import "./lib/atp_ports.adesh" as Ports;
+
+fn waitConnected(conn: any, maxMs: any): any {
+    let elapsed = 0;
+    while elapsed < maxMs {
+        let ev = conn.receive();
+        if (ev != null && ev.type == "connected") { return ev; }
+        thread.sleep(10);
+        elapsed = elapsed + 10;
+    }
+    return null;
+}
+
+fn recvMessage(conn: any, maxMs: any): any {
+    let elapsed = 0;
+    while elapsed < maxMs {
+        let ev = conn.receive();
+        if (ev != null && ev.type == "message") { return ev; }
+        thread.sleep(10);
+        elapsed = elapsed + 10;
+    }
+    return null;
+}
+
+fn acceptConn(server: any, maxMs: any): any {
+    let elapsed = 0;
+    while elapsed < maxMs {
+        let c = server.accept();
+        if (c != null && c.type == "AtpConnection") { return c; }
+        thread.sleep(10);
+        elapsed = elapsed + 10;
+    }
+    return null;
+}
+
+let port = Ports.port(2);
+
+let serverThread = thread.spawn(fn() {
+    let server = ATP.listen(Ports.DEFAULT_HOST, port);
+    let conn = null;
+    let t = 0;
+    while (conn == null && t < 500) {
+        conn = server.accept();
+        t = t + 1;
+        thread.sleep(10);
+    }
+    if (conn != null) {
+        print("[server] client connected");
+        let n = 0;
+        while (n < 60) {
+            let ev = conn.receive();
+            if (ev != null && ev.type == "message") {
+                conn.send("echo:" + ev.data, true, true);
+            } else if (ev != null && ev.type == "datagram") {
+                conn.datagram("echo-dgram:" + ev.data);
+            }
+            n = n + 1;
+            thread.sleep(10);
+        }
+        conn.close();
+    }
+    server.close();
+});
+
+thread.sleep(400);
+
+print("=== ATP Comprehensive Demo (port " + port + ") ===\n");
+
+// 1. Connect
+let conn = ATP.connect(Ports.DEFAULT_HOST, port);
+print("--- 1. Connect ---");
+let connected = waitConnected(conn, 5000);
+if (connected == null) {
+    print("ERROR: handshake failed");
+} else {
+    print("connected, id=" + conn.connectionId);
+}
+
+thread.sleep(50);
+
+// 2. Reliable ordered
+print("\n--- 2. Reliable ordered ---");
+conn.send("ordered:hello", true, true);
+let m1 = recvMessage(conn, 3000);
+print("echo:", m1.data);
+
+// 3. Reliable unordered
+print("\n--- 3. Reliable unordered ---");
+conn.send("rpc:alpha", true, false);
+conn.send("rpc:beta", true, false);
+let m2 = recvMessage(conn, 3000);
+print("rpc reply:", m2.data);
+
+// 4. Datagrams
+print("\n--- 4. Unreliable datagrams ---");
+conn.datagram("telemetry:cpu=42%");
+thread.sleep(150);
+let dgram = null;
+let d = 0;
+while (d < 30) {
+    let ev = conn.receive();
+    if (ev != null && ev.type == "datagram") {
+        dgram = ev;
+        break;
+    }
+    thread.sleep(10);
+    d = d + 1;
+}
+if (dgram != null) {
+    print("datagram echo:", dgram.data);
+}
+
+// 5. Stream multiplexing
+print("\n--- 5. Stream multiplexing ---");
+let rpcStream = conn.openStream("high");
+let chatStream = conn.openStream("medium");
+thread.sleep(100);
+conn.send("stream:rpc", true, true);
+conn.send("stream:chat", true, true);
+let m3 = recvMessage(conn, 3000);
+if (m3 != null) {
+    print("stream msg:", m3.data);
+}
+
+// 6. Ping keepalive
+print("\n--- 6. Ping keepalive ---");
+conn.ping();
+print("ping sent");
+
+// 7. Cancel pending message
+print("\n--- 7. Message cancel ---");
+let bulkStream = conn.openStream("low");
+bulkStream.send("bulk:chunk-1", true, true);
+bulkStream.send("bulk:chunk-2", true, true);
+conn.cancel(1, 2);
+print("cancel issued for stream=1 msg=2");
+
+// 8. Metrics
+print("\n--- 8. Metrics ---");
+let cm = conn.metrics();
+print("bytes sent=" + cm.bytesSent + " recv=" + cm.bytesReceived);
+print("packets sent=" + cm.packetsSent + " recv=" + cm.packetsReceived);
+
+// 9. Close
+print("\n--- 9. Close ---");
+conn.send("/quit", true, true);
+recvMessage(conn, 2000);
+conn.close();
+serverThread.join();
+print("\n=== All ATP features demonstrated ===");

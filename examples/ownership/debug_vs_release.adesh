@@ -1,0 +1,16 @@
+// Debug builds poison freed memory; release builds trust HIR and skip metadata.
+
+fn main() {
+    print("debug vs release memory checks");
+
+    unsafe {
+        let p = alloc(16);
+        free(p);
+        try{
+
+            free(p); /// debug: double-free detected; release: behavior is undefined
+        }catch(e){
+            print("caught error:", e);
+        }
+    }
+}

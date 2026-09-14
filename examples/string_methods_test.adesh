@@ -1,0 +1,92 @@
+// String Methods Test - Object-Oriented Style
+print("=== String Methods Test ===");
+
+// Test split
+let text = "hello,world,adesh";
+let parts = text.split(",");
+print("'hello,world,adesh'.split(','):", parts);
+
+// Test split with empty delimiter (character split)
+let chars = "hello".split("");
+print("'hello'.split(''):", chars);
+
+// Test substring/slice
+let message = "Hello, World!";
+print("'Hello, World!'.substring(0, 5):", message.substring(0, 5));
+print("'Hello, World!'.slice(7, 12):", message.slice(7, 12));
+print("'Hello, World!'.slice(-6):", message.slice(-6));
+
+// Test charAt
+print("'Hello, World!'.charAt(0):", message.charAt(0));
+print("'Hello, World!'.charAt(7):", message.charAt(7));
+
+// Test indexOf and lastIndexOf
+print("'Hello, World!'.indexOf('o'):", message.indexOf("o"));
+print("'Hello, World!'.lastIndexOf('o'):", message.lastIndexOf("o"));
+
+// Test startsWith and endsWith
+print("'Hello, World!'.startsWith('Hello'):", message.startsWith("Hello"));
+print("'Hello, World!'.startsWith('World'):", message.startsWith("World"));
+print("'Hello, World!'.endsWith('World!'):", message.endsWith("World!"));
+print("'Hello, World!'.endsWith('Hello'):", message.endsWith("Hello"));
+
+// Test includes
+print("'Hello, World!'.includes('World'):", message.includes("World"));
+print("'Hello, World!'.includes('xyz'):", message.includes("xyz"));
+
+// Test trim
+let padded = "  hello  ";
+print("'  hello  '.trim():", padded.trim());
+print("'  hello  '.trimStart():", padded.trimStart());
+print("'  hello  '.trimEnd():", padded.trimEnd());
+
+// Test case conversion
+print("'Hello, World!'.toLowerCase():", message.toLowerCase());
+print("'Hello, World!'.toUpperCase():", message.toUpperCase());
+
+// Test replace
+print("'Hello, World!'.replace('World', 'AdeshLang'):", message.replace("World", "AdeshLang"));
+
+// Test repeat
+print("'Hi! '.repeat(3):", "Hi! ".repeat(3));
+
+// Array methods
+print("\n=== Array Methods Test ===");
+
+let numbers = [1, 2, 3, 4, 5];
+print("Original array:", numbers);
+
+// Test join
+print("[1, 2, 3, 4, 5].join(' - '):", numbers.join(" - "));
+
+// Test slice
+print("[1, 2, 3, 4, 5].slice(1, 4):", numbers.slice(1, 4));
+print("[1, 2, 3, 4, 5].slice(-2):", numbers.slice(-2));
+
+// Test indexOf and lastIndexOf
+let repeated = [1, 2, 3, 2, 1];
+print("[1, 2, 3, 2, 1].indexOf(2):", repeated.indexOf(2));
+print("[1, 2, 3, 2, 1].lastIndexOf(2):", repeated.lastIndexOf(2));
+
+// Test includes
+print("[1, 2, 3, 4, 5].includes(3):", numbers.includes(3));
+print("[1, 2, 3, 4, 5].includes(10):", numbers.includes(10));
+
+// Test concat
+let arr1 = [1, 2, 3];
+let arr2 = [4, 5, 6];
+print("[1, 2, 3].concat([4, 5, 6]):", arr1.concat(arr2));
+
+// Test flat
+let nested = [1, [2, 3], 4, [5, 6]];
+print("[1, [2, 3], 4, [5, 6]].flat():", nested.flat());
+
+// Edge cases
+print("\n=== Edge Cases ===");
+print("''.split(','):", "".split(","));
+print("[].join(','):", [].join(","));
+print("''.startsWith('test'):", "".startsWith("test"));
+print("'test'.endsWith(''):", "test".endsWith(""));
+print("'test'.indexOf('missing'):", "test".indexOf("missing"));
+
+print("\n=== Test Complete ===");

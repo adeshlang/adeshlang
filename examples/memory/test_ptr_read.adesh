@@ -1,0 +1,16 @@
+fn test_ptr_read() {
+    unsafe {
+        let ptr = alloc<u8>(5);
+        ptr[0] = 100;
+        print("Assigned 100 to ptr[0]\n");
+        
+        // Now try to read and print it
+        print("About to read\n");
+        print(ptr[0]);
+        print("\n");
+    }
+}
+
+fn main() {
+    test_ptr_read();
+}

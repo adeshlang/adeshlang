@@ -1,0 +1,100 @@
+// Device Information
+// Run: adeshlang run examples/gpu/device_info.adesh
+// Note: This example demonstrates device detection APIs
+// GPU support requires building AdeshLang with GPU features enabled
+
+// Stub functions for demonstration - these would be built-in with GPU support
+fn cpu_name() { return "Unknown CPU"; }
+fn cpu_count() { return 4; }
+fn cpu_arch() { return "x86_64"; }
+fn simd_support() { return "SSE4.2, AVX2"; }
+fn cuda_available() { return false; }
+fn cuda_devices() { return []; }
+fn metal_available() { return false; }
+fn metal_device() { return null; }
+fn vulkan_available() { return false; }
+fn vulkan_devices() { return []; }
+fn get_default_device() { return "CPU"; }
+
+fn main() {
+    print("╔════════════════════════════════════════════════════╗");
+    print("║  DEVICE INFORMATION - Available Compute Devices    ║");
+    print("╚════════════════════════════════════════════════════╝");
+    print("");
+    
+    // List available devices
+    print("Available Devices:");
+    print("");
+    
+    // CPU info
+    print("1. CPU:");
+    print("   Name: " + cpu_name());
+    print("   Cores: " + cpu_count());
+    print("   Architecture: " + cpu_arch());
+    print("   SIMD: " + simd_support());
+    print("");
+    
+    // Check for CUDA
+    print("2. CUDA (NVIDIA):");
+    if (cuda_available()) {
+        let devices = cuda_devices();
+        for (i in 0..len(devices)) {
+            let dev = devices[i];
+            print("   Device " + i + ": " + dev.name);
+            print("     Compute Capability: " + dev.compute_capability);
+            print("     Memory: " + dev.memory_gb + " GB");
+            print("     SM Count: " + dev.sm_count);
+        }
+    } else {
+        print("   Not available");
+    }
+    print("");
+    
+    // Check for Metal
+    print("3. Metal (Apple):");
+    if (metal_available()) {
+        let dev = metal_device();
+        print("   Device: " + dev.name);
+        print("   Memory: " + dev.memory_gb + " GB");
+        print("   Family: " + dev.family);
+    } else {
+        print("   Not available");
+    }
+    print("");
+    
+    // Check for Vulkan
+    print("4. Vulkan:");
+    if (vulkan_available()) {
+        let devices = vulkan_devices();
+        for (i in 0..len(devices)) {
+            let dev = devices[i];
+            print("   Device " + i + ": " + dev.name);
+            print("     Type: " + dev.device_type);
+            print("     Memory: " + dev.memory_gb + " GB");
+        }
+    } else {
+        print("   Not available");
+    }
+    print("");
+    
+    // Current default device
+    print("Current Default Device: " + get_default_device());
+    print("");
+    
+    // Recommendations
+    print("Recommendations:");
+    if (cuda_available()) {
+        print("  ✓ Use --device=cuda for NVIDIA GPU acceleration");
+    } elif (metal_available()) {
+        print("  ✓ Use --device=metal for Apple GPU acceleration");
+    } elif (vulkan_available()) {
+        print("  ✓ Use --device=vulkan for cross-platform GPU");
+    } else {
+        print("  ✓ Use --parallel for CPU multi-threading");
+    }
+    
+    print("");
+    print("Device info complete!");
+}
+
+main();

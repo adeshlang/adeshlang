@@ -1,0 +1,390 @@
+// =============================================================================
+// AdeshLang v0.2.0 - SSRF Prevention Examples
+// =============================================================================
+// This example demonstrates safe URL handling to prevent Server-Side Request
+// Forgery (SSRF) attacks:
+// - URL validation and sanitization
+// - Allowlist-based domain filtering
+// - Protocol restrictions
+//
+// What this demonstrates:
+// - Validating URLs before making requests
+// - Blocking dangerous internal URLs
+// - Safe redirect handling
+//
+// Security Notes:
+// - SSRF attacks trick servers into making unintended requests
+// - Internal networks and cloud metadata are common targets
+// - Validation must happen before any network request
+// =============================================================================
+
+print("=== SSRF Prevention Examples ===\n");
+
+// -----------------------------------------------------------------------------
+// 1. URL Parsing and Validation
+// -----------------------------------------------------------------------------
+
+print("--- URL Parsing and Validation ---\n");
+
+// Parse URL components (simplified)
+fn parseUrl(url) {
+    let result = {
+        protocol: "",
+        host: "",
+        port: "",
+        path: "",
+        valid: true
+    };
+    
+    // Extract protocol
+    let protoEnd = url.indexOf("://");
+    if (protoEnd == -1) {
+        result.valid = false;
+        return result;
+    }
+    
+    result.protocol = url.substring(0, protoEnd);
+    let rest = url.substring(protoEnd + 3);
+    
+    // Extract host (and optional port)
+    let pathStart = rest.indexOf("/");
+    if (pathStart == -1) {
+        result.host = rest;
+        result.path = "/";
+    } else {
+        result.host = rest.substring(0, pathStart);
+        result.path = rest.substring(pathStart);
+    }
+    
+    // Extract port if present
+    let portStart = result.host.indexOf(":");
+    if (portStart != -1) {
+        result.port = result.host.substring(portStart + 1);
+        result.host = result.host.substring(0, portStart);
+    }
+    
+    return result;
+}
+
+// Test URL parsing
+let testUrl = "https://api.example.com:8080/data/users";
+let parsed = parseUrl(testUrl);
+print("Parsing: " + testUrl);
+print("  Protocol: " + parsed.protocol);
+print("  Host: " + parsed.host);
+print("  Port: " + parsed.port);
+print("  Path: " + parsed.path);
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 2. Protocol Allowlist
+// -----------------------------------------------------------------------------
+
+print("--- Protocol Allowlist ---\n");
+
+fn isProtocolAllowed(protocol) {
+    // Only allow secure HTTP protocols
+    let allowed = ["https", "http"];
+    
+    for (p in allowed) {
+        if (protocol == p) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Test protocols
+let testProtocols = ["https", "http", "file", "gopher", "dict", "ftp"];
+
+print("Protocol validation:");
+for (proto in testProtocols) {
+    let status = isProtocolAllowed(proto) ? "✓ Allowed" : "✗ Blocked";
+    print("  " + proto + "://  → " + status);
+}
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 3. Internal IP Detection
+// -----------------------------------------------------------------------------
+
+print("--- Internal IP Detection ---\n");
+
+fn isInternalHost(host) {
+    // Block localhost variations
+    if (host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0") {
+        return true;
+    }
+    
+    // Block IPv6 localhost
+    if (host == "::1" || host == "[::1]") {
+        return true;
+    }
+    
+    // Block private IP ranges
+    if (host.startsWith("10.")) {
+        return true;  // 10.0.0.0/8
+    }
+    
+    if (host.startsWith("172.")) {
+        // Check 172.16.0.0 - 172.31.255.255
+        let parts = host.split(".");
+        if (len(parts) >= 2) {
+            let second = int(parts[1]);
+            if (second >= 16 && second <= 31) {
+                return true;
+            }
+        }
+    }
+    
+    if (host.startsWith("192.168.")) {
+        return true;  // 192.168.0.0/16
+    }
+    
+    // Block link-local
+    if (host.startsWith("169.254.")) {
+        return true;
+    }
+    
+    // Block cloud metadata endpoints
+    if (host == "169.254.169.254") {
+        return true;  // AWS/GCP/Azure metadata
+    }
+    
+    if (host == "metadata.google.internal") {
+        return true;  // GCP metadata
+    }
+    
+    return false;
+}
+
+// Test internal detection
+let testHosts = [
+    "api.example.com",       // External - OK
+    "localhost",             // Internal - Block
+    "127.0.0.1",            // Internal - Block
+    "10.0.0.1",             // Private - Block
+    "172.16.0.1",           // Private - Block
+    "192.168.1.1",          // Private - Block
+    "169.254.169.254",      // Cloud metadata - Block
+    "8.8.8.8",              // External - OK
+    "::1"                  // IPv6 localhost - Block
+];
+
+print("Host validation:");
+for (host in testHosts) {
+    let status = isInternalHost(host) ? "✗ BLOCKED (internal)" : "✓ Allowed";
+    print("  " + host + "  → " + status);
+}
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 4. Domain Allowlist
+// -----------------------------------------------------------------------------
+
+print("--- Domain Allowlist ---\n");
+
+fn isDomainAllowed(host, allowlist) {
+    for (allowed in allowlist) {
+        // Exact match
+        if (host == allowed) {
+            return true;
+        }
+        
+        // Subdomain match (e.g., "api.example.com" matches "*.example.com")
+        if (allowed.startsWith("*.")) {
+            let domain = allowed.substring(2);
+            if (host.endsWith("." + domain) || host == domain) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Define allowed domains
+let allowedDomains = [
+    "api.example.com",
+    "*.trusted-partner.com",
+    "cdn.myapp.com"
+];
+
+print("Allowed domains: " + str(allowedDomains));
+print("");
+
+let testDomains = [
+    "api.example.com",           // Exact match
+    "evil.com",                  // Not in list
+    "api.trusted-partner.com",   // Wildcard match
+    "cdn.myapp.com",             // Exact match
+    "attacker.com",              // Not allowed
+    "sub.api.example.com"        // Not exact match
+];
+
+print("Domain validation:");
+for (domain in testDomains) {
+    let status = isDomainAllowed(domain, allowedDomains) ? "✓ Allowed" : "✗ Blocked";
+    print("  " + domain + "  → " + status);
+}
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 5. Complete URL Validation
+// -----------------------------------------------------------------------------
+
+print("--- Complete URL Validation ---\n");
+
+fn validateUrl(url, allowedDomains) {
+    let errors = [];
+    
+    // 1. Parse URL
+    let parsed = parseUrl(url);
+    if (!parsed.valid) {
+        return { valid: false, errors: ["Invalid URL format"] };
+    }
+    
+    // 2. Check protocol
+    if (!isProtocolAllowed(parsed.protocol)) {
+        errors.push("Protocol '" + parsed.protocol + "' not allowed");
+    }
+    
+    // 3. Check for internal hosts
+    if (isInternalHost(parsed.host)) {
+        errors.push("Internal/private hosts blocked");
+    }
+    
+    // 4. Check domain allowlist
+    if (!isDomainAllowed(parsed.host, allowedDomains)) {
+        errors.push("Domain '" + parsed.host + "' not in allowlist");
+    }
+    
+    // 5. Block suspicious ports
+    let allowedPorts = ["", "80", "443", "8080", "8443"];
+    let portAllowed = false;
+    for (p in allowedPorts) {
+        if (parsed.port == p) {
+            portAllowed = true;
+        }
+    }
+    if (!portAllowed) {
+        errors.push("Port " + parsed.port + " not allowed");
+    }
+    
+    return {
+        valid: len(errors) == 0,
+        errors: errors,
+        parsed: parsed
+    };
+}
+
+// Test complete validation
+let testUrls = [
+    "https://api.example.com/users",          // Should pass
+    "http://localhost:3000/admin",            // Should fail - internal
+    "https://evil.com/steal",                 // Should fail - not allowed
+    "file:///etc/passwd",                     // Should fail - bad protocol
+    "https://169.254.169.254/metadata",       // Should fail - cloud metadata
+    "https://api.trusted-partner.com/data",   // Should pass - wildcard
+    "https://cdn.myapp.com:22/download"       // Should fail - bad port
+];
+
+print("Complete URL validation:");
+print("");
+
+for (url in testUrls) {
+    let result = validateUrl(url, allowedDomains);
+    print("URL: " + url);
+    if (result.valid) {
+        print("  ✓ VALID");
+    } else {
+        print("  ✗ INVALID:");
+        for (err in result.errors) {
+            print("    - " + err);
+        }
+    }
+    print("");
+}
+
+// -----------------------------------------------------------------------------
+// 6. Safe HTTP Request Pattern
+// -----------------------------------------------------------------------------
+
+print("--- Safe HTTP Request Pattern ---\n");
+
+fn safeHttpRequest(url, options) {
+    // 1. Validate URL before any network activity
+    let validation = validateUrl(url, allowedDomains);
+    
+    if (!validation.valid) {
+        print("  Request blocked:");
+        for (err in validation.errors) {
+            print("    " + err);
+        }
+        return { error: "URL validation failed", status: 0 };
+    }
+    
+    // 2. Set security headers
+    let headers = {
+        "User-Agent": "AdeshLang/0.2.0",
+        "Accept": "application/json"
+    };
+    
+    // 3. Set timeouts to prevent hanging
+    let timeout = 30000;  // 30 seconds
+    
+    // 4. Disable redirects or validate redirect URLs
+    let followRedirects = false;
+    
+    // 5. Make request (simulated)
+    print("  ✓ Request allowed to: " + url);
+    print("  Timeout: " + str(timeout) + "ms");
+    print("  Follow redirects: " + str(followRedirects));
+    
+    return { error: null, status: 200, body: "Response data" };
+}
+
+print("Safe request example:");
+safeHttpRequest("https://api.example.com/data", {});
+print("");
+safeHttpRequest("http://localhost/admin", {});
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 7. Security Checklist
+// -----------------------------------------------------------------------------
+
+print("--- SSRF Prevention Checklist ---\n");
+
+print("✓ URL Validation:");
+print("  • Parse and validate before any network call");
+print("  • Never trust user-provided URLs directly");
+print("");
+
+print("✓ Protocol Restrictions:");
+print("  • Allow only http/https");
+print("  • Block file://, gopher://, dict://, etc.");
+print("");
+
+print("✓ Host Restrictions:");
+print("  • Block localhost and 127.0.0.0/8");
+print("  • Block private ranges (10.x, 172.16-31.x, 192.168.x)");
+print("  • Block cloud metadata (169.254.169.254)");
+print("");
+
+print("✓ Domain Allowlist:");
+print("  • Maintain explicit list of allowed domains");
+print("  • Use wildcards carefully");
+print("");
+
+print("✓ Request Hardening:");
+print("  • Set strict timeouts");
+print("  • Validate redirect targets");
+print("  • Log blocked requests for security monitoring");
+
+print("");
+print("=== Demo Complete ===");

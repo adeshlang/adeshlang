@@ -1,0 +1,484 @@
+// ╔═══════════════════════════════════════════════════════════════════════════════╗
+// ║                    ATP — Adesh Transport Protocol                           ║
+// ║                    Complete Usage Examples & Deep-Dive                       ║
+// ║                                                                               ║
+// ║  ATP is a message-oriented, selectively reliable, multiplexed, secure        ║
+// ║  transport protocol built on RUDP (Reliable UDP). It overcomes the           ║
+// ║  limitations of TCP (byte-stream only, head-of-line blocking), UDP          ║
+// ║  (no reliability, no security), and QUIC (stream-oriented, not             ║
+// ║  message-oriented).                                                          ║
+// ║                                                                               ║
+// ║  Key features:                                                                ║
+// ║    • Selective reliability per message (reliable or unreliable)             ║
+// ║    • Multiplexed streams over a single connection                            ║
+// ║    • Built-in encryption (ChaCha20-Poly1305 AEAD)                            ║
+// ║    • X25519 key agreement with replay protection                              ║
+// ║    • Bounded memory with per-connection/stream budgets                        ║
+// ║    • Congestion control (NewReno-style)                                      ║
+// ║    • Flow control with backpressure                                          ║
+// ║    • Connection migration (WiFi → LTE, IPv4 → IPv6)                          ║
+// ║    • Cross-platform: Linux, macOS, Windows, BSD — IPv4 and IPv6             ║
+// ║                                                                               ║
+// ║  Run: cargo run --bin adeshlang -- run examples/Libraries/atp/atp_examples.adesh
+// ╚═══════════════════════════════════════════════════════════════════════════════╝
+
+// @allow(warnings)
+import ATP;
+
+print("==================================================================");
+print("     ATP — Adesh Transport Protocol: Complete Usage Guide       ");
+print("==================================================================");
+
+/// 1. BASIC SERVER — Listen and accept connections
+/// Use Case: A game server, chat server, or RPC backend that needs
+/// reliable + unreliable traffic on a single port.
+fn demo_server() {
+    print("\n--- 1. Basic ATP Server ---");
+
+    // Create an ATP server listening on port 9000.
+    // Works with both IPv4 (0.0.0.0) and IPv6 ([::]).
+    let server = ATP.listen("0.0.0.0", 9000);
+
+    print("ATP Server listening on 0.0.0.0:9000");
+    print("Type:", server.type);   // "AtpServer"
+    print("ID:", server.id);
+
+    // Accept a connection (polls for incoming connections).
+    // In a full async runtime, this would yield until a connection arrives.
+    // Without a real client, this returns null.
+    let conn = server.accept();
+    if (conn != null) {
+        print("Connection accepted:", conn.type);
+        let msg = conn.receive();
+        if (msg != null) {
+            print("Received:", msg);
+        }
+    } else {
+        print("No connection yet (expected — no client connected).");
+    }
+
+    // Check server metrics.
+    let metrics = server.metrics();
+    print("Server metrics:");
+    print("  Connections:", metrics.connections);
+    print("  Established:", metrics.established);
+    print("  Streams:", metrics.streams);
+    print("  Memory used:", metrics.memoryUsed, "bytes");
+
+    // Clean shutdown.
+    server.close();
+    print("Server closed.");
+}
+
+/// 2. BASIC CLIENT — Connect and send data
+/// Use Case: A client connecting to an ATP server.
+fn demo_client() {
+    print("\n--- 2. Basic ATP Client ---");
+
+    // Connect to an ATP server.
+    // The engine automatically binds to the correct address family:
+    //   IPv4 target -> binds to 0.0.0.0:0
+    //   IPv6 target -> binds to [::]:0
+    let conn = ATP.connect("127.0.0.1", 9000);
+
+    print("ATP Client connected to 127.0.0.1:9000");
+    print("Type:", conn.type); // "AtpConnection"
+
+    // Wait for the connection to be established.
+    // The first receive() will return a "connected" status once the
+    // handshake completes. Without a real server, this returns null.
+    let status = conn.receive();
+    if (status != null && status.type == "connected") {
+        print("  -> Handshake complete, connection established!");
+        // Send a reliable, ordered message (default behavior).
+        conn.send("Hello from ATP client!", true, true);
+        print("Sent reliable ordered message.");
+    } else {
+        print("  -> No server running (expected in demo mode).");
+        // The send() call still queues the data — it will be sent
+        // once a connection is established.
+        conn.send("Hello from ATP client!", true, true);
+        print("Queued reliable ordered message (will send on connect).");
+    }
+
+    // Clean shutdown.
+    conn.close();
+    print("Client connection closed.");
+}
+
+/// 3. SELECTIVE RELIABILITY — The core ATP innovation
+/// Use Case: A game or real-time application where some data must arrive
+/// reliably (e.g., chat messages, game state changes) and other data is
+/// best-effort (e.g., player position updates, telemetry).
+fn demo_selective_reliability() {
+    print("\n--- 3. Selective Reliability ---");
+
+    let conn = ATP.connect("127.0.0.1", 9000);
+
+    // Reliable + ordered: Must arrive, in order.
+    // Like TCP for this message. Used for: chat, RPC, file transfers, payments.
+    conn.send("Chat message: Hello!", true, true);
+    print("Sent: reliable + ordered (chat message)");
+
+    // Reliable + unordered: Must arrive, order does not matter.
+    // Used for: parallel RPC responses, independent operations.
+    conn.send("RPC response #42", true, false);
+    print("Sent: reliable + unordered (RPC response)");
+
+    // Unreliable + ordered: Best effort, but ordered if it arrives.
+    // Used for: frame-by-frame state that must be in order but can drop.
+    conn.send("Frame 100", false, true);
+    print("Sent: unreliable + ordered (frame update)");
+
+    // Unreliable + unordered: Pure best effort.
+    // Like raw UDP. Used for: position updates, telemetry, sensor data.
+    conn.send("Position: 100,200", false, false);
+    print("Sent: unreliable + unordered (position update)");
+
+    // Key insight: unreliable data is NEVER retransmitted.
+    // If position update #100 is lost, retransmitting it later is useless
+    // because position #101 is already available.
+    // TCP cannot do this — it would block the stream retransmitting #100.
+
+    conn.close();
+}
+
+/// 4. STREAM MULTIPLEXING — Multiple independent streams over one connection
+/// Use Case: An application that needs file transfer, RPC, and chat
+/// simultaneously, without head-of-line blocking between them.
+fn demo_stream_multiplexing() {
+    print("\n--- 4. Stream Multiplexing ---");
+
+    let conn = ATP.connect("127.0.0.1", 9000);
+
+    // Open a high-priority stream for RPC.
+    let rpc_stream = conn.openStream("high");
+    print("Opened RPC stream (priority: high)");
+
+    // Open a medium-priority stream for chat.
+    let chat_stream = conn.openStream("medium");
+    print("Opened chat stream (priority: medium)");
+
+    // Open a low-priority stream for file transfer.
+    let file_stream = conn.openStream("low");
+    print("Opened file stream (priority: low)");
+
+    // Send on each stream independently.
+    // If RPC stream has a lost packet, chat and file streams are NOT blocked.
+    rpc_stream.send("RPC request: get_user(42)", true, true);
+    chat_stream.send("Chat: Hello everyone!", true, true);
+    file_stream.send("File chunk 0: [binary data]", true, true);
+
+    print("Sent data on 3 independent streams.");
+    print("Key: a lost packet on one stream does NOT block others.");
+
+    // Each stream has its own:
+    //   - Sequence state (independent ordering)
+    //   - Flow control (independent windows)
+    //   - Message queues (independent buffering)
+    //   - Cancellation (cancel one stream without affecting others)
+
+    // Close streams independently.
+    rpc_stream.close();
+    chat_stream.close();
+    file_stream.close();
+    print("All streams closed.");
+
+    conn.close();
+}
+
+/// 5. UNRELIABLE DATAGRAMS — Fire-and-forget data
+/// Use Case: Telemetry, sensor data, heartbeat signals, or any data
+/// where retransmission is wasteful because newer data supersedes older.
+fn demo_datagrams() {
+    print("\n--- 5. Unreliable Datagrams ---");
+
+    let conn = ATP.connect("127.0.0.1", 9000);
+
+    // Send a datagram — no stream, no retransmission, no ordering.
+    // This is the most lightweight way to send data in ATP.
+    // Maps directly to the DATAGRAM frame type.
+    conn.datagram("Telemetry: CPU=45%, MEM=2.1GB");
+    conn.datagram("Telemetry: CPU=47%, MEM=2.2GB");
+    conn.datagram("Telemetry: CPU=43%, MEM=2.1GB");
+
+    print("Sent 3 telemetry datagrams (fire-and-forget).");
+    print("If any datagram is lost, it is NOT retransmitted.");
+    print("This is correct behavior for telemetry — old data is stale.");
+
+    // Receive datagrams on the server side (returns null without a real server).
+    let msg = conn.receive();
+    if (msg != null && msg.type == "datagram") {
+        print("Received datagram:", msg.data);
+    } else {
+        print("No datagram received (expected in demo mode).");
+    }
+
+    conn.close();
+}
+
+/// 6. MIXED TRAFFIC — Reliable + unreliable on one connection
+/// Use Case: A multiplayer game server handling:
+///   - Reliable: chat messages, game state changes, inventory updates
+///   - Unreliable: player positions, animations, particle effects
+/// All over a SINGLE connection — no need for separate TCP + UDP sockets.
+fn demo_mixed_traffic() {
+    print("\n--- 6. Mixed Traffic on One Connection ---");
+
+    let conn = ATP.connect("127.0.0.1", 9000);
+
+    // --- Reliable traffic (must arrive) ---
+
+    // Chat message — reliable + ordered
+    conn.send("Player_42 joined the game", true, true);
+    print("[reliable] Chat: player joined");
+
+    // Inventory update — reliable + ordered
+    conn.send("Inventory: +1 sword", true, true);
+    print("[reliable] Inventory: +1 sword");
+
+    // Game state change — reliable + unordered
+    conn.send("Door_7 opened", true, false);
+    print("[reliable] State: door opened");
+
+    // --- Unreliable traffic (best effort) ---
+
+    // Player position — unreliable + unordered
+    // If lost, the next position update is more useful than a retransmit.
+    conn.send("Pos: 100,200,300", false, false);
+    conn.send("Pos: 101,200,300", false, false);
+    conn.send("Pos: 102,201,300", false, false);
+    print("[unreliable] 3 position updates sent");
+
+    // Animation frame — unreliable + ordered
+    conn.send("Anim: walk_cycle_3", false, true);
+    print("[unreliable] Animation frame sent");
+
+    // --- Datagram traffic (fire-and-forget) ---
+
+    // Heartbeat — datagram
+    conn.datagram("HEARTBEAT");
+    print("[datagram] Heartbeat sent");
+
+    print("\nAll traffic types sent over ONE connection.");
+    print("TCP would need a separate socket for unreliable data.");
+    print("UDP would need a separate library for reliable data.");
+    print("ATP handles both natively.");
+
+    conn.close();
+}
+
+/// 7. MESSAGE CANCELLATION — Stop sending data that is no longer relevant
+/// Use Case: A large file transfer that the user cancelled, or a real-time
+/// operation that has a deadline.
+fn demo_cancellation() {
+    print("\n--- 7. Message Cancellation ---");
+
+    let conn = ATP.connect("127.0.0.1", 9000);
+    let stream = conn.openStream("medium");
+
+    // Send a large message (would be fragmented into many packets).
+    stream.send("Large file chunk 1...", true, true);
+    stream.send("Large file chunk 2...", true, true);
+    stream.send("Large file chunk 3...", true, true);
+    print("Started sending large file (3 chunks)...");
+
+    // Cancel the transfer — stops retransmitting undelivered chunks.
+    // This frees memory and network bandwidth immediately.
+    // stream_id = 1 (default), message_id = 1 (first message)
+    conn.cancel(1, 1);
+    print("Cancelled message — retransmission stopped, memory freed.");
+
+    // The cancel frame is sent to the peer so they also clean up.
+    // This is a semantic optimization that TCP cannot safely perform.
+
+    conn.close();
+}
+
+/// 8. KEEPALIVE — PING/PONG for connection health
+/// Use Case: Maintaining NAT bindings, detecting dead connections,
+/// measuring RTT.
+fn demo_keepalive() {
+    print("\n--- 8. Keepalive (PING/PONG) ---");
+
+    let conn = ATP.connect("127.0.0.1", 9000);
+
+    // Send a PING — the server will automatically respond with PONG.
+    conn.ping();
+    print("Sent PING — server will auto-respond with PONG.");
+
+    // The PONG response is used for:
+    //   - RTT measurement (for retransmission timeout calculation)
+    //   - Connection liveness detection
+    //   - NAT binding maintenance
+
+    // Check connection metrics.
+    let metrics = conn.metrics();
+    print("Connection metrics:");
+    print("  Established:", metrics.established);
+    print("  Streams:", metrics.streams);
+    print("  Memory:", metrics.memoryUsed, "bytes");
+
+    conn.close();
+}
+
+/// 9. IPV6 SUPPORT — Connecting to IPv6 servers
+/// Use Case: Modern networks increasingly use IPv6. ATP handles both
+/// IPv4 and IPv6 transparently.
+fn demo_ipv6() {
+    print("\n--- 9. IPv6 Support ---");
+
+    // Connect to an IPv6 server.
+    // The engine automatically binds to [::]:0 for IPv6 targets.
+    let conn = ATP.connect("::1", 9000);
+    print("Connected to IPv6 loopback (::1:9000)");
+
+    // Send data exactly the same way as IPv4.
+    conn.send("Hello over IPv6!", true, true);
+    print("Sent reliable message over IPv6.");
+
+    // The wire format, encryption, reliability, and multiplexing
+    // are identical for IPv4 and IPv6 — no application code changes needed.
+
+    conn.close();
+}
+
+/// 10. CONNECTION LIFECYCLE — States and transitions
+/// ATP connections go through a well-defined state machine:
+///   Initial -> Handshaking -> Established -> Closing -> Closed
+///                       \-> Migrating /^
+fn demo_lifecycle() {
+    print("\n--- 10. Connection Lifecycle ---");
+
+    print("ATP Connection State Machine:");
+    print("  [Initial]     — Engine created, no handshake yet");
+    print("  [Handshaking] — X25519 key exchange in progress");
+    print("  [Established] — Secure channel active, data flows");
+    print("  [Migrating]   — Path change (WiFi -> LTE) in progress");
+    print("  [Closing]     — Close frame sent, draining");
+    print("  [Closed]      — All resources released");
+
+    print("\nStream State Machine:");
+    print("  [Idle] -> [Open] -> [HalfClosedLocal] -> [Closed]");
+    print("                  -> [HalfClosedRemote] -> [Closed]");
+    print("                  -> [Reset] (abrupt)");
+
+    print("\nMessage State Machine:");
+    print("  [Queued] -> [Sent] -> [PartiallyAcked] -> [Complete]");
+    print("         \\-> [Cancelled]");
+    print("                \\-> [Expired]");
+}
+
+/// 11. SECURITY ARCHITECTURE — How ATP protects data
+fn demo_security() {
+    print("\n--- 11. Security Architecture ---");
+
+    print("ATP Security Stack:");
+    print("  1. Key Agreement:  X25519 (ephemeral Diffie-Hellman)");
+    print("  2. Key Derivation: HKDF-SHA256");
+    print("  3. Encryption:      ChaCha20-Poly1305 AEAD");
+    print("  4. Replay Protection: 64-bit sliding window");
+    print("  5. Key Rotation:    Epoch-based with overlap");
+    print("");
+    print("Security properties:");
+    print("  * Confidentiality:  All data is encrypted (no plaintext on wire)");
+    print("  * Integrity:         AEAD auth tag detects tampering");
+    print("  * Authentication:    Handshake proves peer has the shared secret");
+    print("  * Replay protection: Old/duplicate packets are rejected");
+    print("  * Forward secrecy:   Ephemeral keys — past traffic stays secret");
+    print("");
+    print("DoS protections:");
+    print("  * Stateless initial validation (no state for invalid INITs)");
+    print("  * Memory budgets per connection and per stream");
+    print("  * Amplification control (address validation before large responses)");
+    print("  * Cheap validation before expensive crypto operations");
+}
+
+/// 12. MEMORY ARCHITECTURE — Bounded by design
+fn demo_memory() {
+    print("\n--- 12. Memory Architecture ---");
+
+    print("ATP Memory Budgets (default per connection):");
+    print("  Total budget:          16 MB");
+    print("  Per-stream memory:      2 MB");
+    print("  Reassembly buffers:     4 MB");
+    print("  Send queue:             2 MB");
+    print("  Receive queue:           2 MB");
+    print("");
+    print("Key principles:");
+    print("  * No remote peer can force unbounded allocation");
+    print("  * Every buffer operation checks against a limit");
+    print("  * Backpressure is applied at 90% memory usage");
+    print("  * Buffer pools reuse memory to minimize allocations");
+    print("  * Sparse reassembly: only received fragments consume memory");
+    print("");
+    print("An attacker CANNOT say:");
+    print("  \"I declared a 10 GB message, so allocate 10 GB.\"");
+    print("ATP allocates only for fragments that actually arrive.");
+}
+
+/// 13. COMPARISON — ATP vs TCP vs UDP vs QUIC
+fn demo_comparison() {
+    print("\n--- 13. Protocol Comparison ---");
+
+    print("                    TCP     UDP     QUIC    ATP");
+    print("  -----------------------------------------------");
+    print("  Reliable           Yes     No      Yes     Yes");
+    print("  Unreliable         No      Yes     Partial  Yes");
+    print("  Message-oriented   No      Yes     Partial  Yes");
+    print("  Multiplexing       No      No      Yes     Yes");
+    print("  Selective reliability No  No      Limited  Yes");
+    print("  Encryption         External External Built-in Built-in");
+    print("  Flow control       Yes     No      Yes     Yes");
+    print("  Congestion control Yes     No      Yes     Yes");
+    print("  Connection migration No    No      Yes     Yes");
+    print("  Bounded memory     Impl   Impl    Impl    Protocol");
+    print("  Zero-copy          No      No      No      Yes (Adesh)");
+    print("");
+    print("ATP core difference:");
+    print("  \"Tell me what each piece of data needs,");
+    print("   and I will choose the appropriate transport behavior.\"");
+}
+
+/// 14. CROSS-PLATFORM — Works everywhere
+fn demo_cross_platform() {
+    print("\n--- 14. Cross-Platform Support ---");
+
+    print("Operating Systems:");
+    print("  [ok] Linux (x86_64, ARM64, RISC-V)");
+    print("  [ok] macOS (Intel, Apple Silicon)");
+    print("  [ok] Windows (x86_64, ARM64)");
+    print("  [ok] FreeBSD / NetBSD / OpenBSD");
+    print("");
+    print("Network Stacks:");
+    print("  [ok] IPv4 (0.0.0.0)");
+    print("  [ok] IPv6 ([::])");
+    print("  [ok] Dual-stack (platform-dependent)");
+    print("  [ok] NAT traversal (connection migration)");
+    print("");
+    print("No platform-specific code:");
+    print("  [ok] No unsafe blocks");
+    print("  [ok] No C dependencies (all pure-Rust crypto)");
+    print("  [ok] Explicit big-endian wire format");
+    print("  [ok] Handles WouldBlock, Interrupted, ConnectionReset on all OSes");
+}
+
+/// Main entry point — run all demos
+demo_server();
+demo_client();
+demo_selective_reliability();
+demo_stream_multiplexing();
+demo_datagrams();
+demo_mixed_traffic();
+demo_cancellation();
+demo_keepalive();
+demo_ipv6();
+demo_lifecycle();
+demo_security();
+demo_memory();
+demo_comparison();
+demo_cross_platform();
+
+print("\n==================================================================");
+print("     ATP Examples Complete — All demos finished successfully     ");
+print("==================================================================");

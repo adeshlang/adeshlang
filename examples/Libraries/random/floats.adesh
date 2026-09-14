@@ -1,0 +1,14 @@
+import Random;
+
+print("--- Float Randomness Demo ---");
+let unitFloat = Random.float();
+print("Unit float [0.0, 1.0): " + unitFloat);
+
+let rangeFloat = Random.floatRange(10.5, 20.5);
+print("Range float [10.5, 20.5): " + rangeFloat);
+
+let f32Val = Random.f32();
+print("Random f32: " + f32Val);
+
+let f64Val = Random.f64();
+print("Random f64: " + f64Val);

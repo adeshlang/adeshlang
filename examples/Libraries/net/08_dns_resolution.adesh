@@ -1,0 +1,22 @@
+// AdeshLang Net Example 08: Hostname DNS Resolution & Target Connection
+import Net;
+
+fn resolve_and_inspect(hostname) {
+    print("Resolving hostname:", hostname);
+    let resolved_addrs = Net.resolve(hostname);
+    print("Resolved IP addresses count:", resolved_addrs.len());
+
+    for addr in resolved_addrs {
+        print("  Address:", addr.address, "| Version:", addr.version, "| Loopback?", addr.isLoopback);
+    }
+}
+
+fn main() {
+    print("=== 08. DNS Resolution Example ===");
+
+    resolve_and_inspect("localhost");
+
+    print("=== 08. DNS Resolution Completed ===");
+}
+
+main();

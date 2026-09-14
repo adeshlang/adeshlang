@@ -1,0 +1,15 @@
+// 01 — basic thread
+import thread;
+
+thread.watchdog(15000);
+let h = thread.spawn(fn() {
+    print("hello from worker");
+});
+h.join();
+print("joined");
+
+let h2 = thread.spawn(fn() {
+    print("hello from worker 2");
+});
+h2.join();
+print("joined 2");

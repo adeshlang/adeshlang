@@ -1,0 +1,41 @@
+// Structured args parse example
+// Run: adesh run examples/args/args_parse.adesh -- --port=8080 --host localhost -v -abc file1 file2
+import Env;
+
+// This example demonstrates argument parsing using individual utility functions
+
+// Get argument values by key (supports --key=value or --key value)
+print("port via argGet:", Env.argGet("port"));
+print("host via argGet:", Env.argGet("host"));
+
+// Check for presence of flags (-v, -abc, etc.)
+print("has -v flag:", Env.argHas("v"));
+print("has -a flag:", Env.argHas("a"));
+print("has -b flag:", Env.argHas("b"));
+print("has -c flag:", Env.argHas("c"));
+
+// Find index of positional arguments
+print("index of 'file1':", Env.argsIndexOf("file1"));
+print("index of 'file2':", Env.argsIndexOf("file2"));
+
+// Join all arguments into a single string
+print("all args joined:", Env.argsJoin(" "));
+
+// parseArgs() returns a JSON string representation
+// Note: Object property access (parsed.flags) is not yet supported in VM/AOT
+let parsed = Env.parseArgs();
+print("parseArgs JSON:", parsed);
+
+
+
+// `target\debug\adeshlang.exe run examples/args/args_parse.adesh -- --port=8080 --host localhost -v -abc file1 file2`    
+// port via argGet: 8080
+// host via argGet: localhost
+// has -v flag: true
+// has -a flag: true
+// has -b flag: true
+// has -c flag: true
+// index of 'file1': 5
+// index of 'file2': 6
+// all args joined: --port=8080 --host localhost -v -abc file1 file2
+// parseArgs JSON: {positionals: ["file1", "file2"], flags: {port: "8080", b: true, c: true, host: "localhost", v: true, a: true}}

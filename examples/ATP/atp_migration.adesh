@@ -1,0 +1,108 @@
+// ╔═══════════════════════════════════════════════════════════════════════════════╗
+// ║  ATP Path Migration — stable connection + ping demo                           ║
+// ║  Migration (WiFi→LTE, NAT rebinding) is handled internally by the engine.     ║
+// ║  conn.migrate() is not yet exposed in the AdeshLang API.                      ║
+// ║  Run: cargo run --bin adeshlang -- run examples/Libraries/atp/atp_migration.adesh
+// ╚═══════════════════════════════════════════════════════════════════════════════╝
+
+import ATP;
+import thread;
+import "./lib/atp_ports.adesh" as Ports;
+
+fn waitConnected(conn: any, maxMs: any): any {
+    let elapsed = 0;
+    while elapsed < maxMs {
+        let ev = conn.receive();
+        if (ev != null && ev.type == "connected") { return ev; }
+        thread.sleep(10);
+        elapsed = elapsed + 10;
+    }
+    return null;
+}
+
+fn recvMessage(conn: any, maxMs: any): any {
+    let elapsed = 0;
+    while elapsed < maxMs {
+        let ev = conn.receive();
+        if (ev != null && ev.type == "message") { return ev; }
+        thread.sleep(10);
+        elapsed = elapsed + 10;
+    }
+    return null;
+}
+
+fn acceptConn(server: any, maxMs: any): any {
+    let elapsed = 0;
+    while elapsed < maxMs {
+        let c = server.accept();
+        if (c != null && c.type == "AtpConnection") { return c; }
+        thread.sleep(10);
+        elapsed = elapsed + 10;
+    }
+    return null;
+}
+
+let port = Ports.port(7);
+
+print("=== ATP Path Migration ===");
+print("");
+print("Internal migration flow (PATH_CHALLENGE / PATH_RESPONSE):");
+print("  Stable → Validating → Completed → Stable");
+print("");
+print("Use case: client IP/port changes (NAT rebinding, WiFi → LTE).");
+print("The engine keeps the connection alive across path changes.");
+print("AdeshLang API: migration is not triggerable yet — shown as stable link.");
+print("");
+
+let serverThread = thread.spawn(fn() {
+    let server = ATP.listen(Ports.DEFAULT_HOST, port);
+    let conn = null;
+    let t = 0;
+    while (conn == null && t < 500) {
+        conn = server.accept();
+        t = t + 1;
+        thread.sleep(10);
+    }
+    if (conn != null) {
+        print("[server] connection established on initial path");
+        let n = 0;
+        while (n < 60) {
+            let ev = conn.receive();
+            if (ev != null && ev.type == "message") {
+                conn.send("path-ok:" + ev.data, true, true);
+            }
+            n = n + 1;
+            thread.sleep(10);
+        }
+        conn.close();
+    }
+    server.close();
+});
+
+thread.sleep(400);
+
+let conn = ATP.connect(Ports.DEFAULT_HOST, port);
+let connected = waitConnected(conn, 5000);
+if (connected == null) {
+    print("[client] ERROR: connection failed");
+} else {
+    print("[client] stable connection on path A (127.0.0.1:" + port + ")");
+}
+
+conn.send("probe:stable-path", true, true);
+let reply = recvMessage(conn, 3000);
+if (reply != null) {
+    print("[client] server reply:", reply.data);
+}
+
+print("[client] sending keepalive pings (maintains NAT binding)...");
+conn.ping();
+thread.sleep(100);
+conn.ping();
+
+let cm = conn.metrics();
+print("[client] connection still active — bytes sent=" + cm.bytesSent);
+
+conn.close();
+serverThread.join();
+print("\n=== Migration demo complete (stable link verified) ===");

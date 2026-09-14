@@ -1,0 +1,29 @@
+// AdeshLang WebSocket Example 18: High-Throughput & Large Payload Streaming
+// Demonstrates sending and receiving large payload data payloads.
+
+import WebSocket;
+
+print("=== AdeshLang WebSocket Large Payload Streaming Demo ===");
+
+let server = WebSocket.server(WebSocket.ServerConfig({
+    port: 8618,
+    bind_address: "127.0.0.1",
+    max_message_size: 16777216
+}));
+
+server.startEcho();
+print("✓ Server listening with max_message_size=16MB");
+
+let client = WebSocket.connect("ws://127.0.0.1:8618");
+print("✓ Client connected");
+
+let largePayload = "LARGE_PAYLOAD_CHUNK_".repeat(500);
+client.sendText(largePayload);
+print("✓ Sent large payload string (" + largePayload.len() + " bytes)");
+
+let reply = client.receive();
+print("✓ Received echo payload string (" + reply.payload.len() + " bytes)");
+
+client.close(1000, "Done large payload test");
+server.close();
+print("✓ Large message payload test completed successfully!");

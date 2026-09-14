@@ -1,0 +1,222 @@
+// regex_examples.adesh
+// Comprehensive demonstration of the AdeshLang Regular Expression (Regex) library.
+// import "std:Regex" as Regex;
+import Regex;
+
+print("==================================================");
+print("   AdeshLang Regex Library Comprehensive Demo   ");
+print("==================================================");
+print("");
+
+// --------------------------------------------------
+// 1. Regex Creation & Compiling
+// --------------------------------------------------
+print("--- 1. Regex Creation & Compilation ---");
+
+// Regex.new(pattern) throws an error if pattern is invalid.
+// We can use a raw string literal r"..." to avoid double escaping backslashes.
+let email_re = Regex.new(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$");
+print("Compiled email regex pattern: " + email_re.pattern());
+
+// Regex.compile(pattern, flags) returns a Result (Ok/Err) for safe, dynamic patterns.
+let invalid_pattern = "[a-z";
+let compile_res = Regex.compile(invalid_pattern);
+if compile_res.isOk() {
+    print("✓ Dynamic compilation succeeded (unexpected)");
+} else {
+    print("✗ Dynamic compilation failed gracefully as expected: " + compile_res.value);
+}
+
+// Option to use flags (e.g. Case Insensitive)
+// Constants available: IgnoreCase, Multiline, DotAll, Extended, Unicode
+let flags = Regex.IgnoreCase;
+print("Regex.IgnoreCase value: " + str(flags));
+let word_re = Regex.new(r"\bhello\b", flags);
+print("Case-insensitive word search regex compiled.");
+print("");
+
+
+// --------------------------------------------------
+// 2. Testing and Matching
+// --------------------------------------------------
+print("--- 2. Testing and Matches ---");
+
+// test(text) -> bool (checks if pattern exists anywhere in text)
+let text1 = "Say hello to the world";
+print("Does '" + text1 + "' contain 'hello'? " + str(word_re.test(text1))); // True
+print("Does 'HELLO' match? " + str(word_re.test("HELLO"))); // True (IgnoreCase)
+
+// fullMatch(text) -> bool (checks if pattern matches the entire string)
+let pattern_num = Regex.new(r"\d{3}");
+print("Does '123' fully match '\\d{3}'? " + str(pattern_num.fullMatch("123"))); // True
+print("Does '1234' fully match '\\d{3}'? " + str(pattern_num.fullMatch("1234"))); // False
+
+// match(text) -> Option<Match> (checks if pattern matches at the start of string)
+let start_match_re = Regex.new(r"\bfoo");
+let m_opt = start_match_re.match("foobar");
+if m_opt.isSome() {
+    let m = m_opt.unwrap();
+    print("match() matched at start: '" + m.text() + "'");
+} else {
+    print("match() did not match at start.");
+}
+
+let m_opt_fail = start_match_re.match("barfoo");
+if m_opt_fail.isSome() {
+    print("match() matched (unexpected).");
+} else {
+    print("match() correctly failed for 'barfoo' since it starts with 'bar'.");
+}
+print("");
+
+
+// --------------------------------------------------
+// 3. Finding and Matches Inspection
+// --------------------------------------------------
+print("--- 3. Finding Matches and Match Inspection ---");
+
+let search_text = "The quick brown fox jumps over 42 lazy dogs.";
+let number_re = Regex.new(r"\d+");
+
+// find(text) -> Option<Match>
+let found_opt = number_re.find(search_text);
+if found_opt.isSome() {
+    let m = found_opt.unwrap();
+    // Inspect Match properties
+    print("Found match text:     '" + m.text() + "'");
+    print("Match start index:    " + str(m.start()));
+    print("Match end index:      " + str(m.end()));
+    print("Match range tuple:    " + str(m.range()));
+    print("Match length:         " + str(m.len()));
+    print("Match is empty?       " + str(m.isEmpty()));
+} else {
+    print("No numbers found.");
+}
+
+// findAll(text) -> Array<Match>
+let words_text = "cat, bat, rat, mat";
+let word_pattern = Regex.new(r"[cbr]at");
+let matches = word_pattern.findAll(words_text);
+print("findAll() matches found: " + str(len(matches)));
+let idx = 0;
+while idx < len(matches) {
+    let m = matches[idx];
+    print("  Match " + str(idx) + ": '" + m.text() + "' at range " + str(m.range()));
+    idx = idx + 1;
+}
+print("");
+
+
+// --------------------------------------------------
+// 4. Captures and Group Extraction
+// --------------------------------------------------
+print("--- 4. Captures and Group Extraction ---");
+
+// captures(text) -> Option<Captures>
+let phone_re = Regex.new(r"(?P<area>\d{3})-(?P<exchange>\d{3})-(?P<subscriber>\d{4})");
+let contact = "Call me at 555-867-5309 sometime.";
+
+let caps_opt = phone_re.captures(contact);
+if caps_opt.isSome() {
+    let caps = caps_opt.unwrap();
+    print("Captures length: " + str(caps.len())); // number of capture groups (includes full match at 0)
+    
+    // Positional group extraction using get(index)
+    // index 0 is full match, index 1 is first capture group, etc.
+    let full = caps.full().unwrap();
+    print("Full match:    " + full.text());
+    print("Area code:     " + caps.get(1).unwrap().text());
+    print("Exchange:      " + caps.get(2).unwrap().text());
+    print("Subscriber:    " + caps.get(3).unwrap().text());
+    
+    // Named group extraction using name(name)
+    print("Named Area:    " + caps.name("area").unwrap().text());
+    print("Named Exchange:" + caps.name("exchange").unwrap().text());
+    
+    // Listing all capture group names
+    let names = caps.names();
+    print("Capture group names: " + str(names));
+} else {
+    print("No phone number match found.");
+}
+
+// capturesAll(text) -> Array<Captures>
+let multi_contact = "Offices: 212-555-1234, 415-555-9876";
+let all_caps = phone_re.capturesAll(multi_contact);
+print("Total phone numbers captured: " + str(len(all_caps)));
+let c_idx = 0;
+while c_idx < len(all_caps) {
+    let caps = all_caps[c_idx];
+    print("  Phone " + str(c_idx) + ": " + caps.full().unwrap().text() + " (Area: " + caps.name("area").unwrap().text() + ")");
+    c_idx = c_idx + 1;
+}
+print("");
+
+
+// --------------------------------------------------
+// 5. Replacements and Substitutions
+// --------------------------------------------------
+print("--- 5. Replacements and Substitutions ---");
+
+let original_text = "The silver bullet met the golden key.";
+let color_re = Regex.new(r"silver|golden");
+
+// replace(text, replacement) -> replaces only the first occurrence
+let replaced_first = color_re.replace(original_text, "shiny");
+print("replace():     " + replaced_first);
+
+// replaceAll(text, replacement) -> replaces all occurrences
+let replaced_all = color_re.replaceAll(original_text, "shiny");
+print("replaceAll():  " + replaced_all);
+
+// Replacements with group references ($1, $2, etc.)
+let name_text = "John Doe, Jane Smith";
+let swap_re = Regex.new(r"(\w+)\s+(\w+)");
+let swapped_text = swap_re.replaceAll(name_text, "$2, $1");
+print("Group swaps:   " + swapped_text);
+print("");
+
+
+// --------------------------------------------------
+// 6. Splitting Strings
+// --------------------------------------------------
+print("--- 6. String Splitting ---");
+
+let csv_data = "one, two; three\tfour ,five";
+let split_re = Regex.new(r"[\s,;]+");
+
+// split(text) -> splits string on every match
+let parts = split_re.split(csv_data);
+print("split() parts:");
+let p_idx = 0;
+while p_idx < len(parts) {
+    print("  - '" + parts[p_idx] + "'");
+    p_idx = p_idx + 1;
+}
+
+// splitN(text, limit) -> splits string up to limit parts
+let parts_limited = split_re.splitN(csv_data, 3);
+print("splitN(3) parts:");
+let pl_idx = 0;
+while pl_idx < len(parts_limited) {
+    print("  - '" + parts_limited[pl_idx] + "'");
+    pl_idx = pl_idx + 1;
+}
+print("");
+
+
+// --------------------------------------------------
+// 7. Regex Escaping
+// --------------------------------------------------
+print("--- 7. Escaping special regex characters ---");
+
+let plain_text = "Is this real? (Or is it fantasy? Match *everything*.)";
+let escaped = Regex.escape(plain_text);
+print("Original: " + plain_text);
+print("Escaped:  " + escaped);
+
+let search_escaped = Regex.new(escaped);
+print("Can search with escaped regex: " + str(search_escaped.test(plain_text))); // True
+
+print("");
+print("=== Regular Expression Demonstration Completed ===");

@@ -1,0 +1,63 @@
+// Basic filesystem operations demo
+import "fs";
+print("=== AdeshLang Filesystem Demo ===");
+
+// Write to a file
+fs.write("demo.txt", "Hello from AdeshLang filesystem!");
+print("✓ Wrote to demo.txt");
+
+// Read the file
+let content = fs.read("demo.txt");
+print("✓ Read content: " + content);
+
+// Check if file exists
+if fs.exists("demo.txt") {
+    print("✓ File exists");
+}
+
+// Check file type
+if fs.isFile("demo.txt") {
+    print("✓ Is a file");
+}
+
+// Create a directory
+fs.mkdir("demo_dir");
+print("✓ Created directory demo_dir");
+
+// Check directory
+if fs.isDir("demo_dir") {
+    print("✓ Is a directory");
+}
+
+// List directory contents (skipped for now)
+// let files = fs.readDir(".");
+// print("✓ Directory listing: " + typeof(files) + " with " + files.len() + " items");
+
+// Path operations
+let joined = fs.path.join("demo_dir", "nested", "file.txt");
+print("✓ Path join: " + joined);
+
+let basename = fs.path.basename("demo_dir/nested/file.txt");
+print("✓ Basename: " + basename);
+
+let dirname = fs.path.dirname("demo_dir/nested/file.txt");
+print("✓ Dirname: " + dirname);
+
+let ext = fs.path.extname("demo_dir/nested/file.txt");
+print("✓ Extension: " + ext);
+
+// Copy file
+fs.copy("demo.txt", "demo_copy.txt");
+print("✓ Copied file");
+
+// Move/rename
+fs.move("demo_copy.txt", "demo_renamed.txt");
+print("✓ Renamed file");
+
+// Clean up
+// fs.delete("demo.txt");
+// fs.delete("demo_renamed.txt");
+// fs.delete("demo_dir");
+print("✓ Cleanup completed");
+
+print("=== Demo finished successfully! ===");

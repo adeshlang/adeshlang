@@ -1,0 +1,81 @@
+// Test .then() and .catch() methods
+print("=== Promise .then()/.catch() Tests ===");
+
+async fn main() {
+    // Test 1: Simple .then()
+    print("Test 1: Simple .then() chaining");
+    let p1 = Promise(fn(resolve, reject) {
+        resolve(10);
+    });
+    let p1_then = p1.then(fn(value) {
+        print("  .then() callback called with:", value);
+        return value * 2;
+    });
+    let result1 = await p1;
+    print("  Await original:", result1);
+    let result1_then = await p1_then;
+    print("  Await .then():", result1_then);
+    if result1 == 10 {
+        print("  Original [PASS]");
+    } else {
+        print("  Original [FAIL]");
+    }
+    if result1_then == 20 {
+        print("  .then() [PASS]");
+    } else {
+        print("  .then() [FAIL], got", result1_then);
+    }
+
+    // Test 2: Multiple .then() chaining
+    print("\nTest 2: Multiple .then() chaining");
+    let p2 = Promise(fn(resolve, reject) {
+        resolve(5);
+    });
+    let p2_chain = p2.then(fn(v) {
+        return v + 1;
+    }).then(fn(v) {
+        return v * 2;
+    });
+    let result2 = await p2_chain;
+    print("  (5 + 1) * 2 =", result2);
+    if result2 == 12 {
+        print("  [PASS]");
+    } else {
+        print("  [FAIL] Expected 12, got", result2);
+    }
+
+    // Test 3: .then() with closure capture
+    print("\nTest 3: .then() with closure capture");
+    let multiplier = 10;
+    let p3 = Promise(fn(resolve, reject) {
+        resolve(7);
+    });
+    let p3_then = p3.then(fn(v) {
+        return v * multiplier;
+    });
+    let result3 = await p3_then;
+    print("  7 * 10 =", result3);
+    if result3 == 70 {
+        print("  [PASS]");
+    } else {
+        print("  [FAIL] Expected 70, got", result3);
+    }
+
+    // Test 4: .then() returning different type
+    print("\nTest 4: .then() returning different type");
+    let p4 = Promise(fn(resolve, reject) {
+        resolve(42);
+    });
+    let p4_then = p4.then(fn(v) {
+        return "The answer is: " + v;
+    });
+    let result4 = await p4_then;
+    print(" ", result4);
+    if result4 == "The answer is: 42" {
+        print("  [PASS]");
+    } else {
+        print("  [FAIL]");
+    }
+
+    print("\n=== Tests Complete ===");
+}

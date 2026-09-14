@@ -1,0 +1,15 @@
+// AdeshLang: Shared Borrow Example
+// Multiple readers of the same data using references (&)
+
+fn print_val(val) {
+    print("Value: " + str(val));
+}
+
+fn main() {
+    let x = 42;
+    let r1 = &x;
+    let r2 = &x;
+    print_val(r1);
+    print_val(r2);
+    print("Original: " + str(x));
+}

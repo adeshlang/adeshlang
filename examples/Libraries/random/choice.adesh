@@ -1,0 +1,10 @@
+import Random;
+
+print("--- Choice Demo ---");
+let fruits = ["apple", "banana", "cherry", "dragonfruit", "elderberry"];
+
+let selected = Random.choice(fruits);
+print("Randomly selected fruit: " + selected);
+
+let selected2 = Random.choice(fruits);
+print("Another selection: " + selected2);

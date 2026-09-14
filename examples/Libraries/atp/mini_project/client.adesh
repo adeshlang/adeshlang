@@ -1,0 +1,169 @@
+// ╔═══════════════════════════════════════════════════════════════════════════════╗
+// ║       ATP Real-Time IoT & Fleet Telemetry Mini-Project — Edge Node Client     ║
+// ║                                                                               ║
+// ║  A production-ready connected vehicle edge node client:                       ║
+// ║    • High-frequency live GPS & sensor telemetry stream via ATP datagrams      ║
+// ║    • Dedicated high-priority channel for safety interlock commands            ║
+// ║    • Cryptographic HMAC command authentication & validation                   ║
+// ║    • Seamless connection migration (WiFi Depot -> 5G Cellular Tower)          ║
+// ║    • Automatic local throttling upon safety command reception                 ║
+// ║                                                                               ║
+// ║  Run: cargo run --bin adeshlang -- run examples/Libraries/atp/mini_project/client.adesh
+// ╚═══════════════════════════════════════════════════════════════════════════════╝
+
+// @allow(warnings)
+import ATP;
+import JSON;
+import Crypto;
+import Time;
+
+print("==================================================================");
+print("     Connected Vehicle Edge Node Telemetry Client (ATP Engine)    ");
+print("==================================================================");
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 1. DATA MODELS & INITIAL STATE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+struct VehicleNodeConfig {
+    vehicleId: int,
+    vin: string,
+    serverHost: string,
+    serverPort: int,
+    secretKey: string
+}
+
+fn delayMs(ms: int) {
+    let start = Time.epochMillis();
+    while (Time.epochMillis() - start < ms) {}
+}
+
+let nodeConfig = VehicleNodeConfig {
+    vehicleId: 101,
+    vin: "1HGCR2F83HA009101",
+    serverHost: "127.0.0.1",
+    serverPort: 9150,
+    secretKey: "fleet-command-secret-key-atp-2026"
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 2. CONNECT TO FLEET COMMAND SERVER
+// ═══════════════════════════════════════════════════════════════════════════════
+
+print("[Vehicle #" + nodeConfig.vehicleId + "] Connecting to Fleet Command (" + nodeConfig.serverHost + ":" + nodeConfig.serverPort + ")...");
+let conn = ATP.connect(nodeConfig.serverHost, nodeConfig.serverPort);
+
+// Wait for connection
+let connected: bool = false;
+for (let attempt = 0; attempt < 40; attempt = attempt + 1) {
+    let msg = conn.receive();
+    if (msg != null && msg.type == "connected") {
+        connected = true;
+        break;
+    }
+    delayMs(20);
+}
+
+if (!connected) {
+    print("[error] Failed to connect to Command Center. Make sure server.adesh is running!");
+    conn.close();
+} else {
+    print("[ok] Vehicle #" + nodeConfig.vehicleId + " connected via secure ATP session.\n");
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 3. TELEMETRY TRANSMISSION & REAL-TIME DRIVING SIMULATION
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    let currentLat: float = 37.7749;
+    let currentLon: float = -122.4194;
+    let speed: float = 65.0;
+    let battery: float = 88.0;
+    let tempC: float = 90.0;
+    let tirePsi: float = 32.0;
+
+    print("--- 1. Streaming Live Sensor Telemetry (Unreliable Datagrams) ---");
+
+    for (let frame = 1; frame <= 10; frame = frame + 1) {
+        // Simulate vehicle driving dynamics
+        currentLat = currentLat + 0.0012;
+        currentLon = currentLon + 0.0008;
+        speed = speed + (frame % 2 == 0 ? 2.5 : -1.5);
+        battery = battery - 0.2;
+
+        // Simulate high temperature on frame 7 to trigger safety intervention
+        if (frame == 7) {
+            tempC = 108.5; // Trigger overheating alert
+        } else {
+            tempC = 92.0 + frame * 0.5;
+        }
+
+        let telemetry = {
+            type: "TELEMETRY",
+            vehicleId: nodeConfig.vehicleId,
+            vin: nodeConfig.vin,
+            timestamp: Time.epochMillis(),
+            lat: currentLat,
+            lon: currentLon,
+            speedKmh: speed,
+            batteryPct: battery,
+            engineTempC: tempC,
+            tirePressurePsi: tirePsi,
+            status: tempC > 105 ? "OVERHEAT_WARNING" : "CRUISING"
+        };
+
+        let jsonPayload = JSON.stringify(telemetry);
+        conn.datagram(jsonPayload);
+        print("  [Tx Datagram #" + frame + "] Lat=" + currentLat + " Lon=" + currentLon
+              + " Speed=" + speed + " km/h Temp=" + tempC + "°C");
+
+        // Check for incoming safety commands
+        let incoming = conn.receive();
+        while (incoming != null) {
+            if (incoming.type == "message") {
+                let cmd = JSON.parse(incoming.text);
+                if (cmd != null && cmd.type == "COMMAND") {
+                    print("\n  ⚠️ [CRITICAL COMMAND RECEIVED FROM FLEET SERVER]");
+                    print("     Action: " + cmd.action);
+                    print("     Speed Limit Imposed: " + cmd.speedLimit + " km/h");
+                    print("     Rerouting to: " + cmd.destination);
+
+                    // Validate HMAC cryptographic signature
+                    let expectedSig = Crypto.hmac("sha256", nodeConfig.secretKey, "CMD:" + cmd.action + ":" + nodeConfig.vehicleId);
+                    if (cmd.authSignature == expectedSig) {
+                        print("     [ok] HMAC Signature VERIFIED (Command Authenticity Confirmed)");
+                        speed = cmd.speedLimit; // Apply speed restriction
+                        tempC = 85.0; // Cooling down
+                        conn.send("ACK_SAFETY_INTERVENTION: Executed " + cmd.action + " -> Speed set to " + speed + " km/h", true, true);
+                    } else {
+                        print("     [error] INVALID SIGNATURE — Command Rejected!");
+                    }
+                    print("");
+                }
+            }
+            incoming = conn.receive();
+        }
+
+        // Demonstrate connection migration at frame 5 (WiFi Depot -> 5G Cellular Tower)
+        if (frame == 5) {
+            print("\n  🔄 [MIGRATION] Vehicle leaving depot — Migrating session to 5G Cellular Interface...");
+            conn.migrate("127.0.0.1", nodeConfig.serverPort);
+            print("  [ok] Migrated to 5G network with zero connection reset!\n");
+        }
+
+        delayMs(25);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 4. METRICS & SHUTDOWN
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    print("\n--- 2. Vehicle Edge Node Telemetry Metrics ---");
+    let metrics = conn.metrics();
+    print("[Metrics] Messages Sent:     " + metrics.messagesSent);
+    print("[Metrics] Packets Sent:      " + metrics.packetsSent);
+    print("[Metrics] Packets Received:  " + metrics.packetsReceived);
+    print("[Metrics] Total Data Volume: " + metrics.bytesSent + " B sent / " + metrics.bytesReceived + " B recv");
+
+    conn.close();
+    print("\n[ok] Vehicle #" + nodeConfig.vehicleId + " disconnected cleanly.\n");
+}

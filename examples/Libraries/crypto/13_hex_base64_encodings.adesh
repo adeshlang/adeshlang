@@ -1,0 +1,13 @@
+// 13 - Hexadecimal & Base64 Encodings and Decodings
+import Crypto;
+
+let rawBytes = [65, 100, 101, 115, 104, 76, 97, 110, 103];
+
+let hexStr = Crypto.encodeHex(rawBytes);
+print("Hex Encoded:   ", hexStr);
+
+let b64Str = Crypto.encodeBase64(rawBytes);
+print("Base64 Encoded:", b64Str);
+
+let decodedBytes = Crypto.decodeHex(hexStr);
+print("Decoded Bytes Count:", len(decodedBytes));

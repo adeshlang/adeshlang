@@ -1,0 +1,34 @@
+// AdeshLang Net Example 01: Advanced IP Addressing & Classification
+import Net;
+
+fn main() {
+    print("=== 01. Advanced IP Addressing & Classification ===");
+
+    // 1. Standard IPv4 Addresses
+    let loopback4 = Net.IPAddress.parse("127.0.0.1");
+    print("IPv4 127.0.0.1 -> IsLoopback:", loopback4.isLoopback, "IsPrivate:", loopback4.isPrivate, "IsGlobal:", loopback4.isGlobal);
+
+    let private4 = Net.IPAddress.parse("192.168.1.100");
+    print("IPv4 192.168.1.100 -> IsPrivate:", private4.isPrivate, "IsGlobal:", private4.isGlobal);
+
+    let doc4 = Net.IPAddress.parse("192.0.2.1");
+    print("IPv4 192.0.2.1 -> IsDocumentation:", doc4.isDocumentation, "IsGlobal:", doc4.isGlobal);
+
+    // 2. Standard IPv6 & Zone Scope Identifiers
+    let loopback6 = Net.IPAddress.parse("::1");
+    print("IPv6 ::1 -> IsLoopback:", loopback6.isLoopback, "Version:", loopback6.version);
+
+    let linkLocal6 = Net.IPAddress.parse("fe80::1%eth0");
+    print("IPv6 fe80::1%eth0 -> IsLinkLocal:", linkLocal6.isLinkLocal, "Zone:", linkLocal6.zone, "Canonical:", linkLocal6.address);
+
+    let global6 = Net.IPAddress.parse("2001:db8::1");
+    print("IPv6 2001:db8::1 -> IsDocumentation:", global6.isDocumentation, "IsGlobal:", global6.isGlobal);
+
+    // 3. IPv4-Mapped IPv6 Addresses
+    let mapped6 = Net.IPAddress.parse("::ffff:192.0.2.1");
+    print("IPv6 Mapped ::ffff:192.0.2.1 -> Version:", mapped6.version, "Address:", mapped6.address);
+
+    print("=== 01. IP Addressing Completed ===");
+}
+
+main();

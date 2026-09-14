@@ -1,0 +1,8 @@
+// Structs in AdeshLang
+
+struct Point {
+    x: 10,
+    y: 20
+}
+
+print("Point struct sample");

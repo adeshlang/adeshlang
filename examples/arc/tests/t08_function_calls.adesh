@@ -1,0 +1,76 @@
+// examples/arc/tests/t08_function_calls.adesh
+// T08 – ARC through function parameters and return values
+
+
+fn count_inside(obj) {
+    return obj.strong_count();
+}
+
+fn count_via_weak(w) {
+    let up = w.upgrade();
+    if (up != null) {
+        return up.strong_count();
+    }
+    return 0;
+}
+
+fn make_ref(src) {
+    strong r = src;
+    return r;   // ownership transferred out
+}
+
+fn identity(o) { return o; }
+fn wrap(o)     { return identity(o); }
+
+export fn run() {
+    let PASS = 0;
+    let FAIL = 0;
+
+    fn check(cond, msg) {
+        if (cond) {
+            print("  ✓ PASS:", msg);
+            PASS = PASS + 1;
+        } else {
+            print("  ✗ FAIL:", msg);
+            FAIL = FAIL + 1;
+        }
+    }
+
+print("=== T08: ARC through function calls ===\n");
+
+// ── Passing a shared obj to a function (count bumps then drops) ───────────
+
+share obj = { value: 77 };
+check(obj.strong_count() == 1, "baseline count 1");
+
+let c = count_inside(obj);
+check(c == 3, "count inside fn is 3 (obj param adds 2 due to av vector)");
+check(obj.strong_count() == 1, "count back to 1 after fn returns");
+
+// ── Passing weak ref – strong count unaffected ───────────────────────────
+
+weak wk = obj;
+let wc = count_via_weak(wk);
+// inside fn: obj(1) + up(1) = 2
+check(wc == 2, "strong_count inside weak-fn is 2 (obj + upgrade)");
+check(obj.strong_count() == 1, "count back to 1 after weak-fn returns");
+
+// ── Returning a strong ref from a function ────────────────────────────────
+
+strong kept = make_ref(obj);
+// obj(1) + kept(1) = 2
+check(obj.strong_count() == 2, "count 2 after function returns strong ref");
+
+// ── Chained calls ─────────────────────────────────────────────────────────
+
+let v = wrap(obj);
+// After chain unwinds, only obj + kept remain
+check(obj.strong_count() == 3, "count stable after chained calls");
+check(v.value == 77, "value intact through chain");
+
+print("\nPASS:", PASS, " FAIL:", FAIL);
+
+    return { pass: PASS, fail: FAIL };
+}
+
+run();

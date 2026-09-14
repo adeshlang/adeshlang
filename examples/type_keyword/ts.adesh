@@ -1,0 +1,12 @@
+type User = { name?: String, age?: int };
+  
+fn makeUser(name: String,age:int =10): User {
+    return { name: name, age: age };
+}
+
+let u: User = { name: "Ajay" };
+print("User name:", u.name);
+print("User age:", u.age);
+let bad:User = { age: 30 };
+print(u);
+print("Bad user name:", bad.name, "age:", bad.age);

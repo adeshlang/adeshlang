@@ -1,0 +1,29 @@
+// Example 2: Pretty Print Modes
+// Demonstrates different pretty print modes: full, compact, and simple
+
+let data = {
+    id: 12345,
+    name: "Product",
+    price: 99.99,
+    tags: ["electronics", "gadget", "new"],
+    specs: {
+        weight: "500g",
+        dimensions: "10x5x2 cm"
+    }
+};
+
+println("=== FULL MODE (default) ===");
+println("Shows types, full colors, and all details");
+print(data, { pretty: true });
+// Same as: print(data, { pretty: "full" });
+
+println("\n=== COMPACT MODE ===");
+println("Minimal formatting, no type hints");
+print(data, { pretty: "compact" });
+
+println("\n=== SIMPLE MODE ===");
+println("Basic colors, good for terminals with limited color support");
+print(data, { pretty: "simple" });
+
+println("\n=== NO PRETTY (regular print) ===");
+print(data);

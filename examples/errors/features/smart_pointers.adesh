@@ -1,0 +1,231 @@
+// =============================================================================
+// AdeshLang v0.2.0 - Smart Pointer and Ownership Demo
+// =============================================================================
+// This example demonstrates the ownership and reference semantics in AdeshLang.
+// While AdeshLang doesn't have a full borrow checker like Rust, it provides
+// infrastructure for safe memory management through reference counting
+// and ownership tracking.
+//
+// Key concepts demonstrated:
+// - Value vs Reference types
+// - Reference counting behavior
+// - Avoiding common memory pitfalls
+// =============================================================================
+
+print("=== AdeshLang v0.2.0 Smart Pointer & Ownership Demo ===\n");
+
+// -----------------------------------------------------------------------------
+// 1. Value Types vs Reference Types
+// -----------------------------------------------------------------------------
+
+print("--- Value vs Reference Types ---");
+
+// Primitive types are copied (value semantics)
+let num1 = 42;
+let num2 = num1;  // Copy
+num2 = 100;
+print("After modifying num2:");
+print("  num1 = " + num1);  // Still 42
+print("  num2 = " + num2);  // 100
+
+let str1 = "hello";
+let str2 = &str1;  // Small strings may be copied (SSO)
+print("  str1 = " + str1);
+print("  str2 = " + str2);
+print("");
+
+// Complex types are references (reference semantics)
+print("--- Reference Types ---");
+
+let arr1 = [1, 2, 3];
+let arr2 = arr1;  // Reference to same array
+// Use array concatenation to add elements
+arr2 = arr2 + [4];
+print("After modifying arr2:");
+print("  arr1 = " + str(arr1));  // [1, 2, 3] - original unchanged
+print("  arr2 = " + str(arr2));  // [1, 2, 3, 4] - new array
+print("");
+
+// -----------------------------------------------------------------------------
+// 2. Creating Independent Copies
+// -----------------------------------------------------------------------------
+
+print("--- Creating Copies ---");
+
+// To create an independent copy, manually copy elements
+fn copyArray(arr) {
+    let copy = [];
+    for (item in arr) {
+        copy = copy + [item];
+    }
+    return copy;
+}
+
+let original = [10, 20, 30];
+let copied = copyArray(original);
+copied = copied + [40];
+
+print("After adding 40 to copied:");
+print("  original = " + str(original));  // [10, 20, 30]
+print("  copied = " + str(copied));      // [10, 20, 30, 40]
+print("");
+
+// For objects, copy each property
+fn copyObject(obj) {
+    let copy = {};
+    // Manual property copy (simplified)
+    return copy;
+}
+
+// -----------------------------------------------------------------------------
+// 3. Reference Counting in Action
+// -----------------------------------------------------------------------------
+
+print("--- Reference Counting ---");
+
+// Multiple references keep object alive
+let shared = {data: "important"};
+let ref1 = shared;
+let ref2 = shared;
+let ref3 = ref2;
+
+print("Object shared by 4 references");
+print("  shared.data = " + shared.data);
+print("  ref3.data = " + ref3.data);
+
+// Object stays alive until all references are gone
+ref1 = null;
+ref2 = null;
+print("After clearing ref1 and ref2, ref3 still works:");
+print("  ref3.data = " + ref3.data);
+print("");
+
+// -----------------------------------------------------------------------------
+// 4. Avoiding Circular References
+// -----------------------------------------------------------------------------
+
+print("--- Circular Reference Awareness ---");
+
+// Be careful with circular references
+// AdeshLang's infrastructure tracks these but cleanup requires care
+
+class Node {
+    fn init(value) {
+        this.value = value;
+        this.next = null;
+    }
+    
+    fn setNext(node) {
+        this.next = node;
+    }
+}
+
+// Linear chain - no issues
+let node1 = new Node(1);
+let node2 = new Node(2);
+let node3 = new Node(3);
+node1.setNext(node2);
+node2.setNext(node3);
+
+print("Linear chain:");
+print("  node1.value = " + node1.value);
+print("  node1.next.value = " + node1.next.value);
+print("  node1.next.next.value = " + node1.next.next.value);
+print("");
+
+// Best practice: Break chains before discarding
+node1 = null;
+node2 = null;
+node3 = null;
+
+// -----------------------------------------------------------------------------
+// 5. Function Parameter Semantics
+// -----------------------------------------------------------------------------
+
+print("--- Function Parameter Semantics ---");
+
+// Primitives are passed by value
+fn tryModifyNumber(n) {
+    n = n * 2;
+    print("  Inside function: n = " + n);
+}
+
+let myNum = 10;
+print("Before function call: myNum = " + myNum);
+tryModifyNumber(myNum);
+print("After function call: myNum = " + myNum);  // Still 10
+print("");
+
+// Objects are passed by reference
+fn modifyObject(obj) {
+    obj.modified = true;
+    print("  Inside function: obj.modified = " + obj.modified);
+}
+
+let myObj = {modified: false};
+print("Before function call: myObj.modified = " + myObj.modified);
+modifyObject(myObj);
+print("After function call: myObj.modified = " + myObj.modified);  // true
+print("");
+
+// -----------------------------------------------------------------------------
+// 6. Safe Patterns
+// -----------------------------------------------------------------------------
+
+print("--- Safe Ownership Patterns ---");
+
+// Pattern 1: Factory functions return new objects
+fn createPerson(name, age) {
+    return {name: name, age: age};  // New object each call
+}
+
+let person1 = createPerson("Alice", 30);
+let person2 = createPerson("Bob", 25);
+print("Factory pattern creates independent objects:");
+print("  person1.name = " + person1.name);
+print("  person2.name = " + person2.name);
+print("");
+
+// Pattern 2: Builder pattern for complex objects
+class PersonBuilder {
+    fn init() {
+        this.result = {};
+    }
+    
+    fn withName(name) {
+        this.result.name = name;
+        return this;
+    }
+    
+    fn withAge(age) {
+        this.result.age = age;
+        return this;
+    }
+    
+    fn build() {
+        let person = this.result;
+        this.result = {};  // Reset for reuse
+        return person;
+    }
+}
+
+let builder = new PersonBuilder();
+let charlie = builder.withName("Charlie").withAge(35).build();
+print("Builder pattern:");
+print("  charlie.name = " + charlie.name);
+print("  charlie.age = " + charlie.age);
+print("");
+
+// -----------------------------------------------------------------------------
+// Summary
+// -----------------------------------------------------------------------------
+
+print("=== Ownership Summary ===");
+print("1. Primitives use value semantics (copied)");
+print("2. Objects/Arrays use reference semantics (shared)");
+print("3. Reference counting manages memory automatically");
+print("4. Use factory functions for independent copies");
+print("5. Be mindful of circular references");
+print("6. Function parameters follow same rules");
+print("");
+print("=== Demo Complete ===");

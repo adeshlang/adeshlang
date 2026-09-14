@@ -1,0 +1,74 @@
+// Example 6: Comprehensive FFI Demo
+// Demonstrates using $cImport for automatic header parsing
+
+$cImport("mylib.h")
+
+/* Alternative: Manual declarations
+extern "C" {
+    fn add_int(a: i32, b: i32) -> i32;
+    fn square_root(x: f64) -> f64;
+    fn string_length(s: ptr<u8>) -> usize;
+    fn random_seed(seed: u32) -> void;
+    fn random_int(min: i32, max: i32) -> i32;
+    fn get_timestamp() -> i64;
+    fn is_prime(n: i32) -> i32;
+    fn is_even(n: i32) -> i32;
+    fn factorial(n: i32) -> i64;
+}
+*/
+
+fn main() {
+    print("=== Comprehensive FFI Demonstration ===\n\n");
+    
+    // Math operations
+    print("Math Operations:\n");
+    print("  10 + 5 = ");
+    print(add_int(10, 5));
+    print("\n");
+    
+    print("  sqrt(81) = ");
+    print(square_root(81.0));
+    print("\n");
+    
+    // String operations
+    print("\nString Operations:\n");
+    let text = "AdeshLang";
+    print("  Length of '");
+    print(text);
+    print("': ");
+    print(string_length(text));
+    print("\n");
+    
+    // Boolean checks
+    print("\nBoolean Checks:\n");
+    print("  Is 42 even? ");
+    if is_even(42) {
+        print("Yes\n");
+    } else {
+        print("No\n");
+    }
+    
+    print("  Is 17 prime? ");
+    if is_prime(17) {
+        print("Yes\n");
+    } else {
+        print("No\n");
+    }
+    
+    // Random numbers
+    print("\nRandom Numbers:\n");
+    random_seed(12345);
+    print("  Random int (1-100): ");
+    print(random_int(1, 100));
+    print("\n");
+    
+    // Factorial
+    print("\nFactorial:\n");
+    print("  7! = ");
+    print(factorial(7));
+    print("\n");
+    
+    print("\n✓ All functions from mylib.h are accessible!\n");
+}
+
+// To run: adesh run example6_cimport.adesh -L . -l mylib

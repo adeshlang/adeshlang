@@ -1,0 +1,17 @@
+// fib_recursive.ind — Recursive Fibonacci approaches
+
+print("=== Recursive Fibonacci Approaches ===");
+
+// Naive recursive approach - O(2^n)
+fn fib_naive(n) {
+    if (n <= 1) {
+        return n;
+    }
+    return fib_naive(n - 1) + fib_naive(n - 2);
+}
+
+print("fib_naive(10) =", fib_naive(10));
+print("fib_naive(12) =", fib_naive(12));
+print("fib_naive(15) =", fib_naive(15));
+
+print("=== Recursive Fibonacci Complete ===");

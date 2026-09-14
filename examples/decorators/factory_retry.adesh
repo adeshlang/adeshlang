@@ -1,0 +1,126 @@
+// ================================================
+// Decorator Factory Pattern
+// ================================================
+//
+// A decorator factory is a function that creates decorators.
+// This allows you to parameterize decorators.
+//
+// Structure:
+//   decorator factoryName(param1, param2, ...) {
+//     // Returns the actual decorator function
+//     return fn(target, meta) {
+//       // Returns the wrapper function
+//       return fn(...args) {
+//         // Implementation using factory parameters
+//       };
+//     };
+//   }
+//
+// Usage:
+//   @factoryName(value1, value2)
+//   fn myFunction() { ... }
+//
+// This example shows a retry decorator factory that:
+// - Takes a 'limit' parameter (max retry attempts)
+// - Returns a decorator that wraps functions with retry logic
+// - The wrapper retries the function up to 'limit' times
+//
+// ================================================
+
+/**
+ * Retry decorator factory
+ * Creates a decorator that retries a function up to 'limit' times
+ * 
+ * @param {number} limit - Maximum number of retry attempts
+ * @returns {function} A decorator function
+ */
+decorator retry(limit) {
+  print("🔧 Creating retry decorator with limit:", limit);
+  
+  // Return the actual decorator
+  return fn(target, meta) {
+    print("🔧 Applying retry decorator to:", meta.name);
+    
+    // Return the wrapper function
+    return fn(...args) {
+      let attempts = 0;
+      let result = null;
+      
+      print("\n🔄 Starting retry loop for", meta.name);
+      
+      // Try up to 'limit' times
+      while (attempts < limit) {
+        attempts = attempts + 1;
+        print("  Attempt", attempts, "of", limit);
+        
+        // Call the target function
+        let r = target(...args);
+        
+        // If successful (non-null result), return it
+        if (r != null) {
+          result = r;
+          print("  ✓ Success on attempt", attempts);
+          break;
+        }
+        
+        // Failed attempt
+        print("  ✗ Attempt", attempts, "failed (null result)");
+      }
+      
+      if (result == null) {
+        print("  ❌ All", limit, "attempts failed");
+      }
+      
+      return result;
+    };
+  };
+}
+
+// Example 1: Function that always succeeds
+print("\n=== Example 1: Always Succeeds ===");
+
+@retry(3)
+fn alwaysSucceeds() {
+  print("    → Executing alwaysSucceeds()");
+  return "success";
+}
+
+let result1 = alwaysSucceeds();
+print("Result:", result1);
+
+// Example 2: Function that fails sometimes
+print("\n\n=== Example 2: Succeeds After Retries ===");
+
+let callCounter = 0;
+
+@retry(3)
+fn sometimesFails() {
+  callCounter = callCounter + 1;
+  print("    → Executing sometimesFails() (call #" + callCounter + ")");
+  
+  // Fail first 2 times, succeed on 3rd
+  if (callCounter < 3) {
+    return null;  // Simulate failure
+  }
+  
+  return "success after retries";
+}
+
+let result2 = sometimesFails();
+print("Result:", result2);
+
+// Example 3: Function that always fails
+print("\n\n=== Example 3: Always Fails ===");
+
+@retry(3)
+fn alwaysFails() {
+  print("    → Executing alwaysFails()");
+  return null;  // Always returns null (failure)
+}
+
+let result3 = alwaysFails();
+print("Result:", result3);
+
+print("\n✓ Decorator factory demo complete!");
+print("\n💡 Key takeaway: Decorator factories allow you to");
+print("   create reusable decorators with different configurations.");

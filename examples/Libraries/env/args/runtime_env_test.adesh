@@ -1,0 +1,49 @@
+// Test runtime envRuntimeLoad mutation
+import Env;
+
+print("=== Testing Runtime envRuntimeLoad ===\n");
+
+// First, check if API_KEY exists in OS environment (should be null)
+print("Before envRuntimeLoad:");
+print("  env(API_KEY):", Env.env("API_KEY"));
+print("");
+
+// Load the .env file
+let de = Env.envFromFile("examples/args/.env");
+print("Loaded .env file as object:");
+print("  de.API_KEY:", de.API_KEY);
+print("  de.DB_HOST:", de.DB_HOST);
+print("  de.DEBUG:", de.DEBUG);
+print("");
+
+// Now call envRuntimeLoad to populate env() with .env values
+let count = Env.envRuntimeLoad(de);
+print("Called envRuntimeLoad(de)");
+print("  Loaded", count, "variables");
+print("");
+
+// After runtime load, env() should return .env values
+print("After envRuntimeLoad:");
+print("  env(API_KEY):", Env.env("API_KEY"));
+print("  env(DB_HOST):", Env.env("DB_HOST"));
+print("  env(DEBUG):", Env.env("DEBUG"));
+print("");
+
+// Verify the values match
+if Env.env("API_KEY") == "demo_key_123" {
+    print("✓ API_KEY loaded correctly",{color:"#00ff00"});
+} else {
+    print("✗ API_KEY mismatch");
+}
+
+if Env.env("DB_HOST") == "localhost" {
+    print("✓ DB_HOST loaded correctly",{color:"#00ff00"});
+} else {
+    print("✗ DB_HOST mismatch");
+}
+
+if Env.env("DEBUG") == "true" {
+    print("✓ DEBUG loaded correctly",{color:"#00ff00"});
+} else {
+    print("✗ DEBUG mismatch",{color:"#ff0000"});
+}

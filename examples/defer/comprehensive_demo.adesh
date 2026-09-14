@@ -1,0 +1,200 @@
+
+
+
+// Example 1: Basic LIFO execution
+fn example_basic() {
+    print("=== Example 1: Basic LIFO ===");
+    print("Start");
+    defer { print("Cleanup 1 (executed third)"); }
+    defer { print("Cleanup 2 (executed second)"); }
+    defer { print("Cleanup 3 (executed first)"); }
+    print("End of function");
+    print("");
+
+}
+
+// Example 2: Resource management pattern
+fn example_resource_management() {
+    print("=== Example 2: Resource Management ===");
+    
+    fn open_connection(name: string) {
+        print("Opening connection:", name);
+        defer { print("Closing connection:", name); }
+        print("Using connection:", name);
+    }
+    
+    open_connection("Database");
+    open_connection("API");
+    print("");
+}
+
+// Example 3: Nested scopes
+fn example_nested_scopes() {
+    print("=== Example 3: Nested Scopes ===");
+    defer { print("Outer scope defer"); }
+    
+    {
+        defer { print("Inner scope defer 1"); }
+        print("Inside inner scope");
+        defer { print("Inner scope defer 2"); }
+    }
+    
+    print("Back to outer scope");
+    print("");
+}
+
+
+
+// Example 4: Early return with cleanup
+fn example_early_return(should_fail: bool): string {
+    print("=== Example 4: Early Return ===");
+    defer { print("Cleanup always runs"); }
+    
+    if (should_fail) {
+        print("Failing early");
+        return "error";
+    }
+    
+    print("Success path");
+    return "success";
+}
+
+// Example 5: Loop with defer
+fn example_loop_defer() {
+    print("=== Example 5: Loop Defer ===");
+    let i = 0;
+    while (i < 3) {
+        defer { print("Cleanup iteration:", i); }
+        print("Executing iteration:", i);
+        i = i + 1;
+    }
+    print("");
+}
+
+// // Example 6: Multiple defers for complex cleanup
+fn example_complex_cleanup() {
+    print("=== Example 6: Complex Cleanup ===");
+    
+    // Simulate multi-step initialization
+    print("Step 1: Initialize system");
+    defer { print("Cleanup step 1"); }
+    
+    print("Step 2: Allocate resources");
+    defer { print("Cleanup step 2"); }
+    
+    print("Step 3: Configure settings");
+    defer { print("Cleanup step 3"); }
+    
+    print("All systems ready");
+    print("");
+}
+
+// // Example 7: Defer with variable capture
+fn example_variable_capture() {
+    print("=== Example 7: Variable Capture ===");
+    let count = 0;
+    
+    count = count + 1;
+    defer { print("Count at first defer:", count); }
+    
+    count = count + 1;
+    defer { print("Count at second defer:", count); }
+    
+    count = count + 1;
+    print("Final count:", count);
+    print("");
+}
+
+// // Example 8: Defer in conditional blocks
+fn example_conditional_defer(use_path_a: bool) {
+    print("=== Example 8: Conditional Defer ===");
+    
+    if (use_path_a) {
+        defer { print("Path A cleanup"); }
+        print("Executing path A");
+    } else {
+        defer { print("Path B cleanup"); }
+        print("Executing path B");
+    }
+    
+    print("After conditional");
+    print("");
+}
+
+// // Example 9: Chained defer operations
+fn example_chained_operations() {
+    print("=== Example 9: Chained Operations ===");
+    
+    fn step1() {
+        defer { print("Undo step 1"); }
+        print("Execute step 1");
+    }
+    
+    fn step2() {
+        defer { print("Undo step 2"); }
+        print("Execute step 2");
+    }
+    
+    fn step3() {
+        defer { print("Undo step 3"); }
+        print("Execute step 3");
+    }
+    
+    step1();
+    step2();
+    step3();
+    print("");
+}
+
+// // Example 10: Defer with function calls
+fn example_defer_with_functions() {
+    print("=== Example 10: Defer with Functions ===");
+    
+    fn cleanup_a() {
+        print("Cleanup function A");
+    }
+    
+    fn cleanup_b() {
+        print("Cleanup function B");
+    }
+    
+    defer { cleanup_a(); }
+    print("Main work");
+    defer { cleanup_b(); }
+    print("");
+}
+
+
+
+fn main() {
+    print("╔═══════════════════════════════════════╗");
+    print("║  AdeshLang Defer Keyword Demo          ║");
+    print("║  Deterministic Resource Cleanup       ║");
+    print("╚═══════════════════════════════════════╝");
+    print("");
+    
+    
+    example_basic();
+    example_resource_management();
+    example_nested_scopes();
+    
+    let result1 = example_early_return(false);
+    print("Result:", result1);
+    print("");
+    
+    let result2 = example_early_return(true);
+    print("Result:", result2);
+    print("");
+    
+    example_loop_defer();
+    example_complex_cleanup();
+    example_variable_capture();
+    example_conditional_defer(true);
+    example_conditional_defer(false);
+    example_chained_operations();
+    example_defer_with_functions();
+    
+    print("╔═══════════════════════════════════════╗");
+    print("║  All examples completed successfully  ║");
+    print("╚═══════════════════════════════════════╝");
+}

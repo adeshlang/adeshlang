@@ -1,0 +1,7 @@
+let values: [i32] = [3, 1, 2, 2];
+print(values.length(), values.first(), values.last());
+print(values.distinct().sort().join(","));
+print(values.sum(), values.min(), values.max());
+print(values.toSet(), values.toTuple());
+print(values.map(fn(x) { return x * 2; }));
+print(values.length);

@@ -1,0 +1,67 @@
+// AdeshLang Built-in JSON — Full Kitchen Sink Demo
+// Combines every JSON API in one realistic scenario:
+// loading a config, mutating it, round-tripping through bytes,
+// writing to a file, then reloading and validating.
+
+fn main() {
+    println("=== AdeshLang JSON — Full Demo ===\n");
+
+    // ── Step 1: Parse from multiline text cleanly using backticks ────────
+    let json_text = 
+    {
+        "service": "api",
+        "port": 3000,
+        "retries": 3,
+        "verbose": false
+    };
+    let cfg = JSON.parse(json_text);
+    println("Parsed service : " + cfg.service);
+    println("Parsed port    : " + str(cfg.port));
+
+    // ── Step 2: Modify fields ────────────────────────────────────────────
+    cfg.port    = 8080;
+    cfg.verbose = true;
+    cfg.tags    = ["production", "v3"];
+
+    // ── Step 3: Compact & pretty output ─────────────────────────────────
+    let compact = JSON.stringify(cfg);
+    let pretty  = JSON.stringifyPretty(cfg);
+    println("\nCompact:\n" + compact);
+    println("\nPretty:\n"  + pretty);
+
+    // ── Step 4: Minify a multiline JSON string ───────────────────────────
+    let hand = `
+    {
+        "meta": {
+            "build": "release"
+        }
+    }
+    `;
+    println("\nMinified: " + JSON.minify(hand));
+
+    // ── Step 5: Byte round-trip ──────────────────────────────────────────
+    let bytes    = JSON.stringifyBytes(cfg);
+    let restored = JSON.parseBytes(bytes);
+    if restored.port != 8080 {
+        throw "Byte round-trip port mismatch";
+    }
+    println("\nByte round-trip port : " + str(restored.port) + " ✓");
+
+    // ── Step 6: File round-trip ──────────────────────────────────────────
+    let path = "tmp_all_demo.json";
+    JSON.stringifyFile(path, cfg, true);
+    let from_file = JSON.parseFile(path);
+    if from_file.service != "api" {
+        throw "File round-trip service mismatch";
+    }
+    println("File round-trip service: " + str(from_file.service) + " ✓");
+
+    // ── Step 7: Validation ───────────────────────────────────────────────
+    println("\nisValid(compact) : " + JSON.isValid(compact));
+    println("isValid(\"nope\")  : " + JSON.isValid("nope"));
+
+    let safe = JSON.tryParse("{broken");
+    println("tryParse({broken): " + safe);    // null
+
+    println("\n=== All checks passed ===");
+}

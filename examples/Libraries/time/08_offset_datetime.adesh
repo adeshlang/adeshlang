@@ -1,0 +1,52 @@
+// 08_offset_datetime.adesh - OffsetDateTime with timezone offsets
+import Time;
+
+print("=== OffsetDateTime Examples ===\n");
+
+// --- Construction ---
+let utcNow: UtcDateTime = Time.utcDateTimeNow();
+let ist: UtcOffset = Time.utcOffsetHoursMinutes(5, 30);
+let pst: UtcOffset = Time.utcOffsetHours(-8);
+let jst: UtcOffset = Time.utcOffsetHours(9);
+
+let istNow: OffsetDateTime = Time.offsetDateTimeFromUtc(utcNow, ist);
+let pstNow: OffsetDateTime = Time.offsetDateTimeFromUtc(utcNow, pst);
+let jstNow: OffsetDateTime = Time.offsetDateTimeFromUtc(utcNow, jst);
+
+print("IST Now :", istNow.toIsoString());
+print("PST Now :", pstNow.toIsoString());
+print("JST Now :", jstNow.toIsoString());
+
+// --- Parsing ---
+let parsed: OffsetDateTime = Time.offsetDateTimeParse("2024-03-15T10:30:00+05:30");
+print("\nParsed    :", parsed.toIsoString());
+print("As UTC    :", parsed.toUtc().toIsoString());
+
+// --- Accessors ---
+print("\n--- Accessors (IST Now) ---");
+print("Year   :", istNow.year());
+print("Month  :", istNow.month());
+print("Day    :", istNow.day());
+print("Hour   :", istNow.hour());
+print("Minute :", istNow.minute());
+print("Second :", istNow.second());
+print("Date   :", istNow.date().toIsoString());
+print("Time   :", istNow.time().toIsoString());
+print("Offset :", istNow.offset().toString());
+
+// --- Convert between offsets ---
+print("\n--- Convert IST → PST ---");
+let pst2: OffsetDateTime = istNow.withOffset(pst);
+print("IST :", istNow.toIsoString());
+print("PST :", pst2.toIsoString());
+
+// --- Same instant check ---
+let istUtc: UtcDateTime = istNow.toUtc();
+let pstUtc: UtcDateTime = pstNow.toUtc();
+print("\nIST and PST same UTC instant:", istUtc.eq(pstUtc));
+
+// --- Arithmetic ---
+let plus2h: OffsetDateTime = istNow.add(Time.durationHours(2n));
+let minus1d: OffsetDateTime = istNow.sub(Time.durationDays(1n));
+print("\n+2h  :", plus2h.toIsoString());
+print("-1d  :", minus1d.toIsoString());

@@ -1,0 +1,20 @@
+// Filesystem watch demo
+import "fs";
+print("=== Filesystem Watch Demo ===");
+
+// Watch the examples/fs directory for changes
+print("Setting up watch on examples/fs directory...");
+let watchId = fs.watch("examples/fs", fn(event, path){
+    print("File change detected:");
+    print("  Event: " + event);
+    print("  Path: " + path);
+});
+
+print("Watch set up successfully");
+
+// In a real application, you would keep the watch active
+// For demo purposes, we skip unwatch to avoid timer issues
+// fs.unwatch(watchId);
+print("Demo completed (watch active)");
+
+print("=== Demo completed ===");

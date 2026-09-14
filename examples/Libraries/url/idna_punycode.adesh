@@ -1,0 +1,8 @@
+import URL;
+
+let unicodeDomain: String = "münich.example";
+let asciiDomain: String = URL.domainToAscii(unicodeDomain);
+
+print("Unicode Domain:", unicodeDomain);
+print("Punycode ASCII Domain:", asciiDomain);
+print("Decoded Unicode Domain:", URL.domainToUnicode(asciiDomain));

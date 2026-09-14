@@ -1,0 +1,11 @@
+// Voice input alias example
+// Delegates to core input; supports the same options
+// input.mock(["Test voice note"]);
+
+let note = input.voice("Say or type a note:", {
+  onStart: fn(){ print("[voice] start"); },
+  onSubmit: fn(s){ print("[voice] submitted:", s); },
+  def: "noop",
+  notEmpty: true
+});
+print("Final voice note:", note);

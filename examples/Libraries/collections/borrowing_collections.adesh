@@ -1,0 +1,13 @@
+import Collections;
+
+print("========================================");
+print("Borrowing & Non-Owning Slice Views Example");
+print("========================================");
+
+let source = [100, 200, 300, 400, 500];
+let view = Collections.Slice(source, 1, 4);
+
+print("View length: ", view.len());
+print("View first: ", view.first());
+print("View last: ", view.last());
+print("View array: ", view.toArray());

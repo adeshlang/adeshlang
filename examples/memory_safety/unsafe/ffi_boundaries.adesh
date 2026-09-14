@@ -1,0 +1,80 @@
+// FFI (Foreign Function Interface) Boundaries
+// Calling external code requires unsafe blocks
+
+fn main() {
+    print("=== FFI Safety Boundaries ===");
+    
+    // Calling foreign functions is inherently unsafe
+    // The compiler cannot verify external code
+    
+    let result = safe_wrapper_for_ffi();
+    print("Got result safely:", result);
+}
+
+// Safe wrapper around unsafe FFI
+fn safe_wrapper_for_ffi() {
+    // Validate inputs in safe code
+    let input = 42;
+    
+    if (input < 0) {
+        return 0;  // Safe default
+    }
+    
+    // Call unsafe FFI in unsafe block
+    unsafe {
+        // Hypothetical FFI call
+        // let result = external_function(input);
+        let result = input * 2;
+        
+        // Validate result before returning to safe code
+        if (result > 1000) {
+            return 1000;  // Cap at safe value
+        }
+        
+        return result;
+    }
+}
+
+// Pattern: Unsafe cannot escape to safe code
+fn proper_unsafe_containment() {
+    let safe_value = 10;
+    
+    // Avoid using `unsafe` as an expression; assign inside the unsafe block to an outer variable.
+    let  result = 0;
+    unsafe {
+        // Unsafe operations contained here
+        let temp = safe_value * 2;
+        result = temp;
+    }
+
+    // `result` is now in safe context
+    print("Safe result:", result);
+}
+
+// Anti-pattern: Don't let unsafe leak
+fn demonstrate_unsafe_boundary_rules() {
+    // ❌ This would be wrong:
+    // let unsafe_ptr = get_unsafe_pointer();  // ERROR: returns unsafe value to safe context
+    
+    // ✅ This is correct:
+    unsafe {
+        // let unsafe_ptr = get_unsafe_pointer();  // Contained in unsafe block
+        // validate_and_use(unsafe_ptr);
+    }
+}
+
+// Minimal unsafe surface area
+fn minimize_unsafe() {
+    // Keep unsafe blocks small
+    let data = [1, 2, 3];
+    
+    // Most of the logic is safe
+    print("Processing data:", data);
+    
+    // Only the truly unsafe parts are in unsafe blocks
+    unsafe {
+        // Minimal unsafe operation here
+    }
+    
+    print("Done safely");
+}

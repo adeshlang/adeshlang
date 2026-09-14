@@ -1,0 +1,108 @@
+// ╔═══════════════════════════════════════════════════════════════════════════════╗
+// ║  ATP Identity Authentication — handshake + echo demo                          ║
+// ║  Identity keys are configured in AtpConfig on the Rust side (not yet in API). ║
+// ║  Run: cargo run --bin adeshlang -- run examples/Libraries/atp/atp_identity.adesh
+// ╚═══════════════════════════════════════════════════════════════════════════════╝
+
+import ATP;
+import thread;
+import "./lib/atp_ports.adesh" as Ports;
+
+fn waitConnected(conn: any, maxMs: any): any {
+    let elapsed = 0;
+    while elapsed < maxMs {
+        let ev = conn.receive();
+        if (ev != null && ev.type == "connected") { return ev; }
+        thread.sleep(10);
+        elapsed = elapsed + 10;
+    }
+    return null;
+}
+
+fn recvMessage(conn: any, maxMs: any): any {
+    let elapsed = 0;
+    while elapsed < maxMs {
+        let ev = conn.receive();
+        if (ev != null && ev.type == "message") { return ev; }
+        thread.sleep(10);
+        elapsed = elapsed + 10;
+    }
+    return null;
+}
+
+fn acceptConn(server: any, maxMs: any): any {
+    let elapsed = 0;
+    while elapsed < maxMs {
+        let c = server.accept();
+        if (c != null && c.type == "AtpConnection") { return c; }
+        thread.sleep(10);
+        elapsed = elapsed + 10;
+    }
+    return null;
+}
+
+let port = Ports.port(3);
+
+print("=== ATP Identity Authentication ===");
+print("");
+print("Ed25519 identity proofs bind long-term keys to the handshake.");
+print("Configure on the Rust side via AtpConfig:");
+print("  server.set_identity_key(server_private_key)");
+print("  server.trust_peer(client_public_key)");
+print("  client.set_identity_key(client_private_key)");
+print("  client.trust_peer(server_public_key)");
+print("");
+print("Without matching trusted keys the handshake fails closed (MITM protection).");
+print("This demo runs a real encrypted handshake + echo without identity config.");
+print("");
+
+let serverThread = thread.spawn(fn() {
+    let server = ATP.listen(Ports.DEFAULT_HOST, port);
+    let conn = null;
+    let t = 0;
+    while (conn == null && t < 500) {
+        conn = server.accept();
+        t = t + 1;
+        thread.sleep(10);
+    }
+    if (conn != null) {
+        print("[server] awaiting identity handshake...");
+        let n = 0;
+        while (n < 40) {
+            let ev = conn.receive();
+            if (ev != null && ev.type == "connected") {
+                print("[server] handshake complete (X25519 + optional identity proof)");
+            } else if (ev != null && ev.type == "message") {
+                print("[server] received:", ev.data);
+                conn.send("trusted-echo:" + ev.data, true, true);
+            }
+            n = n + 1;
+            thread.sleep(10);
+        }
+        conn.close();
+    }
+    server.close();
+});
+
+thread.sleep(400);
+
+let conn = ATP.connect(Ports.DEFAULT_HOST, port);
+print("[client] connecting for identity handshake...");
+
+let connected = waitConnected(conn, 5000);
+if (connected == null) {
+    print("[client] ERROR: handshake failed");
+} else {
+    print("[client] handshake succeeded — secure channel established");
+    print("[client] connection id=" + conn.connectionId);
+}
+
+conn.send("identity-probe:who-are-you?", true, true);
+let reply = recvMessage(conn, 3000);
+if (reply != null) {
+    print("[client] echo:", reply.data);
+}
+
+conn.close();
+serverThread.join();
+print("\n=== Identity demo complete ===");

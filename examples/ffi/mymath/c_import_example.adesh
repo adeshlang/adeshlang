@@ -1,0 +1,40 @@
+// Example: Using $cImport to automatically parse C headers
+// Automatically extracts function declarations from C header files
+
+// Simple C header with some functions
+// Create mymath.h:
+// int add(int a, int b);
+// float multiply(float x, float y);
+// void print_hello(void);
+
+// Import the header - automatically generates extern declarations
+$cImport("mymath.h")
+
+fn main() {
+    print("Calling functions from C header:\n");
+    
+    // These functions are now available
+    let result = add(10, 32);
+    print("add(10, 32) = ");
+    print(result);
+    print("\n");
+    
+    let product = multiply(3.14, 2.0);
+    print("multiply(3.14, 2.0) = ");
+    print(product);
+    print("\n");
+    
+    print_hello();
+}
+
+// Equivalent to manually writing:
+// extern "C" {
+//     fn add(a: i32, b: i32) -> i32;
+//     fn multiply(x: f32, y: f32) -> f32;
+//     fn print_hello() -> void;
+// }
+
+// To run:
+// 1. Create mymath.h and mymath.c
+// 2. Compile: gcc -shared -fPIC -o libmymath.so mymath.c
+// 3. Run: adesh run c_import_example.adesh -L . -l mymath

@@ -1,0 +1,8 @@
+let usd = 19.9;
+let eur = 42.75;
+let jpy = 1000.0;
+let inr = 123456.78;
+print(`USD: ${usd:currency(USD)}`);
+print(`EUR: ${eur:currency(EUR)}`);
+print(`JPY: ${jpy:currency(JPY)}`);
+print(`INR: ${inr:currency(INR)}`);

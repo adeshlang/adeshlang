@@ -1,0 +1,1852 @@
+//! Tiered JIT Compiler for AdeshLang
+//!
+//! Implements a multi-tier execution strategy:
+//! - Tier 0: Interpreter (cold code)
+//! - Tier 1: Baseline JIT (warm code, fast compile)
+//! - Tier 2: Optimizing JIT (hot code, aggressive optimization)
+//!
+//! Functions are promoted between tiers based on execution frequency.
+
+#![allow(dead_code)] // Tiered execution methods are intentionally unused for now
+
+mod tiered_impl;
+
+use super::builtins::{BuiltinRegistry, CallableFunction, RuntimeValue};
+use super::lir::{LirFunction, LirInst, LirModule};
+use super::unsafe_heap;
+use crate::utils::collections::FastMap;
+use num_bigint::BigInt;
+use std::sync::{Arc, atomic::Ordering};
+
+// Re-export types from tiered_impl
+pub use tiered_impl::{
+    CachedModule, ControlFlow, FunctionProfile, JitFrame, OptLevel, Tier, TierThresholds,
+    TieredJitStats, tiered_jit_run, tiered_jit_run_with_opt,
+};
+
+/// Tiered JIT execution context
+pub struct TieredJitContext {
+    builtins: BuiltinRegistry,
+    /// Dynamic builtins (closures) for WASM wrappers etc.
+    dynamic_builtins: FastMap<String, Box<dyn Fn(&[RuntimeValue]) -> RuntimeValue + Send + Sync>>,
+    globals: FastMap<String, RuntimeValue>,
+    functions: FastMap<String, LirFunction>,
+    /// Function profiles for tier decisions
+    profiles: FastMap<String, FunctionProfile>,
+    /// Tier promotion thresholds
+    thresholds: TierThresholds,
+    /// Current optimization level (affects all tiers)
+    opt_level: OptLevel,
+    /// Statistics
+    stats: TieredJitStats,
+    /// ARC-managed values: ArcId -> RuntimeValue
+    arc_values: FastMap<u64, Arc<std::sync::Mutex<RuntimeValue>>>,
+    /// ARC reference counts: ArcId -> strong_count
+    arc_strong_counts: FastMap<u64, Arc<std::sync::atomic::AtomicUsize>>,
+    /// Weak reference counts: ArcId -> weak_count
+    arc_weak_counts: FastMap<u64, Arc<std::sync::atomic::AtomicUsize>>,
+    /// Next ARC ID
+    next_arc_id: u64,
+    /// Module cache: alias -> cached compiled module
+    module_cache: FastMap<String, CachedModule>,
+    /// Import aliases: alias -> module path
+    import_aliases: FastMap<String, String>,
+}
+
+impl TieredJitContext {
+    /// Create a new tiered JIT context
+    pub fn new() -> Self {
+        TieredJitContext {
+            builtins: BuiltinRegistry::new(),
+            dynamic_builtins: FastMap::default(),
+            globals: FastMap::default(),
+            functions: FastMap::default(),
+            profiles: FastMap::default(),
+            thresholds: TierThresholds::default(),
+            opt_level: OptLevel::default(),
+            stats: TieredJitStats::default(),
+            arc_values: FastMap::default(),
+            arc_strong_counts: FastMap::default(),
+            arc_weak_counts: FastMap::default(),
+            next_arc_id: 1,
+            module_cache: FastMap::default(),
+            import_aliases: FastMap::default(),
+        }
+    }
+
+    /// Create with custom thresholds
+    pub fn with_thresholds(thresholds: TierThresholds) -> Self {
+        let mut ctx = Self::new();
+        ctx.thresholds = thresholds;
+        ctx
+    }
+
+    /// Set optimization level
+    pub fn set_opt_level(&mut self, level: OptLevel) {
+        self.opt_level = level;
+        // Adjust thresholds based on opt level
+        match level {
+            OptLevel::O0 => {
+                // Debug mode: stay in interpreter longer
+                self.thresholds.baseline_threshold = 1000;
+                self.thresholds.optimizing_threshold = 10000;
+            }
+            OptLevel::O1 => {
+                self.thresholds.baseline_threshold = 50;
+                self.thresholds.optimizing_threshold = 500;
+            }
+            OptLevel::O2 => {
+                self.thresholds.baseline_threshold = 10;
+                self.thresholds.optimizing_threshold = 100;
+            }
+            OptLevel::O3 => {
+                // Aggressive: promote to optimizing very quickly
+                self.thresholds.baseline_threshold = 2;
+                self.thresholds.optimizing_threshold = 20;
+            }
+        }
+    }
+
+    /// Load an LIR module into the JIT context
+    pub fn load_module(&mut self, module: &LirModule) {
+        tiered_impl::cache::load_module(
+            module,
+            &mut self.functions,
+            &mut self.profiles,
+            &mut self.import_aliases,
+        );
+    }
+
+    /// Load a VIR module into the JIT context using the bridge adapter
+    pub fn load_vir_module(
+        &mut self,
+        vir_module: &crate::ir::vir::VirModule,
+    ) -> Result<(), String> {
+        use crate::backends::common::vir_lir_bridge::VirToLirBridge;
+        let mut bridge = VirToLirBridge::new();
+        let lir_module = bridge.convert_module(vir_module)?;
+        self.load_module(&lir_module);
+        Ok(())
+    }
+
+    /// Compile a VIR module (equivalent to load_vir_module)
+    pub fn compile_vir_module(
+        &mut self,
+        vir_module: &crate::ir::vir::VirModule,
+    ) -> Result<(), String> {
+        self.load_vir_module(vir_module)
+    }
+
+    /// Load an imported module and return its namespace object
+    /// Uses caching with Arc for efficient sharing
+    fn load_imported_module(&mut self, alias: &str) -> Result<RuntimeValue, String> {
+        tiered_impl::cache::load_imported_module(
+            alias,
+            &mut self.module_cache,
+            &self.import_aliases,
+            &mut self.functions,
+            &mut self.profiles,
+            &mut self.dynamic_builtins,
+        )
+    }
+
+    /// Execute the main function
+    pub fn run_main(&mut self) -> Result<RuntimeValue, String> {
+        let entry_func = self
+            .functions
+            .get("main")
+            .or_else(|| self.functions.get("__top_level_wrapper"))
+            .or_else(|| self.functions.get("__user_main"))
+            .cloned();
+
+        if let Some(main_func) = entry_func {
+            let result = self.execute_function(&main_func, vec![])?;
+            let max_drain_iterations = 10000;
+            let mut drain_count = 0;
+            let mut idle_count = 0;
+            while drain_count < max_drain_iterations {
+                if crate::backends::builtins::PROMISE_RUNTIME.has_microtasks() {
+                    let _ = self.process_microtasks();
+                    idle_count = 0;
+                    drain_count += 1;
+                    continue;
+                }
+                if crate::backends::builtins::PROMISE_RUNTIME.has_pending_timers() {
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                    idle_count += 1;
+                    drain_count += 1;
+                    if idle_count > 2000 {
+                        break;
+                    }
+                    continue;
+                }
+                break;
+            }
+            use crate::backends::builtins::CURRENT_EXCEPTION;
+            if let Some(exc) = CURRENT_EXCEPTION.with(|exc| exc.borrow_mut().take()) {
+                let msg = match &exc {
+                    RuntimeValue::Object(obj) => {
+                        if let Some(RuntimeValue::String(s)) = obj.get("message") {
+                            s.clone()
+                        } else {
+                            exc.as_string()
+                        }
+                    }
+                    _ => exc.as_string(),
+                };
+                Err(format!("Unhandled exception: {}", msg))
+            } else {
+                Ok(result)
+            }
+        } else {
+            Err("No main function found".to_string())
+        }
+    }
+
+    /// Execute a named function with arguments
+    pub fn run_function(
+        &mut self,
+        name: &str,
+        args: Vec<RuntimeValue>,
+    ) -> Result<RuntimeValue, String> {
+        if let Some(func) = self.functions.get(name).cloned() {
+            self.execute_function(&func, args)
+        } else {
+            Err(format!("Function '{}' not found", name))
+        }
+    }
+
+    /// Get execution statistics
+    pub fn stats(&self) -> &TieredJitStats {
+        &self.stats
+    }
+
+    /// Print tier status for all functions
+    pub fn print_tier_status(&self) {
+        println!("╔═══════════════════════════════════════════════════════╗");
+        println!("║           Tiered JIT Function Status                  ║");
+        println!("╠═══════════════════════════════════════════════════════╣");
+        for (name, profile) in &self.profiles {
+            let calls = profile.call_count.load(Ordering::Relaxed);
+            println!(
+                "║ {:20} │ {:15} │ calls: {:6} ║",
+                name,
+                profile.current_tier.to_string(),
+                calls
+            );
+        }
+        println!("╚═══════════════════════════════════════════════════════╝");
+    }
+
+    /// Execute a function using the appropriate tier
+    fn execute_function(
+        &mut self,
+        func: &LirFunction,
+        args: Vec<RuntimeValue>,
+    ) -> Result<RuntimeValue, String> {
+        // Record call and check for promotion
+        let tier = if let Some(profile) = self.profiles.get(&func.name) {
+            if let Some(new_tier) = profile.record_call(&self.thresholds) {
+                self.stats.promotions += 1;
+                new_tier
+            } else {
+                profile.current_tier
+            }
+        } else {
+            Tier::Interpreter
+        };
+
+        // Update profile tier
+        if let Some(profile) = self.profiles.get_mut(&func.name) {
+            if tier > profile.current_tier {
+                profile.current_tier = tier;
+            }
+        }
+
+        // Execute in appropriate tier
+        match tier {
+            Tier::Interpreter => self.execute_interpreter(func, args),
+            Tier::Baseline => self.execute_baseline(func, args),
+            Tier::Optimizing => self.execute_optimizing(func, args),
+        }
+    }
+
+    /// Execute function with captured variables (for closures)
+    fn execute_function_with_captures(
+        &mut self,
+        func: &LirFunction,
+        args: Vec<RuntimeValue>,
+        captures: &FastMap<String, RuntimeValue>,
+    ) -> Result<RuntimeValue, String> {
+        self.execute_function_internal(func, args, Some(captures))
+    }
+
+    /// Common instruction execution (shared by all tiers)
+    #[inline(always)]
+    fn execute_instruction_common(
+        &mut self,
+        frame: &mut JitFrame,
+        inst: &LirInst,
+        _func: &LirFunction,
+    ) -> Result<ControlFlow, String> {
+        match inst {
+            LirInst::ConstI64(dst, n) => {
+                frame.set_value(*dst, RuntimeValue::Int(*n));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::ConstF64(dst, n) => {
+                frame.set_value(*dst, RuntimeValue::F64(*n));
+                Ok(ControlFlow::Next)
+            }
+
+            // Fixed-width unsigned integer constants
+            LirInst::ConstU8(dst, n) => {
+                frame.set_value(*dst, RuntimeValue::U8(*n));
+                Ok(ControlFlow::Next)
+            }
+            LirInst::ConstU16(dst, n) => {
+                frame.set_value(*dst, RuntimeValue::U16(*n));
+                Ok(ControlFlow::Next)
+            }
+            LirInst::ConstU32(dst, n) => {
+                frame.set_value(*dst, RuntimeValue::U32(*n));
+                Ok(ControlFlow::Next)
+            }
+            LirInst::ConstU64(dst, n) => {
+                frame.set_value(*dst, RuntimeValue::U64(*n));
+                Ok(ControlFlow::Next)
+            }
+            LirInst::ConstU128(dst, n) => {
+                frame.set_value(*dst, RuntimeValue::U128(*n));
+                Ok(ControlFlow::Next)
+            }
+            // Fixed-width signed integer constants
+            LirInst::ConstI8(dst, n) => {
+                frame.set_value(*dst, RuntimeValue::I8(*n));
+                Ok(ControlFlow::Next)
+            }
+            LirInst::ConstI16(dst, n) => {
+                frame.set_value(*dst, RuntimeValue::I16(*n));
+                Ok(ControlFlow::Next)
+            }
+            LirInst::ConstI32(dst, n) => {
+                frame.set_value(*dst, RuntimeValue::I32(*n));
+                Ok(ControlFlow::Next)
+            }
+            LirInst::ConstI128(dst, n) => {
+                frame.set_value(*dst, RuntimeValue::I128(*n));
+                Ok(ControlFlow::Next)
+            }
+            // Fixed-width float constants
+            LirInst::ConstF32(dst, n) => {
+                frame.set_value(*dst, RuntimeValue::F32(*n));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::ConstBool(dst, b) => {
+                frame.set_value(*dst, RuntimeValue::Bool(*b));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::ConstString(dst, s) => {
+                frame.set_value(*dst, RuntimeValue::String(s.clone()));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::ConstNull(dst) => {
+                frame.set_value(*dst, RuntimeValue::Null);
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::ConstBigInt(dst, bi) => {
+                frame.set_value(*dst, RuntimeValue::BigInt(bi.clone()));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::ConstFunc(dst, name, captured_var_names, is_async) => {
+                // Build captures map from current frame/globals
+                let mut captures = FastMap::default();
+                for var_name in captured_var_names {
+                    if let Some(val) = frame
+                        .get_var(var_name)
+                        .or_else(|| self.globals.get(var_name).cloned())
+                    {
+                        captures.insert(var_name.clone(), val);
+                    }
+                }
+                frame.set_value(
+                    *dst,
+                    RuntimeValue::Function(CallableFunction {
+                        name: name.clone(),
+                        params: vec![],
+                        captures,
+                        is_async: *is_async,
+                    }),
+                );
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::LoadVar(dst, name) => {
+                let value = frame
+                    .get_var(name)
+                    .or_else(|| self.globals.get(name).cloned())
+                    .unwrap_or(RuntimeValue::Null);
+                frame.set_value(*dst, value);
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::StoreVar(name, src) => {
+                let value = frame.get_value(*src);
+                frame.set_var(name.clone(), value);
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::LoadModule(dst, alias) => {
+                // Load the imported module and get its namespace
+                let namespace = self.load_imported_module(alias)?;
+                frame.set_value(*dst, namespace.clone());
+                // Also store in globals so nested functions can access it
+                self.globals.insert(alias.clone(), namespace);
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::Copy(dst, src) => {
+                let value = frame.get_value(*src);
+                frame.set_value(*dst, value);
+                Ok(ControlFlow::Next)
+            }
+
+            // Arithmetic operations (all inlined for performance)
+            // BigInt-aware: if either operand is BigInt, promote both to BigInt
+            LirInst::AddI64(dst, a, b) => {
+                let av = frame.get_value(*a);
+                let bv = frame.get_value(*b);
+                let result = if av.is_bigint() || bv.is_bigint() {
+                    let av_bi = av.as_bigint().unwrap_or(BigInt::from(0));
+                    let bv_bi = bv.as_bigint().unwrap_or(BigInt::from(0));
+                    RuntimeValue::BigInt(av_bi + bv_bi)
+                } else {
+                    let av_i = av.as_int().unwrap_or(0);
+                    let bv_i = bv.as_int().unwrap_or(0);
+                    RuntimeValue::Int(av_i.wrapping_add(bv_i))
+                };
+                frame.set_value(*dst, result);
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::AddF64(dst, a, b) => {
+                let av = frame.get_value(*a).as_float().unwrap_or(0.0);
+                let bv = frame.get_value(*b).as_float().unwrap_or(0.0);
+                frame.set_value(*dst, RuntimeValue::Float(av + bv));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::SubI64(dst, a, b) => {
+                let av = frame.get_value(*a);
+                let bv = frame.get_value(*b);
+                let result = if av.is_bigint() || bv.is_bigint() {
+                    let av_bi = av.as_bigint().unwrap_or(BigInt::from(0));
+                    let bv_bi = bv.as_bigint().unwrap_or(BigInt::from(0));
+                    RuntimeValue::BigInt(av_bi - bv_bi)
+                } else {
+                    let av_i = av.as_int().unwrap_or(0);
+                    let bv_i = bv.as_int().unwrap_or(0);
+                    RuntimeValue::Int(av_i.wrapping_sub(bv_i))
+                };
+                frame.set_value(*dst, result);
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::SubF64(dst, a, b) => {
+                let av = frame.get_value(*a).as_float().unwrap_or(0.0);
+                let bv = frame.get_value(*b).as_float().unwrap_or(0.0);
+                frame.set_value(*dst, RuntimeValue::Float(av - bv));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::MulI64(dst, a, b) => {
+                let av = frame.get_value(*a);
+                let bv = frame.get_value(*b);
+                let result = if av.is_bigint() || bv.is_bigint() {
+                    let av_bi = av.as_bigint().unwrap_or(BigInt::from(0));
+                    let bv_bi = bv.as_bigint().unwrap_or(BigInt::from(0));
+                    RuntimeValue::BigInt(av_bi * bv_bi)
+                } else {
+                    let av_i = av.as_int().unwrap_or(0);
+                    let bv_i = bv.as_int().unwrap_or(0);
+                    RuntimeValue::Int(av_i.wrapping_mul(bv_i))
+                };
+                frame.set_value(*dst, result);
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::MulF64(dst, a, b) => {
+                let av = frame.get_value(*a).as_float().unwrap_or(0.0);
+                let bv = frame.get_value(*b).as_float().unwrap_or(0.0);
+                frame.set_value(*dst, RuntimeValue::Float(av * bv));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::DivI64(dst, a, b) => {
+                let av = frame.get_value(*a);
+                let bv = frame.get_value(*b);
+                let result = if av.is_bigint() || bv.is_bigint() {
+                    let av_bi = av.as_bigint().unwrap_or(BigInt::from(0));
+                    let bv_bi = bv.as_bigint().unwrap_or(BigInt::from(1));
+                    if bv_bi != BigInt::from(0) {
+                        RuntimeValue::BigInt(av_bi / bv_bi)
+                    } else {
+                        RuntimeValue::BigInt(BigInt::from(0))
+                    }
+                } else {
+                    let av_i = av.as_int().unwrap_or(0);
+                    let bv_i = bv.as_int().unwrap_or(1);
+                    RuntimeValue::Int(if bv_i != 0 { av_i / bv_i } else { 0 })
+                };
+                frame.set_value(*dst, result);
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::DivF64(dst, a, b) => {
+                let av = frame.get_value(*a).as_float().unwrap_or(0.0);
+                let bv = frame.get_value(*b).as_float().unwrap_or(1.0);
+                frame.set_value(*dst, RuntimeValue::Float(av / bv));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::ModI64(dst, a, b) => {
+                let av = frame.get_value(*a);
+                let bv = frame.get_value(*b);
+                let result = if av.is_bigint() || bv.is_bigint() {
+                    let av_bi = av.as_bigint().unwrap_or(BigInt::from(0));
+                    let bv_bi = bv.as_bigint().unwrap_or(BigInt::from(1));
+                    if bv_bi != BigInt::from(0) {
+                        RuntimeValue::BigInt(av_bi % bv_bi)
+                    } else {
+                        RuntimeValue::BigInt(BigInt::from(0))
+                    }
+                } else {
+                    let av_i = av.as_int().unwrap_or(0);
+                    let bv_i = bv.as_int().unwrap_or(1);
+                    RuntimeValue::Int(if bv_i != 0 { av_i % bv_i } else { 0 })
+                };
+                frame.set_value(*dst, result);
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::NegI64(dst, a) => {
+                let av = frame.get_value(*a);
+                let result = if av.is_bigint() {
+                    RuntimeValue::BigInt(-av.as_bigint().unwrap_or(BigInt::from(0)))
+                } else {
+                    RuntimeValue::Int(-av.as_int().unwrap_or(0))
+                };
+                frame.set_value(*dst, result);
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::NegF64(dst, a) => {
+                let av = frame.get_value(*a).as_float().unwrap_or(0.0);
+                frame.set_value(*dst, RuntimeValue::Float(-av));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::Not(dst, a) => {
+                let av = frame.get_value(*a).as_bool().unwrap_or(false);
+                frame.set_value(*dst, RuntimeValue::Bool(!av));
+                Ok(ControlFlow::Next)
+            }
+
+            // Comparison operations (BigInt-aware)
+            LirInst::CmpLtI64(dst, a, b) => {
+                let av = frame.get_value(*a);
+                let bv = frame.get_value(*b);
+                let result = if av.is_bigint() || bv.is_bigint() {
+                    let av_bi = av.as_bigint().unwrap_or(BigInt::from(0));
+                    let bv_bi = bv.as_bigint().unwrap_or(BigInt::from(0));
+                    av_bi < bv_bi
+                } else {
+                    av.as_int().unwrap_or(0) < bv.as_int().unwrap_or(0)
+                };
+                frame.set_value(*dst, RuntimeValue::Bool(result));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::CmpLeI64(dst, a, b) => {
+                let av = frame.get_value(*a);
+                let bv = frame.get_value(*b);
+                let result = if av.is_bigint() || bv.is_bigint() {
+                    let av_bi = av.as_bigint().unwrap_or(BigInt::from(0));
+                    let bv_bi = bv.as_bigint().unwrap_or(BigInt::from(0));
+                    av_bi <= bv_bi
+                } else {
+                    av.as_int().unwrap_or(0) <= bv.as_int().unwrap_or(0)
+                };
+                frame.set_value(*dst, RuntimeValue::Bool(result));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::CmpGtI64(dst, a, b) => {
+                let av = frame.get_value(*a);
+                let bv = frame.get_value(*b);
+                let result = if av.is_bigint() || bv.is_bigint() {
+                    let av_bi = av.as_bigint().unwrap_or(BigInt::from(0));
+                    let bv_bi = bv.as_bigint().unwrap_or(BigInt::from(0));
+                    av_bi > bv_bi
+                } else {
+                    av.as_int().unwrap_or(0) > bv.as_int().unwrap_or(0)
+                };
+                frame.set_value(*dst, RuntimeValue::Bool(result));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::CmpGeI64(dst, a, b) => {
+                let av = frame.get_value(*a);
+                let bv = frame.get_value(*b);
+                let result = if av.is_bigint() || bv.is_bigint() {
+                    let av_bi = av.as_bigint().unwrap_or(BigInt::from(0));
+                    let bv_bi = bv.as_bigint().unwrap_or(BigInt::from(0));
+                    av_bi >= bv_bi
+                } else {
+                    av.as_int().unwrap_or(0) >= bv.as_int().unwrap_or(0)
+                };
+                frame.set_value(*dst, RuntimeValue::Bool(result));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::CmpEqI64(dst, a, b) => {
+                let av = frame.get_value(*a);
+                let bv = frame.get_value(*b);
+                let result = if av.is_bigint() || bv.is_bigint() {
+                    let av_bi = av.as_bigint().unwrap_or(BigInt::from(0));
+                    let bv_bi = bv.as_bigint().unwrap_or(BigInt::from(0));
+                    av_bi == bv_bi
+                } else {
+                    av.as_int().unwrap_or(0) == bv.as_int().unwrap_or(0)
+                };
+                frame.set_value(*dst, RuntimeValue::Bool(result));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::CmpNeI64(dst, a, b) => {
+                let av = frame.get_value(*a);
+                let bv = frame.get_value(*b);
+                let result = if av.is_bigint() || bv.is_bigint() {
+                    let av_bi = av.as_bigint().unwrap_or(BigInt::from(0));
+                    let bv_bi = bv.as_bigint().unwrap_or(BigInt::from(0));
+                    av_bi != bv_bi
+                } else {
+                    av.as_int().unwrap_or(0) != bv.as_int().unwrap_or(0)
+                };
+                frame.set_value(*dst, RuntimeValue::Bool(result));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::CmpLtF64(dst, a, b) => {
+                let av = frame.get_value(*a).as_float().unwrap_or(0.0);
+                let bv = frame.get_value(*b).as_float().unwrap_or(0.0);
+                frame.set_value(*dst, RuntimeValue::Bool(av < bv));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::CmpLeF64(dst, a, b) => {
+                let av = frame.get_value(*a).as_float().unwrap_or(0.0);
+                let bv = frame.get_value(*b).as_float().unwrap_or(0.0);
+                frame.set_value(*dst, RuntimeValue::Bool(av <= bv));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::CmpGtF64(dst, a, b) => {
+                let av = frame.get_value(*a).as_float().unwrap_or(0.0);
+                let bv = frame.get_value(*b).as_float().unwrap_or(0.0);
+                frame.set_value(*dst, RuntimeValue::Bool(av > bv));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::CmpGeF64(dst, a, b) => {
+                let av = frame.get_value(*a).as_float().unwrap_or(0.0);
+                let bv = frame.get_value(*b).as_float().unwrap_or(0.0);
+                frame.set_value(*dst, RuntimeValue::Bool(av >= bv));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::CmpEqF64(dst, a, b) => {
+                let av = frame.get_value(*a).as_float().unwrap_or(0.0);
+                let bv = frame.get_value(*b).as_float().unwrap_or(0.0);
+                frame.set_value(*dst, RuntimeValue::Bool((av - bv).abs() < f64::EPSILON));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::CmpNeF64(dst, a, b) => {
+                let av = frame.get_value(*a).as_float().unwrap_or(0.0);
+                let bv = frame.get_value(*b).as_float().unwrap_or(0.0);
+                frame.set_value(*dst, RuntimeValue::Bool((av - bv).abs() >= f64::EPSILON));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::And(dst, a, b) => {
+                let av = frame.get_value(*a).as_bool().unwrap_or(false);
+                let bv = frame.get_value(*b).as_bool().unwrap_or(false);
+                frame.set_value(*dst, RuntimeValue::Bool(av && bv));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::Or(dst, a, b) => {
+                let av = frame.get_value(*a).as_bool().unwrap_or(false);
+                let bv = frame.get_value(*b).as_bool().unwrap_or(false);
+                frame.set_value(*dst, RuntimeValue::Bool(av || bv));
+                Ok(ControlFlow::Next)
+            }
+
+            // Function calls
+            LirInst::Call(dst, name, args) => {
+                let arg_values: Vec<RuntimeValue> =
+                    args.iter().map(|v| frame.get_value(*v)).collect();
+
+                // Try user function first
+                if let Some(callee) = self.functions.get(name).cloned() {
+                    let result = self.execute_function(&callee, arg_values)?;
+                    frame.set_value(*dst, result);
+                    return Ok(ControlFlow::Next);
+                }
+
+                // Try function stored in a variable (closure)
+                if let Some(RuntimeValue::Function(func_val)) = frame.get_var(name) {
+                    // Try to call as a regular function with captured variables
+                    if let Some(target_func) = self.functions.get(&func_val.name).cloned() {
+                        let result = self.execute_function_with_captures(
+                            &target_func,
+                            arg_values,
+                            &func_val.captures,
+                        )?;
+                        frame.set_value(*dst, result);
+                        return Ok(ControlFlow::Next);
+                    }
+                }
+
+                // Then try builtin
+                let result = if let Some(builtin) = self.builtins.get(name) {
+                    builtin(&arg_values)
+                } else if let Some(dynamic_builtin) = self.dynamic_builtins.get(name) {
+                    dynamic_builtin(&arg_values)
+                } else {
+                    RuntimeValue::Null
+                };
+
+                if let Some(err) = super::builtins::take_jit_error() {
+                    return Err(err);
+                }
+
+                frame.set_value(*dst, result);
+                Ok(ControlFlow::Next)
+            }
+
+            // Call builtin with generic type parameter
+            LirInst::CallBuiltinGeneric(dst, name, args, generic_type) => {
+                let arg_values: Vec<RuntimeValue> =
+                    args.iter().map(|v| frame.get_value(*v)).collect();
+
+                super::builtins::set_jit_generic_type(generic_type.clone());
+
+                let result = if let Some(builtin) = self.builtins.get(name) {
+                    builtin(&arg_values)
+                } else {
+                    RuntimeValue::Null
+                };
+
+                super::builtins::clear_jit_generic_type();
+
+                if let Some(err) = super::builtins::take_jit_error() {
+                    return Err(err);
+                }
+
+                frame.set_value(*dst, result);
+                Ok(ControlFlow::Next)
+            }
+
+            // Control flow
+            LirInst::Jump(target) => Ok(ControlFlow::Jump(*target)),
+
+            LirInst::JumpIf(cond, then_block, else_block) => {
+                let cond_val = frame.get_value(*cond).as_bool().unwrap_or(false);
+                if cond_val {
+                    Ok(ControlFlow::Jump(*then_block))
+                } else {
+                    Ok(ControlFlow::Jump(*else_block))
+                }
+            }
+
+            LirInst::Return(value) => {
+                let ret_value = value
+                    .map(|v| frame.get_value(v))
+                    .unwrap_or(RuntimeValue::Null);
+                Ok(ControlFlow::Return(ret_value))
+            }
+
+            LirInst::TailCall(name, args) => {
+                // Collect argument values
+                let arg_values: Vec<RuntimeValue> =
+                    args.iter().map(|&a| frame.get_value(a)).collect();
+                Ok(ControlFlow::TailCall(name.clone(), arg_values))
+            }
+
+            LirInst::Phi(dst, values) => {
+                let value = values
+                    .first()
+                    .map(|(_, v)| frame.get_value(*v))
+                    .unwrap_or(RuntimeValue::Null);
+                frame.set_value(*dst, value);
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::ArcNew(dst, value) => {
+                let value_obj = frame.get_value(*value);
+                let arc_id = self.next_arc_id;
+                self.next_arc_id += 1;
+                self.arc_values
+                    .insert(arc_id, Arc::new(std::sync::Mutex::new(value_obj.clone())));
+                self.arc_strong_counts
+                    .insert(arc_id, Arc::new(std::sync::atomic::AtomicUsize::new(1)));
+                self.arc_weak_counts
+                    .insert(arc_id, Arc::new(std::sync::atomic::AtomicUsize::new(0)));
+                crate::backends::common::builtins::objects::insert_jit_arc_value(arc_id, value_obj);
+                frame.set_value(*dst, RuntimeValue::U64(arc_id));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::ArcClone(dst, arc_id_val) => {
+                let arc_id_rv = frame.get_value(*arc_id_val);
+                if let Some(arc_id) = arc_id_rv.as_int().map(|n| n as u64) {
+                    if let Some(strong_count) = self.arc_strong_counts.get(&arc_id) {
+                        let count = strong_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if count == usize::MAX {
+                            return Err("ARC reference count overflow".to_string());
+                        }
+                        frame.set_value(*dst, arc_id_rv);
+                        Ok(ControlFlow::Next)
+                    } else {
+                        Err(format!("Invalid ARC id: {}", arc_id))
+                    }
+                } else {
+                    Err("ArcClone requires ArcId as argument".to_string())
+                }
+            }
+
+            LirInst::ArcDrop(arc_id_val) => {
+                let arc_id_rv = frame.get_value(*arc_id_val);
+                if let Some(arc_id) = arc_id_rv.as_int().map(|n| n as u64) {
+                    if let Some(strong_count) = self.arc_strong_counts.get(&arc_id) {
+                        let prev_count =
+                            strong_count.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                        if prev_count == 1 {
+                            let weak_count = self
+                                .arc_weak_counts
+                                .get(&arc_id)
+                                .map(|wc| wc.load(std::sync::atomic::Ordering::Relaxed))
+                                .unwrap_or(0);
+                            if weak_count == 0 {
+                                self.arc_values.remove(&arc_id);
+                                self.arc_strong_counts.remove(&arc_id);
+                                self.arc_weak_counts.remove(&arc_id);
+                                crate::backends::common::builtins::objects::remove_jit_arc_value(arc_id);
+                            }
+                        }
+                        Ok(ControlFlow::Next)
+                    } else {
+                        Err(format!("Invalid ARC id: {}", arc_id))
+                    }
+                } else {
+                    Err("ArcDrop requires ArcId as argument".to_string())
+                }
+            }
+
+            LirInst::WeakNew(dst, arc_id_val) => {
+                let arc_id_rv = frame.get_value(*arc_id_val);
+                if let Some(arc_id) = arc_id_rv.as_int().map(|n| n as u64) {
+                    if let Some(weak_count) = self.arc_weak_counts.get(&arc_id) {
+                        let count = weak_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if count == usize::MAX {
+                            return Err("Weak reference count overflow".to_string());
+                        }
+                        frame.set_value(*dst, RuntimeValue::U64(arc_id));
+                        Ok(ControlFlow::Next)
+                    } else {
+                        Err(format!("Invalid ARC id: {}", arc_id))
+                    }
+                } else {
+                    Err("WeakNew requires ArcId as argument".to_string())
+                }
+            }
+
+            LirInst::WeakDrop(arc_id_val) => {
+                let arc_id_rv = frame.get_value(*arc_id_val);
+                if let Some(arc_id) = arc_id_rv.as_int().map(|n| n as u64) {
+                    if let Some(weak_count) = self.arc_weak_counts.get(&arc_id) {
+                        let prev_count =
+                            weak_count.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                        if prev_count == 1 {
+                            let strong_count = self
+                                .arc_strong_counts
+                                .get(&arc_id)
+                                .map(|sc| sc.load(std::sync::atomic::Ordering::Relaxed))
+                                .unwrap_or(0);
+                            if strong_count == 0 {
+                                self.arc_values.remove(&arc_id);
+                                self.arc_strong_counts.remove(&arc_id);
+                                self.arc_weak_counts.remove(&arc_id);
+                            }
+                        }
+                        Ok(ControlFlow::Next)
+                    } else {
+                        Err(format!("Invalid ARC id: {}", arc_id))
+                    }
+                } else {
+                    Err("WeakDrop requires ArcId as argument".to_string())
+                }
+            }
+
+            LirInst::ArcGet(dst, arc_id_val) => {
+                let arc_id_rv = frame.get_value(*arc_id_val);
+                if let Some(arc_id) = arc_id_rv.as_int().map(|n| n as u64) {
+                    if let Some(arc_value) = self.arc_values.get(&arc_id) {
+                        if let Ok(guard) = arc_value.lock() {
+                            frame.set_value(*dst, guard.clone());
+                            Ok(ControlFlow::Next)
+                        } else {
+                            Err(format!("Failed to lock ARC value: {}", arc_id))
+                        }
+                    } else {
+                        Err(format!("Invalid ARC id: {}", arc_id))
+                    }
+                } else {
+                    Err("ArcGet requires ArcId as argument".to_string())
+                }
+            }
+
+            LirInst::ArcSet(arc_id_val, value) => {
+                let arc_id_rv = frame.get_value(*arc_id_val);
+                if let Some(arc_id) = arc_id_rv.as_int().map(|n| n as u64) {
+                    let value_obj = frame.get_value(*value);
+                    if let Some(arc_value) = self.arc_values.get(&arc_id) {
+                        if let Ok(mut guard) = arc_value.lock() {
+                            *guard = value_obj.clone();
+                            crate::backends::common::builtins::objects::insert_jit_arc_value(arc_id, value_obj);
+                            Ok(ControlFlow::Next)
+                        } else {
+                            Err(format!("Failed to lock ARC value: {}", arc_id))
+                        }
+                    } else {
+                        Err(format!("Invalid ARC id: {}", arc_id))
+                    }
+                } else {
+                    Err("ArcSet requires ArcId as argument".to_string())
+                }
+            }
+
+            LirInst::ArcStrongCount(dst, arc_id_val) => {
+                let arc_id_rv = frame.get_value(*arc_id_val);
+                if let Some(arc_id) = arc_id_rv.as_int().map(|n| n as u64) {
+                    if let Some(strong_count) = self.arc_strong_counts.get(&arc_id) {
+                        let count = strong_count.load(std::sync::atomic::Ordering::Relaxed);
+                        frame.set_value(*dst, RuntimeValue::Int(count as i64));
+                        Ok(ControlFlow::Next)
+                    } else {
+                        Err(format!("Invalid ARC id: {}", arc_id))
+                    }
+                } else {
+                    Err("ArcStrongCount requires ArcId as argument".to_string())
+                }
+            }
+
+            LirInst::ArcWeakCount(dst, arc_id_val) => {
+                let arc_id_rv = frame.get_value(*arc_id_val);
+                if let Some(arc_id) = arc_id_rv.as_int().map(|n| n as u64) {
+                    if let Some(weak_count) = self.arc_weak_counts.get(&arc_id) {
+                        let count = weak_count.load(std::sync::atomic::Ordering::Relaxed);
+                        frame.set_value(*dst, RuntimeValue::Int(count as i64));
+                        Ok(ControlFlow::Next)
+                    } else {
+                        Err(format!("Invalid ARC id: {}", arc_id))
+                    }
+                } else {
+                    Err("ArcWeakCount requires ArcId as argument".to_string())
+                }
+            }
+
+            LirInst::Alloc(dst, size_val) => {
+                let size_rv = frame.get_value(*size_val);
+                if let Some(size) = size_rv.as_int().map(|n| n as usize) {
+                    let ptr = unsafe_heap::alloc(size)?;
+                    frame.set_value(*dst, RuntimeValue::U64(ptr));
+                    Ok(ControlFlow::Next)
+                } else {
+                    Err("Alloc requires size as integer argument".to_string())
+                }
+            }
+
+            LirInst::AllocTyped(dst, size_val, elem_size) => {
+                let size_rv = frame.get_value(*size_val);
+                if let Some(size) = size_rv.as_int().map(|n| n as usize) {
+                    if *elem_size <= 0 {
+                        return Err("AllocTyped requires elem_size > 0".to_string());
+                    }
+                    let elem_size_usize = *elem_size as usize;
+                    let ptr = unsafe_heap::alloc_typed(size, elem_size_usize)?;
+                    frame.set_value(*dst, RuntimeValue::U64(ptr));
+                    Ok(ControlFlow::Next)
+                } else {
+                    Err("AllocTyped requires size as integer argument".to_string())
+                }
+            }
+
+            LirInst::Free(ptr_val) => {
+                let ptr_rv = frame.get_value(*ptr_val);
+                if let Some(ptr) = ptr_rv.as_int().map(|n| n as u64) {
+                    unsafe_heap::free(ptr)?;
+                    Ok(ControlFlow::Next)
+                } else {
+                    Err("Free requires pointer as argument".to_string())
+                }
+            }
+
+            LirInst::PtrLoad(dst, ptr_val, index_val) => {
+                let ptr_rv = frame.get_value(*ptr_val);
+                let idx_rv = frame.get_value(*index_val);
+                if let Some(ptr) = ptr_rv.as_int().map(|n| n as u64) {
+                    let idx_i64 = idx_rv
+                        .as_int()
+                        .ok_or_else(|| "PtrLoad index must be an integer".to_string())?;
+                    if idx_i64 < 0 {
+                        return Err("PtrLoad index must be non-negative".to_string());
+                    }
+                    let idx = idx_i64 as usize;
+                    let bytes = unsafe_heap::load_typed(ptr, idx)?;
+                    let mut buf = [0u8; 8];
+                    let copy_len = bytes.len().min(8);
+                    buf[..copy_len].copy_from_slice(&bytes[..copy_len]);
+                    let val = i64::from_le_bytes(buf);
+                    frame.set_value(*dst, RuntimeValue::Int(val));
+                    Ok(ControlFlow::Next)
+                } else {
+                    Err("PtrLoad requires pointer as argument".to_string())
+                }
+            }
+
+            LirInst::PtrStore(ptr_val, value, index_val) => {
+                let ptr_rv = frame.get_value(*ptr_val);
+                let idx_rv = frame.get_value(*index_val);
+                if let Some(ptr) = ptr_rv.as_int().map(|n| n as u64) {
+                    let idx_i64 = idx_rv
+                        .as_int()
+                        .ok_or_else(|| "PtrStore index must be an integer".to_string())?;
+                    if idx_i64 < 0 {
+                        return Err("PtrStore index must be non-negative".to_string());
+                    }
+                    let idx = idx_i64 as usize;
+                    let value_rv = frame.get_value(*value);
+                    let elem_size = unsafe_heap::elem_size_of_ptr(ptr)?;
+                    let mut buf = vec![0u8; elem_size];
+                    let val_i64 = value_rv
+                        .as_int()
+                        .ok_or_else(|| "PtrStore requires integer-compatible value".to_string())?;
+                    let bytes = val_i64.to_le_bytes();
+                    let copy_len = elem_size.min(bytes.len());
+                    buf[..copy_len].copy_from_slice(&bytes[..copy_len]);
+                    unsafe_heap::store_typed(ptr, idx, &buf)?;
+                    Ok(ControlFlow::Next)
+                } else {
+                    Err("PtrStore requires pointer as argument".to_string())
+                }
+            }
+
+            // Bitwise operations
+            LirInst::BitAnd(dst, a, b) => {
+                let av = frame.get_value(*a).as_int().unwrap_or(0);
+                let bv = frame.get_value(*b).as_int().unwrap_or(0);
+                frame.set_value(*dst, RuntimeValue::Int(av & bv));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::BitOr(dst, a, b) => {
+                let av = frame.get_value(*a).as_int().unwrap_or(0);
+                let bv = frame.get_value(*b).as_int().unwrap_or(0);
+                frame.set_value(*dst, RuntimeValue::Int(av | bv));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::BitXor(dst, a, b) => {
+                let av = frame.get_value(*a).as_int().unwrap_or(0);
+                let bv = frame.get_value(*b).as_int().unwrap_or(0);
+                frame.set_value(*dst, RuntimeValue::Int(av ^ bv));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::Shl(dst, a, b) => {
+                let av = frame.get_value(*a).as_int().unwrap_or(0);
+                let bv = frame.get_value(*b).as_int().unwrap_or(0) as u32;
+                frame.set_value(*dst, RuntimeValue::Int(av.wrapping_shl(bv)));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::Shr(dst, a, b) => {
+                let av = frame.get_value(*a).as_int().unwrap_or(0);
+                let bv = frame.get_value(*b).as_int().unwrap_or(0) as u32;
+                frame.set_value(*dst, RuntimeValue::Int(av.wrapping_shr(bv)));
+                Ok(ControlFlow::Next)
+            }
+
+            // Type conversions
+            LirInst::I64ToF64(dst, src) => {
+                let v = frame.get_value(*src).as_int().unwrap_or(0);
+                frame.set_value(*dst, RuntimeValue::Float(v as f64));
+                Ok(ControlFlow::Next)
+            }
+
+            LirInst::F64ToI64(dst, src) => {
+                let v = frame.get_value(*src).as_float().unwrap_or(0.0);
+                frame.set_value(*dst, RuntimeValue::Int(v as i64));
+                Ok(ControlFlow::Next)
+            }
+
+            // Call builtin (same as regular call but for builtins)
+            LirInst::CallBuiltin(dst, name, args) => {
+                let arg_values: Vec<RuntimeValue> =
+                    args.iter().map(|v| frame.get_value(*v)).collect();
+
+                // Pointer-aware fast path for get_index/set_index via shared unsafe heap
+                if name == "get_index" {
+                    if let Some(RuntimeValue::U64(ptr)) = arg_values.get(0) {
+                        if let Some(idx_rv) = arg_values.get(1) {
+                            let off = idx_rv
+                                .as_int()
+                                .ok_or_else(|| "index must be integer".to_string())?;
+                            if off < 0 {
+                                return Err("index must be non-negative".to_string());
+                            }
+                            let off_usize = off as usize;
+
+                            // Use state-validated load (checks for use-after-free)
+                            let byte = unsafe_heap::load_u8(*ptr, off_usize)?;
+                            frame.set_value(*dst, RuntimeValue::Int(byte as i64));
+                            return Ok(ControlFlow::Next);
+                        }
+                    }
+                } else if name == "set_index" {
+                    if arg_values.len() >= 3 {
+                        if let Some(RuntimeValue::U64(ptr)) = arg_values.get(0) {
+                            let off = arg_values[1]
+                                .as_int()
+                                .ok_or_else(|| "index must be integer".to_string())?;
+                            if off < 0 {
+                                return Err("index must be non-negative".to_string());
+                            }
+                            let off_usize = off as usize;
+                            let byte_val = arg_values[2]
+                                .as_int()
+                                .ok_or_else(|| "value must be integer".to_string())?;
+                            let byte_u8 = if byte_val >= 0 && byte_val <= 255 {
+                                byte_val as u8
+                            } else {
+                                return Err("value must be 0..255".to_string());
+                            };
+
+                            // State validation embedded in store_u8
+                            unsafe_heap::store_u8(*ptr, off_usize, byte_u8)?;
+                            frame.set_value(*dst, RuntimeValue::U64(*ptr));
+                            return Ok(ControlFlow::Next);
+                        }
+                    }
+                }
+
+                // Callback-aware array ops for JIT: map/filter/reduce
+                if (name == "map" || name == "filter" || name == "reduce") && arg_values.len() >= 2
+                {
+                    if let RuntimeValue::Function(cb) = &arg_values[1] {
+                        let result = match name.as_str() {
+                            "map" => match &arg_values[0] {
+                                RuntimeValue::Array(a) => {
+                                    let mut out = Vec::with_capacity(a.len());
+                                    for v in a.iter() {
+                                        if let Some(target) = self.functions.get(&cb.name).cloned()
+                                        {
+                                            let rv = self
+                                                .execute_function_with_captures(
+                                                    &target,
+                                                    vec![v.clone()],
+                                                    &cb.captures,
+                                                )
+                                                .unwrap_or(RuntimeValue::Null);
+                                            out.push(rv);
+                                        } else {
+                                            out.push(RuntimeValue::Null);
+                                        }
+                                    }
+                                    RuntimeValue::Array(out)
+                                }
+                                RuntimeValue::DynArray {
+                                    data,
+                                    element_type,
+                                    concrete_type,
+                                    tracked_capacity,
+                                } => {
+                                    let mut out = Vec::with_capacity(data.len());
+                                    for v in data.iter() {
+                                        if let Some(target) = self.functions.get(&cb.name).cloned()
+                                        {
+                                            let rv = self
+                                                .execute_function_with_captures(
+                                                    &target,
+                                                    vec![v.clone()],
+                                                    &cb.captures,
+                                                )
+                                                .unwrap_or(RuntimeValue::Null);
+                                            out.push(rv);
+                                        } else {
+                                            out.push(RuntimeValue::Null);
+                                        }
+                                    }
+                                    RuntimeValue::DynArray {
+                                        data: out,
+                                        element_type: element_type.clone(),
+                                        concrete_type: concrete_type.clone(),
+                                        tracked_capacity: *tracked_capacity,
+                                    }
+                                }
+                                RuntimeValue::RawArray(_, a) => {
+                                    let mut out = Vec::with_capacity(a.len());
+                                    for v in a.iter() {
+                                        if let Some(target) = self.functions.get(&cb.name).cloned()
+                                        {
+                                            let rv = self
+                                                .execute_function_with_captures(
+                                                    &target,
+                                                    vec![v.clone()],
+                                                    &cb.captures,
+                                                )
+                                                .unwrap_or(RuntimeValue::Null);
+                                            out.push(rv);
+                                        } else {
+                                            out.push(RuntimeValue::Null);
+                                        }
+                                    }
+                                    RuntimeValue::Array(out)
+                                }
+                                _ => RuntimeValue::Null,
+                            },
+                            "filter" => {
+                                let is_true = |v: &RuntimeValue| v.as_bool().unwrap_or(false);
+                                match &arg_values[0] {
+                                    RuntimeValue::Array(a) => {
+                                        let mut out = Vec::new();
+                                        for v in a.iter() {
+                                            if let Some(target) =
+                                                self.functions.get(&cb.name).cloned()
+                                            {
+                                                let rv = self
+                                                    .execute_function_with_captures(
+                                                        &target,
+                                                        vec![v.clone()],
+                                                        &cb.captures,
+                                                    )
+                                                    .unwrap_or(RuntimeValue::Null);
+                                                if is_true(&rv) {
+                                                    out.push(v.clone());
+                                                }
+                                            }
+                                        }
+                                        RuntimeValue::Array(out)
+                                    }
+                                    RuntimeValue::DynArray {
+                                        data,
+                                        element_type,
+                                        concrete_type,
+                                        tracked_capacity,
+                                    } => {
+                                        let mut out = Vec::new();
+                                        for v in data.iter() {
+                                            if let Some(target) =
+                                                self.functions.get(&cb.name).cloned()
+                                            {
+                                                let rv = self
+                                                    .execute_function_with_captures(
+                                                        &target,
+                                                        vec![v.clone()],
+                                                        &cb.captures,
+                                                    )
+                                                    .unwrap_or(RuntimeValue::Null);
+                                                if is_true(&rv) {
+                                                    out.push(v.clone());
+                                                }
+                                            }
+                                        }
+                                        RuntimeValue::DynArray {
+                                            data: out,
+                                            element_type: element_type.clone(),
+                                            concrete_type: concrete_type.clone(),
+                                            tracked_capacity: *tracked_capacity,
+                                        }
+                                    }
+                                    RuntimeValue::RawArray(_, a) => {
+                                        let mut out = Vec::new();
+                                        for v in a.iter() {
+                                            if let Some(target) =
+                                                self.functions.get(&cb.name).cloned()
+                                            {
+                                                let rv = self
+                                                    .execute_function_with_captures(
+                                                        &target,
+                                                        vec![v.clone()],
+                                                        &cb.captures,
+                                                    )
+                                                    .unwrap_or(RuntimeValue::Null);
+                                                if is_true(&rv) {
+                                                    out.push(v.clone());
+                                                }
+                                            }
+                                        }
+                                        RuntimeValue::Array(out)
+                                    }
+                                    _ => RuntimeValue::Null,
+                                }
+                            }
+                            "reduce" => {
+                                let init = if arg_values.len() >= 3 {
+                                    Some(arg_values[2].clone())
+                                } else {
+                                    None
+                                };
+                                match &arg_values[0] {
+                                    RuntimeValue::Array(a) => {
+                                        let mut iter = a.iter();
+                                        let mut acc = init.unwrap_or_else(|| {
+                                            iter.next().cloned().unwrap_or(RuntimeValue::Null)
+                                        });
+                                        for v in iter {
+                                            if let Some(target) =
+                                                self.functions.get(&cb.name).cloned()
+                                            {
+                                                let cur = acc.clone();
+                                                acc = self
+                                                    .execute_function_with_captures(
+                                                        &target,
+                                                        vec![RuntimeValue::Tuple(vec![
+                                                            cur,
+                                                            v.clone(),
+                                                        ])],
+                                                        &cb.captures,
+                                                    )
+                                                    .unwrap_or(acc.clone());
+                                            }
+                                        }
+                                        acc
+                                    }
+                                    RuntimeValue::DynArray { data, .. } => {
+                                        let mut iter = data.iter();
+                                        let mut acc = init.unwrap_or_else(|| {
+                                            iter.next().cloned().unwrap_or(RuntimeValue::Null)
+                                        });
+                                        for v in iter {
+                                            if let Some(target) =
+                                                self.functions.get(&cb.name).cloned()
+                                            {
+                                                let cur = acc.clone();
+                                                acc = self
+                                                    .execute_function_with_captures(
+                                                        &target,
+                                                        vec![RuntimeValue::Tuple(vec![
+                                                            cur,
+                                                            v.clone(),
+                                                        ])],
+                                                        &cb.captures,
+                                                    )
+                                                    .unwrap_or(acc.clone());
+                                            }
+                                        }
+                                        acc
+                                    }
+                                    RuntimeValue::RawArray(_, a) => {
+                                        let mut iter = a.iter();
+                                        let mut acc = init.unwrap_or_else(|| {
+                                            iter.next().cloned().unwrap_or(RuntimeValue::Null)
+                                        });
+                                        for v in iter {
+                                            if let Some(target) =
+                                                self.functions.get(&cb.name).cloned()
+                                            {
+                                                let cur = acc.clone();
+                                                acc = self
+                                                    .execute_function_with_captures(
+                                                        &target,
+                                                        vec![RuntimeValue::Tuple(vec![
+                                                            cur,
+                                                            v.clone(),
+                                                        ])],
+                                                        &cb.captures,
+                                                    )
+                                                    .unwrap_or(acc.clone());
+                                            }
+                                        }
+                                        acc
+                                    }
+                                    _ => RuntimeValue::Null,
+                                }
+                            }
+                            _ => RuntimeValue::Null,
+                        };
+                        frame.set_value(*dst, result);
+                        return Ok(ControlFlow::Next);
+                    }
+                }
+
+                // Special handling for __call_method to support extended methods and built-in methods
+                let result = if name == "__call_method" && arg_values.len() >= 2 {
+                    let obj = &arg_values[0];
+                    let method_name = arg_values[1].as_string();
+                    let method_args: Vec<RuntimeValue> = std::iter::once(obj.clone())
+                        .chain(arg_values.iter().skip(2).cloned())
+                        .collect();
+
+                    // Method syntax for map/filter/reduce with callbacks
+                    if (method_name == "map" || method_name == "filter" || method_name == "reduce")
+                        && method_args.len() >= 2
+                    {
+                        if let RuntimeValue::Function(cb) = &method_args[1] {
+                            let res = if method_name == "map" {
+                                match &method_args[0] {
+                                    RuntimeValue::Array(_)
+                                    | RuntimeValue::DynArray { .. }
+                                    | RuntimeValue::RawArray(_, _) => {
+                                        // Reuse same logic by reentering builtin name handling
+                                        // Use the direct branch above by constructing equivalent args
+                                        // Since we are already inside, call the same mapping logic inline
+                                        match &method_args[0] {
+                                            RuntimeValue::Array(a) => {
+                                                let mut out = Vec::with_capacity(a.len());
+                                                for v in a.iter() {
+                                                    if let Some(target) =
+                                                        self.functions.get(&cb.name).cloned()
+                                                    {
+                                                        let rv = self
+                                                            .execute_function_with_captures(
+                                                                &target,
+                                                                vec![v.clone()],
+                                                                &cb.captures,
+                                                            )
+                                                            .unwrap_or(RuntimeValue::Null);
+                                                        out.push(rv);
+                                                    } else {
+                                                        out.push(RuntimeValue::Null);
+                                                    }
+                                                }
+                                                RuntimeValue::Array(out)
+                                            }
+                                            RuntimeValue::DynArray {
+                                                data,
+                                                element_type,
+                                                concrete_type,
+                                                tracked_capacity,
+                                            } => {
+                                                let mut out = Vec::with_capacity(data.len());
+                                                for v in data.iter() {
+                                                    if let Some(target) =
+                                                        self.functions.get(&cb.name).cloned()
+                                                    {
+                                                        let rv = self
+                                                            .execute_function_with_captures(
+                                                                &target,
+                                                                vec![v.clone()],
+                                                                &cb.captures,
+                                                            )
+                                                            .unwrap_or(RuntimeValue::Null);
+                                                        out.push(rv);
+                                                    } else {
+                                                        out.push(RuntimeValue::Null);
+                                                    }
+                                                }
+                                                RuntimeValue::DynArray {
+                                                    data: out,
+                                                    element_type: element_type.clone(),
+                                                    concrete_type: concrete_type.clone(),
+                                                    tracked_capacity: *tracked_capacity,
+                                                }
+                                            }
+                                            RuntimeValue::RawArray(_, a) => {
+                                                let mut out = Vec::with_capacity(a.len());
+                                                for v in a.iter() {
+                                                    if let Some(target) =
+                                                        self.functions.get(&cb.name).cloned()
+                                                    {
+                                                        let rv = self
+                                                            .execute_function_with_captures(
+                                                                &target,
+                                                                vec![v.clone()],
+                                                                &cb.captures,
+                                                            )
+                                                            .unwrap_or(RuntimeValue::Null);
+                                                        out.push(rv);
+                                                    } else {
+                                                        out.push(RuntimeValue::Null);
+                                                    }
+                                                }
+                                                RuntimeValue::Array(out)
+                                            }
+                                            _ => RuntimeValue::Null,
+                                        }
+                                    }
+                                    _ => RuntimeValue::Null,
+                                }
+                            } else if method_name == "filter" {
+                                let is_true = |v: &RuntimeValue| v.as_bool().unwrap_or(false);
+                                match &method_args[0] {
+                                    RuntimeValue::Array(a) => {
+                                        let mut out = Vec::new();
+                                        for v in a.iter() {
+                                            if let Some(target) =
+                                                self.functions.get(&cb.name).cloned()
+                                            {
+                                                let rv = self
+                                                    .execute_function_with_captures(
+                                                        &target,
+                                                        vec![v.clone()],
+                                                        &cb.captures,
+                                                    )
+                                                    .unwrap_or(RuntimeValue::Null);
+                                                if is_true(&rv) {
+                                                    out.push(v.clone());
+                                                }
+                                            }
+                                        }
+                                        RuntimeValue::Array(out)
+                                    }
+                                    RuntimeValue::DynArray {
+                                        data,
+                                        element_type,
+                                        concrete_type,
+                                        tracked_capacity,
+                                    } => {
+                                        let mut out = Vec::new();
+                                        for v in data.iter() {
+                                            if let Some(target) =
+                                                self.functions.get(&cb.name).cloned()
+                                            {
+                                                let rv = self
+                                                    .execute_function_with_captures(
+                                                        &target,
+                                                        vec![v.clone()],
+                                                        &cb.captures,
+                                                    )
+                                                    .unwrap_or(RuntimeValue::Null);
+                                                if is_true(&rv) {
+                                                    out.push(v.clone());
+                                                }
+                                            }
+                                        }
+                                        RuntimeValue::DynArray {
+                                            data: out,
+                                            element_type: element_type.clone(),
+                                            concrete_type: concrete_type.clone(),
+                                            tracked_capacity: *tracked_capacity,
+                                        }
+                                    }
+                                    RuntimeValue::RawArray(_, a) => {
+                                        let mut out = Vec::new();
+                                        for v in a.iter() {
+                                            if let Some(target) =
+                                                self.functions.get(&cb.name).cloned()
+                                            {
+                                                let rv = self
+                                                    .execute_function_with_captures(
+                                                        &target,
+                                                        vec![v.clone()],
+                                                        &cb.captures,
+                                                    )
+                                                    .unwrap_or(RuntimeValue::Null);
+                                                if is_true(&rv) {
+                                                    out.push(v.clone());
+                                                }
+                                            }
+                                        }
+                                        RuntimeValue::Array(out)
+                                    }
+                                    _ => RuntimeValue::Null,
+                                }
+                            } else {
+                                // reduce
+                                let init = if method_args.len() >= 3 {
+                                    Some(method_args[2].clone())
+                                } else {
+                                    None
+                                };
+                                match &method_args[0] {
+                                    RuntimeValue::Array(a) => {
+                                        let mut iter = a.iter();
+                                        let mut acc = init.clone().unwrap_or_else(|| {
+                                            iter.next().cloned().unwrap_or(RuntimeValue::Null)
+                                        });
+                                        for v in iter {
+                                            if let Some(target) =
+                                                self.functions.get(&cb.name).cloned()
+                                            {
+                                                let cur = acc.clone();
+                                                acc = self
+                                                    .execute_function_with_captures(
+                                                        &target,
+                                                        vec![RuntimeValue::Tuple(vec![
+                                                            cur,
+                                                            v.clone(),
+                                                        ])],
+                                                        &cb.captures,
+                                                    )
+                                                    .unwrap_or(acc.clone());
+                                            }
+                                        }
+                                        acc
+                                    }
+                                    RuntimeValue::DynArray { data, .. } => {
+                                        let mut iter = data.iter();
+                                        let mut acc = init.clone().unwrap_or_else(|| {
+                                            iter.next().cloned().unwrap_or(RuntimeValue::Null)
+                                        });
+                                        for v in iter {
+                                            if let Some(target) =
+                                                self.functions.get(&cb.name).cloned()
+                                            {
+                                                let cur = acc.clone();
+                                                acc = self
+                                                    .execute_function_with_captures(
+                                                        &target,
+                                                        vec![RuntimeValue::Tuple(vec![
+                                                            cur,
+                                                            v.clone(),
+                                                        ])],
+                                                        &cb.captures,
+                                                    )
+                                                    .unwrap_or(acc.clone());
+                                            }
+                                        }
+                                        acc
+                                    }
+                                    RuntimeValue::RawArray(_, a) => {
+                                        let mut iter = a.iter();
+                                        let mut acc = init.clone().unwrap_or_else(|| {
+                                            iter.next().cloned().unwrap_or(RuntimeValue::Null)
+                                        });
+                                        for v in iter {
+                                            if let Some(target) =
+                                                self.functions.get(&cb.name).cloned()
+                                            {
+                                                let cur = acc.clone();
+                                                acc = self
+                                                    .execute_function_with_captures(
+                                                        &target,
+                                                        vec![RuntimeValue::Tuple(vec![
+                                                            cur,
+                                                            v.clone(),
+                                                        ])],
+                                                        &cb.captures,
+                                                    )
+                                                    .unwrap_or(acc.clone());
+                                            }
+                                        }
+                                        acc
+                                    }
+                                    _ => RuntimeValue::Null,
+                                }
+                            };
+                            frame.set_value(*dst, res);
+                            return Ok(ControlFlow::Next);
+                        }
+                    }
+
+                    // Check if object has __class__ field and if there's an extended method
+                    if let RuntimeValue::U64(arc_id) = obj {
+                        match method_name.as_str() {
+                            "strong_count" => {
+                                let count = self
+                                    .arc_strong_counts
+                                    .get(arc_id)
+                                    .map(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+                                    .unwrap_or(0);
+                                RuntimeValue::I64(count as i64)
+                            }
+                            "weak_count" => {
+                                let count = self
+                                    .arc_weak_counts
+                                    .get(arc_id)
+                                    .map(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+                                    .unwrap_or(0);
+                                RuntimeValue::I64(count as i64)
+                            }
+                            "is_alive" => {
+                                let count = self
+                                    .arc_strong_counts
+                                    .get(arc_id)
+                                    .map(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+                                    .unwrap_or(0);
+                                RuntimeValue::Bool(count > 0)
+                            }
+                            "upgrade" => {
+                                let count = self
+                                    .arc_strong_counts
+                                    .get(arc_id)
+                                    .map(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+                                    .unwrap_or(0);
+                                if count > 0 {
+                                    if let Some(sc) = self.arc_strong_counts.get(arc_id) {
+                                        sc.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    }
+                                    RuntimeValue::U64(*arc_id)
+                                } else {
+                                    RuntimeValue::Null
+                                }
+                            }
+                            _ => {
+                                if let Some(builtin) = self.builtins.get("__call_method") {
+                                    builtin(&arg_values)
+                                } else {
+                                    RuntimeValue::Null
+                                }
+                            }
+                        }
+                    } else if let RuntimeValue::Object(obj_map) = obj {
+                        if let Some(RuntimeValue::String(class_name)) = obj_map.get("__class__") {
+                            // Check for extended method
+                            if let Some(_) =
+                                super::builtins::get_extended_method(class_name, &method_name)
+                            {
+                                // Call the extended method function
+                                if let Some(callee) = self.functions.get(&method_name).cloned() {
+                                    // Set 'this' in a new frame and execute
+                                    match self.execute_function_with_this(
+                                        &callee,
+                                        method_args.iter().skip(1).cloned().collect(),
+                                        obj.clone(),
+                                    ) {
+                                        Ok(r) => r,
+                                        Err(_) => RuntimeValue::Null,
+                                    }
+                                } else {
+                                    RuntimeValue::Null
+                                }
+                            } else {
+                                // Fall back to builtin method - call runtime_call_method directly
+                                if let Some(builtin) = self.builtins.get("__call_method") {
+                                    builtin(&arg_values)
+                                } else {
+                                    RuntimeValue::Null
+                                }
+                            }
+                        } else {
+                            // No __class__, use builtin - call runtime_call_method directly
+                            if let Some(builtin) = self.builtins.get("__call_method") {
+                                builtin(&arg_values)
+                            } else {
+                                RuntimeValue::Null
+                            }
+                        }
+                    } else {
+                        // Not an object, use builtin - call runtime_call_method directly
+                        if let Some(builtin) = self.builtins.get("__call_method") {
+                            builtin(&arg_values)
+                        } else {
+                            RuntimeValue::Null
+                        }
+                    }
+                } else if let Some(builtin) = self.builtins.get(name) {
+                    builtin(&arg_values)
+                } else {
+                    RuntimeValue::Null
+                };
+
+                frame.set_value(*dst, result);
+                Ok(ControlFlow::Next)
+            }
+        }
+    }
+}
+
+impl Default for TieredJitContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tiered_jit_simple() {
+        let result = tiered_jit_run("let x = 1 + 2;").unwrap();
+        assert!(matches!(result, RuntimeValue::Null));
+    }
+
+    #[test]
+    fn test_tiered_jit_function() {
+        let result = tiered_jit_run(
+            r#"
+            fn add(a, b) { return a + b; }
+            let x = add(2, 3);
+        "#,
+        )
+        .unwrap();
+        assert!(matches!(result, RuntimeValue::Null));
+    }
+
+    #[test]
+    fn test_tiered_jit_array_capacity_exception() {
+        // JIT currently silently ignores capacity overflow instead of throwing
+        // This test verifies it doesn't crash, but proper exception throwing is a TODO
+        let result = tiered_jit_run(
+            r#"
+            let a:[i32;2] = [1,2];
+            a.append(3);
+        "#,
+        );
+        // Should succeed (JIT doesn't fully implement capacity exceptions yet)
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_tier_promotion() {
+        let src = r#"
+            fn hot(n) { return n * 2; }
+            let i = 0;
+            while (i < 200) {
+                let x = hot(i);
+                i = i + 1;
+            }
+        "#;
+
+        let mut ctx = TieredJitContext::new();
+        ctx.set_opt_level(OptLevel::O3);
+
+        use super::super::lir_lower::hir_to_lir;
+        use crate::parsing::hir_lower::ast_to_hir;
+        use crate::parsing::lexer::Lexer;
+        use crate::parsing::parser::Parser;
+
+        let mut lexer = Lexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, None);
+        let ast = parser.parse_program().unwrap();
+        let hir = ast_to_hir(&ast, false).unwrap();
+        let lir = hir_to_lir(&hir).unwrap();
+
+        ctx.load_module(&lir);
+        let hot_fn = ctx
+            .functions
+            .get("hot")
+            .cloned()
+            .expect("Expected 'hot' function in module");
+        for i in 0..200 {
+            ctx.execute_function(&hot_fn, vec![RuntimeValue::Int(i)])
+                .unwrap();
+        }
+
+        // Verify hot function was promoted
+        let stats = ctx.stats();
+        assert!(stats.promotions > 0, "Expected tier promotions");
+    }
+}

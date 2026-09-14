@@ -1,0 +1,14 @@
+import DNS;
+
+print("=== Resolver Caching Demonstration ===");
+
+// Construct resolver with explicit caching enabled via .cache(true)
+let resolver = DNS.Resolver().cache(true);
+
+print("1. First query (Populates DNS cache from upstream server):");
+let start1 = resolver.query("cloudflare.com", DNS.Type.A);
+print("   First lookup IP:", start1[0].data, "| TTL:", start1[0].ttl);
+
+print("2. Second query (Served directly from in-memory DNS cache):");
+let start2 = resolver.query("cloudflare.com", DNS.Type.A);
+print("   Cached lookup IP:", start2[0].data, "| TTL:", start2[0].ttl);

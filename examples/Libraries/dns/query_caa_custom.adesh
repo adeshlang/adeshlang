@@ -1,0 +1,11 @@
+import DNS;
+
+print("=== 1. Querying CAA (Certificate Authority Authorization) Records ===");
+let caa_records = DNS.query("google.com", DNS.Type.CAA);
+print("google.com CAA records:", caa_records);
+
+print("=== 2. Resolving Custom Resolvers (1.1.1.1 / 8.8.8.8) ===");
+let custom_a = DNS.query("cloudflare.com", DNS.Type.A);
+for (rec in custom_a) {
+    print("Resolved IP via DNS:", rec.data);
+}

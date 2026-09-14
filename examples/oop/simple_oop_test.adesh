@@ -1,0 +1,23 @@
+// Simple OOP test to verify basic functionality
+
+class Person {
+    Person(name, age) {
+        this.name = name;
+        this.age = age;
+    }
+    
+    fn greet() {
+        print("Hello, I'm " + this.name);
+    }
+    
+    fn toString() {
+        return this.name + " (" + this.age + " years old)";
+    }
+}
+
+// Test basic class functionality
+let person = new Person("Alice", 30);
+person.greet();
+print("Person:", person.toString());
+
+print("Test completed successfully!");

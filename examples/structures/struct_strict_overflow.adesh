@@ -1,0 +1,15 @@
+// Strict struct range regression case: should fail u8 range check.
+
+struct User {
+    username: String;
+    email: String;
+    age: u8;
+};
+
+let badUser = User {
+    username: "alice123",
+    email: "alice@example.com",
+    age: 2800,
+};
+
+print(badUser.age);

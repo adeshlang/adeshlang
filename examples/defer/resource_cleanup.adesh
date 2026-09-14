@@ -1,0 +1,32 @@
+// Defer for resource cleanup pattern
+
+fn process_file(filename: string) {
+    print("Opening file:", filename);
+    
+    defer {
+        print("Closing file:", filename);
+    }
+    
+    print("Processing:", filename);
+    
+    // Simulate work
+    print("Reading contents...");
+    print("Processing data...");
+    
+    // File will be automatically closed when function returns
+}
+
+fn main() {
+    print("Start");
+    process_file("data.txt");
+    print("End");
+    
+    // Expected output:
+    // Start
+    // Opening file: data.txt
+    // Processing: data.txt
+    // Reading contents...
+    // Processing data...
+    // Closing file: data.txt
+    // End
+}

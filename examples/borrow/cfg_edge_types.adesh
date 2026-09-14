@@ -1,0 +1,487 @@
+// ================================================================
+// CFG Edge Types - Visual Examples
+// ================================================================
+// This file demonstrates all CFG edge types and how borrow states
+// propagate across them. Each example includes ASCII art showing
+// the CFG structure.
+// ================================================================
+
+
+// ════════════════════════════════════════════════════════════════
+// 1. NORMAL EDGES - Unconditional flow between blocks
+// ════════════════════════════════════════════════════════════════
+//
+// CFG:
+//    ┌─────────┐
+//    │ B0      │
+//    │ let x=1 │
+//    └────┬────┘
+//         │ Normal
+//         ▼
+//    ┌─────────┐
+//    │ B1      │
+//    │ use(x)  │
+//    └────┬────┘
+//         │ Normal
+//         ▼
+//    ┌─────────┐
+//    │ B2 Exit │
+//    └─────────┘
+
+fn edge_type_normal() {
+    let x = 1;     // B0: x = Unborrowed
+    use(x);        // B1: state propagates normally
+}                  // B2: Exit
+
+
+// ════════════════════════════════════════════════════════════════
+// 2. CONDITIONAL EDGES - Branch true/false
+// ════════════════════════════════════════════════════════════════
+//
+// CFG:
+//    ┌─────────────┐
+//    │ B0          │
+//    │ let x       │
+//    │ if cond     │
+//    └──────┬──────┘
+//           │
+//     ┌─────┴─────┐
+//     │           │
+//  ConditionalTrue ConditionalFalse
+//     │           │
+//     ▼           ▼
+// ┌───────┐   ┌───────┐
+// │ B1    │   │ B2    │
+// │ &x    │   │ &x    │
+// └───┬───┘   └───┬───┘
+//     │           │
+//     └─────┬─────┘
+//           │ Normal (merge)
+//           ▼
+//       ┌───────┐
+//       │ B3    │
+//       │ join  │
+//       └───────┘
+
+fn edge_type_conditional() {
+    let x = Data();
+    
+    if is_ready() {        // ConditionalTrue edge to B1
+        let r = &x;        // B1: x = SharedBorrowed
+        read(r);
+    } else {               // ConditionalFalse edge to B2
+        let r = &x;        // B2: x = SharedBorrowed
+        read(r);
+    }
+    // B3: merge(SharedBorrowed, SharedBorrowed) = SharedBorrowed
+    
+    validate(&x);          // ✓ OK: consistent shared state
+}
+
+
+// ════════════════════════════════════════════════════════════════
+// 3. LOOP BACK EDGE - Returns to loop header
+// ════════════════════════════════════════════════════════════════
+//
+// CFG:
+//    ┌─────────┐
+//    │ B0      │
+//    │ let i=0 │
+//    └────┬────┘
+//         │ Normal
+//         ▼
+//    ┌─────────┐ ◄───────────┐
+//    │ B1 Hdr  │             │
+//    │ i < 10? │             │ LoopBackEdge
+//    └────┬────┘             │
+//         │                  │
+//    ConditionalTrue    ┌────┴────┐
+//         │             │ B2 Body │
+//         ▼             │ i = i+1 │
+//    ┌─────────┐        └─────────┘
+//    │ B3 Exit │             ▲
+//    └─────────┘             │
+//         ▲                  │
+//         └──────────────────┘
+//              ConditionalFalse
+
+fn edge_type_loop_back() {
+    let i = 0;             // B0
+    
+    while i < 10 {         // B1: Loop header
+        // B2: Loop body
+        let temp = &i;     // Borrow
+        print(temp);
+        // Borrow ends
+        i = i + 1;
+    }                      // LoopBackEdge to B1
+    
+    // B3: Exit - i is Unborrowed
+    print(i);
+}
+
+
+// ════════════════════════════════════════════════════════════════
+// 4. BREAK EDGE - Exits loop early
+// ════════════════════════════════════════════════════════════════
+//
+// CFG:
+//    ┌─────────┐
+//    │ B0      │
+//    └────┬────┘
+//         ▼
+//    ┌─────────┐ ◄───┐
+//    │ B1 Hdr  │     │ LoopBackEdge
+//    └────┬────┘     │
+//         │          │
+//    ┌────┴────┐     │
+//    │ B2 Body │     │
+//    │ if done │     │
+//    └────┬────┘     │
+//         │          │
+//    BreakEdge  ┌────┴────┐
+//         │     │ B4 Cont │
+//         │     └─────────┘
+//         ▼
+//    ┌─────────┐
+//    │ B3 Exit │
+//    └─────────┘
+
+fn edge_type_break() {
+    let data = Data();
+    
+    while true {           // B1: Infinite loop header
+        let r = &data;     // B2: Borrow in body
+        
+        if is_complete(r) {
+            break;         // BreakEdge to B3
+        }                  // Borrow released before break
+        
+        step(&data);       // B4: Continue processing
+    }                      // LoopBackEdge to B1
+    
+    // B3: data is Unborrowed (break must release borrows)
+    data.finalize();
+}
+
+
+// ════════════════════════════════════════════════════════════════
+// 5. CONTINUE EDGE - Jumps to next iteration
+// ════════════════════════════════════════════════════════════════
+//
+// CFG:
+//    ┌─────────┐ ◄─────────────────┐
+//    │ B1 Hdr  │                   │
+//    └────┬────┘                   │
+//         │                        │
+//    ┌────┴────┐                   │
+//    │ B2 Body │                   │
+//    │ if skip │                   │
+//    └────┬────┘                   │
+//         │                        │
+//    ContinueEdge ────────────────►│
+//         │                        │
+//    ┌────┴────┐                   │
+//    │ B3 Rest │                   │
+//    │ process │──────────────────►│ LoopBackEdge
+//    └─────────┘
+
+fn edge_type_continue() {
+    let items = [1, 2, 3, 4, 5];
+    
+    for item in items {    // B1: Iterator
+        if item == 3 {
+            continue;      // ContinueEdge back to B1
+        }
+        
+        // B3: Only executed if not skipped
+        let r = &item;
+        heavy_process(r);
+    }
+}
+
+
+// ════════════════════════════════════════════════════════════════
+// 6. RETURN EDGE - Exits function
+// ════════════════════════════════════════════════════════════════
+//
+// CFG:
+//    ┌─────────┐
+//    │ B0      │
+//    │ if err  │
+//    └────┬────┘
+//         │
+//    ┌────┴────┐
+//    │         │
+//    ▼         ▼
+// ┌─────┐   ┌─────┐
+// │ B1  │   │ B2  │
+// │return   │ ... │
+// └──┬──┘   └──┬──┘
+//    │         │
+// ReturnEdge   │
+//    │         │
+//    ▼         ▼
+// ┌─────────────┐
+// │   B_Exit    │
+// └─────────────┘
+
+fn edge_type_return() -> int {
+    let resource = acquire();
+    
+    if resource.is_error() {
+        // B1: Early return - resource dropped here
+        return -1;         // ReturnEdge to Exit
+    }
+    
+    // B2: Normal path
+    let result = resource.process();
+    return result;         // ReturnEdge to Exit
+}
+
+
+// ════════════════════════════════════════════════════════════════
+// 7. PANIC EDGE - Abnormal termination
+// ════════════════════════════════════════════════════════════════
+//
+// CFG:
+//    ┌──────────┐
+//    │ B0       │
+//    │ if !valid│
+//    └────┬─────┘
+//         │
+//    ┌────┴────┐
+//    │         │
+//    ▼         ▼
+// ┌─────┐   ┌─────┐
+// │ B1  │   │ B2  │
+// │panic│   │ ok  │
+// └──┬──┘   └──┬──┘
+//    │         │
+// PanicEdge    │ Normal
+//    │         │
+//    ▼         ▼
+// ┌─────┐   ┌─────┐
+// │Panic│   │Exit │
+// │Block│   │     │
+// └─────┘   └─────┘
+
+fn edge_type_panic() {
+    let data = load_data();
+    
+    if !data.is_valid() {
+        // B1: Panic path
+        panic("Invalid data!");  // PanicEdge to PanicBlock
+    }
+    
+    // B2: Normal path - only reached if valid
+    data.process();
+}
+
+
+// ════════════════════════════════════════════════════════════════
+// 8. TRY-CATCH EDGES - Exception handling
+// ════════════════════════════════════════════════════════════════
+//
+// CFG:
+//    ┌─────────┐
+//    │ B0 Try  │
+//    │ risky() │
+//    └────┬────┘
+//         │
+//    ┌────┴────┐
+//    │         │
+// Normal    ExceptionEdge
+//    │         │
+//    ▼         ▼
+// ┌─────┐   ┌─────┐
+// │ B1  │   │ B2  │
+// │ ok  │   │catch│
+// └──┬──┘   └──┬──┘
+//    │         │
+//    └────┬────┘
+//         │ Normal (join)
+//         ▼
+//    ┌─────────┐
+//    │ B3 Join │
+//    └─────────┘
+
+fn edge_type_try_catch() {
+    let resource = Resource();
+    
+    try {
+        // B0: Try block
+        resource.risky_operation();
+    } catch(e) {
+        // B2: Catch block (ExceptionEdge from B0)
+        log_error(e);
+        resource.reset();
+    }
+    
+    // B3: Join - resource state must be consistent
+    resource.cleanup();
+}
+
+
+// ════════════════════════════════════════════════════════════════
+// 9. NESTED LOOP EDGES
+// ════════════════════════════════════════════════════════════════
+//
+// CFG:
+//    ┌─────────┐
+//    │ B0      │
+//    └────┬────┘
+//         ▼
+//    ┌─────────┐ ◄───────────────────┐
+//    │ B1 Outer│                     │
+//    │ Header  │                     │ OuterLoopBack
+//    └────┬────┘                     │
+//         ▼                          │
+//    ┌─────────┐ ◄─────────┐         │
+//    │ B2 Inner│           │         │
+//    │ Header  │           │ InnerLoopBack
+//    └────┬────┘           │         │
+//         ▼                │         │
+//    ┌─────────┐           │         │
+//    │ B3 Body │───────────┘         │
+//    │ break?  │                     │
+//    └────┬────┘                     │
+//         │                          │
+//    BreakEdge (inner) ──────────────┤
+//         │                          │
+//    ┌────┴────┐                     │
+//    │ B4 After│─────────────────────┘
+//    │ Inner   │
+//    └─────────┘
+
+fn edge_type_nested_loops() {
+    let matrix = [[1,2,3], [4,5,6], [7,8,9]];
+    let found = false;
+    
+    'outer: for row in matrix {          // B1: Outer header
+        'inner: for cell in row {         // B2: Inner header
+            // B3: Inner body
+            if cell == 5 {
+                found = true;
+                break 'outer;             // BreakEdge to outer exit
+            }
+        }                                 // InnerLoopBack to B2
+        
+        // B4: After inner loop
+    }                                     // OuterLoopBack to B1
+    
+    print(found);
+}
+
+
+// ════════════════════════════════════════════════════════════════
+// 10. MATCH/SWITCH EDGES - Multi-way branching
+// ════════════════════════════════════════════════════════════════
+//
+// CFG:
+//      ┌──────────┐
+//      │ B0       │
+//      │ match v  │
+//      └────┬─────┘
+//           │
+//    ┌──────┼──────┬──────┐
+//    │      │      │      │
+//   Arm0   Arm1   Arm2   Default
+//    │      │      │      │
+//    ▼      ▼      ▼      ▼
+// ┌────┐ ┌────┐ ┌────┐ ┌────┐
+// │ B1 │ │ B2 │ │ B3 │ │ B4 │
+// └─┬──┘ └─┬──┘ └─┬──┘ └─┬──┘
+//   │      │      │      │
+//   └──────┴──────┴──────┘
+//           │ Normal
+//           ▼
+//      ┌──────────┐
+//      │ B5 Join  │
+//      └──────────┘
+
+fn edge_type_match() {
+    let value = get_command();
+    let data = Data();
+    
+    match value {
+        Command::Read => {     // Arm0 edge to B1
+            let r = &data;
+            read_data(r);
+        }
+        Command::Write => {    // Arm1 edge to B2
+            let r = &data;
+            read_data(r);      // Still shared (just reading for write)
+        }
+        Command::Delete => {   // Arm2 edge to B3
+            let r = &data;
+            check_permissions(r);
+        }
+        _ => {                 // Default edge to B4
+            let r = &data;
+            log_unknown(r);
+        }
+    }
+    
+    // B5: All arms had SharedBorrowed → merge OK
+    data.close();
+}
+
+
+// ════════════════════════════════════════════════════════════════
+// EDGE TYPE SUMMARY TABLE
+// ════════════════════════════════════════════════════════════════
+//
+// | Edge Type       | Source          | Target          | Borrow Behavior           |
+// |-----------------|-----------------|-----------------|---------------------------|
+// | Normal          | Any block       | Next block      | State propagates directly |
+// | ConditionalTrue | Branch block    | Then block      | State forked for branch   |
+// | ConditionalFalse| Branch block    | Else block      | State forked for branch   |
+// | LoopBackEdge    | Loop body end   | Loop header     | State must match header   |
+// | BreakEdge       | Inside loop     | Loop exit       | Borrows must be released  |
+// | ContinueEdge    | Inside loop     | Loop header     | Borrows must be released  |
+// | ReturnEdge      | Any block       | Exit block      | All resources dropped     |
+// | PanicEdge       | Panic point     | Panic block     | Treated like return       |
+// | MatchArm        | Match block     | Arm block       | State forked for arm      |
+// | ExceptionEdge   | Try block       | Catch block     | May have partial state    |
+
+
+// ════════════════════════════════════════════════════════════════
+// HELPER STUBS
+// ════════════════════════════════════════════════════════════════
+
+fn use(x) { }
+fn read(r) { }
+fn is_ready() -> bool { true }
+fn validate(r) { }
+fn is_complete(r) -> bool { true }
+fn step(r) { }
+fn heavy_process(r) { }
+fn acquire() { return Resource(); }
+fn load_data() { return Data(); }
+fn log_error(e) { }
+fn get_command() { return Command::Read; }
+fn read_data(r) { }
+fn check_permissions(r) { }
+fn log_unknown(r) { }
+
+class Data {
+    fn is_valid() -> bool { true }
+    fn process() { }
+    fn finalize() { }
+    fn close() { }
+}
+
+class Resource {
+    fn is_error() -> bool { false }
+    fn process() -> int { return 0; }
+    fn risky_operation() { }
+    fn reset() { }
+    fn cleanup() { }
+}
+
+enum Command {
+    Read,
+    Write,
+    Delete
+}

@@ -1,0 +1,15 @@
+import URL;
+
+let url: URL = URL.builder()
+    .scheme("https")
+    .host("api.example.com")
+    .port(443)
+    .path("/v1")
+    .appendPathSegment("users")
+    .queryParam("page", 2)
+    .queryParam("limit", 50)
+    .fragment("results")
+    .build();
+
+let href: String = url.href();
+print("Built URL:", href);

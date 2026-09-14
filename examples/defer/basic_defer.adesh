@@ -1,0 +1,29 @@
+// Basic defer example - demonstrates LIFO execution order
+
+fn main() {
+    print("Start");
+    
+    defer {
+        print("Defer 1 (executed last)");
+    }
+    
+    print("Middle");
+    
+    defer {
+        print("Defer 2 (executed second)");
+    }
+    
+    defer {
+        print("Defer 3 (executed first)");
+    }
+    
+    print("End");
+    
+    // Expected output:
+    // Start
+    // Middle
+    // End
+    // Defer 3 (executed first)
+    // Defer 2 (executed second)
+    // Defer 1 (executed last)
+}

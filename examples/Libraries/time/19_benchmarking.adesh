@@ -1,0 +1,75 @@
+// 19_benchmarking.adesh - Using Instant/Stopwatch for performance measurement
+import Time;
+
+print("=== Benchmarking with Instant & Stopwatch ===\n");
+
+// -------------------------------------------------------
+// Benchmark helper: time a loop
+// -------------------------------------------------------
+fn benchmarkLoop(n: i64): Duration {
+    let t0: Instant = Time.instantNow();
+    let sum = 0;
+    let i = 0;
+    while (i < n) { sum = sum + i; i = i + 1; }
+    return t0.elapsed();
+}
+
+// -------------------------------------------------------
+// Run at different sizes
+// -------------------------------------------------------
+print("--- Loop Benchmark ---");
+let t1k: Duration = benchmarkLoop(1000);
+let t10k: Duration = benchmarkLoop(10000);
+let t100k: Duration = benchmarkLoop(100000);
+let t1m: Duration = benchmarkLoop(1000000);
+
+print("  1,000 iterations :", t1k.toString());
+print(" 10,000 iterations :", t10k.toString());
+print("100,000 iterations :", t100k.toString());
+print("1M      iterations :", t1m.toString());
+
+// -------------------------------------------------------
+// Stopwatch with laps
+// -------------------------------------------------------
+print("\n--- Stopwatch with Laps ---");
+let sw: Stopwatch = Time.stopwatch();
+sw.start();
+
+// Phase 1
+let i = 0;
+while (i < 500000) { i = i + 1; }
+let lap1: Duration = sw.lap();
+print("Phase 1 (500K loop)  :", lap1.toString());
+
+// Phase 2
+i = 0;
+while (i < 1000000) { i = i + 1; }
+let lap2: Duration = sw.lap();
+print("Phase 2 (1M   loop)  :", lap2.toString());
+
+// Phase 3
+i = 0;
+while (i < 250000) { i = i + 1; }
+let lap3: Duration = sw.lap();
+print("Phase 3 (250K loop)  :", lap3.toString());
+
+let total: Duration = sw.elapsed();
+print("Total elapsed        :", total.toString());
+
+// -------------------------------------------------------
+// Multiple instant captures
+// -------------------------------------------------------
+print("\n--- Multiple Checkpoints ---");
+let c0: Instant = Time.instantNow();
+i = 0; while (i < 300000) { i = i + 1; }
+let c1: Instant = Time.instantNow();
+i = 0; while (i < 300000) { i = i + 1; }
+let c2: Instant = Time.instantNow();
+
+let seg1: Duration = c0.durationSince(c1).abs();
+let seg2: Duration = c1.durationSince(c2).abs();
+let overall: Duration = c0.durationSince(c2).abs();
+
+print("Segment 1:", seg1.toString());
+print("Segment 2:", seg2.toString());
+print("Overall  :", overall.toString());

@@ -1,0 +1,8 @@
+import Path;
+
+let child = Path.new("assets/images/logo.png");
+let parent = child.parent();
+
+print("Child: " + child.toString());
+print("Parent: " + parent.toString());
+print("Grandparent: " + parent.parent().toString());

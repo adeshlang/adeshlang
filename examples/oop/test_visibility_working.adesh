@@ -1,0 +1,96 @@
+// Test visibility enforcement with class context propagation
+
+print("=== Test 1: Private method calling private method (same class) ===");
+
+class BankAccount {
+    BankAccount() {
+        this.balance = 100;
+    }
+    
+    private fn validateAmount(amt) {
+        print("  validateAmount called");
+        return amt > 0;
+    }
+    
+    public fn deposit(amt) {
+        print("  deposit called with " + amt);
+        // This should work now - private calling private in same class
+        if this.validateAmount(amt) {
+            this.balance = this.balance + amt;
+            return true;
+        }
+        return false;
+    }
+    
+    public fn getBalance() {
+        return this.balance;
+    }
+}
+
+let account = new BankAccount();
+print("Initial balance: " + account.getBalance());
+print("Depositing 50...");
+let result = account.deposit(50);
+print("Deposit result: " + result);
+print("New balance: " + account.getBalance());
+
+print("\n=== Test 2: Public methods accessible from outside ===");
+
+class PublicClass {
+    public fn publicMethod() {
+        print("  publicMethod called - OK!");
+    }
+}
+
+let pub = new PublicClass();
+pub.publicMethod();
+
+print("\n=== Test 3: Multiple method calls in chain ===");
+
+class Calculator {
+    private fn addInternal(a, b) {
+        print("  addInternal: " + a + " + " + b);
+        return a + b;
+    }
+    
+    private fn multiplyInternal(a, b) {
+        print("  multiplyInternal: " + a + " * " + b);
+        return a * b;
+    }
+    
+    public fn compute(a, b) {
+        print("  compute called");
+        let sum = this.addInternal(a, b);
+        let product = this.multiplyInternal(sum, 2);
+        return product;
+    }
+}
+
+let calc = new Calculator();
+let result2 = calc.compute(5, 10);
+print("Compute result: " + result2);
+
+print("\n=== Test 4: Protected methods in subclass ===");
+
+class Parent {
+    protected fn protectedMethod() {
+        print("  protectedMethod in Parent");
+    }
+    
+    public fn callProtected() {
+        this.protectedMethod();
+    }
+}
+
+class Child extends Parent {
+    public fn childMethod() {
+        print("  childMethod in Child");
+        this.protectedMethod();  // Should work - protected accessible in subclass
+    }
+}
+
+let child = new Child();
+child.callProtected();
+child.childMethod();
+
+print("\n=== All visibility tests completed successfully! ===");

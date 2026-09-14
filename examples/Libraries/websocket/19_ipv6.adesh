@@ -1,0 +1,25 @@
+// AdeshLang WebSocket Example 19: Dual-Stack IPv4/IPv6 Support
+// Demonstrates connecting via localhost / 127.0.0.1 dual-stack socket addresses.
+
+import WebSocket;
+
+print("=== AdeshLang WebSocket IPv4/IPv6 Addressing Demo ===");
+
+let server = WebSocket.server(WebSocket.ServerConfig({
+    port: 8619,
+    bind_address: "127.0.0.1"
+}));
+
+server.startEcho();
+print("✓ Server listening on 127.0.0.1:8619");
+
+let client = WebSocket.connect("ws://127.0.0.1:8619");
+print("✓ Client connected via IP endpoint address");
+
+client.sendText("IPv4/IPv6 address test");
+let reply = client.receive();
+print("Server Response: " + reply.payload);
+
+client.close(1000, "Done");
+server.close();
+print("✓ Dual-stack IP address test completed successfully!");

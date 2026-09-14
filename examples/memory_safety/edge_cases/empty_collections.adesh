@@ -1,0 +1,58 @@
+// Edge Cases: Empty Collections
+// Memory safety with edge cases
+
+fn main() {
+    print("=== Edge Case: Empty Collections ===");
+    
+    // Empty array
+    let empty_arr = [];
+    print("Empty array:", empty_arr);
+    print("Length:", empty_arr.length);
+    
+    // Moving empty array is safe
+    let moved_empty = empty_arr;
+    print("Moved empty:", moved_empty);
+    
+    // Borrowing empty array
+    let borrowed_empty = &moved_empty;
+    print("Borrowed empty:", borrowed_empty);
+}
+
+// Operations on empty collections
+fn empty_operations() {
+    let empty = [];
+    
+    // Safe to iterate over empty
+    for (i = 0; i < empty.length; i = i + 1) {
+        print("Never executes");
+    }
+    
+    // Accessing empty (bounds checking prevents crashes)
+    // let first = empty[0];  // Runtime error (bounds check)
+    
+    print("Empty operations completed safely");
+}
+
+// Null and undefined handling
+fn null_handling() {
+    let maybe_value = null;
+    
+    if (maybe_value == null) {
+        print("Value is null");
+    } else {
+        print("Value:", maybe_value);
+    }
+    
+    // Borrowing null is prevented by type system
+    // let borrowed_null = &null;  // Type error
+}
+
+// Empty vs uninitialized
+fn empty_vs_uninitialized() {
+    let empty = [];  // Initialized to empty
+    print("Empty:", empty);
+    
+    // Uninitialized would be caught at compile-time
+    // let uninit;
+    // print("Uninit:", uninit);  // ERROR: use of uninitialized variable
+}

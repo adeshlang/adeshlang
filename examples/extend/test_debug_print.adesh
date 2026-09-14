@@ -1,0 +1,24 @@
+// Debug: is print accessible inside extension?
+
+class Person {
+    Person(name, age) {
+        this.name = name;
+        this.age = age;
+    }
+}
+
+extend on Person {
+    fn greet() {
+        print("Hello from inside extension!");
+    }
+
+    fn getAgePow() {
+        return this.age * this.age;
+    }
+}
+
+let p = new Person("Alice", 25);
+p.greet();
+let a = p.getAgePow();
+print("Age^2: " + a);
+print("Done!");

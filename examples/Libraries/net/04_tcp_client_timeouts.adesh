@@ -1,0 +1,29 @@
+// AdeshLang Net Example 04: TCP Client Socket Options & Timeout Configuration
+import Net;
+
+fn main() {
+    print("=== 04. TCP Client Socket Options & Timeouts ===");
+
+    // Connect to echo server or remote host
+    let stream = Net.tcpConnect("127.0.0.1", 9092);
+    print("Connected to server! Local:", stream.localAddress(), "Remote:", stream.remoteAddress());
+
+    // 1. Enable TCP_NODELAY for latency sensitivity
+    stream.setNoDelay(true);
+
+    // 2. Set Read & Write Timeouts (5.0 seconds)
+    stream.setReadTimeout(5.0);
+    stream.setWriteTimeout(5.0);
+
+    // 3. Write data and read response
+    stream.writeText("High performance networking in AdeshLang!");
+    print("Sent text payload to server");
+
+    let response = stream.read(2048);
+    print("Received response from server");
+
+    stream.close();
+    print("=== 04. TCP Client Timeouts Completed ===");
+}
+
+main();

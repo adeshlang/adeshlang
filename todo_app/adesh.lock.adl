@@ -1,0 +1,64 @@
+lock {
+  version = "1"
+  generated-at = "2026-08-17T09:30:03Z"
+  compiler-version = "0.3.0"
+  adl-version = "0.3.0"
+  package-id = "todo_app"
+  dependencies = [
+    {
+      package-id = "Crypto@0.79.979"
+      name = "Crypto"
+      version = "0.79.979"
+      requirement = "^1.0.0"
+      checksum = "968b18ae333b7420"
+      sha256 = "968b18ae333b7420"
+      source = { kind = "registry", location = "official" }
+    }
+    {
+      package-id = "DNS@0.23.223"
+      name = "DNS"
+      version = "0.23.223"
+      requirement = "^1.0.0"
+      checksum = "8d84488ef56a3e8f"
+      sha256 = "8d84488ef56a3e8f"
+      source = { kind = "registry", location = "official" }
+    }
+    {
+      package-id = "Encoding@0.93.93"
+      name = "Encoding"
+      version = "0.93.93"
+      requirement = "^1.0.0"
+      checksum = "0653e41f2292599b"
+      sha256 = "0653e41f2292599b"
+      source = { kind = "registry", location = "official" }
+    }
+    {
+      package-id = "HTTP@0.22.322"
+      name = "HTTP"
+      version = "0.22.322"
+      requirement = "^4.0.0"
+      checksum = "23426ebbec212c8b"
+      sha256 = "23426ebbec212c8b"
+      source = { kind = "registry", location = "official" }
+    }
+    {
+      package-id = "Regex@0.29.429"
+      name = "Regex"
+      version = "0.29.429"
+      requirement = "^1.0.0"
+      checksum = "aabe2f0fe66a8e87"
+      sha256 = "aabe2f0fe66a8e87"
+      source = { kind = "registry", location = "official" }
+    }
+    {
+      package-id = "Time@0.91.791"
+      name = "Time"
+      version = "0.91.791"
+      requirement = "^1.0.0"
+      checksum = "c0d1dcdd34ba9b1a"
+      sha256 = "c0d1dcdd34ba9b1a"
+      source = { kind = "registry", location = "official" }
+    }
+  ]
+  signature = "5cf3e62bcadd52a8"
+}

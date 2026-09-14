@@ -1,0 +1,246 @@
+// =============================================================================
+// AdeshLang CFG Borrow Checker - Valid Examples
+// =============================================================================
+// This file demonstrates CFG-based borrow checking patterns that WORK.
+// Run with: cargo run -- examples/borrow/cfg_valid_examples.adesh
+// =============================================================================
+
+print("=== CFG Borrow Checker - Valid Examples ===\n");
+
+// -----------------------------------------------------------------------------
+// 1. Multiple Shared Borrows (OK)
+// -----------------------------------------------------------------------------
+print("--- Test 1: Multiple Shared Borrows ---");
+
+let data = [1, 2, 3, 4, 5];
+
+fn sum_array(arr) {
+    let total = 0;
+    for (x in arr) {
+        total = total + x;
+    }
+    return total;
+}
+
+fn count_array(arr) {
+    return len(arr);
+}
+
+// Both functions borrow data immutably - this is allowed
+let s = sum_array(data);
+let c = count_array(data);
+print("Sum:", s, "Count:", c);
+print("✓ Multiple shared borrows OK\n");
+
+// -----------------------------------------------------------------------------
+// 2. Sequential Access (OK)
+// -----------------------------------------------------------------------------
+print("--- Test 2: Sequential Access ---");
+
+let numbers = [10, 20, 30];
+print("Before:", numbers);
+
+// Read first
+let first = numbers[0];
+print("First element:", first);
+
+// Mutate later
+numbers.push(40);
+print("After push:", numbers);
+
+// Read again
+let last_idx = len(numbers) - 1;
+print("Last element:", numbers[last_idx]);
+print("✓ Sequential access OK\n");
+
+// -----------------------------------------------------------------------------
+// 3. If/Else with Consistent Borrows (OK)
+// -----------------------------------------------------------------------------
+print("--- Test 3: If/Else Consistent Borrows ---");
+
+let resource = [100, 200, 300];
+
+fn read_first(arr) {
+    return arr[0];
+}
+
+fn read_last(arr) {
+    let idx = len(arr) - 1;
+    return arr[idx];
+}
+
+let use_first = true;
+let result = 0;
+
+if (use_first) {
+    result = read_first(resource);  // Shared borrow
+} else {
+    result = read_last(resource);   // Shared borrow (same kind)
+}
+
+// After join: both branches had shared borrows - consistent!
+print("Result:", result);
+let total = sum_array(resource);  // Can still borrow
+print("Total:", total);
+print("✓ If/else consistent borrows OK\n");
+
+// -----------------------------------------------------------------------------
+// 4. While Loop with Iteration (OK)
+// -----------------------------------------------------------------------------
+print("--- Test 4: While Loop ---");
+
+let counter = 0;
+let items = [1, 2, 3, 4, 5];
+
+while (counter < len(items)) {
+    let item = items[counter];
+    print("  Processing item:", item);
+    counter = counter + 1;
+}
+
+// After loop: items still accessible
+print("Items still valid:", items);
+print("✓ While loop OK\n");
+
+// -----------------------------------------------------------------------------
+// 5. For Loop with Shared Access (OK)
+// -----------------------------------------------------------------------------
+print("--- Test 5: For Loop ---");
+
+let values = [10, 20, 30, 40, 50];
+let sum_val = 0;
+
+for (v in values) {
+    sum_val = sum_val + v;
+}
+
+print("Sum of values:", sum_val);
+print("Values still valid:", values);
+print("✓ For loop OK\n");
+
+// -----------------------------------------------------------------------------
+// 6. Nested Functions (OK)
+// -----------------------------------------------------------------------------
+print("--- Test 6: Nested Functions ---");
+
+fn process_data(arr) {
+    fn helper(x) {
+        return x * 2;
+    }
+    
+    let result = [];
+    for (item in arr) {
+        result.push(helper(item));
+    }
+    return result;
+}
+
+let input_data = [1, 2, 3];
+let output_data = process_data(input_data);
+print("Input:", input_data);
+print("Output:", output_data);
+print("✓ Nested functions OK\n");
+
+// -----------------------------------------------------------------------------
+// 7. Closure Capture (OK)
+// -----------------------------------------------------------------------------
+print("--- Test 7: Closure Capture ---");
+
+let multiplier = 10;
+
+let scale = fn(x) {
+    return x * multiplier;
+};
+
+print("scale(5) =", scale(5));
+print("scale(3) =", scale(3));
+print("✓ Closure capture OK\n");
+
+// -----------------------------------------------------------------------------
+// 8. Return Owned Data (OK)
+// -----------------------------------------------------------------------------
+print("--- Test 8: Return Owned Data ---");
+
+fn create_list(n) {
+    let result = [];
+    let i = 1;
+    while (i <= n) {
+        result.push(i);
+        i = i + 1;
+    }
+    return result;
+}
+
+let my_list = create_list(5);
+print("Created list:", my_list);
+print("✓ Return owned data OK\n");
+
+// -----------------------------------------------------------------------------
+// 9. Class with Methods (OK)
+// -----------------------------------------------------------------------------
+print("--- Test 9: Class Methods ---");
+
+class Counter {
+    fn init(start) {
+        this.value = start;
+    }
+    
+    fn increment() {
+        this.value = this.value + 1;
+        return this.value;
+    }
+    
+    fn get() {
+        return this.value;
+    }
+}
+
+let c = new Counter(0);
+print("Initial:", c.get());
+print("After increment:", c.increment());
+print("After increment:", c.increment());
+print("Final:", c.get());
+print("✓ Class methods OK\n");
+
+// -----------------------------------------------------------------------------
+// 10. Nested If/Else (OK)
+// -----------------------------------------------------------------------------
+print("--- Test 10: Nested If/Else ---");
+
+fn classify(x) {
+    if (x < 0) {
+        return "negative";
+    } elif (x == 0) {
+        return "zero";
+    } elif (x < 10) {
+        return "small";
+    } elif (x < 100) {
+        return "medium";
+    } else {
+        return "large";
+    }
+}
+
+print("classify(-5):", classify(-5));
+print("classify(0):", classify(0));
+print("classify(5):", classify(5));
+print("classify(50):", classify(50));
+print("classify(500):", classify(500));
+print("✓ Nested if/else OK\n");
+
+// -----------------------------------------------------------------------------
+// Summary
+// -----------------------------------------------------------------------------
+print("=== All CFG Borrow Tests Passed! ===");
+print("");
+print("Valid patterns demonstrated:");
+print("  ✓ Multiple shared borrows");
+print("  ✓ Sequential access");
+print("  ✓ If/else with consistent borrows");
+print("  ✓ While loops");
+print("  ✓ For loops");
+print("  ✓ Nested functions");
+print("  ✓ Closure capture");
+print("  ✓ Return owned data");
+print("  ✓ Class methods");
+print("  ✓ Nested if/else");

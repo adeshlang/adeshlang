@@ -1,0 +1,28 @@
+// Dynamic Programming Fibonacci benchmark (using array for mutable state)
+
+fn fib_dp(n) {
+    if (n <= 1) {
+        return n;
+    }
+    
+    let state = [0, 1];
+    let i = 2;
+    
+    while (i <= n) {
+        let a = state[0];
+        let b = state[1];
+        let next = a + b;
+        state = [b, next];
+        i = i + 1;
+    }
+    
+    return state[1];
+}
+
+let start = clock();
+let n = 35;
+let result = fib_dp(n);
+let end = clock();
+
+print("Fibonacci(", n, ") =", result);
+print("Time taken:", end - start, "seconds");

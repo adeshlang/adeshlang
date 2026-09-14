@@ -1,0 +1,42 @@
+// Defer with nested scopes
+
+fn main() {
+    print("Outer scope start");
+    
+    defer {
+        print("Outer defer 1");
+    }
+    
+    {
+        print("Inner scope start");
+        
+        defer {
+            print("Inner defer 1");
+        }
+        
+        defer {
+            print("Inner defer 2");
+        }
+        
+        print("Inner scope end");
+    }
+    
+    print("After inner scope");
+    
+    defer {
+        print("Outer defer 2");
+    }
+    
+    print("Outer scope end");
+    
+    // Expected output:
+    // Outer scope start
+    // Inner scope start
+    // Inner scope end
+    // Inner defer 2
+    // Inner defer 1
+    // After inner scope
+    // Outer scope end
+    // Outer defer 2
+    // Outer defer 1
+}

@@ -1,0 +1,111 @@
+// ================================================
+// ADESH FOR x86-64 ARCHITECTURE
+// ================================================
+// Target: x86_64-unknown-linux-gnu, x86_64-pc-windows-msvc, x86_64-apple-darwin
+// Use: Desktop applications, servers, high-performance computing
+//
+// Characteristics:
+//   - 64-bit registers (RAX, RBX, RCX, etc.)
+//   - SIMD: SSE4.2, AVX, AVX2 (256-bit vectors)
+//   - Cache: 64-byte lines, up to 8MB L3
+//   - Instruction set: Complex, many addressing modes
+//
+// Same Adesh code runs here, but x86-64 optimizer:
+//   - Uses AVX2 for auto-vectorization
+//   - Implements branch prediction well
+//   - Optimizes cache locality
+//   - Fast hardware multiplier
+
+fn fast_convolution(kernel: [f64], signal: [f64], size: i64): [f64] {
+    // This function is efficient on x86-64 due to:
+    // 1. AVX2 can process 4 f64 values at once (256-bit / 64-bit)
+    // 2. Good cache behavior with sequential access
+    // 3. Hardware floating point unit
+    
+    let result: [f64] = [];
+    let i: i64 = 0;
+    
+    while (i < signal.len() - size) {
+        let sum = 0.0;
+        let j: i64 = 0;
+        
+        while (j < size) {
+            sum = sum + (kernel[j] * signal[i + j]);
+            j = j + 1;
+        };
+        
+        result[i] = sum;
+        i = i + 1;
+    };
+    
+    return result;
+}
+
+fn crypto_sensitive_hash(data: [i64]): i64 {
+    // On x86-64, this may use:
+    // - SHA instruction extensions (SHA-NI) for faster hashing
+    // - AES-NI for encryption
+    // - RDRAND instruction for truly random bytes
+    
+    let hash: i64 = 2654435761;
+    let i: i64 = 0;
+    
+    while (i < data.len()) {
+        hash = hash ^ data[i];
+        // Each iteration: ~1 cycle on x86-64 (fast rotate/xor unit)
+        hash = (hash * 16777619);
+        i = i + 1;
+    };
+    
+    return hash;
+}
+
+fn x86_64_cache_test(): i64 {
+    // This test shows x86-64 cache efficiency
+    // L1 cache: 32KB (fits ~4000 i64 values)
+    // L2 cache: 256KB (fits ~32000 i64 values)
+    // L3 cache: 8MB (shared between cores)
+    
+    let sum: i64 = 0;
+    let i: i64 = 0;
+    
+    // Sequential access = great cache hits
+    let data: [i64] = [];
+    while (i < 1000) {
+        data[i] = i;
+        i = i + 1;
+    };
+    
+    // This loop has excellent cache locality
+    let j: i64 = 0;
+    while (j < 1000) {
+        sum = sum + data[j];
+        j = j + 1;
+    };
+    
+    return sum;
+}
+
+fn main_x86_64() {
+    print("\n=== Adesh for x86-64 ===\n");
+    
+    let kernel = [0.1, 0.2, 0.3, 0.2, 0.1];
+    let signal = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+    
+    let convolved = fast_convolution(kernel, signal, 5);
+    print("Convolution completed\n");
+    
+    let hash = crypto_sensitive_hash([1, 2, 3, 4, 5]);
+    print("Hash result: ", hash, "\n");
+    
+    let cache_sum = x86_64_cache_test();
+    print("Cache test sum: ", cache_sum, "\n");
+    
+    print("x86-64 Characteristics:");
+    print("  - SIMD width: 256 bits (AVX2)");
+    print("  - Cache line: 64 bytes");
+    print("  - Instruction issue: 6 per cycle (modern CPUs)");
+    print("  - Perfect for: desktop apps, servers");
+    
+    return 0;
+}

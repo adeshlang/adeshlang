@@ -1,0 +1,35 @@
+// 02_generic_interfaces.adesh
+// Shows generic interface definition and its implementation.
+
+print("=== 02: GENERIC INTERFACES DEMO ===");
+
+interface Container<T> {
+    fn get_value();
+    fn set_value(val: T);
+}
+
+class SafeBox<T> implements Container {
+    SafeBox(val: T) {
+        this.value = val;
+    }
+
+    fn get_value(): T {
+        return this.value;
+    }
+
+    fn set_value(val: T): void {
+        this.value = val;
+    }
+}
+
+let intBox = new SafeBox(1234);
+print("Box value before set =", intBox.get_value());
+intBox.set_value(5678);
+print("Box value after set  =", intBox.get_value());
+
+let strBox = new SafeBox("Initial Safe Message");
+print("Box value before set =", strBox.get_value());
+strBox.set_value("New Secret Message");
+print("Box value after set  =", strBox.get_value());
+
+print("✅ Generic Interfaces Demo Passed.\n");

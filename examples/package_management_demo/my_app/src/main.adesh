@@ -1,0 +1,25 @@
+import "my_lib" as lib;
+import "my_native_lib" as native;
+
+fn main() {
+    print("Welcome demo starting...");
+    
+    // Call exported welcome message function
+    let msg = lib.get_welcome_message("Developer");
+    print(msg);
+    
+    // Call exported factorial calculation function
+    let fact5 = lib.calculate_factorial(5);
+    print("Factorial of 5 calculated via my_lib is: " + fact5);
+    
+    // Call exported native calculations utilizing C FFI inside adl module
+    let hyp = native.calculate_hypotenuse(3.0, 4.0);
+    print("Hypotenuse of 3 and 4 calculated via C FFI in my_native_lib: " + hyp);
+    
+    // Call custom C DLL FFI functions
+    let mult = native.multiply_native(6.0, 7.0);
+    print("6 * 7 calculated via custom C DLL: " + mult);
+    
+    let fact10 = native.factorial_native(10);
+    print("Factorial of 10 calculated via custom C DLL: " + fact10);
+}

@@ -1,0 +1,26 @@
+import Collections;
+
+print("========================================");
+print("LeetCode 1 - Two Sum (BTreeMap / HashSet)");
+print("========================================");
+
+fn twoSum(nums, target) {
+    let map = Collections.BTreeMap();
+    let i = 0;
+    while (i < nums.len()) {
+        let complement = target - nums[i];
+        let comp_key = "key_" + complement;
+        let found = map.get(comp_key);
+        if (found != null) {
+            return [found, i];
+        }
+        map.insert("key_" + nums[i], i);
+        i = i + 1;
+    }
+    return [];
+}
+
+let nums = [2, 7, 11, 15];
+let target = 9;
+print("Numbers: ", nums, " Target: ", target);
+print("Indices: ", twoSum(nums, target)); // Expect [0, 1]

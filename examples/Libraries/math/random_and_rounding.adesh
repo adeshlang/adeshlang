@@ -1,0 +1,9 @@
+
+import Math;
+
+let r = Math.random();
+print("random:", r);
+print("floor:", Math.floor(7.9));
+print("ceil:", Math.ceil(2.1));
+print("round1:", Math.round(2.4));
+print("round2:", Math.round(2.5));

@@ -1,0 +1,43 @@
+// Uncomment the mock block below to test non-interactively in automated pipelines:
+// input.mock([
+//     "true",               // confirm
+//     "SuperSecret#2026",   // password
+//     ["TypeScript", "Rust"], // checkbox
+//     "Native JIT",         // radio
+//     "90",                 // slider
+//     "2026-10-15",         // datepicker
+//     "09:30:00",           // timepicker
+//     "#ffaa00",            // color
+//     "1234"                // pin
+// ]);
+
+println("=== ADESHLANG INPUT SYSTEM DEMO ===");
+
+let confirmed = input.confirm("Do you want to initialize all backend targets?", true);
+println(`Confirmed: ${confirmed}`);
+
+let pass = input.password("Enter Master Key:");
+println("Password accepted!");
+
+let selected_stack = input.checkbox("Select Preferred Tooling:", ["TypeScript", "Rust", "Go", "Python"]);
+println(`Selected Stack count: ${selected_stack.length}`);
+
+let engine = input.radio("Choose Execution Engine:", ["Interpreter", "Native JIT", "AOT Standalone", "WASM", "GPU"]);
+println(`Selected Execution Engine: ${engine}`);
+
+let performance_level = input.slider("Desired Compilation Optimization (%):", { min: 0, max: 100, step: 10, default: 80 });
+println(`Optimization Target: ${performance_level}%`);
+
+let scheduled = input.datepicker("Release Deployment Date:");
+println(`Deployment Date: ${scheduled}`);
+
+let launch_time = input.timepicker("Deployment Launch Window:");
+println(`Launch Window: ${launch_time}`);
+
+let theme = input.color("Select Theme Accent:");
+println(`Theme Accent: ${theme}`);
+
+let pin_code = input.pin("Enter Security Authorization PIN:", 4);
+println(`Security PIN verified (length: ${pin_code.length})`);
+
+println("=== ALL INPUT PRIMITIVES EXECUTED SUCCESSFULLY ===");

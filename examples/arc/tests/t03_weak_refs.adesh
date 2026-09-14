@@ -1,0 +1,46 @@
+// examples/arc/tests/t03_weak_refs.adesh
+// T03 – Weak refs: do not affect strong_count, do track in weak_count
+
+
+export fn run() {
+    let PASS = 0;
+    let FAIL = 0;
+
+    fn check(cond, msg) {
+        if (cond) {
+            print("  ✓ PASS:", msg);
+            PASS = PASS + 1;
+        } else {
+            print("  ✗ FAIL:", msg);
+            FAIL = FAIL + 1;
+        }
+    }
+
+print("=== T03: Weak reference counting ===\n");
+
+share obj = { label: "resource" };
+check(obj.strong_count() == 1, "baseline strong_count is 1");
+check(obj.weak_count()   == 0, "baseline weak_count is 0");
+
+weak w1 = obj;
+check(obj.strong_count() == 1, "strong_count unchanged after first weak ref");
+check(obj.weak_count()   == 1, "weak_count is 1 after first weak ref");
+
+weak w2 = obj;
+check(obj.strong_count() == 1, "strong_count unchanged after second weak ref");
+check(obj.weak_count()   == 2, "weak_count is 2 after second weak ref");
+
+weak w3 = obj;
+check(obj.weak_count()   == 3, "weak_count is 3 after third weak ref");
+
+// Multiple weak refs don't block strong ref from working normally
+strong s = obj;
+check(obj.strong_count() == 2, "strong_count becomes 2 alongside three weaks");
+check(obj.weak_count()   == 3, "weak_count stays 3 when strong added");
+
+print("\nPASS:", PASS, " FAIL:", FAIL);
+
+    return { pass: PASS, fail: FAIL };
+}
+
+run();

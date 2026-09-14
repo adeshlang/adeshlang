@@ -1,0 +1,77 @@
+// Extended Math Library Example
+// Demonstrates seedable RNG, constants, and new functions
+
+print("=== Extended Math Library Demo ===\n");
+
+// Math constants
+print("Math Constants:");
+print("  PI:", Math.PI);
+print("  E:", Math.E);
+print("  TAU:", Math.TAU);
+print("  SQRT2:", Math.SQRT2);
+print("  LN2:", Math.LN2);
+print("  LN10:", Math.LN10);
+print("");
+
+// Basic random (unseeded)
+print("Random Numbers (unseeded):");
+print("  random():", Math.random());
+print("  random():", Math.random());
+print("  random():", Math.random());
+print("");
+
+// Seedable RNG for deterministic sequences
+print("Seedable RNG Demo:");
+print("Setting seed to 12345...");
+Math.seed(12345);
+print("  random():", Math.random());
+print("  random():", Math.random());
+print("  random():", Math.random());
+
+print("\nResetting seed to 12345...");
+Math.seed(12345);
+print("  random():", Math.random());
+print("  random():", Math.random());
+print("  random():", Math.random());
+print("Note: Same seed produces same sequence!");
+print("");
+
+// Random integer range
+print("Random Integer Range:");
+Math.seed(42);
+print("  randomInt(1, 10):", Math.randomInt(1, 10));
+print("  randomInt(1, 10):", Math.randomInt(1, 10));
+print("  randomInt(1, 10):", Math.randomInt(1, 10));
+print("  randomInt(100, 200):", Math.randomInt(100, 200));
+print("");
+
+// Random float range
+print("Random Float Range:");
+Math.seed(99);
+print("  randomRange(0, 100):", Math.randomRange(0, 100));
+print("  randomRange(0, 100):", Math.randomRange(0, 100));
+print("  randomRange(-1, 1):", Math.randomRange(-1, 1));
+print("");
+
+// All math functions
+print("All Math Functions:");
+print("  floor(3.7):", Math.floor(3.7));
+print("  ceil(3.1):", Math.ceil(3.1));
+print("  round(3.5):", Math.round(3.5));
+print("  abs(-42):", Math.abs(-42));
+print("  min(3, -10, 20):", Math.min(3, -10, 20));
+print("  max(3, -10, 20):", Math.max(3, -10, 20));
+print("  pow(2, 8):", Math.pow(2, 8));
+print("  sqrt(81):", Math.sqrt(81));
+print("  sin(0):", Math.sin(0));
+print("  cos(0):", Math.cos(0));
+print("  tan(0):", Math.tan(0));
+print("  exp(1):", Math.exp(1));
+print("  log(1):", Math.log(1));
+print("  log10(10):", Math.log10(10));
+print("  log2(8):", Math.log2(8));
+print("  trunc(3.9):", Math.trunc(3.9));
+print("  sign(-10):", Math.sign(-10));
+print("");
+
+print("=== Demo Complete ===");

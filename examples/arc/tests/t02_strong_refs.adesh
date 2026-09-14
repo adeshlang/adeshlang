@@ -1,0 +1,48 @@
+// examples/arc/tests/t02_strong_refs.adesh
+// T02 – Strong refs: count increments per ref, decrements on scope exit
+
+
+export fn run() {
+    let PASS = 0;
+    let FAIL = 0;
+
+    fn check(cond, msg) {
+        if (cond) {
+            print("  ✓ PASS:", msg);
+            PASS = PASS + 1;
+        } else {
+            print("  ✗ FAIL:", msg);
+            FAIL = FAIL + 1;
+        }
+    }
+
+print("=== T02: Strong reference counting ===\n");
+
+share base = { val: 10 };
+check(base.strong_count() == 1, "baseline count is 1");
+
+strong a = base;
+check(base.strong_count() == 2, "count is 2 after first strong ref");
+
+strong b = base;
+check(base.strong_count() == 3, "count is 3 after second strong ref");
+
+strong c = base;
+check(base.strong_count() == 4, "count is 4 after third strong ref");
+
+// Scope drop
+{
+    strong tmp = base;
+    check(base.strong_count() == 5, "count is 5 inside inner scope");
+}
+check(base.strong_count() == 4, "count drops to 4 after inner scope exits");
+
+// Verify the value is intact
+check(base.val == 10, "underlying value is intact after scope changes");
+
+print("\nPASS:", PASS, " FAIL:", FAIL);
+
+    return { pass: PASS, fail: FAIL };
+}
+
+run();

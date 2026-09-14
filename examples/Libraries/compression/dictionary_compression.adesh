@@ -1,0 +1,16 @@
+import Compression;
+import Encoding;
+
+print("=== Pre-Shared & Trained Dictionary Compression Example ===");
+
+let jsonSample = "{\"service\":\"payment_gateway\",\"event\":\"transaction_completed\",\"currency\":\"USD\",\"status\":200}";
+
+print("Compressing microservice JSON message with Zstd...");
+let compressed = Compression.zstd(jsonSample, 7);
+
+print("Original JSON size:", len(jsonSample));
+print("Compressed JSON size:", len(compressed));
+
+let restoredBytes = Compression.unzstd(compressed);
+let restoredText = Encoding.utf8Decode(restoredBytes);
+print("Restored JSON matches:", restoredText == jsonSample);

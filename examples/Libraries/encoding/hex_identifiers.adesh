@@ -1,0 +1,19 @@
+import Encoding;
+
+// ============================================================================
+// Hexadecimal Encoding for Hash Digests & Identifiers
+// ============================================================================
+
+let hashRawBytes = [222, 173, 190, 239, 0, 1, 2, 255]; // 0xDEADBEEF000102FF
+
+print("--- Lowercase Hex Encoding ---");
+let hexLower = Encoding.hexEncode(hashRawBytes);
+print("Hex (lowercase):", hexLower);
+
+print("\n--- Uppercase Hex Encoding ---");
+let hexUpper = Encoding.hexEncodeUpper(hashRawBytes);
+print("Hex (uppercase):", hexUpper);
+
+print("\n--- Decoding Hex String ---");
+let decodedBytes = Encoding.hexDecode(hexLower);
+print("Decoded Bytes:", decodedBytes);

@@ -1,0 +1,12 @@
+// Test short flag parsing
+// Run: adesh run examples/args/test_short_flags.adesh -- -abc
+import Env;
+
+print("Testing -abc flag parsing:");
+print("argHas('a'):", Env.argHas("a"));
+print("argHas('b'):", Env.argHas("b"));
+print("argHas('c'):", Env.argHas("c"));
+print("argHas('abc'):", Env.argHas("abc"));
+
+let parsed = Env.parseArgs();
+print("parseArgs:", parsed);

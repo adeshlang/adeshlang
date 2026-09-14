@@ -1,0 +1,63 @@
+// Function parameters with pointers
+// Demonstrates passing pointers to functions (no ownership transfer)
+
+print("=== Pointer Function Parameters ===");
+
+fn fill_buffer(buf: *u8, len: u64, value: u8) unsafe {
+    for i in 0..len {
+        buf[i] = value;
+    }
+}
+
+fn sum_buffer(buf: *u8, len: u64) -> u64 unsafe {
+    let total: u64 = 0;
+    for i in 0..len {
+        total = total + (buf[i] as u64);
+    }
+    return total;
+}
+
+fn modify_first(buf: *u8) unsafe {
+    buf[0] = 255;
+}
+
+unsafe {
+    let buffer = alloc(10);
+    print("Allocated 10-byte buffer");
+    
+    // Fill with value 5
+    fill_buffer(buffer, 10, 5);
+    print("Filled buffer with 5s");
+    
+    // Calculate sum: 5 * 10 = 50
+    let total = sum_buffer(buffer, 10);
+    print("Sum of buffer:");
+    print(total);  // 50
+    
+    // Modify first element
+    modify_first(buffer);
+    print("Modified first element to 255");
+    
+    // New sum: 255 + (5 * 9) = 300
+    let new_total = sum_buffer(buffer, 10);
+    print("New sum:");
+    print(new_total);  // 300
+    
+    // Caller still owns buffer and must free it (or let RAII do it)
+    free(buffer);
+    print("Buffer freed by caller");
+}
+
+print("All operations complete");
+
+// Expected output:
+// === Pointer Function Parameters ===
+// Allocated 10-byte buffer
+// Filled buffer with 5s
+// Sum of buffer:
+// 50
+// Modified first element to 255
+// New sum:
+// 300
+// Buffer freed by caller
+// All operations complete

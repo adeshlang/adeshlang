@@ -1,0 +1,53 @@
+// examples/arc/06_reference_counts.adesh
+// Explores strong_count() and weak_count() in detail –
+// useful for debugging or asserting ownership invariants.
+
+print("=== Reference Count Introspection ===\n");
+
+share node = { label: "root", depth: 0 };
+
+// ── Baseline ──────────────────────────────────────────────────────────────
+print("Baseline:");
+print("  strong_count:", node.strong_count()); // 1
+print("  weak_count  :", node.weak_count());   // 0
+
+// ── Add strong refs ───────────────────────────────────────────────────────
+strong s1 = node;
+strong s2 = node;
+strong s3 = node;
+
+print("\nAfter 3 strong refs:");
+print("  strong_count:", node.strong_count()); // 4
+print("  weak_count  :", node.weak_count());   // 0
+
+// ── Add weak refs ─────────────────────────────────────────────────────────
+weak w1 = node;
+weak w2 = node;
+
+print("\nAfter 2 weak refs:");
+print("  strong_count:", node.strong_count()); // 4 (unchanged)
+print("  weak_count  :", node.weak_count());   // 2
+
+// ── Release one strong ref inside a scope ─────────────────────────────────
+{
+    strong temp = node;
+    print("\nInside temp scope:");
+    print("  strong_count:", node.strong_count()); // 5
+}
+print("After temp scope:");
+print("  strong_count:", node.strong_count()); // 4
+
+// ── Introspect through the weak reference itself ───────────────────────────
+// Weak refs proxy the same counters.
+print("\nCounts via w1.upgrade() path:");
+{
+    let maybe = w1.upgrade();
+    if (maybe != null) {
+        print("  strong while upgrading:", maybe.strong_count()); // 5 (upgrade adds 1)
+    }
+}
+print("  strong after upgrade scope:", node.strong_count()); // 4
+
+print("\nFinal state:");
+print("  strong_count:", node.strong_count()); // 4 (s1, s2, s3, node)
+print("  weak_count  :", node.weak_count());   // 2

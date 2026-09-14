@@ -1,0 +1,27 @@
+// AdeshLang WebSocket Example 11: Invalid Frames & Protocol Error Handlers
+// Demonstrates how AdeshLang WebSocket handles malformed input and close error codes.
+
+import WebSocket;
+
+print("=== AdeshLang WebSocket RFC 6455 Invalid Frame Handling ===");
+
+let config = WebSocket.ServerConfig({
+    port: 8611,
+    bind_address: "127.0.0.1"
+});
+
+let server = WebSocket.server(config);
+server.startEcho();
+print("✓ Server listening on ws://127.0.0.1:8611");
+
+let client = WebSocket.connect("ws://127.0.0.1:8611");
+print("✓ Client connected");
+
+// Verify Close Code Constants
+print("CloseCode NormalClosure: " + WebSocket.CloseCode.NormalClosure);
+print("CloseCode ProtocolError: " + WebSocket.CloseCode.ProtocolError);
+print("CloseCode InvalidPayloadData: " + WebSocket.CloseCode.InvalidPayloadData);
+
+client.close(WebSocket.CloseCode.NormalClosure, "Clean termination");
+server.close();
+print("✓ Protocol error and close validation test completed successfully!");

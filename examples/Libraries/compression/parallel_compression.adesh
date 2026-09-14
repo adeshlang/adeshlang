@@ -1,0 +1,16 @@
+import Compression;
+import Encoding;
+
+print("=== Multi-Threaded Parallel Chunk Compression Example ===");
+
+let largeDataset = "High frequency financial market tick data row entry 1...\nHigh frequency financial market tick data row entry 2...\nHigh frequency financial market tick data row entry 3...\n";
+
+print("Compressing dataset across 4 parallel worker threads...");
+let compressed = Compression.parallelCompress(largeDataset, "zstd", 32, 5, 4);
+
+print("Original size:", len(largeDataset));
+print("Parallel compressed size:", len(compressed));
+
+let decompressedBytes = Compression.parallelDecompress(compressed, "zstd", null, 4);
+let decompressedText = Encoding.utf8Decode(decompressedBytes);
+print("Parallel decompression verification:", decompressedText == largeDataset);

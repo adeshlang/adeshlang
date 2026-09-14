@@ -1,0 +1,35 @@
+// array_methods_interpreter.adesh - Interpreter coverage for array methods
+
+print("Array methods (interpreter) demo start");
+
+let base:[i32;16] = [10, 20, 30, 40];
+print("base:", base);
+
+print("push 50 ->", base.push(50));
+print("append 60 ->", base.append(60));
+print("unshift 5 ->", base.unshift(5));
+print("shift ->", base.shift());
+
+print("insert(2, 25) ->", base.insert(2, 25));
+print("remove(1) ->", base.remove(10));
+
+print("extend [70, 80] ->", base.extend([70, 80]));
+print("concat [90, 100] ->", base.concat([90, 100]));
+
+print("set_index(0, 99) ->", base.set_index(0, 99));
+print("pop() ->", base.pop());
+print("pop(2) ->", base.pop(2));
+
+let nums = [3, 1, 2, 3, 2, 3];
+print("nums:", nums);
+print("count(3) ->", nums.count(3));
+print("index(2) ->", nums.index(2));
+print("indexOf(2) ->", nums.indexOf(2));
+print("includes(9) ->", nums.includes(9));
+
+print("sort ->", nums.sort());
+print("reverse ->", nums.reverse());
+
+print("clear ->", nums.clear());
+
+print("Array methods (interpreter) demo complete");

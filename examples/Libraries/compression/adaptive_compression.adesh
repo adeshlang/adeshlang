@@ -1,0 +1,13 @@
+import Compression;
+
+print("=== Adaptive Compression Example ===");
+
+let jsonPayload = "{\"id\": 101, \"title\": \"AdeshLang Adaptive Compression\", \"score\": 99.8}{\"id\": 102, \"title\": \"AdeshLang Adaptive Compression\", \"score\": 99.9}{\"id\": 103, \"title\": \"AdeshLang Adaptive Compression\", \"score\": 99.7}";
+
+let result = Compression.compressAdaptive(jsonPayload);
+
+print("Was compressed:", result.wasCompressed);
+print("Algorithm chosen:", result.algorithm);
+print("Original size:", result.originalSize);
+print("Compressed size:", result.compressedSize);
+print("Space saved %:", result.spaceSavedPercent);

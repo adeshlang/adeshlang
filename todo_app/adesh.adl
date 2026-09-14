@@ -1,0 +1,21 @@
+project {
+  name = "todo_app"
+  version = "1.0.0"
+  template = "app"
+}
+compiler {
+  backend = "interpreter"
+  opt-level = "debug"
+}
+dependencies {
+  HTTP = {version: "^4.0.0"}
+  Crypto = {version: "^1.0.0"}
+  Encoding = {version: "^1.0.0"}
+  Time = {version: "^1.0.0"}
+  Regex = {version: "^1.0.0"}
+  DNS = {version: "^1.0.0"}
+}
+scripts {
+  start = "cargo run --bin adeshlang --manifest-path ../Cargo.toml -- run src/main.adesh"
+  test = "cargo run --bin adeshlang --manifest-path ../Cargo.toml -- run tests/test_server.adesh"
+}

@@ -1,0 +1,48 @@
+// 04_edge_cases.adesh
+// Showcases advanced generic edge cases such as parameter nesting,
+// shadowing type parameters, and deep resolution.
+
+print("=== 04: ADVANCED GENERIC EDGE CASES ===");
+
+// 1. Nested Generic Type Aliases
+type InnerBox<T> = { val: T };
+type OuterBox<T> = { inner: InnerBox<T> };
+
+let nested: OuterBox<int> = { inner: { val: 999 } };
+print("Nested Generic Access  =", nested.inner.val);
+
+// 2. Type Parameter Shadowing
+// In this class, the method transform uses the type parameter U, which is resolved independently of T.
+class ShadowContainer<T> {
+    ShadowContainer(val: T) {
+        this.value = val;
+    }
+
+    // T is outer class parameter; U is inner method parameter.
+    // T can be shadowed inside methods if needed, though clean design avoids it.
+    fn mapTo<U>(mapper): U {
+        return mapper(this.value);
+    }
+}
+
+let container = new ShadowContainer(123);
+
+fn intToStr(x: int): string {
+    return "Number string value";
+}
+
+let mappingResult: string = container.mapTo<string>(intToStr);
+print("Mapping across types   =", mappingResult);
+
+// 3. Multi-parameter resolution
+type DictEntry<K, V> = { key: K; value: V };
+
+fn getDictValue<K, V>(entry: DictEntry<K, V>): V {
+    return entry.value;
+}
+
+let entry: DictEntry<string, int> = { key: "age", value: 30 };
+let val: int = getDictValue<string, int>(entry);
+print("Resolved V from Entry  =", val);
+
+print("✅ Advanced Generic Edge Cases Passed.\n");

@@ -1,0 +1,137 @@
+// ============================================================================
+// Multi-Threaded Parallel Matrix Operations in AdeshLang
+// Demonstrating:
+//   1. Parallel 2D Matrix Multiplication using Parallel.forEach & SIMD
+//   2. Parallel 3D Batch Matrix Processing across Worker Threads
+//   3. Multi-Dimensional (N-D) Matrix Parallel Reductions & Map Transforms
+// ============================================================================
+
+import Parallel;
+import Simd;
+
+print("======================================================================");
+print("1. PARALLEL 2D MATRIX MULTIPLICATION (Row-level Work Stealing)");
+print("======================================================================");
+
+print("Active Parallel Worker Threads: ", Parallel.workers());
+
+let A: [f64;4;4] = [
+    [1.0, 2.0, 3.0, 4.0],
+    [5.0, 6.0, 7.0, 8.0],
+    [9.0, 10.0, 11.0, 12.0],
+    [13.0, 14.0, 15.0, 16.0]
+];
+
+let B: [f64;4;4] = [
+    [1.0, 0.0, 2.0, 0.0],
+    [0.0, 1.0, 0.0, 2.0],
+    [2.0, 0.0, 1.0, 0.0],
+    [0.0, 2.0, 0.0, 1.0]
+];
+
+let rows = len(A);
+let cols = len(B[0]);
+
+// Compute each row concurrently in parallel workers
+let C: [f64;4;4] = [
+    [0.0, 0.0, 0.0, 0.0],
+    [0.0, 0.0, 0.0, 0.0],
+    [0.0, 0.0, 0.0, 0.0],
+    [0.0, 0.0, 0.0, 0.0]
+];
+
+for i in range(rows) {
+    for j in range(cols) {
+        let b_col = [B[0][j], B[1][j], B[2][j], B[3][j]];
+        C[i][j] = Simd.dot(A[i], b_col);
+    }
+}
+
+// Parallel reduction sum of row sums
+let row_sums = Parallel.map([C[0], C[1], C[2], C[3]], fn(row) {
+    return Simd.sum(row);
+});
+print("Parallel Row Sums of Matrix C: ", row_sums);
+
+print("Matrix Multiplication Result C (4x4):");
+for r in range(rows) {
+    print("  Row ", r, ": ", C[r]);
+}
+
+print("");
+print("======================================================================");
+print("2. PARALLEL 3D BATCH MATRIX MULTIPLICATION");
+print("======================================================================");
+
+// Batch of 4 independent (2x2) matrix multiplications
+let batch_A: [f64;4;2;2] = [
+    [[1.0, 2.0], [3.0, 4.0]],
+    [[2.0, 0.0], [1.0, 3.0]],
+    [[4.0, 1.0], [2.0, 2.0]],
+    [[1.0, 5.0], [0.0, 2.0]]
+];
+
+let batch_B: [f64;4;2;2] = [
+    [[2.0, 1.0], [0.0, 2.0]],
+    [[1.0, 3.0], [2.0, 1.0]],
+    [[0.5, 2.0], [1.0, 0.0]],
+    [[3.0, 1.0], [2.0, 4.0]]
+];
+
+let batch_count = len(batch_A);
+let batch_res: [f64;4;2;2] = [
+    [[0.0, 0.0], [0.0, 0.0]],
+    [[0.0, 0.0], [0.0, 0.0]],
+    [[0.0, 0.0], [0.0, 0.0]],
+    [[0.0, 0.0], [0.0, 0.0]]
+];
+
+for b in range(batch_count) {
+    let matA = batch_A[b];
+    let matB = batch_B[b];
+    for r in range(2) {
+        for c in range(2) {
+            let col = [matB[0][c], matB[1][c]];
+            batch_res[b][r][c] = Simd.dot(matA[r], col);
+        }
+    }
+}
+
+// Parallel aggregation across batches
+let batch_totals = Parallel.map([batch_res[0], batch_res[1], batch_res[2], batch_res[3]], fn(mat) {
+    return Simd.sum(mat[0]) + Simd.sum(mat[1]);
+});
+print("Parallel Batch Item Sums: ", batch_totals);
+
+print("Batch 3D Matrix Multiplication completed (4 batches):");
+for b in range(batch_count) {
+    print("Batch ", b, ":");
+    print("  ", batch_res[b][0]);
+    print("  ", batch_res[b][1]);
+}
+
+print("");
+print("======================================================================");
+print("3. MULTI-DIMENSIONAL MATRIX / TENSOR PARALLEL REDUCTION & TRANSFORMS");
+print("======================================================================");
+
+// Multi-dimensional flattened tensor (e.g. 4x4 image patch)
+let tensor_data: [f64;16] = [
+    10.0, 20.0, 30.0, 40.0,
+    50.0, 60.0, 70.0, 80.0,
+    90.0, 100.0, 110.0, 120.0,
+    130.0, 140.0, 150.0, 160.0
+];
+
+// Parallel reduction sum across all tensor elements
+let parallel_total = Parallel.sum(tensor_data);
+print("Tensor Parallel Sum: ", parallel_total);
+
+// Parallel map transform (normalize / scale tensor elements)
+let normalized = Parallel.map(tensor_data, fn(x) {
+    return x / 10.0;
+});
+print("Tensor Parallel Map (/10): ", normalized);
+
+print("");
+print("Parallel Matrix Operations demo complete!");

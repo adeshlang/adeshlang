@@ -1,0 +1,87 @@
+// Example: Escape analysis and leak prevention
+// Shows patterns that escape ownership and how to handle them
+// .
+fn main() {
+    println("=== Escape Analysis Examples ===");
+    
+    // Pattern 1: Ownership does not escape scope
+    println("\n1. No escape: Pointer freed within scope");
+    {
+        let p = alloc<i32>();
+        *p = 42;
+        free(p);
+    }  // No leak - freed before scope exit
+    
+    // Pattern 2: Controlled escape via transfer to global
+    println("\n2. Controlled escape: Explicit transfer to global");
+    let p2 = alloc<i32>();
+    *p2 = 100;
+    
+    global.buffer = transfer p2;  // Ownership transferred - no leak
+    
+    // Pattern 3: Escape prevention with closure
+    println("\n3. Closure with local capture (no escape):");
+    let p3 = alloc<i32>();
+    *p3 = 200;
+    
+    let callback = {
+        let captured = p3;  // Captured locally
+        fn() {
+            println("Callback sees:", *captured);
+        }
+    };
+    
+    callback();
+    free(p3);  // Still owner, can free
+    
+    // Pattern 4: Async tasks with transfer
+    println("\n4. Async with explicit ownership transfer:");
+    let p4 = alloc<i32>();
+    *p4 = 300;
+    
+    async {
+        let p = transfer p4;  // Ownership transferred to task
+        *p = 400;
+        free(p);  // Freed within task
+    }.await();
+    
+    // Pattern 5: Function that captures ownership
+    println("\n5. Function receiving transferred ownership:");
+    let p5 = alloc<i32>();
+    *p5 = 500;
+    
+    process_and_free(transfer p5);  // Ownership transferred
+    
+    println("\n=== Escape analysis examples completed ===");
+}
+
+fn process_and_free(p: ptr<i32>) {
+    // Function takes ownership
+    println("Processing:", *p);
+    free(p);  // Freed by receiver - no leak
+}
+
+// Examples of escape patterns that would leak (commented):
+/*
+fn leak_to_global() {
+    let p = alloc<i32>();
+    global.leaked = p;  // ERROR: escape without transfer
+    // p would leak if this compiled
+}
+
+fn leak_in_closure() {
+    let p = alloc<i32>();
+    let cb = fn() {
+        println(*p);
+        // p is escaped in closure without transfer
+    };
+    // ERROR: p escapes without transfer
+}
+
+fn leak_in_async() {
+    let p = alloc<i32>();
+    async {
+        *p = 100;
+    };  // ERROR: p captured in async without transfer
+}
+*/

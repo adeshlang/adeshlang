@@ -1,0 +1,42 @@
+// 04_time_of_day.adesh - TimeOfDay creation, accessors, arithmetic
+import Time;
+
+print("=== TimeOfDay Examples ===\n");
+
+// --- Construction ---
+let t1: TimeOfDay = Time.timeOfDay(9, 30, 0, 0);
+let t2: TimeOfDay = Time.timeOfDay(14, 45, 30, 500000000);
+let t3: TimeOfDay = Time.timeOfDay(0, 0, 0, 0);    // midnight
+let t4: TimeOfDay = Time.timeOfDay(23, 59, 59, 999000000);
+let nowTime: TimeOfDay = Time.timeNow();
+
+print("09:30:00        :", t1.toIsoString());
+print("14:45:30.500    :", t2.toIsoString());
+print("Midnight        :", t3.toIsoString());
+print("23:59:59.999    :", t4.toIsoString());
+print("Now (local)     :", nowTime.toIsoString());
+
+// --- Accessors ---
+print("\n--- Accessors ---");
+print("t2 hour        :", t2.hour());
+print("t2 minute      :", t2.minute());
+print("t2 second      :", t2.second());
+print("t2 nanosecond  :", t2.nanosecond());
+print("t2 microsecond :", t2.microsecond());
+print("t2 millisecond :", t2.millisecond());
+
+// --- Seconds since midnight ---
+print("t1 seconds since midnight:", t1.secondsSinceMidnight());
+print("t2 seconds since midnight:", t2.secondsSinceMidnight());
+
+// --- Arithmetic ---
+print("\n--- Arithmetic ---");
+let added = t1.addHours(3);
+let subbed = t2.subMinutes(20);
+print("09:30 + 3h =", added.toIsoString());
+print("14:45 - 20m=", subbed.toIsoString());
+
+// --- Comparison ---
+print("\n--- Comparison ---");
+print("t1 < t2 :", t1.lt(t2));
+print("t3 == midnight :", t3.eq(Time.timeOfDay(0, 0, 0, 0)));

@@ -1,0 +1,21 @@
+struct Vector2 {
+    x: F64;
+    y: F64;
+};
+
+extend on Vector2 {
+    fn asString() {
+        return "Vector2(" + this.x + ", " + this.y + ")";
+    }
+
+    fn magnitude() {
+        let x2 = this.x * this.x;
+        let y2 = this.y * this.y;
+        let sum = x2 + y2;
+        return sum ** 0.5;
+    }
+}
+
+let v = Vector2 { x: 3.0, y: 4.0 };
+print(v.asString());
+print("Magnitude: " + v.magnitude());

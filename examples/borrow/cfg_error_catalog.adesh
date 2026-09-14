@@ -1,0 +1,436 @@
+// ================================================================
+// CFG Borrow Checker - Expected Error Catalog
+// ================================================================
+// This file documents all the expected compile-time errors that
+// the CFG-based borrow checker should produce. Each example shows
+// the code that triggers the error and the expected error message.
+// ================================================================
+
+// ────────────────────────────────────────────────────────────────
+// ERROR E0501: Conflicting borrow states across branches
+// ────────────────────────────────────────────────────────────────
+// 
+// This error occurs when different branches produce incompatible
+// borrow states that cannot be safely merged at the join point.
+//
+// Expected message:
+// error[E0501]: conflicting borrow states for `x` across branches
+//   -: example.adesh:10:5
+//    |
+// 6  |         x.mutate();   // exclusive borrow
+//    |         ---------- exclusive borrow in then branch
+// 8  |         x.read();     // shared borrow
+//    |         -------- shared borrow in else branch
+// 10 |     x.use();
+//    |     ^^^^^^^ cannot use `x` after conflicting borrows
+
+fn error_e0501_branch_conflict() {
+    let x = Object();
+    
+    if condition() {
+        x.mutate();   // Exclusive borrow (mutation)
+    } else {
+        x.read();     // Shared borrow (read-only)
+    }
+    
+    x.use();  // ERROR E0501
+}
+
+
+// ────────────────────────────────────────────────────────────────
+// ERROR E0502: Cannot borrow as mutable because already borrowed
+// ────────────────────────────────────────────────────────────────
+//
+// This error occurs when attempting an exclusive borrow while
+// a shared borrow is active.
+//
+// Expected message:
+// error[E0502]: cannot borrow `data` as mutable because it is 
+//               also borrowed as immutable
+//   -: example.adesh:5:5
+//    |
+// 3  |     let r = &data;
+//    |             ----- immutable borrow occurs here
+// 5  |     let w = &mut data;
+//    |             ^^^^^^^^^ mutable borrow occurs here
+// 7  |     print(r);
+//    |           - immutable borrow later used here
+
+fn error_e0502_mutable_while_borrowed() {
+    let data = [1, 2, 3];
+    
+    let r = &data;        // Shared borrow
+    let w = &mut data;    // ERROR E0502: Exclusive while shared exists
+    
+    print(r);
+}
+
+
+// ────────────────────────────────────────────────────────────────
+// ERROR E0503: Cannot use value because it was moved
+// ────────────────────────────────────────────────────────────────
+//
+// This error occurs when using a value after it has been moved.
+//
+// Expected message:
+// error[E0503]: use of moved value: `resource`
+//   -: example.adesh:5:11
+//    |
+// 2  |     let resource = create();
+//    |         -------- move occurs because `resource` has type 
+//    |                  `Resource`, which does not implement `Copy`
+// 3  |     consume(resource);
+//    |             -------- value moved here
+// 5  |     print(resource);
+//    |           ^^^^^^^^ value used here after move
+
+fn error_e0503_use_after_move() {
+    let resource = create_resource();
+    consume(resource);    // Moves resource
+    
+    print(resource);      // ERROR E0503: Use after move
+}
+
+
+// ────────────────────────────────────────────────────────────────
+// ERROR E0504: Cannot move out of borrowed content
+// ────────────────────────────────────────────────────────────────
+//
+// This error occurs when moving a value while it is borrowed.
+//
+// Expected message:
+// error[E0504]: cannot move out of `data` because it is borrowed
+//   -: example.adesh:5:13
+//    |
+// 3  |     let r = &data;
+//    |             ----- borrow of `data` occurs here
+// 5  |     consume(data);
+//    |             ^^^^ move out of `data` occurs here
+// 7  |     print(r);
+//    |           - borrow later used here
+
+fn error_e0504_move_while_borrowed() {
+    let data = Data();
+    
+    let r = &data;        // Borrow starts
+    consume(data);        // ERROR E0504: Move while borrowed
+    
+    print(r);             // Borrow used here
+}
+
+
+// ────────────────────────────────────────────────────────────────
+// ERROR E0505: Cannot move out of value possibly moved in branch
+// ────────────────────────────────────────────────────────────────
+//
+// This error occurs when a value might have been moved in one
+// branch and is used after the branch merge.
+//
+// Expected message:
+// error[E0505]: value may have been moved: `item`
+//   -: example.adesh:9:11
+//    |
+// 4  |         take(item);
+//    |              ---- value moved here (in then branch)
+// 9  |     print(item);
+//    |           ^^^^ value used here, but may have been moved
+
+fn error_e0505_conditional_move() {
+    let item = create_item();
+    
+    if should_take() {
+        take(item);       // Moved in this branch only
+    }
+    
+    print(item);          // ERROR E0505: Might be moved
+}
+
+
+// ────────────────────────────────────────────────────────────────
+// ERROR E0506: Cannot free while borrowed
+// ────────────────────────────────────────────────────────────────
+//
+// This error occurs when freeing memory while references exist.
+//
+// Expected message:
+// error[E0506]: cannot free `ptr` because it is borrowed
+//   -: example.adesh:5:5
+//    |
+// 3  |     let r = &*ptr;
+//    |             ----- borrow of `*ptr` occurs here
+// 5  |     free(ptr);
+//    |     ^^^^^^^^^ free occurs here while `*ptr` is borrowed
+// 7  |     print(r);
+//    |           - borrow later used here
+
+fn error_e0506_free_while_borrowed() {
+    let ptr = alloc<int>();
+    
+    let r = &*ptr;        // Borrow the pointed value
+    free(ptr);            // ERROR E0506: Free while borrowed
+    
+    print(r);
+}
+
+
+// ────────────────────────────────────────────────────────────────
+// ERROR E0507: Use after free
+// ────────────────────────────────────────────────────────────────
+//
+// This error occurs when accessing memory after it was freed.
+//
+// Expected message:
+// error[E0507]: use of freed value: `ptr`
+//   -: example.adesh:5:11
+//    |
+// 3  |     free(ptr);
+//    |     --------- value freed here
+// 5  |     print(*ptr);
+//    |           ^^^^ value used here after free
+
+fn error_e0507_use_after_free() {
+    let ptr = alloc<int>(2);
+    *ptr[0] = 42;
+    
+    free(ptr);            // ptr is freed
+    print(*ptr);          // ERROR E0507: Use after free
+}
+
+
+// ────────────────────────────────────────────────────────────────
+// ERROR E0508: Double free
+// ────────────────────────────────────────────────────────────────
+//
+// This error occurs when freeing already freed memory.
+//
+// Expected message:
+// error[E0508]: double free of `ptr`
+//   -: example.adesh:4:5
+//    |
+// 3  |     free(ptr);
+//    |     --------- first free occurs here
+// 4  |     free(ptr);
+//    |     ^^^^^^^^^ second free occurs here
+
+fn error_e0508_double_free() {
+    let ptr = alloc<int>();
+    
+    free(ptr);            // First free
+    free(ptr);            // ERROR E0508: Double free
+}
+
+
+// ────────────────────────────────────────────────────────────────
+// ERROR E0509: Drop while borrowed
+// ────────────────────────────────────────────────────────────────
+//
+// This error occurs when a value goes out of scope while borrowed.
+//
+// Expected message:
+// error[E0509]: `data` dropped while still borrowed
+//   -: example.adesh:6:5
+//    |
+// 4  |         holder = &data;
+//    |                  ----- borrow of `data` occurs here
+// 5  |     }
+//    |     - `data` dropped here while still borrowed
+// 7  |     print(holder);
+//    |           ------ borrow used here after drop
+
+fn error_e0509_drop_while_borrowed() {
+    let holder;
+    
+    {
+        let data = Data();
+        holder = &data;   // Borrow data
+    }                     // ERROR E0509: data dropped while holder exists
+    
+    print(holder);
+}
+
+
+// ────────────────────────────────────────────────────────────────
+// ERROR E0510: Different exclusive borrows across branches
+// ────────────────────────────────────────────────────────────────
+//
+// This error occurs when different branches create different
+// exclusive borrows of the same value.
+//
+// Expected message:
+// error[E0510]: different exclusive borrows of `x` in branches
+//   -: example.adesh:8:5
+//    |
+// 4  |         ref1 = &mut x;
+//    |                ------ exclusive borrow (id=1) in then branch
+// 6  |         ref2 = &mut x;
+//    |                ------ exclusive borrow (id=2) in else branch
+// 8  |     use(ref1);
+//    |     ^^^^^^^^^ cannot use after inconsistent exclusive borrows
+
+fn error_e0510_different_exclusives() {
+    let x = Object();
+    let ref1;
+    let ref2;
+    
+    if condition() {
+        ref1 = &mut x;    // Exclusive borrow 1
+    } else {
+        ref2 = &mut x;    // Exclusive borrow 2 (different!)
+    }
+    
+    // ERROR E0510: Which borrow is active?
+}
+
+
+// ────────────────────────────────────────────────────────────────
+// ERROR E0511: Value freed in some branches
+// ────────────────────────────────────────────────────────────────
+//
+// This error occurs when a value is freed in some but not all
+// branches leading to a join point.
+//
+// Expected message:
+// error[E0511]: `ptr` freed in some branches, not in others
+//   -: example.adesh:9:11
+//    |
+// 4  |         free(ptr);
+//    |         --------- freed in then branch
+// 6  |         // else: not freed
+//    |         -------------------- not freed in else branch
+// 9  |     print(*ptr);
+//    |           ^^^^ cannot safely use `ptr` (may be freed)
+
+fn error_e0511_conditional_free() {
+    let ptr = alloc<int>();
+    *ptr = 100;
+    
+    if should_cleanup() {
+        free(ptr);        // Freed here
+    } else {
+        // Not freed
+    }
+    
+    print(*ptr);          // ERROR E0511: Might be freed
+}
+
+
+// ────────────────────────────────────────────────────────────────
+// ERROR E0512: Loop moves value that may be used in next iteration
+// ────────────────────────────────────────────────────────────────
+//
+// Expected message:
+// error[E0512]: value moved inside loop
+//   -: example.adesh:4:17
+//    |
+// 3  |     while condition() {
+//    |     ----- loop starts here
+// 4  |         consume(item);
+//    |                 ^^^^ value moved inside loop body
+//    |
+//    = note: `item` moved on first iteration
+//    = note: loop may iterate again but value is moved
+
+fn error_e0512_move_in_loop() {
+    let item = create_item();
+    
+    while condition() {
+        consume(item);    // ERROR E0512: Moved in loop
+    }
+}
+
+
+// ────────────────────────────────────────────────────────────────
+// ERROR E0513: Cannot mutate collection while iterating
+// ────────────────────────────────────────────────────────────────
+//
+// Expected message:
+// error[E0513]: cannot mutate `items` during iteration
+//   -: example.adesh:5:13
+//    |
+// 3  |     for item in items {
+//    |                 ----- immutable borrow of `items` occurs here
+// 5  |         items.push(10);
+//    |         ^^^^^^^^^^^^^^ mutable borrow occurs here
+//    |
+//    = note: the iterator holds a borrow of the collection
+
+fn error_e0513_mutate_during_iteration() {
+    let items = [1, 2, 3];
+    
+    for item in items {
+        items.push(10);   // ERROR E0513: Mutate while iterating
+    }
+}
+
+
+// ────────────────────────────────────────────────────────────────
+// ERROR E0514: Borrow escapes loop scope
+// ────────────────────────────────────────────────────────────────
+//
+// Expected message:
+// error[E0514]: borrow may escape loop scope
+//   -: example.adesh:5:22
+//    |
+// 4  |     while condition() {
+//    |     ----- loop boundary
+// 5  |         escaped = &items[i];
+//    |                   ^^^^^^^^^ borrow created here
+// 8  |     print(escaped);
+//    |           ------- borrow used outside loop
+
+fn error_e0514_borrow_escapes_loop() {
+    let items = [1, 2, 3];
+    let escaped;
+    let i = 0;
+    
+    while i < 3 {
+        escaped = &items[i];  // ERROR E0514: Escapes loop
+        i = i + 1;
+    }
+    
+    print(escaped);
+}
+
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// SUMMARY OF ERROR CODES
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// E0501 - Conflicting borrow states across branches
+// E0502 - Cannot borrow as mutable (already borrowed)
+// E0503 - Use of moved value
+// E0504 - Cannot move out of borrowed content
+// E0505 - Value may have been moved in branch
+// E0506 - Cannot free while borrowed
+// E0507 - Use after free
+// E0508 - Double free
+// E0509 - Drop while borrowed
+// E0510 - Different exclusive borrows across branches
+// E0511 - Value freed in some branches
+// E0512 - Value moved inside loop
+// E0513 - Cannot mutate collection while iterating
+// E0514 - Borrow escapes loop scope
+//
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+// Helper stubs
+fn condition() : bool { true }
+fn should_take() : bool { false }
+fn should_cleanup() : bool { false }
+fn create_resource() { return Resource(); }
+fn create_item() { return Item(); }
+fn consume(x) { }
+fn take(x) { }
+fn alloc<T>() { return 0; }  // Placeholder
+fn free(ptr) { }
+
+class Object {
+    fn mutate() { }
+    fn read() { }
+    fn use() { }
+}
+
+class Data { }
+class Resource { }
+class Item { }

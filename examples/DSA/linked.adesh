@@ -1,0 +1,36 @@
+class Node{
+    Node(data:int, next:Node?){
+        this.data = data;
+        this.next = next;
+    }
+}
+
+class LinkedList{
+    LinkedList(){
+        this.head = null;
+    }
+
+    add(data:int){
+        let node = new Node(data, this.head);
+        this.head = node;
+    }
+
+    printf(){
+        let current = this.head;
+        while(current != null){
+            if(current.next == null){
+                print(current.data);
+            } else {
+                 print(current.data ,{end:" "});
+                 print("->",{end:" ",color:"#00FF00",bold:true});
+            }
+            current = current.next;
+        }
+    }
+}
+
+let list = new LinkedList();
+list.add(3);
+list.add(2);
+list.add(1);
+list.printf();

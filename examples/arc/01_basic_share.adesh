@@ -1,0 +1,38 @@
+// examples/arc/01_basic_share.adesh
+// Demonstrates the fundamentals of ARC (Automatic Reference Counting)
+// using the `share` keyword to create reference-counted heap values.
+
+// ── Basic share declaration ────────────────────────────────────────────────
+// `share` wraps a value in a reference-counted container.
+// The reference count starts at 1 (the `data` variable itself).
+share data = { name: "Alice", age: 30 };
+
+print("=== Basic ARC Share ===");
+print("strong_count:", data.strong_count());   // 1
+print("weak_count:  ", data.weak_count());      // 0
+
+// ── Cloning / additional strong references ─────────────────────────────────
+// `strong ref = shared_val` increments the strong count.
+strong ref1 = data;
+print("\nAfter strong ref1:");
+print("strong_count:", data.strong_count());   // 2
+
+strong ref2 = data;
+print("After strong ref2:");
+print("strong_count:", data.strong_count());   // 3
+
+// ── Scope-based cleanup ────────────────────────────────────────────────────
+// When a strong reference leaves its scope the count decreases.
+// The underlying allocation is freed only when the count reaches 0.
+{
+    strong temp = data;
+    print("\nInside inner scope, strong_count:", data.strong_count()); // 4
+} // `temp` dropped here
+
+print("After inner scope, strong_count:", data.strong_count());       // 3
+
+// ── Accessing fields through a shared reference ────────────────────────────
+print("\ndata.name:", ref1.name);
+print("data.age :", ref2.age);
+
+print("\nDone – all strong references will be freed at end of program.");

@@ -1,0 +1,25 @@
+// Text Replacer and Splitter Example
+import "std:Regex" as Regex;
+
+print("--- Text Replacement Example ---");
+// Mask credit card numbers with asterisks, keeping last 4 digits
+let credit_card_text = "My cards are: 1234-5678-9012-3456 and 9876-5432-1098-7654.";
+print("Original: " + credit_card_text);
+
+let mask_re = Regex.new(r"\b\d{4}-\d{4}-\d{4}-(\d{4})\b");
+let masked_text = mask_re.replaceAll(credit_card_text, "XXXX-XXXX-XXXX-$1");
+print("Masked:   " + masked_text);
+
+print("\n--- Word Splitting Example ---");
+// Split string by commas, semicolons, and spaces
+let list_text = "apple, banana; orange  grape, peach";
+print("List: " + list_text);
+
+let split_re = Regex.new(r"[\s,;]+");
+let items = split_re.split(list_text);
+print("Parsed Items:");
+let idx = 0;
+while idx < len(items) {
+    print("- " + items[idx]);
+    idx = idx + 1;
+}

@@ -1,0 +1,8 @@
+// Very simple clock test
+let t1 = clock();
+print("t1 =", t1);
+let t2= clock();
+print("t2 =", t2);
+let diff = t2 - t1;
+print("diff =", diff);
+print("direct =", t2 - t1);

@@ -1,0 +1,342 @@
+{
+  "ADL Full Manifest": {
+    "prefix": "manifest",
+    "body": [
+      "// Adesh Package Manifest (ADL)",
+      "import \"${1:./shared/descriptions.adl}\"",
+      "",
+      "[project]",
+      "name = \"${2:my_project}\"",
+      "version = \"${3:0.1.0}\"",
+      "template = \"${4:app}\"",
+      "libs = [${5:\"mylib\"}]",
+      "",
+      "[compiler]",
+      "backend = \"${6:interpreter}\"",
+      "opt-level = \"${7:debug}\"",
+      "",
+      "[dependencies]",
+      "${8:PackageName} = \"${9:^1.0.0}\"",
+      "",
+      "[scripts]",
+      "const build = \"${10:default}\"",
+      "const test = \"${11:default}\"",
+      "",
+      "[workspace]",
+      "members = [${12:\"packages/*\"}]$0"
+    ],
+    "description": "Create a full adesh.adl manifest template with all sections"
+  },
+  "ADL App Template": {
+    "prefix": "app",
+    "body": [
+      "[project]",
+      "name = \"${1:my_app}\"",
+      "version = \"${2:0.1.0}\"",
+      "template = \"app\"",
+      "",
+      "[compiler]",
+      "backend = \"${3:interpreter}\"",
+      "opt-level = \"${4:debug}\"",
+      "",
+      "[dependencies]",
+      "${5:PackageName} = \"${6:^1.0.0}\"$0"
+    ],
+    "description": "Create an adesh.adl manifest for an executable application"
+  },
+  "ADL Library Template": {
+    "prefix": "lib",
+    "body": [
+      "[project]",
+      "name = \"${1:my_lib}\"",
+      "version = \"${2:0.1.0}\"",
+      "template = \"lib\"",
+      "libs = [${3:\"libname\"}]",
+      "",
+      "[dependencies]",
+      "${4:PackageName} = \"${5:^1.0.0}\"$0"
+    ],
+    "description": "Create an adesh.adl manifest for a reusable library"
+  },
+  "ADL Plugin Template": {
+    "prefix": "plugin",
+    "body": [
+      "[project]",
+      "name = \"${1:my_plugin}\"",
+      "version = \"${2:0.1.0}\"",
+      "template = \"plugin\"",
+      "",
+      "[compiler]",
+      "backend = \"${3:native}\"",
+      "opt-level = \"${4:release}\"",
+      "",
+      "[dependencies]",
+      "${5:CompilerAPI} = \"${6:^1.0.0}\"$0"
+    ],
+    "description": "Create an adesh.adl manifest for a compiler plugin"
+  },
+  "ADL Project Section": {
+    "prefix": "project",
+    "body": [
+      "[project]",
+      "name = \"${1:my_project}\"",
+      "version = \"${2:0.1.0}\"",
+      "template = \"${3:app}\"",
+      "libs = [${4:\"libname\"}]$0"
+    ],
+    "description": "Add a [project] section to adesh.adl"
+  },
+  "ADL Compiler Section": {
+    "prefix": "compiler",
+    "body": [
+      "[compiler]",
+      "backend = \"${1:interpreter}\"",
+      "opt-level = \"${2:debug}\"$0"
+    ],
+    "description": "Add a [compiler] section to adesh.adl"
+  },
+  "ADL Dependencies Section": {
+    "prefix": "dependencies",
+    "body": [
+      "[dependencies]",
+      "${1:PackageName} = \"${2:^1.0.0}\"$0"
+    ],
+    "description": "Add a [dependencies] section to adesh.adl"
+  },
+  "ADL Scripts Section": {
+    "prefix": "scripts",
+    "body": [
+      "[scripts]",
+      "const build = \"${1:default}\"",
+      "const test = \"${2:default}\"",
+      "const run = \"${3:default}\"$0"
+    ],
+    "description": "Add a [scripts] section to adesh.adl"
+  },
+  "ADL Workspace Section": {
+    "prefix": "workspace",
+    "body": [
+      "[workspace]",
+      "members = [${1:\"packages/*\"}]$0"
+    ],
+    "description": "Add a [workspace] section to adesh.adl"
+  },
+  "ADL Workspace with Members": {
+    "prefix": "workspace-members",
+    "body": [
+      "[workspace]",
+      "members = [",
+      "  \"${1:packages/*}\",",
+      "  \"${2:tools/cli}\"",
+      "]$0"
+    ],
+    "description": "Add a [workspace] section with multiple members and glob patterns"
+  },
+  "ADL Dependency Entry": {
+    "prefix": "dep",
+    "body": "${1:PackageName} = \"${2:^1.0.0}\"$0",
+    "description": "Add a version-requirement dependency entry"
+  },
+  "ADL Path Dependency": {
+    "prefix": "dep-path",
+    "body": "${1:PackageName} = { source = \"path\", location = \"${2:../path/to/lib}\" }$0",
+    "description": "Add a path-based dependency"
+  },
+  "ADL Git Dependency": {
+    "prefix": "dep-git",
+    "body": "${1:PackageName} = { source = \"git\", location = \"${2:https://github.com/user/repo.git}\" }$0",
+    "description": "Add a git-based dependency"
+  },
+  "ADL Registry Dependency": {
+    "prefix": "dep-registry",
+    "body": "${1:PackageName} = { source = \"registry\", location = \"${2:official}\" }$0",
+    "description": "Add a registry-based dependency"
+  },
+  "ADL Workspace Dependency": {
+    "prefix": "dep-workspace",
+    "body": "${1:PackageName} = { source = \"workspace\", location = \"${2:../crates/member}\" }$0",
+    "description": "Add a dependency resolved from a workspace member"
+  },
+  "ADL Dependency: Crypto": {
+    "prefix": "dep-crypto",
+    "body": "Crypto = \"^${1:1.0.0}\"$0",
+    "description": "Add the standard Crypto library dependency"
+  },
+  "ADL Dependency: HTTP": {
+    "prefix": "dep-http",
+    "body": "HTTP = \"^${1:4.0.0}\"$0",
+    "description": "Add the standard HTTP library dependency"
+  },
+  "ADL Dependency: IO": {
+    "prefix": "dep-io",
+    "body": "IO = \"^${1:1.0.0}\"$0",
+    "description": "Add the standard IO library dependency"
+  },
+  "ADL Dependency: Math": {
+    "prefix": "dep-math",
+    "body": "Math = \"^${1:1.0.0}\"$0",
+    "description": "Add the standard Math library dependency"
+  },
+  "ADL Dependency: Time": {
+    "prefix": "dep-time",
+    "body": "Time = \"^${1:1.0.0}\"$0",
+    "description": "Add the standard Time library dependency"
+  },
+  "ADL Dependency: Regex": {
+    "prefix": "dep-regex",
+    "body": "Regex = \"^${1:1.0.0}\"$0",
+    "description": "Add the standard Regex library dependency"
+  },
+  "ADL Dependency: Encoding": {
+    "prefix": "dep-encoding",
+    "body": "Encoding = \"^${1:1.0.0}\"$0",
+    "description": "Add the standard Encoding library dependency"
+  },
+  "ADL Dependency: DNS": {
+    "prefix": "dep-dns",
+    "body": "DNS = \"^${1:1.0.0}\"$0",
+    "description": "Add the standard DNS library dependency"
+  },
+  "ADL Conditional Block": {
+    "prefix": "if",
+    "body": [
+      "if ${1:condition} {",
+      "  ${2:// ...}",
+      "}$0"
+    ],
+    "description": "Add a conditional block in adesh.adl"
+  },
+  "ADL If Else Block": {
+    "prefix": "if-else",
+    "body": [
+      "if ${1:condition} {",
+      "  ${2:// ...}",
+      "} else {",
+      "  ${3:// ...}",
+      "}$0"
+    ],
+    "description": "Add an if/else conditional block in adesh.adl"
+  },
+  "ADL Platform Condition": {
+    "prefix": "if-platform",
+    "body": [
+      "if ${1:platform} == \"${2:windows}\" {",
+      "  ${3:// platform-specific configuration}",
+      "}$0"
+    ],
+    "description": "Add a platform-specific conditional block in adesh.adl"
+  },
+  "ADL Target Condition": {
+    "prefix": "if-target",
+    "body": [
+      "if ${1:target} == \"${2:wasm}\" {",
+      "  ${3:// target-specific configuration}",
+      "}$0"
+    ],
+    "description": "Add a target-specific conditional block in adesh.adl"
+  },
+  "ADL Debug Condition": {
+    "prefix": "if-debug",
+    "body": [
+      "if ${1:debug} {",
+      "  ${2:// debug-only configuration}",
+      "} else {",
+      "  ${3:// release configuration}",
+      "}$0"
+    ],
+    "description": "Add a debug vs release conditional block in adesh.adl"
+  },
+  "ADL Import Statement": {
+    "prefix": "import",
+    "body": "import \"${1:./path/to/file.adl}\"$0",
+    "description": "Add an import statement for another ADL manifest"
+  },
+  "ADL Build Profile: Debug": {
+    "prefix": "profile-debug",
+    "body": [
+      "[compiler]",
+      "backend = \"${1:interpreter}\"",
+      "opt-level = \"debug\"$0"
+    ],
+    "description": "Configure the debug build profile in adesh.adl"
+  },
+  "ADL Build Profile: Release": {
+    "prefix": "profile-release",
+    "body": [
+      "[compiler]",
+      "backend = \"${1:llvm}\"",
+      "opt-level = \"release\"$0"
+    ],
+    "description": "Configure the release build profile in adesh.adl"
+  },
+  "ADL Multi-Target Configuration": {
+    "prefix": "multi-target",
+    "body": [
+      "// Platform-specific dependencies",
+      "if ${1:platform} == \"${2:windows}\" {",
+      "  [dependencies]",
+      "  ${3:WinAPI} = \"${4:^1.0.0}\"",
+      "}",
+      "",
+      "if ${1:platform} == \"${5:linux}\" {",
+      "  [dependencies]",
+      "  ${6:LinuxAPI} = \"${7:^1.0.0}\"",
+      "}$0"
+    ],
+    "description": "Add per-platform dependency configuration to adesh.adl"
+  },
+  "ADL Lockfile Template": {
+    "prefix": "lockfile",
+    "body": [
+      "lock {",
+      "  version = \"1\"",
+      "  generated-at = \"${1:2026-01-01T00:00:00Z}\"",
+      "  compiler-version = \"${2:0.3.0}\"",
+      "  adl-version = \"${3:0.3.0}\"",
+      "  package-id = \"${4:my_project}\"",
+      "  dependencies = [",
+      "    {",
+      "      package-id = \"${5:Name@0.0.0}\"",
+      "      name = \"${6:Name}\"",
+      "      version = \"${7:0.0.0}\"",
+      "      requirement = \"${8:^1.0.0}\"",
+      "      checksum = \"${9:0000000000000000}\"",
+      "      sha256 = \"${9:0000000000000000}\"",
+      "      source = { kind = \"${10:registry}\", location = \"${11:official}\" }",
+      "    }",
+      "  ]",
+      "  signature = \"${12:0000000000000000}\"",
+      "}$0"
+    ],
+    "description": "Create a full adesh.lock.adl lockfile template"
+  },
+  "ADL Lockfile Dependency Entry": {
+    "prefix": "lock-dep",
+    "body": [
+      "    {",
+      "      package-id = \"${1:Name@0.0.0}\"",
+      "      name = \"${2:Name}\"",
+      "      version = \"${3:0.0.0}\"",
+      "      requirement = \"${4:^1.0.0}\"",
+      "      checksum = \"${5:0000000000000000}\"",
+      "      sha256 = \"${5:0000000000000000}\"",
+      "      source = { kind = \"${6:registry}\", location = \"${7:official}\" }",
+      "    }$0"
+    ],
+    "description": "Add a locked dependency entry inside lock { dependencies = [...] }"
+  },
+  "ADL Lockfile Source Object": {
+    "prefix": "lock-source",
+    "body": "source = { kind = \"${1:registry}\", location = \"${2:official}\" }$0",
+    "description": "Add a source object to a lockfile dependency entry"
+  },
+  "ADL Lockfile Confidential Block": {
+    "prefix": "lock-confidential",
+    "body": [
+      "confidential = {",
+      "  ${1:key} = \"${2:value}\"",
+      "}$0"
+    ],
+    "description": "Add a confidential (secret) block to a lockfile"
+  }
+}

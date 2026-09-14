@@ -1,0 +1,182 @@
+// =============================================================================
+// AdeshLang v0.2.0 - SSO and SAO Examples
+// =============================================================================
+// This example demonstrates Small String Optimization (SSO) and
+// Small Array Optimization (SAO) in AdeshLang's memory model.
+// =============================================================================
+
+print("=== SSO & SAO Optimization Demo ===\n");
+
+// -----------------------------------------------------------------------------
+// 1. Small String Optimization (SSO)
+// -----------------------------------------------------------------------------
+// Strings under 22 bytes are stored inline without heap allocation.
+// This provides faster access and reduced memory overhead.
+
+print("--- Small String Optimization (SSO) ---");
+print("SSO threshold: 22 bytes (strings stored inline)\n");
+
+// These strings are stored inline (under 22 bytes)
+let s1 = "Hi";              // 2 bytes
+let s2 = "Hello";           // 5 bytes
+let s3 = "AdeshLang";        // 8 bytes
+let s4 = "Hello, World!";   // 13 bytes
+let s5 = "21 chars exactly!";  // 21 bytes - still inline
+
+print("Inline strings (SSO):");
+print("  '" + s1 + "' - " + str(sizeof(s1)) + " bytes");
+print("  '" + s2 + "' - " + str(sizeof(s2)) + " bytes");
+print("  '" + s3 + "' - " + str(sizeof(s3)) + " bytes");
+print("  '" + s4 + "' - " + str(sizeof(s4)) + " bytes");
+print("  '" + s5 + "' - " + str(sizeof(s5)) + " bytes");
+
+// This string exceeds SSO threshold - heap allocated
+let longStr = "This string is longer than 22 bytes so it's heap allocated";
+print("\nHeap-allocated string:");
+print("  '" + longStr + "'");
+print("  Length: " + str(sizeof(longStr)) + " bytes");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 2. SSO in Practice
+// -----------------------------------------------------------------------------
+
+print("--- SSO Performance Benefits ---");
+
+// Common short strings benefit most from SSO
+let keywords = ["if", "else", "for", "while", "fn", "let", "const", "return"];
+print("Keywords (all SSO-optimized):");
+for (kw in keywords) {
+    print("  " + kw);
+}
+
+// String building with SSO awareness
+fn formatId(prefix, num) {
+    // Result often stays within SSO limit
+    return prefix + "-" + str(num);
+}
+
+print("\nGenerated IDs:");
+for (i in range(1, 4)) {
+    let id = formatId("user", i);
+    print("  " + id + " (" + str(sizeof(id)) + " bytes)");
+}
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 3. Small Array Optimization (SAO)
+// -----------------------------------------------------------------------------
+// Arrays with fewer than 8 elements are stored inline for better performance.
+
+print("--- Small Array Optimization (SAO) ---");
+print("SAO threshold: 8 elements (arrays stored inline)\n");
+
+// These arrays are stored inline (under 8 elements)
+let a1 = [1];                          // 1 element
+let a2 = [1, 2, 3];                    // 3 elements
+let a3 = [1, 2, 3, 4, 5];              // 5 elements
+let a4 = [1, 2, 3, 4, 5, 6, 7];        // 7 elements - still inline
+
+print("Inline arrays (SAO):");
+print("  " + str(a1) + " - " + str(len(a1)) + " elements");
+print("  " + str(a2) + " - " + str(len(a2)) + " elements");
+print("  " + str(a3) + " - " + str(len(a3)) + " elements");
+print("  " + str(a4) + " - " + str(len(a4)) + " elements");
+
+print("Sizeof",sizeof(a1[0]));
+print("Length of a1",len(a1));
+print("Capcity",capcity(a1));
+print("Metadata",metadata_size(a1));
+
+// This array exceeds SAO threshold - heap allocated
+let largeArray = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+print("\nHeap-allocated array:");
+print("  " + str(largeArray) + " - " + str(len(largeArray)) + " elements");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 4. SAO in Practice
+// -----------------------------------------------------------------------------
+
+print("--- SAO Common Patterns ---");
+
+// Points and coordinates (2-3 elements) - perfect for SAO
+let point2D = [10, 20];
+let point3D = [10, 20, 30];
+let rgba = [255, 128, 0, 255];
+
+print("Coordinate types (all SAO-optimized):");
+print("  2D point: " + str(point2D));
+print("  3D point: " + str(point3D));
+print("  RGBA color: " + str(rgba));
+
+// Matrix rows (typically 3-4 elements)
+let mat3x3 = [
+    [1, 0, 0],
+    [0, 1, 0],
+    [0, 0, 1]
+];
+print("\n3x3 Identity matrix (each row SAO-optimized):");
+for (row in mat3x3) {
+    print("  " + str(row));
+}
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 5. Memory Stats Comparison
+// -----------------------------------------------------------------------------
+
+print("--- Memory Usage Comparison ---\n");
+
+// Show memory stats before creating objects
+print("Before creating large data structures...");
+
+// Create a mix of SSO and heap strings
+let ssoStrings = [];
+let heapStrings = [];
+
+for (i in range(1, 6)) {
+    ssoStrings.push("s" + str(i));  // Short, SSO-optimized
+    heapStrings.push("This is a much longer string number " + str(i));
+}
+
+print("Created 5 SSO strings and 5 heap strings");
+
+// Create a mix of SAO and heap arrays
+let saoArrays = [];
+let heapArrays = [];
+
+for (i in range(1, 6)) {
+    saoArrays.push([i, i*2, i*3]);  // Small, SAO-optimized
+    heapArrays.push([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);  // Large
+}
+
+print("Created 5 SAO arrays and 5 heap arrays");
+
+print("\nMemory summary:");
+print("  SSO strings: No heap allocations for short strings");
+print("  SAO arrays: No heap allocations for small arrays");
+print("  Result: Faster allocation, better cache locality");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 6. Optimization Guidelines
+// -----------------------------------------------------------------------------
+
+print("--- Optimization Guidelines ---\n");
+
+print("For best performance:");
+print("1. Prefer short identifiers/keys (< 22 chars) for SSO");
+print("2. Use small tuples/arrays (< 8 elements) for SAO");
+print("3. SSO strings can be concatenated quickly");
+print("4. SAO arrays have O(1) element access");
+print("5. When building large strings, batch operations");
+print("6. Consider splitting large arrays into chunks of 7");
+
+print("");
+print("=== Demo Complete ===");

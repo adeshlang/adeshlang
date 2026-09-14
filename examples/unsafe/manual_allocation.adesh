@@ -1,0 +1,12 @@
+
+unsafe {
+  let ptrs = alloc<u8>(100);
+  print("Unsafe allocation: requested 100 bytes");
+  print(ptrs);
+  
+  free ptrs;
+  print(ptrs);
+  print("Unsafe deallocation: freed memory");
+}
+
+print("Unsafe operations completed");

@@ -1,0 +1,6 @@
+// Smart input example (aiSuggest optional)
+// The aiSuggest flag is reserved; this shows intended usage
+// input.mock(["backend"]);
+
+let tag = input("Tag:", { aiSuggest: true });
+print("Tag:", tag);

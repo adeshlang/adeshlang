@@ -1,0 +1,48 @@
+// AdeshLang Built-in JSON — Validation & Safe Parsing
+// Demonstrates JSON.isValid and JSON.tryParse for defensive parsing
+// without needing try/catch blocks.
+
+// ── Guarded parsing helper (top-level function) ────────────────────────────
+fn safe_read(src) {
+    if JSON.isValid(src) == false {
+        return null;
+    }
+    return JSON.parse(src);
+}
+
+fn main() {
+    // ── isValid ─────────────────────────────────────────────────────────
+    let good = `
+    {
+        "status": 200,
+        "ok": true
+    }
+    `;
+    let bad = `{status: 200}`;          // unquoted key — not valid JSON
+
+    println("isValid (good) : " + str(JSON.isValid(good)));   // true
+    println("isValid (bad)  : " + str(JSON.isValid(bad)));    // false
+
+    // ── tryParse: returns null on failure, no exception ─────────────────
+    let result_ok  = JSON.tryParse(good);
+    let result_bad = JSON.tryParse("this is not json at all");
+
+    if result_ok != null {
+        println("status (safe parse) : " + str(result_ok.status));
+    }
+
+    if result_bad == null {
+        println("bad input safely returned null — no crash");
+    }
+
+    // ── Guarded parsing pattern ──────────────────────────────────────────
+    let city_json = `
+    {
+        "city": "Bangalore"
+    }
+    `;
+    let v = safe_read(city_json);
+    if v != null {
+        println("city : " + str(v.city));
+    }
+}

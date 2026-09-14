@@ -1,0 +1,42 @@
+// AdeshLang type-system showcase
+// Consolidated canonical example.
+
+print("=== Numeric Literals ===");
+let bin1 = 0b1010;
+let hex1 = 0xFF;
+let dec1 = 1_000_000;
+print(bin1);
+print(hex1);
+print(dec1);
+print("Numeric literals OK");
+
+print("=== Float Widths ===");
+let f32_value:f32 = 3.14f32;
+let f64_value:f64 = 3.141592653589793f64;
+print(f32_value);
+print(type(f32_value));
+print(sizeof(f32_value));
+print(f64_value);
+print(type(f64_value));
+print(sizeof(f64_value));
+print("Float checks OK");
+
+print("=== Type Checks ===");
+print(type(42));
+print(typeof(42));
+print(type("hello"));
+print("Type checks OK");
+
+print("=== Object Operations ===");
+let obj = { name: "Alice", age: 30 };
+print(type(obj));
+print(sizeof(obj));
+print(hasKey(obj, "name"));
+print("Object checks OK");
+
+print("=== Null Checks ===");
+let maybeUser = null;
+print(type(maybeUser));
+print("Null checks OK");
+
+print("=== All Tests Complete ===");

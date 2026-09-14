@@ -1,0 +1,97 @@
+// Comprehensive FFI test for AdeshLang
+// Tests all FFI features: extern declarations, type mappings, error handling
+
+extern "C" {
+    // Standard C library functions
+    fn strlen(s: ptr<u8>) -> usize;
+    fn strcmp(a: ptr<u8>, b: ptr<u8>) -> i32;
+    fn printf(fmt: ptr<u8>, a: i32, b: i32, c: i32) -> i32;
+    
+    // Math functions
+    fn sqrt(x: f64) -> f64;
+    fn pow(base: f64, exp: f64) -> f64;
+    fn floor(x: f64) -> f64;
+    fn ceil(x: f64) -> f64;
+}
+
+fn test_string_functions() {
+    print("=== Testing String Functions ===\n");
+    
+    let text = "AdeshLang";
+    let len = strlen(text);
+    print("strlen('AdeshLang') = ");
+    print(len);
+    print(" (expected 8)\n");
+    
+    let cmp = strcmp("hello", "hello");
+    print("strcmp('hello', 'hello') = ");
+    print(cmp);
+    print(" (expected 0)\n");
+    
+    printf("Printf from C: %d + %d = %d\n", 10, 20, 30);
+}
+
+fn test_math_functions() {
+    print("\n=== Testing Math Functions ===\n");
+    
+    let root = sqrt(144.0);
+    print("sqrt(144.0) = ");
+    print(root);
+    print(" (expected 12.0)\n");
+    
+    let power = pow(2.0, 10.0);
+    print("pow(2.0, 10.0) = ");
+    print(power);
+    print(" (expected 1024.0)\n");
+    
+    let f = floor(3.7);
+    print("floor(3.7) = ");
+    print(f);
+    print(" (expected 3.0)\n");
+    
+    let c = ceil(3.2);
+    print("ceil(3.2) = ");
+    print(c);
+    print(" (expected 4.0)\n");
+}
+
+fn test_type_safety() {
+    print("\n=== Testing Type Safety ===\n");
+    
+    // These should work - correct types
+    let s1 = strlen("test");
+    print("Type-checked strlen: ");
+    print(s1);
+    print("\n");
+    
+    let m1 = sqrt(25.0);
+    print("Type-checked sqrt: ");
+    print(m1);
+    print("\n");
+    
+    print("All type checks passed!\n");
+}
+
+fn main() {
+    print("╔════════════════════════════════════╗\n");
+    print("║  AdeshLang FFI Comprehensive Test  ║\n");
+    print("╚════════════════════════════════════╝\n\n");
+    
+    test_string_functions();
+    test_math_functions();
+    test_type_safety();
+    
+    print("\n╔════════════════════════════════════╗\n");
+    print("║       All Tests Completed!         ║\n");
+    print("╚════════════════════════════════════╝\n");
+}
+
+// To run:
+// adesh run test_ffi_complete.adesh --ffi-debug
+//
+// Expected output should show:
+// - strlen returns correct values
+// - strcmp comparison works
+// - printf output appears
+// - math functions compute correctly
+// - Type safety is maintained

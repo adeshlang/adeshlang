@@ -1,0 +1,40 @@
+// 05_efficiency_bench.adesh
+// Measures efficiency/performance of generic functions and monomorphization patterns.
+
+import "time" as time;
+
+print("=== 05: GENERICS EFFICIENCY BENCHMARK ===");
+
+// Generic identity function
+fn genericIdentity<T>(x: T): T {
+    return x;
+}
+
+// Plain non-generic identity function for comparison
+fn plainIdentity(x: int): int {
+    return x;
+}
+
+let startPlain = time.nowMs();
+let i = 0;
+for (i = 0; i < 10000; i = i + 1) {
+    let dummy = plainIdentity(i);
+}
+let endPlain = time.nowMs();
+let plainTime = endPlain - startPlain;
+print("Plain Function (10k calls)    =", plainTime, "ms");
+
+let startGeneric = time.nowMs();
+for (i = 0; i < 10000; i = i + 1) {
+    let dummy = genericIdentity<int>(i);
+}
+let endGeneric = time.nowMs();
+let genericTime = endGeneric - startGeneric;
+print("Generic Function (10k calls)  =", genericTime, "ms");
+
+let diff = genericTime - plainTime;
+if (diff < 0) {
+    diff = 0 - diff;
+}
+print("Difference                    =", diff, "ms");
+print("✅ Generics Efficiency Benchmark Passed.");

@@ -1,0 +1,9 @@
+// Demonstrates that moving a value while a shared borrow is active is rejected.
+
+let note = "hello";
+let shared = &note;        // shared borrow starts
+print(shared);
+
+// ❌ This should fail because `note` is borrowed.
+let moved = note;
+print(moved);              // not reached

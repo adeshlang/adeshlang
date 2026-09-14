@@ -1,0 +1,34 @@
+// AdeshLang WebSocket Example 17: Production Heartbeat Keepalive Manager
+// Demonstrates ping/pong auto-reply keepalive mechanism.
+
+import WebSocket;
+
+print("=== AdeshLang WebSocket Heartbeat & Keepalive Demo ===");
+
+let serverConfig = WebSocket.ServerConfig({
+    port: 8617,
+    bind_address: "127.0.0.1",
+    automatic_pong: true
+});
+
+let server = WebSocket.server(serverConfig);
+server.startEcho();
+print("✓ Server running with automatic_pong=true");
+
+let clientConfig = WebSocket.ClientConfig({
+    automatic_pong: true
+});
+
+let client = WebSocket.connect("ws://127.0.0.1:8617", clientConfig);
+print("✓ Client connected with automatic_pong enabled");
+
+client.sendPing("keepalive-check");
+print("✓ Sent ping: 'keepalive-check'");
+
+client.sendText("Payload after keepalive");
+let msg = client.receive();
+print("Received payload: " + msg.payload);
+
+client.close(1000, "Heartbeat test done");
+server.close();
+print("✓ Heartbeat keepalive test completed successfully!");

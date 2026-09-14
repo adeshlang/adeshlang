@@ -1,0 +1,46 @@
+// Comprehensive print() examples
+
+// ===== Simple Usage (Python/JS style) =====
+print("Hello", "World");                    // Hello World
+print(1, 2, 3, 4, 5);                      // 1 2 3 4 5
+print("Value:", 42);                        // Value: 42
+
+// ===== Custom Separator =====
+print("apple", "banana", "cherry", { sep: ", " });  // apple, banana, cherry
+print("A", "B", "C", { sep: " | " });              // A | B | C
+
+// ===== Custom End =====
+print("No newline here", { end: "\t" });
+print(" - continued!");                     // Output: No newline here - continued!
+
+print("Multiple", { end: "..." });
+print("parts", { end: "..." });
+print("concatenated");                      // Multiple...parts...concatenated
+
+// ===== Colored Output (ANSI) =====
+print("Red text", { color: "#FF0000" });
+print("Green text", { color: "#00FF00" });
+print("Blue text", { color: "#0000FF" });
+print("Orange warning", { color: "#FF9900" });
+
+// ===== File Output =====
+print("This is logged to a file", { file: "app.log" });
+print("Another log entry", { file: "app.log" });
+
+// ===== Flush Output =====
+print("Flushed immediately", { flush: true });
+
+// ===== Combining Options =====
+print("Error", "Warning", "Info", { 
+    sep: " | ", 
+    color: "#FF0000",
+    end: " <---\n"
+});
+
+print("CSV", "style", "output", { sep: ",", end: "\n" });
+
+// ===== Complex Values =====
+let arr = [1, 2, 3];
+let obj = { name: "India", version: 1 };
+print("Array:", arr);
+print("Object:", obj);

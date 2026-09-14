@@ -1,0 +1,102 @@
+{
+  // ALS (Adesh Language Server) Sublime Text LSP Configuration
+  // Production-grade LSP configuration for AdeshLang.
+  //
+  // Installation:
+  // 1. Build ALS: `cargo build --release` in the als/ directory
+  // 2. Install the LSP package via Package Control
+  // 3. Copy this file to: Packages/User/LSP.sublime-settings
+  //    (Preferences > Package Settings > LSP > Settings)
+  // 4. Update the command path below to point to the ALS binary
+  "clients": {
+    "als": {
+      "enabled": true,
+      "command": ["/path/to/AdeshLang/als/target/release/als"],
+      // On Windows, use forward slashes or escaped backslashes:
+      // "command": ["C:/Projects/AdeshLang/als/target/release/als.exe"],
+      "selector": "source.adesh, source.adl",
+      "syntaxes": ["Packages/Adesh/Adesh.tmLanguage", "Packages/Adesh/Adl.tmLanguage"],
+      "scopes": ["source.adesh", "source.adl"],
+      "initializationOptions": {},
+      "settings": {
+        "format": {
+          "indentSize": 4,
+          "useTabs": false,
+          "enable": true
+        },
+        "borrowChecker": {
+          "enabled": true,
+          "showOwnershipHints": true,
+          "highlightBorrows": true
+        },
+        "unsafe": {
+          "warnOnUsage": true
+        },
+        "inlayHints": {
+          "enabled": true,
+          "showOwnership": true,
+          "showBorrowState": false
+        },
+        "completion": {
+          "enabled": true,
+          "includeKeywords": true,
+          "includeBuiltins": true
+        },
+        "diagnostics": {
+          "enabled": true,
+          "refreshOnSave": true
+        },
+        "typeAssistance": {
+          "enabled": true,
+          "showInferredTypes": true,
+          "strictMode": false
+        },
+        "server": {
+          "enabled": true,
+          "timeout": 30000
+        }
+      },
+      "experimental_capabilities": {
+        "textDocument": {
+          "completion": {
+            "completionItem": {
+              "snippetSupport": true,
+              "documentationFormat": ["markdown", "plaintext"],
+              "deprecatedSupport": true,
+              "preselectSupport": true
+            }
+          },
+          "hover": {
+            "contentFormat": ["markdown", "plaintext"]
+          },
+          "semanticTokens": {
+            "tokenTypes": [
+              "borrowedVariable", "ownedVariable", "movedVariable", "droppedVariable",
+              "unsafeFunction", "region", "sharedVariable", "strongReference", "weakReference"
+            ],
+            "tokenModifiers": [
+              "borrowed", "owned", "moved", "mutable", "unsafe", "noalias", "shared", "weak"
+            ]
+          }
+        }
+      }
+    }
+  },
+  // Global LSP settings
+  "show_diagnostics_in_view": true,
+  "show_diagnostics_severity_level": 1,
+  "show_diagnostics_count_in_status_bar": true,
+  "auto_show_diagnostics_panel": "never",
+  "show_diagnostics_count_in_status_bar": true,
+  "diagnostics_panel_include_severity_level": 1,
+  "diagnostics_gutter_marker": "dot",
+  "show_code_actions_bulb": true,
+  "show_symbol_action_links": true,
+  "only_show_lsp_completions": false,
+  "show_completion_preview": true,
+  "show_signature_help": true,
+  "show_hover": true,
+  "document_highlight_style": "underline",
+  "semantic_tokens_enabled": true,
+  "inlay_hints_enabled": true
+}

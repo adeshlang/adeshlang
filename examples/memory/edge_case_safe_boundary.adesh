@@ -1,0 +1,43 @@
+﻿// Edge case: Lexical Safety Isolation across function boundaries
+// An unsafe caller invokes a safe function. The safe function MUST NOT
+// inherit unsafe privileges; any raw pointer access or unsafe call inside
+// the safe function must fail unless it wraps them in its own unsafe block.
+
+unsafe fn dangerous_op(ptr: *u8): int {
+    ptr[0] = 42;
+    return ptr[0];
+}
+
+fn safe_caller(ptr: *u8): int {
+    // Calling dangerous_op directly without unsafe block MUST fail
+    return dangerous_op(ptr);
+}
+
+fn safe_caller_fixed(ptr: *u8): int {
+    // Wrapping in an unsafe block within the safe function succeeds
+    let res = 0;
+    unsafe {
+        res = dangerous_op(ptr);
+    }
+    return res;
+}
+
+unsafe {
+    let buf = alloc(16);
+    println("Allocated buffer at:", buf);
+
+    try {
+        println("Calling safe_caller from within unsafe block (should fail)...");
+        safe_caller(buf);
+        println("FAILED: safe_caller should not inherit unsafe privileges!");
+    } catch (e) {
+        println("SUCCESS: Safe boundary enforced! Caught expected error:", e);
+    }
+
+    println("Calling safe_caller_fixed (has its own explicit unsafe block)...");
+    let val = safe_caller_fixed(buf);
+    println("SUCCESS: Value returned through safe function:", val);
+
+    free(buf);
+    println("Lexical safety isolation test completed successfully!");
+}

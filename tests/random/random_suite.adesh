@@ -1,0 +1,51 @@
+import Random;
+
+print("--- Running AdeshLang Random Test Suite ---");
+
+// Test 1: Integer bounds
+let i = Random.int(10, 20);
+assert(i >= 10 && i < 20, "Random.int bounds check failed");
+
+let iInc = Random.intInclusive(10, 20);
+assert(iInc >= 10 && iInc <= 20, "Random.intInclusive bounds check failed");
+
+// Test 2: Float bounds
+let f = Random.float();
+assert(f >= 0.0 && f < 1.0, "Random.float bounds check failed");
+
+let fRange = Random.floatRange(5.0, 15.0);
+assert(fRange >= 5.0 && fRange < 15.0, "Random.floatRange bounds check failed");
+
+// Test 3: Boolean
+let b = Random.bool();
+assert(b == true || b == false, "Random.bool check failed");
+
+// Test 4: Bytes & Strings
+let bytes = Random.bytes(10);
+assert(len(bytes) == 10, "Random.bytes length check failed");
+
+let strVal = Random.string(16);
+assert(len(strVal) == 16, "Random.string length check failed");
+
+// Test 5: Choice & Shuffle
+let colors = ["red", "green", "blue"];
+let chosen = Random.choice(colors);
+assert(chosen == "red" || chosen == "green" || chosen == "blue", "Random.choice failed");
+
+let shuffled = Random.shuffled(colors);
+assert(len(shuffled) == 3, "Random.shuffled length check failed");
+
+// Test 6: Seed Reproducibility
+let rng1 = Random.seed(777);
+let val1 = rng1.int(1, 1000);
+
+let rng2 = Random.seed(777);
+let val2 = rng2.int(1, 1000);
+
+assert(val1 == val2, "Random.seed reproducibility check failed");
+
+// Test 7: UUID
+let uid = Random.uuid();
+assert(len(uid) == 36, "Random.uuid length check failed");
+
+print("--- All AdeshLang Random Tests Passed Successfully! ---");

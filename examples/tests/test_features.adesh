@@ -1,0 +1,62 @@
+// Test rest parameters like JavaScript
+fn testRest(...args) {
+    print("Rest parameters:", args);
+    print("First arg:", args[0]);
+    print("Length:", len(args));
+};
+
+// Test spread operator in function calls
+fn testSpread() {
+    let arr = [1, 2, 3];
+    print("Spread in function call:", testRest(...arr));
+};
+
+// Test spread in array construction
+fn testArraySpread() {
+    let arr1 = [1, 2, 3];
+    let arr2 = [...arr1, 4, 5];
+    print("Array spread:", arr2);
+};
+
+// Test range operators like Rust
+fn testRanges() {
+    print("Range 1..5:");
+    for (i in 1..5) {
+        print(i);
+    }
+    
+    print("Range 1...5 (inclusive):");
+    for (i in 1...5) {
+        print(i);
+    }
+};
+
+// Test mixed usage
+fn testMixed() {    
+    let numbers = [10, 20, 30];
+    let moreNumbers = [...numbers, 40, 50];
+    print("Mixed spread:", moreNumbers);
+    
+    // Test rest with spread
+    fn combine(...items) {
+        return items;
+    };
+    
+    let result = combine(...moreNumbers);
+    print("Rest + spread:", result);
+};
+
+// Run all tests
+print("=== Testing Rest Parameters ===");
+testRest(1, 2, 3, 4, 5);
+
+print("\n=== Testing Spread in Arrays ===");
+testArraySpread();
+
+print("\n=== Testing Range Operators ===");
+testRanges();
+
+print("\n=== Testing Mixed Features ===");
+testMixed();
+
+print("\n=== All tests completed ===");

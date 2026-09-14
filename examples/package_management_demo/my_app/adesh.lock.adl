@@ -1,0 +1,28 @@
+lock {
+  version = "1"
+  generated-at = "2026-07-02T18:16:33Z"
+  compiler-version = "0.3.0"
+  adl-version = "0.3.0"
+  package-id = "my_app"
+  dependencies = [
+    {
+      package-id = "my_lib@1.2.0"
+      name = "my_lib"
+      version = "1.2.0"
+      requirement = "=1.2.0"
+      checksum = "2d0c7042ce56f715"
+      sha256 = "2d0c7042ce56f715"
+      source = { kind = "path", location = "D:\Projects\AdeshLang\examples\package_management_demo\my_app\../my_lib" }
+    }
+    {
+      package-id = "my_native_lib@1.0.0"
+      name = "my_native_lib"
+      version = "1.0.0"
+      requirement = "=1.0.0"
+      checksum = "3cc0de876be78149"
+      sha256 = "3cc0de876be78149"
+      source = { kind = "path", location = "D:\Projects\AdeshLang\examples\package_management_demo\my_app\../my_native_lib" }
+    }
+  ]
+  signature = "ea80287b81a5c3d5"
+}

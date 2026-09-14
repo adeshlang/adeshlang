@@ -1,0 +1,12 @@
+// Debug test for FFI
+extern "C" fn strlen(s: ptr<u8>) -> usize;
+
+fn main() {
+    print("Starting main function\n");
+    let text = "Hello";
+    print("About to call strlen\n");
+    let len = strlen(text);
+    print("Result: ");
+    print(len);
+    print("\n");
+}

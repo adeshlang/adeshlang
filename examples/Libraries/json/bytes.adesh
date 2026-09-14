@@ -1,0 +1,31 @@
+// AdeshLang Built-in JSON — Byte Serialization
+// Demonstrates JSON.stringifyBytes and JSON.parseBytes for working
+// with UTF-8 byte arrays — useful for network I/O, hashing, and
+// binary protocols.
+
+fn main() {
+    let payload = JSON.object();
+    payload.action  = "login";
+    payload.user    = "ajay";
+    payload.token   = "abc123";
+
+    // ── Serialize to byte array ──────────────────────────────────────────
+    let bytes = JSON.stringifyBytes(payload);
+    println("Byte count : " + str(len(bytes)));
+
+    // ── Inspect first few bytes (ASCII codes for '{' '"' 'a' ...) ────────
+    let preview = bytes[0];
+    println("First byte  : " + str(preview) + "  ('{' is 123)");
+
+    // ── Deserialize from bytes ───────────────────────────────────────────
+    let restored = JSON.parseBytes(bytes);
+    println("action : " + str(restored.action));
+    println("user   : " + str(restored.user));
+    println("token  : " + str(restored.token));
+
+    // ── Round-trip check ─────────────────────────────────────────────────
+    if restored.action != "login" {
+        throw "Byte round-trip action mismatch";
+    }
+    println("Byte round-trip OK");
+}

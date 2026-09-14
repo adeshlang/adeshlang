@@ -1,0 +1,11 @@
+
+// Pass a shared borrow into a function; owner still usable afterwards.
+fn take_ref(x) {
+  print("inside:", x);
+}
+
+let s = "world";
+let r = &s; // if & then r is a shared borrow of s
+take_ref(r);
+print("after:", s);
+

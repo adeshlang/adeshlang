@@ -1,0 +1,108 @@
+// Example demonstrating visibility modifiers in AdeshLang classes
+// AdeshLang now enforces private and protected visibility at runtime
+
+// Base class with different visibility levels
+class Account {
+    // Public field - accessible from anywhere
+    public let name = "";
+    
+    // Protected field - accessible from class and subclasses
+    protected let balance = 0;
+    
+    // Private field - only accessible within this class
+    private let pin = 0;
+    
+    Account(name, initialBalance, pin) {
+        this.name = name;
+        this.balance = initialBalance;
+        this.pin = pin;
+    }
+    
+    // Public method
+    public fn getBalance() {
+        return this.balance;
+    }
+    
+    // Private method - only callable within this class
+    private fn verifyPin(enteredPin) {
+        return this.pin == enteredPin;
+    }
+    
+    // Public method that uses private method
+    public fn withdraw(amount, pin) {
+        if (!this.verifyPin(pin)) {
+            print("Invalid PIN!");
+            return false;
+        }
+        if (amount > this.balance) {
+            print("Insufficient funds!");
+            return false;
+        }
+        this.balance = this.balance - amount;
+        print("Withdrew " + amount + ". New balance: " + this.balance);
+        return true;
+    }
+    
+    // Protected method - accessible from subclasses
+    protected fn addInterest(rate) {
+        let interest = this.balance * rate;
+        this.balance = this.balance + interest;
+        return interest;
+    }
+}
+
+// Subclass demonstrating protected access
+class SavingsAccount extends Account {
+    private let interestRate = 0.05;
+    
+    SavingsAccount(name, initialBalance, pin) {
+        super(name, initialBalance, pin);
+    }
+    
+    // Can access protected method from parent
+    public fn applyMonthlyInterest() {
+        // This works because addInterest is protected
+        print("Applying monthly interest...");
+        let earned = this.addInterest(this.interestRate);
+        print("Applied interest. Earned: " + earned);
+    }
+    
+    // Can access protected field from parent
+    public fn showBalance() {
+        // This works because balance is protected
+        print("Account: " + this.name + ", Balance: " + this.balance);
+    }
+}
+
+// Demo
+print("=== Visibility Modifiers Demo ===");
+
+let savings = new SavingsAccount("Alice", 1000, 1234);
+
+// Public access works
+print("Account holder: " + savings.name);
+
+// Public methods work
+savings.showBalance();
+
+// Protected access from subclass works
+savings.applyMonthlyInterest();
+savings.showBalance();
+
+// Withdraw with correct PIN
+savings.withdraw(100, 1234);
+
+// Withdraw with wrong PIN
+// savings.withdraw(100, 9999);
+try{
+    savings.withdraw(100, 9999);
+}  catch (error) {
+    print("Wrong PIN entered!",{color:"#FF0000"});
+}
+
+print("=== Demo Complete ===");
+
+// Note: Attempting to access private members from outside the class
+// would result in an error (when enforcement is enabled):
+// print(savings.pin);        // Error: Cannot access private member
+// print(savings.balance);    // Error: Cannot access protected member (from outside)

@@ -1,0 +1,20 @@
+import Collections;
+
+print("========================================");
+print("HashMap Comprehensive Examples with Generics");
+print("========================================");
+
+let map = Collections.HashMap<string, string>();
+map.insert("name", "AdeshLang");
+map.insert("author", "Ajay");
+map.insert("year", 2026);
+
+print("Map len: ", map.len());
+print("Get 'name': ", map.get("name"));
+print("ContainsKey 'author': ", map.containsKey("author"));
+print("Keys: ", map.keys());
+print("Values: ", map.values());
+print("Entries: ", map.entries());
+
+print("Removed 'author': ", map.remove("author"));
+print("ContainsKey 'author' after remove: ", map.containsKey("author"));

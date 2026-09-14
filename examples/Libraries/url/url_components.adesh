@@ -1,0 +1,19 @@
+import URL;
+
+let url: URL = URL.parse("https://user:secret@example.com:8443/users/10/posts?page=2&limit=50#top");
+
+let scheme: String = url.scheme();
+let username: Option<String> = url.username();
+let password: Option<String> = url.password();
+let host: String = url.host();
+let port: Option<Int> = url.port();
+let path: String = url.path();
+let query: String = url.query();
+let fragment: Option<String> = url.fragment();
+let origin: String = url.origin();
+
+print("Scheme:", scheme);
+print("Host:", host);
+print("Port:", port);
+print("Path:", path);
+print("Origin:", origin);

@@ -1,0 +1,90 @@
+// =============================================================================
+// DSA Example: Two Sum Problem
+// =============================================================================
+// Given an array of integers 'nums' and an integer 'target', return indices
+// of the two numbers such that they add up to 'target'.
+// =============================================================================
+
+// Approach 1: Brute Force (O(N^2) Time Complexity, O(1) Space Complexity)
+fn twoSumBruteForce(nums: [int], target: int): [int] {
+    let n = len(nums);
+    for i in range(n) {
+        for j in range(i + 1, n) {
+            if (nums[i] + nums[j] == target) {
+                return [i, j];
+            }
+        }
+    }
+    return [];
+}
+
+// Approach 2: Optimized Hash Map (O(N) Time Complexity, O(N) Space Complexity)
+// Uses AdeshLang's dynamic object keys as a lookup map.
+fn twoSumHashMap(nums: [int], target: int): [int] {
+    let map = {};
+    let n = len(nums);
+    for i in range(n) {
+        let num = nums[i];
+        let complement = target - num;
+        
+        // Check if the complement exists in our map
+        let complementKey = str(complement);
+        if (map[complementKey] != null) {
+            return [map[complementKey], i];
+        }
+        
+        // Store current number's index
+        let numKey = str(num);
+        map[numKey] = i;
+    }
+    return [];
+}
+
+// =============================================================================
+// Test Harness
+// =============================================================================
+
+fn runTests() {
+    let nums = [2, 7, 11, 15, 3, 6, 4, 8, 1, 5];
+    let target = 10;
+    
+    print("Test Input:");
+    print("  Nums:   " + str(nums));
+    print("  Target: " + str(target));
+    print("");
+    
+    // Test Approach 1
+    let start = clock();
+    let indices1 = twoSumBruteForce(nums, target);
+    let end = clock();
+    let duration = end - start;
+    print("⏱️ [Brute Force] Duration: " + str(duration) + "ms");
+    print("🔍 [Brute Force] Indices: " + str(indices1));
+    
+    // Test Approach 2
+    let start2 = clock();
+    let indices2 = twoSumHashMap(nums, target);
+    let end2 = clock();
+    let duration2 = end2 - start2;
+    print("⏱️ [Hash Map]    Duration: " + str(duration2) + "ms");
+    print("🚀 [Hash Map]    Indices: " + str(indices2));
+    
+    // Verification
+    if (len(indices2) == 2) {
+        let sum = nums[indices2[0]] + nums[indices2[1]];
+        print("✅ Verification: " + str(nums[indices2[0]]) + " + " + str(nums[indices2[1]]) + " = " + str(sum));
+    } else {
+        print("❌ Verification Failed: No solution found.");
+    }
+}
+
+runTests();
+
+// ✓ Interpreter ready [5.72ms]                                                    
+// Test Input:                                                                     
+//   Nums:   [2, 7, 11, 15, 3, 6, 4, 8, 1, 5] (len=10, cap=10)
+//   Target: 9
+
+// 🔍 [Brute Force] Indices: [0, 1] (len=2, cap=2)
+// 🚀 [Hash Map]    Indices: [0, 1] (len=2, cap=2)
+// ✅ Verification: 2 + 7 = 9

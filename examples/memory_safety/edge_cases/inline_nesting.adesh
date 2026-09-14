@@ -1,0 +1,62 @@
+// Inline Nested Structures - Simplified
+// Demonstrates inline object definitions (like JavaScript/JSON)
+// Note: Very deep inline nesting hits parser recursion limits
+// Solution: Use incremental building for deep structures
+
+fn main() {
+    print("=== Inline Nested Structures ===");
+    
+    simple_two_level();
+    simple_three_level();
+    array_inline();
+}
+
+// Two-level inline object
+fn simple_two_level() {
+    print("\n--- Two-Level Inline Object ---");
+    
+    let obj = {
+        x: 10,
+        y: 20
+    };
+    
+    print("obj.x =", obj.x);
+    print("obj =", obj);
+}
+
+// Three-level inline with nested object
+fn simple_three_level() {
+    print("\n--- Three-Level Inline Object ---");
+    
+    let config = {
+        host: "localhost",
+        settings: {
+            timeout: 5000
+        }
+    };
+    
+    print("config.settings.timeout =", config.settings.timeout);
+    print("config =", config);
+}
+
+// Inline array with objects
+fn array_inline() {
+    print("\n--- Array with Inline Objects ---");
+    
+    let items = [
+        {
+            id: 1,
+            name: "Item A"
+        },
+        {
+            id: 2,
+            name: "Item B"
+        }
+    ];
+    
+    print("items[0].name =", items[0].name);
+    print("items[1].id =", items[1].id);
+    print("items =", items);
+}
+
+

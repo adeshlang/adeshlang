@@ -1,0 +1,59 @@
+// Example 3: Complex Data Structures
+// Demonstrates pretty printing with deeply nested and complex structures
+
+// Deeply nested object
+let config = {
+    app: {
+        name: "MyApp",
+        version: "1.0.0",
+        settings: {
+            theme: {
+                primary: "#3498db",
+                secondary: "#2ecc71",
+                background: {
+                    light: "#ecf0f1",
+                    dark: "#34495e"
+                }
+            },
+            features: {
+                enableNotifications: true,
+                enableAnalytics: false,
+                maxConnections: 100
+            }
+        }
+    },
+    database: {
+        host: "localhost",
+        port: 5432,
+        credentials: {
+            username: "admin",
+            encrypted: true
+        }
+    }
+};
+
+println("=== Deeply Nested Configuration ===");
+print(config, { pretty: true });
+
+// Array of objects
+let users = [
+    { id: 1, name: "Alice", role: "admin" },
+    { id: 2, name: "Bob", role: "user" },
+    { id: 3, name: "Charlie", role: "moderator" }
+];
+
+println("\n=== Array of Objects ===");
+print(users, { pretty: true });
+
+// Mixed types array
+let mixed = [
+    42,
+    "hello",
+    true,
+    null,
+    [1, 2, 3],
+    { key: "value" }
+];
+
+println("\n=== Mixed Types Array ===");
+print(mixed, { pretty: true });

@@ -1,0 +1,9 @@
+// Fibonacci Calculation in AdeshLang
+
+fn fib(n) {
+    if (n <= 1) { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
+
+let result = fib(15);
+print("fib(15) =", result);

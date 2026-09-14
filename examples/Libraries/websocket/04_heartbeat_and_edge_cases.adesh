@@ -1,0 +1,47 @@
+// Example 04: Control Frame Heartbeats & Edge Cases
+// Demonstrates Ping/Pong keepalive handling, oversized message protection, try/catch.
+
+import WebSocket;
+
+fn runHeartbeatAndEdgeCases() {
+    print("=== Example 04: Heartbeats, Backpressure & Edge Cases ===");
+
+    let serverConfig = {
+        port: 8604,
+        bind_address: "127.0.0.1"
+    };
+
+    let server = WebSocket.server(serverConfig);
+    server.startEcho();
+
+    let clientConfig = WebSocket.ClientConfig({
+        max_message_size: 1048576,
+        max_frame_size: 262144,
+        automatic_pong: true
+    });
+
+    let client = WebSocket.connect("ws://127.0.0.1:8604", clientConfig);
+    if (WebSocket.isError(client)) {
+        print("Failed to connect");
+        return;
+    }
+
+    print("Sending Heartbeat Ping with valid bytes...");
+    let pingRes = client.sendPing([1, 2, 3, 4, 5]);
+    if (WebSocket.isError(pingRes)) {
+        print("Ping failed");
+    } else {
+        print("✓ Sent valid ping frame (5 bytes)");
+    }
+
+    client.close(1000, "Closing sequence initiated");
+    let sendAfterCloseErr = client.sendText("Message after close");
+    if (WebSocket.isError(sendAfterCloseErr)) {
+        print("✓ Closed State Guard Caught: " + sendAfterCloseErr.kind);
+    }
+
+    server.close();
+    print("✓ Heartbeat & edge cases test complete.");
+}
+
+runHeartbeatAndEdgeCases();

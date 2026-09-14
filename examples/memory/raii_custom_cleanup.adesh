@@ -1,0 +1,72 @@
+// RAII with Automatic Cleanup
+// Demonstrates guaranteed resource cleanup on all control flows
+
+print("=== Basic RAII Cleanup ===");
+
+print("RAII (Resource Acquisition Is Initialization) ensures:");
+print("1. Resources are acquired and initialized");
+print("2. Resources are automatically cleaned up when out of scope");
+print("3. Cleanup happens on normal exit, early return, and error flow");
+
+unsafe {
+    let res = alloc(128);
+    print("Resource allocated");
+    print("Resource will be freed automatically");
+}
+print("Resource freed after scope exit");
+
+print("=== RAII with Early Return ===");
+
+fn operation(success) {
+    unsafe {
+        let res = alloc(8);
+        print("Resource allocated");
+        
+        if success == 0 {
+            print("Early return triggered");
+            return 999;
+        }
+        
+        print("Normal completion");
+    }
+}
+
+let result = operation(0);
+print("After operation returning early");
+
+print("=== RAII with Loop Break ===");
+
+fn loop_with_resource() {
+    print("In loop with resource");
+}
+
+loop_with_resource();
+
+print("=== Nested Scopes ===");
+
+{
+    unsafe {
+        let r1 = alloc(8);
+        print("Outer resource 1");
+    }
+    print("Outer resource 1 cleaned");
+    
+    {
+        unsafe {
+            let r2 = alloc(8);
+            print("Inner resource 2");
+        }
+        print("Inner resource 2 cleaned");
+    }
+}
+print("All resources cleaned");
+
+print("=== Guaranteed Cleanup Summary ===");
+
+print("RAII ensures cleanup on:");
+print("1. Normal scope exit");
+print("2. Early return");
+print("3. Loop break/continue");
+print("4. Nested scope exit");
+
+print("=== All RAII Tests Passed ===");

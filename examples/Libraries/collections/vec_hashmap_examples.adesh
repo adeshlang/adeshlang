@@ -1,0 +1,30 @@
+import Collections;
+
+print("========================================");
+print("6. Vec & HashMap Core Collection Examples");
+print("========================================");
+
+print("--- Collections.Vec ---");
+let v = Collections.Vec();
+v.push(100);
+v.push(200);
+v.push(300);
+
+print("Vec len: ", v.len()); // 3
+print("Vec capacity: ", v.capacity());
+print("Vec get(0): ", v.get(0)); // 100
+print("Vec get(2): ", v.get(2)); // 300
+print("Vec pop: ", v.pop()); // 300
+print("Vec len after pop: ", v.len()); // 2
+
+print("\n--- Collections.HashMap ---");
+let map = Collections.HashMap();
+map.insert("username", "adesh_user");
+map.insert("role", "admin");
+
+print("HashMap containsKey 'role': ", map.containsKey("role")); // true
+print("HashMap containsKey 'missing': ", map.containsKey("missing")); // false
+print("HashMap get 'username': ", map.get("username")); // adesh_user
+print("HashMap remove 'role': ", map.remove("role")); // admin
+print("HashMap containsKey 'role' after remove: ", map.containsKey("role")); // false
+print("HashMap len: ", map.len()); // 1

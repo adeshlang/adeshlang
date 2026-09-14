@@ -1,0 +1,31 @@
+// Defer with early return
+
+fn cleanup_on_return(): number {
+    print("Function start");
+    
+    defer {
+        print("Cleanup 1");
+    }
+    
+    defer {
+        print("Cleanup 2");
+    }
+    
+    print("Before return");
+    return 42;
+    
+    // This line should never execute
+    print("After return");
+}
+
+fn main() {
+    let result = cleanup_on_return();
+    print("Returned:", result);
+    
+    // Expected output:
+    // Function start
+    // Before return
+    // Cleanup 2
+    // Cleanup 1
+    // Returned: 42
+}

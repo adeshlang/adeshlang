@@ -1,0 +1,18 @@
+// Demonstration: AdeshLang language-level JSON System (No import JSON required!)
+
+fn main() {
+    let json_text = "{\"name\": \"AdeshLang\", \"version\": 1, \"features\": [\"ownership\", \"jit\", \"aot\"]}";
+    
+    // 1. JSON.parse directly available without import
+    let data = JSON.parse(json_text);
+    println("Parsed JSON name: " + str(data.name));
+    println("Parsed JSON version: " + str(data.version));
+    
+    // 2. JSON.stringify directly available without import
+    let compact = JSON.stringify(data);
+    println("Serialized JSON: " + compact);
+    
+    // 3. JSON.stringifyPretty
+    let pretty_text = JSON.stringifyPretty(data);
+    println("Pretty Serialized JSON:\n" + pretty_text);
+}

@@ -1,0 +1,15 @@
+// Strict struct validation regression case: should fail type checking.
+
+struct User {
+    username: String;
+    email: String;
+    age: u8;
+};
+
+let badUser = User {
+    username: "alice123",
+    email: "asd",
+    age: 2800,
+};
+
+print(badUser.username);

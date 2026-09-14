@@ -1,0 +1,79 @@
+// Array Method Syntax Demonstration
+// Shows the new method-style calls alongside traditional function-style calls
+// 
+// IMPORTANT: This example requires --vm mode for callback-based array operations
+// (filter/map/reduce with lambdas)
+//
+// Run with: adesh run examples/arrays/method_syntax_demo.adesh --vm
+//
+// NOTE: JIT mode (--jit) currently doesn't support callbacks in array operations.
+// See JIT_CALLBACK_LIMITATIONS.md for details and workarounds.
+
+print("=== Array Method Syntax Demo (v0.2.0) ===");
+print("⚠️  This demo requires --vm mode for callback operations");
+print("   Try: adesh run examples/arrays/method_syntax_demo.adesh --vm\n");
+
+// Create a sample array
+let numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+print(`Original array: ${numbers}\n`);
+
+// ============================================
+// 1. FILTER - Find elements matching a condition
+// ============================================
+print("--- FILTER ---");
+print("Method style: numbers.filter(fn(x) { return x > 5; })");
+let filtered_method = numbers.filter(fn(x) { return x > 5; });
+print(`Result: ${filtered_method}\n`);
+
+// ============================================
+// 2. MAP - Transform each element
+// ============================================
+print("--- MAP ---");
+print("Method style: numbers.map(fn(x) { return x * x; })");
+let squared_method = numbers.map(fn(x) { return x * x; });
+print(`Result: ${squared_method}\n`);
+
+// ============================================
+// 3. REDUCE - Aggregate into a single value
+// ============================================
+print("--- REDUCE ---");
+print("Method style: numbers.reduce(fn(acc, x) { return acc + x; }, 0)");
+let sum_method = numbers.reduce(fn(acc, x) { return acc + x; }, 0);
+print(`Result (sum): ${sum_method}\n`);
+
+// ============================================
+// 4. Combining operations
+// ============================================
+print("--- COMBINING OPERATIONS ---");
+print("Scenario: Filter even numbers, double them, sum them\n");
+
+// Method syntax approach
+print("Method style:");
+print("  let evens = numbers.filter(fn(x) { return x % 2 == 0; });");
+let evens_method = numbers.filter(fn(x) { return x % 2 == 0; });
+print(`  Evens: ${evens_method}`);
+print("  let doubled = evens.map(fn(x) { return x * 2; });");
+let doubled_method = evens_method.map(fn(x) { return x * 2; });
+print(`  Doubled: ${doubled_method}`);
+print("  let total = doubled.reduce(fn(a, x) { return a + x; }, 0);");
+let total_method = doubled_method.reduce(fn(a, x) { return a + x; }, 0);
+print(`  Total: ${total_method}`);
+
+// ============================================
+// 5. Working with DynArray
+// ============================================
+print("\n--- DYNAMIC ARRAY SUPPORT ---");
+let dyn_nums = push([1, 2, 3], 4);
+dyn_nums = push(dyn_nums, 5);
+print(`Dynamic array: ${dyn_nums}`);
+
+let dyn_filtered = dyn_nums.filter(fn(x) { return x > 2; });
+print(`Filtered (method): ${dyn_filtered}`);
+
+let dyn_mapped = dyn_nums.map(fn(x) { return x + 10; });
+print(`Mapped (method): ${dyn_mapped}`);
+
+let dyn_sum = dyn_nums.reduce(fn(a, x) { return a + x; }, 100);
+print(`Reduced with seed=100 (method): ${dyn_sum}`);
+
+print("\n✅ Array Method Syntax Demo Complete!");

@@ -1,0 +1,50 @@
+// 03_date.adesh - Date creation, accessors, arithmetic, formatting
+import Time;
+
+print("=== Date Examples ===\n");
+
+// --- Construction ---
+let d1: Date = Time.dateYmd(2024, 3, 15);
+let d2: Date = Time.dateYmd(2000, 2, 29);   // leap day
+let today: Date = Time.dateToday();
+let todayUtc: Date = Time.dateTodayUtc();
+
+print("2024-03-15    :", d1.toIsoString());
+print("2000-02-29    :", d2.toIsoString());
+print("Today (local) :", today.toIsoString());
+print("Today (UTC)   :", todayUtc.toIsoString());
+
+// --- Accessors ---
+print("\n--- Accessors ---");
+print("Year  :", d1.year());
+print("Month :", d1.month());
+print("Day   :", d1.day());
+print("Weekday (0=Mon):", d1.weekday());
+print("Day of year   :", d1.dayOfYear());
+print("Days in month :", d1.daysInMonth());
+print("Is leap year  :", d1.isLeapYear());
+print("2000-02-29 leap:", d2.isLeapYear());
+
+// --- Arithmetic ---
+print("\n--- Arithmetic ---");
+let next = d1.addDays(10);
+let prev = d1.subDays(5);
+let nextM = d1.addMonths(2);
+let nextY = d1.addYears(1);
+print("+ 10 days  :", next.toIsoString());
+print("- 5 days   :", prev.toIsoString());
+print("+ 2 months :", nextM.toIsoString());
+print("+ 1 year   :", nextY.toIsoString());
+
+// --- Difference ---
+let diff = d1.daysSince(d2);
+print("\nDays between 2000-02-29 and 2024-03-15:", diff);
+
+// --- Comparison ---
+print("\n--- Comparison ---");
+print("d1 > d2  :", d1.gt(d2));
+print("d2 < d1  :", d2.lt(d1));
+print("d1 == d1 :", d1.eq(Time.dateYmd(2024, 3, 15)));
+
+// --- Ordinal / epoch ---
+print("\nEpoch days (d1):", d1.toEpochDays());

@@ -1,0 +1,20 @@
+// Test while loop at global scope
+
+print("Testing while loop at global scope");
+
+let i = 2;
+let n = 10;
+let count = 0;
+
+print("Before loop: i =", i, "n =", n);
+
+while (i <= n) {
+    print("Loop iteration:", i);
+    count = count + 1;
+    i = i + 1;
+    if (count > 20) {
+        break;
+    }
+}
+
+print("Loop executed", count, "times");

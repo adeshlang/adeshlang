@@ -1,0 +1,221 @@
+// AdeshLang Encoding Standard Library
+// Comprehensive Text, Unicode, Binary, Base64, Hex, Percent & Streaming Encoding System
+
+// ============================================================================
+// Text Encodings (UTF-8, UTF-16, UTF-32, ASCII)
+// ============================================================================
+
+export fn utf8Encode(text) {
+    return Encoding.utf8Encode(text);
+}
+
+export fn utf8Decode(bytes) {
+    return Encoding.utf8Decode(bytes);
+}
+
+export fn utf8DecodeLossy(bytes) {
+    return Encoding.utf8DecodeLossy(bytes);
+}
+
+export fn isValidUtf8(bytes) {
+    return Encoding.isValidUtf8(bytes);
+}
+
+export fn validateUtf8(bytes) {
+    return Encoding.validateUtf8(bytes);
+}
+
+export fn utf16Encode(text) {
+    return Encoding.utf16Encode(text);
+}
+
+export fn utf16Decode(bytes) {
+    return Encoding.utf16Decode(bytes);
+}
+
+export fn utf16LEEncode(text) {
+    return Encoding.utf16LEEncode(text);
+}
+
+export fn utf16LEDecode(bytes) {
+    return Encoding.utf16LEDecode(bytes);
+}
+
+export fn utf16BEEncode(text) {
+    return Encoding.utf16BEEncode(text);
+}
+
+export fn utf16BEDecode(bytes) {
+    return Encoding.utf16BEDecode(bytes);
+}
+
+export fn utf32Encode(text) {
+    return Encoding.utf32Encode(text);
+}
+
+export fn utf32Decode(bytes) {
+    return Encoding.utf32Decode(bytes);
+}
+
+export fn utf32LEEncode(text) {
+    return Encoding.utf32LEEncode(text);
+}
+
+export fn utf32LEDecode(bytes) {
+    return Encoding.utf32LEDecode(bytes);
+}
+
+export fn utf32BEEncode(text) {
+    return Encoding.utf32BEEncode(text);
+}
+
+export fn utf32BEDecode(bytes) {
+    return Encoding.utf32BEDecode(bytes);
+}
+
+export fn asciiEncode(text) {
+    return Encoding.asciiEncode(text);
+}
+
+export fn asciiDecode(bytes) {
+    return Encoding.asciiDecode(bytes);
+}
+
+export fn isAscii(data) {
+    return Encoding.isAscii(data);
+}
+
+// ============================================================================
+// Binary Encodings (Base64, Base64URL, Hex)
+// ============================================================================
+
+export fn base64Encode(bytes) {
+    return Encoding.base64Encode(bytes);
+}
+
+export fn base64Decode(b64Str) {
+    return Encoding.base64Decode(b64Str);
+}
+
+export fn base64UrlEncode(bytes) {
+    return Encoding.base64UrlEncode(bytes);
+}
+
+export fn base64UrlDecode(b64UrlStr) {
+    return Encoding.base64UrlDecode(b64UrlStr);
+}
+
+export fn hexEncode(bytes) {
+    return Encoding.hexEncode(bytes);
+}
+
+export fn hexEncodeUpper(bytes) {
+    return Encoding.hexEncodeUpper(bytes);
+}
+
+export fn hexDecode(hexStr) {
+    return Encoding.hexDecode(hexStr);
+}
+
+// ============================================================================
+// Percent & Form Encodings
+// ============================================================================
+
+export fn percentEncode(text) {
+    return Encoding.percentEncode(text);
+}
+
+export fn percentDecode(text) {
+    return Encoding.percentDecode(text);
+}
+
+export fn urlEncodeComponent(text) {
+    return Encoding.urlEncodeComponent(text);
+}
+
+export fn urlDecodeComponent(text) {
+    return Encoding.urlDecodeComponent(text);
+}
+
+export fn formEncode(text) {
+    return Encoding.formEncode(text);
+}
+
+export fn formDecode(text) {
+    return Encoding.formDecode(text);
+}
+
+// ============================================================================
+// Fixed-Width Integer & Float Encodings (Endianness)
+// ============================================================================
+
+export fn u16ToBytesLE(value) { return Encoding.u16ToBytesLE(value); }
+export fn u16ToBytesBE(value) { return Encoding.u16ToBytesBE(value); }
+export fn bytesToU16LE(bytes) { return Encoding.bytesToU16LE(bytes); }
+export fn bytesToU16BE(bytes) { return Encoding.bytesToU16BE(bytes); }
+
+export fn u32ToBytesLE(value) { return Encoding.u32ToBytesLE(value); }
+export fn u32ToBytesBE(value) { return Encoding.u32ToBytesBE(value); }
+export fn bytesToU32LE(bytes) { return Encoding.bytesToU32LE(bytes); }
+export fn bytesToU32BE(bytes) { return Encoding.bytesToU32BE(bytes); }
+
+export fn u64ToBytesLE(value) { return Encoding.u64ToBytesLE(value); }
+export fn u64ToBytesBE(value) { return Encoding.u64ToBytesBE(value); }
+export fn bytesToU64LE(bytes) { return Encoding.bytesToU64LE(bytes); }
+export fn bytesToU64BE(bytes) { return Encoding.bytesToU64BE(bytes); }
+
+export fn i16ToBytesLE(value) { return Encoding.i16ToBytesLE(value); }
+export fn i16ToBytesBE(value) { return Encoding.i16ToBytesBE(value); }
+export fn bytesToI16LE(bytes) { return Encoding.bytesToI16LE(bytes); }
+export fn bytesToI16BE(bytes) { return Encoding.bytesToI16BE(bytes); }
+
+export fn i32ToBytesLE(value) { return Encoding.i32ToBytesLE(value); }
+export fn i32ToBytesBE(value) { return Encoding.i32ToBytesBE(value); }
+export fn bytesToI32LE(bytes) { return Encoding.bytesToI32LE(bytes); }
+export fn bytesToI32BE(bytes) { return Encoding.bytesToI32BE(bytes); }
+
+export fn i64ToBytesLE(value) { return Encoding.i64ToBytesLE(value); }
+export fn i64ToBytesBE(value) { return Encoding.i64ToBytesBE(value); }
+export fn bytesToI64LE(bytes) { return Encoding.bytesToI64LE(bytes); }
+export fn bytesToI64BE(bytes) { return Encoding.bytesToI64BE(bytes); }
+
+export fn f32ToBytesLE(value) { return Encoding.f32ToBytesLE(value); }
+export fn f32ToBytesBE(value) { return Encoding.f32ToBytesBE(value); }
+export fn bytesToF32LE(bytes) { return Encoding.bytesToF32LE(bytes); }
+export fn bytesToF32BE(bytes) { return Encoding.bytesToF32BE(bytes); }
+
+export fn f64ToBytesLE(value) { return Encoding.f64ToBytesLE(value); }
+export fn f64ToBytesBE(value) { return Encoding.f64ToBytesBE(value); }
+export fn bytesToF64LE(bytes) { return Encoding.bytesToF64LE(bytes); }
+export fn bytesToF64BE(bytes) { return Encoding.bytesToF64BE(bytes); }
+
+export fn readU16LE(buffer, offset) { return Encoding.readU16LE(buffer, offset); }
+export fn readU16BE(buffer, offset) { return Encoding.readU16BE(buffer, offset); }
+export fn readU32LE(buffer, offset) { return Encoding.readU32LE(buffer, offset); }
+export fn readU32BE(buffer, offset) { return Encoding.readU32BE(buffer, offset); }
+export fn readU64LE(buffer, offset) { return Encoding.readU64LE(buffer, offset); }
+export fn readU64BE(buffer, offset) { return Encoding.readU64BE(buffer, offset); }
+
+// ============================================================================
+// VarInt, ZigZag & LEB128 Encodings
+// ============================================================================
+
+export fn varIntEncode(value) { return Encoding.varIntEncode(value); }
+export fn varIntDecode(bytes) { return Encoding.varIntDecode(bytes); }
+export fn zigzagEncode(value) { return Encoding.zigzagEncode(value); }
+export fn zigzagDecode(value) { return Encoding.zigzagDecode(value); }
+export fn signedVarIntEncode(value) { return Encoding.signedVarIntEncode(value); }
+export fn signedVarIntDecode(bytes) { return Encoding.signedVarIntDecode(bytes); }
+
+export fn uleb128Encode(value) { return Encoding.uleb128Encode(value); }
+export fn uleb128Decode(bytes) { return Encoding.uleb128Decode(bytes); }
+export fn sleb128Encode(value) { return Encoding.sleb128Encode(value); }
+export fn sleb128Decode(bytes) { return Encoding.sleb128Decode(bytes); }
+
+// ============================================================================
+// Byte Order Mark (BOM)
+// ============================================================================
+
+export fn detectBom(bytes) { return Encoding.detectBom(bytes); }
+export fn removeBom(bytes) { return Encoding.removeBom(bytes); }
+export fn addBom(bytes, encodingName) { return Encoding.addBom(bytes, encodingName); }

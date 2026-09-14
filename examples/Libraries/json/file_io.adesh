@@ -1,0 +1,32 @@
+// AdeshLang Built-in JSON — File I/O
+// Demonstrates JSON.parseFile and JSON.stringifyFile for reading
+// and writing JSON directly to and from disk.
+
+fn main() {
+    let path = "tmp_demo_config.json";
+
+    // ── 1. Build a config object ─────────────────────────────────────────
+    let config = JSON.object();
+    config.app     = "AdeshLang Demo";
+    config.version = "3.0";
+    config.debug   = false;
+
+    config.features = ["jit", "aot", "wasm"];
+
+    // ── 2. Write to file (pretty = true) ────────────────────────────────
+    JSON.stringifyFile(path, config, true);
+    println("Wrote config to: " + path);
+
+    // ── 3. Read back from file ───────────────────────────────────────────
+    let loaded = JSON.parseFile(path);
+    println("app      : " + str(loaded.app));
+    println("version  : " + str(loaded.version));
+    println("debug    : " + str(loaded.debug));
+    println("feature0 : " + str(loaded.features[0]));
+
+    // ── 4. Round-trip assertion ──────────────────────────────────────────
+    if loaded.app != "AdeshLang Demo" {
+        throw "Round-trip error: app name mismatch";
+    }
+    println("Round-trip OK");
+}

@@ -1,0 +1,258 @@
+// =============================================================================
+// AdeshLang v0.2.0 - JIT Optimizations Demo
+// =============================================================================
+// This example demonstrates JIT optimization features in AdeshLang:
+// - Hidden classes for fast property access
+// - Inline caching (IC) for monomorphic call sites
+// - Type specialization and fast paths
+// - Constant folding
+// =============================================================================
+
+print("=== JIT Optimizations Demo ===\n");
+
+// -----------------------------------------------------------------------------
+// 1. Hidden Classes - Consistent Object Shapes
+// -----------------------------------------------------------------------------
+// Objects with the same property layout share a "hidden class", enabling
+// fast property access through inline caching.
+
+print("--- Hidden Classes ---");
+
+// These objects have the same shape -> same hidden class
+fn createPoint(x, y) {
+    return { x: x, y: y };
+}
+
+let points = [];
+for (i in range(0, 5)) {
+    // All points have same hidden class: {x, y}
+    points.push(createPoint(i, i * 2));
+}
+
+// Fast property access due to shared hidden class
+let sumX = 0;
+let sumY = 0;
+for (p in points) {
+    sumX = sumX + p.x;  // IC: monomorphic, single hidden class
+    sumY = sumY + p.y;
+}
+
+print("Points with consistent shape:");
+print("  Sum of x: " + str(sumX));
+print("  Sum of y: " + str(sumY));
+print("  (Fast path: all objects share hidden class)");
+
+print("");
+
+// Hidden class transition (adding property)
+print("Hidden class transitions:");
+let obj = { a: 1 };
+print("  obj = { a: 1 }      -> HiddenClass0");
+obj.b = 2;
+print("  obj.b = 2           -> HiddenClass1 (transition)");
+obj.c = 3;
+print("  obj.c = 3           -> HiddenClass2 (transition)");
+print("  Tip: Add properties in consistent order for best performance");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 2. Inline Caching (IC) - Fast Path for Property Access
+// -----------------------------------------------------------------------------
+
+print("--- Inline Caching ---");
+
+class Counter {
+    fn init(name) {
+        this.name = name;
+        this.value = 0;
+    }
+    
+    fn increment() {
+        this.value = this.value + 1;
+    }
+    
+    fn getValue() {
+        return this.value;
+    }
+}
+
+// Monomorphic call site - always same type
+let counter = new Counter("main");
+
+print("Monomorphic IC (single type):");
+let start = clock();
+for (i in range(0, 1000)) {
+    counter.increment();  // IC caches: Counter.increment
+}
+let elapsed = clock() - start;
+print("  1000 increments: " + str(counter.getValue()));
+print("  (IC hit rate: ~100% for monomorphic sites)");
+
+print("");
+
+// Polymorphic example (multiple types)
+print("Polymorphic IC (multiple types):");
+
+class Dog {
+    fn speak() { return "Woof!"; }
+}
+
+class Cat {
+    fn speak() { return "Meow!"; }
+}
+
+class Bird {
+    fn speak() { return "Tweet!"; }
+}
+
+let animals = [new Dog(), new Cat(), new Bird(), new Dog(), new Cat()];
+
+for (animal in animals) {
+    print("  " + animal.speak());  // IC: polymorphic, 3 types
+}
+print("  (IC handles up to ~4 types efficiently)");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 3. Type-Specialized Fast Paths
+// -----------------------------------------------------------------------------
+
+print("--- Type-Specialized Fast Paths ---");
+
+// Integer addition fast path
+print("Integer operations (fast path):");
+let intSum = 0;
+for (i in range(1, 101)) {
+    intSum = intSum + i;  // Fast path: int + int
+}
+print("  Sum 1-100: " + str(intSum));
+
+// Float operations fast path
+print("\nFloat operations (fast path):");
+let floatSum = 0.0;
+for (i in range(1, 11)) {
+    floatSum = floatSum + (i * 0.1);  // Fast path: float + float
+}
+print("  Sum 0.1-1.0: " + str(floatSum));
+
+// String concatenation fast path (SSO-aware)
+print("\nString operations (SSO fast path):");
+let greeting = "Hello";
+greeting = greeting + ", ";   // SSO: inline concat
+greeting = greeting + "World";
+greeting = greeting + "!";
+print("  Result: " + greeting);
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 4. Constant Folding
+// -----------------------------------------------------------------------------
+
+print("--- Constant Folding ---");
+
+// These expressions are evaluated at compile time
+let PI = 3.14159;
+let TAU = PI * 2;        // Folded at compile time
+let CIRCLE_AREA_FACTOR = PI;  // Directly substituted
+
+print("Compile-time constants:");
+print("  PI = " + str(PI));
+print("  TAU = " + str(TAU) + " (folded: PI * 2)");
+
+// Constant expressions in loops
+fn computeWithConstants() {
+    let result = 0;
+    let MULTIPLIER = 10;  // Constant
+    let OFFSET = 5;       // Constant
+    
+    for (i in range(1, 6)) {
+        // MULTIPLIER * OFFSET is folded to 50
+        result = result + (i * MULTIPLIER) + OFFSET;
+    }
+    return result;
+}
+
+print("\nLoop with folded constants:");
+print("  Result: " + str(computeWithConstants()));
+print("  (MULTIPLIER * OFFSET folded at compile time)");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 5. Map/Filter Fast Paths
+// -----------------------------------------------------------------------------
+
+print("--- Collection Fast Paths ---");
+
+let numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+// Map with optimized callback
+let doubled = numbers.map(x => x * 2);
+print("Map (doubled): " + str(doubled));
+
+// Filter with optimized predicate
+let evens = numbers.filter(x => x % 2 == 0);
+print("Filter (evens): " + str(evens));
+
+// Reduce with optimized accumulator
+let total = numbers.reduce((acc, x) => acc + x, 0);
+print("Reduce (sum): " + str(total));
+
+print("\nOptimizations applied:");
+print("  • Inline callback expansion");
+print("  • Type-specialized iteration");
+print("  • SAO for small results");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 6. Deoptimization Bailouts
+// -----------------------------------------------------------------------------
+
+print("--- Deoptimization ---");
+print("When assumptions are violated, JIT bails out:\n");
+
+print("  1. Type guard failure:");
+print("     fn add(a, b) { return a + b; }");
+print("     add(1, 2);    // Optimized for int+int");
+print("     add('a', 'b'); // Deopt: type changed to string");
+print("");
+print("  2. Hidden class mismatch:");
+print("     Deleting properties or changing types triggers deopt");
+print("");
+print("  3. Megamorphic call sites:");
+print("     More than ~4 types at a call site -> generic dispatch");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// Performance Tips
+// -----------------------------------------------------------------------------
+
+print("=== JIT Performance Tips ===\n");
+
+print("1. Keep object shapes consistent");
+print("   • Initialize all properties in constructor");
+print("   • Add properties in same order");
+print("");
+print("2. Avoid type changes");
+print("   • Don't store different types in same variable");
+print("   • Use consistent types in arrays");
+print("");
+print("3. Use monomorphic call sites");
+print("   • Call methods on same type when possible");
+print("   • Avoid highly polymorphic patterns");
+print("");
+print("4. Leverage constant folding");
+print("   • Use const for compile-time values");
+print("   • Extract constant expressions");
+print("");
+print("5. Enable JIT for hot paths");
+print("   • Run with --jit for performance-critical code");
+print("   • Use --tiered for mixed workloads");
+
+print("");
+print("=== Demo Complete ===");

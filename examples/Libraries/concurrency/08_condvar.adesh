@@ -1,0 +1,12 @@
+// 08 — condvar / event
+import thread;
+
+thread.watchdog(15000);
+let ev = thread.Condvar.new();
+let h = thread.spawn(fn() {
+    thread.sleep(20);
+    ev.notify_one();
+});
+ev.wait();
+h.join();
+print("woke");

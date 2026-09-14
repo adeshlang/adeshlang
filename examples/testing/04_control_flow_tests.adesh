@@ -1,0 +1,50 @@
+// Control Flow Testing Examples
+// Demonstrates testing conditionals and loops
+
+// Test conditional logic
+test fn test_simple_if() {
+    let x = 5;
+    if x > 0 {
+        assert(true);
+    }
+}
+
+test fn test_if_else() {
+    let x = 10;
+    if x > 5 {
+        assert(true);
+    } else {
+        assert(false);
+    }
+}
+
+test fn test_comparison() {
+    assert(5 > 3);
+    assert(10 >= 10);
+    assert(2 < 5);
+    assert(5 <= 5);
+    assert(5 == 5);
+    assert(5 != 3);
+}
+
+// Test loop behavior
+test fn test_for_loop() {
+    let sum = 0;
+    for i in range(1, 6) {
+        sum = sum + i;
+    }
+    assert_eq(sum, 15);
+}
+
+test fn test_range() {
+    let count = 0;
+    for i in range(10) {
+        count = count + 1;
+    }
+    assert_eq(count, 10);
+}
+
+fn main() {
+    print("Control Flow Testing Examples");
+    print("Run with: adesh run --test 04_control_flow_tests.adesh");
+}

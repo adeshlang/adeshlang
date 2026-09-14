@@ -1,0 +1,74 @@
+// AdeshLang HTTP Client Example
+// Demonstrates: GET, POST, PUT, DELETE, PATCH, HEAD, custom headers, JSON parsing
+// Run: cargo run --bin adeshlang -- run examples/Libraries/http/client.adesh
+// Note: Uses httpbin.org (public test API) — requires internet connection
+
+import HTTP;
+
+print("═══════════════════════════════════════════════");
+print("  AdeshLang HTTP Client Demo");
+print("═══════════════════════════════════════════════");
+
+// ─── 1. Basic GET request ─────────────────────────────────────────────────────
+print("\n[1] GET https://httpbin.org/get");
+let res_get = HTTP.get("https://httpbin.org/get");
+print("  Status:", res_get.status, "|", res_get.statusText);
+print("  OK:", res_get.ok);
+
+// ─── 2. GET with JSON parsing ─────────────────────────────────────────────────
+print("\n[2] GET https://httpbin.org/json — parse JSON");
+let res_json = HTTP.get("https://httpbin.org/json");
+print("  Status:", res_json.status);
+let body_text = res_json.text();
+print("  Body preview:", body_text);
+
+// ─── 3. POST with body ────────────────────────────────────────────────────────
+print("\n[3] POST https://httpbin.org/post");
+let res_post = HTTP.post("https://httpbin.org/post", "{\"name\":\"AdeshLang\",\"version\":\"0.3\"}");
+print("  Status:", res_post.status, "|", res_post.statusText);
+
+// ─── 4. PUT request ──────────────────────────────────────────────────────────
+print("\n[4] PUT https://httpbin.org/put");
+let res_put = HTTP.put("https://httpbin.org/put", "{\"action\":\"update\",\"id\":42}");
+print("  Status:", res_put.status);
+
+// ─── 5. PATCH request ─────────────────────────────────────────────────────────
+print("\n[5] PATCH https://httpbin.org/patch");
+let res_patch = HTTP.patch("https://httpbin.org/patch", "{\"field\":\"email\",\"value\":\"new@example.com\"}");
+print("  Status:", res_patch.status);
+
+// ─── 6. DELETE request ────────────────────────────────────────────────────────
+print("\n[6] DELETE https://httpbin.org/delete");
+let res_del = HTTP.delete("https://httpbin.org/delete");
+print("  Status:", res_del.status);
+
+// ─── 7. HEAD request ─────────────────────────────────────────────────────────
+print("\n[7] HEAD https://httpbin.org/get");
+let res_head = HTTP.head("https://httpbin.org/get");
+print("  Status:", res_head.status);
+print("  Headers:", res_head.headers);
+
+// ─── 8. Status code checks ───────────────────────────────────────────────────
+print("\n[8] Status code utilities");
+print("  200 is success:", HTTP.Status.isSuccess(200));
+print("  404 is client error:", HTTP.Status.isClientError(404));
+print("  500 is server error:", HTTP.Status.isServerError(500));
+print("  GET is safe method:", HTTP.Method.isSafe("GET"));
+print("  POST is idempotent:", HTTP.Method.isIdempotent("POST"));
+
+// ─── 9. Client instance (persistent connection settings) ─────────────────────
+print("\n[9] HTTP Client instance");
+let client = HTTP.Client();
+let c_res = client.get("https://httpbin.org/uuid");
+print("  Status:", c_res.status);
+let uuid_body = c_res.text();
+print("  UUID:", uuid_body);
+
+// ─── 10. Custom HTTP method (if supported by server) ─────────────────────────
+print("\n[10] QUERY method (custom/RFC9110)");
+let res_query = HTTP.query("https://httpbin.org/post", "query body data");
+print("  Status:", res_query.status);
+
+print("\n═══════════════════════════════════════════════");
+print("  All HTTP client examples complete!");
+print("═══════════════════════════════════════════════");

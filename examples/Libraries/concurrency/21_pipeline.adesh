@@ -1,0 +1,17 @@
+// 21 — pipeline
+import thread;
+
+thread.watchdog(15000);
+let a = thread.Channel.bounded(4);
+let b = thread.Channel.bounded(4);
+let tx0 = a[0];
+let rx0 = a[1];
+let tx1 = b[0];
+let rx1 = b[1];
+thread.spawn(fn() { tx0.send(3); tx0.close(); }).join();
+thread.spawn(fn() {
+    let m = rx0.recv();
+    if (m.ok) { tx1.send(m.value * 10); }
+    tx1.close();
+}).join();
+print(rx1.recv().value);

@@ -1,0 +1,18 @@
+import Compression;
+import Encoding;
+
+print("=== Stateful Chunk Streaming Compression Example ===");
+
+let streamDataChunk1 = "Chunk 1: [2026-08-11 22:00:01] INFO  Server started on port 8080\n";
+let streamDataChunk2 = "Chunk 2: [2026-08-11 22:00:02] DEBUG Received 1,000 requests/sec\n";
+let streamDataChunk3 = "Chunk 3: [2026-08-11 22:00:03] INFO  Database connection pool healthy\n";
+
+print("Compressing streaming chunks sequentially...");
+let comp1 = Compression.compress(streamDataChunk1, "zstd", 5);
+let comp2 = Compression.compress(streamDataChunk2, "zstd", 5);
+let comp3 = Compression.compress(streamDataChunk3, "zstd", 5);
+
+print("Decompressing stream chunk #2...");
+let decompBytes = Compression.decompress(comp2, "zstd");
+let decompText = Encoding.utf8Decode(decompBytes);
+print("Chunk #2 restored:", decompText == streamDataChunk2);

@@ -1,0 +1,21 @@
+import Collections;
+
+print("========================================");
+print("Top K Elements Example (Using BinaryHeap)");
+print("========================================");
+
+let numbers = [12, 3, 5, 7, 19, 1, 4, 26, 8];
+let heap = Collections.BinaryHeap();
+
+for n in numbers {
+    heap.push(n);
+}
+
+let k = 3;
+print("Top ", k, " largest elements from array:");
+
+let i = 0;
+while (i < k) {
+    print("Rank ", i + 1, ": ", heap.pop());
+    i = i + 1;
+}

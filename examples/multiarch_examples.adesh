@@ -1,0 +1,403 @@
+// ================================================
+// ADESH CODE EXAMPLES FOR DIFFERENT ARCHITECTURES
+// ================================================
+// 
+// Adesh source code is architecture-AGNOSTIC
+// The same .adesh code compiles to multiple targets:
+//   - x86-64 (Linux, Windows, macOS Intel)
+//   - ARM64 (macOS Apple Silicon, Raspberry Pi, Android)
+//   - WebAssembly (Browser, WASI)
+//   - GPU (CUDA, OpenCL)
+//
+// Compilation targets are specified at build time, not in source code
+//
+// Examples:
+//  adesh build --target x86_64-unknown-linux-gnu    # x86-64 Linux
+//  adesh build --target aarch64-apple-darwin        # ARM64 macOS  
+//  adesh build --target wasm32-unknown-unknown      # WebAssembly
+//  adesh build --target cuda                        # NVIDIA GPU
+
+
+// ================================================
+// Example 1: Matrix Operations (All Architectures)
+// ================================================
+// This code works on x86-64, ARM64, and can be GPU-accelerated
+
+fn matrix_multiply(a: [i64], b: [i64], size: i64): [i64] {
+    let result = [];
+    let i = 0;
+    
+    while (i < size) {
+        let j = 0;
+        while (j < size) {
+            let sum = 0;
+            let k = 0;
+            while (k < size) {
+                let a_idx = i * size + k;
+                let b_idx = k * size + j;
+                let a_val = a[a_idx];
+                let b_val = b[b_idx];
+                sum = sum + (a_val * b_val);
+                k = k + 1;
+            };
+            result[i * size + j] = sum;
+            j = j + 1;
+        };
+        i = i + 1;
+    };
+    
+    return result;
+}
+
+
+// ================================================
+// Example 2: Image Processing (All Architectures)
+// ================================================
+// Blur filter - same code, different performance per architecture
+//
+// x86-64: Uses AVX2 SIMD (256-bit vectors) - Very fast
+// ARM64:  Uses NEON SIMD (128-bit vectors) - Fast
+// WASM:   Scalar operations - Moderate
+// GPU:    Massive parallelism - Extremely fast
+
+fn blur_pixel(image: [i64], width: i64, height: i64, x: i64, y: i64): i64 {
+    // 3x3 blur kernel
+    let sum = 0;
+    let count = 0;
+    
+    let dy = -1;
+    while (dy <= 1) {
+        let dx = -1;
+        while (dx <= 1) {
+            let nx = x + dx;
+            let ny = y + dy;
+            
+            // Bounds check
+            if (nx >= 0) {
+                if (nx < width) {
+                    if (ny >= 0) {
+                        if (ny < height) {
+                            let idx = ny * width + nx;
+                            sum = sum + image[idx];
+                            count = count + 1;
+                        };
+                    };
+                };
+            };
+            
+            dx = dx + 1;
+        };
+        dy = dy + 1;
+    };
+    
+    return sum / count;
+}
+
+fn blur_image(image: [i64], width: i64, height: i64): [i64] {
+    let result = [];
+    let y = 0;
+    
+    while (y < height) {
+        let x = 0;
+        while (x < width) {
+            let blurred = blur_pixel(image, width, height, x, y);
+            result[y * width + x] = blurred;
+            x = x + 1;
+        };
+        y = y + 1;
+    };
+    
+    return result;
+}
+
+
+// ================================================
+// Example 3: Cryptographic Hash (All Architectures)
+// ================================================
+// Simple hash function - works everywhere
+//
+// x86-64: Can use SHA-NI instruction extensions - Very fast
+// ARM64:  Can use SHA instruction extensions - Fast  
+// WASM:   Pure Adesh implementation - Slower
+// GPU:    Multi-threaded hashing - Very fast
+
+fn simple_hash(data: [i64]): i64 {
+    let hash = 2654435761;  // FNV offset basis
+    let i = 0;
+    
+    while (i < data.len()) {
+        let byte = data[i];
+        hash = hash ^ byte;
+        hash = hash * 16777619;  // FNV prime
+        i = i + 1;
+    };
+    
+    return hash;
+}
+
+
+// ================================================
+// Example 4: Scientific Computing (All Architectures)
+// ================================================
+// Monte Carlo Pi estimation - parallelizable
+//
+// x86-64: Fast scalar operations, compiler can vectorize
+// ARM64:  Good at floating point, NEON optimization
+// WASM:   Single-threaded reference
+// GPU:    Millions of parallel trials - Perfect for GPU
+
+fn estimate_pi(num_samples: i64): f64 {
+    let inside_circle = 0;
+    let i = 0;
+    
+    while (i < num_samples) {
+        // Generate random point (simplified)
+        let x = (i % 100) / 100.0;
+        let y = ((i / 100) % 100) / 100.0;
+        
+        // Check if inside unit circle
+        let distance_sq = (x * x) + (y * y);
+        if (distance_sq <= 1.0) {
+            inside_circle = inside_circle + 1;
+        };
+        
+        i = i + 1;
+    };
+    
+    let pi_estimate = (4.0 * inside_circle) / num_samples;
+    return pi_estimate;
+}
+
+
+// ================================================
+// Example 5: Vector Operations (All Architectures)
+// ================================================
+// Dot product and norm - fundamental operations
+//
+// x86-64: Can use AVX2 for 4 float operations at once
+// ARM64:  Can use NEON for 4 float operations at once
+// WASM:   Scalar operations only
+// GPU:    Ideal for reduction operations
+
+fn dot_product(a: [f64], b: [f64]): f64 {
+    let result = 0.0;
+    let i = 0;
+    
+    while (i < a.len()) {
+        result = result + (a[i] * b[i]);
+        i = i + 1;
+    };
+    
+    return result;
+}
+
+fn vector_norm(v: [f64]): f64 {
+    let sum_sq = 0.0;
+    let i = 0;
+    
+    while (i < v.len()) {
+        let val = v[i];
+        sum_sq = sum_sq + (val * val);
+        i = i + 1;
+    };
+    
+    // Simplified sqrt (Newton's method)
+    let x = sum_sq;
+    let guess = x / 2.0;
+    let precision = 0.00001;
+    
+    while ((guess * guess) - x > precision) {
+        guess = (guess + (x / guess)) / 2.0;
+    };
+    
+    return guess;
+}
+
+
+// ================================================
+// Example 6: Data Processing Pipeline (All Architectures)
+// ================================================
+// Typical data ETL workflow
+
+fn filter_data(data: [i64], threshold: i64): [i64] {
+    let result = [];
+    let i = 0;
+    
+    while (i < data.len()) {
+        if (data[i] >= threshold) {
+            result[i] = data[i];
+        };
+        i = i + 1;
+    };
+    
+    return result;
+}
+
+fn transform_data(data: [i64], multiplier: i64): [i64] {
+    let result = [];
+    let i = 0;
+    
+    while (i < data.len()) {
+        result[i] = data[i] * multiplier;
+        i = i + 1;
+    };
+    
+    return result;
+}
+
+fn sum_data(data: [i64]): i64 {
+    let sum = 0;
+    let i = 0;
+    
+    while (i < data.len()) {
+        sum = sum + data[i];
+        i = i + 1;
+    };
+    
+    return sum;
+}
+
+fn pipeline_example(): i64 {
+    // Raw data
+    let raw = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+    
+    // Filter: all values >= 30
+    let filtered = filter_data(raw, 30);
+    
+    // Transform: multiply by 2
+    let transformed = transform_data(filtered, 2);
+    
+    // Aggregate: sum
+    let total = sum_data(transformed);
+    
+    return total;
+}
+
+
+// ================================================
+// Example 7: String Processing (All Architectures)
+// ================================================
+
+fn string_length(s: string): i64 {
+    // Count characters
+    let count = 0;
+    let i = 0;
+    
+    while (i < 1000) {  // Assuming max 1000 chars
+        let c = s[i];
+        if (c == 0) {
+            break;
+        };
+        count = count + 1;
+        i = i + 1;
+    };
+    
+    return count;
+}
+
+fn reverse_string(s: string): string {
+    let len = string_length(s);
+    let result = "";
+    let i = len - 1;
+    
+    while (i >= 0) {
+        result = result + s[i];
+        i = i - 1;
+    };
+    
+    return result;
+}
+
+
+// ================================================
+// Example 8: Performance-Critical Sorting (All Architectures)
+// ================================================
+// Quick sort with good performance on all targets
+
+fn partition(arr: [i64], low: i64, high: i64): i64 {
+    let pivot = arr[high];
+    let i = low - 1;
+    let j = low;
+    
+    while (j < high) {
+        if (arr[j] <= pivot) {
+            i = i + 1;
+            // Swap
+            let temp = arr[i];
+            arr[i] = arr[j];
+            arr[j] = temp;
+        };
+        j = j + 1;
+    };
+    
+    // Swap pivot
+    let temp = arr[i + 1];
+    arr[i + 1] = arr[high];
+    arr[high] = temp;
+    
+    return i + 1;
+}
+
+fn quicksort(arr: [i64], low: i64, high: i64): [i64] {
+    if (low < high) {
+        let pi = partition(arr, low, high);
+        quicksort(arr, low, pi - 1);
+        quicksort(arr, pi + 1, high);
+    };
+    
+    return arr;
+}
+
+
+// ================================================
+// Main Program - Demonstrate All Examples
+// ================================================
+
+fn main() {
+    print("\n=== Adesh Multi-Architecture Examples ===\n");
+    
+    // Same code, different architecture optimization:
+    print("1. Matrix Operations");
+    let m1 = [1, 2, 3, 4];  // 2x2 matrix
+    let m2 = [1, 2, 3, 4];  // 2x2 matrix
+    let result = matrix_multiply(m1, m2, 2);
+    print("   Matrix multiply result: done\n");
+    
+    print("2. Pi Estimation (x86-64: very fast, ARM64: fast, WASM: slower)");
+    let pi = estimate_pi(10000);
+    print("   Estimated Pi: ", pi, "\n");
+    
+    print("3. Vector Norm");
+    let v = [3.0, 4.0];  // Should give 5.0
+    let norm = vector_norm(v);
+    print("   Norm of [3.0, 4.0]: ", norm, "\n");
+    
+    print("4. Dot Product");
+    let a = [1.0, 2.0, 3.0];
+    let b = [4.0, 5.0, 6.0];
+    let dot = dot_product(a, b);
+    print("   Dot product: ", dot, "\n");
+    
+    print("5. Data Pipeline");
+    let pipe_result = pipeline_example();
+    print("   Pipeline result: ", pipe_result, "\n");
+    
+    print("6. String Processing");
+    let test_str = "hello";
+    let len = string_length(test_str);
+    print("   String length: ", len, "\n");
+    
+    print("7. Sorting");
+    let arr = [64, 34, 25, 12, 22, 11, 90];
+    let sorted = quicksort(arr, 0, 6);
+    print("   Sorted successfully\n");
+    
+    print("\n=== All examples completed ===");
+    print("Compile with different targets:");
+    print("  adesh build --target x86_64-unknown-linux-gnu");
+    print("  adesh build --target aarch64-apple-darwin");
+    print("  adesh build --target wasm32-unknown-unknown");
+    print("  adesh build --target cuda");
+    
+    return 0;
+}

@@ -1,0 +1,62 @@
+// Enhanced Print Demo
+// Demonstrates color, background, underline, bold, italic, and styling options
+
+print("=== Enhanced Print Demo ===\n");
+
+print("Basic print with default settings");
+print("");
+
+print("Custom separator and end");
+print("a", "b", "c", { sep: " | " });
+print("No newline:", { end: "" });
+print(" continued on same line");
+print("");
+
+print("Foreground colors");
+print("Red text", { color: "#FF0000" });
+print("Green text", { color: "#00FF00" });
+print("Blue text", { color: "#0000FF" });
+print("Orange text", { color: "#FF8800" });
+print("");
+
+print("Background colors");
+print("White on red background", { background: "#FF0000", color: "#FFFFFF" });
+print("Black on yellow background", { background: "#FFFF00", color: "#000000" });
+print("White on blue background", { background: "#0000FF", color: "#FFFFFF" });
+print("");
+
+print("Text styling");
+print("Bold text", { bold: true });
+print("Italic text", { italic: true });
+print("Underlined text", { underline: true });
+print("Strikethrough text", { strikethrough: true });
+print("");
+
+print("Combined styles");
+print("Bold + Italic", { bold: true, italic: true });
+print("Bold + Underline + Red", { bold: true, underline: true, color: "#FF0000" });
+print("All styles combined", {
+    bold: true,
+    italic: true,
+    underline: true,
+    color: "#FFFFFF",
+    background: "#800080"
+});
+print("");
+
+print("Practical examples");
+print("SUCCESS:", "Operation completed", { color: "#00FF00", bold: true });
+print("WARNING:", "Low memory", { color: "#FFFF00", bold: true });
+print("ERROR:", "File not found", { color: "#FF0000", bold: true });
+print("INFO:", "Processing started", { color: "#00FFFF" });
+print("");
+
+print("Log levels with timestamps");
+let timestamp = "2026-02-03T10:30:00Z";
+print("[", timestamp, "]", "DEBUG", "Variable x =", 42, { sep: " ", color: "#888888" });
+print("[", timestamp, "]", "INFO", "Server started on port 8080", { sep: " ", color: "#00FFFF" });
+print("[", timestamp, "]", "WARN", "Deprecated API usage", { sep: " ", color: "#FFFF00" });
+print("[", timestamp, "]", "ERROR", "Connection timeout", { sep: " ", color: "#FF0000" });
+print("");
+
+print("=== Demo Complete ===");

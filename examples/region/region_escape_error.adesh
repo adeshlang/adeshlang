@@ -1,0 +1,11 @@
+fn leak_region() : Obj {
+    region Temp {
+        let inner = Obj();
+        return &inner; // compile error: reference cannot escape region
+    }
+}
+
+fn main() {
+    let escaped = leak_region();
+    print(escaped);
+}

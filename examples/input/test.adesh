@@ -1,0 +1,22 @@
+// Direct inline mocking on input()
+let name = input("Enter your name:").mock(["Ajay"]);
+
+// Single value mock directly on input
+let city = input("Enter city:").mock("Bangalore");
+
+// Chained mock on interactive widgets
+let lang     = input.select("Choose Language:", ["Rust", "Python", "AdeshLang"]).mock(["AdeshLang"]);
+let pin      = input.pin("Enter 4-digit PIN:", 4).mock(["9876"]);
+let date     = input.datepicker("Select Date:").mock(["2026-04-14"]);
+let time     = input.timepicker("Select Time:").mock(["14:30:00"]);
+let approved = input.confirm("Proceed to deployment?").mock([true]);
+// let table    = input.table("Select Microservice:", headers, rows).mock(["0"]);
+// let diff     = input.diff("Edit Config:", original).mock(["host = 0.0.0.0"]);
+// 
+print("lang: " + lang);
+print("city: " + city);
+print("pin: " + pin);
+print("date: " + date);
+print("time: " + time);
+print("approved: " + approved);
+print("Hello " + name + ", you are from " + city + " and your preferred language is " + lang + ". Your PIN is " + pin + ", selected date is " + date + ", selected time is " + time + ", and deployment approval status is " + approved);

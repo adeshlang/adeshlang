@@ -1,0 +1,48 @@
+// Test inheritance without super calls
+
+print("=== Testing Inheritance ===");
+
+class Animal {
+    Animal(name) {
+        this.name = name;
+        this.species = "Unknown";
+    }
+    
+    fn speak() {
+        print(this.name + " makes a sound");
+    }
+    
+    fn info() {
+        print("Name: " + this.name + ", Species: " + this.species);
+    }
+}
+
+class Dog extends Animal {
+    Dog(name) {
+        this.name = name;
+        this.species = "Canine";
+        this.breed = "Mixed";
+    }
+    
+    fn speak() {
+        print(this.name + " barks: Woof!");
+    }
+    
+    fn wagTail() {
+        print(this.name + " wags tail happily");
+    }
+}
+
+// Test basic inheritance
+let animal = new Animal("Generic");
+animal.speak();
+animal.info();
+
+print("");
+
+let dog = new Dog("Buddy");
+dog.speak();  // Should use Dog's implementation
+dog.info();   // Should use Animal's implementation
+dog.wagTail(); // Dog-specific method
+
+print("\n=== Inheritance test completed! ===");

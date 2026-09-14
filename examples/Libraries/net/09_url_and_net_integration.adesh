@@ -1,0 +1,44 @@
+// AdeshLang Net Example 09: Integrating URL, Net, Crypto & Encoding Libraries
+import URL;
+import Net;
+import Encoding;
+import Crypto;
+
+fn main() {
+    print("=== 09. URL, Net, Crypto & Encoding Integration ===");
+
+    // 1. Parse target URL using URL standard library
+    let targetUrlStr = "https://127.0.0.1:8080/v1/api/data";
+    let url = URL.parse(targetUrlStr);
+    print("Target URL parsed:", url.href);
+    print("  Host:", url.hostname);
+    print("  Port:", url.port);
+    print("  Path:", url.pathname);
+
+    // 2. Security validation using Net.NetworkPolicy
+    let policy = Net.NetworkPolicy()
+        .allowTcp()
+        .allowPort(8080)
+        .allowPort(443);
+
+    let ip = Net.IPAddress.parse(url.hostname);
+    print("Destination IP:", ip.address, "Version:", ip.version);
+    let is_valid = policy.validate(ip.address);
+    print("Security policy validation passed?", is_valid);
+
+    // 3. Encode Payload & Generate Crypto Hash Token
+    let rawPayload = "user=admin&action=fetch";
+    let base64Token = Encoding.base64Encode(rawPayload);
+    print("Encoded Base64 Auth Payload:", base64Token);
+
+    let hmacSignature = Crypto.sha256(rawPayload);
+    print("SHA-256 Request Integrity Signature:", hmacSignature);
+
+    // 4. Construct Target SocketAddress
+    let endpoint = Net.SocketAddress.parse("127.0.0.1:8080");
+    print("Target SocketAddress constructed:", endpoint.address);
+
+    print("=== 09. URL and Net Integration Completed ===");
+}
+
+main();

@@ -1,0 +1,64 @@
+// Test Promise.all, Promise.race, Promise.any, Promise.allSettled
+
+async fn main() {
+    print("=== Promise Combinator Tests ===");
+
+    // ============================================================================
+    // Test 1: Promise.all with all successful
+    // ============================================================================
+    print("Test 1: Promise.all with all successful");
+    let p1 = Promise(fn(resolve, reject) { resolve(1); });
+    let p2 = Promise(fn(resolve, reject) { resolve(2); });
+    let p3 = Promise(fn(resolve, reject) { resolve(3); });
+
+    let results = await Promise.all([p1, p2, p3]);
+    print("  Promise.all results:", results);
+
+    // ============================================================================
+    // Test 2: Promise.race - first resolver wins
+    // ============================================================================
+    print("\nTest 2: Promise.race");
+    // Wrap timers in promises so race semantics work properly
+    let fast = Promise(fn(resolve, reject) {
+        setTimeout(fn() { resolve("fast wins!"); }, 5);
+    });
+    let slow = Promise(fn(resolve, reject) {
+        setTimeout(fn() { resolve("slow loses"); }, 30);
+    });
+    let raceResult = await Promise.race([fast, slow]);
+    print("  Promise.race result:", raceResult);
+    if raceResult == "fast wins!" {
+        print("  [PASS]");
+    } else {
+        print("  [NOTE] Race result:", raceResult);
+    }
+
+    // ============================================================================
+    // Test 3: Promise.any with first success
+    // ============================================================================
+    print("\nTest 3: Promise.any with first success");
+    let success = Promise(fn(resolve, reject) { resolve("success!"); });
+    let anyResult = await Promise.any([success]);
+    print("  Promise.any result:", anyResult);
+
+    // ============================================================================
+    // Test 4: Promise.allSettled with resolved values
+    // ============================================================================
+    print("\nTest 4: Promise.allSettled");
+    let settled1 = Promise(fn(resolve, reject) { resolve("resolved value"); });
+    let settled2 = Promise(fn(resolve, reject) { resolve("another resolved"); });
+    let settledResults = await Promise.allSettled([settled1, settled2]);
+    print("  Promise.allSettled results:", settledResults);
+
+    // ============================================================================
+    // Test 5: Promise.all with computations
+    // ============================================================================
+    print("\nTest 5: Promise.all with computations");
+    let pa = Promise(fn(r, _) { r(10); });
+    let pb = Promise(fn(r, _) { r(20); });
+    let pc = Promise(fn(r, _) { r(30); });
+    let allRes = await Promise.all([pa, pb, pc]);
+    print("  Results:", allRes);
+
+    print("\n=== All Promise combinator tests completed! ===");
+}

@@ -1,0 +1,27 @@
+import Collections;
+
+print("========================================");
+print("Vec Comprehensive Examples with Generics");
+print("========================================");
+
+let v = Collections.Vec<i32>();
+v.push(10);
+v.push(20);
+v.push(30);
+
+print("Length: ", v.len());
+print("First: ", v.first());
+print("Last: ", v.last());
+print("Contains 20: ", v.contains(20));
+print("Index of 30: ", v.indexOf(30));
+
+v.insert(1, 15);
+print("After insert(1, 15), get(1): ", v.get(1));
+print("Len: ", v.len());
+
+print("Removed at 1: ", v.remove(1));
+print("Reverse vector...");
+v.reverse();
+print("First after reverse: ", v.first());
+print("Popped element: ", v.pop());
+print("Array representation: ", v.toArray());

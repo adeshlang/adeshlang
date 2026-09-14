@@ -1,0 +1,12 @@
+{
+  "hash": "b63626022cbe8fb1",
+  "source_path": null,
+  "output_path": "string_utils.o",
+  "opt_level": 2,
+  "fast_compile": false,
+  "output_format": "Object",
+  "target_triple": null,
+  "debug_info": false,
+  "timestamp_secs": 1788891588,
+  "output_file_size": 4260
+}

@@ -1,0 +1,6 @@
+project {
+  name = "my_native_lib"
+  version = 1.0.0
+  template = "lib"
+  libs = ["custom_math"]
+}

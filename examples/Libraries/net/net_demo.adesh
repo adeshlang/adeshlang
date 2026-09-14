@@ -1,0 +1,36 @@
+// AdeshLang Net Standard Library Demonstration
+import Net;
+
+fn main() {
+    print("=== AdeshLang Net Standard Library Demo ===");
+
+    // 1. IP Address Parsing & Classification
+    let ip4 = Net.IPAddress.parse("127.0.0.1");
+    print("IPv4 Loopback:", ip4.address, "Loopback?", ip4.isLoopback);
+
+    let ip6 = Net.IPAddress.parse("2001:db8::1");
+    print("IPv6 Address:", ip6.address, "Global?", ip6.isGlobal);
+
+    // 2. Socket Address
+    let addr = Net.SocketAddress.parse("127.0.0.1:8080");
+    print("Socket Address:", addr.address, "Port:", addr.port);
+
+    // 3. Network Interfaces
+    let ifaces = Net.interfaces();
+    print("Network Interfaces count:", ifaces.len());
+    for iface in ifaces {
+        print("Interface:", iface.name, "Loopback?", iface.isLoopback, "Addresses:", iface.addresses);
+    }
+
+    // 4. Network Security Policy
+    let policy = Net.NetworkPolicy()
+        .allowTcp()
+        .allowPort(443)
+        .denyPrivateNetworks()
+        .denyLoopback();
+    print("Network Policy created:", policy.denyPrivateNetworks);
+
+    print("=== Net Demo Complete ===");
+}
+
+main();

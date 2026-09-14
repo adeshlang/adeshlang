@@ -1,0 +1,191 @@
+// =============================================================================
+// AdeshLang v0.2.0 - Smart Pointers Demo: Shared, Unique, and Weak
+// =============================================================================
+// This example demonstrates the smart pointer types in AdeshLang's memory model:
+// - Shared<T>: Reference-counted shared ownership
+// - Unique<T>: Move-only exclusive ownership
+// - Weak<T>: Non-owning references to break cycles
+// =============================================================================
+
+print("=== Smart Pointers Demo ===\n");
+
+// -----------------------------------------------------------------------------
+// 1. Shared<T> - Reference-Counted Ownership
+// -----------------------------------------------------------------------------
+// Shared pointers allow multiple owners of the same data.
+// Data is deallocated when the last reference is dropped.
+
+print("--- Shared<T> Demo ---");
+
+// Create a shared pointer to an object
+let data = { name: "Alice", score: 100 };
+print("Created data object: " + data.name);
+
+// Multiple references to the same data (simulating Shared behavior)
+let ref1 = data;
+let ref2 = data;
+
+// All references see the same data
+print("ref1.name = " + ref1.name);
+print("ref2.name = " + ref2.name);
+
+// Modifying through any reference affects all
+ref1.score = 200;
+print("After ref1.score = 200:");
+print("  ref2.score = " + ref2.score);  // Also 200
+
+// Shared.clone() creates a new reference (not a copy)
+// In AdeshLang, this is implicit for objects
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 2. Unique<T> - Move-Only Exclusive Ownership
+// -----------------------------------------------------------------------------
+// Unique pointers have exclusive ownership. When moved, the original
+// becomes invalid (in a fully enforced system - currently advisory).
+
+print("--- Unique<T> Semantics Demo ---");
+
+// Create a unique resource
+fn createResource(id) {
+    return {
+        id: id,
+        data: [1, 2, 3, 4, 5],
+        disposed: false
+    };
+}
+
+let resource = createResource("unique-001");
+print("Created resource: " + resource.id);
+
+// Simulate move semantics
+fn transferOwnership(res) {
+    print("  Transferring ownership of: " + res.id);
+    return res;
+}
+
+let newOwner = transferOwnership(resource);
+print("New owner has resource: " + newOwner.id);
+
+// In a strict unique system, accessing 'resource' here would error:
+// print(resource.id);  // Would be: Error: value has been moved
+
+// The new owner has exclusive access
+newOwner.data.push(6);
+print("New owner modified data: " + str(newOwner.data));
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 3. Weak<T> - Non-Owning References
+// -----------------------------------------------------------------------------
+// Weak references don't prevent deallocation. They must be upgraded
+// to access data, which may fail if the data was deallocated.
+
+print("--- Weak<T> Pattern Demo ---");
+
+// Parent-child relationship with weak back-reference
+class TreeNode {
+    fn init(value) {
+        this.value = value;
+        this.children = [];
+        this.parent = null;  // Would be Weak<TreeNode> to break cycle
+    }
+    
+    fn addChild(child) {
+        this.children.push(child);
+        child.parent = this;  // Back-reference (weak in ideal case)
+    }
+    
+    fn describe() {
+        let parentVal = "none";
+        if (this.parent != null) {
+            parentVal = str(this.parent.value);
+        }
+        print("  Node(" + this.value + "), parent=" + parentVal + 
+              ", children=" + len(this.children));
+    }
+}
+
+let root = new TreeNode("root");
+let child1 = new TreeNode("child1");
+let child2 = new TreeNode("child2");
+
+root.addChild(child1);
+root.addChild(child2);
+
+print("Tree structure:");
+root.describe();
+child1.describe();
+child2.describe();
+
+// Weak upgrade pattern (conceptual)
+// let weakRef = root.downgrade();  // Create weak reference
+// let upgraded = weakRef.upgrade(); // Returns null if deallocated
+// if (upgraded != null) { ... }
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 4. Debug Poisoning Behavior
+// -----------------------------------------------------------------------------
+// In debug mode, freed/moved values are "poisoned" to detect use-after-free.
+// Accessing poisoned values triggers an error.
+
+print("--- Debug Poisoning (Conceptual) ---");
+print("In debug mode, accessing moved/freed values would show:");
+print("  'Error: Use of poisoned value (use-after-free detected)'");
+print("This helps catch memory safety bugs during development.");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 5. Safe Back-Reference Pattern Using Weak
+// -----------------------------------------------------------------------------
+
+print("--- Safe Cycle Breaking ---");
+
+// Cache that doesn't prevent cleanup of cached objects
+class Cache {
+    fn init() {
+        this.entries = {};  // Would use Weak<T> values
+    }
+    
+    fn set(key, value) {
+        this.entries[key] = value;
+    }
+    
+    fn get(key) {
+        // In a Weak-based cache, this would:
+        // 1. Lookup the weak reference
+        // 2. Try to upgrade it
+        // 3. Return null if the value was collected
+        if (hasKey(this.entries, key)) {
+            return this.entries[key];  // Would be: entry.upgrade()
+        }
+        return null;
+    }
+}
+
+let cache = new Cache();
+let tempData = { id: 42, large: "some data" };
+cache.set("item1", tempData);
+
+print("Cached item: " + str(cache.get("item1").id));
+print("With Weak<T>, cached items can be garbage collected");
+print("and cache.get() would return null for collected entries.");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// Summary
+// -----------------------------------------------------------------------------
+
+print("=== Smart Pointer Summary ===");
+print("1. Shared<T>: Multiple owners, ref-counted, clone() to share");
+print("2. Unique<T>: Single owner, move() transfers ownership");
+print("3. Weak<T>: Non-owning, upgrade() to access, breaks cycles");
+print("4. Debug poisoning catches use-after-free in debug mode");
+print("");
+print("=== Demo Complete ===");

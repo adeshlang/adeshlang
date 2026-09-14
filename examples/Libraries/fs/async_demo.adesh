@@ -1,0 +1,24 @@
+// Async filesystem demo
+import "fs";
+print("=== Async Filesystem Demo ===");
+
+let p = "async_demo.txt";
+
+// Write asynchronously
+print("Writing file asynchronously...");
+let writePromise = fs.async.write(p, "hello async world!");
+print("Write promise created");
+
+// Read asynchronously
+print("Reading file asynchronously...");
+let readPromise = fs.async.read(p);
+
+// Chain promises (simplified - in real async code, use await)
+readPromise.then(fn(content){
+    print("Async read result: " + content);
+    // Clean up
+    fs.delete(p);
+    print("Cleaned up demo file");
+});
+
+print("=== Demo setup completed ===");

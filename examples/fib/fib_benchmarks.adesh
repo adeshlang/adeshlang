@@ -1,0 +1,56 @@
+// fib_benchmarks.ind — Performance benchmarks comparing different Fibonacci approaches
+
+print("=== Fibonacci Performance Benchmarks ===");
+
+// Naive recursive approach - O(2^n)
+fn fib_naive(n) {
+    if (n <= 1) {
+        return n;
+    }
+    return fib_naive(n - 1) + fib_naive(n - 2);
+}
+
+// Dynamic programming iterative approach - O(n)
+fn fib_dp(n) {
+    if (n <= 1) {
+        return n;
+    }
+    let prev = 0;
+    let curr = 1;
+    let i = 2;
+    while (i <= n) {
+        prev, curr = curr, prev + curr;
+        i = i + 1;
+    }
+    return curr;
+}
+
+print("Testing Naive Recursive (n=20):");
+let start1 = clock();
+let result1 = fib_naive(20);
+let end1 = clock();
+print("Result:", result1);
+print("Time:", end1 - start1, "seconds");
+
+print("Testing DP Iterative (n=20):");
+let start2 = clock();
+let result2 = fib_dp(20);
+let end2 = clock();
+print("Result:", result2);
+print("Time:", end2 - start2, "seconds");
+
+print("Testing DP Iterative (n=30):");
+let start3 = clock();
+let result3 = fib_dp(30);
+let end3 = clock();
+print("Result:", result3);
+print("Time:", end3 - start3, "seconds");
+
+print("Testing DP Iterative (n=40):");
+let start4 = clock();
+let result4 = fib_dp(40);
+let end4 = clock();
+print("Result:", result4);
+print("Time:", end4 - start4, "seconds");
+
+print("=== Fibonacci Benchmarks Complete ===");

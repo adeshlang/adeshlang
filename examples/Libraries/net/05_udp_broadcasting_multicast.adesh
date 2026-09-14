@@ -1,0 +1,28 @@
+// AdeshLang Net Example 05: UDP Broadcast & Multicast Support
+import Net;
+
+fn main() {
+    print("=== 05. UDP Broadcast & Multicast Example ===");
+
+    // 1. Create UDP socket bound to local port 9095
+    let socket = Net.udpBind("0.0.0.0", 9095);
+    print("UDP Socket bound to:", socket.localAddress());
+
+    // 2. Enable UDP Broadcast
+    socket.setBroadcast(true);
+    print("Broadcast enabled on UDP socket");
+
+    // 3. Multicast group operations
+    print("Joining multicast group 239.255.255.250...");
+    socket.joinMulticast("239.255.255.250", "0.0.0.0");
+    print("Multicast group joined successfully");
+
+    print("Leaving multicast group...");
+    socket.leaveMulticast("239.255.255.250", "0.0.0.0");
+    print("Left multicast group successfully");
+
+    socket.close();
+    print("=== 05. UDP Broadcast & Multicast Completed ===");
+}
+
+main();

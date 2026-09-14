@@ -1,0 +1,33 @@
+// Raw vs Dynamic Arrays Demo
+// Shows the difference between raw arrays and dynamic arrays
+
+// Dynamic array: [T] - has metadata (length, capacity, type descriptor)
+let dynamic_arr: [u8;raw] = [1, 2, 3];
+print("Dynamic array: ", dynamic_arr);
+print("Length: ", dynamic_arr.length);
+print("Type: ", typeof dynamic_arr);
+print("Size: ", sizeof(dynamic_arr), " bytes (24 metadata + 3 elements * 1 byte)");
+
+// Fixed-size array: [T;N] - may have metadata, size known at compile time
+let fixed_arr: [u8;4] = [10, 20, 30, 40];
+print("Fixed-size array: ", fixed_arr);
+
+// Raw arrays (concept): [T;raw] - no metadata header, just raw bytes
+// Note: Raw array type annotations are parsed, but interpretation depends on runtime
+let raw_dynamic: [u8;raw] = [1, 2, 3];  // Raw dynamic array (no metadata)
+let raw_fixed: [u8;4;raw] = [1, 2, 3, 4];  // Raw fixed array (no metadata)
+
+// For now, demonstrate standard arrays
+let numbers = [100, 200, 300, 400, 500];
+print("Numbers array: ", numbers);
+
+// Array with type annotation
+let typed_arr: [i32] = [1, 2, 3, 4, 5];
+print("Typed array (i32): ", typed_arr);
+
+// Multi-dimensional array (nested)
+let matrix = [[1, 2, 3], [4, 5, 6], [7, 8, 9]];
+print("Matrix: ", matrix);
+print("Element [1][2]: ", matrix[1][2]);
+
+print("Raw vs Dynamic demo completed!");

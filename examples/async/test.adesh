@@ -1,0 +1,14 @@
+async fn main() {
+    let a = Promise(fn(res, rej) {
+        setTimeout(fn() {
+            rej("Promise rejected!");
+        }, 100);
+    });
+    
+    let p = a.then(fn(res) {
+        print("Then handler executed with result: " + res);
+    }).catch(fn(err) {
+        print("Catch handler executed with error: " + err);
+    });
+    await p;
+}

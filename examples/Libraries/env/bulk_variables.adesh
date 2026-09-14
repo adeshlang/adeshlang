@@ -1,0 +1,27 @@
+import Env;
+
+// Bulk operations: count, getMany, filter, setIfAbsent
+print("Environment variable count: " + str(Env.count()));
+
+Env.set("DEMO_MODE", "test");
+Env.set("DEMO_REGION", "us-east");
+Env.set("DEMO_DEPLOY", "blue");
+
+// getMany: fetch a subset of keys in one call
+let wanted = ["DEMO_MODE", "DEMO_REGION", "DOES_NOT_EXIST"];
+print("getMany: " + str(Env.getMany(wanted)));
+
+// filter: all variables sharing a prefix
+print("filter('DEMO_'): " + str(Env.filter("DEMO_")));
+print("filterKeys('DEMO_'): " + str(Env.filterKeys("DEMO_")));
+
+// setIfAbsent: only sets when the key is missing
+print("setIfAbsent(DEMO_MODE, x): " + str(Env.setIfAbsent("DEMO_MODE", "x")));
+print("setIfAbsent(DEMO_NEW, x): " + str(Env.setIfAbsent("DEMO_NEW", "x")));
+print("DEMO_NEW is now: " + str(Env.get("DEMO_NEW")));
+
+Env.remove("DEMO_MODE");
+Env.remove("DEMO_REGION");
+Env.remove("DEMO_DEPLOY");
+Env.remove("DEMO_NEW");
+print("Final count: " + str(Env.count()));

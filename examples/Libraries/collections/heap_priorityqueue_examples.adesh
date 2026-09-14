@@ -1,0 +1,33 @@
+import Collections;
+
+print("========================================");
+print("4. BinaryHeap & PriorityQueue Examples");
+print("========================================");
+
+print("--- BinaryHeap (Max Heap) ---");
+let heap = Collections.BinaryHeap<i32>();
+heap.push(30);
+heap.push(10);
+heap.push(50);
+heap.push(20);
+heap.push(40);
+
+print("Heap length: ", heap.len());
+print("Pop 1 (expect 50): ", heap.pop());
+print("Pop 2 (expect 40): ", heap.pop());
+print("Pop 3 (expect 30): ", heap.pop());
+print("Heap length remaining: ", heap.len());
+
+print("\n--- PriorityQueue (Explicit Priority Score) ---");
+let pq = Collections.PriorityQueue<string, f64>();
+pq.push("Low Priority Task", 1.0);
+pq.push("Critical Security Patch", 100);
+pq.push("Feature Request", 10);
+pq.push("Bug Fix", 50);
+
+print("PQ length: ", pq.len());
+print("Highest priority pop: ", pq.pop()); // Critical Security Patch
+print("Next priority pop: ", pq.pop());    // Bug Fix
+print("Next priority pop: ", pq.pop());    // Feature Request
+print("Lowest priority pop: ", pq.pop());  // Low Priority Task
+print("Empty pop (expect null): ", pq.pop());

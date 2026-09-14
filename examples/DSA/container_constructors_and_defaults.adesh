@@ -1,0 +1,77 @@
+// =============================================================================
+// DSA Example: Container Constructors & Default Declarations
+// =============================================================================
+// Demonstrates AdeshLang's container support:
+// 1. Python/JS-style global constructors: Set(), Dict(), Array(), List(), Tuple(), Map()
+// 2. Generic constructor format: Set<int>(), Dict<string, int>()
+// 3. Default variable declarations: let sa: set; let d: dict;
+// 4. In-place mutability and method operations
+// =============================================================================
+
+fn testDefaultDeclarations() {
+    print("--- 1. Default Declarations (let x: type;) ---");
+    let s: set;       // automatically initialized to empty mutable Set
+    let d: dict;      // automatically initialized to empty mutable Dict/Object
+    let a: array;     // automatically initialized to empty mutable Array
+    
+    s.insert(100);
+    s.insert(200);
+    s.insert(100); // duplicate ignored
+    print("Set elements (size=" + str(s.size()) + "): " + str(s));
+    print("Set contains 100: " + str(s.contains(100)));
+    print("Set contains 300: " + str(s.contains(300)));
+    
+    d["apple"] = 5;
+    d["banana"] = 12;
+    print("Dict entries: apple=" + str(d["apple"]) + ", banana=" + str(d["banana"]));
+    
+    a.push(1);
+    a.push(2);
+    a.push(3);
+    print("Array elements: " + str(a));
+}
+
+fn testGenericConstructors() {
+    print("");
+    print("--- 2. Generic Constructors (Set<T>(), Dict<K,V>()) ---");
+    
+    let userSet = Set<int>([10, 20, 30, 20, 10]);
+    print("Set from initial list: " + str(userSet));
+    userSet.insert(40);
+    print("After inserting 40: " + str(userSet));
+    
+    let scores = Dict<string, int>();
+    scores["Alice"] = 95;
+    scores["Bob"] = 88;
+    print("Scores Dict: " + str(scores));
+    
+    let items = Array<string>(["alpha", "beta", "gamma"]);
+    items.push("delta");
+    print("Items Array: " + str(items));
+}
+
+fn testSetOperations() {
+    print("");
+    print("--- 3. Set Operations (Union & Intersection) ---");
+    let setA = Set([1, 2, 3, 4]);
+    let setB = Set([3, 4, 5, 6]);
+    
+    let unionSet = setA.union(setB);
+    let interSet = setA.intersection(setB);
+    
+    print("Set A: " + str(setA));
+    print("Set B: " + str(setB));
+    print("A ∪ B: " + str(unionSet));
+    print("A ∩ B: " + str(interSet));
+}
+
+fn main() {
+    print("=== Container Constructors & Default Declarations in AdeshLang ===");
+    testDefaultDeclarations();
+    testGenericConstructors();
+    testSetOperations();
+    print("");
+    print("✅ All container features working flawlessly!");
+}
+
+

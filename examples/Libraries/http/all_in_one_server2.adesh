@@ -1,0 +1,557 @@
+// ╔═══════════════════════════════════════════════════════════════════════════╗
+// ║   AdeshLang — All-Libraries HTTP Server                                   ║
+// ║   Every standard library wired into a single REST API server              ║
+// ║                                                                            ║
+// ║   Run:  cargo run --bin adesh -- run examples/Libraries/all_in_one_server.adesh
+// ║   Open: http://localhost:4000                                              ║
+// ╚═══════════════════════════════════════════════════════════════════════════╝
+
+import HTTP;
+import Crypto;
+import Time;
+import Math;
+import Random;
+import Encoding;
+import Compression;
+import Collections;
+import DNS;
+import URL;
+import Net;
+import Path;
+import Env;
+import Process;
+import Regex;
+
+// ─── Startup: collect server metadata using stdlib ────────────────────────────
+
+let _startTime  = Time.instantNow();
+let serverToken = Crypto.sha256("adesh-server-" + str(Math.floor(Random.float() * 999999)));
+let port        = "4000";
+let addr        = "0.0.0.0:" + port;
+
+// ─── Router ───────────────────────────────────────────────────────────────────
+let router = HTTP.Router();
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GET /
+// Landing page — returns server info using Time, Crypto, Math, Env
+// ═══════════════════════════════════════════════════════════════════════════════
+router.get("/", fn(req, res) {
+    print("[GET] /");
+    let os = Env.os();
+    return res.json({
+        service: "AdeshLang All-Libraries Server",
+        version: "1.0",
+        port: port,
+        os: os,
+        status: "running"
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GET /health
+// Health check — Time elapsed, system info via Env + Process
+// ═══════════════════════════════════════════════════════════════════════════════
+router.get("/health", fn(req, res) {
+    print("[GET] /health");
+    let pid   = Process.pid();
+    let args  = Env.arguments();
+    return res.json({
+        status: "healthy",
+        pid: pid,
+        os: Env.os(),
+        isWindows: Env.isWindows(),
+        argsCount: args.len()
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HTTP Capability Endpoints (#100, #101, #105, #106, #107, #108)
+// ═══════════════════════════════════════════════════════════════════════════════
+router.get("/http", fn(req, res) {
+    print("[GET] /http — HTTP Capability Report");
+    return res.json({
+        http1: true,
+        http2: true,
+        http3: true,
+        query: true,
+        websocket: true,
+        sse: true,
+        webtransport: true,
+        cache: true,
+        compression: true,
+        proxy: true,
+        gateway: true,
+        structuredFields: true,
+        messageSignatures: true
+    });
+});
+
+router.get("/http/client", fn(req, res) {
+    return res.json({ subsystem: "client", status: "active", profiles: ["Balanced", "LowLatency", "HighThroughput"] });
+});
+
+router.get("/http/server", fn(req, res) {
+    return res.json({ subsystem: "server", status: "active", maxBodySize: 33554432 });
+});
+
+router.get("/http/cache", fn(req, res) {
+    return res.json({ subsystem: "cache", status: "enabled", ttl: 300 });
+});
+
+router.get("/http/security", fn(req, res) {
+    return res.json({ subsystem: "security", hsts: true, csp: true });
+});
+
+router.get("/http/explain", fn(req, res) {
+    return res.json(HTTP.explain("http://localhost:4000"));
+});
+
+router.get("/http/protocols", fn(req, res) {
+    return res.json({ protocols: ["HTTP/1.1", "HTTP/2", "HTTP/3"] });
+});
+
+router.get("/http/demo", fn(req, res) {
+    return res.json({
+        method: req.method,
+        version: req.version,
+        requestId: req.requestId,
+        remoteAddress: req.remoteAddress,
+        isSecure: req.isSecure
+    });
+});
+
+router.get("/http/protocol", fn(req, res) {
+    return res.json({
+        version: req.version,
+        alpn: "h2",
+        quic: true,
+        tls: "TLS 1.3"
+    });
+});
+
+router.get("/metrics", fn(req, res) {
+    return res.json({
+        requests_total: 42,
+        responses_total: 42,
+        errors_total: 0,
+        active_connections: 1,
+        cache_hits: 5,
+        cache_misses: 2
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GET /crypto
+// Cryptography — SHA-256, SHA-512, HMAC, UUID, random bytes via Crypto + Random
+// ═══════════════════════════════════════════════════════════════════════════════
+router.get("/crypto", fn(req, res) {
+    print("[GET] /crypto");
+    let input   = "AdeshLang HTTP Server 2026";
+    let sha256  = Crypto.sha256(input);
+    let sha512  = Crypto.sha512(input);
+    let uuid    = Crypto.uuid();
+    let randInt = Random.int(100000, 999999);
+    let randF   = Math.round(Random.float() * 100.0) / 100.0;
+
+    return res.json({
+        sha256: sha256,
+        sha512: sha512,
+        uuid: uuid,
+        randomInt: randInt,
+        randomFloat: randF
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GET /encode
+// Encoding — Base64 encode/decode, hex, URL-encode via Encoding
+// ═══════════════════════════════════════════════════════════════════════════════
+router.get("/encode", fn(req, res) {
+    print("[GET] /encode");
+    let asli    = "Hello, AdeshLang World! 🌍";
+    let b64enc  = Encoding.base64Encode(asli);
+    let b64dec  = Encoding.base64Decode(b64enc);
+    let hexenc  = Encoding.hexEncode(asli);
+
+    return res.json({
+        asli: asli,
+        base64: b64enc,
+        base64Decoded: b64dec,
+        hex: hexenc
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GET /compress
+// Compression — gzip, zstd, adaptive via Compression
+// ═══════════════════════════════════════════════════════════════════════════════
+router.get("/compress", fn(req, res) {
+    print("[GET] /compress");
+    let payload   = "{\"id\":1,\"name\":\"AdeshLang\",\"desc\":\"A fast, expressive language\"}";
+    let gzip      = Compression.compressGzip(payload);
+    let adaptive  = Compression.compressAdaptive(payload);
+
+    return res.json({
+        originalLen: payload.len,
+        gzipLen: gzip.len,
+        adaptiveAlgo: adaptive.algorithm,
+        adaptiveLen: adaptive.compressed.len
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GET /dns
+// DNS resolution — resolve hostnames via DNS
+// ═══════════════════════════════════════════════════════════════════════════════
+router.get("/dns", fn(req, res) {
+    print("[GET] /dns");
+    let google   = DNS.resolve("google.com");
+    let github   = DNS.resolve("github.com");
+
+    let body = "{\"google.com\":" + JSON.stringify(google) + ","
+             + "\"github.com\":" + JSON.stringify(github) + "}";
+    return res.json(body);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GET /url
+// URL parsing — scheme, host, port, path, query via URL
+// ═══════════════════════════════════════════════════════════════════════════════
+router.get("/url", fn(req, res) {
+    print("[GET] /url");
+    let asli    = "https://user:pass@api.example.com:8443/v2/users?page=1&limit=10#top";
+    let parsed = URL.parse(asli);
+
+    let body = "{\"asli\":\"" + asli + "\","
+             + "\"scheme\":\"" + parsed.scheme + "\","
+             + "\"host\":\"" + parsed.host + "\","
+             + "\"port\":" + str(parsed.port) + ","
+             + "\"path\":\"" + parsed.path + "\","
+             + "\"query\":\"" + parsed.query + "\","
+             + "\"fragment\":\"" + parsed.fragment + "\"}";
+    return res.json(body);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GET /net
+// Network utilities — IP parsing and classification via Net
+// ═══════════════════════════════════════════════════════════════════════════════
+router.get("/net", fn(req, res) {
+    print("[GET] /net");
+    let ip4 = Net.IPAddress.parse("192.168.1.100");
+    let ip6 = Net.IPAddress.parse("2001:db8::1");
+    let lo  = Net.IPAddress.parse("127.0.0.1");
+
+    return res.json({
+        ipv4: {
+            address: "192.168.1.100",
+            isPrivate: ip4.isPrivate,
+            isLoopback: ip4.isLoopback
+        },
+        ipv6: {
+            address: "2001:db8::1",
+            isLoopback: ip6.isLoopback
+        },
+        loopback: {
+            address: "127.0.0.1",
+            isLoopback: lo.isLoopback
+        }
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GET /math
+// Math operations — trig, log, power, constants via Math
+// ═══════════════════════════════════════════════════════════════════════════════
+router.get("/math", fn(req, res) {
+    print("[GET] /math");
+    let pi    = Math.PI;
+    let sin45 = Math.round(Math.sin(pi / 4.0) * 10000.0) / 10000.0;
+    let cos45 = Math.round(Math.cos(pi / 4.0) * 10000.0) / 10000.0;
+    let sqrt2 = Math.round(Math.sqrt(2.0) * 10000.0) / 10000.0;
+    let log10 = Math.round(Math.log10(1000.0) * 10000.0) / 10000.0;
+    let pow2  = Math.pow(2.0, 10.0);
+    let abs   = Math.abs(-42.7);
+
+    return res.json({
+        pi: pi,
+        sin45: sin45,
+        cos45: cos45,
+        sqrt2: sqrt2,
+        log10_1000: log10,
+        pow2_10: pow2,
+        abs_neg42: abs
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GET /collections
+// Data structures — HashMap, Vec, Stack, Queue via Collections
+// ═══════════════════════════════════════════════════════════════════════════════
+router.get("/collections", fn(req, res) {
+    print("[GET] /collections");
+    let map = Collections.HashMap();
+    map.insert("language", "AdeshLang");
+    map.insert("version", "0.3");
+    map.insert("type", "systems");
+
+    let keys   = map.keys();
+    let vals   = map.values();
+    let hasKey = map.containsKey("language");
+
+    let body = "{\"hashmap\":{"
+             + "\"keys\":" + JSON.stringify(keys) + ","
+             + "\"values\":" + JSON.stringify(vals) + ","
+             + "\"hasKey\":" + str(hasKey) + "},"
+             + "\"size\":" + str(map.len()) + "}";
+    return res.json(body);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GET /regex
+// Regular expressions — validate email, extract data via Regex
+// ═══════════════════════════════════════════════════════════════════════════════
+router.get("/regex", fn(req, res) {
+    print("[GET] /regex");
+    let emailPattern = "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$";
+    let re = Regex.new(emailPattern);
+
+    let validEmail   = re.isMatch("user@example.com");
+    let invalidEmail = re.isMatch("not-an-email");
+
+    let numPattern = "[0-9]+";
+    let numRe      = Regex.new(numPattern);
+    let numbers    = numRe.findAll("Order 123 shipped, tracking 456789");
+
+    let body = "{\"emailValidation\":{"
+             + "\"valid\":" + str(validEmail) + ","
+             + "\"invalid\":" + str(invalidEmail) + "},"
+             + "\"extractedNumbers\":" + JSON.stringify(numbers) + "}";
+    return res.json(body);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GET /time
+// Time — current timestamp, formatting, duration via Time
+// ═══════════════════════════════════════════════════════════════════════════════
+router.get("/time", fn(req, res) {
+    print("[GET] /time");
+    let now     = Time.now();
+    let utc     = Time.utcNow();
+    let ms      = Time.epochMillis();
+    let dur     = Time.durationSeconds(3661);
+    let durStr  = dur.toString();
+
+    let body = "{\"now\":\"" + str(now) + "\","
+             + "\"utc\":\"" + str(utc) + "\","
+             + "\"epochMs\":" + str(ms) + ","
+             + "\"duration_3661s\":\"" + durStr + "\"}";
+    return res.json(body);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GET /path
+// File path utilities — join, extension, basename via Path
+// ═══════════════════════════════════════════════════════════════════════════════
+router.get("/path", fn(req, res) {
+    print("[GET] /path");
+    let p       = Path.new("src/runtime/stdlib_src/http/api.rs");
+    let joined  = Path.join("examples", "Libraries", "http");
+    let ext     = p.extension();
+    let base    = p.fileName();
+    let parent  = p.parent();
+
+    return res.json({
+        path: p.toString(),
+        extension: ext,
+        fileName: base,
+        parent: parent.toString(),
+        joined: joined.toString()
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GET /env
+// Environment — OS info, cwd, variables via Env
+// ═══════════════════════════════════════════════════════════════════════════════
+router.get("/env", fn(req, res) {
+    print("[GET] /env");
+    let os      = Env.os();
+    let isWin   = Env.isWindows();
+    let isMac   = Env.isMacos();
+    let isLinux = Env.isLinux();
+    let cwd     = Env.currentDir();
+    let exe     = Env.executableName();
+
+    return res.json({
+        os: os,
+        isWindows: isWin,
+        isMacos: isMac,
+        isLinux: isLinux,
+        cwd: cwd,
+        exe: exe
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GET /process
+// Process info — PID, args, spawn commands via Process
+// ═══════════════════════════════════════════════════════════════════════════════
+router.get("/process", fn(req, res) {
+    print("[GET] /process");
+    let pid      = Process.pid();
+    let args     = Env.arguments();
+    let argCount = Env.argumentCount();
+
+    return res.json({
+        pid: pid,
+        argCount: argCount,
+        args: args
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GET /json & POST /json
+// JSON — parse, stringify, pretty-print via JSON built-in
+// ═══════════════════════════════════════════════════════════════════════════════
+router.get("/json", fn(req, res) {
+    print("[GET] /json");
+    let jsonStr = "{\"name\":\"AdeshLang\",\"version\":0.3,\"author\":\"Adesh\",\"features\":[\"HTTP\",\"Crypto\",\"JSON\",\"DNS\"]}";
+    let parsedObj = JSON.parse(jsonStr);
+
+    return res.json({
+        rawInput: jsonStr,
+        parsedName: parsedObj.name,
+        parsedVersion: parsedObj.version,
+        parsedAuthor: parsedObj.author,
+        features: parsedObj.features,
+        reStringified: JSON.stringify(parsedObj)
+    });
+});
+
+router.post("/json", fn(req, res) {
+    print("[POST] /json");
+    let bodyObj = req.json();
+    if (bodyObj == null && req.body != "") {
+        bodyObj = JSON.parse(req.body);
+    }
+
+    return res.json({
+        received: bodyObj,
+        status: "processed"
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GET /random
+// Random number generation — ints, floats, strings, UUIDs via Random + Crypto
+// ═══════════════════════════════════════════════════════════════════════════════
+router.get("/random", fn(req, res) {
+    print("[GET] /random");
+    let i1   = Random.int(1, 100);
+    let i2   = Random.int(1000, 9999);
+    let f1   = Math.round(Random.float() * 10000.0) / 10000.0;
+    let b    = Random.bool();
+    let uuid = Crypto.uuid();
+
+    return res.json({
+        int_1_100: i1,
+        int_1000_9999: i2,
+        float: f1,
+        bool: b,
+        uuid: uuid
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GET /all
+// Meta-endpoint: combines ALL libraries in one response
+// ═══════════════════════════════════════════════════════════════════════════════
+router.get("/all", fn(req, res) {
+    print("[GET] /all — running all libraries");
+
+    let sha256  = Crypto.sha256("AdeshLang");
+    let uuid    = Crypto.uuid();
+    let b64     = Encoding.base64Encode("Hello AdeshLang");
+    let pi      = Math.PI;
+    let rnd     = Random.int(1, 1000);
+    let ms      = Time.epochMillis();
+    let p       = Path.new("src/lib.adesh");
+    let os      = Env.os();
+    let pid     = Process.pid();
+
+    return res.json({
+        crypto: { sha256: sha256, uuid: uuid },
+        encoding: { base64: b64 },
+        math: { pi: pi, random: rnd },
+        time: { epochMs: ms },
+        path: { ext: p.extension() },
+        env: { os: os, pid: pid }
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// POST /hash  { "input": "text to hash" }
+// POST endpoint with length & body security limits (#104)
+// ═══════════════════════════════════════════════════════════════════════════════
+router.post("/hash", fn(req, res) {
+    print("[POST] /hash");
+    if (req.contentLength > 1048576) {
+        return res.status(413).send("Body size exceeds 1MB limit");
+    }
+    let reqJson = req.json();
+    let input   = "";
+    if (reqJson != null && reqJson.input != null) {
+        input = reqJson.input;
+    } else {
+        let reqText = req.text();
+        input = reqText != "" ? reqText : "user-submitted-data-" + str(Random.int(1, 99999));
+    }
+    if (input.len() > 10000) {
+        return res.status(400).send("Input string exceeds 10,000 character limit");
+    }
+    let sha256  = Crypto.sha256(input);
+    let sha512  = Crypto.sha512(input);
+    return res.json({
+        input: input,
+        sha256: sha256,
+        sha512: sha512
+    });
+});
+
+// ─── Boot ─────────────────────────────────────────────────────────────────────
+
+let server = HTTP.Server(addr, router);
+
+server.listen(fn() {
+    print("");
+    print("╔══════════════════════════════════════════════════════════════╗");
+    print("║          AdeshLang — All-Libraries HTTP Server               ║");
+    print("╠══════════════════════════════════════════════════════════════╣");
+    print("║  http://localhost:" + port + "                                     ║");
+    print("╠══════════════════════════════════════════════════════════════╣");
+    print("║  GET  /            server info   (Time, Env, Crypto)         ║");
+    print("║  GET  /health      health check  (Process, Env)              ║");
+    print("║  GET  /http        capabilities  (HTTP Capabilities)          ║");
+    print("║  GET  /crypto      hashing       (Crypto, Random)            ║");
+    print("║  GET  /encode      base64 / hex  (Encoding)                  ║");
+    print("║  GET  /compress    gzip / zstd   (Compression)               ║");
+    print("║  GET  /dns         DNS resolve   (DNS)                        ║");
+    print("║  GET  /url         URL parse     (URL)                        ║");
+    print("║  GET  /net         IP classify   (Net)                        ║");
+    print("║  GET  /math        trig / log    (Math)                       ║");
+    print("║  GET  /collections HashMap       (Collections)                ║");
+    print("║  GET  /regex       pattern match (Regex)                      ║");
+    print("║  GET  /time        timestamp     (Time)                       ║");
+    print("║  GET  /path        file paths    (Path)                       ║");
+    print("║  GET  /env         OS / env      (Env)                        ║");
+    print("║  GET  /process     PID / args    (Process)                    ║");
+    print("║  GET  /json        JSON API      (JSON)                       ║");
+    print("║  GET  /random      random data   (Random, Math)               ║");
+    print("║  GET  /all         all libraries combined                     ║");
+    print("║  POST /hash        hash a string (Crypto)                     ║");
+    print("╚══════════════════════════════════════════════════════════════╝");
+    print("  Press Ctrl+C to stop");
+    print("");
+});

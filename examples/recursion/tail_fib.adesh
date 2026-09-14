@@ -1,0 +1,44 @@
+// Tail-Recursive Fibonacci - Demonstrates TCO
+// Run: adesh run examples/recursion/tail_fib.adesh --jit --tco
+
+// Tail-recursive fibonacci helper
+fn fib_tail(n, a, b) {
+    if n == 0 {
+        return a;
+    }
+    if n == 1 {
+        return b;
+    }
+    // Tail call - can be optimized to loop
+    return fib_tail(n - 1, b, a + b);
+}
+
+// Public API
+fn fib(n) {
+    return fib_tail(n, 0, 1);
+}
+
+// Benchmark
+fn benchmark(n) {
+    print(`fib(${n}) = ${fib(n)}`);
+}
+
+fn main() {
+    print("╔════════════════════════════════════════════════════╗");
+    print("║  TAIL-RECURSIVE FIBONACCI - TCO Demo               ║");
+    print("║  Use --jit --tco for tail call optimization        ║");
+    print("╚════════════════════════════════════════════════════╝");
+    print("");
+    
+    // Tail-recursive fibonacci works efficiently
+    benchmark(10);
+    benchmark(20);
+    benchmark(30);
+    benchmark(40);
+    benchmark(50);
+    
+    print("");
+    print("✓ Tail-call optimization prevents stack overflow!");
+}
+
+

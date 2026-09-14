@@ -1,0 +1,30 @@
+import Collections;
+
+print("========================================");
+print("Adjacency List Graph Data Structure");
+print("========================================");
+
+let graph = Collections.HashMap();
+
+fn add_undirected_edge(graph, u, v) {
+    let list_u = graph.get(u);
+    if (list_u == null) {
+        list_u = Collections.Vec();
+        graph.insert(u, list_u);
+    }
+    list_u.push(v);
+
+    let list_v = graph.get(v);
+    if (list_v == null) {
+        list_v = Collections.Vec();
+        graph.insert(v, list_v);
+    }
+    list_v.push(u);
+}
+
+add_undirected_edge(graph, "Node1", "Node2");
+add_undirected_edge(graph, "Node2", "Node3");
+
+print("Node1 connections: ", graph.get("Node1").toArray());
+print("Node2 connections: ", graph.get("Node2").toArray());
+print("Node3 connections: ", graph.get("Node3").toArray());

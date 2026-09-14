@@ -1,0 +1,171 @@
+// Comprehensive async examples
+import "../modules/mod_a.adesh" as m;
+
+// --- Helper async functions ---
+async fn compute() {
+    let a = Promise(fn(res, _) { res(2); });
+    let b = Promise(fn(res, _) { res(3); });
+    let x = await a;
+    let y = await b;
+    return x + y;
+}
+
+async fn will_fail() {
+    throw "something went wrong";
+}
+
+async fn maybe_throw(x) {
+    if x > 0 {
+        return x;
+    }
+    throw "bad input";
+}
+
+async fn sequential_awaits() {
+    let p1 = Promise(fn(res, _) { res("first"); });
+    let p2 = Promise(fn(res, _) { res("second"); });
+    let v1 = await p1;
+    let v2 = await p2;
+    return v1 + " " + v2;
+}
+
+async fn outer_async() {
+    // Demonstrates awaiting a Promise inside an async function
+    let p = Promise(fn(res, _) { res("nested"); });
+    let inner_result = await p;
+    return "outer: " + inner_result;
+}
+
+async fn await_resolved(already_resolved) {
+    return await already_resolved;
+}
+
+async fn main() {
+    print("Comprehensive async examples starting");
+
+    // ---- Basic async/await ----
+    print("\n--- Basic async/await ---");
+    let compute_result = await compute();
+    print("compute result:", compute_result);
+
+    // ---- Promise chaining ----
+    print("\n--- Promise chaining ---");
+    let p_basic = Promise(fn(res, rej) { res(5); });
+    let p2_chain = p_basic.then(fn(x) { return x * 2; });
+    let p3_chain = p2_chain.then(fn(y) { return y + 1; });
+    let final_chained = await p3_chain;
+    print("final chained:", final_chained);
+
+    let p_err = Promise(fn(_res, rej) { rej("oops"); });
+    let p_err_caught = p_err.then(null, fn(e) { return "caught: " + e; });
+    let err_result = await p_err_caught;
+    print("caught basic rejection:", err_result);
+
+    // ---- Promise rejection propagation ----
+    print("\n--- Promise rejection propagation ---");
+    let p_rej = Promise(fn(_res, rej) { rej("network error"); });
+    let p2_rej = p_rej.then(fn(v) { return v; });
+    let p2_rej_caught = p2_rej.catch(fn(e) { return "caught propagated: " + e; });
+    let rej_result = await p2_rej_caught;
+    print("caught propagated rejection:", rej_result);
+
+    let p3_rej = p_rej.catch(fn(e) {
+        return "default";
+    });
+    let p3_val = await p3_rej;
+    print("p3_rej value:", p3_val);
+
+    // ---- Async exceptions ----
+    print("\n--- Async exceptions ---");
+    let fail_caught = will_fail().catch(fn(e) { return "caught async exception: " + e; });
+    let fail_result = await fail_caught;
+    print(fail_result);
+
+    let maybe_ok = await maybe_throw(1);
+    print("maybe_throw value:", maybe_ok);
+
+    let maybe_bad = maybe_throw(0).catch(fn(e) { return "caught from maybe_throw: " + e; });
+    let bad_result = await maybe_bad;
+    print(bad_result);
+
+    // ---- Module async interop ----
+    print("\n--- Module async interop ---");
+    let mod_result = await m.modAdd(10, 32);
+    print("modAdd returned:", mod_result);
+    let mod_result2 = await m.modAdd(2, 3);
+    print("awaited modAdd result:", mod_result2);
+
+    // ---- Additional edge cases ----
+    print("\n--- Additional edge cases ---");
+    let seq_result = await sequential_awaits();
+    print("sequential:", seq_result);
+
+    let nested_result = await outer_async();
+    print("nested async:", nested_result);
+
+    let p_executor_error = Promise(fn(_res, _rej) {
+        throw "executor error";
+    });
+    let exec_err = p_executor_error.catch(fn(e) { return "executor error caught: " + e; });
+    let exec_result = await exec_err;
+    print(exec_result);
+
+    let already_resolved = Promise(fn(res, _) { res("already done"); });
+    let resolved_val = await await_resolved(already_resolved);
+    print("await resolved:", resolved_val);
+
+    // Test awaiting a rejected promise with try/catch
+    let rej_caught = "no catch";
+    let rej_p = Promise.reject("already failed");
+    let rej_then = rej_p.catch(fn(e) { return "caught: " + e; });
+    rej_caught = await rej_then;
+    print("await rejected handled:", rej_caught);
+
+    // ---- Promise combinators ----
+    print("\n=== Testing Promise combinators ===");
+
+    print("\n--- Promise.all ---");
+    let pc1 = Promise(fn(resolve, _reject) {
+        setTimeout(fn() { resolve("A"); }, 10);
+    });
+    let pc2 = Promise(fn(resolve, _reject) {
+        setTimeout(fn() { resolve("B"); }, 20);
+    });
+    let pc3 = Promise(fn(resolve, _reject) {
+        setTimeout(fn() { resolve("C"); }, 30);
+    });
+    let all_result = await Promise.all([pc1, pc2, pc3]);
+    print("Promise.all result:", all_result);
+
+    print("\n--- Promise.any ---");
+    let pa1 = Promise(fn(resolve, _reject) {
+        setTimeout(fn() { resolve("success"); }, 10);
+    });
+    let pa2 = Promise(fn(resolve, _reject) {
+        setTimeout(fn() { resolve("late"); }, 50);
+    });
+    let any_result = await Promise.any([pa1, pa2]);
+    print("Promise.any result:", any_result);
+
+    print("\n--- Promise.race ---");
+    let pr1 = Promise(fn(resolve, _reject) {
+        setTimeout(fn() { resolve("fast"); }, 15);
+    });
+    let pr2 = Promise(fn(resolve, _reject) {
+        setTimeout(fn() { resolve("slow"); }, 40);
+    });
+    let race_result = await Promise.race([pr1, pr2]);
+    print("Promise.race result:", race_result);
+
+    print("\n--- Promise.all with objects ---");
+    let obj1 = { name: "User1", id: 1 };
+    let obj2 = { name: "User2", id: 2 };
+    let obj3 = { name: "User3", id: 3 };
+    let o1 = Promise(fn(resolve, _) { setTimeout(fn() { resolve(obj1); }, 10); });
+    let o2 = Promise(fn(resolve, _) { setTimeout(fn() { resolve(obj2); }, 15); });
+    let o3 = Promise(fn(resolve, _) { setTimeout(fn() { resolve(obj3); }, 20); });
+    let objs = await Promise.all([o1, o2, o3]);
+    print("Objects from Promise.all:", objs);
+
+    print("\n=== All tests complete ===");
+}

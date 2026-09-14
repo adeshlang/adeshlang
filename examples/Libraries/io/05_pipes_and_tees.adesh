@@ -1,0 +1,17 @@
+// Example 05: Stream Pipes, Tee Readers and Stream Copying
+
+import { MemoryReader, MemoryWriter, TeeReader, copy, IO } from "IO";
+
+fn main() {
+    let source = new MemoryReader("Streaming pipeline data transfer");
+    let primaryDst = new MemoryWriter();
+    let secondaryDst = new MemoryWriter();
+
+    let teeReader = new TeeReader(source, secondaryDst);
+    let copiedBytes = copy(teeReader, primaryDst);
+
+    IO.println("Copied " + copiedBytes + " bytes");
+    IO.println("Primary Dst: " + primaryDst.toString());
+    IO.println("Secondary Dst (via Tee): " + secondaryDst.toString());
+}
+

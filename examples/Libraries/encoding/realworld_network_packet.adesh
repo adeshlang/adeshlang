@@ -1,0 +1,81 @@
+import Encoding;
+
+// ============================================================================
+// Real-World Use Case: Binary Network Packet Framing Protocol
+// Structure:
+// - Magic Header: [0x41, 0x44] ("AD")
+// - Version: u16 Big-Endian
+// - Command Type: u8
+// - Payload Length: u32 Big-Endian
+// - Payload: UTF-8 JSON / string
+// ============================================================================
+
+print("=== 1. Constructing Binary Network Packet ===");
+
+let payloadText = "{\"action\":\"login\",\"user\":\"ajay\"}";
+let payloadBytes = Encoding.utf8Encode(payloadText);
+
+let version = 1;
+let commandType = 5; // LOGIN_CMD
+let payloadLen = payloadBytes.length;
+
+let packet = [65, 68]; // "AD"
+
+// Append Version (u16 BE)
+let verBytes = Encoding.u16ToBytesBE(version);
+let i = 0;
+while (i < verBytes.length) {
+    packet.push(verBytes[i]);
+    i = i + 1;
+}
+
+// Append Command Type (u8)
+packet.push(commandType);
+
+// Append Payload Length (u32 BE)
+let lenBytes = Encoding.u32ToBytesBE(payloadLen);
+i = 0;
+while (i < lenBytes.length) {
+    packet.push(lenBytes[i]);
+    i = i + 1;
+}
+
+// Append Payload Bytes
+i = 0;
+while (i < payloadBytes.length) {
+    packet.push(payloadBytes[i]);
+    i = i + 1;
+}
+
+print("Total Formatted Packet Bytes:", packet.length);
+print("Packet Hex Representation:", Encoding.hexEncode(packet));
+
+print("\n=== 2. Parsing & Deserializing Network Packet ===");
+
+// Verify magic bytes
+if (packet[0] == 65 && packet[1] == 68) {
+    print("Magic Header Verified: AD");
+}
+
+// Read Version at offset 2 (u16 BE)
+let parsedVersion = Encoding.readU16BE(packet, 2);
+print("Parsed Version:", parsedVersion);
+
+// Read Command Type at offset 4 (u8)
+let parsedCmd = packet[4];
+print("Parsed Command Type:", parsedCmd);
+
+// Read Payload Length at offset 5 (u32 BE)
+let parsedPayloadLen = Encoding.readU32BE(packet, 5);
+print("Parsed Payload Length:", parsedPayloadLen);
+
+// Extract Payload Bytes (offset 9 to end)
+let payloadExtracted = [];
+i = 9;
+while (i < packet.length) {
+    payloadExtracted.push(packet[i]);
+    i = i + 1;
+}
+
+let parsedPayloadStr = Encoding.utf8Decode(payloadExtracted);
+print("Parsed Payload Text:", parsedPayloadStr);

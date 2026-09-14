@@ -1,0 +1,152 @@
+// ╔═══════════════════════════════════════════════════════════════════════════════╗
+// ║  ATP Production Pattern — typed config + string protocol + server thread      ║
+// ║  Run: cargo run --bin adeshlang -- run examples/Libraries/atp/atp_production.adesh
+// ╚═══════════════════════════════════════════════════════════════════════════════╝
+
+import ATP;
+import thread;
+import "./lib/atp_ports.adesh" as Ports;
+
+struct ServerConfig {
+    host: any;
+    port: any;
+    maxClients: any;
+}
+
+struct ChatMessage {
+    sender: any;
+    text: any;
+    ts: any;
+}
+
+fn waitConnected(conn: any, maxMs: any): any {
+    let elapsed = 0;
+    while elapsed < maxMs {
+        let ev = conn.receive();
+        if (ev != null && ev.type == "connected") { return ev; }
+        thread.sleep(10);
+        elapsed = elapsed + 10;
+    }
+    return null;
+}
+
+fn recvMessage(conn: any, maxMs: any): any {
+    let elapsed = 0;
+    while elapsed < maxMs {
+        let ev = conn.receive();
+        if (ev != null && ev.type == "message") { return ev; }
+        thread.sleep(10);
+        elapsed = elapsed + 10;
+    }
+    return null;
+}
+
+fn acceptConn(server: any, maxMs: any): any {
+    let elapsed = 0;
+    while elapsed < maxMs {
+        let c = server.accept();
+        if (c != null && c.type == "AtpConnection") { return c; }
+        thread.sleep(10);
+        elapsed = elapsed + 10;
+    }
+    return null;
+}
+
+// Wire format: TYPE|field1|field2|...
+fn encodeChat(msg: ChatMessage): any {
+    return "CHAT|" + msg.sender + "|" + msg.text + "|" + msg.ts;
+}
+
+fn decodeChat(payload: any): any {
+    let parts = payload.split("|");
+    if (parts.len() < 4) { return null; }
+    return ChatMessage {
+        sender: parts[1],
+        text: parts[2],
+        ts: parts[3]
+    };
+}
+
+fn encodeAck(seq: any): any {
+    return "ACK|" + seq;
+}
+
+let port = Ports.port(8);
+let config = ServerConfig {
+    host: Ports.DEFAULT_HOST,
+    port: port,
+    maxClients: 10
+};
+
+print("=== ATP Production Pattern ===\n");
+
+let serverThread = thread.spawn(fn() {
+    let server = ATP.listen(config.host, config.port);
+    print("[server] listening on " + config.host + ":" + config.port);
+
+    let conn = null;
+    let t = 0;
+    while (conn == null && t < 500) {
+        conn = server.accept();
+        t = t + 1;
+        thread.sleep(10);
+    }
+    if (conn != null) {
+        print("[server] client connected");
+        let handled = 0;
+        let n = 0;
+        while (n < 60) {
+            let ev = conn.receive();
+            if (ev != null && ev.type == "message") {
+                let wire = ev.data;
+                if (wire.substring(0, 5) == "CHAT|") {
+                    let chat = decodeChat(wire);
+                    print("[server] chat from " + chat.sender + ": " + chat.text);
+                    conn.send(encodeAck(chat.ts), true, true);
+                    handled = handled + 1;
+                } else if (wire == "PING") {
+                    conn.send("PONG|server", true, true);
+                    handled = handled + 1;
+                } else if (wire == "QUIT") {
+                    conn.send("BYE|server", true, true);
+                    break;
+                }
+            }
+            n = n + 1;
+            thread.sleep(10);
+        }
+        let sm = server.metrics();
+        print("[server] metrics: connections=" + sm.connections + " established=" + sm.established);
+        conn.close();
+    }
+    server.close();
+});
+
+thread.sleep(400);
+
+let conn = ATP.connect(config.host, config.port);
+waitConnected(conn, 5000);
+print("[client] connected to production server");
+
+let chat1 = ChatMessage { sender: "alice", text: "Hello production ATP!", ts: "1001" };
+conn.send(encodeChat(chat1), true, true);
+let ack1 = recvMessage(conn, 3000);
+print("[client] ack:", ack1.data);
+
+let chat2 = ChatMessage { sender: "bob", text: "Structured wire protocol works", ts: "1002" };
+conn.send(encodeChat(chat2), true, true);
+let ack2 = recvMessage(conn, 3000);
+print("[client] ack:", ack2.data);
+
+conn.send("PING", true, true);
+let pong = recvMessage(conn, 3000);
+print("[client] heartbeat:", pong.data);
+
+let cm = conn.metrics();
+print("[client] metrics bytes sent=" + cm.bytesSent + " recv=" + cm.bytesReceived);
+
+conn.send("QUIT", true, true);
+recvMessage(conn, 2000);
+conn.close();
+serverThread.join();
+print("\n=== Production pattern demo complete ===");

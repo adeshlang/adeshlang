@@ -1,0 +1,14 @@
+// Executable Example: ProcessBuilder API
+import Process;
+import Env;
+
+let result = Process.builder("git")
+    .args(["status", "--short"])
+    .workingDirectory(Env.currentDirectory())
+    .environment("GIT_OPTIONAL_LOCKS", "0")
+    .stdoutPipe()
+    .stderrPipe()
+    .run();
+
+print("Status code: " + str(result.code()));
+print("Output:\n" + result.stdoutText());

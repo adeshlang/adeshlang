@@ -1,0 +1,57 @@
+// Unsafe Code with Raw Pointers
+// Unsafe operations must be in 'unsafe' blocks
+
+fn main() {
+    let x = 42;
+    
+    // Raw pointer operations require unsafe block
+    unsafe {
+        // Get memory address (implementation-specific)
+        print("Working with value:", x);
+        
+        // Unsafe operations are tracked by compiler
+        // Direct memory manipulation would go here
+    }
+    demonstrate_unsafe_boundary();
+    safe_wrapper_for_unsafe();
+}
+
+// Example: Why unsafe is needed
+fn demonstrate_unsafe_boundary() {
+    
+    let data = [1, 2, 3];
+    
+    // Safe operations - no unsafe needed
+    print("Safe read:", data[0]);
+    data[1] = 99;
+    print("Safe write:", data);
+    
+    // ❌ This would be an error (outside unsafe block):
+    // Hypothetical unsafe operations:
+    // - Manual memory allocation/deallocation
+    // - Raw pointer dereferencing  
+    // - Calling foreign functions (FFI)
+    // - Type punning / reinterpret casts
+}
+
+// Example: Unsafe blocks isolate dangerous code
+fn safe_wrapper_for_unsafe() {
+    let result = get_value_unsafely();
+    print("Got value safely:", result);
+}
+
+fn get_value_unsafely() {
+    let x = 42;
+    
+    unsafe {
+        // Unsafe operations contained here
+        // Compiler tracks but doesn't prevent
+        return x;
+    }
+}
+
+// ❌ Key Rule: Unsafe cannot escape to safe code
+fn invalid_example() {
+    // let ptr = cast_to_pointer();  // ERROR: unsafe operation outside unsafe block
+    // let value = *ptr;              // ERROR: dereference outside unsafe block
+}

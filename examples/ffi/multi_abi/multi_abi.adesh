@@ -1,0 +1,39 @@
+// Example: Using multiple ABIs (C, Rust, System)
+// Demonstrates ABI specifications and advanced type mapping
+
+// C ABI (default)
+// Note: `free` is a builtin here, so libc malloc/free are not used in this demo.
+extern "C" {
+    fn printf(fmt: ptr<u8>) -> i32;
+}
+
+// Rust ABI (for Rust cdylib) - enable when you have a Rust library exposing rust_hash:
+// extern "Rust" {
+//     fn rust_hash(data: ptr<u8>, len: usize) -> u64;
+// }
+
+// System ABI (platform-specific) - enable on Windows:
+// extern "System" {
+//     fn GetCurrentProcessId() -> u32;  // Windows only
+// }
+
+fn main() {
+    print("Multi-ABI FFI Example:\n");
+    
+    // C function call
+    printf("Hello from C printf!\n");
+    
+    // Uncomment if you have a Rust library:
+    // let hash = rust_hash("test", 4);
+    // print("Rust hash: ");
+    // print(hash);
+    
+    // Windows only:
+    // let pid = GetCurrentProcessId();
+    // print("Process ID: ");
+    // print(pid);
+}
+
+// To run:
+// adesh run multi_abi.adesh --ffi-debug
+// Add -L and -l for Rust library if needed

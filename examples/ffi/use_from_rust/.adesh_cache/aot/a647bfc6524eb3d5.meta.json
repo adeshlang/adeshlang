@@ -1,0 +1,12 @@
+{
+  "hash": "a647bfc6524eb3d5",
+  "source_path": null,
+  "output_path": "math_lib.o",
+  "opt_level": 2,
+  "fast_compile": false,
+  "output_format": "Object",
+  "target_triple": null,
+  "debug_info": false,
+  "timestamp_secs": 1788891618,
+  "output_file_size": 4450
+}

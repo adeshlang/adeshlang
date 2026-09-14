@@ -1,0 +1,389 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://adesh-lang.dev/schemas/adl-schema.json",
+  "title": "Adesh Package Manifest (ADL)",
+  "description": "JSON Schema for Adesh Package Manifest (ADL) files — the adesh.adl project manifest. ADL is a TOML-like package manifest format for the Adesh programming language. It consists of optional [project], [compiler], [dependencies], [scripts] and [workspace] sections plus top-level import statements and if/else conditional blocks.",
+  "type": "object",
+  "properties": {
+    "project": {
+      "$ref": "#/definitions/projectSection"
+    },
+    "compiler": {
+      "$ref": "#/definitions/compilerSection"
+    },
+    "dependencies": {
+      "$ref": "#/definitions/dependenciesSection"
+    },
+    "scripts": {
+      "$ref": "#/definitions/scriptsSection"
+    },
+    "workspace": {
+      "$ref": "#/definitions/workspaceSection"
+    },
+    "import": {
+      "$ref": "#/definitions/importStatement"
+    },
+    "if": {
+      "$ref": "#/definitions/conditionalBlock"
+    },
+    "lock": {
+      "$ref": "#/definitions/lockBlock"
+    }
+  },
+  "required": [
+    "project"
+  ],
+  "additionalProperties": false,
+  "definitions": {
+    "semver": {
+      "type": "string",
+      "description": "Semantic version in MAJOR.MINOR.PATCH form (e.g. \"0.1.0\"), optionally with pre-release or build metadata.",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$",
+      "errorMessage": "Value must be a valid semantic version such as \"0.1.0\" (MAJOR.MINOR.PATCH, optionally with pre-release or build metadata)."
+    },
+    "versionRequirement": {
+      "type": "string",
+      "description": "Version requirement for a dependency, e.g. \"^1.0.0\", \">=2.0.0\", \"~1.2.3\", \"=1.0.0\", \"1.2.3\" or \"*\".",
+      "pattern": "^((\\^|~|>=|<=|>|<|=)?\\s?(0|[1-9]\\d*)(\\.(0|[1-9]\\d*)){0,2}(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?|\\*)$",
+      "errorMessage": "Version requirement must look like \"^1.0.0\", \">=2.0.0\", \"~1.2.3\", \"=1.2.3\", \"1.2.3\" or \"*\"."
+    },
+    "projectSection": {
+      "type": "object",
+      "title": "[project]",
+      "description": "Project metadata section. This section is required in every adesh.adl manifest and defines the project name, version, and template type.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The name of the project. Must start with a letter or underscore and contain only letters, digits, hyphens, and underscores.",
+          "pattern": "^[a-zA-Z_][a-zA-Z0-9_-]*$",
+          "errorMessage": "Project name must start with a letter or underscore and contain only letters, digits, hyphens, and underscores."
+        },
+        "version": {
+          "$ref": "#/definitions/semver",
+          "description": "Semantic version of the project (e.g. \"0.1.0\")."
+        },
+        "template": {
+          "type": "string",
+          "description": "The project template type.\n- app — executable application\n- lib — reusable library\n- workspace — multi-package workspace\n- plugin — compiler plugin\n- package — distributable package",
+          "enum": [
+            "app",
+            "lib",
+            "workspace",
+            "plugin",
+            "package"
+          ],
+          "errorMessage": "Template must be one of: \"app\", \"lib\", \"workspace\", \"plugin\", \"package\"."
+        },
+        "libs": {
+          "type": "array",
+          "description": "List of library names to link against (for native backends).",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "template"
+      ],
+      "additionalProperties": false
+    },
+    "compilerSection": {
+      "type": "object",
+      "title": "[compiler]",
+      "description": "Compiler configuration section. Controls the compilation backend and the optimization level.",
+      "properties": {
+        "backend": {
+          "type": "string",
+          "description": "The compilation backend.\n- interpreter — tree-walking interpreter (default)\n- llvm — LLVM-based native compilation\n- native — direct native code generation",
+          "enum": [
+            "interpreter",
+            "llvm",
+            "native"
+          ],
+          "errorMessage": "backend must be one of: \"interpreter\", \"llvm\", \"native\"."
+        },
+        "opt-level": {
+          "type": "string",
+          "description": "Optimization level.\n- debug — no optimizations, full debug info\n- release — full optimizations, no debug info\n- fast — fast compilation with basic optimizations",
+          "enum": [
+            "debug",
+            "release",
+            "fast"
+          ],
+          "errorMessage": "opt-level must be one of: \"debug\", \"release\", \"fast\"."
+        }
+      },
+      "additionalProperties": false
+    },
+    "dependenciesSection": {
+      "type": "object",
+      "title": "[dependencies]",
+      "description": "Dependency declarations. Each key is a package name and the value is either a version requirement string (e.g. \"^1.0.0\", \">=2.0.0\", \"*\") or an object describing the dependency source and location.",
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+        "errorMessage": "Dependency names must be valid identifiers: letters, digits, hyphens, and underscores, starting with a letter or underscore."
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "string",
+            "title": "Version requirement",
+            "description": "Version requirement for the package, e.g. \"^1.0.0\", \">=2.0.0\", \"~1.2.3\", or \"*\".",
+            "pattern": "^((\\^|~|>=|<=|>|<|=)?\\s?(0|[1-9]\\d*)(\\.(0|[1-9]\\d*)){0,2}(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?|\\*)$",
+            "errorMessage": "Version requirement must look like \"^1.0.0\", \">=2.0.0\", \"~1.2.3\", or \"*\"."
+          },
+          {
+            "type": "object",
+            "title": "Source dependency",
+            "description": "Dependency resolved from a specific source kind (path, git, registry, local, or workspace) and a location.",
+            "properties": {
+              "source": {
+                "type": "string",
+                "description": "How the dependency is resolved.\n- path — resolve from a local filesystem path\n- git — clone from a git repository\n- registry — download from a named registry\n- local — local path that is not published\n- workspace — resolve from a workspace member",
+                "enum": [
+                  "path",
+                  "git",
+                  "registry",
+                  "local",
+                  "workspace"
+                ],
+                "errorMessage": "Dependency source must be one of: \"path\", \"git\", \"registry\", \"local\", \"workspace\"."
+              },
+              "location": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The source location: a relative filesystem path for path/local/workspace sources, a git URL for git, or the registry name for registry (e.g. \"official\")."
+              }
+            },
+            "required": [
+              "source",
+              "location"
+            ],
+            "additionalProperties": false,
+            "errorMessage": "A source-based dependency object must contain both \"source\" and \"location\"."
+          }
+        ],
+        "errorMessage": "Dependency values must be a version requirement string (e.g. \"^1.0.0\") or an object with \"source\" and \"location\"."
+      }
+    },
+    "scriptsSection": {
+      "type": "object",
+      "title": "[scripts]",
+      "description": "Named project scripts. Each entry is a binding of the form `const <name> = \"<command>\"` or `let <name> = \"<command>\"`. Use `const` for fixed scripts and `let` for parameterized scripts.",
+      "patternProperties": {
+        "^(const|let) [a-zA-Z_][a-zA-Z0-9_-]*$": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The command executed by this script binding."
+        }
+      },
+      "additionalProperties": false,
+      "$comment": "ADL scripts use const/let bindings instead of plain keys; the pattern matches the full `const <name>` / `let <name>` binding form."
+    },
+    "workspaceSection": {
+      "type": "object",
+      "title": "[workspace]",
+      "description": "Workspace section for multi-package projects. Declares the paths of the workspace members.",
+      "properties": {
+        "members": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Workspace member paths. Supports glob patterns such as \"packages/*\".",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "members"
+      ],
+      "additionalProperties": false
+    },
+    "importStatement": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[^\"\\s]+$",
+          "description": "Path of a single ADL manifest to import (e.g. \"./shared.adl\")."
+        },
+        {
+          "type": "array",
+          "description": "Paths of multiple ADL manifests to import.",
+          "items": {
+            "type": "string",
+            "pattern": "^[^\"\\s]+$"
+          }
+        }
+      ],
+      "description": "Import another ADL manifest file. ADL syntax: `import \"./path/to/file.adl\"`. May appear multiple times at the top level."
+    },
+    "conditionalBlock": {
+      "type": "object",
+      "title": "if condition { ... } else { ... }",
+      "description": "Conditional configuration block. ADL syntax: `if <expr> { ... } else { ... }`. Conditions commonly test platform, target, or the debug flag, e.g. `if platform == \"windows\" { ... }`.",
+      "properties": {
+        "condition": {
+          "type": "string",
+          "description": "The condition expression, e.g. `platform == \"windows\"`, `target == \"wasm\"`, or `debug`."
+        },
+        "then": {
+          "type": "object",
+          "description": "Configuration applied when the condition is true."
+        },
+        "else": {
+          "type": "object",
+          "description": "Configuration applied when the condition is false. Optional."
+        }
+      },
+      "additionalProperties": false
+    },
+    "lockBlock": {
+      "type": "object",
+      "title": "lock { }",
+      "description": "Lockfile block, present in adesh.lock.adl files (not adesh.adl manifests). Locks the exact resolution of every dependency: version, checksum, and source. This schema validates lockfiles permissively so the *.adl mapping does not flag lock-only keys.",
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "Lockfile format version (currently \"1\")."
+        },
+        "generated-at": {
+          "type": "string",
+          "description": "RFC 3339 / ISO 8601 timestamp when the lockfile was generated, e.g. \"2026-07-01T00:00:00Z\"."
+        },
+        "compiler-version": {
+          "type": "string",
+          "description": "Version of the Adesh compiler that generated this lockfile."
+        },
+        "adl-version": {
+          "type": "string",
+          "description": "Version of the ADL package manager that generated this lockfile."
+        },
+        "package-id": {
+          "type": "string",
+          "description": "Unique identifier of the package this lockfile belongs to."
+        },
+        "dependencies": {
+          "type": "array",
+          "description": "Locked dependency entries. Each entry records the exact resolved version, integrity checksums, and source for one dependency.",
+          "items": {
+            "$ref": "#/definitions/lockDependencyEntry"
+          }
+        },
+        "confidential": {
+          "type": "object",
+          "description": "Sensitive key-value pairs (tokens, secrets) that are stripped from the published manifest."
+        },
+        "signature": {
+          "type": "string",
+          "description": "Integrity signature (FNV-1a hash) computed over all lockfile fields, used to detect tampering."
+        }
+      },
+      "additionalProperties": true
+    },
+    "lockDependencyEntry": {
+      "type": "object",
+      "title": "Locked dependency",
+      "description": "A single locked dependency entry inside lock { dependencies = [ ... ] }.",
+      "properties": {
+        "package-id": {
+          "type": "string",
+          "description": "Unique identifier for the dependency, typically `Name@version`."
+        },
+        "name": {
+          "type": "string",
+          "description": "The package name."
+        },
+        "version": {
+          "$ref": "#/definitions/semver",
+          "description": "The exact resolved version of the dependency."
+        },
+        "requirement": {
+          "$ref": "#/definitions/versionRequirement",
+          "description": "The version requirement from the manifest that resolved to this version (e.g. \"^1.0.0\")."
+        },
+        "checksum": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]+$",
+          "description": "Short checksum (16 hex characters) for integrity verification.",
+          "errorMessage": "checksum must be a hexadecimal string."
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]+$",
+          "description": "SHA-256 checksum for content verification.",
+          "errorMessage": "sha256 must be a hexadecimal string."
+        },
+        "source": {
+          "$ref": "#/definitions/sourceObject"
+        },
+        "features": {
+          "type": "array",
+          "description": "Feature flags enabled for this dependency.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "registries": {
+          "type": "array",
+          "description": "Registries consulted when resolving this dependency.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "transitive": {
+          "type": "array",
+          "description": "Transitive dependency IDs pulled in by this dependency.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "target": {
+          "type": "string",
+          "description": "Target platform triple (e.g. \"x86_64-pc-windows-msvc\"). If absent, the dependency applies to all targets."
+        },
+        "profile": {
+          "type": "string",
+          "enum": [
+            "debug",
+            "release",
+            "fast"
+          ],
+          "description": "Build profile for this dependency."
+        }
+      },
+      "additionalProperties": true
+    },
+    "sourceObject": {
+      "type": "object",
+      "title": "source { kind, location }",
+      "description": "Source descriptor for a dependency.",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "The source kind.\n- registry — download from a named registry\n- git — clone from a git URL\n- path — resolve from a local filesystem path\n- local — local path, not published\n- workspace — resolve from a workspace member",
+          "enum": [
+            "registry",
+            "git",
+            "path",
+            "local",
+            "workspace"
+          ],
+          "errorMessage": "source.kind must be one of: \"registry\", \"git\", \"path\", \"local\", \"workspace\"."
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The source location: a registry name (\"official\"), a git URL, or a filesystem path."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

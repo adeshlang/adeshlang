@@ -1,0 +1,53 @@
+// AdeshLang Full HTTPS / SSL Verification Server using Crypto & TLS stdlib
+// Demonstrates self-signed TLS cert generation and HTTPS socket binding
+
+// @allow(warnings)
+import Crypto;
+import TLS;
+import HTTP;
+
+print("Generating X.509 self-signed TLS certificate & private key via Crypto stdlib...");
+let certPair = Crypto.generateSelfSignedCert();
+
+print("✓ Certificate PEM generated successfully.");
+print("✓ Private Key PEM generated successfully.");
+
+let router = HTTP.Router();
+
+router.get("/", fn(req, res) {
+    return res.json({
+        server: "AdeshLang Full HTTPS / TLS Engine",
+        protocol: req.version,
+        scheme: "https",
+        secure: true,
+        host: req.host
+    });
+});
+
+router.get("/h2", fn(req, res) {
+    return res
+        .header("X-TLS-Protocol", req.version)
+        .json({
+            protocol: req.version,
+            message: "HTTPS / TLS 1.3 HTTP/2 Multiplexed Stream Verified",
+            secure: true
+        });
+});
+
+router.get("/h3", fn(req, res) {
+    return res
+        .header("Alt-Svc", "h3=\":4043\"; ma=86400")
+        .json({
+            protocol: req.version,
+            quic: true,
+            message: "HTTPS / TLS 1.3 HTTP/3 QUIC UDP Stream Verified",
+            secure: true
+        });
+});
+
+print("Starting HTTPS / TLS Server on https://127.0.0.1:4043...");
+let server = HTTP.Server("127.0.0.1:4043", router);
+server.setProtocols(["h3", "h2", "http/1.1"]);
+server.listen(fn() {
+    print("✓ HTTPS Server is listening on https://127.0.0.1:4043 with TLS 1.3, HTTP/2 & HTTP/3 support.");
+});

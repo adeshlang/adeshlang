@@ -1,0 +1,49 @@
+// Example: Advanced type mapping with fixed-width integers
+// Demonstrates all supported numeric types
+
+extern "C" {
+    // Signed integers
+    fn test_i8(val: i8) -> i8;
+    fn test_i16(val: i16) -> i16;
+    fn test_i32(val: i32) -> i32;
+    fn test_i64(val: i64) -> i64;
+    fn test_i128(val: i128) -> i128;
+    
+    // Unsigned integers
+    fn test_u8(val: u8) -> u8;
+    fn test_u16(val: u16) -> u16;
+    fn test_u32(val: u32) -> u32;
+    fn test_u64(val: u64) -> u64;
+    fn test_u128(val: u128) -> u128;
+    
+    // Floats
+    fn test_f32(val: f32) -> f32;
+    fn test_f64(val: f64) -> f64;
+    
+    // Pointers
+    fn test_ptr(p: ptr<i32>) -> ptr<i32>;
+    fn test_void_ptr(p: ptr<void>) -> ptr<void>;
+}
+
+fn main() {
+    print("Advanced Type Mapping:\n");
+    print("All numeric types are supported!\n");
+    
+    // Example usage (assuming these functions exist in a C library):
+    // let i8_result = test_i8(127);
+    // let u64_result = test_u64(18446744073709551615);
+    // let f32_result = test_f32(3.14159);
+    
+    print("See docs/FFI.md for complete type mapping table.\n");
+}
+
+// AdeshLang Type -> C Type Mapping:
+// i8/u8    -> int8_t/uint8_t
+// i16/u16  -> int16_t/uint16_t
+// i32/u32  -> int32_t/uint32_t
+// i64/u64  -> int64_t/uint64_t
+// i128/u128 -> __int128/__uint128 (or custom)
+// f32/f64  -> float/double
+// bool     -> bool or int
+// ptr<T>   -> T*
+// ptr<void> -> void*

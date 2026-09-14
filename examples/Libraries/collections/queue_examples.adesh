@@ -1,0 +1,19 @@
+import Collections;
+
+print("========================================");
+print("Queue (FIFO) Examples");
+print("========================================");
+
+let q = Collections.Queue<string>();
+q.enqueue("Task 1");
+q.enqueue("Task 2");
+q.enqueue("Task 3");
+
+print("Queue length: ", q.len());
+print("Front task: ", q.front());
+print("Back task: ", q.back());
+
+print("Dequeued: ", q.dequeue());
+print("Dequeued: ", q.dequeue());
+print("Length remaining: ", q.len());
+print("Is empty: ", q.isEmpty());

@@ -1,0 +1,12 @@
+// 15 - Safe JWT Signing & Whitelisted Algorithm Verification
+import Crypto;
+
+let claimsJsonStr = "{\"sub\":\"user_789\",\"iss\":\"adeshlang-auth\",\"exp\":2524608000}";
+let hmacSecret = "super_secret_jwt_signing_key_32_bytes!!";
+
+let jwtToken = Crypto.signJwt(claimsJsonStr, hmacSecret);
+print("Generated JWT Token:", jwtToken);
+
+// Verify with explicit algorithm whitelist ["HS256"] to eliminate alg confusion attacks
+let verifiedClaims = Crypto.verifyJwt(jwtToken, hmacSecret, ["HS256"]);
+print("Verified Claims:    ", verifiedClaims);

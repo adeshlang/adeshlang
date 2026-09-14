@@ -1,0 +1,245 @@
+// =============================================================================
+// AdeshLang v0.2.0 - Async Safe Closures Demo
+// =============================================================================
+// This example demonstrates async patterns with closures under the new
+// lifetime rules, including:
+// - Safe async closure capturing
+// - Cancellation-safe timer interactions
+// - Value ownership in async contexts
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// Global state and helper definitions
+// -----------------------------------------------------------------------------
+
+let completedTimers = [];
+
+// 1. Basic Async Closure Capture
+async fn fetchWithContext(id) {
+    let context = "Request-" + str(id);
+    
+    // Closure captures 'context' by reference
+    let logResult = fn(result) {
+        print("  [" + context + "] Result: " + result);
+    };
+    
+    // Simulate async work
+    await Promise.resolve("data-" + str(id));
+    
+    logResult("Success");
+    return context;
+}
+
+// 2. Timer Callbacks with Safe Capture
+fn scheduleWork(name, delayMs) {
+    let workId = name;  // Captured by closure
+    
+    setTimeout(fn() {
+        print("  Timer '" + workId + "' completed");
+        completedTimers.push(workId);
+    }, delayMs);
+}
+
+// 3. Promise Chain with Closure State
+fn processWithState(value) {
+    let state = { count: 0, history: [] };
+    
+    return Promise.resolve(value)
+        .then(fn(v) {
+            state.count = state.count + 1;
+            state.history.push("step1: " + str(v));
+            return v * 2;
+        })
+        .then(fn(v) {
+            state.count = state.count + 1;
+            state.history.push("step2: " + str(v));
+            return v + 10;
+        })
+        .then(fn(v) {
+            state.count = state.count + 1;
+            state.history.push("step3: " + str(v));
+            print("  Final value: " + str(v));
+            print("  Steps taken: " + str(state.count));
+            print("  History: " + str(state.history));
+            return v;
+        });
+}
+
+// 4. Cancellation-Safe Patterns
+class CancellableTask {
+    CancellableTask(name) {
+        this.name = name;
+        this.cancelled = false;
+        this.timerId = null;
+    }
+    
+    fn start(callback) {
+        let selfi = this;  // Capture reference for closure
+        
+        this.timerId = setTimeout(fn() {
+            if (!selfi.cancelled) {
+                print("  Task '" + selfi.name + "' executing...");
+                callback("completed");
+            } else {
+                print("  Task '" + selfi.name + "' was cancelled");
+            }
+        }, 100);
+    }
+    
+    fn cancel() {
+        this.cancelled = true;
+        if (this.timerId != null) {
+            clearTimeout(this.timerId);
+        }
+        print("  Task '" + this.name + "' cancellation requested");
+    }
+}
+
+// 5. Async Iterator Pattern
+fn createAsyncIterator(items) {
+    let index = 0;
+    let data = items;  // Captured by closure
+    
+    return {
+        hasNext: fn() {
+            return index < len(data);
+        },
+        next: fn() {
+            return Promise.resolve(null).then(fn(_) {
+                if (index < len(data)) {
+                    let item = data[index];
+                    index = index + 1;
+                    return { done: false, value: item };
+                }
+                return { done: true, value: null };
+            });
+        }
+    };
+}
+
+async fn consumeIterator(iterator) {
+    while (iterator.hasNext()) {
+        let result = await iterator.next();
+        if (!result.done) {
+            print("  Received: " + str(result.value));
+        }
+    }
+}
+
+// 6. Safe Cleanup Pattern
+async fn withResource(resourceId, operation) {
+    let resource = { id: resourceId, acquired: true };
+    print("  Resource " + str(resourceId) + " acquired");
+    
+    try {
+        let result = await operation(resource);
+        return result;
+    } catch (e) {
+        print("  Error during operation: " + str(e));
+        throw e;
+    }
+}
+
+// 7. Ownership in Async Contexts
+async fn transferOwnership() {
+    let data = [1, 2, 3, 4, 5];
+    print("  Created data: " + str(data));
+    
+    // Data survives across await points
+    await Promise.resolve(null);
+    
+    // Still valid after await
+    data.push(6);
+    print("  After await, modified: " + str(data));
+    
+    // Return ownership to caller
+    return data;
+}
+
+// -----------------------------------------------------------------------------
+// Main execution entry point
+// -----------------------------------------------------------------------------
+
+async fn main() {
+    print("=== Async Safe Closures Demo ===\n");
+
+    print("--- Basic Async Closure Capture ---");
+    await fetchWithContext(1);
+    await fetchWithContext(2);
+
+    print("");
+
+    print("--- Timer Callbacks with Safe Capture ---");
+    // Schedule multiple timers
+    scheduleWork("task-A", 50);
+    scheduleWork("task-B", 100);
+    scheduleWork("task-C", 150);
+
+    // Wait for timers
+    await sleep(200);
+    print("  Completed: " + str(completedTimers));
+
+    print("");
+
+    print("--- Promise Chain with Closure State ---");
+    await processWithState(5);
+
+    print("");
+
+    print("--- Cancellation-Safe Patterns ---");
+    // Run a task to completion
+    let task1 = new CancellableTask("will-complete");
+    task1.start(fn(result) {
+        print("  Callback received: " + result);
+    });
+
+    // Cancel a task before it completes
+    let task2 = new CancellableTask("will-cancel");
+    task2.start(fn(result) {
+        print("  This should not print");
+    });
+    task2.cancel();
+
+    await sleep(150);  // Wait for tasks
+
+    print("");
+
+    print("--- Async Iterator Pattern ---");
+    let iter = createAsyncIterator([10, 20, 30]);
+    await consumeIterator(iter);
+
+    print("");
+
+    print("--- Safe Cleanup Pattern ---");
+    await withResource(42, async fn(res) {
+        print("  Using resource " + str(res.id));
+        await Promise.resolve("work done");
+        return "success";
+    });
+
+    print("");
+
+    print("--- Ownership in Async Contexts ---");
+    let result = await transferOwnership();
+    print("  Caller received: " + str(result));
+
+    print("");
+
+    print("=== Async Safety Summary ===\n");
+
+    print("✓ Safe Patterns:");
+    print("  • Closures capture outer variables safely");
+    print("  • Timer callbacks maintain valid references");
+    print("  • Promise chains preserve closure state");
+    print("  • Cancellation checks prevent stale callbacks");
+    print("");
+
+    print("Key Principles:");
+    print("  1. Values survive across await points");
+    print("  2. Closures capture by reference safely");
+    print("  3. Use cancellation flags for interruptible work");
+    print("  4. Clean up resources in try-catch blocks");
+
+    print("");
+    print("=== Demo Complete ===");
+}

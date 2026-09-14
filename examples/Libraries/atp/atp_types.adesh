@@ -1,0 +1,75 @@
+// ╔═══════════════════════════════════════════════════════════════════════════════╗
+// ║          ATP Type Definitions & Interface Models (AdeshLang)                  ║
+// ║                                                                               ║
+// ║  Canonical data types, configuration structures, delivery frames,             ║
+// ║  and metrics records for the Adesh Transport Protocol (ATP) stdlib.           ║
+// ╚═══════════════════════════════════════════════════════════════════════════════╝
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 1. PROTOCOL CONFIGURATION & IDENTITY TYPES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+struct AtpConfig {
+    maxStreams: int,
+    idleTimeout: int,
+    handshakeTimeout: int,
+    retryTokenTtl: int,
+    rateLimit: int,
+    requireIdentity: bool
+}
+
+struct AtpIdentityKey {
+    role: string,
+    seedHex: string,
+    publicKeyHex: string
+}
+
+struct AtpPathEndpoint {
+    label: string,
+    host: string,
+    port: int
+}
+
+struct AtpSessionContext {
+    sessionId: int,
+    peerHost: string,
+    peerPort: int,
+    established: bool
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 2. STREAM & DELIVERY TYPES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+struct AtpStreamInfo {
+    streamId: int,
+    priority: string,
+    quantumBytes: int,
+    state: string
+}
+
+struct AtpDelivery {
+    type: string,
+    text: string,
+    data: string,
+    streamId: int,
+    messageId: int,
+    reason: string
+}
+
+struct AtpMetrics {
+    connections: int,
+    established: int,
+    streams: int,
+    memoryUsed: int,
+    messagesSent: int,
+    messagesReceived: int,
+    bytesSent: int,
+    bytesReceived: int,
+    packetsSent: int,
+    packetsReceived: int,
+    lossEvents: int,
+    rttUs: int,
+    congestionWindow: int,
+    bytesInFlight: int
+}

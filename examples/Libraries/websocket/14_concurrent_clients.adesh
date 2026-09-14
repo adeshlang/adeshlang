@@ -1,0 +1,31 @@
+// AdeshLang WebSocket Example 14: Concurrent Multi-Client Performance & Isolation
+// Demonstrates thread-safe concurrent send/receive across multiple client connections.
+
+import WebSocket;
+
+print("=== AdeshLang WebSocket Concurrent Multi-Client Demo ===");
+
+let server = WebSocket.server(WebSocket.ServerConfig({
+    port: 8614,
+    bind_address: "127.0.0.1"
+}));
+
+server.startEcho();
+print("✓ Server started on port 8614");
+
+let c1 = WebSocket.connect("ws://127.0.0.1:8614");
+let c2 = WebSocket.connect("ws://127.0.0.1:8614");
+
+c1.sendText("Message from Client 1");
+c2.sendText("Message from Client 2");
+
+let r1 = c1.receive();
+let r2 = c2.receive();
+
+print("Client 1 Received: " + r1.payload);
+print("Client 2 Received: " + r2.payload);
+
+c1.close(1000, "done");
+c2.close(1000, "done");
+server.close();
+print("✓ Concurrent client test completed successfully!");

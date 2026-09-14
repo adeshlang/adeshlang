@@ -1,0 +1,31 @@
+import URL;
+
+let url = URL.parse("https://user:secret@example.com:8443/users/10?page=2&limit=50#results");
+print("URL Scheme:", url.scheme);
+print("URL Host:", url.host);
+print("URL Port:", url.port);
+print("URL Path:", url.path);
+print("URL Query:", url.query);
+print("URL Redacted:", url.redacted());
+
+let builder = URL.builder()
+    .scheme("https")
+    .host("api.example.com")
+    .path("/posts")
+    .queryParam("id", "42")
+    .build();
+
+print("Builder URL:", builder.href);
+
+let base = URL.parse("https://example.com/docs/index.html");
+let resolved = base.resolve("../images/logo.png");
+print("Resolved URL:", resolved.href);
+
+let pat = URL.pattern("https://example.com/users/:id");
+let patMatch = pat.match(url);
+if (patMatch != null) {
+    print("Matched User ID:", patMatch.params.id);
+}
+
+let policy = URL.SecurityPolicy().denyPrivateNetworks();
+print("Policy validate safe URL:", policy.validate(url));

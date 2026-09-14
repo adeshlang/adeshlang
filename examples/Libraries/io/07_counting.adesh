@@ -1,0 +1,15 @@
+// Example 07: Counting Reader and Writer Metrics
+
+import { MemoryReader, MemoryWriter, CountingReader, CountingWriter, copy, IO } from "IO";
+
+fn main() {
+    let src = new MemoryReader("Metrics collection stream");
+    let dst = new MemoryWriter();
+    let cr = new CountingReader(src);
+    let cw = new CountingWriter(dst);
+
+    copy(cr, cw);
+    IO.println("Bytes Read: " + cr.count());
+    IO.println("Bytes Written: " + cw.count());
+}
+

@@ -1,0 +1,132 @@
+// ╔═══════════════════════════════════════════════════════════════════════════════╗
+// ║                    ATP Client Example — Mixed Traffic Demo                   ║
+// ║                                                                               ║
+// ║  A practical ATP client that demonstrates:                                    ║
+// ║    • Reliable ordered messages (chat)                                        ║
+// ║    • Reliable unordered messages (RPC)                                        ║
+// ║    • Unreliable datagrams (telemetry)                                        ║
+// ║    • Stream multiplexing (file + RPC + chat)                                  ║
+// ║    • Message cancellation                                                    ║
+// ║    • Keepalive (PING/PONG)                                                   ║
+// ║                                                                               ║
+// ║  Run: cargo run --bin adeshlang -- run examples/Libraries/atp/atp_client.adesh
+// ╚═══════════════════════════════════════════════════════════════════════════════╝
+
+// @allow(warnings)
+import ATP;
+
+print("==================================================================");
+print("              ATP Client — Mixed Traffic Demo                   ");
+print("==================================================================");
+
+// Connect to the ATP server.
+let conn = ATP.connect("127.0.0.1", 9000);
+print("Connecting to 127.0.0.1:9000...");
+
+// Wait for the connection to be established.
+// Without a real server running, this returns null (demo mode).
+let status = conn.receive();
+let connected = false;
+if (status != null && status.type == "connected") {
+    print("[ok] Connection established (X25519 handshake complete)");
+    connected = true;
+} else {
+    print("[demo] No server running — showing API usage in demo mode.");
+    print("       Start atp_server.adesh first for real communication.");
+}
+
+// 1. Reliable Ordered Messages (Chat)
+print("\n--- 1. Reliable Ordered (Chat) ---");
+conn.send("Chat: Hello, ATP server!", true, true);
+conn.send("Chat: How are you?", true, true);
+conn.send("Chat: Goodbye!", true, true);
+print("Sent 3 chat messages (reliable + ordered)");
+
+// Receive echo (if connected).
+let echo1 = conn.receive();
+if (echo1 != null) {
+    print("Echo:", echo1.data);
+} else {
+    print("No echo (expected in demo mode).");
+}
+
+// 2. Reliable Unordered (RPC)
+print("\n--- 2. Reliable Unordered (RPC) ---");
+conn.send("RPC: get_user_profile(42)", true, false);
+conn.send("RPC: get_user_settings(42)", true, false);
+print("Sent 2 RPC requests (reliable + unordered)");
+print("  -> Order does not matter: each response is independent");
+
+// 3. Unreliable Datagrams (Telemetry)
+print("\n--- 3. Unreliable Datagrams (Telemetry) ---");
+for (let i = 0; i < 5; i = i + 1) {
+    conn.datagram("Telemetry: CPU=" + (40 + i) + "%");
+}
+print("Sent 5 telemetry datagrams (fire-and-forget)");
+print("  -> If any are lost, the next reading is more useful");
+
+// 4. Stream Multiplexing
+print("\n--- 4. Stream Multiplexing ---");
+let rpc_stream = conn.openStream("high");
+let chat_stream = conn.openStream("medium");
+let file_stream = conn.openStream("low");
+print("Opened 3 streams: RPC (high), Chat (medium), File (low)");
+
+// Send on all three streams — they are independent.
+rpc_stream.send("RPC: query_database()", true, true);
+chat_stream.send("Chat: streaming on multiple channels!", true, true);
+file_stream.send("File: chunk_0 [binary data]", true, true);
+file_stream.send("File: chunk_1 [binary data]", true, true);
+file_stream.send("File: chunk_2 [binary data]", true, true);
+print("Sent data on 3 streams simultaneously");
+print("  -> A lost packet on file_stream does NOT block rpc_stream or chat_stream");
+
+// 5. Message Cancellation
+print("\n--- 5. Message Cancellation ---");
+file_stream.send("File: chunk_3 [this will be cancelled]", true, true);
+print("Started sending file chunk 3...");
+conn.cancel(1, 4);  // Cancel the 4th message on stream 1
+print("Cancelled chunk 3 — retransmission stopped, memory freed");
+print("  -> TCP cannot do this: it would keep retransmitting");
+
+// 6. Keepalive
+print("\n--- 6. Keepalive ---");
+conn.ping();
+print("Sent PING — measuring RTT and keeping connection alive");
+
+// 7. Receive Responses
+print("\n--- 7. Receiving Responses ---");
+let responses = 0;
+let msg = conn.receive();
+while (msg != null && responses < 10) {
+    if (msg.type == "datagram") {
+        print("[datagram]", msg.data);
+    }
+    else if (msg.streamId != null) {
+        print("[stream " + msg.streamId + "]", msg.data);
+    }
+    else if (msg.type == "closed") {
+        print("[closed]", msg.reason);
+    }
+    responses = responses + 1;
+    msg = conn.receive();
+}
+if (responses == 0) {
+    print("No responses (expected in demo mode without a server).");
+}
+
+// 8. Connection Metrics
+print("\n--- 8. Connection Metrics ---");
+let metrics = conn.metrics();
+print("Connections:", metrics.connections);
+print("Established:", metrics.established);
+print("Streams:", metrics.streams);
+print("Memory used:", metrics.memoryUsed, "bytes");
+
+// Clean Shutdown
+print("\n--- Shutdown ---");
+conn.close();
+print("Connection closed. All resources released.");
+print("\n==================================================================");
+print("              ATP Client Demo Complete                          ");
+print("==================================================================");

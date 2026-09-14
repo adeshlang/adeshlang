@@ -1,0 +1,25 @@
+// AdeshLang Net Example 02: Socket Address Formatting & Validation
+import Net;
+
+fn main() {
+    print("=== 02. Socket Address Formatting & Validation ===");
+
+    // 1. IPv4 Socket Address
+    let addr4 = Net.SocketAddress.parse("127.0.0.1:8080");
+    print("IPv4 SocketAddress:", addr4.address);
+    print("  IP Version:", addr4.ip.version);
+    print("  Port:", addr4.port);
+
+    // 2. Bracketed IPv6 Socket Address
+    let addr6 = Net.SocketAddress.parse("[::1]:443");
+    print("IPv6 SocketAddress:", addr6.address);
+    print("  IP Version:", addr6.ip.version);
+    print("  Port:", addr6.port);
+
+    let globalAddr6 = Net.SocketAddress.parse("[2001:db8::1]:8443");
+    print("Global IPv6 SocketAddress:", globalAddr6.address);
+
+    print("=== 02. Socket Address Formatting Completed ===");
+}
+
+main();

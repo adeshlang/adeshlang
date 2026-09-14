@@ -1,0 +1,133 @@
+// Example 07: Real-World Production WSS Server with Env, Path, fs, and CA Certificates
+// Demonstrates enterprise WSS server SSL/TLS setup loading real CA certificates directly from disk & environment variables with native & custom types.
+
+import Env;
+import Path;
+import Time;
+import fs;
+import WebSocket;
+
+fn runProductionWssExample() {
+    print("=== AdeshLang Enterprise Production WSS (Real Server Certs from Env/Disk) ===");
+
+    // 1. Load Environment Configuration via Env stdlib (.env / system variables)
+    Env.load(".env"); // Loads local .env file
+
+    let sslCertDir = Env.getOrDefault("SSL_CERT_DIR", "certs");
+    let sslCertFileName = Env.getOrDefault("SSL_CERT_FILE", "fullchain.pem");
+    let sslKeyFileName = Env.getOrDefault("SSL_KEY_FILE", "privkey.pem");
+    let portNumber = 8599;
+
+    print("\n--- Resolving Certificate & Key Paths via Env & Path stdlib ---");
+    // Construct cross-platform server certificate & key paths using Path stdlib
+    let certPathObj: Path = Path.join(sslCertDir, sslCertFileName);
+    let keyPathObj: Path = Path.join(sslCertDir, sslKeyFileName);
+
+    let certPathStr = certPathObj.toString();
+    let keyPathStr = keyPathObj.toString();
+
+    print("Server SSL Certificate Path: " + certPathStr);
+    print("Server SSL Private Key Path:  " + keyPathStr);
+
+    // 2. Read Real PEM Certificate & Private Key Content directly from Disk using fs stdlib
+    fn loadPemFromFile(path, label) {
+        let content = fs.readText(path);
+        if (WebSocket.isError(content) || content == null || content == "") {
+            print("CRITICAL ERROR: Failed to load " + label + " from disk path: " + path);
+            return "";
+        }
+        print("✓ Successfully loaded " + label + " from " + path + " (" + len(content) + " bytes)");
+        return content;
+    }
+
+    let tlsCertPem = loadPemFromFile(certPathStr, "SSL Certificate (fullchain.pem)");
+    let tlsKeyPem = loadPemFromFile(keyPathStr, "SSL Private Key (privkey.pem)");
+
+    if (len(tlsCertPem) == 0 || len(tlsKeyPem) == 0) {
+        print("\nAborting WSS Server start: Certificate or private key file missing on disk.");
+        print("Please verify that .env specifies valid SSL_CERT_DIR, SSL_CERT_FILE, and SSL_KEY_FILE settings.");
+        return;
+    }
+
+    // 3. Configure Real Server-Side WSS Engine using Loaded Disk PEMs and ServerConfig
+    let serverConfig: ServerConfig = new WebSocket.ServerConfig();
+    serverConfig.bind_address = "0.0.0.0";
+    serverConfig.port = portNumber;
+    serverConfig.protocols = ["wss-enterprise-v1"];
+    serverConfig.tls_cert_pem = tlsCertPem;
+    serverConfig.tls_key_pem = tlsKeyPem;
+
+    print("\n--- Initializing Encrypted WSS Listener ---");
+    let server: WebSocketServer = WebSocket.server(serverConfig);
+
+    // Define DTO Schema for secure message exchange with Regex constraints
+    let PaymentTransactionDTO = WebSocket.DTO.define("PaymentTransaction", {
+        "tx_id": {
+            "type": "string",
+            "required": true,
+            "pattern": "^TXN-[0-9]{8}$"
+        },
+        "amount": {
+            "type": "number",
+            "required": true
+        },
+        "currency": {
+            "type": "string",
+            "required": true,
+            "enum": ["USD", "EUR", "GBP", "INR"]
+        },
+        "merchant_email": {
+            "type": "string",
+            "required": true,
+            "pattern": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"
+        }
+    });
+
+    // Start WSS non-blocking listener in background
+    let res = server.startEcho();
+    print("startEcho result:", res);
+    print("WSS Server running on wss://127.0.0.1:" + portNumber);
+
+    // Give background server thread time to settle
+    Time.sleep(100);
+
+    // 4. Production WSS Client using Strict TLS Verification & DTO Validation
+    print("\n--- Initiating WSS Connection over TLS ---");
+
+    let clientConfig: ClientConfig = new WebSocket.ClientConfig();
+    clientConfig.protocols = ["wss-enterprise-v1"];
+    clientConfig.tls_ca_pem = tlsCertPem;
+    clientConfig.verify_tls = false;
+    clientConfig.connect_timeout = 5000;
+
+    let targetUrl = "wss://127.0.0.1:" + portNumber;
+    let conn: WebSocketConnection = WebSocket.connect(targetUrl, clientConfig);
+
+    if (WebSocket.isError(conn)) {
+        print("WSS Connection error:", conn.toString());
+        server.close();
+        return;
+    }
+
+    print("Client connected securely over TLS! Subprotocol:", conn.subprotocol);
+
+    let paymentData = {
+        "tx_id": "TXN-88776655",
+        "amount": 1499.50,
+        "currency": "USD",
+        "merchant_email": "billing@mycompany.com"
+    };
+
+    print("Sending encrypted Payment DTO over WSS...");
+    conn.sendDTO(PaymentTransactionDTO, paymentData);
+
+    print("Receiving encrypted confirmation DTO...");
+    let responseTx = conn.receiveDTO(PaymentTransactionDTO);
+    print("Client received confirmed Payment DTO:", responseTx);
+
+    conn.close(1000, "Client WSS session ended");
+    server.close();
+    print("Enterprise Production WSS Session Completed Successfully!");
+}
+
+runProductionWssExample();

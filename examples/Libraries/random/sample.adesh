@@ -1,0 +1,10 @@
+import Random;
+
+print("--- Sampling Demo ---");
+let candidates = ["Ajay", "Rahul", "Priya", "Neha", "Amit", "Suresh", "Kavita"];
+
+let winners = Random.sample(candidates, 3);
+print("3 unique winners (sampling without replacement): " + winners);
+
+let repeatedDraws = Random.sampleWithReplacement(candidates, 5);
+print("5 draws with replacement: " + repeatedDraws);

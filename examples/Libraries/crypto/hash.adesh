@@ -1,0 +1,13 @@
+// AdeshLang Cryptography Example: Hashing Data
+import Crypto;
+
+let text = "Hello AdeshLang Crypto Ecosystem!";
+
+let sha256Digest = Crypto.sha256(text);
+print("SHA-256 Digest:", sha256Digest);
+
+let sha512Digest = Crypto.sha512(text);
+print("SHA-512 Digest:", sha512Digest);
+
+let blake3Digest = Crypto.blake3(text);
+print("BLAKE3 Digest: ", blake3Digest);

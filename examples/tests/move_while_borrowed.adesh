@@ -1,0 +1,9 @@
+// Demonstrates that moving a value fails while it is borrowed.
+
+let data = "guarded";
+let reader = &data;       // shared borrow starts
+print(reader);
+
+// ❌ Moving while borrowed triggers an error.
+let moved = data;
+print(moved);             // not reached

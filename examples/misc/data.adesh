@@ -1,0 +1,9 @@
+let person = {
+    name: "Ajay",
+    age: 25,
+    skills: ["Rust", "JS", "Next.js"]
+};
+
+print("Name:", person.name);
+print("Age:", person.age);
+print("First skill:", person.skills[0]);

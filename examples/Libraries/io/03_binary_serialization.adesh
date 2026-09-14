@@ -1,0 +1,25 @@
+// Example 03: Binary Primitive Serialization with Endianness
+
+import { MemoryWriter, MemoryReader, BinaryWriter, BinaryReader, IO } from "IO";
+
+fn main() {
+    let mw = new MemoryWriter();
+    let bw = new BinaryWriter(mw, "big"); // Big-endian packing
+
+    bw.writeU8(0xAB);
+    bw.writeU16(0x1234);
+    bw.writeU32(0x87654321);
+    bw.writeF64(2.718281828459);
+    bw.writeString("UTF-8 Binary Data");
+    bw.flush();
+
+    let mr = new MemoryReader(mw.getBytes());
+    let br = new BinaryReader(mr, "big");
+
+    IO.println("Read U8: " + br.readU8());
+    IO.println("Read U16: " + br.readU16());
+    IO.println("Read U32: " + br.readU32());
+    IO.println("Read F64: " + br.readF64());
+    IO.println("Read String: " + br.readString(17));
+}
+

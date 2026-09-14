@@ -1,0 +1,11 @@
+// This example should FAIL to compile in embedded mode:
+//   adesh run --embedded examples/memory/embedded_alloc_fail.adesh
+// Expected error: "Embedded mode forbids heap allocation via alloc(); use stack/arena/region instead."
+// In non-embedded mode, it runs and frees via RAII.
+
+unsafe {
+    let buf: *u8 = alloc(32);
+    buf[0] = 7;
+}
+// print("This line should never execute in embedded mode");
+// 

@@ -1,0 +1,177 @@
+// ================================================
+// ADESH FOR ARM64 ARCHITECTURE
+// ================================================
+// Target: aarch64-unknown-linux-gnu, aarch64-apple-darwin
+// Use: Mobile (Android, iOS), IoT, Raspberry Pi, Apple Silicon
+//
+// Characteristics:
+//   - 64-bit registers (X0-X30)
+//   - SIMD: NEON (128-bit vectors, not 256-bit)
+//   - Little-endian byte order (implicit)
+//   - Simpler instruction set than x86-64
+//   - Better power efficiency (2-3W idle vs 10-15W x86)
+//   - 4KB page size
+//
+// Adesh code benefits from:
+//   - NEON SIMD (128-bit, processes 2 f64 or 4 f32 at once)
+//   - Load/store with immediate offsets (efficient addressing)
+//   - Conditional execution (fewer branches)
+//   - Power-optimized for mobile workloads
+
+fn neon_vector_operations(a: [f64], b: [f64]): f64 {
+    // NEON advantage: 128-bit vectors
+    // On ARM64, processes 2 x f64 values per operation
+    // On x86, would need 4 x f64 (AVX2)
+    
+    let dot_product = 0.0;
+    let i = 0;
+    
+    while (i < a.len()) {
+        dot_product = dot_product + (a[i] * b[i]);
+        i = i + 1;
+    };
+    
+    return dot_product;
+}
+
+fn power_efficient_processing(iterations: i64): i64 {
+    // ARM64 excels at power efficiency
+    // Each iteration uses minimal power
+    
+    let result = 0;
+    let i = 0;
+    
+    while (i < iterations) {
+        // Simple operations that ARM does well
+        result = result + i;
+        result = result ^ (i * 7);  // XOR is fast on ARM
+        i = i + 1;
+    };
+    
+    return result;
+}
+
+fn mobile_image_processing(pixels: [i64], width: i64, height: i64): [i64] {
+    // ARM64 efficient filtering for mobile
+    let result = [];
+    let y = 0;
+    
+    while (y < height) {
+        let x = 0;
+        while (x < width) {
+            if (x > 0) {
+                if (x < width - 1) {
+                    // Simple edge detection
+                    let idx = y * width + x;
+                    let left = pixels[idx - 1];
+                    let right = pixels[idx + 1];
+                    let edge = right - left;
+                    result[idx] = edge;
+                };
+            };
+            x = x + 1;
+        };
+        y = y + 1;
+    };
+    
+    return result;
+}
+
+fn arm64_little_endian_safe(data: [i64]): i64 {
+    // ARM64 is always little-endian
+    // This function is safe and efficient
+    
+    let value = 0;
+    let i = 0;
+    
+    // Byte-by-byte reconstruction
+    while (i < 8) {
+        let byte = data[i];
+        value = value | (byte << (i * 8));  // Little-endian order
+        i = i + 1;
+    };
+    
+    return value;
+}
+
+fn arm64_conditional_execution(a: i64, b: i64): i64 {
+    // ARM64 can execute conditionally without branching
+    // Compiler may use conditional selection instead of jumps
+    
+    let result = 0;
+    
+    if (a > b) {
+        result = a;
+    } else {
+        result = b;
+    };
+    
+    return result;
+}
+
+fn apple_silicon_optimization(): i64 {
+    // Apple Silicon (M1, M2, M3) specific
+    // - Mix of performance cores (P) and efficiency cores (E)
+    // - Unified memory (RAM shared with GPU)
+    // - Excellent for mixed workloads
+    
+    let sum = 0;
+    let i = 0;
+    
+    while (i < 10000) {
+        sum = sum + (i * 2);
+        i = i + 1;
+    };
+    
+    return sum;
+}
+
+fn rice_rpi5_optimization(): i64 {
+    // Raspberry Pi 5: ARM Cortex-A76
+    // - 3-4 core complex processor
+    // - Moderate clock (2.4 GHz)
+    // - Good for IoT/edge computing
+    
+    let measurements = [100, 102, 101, 103, 102, 101];
+    let sum = 0;
+    let i = 0;
+    
+    while (i < measurements.len()) {
+        sum = sum + measurements[i];
+        i = i + 1;
+    };
+    
+    let average = sum / measurements.len();
+    return average;
+}
+
+fn main_arm64() {
+    print("\n=== Adesh for ARM64 ===\n");
+    
+    let a = [1.0, 2.0, 3.0, 4.0];
+    let b = [5.0, 6.0, 7.0, 8.0];
+    let dot = neon_vector_operations(a, b);
+    print("Dot product: ", dot, "\n");
+    
+    let efficient = power_efficient_processing(5000);
+    print("Power-efficient result: ", efficient, "\n");
+    
+    let pixels = [10, 20, 30, 40, 50];
+    let processed = mobile_image_processing(pixels, 5, 1);
+    print("Image processing done\n");
+    
+    let apple = apple_silicon_optimization();
+    print("Apple Silicon sum: ", apple, "\n");
+    
+    let rpi = rice_rpi5_optimization();
+    print("Raspberry Pi 5 average: ", rpi, "\n");
+    
+    print("\nARM64 Characteristics:");
+    print("  - SIMD width: 128 bits (NEON)");
+    print("  - Byte order: Little-endian");
+    print("  - Page size: 4KB");
+    print("  - Power: 2-3W idle (vs 10-15W x86)");
+    print("  - Perfect for: mobile, IoT, Apple Silicon");
+    
+    return 0;
+}

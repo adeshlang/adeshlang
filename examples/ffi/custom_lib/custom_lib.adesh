@@ -1,0 +1,30 @@
+// Example: Call custom C library functions
+// Demonstrates how to use -L and -l flags for custom libraries
+
+// Assuming you have a custom shared library 'libmylib.so' or 'mylib.dll' with:
+// int add_numbers(int a, int b);
+// void print_message(const char* msg);
+
+extern "C" {
+    fn add_numbers(a: i32, b: i32) -> i32;
+    fn print_message(msg: ptr<u8>) -> void;
+}
+
+fn main() {
+    print("Custom Library FFI:\n");
+    
+    let result = add_numbers(42, 58);
+    print("add_numbers(42, 58) = ");
+    print(result);
+    print("\n");
+    
+    print_message("Hello from AdeshLang!\n");
+}
+
+// To compile your C library:
+// gcc -shared -fPIC -o libmylib.so mylib.c         (Linux)
+// gcc -shared -o mylib.dll mylib.c                  (Windows)
+// clang -dynamiclib -o libmylib.dylib mylib.c       (macOS)
+
+// To run with custom library:
+// adesh run custom_lib.adesh -L /path/to/lib -l mylib --ffi-debug

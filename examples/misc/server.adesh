@@ -1,0 +1,15 @@
+export default class Server {
+    fn init(n) {
+        this.n ?= n;
+    }
+    fn info() {
+        return "ok";
+    }
+}
+export fn http() {
+    return "http";
+}
+
+export fn tcp() {
+    return "tcp";
+}

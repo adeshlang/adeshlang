@@ -1,0 +1,10 @@
+// AdeshLang: Ownership Move Example
+// String is a non-Copy type, so assigning it transfers ownership (move semantics).
+// Attempting to use the variable after it has been moved triggers a compile-time error.
+
+fn main() {
+    let s = "hello";
+    let t = s; // s is moved to t here
+    print("t: " + t);
+    print("s: " + s); // This should cause an E0503 use-of-moved-value compiler error!
+}

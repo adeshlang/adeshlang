@@ -1,0 +1,32 @@
+import Collections;
+
+print("========================================");
+print("1. VecDeque - Double-Ended Queue Basics");
+print("========================================");
+
+let deque = Collections.VecDeque();
+
+// Push elements at both ends
+deque.pushBack(10);
+deque.pushBack(20);
+deque.pushFront(5);
+deque.pushFront(1);
+
+print("Length after 4 pushes: ", deque.len());
+print("Pop Front (expect 1): ", deque.popFront());
+print("Pop Back (expect 20): ", deque.popBack());
+print("Pop Front (expect 5): ", deque.popFront());
+print("Pop Back (expect 10): ", deque.popBack());
+print("Pop from empty (expect null): ", deque.popFront());
+print("Length empty: ", deque.len());
+
+print("\n--- Edge Case: Alternating push & pop (wrap-around) ---");
+let ring = Collections.VecDeque();
+let i = 0;
+while (i < 10) {
+    ring.pushBack(i);
+    ring.pushFront(i * 10);
+    print("Front: ", ring.popFront(), " Back: ", ring.popBack());
+    i = i + 1;
+}
+print("Final ring length: ", ring.len());

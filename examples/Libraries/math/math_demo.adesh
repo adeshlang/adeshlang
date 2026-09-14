@@ -1,0 +1,35 @@
+import Math;
+
+print("--- AdeshLang Math Library Extension Demo ---");
+
+// Constants
+print("SQRT1_2 (1 / sqrt(2)):", Math.SQRT1_2);
+
+// Hyperbolic functions
+let val = 1.0;
+print("sinh(1.0):", Math.sinh(val));
+print("cosh(1.0):", Math.cosh(val));
+print("tanh(1.0):", Math.tanh(val));
+
+// Inverse Hyperbolic functions
+print("asinh(sinh(1.0)):", Math.asinh(Math.sinh(val)));
+print("acosh(cosh(1.0)):", Math.acosh(Math.cosh(val)));
+print("atanh(tanh(1.0)):", Math.atanh(Math.tanh(val)));
+
+// Angle conversion utilities
+let deg = 180.0;
+let rad = Math.degToRad(deg);
+print("180 degrees in radians:", rad); // should be PI (3.14159...)
+print("Back to degrees:", Math.radToDeg(rad));
+
+// Interpolation, clamping and Euclidean distance
+print("clamp(45, 0, 10):", Math.clamp(45, 0, 10)); // should be 10
+print("clamp(-5, 0, 10):", Math.clamp(-5, 0, 10)); // should be 0
+print("lerp(10, 20, 0.5):", Math.lerp(10, 20, 0.5)); // should be 15
+print("hypot(3, 4):", Math.hypot(3, 4)); // Euclidean distance (should be 5)
+print("cbrt(27):", Math.cbrt(27)); // Cube root (should be 3)
+
+// Arithmetic functions
+print("gcd(24, 36):", Math.gcd(24, 36)); // should be 12
+print("lcm(24, 36):", Math.lcm(24, 36)); // should be 72
+print("factorial(5):", Math.factorial(5)); // should be 120

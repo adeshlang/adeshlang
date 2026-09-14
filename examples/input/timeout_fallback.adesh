@@ -1,0 +1,9 @@
+// Timeout + fallback example
+// Waits up to 10 seconds for OTP, otherwise runs onTimeout
+// input.mock(["123456"]); // comment this to test timeout
+
+fn generate(){
+     print("Generating new OTP...");
+ }
+let otp = input("OTP:", { timeout: 10, onTimeout: generate, min: 6, max: 7, type: "int", style: { color: "#00ff00" },def:123456 });
+print("OTP:", otp);

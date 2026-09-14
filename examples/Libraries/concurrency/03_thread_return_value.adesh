@@ -1,0 +1,7 @@
+// 03 — return value
+import Thread;
+
+let h = Thread.spawn(fn() {
+    return 42;
+});
+print(h.join());

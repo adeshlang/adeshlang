@@ -1,0 +1,14 @@
+// AdeshLang Cryptography Example: AEAD Encryption (AES-256-GCM / Seal)
+import Crypto
+
+let key = Crypto.randomBytes(32)
+let secretMessage = "Confidential Banking Account Details: ACC-998877"
+
+// Seal generates a fresh 96-bit random nonce for every operation
+let sealed = Crypto.seal(key, secretMessage)
+
+print("Nonce (Hex):     ", Crypto.encodeHex(sealed.nonce))
+print("Ciphertext (Hex):", Crypto.encodeHex(sealed.ciphertext))
+
+let decryptedBytes = Crypto.decryptAead(key, sealed.nonce, sealed.ciphertext)
+print("Decrypted Success:", decryptedBytes != null)

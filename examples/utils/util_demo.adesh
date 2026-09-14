@@ -1,0 +1,9 @@
+/**
+ * Utility add function
+ * @param {number} a first operand
+ * @param {number} b second operand
+ * @returns {number} sum of a and b
+ * @example
+ * utilAdd(2,3) // 5
+ */
+export fn utilAdd(a, b) { return a + b; }

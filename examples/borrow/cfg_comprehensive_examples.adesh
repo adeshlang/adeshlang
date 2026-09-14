@@ -1,0 +1,882 @@
+// ================================================================
+// CFG Borrow Checker - Comprehensive Examples
+// ================================================================
+// This file demonstrates all CFG control flow patterns and their
+// interaction with AdeshLang's borrow checker. Examples marked with
+// ✓ should compile successfully, while those marked with ✗ should
+// produce compile-time errors.
+// ================================================================
+
+// ============================================================
+// SECTION 1: BASIC BORROW RULES
+// ============================================================
+
+// ✓ VALID: Multiple shared borrows are allowed
+fn example_multiple_shared_ok() {
+    let data = [1, 2, 3, 4, 5];
+    
+    let ref1 = &data;    // First shared borrow
+    let ref2 = &data;    // Second shared borrow - OK!
+    let ref3 = &data;    // Third shared borrow - OK!
+    
+    // All three can coexist and be used
+    print(ref1[0]);
+    print(ref2[1]);
+    print(ref3[2]);
+}
+
+// ✗ ERROR: Cannot have exclusive borrow while shared exists
+fn example_exclusive_while_shared_error() {
+    let data = [1, 2, 3];
+    
+    let shared_ref = &data;     // Shared borrow
+    let mut_ref = &mut data;    // ✗ ERROR: Cannot borrow mutably while borrowed
+    
+    print(shared_ref);          // Shared still in use
+}
+
+// ✗ ERROR: Cannot have two exclusive borrows
+fn example_double_exclusive_error() {
+    let data = Object();
+    
+    let mut_ref1 = &mut data;   // First exclusive borrow
+    let mut_ref2 = &mut data;   // ✗ ERROR: Already exclusively borrowed
+    
+    mut_ref1.modify();
+    mut_ref2.modify();
+}
+
+// ✓ VALID: Sequential exclusive borrows (non-overlapping)
+fn example_sequential_exclusive_ok() {
+    let data = Object();
+    
+    {
+        let mut_ref = &mut data;
+        mut_ref.modify();
+    }  // Borrow ends here
+    
+    {
+        let mut_ref2 = &mut data;  // ✓ OK: Previous borrow ended
+        mut_ref2.modify();
+    }
+}
+
+
+// ============================================================
+// SECTION 2: IF/ELSE BRANCHING
+// ============================================================
+
+// ✓ VALID: Consistent shared borrows in both branches
+fn example_if_else_consistent_shared() {
+    let data = Resource();
+    
+    if condition() {
+        let r = &data;     // Shared borrow in then-branch
+        r.read();
+    } else {
+        let r = &data;     // Shared borrow in else-branch
+        r.read();
+    }
+    
+    // After join: both branches had compatible (shared) borrows
+    let final_ref = &data;  // ✓ OK
+    final_ref.read();
+}
+
+// ✗ ERROR: Conflicting borrows across branches
+fn example_if_else_conflict_error() {
+    let data = Resource();
+    
+    if condition() {
+        data.mutate();     // Exclusive borrow (mutation)
+    } else {
+        data.read();       // Shared borrow (read-only)
+    }
+    
+    // ✗ ERROR at join: Exclusive in one branch, Shared in other
+    // Cannot determine safe borrow state after join
+    data.read();
+}
+
+// ✗ ERROR: Move in one branch, use in other
+fn example_if_else_partial_move_error() {
+    let resource = create_resource();
+    
+    if should_transfer() {
+        consume(resource);    // Moves resource in this branch
+    } else {
+        use_ref(&resource);   // Borrows in this branch
+    }
+    
+    // ✗ ERROR: resource might have been moved
+    print(resource);
+}
+
+// ✓ VALID: Move in both branches (consistent)
+fn example_if_else_both_move_ok() {
+    let resource = create_resource();
+    
+    if condition_a() {
+        consume_a(resource);  // Move in branch A
+    } else {
+        consume_b(resource);  // Move in branch B
+    }
+    
+    // After join: resource is definitely moved (consistent)
+    // No use after this point - OK because we don't use it
+}
+
+// ✓ VALID: Different operations, same borrow kind
+fn example_if_else_same_kind_different_ops() {
+    let collection = Vec();
+    
+    if is_sorted() {
+        let r = &collection;
+        binary_search(r, 42);
+    } else {
+        let r = &collection;
+        linear_search(r, 42);
+    }
+    
+    // ✓ OK: Both branches had shared borrows
+    print(collection.len());
+}
+
+
+// ============================================================
+// SECTION 3: NESTED IF/ELSE
+// ============================================================
+
+// ✓ VALID: Deeply nested consistent borrows
+fn example_nested_if_ok() {
+    let data = Data();
+    
+    if outer_cond() {
+        if inner_cond_a() {
+            let r = &data;
+            process_a(r);
+        } else {
+            let r = &data;
+            process_b(r);
+        }
+        // Inner join: both shared - OK
+    } else {
+        if inner_cond_b() {
+            let r = &data;
+            process_c(r);
+        } else {
+            let r = &data;
+            process_d(r);
+        }
+        // Inner join: both shared - OK
+    }
+    
+    // Outer join: all paths had shared borrows - OK
+    let final_ref = &data;
+    final_ref.summarize();
+}
+
+// ✗ ERROR: Conflict in one nested branch
+fn example_nested_if_conflict_error() {
+    let data = Data();
+    
+    if outer_cond() {
+        if inner_cond() {
+            data.read();      // Shared
+        } else {
+            data.mutate();    // ✗ Exclusive - conflicts!
+        }
+    } else {
+        data.read();          // Shared
+    }
+    
+    // ✗ ERROR: Inner if/else has incompatible states
+    data.read();
+}
+
+
+// ============================================================
+// SECTION 4: WHILE LOOPS
+// ============================================================
+
+// ✓ VALID: Borrow released each iteration
+fn example_while_loop_borrow_release() {
+    let items = [1, 2, 3, 4, 5];
+    let i = 0;
+    
+    while i < items.len() {
+        let item_ref = &items[i];  // Borrow
+        process(item_ref);
+        // Borrow released at end of loop body
+        i = i + 1;
+    }
+    
+    // ✓ OK: No borrows persist after loop
+    items.push(6);
+}
+
+// ✗ ERROR: Borrow escapes loop
+fn example_while_loop_escape_error() {
+    let items = [1, 2, 3];
+    let escaped_ref;
+    
+    while condition() {
+        escaped_ref = &items[0];  // ✗ Borrow escapes loop
+        // Cannot track lifetime across iterations
+    }
+    
+    // escaped_ref might refer to different iteration's borrow
+    print(escaped_ref);
+}
+
+// ✓ VALID: Mutation inside loop with proper guards
+fn example_while_loop_mutation() {
+    let counter = 0;
+    
+    while counter < 100 {
+        // Exclusive borrow for mutation
+        counter = counter + 1;
+        // Released before next check
+    }
+    
+    // ✓ OK: counter is Unborrowed after loop
+    print(counter);
+}
+
+// ✗ ERROR: Move inside loop, loop may iterate again
+fn example_while_loop_move_error() {
+    let resource = create_resource();
+    
+    while condition() {
+        consume(resource);  // ✗ ERROR: Moves resource
+        // But loop may iterate again - resource is gone!
+    }
+}
+
+
+// ============================================================
+// SECTION 5: FOR LOOPS
+// ============================================================
+
+// ✓ VALID: Iterate with shared borrows
+fn example_for_loop_shared() {
+    let items = ["a", "b", "c"];
+    
+    for item in items {
+        // item is a shared borrow of each element
+        print(item);
+    }
+    
+    // ✓ OK: items still accessible
+    print(items.len());
+}
+
+// ✓ VALID: Iterate with mutation (if supported)
+fn example_for_loop_mutation() {
+    let items = [1, 2, 3];
+    
+    for item in &mut items {
+        item = item * 2;  // Mutate each element
+    }
+    
+    // ✓ OK after loop
+    print(items);
+}
+
+// ✗ ERROR: Modify collection while iterating
+fn example_for_loop_invalidation_error() {
+    let items = [1, 2, 3];
+    
+    for item in items {
+        if item == 2 {
+            items.push(4);  // ✗ ERROR: Cannot modify while iterating
+        }
+    }
+}
+
+
+// ============================================================
+// SECTION 6: BREAK AND CONTINUE
+// ============================================================
+
+// ✓ VALID: Break with consistent borrow state
+fn example_break_ok() {
+    let data = Data();
+    
+    while true {
+        if should_exit() {
+            break;  // Exit with data Unborrowed
+        }
+        
+        let r = &data;
+        process(r);
+        // Borrow released before next iteration or break
+    }
+    
+    // ✓ OK: All paths to here have data Unborrowed
+    data.finalize();
+}
+
+// ✗ ERROR: Break with active borrow
+fn example_break_with_borrow_error() {
+    let data = Data();
+    let ref_holder;
+    
+    while true {
+        ref_holder = &data;  // Borrow starts
+        
+        if should_exit() {
+            break;  // ✗ ERROR: Exiting with active borrow
+        }
+        
+        // ... ref_holder still alive
+    }
+    
+    // ref_holder refers to borrow that may/may not exist
+    print(ref_holder);
+}
+
+// ✓ VALID: Continue skips rest of iteration
+fn example_continue_ok() {
+    let items = [1, 2, 3, 4, 5];
+    
+    for item in items {
+        if item == 3 {
+            continue;  // Skip processing for this item
+        }
+        
+        let processed = &item;
+        heavy_processing(processed);
+        // Borrow ends here
+    }
+    
+    // ✓ OK
+    print("done");
+}
+
+// ✓ VALID: Break from nested loop
+fn example_nested_loop_break() {
+    let matrix = [[1,2], [3,4], [5,6]];
+    let found = false;
+    
+     for row in matrix {
+        for cell in row {
+            if cell == 4 {
+                found = true;
+                break ;  // Break outer loop
+            }
+        }
+    }
+    
+    // ✓ OK: All borrows released on break
+    print(found);
+}
+
+
+// ============================================================
+// SECTION 7: EARLY RETURN
+// ============================================================
+
+// ✓ VALID: Early return releases borrows
+fn example_early_return_ok() : int {
+    let data = Data();
+    
+    if is_empty(&data) {
+        return 0;  // Return releases all borrows
+    }
+    
+    let r = &data;
+    return r.compute();
+}
+
+// ✗ ERROR: Return moved value
+fn example_return_after_move_error() : Resource {
+    let r = create_resource();
+    
+    if condition() {
+        consume(r);     // Moved here
+    }
+    
+    return r;  // ✗ ERROR: r might be moved
+}
+
+// ✓ VALID: Return borrow (if function signature allows)
+fn example_return_borrow() {
+    if data.is_valid() {
+        return data;  // Return the borrow
+    }
+    
+    panic("Invalid data");
+}
+
+
+// ============================================================
+// SECTION 8: TRY/CATCH
+// ============================================================
+
+// ✓ VALID: Consistent state in try and catch
+fn example_try_catch_ok() {
+    let resource = Resource();
+    
+    try {
+        resource.use();  // Shared borrow
+    } catch(e) {
+        log_error(e);
+        resource.reset();  // Also mutates - isolated block
+    }
+    
+    // ✓ OK after try/catch
+    resource.finalize();
+}
+
+// ✗ ERROR: Move in try, use in catch
+fn example_try_catch_move_error() {
+    let resource = Resource();
+    
+    try {
+        consume(resource);  // Moved in try
+    } catch(e) {
+        resource.reset();   // ✗ ERROR: resource might be moved
+    }
+}
+
+// ✓ VALID: Resource cleanup in catch
+fn example_try_catch_cleanup() {
+    let file = open_file("data.txt");
+    
+    try {
+        process_file(&file);
+    } catch(e) {
+        // Catch can still access file for cleanup
+        file.close();
+        rethrow(e);
+    }
+    
+    file.close();
+}
+
+
+// ============================================================
+// SECTION 9: MATCH/SWITCH
+// ============================================================
+
+// ✓ VALID: All arms have consistent borrows
+fn example_match_consistent() {
+    let value = get_value();
+    let data = Data();
+    
+    match value {
+        0 => {
+            let r = &data;
+            handle_zero(r);
+        },
+        1 => {
+            let r = &data;
+            handle_one(r);
+        },
+        _ => {
+            let r = &data;
+            handle_default(r);
+        }
+    }
+    
+    // ✓ OK: All arms had shared borrows
+    data.summarize();
+}
+
+// ✗ ERROR: Inconsistent borrows across arms
+fn example_match_inconsistent_error() {
+    let value = get_value();
+    let data = Data();
+    
+    match value {
+        0 => data.read(),      // Shared
+        1 => data.mutate(),    // ✗ Exclusive - inconsistent!
+        _ => data.read(),      // Shared
+    }
+    
+    // ✗ ERROR: Arm 1 has different borrow kind
+    data.finalize();
+}
+
+// ✓ VALID: Move in all arms (consistent terminal state)
+fn example_match_all_move() {
+    let resource = create_resource();
+    let kind = get_kind();
+    
+    match kind {
+        Kind.A => consume_a(resource),
+        Kind.B => consume_b(resource),
+        Kind.C => consume_c(resource),
+    }
+    
+    // resource is moved in all arms - no use after
+}
+
+
+// ============================================================
+// SECTION 10: USE AFTER MOVE
+// ============================================================
+
+// ✗ ERROR: Simple use after move
+fn example_use_after_move_error() {
+    let data = create_data();
+    
+    consume(data);  // data is moved
+    
+    print(data);    // ✗ ERROR: Use after move
+}
+
+// ✗ ERROR: Use after conditional move
+fn example_conditional_use_after_move_error() {
+    let data = create_data();
+    
+    if condition() {
+        consume(data);  // Moved in this branch
+    }
+    // else: not moved
+    
+    // ✗ ERROR: data might be moved
+    print(data);
+}
+
+// ✓ VALID: Use before move
+fn example_use_before_move_ok() {
+    let data = create_data();
+    
+    print(data);    // Use (shared borrow)
+    process(&data); // Use (shared borrow)
+    
+    consume(data);  // ✓ OK: Move after all uses
+}
+
+
+// ============================================================
+// SECTION 11: USE AFTER FREE
+// ============================================================
+
+// ✗ ERROR: Use after free
+fn example_use_after_free_error() {
+    let ptr = alloc<int>();
+    *ptr = 42;
+    
+    free(ptr);      // ptr is now freed
+    
+    print(*ptr);    // ✗ ERROR: Use after free
+}
+
+// ✗ ERROR: Free in one branch, use after
+fn example_conditional_free_error() {
+    let ptr = alloc<int>();
+    *ptr = 100;
+    
+    if should_free() {
+        free(ptr);   // Freed in this branch
+    }
+    
+    // ✗ ERROR: ptr might be freed
+    print(*ptr);
+}
+
+// ✗ ERROR: Double free
+fn example_double_free_error() {
+    let ptr = alloc<int>();
+    
+    free(ptr);
+    free(ptr);  // ✗ ERROR: Double free
+}
+
+// ✗ ERROR: Free while borrowed
+fn example_free_while_borrowed_error() {
+    let ptr = alloc<int>();
+    *ptr = 42;
+    
+    let r = &*ptr;   // Borrow the value
+    
+    free(ptr);       // ✗ ERROR: Cannot free while borrowed
+    
+    print(r);        // r would be dangling
+}
+
+
+// ============================================================
+// SECTION 12: DROP SEMANTICS
+// ============================================================
+
+// ✓ VALID: Implicit drop at scope end
+fn example_implicit_drop() {
+    {
+        let resource = Resource();
+        resource.use();
+        // resource dropped here implicitly
+    }
+    // resource no longer in scope
+}
+
+// ✗ ERROR: Drop while borrowed
+fn example_drop_while_borrowed_error() {
+    let holder;
+    
+    {
+        let data = Data();
+        holder = &data;
+        // ✗ ERROR: data dropped while holder borrows it
+    }
+    
+    print(holder);  // Dangling reference
+}
+
+// ✓ VALID: Explicit drop
+fn example_explicit_drop() {
+    let resource = Resource();
+    resource.use();
+    
+    drop(resource);  // Explicit drop
+    
+    // resource is now dropped, cannot use
+}
+
+
+// ============================================================
+// SECTION 13: CLOSURE CAPTURES
+// ============================================================
+
+// ✓ VALID: Closure with shared capture
+fn example_closure_shared_ok() {
+    let data = [1, 2, 3];
+    
+    let summer = || {
+        let sum = 0;
+        for x in &data {  // Shared capture
+            sum = sum + x;
+        }
+        return sum;
+    };
+    
+    // ✓ OK: data can still be read
+    print(data.len());
+    print(summer());
+}
+
+// ✗ ERROR: Closure captures moved value
+fn example_closure_capture_moved_error() {
+    let data = create_data();
+    
+    consume(data);  // data moved
+    
+    let printer = || {
+        print(data);  // ✗ ERROR: data was moved before closure defined
+    };
+    
+    printer();
+}
+
+// ✓ VALID: Move into closure
+fn example_closure_move_into() {
+    let data = create_data();
+    
+    let consumer = move || {
+        consume(data);  // data moved INTO closure
+    };
+    
+    // data is no longer accessible here
+    consumer();
+}
+
+
+// ============================================================
+// SECTION 14: STRUCT FIELD BORROWS
+// ============================================================
+
+// ✓ VALID: Borrow different fields simultaneously
+fn example_split_borrow_ok() {
+    let point = Point { x: 1, y: 2 };
+    
+    let x_ref = &point.x;  // Borrow x field
+    let y_ref = &point.y;  // Borrow y field - OK, different fields!
+    
+    print(x_ref);
+    print(y_ref);
+}
+
+// ✗ ERROR: Exclusive borrow of field, then borrow whole struct
+fn example_field_whole_conflict_error() {
+    let obj = Object { a: 1, b: 2 };
+    
+    let a_ref = &mut obj.a;  // Exclusive borrow of field
+    let obj_ref = &obj;      // ✗ ERROR: Cannot borrow whole while field is exclusive
+    
+    *a_ref = 10;
+}
+
+// ✓ VALID: Sequential field mutations
+fn example_sequential_field_mutation() {
+    let obj = Object { a: 1, b: 2 };
+    
+    obj.a = 10;  // Mutate a
+    obj.b = 20;  // Mutate b (a's borrow ended)
+    
+    print(obj);  // ✓ OK
+}
+
+
+// ============================================================
+// SECTION 15: COMPLEX PATTERNS
+// ============================================================
+
+// ✓ VALID: Resource acquisition in loop with cleanup
+fn example_loop_with_cleanup() {
+    for i in 0..10 {
+        let resource = acquire_resource(i);
+        
+        try {
+            resource.process();
+        } catch(e) {
+            resource.cleanup();
+            continue;  // Skip to next iteration
+        }
+        
+        resource.commit();
+        // resource dropped at end of iteration
+    }
+}
+
+// ✓ VALID: State machine pattern
+fn example_state_machine() {
+    let state = State::Init;
+    let data = Data();
+    
+    while state != State::Done {
+        match state {
+            State::Init => {
+                data.initialize();
+                state = State::Processing;
+            }
+            State::Processing => {
+                if data.is_complete() {
+                    state = State::Done;
+                } else {
+                    data.step();
+                }
+            }
+            State::Done => {
+                // Unreachable
+            }
+        }
+    }
+    
+    data.finalize();
+}
+
+// ✓ VALID: Builder pattern
+fn example_builder_pattern() -> Result {
+    let builder = Builder();
+    
+    builder.set_name("test");
+    builder.set_value(42);
+    
+    if needs_extra() {
+        builder.set_extra(true);
+    }
+    
+    return builder.build();  // Consumes builder
+}
+
+
+// ============================================================
+// HELPER FUNCTION STUBS
+// ============================================================
+
+fn condition() -> bool { true }
+fn should_transfer() -> bool { false }
+fn should_free() -> bool { false }
+fn should_exit() -> bool { false }
+fn is_sorted() -> bool { true }
+fn is_empty(d: &Data) -> bool { false }
+fn outer_cond() -> bool { true }
+fn inner_cond() -> bool { true }
+fn inner_cond_a() -> bool { true }
+fn inner_cond_b() -> bool { true }
+fn condition_a() -> bool { true }
+
+fn create_resource() { return Resource(); }
+fn create_data() { return Data(); }
+fn consume(x) { }
+fn consume_a(x) { }
+fn consume_b(x) { }
+fn consume_c(x) { }
+fn use_ref(x) { }
+fn process(x) { }
+fn process_a(x) { }
+fn process_b(x) { }
+fn process_c(x) { }
+fn process_d(x) { }
+fn binary_search(x, v) { }
+fn linear_search(x, v) { }
+fn heavy_processing(x) { }
+fn log_error(e) { }
+fn rethrow(e) { }
+fn handle_zero(x) { }
+fn handle_one(x) { }
+fn handle_default(x) { }
+fn get_value() -> int { return 0; }
+fn get_kind() { return Kind::A; }
+fn acquire_resource(i) { return Resource(); }
+fn needs_extra() -> bool { false }
+
+class Resource {
+    fn use() { }
+    fn reset() { }
+    fn finalize() { }
+    fn read() { }
+    fn mutate() { }
+    fn close() { }
+    fn process() { }
+    fn cleanup() { }
+    fn commit() { }
+}
+
+class Data {
+    fn read() { }
+    fn mutate() { }
+    fn finalize() { }
+    fn summarize() { }
+    fn compute() -> int { return 0; }
+    fn is_valid() -> bool { return true; }
+    fn initialize() { }
+    fn is_complete() -> bool { return true; }
+    fn step() { }
+}
+
+class Object {
+    a: int
+    b: int
+    fn modify() { }
+}
+
+class Point {
+    x: int
+    y: int
+}
+
+class Builder {
+    fn set_name(s) { }
+    fn set_value(v) { }
+    fn set_extra(b) { }
+    fn build() { return Result(); }
+}
+
+enum State {
+    Init,
+    Processing,
+    Done
+}
+
+enum Kind {
+    A,
+    B,
+    C
+}
+
+class Result { }
+class Vec { }

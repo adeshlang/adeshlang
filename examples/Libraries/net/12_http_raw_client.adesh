@@ -1,0 +1,26 @@
+// AdeshLang Net Example 12: Raw HTTP Client Implementation over Net.tcpConnect
+import Net;
+
+fn http_get_request(host, port, path) {
+    print("Initiating raw HTTP GET request to", host, "port", port, "path", path);
+
+    let stream = Net.tcpConnect(host, port);
+    stream.setNoDelay(true);
+
+    let reqHeader = "GET " + path + " HTTP/1.1\r\nHost: " + host + "\r\nUser-Agent: AdeshLang-RawHTTP/1.0\r\nConnection: close\r\n\r\n";
+    stream.writeText(reqHeader);
+    print("Sent HTTP request header");
+
+    let response = stream.read(4096);
+    print("Received HTTP response");
+
+    stream.close();
+}
+
+fn main() {
+    print("=== 12. Raw HTTP Client over Net.tcpConnect ===");
+    http_get_request("127.0.0.1", 9093, "/api/v1/health");
+    print("=== 12. Raw HTTP Client Completed ===");
+}
+
+

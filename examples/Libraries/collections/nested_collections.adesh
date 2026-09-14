@@ -1,0 +1,17 @@
+import Collections;
+
+print("========================================");
+print("Multi-Level Nested Collections Example");
+print("========================================");
+
+let outer = Collections.HashMap();
+let inner_vec = Collections.Vec();
+
+inner_vec.push("item_1");
+inner_vec.push("item_2");
+
+outer.insert("sub_list", inner_vec);
+
+let retrieved_vec = outer.get("sub_list");
+print("Retrieved nested vector length: ", retrieved_vec.len());
+print("Retrieved nested vector content: ", retrieved_vec.toArray());

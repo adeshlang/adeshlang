@@ -1,0 +1,53 @@
+// Data Structure Testing Examples
+// Demonstrates testing arrays and objects
+
+// Test array operations
+test fn test_array_creation() {
+    let arr = [1, 2, 3, 4, 5];
+    assert_eq(arr[0], 1);
+    assert_eq(arr[4], 5);
+}
+
+test fn test_array_length() {
+    let arr = [1, 2, 3];
+    assert_eq(arr.length, 3);
+    
+    let empty = [];
+    assert_eq(empty.length, 0);
+}
+
+test fn test_array_operations() {
+    let arr = [1, 2, 3];
+    arr.push(4);
+    assert_eq(arr.length, 4);
+    assert_eq(arr[3], 4);
+}
+
+// Test object operations
+test fn test_object_creation() {
+    let obj = {
+        name: "Adesh",
+        version: 1
+    };
+    assert_eq(obj.name, "Adesh");
+    assert_eq(obj.version, 1);
+}
+
+test fn test_object_modification() {
+    let obj = {
+        count: 0
+    };
+    obj.count = 5;
+    assert_eq(obj.count, 5);
+}
+
+// Test string operations
+test fn test_string_length() {
+    let str = "Adesh";
+    assert_eq(str.length, 4);
+}
+
+fn main() {
+    print("Data Structure Testing Examples");
+    print("Run with: adesh run --test 03_data_structure_tests.adesh");
+}

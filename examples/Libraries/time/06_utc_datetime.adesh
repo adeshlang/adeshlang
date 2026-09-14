@@ -1,0 +1,50 @@
+// 06_utc_datetime.adesh - UtcDateTime with nanosecond timestamps
+import Time;
+
+print("=== UtcDateTime Examples ===\n");
+
+// --- Now ---
+let now: UtcDateTime = Time.utcDateTimeNow();
+print("UTC Now ISO    :", now.toIsoString());
+print("UTC Now RFC3339:", now.toRfc3339());
+
+// --- From nanoseconds since epoch ---
+let epoch: UtcDateTime = Time.utcDateTimeFromNanos(0n);
+print("Unix epoch     :", epoch.toIsoString());
+
+let y2k: UtcDateTime = Time.utcDateTimeFromNanos(946684800000000000n);
+print("Year 2000      :", y2k.toIsoString());
+
+// --- Accessors ---
+print("\n--- Accessors ---");
+print("now year         :", now.year());
+print("now month        :", now.month());
+print("now day          :", now.day());
+print("now hour         :", now.hour());
+print("now minute       :", now.minute());
+print("now second       :", now.second());
+print("unix nanoseconds :", now.unixNanoseconds());
+print("unix seconds     :", now.unixSeconds());
+print("unix milliseconds:", now.unixMilliseconds());
+
+// --- Parsing ---
+let parsed: UtcDateTime = Time.utcDateTimeParse("2024-01-15T12:30:00Z");
+print("\nParsed UTC :", parsed.toIsoString());
+
+// --- Arithmetic ---
+print("\n--- Arithmetic ---");
+let plus1h: UtcDateTime = now.add(Time.durationHours(1n));
+let minus30s: UtcDateTime = now.sub(Time.durationSeconds(30n));
+print("+ 1 hour   :", plus1h.toIsoString());
+print("- 30 secs  :", minus30s.toIsoString());
+
+// --- Duration between ---
+let gap: Duration = now.durationSince(y2k);
+print("\nNanoseconds since Y2K:", gap.wholeNanoseconds());
+print("Hours since Y2K      :", gap.wholeHours());
+
+// --- Comparison ---
+print("\n--- Comparison ---");
+print("epoch < y2k   :", epoch.lt(y2k));
+print("now   > y2k   :", now.gt(y2k));
+print("epoch == epoch:", epoch.eq(Time.utcDateTimeFromNanos(0n)));

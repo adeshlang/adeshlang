@@ -1,0 +1,126 @@
+// AdeshLang - Built-in Decorators Working Demo
+// Simple examples that work with current implementation
+
+print("=== BUILT-IN DECORATORS DEMO ===\n");
+
+// ============================================
+// Test 1: @memoize - Caching Pure Functions
+// ============================================
+print("Test 1: @memoize - Automatic Caching");
+print("--------------------------------------");
+
+@memoize
+fn factorial(n) {
+    if (n <= 1) { return 1; }
+    return n * factorial(n - 1);
+}
+
+print("Computing factorial(10)...");
+let start1 = clock();
+let fact1 = factorial(10);
+let time1 = clock() - start1;
+print("Result:", fact1, "Time:", time1, "sec");
+
+print("Computing factorial(10) again (cached)...");
+let start2 = clock();
+let fact2 = factorial(10);
+let time2 = clock() - start2;
+print("Result:", fact2, "Time:", time2, "sec");
+
+if (time2 < time1) {
+    print("✅ Second call was FASTER (using cache)!");
+}
+print();
+
+// ============================================
+// Test 2: @trace - Call Tracing  
+// ============================================
+print("Test 2: @trace - Automatic Logging");
+print("--------------------------------------");
+
+@trace
+fn add(a, b) {
+    return a + b;
+}
+
+print("Watch the trace output:");
+let sum = add(15, 25);
+print("Final result:", sum);
+print();
+
+// ============================================
+// Test 3: @benchmark - Performance Measurement
+// ============================================
+print("Test 3: @benchmark - Timing");
+print("--------------------------------------");
+
+@benchmark
+fn slowLoop(n) {
+    let total = 0;
+    for (i in 0..n) {
+        total = total + i;
+    }
+    return total;
+}
+
+print("Running benchmarked function:");
+let result = slowLoop(5000);
+print("Result:", result);
+print();
+
+// ============================================
+// Test 4: @deprecated - Warnings
+// ============================================
+print("Test 4: @deprecated - Deprecation");
+print("--------------------------------------");
+
+@deprecated
+fn legacyCalc(x) {
+    return x * 2;
+}
+
+print("Calling deprecated function (check stderr):");
+let legacy = legacyCalc(42);
+print("Result:", legacy);
+print();
+
+// ============================================
+// Test 5: Stacked Decorators
+// ============================================
+print("Test 5: Stacking Decorators");
+print("--------------------------------------");
+
+@trace
+@memoize
+@benchmark
+fn complexCalc(n) {
+    return n * n * n;
+}
+
+print("First call (traced, benchmarked):");
+let c1 = complexCalc(5);
+print("Result:", c1);
+
+print("\nSecond call (should use cache):");
+let c2 = complexCalc(5);
+print("Result:", c2);
+print();
+
+// ============================================
+// SUMMARY
+// ============================================
+print("=== RESULTS ===");
+print("\nDecorators Successfully Demonstrated:");
+print("✅ @memoize     - Result caching works");
+print("✅ @trace       - Call logging works");
+print("✅ @benchmark   - Timing measurement works");
+print("✅ @deprecated  - Deprecation warnings work");
+print("✅ Stacking     - Multiple decorators work together");
+print("\n🎯 KEY POINT:");
+print("These are BUILT-IN decorators implemented in Rust.");
+print("They have capabilities regular functions DON'T:");
+print("  • Persistent cache (memoize)");
+print("  • High-resolution timing (trace, benchmark)");
+print("  • Stderr output (deprecated)");
+print("  • Native optimization");
+print("\n✨ The 'decorator' keyword NOW HAS UNIQUE VALUE!");

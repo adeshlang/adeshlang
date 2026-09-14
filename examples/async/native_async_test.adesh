@@ -1,0 +1,161 @@
+// Native async/await JIT tests
+// Run: adesh run examples/async/native_async_test.adesh --jit
+
+async fn main() {
+    print("=== Native Async/Await Tests (JIT Backend) ===\n");
+
+    // ============================================================================
+    // Test 1: Basic Promise with immediate resolve
+    // ============================================================================
+    print("Test 1: Basic Promise with immediate resolve");
+    let p1 = Promise(fn(resolve, reject) {
+        resolve(42);
+    });
+    let v1 = await p1;
+    print("  Result:", v1);
+    if v1 == 42 {
+        print("  [PASS]");
+    } else {
+        print("  [FAIL]");
+    }
+
+    // ============================================================================
+    // Test 2: Promise with computation in executor
+    // ============================================================================
+    print("\nTest 2: Promise with computation");
+    let p2 = Promise(fn(resolve, reject) {
+        let sum: i32 = 0;
+        let i: i32 = 1;
+        while i <= 100 {
+            sum = sum + i;
+            i = i + 1;
+        }
+        resolve(sum);
+    });
+    let v2 = await p2;
+    print("  Sum 1-100:", v2);
+    if v2 == 5050 {
+        print("  [PASS]");
+    } else {
+        print("  [FAIL]");
+    }
+
+    // ============================================================================
+    // Test 3: Multiple sequential promises
+    // ============================================================================
+    print("\nTest 3: Multiple sequential promises");
+    let pa = Promise(fn(r, _) { r("A"); });
+    let pb = Promise(fn(r, _) { r("B"); });
+    let pc = Promise(fn(r, _) { r("C"); });
+    let va = await pa;
+    let vb = await pb;
+    let vc = await pc;
+    print("  Values:", va, vb, vc);
+    if va == "A" {
+        if vb == "B" {
+            if vc == "C" {
+                print("  [PASS]");
+            }
+        }
+    }
+
+    // ============================================================================
+    // Test 4: Await on async fn/promise values
+    // ============================================================================
+    print("\nTest 4: Await on async values");
+    let testFn1 = async fn() { return 123; };
+    let testFn2 = async fn() { return "hello"; };
+    let testFn3 = async fn() { return 3.14; };
+    let v_int = await testFn1();
+    let v_str = await testFn2();
+    let v_float = await testFn3();
+    print("  Int:", v_int, "String:", v_str, "Float:", v_float);
+    if v_int == 123 {
+        print("  [PASS]");
+    } else {
+        print("  [FAIL]");
+    }
+
+    // ============================================================================
+    // Test 5: Promise with conditional logic
+    // ============================================================================
+    print("\nTest 5: Promise with conditional logic");
+    let p5 = Promise(fn(resolve, reject) {
+        let x = 10;
+        if x > 5 {
+            resolve("greater");
+        } else {
+            resolve("smaller");
+        }
+    });
+    let v5 = await p5;
+    print("  Result:", v5);
+    if v5 == "greater" {
+        print("  [PASS]");
+    } else {
+        print("  [FAIL]");
+    }
+
+    // ============================================================================
+    // Test 6: Promise with array computation
+    // ============================================================================
+    print("\nTest 6: Promise with array");
+    let p6 = Promise(fn(resolve, reject) {
+        let arr = [1, 2, 3, 4, 5];
+        let sum = 0;
+        for x in arr {
+            sum = sum + x;
+        }
+        resolve(sum);
+    });
+    let v6 = await p6;
+    print("  Array sum:", v6);
+    if v6 == 15 {
+        print("  [PASS]");
+    } else {
+        print("  [FAIL]");
+    }
+
+    // ============================================================================
+    // Test 7: Promise with string operations
+    // ============================================================================
+    print("\nTest 7: Promise with string concat");
+    let p7 = Promise(fn(resolve, reject) {
+        let s = "Hello";
+        let s2 = " World";
+        resolve(s + s2);
+    });
+    let v7 = await p7;
+    print("  String:", v7);
+    if v7 == "Hello World" {
+        print("  [PASS]");
+    } else {
+        print("  [FAIL]");
+    }
+
+    // ============================================================================
+    // Test 8: Nested Promise execution (no closure capture)
+    // ============================================================================
+    print("\nTest 8: Sequential promise chain");
+    let first = Promise(fn(r, _) { r(10); });
+    let f_val = await first;
+    print("  First:", f_val);
+
+    let second = Promise(fn(r, _) { r(20); });
+    let s_val = await second;
+    print("  Second:", s_val);
+
+    let combined = f_val + s_val;
+    print("  Combined:", combined);
+    if combined == 30 {
+        print("  [PASS]");
+    } else {
+        print("  [FAIL]");
+    }
+
+    // ============================================================================
+    // Summary
+    // ============================================================================
+    print("\n=== All tests complete ===");
+    print("Native Promise/await working in JIT backend!");
+}

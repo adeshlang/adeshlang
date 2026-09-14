@@ -1,0 +1,13 @@
+// This program tests if heap allocations are properly blocked in embedded mode
+fn main() {
+    print("Attempting to create a large allocation...");
+    
+    // Try to create something that would require heap allocation
+    let large_array = [];
+    for i in 0..1000 {
+        large_array.push(i);
+    }
+    
+    print("Array created:");
+    print(large_array.length);
+}

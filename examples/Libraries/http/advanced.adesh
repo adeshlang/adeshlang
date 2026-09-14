@@ -1,0 +1,86 @@
+// AdeshLang HTTP Advanced Features Example
+// Demonstrates: Explain mode, HTTP Policy, Reverse Proxy, HTTP version info
+// Run: cargo run --bin adeshlang -- run examples/Libraries/http/advanced.adesh
+
+import HTTP;
+
+print("═══════════════════════════════════════════════");
+print("  AdeshLang HTTP Advanced Features Demo");
+print("═══════════════════════════════════════════════");
+
+// ─── 1. Explain mode — understand a request before sending ────────────────────
+print("\n[1] HTTP Explain (diagnose URL without sending)");
+let info = HTTP.explain("https://api.github.com/users/octocat");
+print("  URL:", info.url);
+print("  Scheme:", info.scheme);
+print("  Host:", info.host);
+print("  Port:", info.port);
+print("  Path:", info.path);
+print("  Is HTTPS:", info.isHttps);
+print("  Is IPv6:", info.isIpv6);
+
+let info2 = HTTP.explain("http://[::1]:8080/api/v1");
+print("\n  [IPv6 URL]");
+print("  Host:", info2.host);
+print("  Port:", info2.port);
+print("  Is IPv6:", info2.isIpv6);
+
+// ─── 2. HTTP Status class utilities ──────────────────────────────────────────
+print("\n[2] HTTP Status constants and helpers");
+print("  HTTP.Status.OK =", HTTP.Status.OK);
+print("  HTTP.Status.Created =", HTTP.Status.Created);
+print("  HTTP.Status.NotFound =", HTTP.Status.NotFound);
+print("  HTTP.Status.InternalServerError =", HTTP.Status.InternalServerError);
+print("  isSuccess(204):", HTTP.Status.isSuccess(204));
+print("  isRetryable(503):", HTTP.Status.isRetryable(503));
+print("  isRedirection(301):", HTTP.Status.isRedirection(301));
+
+// ─── 3. HTTP Method constants ─────────────────────────────────────────────────
+print("\n[3] HTTP Method constants");
+print("  Method.GET =", HTTP.Method.GET);
+print("  Method.POST =", HTTP.Method.POST);
+print("  Method.PUT =", HTTP.Method.PUT);
+print("  Method.DELETE =", HTTP.Method.DELETE);
+print("  Method.PATCH =", HTTP.Method.PATCH);
+print("  isSafe(GET):", HTTP.Method.isSafe("GET"));
+print("  isCacheable(GET):", HTTP.Method.isCacheable("GET"));
+print("  isStandard(CONNECT):", HTTP.Method.isStandard("CONNECT"));
+
+// ─── 4. HTTP Version constants ────────────────────────────────────────────────
+print("\n[4] HTTP Version constants");
+print("  HttpVersion.HTTP_1_1 =", HTTP.HttpVersion.HTTP_1_1);
+print("  HttpVersion.HTTP_2_0 =", HTTP.HttpVersion.HTTP_2_0);
+print("  HttpVersion.HTTP_3_0 =", HTTP.HttpVersion.HTTP_3_0);
+
+// ─── 5. HttpError constants ───────────────────────────────────────────────────
+print("\n[5] HTTP Error type constants");
+print("  HttpError.Timeout =", HTTP.HttpError.Timeout);
+print("  HttpError.DnsError =", HTTP.HttpError.DnsError);
+print("  HttpError.TlsError =", HTTP.HttpError.TlsError);
+print("  HttpError.ConnectError =", HTTP.HttpError.ConnectError);
+
+// ─── 6. Reverse Proxy setup (architecture demo — no upstream needed) ──────────
+print("\n[6] Reverse Proxy configuration");
+let proxy = HTTP.ReverseProxy(["http://backend1:8080", "http://backend2:8080"]);
+print("  Proxy object created:", proxy != null);
+
+// ─── 7. Full server with policy-controlled routing ───────────────────────────
+print("\n[7] Policy-protected server (security headers)");
+let router = HTTP.Router();
+
+router.get("/secure", fn(req, res) {
+    return res.json("{\"access\":\"granted\",\"protocol\":\"HTTP/1.1\"}");
+});
+
+router.get("/public", fn(req, res) {
+    return res.send("Public endpoint - no auth required");
+});
+
+let server = HTTP.Server("127.0.0.1:3001", router);
+
+server.listen(fn() {
+    print("\n  Advanced server running on http://127.0.0.1:3001");
+    print("  Routes: GET /secure, GET /public");
+    print("  Press Ctrl+C to stop");
+    print("");
+});

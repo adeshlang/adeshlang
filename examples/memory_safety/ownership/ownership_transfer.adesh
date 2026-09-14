@@ -1,0 +1,53 @@
+// Ownership Transfer Patterns
+// Different ways ownership changes hands
+
+fn main() {
+    print("=== Ownership Transfer Patterns ===");
+    
+    // Pattern 1: Assignment transfers ownership
+    let a = [1, 2, 3];
+    let b = a;  // Ownership transfers from a to b
+    // a is no longer valid
+    
+    // Pattern 2: Function call transfers ownership
+    let data = [4, 5, 6];
+    consume(data);  // Ownership transfers to function
+    // data is no longer valid
+    
+    // Pattern 3: Return value transfers ownership
+    let result = create_array();  // Ownership transfers from function
+    print("Received:", result);
+    
+    // Pattern 4: Conditional ownership transfer
+    let x = [7, 8, 9];
+    if (true) {
+        let y = x;  // x moved into if block
+        print("In block:", y);
+    }
+    // x is no longer valid here
+}
+
+fn consume(arr) {
+    print("Consuming:", arr);
+    // arr is dropped when function ends
+}
+
+fn create_array() {
+    let new_arr = [10, 11, 12];
+    return new_arr;  // Ownership transfers to caller
+}
+
+// Return borrowed data (no ownership transfer)
+fn borrow_pattern() {
+    let data = [1, 2, 3];
+    let borrowed = borrow_data(&data);
+    
+    // data is still valid because we only borrowed
+    print("Original:", data);
+    print("Borrowed:", borrowed);
+}
+
+fn borrow_data(arr) {
+    // Just return the borrow, not the ownership
+    return arr;
+}

@@ -1,0 +1,8 @@
+import URL;
+
+let urlV4: URL = URL.parse("http://192.168.1.1:8080/router/settings");
+let urlV6: URL = URL.parse("http://[2001:db8::1]:443/ipv6/test");
+
+print("--- 06 IPv4 and IPv6 Handling Example ---");
+print("IPv4 Host:", urlV4.host);
+print("IPv6 Host:", urlV6.host);

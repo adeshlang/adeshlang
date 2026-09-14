@@ -1,0 +1,10 @@
+import Env;
+
+let path = Env.get("PATH");
+print("PATH: " + str(path));
+
+if Env.contains("JAVA_HOME") {
+    print("Java Installed at: " + str(Env.get("JAVA_HOME")));
+} else {
+    print("JAVA_HOME environment variable is not set.");
+}

@@ -1,0 +1,26 @@
+// Example 10: STARTTLS Protocol Upgrade over Existing Socket Stream
+import Net;
+import TLS;
+
+let host: String = "1.1.1.1";
+let port: i64 = 443;
+
+print("--- STARTTLS Stream Upgrade Demo ---");
+
+// Step 1: Establish cleartext network socket
+let tcpSocket: Object = Net.tcpConnect(host, port);
+print("Established raw TCP socket connection.");
+
+// Step 2: Perform STARTTLS stream wrapping (upgrade cleartext socket to encrypted TLS 1.3 stream)
+let tls: TLS = TLS.wrap(tcpSocket, host);
+print("Successfully upgraded TCP socket to TLS stream.");
+
+print("Negotiated Protocol: " + tls.version());
+print("Negotiated ALPN: " + (tls.alpn() == "" ? "None" : tls.alpn()));
+
+tls.writeText("GET / HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n");
+let data: String = tls.readText(1024);
+print("\nEncrypted Read Payload:\n" + data);
+
+tls.close();
+print("STARTTLS Session Upgraded Stream Closed.");

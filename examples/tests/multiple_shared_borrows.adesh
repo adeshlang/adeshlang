@@ -1,0 +1,9 @@
+
+// Create several borrows and interleave prints
+let s = "abc";
+let a = &s;
+let c = &s;
+print(a);
+print(c);
+print(s);
+

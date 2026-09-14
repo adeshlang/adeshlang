@@ -1,0 +1,104 @@
+// Examples showing generics usage: aliases, functions, classes/methods
+let start = clock();
+
+// Generic type aliases
+type Pair<T, U> = { first: T; second: U };
+type Maybe<T> = { value?: T; present: bool };
+type Box<T> = { value: T };
+
+// Generic functions
+fn identity<T>(x: T): T {
+    return x;
+}
+
+fn make_pair<T, U>(a: T, b: U): Pair<T, U> {
+    return { first: a, second: b };
+}
+
+// Generic class with generic method
+class C<T> {
+    fn id<U>(x: U): U {
+        return x;
+    }
+}
+
+// Function generics
+let a: number = identity<number>(42);
+let b: string = identity<string>("hello generics");
+print("a:", a);
+print("b:", b);
+
+// Alias instantiation
+let p: Pair<number, string> = make_pair<number, string>(1, "two");
+print("pair:", p.first, p.second);
+
+// Maybe alias with optional field
+let m: Maybe<string> = { present: false };
+let m2: Maybe<string> = { present: true, value: "ok" };
+print("maybe m:", m.present, m.value);
+print("maybe m2:", m2.present, m2.value);
+
+// Nested alias instantiation
+let bx: Box<Box<number>> = { value: { value: 1 } };
+print("box value:", bx.value.value);
+
+let bx3: Box<Box<Box<string>>> = { value: { value: { value: "ok" } } };
+print("box3 value:", bx3.value.value.value);
+
+let mn: Maybe<number?> = { present: true, value: null };
+print("maybe mn:", mn.present, mn.value);
+
+let pp: Pair<Box<number>, Box<string>> = make_pair<Box<number>, Box<string>>(
+    { value: 7 },
+    { value: "s" }
+);
+print("pair of boxes:", pp.first.value, pp.second.value);
+
+// Class method generics via instance
+let cinst = new C(0);
+let ca: number = cinst.id<number>(1);
+let cb: string = cinst.id<string>("x");
+print("class id ca:", ca);
+print("class id cb:", cb);
+
+// Generic param enforcement examples (these are validated by the type checker)
+// let bad_num: number = identity<string>("oops"); // type error
+// let bad_pair: Pair<number, string> = { first: 1, second: 2 }; // type error
+
+let end = clock();
+print(`time: ${end - start} ms`);
+
+type Result<T, E> = { ok?: T; err?: E };
+let r1: Result<number, string> = { ok: 10 };
+let r2: Result<number, string> = { err: "fail" };
+print("result r1:", r1.ok, r1.err);
+print("result r2:", r2.ok, r2.err);
+
+class Stack<T> {
+    fn init() {
+        this.items = [];
+    }
+
+    fn push(x: T) {
+        this.items = this.items + [x];
+    }
+
+    fn top(): T? {
+        if (this.items.length == 0) {
+            return null;
+        }
+        return this.items[this.items.length - 1];
+    }
+
+    fn mapped<U>(f) {
+        return map(this.items, f);
+    }
+}
+
+let st = new Stack();
+st.push(1);
+st.push(2);
+st.push(3);
+print("stack top:", st.top());
+let doubled = st.mapped<number>(x => x + x);
+print("stack mapped length:", doubled.length);

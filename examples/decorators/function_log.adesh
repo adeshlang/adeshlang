@@ -1,0 +1,55 @@
+// ================================================
+// Basic Function Decorator: Logging
+// ================================================
+//
+// This example demonstrates the simplest form of a decorator:
+// a function that wraps another function to add logging behavior.
+//
+// Key Concepts:
+// - Decorators receive two parameters: target and meta
+// - target: the original function being decorated
+// - meta: metadata object with info about the decorated function
+//   - meta.name: the function's name
+//   - meta.type: "function" (for function decorators)
+//   - meta.params: array of parameter types (if annotated)
+// - The decorator returns a new function that wraps the original
+// - The wrapper can execute code before and after calling target
+//
+// ================================================
+
+/**
+ * Basic logging decorator
+ * Logs function name and arguments before execution
+ * 
+ * @param {function} target - The function being decorated
+ * @param {object} meta - Metadata about the function (name, type, params)
+ * @returns {function} Wrapped function with logging
+ */
+decorator log(target, meta) {
+  // Return a new function that wraps the original
+  return fn(a, b) {
+    // Log before execution
+    print(" 📝 LOG:", meta.name, "called with arguments:", a, b);
+    
+    // Call the original function
+    let result = target(a, b);
+    
+    // Return the result
+    return result;
+  };
+}
+
+// Apply the @log decorator to the add function
+// When add() is called, it will actually call the wrapper function
+// returned by the log decorator
+@log
+fn add(a, b) {
+  return a + b;
+}
+
+// Test the decorated function
+print("\n=== Testing Decorated Function ===\n");
+let result = add(2, 3);
+print("\nResult:", result);
+
+print("\n ✓ Basic logging decorator demo complete!");

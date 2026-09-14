@@ -1,0 +1,9 @@
+Package: adeshlang
+Version: 0.3.0
+Section: devel
+# arm64 is built identically with: dpkg-deb --build --arch arm64
+Architecture: amd64
+Depends: libc6 (>= 2.28)
+Maintainer: AdeshLang Team
+Description: AdeshLang compiler, package manager, language server, and editor
+ AdeshLang is a programming language toolchain with AOT compilation support.

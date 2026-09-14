@@ -1,0 +1,17 @@
+class Resource {
+    constructor(id) {
+        self.id = id;
+    }
+}
+
+
+fn consume(r: Resource) {
+    print("consumed resource");
+}
+
+fn main() {
+    let r = new Resource(1);
+    let moved = r;
+    consume(moved);
+    print("ownership moved");
+}

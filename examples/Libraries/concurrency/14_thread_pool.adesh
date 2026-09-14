@@ -1,0 +1,9 @@
+// 14 — thread pool
+import thread;
+
+thread.watchdog(15000);
+let pool = thread.ThreadPool.new(2);
+let f = pool.submit(fn() { return 99; });
+print(f.get());
+pool.shutdown();
+pool.join_timeout(3000);

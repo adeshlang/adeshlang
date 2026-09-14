@@ -1,0 +1,111 @@
+// examples/arc/tests/t10_edge_cases.adesh
+// T10 – Edge cases: empty objects, diamond pattern, repeated upgrades,
+//        zero-strong-ref simulation, single-value objects
+
+
+fn alive_count(a, b, c, d, e) {
+    let cnt = 0;
+    if (a.is_alive()) { cnt = cnt + 1; }
+    if (b.is_alive()) { cnt = cnt + 1; }
+    if (c.is_alive()) { cnt = cnt + 1; }
+    if (d.is_alive()) { cnt = cnt + 1; }
+    if (e.is_alive()) { cnt = cnt + 1; }
+    return cnt;
+}
+
+export fn run() {
+    let PASS = 0;
+    let FAIL = 0;
+
+    fn check(cond, msg) {
+        if (cond) {
+            print("  ✓ PASS:", msg);
+            PASS = PASS + 1;
+        } else {
+            print("  ✗ FAIL:", msg);
+            FAIL = FAIL + 1;
+        }
+    }
+
+print("=== T10: Edge cases ===\n");
+
+// ── Edge 1: empty object ──────────────────────────────────────────────────
+print("-- Edge 1: empty object --");
+share empty = { };
+weak wk_e = empty;
+check(empty.strong_count() == 1, "empty obj strong_count is 1");
+check(wk_e.is_alive()      == true, "weak on empty obj is alive");
+let up_e = wk_e.upgrade();
+check(up_e != null, "upgrade of empty object succeeds");
+
+// ── Edge 2: diamond sharing (same base via two paths) ─────────────────────
+print("\n-- Edge 2: diamond sharing --");
+share diamond = { id: 99 };
+strong left  = diamond;
+strong right = diamond;
+// diamond(1) + left(1) + right(1) = 3
+check(diamond.strong_count() == 3, "diamond count is 3 after left+right");
+
+strong joined_l = left;
+strong joined_r = right;
+// + joined_l(1) + joined_r(1) = 5
+check(diamond.strong_count() == 5, "diamond count is 5 after joins");
+
+// ── Edge 3: repeated upgrade from same weak ref ───────────────────────────
+print("\n-- Edge 3: repeated upgrade --");
+share rep = { x: 42 };
+weak wk_r = rep;
+
+{
+    let u1 = wk_r.upgrade();
+    let u2 = wk_r.upgrade();
+    let u3 = wk_r.upgrade();
+    // rep(1) + u1(1) + u2(1) + u3(1) = 4
+    if (u1 != null && u2 != null && u3 != null) {
+        check(rep.strong_count() == 4, "count 4 holding 3 simultaneous upgrades");
+        check(u1.x == 42, "upgrade u1 has correct value");
+        check(u2.x == 42, "upgrade u2 has correct value");
+        check(u3.x == 42, "upgrade u3 has correct value");
+    }
+}
+check(rep.strong_count() == 1, "count back to 1 after all upgrades released");
+
+// ── Edge 4: single strong, many weaks ─────────────────────────────────────
+print("\n-- Edge 4: single strong, many weaks --");
+share one = { n: 1 };
+weak wa = one; weak wb = one; weak wc = one;
+weak wd = one; weak we = one;
+
+check(one.strong_count() == 1, "single strong owner count is 1");
+check(one.weak_count()   == 5, "five weak refs give weak_count 5");
+
+// All five weaks can see the object
+check(alive_count(wa, wb, wc, wd, we) == 5, "all 5 weaks report alive");
+
+// ── Edge 5: deeply nested scope then verify count ─────────────────────────
+print("\n-- Edge 5: deep nesting --");
+share deep = { v: 0 };
+{
+    strong d1 = deep;
+    { strong d2 = deep;
+        { strong d3 = deep;
+            { strong d4 = deep;
+                { strong d5 = deep;
+                    check(deep.strong_count() == 6, "count 6 at depth 5");
+                }
+                check(deep.strong_count() == 5, "count 5 at depth 4");
+            }
+            check(deep.strong_count() == 4, "count 4 at depth 3");
+        }
+        check(deep.strong_count() == 3, "count 3 at depth 2");
+    }
+    check(deep.strong_count() == 2, "count 2 at depth 1");
+}
+check(deep.strong_count() == 1, "count 1 after all depth exit");
+
+print("\nPASS:", PASS, " FAIL:", FAIL);
+
+    return { pass: PASS, fail: FAIL };
+}
+
+run();

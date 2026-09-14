@@ -1,0 +1,37 @@
+// AdeshLang Net Example 06: SSRF Protection & Network Security Policies
+import Net;
+
+fn validate_destination(target_ip_str) {
+    let policy = Net.NetworkPolicy()
+        .allowTcp()
+        .allowPort(443)
+        .allowPort(80)
+        .denyPrivateNetworks()
+        .denyLoopback();
+
+    print("Validating IP against policy:", target_ip_str);
+    try {
+        let is_valid = policy.validate(target_ip_str);
+        print("  Validation PASSED for", target_ip_str);
+    } catch (err) {
+        print("  Validation BLOCKED for", target_ip_str, "-> Error:", err);
+    }
+}
+
+fn main() {
+    print("=== 06. SSRF Protection & Security Policies ===");
+
+    // Test loopback IP validation (should be blocked by policy)
+    validate_destination("127.0.0.1");
+
+    // Test private IP validation (should be blocked by policy)
+    validate_destination("192.168.1.1");
+    validate_destination("10.0.0.1");
+
+    // Test public internet IP (should be allowed)
+    validate_destination("8.8.8.8");
+
+    print("=== 06. Security Policies Completed ===");
+}
+
+main();

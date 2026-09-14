@@ -1,0 +1,11 @@
+// Test dynamic array with fixed capacity
+let a:[i32;6] = [1, 2, 3, 4];
+print("Dynamic array:", a);
+print("Length:", a.length);
+
+// Should work - append within capacity
+let a2 = a.append(5);
+print("After append(5):", a2);
+print("Length:", a2.length);
+
+print("Done");

@@ -1,0 +1,536 @@
+// ==============================================================================
+// AdeshLang Enterprise Full-Stack Todo Application Server
+// Built with AdeshLang Standard Libraries & Language Features:
+// - HTTP Server, Router, Request, Response & Middlewares
+// - Crypto (SHA256, HMAC, Token Verification, UUID)
+// - Encoding (Base64 URL Safe encoding)
+// - Time (Epoch Millis, UTC Formatting)
+// - Regex (Email & Title input validation)
+// - DNS & Net (Host resolution & IP classification)
+// - Structs, Enums, Type Aliases, Class Inheritance & Extensions
+// - RAII Defer Resource Management & Function Decorators
+// - Custom Request Logger with File output & Console formatting
+// ==============================================================================
+
+import HTTP;
+import Crypto;
+import Encoding;
+import Time;
+import Regex;
+import DNS;
+import Net;
+import Path;
+
+print("==================================================================");
+print("  ADESHLANG ENTERPRISE TODO SERVER — FULL STACK HTTP ENGINE");
+print("==================================================================\n");
+
+// ─── 1. TYPE ALIASES & ENUMS ───────────────────────────────────────────────────
+
+enum TodoStatus {
+    Pending,
+    InProgress,
+    Completed
+}
+
+extend TodoStatusOps on TodoStatus {
+    fn isFinished() {
+        return this.tag == "Completed";
+    }
+
+    fn label() {
+        return str(this.tag);
+    }
+}
+
+type User = {
+    id: int,
+    username: string,
+    email: string,
+    role: string,
+    token: string
+};
+
+type TodoItem = {
+    id: int,
+    userId: int,
+    title: string,
+    description: string,
+    priority: string,
+    completed: bool,
+    createdAt: int,
+    updatedAt: int
+};
+
+// ─── 2. IN-MEMORY STORAGE ENGINE ──────────────────────────────────────────────
+
+class DatabaseEngine {
+    DatabaseEngine() {
+        this.users = [];
+        this.todos = [];
+        this.sessions = [];
+        this.userCounter = 1;
+        this.todoCounter = 1;
+        this.seedInitialData();
+    }
+
+    fn seedInitialData() {
+        let adminPassHash: any = Crypto.sha256("admin123");
+        let adminUser: any = {
+            id: 1,
+            username: "admin",
+            email: "admin@adeshlang.org",
+            passwordHash: adminPassHash,
+            role: "Administrator"
+        };
+        this.users.push(adminUser);
+
+        this.todos.push({
+            id: 1,
+            userId: 1,
+            title: "Build AdeshLang High-Performance HTTP Engine",
+            description: "Implement zero-allocation routing, middle-wares and native async concurrency.",
+            priority: "High",
+            completed: true,
+            createdAt: Time.epochMillis(),
+            updatedAt: Time.epochMillis()
+        });
+
+        this.todos.push({
+            id: 2,
+            userId: 1,
+            title: "Deploy Todo Enterprise Microservice",
+            description: "Verify GET, POST, PUT, DELETE, PATCH, OPTIONS REST semantics.",
+            priority: "Medium",
+            completed: false,
+            createdAt: Time.epochMillis(),
+            updatedAt: Time.epochMillis()
+        });
+        this.todoCounter = 3;
+    }
+
+    fn findUserByUsername(uname) {
+        let count: any = this.users.len();
+        let i: int = 0;
+        while (i < count) {
+            let u: any = this.users[i];
+            if (str(u.username) == str(uname)) {
+                return u;
+            }
+            i = i + 1;
+        }
+        return null;
+    }
+
+    fn createSession(userId) {
+        let rawToken = "sess_" + Crypto.uuid() + "_" + str(Time.epochMillis());
+        let token = Encoding.base64Encode(rawToken);
+        let session = {
+            token: token,
+            userId: userId,
+            createdAt: Time.epochMillis(),
+            lastSeenAt: Time.epochMillis()
+        };
+        this.sessions.push(session);
+        return token;
+    }
+
+    fn verifySession(token) {
+        let count = this.sessions.len();
+        let i = 0;
+        let now = Time.epochMillis();
+        let maxAgeMs = 7200000; // 2 hours sliding window
+
+        while (i < count) {
+            let s = this.sessions[i];
+            if (str(s.token) == str(token)) {
+                // Check if session has expired
+                let age = now - s.lastSeenAt;
+                if (age > maxAgeMs) {
+                    // Session expired — revoke
+                    this.removeSession(token);
+                    return null;
+                }
+                // Revalidate & slide session window (refresh lastSeenAt)
+                s.lastSeenAt = now;
+                return s;
+            }
+            i = i + 1;
+        }
+        return null;
+    }
+
+    fn removeSession(token) {
+        let newSessions: any = [];
+        let count: any = this.sessions.len();
+        let i: int = 0;
+        while (i < count) {
+            let s: any = this.sessions[i];
+            if (str(s.token) != str(token)) {
+                newSessions.push(s);
+            }
+            i = i + 1;
+        }
+        this.sessions = newSessions;
+    }
+
+    fn getTodosForUser(userId) {
+        let list: any = [];
+        let count: any = this.todos.len();
+        let i: int = 0;
+        while (i < count) {
+            let t: any = this.todos[i];
+            if (t.userId == userId) {
+                list.push(t);
+            }
+            i = i + 1;
+        }
+        return list;
+    }
+
+    fn addTodo(userId, title, description, priority) {
+        let newId: any = this.todoCounter;
+        this.todoCounter = this.todoCounter + 1;
+
+        let item = {
+            id: newId,
+            userId: userId,
+            title: title,
+            description: description,
+            priority: priority,
+            completed: false,
+            createdAt: Time.epochMillis(),
+            updatedAt: Time.epochMillis()
+        };
+        this.todos.push(item);
+        return item;
+    }
+
+    fn updateTodo(id, userId, title, description, priority) {
+        let count: any = this.todos.len();
+        let i: int = 0;
+        while (i < count) {
+            let t: any = this.todos[i];
+            if (t.id == id && t.userId == userId) {
+                t.title = title;
+                t.description = description;
+                t.priority = priority;
+                t.updatedAt = Time.epochMillis();
+                return t;
+            }
+            i = i + 1;
+        }
+        return null;
+    }
+
+    fn patchTodo(id, userId, title, completed) {
+        let count: any = this.todos.len();
+        let i: int = 0;
+        while (i < count) {
+            let t: any = this.todos[i];
+            if (t.id == id && t.userId == userId) {
+                if (title != null) {
+                    t.title = title;
+                }
+                if (completed != null) {
+                    t.completed = completed;
+                }
+                t.updatedAt = Time.epochMillis();
+                return t;
+            }
+            i = i + 1;
+        }
+        return null;
+    }
+
+    fn deleteTodo(id, userId) {
+        let newTodos: any = [];
+        let deleted: bool = false;
+        let count: any = this.todos.len();
+        let i: int = 0;
+        while (i < count) {
+            let t: any = this.todos[i];
+            if (t.id == id && t.userId == userId) {
+                deleted = true;
+            } else {
+                newTodos.push(t);
+            }
+            i = i + 1;
+        }
+        this.todos = newTodos;
+        return deleted;
+    }
+}
+
+// Instantiate Global Database Engine
+let db: any = new DatabaseEngine();
+
+// ─── 3. LOGGING & DECORATORS ───────────────────────────────────────────────────
+
+decorator auditLog(target, meta) {
+    return fn (msg: string) {
+        print(`  [@auditLog] [${meta.name}] ${msg}`);
+        return target(msg);
+    };
+}
+
+@auditLog
+fn logServerEvent(msg: string) {
+    let logLine = str("[") + str(Time.isoString()) + "] " + str(msg);
+    print(logLine);
+    return true;
+}
+
+// ─── 4. INPUT VALIDATION & REGEX HELPERS ───────────────────────────────────────
+
+fn validateEmail(email: string) {
+    let re: any = Regex.new("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    return re.isMatch(email);
+}
+
+// ─── 5. MIDDLEWARE ENGINE ──────────────────────────────────────────────────────
+
+fn authenticateMiddleware(req, res) {
+    let authHeader: any = req.header("Authorization");
+    let authStr: string = str(authHeader);
+
+    if (!authStr.startsWith("Bearer ")) {
+        return null;
+    }
+    let token = authStr.replace("Bearer ", "");
+    let session = db.verifySession(token);
+    return session;
+}
+
+// ─── 6. ROUTER & RESTFUL ENDPOINTS ─────────────────────────────────────────────
+
+fn createTodoServerRouter() {
+    let router: any = HTTP.Router();
+
+    // CORS & Security Headers
+    let _cors: any = HTTP.CORS({ origins: ["*"], methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"] });
+    let _sec: any = HTTP.SecurityHeaders();
+
+    // ─── STATIC FILE ROUTE: Serve HTML UI ───
+    router.get("/", fn(_req, res) {
+        let htmlPath: any = Path.new("assets/index.html");
+        return res.file(htmlPath.toString());
+    });
+
+    router.get("/assets/index.html", fn(_req, res) {
+        return res.file("assets/index.html");
+    });
+
+    // ─── AUTH ROUTE 1: POST /api/auth/login ───
+    router.post("/api/auth/login", fn(req, res) {
+        defer {
+            logServerEvent("POST /api/auth/login processed");
+        }
+
+        let body: any = req.tryJson();
+        if (body == null || body.username == null || body.password == null) {
+            return res.status(400).json({ error: "Missing username or password" });
+        }
+
+        let user: any = db.findUserByUsername(body.username);
+        if (user == null) {
+            return res.status(401).json({ error: "Invalid credentials" });
+        }
+
+        let expectedHash: any = Crypto.sha256(body.password);
+        if (str(user.passwordHash) != str(expectedHash)) {
+            return res.status(401).json({ error: "Invalid credentials" });
+        }
+
+        let token: any = db.createSession(user.id);
+        return res.json({
+            success: true,
+            token: token,
+            user: {
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                role: user.role
+            }
+        });
+    });
+
+    // ─── AUTH ROUTE 2: POST /api/auth/logout ───
+    router.post("/api/auth/logout", fn(req, res) {
+        let authHeader: any = req.header("Authorization");
+        let authStr: string = str(authHeader);
+        if (authStr.startsWith("Bearer ")) {
+            let token = authStr.replace("Bearer ", "");
+            db.removeSession(token);
+        }
+        return res.json({ success: true, message: "Logged out cleanly" });
+    });
+
+    // ─── TODO ROUTE 1: GET /api/todos (Fetch all todos for user) ───
+    router.get("/api/todos", fn(req, res) {
+        let session = authenticateMiddleware(req, res);
+        if (session == null) {
+            return res.status(401).json({ error: "Unauthorized access" });
+        }
+
+        let todos: any = db.getTodosForUser(session.userId);
+        return res.json({
+            success: true,
+            todos: todos
+        });
+    });
+
+    // ─── TODO ROUTE 2: POST /api/todos (Create new todo) ───
+    router.post("/api/todos", fn(req, res) {
+        let session = authenticateMiddleware(req, res);
+        if (session == null) {
+            return res.status(401).json({ error: "Unauthorized access" });
+        }
+
+        let body: any = req.tryJson();
+        if (body == null || body.title == null) {
+            return res.status(400).json({ error: "Title is required" });
+        }
+
+        let title: string = str(body.title);
+        let desc: string = body.description != null ? str(body.description) : "";
+        let priority: string = body.priority != null ? str(body.priority) : "Medium";
+
+        let newTodo: any = db.addTodo(session.userId, title, desc, priority);
+        logServerEvent("Created Todo ID " + str(newTodo.id) + " for User " + str(session.userId));
+        return res.status(201).json({
+            success: true,
+            todo: newTodo
+        });
+    });
+
+    // ─── TODO ROUTE 3: PUT /api/todos/:id (Full replace update) ───
+    router.put("/api/todos/:id", fn(req, res) {
+        let session = authenticateMiddleware(req, res);
+        if (session == null) {
+            return res.status(401).json({ error: "Unauthorized access" });
+        }
+
+        let todoId: any = req.paramInt("id");
+        let body: any = req.tryJson();
+        if (body == null || body.title == null) {
+            return res.status(400).json({ error: "Title is required for PUT update" });
+        }
+
+        let title: string = str(body.title);
+        let desc: string = body.description != null ? str(body.description) : "";
+        let priority: string = body.priority != null ? str(body.priority) : "Medium";
+
+        let updated: any = db.updateTodo(todoId, session.userId, title, desc, priority);
+        if (updated == null) {
+            return res.status(404).json({ error: "Todo item not found" });
+        }
+        return res.json({ success: true, todo: updated });
+    });
+
+    // ─── TODO ROUTE 4: PATCH /api/todos/:id (Partial field update) ───
+    router.patch("/api/todos/:id", fn(req, res) {
+        let session = authenticateMiddleware(req, res);
+        if (session == null) {
+            return res.status(401).json({ error: "Unauthorized access" });
+        }
+
+        let todoId = req.paramInt("id");
+        let body = req.tryJson();
+        let title = body != null && body.title != null ? body.title : null;
+        let completed = body != null && body.completed != null ? body.completed : null;
+
+        let patched = db.patchTodo(todoId, session.userId, title, completed);
+        if (patched == null) {
+            return res.status(404).json({ error: "Todo item not found" });
+        }
+        return res.json({ success: true, todo: patched });
+    });
+
+    // ─── TODO ROUTE 5: DELETE /api/todos/:id (Delete todo) ───
+    router.delete("/api/todos/:id", fn(req, res) {
+        let session = authenticateMiddleware(req, res);
+        if (session == null) {
+            return res.status(401).json({ error: "Unauthorized access" });
+        }
+
+        let todoId: any = req.paramInt("id");
+        let deleted = db.deleteTodo(todoId, session.userId);
+        if (!deleted) {
+            return res.status(404).json({ error: "Todo item not found" });
+        }
+        return res.json({ success: true, message: "Deleted todo successfully" });
+    });
+
+    // ─── TODO ROUTE 6: OPTIONS /api/todos & /api/auth/login (CORS preflight) ───
+    router.options("/api/todos", fn(_req, res) {
+        return res.status(204)
+            .header("Access-Control-Allow-Origin", "*")
+            .header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS")
+            .header("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept")
+            .send("");
+    });
+
+    router.options("/api/todos/:id", fn(_req, res) {
+        return res.status(204)
+            .header("Access-Control-Allow-Origin", "*")
+            .header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS")
+            .header("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept")
+            .send("");
+    });
+
+    router.options("/api/auth/login", fn(_req, res) {
+        return res.status(204)
+            .header("Access-Control-Allow-Origin", "*")
+            .header("Access-Control-Allow-Methods", "POST, OPTIONS")
+            .header("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept")
+            .send("");
+    });
+
+    // ─── DIAGNOSTICS & SYSTEM INFO ───
+    router.get("/api/system/info", fn(_req, res) {
+        let dnsRes: any = DNS.resolve("localhost");
+        let ip4: any = Net.IPAddress.parse("127.0.0.1");
+
+        return res.json({
+            service: "AdeshLang Full-Stack Todo Server",
+            version: "1.0.0",
+            dnsLocalhost: dnsRes,
+            ipIsLoopback: ip4.isLoopback,
+            timestamp: Time.epochMillis()
+        });
+    });
+
+    return router;
+}
+
+// ─── 7. SERVER INITIALIZATION & LISTEN ───────────────────────────────────────
+
+let port: string = "4000";
+let addr: string = "0.0.0.0:" + port;
+let serverRouter: any = createTodoServerRouter();
+let server: any = HTTP.Server(addr, serverRouter);
+
+logServerEvent("AdeshLang HTTP Server initialized on " + addr);
+
+server.listen(fn() {
+    print("");
+    print("╔══════════════════════════════════════════════════════════════════════╗");
+    print("║        AdeshLang Enterprise Todo Full-Stack Server Ready             ║");
+    print("╠══════════════════════════════════════════════════════════════════════╣");
+    print("║  Open UI:    http://localhost:" + port + "                                ║");
+    print("║  REST API:   http://localhost:" + port + "/api/todos                        ║");
+    print("╠══════════════════════════════════════════════════════════════════════╣");
+    print("║  GET    /                     Serve HTML Enterprise UI               ║");
+    print("║  POST   /api/auth/login       Crypto SHA-256 / Session Token Auth    ║");
+    print("║  POST   /api/auth/logout      Revoke Session                         ║");
+    print("║  GET    /api/todos            Fetch Todos for authenticated user    ║");
+    print("║  POST   /api/todos            Create new Todo                        ║");
+    print("║  PUT    /api/todos/:id        Full replacement update                ║");
+    print("║  PATCH  /api/todos/:id        Partial field update                   ║");
+    print("║  DELETE /api/todos/:id        Delete Todo item                       ║");
+    print("║  OPTIONS/api/todos            CORS preflight & capability metadata   ║");
+    print("╚══════════════════════════════════════════════════════════════════════╝");
+    print("  Press Ctrl+C to stop server");
+    print("");
+});

@@ -1,0 +1,21 @@
+// AdeshLang TCP Client Example
+import Net;
+
+fn start_client() {
+    print("Connecting to TCP server on 127.0.0.1:9090...");
+    let stream = Net.tcpConnect("127.0.0.1", 9090)?;
+    print("Connected! Local address:", stream.localAddress(), "Remote address:", stream.remoteAddress());
+
+    stream.setNoDelay(true);
+
+    stream.writeText("Hello from AdeshLang TCP Client!");
+    print("Sent message to server");
+
+    let response = stream.read(1024)?;
+    print("Received response from server");
+
+    stream.close();
+    print("TCP Client finished");
+}
+
+start_client();

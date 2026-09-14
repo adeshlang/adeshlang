@@ -1,0 +1,16 @@
+// Debug: struct extension
+struct Vector2 {
+    x: F64;
+    y: F64;
+};
+
+extend VectorMath on Vector2 {
+    fn getX() {
+        return this.x;
+    }
+}
+
+let v = Vector2 { x: 3.0, y: 4.0 };
+let x = v.getX();
+print("getX: " + x);
+print("DONE");

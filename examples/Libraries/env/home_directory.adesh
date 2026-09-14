@@ -1,0 +1,13 @@
+import Env;
+
+let home = Env.home();
+print("Home Directory: " + home.toString());
+
+let desktop = Env.desktop();
+print("Desktop Directory: " + desktop.toString());
+
+let documents = Env.documents();
+print("Documents Directory: " + documents.toString());
+
+let temp = Env.tempDirectory();
+print("Temp Directory: " + temp.toString());

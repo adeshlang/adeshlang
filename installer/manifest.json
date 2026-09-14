@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "version": "0.3.0",
+  "platforms": {
+    "windows-x86_64": {
+      "artifact": "AdeshLang-0.3.0-windows-x86_64.zip",
+      "architecture": "x86_64",
+      "llvm": "18.x",
+      "clang": "18.x",
+      "lld": "18.x",
+      "requires": ["windows-10"]
+    },
+    "linux-x86_64": {
+      "artifact": "AdeshLang-0.3.0-linux-x86_64.tar.xz",
+      "architecture": "x86_64",
+      "llvm": "18.x",
+      "clang": "18.x",
+      "lld": "18.x",
+      "requires": ["glibc-2.28"]
+    },
+    "linux-aarch64": {
+      "artifact": "AdeshLang-0.3.0-linux-aarch64.tar.xz",
+      "architecture": "aarch64",
+      "llvm": "18.x",
+      "clang": "18.x",
+      "lld": "18.x",
+      "requires": ["glibc-2.28"]
+    },
+    "macos-arm64": {
+      "artifact": "AdeshLang-0.3.0-macos-arm64.tar.xz",
+      "architecture": "arm64",
+      "llvm": "18.x",
+      "clang": "18.x",
+      "lld": "18.x",
+      "requires": ["macos-12"]
+    },
+    "macos-x86_64": {
+      "artifact": "AdeshLang-0.3.0-macos-x86_64.tar.xz",
+      "architecture": "x86_64",
+      "llvm": "18.x",
+      "clang": "18.x",
+      "lld": "18.x",
+      "requires": ["macos-12"]
+    }
+  }
+}

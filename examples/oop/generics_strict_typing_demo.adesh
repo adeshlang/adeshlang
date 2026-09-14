@@ -1,0 +1,60 @@
+print("=== Generic + Strict Typing OOP Demo ===");
+
+class Box<T> {
+    Box(value) {
+        this.value = value;
+    }
+
+    fn get() {
+        return this.value;
+    }
+
+    fn set(next) {
+        this.value = next;
+    }
+}
+
+class Pair<T, U> {
+    Pair(left, right) {
+        this.left = left;
+        this.right = right;
+    }
+
+    fn summary(): String {
+        return "Pair(" + this.left + ", " + this.right + ")";
+    }
+}
+
+class ScoreBoard {
+    ScoreBoard(player: String, score: i32) {
+        this.player = player;
+        this.score = score;
+    }
+
+    fn add(points: i32): i32 {
+        this.score = this.score + points;
+        return this.score;
+    }
+
+    fn label(): String {
+        return this.player + ": " + this.score;
+    }
+}
+
+fn announce(board: ScoreBoard): String {
+    return "Announce -> " + board.label();
+}
+
+let nameBox = new Box("Ajay");
+let scoreBox = new Box(99);
+let pair = new Pair("level", 7);
+let board = new ScoreBoard("Compiler", 10);
+
+print("nameBox=" + nameBox.get());
+print("scoreBox=" + scoreBox.get());
+print(pair.summary());
+print(board.label());
+print("after add=" + board.add(15));
+print(announce(board));
+
+print("=== Generic + Strict Typing Demo Complete ===");

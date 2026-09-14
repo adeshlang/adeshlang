@@ -1,0 +1,6 @@
+// Simple test
+import Env;
+let de = Env.envFromFile("examples/args/.env");
+print("Before: API_KEY =", Env.env("API_KEY"));
+Env.envRuntimeLoad(de);
+print("After: API_KEY =", Env.env("API_KEY"));

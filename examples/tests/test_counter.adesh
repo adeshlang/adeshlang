@@ -1,0 +1,29 @@
+// Debug while loop with counter
+
+fn test_counter(n) {
+    let i = 0;
+    let count = 0;
+    
+    while (true) {
+        print("Loop iteration:", count, "i =", i);
+        
+        if (i >= n) {
+            print("Breaking because i >= n");
+            break;
+        }
+        
+        i = i + 1;
+        print("After i = i + 1, i is now:", i);
+        
+        count = count + 1;
+        if (count > 5) {
+            print("Safety break at count 5");
+            break;
+        }
+    }
+    
+    return i;
+}
+
+let result = test_counter(3);
+print("Final result:", result);

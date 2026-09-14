@@ -1,0 +1,77 @@
+// =============================================================================
+// DSA Example: TypeScript-style Union & Optional Types
+// =============================================================================
+// Demonstrates AdeshLang's TypeScript-like type annotations:
+// 1. Union return types (e.g. [int] | null, int | string, [int] | [])
+// 2. Optional / Nullable types (e.g. [int]?, string?)
+// 3. TypeScript array shorthand (int[], string[])
+// 4. Empty container literals ([] and {})
+// =============================================================================
+
+// Search for a target and return either the index or null
+fn findIndex(nums: [int], target: int): int | null {
+    for i in range(len(nums)) {
+        if nums[i] == target {
+            return i;
+        }
+    }
+    return null;
+}
+
+// Find a pair adding to target; returns [i, j] or empty []
+fn findPair(nums: [int], target: int): [int] | [] {
+    let seen: set; // Default initialized to mutable empty Set
+    for i in range(len(nums)) {
+        let complement = target - nums[i];
+        if seen.contains(complement) {
+            return [complement, nums[i]];
+        }
+        seen.insert(nums[i]);
+    }
+    return [];
+}
+
+// Parse value into formatted description with union parameter type
+fn describeValue(v: int | string | bool): string {
+    return "Value is: " + str(v);
+}
+
+fn main() {
+    print("=== TypeScript-Style Union & Optional Types in AdeshLang ===");
+    
+    let numbers = [10, 20, 30, 40, 50];
+    
+    // 1. findIndex with int | null return
+    let idx1 = findIndex(numbers, 30);
+    print("Search for 30 -> Index: " + str(idx1));
+    
+    let idx2 = findIndex(numbers, 99);
+    print("Search for 99 -> Index: " + str(idx2));
+    
+    // 2. findPair with [int] | [] return
+    let pair = findPair(numbers, 50);
+    print("Pair summing to 50: " + str(pair));
+    
+    let noPair = findPair(numbers, 999);
+    print("Pair summing to 999: " + str(noPair));
+    
+    // 3. Union parameters
+    print(describeValue(42));
+    print(describeValue("AdeshLang"));
+    print(describeValue(true));
+    
+    print("✅ Union and Optional types working perfectly!");
+}
+
+
+
+                                                                                
+// === TypeScript-Style Union & Optional Types in AdeshLang ===
+// Search for 30 -> Index: 2
+// Search for 99 -> Index: null
+// Pair summing to 50: [20, 30] (len=2, cap=2)
+// Pair summing to 999: [] (len=0, cap=0)
+// Value is: 42
+// Value is: AdeshLang
+// Value is: true
+// ✅ Union and Optional types working perfectly!

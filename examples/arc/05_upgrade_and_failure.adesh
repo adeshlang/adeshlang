@@ -1,0 +1,58 @@
+// examples/arc/05_upgrade_and_failure.adesh
+// Demonstrates two key scenarios for weak.upgrade():
+//  (a) Success – the strong owner is still alive.
+//  (b) Failure  – upgrade() returns null once strong_count hits 0.
+//
+// Scenario (b) uses a helper that returns a weak ref after the share owner
+// exits the function scope, so the weak observer outlives all strong owners.
+
+print("=== Upgrade Success & Failure ===\n");
+
+// ─────────────────────────────────────────────────────────────────────────
+// Scenario A – successful upgrade
+// ─────────────────────────────────────────────────────────────────────────
+print("--- Scenario A: upgrade while alive ---");
+
+share item = { kind: "sensor", value: 3.14 };
+weak observer = item;
+
+print("is_alive before upgrade:", observer.is_alive()); // true
+
+{
+    let got = observer.upgrade();
+    if (got != null) {
+        print("Upgrade succeeded!");
+        print("kind :", got.kind);
+        print("value:", got.value);
+    } else {
+        print("Upgrade failed (unexpected)");
+    }
+}
+// temporary strong ref from upgrade() is released here
+
+print("strong_count back to 1:", item.strong_count()); // 1
+
+// ─────────────────────────────────────────────────────────────────────────
+// Scenario B – upgrade after the only strong owner was released
+// ─────────────────────────────────────────────────────────────────────────
+print("\n--- Scenario B: upgrade after owner released ---");
+
+fn orphan_weak() {
+    share ephemeral = { id: 7 };
+    weak watcher = ephemeral;
+    // ephemeral is the only strong owner; returning watcher moves the weak out
+    // while ephemeral is dropped when this function returns.
+    return watcher;
+}
+
+weak orphan = orphan_weak();
+
+print("is_alive after owner scope exit:", orphan.is_alive()); // false
+let result = orphan.upgrade();
+if (result == null) {
+    print("upgrade() returned null as expected");
+} else {
+    print("Upgrade unexpectedly succeeded, id:", result.id);
+}
+
+print("\nUpgrade patterns demonstrated.");

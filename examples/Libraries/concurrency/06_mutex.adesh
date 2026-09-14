@@ -1,0 +1,10 @@
+// 06 — mutex
+import thread;
+
+let mutex = thread.Mutex.new(10);
+{
+    let g = mutex.lock();
+    g.value.set(g.value.get() + 1);
+    g.value.unlock();
+}
+mutex.with(fn(v) { print(v); return v; });

@@ -1,0 +1,111 @@
+// Array Metadata Analysis
+// This demo shows the metadata overhead for different array types
+
+print("=== Array Metadata Analysis ===");
+print("");
+
+// 1. Standard dynamic array (inferred u8)
+let arr_u8 = [1, 2, 3, 4, 5];
+print("u8 array [1,2,3,4,5]:");
+print("  Total size: ", sizeof(arr_u8), " bytes");
+print("  Metadata: ", arr_u8.metadata_size(), " bytes");
+print("  Data: ", arr_u8.length, " elements * 1 byte = ", arr_u8.length, " bytes");
+print("  Type: ", typeof arr_u8);
+print("");
+
+// 2. Raw array (no metadata)
+let raw_u8: [u8;raw] = [1u8, 2u8, 3u8, 4u8, 5u8];
+print("Raw u8 array [1,2,3,4,5]:");
+print("  Total size: ", sizeof(raw_u8), " bytes");
+print("  Metadata: ", raw_u8.metadata_size(), " bytes (zero for raw arrays!)");
+print("  Data: 5 elements * 1 byte = 5 bytes");
+print("  Type: ", typeof raw_u8);
+print("");
+
+// 3. i32 array (Word type - uses 4-byte metadata fields)
+let arr_i32: [i32] = [100i32, 200i32, 300i32, 400i32, 500i32];
+print("i32 array [100,200,300,400,500]:");
+print("  Total size: ", sizeof(arr_i32), " bytes");
+print("  Metadata: ", arr_i32.metadata_size(), " bytes");
+print("  Data: 5 elements * 4 bytes = 20 bytes");
+print("  Type: ", typeof arr_i32);
+print("");
+
+// 4. f64 array (Long type - uses 8-byte metadata fields)
+let arr_f64: [f64] = [1.1f64, 2.2f64, 3.3f64, 4.4f64, 5.5f64];
+print("f64 array [1.1,2.2,3.3,4.4,5.5]:");
+print("  Total size: ", sizeof(arr_f64), " bytes");
+print("  Metadata: ", arr_f64.metadata_size(), " bytes");
+print("  Data: 5 elements * 8 bytes = 40 bytes");
+print("  Type: ", typeof arr_f64);
+print("");
+
+print("=== Current Metadata Structure ===");
+print("");
+print("Standard Vec<T> in Rust uses 24 bytes:");
+print("  ┌────────────────┬────────────────┬────────────────┐");
+print("  │   ptr (8B)     │   len (8B)     │ capacity (8B)  │");
+print("  └────────────────┴────────────────┴────────────────┘");
+print("");
+print("DynamicArray (current implementation):");
+print("");
+print("  For Byte/Short/Word types: 16 bytes");
+print("  ┌────────────────┬────────────┬────────────┐");
+print("  │   ptr (8B)     │  len (4B)  │  cap (4B)  │");
+print("  └────────────────┴────────────┴────────────┘");
+print("");
+print("  For Long/Extended/Any types: 24 bytes");
+print("  ┌────────────────┬────────────────┬────────────────┐");
+print("  │   ptr (8B)     │   len (8B)     │ capacity (8B)  │");
+print("  └────────────────┴────────────────┴────────────────┘");
+print("");
+print("  Raw arrays: 0 bytes metadata (C-like)");
+print("  ┌─────────────────────────────────────────────────┐");
+print("  │  data[0]  │  data[1]  │  data[2]  │    ...      │");
+print("  └─────────────────────────────────────────────────┘");
+print("");
+
+print("=== Optimization Strategies ===");
+print("");
+print("1. CURRENT: Reduce len/cap fields for small elements");
+print("   Savings: 8 bytes (24 -> 16) for Byte/Short/Word types");
+print("   Tradeoff: Max ~4 billion elements (usually plenty)");
+print("");
+print("2. POSSIBLE: Store capacity as offset from length");
+print("   Instead of: len=5, cap=8");
+print("   Store:      len=5, cap_delta=3 (using 1-2 bytes)");
+print("   Savings: Could reduce to 12-14 bytes for small arrays");
+print("");
+print("3. POSSIBLE: Small String Optimization (SSO) pattern");
+print("   For arrays with <=N elements, store inline (no heap)");
+print("   ┌────────────────────────────────────────────────┐");
+print("   │  len (1B)  │  data[0..N] inline (up to 23B)   │");
+print("   └────────────────────────────────────────────────┘");
+print("   Best for: Small fixed-size arrays of primitives");
+print("");
+print("4. POSSIBLE: Tagged pointer optimization");
+print("   Use low bits of pointer for small length values");
+print("   Only works for aligned data on 64-bit systems");
+print("");
+print("5. BEST FOR FIXED: Use raw arrays [T;raw] or [T;N]");
+print("   Zero metadata overhead for compile-time known sizes");
+print("");
+
+print("=== Practical Comparison ===");
+print("");
+print("Array of 1000 u8 elements:");
+print("  Standard Vec:    24 + 1000 = 1024 bytes (2.4% overhead)");
+print("  DynamicArray:    16 + 1000 = 1016 bytes (1.6% overhead)");
+print("  Raw array:        0 + 1000 = 1000 bytes (0% overhead)");
+print("");
+print("Array of 100 u8 elements:");
+print("  Standard Vec:    24 + 100 = 124 bytes (24% overhead!)");
+print("  DynamicArray:    16 + 100 = 116 bytes (16% overhead)");
+print("  Raw array:        0 + 100 = 100 bytes (0% overhead)");
+print("");
+print("Array of 10 u8 elements:");
+print("  Standard Vec:    24 + 10 = 34 bytes (240% overhead!!)");
+print("  DynamicArray:    16 + 10 = 26 bytes (160% overhead!)");
+print("  Raw array:        0 + 10 = 10 bytes (0% overhead)");
+print("");
+print("Recommendation: Use raw arrays for fixed-size data!");

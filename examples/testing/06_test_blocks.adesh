@@ -1,0 +1,40 @@
+// Demonstrates grouping multiple tests under a test block
+
+test math {
+    
+    test fn add() {
+        assert_eq(2 + 2, 4);
+    }
+
+    test fn sub() {
+        assert_eq(10 - 3, 7);
+    }
+
+    test fn mul() {
+        print("Testing multiplication");
+        eprint("Testing multiplication (stderr)");
+        assert_eq(6 * 7, 42);
+    }
+}
+
+test strings {
+    test fn concat() {
+        assert_eq("adesh" + "lang", "adeshlang");
+    }
+
+    test fn length() {
+        let s = "hello";
+        print("Testing string length");
+        assert_eq(s.length, 5);
+        eprint("Testing string length (stderr)");
+    }
+}
+
+test fn standalone() {
+    // print("This is a standalone test");
+    sleep(1000);
+    // assert_eq(1 + 1, 2);
+}
+fn main() {
+    print("This should not run in test mode");
+}

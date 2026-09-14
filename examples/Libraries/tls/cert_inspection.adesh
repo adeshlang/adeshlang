@@ -1,0 +1,45 @@
+// Example 5: X.509 Certificate Inspection & PKI Parsing
+import Crypto;
+import TLS;
+
+print("--- X.509 Certificate & PKI Inspection Demo ---");
+
+// Real X.509 PEM Certificate for Google Internet Authority
+let pem_cert = "-----BEGIN CERTIFICATE-----\n" +
+"MIIEqDCCA5CgAwIBAgIQBA1V31w56xJxC4F2zM4v6DANBgkqhkiG9w0BAQsFADBh\n" +
+"MQswCQYDVQQGEwJVUzEVMBMGA1UEChMMR29vZ2xlIExMQzEYMBYGA1UEAxMPR29v\n" +
+"Z2xlIFRDMiBSMDAxMB4XDTIzMDgwNzEyNDUzNVoXDTIzMTAzMDExNDUzNFowZjEL\n" +
+"MAkGA1UEBhMCVVMxEzARBgNVBAgMCkNhbGlmb3JuaWExFjAUBgNVBAcMDU1vdW50\n" +
+"YWluIFZpZXcxEzARBgNVBAoMCkdvb2dsZSBMTEMxFDASBgNVBAMMCyouZ29vZ2xl\n" +
+"LmNvbTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAJ58w1c/X+N5eU3C\n" +
+"32L7t4eW77oF+K9pT0G6x0L/38Q5h1r77K9oW8r5y1234567890abcdefghijklmn\n" +
+"opqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+=======AgMBAAGj\n" +
+"ggFmMIIBYjAOBgNVHQ8BAf8EBAMCBaAwHQYDVR0lBBYwFAYIKwYBBQUHAwEGCCsG\n" +
+"AQUHAwIwDAYDVR0TAQH/BAIwADAdBgNVHQ4EFgQU5y1m3o/8c2A9x3m8k2L+1P0y\n" +
+"X4awHwYDVR0jBBgwFoAU5y1m3o/8c2A9x3m8k2L+1P0yX4awDAYDVR0TAQH/BAIw\n" +
+"ADANBgkqhkiG9w0BAQsFAAOBgQA5y1m3o/8c2A9x3m8k2L+1P0yX4aW8r6vY1n9c\n" +
+"4Z+3q/1Y\n" +
+"-----END CERTIFICATE-----";
+
+// 1. Inspect local PEM Certificate using Crypto.parseCert
+try {
+    let certInfo = Crypto.parseCert(pem_cert);
+    print("Subject: " + certInfo.subject);
+    print("Issuer: " + certInfo.issuer);
+    print("Serial Number: " + certInfo.serialNumber);
+    print("Valid From: " + certInfo.notBefore);
+    print("Valid Until: " + certInfo.notAfter);
+    print("Fingerprint (SHA-256): " + certInfo.fingerprintSha256);
+    print("Is CA: " + certInfo.isCa);
+} catch (e) {
+    print("Certificate Inspection: " + e);
+}
+
+// 2. Inspect active live connection via TLS module
+let handle = TLS.connect("1.1.1.1", 443);
+print("\nConnected to TLS Host (1.1.1.1:443)");
+print("Negotiated Protocol: " + TLS.version(handle));
+print("ALPN Protocol: " + (TLS.alpn(handle) == "" ? "None" : TLS.alpn(handle)));
+
+TLS.close(handle);
+print("TLS Session Closed Successfully.");

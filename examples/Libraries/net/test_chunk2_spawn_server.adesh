@@ -1,0 +1,42 @@
+// Chunk 2 Test: Concurrent Server & Client using AdeshLang spawn
+import Net;
+
+fn run_server() {
+    print("Server: Listening on 127.0.0.1:9100...");
+    let server = Net.tcpListen("127.0.0.1", 9100);
+    let client = server.accept();
+    print("Server: Accepted connection from:", client.remoteAddress);
+
+    let data = client.stream.read(1024);
+    print("Server: Received request payload bytes count:", data.len());
+
+    client.stream.writeText("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nHELLO");
+    client.stream.close();
+    server.close();
+    print("Server: Done!");
+}
+
+async fn main() {
+    print("=== Chunk 2: Concurrent Server with spawn ===");
+
+    // Spawn server in background concurrent thread
+    let serverTask = spawn run_server();
+
+    // Give server 50ms to bind
+    sleep(50);
+
+    print("Client: Connecting to 127.0.0.1:9100...");
+    let stream = Net.tcpConnect("127.0.0.1", 9100);
+    print("Client: Connected! Sending GET request...");
+
+    stream.writeText("GET / HTTP/1.1\r\nHost: 127.0.0.1:9100\r\n\r\n");
+
+    let response = stream.read(1024);
+    print("Client: Received server response bytes count:", response.len());
+
+    stream.close();
+    await serverTask;
+    print("=== Chunk 2 Completed Successfully ===");
+}
+
+main();

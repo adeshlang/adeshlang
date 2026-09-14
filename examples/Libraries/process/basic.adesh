@@ -1,0 +1,7 @@
+// Executable Example: Basic Process Execution
+import Process;
+
+let result = Process.run("git", ["--version"]);
+
+print("Success: " + str(result.success()));
+print("Git version output: " + result.stdoutText().trim());

@@ -1,0 +1,24 @@
+struct User {
+    age: uint,
+    score: int,
+    name: string,
+};
+
+let user1: User = new User(25, -10, "Alice");
+println(user1.age);
+println(user1.score);
+println(user1.name);
+
+// This should work and auto-coerce properly
+user1.age = 30;
+println(user1.age);
+
+// Should fail: score expects int, not a string
+// user1.score = "not an int";
+
+let score_val: int = -50;
+let age_val: uint = 100;
+println(score_val);
+println(age_val);
+
+// The dynamic types automatically clamp the bit-width based on the value!

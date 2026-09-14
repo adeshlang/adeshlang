@@ -1,0 +1,7 @@
+let z: complex = complex(3, 4);
+print(z.real(), z.imag());
+print(z.magnitude(), z.phase());
+print(z.conjugate());
+print(z.pow(2));
+let imaginary: complex = 5j;
+print(imaginary, (5j + 2).magnitude());

@@ -1,0 +1,210 @@
+// Operators Showcase for Adesh Language
+
+// Arithmetic
+let a = 10;
+let b = 3;
+let neg = -b;
+
+print("Arithmetic:", a + b, a - b, a * b, a / b, a % b);
+
+let pow = 2 ** 8;
+let trunc = 7 ~/ 3;
+
+print("Power/Trunc:", pow, trunc, neg);
+
+// Assignment (explicit style for parser stability)
+let x = 5;
+x = x + 2;
+x = x - 1;
+x = x * 3;
+x = x / 2;
+x = x % 3;
+
+print("Compound:", x);
+
+let p = 2;
+p = p ** 3;
+
+print("Power assign:", p);
+
+let s = 1;
+s = s << 3;
+
+let t = 16;
+t = t >> 2;
+
+let u = 5;
+u = (u | 2);
+
+let v = 7;
+v = (v & 3);
+
+let w = 5;
+w = (w ^ 1);
+
+print("Bitwise assigns:", s, t, u, v, w);
+
+// Comparison
+print("Comparison:", a == b, a != b, a > b, a >= b, a < b, a <= b);
+
+let s1 = "hi";
+let s2 = "hi";
+
+print("Strict:", s1 === s2, s1 !== s2);
+
+// Logical
+let L1 = true && false;
+let L2 = true || false;
+let L3 = !false;
+let Lp = (!false) && (true || false);
+
+print("Logical:", L1, L2, L3, Lp);
+
+// Nullish and optional
+let n = null;
+let co1 = n ?? 42;
+let co2 = (1 ?? 99);
+
+print("Nullish:", co1, co2);
+
+let obj = { user: { name: "Ravi", age: 30 } };
+
+print("Optional:", obj?.user?.name);
+
+let maybe = null;
+
+print("Optional null:", maybe?.field);
+
+let keep = "ajay";
+keep ??= "set-on-null";
+
+print("Coalesce assign:", keep);
+
+// Non-null assertion
+let nn = "ok";
+
+print("Non-null:", nn!);
+
+// Bitwise
+let ba = 6 & 3;
+let bo = 6 | 1;
+let bx = 6 ^ 5;
+let shl = 1 << 4;
+let shr = 16 >> 2;
+
+print("Bitwise:", ba, bo, bx, shl, shr);
+
+// Range and spread
+let rng = 1 .. 5;
+let rngi = 1 ... 5;
+
+print("Ranges:", rng, rngi);
+
+let arr = [1, 2, 3];
+let arr2 = [...arr, 4, 5];
+
+print("Spread:", arr2);
+
+// Sets (union, intersection, add)
+let sA = makeSet([1, 2, 3]);
+let sB = makeSet([3, 4]);
+
+let sU = sA.union(sB);
+
+print("Set union len:", len(sU));
+
+let sI = sA.intersection(makeSet([2, 3]));
+
+print("Set intersection len:", len(sI));
+
+let sC = sA.add(5);
+
+print("Set add len:", len(sC));
+
+// Membership
+print("Membership:", (2 in [1, 2, 3]), ("a" in { a: 1, b: 2 }), ("llo" in "hello"));
+
+// Type and instanceof
+print("typeof:", typeof(123), typeof("abc"), typeof(arr2));
+
+class Person {
+    Person(name) {
+        this.name = name;
+    }
+}
+
+// Extend class with a method
+extend on Person {
+    fn farewell() {
+        print("Bye " + this.name);
+    }
+}
+
+let pinst = new Person("Ajay");
+pinst.name = "Ajay";
+
+print("instanceof:", (pinst instanceof Person), (pinst instanceof "Person"));
+
+pinst.farewell();
+
+// Ternary
+let cond = true;
+let out = cond ? "yes" : "no";
+
+print("Ternary:", out);
+
+// Functions and arrow
+let inc = x => x + 1;
+
+print("Arrow:", inc(10));
+
+fn add(a, b = 2) {
+    return a + b;
+}
+
+print("Default param:", add(5));
+
+let doubled = arr.map((x) => x * 2);
+
+print("Map doubled:", doubled);
+
+// Updates (++/--)
+let ux = 1;
+ux++;
+
+let uy = 5;
+--uy;
+
+print("Update:", ux, uy);
+
+// Object, indexing & assignment
+let obj2 = { a: 1, b: 2 };
+obj2.a = obj2.a + 5;
+
+print("Object +=:", obj2.a);
+
+let list = [10, 20, 30];
+list[1] = list[1] + 3;
+
+print("Index assign:", list);
+
+// String concatenation via +
+print("Concat:", "Hello " + "World", "Age " + 21);
+
+// Try/Catch and throw
+let got = null;
+
+try {
+    throw "boom";
+} catch (e) {
+    got = e;
+}
+
+print("Caught:", got);
+
+// Date demos
+let d = new Date();
+print("Date:", d.toISOString(), d.getTime(), Date.now());
+print("Local getters:", d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds(), d.getMilliseconds());
+print("All Tests Complete",{color:"#00FF00",bold:true,underline:true,background:"#ffffff",flush:true});
+print();

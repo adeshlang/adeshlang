@@ -1,0 +1,29 @@
+// AdeshLang Net Example 10: Multi-Client TCP Server Endpoint
+import Net;
+
+fn start_tcp_chat_server() {
+    print("=== 10. Multi-Client TCP Server Endpoint ===");
+
+    let server = Net.tcpListen("127.0.0.1", 9093);
+    print("TCP Server listening on:", server.localAddress());
+
+    // Accept Client 1
+    print("Waiting for Client 1 connection...");
+    let client1 = server.accept();
+    let stream1 = client1.stream;
+    print("Client 1 connected from:", client1.remoteAddress);
+
+    // Read payload from Client 1
+    let payload = stream1.read(1024);
+    print("Received payload from Client 1 (bytes):", payload.len());
+
+    // Send response back
+    stream1.writeText("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nHello Client!");
+    print("Sent HTTP response to Client 1");
+
+    stream1.close();
+    server.close();
+    print("=== 10. TCP Chat Server Completed ===");
+}
+
+start_tcp_chat_server();

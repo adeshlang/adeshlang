@@ -1,0 +1,15 @@
+// 05 — shared mutex
+import thread;
+
+let m = thread.Mutex.new(0);
+let t1 = thread.spawn(fn() {
+    m.with(fn(v) { return v + 1; });
+});
+let t2 = thread.spawn(fn() {
+    m.with(fn(v) { return v + 1; });
+});
+t1.join();
+t2.join();
+let g = m.lock();
+print(g.value.get());
+g.value.unlock();

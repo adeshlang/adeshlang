@@ -1,0 +1,23 @@
+enum Direction {
+    North,
+    South,
+    East,
+    West
+}
+
+extend DirectionTest on Direction {
+    fn opposite() {
+        let t = this.tag;
+        // Use match on a string variable instead
+        return match t {
+            "North" => "got North",
+            "South" => "got South",
+            _ => "other"
+        };
+    }
+}
+
+let d = Direction.North();
+print("tag:", d.tag);
+let result = d.opposite();
+print("result:", result);

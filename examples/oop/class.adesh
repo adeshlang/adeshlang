@@ -1,0 +1,12 @@
+class Person {
+    Person(name) {
+        this.name = name;
+    }
+
+    fn greet() {
+        print("Hello, my name is", this.name);
+    }
+}
+
+let p = new Person("Ajay");
+p.greet();

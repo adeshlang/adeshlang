@@ -1,0 +1,10 @@
+import URL;
+
+let pattern: URLPattern = URL.pattern("https://example.com/users/:id");
+let url: URL = URL.parse("https://example.com/users/42");
+
+let patMatch: Option<URLPatternMatch> = pattern.match(url);
+
+if (patMatch != null) {
+    print("Matched User ID:", patMatch.params.get("id"));
+}

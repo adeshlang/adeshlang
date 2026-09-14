@@ -1,0 +1,4 @@
+print("Line 1");
+print("Line 2", { end: "" });
+print("Line 3");
+print("a", "b", "c", { sep: ", " });

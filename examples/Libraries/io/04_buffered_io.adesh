@@ -1,0 +1,20 @@
+// Example 04: High-Performance Buffered Readers and Writers
+
+import { MemoryWriter, MemoryReader, BufferedWriter, BufferedReader, IO } from "IO";
+
+fn main() {
+    let mw = new MemoryWriter();
+    let bw = new BufferedWriter(mw, 64);
+
+    for i in 1..10 {
+        bw.writeLine("Buffered record #" + i);
+    }
+    bw.flush();
+
+    let mr = new MemoryReader(mw.toString());
+    let br = new BufferedReader(mr, 32);
+
+    IO.println("Peeking first character: " + br.peek());
+    let lines = br.readLines();
+    IO.println("Total lines read through buffer: " + len(lines));
+}

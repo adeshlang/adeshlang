@@ -1,0 +1,34 @@
+// Basic Move Semantics Example
+// AdeshLang: Everything is mutable by default (like JS/Python)
+// Use 'const' for immutable values
+
+fn main() {
+    // Create an array - ownership starts here
+    let v1 = [1, 2, 3];
+    print("v1 = ", v1);
+    
+    // Move v1 to v2 - ownership transferred
+    let v2 = v1;
+    print("v2 = ", v2);
+    
+    // ❌ This would be a compile-time error:
+    // print("v1 = ", v1);  // ERROR: v1 moved, no longer valid
+    
+    // Move v2 into function - ownership transferred to function
+    consume_array(v2);
+    
+    // ❌ This would be a compile-time error:
+    // print("v2 = ", v2);  // ERROR: v2 was moved into function
+}
+
+fn consume_array(data) {
+    print("Consumed: ", data);
+    // data is automatically dropped here when function exits (RAII)
+}
+
+// Example with const (immutable)
+fn immutable_example() {
+    const x = 42;
+    // x = 100;  // ERROR: cannot assign to const
+    print("Immutable x:", x);
+}

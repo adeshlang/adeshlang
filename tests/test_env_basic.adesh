@@ -1,0 +1,60 @@
+import Env;
+import Path;
+
+print("--- Testing Env Standard Library ---");
+
+// Environment Variables
+Env.set("TEST_ADESH_ENV_VAR", "hello_world_123");
+print("Contains TEST_ADESH_ENV_VAR: " + str(Env.contains("TEST_ADESH_ENV_VAR")));
+print("Get TEST_ADESH_ENV_VAR: " + str(Env.get("TEST_ADESH_ENV_VAR")));
+
+let all_vars = Env.variables();
+print("Variables type check ok: " + str(typeof(all_vars) == "object"));
+
+let keys_list = Env.keys();
+print("Keys count >= 1: " + str(len(keys_list) >= 1));
+
+let vals_list = Env.values();
+print("Values count >= 1: " + str(len(vals_list) >= 1));
+
+Env.remove("TEST_ADESH_ENV_VAR");
+print("After remove contains: " + str(Env.contains("TEST_ADESH_ENV_VAR")));
+
+// Directories & Path Integration
+let home = Env.home();
+print("Home path: " + home.toString());
+
+let cwd = Env.currentDirectory();
+print("Current dir: " + cwd.toString());
+
+let config = Env.home().join(".adesh").join("config.toml");
+print("Config path chain: " + config.toString());
+
+let temp = Env.tempDirectory();
+print("Temp dir: " + temp.toString());
+
+let exe = Env.executable();
+print("Executable path: " + exe.toString());
+
+// Platform Metadata & Checks
+print("OS: " + Env.os());
+print("Architecture: " + Env.architecture());
+print("Platform: " + Env.platform());
+print("Hostname: " + Env.hostname());
+print("Username: " + Env.username());
+print("Process ID > 0: " + str(Env.processId() > 0));
+
+print("isWindows: " + str(Env.isWindows()));
+print("isLinux: " + str(Env.isLinux()));
+print("isMacOS: " + str(Env.isMacOS()));
+print("isWasm: " + str(Env.isWasm()));
+
+// Separators
+print("Path Separator: " + Env.pathSeparator());
+print("File Separator: " + Env.fileSeparator());
+
+// Command Line
+print("Argument Count: " + str(Env.argumentCount()));
+print("Arguments type check: " + str(typeof(Env.arguments()) == "array"));
+
+print("--- Env Standard Library Test Passed ---");

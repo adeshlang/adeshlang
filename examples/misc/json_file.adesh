@@ -1,0 +1,7 @@
+
+let s = read_file(".\\examples\\misc\\sample.json");
+let obj = json_parse(s);
+print("city:", obj.city);
+print("pop:", obj.population);
+let s2 = json_stringify(obj);
+print("json:", s2);

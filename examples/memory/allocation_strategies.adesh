@@ -1,0 +1,442 @@
+// =============================================================================
+// AdeshLang Memory Management - Allocation Strategies
+// =============================================================================
+// This example demonstrates different memory allocation strategies:
+// - Heap allocation for long-lived data
+// - Arena allocation for temporary data
+// - Bump allocation for compilation phases
+// - Slab allocation for fixed-size objects
+// - Memory pool management
+// =============================================================================
+// .
+print("=== Allocation Strategies Demo ===\n");
+
+// -----------------------------------------------------------------------------
+// 1. Heap Allocation Strategy
+// -----------------------------------------------------------------------------
+// Heap allocation for long-lived data that needs to persist across scopes.
+
+print("--- Heap Allocation Strategy ---");
+
+class HeapAllocatedData {
+    fn init(size) {
+        this.size = size;
+        this.data = [];
+        this.allocSource = "heap";
+        
+        // Simulate heap allocation
+        for (i in range(0, size)) {
+            this.data.push("heap-item-" + str(i));
+        }
+        
+        print("  Allocated " + str(size) + " items on heap");
+    }
+    
+    fn getMemoryInfo() {
+        return {
+            source: this.allocSource,
+            size: this.size,
+            itemSize: sizeof(this.data[0]),
+            totalBytes: this.size * sizeof(this.data[0])
+        };
+    }
+}
+
+// Long-lived data goes on heap
+let globalCache = new HeapAllocatedData(100);
+let heapInfo = globalCache.getMemoryInfo();
+print("  Heap allocation info: " + str(heapInfo));
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 2. Arena Allocation Strategy
+// -----------------------------------------------------------------------------
+// Arena allocation for temporary data with bounded lifetime.
+
+print("--- Arena Allocation Strategy ---");
+
+class ArenaAllocator {
+    fn init(name, capacity) {
+        this.name = name;
+        this.capacity = capacity;
+        this.used = 0;
+        this.allocations = [];
+        print("  Created arena '" + name + "' with capacity " + str(capacity));
+    }
+    
+    fn allocate(size, data) {
+        if (this.used + size > this.capacity) {
+            throw Error("Arena out of memory: " + this.name);
+        }
+        
+        let allocation = {
+            id: len(this.allocations),
+            size: size,
+            data: data,
+            offset: this.used
+        };
+        
+        this.allocations.push(allocation);
+        this.used = this.used + size;
+        
+        print("  Arena allocated " + str(size) + " bytes (total: " + str(this.used) + ")");
+        return allocation;
+    }
+    
+    fn reset() {
+        let oldUsed = this.used;
+        this.allocations = [];
+        this.used = 0;
+        print("  Arena '" + this.name + "' reset (freed " + str(oldUsed) + " bytes)");
+    }
+    
+    fn getStats() {
+        return {
+            name: this.name,
+            capacity: this.capacity,
+            used: this.used,
+            free: this.capacity - this.used,
+            allocations: len(this.allocations),
+            fragmentation: 0 // Arena has no fragmentation
+        };
+    }
+}
+
+// Function-local arena for temporary computations
+fn processWithArena() {
+    let arena = new ArenaAllocator("temp-processing", 1000);
+    
+    // Allocate temporary data
+    let temp1 = arena.allocate(100, "temporary buffer 1");
+    let temp2 = arena.allocate(200, "temporary buffer 2");
+    let temp3 = arena.allocate(150, "temporary buffer 3");
+    
+    print("  Processing with temporary data...");
+    print("  Arena stats: " + str(arena.getStats()));
+    
+    // All arena memory freed at once
+    arena.reset();
+    
+    return "processing complete";
+}
+
+let result = processWithArena();
+print("  Result: " + result);
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 3. Bump Allocation Strategy
+// -----------------------------------------------------------------------------
+// Bump allocation for very fast allocation during compilation phases.
+
+print("--- Bump Allocation Strategy ---");
+
+class BumpAllocator {
+    fn init(chunkSize) {
+        this.chunkSize = chunkSize;
+        this.currentChunk = 0;
+        this.position = 0;
+        this.chunks = [[]]; // Start with one chunk
+        this.totalAllocated = 0;
+        print("  Created bump allocator with " + str(chunkSize) + " byte chunks");
+    }
+    
+    fn allocate(size, data) {
+        // Check if current chunk has space
+        if (this.position + size > this.chunkSize) {
+            // Need new chunk
+            this.chunks.push([]);
+            this.currentChunk = this.currentChunk + 1;
+            this.position = 0;
+            print("  Bump allocator: new chunk #" + str(this.currentChunk));
+        }
+        
+        // Allocate in current chunk
+        let allocation = {
+            chunk: this.currentChunk,
+            offset: this.position,
+            size: size,
+            data: data
+        };
+        
+        this.chunks[this.currentChunk].push(allocation);
+        this.position = this.position + size;
+        this.totalAllocated = this.totalAllocated + size;
+        
+        return allocation;
+    }
+    
+    fn reset() {
+        let oldTotal = this.totalAllocated;
+        this.chunks = [[]];
+        this.currentChunk = 0;
+        this.position = 0;
+        this.totalAllocated = 0;
+        print("  Bump allocator reset (freed " + str(oldTotal) + " bytes)");
+    }
+    
+    fn getStats() {
+        return {
+            chunks: len(this.chunks),
+            totalAllocated: this.totalAllocated,
+            currentPosition: this.position,
+            chunkSize: this.chunkSize
+        };
+    }
+}
+
+// Simulate AST node allocation during parsing
+fn parseWithBumpAllocator() {
+    let bump = new BumpAllocator(500);
+    
+    // Rapidly allocate AST nodes
+    let nodes = [];
+    for (i in range(0, 20)) {
+        let node = bump.allocate(25, "AST-node-" + str(i));
+        nodes.push(node);
+    }
+    
+    print("  Allocated " + str(len(nodes)) + " AST nodes");
+    print("  Bump stats: " + str(bump.getStats()));
+    
+    // Reset when parsing phase complete
+    bump.reset();
+    
+    return nodes;
+}
+
+let astNodes = parseWithBumpAllocator();
+print("  Parsed " + str(len(astNodes)) + " nodes");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 4. Slab Allocation Strategy
+// -----------------------------------------------------------------------------
+// Slab allocation for fixed-size objects with predictable patterns.
+
+print("--- Slab Allocation Strategy ---");
+
+class SlabAllocator {
+    fn init(objectSize, slabSize) {
+        this.objectSize = objectSize;
+        this.slabSize = slabSize;
+        this.slabs = [];
+        this.freeList = [];
+        this.totalObjects = 0;
+        this.allocatedObjects = 0;
+        
+        // Create initial slab
+        this.addSlab();
+        print("  Created slab allocator: " + str(objectSize) + " byte objects");
+    }
+    
+    fn addSlab() {
+        let slab = {
+            id: len(this.slabs),
+            objects: [],
+            freeSlots: []
+        };
+        
+        // Initialize free slots
+        for (i in range(0, this.slabSize)) {
+            slab.freeSlots.push(i);
+        }
+        
+        this.slabs.push(slab);
+        this.totalObjects = this.totalObjects + this.slabSize;
+        print("  Added slab #" + str(slab.id) + " with " + str(this.slabSize) + " slots");
+    }
+    
+    fn allocate(data) {
+        // Find slab with free slots
+        let targetSlab = null;
+        for (slab in this.slabs) {
+            if (len(slab.freeSlots) > 0) {
+                targetSlab = slab;
+                break;
+            }
+        }
+        
+        // Create new slab if needed
+        if (targetSlab == null) {
+            this.addSlab();
+            targetSlab = this.slabs[len(this.slabs) - 1];
+        }
+        
+        // Allocate from slab
+        let slot = targetSlab.freeSlots.pop();
+        let allocation = {
+            slab: targetSlab.id,
+            slot: slot,
+            data: data,
+            size: this.objectSize
+        };
+        
+        targetSlab.objects[slot] = allocation;
+        this.allocatedObjects = this.allocatedObjects + 1;
+        
+        return allocation;
+    }
+    
+    fn deallocate(allocation) {
+        let slab = this.slabs[allocation.slab];
+        slab.objects[allocation.slot] = null;
+        slab.freeSlots.push(allocation.slot);
+        this.allocatedObjects = this.allocatedObjects - 1;
+        print("  Deallocated from slab " + str(allocation.slab) + " slot " + str(allocation.slot));
+    }
+    
+    fn getStats() {
+        return {
+            slabs: len(this.slabs),
+            objectSize: this.objectSize,
+            totalObjects: this.totalObjects,
+            allocatedObjects: this.allocatedObjects,
+            freeObjects: this.totalObjects - this.allocatedObjects,
+            utilization: (this.allocatedObjects * 100) / this.totalObjects
+        };
+    }
+}
+
+// Allocate fixed-size network packets
+fn networkProcessing() {
+    let packetAllocator = new SlabAllocator(64, 10); // 64-byte packets, 10 per slab
+    
+    let packets = [];
+    
+    // Allocate packets
+    for (i in range(0, 15)) {
+        let packet = packetAllocator.allocate("packet-data-" + str(i));
+        packets.push(packet);
+    }
+    
+    print("  Allocated " + str(len(packets)) + " network packets");
+    print("  Slab stats: " + str(packetAllocator.getStats()));
+    
+    // Process and deallocate some packets
+    for (i in range(0, 5)) {
+        packetAllocator.deallocate(packets[i]);
+    }
+    
+    print("  After processing 5 packets:");
+    print("  Slab stats: " + str(packetAllocator.getStats()));
+    
+    return packetAllocator;
+}
+
+let packetAlloc = networkProcessing();
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 5. Memory Pool Management
+// -----------------------------------------------------------------------------
+// Coordinate multiple allocation strategies for optimal performance.
+
+print("--- Memory Pool Management ---");
+
+class MemoryManager {
+    fn init() {
+        this.heap = { allocated: 0, peak: 0 };
+        this.arenas = [];
+        this.slabs = [];
+        this.totalAllocated = 0;
+        print("  Initialized memory manager");
+    }
+    
+    fn createArena(name, size) {
+        let arena = new ArenaAllocator(name, size);
+        this.arenas.push(arena);
+        return arena;
+    }
+    
+    fn createSlab(objectSize, slabSize) {
+        let slab = new SlabAllocator(objectSize, slabSize);
+        this.slabs.push(slab);
+        return slab;
+    }
+    
+    fn allocateHeap(size, data) {
+        this.heap.allocated = this.heap.allocated + size;
+        this.heap.peak = max(this.heap.peak, this.heap.allocated);
+        this.totalAllocated = this.totalAllocated + size;
+        
+        return {
+            source: "heap",
+            size: size,
+            data: data
+        };
+    }
+    
+    fn getGlobalStats() {
+        let arenaStats = [];
+        for (arena in this.arenas) {
+            arenaStats.push(arena.getStats());
+        }
+        
+        let slabStats = [];
+        for (slab in this.slabs) {
+            slabStats.push(slab.getStats());
+        }
+        
+        return {
+            heap: this.heap,
+            arenas: arenaStats,
+            slabs: slabStats,
+            totalAllocated: this.totalAllocated
+        };
+    }
+    
+    fn cleanup() {
+        // Reset all arenas
+        for (arena in this.arenas) {
+            arena.reset();
+        }
+        
+        print("  Memory manager cleanup complete");
+    }
+}
+
+// Demonstrate coordinated memory management
+let memMgr = new MemoryManager();
+
+// Create specialized allocators
+let tempArena = memMgr.createArena("temp-work", 2000);
+let objSlab = memMgr.createSlab(32, 20);
+
+// Use different strategies
+let heapData = memMgr.allocateHeap(500, "persistent data");
+let tempData = tempArena.allocate(100, "temporary work");
+let objData = objSlab.allocate("small object");
+
+print("  Used multiple allocation strategies");
+print("  Global memory stats:");
+let stats = memMgr.getGlobalStats();
+print("    " + str(stats));
+
+// Cleanup
+memMgr.cleanup();
+
+print("");
+
+// -----------------------------------------------------------------------------
+// Summary
+// -----------------------------------------------------------------------------
+
+print("=== Allocation Strategy Summary ===");
+print("1. Heap: Long-lived data, general purpose");
+print("2. Arena: Temporary data, bulk deallocation");
+print("3. Bump: Very fast allocation, compilation phases");
+print("4. Slab: Fixed-size objects, predictable patterns");
+print("5. Pool management: Coordinate multiple strategies");
+print("");
+print("Choose strategy based on:");
+print("  - Object lifetime (temporary vs persistent)");
+print("  - Size patterns (fixed vs variable)");
+print("  - Performance requirements (speed vs memory)");
+print("  - Deallocation patterns (individual vs bulk)");
+print("");
+print("=== Demo Complete ===");

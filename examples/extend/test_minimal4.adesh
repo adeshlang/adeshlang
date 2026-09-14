@@ -1,0 +1,18 @@
+struct Vector2 {
+    x: F64;
+    y: F64;
+};
+
+extend on Vector2 {
+    fn getX() {
+        return this.x;
+    }
+
+    fn getXStr() {
+        return "X: " + this.x;
+    }
+}
+
+let v = Vector2 { x: 3.0, y: 4.0 };
+print("X: " + v.getX());
+print(v.getXStr());

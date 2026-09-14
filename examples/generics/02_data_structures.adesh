@@ -1,0 +1,77 @@
+// 02_data_structures.adesh
+// Demonstrates writing complex generic data structures (Generic Stack and Generic LinkedList Node)
+// with type annotations, and safety validation.
+
+print("=== 02: GENERIC DATA STRUCTURES ===");
+
+// 1. Generic Stack Implementation
+class Stack<T> {
+    Stack() {
+        this.elements = [];
+    }
+
+    fn push(item: T) {
+        this.elements.push(item);
+    }
+
+    fn pop(): T? {
+        if (len(this.elements) == 0) {
+            return null;
+        }
+        let last_idx = len(this.elements) - 1;
+        let val = this.elements[last_idx];
+        
+        // Simulating pop by shrinking
+        let new_elements = [];
+        let i = 0;
+        for (i = 0; i < last_idx; i = i + 1) {
+            new_elements.push(this.elements[i]);
+        }
+        this.elements = new_elements;
+        return val;
+    }
+
+    fn size(): int {
+        return len(this.elements);
+    }
+}
+
+// Test Generic Stack
+let numStack = new Stack();
+numStack.push(10);
+numStack.push(20);
+numStack.push(30);
+
+print("Stack size after push =", numStack.size());
+print("Pop value             =", numStack.pop());
+print("Pop value             =", numStack.pop());
+print("Stack size after pop  =", numStack.size());
+
+// 2. Generic Linked List Node
+class Node<T> {
+    Node(data: T, nextNode) {
+        this.data = data;
+        this.next = nextNode; // reference to next Node or null
+    }
+
+    fn getData(): T {
+        return this.data;
+    }
+
+    fn getNext() {
+        return this.next;
+    }
+}
+
+// Build a linked list: 3 -> 2 -> 1 -> null
+let n1 = new Node(1, null);
+let n2 = new Node(2, n1);
+let n3 = new Node(3, n2);
+
+print("Head Node Data        =", n3.getData());
+let secondNode = n3.getNext();
+print("Second Node Data      =", secondNode.getData());
+let thirdNode = secondNode.getNext();
+print("Third Node Data       =", thirdNode.getData());
+
+print("✅ Generic Data Structures Demo Passed.\n");

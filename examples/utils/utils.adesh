@@ -1,0 +1,7 @@
+/**
+    * Example VyoM utility functions and constants.
+    */
+fn add(a, b) { return a + b; }
+export default add;
+export fn sum(a, b) { return a + b; }
+export let PI = 3.14;

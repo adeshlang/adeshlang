@@ -1,0 +1,28 @@
+import Collections;
+
+print("========================================");
+print("Group By Example (Grouping Items by Category)");
+print("========================================");
+
+let groups = Collections.HashMap();
+
+fn add_to_group(groups, category, item) {
+    let list = groups.get(category);
+    if (list == null) {
+        list = Collections.Vec();
+        groups.insert(category, list);
+    }
+    list.push(item);
+}
+
+add_to_group(groups, "fruit", "apple");
+add_to_group(groups, "fruit", "banana");
+add_to_group(groups, "vegetable", "carrot");
+add_to_group(groups, "fruit", "cherry");
+add_to_group(groups, "vegetable", "broccoli");
+
+let fruits = groups.get("fruit");
+print("Fruits group: ", fruits.toArray());
+
+let veggies = groups.get("vegetable");
+print("Vegetables group: ", veggies.toArray());

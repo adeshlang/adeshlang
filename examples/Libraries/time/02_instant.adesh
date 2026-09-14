@@ -1,0 +1,33 @@
+// 02_instant.adesh - Monotonic clock and elapsed time measurement
+import Time;
+
+print("=== Instant Examples ===\n");
+
+// --- Capture now ---
+let t1: Instant = Time.instantNow();
+print("Instant captured:", t1.toString());
+
+// --- Simulate work ---
+let sum = 0;
+let i = 0;
+while (i < 1000000) { sum = sum + i; i = i + 1; }
+print("(work done, sum =", sum, ")");
+
+// --- Measure elapsed ---
+let t2: Instant = Time.instantNow();
+let elapsed: Duration = t1.elapsed();
+print("Elapsed since t1:", elapsed.toString());
+
+// --- Duration between two instants ---
+let between: Duration = t1.durationSince(t2);
+print("t1.durationSince(t2) nanos:", between.abs().wholeNanoseconds());
+
+// --- Add a duration to an instant ---
+let future: Instant = t1.add(Time.durationSeconds(10n));
+print("t1 + 10s nanos:", future.nanoseconds());
+
+// --- Compare instants ---
+print("\n--- Comparison ---");
+print("t1 before t2:", t1.lt(t2));
+print("t2 after  t1:", t2.gt(t1));
+print("t1 == t1:", t1.eq(t1));

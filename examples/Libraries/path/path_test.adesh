@@ -1,0 +1,44 @@
+import Path;
+import FS;
+
+// Test 1: Basic construction and joining
+let file_path = Path.new("assets").join("images").join("logo.png");
+print(file_path);
+
+// Test 2: Normalization
+let messy = Path.new("a/b/../c/./d").normalize();
+print("Messy normalized: " + messy.toString());
+
+// Test 3: Components and properties
+let sample = Path.new("usr/local/bin/app.tar.gz");
+print("FileName: " + sample.fileName());
+print("Stem: " + sample.stem());
+print("Extension: " + sample.extension());
+
+let with_jpg = sample.withExtension("zip");
+print("WithExtension: " + with_jpg.toString());
+
+let parent_dir = sample.parent();
+print("Parent: " + parent_dir.toString());
+
+// Test 4: System paths
+let cwd = Path.current();
+let temp = Path.temp();
+print("CWD absolute: " + str(cwd.isAbsolute()));
+print("Temp exists: " + str(temp.exists()));
+
+// Test 5: Relative calculation
+let base = Path.new("/home/user");
+let target = Path.new("/home/user/docs/report.pdf");
+let rel = target.relativeTo(base);
+print("Relative: " + rel.toString());
+
+// Test 6: FS Integration
+let tmp_file = temp.join("adesh_path_test.txt");
+FS.writeText(tmp_file, "Path library integration successful!");
+let content = FS.readText(tmp_file);
+print("File Content: " + content);
+
+// Test 7: Unicode path
+let unicode_path = Path.new("C:/Users/अजय/docs/日本/kanji.txt").normalize();
+print("Unicode Path: " + unicode_path.toString());

@@ -1,0 +1,48 @@
+// Example: Valid borrow patterns (compiles and runs successfully)
+// .
+fn main() {
+    println("=== Borrow Example: Valid Patterns ===");
+    
+    // Pattern 1: Owning pointer with shared read
+    println("\n1. Shared references to immutable data:");
+    let p = alloc<i32>();
+    *p = 42;
+    
+    let r1 = &p;  // Borrow for reading
+    let r2 = &p;  // Another ref to same data - OK
+    
+    println("r1 =", *r1);
+    println("r2 =", *r2);
+    // Borrows released here
+    
+    free(p);
+    
+    // Pattern 2: Exclusive access (auto-inferred from mutation)
+    println("\n2. Exclusive reference (auto-inferred):");
+    let p2 = alloc<i32>();
+    let mr = &p2;  // Compiler sees mutation below, infers exclusive borrow
+    *mr = 100;
+    println("Modified to:", *mr);
+    // Borrow released here
+    
+    free(p2);
+    
+    // Pattern 3: Sequential borrowing (same pointer)
+    println("\n3. Sequential borrowing:");
+    let p3 = alloc<i32>();
+    *p3 = 10;
+    {
+        let r3 = &p3;
+        println("First read:", *r3);
+    }  // Borrow ends
+    
+    {
+        let mr3 = &p3;  // Auto-inferred as exclusive (mutation detected)
+        *mr3 = 20;
+        println("After mutation:", *mr3);
+    }  // Borrow ends
+    
+    free(p3);
+    
+    println("\n=== All patterns compiled and executed successfully ===");
+}

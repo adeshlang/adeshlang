@@ -1,0 +1,71 @@
+import Collections;
+
+print("========================================");
+print("AdeshLang Collections Performance Benchmark");
+print("========================================");
+
+let count = 5000;
+
+// 1. Vec Benchmark
+let v = Collections.Vec();
+let i = 0;
+while (i < count) {
+    v.push(i);
+    i = i + 1;
+}
+print("Vec push 5000 elements completed. Len: ", v.len());
+
+// 2. HashMap Benchmark
+let map = Collections.HashMap();
+i = 0;
+while (i < count) {
+    map.insert("key_" + i, i);
+    i = i + 1;
+}
+print("HashMap insert 5000 elements completed. Len: ", map.len());
+print("HashMap lookup key_2500: ", map.get("key_2500"));
+
+// 3. VecDeque Benchmark
+let deque = Collections.VecDeque();
+i = 0;
+while (i < count) {
+    deque.pushBack(i);
+    deque.pushFront(i * 10);
+    i = i + 1;
+}
+print("VecDeque pushBack/pushFront completed. Len: ", deque.len());
+
+// 4. HashSet Benchmark
+let set = Collections.HashSet();
+i = 0;
+while (i < count) {
+    set.insert("item_" + i);
+    i = i + 1;
+}
+print("HashSet insert 5000 items completed. Len: ", set.len());
+print("HashSet contains item_2500: ", set.contains("item_2500"));
+
+// 5. BinaryHeap Benchmark
+let heap = Collections.BinaryHeap();
+i = 0;
+while (i < count) {
+    heap.push(i);
+    i = i + 1;
+}
+print("BinaryHeap push 5000 items completed. Max peek: ", heap.peek());
+
+// 6. Queue & Stack Benchmark
+let q = Collections.Queue();
+let s = Collections.Stack();
+i = 0;
+while (i < count) {
+    q.enqueue(i);
+    s.push(i);
+    i = i + 1;
+}
+print("Queue enqueue 5000 items. Len: ", q.len(), " Dequeue front: ", q.dequeue());
+print("Stack push 5000 items. Len: ", s.len(), " Pop top: ", s.pop());
+
+print("========================================");
+print("Collections Benchmark Finished Successfully!");
+print("========================================");

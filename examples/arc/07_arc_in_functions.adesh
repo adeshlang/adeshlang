@@ -1,0 +1,71 @@
+// examples/arc/07_arc_in_functions.adesh
+// Passing shared and weak references through function calls.
+// Demonstrates how ARC interacts with AdeshLang's call stack.
+
+print("=== ARC in Functions ===\n");
+
+// ── Helper functions ──────────────────────────────────────────────────────
+
+// Passing a share into a function clones a strong ref for the parameter.
+// While `print_counts` runs, obj.strong_count() includes that parameter owner
+// (+1 vs sensor.strong_count() in the caller).
+fn print_counts(label, obj) {
+    print(label, "→ strong:", obj.strong_count(), " weak:", obj.weak_count());
+}
+
+fn hold_strong(obj) {
+    // `obj` is a strong ref copy; count includes caller binding + this parameter.
+    print("  inside hold_strong: strong_count =", obj.strong_count());
+    // obj released on return
+}
+
+fn hold_weak(w) {
+    // `w` is a weak ref; count stays the same
+    let live = w.upgrade();
+    if (live != null) {
+        print("  inside hold_weak: is_alive=true, value:", live.value);
+    } else {
+        print("  inside hold_weak: is_alive=false");
+    }
+}
+
+fn read_field(obj) {
+    return obj.value;
+}
+
+// ── Main demonstration ────────────────────────────────────────────────────
+share sensor = { value: 42, name: "tempSensor" };
+weak watcher = sensor;
+
+print("direct baseline → strong:", sensor.strong_count(), " weak:", sensor.weak_count()); // 1, 1
+print_counts("via print_counts", sensor);  // strong:2 (sensor + param), weak:1
+
+// Passing to strong-taking function
+print("\nCalling hold_strong:");
+hold_strong(sensor);
+print("direct after hold_strong → strong:", sensor.strong_count());   // 1
+print_counts("via print_counts", sensor);   // strong:2
+
+// Passing weak to function
+print("\nCalling hold_weak:");
+hold_weak(watcher);
+print_counts("after hold_weak", sensor);     // strong:2, weak:1
+
+// Reading a field
+let v = read_field(sensor);
+print("\nread_field returned:", v);           // 42
+print_counts("after read_field", sensor);   // strong:2
+
+// ── Returning a strong ref from a function ────────────────────────────────
+fn make_extra_ref(obj) {
+    strong extra = obj;
+    return extra;   // moves `extra` out; count remains elevated
+}
+
+print("\nCalling make_extra_ref:");
+strong kept = make_extra_ref(sensor);
+print("direct after make_extra_ref → strong:", sensor.strong_count()); // 2 (sensor + kept)
+print_counts("via print_counts", sensor);  // strong:3 (sensor + kept + param)
+
+// `kept` goes out of scope at end of program — count drops to 1 then 0.
+print("\nFunction-based ARC patterns demonstrated.");

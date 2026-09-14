@@ -1,0 +1,37 @@
+// Example 5: Combining Pretty with Other Print Options
+// Shows how to use pretty printing with other print function options
+
+let data = {
+    status: "active",
+    count: 42,
+    items: ["a", "b", "c"]
+};
+
+println("=== Pretty Print with Custom Separator ===");
+print("Name:", "Value:", data, { sep: " | ", pretty: true });
+
+println("\n=== Pretty Print without Newline ===");
+print(data, { pretty: true, end: "" });
+print(" <- inline!", { pretty: false });
+
+println("\n\n=== Multiple Values with Pretty Print ===");
+let user = { name: "Alice", age: 30 };
+let score = { points: 100, level: 5 };
+print(user, score, { pretty: true, sep: "\n---\n" });
+
+println("\n\n=== Compact Mode with Custom Options ===");
+print("Result:", data, { 
+    pretty: "compact",
+    sep: " => ",
+    end: " [DONE]\n"
+});
+
+println("\n=== Comparing Different Outputs ===");
+println("Regular:");
+print(data);
+
+println("\nPretty (compact):");
+print(data, { pretty: "compact" });
+
+println("\nPretty (full):");
+print(data, { pretty: true });

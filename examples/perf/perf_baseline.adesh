@@ -1,0 +1,76 @@
+// Baseline performance benchmark
+// Targets:
+// - 1M arithmetic ops: < 100 ms
+// - 100k loop + 1 print: < 10 ms
+
+print("============================================================");
+print("AdeshLang Performance Baseline");
+print("============================================================");
+
+// TEST 1: 100,000 loop iterations with single print at end (target: <10ms)
+print("Test 1: 100,000 loop iterations, print at end");
+let start1: f64 = clock();
+let sum1 = 0;
+for (i in 0..100000) {
+    sum1 = sum1 + i;
+}
+let end1: f64 = clock();
+let time1: f64 = (end1 - start1)*1000 ;
+print("Sum:", sum1);
+print("Time:", time1, "ms (target: <10ms)");
+
+// TEST 2: 1,000,000 arithmetic ops (target: <100ms)
+print("Test 2: 1,000,000 arithmetic ops");
+let start2: f64 = clock();
+let acc2 = 0;
+for (i in 0..1000000) {
+    acc2 = acc2 + i * 2;
+}
+let end2: f64 = clock();
+let time2: f64 = (end2 - start2)*1000 ;
+print("Accumulator:", acc2);
+print("Time:", time2, "ms (target: <100ms)");
+
+// TEST 3: Variable access and assignment in tight loop
+print("Test 3: Variable access test (100k iterations)");
+let start3: f64 = clock();
+let x = 0;
+let y = 0;
+for (i in 0..100000) {
+    y = x;
+    x = i;
+}
+let end3: f64 = clock();
+let time3: f64 = (end3 - start3) * 1000;
+print("Final x:", x, "y:", y);
+
+print("Time:", time3, "ms");
+
+print("============================================================");
+print("SUMMARY");
+print("============================================================");
+print("100k loop + 1 print:", time1, "ms (target: <10ms)");
+print("1M arithmetic ops:", time2, "ms (target: <100ms)");
+print("100k variable access:", time3, "ms");
+
+
+// ============================================================
+// AdeshLang Performance Baseline
+// ============================================================       
+// Test 1: 100,000 loop iterations, print at end
+// Sum: 4999950000
+// Time: 0.19899999999999998 ms (target: <10ms)
+// Test 2: 1,000,000 arithmetic ops
+// Accumulator: 999999000000
+// Time: 1.1747999999999998 ms (target: <100ms)
+// Test 3: Variable access test (100k iterations)
+// Final x: 99999 y: 99998
+// Time: 0.018400000000000014 ms
+// ============================================================       
+// SUMMARY
+// ============================================================       
+// 100k loop + 1 print: 0.19899999999999998 ms (target: <10ms)        
+// 1M arithmetic ops: 1.1747999999999998 ms (target: <100ms)
+// 100k variable access: 0.018400000000000014 ms
+
+// ⏱  Execution time: 11.5821ms

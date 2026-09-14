@@ -1,0 +1,85 @@
+// High Resolution Time Demo
+// Demonstrates nanosecond precision timing across JIT/interpreter
+
+print("=== High Resolution Time Demo ===\n");
+
+// Basic clock function
+print("clock() - Monotonic time in seconds:");
+let start = clock();
+print("  Start:", start);
+
+// time.now() - nanoseconds
+print("\ntime.now() - Nanosecond precision:");
+let nanos1 = time.now();
+print("  Timestamp (ns):", nanos1);
+
+// time.nowMs() - milliseconds
+print("\ntime.nowMs() - Millisecond precision:");
+let ms1 = time.nowMs();
+print("  Timestamp (ms):", ms1);
+
+// time.nowUs() - microseconds
+print("\ntime.nowUs() - Microsecond precision:");
+let us1 = time.nowUs();
+print("  Timestamp (μs):", us1);
+
+// time.nowSecs() - seconds with high precision
+print("\ntime.nowSecs() - Seconds with fractional precision:");
+let secs1 = time.nowSecs();
+print("  Timestamp (s):", secs1);
+
+// Unix epoch timestamps
+print("\nUnix Epoch Timestamps:");
+let epoch = time.epoch();
+print("  time.epoch() (ms):", epoch);
+
+let epochNanos = time.epochNanos();
+print("  time.epochNanos() (ns):", epochNanos);
+
+// Timing a computation
+print("\n=== Timing a Computation ===\n");
+
+print("Computing fibonacci(30)...");
+let t1 = time.nowMs();
+
+fn fib(n) {
+    if (n <= 1) {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+let result = fib(20);
+let t2 = time.nowMs();
+
+print("Result:", result);
+print("Time taken:", t2 - t1, "ms");
+
+// Timing a loop
+print("\n=== Timing a Loop ===\n");
+
+print("Summing 1 to 10000...");
+let loopStart = time.nowUs();
+
+let sum = 0;
+for (i in 0..10000) {
+    sum = sum + i;
+}
+
+let loopEnd = time.nowUs();
+print("Sum:", sum);
+print("Time taken:", loopEnd - loopStart, "μs");
+
+// High precision measurement
+print("\n=== High Precision Measurement ===\n");
+
+print("Measuring empty loop overhead (1000 iterations)...");
+let precStart = time.now();
+for (i in 0..1000) {
+    // Empty loop
+}
+let precEnd = time.now();
+print("Total time (ns):", precEnd - precStart);
+print("Average per iteration (ns):", (precEnd - precStart) / 1000);
+
+print("\n=== Demo Complete ===");

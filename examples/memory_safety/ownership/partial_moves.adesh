@@ -1,0 +1,55 @@
+// Partial Moves - Moving Individual Fields
+// Moving part of a structure
+
+fn main() {
+    print("=== Partial Move Example ===");
+    
+    let person = {
+        name: "Alice",
+        age: 30,
+        address: {street: "123 Main St", city: "NYC"}
+    };
+    
+    // Move one field
+    let person_name = person.name;  // name is moved out
+    
+    // Can still access other fields
+    print("Age:", person.age);
+    print("City:", person.address.city);
+    
+    // Cannot access moved field
+    // print("Name:", person.name);  // ERROR: name was moved
+    
+    // Cannot use whole object
+    // let p2 = person;  // ERROR: person is partially moved
+}
+
+// Array partial moves
+fn array_partial_move() {
+    let arr = [[1, 2], [3, 4], [5, 6]];
+    
+    // Move individual elements
+    let first = arr[0];  // Move first element
+    
+    // Rest are still accessible
+    print("Second:", arr[1]);
+    print("Third:", arr[2]);
+    
+    // But first is moved
+    // print("First:", arr[0]);  // ERROR: moved
+}
+
+// Preventing partial moves with borrowing
+fn avoid_partial_moves() {
+    let data = {x: 10, y: 20, z: 30};
+    
+    // Borrow instead of move
+    let x_ref = &data.x;
+    let y_ref = &data.y;
+    
+    print("x:", x_ref);
+    print("y:", y_ref);
+    
+    // data is still fully usable
+    print("Complete data:", data);
+}

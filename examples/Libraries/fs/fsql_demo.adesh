@@ -1,0 +1,10 @@
+// Filesystem query demo
+import "fs";
+print("=== Filesystem Query Demo ===");
+
+// Query for .adesh files in examples directory
+let rows = fs.fsql("examples", "adesh");
+print("Found .adesh files:");
+print(rows);
+
+print("=== Demo completed ===");

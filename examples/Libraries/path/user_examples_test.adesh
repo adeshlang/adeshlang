@@ -1,0 +1,13 @@
+import Path;
+
+// Example 1: Change Extension
+let image = Path.new("photo.png").withExtension("jpg");
+print("1. Change Extension: " + image.toString());
+
+// Example 2: Filename
+let file1 = Path.new("assets/images/logo.png");
+print("2. Filename: " + file1.fileName());
+
+// Example 3: File Stem
+let file2 = Path.new("assets/images/logo.png");
+print("3. File Stem: " + file2.stem());

@@ -1,0 +1,144 @@
+// Comprehensive IO Standard Library Functional Test Suite
+
+import IO;
+
+fn test_memory_streams() {
+    print("Running test_memory_streams...\n");
+    let r = new MemoryReader("Hello World");
+    assert(r.length() == 11);
+    assert(r.remaining() == 11);
+    
+    let mw = new MemoryWriter();
+    let n = copy(r, mw);
+    assert(n == 11);
+    assert(mw.toString() == "Hello World");
+    print("[PASS] test_memory_streams\n");
+}
+
+fn test_buffered_streams() {
+    print("Running test_buffered_streams...\n");
+    let mr = new MemoryReader("Line 1\nLine 2\nLine 3\n");
+    let br = new BufferedReader(mr, 4);
+    let l1 = br.readLine();
+    print("l1: '" + l1 + "'\n");
+    assert(l1 == "Line 1");
+    let l2 = br.readLine();
+    print("l2: '" + l2 + "'\n");
+    assert(l2 == "Line 2");
+    let l3 = br.readLine();
+    print("l3: '" + l3 + "'\n");
+    assert(l3 == "Line 3");
+    
+    print("Testing BufferedWriter...\n");
+    let mw = new MemoryWriter();
+    let bw = new BufferedWriter(mw, 8);
+    print("Writing line...\n");
+    bw.writeLine("Buffered Output");
+    print("Flushing...\n");
+    bw.flush();
+    assert(mw.toString() == "Buffered Output\n");
+    print("[PASS] test_buffered_streams\n");
+}
+
+fn test_binary_streams() {
+    print("Running test_binary_streams...\n");
+    let mw = new MemoryWriter();
+    let bw = new BinaryWriter(mw, "little");
+    bw.writeU8(255);
+    bw.writeI16(-1024);
+    bw.writeI32(100000);
+    bw.writeF64(3.14159);
+    bw.writeString("Adesh");
+    bw.flush();
+
+    let allBytes = mw.getBytes();
+    print("bytes: " + len(allBytes) + "\n");
+    let mr = new MemoryReader(allBytes);
+    let br = new BinaryReader(mr, "little");
+    let u8_val = br.readU8();
+    print("u8_val: " + u8_val + "\n");
+    assert(u8_val == 255);
+    let i16_val = br.readI16();
+    print("i16_val: " + i16_val + "\n");
+    assert(i16_val == -1024);
+    let i32_val = br.readI32();
+    print("i32_val: " + i32_val + "\n");
+    assert(i32_val == 100000);
+    let f = br.readF64();
+    print("f64_val: " + f + "\n");
+    assert(f > 3.14 && f < 3.15);
+    let s = br.readString(5);
+    print("string_val: " + s + "\n");
+    assert(s == "Adesh");
+    print("[PASS] test_binary_streams\n");
+}
+
+fn test_byte_and_string_buffers() {
+    print("Running test_byte_and_string_buffers...\n");
+    let bb = new ByteBuffer(16);
+    bb.writeByte(65);
+    bb.writeByte(66);
+    bb.writeByte(67);
+    assert(bb.readByte() == 65);
+    
+    let sb = new StringBuffer();
+    sb.append("Adesh").appendLine("Lang");
+    assert(sb.toString() == "AdeshLang\n");
+    print("[PASS] test_byte_and_string_buffers\n");
+}
+
+fn test_pipe_and_adapters() {
+    print("Running test_pipe_and_adapters...\n");
+    let p = new Pipe();
+    p.write([72, 101, 108, 108, 111], 0, 5);
+    let mw = new MemoryWriter();
+    copy(p, mw);
+    assert(mw.toString() == "Hello");
+
+    let mr = new MemoryReader("1234567890");
+    let lim = limit(mr, 4);
+    assert(lim.readToEnd() == "1234");
+    print("[PASS] test_pipe_and_adapters\n");
+}
+
+fn test_counting_and_tee() {
+    print("Running test_counting_and_tee...\n");
+    let mr = new MemoryReader("Sample Data");
+    let cr = new CountingReader(mr);
+    let mw = new MemoryWriter();
+    let cw = new CountingWriter(mw);
+
+    let tr = new TeeReader(cr, cw);
+    tr.readToEnd();
+    assert(cr.count() == 11);
+    assert(cw.count() == 11);
+    assert(mw.toString() == "Sample Data");
+    print("[PASS] test_counting_and_tee\n");
+}
+
+fn test_combinators() {
+    print("Running test_combinators...\n");
+    let r1 = new MemoryReader("Part1 ");
+    let r2 = new MemoryReader("Part2");
+    let c = concat([r1, r2]);
+    assert(c.readToEnd() == "Part1 Part2");
+
+    let rep = repeat(65, 3);
+    assert(rep.readToEnd() == "AAA");
+    print("[PASS] test_combinators\n");
+}
+
+fn main() {
+    print("Running AdeshLang IO Standard Library Test Suite...\n");
+    let _mod = IO;
+    test_memory_streams();
+    test_buffered_streams();
+    test_binary_streams();
+    test_byte_and_string_buffers();
+    test_pipe_and_adapters();
+    test_counting_and_tee();
+    test_combinators();
+    print("ALL IO SUITE TESTS PASSED SUCCESSFULLY!\n");
+}
+
+

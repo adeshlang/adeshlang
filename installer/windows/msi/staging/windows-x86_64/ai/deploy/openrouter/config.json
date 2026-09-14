@@ -1,0 +1,21 @@
+{
+  "model_name": "adeshlang/adesh-coder-0.5b",
+  "display_name": "AdeshLang Coder 0.5B (Official)",
+  "version": "0.3.0",
+  "base_model": "Qwen/Qwen2.5-Coder-0.5B-Instruct",
+  "context_length": 32768,
+  "pricing": {
+    "prompt": "0.0",
+    "completion": "0.0"
+  },
+  "architecture": {
+    "modality": "text->text",
+    "tokenizer": "qwen2",
+    "instruct_type": "chatml"
+  },
+  "deployment": {
+    "vllm_command": "python3 -m vllm.entrypoints.openai.api_server --model ai/models/merged-latest --served-model-name adeshlang/adesh-coder-0.5b --port 8000 --max-model-len 32768",
+    "llama_cpp_server_command": "llama-server -m ai/models/adesh-coder-0.5b-q4_0.gguf --port 8080 -c 8192 -ngl 99",
+    "ollama_command": "ollama create adeshlang -f ai/deploy/ollama/Modelfile"
+  }
+}

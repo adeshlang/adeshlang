@@ -1,0 +1,10 @@
+let val = 123.9;
+print(`Value: ${val:int}`);
+let pi = 3.14159;
+print(`Pi: ${pi:float(2)}`);
+let n = 10;
+print(`Binary: ${n:bin}`);
+let m = 255;
+print(`Hex: ${m:hex}`);
+let price = 1234.5;
+print(`Currency: ${price:currency(INR)}`);

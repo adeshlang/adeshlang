@@ -1,0 +1,29 @@
+// Date/Time Examples
+
+// Current date
+let d = new Date();
+print("ISO:", d.toISOString());
+print("Local:", d.toLocaleString());
+print("Local Date:", d.toLocaleDateString());
+print("Local Time:", d.toLocaleTimeString());
+print("Local getters:", d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds(), d.getMilliseconds(), d.getDay());
+print("UTC getters:", (new Date()).getUTCFullYear(), (new Date()).getUTCMonth(), (new Date()).getUTCDate(), (new Date()).getUTCHours(), (new Date()).getUTCMinutes(), (new Date()).getUTCSeconds(), (new Date()).getUTCMilliseconds());
+print("Timezone offset (min):", d.getTimezoneOffset());
+
+// Construct from ms
+let epoch = new Date(0);
+print("Epoch:", epoch.toISOString());
+
+// Parse ISO
+let ms = Date.parse("2025-11-20T00:00:00.000Z");
+let d2 = new Date(ms);
+print("Parsed:", d2.toISOString(), d2.toLocaleString());
+
+// Add 1 hour
+let oneHour = 60 * 60 * 1000;
+let d3 = new Date(d.getTime() + oneHour);
+print("+1 hour ISO:", d3.toISOString());
+
+// Custom formatter via toLocale components
+let custom = d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate() + " " + d.getHours() + ":" + d.getMinutes();
+print("Custom:", custom);

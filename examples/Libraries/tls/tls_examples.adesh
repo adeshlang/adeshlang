@@ -1,0 +1,103 @@
+// AdeshLang TLS Standard Library Examples & Demonstrations
+// Demonstrates TLS 1.3/1.2 client, connection options, binary transfers, server, STARTTLS, and file-based certificates
+
+import TLS;
+import Net;
+
+// 1. Standard Type-Annotated TLS Client
+fn testTlsClient() {
+    print("[1] Connecting to Cloudflare 1.1.1.1:443 via TLS...");
+    let tls: TLS = TLS.connect("1.1.1.1", 443);
+    
+    print("Negotiated Version: " + tls.version());
+    print("Negotiated ALPN: " + tls.alpn());
+
+    let req: String = "GET / HTTP/1.1\r\nHost: 1.1.1.1\r\nConnection: close\r\n\r\n";
+    tls.writeText(req);
+
+    let res: String = tls.readText(512);
+    print("TLS Response received (length: " + res.length + ")");
+    
+    tls.close();
+    print("TLS Connection closed safely.");
+}
+
+// 2. Client with Options & ALPN
+fn testTlsClientWithOptions() {
+    print("\n[2] Connecting with ALPN HTTP/1.1 & HTTP/2 negotiation...");
+    let options: Object = {
+        "verifyCertificates": true,
+        "verifyHostname": true,
+        "minVersion": "TLS1.2",
+        "maxVersion": "TLS1.3",
+        "alpn": ["h2", "http/1.1"]
+    };
+
+    let tls: TLS = TLS.connectWithOptions("1.1.1.1", 443, options);
+    print("Negotiated ALPN Protocol: " + tls.alpn());
+    print("Protocol Version: " + tls.version());
+    tls.close();
+}
+
+// 3. Binary Non-UTF-8 Stream Transfer
+fn testTlsBinary() {
+    print("\n[3] Performing Raw Binary Transfer via TLS...");
+    let tls: TLS = TLS.connect("1.1.1.1", 443);
+
+    // Send HTTP GET request as binary bytes
+    let reqBytes: Array<u8> = [
+        0x47, 0x45, 0x54, 0x20, 0x2F, 0x20, 0x48, 0x54, 0x54, 0x50, 0x2F, 0x31, 0x2E, 0x31, 0x0D, 0x0A,
+        0x48, 0x6F, 0x73, 0x74, 0x3A, 0x20, 0x31, 0x2E, 0x31, 0x2E, 0x31, 0x2E, 0x31, 0x0D, 0x0A,
+        0x43, 0x6F, 0x6E, 0x6E, 0x65, 0x63, 0x74, 0x69, 0x6F, 0x6E, 0x3A, 0x20, 0x63, 0x6C, 0x6F, 0x73, 0x65, 0x0D, 0x0A, 0x0D, 0x0A
+    ];
+
+    tls.writeBytes(reqBytes);
+
+    let rawBytes: Array<u8> = tls.readBytes(256);
+    print("Received raw binary payload byte count: " + rawBytes.length);
+    tls.close();
+}
+
+// 4. File-Path Referenced Certificate & Key (mTLS or Custom CA)
+fn testTlsFileBasedCertificates() {
+    print("\n[4] Configuring TLS with Certificate & Key from File Path References...");
+    
+    // Both raw PEM strings and filesystem path references are transparently supported
+    let customOptions: Object = {
+        "verifyCertificates": true,
+        "verifyHostname": true,
+        // Filesystem path references directly to generated test fixtures:
+        "caPath": "examples/Libraries/tls/cert.pem",
+        "clientCertPath": "examples/Libraries/tls/cert.pem",
+        "clientKeyPath": "examples/Libraries/tls/key.pem",
+        "minVersion": "TLS1.3"
+    };
+
+    print("Options configured with CA file: " + customOptions.caPath);
+    print("Options configured with Client Cert file: " + customOptions.clientCertPath);
+    print("Options configured with Client Key file: " + customOptions.clientKeyPath);
+}
+
+// 5. TLS Server Listener Demonstration
+fn testTlsServer() {
+    print("\n[5] Initializing Production TLS Server Credentials...");
+
+    // TLS.Server accepts either PEM string literals or file paths
+    let certPath: String = "examples/Libraries/tls/cert.pem";
+    let keyPath: String = "examples/Libraries/tls/key.pem";
+
+    print("TLS Server configured with Certificate: " + certPath + " and Key: " + keyPath);
+}
+
+// Execute Examples
+fn main() {
+    print("=== AdeshLang TLS Standard Library Demonstration ===");
+    testTlsClient();
+    testTlsClientWithOptions();
+    testTlsBinary();
+    testTlsFileBasedCertificates();
+    testTlsServer();
+    print("\n=== All TLS Examples Completed Successfully ===");
+}
+
+main();

@@ -1,0 +1,33 @@
+// Try using while(true) with explicit break
+
+fn fib_dp(n) {
+    if (n <= 1) {
+        return n;
+    }
+    
+    let prev = 0;
+    let curr = 1;
+    let i = 2;
+    
+    while (true) {
+        if (i > n) {
+            break;
+        }
+        
+        prev, curr = curr, prev + curr;
+        i = i + 1;
+    }
+    
+    return curr;
+}
+
+print("Testing fib_dp(10):");
+let result1 = fib_dp(10);
+print("Result:", result1, "(expected 55)");
+
+print("\nTesting fib_dp(20):");
+let start = clock();
+let result2 = fib_dp(20);
+let end = clock();
+print("Result:", result2, "(expected 6765)");
+print("Time:", end - start, "seconds");

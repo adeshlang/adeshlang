@@ -1,0 +1,13 @@
+import Compression;
+
+print("=== Seekable Random Access Compressed Archive Example ===");
+
+let dataset = "Record 0: Initial database log entry.\nRecord 1: Secondary log entry.\nRecord 2: Additional log entry.\nRecord 3: Final database record entry.\n";
+
+// Create seekable archive with 32-byte chunks
+let archive = Compression.createSeekable(dataset, "zstd", 32);
+print("Total seekable archive bytes:", len(archive));
+
+// Read chunk #0 directly without decompressing the whole file
+let chunk0 = Compression.readSeekableChunk(archive, 0);
+print("Read chunk #0 len:", len(chunk0));

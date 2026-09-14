@@ -1,0 +1,106 @@
+// ╔═══════════════════════════════════════════════════════════════════════════════╗
+// ║  ATP Loss Recovery — reliable delivery verification                           ║
+// ║  Loss simulation is internal to the Rust test harness (not exposed in API).   ║
+// ║  Run: cargo run --bin adeshlang -- run examples/Libraries/atp/atp_loss_recovery.adesh
+// ╚═══════════════════════════════════════════════════════════════════════════════╝
+
+import ATP;
+import thread;
+import "./lib/atp_ports.adesh" as Ports;
+
+fn waitConnected(conn: any, maxMs: any): any {
+    let elapsed = 0;
+    while elapsed < maxMs {
+        let ev = conn.receive();
+        if (ev != null && ev.type == "connected") { return ev; }
+        thread.sleep(10);
+        elapsed = elapsed + 10;
+    }
+    return null;
+}
+
+fn recvMessage(conn: any, maxMs: any): any {
+    let elapsed = 0;
+    while elapsed < maxMs {
+        let ev = conn.receive();
+        if (ev != null && ev.type == "message") { return ev; }
+        thread.sleep(10);
+        elapsed = elapsed + 10;
+    }
+    return null;
+}
+
+fn acceptConn(server: any, maxMs: any): any {
+    let elapsed = 0;
+    while elapsed < maxMs {
+        let c = server.accept();
+        if (c != null && c.type == "AtpConnection") { return c; }
+        thread.sleep(10);
+        elapsed = elapsed + 10;
+    }
+    return null;
+}
+
+let port = Ports.port(6);
+let MSG_COUNT = 15;
+
+let serverThread = thread.spawn(fn() {
+    let server = ATP.listen(Ports.DEFAULT_HOST, port);
+    let conn = null;
+    let t = 0;
+    while (conn == null && t < 500) {
+        conn = server.accept();
+        t = t + 1;
+        thread.sleep(10);
+    }
+    if (conn != null) {
+        let echoed = 0;
+        let n = 0;
+        while (n < 200) {
+            let ev = conn.receive();
+            if (ev != null && ev.type == "message") {
+                conn.send("seq:" + ev.data, true, true);
+                echoed = echoed + 1;
+            }
+            n = n + 1;
+            thread.sleep(5);
+        }
+        print("[server] echoed " + echoed + " reliable messages");
+        conn.close();
+    }
+    server.close();
+});
+
+thread.sleep(400);
+
+print("=== ATP Reliable Delivery (loss recovery) ===");
+print("Sending " + MSG_COUNT + " reliable ordered messages...\n");
+
+let conn = ATP.connect(Ports.DEFAULT_HOST, port);
+waitConnected(conn, 5000);
+
+for (let i = 0; i < MSG_COUNT; i = i + 1) {
+    conn.send("msg-" + i, true, true);
+}
+
+let delivered = 0;
+while (delivered < MSG_COUNT) {
+    let msg = recvMessage(conn, 5000);
+    if (msg == null) {
+        break;
+    }
+    delivered = delivered + 1;
+}
+
+if (delivered == MSG_COUNT) {
+    print("[client] all " + MSG_COUNT + " messages delivered (reliable + ordered)");
+} else {
+    print("[client] delivered " + delivered + "/" + MSG_COUNT + " — check network");
+}
+
+let cm = conn.metrics();
+print("[client] bytes sent=" + cm.bytesSent + " recv=" + cm.bytesReceived);
+
+conn.close();
+serverThread.join();
+print("\n=== Loss recovery demo complete ===");

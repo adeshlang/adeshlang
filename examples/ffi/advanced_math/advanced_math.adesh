@@ -1,0 +1,170 @@
+// Advanced Mathematical Functions - Demonstrates Complex FFI Export
+// This library can be compiled and used from C/C++/Rust with full type safety
+
+export fn gcd(a: i64, b: i64): i64 {
+    let x: i64;
+    let y: i64;
+    x = a;
+    y = b;
+    
+    while y != 0 {
+        let r: i64;
+        r = x % y;
+        x = y;
+        y = r;
+    }
+    
+    return x;
+}
+
+export fn lcm(a: i64, b: i64): i64 {
+    if a == 0 || b == 0 {
+        return 0;
+    }
+    let g: i64;
+    g = gcd(a, b);
+    let quotient: i64;
+    quotient = a / g;
+    let result: i64;
+    result = quotient * b;
+    return result;
+}
+
+export fn is_prime(n: i64): i64 {
+    if n <= 1 {
+        return 0;
+    }
+    if n <= 3 {
+        return 1;
+    }
+    if n % 2 == 0 || n % 3 == 0 {
+        return 0;
+    }
+    
+    let i: i64;
+    i = 5;
+    while i * i <= n {
+        if n % i == 0 || n % (i + 2) == 0 {
+            return 0;
+        }
+        i = i + 6;
+    }
+    return 1;
+}
+
+export fn nth_fibonacci(n: i64): i64 {
+    if n <= 0 {
+        return 0;
+    }
+    if n == 1 {
+        return 1;
+    }
+    
+    let a: i64;
+    let b: i64;
+    a = 0;
+    b = 1;
+    
+    let count: i64;
+    count = 2;
+    
+    while count <= n {
+        let temp: i64;
+        temp = a + b;
+        a = temp - a;
+        b = temp;
+        count = count + 1;
+    }
+    
+    return b;
+}
+
+export fn sum_range(start: i64, end: i64): i64 {
+    let sum: i64;
+    sum = 0;
+    let i: i64;
+    i = start;
+    
+    while i <= end {
+        sum = sum + i;
+        i = i + 1;
+    }
+    
+    return sum;
+}
+
+export fn modular_pow(base: i64, exp: i64, modulo: i64): i64 {
+    if modulo == 1 {
+        return 0;
+    }
+    
+    let result: i64;
+    result = 1;
+    let b: i64;
+    b = base % modulo;
+    let e: i64;
+    e = exp;
+    
+    while e > 0 {
+        if e % 2 == 1 {
+            result = (result * b) % modulo;
+        }
+        e = e >> 1;
+        b = (b * b) % modulo;
+    }
+    
+    return result;
+}
+
+// Floating point operations
+export fn sqrt_approx(x: f64): f64 {
+    if x < 0.0 {
+        return 0.0;
+    }
+    if x == 0.0 {
+        return 0.0;
+    }
+    
+    // Binary search on the interval [0, x] (uses only multiply/add/compare)
+    let lo: f64;
+    lo = 0.0;
+    let hi: f64;
+    hi = x + 0.0;
+    let iterations: i64;
+    iterations = 0;
+    let max_iter: i64;
+    max_iter = 100;
+    
+    while iterations < max_iter {
+        let sq: f64;
+        sq = (lo + (hi - lo) * 0.5) * (lo + (hi - lo) * 0.5);
+        if sq < x {
+            lo = lo + (hi - lo) * 0.5;
+        } else {
+            hi = lo + (hi - lo) * 0.5;
+        }
+        iterations = iterations + 1;
+    }
+    
+    let result: f64;
+    result = lo + (hi - lo) * 0.5;
+    return result;
+}
+
+export fn circle_area(radius: f64): f64 {
+    let pi: f64;
+    pi = 3.14159265359;
+    let area: f64;
+    area = pi * radius;
+    area = area * radius;
+    return area;
+}
+
+export fn circle_circumference(radius: f64): f64 {
+    let pi: f64;
+    pi = 3.14159265359;
+    let circumference: f64;
+    circumference = pi * radius;
+    circumference = circumference * 2.0;
+    return circumference;
+}

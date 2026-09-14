@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  WiX Burn bootstrapper. Build with:
+    wix build Bundle.wxs -ext WixToolset.Bal.wixext -ext WixToolset.Util.wixext ...
+
+  The MSI is installed first. Burn then invokes adesh with the manifest
+  installed by that MSI. The toolchain DetectCondition is intentionally based
+  on HKLM Environment\ADESH_TOOLCHAIN, the machine-wide marker written by the
+  toolchain command.
+
+  VSBuildToolsInstall is a numeric Burn variable and defaults to 0 (unchecked).
+  WixStdBA exposes it for command-line/admin automation (`/v
+  VSBuildToolsInstall=1`); a custom theme can bind a checkbox with the same
+  variable name without changing the chain.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+      xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal"
+      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <?define ProductVersion = "0.3.0.0" ?>
+  <?define MsiPath = "$(var.MsiPath)" ?>
+  <?define AdeshExePath = "$(var.AdeshExePath)" ?>
+
+  <Bundle Name="AdeshLang"
+          Version="$(var.ProductVersion)"
+          Manufacturer="AdeshLang Team"
+          UpgradeCode="{CCB8DD91-839E-49F4-9DB6-4EC95B4C6E9A}"
+          Compressed="yes"
+          AboutUrl="https://github.com/adeshlang/adeshlang">
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication Theme="hyperlinkSidebarLicense"
+                                              LicenseUrl="https://github.com/adeshlang/adeshlang/blob/main/LICENSE" />
+    </BootstrapperApplication>
+
+    <Variable Name="VSBuildToolsInstall"
+              Type="numeric"
+              Value="0"
+              Persisted="no"
+              bal:Overridable="yes" />
+    <!-- This BalCondition keeps the variable a strict unchecked/checked
+         switch while allowing admins to set it with /v. In the WiX v4/v5
+         Burn schema the expression is the Condition attribute, not inner
+         text. -->
+    <bal:Condition Condition="VSBuildToolsInstall = 0 OR VSBuildToolsInstall = 1"
+                   Message="VSBuildToolsInstall must be 0 or 1." />
+
+    <util:RegistrySearch Id="ToolchainInstalledSearch"
+                         Root="HKLM"
+                         Key="SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+                         Value="ADESH_TOOLCHAIN"
+                         Result="exists"
+                         Variable="ToolchainInstalled" />
+    <util:RegistrySearch Id="VSBuildToolsSearch"
+                         Root="HKLM"
+                         Key="SOFTWARE\Microsoft\VisualStudio\Setup\Instances\BuildTools"
+                         Value="InstallationPath"
+                         Result="exists"
+                         Variable="VSBuildToolsDetected" />
+    <util:FileSearch Id="ToolchainFilesSearch"
+                     Path="[ProgramFiles64Folder]AdeshLang\toolchain\llvm\bin\clang.exe"
+                     Result="exists"
+                     Variable="ToolchainFilesInstalled" />
+
+    <Chain>
+      <!-- The bundle drives the toolchain install itself (AdeshToolchain
+           below), so it suppresses the MSI's own post-install custom action
+           via this property; a standalone MSI deployment still runs it. -->
+      <MsiPackage Id="AdeshLangMsi"
+                  SourceFile="$(var.MsiPath)"
+                  DisplayName="AdeshLang core">
+        <MsiProperty Name="ADESH_MSI_SKIP_TOOLCHAIN" Value="1" />
+      </MsiPackage>
+      <!-- Permanent: the CLI payload has no Burn uninstall contract; LLVM
+           cleanup is documented for `adesh toolchain` rather than the
+           bundle's uninstall. -->
+      <ExePackage Id="AdeshToolchain"
+                  SourceFile="$(var.AdeshExePath)"
+                  DisplayName="Pinned LLVM 18.1.8 toolchain"
+                  InstallArguments="toolchain install --system --manifest &quot;[ProgramFiles64Folder]AdeshLang\config\toolchain-manifest.json&quot;"
+                  DetectCondition="ToolchainInstalled AND ToolchainFilesInstalled"
+                  InstallCondition="NOT (ToolchainInstalled AND ToolchainFilesInstalled)"
+                  Permanent="yes"
+                  Vital="yes" />
+      <!-- The small vs_buildtools.exe web bootstrapper (~2 MB) is fetched at
+           BUILD time by build-bundle.ps1 and embedded here; at INSTALL time
+           it downloads only the VS components selected below. -->
+      <ExePackage Id="VSBuildTools"
+                  SourceFile="$(var.VsBuildToolsPath)"
+                  Name="vs_buildtools.exe"
+                  DownloadUrl="https://aka.ms/vs/17/release/vs_buildtools.exe"
+                  DisplayName="Visual Studio Build Tools and Windows SDK"
+                  InstallArguments="--quiet --wait --norestart --nocache --installPath &quot;[ProgramFilesFolder]Microsoft Visual Studio\2022\BuildTools&quot; --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+                  DetectCondition="VSBuildToolsDetected"
+                  InstallCondition="VSBuildToolsInstall"
+                  Permanent="yes"
+                  Vital="no" />
+    </Chain>
+  </Bundle>
+</Wix>

@@ -1,0 +1,300 @@
+AdeshLang License v2.0
+
+Copyright (c) 2025-2026 Ajay Tainwala. All rights reserved.
+
+==============================================================================
+TABLE OF CONTENTS
+==============================================================================
+  1. Definitions
+  2. Grant of Copyright License
+  3. Grant of Patent License
+  4. Redistribution Conditions
+  5. Trademark and Branding
+  6. Contribution Terms
+  7. Commercial Use and Attribution
+  8. Security Vulnerability Disclosure
+  9. Export Compliance
+ 10. Disclaimer of Warranty
+ 11. Limitation of Liability
+ 12. Indemnification
+ 13. Termination
+ 14. Governing Law and Jurisdiction
+ 15. Severability
+ 16. Entire Agreement
+ 17. Amendments
+
+==============================================================================
+1. DEFINITIONS
+==============================================================================
+
+"Software" refers to the AdeshLang programming language, its compiler,
+runtime, standard library, language server, tooling, associated documentation
+files, and all source code contained in this repository.
+
+"Licensor" refers to the copyright holder, Ajay Tainwala.
+
+"Contributor" refers to any individual or entity that submits original work
+to the Software for inclusion or modification by the Licensor.
+
+"Contribution" refers to any original work of authorship, including
+modifications, additions, or corrections, intentionally submitted by a
+Contributor to the Licensor for inclusion in the Software.
+
+"Derivative Work" refers to any work that is based on or derived from the
+Software, including translations, modifications, compilations, or any other
+form in which the Software may be recast, transformed, or adapted.
+
+"Recipient" refers to any person or entity who receives or uses the Software
+under the terms of this License.
+
+"Standard Library" refers to the built-in library modules shipped with
+AdeshLang, including but not limited to Crypto, TLS, HTTP, WebSocket, IO,
+Path, Process, Env, Time, Compression, Encoding, Random, URL, and System.
+
+==============================================================================
+2. GRANT OF COPYRIGHT LICENSE
+==============================================================================
+
+Subject to the terms and conditions of this License, the Licensor hereby
+grants to each Recipient a perpetual, worldwide, non-exclusive, no-charge,
+royalty-free, irrevocable copyright license to reproduce, prepare Derivative
+Works of, publicly display, publicly perform, sublicense, and distribute the
+Software and any Derivative Works thereof.
+
+==============================================================================
+3. GRANT OF PATENT LICENSE
+==============================================================================
+
+Subject to the terms and conditions of this License, the Licensor hereby
+grants to each Recipient a perpetual, worldwide, non-exclusive, no-charge,
+royalty-free, irrevocable (except as stated in this section) patent license
+to make, have made, use, offer to sell, sell, import, and otherwise transfer
+the Software, where such license applies only to those patent claims
+licensable by the Licensor that are necessarily infringed by the Software
+alone or by combination of the Software with Derivative Works.
+
+If any Recipient institutes patent litigation against the Licensor or any
+entity (including a cross-claim or counterclaim in a lawsuit) alleging that
+the Software or a Contribution incorporated within the Software constitutes
+direct or contributory patent infringement, then any patent licenses granted
+to that Recipient under this License for the Software shall terminate as of
+the date such litigation is filed.
+
+==============================================================================
+4. REDISTRIBUTION CONDITIONS
+==============================================================================
+
+Redistribution and use of the Software in source and binary forms, with or
+without modification, are permitted provided that the following conditions
+are met:
+
+  a. The above copyright notice and this permission notice shall be included
+     in all copies or substantial portions of the Software.
+
+  b. Recipients must retain or reproduce all copyright, patent, trademark,
+     and attribution notices present in the Software, including in the
+     source code, documentation, and binary distributions.
+
+  c. Neither the name of AdeshLang, the Licensor, nor the names of its
+     Contributors may be used to endorse or promote products derived from
+     the Software without specific prior written permission from the Licensor.
+
+  d. If the Software is redistributed in binary form, the Recipient must also
+     make the corresponding source code available under the terms of this
+     License for no more than the cost of reasonable distribution.
+
+  e. Any Derivative Work distributed by a Recipient must clearly indicate
+     that it is a Derivative Work and must identify the original Software
+     from which it is derived.
+
+==============================================================================
+5. TRADEMARK AND BRANDING
+==============================================================================
+
+This License does not grant permission to use the trade names, trademarks,
+service marks, product names, or logos of the Licensor, except as required
+for reasonable and customary use in describing the origin of the Software
+and reproducing the content of the copyright notice.
+
+The names "AdeshLang", "Adesh", "ALS" (Adesh Language Server), "ADL" (Adesh
+Dependency Language), and associated logos are trademarks of the Licensor.
+Use of these marks for commercial purposes, in product names, or to imply
+endorsement of products or services requires prior written permission from
+the Licensor.
+
+==============================================================================
+6. CONTRIBUTION TERMS
+==============================================================================
+
+By submitting a Contribution to the Software, the Contributor grants to the
+Licensor a perpetual, worldwide, non-exclusive, no-charge, royalty-free,
+irrevocable copyright license to reproduce, prepare Derivative Works of,
+publicly display, publicly perform, sublicense, and distribute the
+Contribution and any Derivative Works thereof.
+
+The Contributor represents that each Contribution is the Contributor's
+original work, that the Contributor has sufficient rights to grant the
+foregoing license, and that the Contribution does not infringe any
+third-party intellectual property rights.
+
+Contributions are accepted at the sole discretion of the Licensor. The
+Licensor is not obligated to accept or review any Contribution and may
+reject, modify, or remove any Contribution at any time without notice.
+
+==============================================================================
+7. COMMERCIAL USE AND ATTRIBUTION
+==============================================================================
+
+Commercial use of the Software is permitted under this License, subject to
+the following conditions:
+
+  a. Products or services built using or incorporating the Software must
+     include attribution to AdeshLang and the Licensor in the product
+     documentation, about page, or equivalent location.
+
+  b. If the Software, or any Derivative Work thereof, is distributed as
+     part of a commercial product or service, the Recipient must ensure
+     that end users are informed that the product includes AdeshLang
+     components licensed under this License.
+
+  c. Sublicensing of the Software as part of a larger product is permitted,
+     provided that the sublicense is consistent with the terms of this
+     License and does not impose additional restrictions on the Software
+     beyond those stated herein.
+
+==============================================================================
+8. SECURITY VULNERABILITY DISCLOSURE
+==============================================================================
+
+The Software includes cryptographic and networking components. Recipients
+who discover security vulnerabilities in the Software are strongly
+encouraged to report them responsibly to the Licensor before public
+disclosure.
+
+Recipients must not use the Software's cryptographic or networking
+capabilities for unlawful purposes, including but not limited to
+unauthorized access, data exfiltration, or circumvention of security
+controls.
+
+The Licensor disclaims any responsibility for the security of Derivative
+Works or third-party integrations. Recipients are responsible for
+conducting their own security audits of any Derivative Works.
+
+==============================================================================
+9. EXPORT COMPLIANCE
+==============================================================================
+
+The Software includes cryptographic components that may be subject to
+export control laws and regulations of various jurisdictions. Recipients
+are solely responsible for compliance with all applicable export control
+laws, including but not limited to the Export Administration Regulations
+(EAR) of the United States, the Wassenaar Arrangement, and equivalent
+regulations in the Recipient's jurisdiction.
+
+The Licensor makes no representation that the Software or any Derivative
+Work is suitable for export or import in any particular jurisdiction, and
+the Recipient assumes all risk and responsibility for compliance with
+applicable trade regulations.
+
+==============================================================================
+10. DISCLAIMER OF WARRANTY
+==============================================================================
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT. THE LICENSOR
+DOES NOT WARRANT THAT THE SOFTWARE WILL MEET ANY RECIPIENT'S REQUIREMENTS,
+THAT THE SOFTWARE WILL OPERATE ERROR-FREE OR UNINTERRUPTED, OR THAT THE
+SOFTWARE WILL BE FREE OF VULNERABILITIES OR HARMFUL COMPONENTS.
+
+The Software includes components that interact with networks, file systems,
+and external processes. The Licensor makes no warranty regarding the safety,
+security, or reliability of such interactions in any specific deployment
+context.
+
+==============================================================================
+11. LIMITATION OF LIABILITY
+==============================================================================
+
+IN NO EVENT SHALL THE AUTHORS, COPYRIGHT HOLDERS, OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+OUT OF THE USE OF OR INABILITY TO USE THE SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+The aggregate liability of the Licensor for all claims arising from or
+related to the Software shall not exceed the amount paid by the Recipient
+to the Licensor for the Software, if any, or USD $100, whichever is greater.
+
+==============================================================================
+12. INDEMNIFICATION
+==============================================================================
+
+Any Recipient who distributes the Software or any Derivative Work to third
+parties agrees to indemnify, defend, and hold harmless the Licensor and all
+Contributors from and against any claims, damages, losses, or expenses
+(including reasonable attorneys' fees) arising from such distribution,
+including claims based on the Recipient's modifications or additions to the
+Software.
+
+==============================================================================
+13. TERMINATION
+==============================================================================
+
+This License and the rights granted hereunder will terminate automatically
+if a Recipient fails to comply with any term of this License and does not
+cure such failure within thirty (30) days of becoming aware of it.
+
+Upon termination, the Recipient must cease all use, reproduction, and
+distribution of the Software. Provisions which by their nature should
+survive termination (including Sections 5, 8, 9, 10, 11, 12, and 14) shall
+survive.
+
+==============================================================================
+14. GOVERNING LAW AND JURISDICTION
+==============================================================================
+
+This License shall be governed by and construed in accordance with the laws
+of India, without regard to its conflict of law provisions. The parties
+agree that any disputes arising under this License shall be subject to the
+exclusive jurisdiction of the courts located in India.
+
+==============================================================================
+15. SEVERABILITY
+==============================================================================
+
+If any provision of this License is held to be unenforceable or invalid,
+that provision shall be reformed to the minimum extent necessary to make it
+enforceable, and the remaining provisions shall remain in full force and
+effect.
+
+==============================================================================
+16. ENTIRE AGREEMENT
+==============================================================================
+
+This License constitutes the entire agreement between the Licensor and any
+Recipient with respect to the Software. No amendment, modification, or
+addition to this License shall be binding unless made in writing and signed
+by the Licensor.
+
+==============================================================================
+17. AMENDMENTS
+==============================================================================
+
+The Licensor reserves the right to amend or update this License at any time.
+Any such amendment shall apply prospectively to Recipients who receive the
+Software after the effective date of the amendment. Recipients who received
+the Software under a prior version of this License may continue to use the
+Software under the terms of that prior version.
+
+==============================================================================
+
+For questions regarding this License, contact:
+  Ajay Tainwala
+  GitHub: https://github.com/ajaytainwala-dev/mylang
+
+This license is compatible with the MIT License. Recipients may also use
+the Software under the MIT License terms as an alternative to this License.

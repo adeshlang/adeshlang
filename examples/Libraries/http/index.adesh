@@ -1,0 +1,49 @@
+// AdeshLang HTTP Server — Quick Start
+// Express-style routing with callback-based listen()
+// Run: cargo run --bin adeshlang -- run examples/Libraries/http/index.adesh
+// Open in browser: http://localhost:3000
+
+import HTTP;
+
+let router = HTTP.Router();
+
+// ─── Routes ───────────────────────────────────────────────────────────────────
+
+router.get("/", fn(req, res) {
+    print("[GET] /");
+    return res.json("{\"message\":\"Hello from AdeshLang!\",\"status\":\"ok\"}");
+});
+
+router.get("/hello", fn(req, res) {
+    print("[GET] /hello");
+    return res.send("Hello, World!");
+});
+
+router.get("/echo", fn(req, res) {
+    print("[GET] /echo");
+    return res.json("{\"method\":\"GET\",\"path\":\"/echo\",\"echo\":true}");
+});
+
+router.post("/echo", fn(req, res) {
+    print("[POST] /echo");
+    return res.json("{\"method\":\"POST\",\"path\":\"/echo\",\"echo\":true}");
+});
+
+router.get("/api/v1/users", fn(req, res) {
+    print("[GET] /api/v1/users");
+    return res.json("[{\"id\":1,\"name\":\"Alice\"},{\"id\":2,\"name\":\"Bob\"}]");
+});
+
+// ─── Server ───────────────────────────────────────────────────────────────────
+// Bind 0.0.0.0 so both localhost and 127.0.0.1 work in the browser instantly
+
+let server = HTTP.Server("0.0.0.0:3000", router);
+
+server.listen(fn() {
+    print("Server running — open browser at http://localhost:3000 (Ctrl+C to stop)");
+    print("  GET  /              → JSON greeting");
+    print("  GET  /hello         → plain text");
+    print("  GET  /echo          → echo GET");
+    print("  POST /echo          → echo POST");
+    print("  GET  /api/v1/users  → user list");
+});

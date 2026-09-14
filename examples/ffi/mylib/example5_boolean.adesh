@@ -1,0 +1,75 @@
+// Example 5: Boolean and Validation Functions
+// Demonstrates boolean operations and number validation
+
+extern "C" {
+    fn is_even(n: i32) -> i32;
+    fn is_odd(n: i32) -> i32;
+    fn is_prime(n: i32) -> i32;
+}
+
+fn main() {
+    print("=== Boolean and Validation Functions ===\n\n");
+    
+    print("Testing numbers 1-20:\n");
+    print("Number | Even | Odd | Prime\n");
+    print("-------|------|-----|------\n");
+    
+    let n = 1;
+    while n <= 20 {
+        print("  ");
+        if n < 10 {
+            print(" ");
+        }
+        print(n);
+        print("   |  ");
+        
+        // Check if even (use direct boolean evaluation)
+        if is_even(n) {
+            print("✓");
+        } else {
+            print(" ");
+        }
+        
+        print("   |  ");
+        
+        // Check if odd
+        if is_odd(n) {
+            print("✓");
+        } else {
+            print(" ");
+        }
+        
+        print("  |  ");
+        
+        // Check if prime
+        if is_prime(n) {
+            print("✓");
+        } else {
+            print(" ");
+        }
+        
+        print("\n");
+        n = n + 1;
+    }
+    
+    // Find all primes up to 100
+    print("\nPrime numbers up to 100:\n");
+    let num = 2;
+    let count = 0;
+    while num <= 100 {
+        if is_prime(num) {
+            print(num);
+            print(" ");
+            count = count + 1;
+            if count % 10 == 0 {
+                print("\n");
+            }
+        }
+        num = num + 1;
+    }
+    print("\n\nTotal primes found: ");
+    print(count);
+    print("\n");
+}
+
+// To run: adesh run example5_boolean.adesh -L . -l mylib

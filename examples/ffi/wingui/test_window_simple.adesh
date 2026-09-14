@@ -1,0 +1,27 @@
+extern "C" {
+    fn create_window(title: ptr<u8>, width: i32, height: i32) -> u64;
+    fn show_window(hwnd: u64) -> void;
+    fn close_window(hwnd: u64) -> void;
+    fn clear_window(hwnd: u64, color: u32) -> void;
+}
+
+fn main() {
+    print("Creating window...\n");
+    
+    let title = "Test Window";
+    print("Title: ");
+    print(title);
+    print("\n");
+    
+    let window = create_window(title, 800, 600);
+    print("Window created successfully!\n");
+    print("Window handle: ");
+    print(window);
+    print("\n");
+    
+    print("Clearing window...\n");
+    clear_window(window, 16777215);  // White
+    print("Window cleared!\n");
+    
+    print("Done!\n");
+}

@@ -1,0 +1,75 @@
+// Example 1: Basic Math Operations
+// Demonstrates basic integer and floating-point arithmetic via FFI
+
+extern "C" {
+    fn add_int(a: i32, b: i32) -> i32;
+    fn subtract_int(a: i32, b: i32) -> i32;
+    fn multiply_int(a: i32, b: i32) -> i32;
+    fn divide_int(a: i32, b: i32) -> i32;
+    fn add_float(a: f32, b: f32) -> f32;
+    fn add_double(a: f64, b: f64) -> f64;
+}
+
+fn main() {
+    print("=== Basic Math Operations ===\n");
+    
+    // Integer operations
+    let x = 42;
+    let y = 18;
+    
+    print("Integer Operations:\n");
+    print("  ");
+    print(x);
+    print(" + ");
+    print(y);
+    print(" = ");
+    print(add_int(x, y));
+    print("\n");
+    
+    print("  ");
+    print(x);
+    print(" - ");
+    print(y);
+    print(" = ");
+    print(subtract_int(x, y));
+    print("\n");
+    
+    print("  ");
+    print(x);
+    print(" * ");
+    print(y);
+    print(" = ");
+    print(multiply_int(x, y));
+    print("\n");
+    
+    print("  ");
+    print(x);
+    print(" / ");
+    print(y);
+    print(" = ");
+    print(divide_int(x, y));
+    print("\n");
+    
+    // Float operations
+    print("\nFloating-Point Operations:\n");
+    let a = 3.14;
+    let b = 2.71;
+    
+    print("  ");
+    print(a);
+    print(" + ");
+    print(b);
+    print(" = ");
+    print(add_float(a, b));
+    print("\n");
+    
+    print("  ");
+    print(a);
+    print(" + ");
+    print(b);
+    print(" (double) = ");
+    print(add_double(a, b));
+    print("\n");
+}
+
+// To run: adesh run example1_basic_math.adesh -L . -l mylib

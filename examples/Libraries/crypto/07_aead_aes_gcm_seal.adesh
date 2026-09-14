@@ -1,0 +1,14 @@
+// 07 - Authenticated Encryption (AES-256-GCM Seal & Open)
+import Crypto;
+
+let key = Crypto.randomBytes(32);
+let secretText = "Credit Card Number: 4111-2222-3333-4444";
+
+// Seal creates a fresh random 96-bit nonce automatically
+let sealed = Crypto.seal(key, secretText);
+
+print("Nonce Hex:     ", Crypto.encodeHex(sealed.nonce));
+print("Ciphertext Hex:", Crypto.encodeHex(sealed.ciphertext));
+
+let decrypted = Crypto.decryptAead(key, sealed.nonce, sealed.ciphertext);
+print("Decryption Successful:", decrypted != null);

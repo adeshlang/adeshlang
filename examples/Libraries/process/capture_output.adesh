@@ -1,0 +1,8 @@
+// Executable Example: Capture Output & Bytes
+import Process;
+
+let result = Process.run("git", ["log", "-n", "1"]);
+
+print("Stdout Text length: " + str(len(result.stdoutText())));
+print("Stdout Bytes count: " + str(len(result.stdoutBytes())));
+print("Stderr Text: " + result.stderrText());

@@ -1,0 +1,9 @@
+// Demonstrates taking multiple shared borrows from the same value.
+
+let note = "adesh";
+let a = &note;
+let b = &note;          // another shared borrow is allowed
+
+print(a);
+print(b);
+print(note);            // owner remains usable because shared borrows are non-exclusive

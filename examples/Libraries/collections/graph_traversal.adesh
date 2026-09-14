@@ -1,0 +1,24 @@
+import Collections;
+
+print("========================================");
+print("Graph Traversal Example");
+print("========================================");
+
+let adj = Collections.HashMap();
+
+fn add_edge(adj, u, v) {
+    let list = adj.get(u);
+    if (list == null) {
+        list = Collections.Vec();
+        adj.insert(u, list);
+    }
+    list.push(v);
+}
+
+add_edge(adj, "A", "B");
+add_edge(adj, "A", "C");
+add_edge(adj, "B", "D");
+add_edge(adj, "C", "D");
+
+print("Graph nodes: ", adj.keys());
+print("Neighbors of A: ", adj.get("A").toArray());

@@ -1,0 +1,79 @@
+// ╔═══════════════════════════════════════════════════════════════════════════════╗
+// ║              AdeshLang Protocol Enforcement & Negotiation Usage               ║
+// ║                                                                               ║
+// ║  Demonstrates real-world configuration, protocol fallback, ALPN negotiation  ║
+// ║  enforcement on Client & Server, and explicit error handling edge cases.      ║
+// ║                                                                               ║
+// ║  Run: cargo run --bin adeshlang -- run examples/Libraries/http/protocol_enforcement_example.adesh
+// ╚═══════════════════════════════════════════════════════════════════════════════╝
+
+// @allow(warnings)
+import HTTP;
+
+print("==================================================================");
+print("     AdeshLang Protocol Enforcement & Negotiation Deep-Dive      ");
+print("==================================================================");
+
+/// 1. CLIENT ENFORCEMENT & PROFILE SELECTION
+fn demo_client_enforcement_matrix() {
+    print("\n--- 1. Client Protocol Enforcement Matrix ---");
+
+    // Strategy A: Strict HTTP/1.1 for legacy middleboxes
+    let clientH1 = HTTP.ClientBuilder().http1Only().build();
+    print("Strategy A (HTTP/1.1 Strict) configured.");
+
+    // Strategy B: Strict HTTP/2 for gRPC microservice calls
+    let clientH2 = HTTP.ClientBuilder().http2Only().build();
+    print("Strategy B (HTTP/2 Strict) configured.");
+
+    // Strategy C: HTTP/3 Preferred with automatic TLS ALPN & Alt-Svc negotiation fallback
+    let clientH3 = HTTP.ClientBuilder().http3Preferred().build();
+    print("Strategy C (HTTP/3 Preferred with fallback) configured.");
+}
+
+/// 2. SERVER ALPN NEGOTIATION ENFORCEMENT
+fn demo_server_alpn_enforcement() {
+    print("\n--- 2. Server ALPN Negotiation Enforcement ---");
+
+    let router = HTTP.Router();
+    router.get("/protocol-info", fn(req, res) {
+        return res.json({
+            negotiatedProtocol: req.version,
+            scheme: req.scheme,
+            isSecure: req.isSecure
+        });
+    });
+
+    let server = HTTP.Server("0.0.0.0:4430", router);
+
+    // Explicitly set ALPN protocol negotiation order (HTTP/3 -> HTTP/2 -> HTTP/1.1)
+    server.setProtocols(["h3", "h2", "http/1.1"]);
+
+    print("Server configured with ALPN mandate: ['h3', 'h2', 'http/1.1'].");
+}
+
+/// 3. DIAGNOSTIC SCANNING & DISCOVERY
+fn demo_protocol_discovery() {
+    print("\n--- 3. Endpoint Protocol Discovery & Security Posture ---");
+
+    // Scan target endpoint diagnostic details
+    let disc = HTTP.discover("http://localhost:4000");
+
+    print("Discovery scan result for target:");
+    print("URL:", disc.url);
+    print("HTTP/1.1:", disc.http1);
+    print("HTTP/2:", disc.http2);
+    print("HTTP/3:", disc.http3);
+    print("WebSocket:", disc.websocket);
+    print("SSE:", disc.sse);
+}
+
+// ─── EXECUTION ENTRY POINT ───────────────────────────────────────────────────
+
+demo_client_enforcement_matrix();
+demo_server_alpn_enforcement();
+demo_protocol_discovery();
+
+print("\n==================================================================");
+print("   Protocol Enforcement Deep-Dive Execution Completed Successfully ");
+print("==================================================================");

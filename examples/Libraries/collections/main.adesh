@@ -1,0 +1,11 @@
+print(("========================================"));
+import Collections;
+
+let vect = Collections.Vec<u8>();
+
+vect.push(100);  // OK: valid u8
+print(vect); // Output: [100]
+// Attempting to pass bool when u8 is expected:
+vect.push(true); 
+print(vect);
+// ❌ Exception Thrown: TypeError: Value 'Bool(true)' does not match generic type constraint 'u8'

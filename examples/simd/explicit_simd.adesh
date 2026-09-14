@@ -1,0 +1,21 @@
+// Explicit SIMD — import Simd; use Simd.vector() for instance methods
+import Simd;
+
+let a = [1.0, 2.0, 3.0, 4.0];
+let b = [5.0, 6.0, 7.0, 8.0];
+
+let sum = Simd.add(a, b);
+let product = Simd.mul(a, b);
+let scaled = Simd.mul(a, 2.0);
+
+print("Simd.add: ", sum);
+print("Simd.mul: ", product);
+print("Simd.mul scalar: ", scaled);
+
+// Instance object with methods
+let va = Simd.vector(a);
+print("va.add(b) = ", va.add(b));
+print("va.dot(b) = ", va.dot(b));
+print("va.scale(2) = ", va.scale(2.0));
+
+print("Explicit SIMD demo complete!");

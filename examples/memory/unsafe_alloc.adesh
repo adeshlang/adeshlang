@@ -1,0 +1,24 @@
+// Unsafe heap allocation and manual free must be inside unsafe blocks
+// Demonstrates policy guard behavior and pointer load/store
+
+fn main() {
+    // size in bytes
+    let size = 32;
+
+    unsafe {
+        // Allocate
+        let ptr = Alloc(size);
+        // Store some data
+        PtrStore(ptr, 1234, 0);
+        PtrStore(ptr, 5678, 8);
+
+        // Load and print
+        let a = PtrLoad(ptr, 0);
+        let b = PtrLoad(ptr, 8);
+        print(a);
+        print(b);
+
+        // Free
+        Free(ptr);
+    }
+}

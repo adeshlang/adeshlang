@@ -1,0 +1,7 @@
+// Math & Functions
+
+fn square(n) {
+    return n * n;
+}
+
+print("5 squared is:", square(5));

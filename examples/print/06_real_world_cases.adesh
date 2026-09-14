@@ -1,0 +1,105 @@
+// Example 6: Real-World Use Cases
+// Practical examples of using pretty print for debugging and logging
+
+// Use Case 1: API Response Debugging
+println("=== Use Case 1: API Response ===");
+let apiResponse = {
+    status: 200,
+    message: "Success",
+    data: {
+        user: {
+            id: "user_123",
+            username: "developer",
+            email: "dev@example.com",
+            preferences: {
+                theme: "dark",
+                notifications: true,
+                language: "en"
+            }
+        },
+        timestamp: "2026-01-21T10:30:00Z"
+    },
+    meta: {
+        requestId: "req_abc123",
+        responseTime: 45
+    }
+};
+
+println("API Response:");
+print(apiResponse, { pretty: true });
+
+// Use Case 2: Configuration Validation
+println("\n\n=== Use Case 2: Configuration Validation ===");
+let appConfig = {
+    server: {
+        host: "0.0.0.0",
+        port: 8080,
+        ssl: {
+            enabled: true,
+            cert: "/path/to/cert.pem",
+            key: "/path/to/key.pem"
+        }
+    },
+    database: {
+        type: "postgresql",
+        connections: {
+            max: 20,
+            min: 5,
+            idle: 10000
+        }
+    },
+    cache: {
+        enabled: true,
+        ttl: 3600,
+        maxSize: 1000
+    }
+};
+
+println("Current Configuration:");
+print(appConfig, { pretty: true });
+
+// Use Case 3: Data Transformation Pipeline
+println("\n\n=== Use Case 3: Data Pipeline ===");
+let rawData = [
+    { id: 1, value: 100, category: "A" },
+    { id: 2, value: 200, category: "B" },
+    { id: 3, value: 150, category: "A" }
+];
+
+println("Input Data:");
+print(rawData, { pretty: "compact" });
+
+// Simulate transformation
+let processed = {
+    total: 450,
+    byCategory: {
+        A: 250,
+        B: 200
+    },
+    count: 3
+};
+
+println("\n\nProcessed Results:");
+print(processed, { pretty: true });
+
+// Use Case 4: Error Logging
+println("\n\n=== Use Case 4: Error Context ===");
+let errorContext = {
+    error: "ValidationError",
+    message: "Invalid input data",
+    details: {
+        field: "email",
+        value: "invalid-email",
+        constraint: "format",
+        expectedFormat: "user@domain.com"
+    },
+    stackTrace: [
+        "at validateEmail (validator.adesh:45)",
+        "at processForm (form.adesh:102)",
+        "at handleSubmit (app.adesh:234)"
+    ],
+    timestamp: "2026-01-21T10:30:15Z"
+};
+
+println("Error Report:");
+print(errorContext, { pretty: true });

@@ -1,0 +1,18 @@
+import Collections;
+
+print("========================================");
+print("Stack (LIFO) Examples");
+print("========================================");
+
+let s = Collections.Stack<string>();
+s.push("Page A");
+s.push("Page B");
+s.push("Page C");
+
+print("Stack length: ", s.len());
+print("Peek top: ", s.peek());
+
+print("Popped: ", s.pop());
+print("Popped: ", s.pop());
+print("Length remaining: ", s.len());
+print("Is empty: ", s.isEmpty());

@@ -1,0 +1,5 @@
+// Test environment variable access
+import Env;
+let path = Env.env("PATH");
+print("PATH:", path);
+print(`PATH is: ${path}`);

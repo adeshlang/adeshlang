@@ -1,0 +1,63 @@
+// Aliasing Prevention
+// AdeshLang prevents dangerous aliasing at compile-time
+
+fn main() {
+    print("=== Aliasing Prevention Examples ===");
+    
+    // Safe: Multiple shared borrows (read-only)
+    let data = [1, 2, 3, 4, 5];
+    let r1 = &data;
+    let r2 = &data;
+    let r3 = &data;
+    
+    print("r1:", r1[0]);
+    print("r2:", r2[1]);
+    print("r3:", r3[2]);
+    // All can read simultaneously - no data races
+    
+    // After borrows end, we can modify
+    data[0] = 100;
+    print("Modified:", data);
+}
+
+// Preventing iterator invalidation
+fn safe_iteration() {
+    let arr = [1, 2, 3, 4, 5];
+    
+    // Iterate by borrowing
+    for (i = 0; i < arr.length; i = i + 1) {
+        print("Element:", arr[i]);
+    }
+    
+    // Cannot modify while iterating would borrow
+    // This pattern is safe because we don't keep borrows across modifications
+}
+
+// Data race prevention example
+fn no_data_races() {
+    let counter = 0;
+    
+    // If this were multi-threaded (hypothetical):
+    // Thread 1 would need exclusive access
+    // Thread 2 would wait
+    // Borrow checker ensures no simultaneous mutation
+    
+    counter = counter + 1;
+    print("Counter:", counter);
+}
+
+// Use-after-free prevention
+fn no_use_after_free() {
+    let data = [1, 2, 3];
+    let ref1 = &data;
+    
+    // Cannot move data while borrowed
+    // let data2 = data;  // ERROR: cannot move while borrowed
+    
+    print("Ref:", ref1);
+    // ref1's lifetime ends
+    
+    // Now we can move
+    let data2 = data;
+    print("Moved:", data2);
+}

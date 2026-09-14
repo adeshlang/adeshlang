@@ -1,0 +1,1166 @@
+// AdeshLang Production-Grade IO Standard Library (IO.adesh)
+// High-performance, zero-GC, UTF-8 first, deterministic stream I/O subsystem.
+
+export class IOError {
+    IOError(kind, message) {
+        self.kind = kind;
+        self.message = message;
+    }
+    fn toString() {
+        return "IOError[" + self.kind + "]: " + self.message;
+    }
+}
+
+export class IOResult {
+    IOResult(val, err) {
+        self._val = val;
+        self._err = err;
+    }
+    static fn ok(val) {
+        return new IOResult(val, null);
+    }
+    static fn err(kind, msg) {
+        return new IOResult(null, new IOError(kind, msg));
+    }
+    fn isOk() {
+        return self._err == null;
+    }
+    fn isErr() {
+        return self._err != null;
+    }
+    fn unwrap() {
+        if (self._err != null) {
+            return null;
+        }
+        return self._val;
+    }
+    fn error() {
+        return self._err;
+    }
+}
+
+// Helper: read all remaining bytes from any reader
+export fn slurpReader(reader) {
+    if (typeof(reader) == "string") {
+        return io_utf8_encode(reader);
+    }
+    if (reader != null && typeof(reader) != "string") {
+        let b = reader.getBytes();
+        if (b != null) {
+            return b;
+        }
+    }
+    return reader;
+}
+
+// Helper: read a line from a _bytes+_pos pair (no method dispatch overhead)
+// Returns the line string (without trailing newline), or null if at EOF with nothing read.
+// NOTE: This mutates the caller's self._pos - must be called inline (assigned back).
+export fn _readLineFn(bytes, pos) {
+    let line = "";
+    let n = len(bytes);
+    while (pos < n) {
+        let byte = bytes[pos];
+        pos = pos + 1;
+        let ch = io_utf8_decode([byte]);
+        if (ch == "\n") {
+            // Return [line, newPos, true (found newline)]
+            return [line, pos, true];
+        }
+        if (ch != "\r") {
+            line = line + ch;
+        }
+    }
+    // Reached EOF
+    if (len(line) == 0) {
+        return [null, pos, false];
+    }
+    return [line, pos, false];
+}
+
+export class Reader {
+    fn read(buf, off, length) {
+        let b = self.readBytes(length);
+        let n = len(b);
+        for i in 0..n {
+            buf[off + i] = b[i];
+        }
+        return n;
+    }
+    fn readBytes(length) {
+        return [];
+    }
+    fn readToEnd() {
+        return "";
+    }
+    fn readLine() {
+        return null;
+    }
+    fn readLines() {
+        return [];
+    }
+    fn readUntil(delim) {
+        return "";
+    }
+}
+
+export class Writer {
+    fn write(buf, off, length) {
+        return 0;
+    }
+    fn writeLine(s) {
+        let bytes = io_utf8_encode(s + "\n");
+        return self.write(bytes, 0, len(bytes));
+    }
+    fn writeLines(lines) {
+        let total = 0;
+        for line in lines {
+            total = total + self.writeLine(line);
+        }
+        return total;
+    }
+    fn flush() {
+        return true;
+    }
+}
+
+export class ReadWriter {
+    ReadWriter(reader, writer) {
+        self.reader = reader;
+        self.writer = writer;
+    }
+    fn read(buf, off, length) {
+        return self.reader.read(buf, off, length);
+    }
+    fn readBytes(length) {
+        return self.reader.readBytes(length);
+    }
+    fn write(buf, off, length) {
+        return self.writer.write(buf, off, length);
+    }
+    fn flush() {
+        return self.writer.flush();
+    }
+}
+
+export class SeekableStream {
+    fn seek(offset, whence) {
+        return 0;
+    }
+    fn rewind() {
+        return self.seek(0, "start");
+    }
+    fn skip(n) {
+        return self.seek(n, "current");
+    }
+    fn position() {
+        return self.seek(0, "current");
+    }
+    fn length() {
+        return 0;
+    }
+    fn remaining() {
+        let rem = self.length() - self.position();
+        if (rem < 0) {
+            return 0;
+        }
+        return rem;
+    }
+}
+
+// ---- MemoryReader ----
+export class MemoryReader extends Reader {
+    MemoryReader(data) {
+        if (typeof(data) == "string") {
+            self._bytes = io_utf8_encode(data);
+        } else {
+            self._bytes = data;
+        }
+        self._pos = 0;
+    }
+    fn getBytes() {
+        return io_slice_bytes(self._bytes, self._pos, len(self._bytes) - self._pos);
+    }
+    fn readBytes(length) {
+        if (self._pos >= len(self._bytes)) {
+            return [];
+        }
+        let available = len(self._bytes) - self._pos;
+        let toRead = length;
+        if (toRead > available) {
+            toRead = available;
+        }
+        let res = io_slice_bytes(self._bytes, self._pos, toRead);
+        self._pos = self._pos + toRead;
+        return res;
+    }
+    fn read(buf, off, length) {
+        let b = self.readBytes(length);
+        let n = len(b);
+        for i in 0..n {
+            buf[off + i] = b[i];
+        }
+        return n;
+    }
+    fn readToEnd() {
+        if (self._pos >= len(self._bytes)) {
+            return "";
+        }
+        let res = io_slice_bytes(self._bytes, self._pos, len(self._bytes) - self._pos);
+        self._pos = len(self._bytes);
+        return io_utf8_decode(res);
+    }
+    fn readLine() {
+        if (self._pos >= len(self._bytes)) {
+            return null;
+        }
+        let line = "";
+        let n = len(self._bytes);
+        while (self._pos < n) {
+            let byte_val = self._bytes[self._pos];
+            self._pos = self._pos + 1;
+            if (byte_val == 10) {
+                break;
+            }
+            if (byte_val != 13) {
+                let ch = io_utf8_decode([byte_val]);
+                line = line + ch;
+            }
+        }
+        return line;
+    }
+    fn readLines() {
+        let lines = [];
+        while (self._pos < len(self._bytes)) {
+            let line = self.readLine();
+            if (line == null) {
+                break;
+            }
+            lines.push(line);
+        }
+        return lines;
+    }
+    fn readUntil(delim) {
+        let result = "";
+        let n = len(self._bytes);
+        while (self._pos < n) {
+            let byte = self._bytes[self._pos];
+            self._pos = self._pos + 1;
+            let ch = io_utf8_decode([byte]);
+            result = result + ch;
+            if (ch == delim) {
+                break;
+            }
+        }
+        return result;
+    }
+    fn seek(offset, whence) {
+        if (whence == "start") {
+            self._pos = offset;
+        } elif (whence == "current") {
+            self._pos = self._pos + offset;
+        } elif (whence == "end") {
+            self._pos = len(self._bytes) + offset;
+        }
+        if (self._pos < 0) {
+            self._pos = 0;
+        }
+        if (self._pos > len(self._bytes)) {
+            self._pos = len(self._bytes);
+        }
+        return self._pos;
+    }
+    fn rewind() {
+        self._pos = 0;
+        return 0;
+    }
+    fn position() {
+        return self._pos;
+    }
+    fn length() {
+        return len(self._bytes);
+    }
+    fn remaining() {
+        return len(self._bytes) - self._pos;
+    }
+}
+
+// ---- MemoryWriter ----
+export class MemoryWriter extends Writer {
+    MemoryWriter() {
+        self._bytes = [];
+    }
+    fn write(buf, off, length) {
+        let end = off + length;
+        if (end > len(buf)) {
+            end = len(buf);
+        }
+        let written = 0;
+        let i = off;
+        while (i < end) {
+            self._bytes.push(buf[i]);
+            written = written + 1;
+            i = i + 1;
+        }
+        return written;
+    }
+    fn getBytes() {
+        return self._bytes;
+    }
+    fn toString() {
+        return io_utf8_decode(self._bytes);
+    }
+    fn clear() {
+        self._bytes = [];
+    }
+}
+
+// ---- ByteBuffer ----
+export class ByteBuffer {
+    ByteBuffer(capacity) {
+        self._bytes = [];
+        self._readPos = 0;
+        self._writePos = 0;
+        self._endian = "little";
+        for i in 0..capacity {
+            self._bytes.push(0);
+        }
+    }
+    fn setEndianness(endian) {
+        self._endian = endian;
+        return self;
+    }
+    fn writeByte(b) {
+        if (self._writePos < len(self._bytes)) {
+            self._bytes[self._writePos] = b;
+        } else {
+            self._bytes.push(b);
+        }
+        self._writePos = self._writePos + 1;
+    }
+    fn readByte() {
+        if (self._readPos >= self._writePos) {
+            return -1;
+        }
+        let b = self._bytes[self._readPos];
+        self._readPos = self._readPos + 1;
+        return b;
+    }
+    fn getBytes() {
+        return io_slice_bytes(self._bytes, 0, self._writePos);
+    }
+    fn clear() {
+        self._readPos = 0;
+        self._writePos = 0;
+    }
+}
+
+// ---- StringBuffer ----
+export class StringBuffer {
+    StringBuffer() {
+        self._parts = [];
+    }
+    fn append(s) {
+        self._parts.push(s);
+        return self;
+    }
+    fn appendLine(s) {
+        self._parts.push(s + "\n");
+        return self;
+    }
+    fn toString() {
+        let res = "";
+        for p in self._parts {
+            res = res + p;
+        }
+        return res;
+    }
+    fn clear() {
+        self._parts = [];
+    }
+}
+
+// ---- BufferedReader ----
+export class BufferedReader extends Reader {
+    BufferedReader(reader, capacity) {
+        self._reader = reader;
+        self._cap = capacity;
+        self._bytes = slurpReader(reader);
+        self._pos = 0;
+    }
+    fn getBytes() {
+        return io_slice_bytes(self._bytes, self._pos, len(self._bytes) - self._pos);
+    }
+    fn readBytes(length) {
+        if (self._pos >= len(self._bytes)) {
+            return [];
+        }
+        let avail = len(self._bytes) - self._pos;
+        let toRead = length;
+        if (toRead > avail) {
+            toRead = avail;
+        }
+        let res = io_slice_bytes(self._bytes, self._pos, toRead);
+        self._pos = self._pos + toRead;
+        return res;
+    }
+    fn read(buf, off, length) {
+        let b = self.readBytes(length);
+        let n = len(b);
+        for i in 0..n {
+            buf[off + i] = b[i];
+        }
+        return n;
+    }
+    fn readToEnd() {
+        if (self._pos >= len(self._bytes)) {
+            return "";
+        }
+        let res = io_slice_bytes(self._bytes, self._pos, len(self._bytes) - self._pos);
+        self._pos = len(self._bytes);
+        return io_utf8_decode(res);
+    }
+    fn readLine() {
+        if (self._pos >= len(self._bytes)) {
+            return null;
+        }
+        let line = "";
+        let n = len(self._bytes);
+        while (self._pos < n) {
+            let byte_val = self._bytes[self._pos];
+            self._pos = self._pos + 1;
+            if (byte_val == 10) {
+                break;
+            }
+            if (byte_val != 13) {
+                let ch = io_utf8_decode([byte_val]);
+                line = line + ch;
+            }
+        }
+        return line;
+    }
+    fn readLines() {
+        let lines = [];
+        while (self._pos < len(self._bytes)) {
+            let line = self.readLine();
+            if (line == null) {
+                break;
+            }
+            lines.push(line);
+        }
+        return lines;
+    }
+    fn readUntil(delim) {
+        let result = "";
+        let n = len(self._bytes);
+        while (self._pos < n) {
+            let byte = self._bytes[self._pos];
+            self._pos = self._pos + 1;
+            let ch = io_utf8_decode([byte]);
+            result = result + ch;
+            if (ch == delim) {
+                break;
+            }
+        }
+        return result;
+    }
+    fn peek() {
+        if (self._pos >= len(self._bytes)) {
+            return -1;
+        }
+        return self._bytes[self._pos];
+    }
+    fn consume(n) {
+        self._pos = self._pos + n;
+    }
+    fn clear() {
+        self._bytes = [];
+        self._pos = 0;
+    }
+}
+
+// ---- BufferedWriter ----
+export class BufferedWriter extends Writer {
+    BufferedWriter(writer, capacity) {
+        self._writer = writer;
+        self._cap = capacity;
+        self._buf = [];
+        self._pos = 0;
+    }
+    fn write(buf, off, length) {
+        let end = off + length;
+        if (end > len(buf)) {
+            end = len(buf);
+        }
+        let written = 0;
+        let i = off;
+        while (i < end) {
+            self._buf.push(buf[i]);
+            written = written + 1;
+            if (len(self._buf) >= self._cap) {
+                self.flush();
+            }
+            i = i + 1;
+        }
+        return written;
+    }
+    fn writeLine(s) {
+        let bytes = io_utf8_encode(s + "\n");
+        return self.write(bytes, 0, len(bytes));
+    }
+    fn flush() {
+        if (len(self._buf) > 0) {
+            self._writer.write(self._buf, 0, len(self._buf));
+            self._buf = [];
+        }
+        return self._writer.flush();
+    }
+    fn clear() {
+        self._buf = [];
+    }
+}
+
+// ---- BinaryReader ----
+export class BinaryReader {
+    BinaryReader(reader, endian) {
+        if (typeof(reader) == "array") {
+            self._bytes = reader;
+        } else {
+            self._bytes = slurpReader(reader);
+        }
+        self._pos = 0;
+        self._endian = endian;
+    }
+    fn getBytes() {
+        return io_slice_bytes(self._bytes, self._pos, len(self._bytes) - self._pos);
+    }
+    fn readByte() {
+        if (self._pos >= len(self._bytes)) { return 0; }
+        let b = self._bytes[self._pos];
+        self._pos = self._pos + 1;
+        return b;
+    }
+    fn readBytes(n) {
+        let p0 = self._pos;
+        if (p0 >= len(self._bytes)) { return []; }
+        let avail = len(self._bytes) - p0;
+        let toRead = n;
+        if (toRead > avail) { toRead = avail; }
+        let bytesCopy = self._bytes;
+        let p1 = self._pos;
+        let res = io_slice_bytes(bytesCopy, p1, toRead);
+        self._pos = p0 + toRead;
+        return res;
+    }
+    fn readBool() {
+        return self.readByte() != 0;
+    }
+    fn readChar() {
+        let b = self.readByte();
+        if (b < 0) { return ""; }
+        return io_utf8_decode([b]);
+    }
+    fn readU8() { return self.readByte(); }
+    fn readI8() {
+        let b = self.readByte();
+        if (b > 127) { return b - 256; }
+        return b;
+    }
+    fn readU16() {
+        let bytes = self.readBytes(2);
+        return io_unpack_number("u16", bytes, self._endian);
+    }
+    fn readI16() {
+        let bytes = self.readBytes(2);
+        return io_unpack_number("i16", bytes, self._endian);
+    }
+    fn readU32() {
+        let bytes = self.readBytes(4);
+        return io_unpack_number("u32", bytes, self._endian);
+    }
+    fn readI32() {
+        let bytes = self.readBytes(4);
+        return io_unpack_number("i32", bytes, self._endian);
+    }
+    fn readU64() {
+        let bytes = self.readBytes(8);
+        return io_unpack_number("u64", bytes, self._endian);
+    }
+    fn readI64() {
+        let bytes = self.readBytes(8);
+        return io_unpack_number("i64", bytes, self._endian);
+    }
+    fn readF32() {
+        let bytes = self.readBytes(4);
+        return io_unpack_number("f32", bytes, self._endian);
+    }
+    fn readF64() {
+        let bytes = self.readBytes(8);
+        return io_unpack_number("f64", bytes, self._endian);
+    }
+    fn readString(length) {
+        let bytes = self.readBytes(length);
+        return io_utf8_decode(bytes);
+    }
+}
+
+// ---- BinaryWriter ----
+export class BinaryWriter {
+    BinaryWriter(writer, endian) {
+        self._writer = writer;
+        self._endian = endian;
+    }
+    fn writeByte(b) {
+        return self._writer.write([b], 0, 1);
+    }
+    fn writeBytes(bytes) {
+        return self._writer.write(bytes, 0, len(bytes));
+    }
+    fn writeBool(val) {
+        let b = 0;
+        if (val) { b = 1; }
+        return self.writeByte(b);
+    }
+    fn writeChar(ch) {
+        let bytes = io_utf8_encode(ch);
+        return self.writeBytes(bytes);
+    }
+    fn writeU8(v) { return self.writeByte(v); }
+    fn writeI8(v) { return self.writeByte(v); }
+    fn writeU16(v) {
+        let bytes = io_pack_number("u16", v, self._endian);
+        return self.writeBytes(bytes);
+    }
+    fn writeI16(v) {
+        let bytes = io_pack_number("i16", v, self._endian);
+        return self.writeBytes(bytes);
+    }
+    fn writeU32(v) {
+        let bytes = io_pack_number("u32", v, self._endian);
+        return self.writeBytes(bytes);
+    }
+    fn writeI32(v) {
+        let bytes = io_pack_number("i32", v, self._endian);
+        return self.writeBytes(bytes);
+    }
+    fn writeU64(v) {
+        let bytes = io_pack_number("u64", v, self._endian);
+        return self.writeBytes(bytes);
+    }
+    fn writeI64(v) {
+        let bytes = io_pack_number("i64", v, self._endian);
+        return self.writeBytes(bytes);
+    }
+    fn writeF32(v) {
+        let bytes = io_pack_number("f32", v, self._endian);
+        return self.writeBytes(bytes);
+    }
+    fn writeF64(v) {
+        let bytes = io_pack_number("f64", v, self._endian);
+        return self.writeBytes(bytes);
+    }
+    fn writeString(s) {
+        let bytes = io_utf8_encode(s);
+        return self.writeBytes(bytes);
+    }
+    fn flush() {
+        return self._writer.flush();
+    }
+}
+
+// ---- TextReader ----
+export class TextReader extends Reader {
+    TextReader(reader) {
+        self._bytes = slurpReader(reader);
+        self._pos = 0;
+    }
+    fn getBytes() {
+        return io_slice_bytes(self._bytes, self._pos, len(self._bytes) - self._pos);
+    }
+    fn readBytes(length) {
+        if (self._pos >= len(self._bytes)) {
+            return [];
+        }
+        let avail = len(self._bytes) - self._pos;
+        let toRead = length;
+        if (toRead > avail) { toRead = avail; }
+        let res = io_slice_bytes(self._bytes, self._pos, toRead);
+        self._pos = self._pos + toRead;
+        return res;
+    }
+    fn read(buf, off, length) {
+        let b = self.readBytes(length);
+        let n = len(b);
+        for i in 0..n { buf[off + i] = b[i]; }
+        return n;
+    }
+    fn readToEnd() {
+        if (self._pos >= len(self._bytes)) { return ""; }
+        let res = io_slice_bytes(self._bytes, self._pos, len(self._bytes) - self._pos);
+        self._pos = len(self._bytes);
+        return io_utf8_decode(res);
+    }
+    fn readLine() {
+        if (self._pos >= len(self._bytes)) {
+            return null;
+        }
+        let line = "";
+        let n = len(self._bytes);
+        while (self._pos < n) {
+            let byte_val = self._bytes[self._pos];
+            self._pos = self._pos + 1;
+            if (byte_val == 10) {
+                break;
+            }
+            if (byte_val != 13) {
+                let ch = io_utf8_decode([byte_val]);
+                line = line + ch;
+            }
+        }
+        return line;
+    }
+    fn readLines() {
+        let lines = [];
+        while (self._pos < len(self._bytes)) {
+            let result = _readLineFn(self._bytes, self._pos);
+            self._pos = result[1];
+            if (result[0] != null) { lines.push(result[0]); }
+        }
+        return lines;
+    }
+}
+
+// ---- TextWriter ----
+export class TextWriter extends Writer {
+    TextWriter(writer) {
+        self._writer = writer;
+    }
+    fn write(buf, off, length) {
+        return self._writer.write(buf, off, length);
+    }
+    fn writeLine(s) {
+        return self._writer.writeLine(s);
+    }
+    fn flush() {
+        return self._writer.flush();
+    }
+}
+
+// ---- Pipe ----
+export class Pipe {
+    Pipe() {
+        self._bytes = [];
+        self._closed = false;
+    }
+    fn readBytes(length) {
+        if (len(self._bytes) == 0) {
+            return [];
+        }
+        let avail = len(self._bytes);
+        let toRead = length;
+        if (toRead > avail) { toRead = avail; }
+        let res = io_slice_bytes(self._bytes, 0, toRead);
+        self._bytes = io_slice_bytes(self._bytes, toRead, len(self._bytes) - toRead);
+        return res;
+    }
+    fn read(buf, off, length) {
+        let b = self.readBytes(length);
+        let n = len(b);
+        for i in 0..n { buf[off + i] = b[i]; }
+        return n;
+    }
+    fn readToEnd() {
+        let res = io_utf8_decode(self._bytes);
+        self._bytes = [];
+        return res;
+    }
+    fn write(buf, off, length) {
+        if (self._closed) {
+            return -1;
+        }
+        let end = off + length;
+        if (end > len(buf)) { end = len(buf); }
+        for i in off..end {
+            self._bytes.push(buf[i]);
+        }
+        return end - off;
+    }
+    fn close() {
+        self._closed = true;
+    }
+}
+
+// ---- NullReader ----
+export class NullReader extends Reader {
+    fn readBytes(length) {
+        return [];
+    }
+    fn read(buf, off, length) {
+        return 0;
+    }
+    fn readToEnd() {
+        return "";
+    }
+}
+
+// ---- NullWriter ----
+export class NullWriter extends Writer {
+    fn write(buf, off, length) {
+        return length;
+    }
+}
+
+// ---- TeeReader ----
+export class TeeReader extends Reader {
+    TeeReader(reader, writer) {
+        self._bytes = [];
+        self._pos = 0;
+        // Read through the source (advances source._pos via Arc-shared fields)
+        // and tee each chunk to writer
+        while (true) {
+            let chunk = reader.readBytes(4096);
+            if (len(chunk) <= 0) {
+                break;
+            }
+            writer.write(chunk, 0, len(chunk));
+            self._bytes = io_bytes_concat(self._bytes, chunk);
+        }
+    }
+    fn getBytes() {
+        return io_slice_bytes(self._bytes, self._pos, len(self._bytes) - self._pos);
+    }
+    fn readBytes(length) {
+        if (self._pos >= len(self._bytes)) { return []; }
+        let avail = len(self._bytes) - self._pos;
+        let toRead = length;
+        if (toRead > avail) { toRead = avail; }
+        let res = io_slice_bytes(self._bytes, self._pos, toRead);
+        self._pos = self._pos + toRead;
+        return res;
+    }
+    fn read(buf, off, length) {
+        let b = self.readBytes(length);
+        let n = len(b);
+        for i in 0..n { buf[off + i] = b[i]; }
+        return n;
+    }
+    fn readToEnd() {
+        if (self._pos >= len(self._bytes)) { return ""; }
+        let res = io_slice_bytes(self._bytes, self._pos, len(self._bytes) - self._pos);
+        self._pos = len(self._bytes);
+        return io_utf8_decode(res);
+    }
+    fn readLine() {
+        if (self._pos >= len(self._bytes)) {
+            return null;
+        }
+        let line = "";
+        let n = len(self._bytes);
+        while (self._pos < n) {
+            let byte_val = self._bytes[self._pos];
+            self._pos = self._pos + 1;
+            if (byte_val == 10) {
+                break;
+            }
+            if (byte_val != 13) {
+                let ch = io_utf8_decode([byte_val]);
+                line = line + ch;
+            }
+        }
+        return line;
+    }
+}
+
+// ---- TeeWriter ----
+export class TeeWriter extends Writer {
+    TeeWriter(w1, w2) {
+        self._w1 = w1;
+        self._w2 = w2;
+    }
+    fn write(buf, off, length) {
+        let n1 = self._w1.write(buf, off, length);
+        let n2 = self._w2.write(buf, off, length);
+        if (n1 < n2) { return n1; }
+        return n2;
+    }
+    fn flush() {
+        let f1 = self._w1.flush();
+        let f2 = self._w2.flush();
+        return f1 && f2;
+    }
+}
+
+// ---- LimitedReader ----
+export class LimitedReader extends Reader {
+    LimitedReader(reader, maxLen) {
+        let b = slurpReader(reader);
+        self._bytes = io_slice_bytes(b, 0, maxLen);
+        self._pos = 0;
+    }
+    fn getBytes() {
+        return io_slice_bytes(self._bytes, self._pos, len(self._bytes) - self._pos);
+    }
+    fn readBytes(length) {
+        if (self._pos >= len(self._bytes)) { return []; }
+        let avail = len(self._bytes) - self._pos;
+        let toRead = length;
+        if (toRead > avail) { toRead = avail; }
+        let res = io_slice_bytes(self._bytes, self._pos, toRead);
+        self._pos = self._pos + toRead;
+        return res;
+    }
+    fn read(buf, off, length) {
+        let b = self.readBytes(length);
+        let n = len(b);
+        for i in 0..n { buf[off + i] = b[i]; }
+        return n;
+    }
+    fn readToEnd() {
+        if (self._pos >= len(self._bytes)) { return ""; }
+        let res = io_slice_bytes(self._bytes, self._pos, len(self._bytes) - self._pos);
+        self._pos = len(self._bytes);
+        return io_utf8_decode(res);
+    }
+    fn readLine() {
+        if (self._pos >= len(self._bytes)) {
+            return null;
+        }
+        let line = "";
+        let n = len(self._bytes);
+        while (self._pos < n) {
+            let byte_val = self._bytes[self._pos];
+            self._pos = self._pos + 1;
+            if (byte_val == 10) {
+                break;
+            }
+            if (byte_val != 13) {
+                let ch = io_utf8_decode([byte_val]);
+                line = line + ch;
+            }
+        }
+        return line;
+    }
+}
+
+// ---- CountingReader ----
+export class CountingReader extends Reader {
+    CountingReader(reader) {
+        self._bytes = slurpReader(reader);
+        self._pos = 0;
+    }
+    fn getBytes() {
+        return io_slice_bytes(self._bytes, self._pos, len(self._bytes) - self._pos);
+    }
+    fn readBytes(length) {
+        if (self._pos >= len(self._bytes)) { return []; }
+        let avail = len(self._bytes) - self._pos;
+        let toRead = length;
+        if (toRead > avail) { toRead = avail; }
+        let res = io_slice_bytes(self._bytes, self._pos, toRead);
+        self._pos = self._pos + toRead;
+        return res;
+    }
+    fn read(buf, off, length) {
+        let b = self.readBytes(length);
+        let n = len(b);
+        for i in 0..n { buf[off + i] = b[i]; }
+        return n;
+    }
+    fn readToEnd() {
+        if (self._pos >= len(self._bytes)) { return ""; }
+        let res = io_slice_bytes(self._bytes, self._pos, len(self._bytes) - self._pos);
+        self._pos = len(self._bytes);
+        return io_utf8_decode(res);
+    }
+    fn count() {
+        return self._pos;
+    }
+}
+
+// ---- CountingWriter ----
+export class CountingWriter extends Writer {
+    CountingWriter(writer) {
+        self._writer = writer;
+        self._count = 0;
+    }
+    fn write(buf, off, length) {
+        let n = self._writer.write(buf, off, length);
+        self._count = self._count + n;
+        return n;
+    }
+    fn count() {
+        return self._count;
+    }
+    fn flush() {
+        return self._writer.flush();
+    }
+}
+
+// ---- Console readers/writers ----
+export class StdinReader extends Reader {
+    fn readBytes(length) {
+        let line = io_stdin_readline();
+        return io_utf8_encode(line + "\n");
+    }
+    fn readLine() {
+        return io_stdin_readline();
+    }
+    fn readToEnd() {
+        return io_stdin_readline();
+    }
+}
+
+export class StdoutWriter extends Writer {
+    fn write(buf, off, length) {
+        let sliced = io_slice_bytes(buf, off, length);
+        let s = io_utf8_decode(sliced);
+        io_stdout_write(s);
+        return length;
+    }
+}
+
+export class StderrWriter extends Writer {
+    fn write(buf, off, length) {
+        let sliced = io_slice_bytes(buf, off, length);
+        let s = io_utf8_decode(sliced);
+        io_stderr_write(s);
+        return length;
+    }
+}
+
+// ---- Stream combinators ----
+export fn copy(src, dst) {
+    let total = 0;
+    while (true) {
+        let b = src.readBytes(4096);
+        let n = len(b);
+        if (n <= 0) { break; }
+        dst.write(b, 0, n);
+        total = total + n;
+    }
+    dst.flush();
+    return total;
+}
+
+export fn copyN(src, dst, n) {
+    let lim = new LimitedReader(src, n);
+    return copy(lim, dst);
+}
+
+export fn pipe() {
+    let p = new Pipe();
+    return [p, p];
+}
+
+export fn tee(reader, writer) {
+    return new TeeReader(reader, writer);
+}
+
+export fn limit(reader, n) {
+    return new LimitedReader(reader, n);
+}
+
+export fn repeat(byteVal, count) {
+    let bytes = [];
+    for i in 0..count { bytes.push(byteVal); }
+    return new MemoryReader(bytes);
+}
+
+export fn discard(reader) {
+    let nw = new NullWriter();
+    return copy(reader, nw);
+}
+
+export fn concat(readers) {
+    let allBytes = [];
+    for r in readers {
+        let mr = new MemoryWriter();
+        copy(r, mr);
+        let b = mr.getBytes();
+        allBytes = io_bytes_concat(allBytes, b);
+    }
+    return new MemoryReader(allBytes);
+}
+
+export fn chain(readers) {
+    return concat(readers);
+}
+
+// ---- IO facade class ----
+export class IO {
+    static fn stdin() {
+        return new StdinReader();
+    }
+    static fn stdout() {
+        return new StdoutWriter();
+    }
+    static fn stderr() {
+        return new StderrWriter();
+    }
+    static fn print(val) {
+        io_stdout_write(val + "");
+    }
+    static fn println(val) {
+        io_stdout_write(val + "\n");
+    }
+    static fn eprint(val) {
+        io_stderr_write(val + "");
+    }
+    static fn eprintln(val) {
+        io_stderr_write(val + "\n");
+    }
+    static fn readLine() {
+        return io_stdin_readline();
+    }
+    static fn readChar() {
+        return io_stdin_readchar();
+    }
+    static fn memoryReader(data) {
+        return new MemoryReader(data);
+    }
+    static fn memoryWriter() {
+        return new MemoryWriter();
+    }
+    static fn bufferedReader(reader, cap) {
+        return new BufferedReader(reader, cap);
+    }
+    static fn bufferedWriter(writer, cap) {
+        return new BufferedWriter(writer, cap);
+    }
+    static fn binaryReader(reader, endian) {
+        return new BinaryReader(reader, endian);
+    }
+    static fn binaryWriter(writer, endian) {
+        return new BinaryWriter(writer, endian);
+    }
+    static fn byteBuffer(cap) {
+        return new ByteBuffer(cap);
+    }
+    static fn stringBuffer() {
+        return new StringBuffer();
+    }
+    static fn pipe() {
+        return new Pipe();
+    }
+    static fn teeReader(reader, writer) {
+        return new TeeReader(reader, writer);
+    }
+    static fn countingReader(reader) {
+        return new CountingReader(reader);
+    }
+    static fn countingWriter(writer) {
+        return new CountingWriter(writer);
+    }
+    static fn limit(reader, n) {
+        return new LimitedReader(reader, n);
+    }
+    static fn repeat(byteVal, count) {
+        return repeat(byteVal, count);
+    }
+    static fn concat(readers) {
+        return concat(readers);
+    }
+    static fn copy(src, dst) {
+        return copy(src, dst);
+    }
+}

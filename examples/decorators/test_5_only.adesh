@@ -1,0 +1,40 @@
+// Minimal 5 decorator test
+
+print("=== 5 DECORATOR TEST ===\n");
+
+decorator d1(target, meta) {
+    return fn(x) { return target(x) + 1; };
+}
+
+decorator d2(target, meta) {
+    return fn(x) { return target(x) + 2; };
+}
+
+decorator d3(target, meta) {
+    return fn(x) { return target(x) + 3; };
+}
+
+decorator d4(target, meta) {
+    return fn(x) { return target(x) + 4; };
+}
+
+decorator d5(target, meta) {
+    return fn(x) { return target(x) + 5; };
+}
+
+print("Decorators defined");
+
+@d1
+@d2
+@d3
+@d4
+@d5
+fn test5(x) {
+    return x;
+}
+
+print("Function decorated");
+
+let result = test5(0);
+print("Result:", result);
+print("Expected: 15");

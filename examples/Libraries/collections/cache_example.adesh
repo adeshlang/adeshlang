@@ -1,0 +1,18 @@
+import Collections;
+
+print("========================================");
+print("Fixed-Capacity Stream Cache Example (RingBuffer)");
+print("========================================");
+
+let stream_cache = Collections.RingBuffer(3);
+
+stream_cache.push("log_line_1");
+stream_cache.push("log_line_2");
+stream_cache.push("log_line_3");
+
+print("Buffer len: ", stream_cache.len());
+print("Buffer full: ", stream_cache.isFull());
+
+let evicted = stream_cache.push("log_line_4");
+print("Evicted oldest log line: ", evicted);
+print("Newest buffer len: ", stream_cache.len());

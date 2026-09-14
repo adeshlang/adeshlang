@@ -1,0 +1,40 @@
+// Test suite for AdeshLang unsafe keyword semantics
+
+// 1. Unsafe function definition
+unsafe fn dangerous_add(a: int, b: int) -> int {
+    return a + b;
+}
+
+// 2. Class with unsafe method
+class BufferManager {
+    unsafe fn raw_load(p: *u8, idx: int) -> u8 {
+        return p[idx];
+    }
+}
+
+fn test_safe_context() {
+    println("Testing unsafe block expressions and scopes...");
+    
+    // Unsafe block expression yielding a value
+    let sum = unsafe {
+        return dangerous_add(10, 20);
+    };
+    println("dangerous_add in unsafe block result: " + sum);
+
+    // Pointer access inside unsafe block
+    unsafe {
+        let buf: *u8 = alloc(8);
+        buf[0] = 42;
+        buf[1] = 99;
+        
+        let mgr = new BufferManager();
+        let val = mgr.raw_load(buf, 1);
+        println("raw_load via class unsafe method: " + val);
+        
+        free(buf);
+    }
+    
+    println("Testing complete successfully!");
+}
+
+test_safe_context();

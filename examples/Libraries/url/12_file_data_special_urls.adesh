@@ -1,0 +1,13 @@
+import URL;
+
+let fileUrl: URL = URL.fromFilePath("/var/log/app.log");
+let pathBack: String = URL.toFilePath(fileUrl);
+
+let dataUrlStr: String = URL.toDataUrl("text/plain", "Hello AdeshLang!", true);
+let dataObj: DataURL = URL.parseData(dataUrlStr);
+
+print("--- 12 Special URLs Example ---");
+print("File URL:", fileUrl.href);
+print("Path Back:", pathBack);
+print("Data URL String:", dataUrlStr);
+print("Decoded Data Content:", dataObj.decodeString());

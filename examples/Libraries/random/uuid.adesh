@@ -1,0 +1,8 @@
+import Random;
+
+print("--- UUID & Identifier Generation Demo ---");
+let uuid1 = Random.uuid();
+let uuid2 = Random.uuid4();
+
+print("Generated UUID v4 #1: " + uuid1);
+print("Generated UUID v4 #2: " + uuid2);

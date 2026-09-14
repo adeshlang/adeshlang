@@ -1,0 +1,25 @@
+import Encoding;
+
+// ============================================================================
+// UTF-16 & UTF-32 Encodings (Little-Endian, Big-Endian & Surrogates)
+// ============================================================================
+
+let sample = "AdeshLang 🚀 Unicode";
+
+print("--- UTF-16 LE & BE ---");
+let utf16Le = Encoding.utf16LEEncode(sample);
+print("UTF-16 LE Bytes count:", utf16Le.length);
+print("Decoded UTF-16 LE:", Encoding.utf16LEDecode(utf16Le));
+
+let utf16Be = Encoding.utf16BEEncode(sample);
+print("UTF-16 BE Bytes count:", utf16Be.length);
+print("Decoded UTF-16 BE:", Encoding.utf16BEDecode(utf16Be));
+
+print("\n--- UTF-32 LE & BE ---");
+let utf32Le = Encoding.utf32LEEncode(sample);
+print("UTF-32 LE Bytes count (4 bytes per char):", utf32Le.length);
+print("Decoded UTF-32 LE:", Encoding.utf32LEDecode(utf32Le));
+
+let utf32Be = Encoding.utf32BEEncode(sample);
+print("UTF-32 BE Bytes count:", utf32Be.length);
+print("Decoded UTF-32 BE:", Encoding.utf32BEDecode(utf32Be));

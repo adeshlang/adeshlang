@@ -1,0 +1,76 @@
+// Readonly Variables Demo
+// AdeshLang supports readonly variables and arrays
+
+// Readonly variable - cannot be modified after creation
+readonly let pi = 3.14159265359;
+print("Pi value: ", pi);
+
+try {
+    pi = 3.14;
+} catch (e) {
+    print("Caught expected error (reassign pi):", e);
+}
+
+// Readonly with type annotation
+readonly let max_size: u32 = 1000;
+print("Max size: ", max_size);
+
+// Readonly array - array cannot be modified
+readonly let constants = [1, 2, 3, 5, 8, 13, 21];
+print("Fibonacci constants: ", constants);
+
+try {
+    constants[0] = 99;
+} catch (e) {
+    print("Caught expected error (mutate constants array):", e);
+}
+
+try {
+    constants.push(34);
+} catch (e) {
+    print("Caught expected error (push to constants array):", e);
+}
+
+// Readonly object
+readonly let config = {
+    name: "MyApp",
+    version: "1.0.0",
+    debug: false
+};
+print("Config: ", config);
+
+try {
+    config.debug = true;
+} catch (e) {
+    print("Caught expected error (mutate config object):", e);
+}
+
+// Readonly with type annotation after type name
+let settings: [string] readonly = ["option1", "option2", "option3"];
+print("Settings: ", settings);
+settings[0]; // Accessing element is allowed
+
+try {
+    settings[0] = "new_option";
+} catch (e) {
+    print("Caught expected error (mutate settings array):", e);
+}
+
+// Regular mutable variables for comparison
+let counter = 0;
+counter = 1;
+print("Counter after increment: ", counter);
+
+// Const vs Readonly comparison:
+// - const: compile-time constant, value must be known at compile time
+// - readonly: runtime immutable, value can be computed at runtime
+
+// Function returning readonly array
+fn get_default_values() {
+    return [10, 20, 30, 40, 50];
+}
+
+readonly let defaults = get_default_values();
+print("Default values: ", defaults);
+
+print("Readonly demo completed!");

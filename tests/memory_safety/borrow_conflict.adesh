@@ -1,0 +1,12 @@
+// Test: Borrow conflict detection
+// Should fail with compile-time error
+
+fn test_borrow_conflict() {
+    let x = [1, 2, 3];
+    let a = &mut x;  // Mutable borrow
+    let b = &x;      // ERROR: Cannot borrow immutably while mutably borrowed
+    
+    print(a, b);
+}
+
+test_borrow_conflict();

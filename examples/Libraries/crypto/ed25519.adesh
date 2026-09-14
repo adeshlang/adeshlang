@@ -1,0 +1,11 @@
+// AdeshLang Cryptography Example: Ed25519 Digital Signatures
+import Crypto
+
+let kp = Crypto.generateEd25519()
+let contractText = "Authorization for Wire Transfer of $50,000"
+
+let signature = Crypto.signEd25519(kp.privateKey, contractText)
+print("Signature (Hex):", Crypto.encodeHex(signature))
+
+let valid = Crypto.verifyEd25519(kp.publicKey, contractText, signature)
+print("Signature Verification:", valid)

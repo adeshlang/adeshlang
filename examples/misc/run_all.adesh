@@ -1,0 +1,18 @@
+
+// Run all examples and the unified test suite
+
+import "./factorial.adesh" as fact;
+import basic as b;
+import "./test_suite.adesh" as suite;
+
+print(b.msg);
+print("=== Running unified test suite ===");
+let failures = suite.run();
+if (failures == 0) {
+    print("ALL TESTS PASSED");
+} else {
+    print("TESTS FAILED:", failures);
+}
+
+print("=== Factorial and test suite executed ===");
+fact.run();

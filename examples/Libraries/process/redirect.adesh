@@ -1,0 +1,18 @@
+// Executable Example: File Redirection
+import Process;
+import Env;
+import Path;
+
+let outFile = Env.tempDirectory().join("adesh_process_output.txt");
+
+let isWin = Env.isWindows();
+let cmd = isWin ? "cmd.exe" : "echo";
+let args = isWin ? ["/C", "echo", "redirected_content"] : ["redirected_content"];
+
+let result = Process.builder(cmd)
+    .args(args)
+    .redirectToFile(outFile)
+    .run();
+
+print("Redirection success: " + str(result.success()));
+print("Output file written to: " + outFile.toString());

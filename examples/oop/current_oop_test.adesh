@@ -1,0 +1,59 @@
+// Test current OOP features that are working
+
+print("=== Testing Current OOP Features ===");
+
+// 1. Basic class with methods
+print("\n1. Basic Class:");
+class Person {
+    Person(name, age) {
+        this.name = name;
+        this.age = age;
+    }
+    
+    fn greet() {
+        print("Hello, I'm " + this.name + ", " + this.age + " years old");
+    }
+    
+    fn toString() {
+        return this.name + " (" + this.age + ")";
+    }
+}
+
+let person = new Person("Alice", 30);
+person.greet();
+print("Person:", person.toString());
+
+// 2. Inheritance
+print("\n2. Inheritance:");
+class Employee extends Person {
+    Employee(name, age, department) {
+        super(name, age);
+        this.department = department;
+    }
+    
+    fn greet() {
+        print("Hello, I'm " + this.name + " from " + this.department);
+    }
+    
+    fn getInfo() {
+        return this.toString() + " - " + this.department;
+    }
+}
+
+let emp = new Employee("Bob", 25, "Engineering");
+emp.greet();
+print("Employee:", emp.getInfo());
+
+// 3. Method overriding
+print("\n3. Method Overriding:");
+let people = [person, emp];
+for ( p in people) {
+    p.greet();  // Should call different implementations
+}
+
+// 4. Property access
+print("\n4. Property Access:");
+print("Person name:", person.name);
+print("Employee department:", emp.department);
+
+print("\n=== All tests completed! ===");

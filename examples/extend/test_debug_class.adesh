@@ -1,0 +1,25 @@
+class Person {
+    Person(name, age) {
+        this.name = name;
+        this.age = age;
+    }
+    fn introduce() {
+        print("Hi, I'm " + this.name + " and I'm " + this.age);
+    }
+}
+
+extend PersonUtils on Person {
+    fn greet() {
+        print("Hello from " + this.name + "!");
+    }
+    fn isAdult() {
+        return this.age >= 18;
+    }
+}
+
+let p = new Person("Alice", 25);
+p.introduce();
+p.greet();
+let adult = p.isAdult();
+print("Is adult: " + adult);
+print("DONE");

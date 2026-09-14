@@ -1,0 +1,14 @@
+// Selection example
+// Presents a list and accepts either index or exact label
+// input.mock(["2"]); // selects "green"
+
+let color = input.select("Color:", ["red","green","blue"]);
+print(`Selected: ${color}`);
+
+// Enum select returning numeric index (1-based)
+let idx = input.selectEnum("Choose number:", ["one","two","three","four","five"]);
+print(`Index chosen: ${idx}`);
+
+// Key select from object mapping, returns key
+let lang = input.selectKey("Language:", {js:"JavaScript", ts:"TypeScript", py:"Python"});
+print(`Language key: ${lang}`);

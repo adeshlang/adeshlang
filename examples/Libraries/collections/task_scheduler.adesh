@@ -1,0 +1,20 @@
+import Collections;
+
+print("========================================");
+print("Task Scheduler Example (PriorityQueue)");
+print("========================================");
+
+let scheduler = Collections.PriorityQueue();
+
+scheduler.push("Cleanup temporary files", 10);
+scheduler.push("Critical database migration", 100);
+scheduler.push("Send monthly newsletter", 5);
+scheduler.push("Process payment transaction", 90);
+
+print("Scheduled tasks count: ", scheduler.len());
+print("High-priority peek: ", scheduler.peek());
+
+print("\n--- Executing Tasks by Priority Order ---");
+while (!scheduler.isEmpty()) {
+    print("Executing task: ", scheduler.pop());
+}

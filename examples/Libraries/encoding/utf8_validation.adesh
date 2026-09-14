@@ -1,0 +1,22 @@
+import Encoding;
+
+// ============================================================================
+// UTF-8 Validation & Detailed Error Diagnostics
+// ============================================================================
+
+print("--- Valid UTF-8 Bytes Validation ---");
+let validBytes = [65, 100, 101, 115, 104, 76, 97, 110, 103]; // "AdeshLang"
+print("isValidUtf8:", Encoding.isValidUtf8(validBytes));
+print("validateUtf8:", Encoding.validateUtf8(validBytes)); // null means valid
+
+print("\n--- Invalid UTF-8 Sequence Offset Diagnostics ---");
+// Byte sequence with bad byte at index 3 (0x80 as unexpected continuation byte)
+let badBytes = [72, 101, 108, 128, 111]; 
+print("isValidUtf8:", Encoding.isValidUtf8(badBytes));
+
+// validateUtf8 returns detailed error info or error message
+try {
+    Encoding.validateUtf8(badBytes);
+} catch (e) {
+    print("validateUtf8 Error Info:", e);
+}

@@ -1,0 +1,140 @@
+// ranges_combined.ind — Comprehensive range examples
+// Combining logic, use cases, and edge cases from inclusive_range.ind, range_debug.ind, range_iter_test.ind, simple_range.ind
+
+print("Comprehensive ranges demo start");
+
+// Section 1: Basic ranges (from simple_range.ind and range_debug.ind)
+print("\n--- Basic ranges ---");
+
+let r = 1..5;
+print("Range 1..5 =", r);
+print("Range type:", type(r));
+
+// Inclusive range (from inclusive_range.ind)
+let r_inclusive = 1...5;
+print("Inclusive range 1...5 =", r_inclusive);
+
+// Section 2: Iterating over ranges (from range_iter_test.ind)
+print("\n--- Iterating over ranges ---");
+
+let my_range = 1..5;
+print("Range:", my_range);
+for (i in my_range) {
+    print("i =", i);
+}
+
+// Iterate over inclusive range
+let inclusive_range = 1...10;
+print("Inclusive range:", inclusive_range);
+for (j in inclusive_range) {
+    print("j =", j);
+}
+
+// Section 3: Additional range use cases and edge cases
+print("\n--- Additional range examples ---");
+
+// Negative ranges
+let neg_range = -5..-1;
+print("Negative range -5..-1 =", neg_range);
+for (k in neg_range) {
+    print("k =", k);
+}
+
+// Mixed positive/negative
+let mixed_range = -2..3;
+print("Mixed range -2..3 =", mixed_range);
+for (m in mixed_range) {
+    print("m =", m);
+}
+
+// Single element range
+let single = 5..5;
+print("Single element 5..5 =", single);
+for (s in single) {
+    print("s =", s);
+}
+
+// Empty range (start > end)
+let empty = 5..1;
+print("Empty range 5..1 =", empty);
+let count = 0;
+for (e in empty) {
+    count = count + 1;
+}
+print("Iterations in empty range:", count);
+
+// Large ranges (limited output)
+let large_range = 1..20;
+print("Large range 1..20:", large_range);
+
+// Ranges in expressions
+let sum = 0;
+for (n in 1..10) {
+    sum = sum + n;
+}
+print("Sum of 1..10 =", sum);
+
+// Nested loops with ranges
+print("Nested loops:");
+for (x in 1..3) {
+    for (y in 1..2) {
+        print("x:", x, "y:", y);
+    }
+}
+
+// Range with step (if supported, otherwise simulate)
+print("Simulated step range:");
+let step_range = [];
+for (p in 0..20) {
+    if (p % 3 == 0) {
+        step_range.append(p);
+    }
+}
+print("Every 3rd number from 0..20:", step_range);
+
+// Reverse iteration (manual)
+print("Reverse iteration:");
+let rev = [];
+for (q in 1..5) {
+    rev.append(q);
+}
+// Simple reverse
+let rev_out = [];
+for (i in 0..rev.length) {
+    let idx2 = rev.length - 1 - i;
+    if (idx2 >= 0) { rev_out.append(rev[idx2]); }
+}
+print("Reversed 1..5:", rev_out);
+
+// Floating point ranges (not supported; use ints only)
+
+// Ranges in array slicing (simulate)
+let arr = [10, 20, 30, 40, 50];
+print("Array:", arr);
+let slice = [];
+for (idx in 1..3) {
+    slice.append(arr[idx]);
+}
+print("Slice arr[1..3]:", slice);
+
+// Edge cases: very large numbers
+let big_range = 1000000..1000010;
+print("Big range sample:");
+let idx = 0;
+for (val in big_range) {
+    if (idx < 5) {
+        print("val:", val);
+    }
+    idx = idx + 1;
+}
+
+// Ranges with variables
+let start = 2;
+let end = 7;
+let var_range = start..end;
+print("Variable range", start, "..", end, "=", var_range);
+for (v in var_range) {
+    print("v =", v);
+}
+
+print("Comprehensive ranges demo complete.");

@@ -1,0 +1,187 @@
+// Performance Benchmark: Numeric Operations
+// Real benchmarks — actual computational work
+//
+// Run with different backends to compare performance:
+//   adesh --profile run examples/benchmarks/01_numeric_ops.adesh
+//   adesh --profile run --jit examples/benchmarks/01_numeric_ops.adesh
+//   adesh --profile run --njit examples/benchmarks/01_numeric_ops.adesh
+
+print("╔══════════════════════════════════════════════════╗");
+print("║    AdeshLang Numeric Operations Benchmark         ║");
+print("╚══════════════════════════════════════════════════╝");
+print("");
+
+// ============================================================================
+// 1. INTEGER ADDITION (1M iterations)
+// ============================================================================
+
+print("=== 1. Integer Addition (1M iterations) ===");
+
+let sum = 0;
+let t0 = clock();
+for (i in 0..1000000) {
+    sum = sum + i;
+}
+let t1 = clock();
+print("  result:", sum);
+print("  time:", (t1 - t0) * 1000, "ms");
+print("");
+
+// ============================================================================
+// 2. INTEGER MULTIPLICATION (100k iterations)
+// ============================================================================
+
+print("=== 2. Integer Multiplication (100k iterations) ===");
+
+let product = 1;
+let t2 = clock();
+for (i in 1..100000) {
+    product = product + i * 3;
+    if product > 1000000 {
+        product = product - 1000000;
+    }
+}
+let t3 = clock();
+print("  result:", product);
+print("  time:", (t3 - t2) * 1000, "ms");
+print("");
+
+// ============================================================================
+// 3. HEX AND BINARY LITERAL OPERATIONS
+// ============================================================================
+
+print("=== 3. Hex & Binary Operations (100k iterations) ===");
+
+let acc = 0;
+let t4 = clock();
+for (i in 0..100000) {
+    acc = acc + (i & 0xFF);
+    acc = acc + (i | 0x0F);
+    acc = acc + (i ^ 0xAA);
+    if acc > 10000000 {
+        acc = acc - 10000000;
+    }
+}
+let t5 = clock();
+print("  result:", acc);
+print("  time:", (t5 - t4) * 1000, "ms");
+print("");
+
+// ============================================================================
+// 4. FUNCTION CALL OVERHEAD (50k iterations)
+// ============================================================================
+
+print("=== 4. Function Call Overhead (50k iterations) ===");
+
+fn add_one(x) {
+    return x + 1;
+}
+
+fn double_it(x) {
+    return x * 2;
+}
+
+fn compose(x) {
+    return double_it(add_one(x));
+}
+
+let acc2 = 0;
+let t6 = clock();
+for (i in 0..50000) {
+    acc2 = acc2 + compose(i);
+    if acc2 > 100000000 {
+        acc2 = acc2 - 100000000;
+    }
+}
+let t7 = clock();
+print("  result:", acc2);
+print("  time:", (t7 - t6) * 1000, "ms");
+print("");
+
+// ============================================================================
+// 5. RECURSIVE FIBONACCI (depth 20 — safe from stack overflow)
+// ============================================================================
+
+print("=== 5. Recursive Fibonacci ===");
+
+fn fib(n) {
+    if n <= 1 {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+let t8 = clock();
+let fib_result = fib(20);
+let t9 = clock();
+print("  fib(20):", fib_result);
+print("  time:", (t9 - t8) * 1000, "ms");
+print("");
+
+// ============================================================================
+// 6. NESTED LOOPS (200x200)
+// ============================================================================
+
+print("=== 6. Nested Loops (200x200) ===");
+
+let acc3 = 0;
+let t10 = clock();
+for (i in 0..200) {
+    for (j in 0..200) {
+        acc3 = acc3 + i * j;
+        if acc3 > 100000000 {
+            acc3 = acc3 - 100000000;
+        }
+    }
+}
+let t11 = clock();
+print("  result:", acc3);
+print("  time:", (t11 - t10) * 1000, "ms");
+print("");
+
+// ============================================================================
+// 7. FLOATING POINT OPERATIONS (500k iterations)
+// ============================================================================
+
+print("=== 7. Floating Point Operations (500k iterations) ===");
+
+let pi = 3.14159265358979;
+let acc4 = 0.0;
+let t12 = clock();
+for (i in 0..500000) {
+    acc4 = acc4 + pi;
+    if acc4 > 1000.0 {
+        acc4 = acc4 - 1000.0;
+    }
+}
+let t13 = clock();
+print("  result:", acc4);
+print("  time:", (t13 - t12) * 1000, "ms");
+print("");
+
+// ============================================================================
+// 8. MIXED OPERATIONS (200k iterations)
+// ============================================================================
+
+print("=== 8. Mixed Operations (200k iterations) ===");
+
+let x = 1;
+let y = 2;
+let z = 3;
+let acc5 = 0;
+let t14 = clock();
+for (i in 0..200000) {
+    x = (x * 3 + 7) % 1000;
+    y = (y * 5 + 11) % 1000;
+    z = (x + y * 2) % 1000;
+    acc5 = acc5 + z;
+}
+let t15 = clock();
+print("  result:", acc5);
+print("  time:", (t15 - t14) * 1000, "ms");
+print("");
+
+print("╔══════════════════════════════════════════════════╗");
+print("║  Benchmark complete!                            ║");
+print("║  Run with --jit or --njit to compare backends   ║");
+print("╚══════════════════════════════════════════════════╝");

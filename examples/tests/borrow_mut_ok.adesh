@@ -1,0 +1,8 @@
+// Demonstrates a shared borrow (all values are mutable by default, no &mut needed).
+
+let msg = "shared";
+let handle = &msg;    // shared borrow succeeds
+print(handle);        // prints &shared value
+
+// After the borrow, msg is still usable because shared borrows are non-exclusive.
+print(msg);

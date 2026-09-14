@@ -1,0 +1,16 @@
+fn factorial(n) {
+    if (n <= 1) {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+let acc = factorial(20);
+print("factorial of 20 is: " + acc);
+let i = 3;
+while (i > 0) {
+    print(i);
+    i = i - 1;
+}
+print("Hello " + "AdeshLang!");
+print(2 + 3);

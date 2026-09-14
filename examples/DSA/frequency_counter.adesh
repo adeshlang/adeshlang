@@ -1,0 +1,54 @@
+// =============================================================================
+// DSA Example: Word Frequency & Character Counter
+// =============================================================================
+// Demonstrates:
+// 1. Dict / Map constructors and operations (has, get, set, indexing)
+// 2. Set for unique elements and deduplication
+// 3. TypeScript union return types (int | null, dict | [])
+// =============================================================================
+
+fn countFrequencies(words: [string]): dict {
+    let freq: dict; // default initialized to empty dict
+    for word in words {
+        if freq[word] != null {
+            freq[word] = freq[word] + 1;
+        } else {
+            freq[word] = 1;
+        }
+    }
+    return freq;
+}
+
+fn getTopWord(freq: dict): string | null {
+    let maxCount = 0;
+    let topWord: string | null = null;
+    let wordKeys = freq.keys();
+    for word in wordKeys {
+        let count = freq[word];
+        if (count > maxCount) {
+            maxCount = count;
+            topWord = word;
+        }
+    }
+    return topWord;
+}
+
+fn main() {
+    print("=== Word Frequency Counter (DSA with Dict & Set) ===");
+    let text = ["apple", "banana", "apple", "cherry", "banana", "apple", "date"];
+    
+    let freq = countFrequencies(text);
+    print("Word Frequencies: " + str(freq));
+    
+    let top = getTopWord(freq);
+    print("Most frequent word: " + str(top));
+    
+    let uniqueWords = Set(text);
+    print("Unique words set (size=" + str(uniqueWords.size()) + "): " + str(uniqueWords));
+    print("Contains 'banana': " + str(uniqueWords.contains("banana")));
+    print("Contains 'grape': " + str(uniqueWords.contains("grape")));
+    
+    print("✅ Frequency counter test passed!");
+}
+
+main();

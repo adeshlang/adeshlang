@@ -1,0 +1,51 @@
+// SIMD Vector Types Demo
+// AdeshLang supports SIMD vector type annotations: vec2<T>, vec3<T>, vec4<T>
+// Note: Type annotations are parsed but SIMD intrinsics are pending implementation
+
+// Using SIMD vector type annotation (parsed but not yet runtime optimized)
+// let v: vec4<f32> = [1.0, 2.0, 3.0, 4.0];
+
+// Basic number operations
+let a = 1.0;
+let b = 2.0;
+let c = 3.0;
+let d = 4.0;
+
+// Create a 4-element array (simulates vec4)
+let v4 = [a, b, c, d];
+print("Vector (array): ", v4);
+
+// Test vector operations
+let vec1 = [1.0, 2.0, 3.0, 4.0];
+let vec2 = [5.0, 6.0, 7.0, 8.0];
+
+// Vector operations using arrays
+// let sum = [vec1[0] + vec2[0], vec1[1] + vec2[1], vec1[2] + vec2[2], vec1[3] + vec2[3]];
+let sum = vec1+vec2; // Using array addition (if supported)
+let scaled = [vec1[0] * 2.0, vec1[1] * 2.0, vec1[2] * 2.0, vec1[3] * 2.0];
+let dot = vec1[0] * vec2[0] + vec1[1] * vec2[1] + vec1[2] * vec2[2] + vec1[3] * vec2[3];
+
+print("Vector 1: ", vec1);
+print("Vector 2: ", vec2);
+print("Elem types:", type(vec1[0]), type(vec2[0]));
+print("Elems:", vec1[0], vec2[0]);
+let t0 = vec1[0] + vec2[0];
+print("t0:", t0, type(t0));
+
+print("Sum: ", sum);
+print("Scaled (x2): ", scaled);
+print("Dot product: ", dot);
+
+// 3D vector operations (vec3)
+let pos3d = [10.0, 20.0, 30.0];
+let dir3d = [0.0, 1.0, 0.0];
+print("3D position: ", pos3d);
+print("3D direction: ", dir3d);
+
+// 2D vector operations (vec2)
+let pos2d = [100.0, 200.0];
+let vel2d = [5.0, -3.0];
+print("2D position: ", pos2d);
+print("2D velocity: ", vel2d);
+
+print("SIMD vector demo completed!");

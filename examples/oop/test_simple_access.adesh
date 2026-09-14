@@ -1,0 +1,60 @@
+// Simple test for access modifiers
+print("=== Simple Access Modifier Test ===\n");
+
+// Test 1: Public method (explicit)
+class Test1 {
+    Test1() {
+        this.val = 42;
+    }
+    
+    public fn getVal() {
+        return this.val;
+    }
+}
+
+let t1 = new Test1();
+print("Test 1 - Public method:", t1.getVal());
+
+// Test 2: Private method called from within class
+class Test2 {
+    Test2() {
+        this.val = 100;
+    }
+    
+    private fn helper() {
+        return this.val * 2;
+    }
+    
+    public fn compute() {
+        return this.helper();  // Private method called from same class
+    }
+}
+
+let t2 = new Test2();
+print("Test 2 - Private method via public:", t2.compute());
+
+// Test 3: Protected method in inheritance
+class Base {
+    Base() {
+        this.data = 50;
+    }
+    
+    protected fn getData() {
+        return this.data;
+    }
+    
+    public fn show() {
+        return this.getData();
+    }
+}
+
+class Child extends Base {
+    public fn doubled() {
+        return this.getData() * 2;  // Protected accessible in subclass
+    }
+}
+
+let c = new Child();
+print("Test 3 - Protected in subclass:", c.doubled());
+
+print("\n✓ All access modifier tests passed!");

@@ -1,0 +1,7 @@
+// World-First: Visual Clock Timepicker
+// Interactive hour/minute/second selection
+
+// input.mock(["14:30:00"]);
+
+let alarm_time = input.timepicker("Set Daily Automation Time:");
+println(`Configured Alarm Time: ${alarm_time}`);

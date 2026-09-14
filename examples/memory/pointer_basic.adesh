@@ -1,0 +1,54 @@
+// Basic pointer allocation and access
+// This example demonstrates fundamental pointer operations
+// .
+print("=== Basic Pointer Operations ===");
+
+unsafe {
+    // Allocate 10 bytes
+    let p: *u8 = alloc(10);
+    print("Allocated 10 bytes");
+    
+    // Write values
+    p[0] = 65;  // 'A'
+    p[1] = 66;  // 'B'
+    p[2] = 67;  // 'C'
+    print("Wrote values to indices 0, 1, 2");
+    
+    // Read values back
+    let a = p[0];
+    let b = p[1];
+    let c = p[2];
+    
+    print("Read values:");
+    print(a);  // 65
+    print(b);  // 66
+    print(c);  // 67
+    
+    // Manual free (though RAII will do this automatically)
+    free(p);
+    print("Freed pointer");
+}
+
+print("=== RAII Automatic Cleanup ===");
+
+unsafe {
+    let ptr = alloc(5);
+    ptr[0] = 100;
+    print("Pointer will be freed automatically at scope exit");
+    // No explicit free() needed - RAII handles it
+}
+
+print("Scope exited, pointer freed by RAII");
+
+// Expected output:
+// === Basic Pointer Operations ===
+// Allocated 10 bytes
+// Wrote values to indices 0, 1, 2
+// Read values:
+// 65
+// 66
+// 67
+// Freed pointer
+// === RAII Automatic Cleanup ===
+// Pointer will be freed automatically at scope exit
+// Scope exited, pointer freed by RAII

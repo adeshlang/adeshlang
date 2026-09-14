@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+prefix="/usr/lib/adeshlang"
+profile="/etc/profile.d/adeshlang.sh"
+
+case "$1" in
+    remove)
+        for binary in adesh adl als adesh-editor; do
+            link="/usr/bin/$binary"
+            if [ -L "$link" ] && [ "$(readlink "$link")" = "$prefix/bin/$binary" ]; then
+                rm -f "$link"
+            fi
+        done
+        rm -f "$profile"
+        ;;
+esac
+
+exit 0

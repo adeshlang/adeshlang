@@ -1,0 +1,19 @@
+struct TreeNode {
+  value: i32,
+  parent_id: i32,
+  children_count: i32,
+};
+
+let root = TreeNode { value: 100, parent_id: -1, children_count: 2 };
+
+share  strong_ref =  root;
+weak  weak_ref =  strong_ref;
+
+print("Tree node with ARC:");
+print("Strong reference: 1");
+print("Weak reference: 1 (no cycle - safe)");
+
+let another_strong = strong_ref;
+
+print("Multiple strong references prevent deallocation");
+print("Weak references don't extend lifetime");

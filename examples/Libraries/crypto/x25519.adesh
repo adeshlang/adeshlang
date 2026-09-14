@@ -1,0 +1,15 @@
+// AdeshLang Cryptography Example: X25519 Diffie-Hellman Key Exchange
+import Crypto
+
+let alice = Crypto.generateX25519()
+let bob = Crypto.generateX25519()
+
+let aliceShared = Crypto.exchangeX25519(alice.secretKey, bob.publicKey)
+let bobShared = Crypto.exchangeX25519(bob.secretKey, alice.publicKey)
+
+let hexAlice = Crypto.encodeHex(aliceShared)
+let hexBob = Crypto.encodeHex(bobShared)
+
+print("Alice Derived Shared Secret:", hexAlice)
+print("Bob Derived Shared Secret:  ", hexBob)
+print("Secrets Match:              ", hexAlice == hexBob)

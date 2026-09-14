@@ -1,0 +1,22 @@
+// typed_vars.ind — example showing type annotations and inference
+
+print("Typed vars example");
+
+// explicit type annotation. The type checker will validate this.
+let a:int = 5;
+
+// no annotation — type checker will infer `b` as Number (Any fallback in some contexts)
+let b = 2;
+
+// annotated variable using previously inferred/annotated values
+let c:int = a + b;
+
+print("a =", a);
+print("b =", b);
+print("c =", c);
+
+// Uncommenting the following line should cause the type checker to report an error
+// (but the parser still accepts it). The interpreter will still run unless you block it
+// at compile-time.
+let bad:int = 3;
+print(bad);

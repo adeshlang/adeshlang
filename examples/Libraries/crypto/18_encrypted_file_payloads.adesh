@@ -1,0 +1,13 @@
+// 18 - Encrypted File Container Encryption & Decryption
+import Crypto;
+
+let passphrase = "MasterEncryptionPassphrase2026!";
+let sensitiveDocument = "Confidential Company Quarter Audit File";
+
+print("1. Encrypting File Payload...");
+let payload = Crypto.encryptFile(passphrase, sensitiveDocument);
+print("   Encrypted File Payload Length (bytes):", len(payload));
+
+print("2. Decrypting File Payload...");
+let decrypted = Crypto.decryptFile(passphrase, payload);
+print("   Decrypted File Payload Successfully!");

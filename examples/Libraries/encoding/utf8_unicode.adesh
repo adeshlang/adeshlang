@@ -1,0 +1,25 @@
+import Encoding;
+
+// ============================================================================
+// UTF-8 Unicode, Edge Cases & Lossy Decoding
+// ============================================================================
+
+print("--- Multi-lingual & Emoji UTF-8 ---");
+let multilingual = "AdeshLang 🚀 | Hindi: नमस्ते | Sanskrit: संस्कृतम् | Chinese: 你好 | Arabic: مرحبا";
+print("Original Text:", multilingual);
+
+let utf8Bytes = Encoding.utf8Encode(multilingual);
+print("Encoded Bytes Count:", utf8Bytes.length);
+
+let decodedText = Encoding.utf8Decode(utf8Bytes);
+print("Decoded Text:", decodedText);
+
+print("\n--- Edge Case: Truncated & Invalid Bytes Handling ---");
+// Malformed byte array with invalid continuation bytes (0xFF, 0xFE)
+let invalidBytes = [72, 101, 108, 108, 111, 255, 254, 87, 111, 114, 108, 100];
+
+print("Is Valid UTF-8:", Encoding.isValidUtf8(invalidBytes));
+
+// Lossy decoding replaces malformed bytes with U+FFFD (replacement character)
+let lossyDecoded = Encoding.utf8DecodeLossy(invalidBytes);
+print("Lossy Decoded (replaces invalid bytes with U+FFFD):", lossyDecoded);

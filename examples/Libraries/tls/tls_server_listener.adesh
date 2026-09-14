@@ -1,0 +1,49 @@
+// Example: Fully Type-Annotated Production TLS Server & Listener Setup
+import Net;
+import TLS;
+
+let host: String = "127.0.0.1";
+let port: i64 = 8443;
+
+print("--- Initializing Strongly Typed TLS Server Listener ---");
+
+// PEM Encoded Test Credentials
+let certPem: String = "-----BEGIN CERTIFICATE-----\n" +
+"MIICWDCCAcGgAwIBAgIJAK91/00S/1vJMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV\n" +
+"BAYTAkFVMRMwEQYDVQQIDAZTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBX\n" +
+"aWRnaXRzIFB0eSBMdGQwHhcNMjQwMTAxMDAwMDAwWhcNMzQwMTAxMDAwMDAwWjBF\n" +
+"MQswCQYDVQQGEwJBVDEVMBMGA1UECAwMTmV3IFNvdXRoIFdhbGVzMSEwHwYDVQQK\n" +
+"DBhJbnRlcm5ldCBXaWRnaXRzIFB0eSBMdGQwgZ8wDQYJKoZIhvcNAQEBBQADgY0A\n" +
+"MIGJAoGBANv3lX95xNq95T0/v+5+y8F8O8X56s+3u7y5k8+0d4k/9y6y3r5v6x9m\n" +
+"3k+7w6y5k8+0d4k/9y6y3r5v6x9m3k+7w6y5k8+0d4k/9y6y3r5v6x9m3k+7w6y5\n" +
+"k8+0d4k/9y6y3r5v6x9m3k+7w6y5k8+0d4k/9y6y3r5v6x9mAgMBAAGjUDBOMB0G\n" +
+"A1UdDgQWBBQ6Qv9mN38x4m3k+7w6y5k8+0d4kDAfBgNVHSMEGDAWgBQ6Qv9mN38x\n" +
+"4m3k+7w6y5k8+0d4kAMBAAGjggEAMIHAMAkGA1UdEwQCMAAwDQYJKoZIhvcNAQEL\n" +
+"BQADgYEAN8y/4p8y5k8+0d4k/9y6y3r5v6x9m3k+7w6y5k8+0d4k/9y6y3r5v6x9\n" +
+"m3k+7w6y5k8+0d4k/9y6y3r5v6x9m3k+7w6y5k8+0d4k/9y6y3r5v6x9m3k+7w6y\n" +
+"5k8+0d4k/9y6y3r5v6x9m3k+7w6y5k8+0d4k/9y6y3r5v6x9\n" +
+"-----END CERTIFICATE-----";
+
+let keyPem: String = "-----BEGIN PRIVATE KEY-----\n" +
+"MIICXAIBAAKBgQDb95V/ecTaveU9P7/uusrBfDvF+erPt7u8uZPPtHeJP/cuss6+\n" +
+"b+sfZt5Pu8OsuZPPtHeJP/cuss6+b+sfZt5Pu8OsuZPPtHeJP/cuss6+b+sfZt5P\n" +
+"u8OsuZPPtHeJP/cuss6+b+sfZt5Pu8OsuZPPtHeJP/cuss6+b+sfZwIDAQABAoGA\n" +
+"A1Y6O8OsuZPPtHeJP/cuss6+b+sfZt5Pu8OsuZPPtHeJP/cuss6+b+sfZt5Pu8Os\n" +
+"uZPPtHeJP/cuss6+b+sfZt5Pu8OsuZPPtHeJP/cuss6+b+sfZt5Pu8OsuZPPtHeJ\n" +
+"P/cuss6+b+sfZt5Pu8OsuZPPtHeJP/cuss6+b+sfZt5Pu8ECQQDb95V/ecTaveU9\n" +
+"P7/uusrBfDvF+erPt7u8uZPPtHeJP/cuss6+b+sfZt5Pu8OsuZPPtHeJP/cuss6+\n" +
+"b+sfZt5PAkEA2/eVf3nE2r3lPT+/7rrKwXw7xfnqz7e7vLmTz7R3iT/3LLLevm/r\n" +
+"H2beT7vDrLmTz7R3iT/3LLLevm/rH2beTwJAW3q7w6y5k8+0d4k/9y6y3r5v6x9m\n" +
+"3k+7w6y5k8+0d4k/9y6y3r5v6x9m3k+7w6y5k8+0d4k/9y6y3r5v6x9mAkBbe7vD\n" +
+"rLmTz7R3iT/9y6y3r5v6x9m3k+7w6y5k8+0d4k/9y6y3r5v6x9m3k+7w6y5k8+0d\n" +
+"4k/9y6y3r5v6x9mAkBbe7vDrLmTz7R3iT/9y6y3r5v6x9m3k+7w6y5k8+0d4k/9\n" +
+"y6y3r5v6x9m3k+7w6y5k8+0d4k/9y6y3r5v6x9m\n" +
+"-----END PRIVATE KEY-----";
+
+// Step 1: Bind underlying TCP listener socket
+let tcpListener: Object = Net.tcpListen(host, port);
+print("Bound TCP listener on " + host + ":" + port);
+
+// Step 2: Wrap into production TLS Server listener abstraction
+let server: Object = TLS.Server(tcpListener, certPem, keyPem);
+print("TLS Server Listener configured successfully with certificates.");

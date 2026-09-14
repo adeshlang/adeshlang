@@ -1,0 +1,26 @@
+import Net;
+print("=== Testing On-Demand Tree-Shaken Imports 1 ===");
+import URL;
+print("=== Testing On-Demand Tree-Shaken Imports 2 ===");
+import Crypto;
+print("=== Testing On-Demand Tree-Shaken Imports  3===");
+import Encoding;
+print("=== Testing On-Demand Tree-Shaken Imports 4 ===");
+
+
+print("=== Testing On-Demand Tree-Shaken Imports ===");
+let ip = Net.IPAddress.parse("127.0.0.1");
+print("1. IP parsed:", ip.address);
+
+let u = URL.parse("http://example.com");
+print("2. URL parsed:", u.href);
+
+let h = Crypto.sha256("test");
+print("3. Crypto sha256:", h);
+
+let b = Encoding.base64Encode("hello");
+print("4. Encoding base64:", b);
+
+let j = JSON.stringify({ "key": "val" });
+print("5. JSON stringify:", j);
+print("=== All imports executed successfully! ===");

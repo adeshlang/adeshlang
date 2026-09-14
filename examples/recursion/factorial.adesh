@@ -1,0 +1,51 @@
+// Factorial with Memoization
+// Run: adesh run examples/recursion/factorial.adesh --jit
+
+fn factorial(n) {
+    if n <= 1 {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+// Tail-recursive version
+fn factorial_tail(n, acc) {
+    if n <= 1 {
+        return acc;
+    }
+    return factorial_tail(n - 1, n * acc);
+}
+
+fn fact(n) {
+    return factorial_tail(n, 1);
+}
+
+fn main() {
+    print("╔════════════════════════════════════════════════════╗");
+    print("║  FACTORIAL BENCHMARK                               ║");
+    print("╚════════════════════════════════════════════════════╝");
+    print("");
+    
+    // Standard recursive
+    print("Standard Recursive:");
+    for i in range(1, 15) {
+        print(`${i}! = ${factorial(i)}`);
+    }
+    
+    print("");
+    print("Tail Recursive (with TCO):");
+    for i in range(1, 21) {
+        print(`  ${i}! = ${fact(i)}`);
+    }
+    
+    print("");
+    print("BigInt Examples (use --stack 64M for large factorials):");
+    print("  fact(50n) = ", fact(50));
+    print("  fact(100n) = ", fact(100n));
+    print("  fact(200n) = ", fact(200n));
+    
+    print("");
+    print("TIP: Use --fast-recursion flag for TCO + memoization");
+    print("TIP: Use --stack 64M for BigInt factorial(200n)");
+    print("Default stack is 16MB (configurable with --stack-size)");
+}

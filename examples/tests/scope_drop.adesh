@@ -1,0 +1,9 @@
+// Borrow inside a function; after function returns the borrow should be dropped
+let s = "scope_ok";
+fn borrower() {
+  let r = &s;
+  print(r);
+}
+borrower();
+let moved = s;
+print(moved);

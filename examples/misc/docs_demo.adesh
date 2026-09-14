@@ -1,0 +1,56 @@
+import "../utils/util_demo.ind" as u;
+
+/**
+ * Increment by one
+ * @param {number} x input value
+ * @returns {number} x + 1
+ * @example
+ * inc(4) // 5
+ */
+fn inc(x) { return x + 1; }
+
+/**
+ * Greeter class
+ * @param {string} name person name
+ * @example
+ * let g = new Greeter("Anita");
+ * g.say();
+ */
+class Greeter {
+  fn init(name) { this.name = name; }
+  fn say() { print("Hello", this.name); }
+}
+
+/**
+ * Add via imported util
+ * @param {number} a
+ * @param {number} b
+ * @returns {number}
+ */
+fn add(a, b) { return u.utilAdd(a, b); }
+
+/**
+ * Library version constant
+ * @type {string}
+ */
+export const VERSION = "1.0.0";
+
+/**
+ * Person interface
+ * @description Shape for person records
+ */
+interface Person {
+  name: string;
+  age: number;
+}
+
+/**
+ * 2D point type alias
+ */
+type Point = { x: number; y: number; };
+
+/**
+ * Default entry point
+ * @returns {null}
+ */
+export default fn Main() { return null; }

@@ -1,0 +1,89 @@
+// AdeshLang - Simplified Built-in Decorators Example
+// Testing built-in @memoize, @trace, @benchmark decorators
+
+print("=== BUILT-IN DECORATORS TEST ===\n");
+
+// ============================================
+// 1. @memoize - Automatic Result Caching
+// ============================================
+print("Test 1: @memoize Decorator");
+
+@memoize
+fn expensiveCalc(n) {
+    print("  [Computing]", n, "* 2");
+    return n * 2;
+}
+
+print("First call: expensiveCalc(5)");
+let r1 = expensiveCalc(5);
+print("Result:", r1);
+
+print("Second call: expensiveCalc(5) - should be cached");
+let r2 = expensiveCalc(5);
+print("Result:", r2);
+print("");
+
+// ============================================
+// 2. @trace - Automatic Call Tracing
+// ============================================
+print("Test 2: @trace Decorator");
+
+@trace
+fn add(a, b) {
+    return a + b;
+}
+
+let sum = add(10, 20);
+print("");
+
+// ============================================
+// 3. @benchmark - Performance Timing
+// ============================================
+print("Test 3: @benchmark Decorator");
+
+@benchmark
+fn loopTest() {
+    let total = 0;
+    for (i in 0..100) {
+        total = total + i;
+    }
+    return total;
+}
+
+let loop_result = loopTest();
+print("Loop result:", loop_result);
+print("");
+
+// ============================================
+// 4. @deprecated - Deprecation Warning
+// ============================================
+print("Test 4: @deprecated Decorator");
+
+@deprecated
+fn oldFunction(x) {
+    return x + 1;
+}
+
+let old_result = oldFunction(5);
+print("Result:", old_result);
+print("");
+
+// ============================================
+// 5. Stacking Decorators
+// ============================================
+print("Test 5: Stacking @trace and @memoize");
+
+@trace
+@memoize
+fn multiply(x, y) {
+    return x * y;
+}
+
+print("First call:");
+let m1 = multiply(3, 4);
+
+print("\nSecond call (cached):");
+let m2 = multiply(3, 4);
+print("");
+
+print("✅ Built-in decorators working!");

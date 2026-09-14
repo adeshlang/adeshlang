@@ -1,0 +1,9 @@
+fn get_user(): (string, int, bool) {
+    return "Ajay", 25, true;
+}
+
+let (name, age, is_admin) = get_user();
+
+print("Name: " + name);
+print("Age: " + str(age));
+print("Admin: " + str(is_admin));

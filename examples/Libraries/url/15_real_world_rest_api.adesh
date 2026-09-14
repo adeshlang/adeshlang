@@ -1,0 +1,16 @@
+import URL;
+
+fn buildApiEndpoint(baseUri: String, resource: String, page: Int, filterTag: String): URL {
+    let base: URL = URL.parse(baseUri);
+    return base
+        .appendPathSegment("v1")
+        .appendPathSegment(resource)
+        .withQueryParam("page", page)
+        .withQueryParam("tag", filterTag)
+        .withQueryParam("format", "json");
+}
+
+let endpointUrl: URL = buildApiEndpoint("https://api.platform.org", "analytics", 2, "telemetry");
+
+print("--- 15 Real-World REST API Endpoint Construction ---");
+print("Generated API Endpoint:", endpointUrl.href);

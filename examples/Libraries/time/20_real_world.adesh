@@ -1,0 +1,87 @@
+// 20_real_world.adesh - Real-world date/time scenarios
+import Time;
+
+print("=== Real-World Date/Time Scenarios ===\n");
+
+// -------------------------------------------------------
+// Scenario 1: Age calculator
+// -------------------------------------------------------
+print("--- Scenario 1: Age Calculator ---");
+let birthday: Date = Time.dateYmd(1995, 8, 22);
+let today: Date = Time.dateToday();
+let ageDays: i64 = today.daysSince(birthday);
+let ageYears = ageDays / 365;
+print("Birthday   :", birthday.toIsoString());
+print("Today      :", today.toIsoString());
+print("Age (days) :", ageDays);
+print("Age (years ~):", ageYears);
+
+// -------------------------------------------------------
+// Scenario 2: Meeting time across time zones
+// -------------------------------------------------------
+print("\n--- Scenario 2: Global Meeting Scheduler ---");
+// Team in IST, EST, JST scheduling a meeting
+let meetingUtc: UtcDateTime = Time.utcDateTimeParse("2024-09-10T14:00:00Z");
+let offIst: OffsetDateTime = Time.offsetDateTimeFromUtc(meetingUtc, Time.utcOffsetHoursMinutes(5, 30));
+let offEst: OffsetDateTime = Time.offsetDateTimeFromUtc(meetingUtc, Time.utcOffsetHours(-5));
+let offJst: OffsetDateTime = Time.offsetDateTimeFromUtc(meetingUtc, Time.utcOffsetHours(9));
+
+print("Meeting UTC :", meetingUtc.toIsoString());
+print("For IST team:", offIst.format("HH:mm on dd MMM yyyy"));
+print("For EST team:", offEst.format("HH:mm on dd MMM yyyy"));
+print("For JST team:", offJst.format("HH:mm on dd MMM yyyy"));
+
+// -------------------------------------------------------
+// Scenario 3: Countdown timer
+// -------------------------------------------------------
+print("\n--- Scenario 3: Event Countdown ---");
+let newYear: UtcDateTime = Time.utcDateTimeParse("2025-01-01T00:00:00Z");
+let nowUtc: UtcDateTime = Time.utcDateTimeNow();
+let countdown: Duration = newYear.durationSince(nowUtc);
+print("New Year 2025 UTC   :", newYear.toIsoString());
+print("Current UTC         :", nowUtc.toIsoString());
+if (countdown.wholeNanoseconds() > 0n) {
+    print("Days until NY 2025  :", countdown.wholeHours() / 24);
+    print("Hours until NY 2025 :", countdown.wholeHours());
+} else {
+    print("New Year 2025 has already passed!");
+}
+
+// -------------------------------------------------------
+// Scenario 4: Log timestamp formatting
+// -------------------------------------------------------
+print("\n--- Scenario 4: Log Timestamps ---");
+fn logEntry(level: string, msg: string): string {
+    let ts: DateTime = Time.dateTimeNow();
+    let stamp = ts.format("yyyy-MM-dd HH:mm:ss");
+    return "[" + stamp + "] [" + level + "] " + msg;
+}
+
+print(logEntry("INFO", "Application started"));
+print(logEntry("WARN", "Config file missing, using defaults"));
+print(logEntry("ERROR", "Database connection failed"));
+
+// -------------------------------------------------------
+// Scenario 5: Business days between dates
+// -------------------------------------------------------
+print("\n--- Scenario 5: Business Days ---");
+fn businessDaysBetween(startDate: Date, endDate: Date): i64 {
+    let count = 0;
+    let current: Date = startDate;
+    let totalDays: i64 = endDate.daysSince(startDate);
+    let i = 0;
+    while (i < totalDays) {
+        let wd = current.weekday().numberFromMonday();  // 0=Mon, 4=Fri, 5=Sat, 6=Sun
+        if (wd < 5) { count = count + 1; }
+        current = current.addDays(1);
+        i = i + 1;
+    }
+    return count;
+}
+
+let projectStart: Date = Time.dateYmd(2024, 7, 1);
+let projectEnd: Date = Time.dateYmd(2024, 7, 31);
+let bizDays: i64 = businessDaysBetween(projectStart, projectEnd);
+print("Project: 2024-07-01 to 2024-07-31");
+print("Total days    :", projectEnd.daysSince(projectStart));
+print("Business days :", bizDays);

@@ -1,0 +1,32 @@
+// Example 05: Room Broadcast & Multi-Client Real-Time Architecture
+// Demonstrates room management, non-blocking broadcast, and client connection registry.
+
+import WebSocket;
+
+fn runBroadcastServer() {
+    print("=== Example 05: Real-Time Chat Broadcast Server ===");
+
+    let serverConfig = {
+        port: 8605,
+        bind_address: "127.0.0.1"
+    };
+
+    let server = WebSocket.server(serverConfig);
+    server.startEcho();
+
+    let client1 = WebSocket.connect("ws://127.0.0.1:8605");
+    let client2 = WebSocket.connect("ws://127.0.0.1:8605");
+
+    WebSocket.joinRoom("General", client1.id);
+    WebSocket.joinRoom("General", client2.id);
+
+    let sent = WebSocket.broadcastRoom("General", "Broadcast to room General");
+    print("✓ Broadcast sent to " + sent.toString() + " clients in General");
+
+    client1.close(1000, "Done");
+    client2.close(1000, "Done");
+    server.close();
+    print("✓ Room broadcast server test complete.");
+}
+
+runBroadcastServer();

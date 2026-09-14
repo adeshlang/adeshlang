@@ -1,0 +1,18 @@
+import Random;
+
+print("--- Monte Carlo Pi Estimation ---");
+let rng = Random.seed(42);
+let insideCircle = 0;
+let totalPoints = 1000;
+
+for i in 0..totalPoints {
+    let _pt = i;
+    let x = rng.float();
+    let y = rng.float();
+    if (x * x + y * y <= 1.0) {
+        insideCircle = insideCircle + 1;
+    }
+}
+
+let piEstimate = 4.0 * insideCircle / totalPoints;
+print("Estimated Pi (" + totalPoints + " points): " + piEstimate);

@@ -1,0 +1,7 @@
+import "./to_wasm_math.wasm" as m;
+
+print("Running compiled WASM module...");
+// The compiled WASM module exports a 'main' function that runs the top-level code
+m.main();
+print("WASM execution complete.");
+

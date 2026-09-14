@@ -1,0 +1,57 @@
+// Array Method Syntax Demonstration
+// NOTE: Filter/map/reduce with callbacks currently only work in --vm mode
+// For --jit mode, use the interpreter-based examples or switch to simple operations
+//
+// Run with: adesh run examples/arrays/method_syntax_demo_vm_only.adesh --vm
+
+print("=== Array Method Syntax Demo (v0.2.0) ===");
+print("⚠️  This demo requires --vm mode for callback-based operations");
+print("   Use: adesh run ... --vm\n");
+
+// Create a sample array
+let numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+print(`Original array: ${numbers}\n`);
+
+// ============================================
+// 1. FILTER - Find elements matching a condition
+// ============================================
+print("--- FILTER (interpreter mode only) ---");
+print("Method style: numbers.filter(fn(x) { return x > 5; })");
+let filtered_method = numbers.filter(fn(x) { return x > 5; });
+print(`Result: ${filtered_method}\n`);
+
+// ============================================
+// 2. MAP - Transform each element
+// ============================================
+print("--- MAP (interpreter mode only) ---");
+print("Method style: numbers.map(fn(x) { return x * x; })");
+let squared_method = numbers.map(fn(x) { return x * x; });
+print(`Result: ${squared_method}\n`);
+
+// ============================================
+// 3. REDUCE - Aggregate into a single value
+// ============================================
+print("--- REDUCE (interpreter mode only) ---");
+print("Method style: numbers.reduce(fn(acc, x) { return acc + x; }, 0)");
+let sum_method = numbers.reduce(fn(acc, x) { return acc + x; }, 0);
+print(`Result (sum): ${sum_method}\n`);
+
+// ============================================
+// 4. BASIC ARRAY OPERATIONS (work in all modes)
+// ============================================
+print("--- BASIC ARRAY OPERATIONS (all modes) ---");
+let arr = [1, 2, 3];
+print(`Original: ${arr}`);
+
+arr = push(arr, 4);
+print(`After push(4): ${arr}`);
+
+arr = push(arr, 5);
+print(`After push(5): ${arr}`);
+
+let len = arr.length;
+print(`Length: ${len}`);
+
+print("\n✅ Demo complete!");
+print("   For callback-based operations, use: adesh run ... --vm");
+print("   JIT support for callbacks coming in future releases");

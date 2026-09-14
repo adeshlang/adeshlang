@@ -1,0 +1,14 @@
+import Compression;
+
+print("=== TAR Archive Creation Example ===");
+
+let backupFiles = [
+    { "name": "etc/config.ini", "content": "port=5432\ndb=postgres" },
+    { "name": "var/log/system.log", "content": "[2026-08-11] Backup process initialized." }
+];
+
+let tarBytes = Compression.createTar(backupFiles);
+print("Generated TAR archive bytes:", len(tarBytes));
+
+let crc = Compression.crc32(tarBytes);
+print("TAR Archive CRC32:", crc);

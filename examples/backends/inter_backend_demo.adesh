@@ -1,0 +1,109 @@
+// AdeshLang Inter-Backend Performance & FFI Interoperability Demo
+//
+// This example lets you compare execution speeds across different backends
+// (Interpreter, VM, JIT, Native JIT, AOT) and tests C FFI integration.
+
+// ============================================================================
+// 1. C FFI Integration (Dynamic Linking)
+// ============================================================================
+
+// Import dynamic C library functions (if available in search paths)
+// FFI declarations:
+extern "C" fn sin(x: f64) -> f64;
+extern "C" fn cos(x: f64) -> f64;
+extern "C" fn sqrt(x: f64) -> f64;
+
+fn test_c_ffi() {
+    print("=== Testing C FFI Interoperability ===");
+    
+    // Calculate values using C math library functions
+    let angle = 3.1415926535 / 4.0; // 45 degrees
+    let s = sin(angle);
+    let c = cos(angle);
+    
+    print("sin(pi/4) via C FFI: " + s);
+    print("cos(pi/4) via C FFI: " + c);
+    print("sin^2 + cos^2 = " + (s * s + c * c)); // Should be ~1.0
+    
+    let root = sqrt(16.0);
+    print("sqrt(16.0) via C FFI: " + root);
+}
+
+// ============================================================================
+// 2. High-Compute Benchmark (Prime Counter)
+// ============================================================================
+
+fn is_prime(n: i64): bool {
+    if n <= 1 {
+        return false;
+    }
+    let i = 2;
+    // We don't have sqrt(n) natively in standard library math, so we iterate
+    while i * i <= n {
+        if n % i == 0 {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn count_primes_to(limit: i64): i64 {
+    let count = 0;
+    let num = 2;
+    while num <= limit {
+        if is_prime(num) {
+            count = count + 1;
+        }
+        num = num + 1;
+    }
+    return count;
+}
+
+fn run_benchmark() {
+    print("=== Running Prime Number Benchmark ===");
+    let limit = 20000;
+    print("Counting primes up to: " + limit);
+    
+    let count = count_primes_to(limit);
+    print("Found " + count + " prime numbers.");
+}
+
+// ============================================================================
+// MAIN ENTRYPOINT
+// ============================================================================
+
+print("╔══════════════════════════════════════════════════════╗");
+print("║  AdeshLang Inter-Backend & FFI Interoperability Demo ║");
+print("╚══════════════════════════════════════════════════════╝");
+print("");
+
+// Run FFI Test
+test_c_ffi();
+print("");
+
+// Run Compute Benchmark
+run_benchmark();
+print("");
+
+print("╔══════════════════════════════════════════════════════╗");
+print("║  How to Test Different Backends (Speed comparison):  ║");
+print("║                                                      ║");
+print("║  1. Interpreter Mode (Baseline):                     ║");
+print("║     adesh run --interpreter inter_backend_demo.adesh ║");
+print("║                                                      ║");
+print("║  2. Bytecode VM Mode (Portable execution):            ║");
+print("║     adesh compile inter_backend_demo.adesh -o demo.bc║");
+print("║     adesh run --vm demo.bc                           ║");
+print("║                                                      ║");
+print("║  3. JIT Compiler (Fast compilation):                  ║");
+print("║     adesh run --jit inter_backend_demo.adesh         ║");
+print("║                                                      ║");
+print("║  4. Native JIT (Fastest compilation & run):          ║");
+print("║     adesh run --njit inter_backend_demo.adesh        ║");
+print("║                                                      ║");
+print("║  5. AOT Compiler (Native machine binary output):     ║");
+print("║     adesh build inter_backend_demo.adesh             ║");
+print("║     ./inter_backend_demo (on Unix) or                ║");
+print("║     .\\inter_backend_demo.exe (on Windows)            ║");
+print("╚══════════════════════════════════════════════════════╝");

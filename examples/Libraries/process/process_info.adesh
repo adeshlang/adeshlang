@@ -1,0 +1,9 @@
+// Executable Example: Process Info & Metrics
+import Process;
+
+let currentPid = Process.processId();
+print("Current process PID: " + str(currentPid));
+
+let info = Process.info();
+print("Executable path: " + info.executable());
+print("Start time ms: " + str(info.startTime()));

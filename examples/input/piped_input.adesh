@@ -1,0 +1,9 @@
+// Piped input example
+// Run: echo "hello" | your_program
+
+let piped = input.fromPipe();
+if (piped == null) {
+  print("No pipe detected; enter fallback:");
+  piped = input("Fallback:", { def: "none" });
+}
+print("Piped/Fallback:", piped);

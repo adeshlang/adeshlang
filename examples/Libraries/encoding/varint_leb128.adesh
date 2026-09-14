@@ -1,0 +1,17 @@
+import Encoding;
+
+// VarInt & WASM LEB128 Example
+let num = 624485;
+
+let uleb = Encoding.uleb128Encode(num);
+print("ULEB128 Encoded 624485 Hex:", Encoding.hexEncode(uleb));
+
+let ulebDec = Encoding.uleb128Decode(uleb);
+print("ULEB128 Decoded:", ulebDec);
+
+let signedNum = -123456;
+let sleb = Encoding.sleb128Encode(signedNum);
+print("SLEB128 Encoded -123456 Hex:", Encoding.hexEncode(sleb));
+
+let slebDec = Encoding.sleb128Decode(sleb);
+print("SLEB128 Decoded:", slebDec);

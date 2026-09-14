@@ -1,0 +1,22 @@
+// This example demonstrates struct validation where invalid assignments cause runtime errors
+
+struct Point {
+    x: int,
+    y: int,
+    label: string,
+};
+
+let pt = new Point(10, 20, "start");
+println("Point created:");
+println(pt.label);
+println(pt.x);
+
+println("Changing label to string type works:");
+pt.label = "end";
+println(pt.label);
+
+// The following assignment would fail because the field 'x' is expected to be an int (integer).
+// pt.x = "10";
+
+// The following would also fail, missing fields or providing the wrong data type during instantiation:
+// let invalid_pt = new Point(10, "wrong", "hello");

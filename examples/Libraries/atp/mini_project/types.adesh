@@ -1,0 +1,126 @@
+// ╔═══════════════════════════════════════════════════════════════════════════════╗
+// ║      ATP Real-Time IoT & Fleet Telemetry Mini-Project — Data Schemas          ║
+// ║                                                                               ║
+// ║  Defines message structures, sensor models, command payloads, and             ║
+// ║  serialization helpers for real-time vehicle edge nodes and command servers.  ║
+// ╚═══════════════════════════════════════════════════════════════════════════════╝
+
+// @allow(warnings)
+import JSON;
+import Crypto;
+import Time;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 1. DATA STRUCTURES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+struct VehicleTelemetry {
+    vehicleId: int,
+    vin: string,
+    timestamp: int,
+    lat: float,
+    lon: float,
+    speedKmh: float,
+    batteryPct: float,
+    engineTempC: float,
+    tirePressurePsi: float,
+    status: string
+}
+
+struct FleetCommand {
+    commandId: int,
+    targetVehicleId: int,
+    action: string,
+    speedLimit: int,
+    destination: string,
+    issuedAt: int,
+    authSignature: string
+}
+
+struct SafetyAlert {
+    alertId: int,
+    vehicleId: int,
+    severity: string,
+    description: string,
+    sensorValue: float,
+    timestamp: int
+}
+
+struct FleetAggregateStats {
+    totalFramesIngested: int,
+    activeVehicles: int,
+    criticalAlertsCount: int,
+    avgFleetSpeed: float
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 2. SERIALIZATION & HMAC AUTHENTICATION HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let HMAC_SECRET_KEY = "fleet-command-secret-key-atp-2026";
+
+fn signCommand(action: string, vehicleId: int, secretKey: string): string {
+    let message = "CMD:" + action + ":" + vehicleId;
+    return Crypto.hmac("sha256", secretKey, message);
+}
+
+fn verifyCommandAuth(action: string, vehicleId: int, signature: string, secretKey: string): bool {
+    let expected = Crypto.hmac("sha256", secretKey, "CMD:" + action + ":" + vehicleId);
+    return signature == expected;
+}
+
+fn serializeTelemetry(t: VehicleTelemetry): string {
+    let map = {
+        type: "TELEMETRY",
+        vehicleId: t.vehicleId,
+        vin: t.vin,
+        timestamp: t.timestamp,
+        lat: t.lat,
+        lon: t.lon,
+        speedKmh: t.speedKmh,
+        batteryPct: t.batteryPct,
+        engineTempC: t.engineTempC,
+        tirePressurePsi: t.tirePressurePsi,
+        status: t.status
+    };
+    return JSON.stringify(map);
+}
+
+fn deserializeTelemetry(jsonStr: string) {
+    return JSON.parse(jsonStr);
+}
+
+fn serializeCommand(cmd: FleetCommand): string {
+    let map = {
+        type: "COMMAND",
+        commandId: cmd.commandId,
+        targetVehicleId: cmd.targetVehicleId,
+        action: cmd.action,
+        speedLimit: cmd.speedLimit,
+        destination: cmd.destination,
+        issuedAt: cmd.issuedAt,
+        authSignature: cmd.authSignature
+    };
+    return JSON.stringify(map);
+}
+
+fn deserializeCommand(jsonStr: string) {
+    return JSON.parse(jsonStr);
+}
+
+fn serializeAlert(alert: SafetyAlert): string {
+    let map = {
+        type: "ALERT",
+        alertId: alert.alertId,
+        vehicleId: alert.vehicleId,
+        severity: alert.severity,
+        description: alert.description,
+        sensorValue: alert.sensorValue,
+        timestamp: alert.timestamp
+    };
+    return JSON.stringify(map);
+}
+
+fn deserializeAlert(jsonStr: string) {
+    return JSON.parse(jsonStr);
+}

@@ -1,0 +1,29 @@
+// Example 02: High-Performance Concurrent Echo Server
+// Demonstrates server binding, connection handlers, and echo protocol.
+
+import WebSocket;
+
+fn runServer() {
+    print("=== Example 02: WebSocket Echo Server ===");
+
+    let config = {
+        bind_address: "127.0.0.1",
+        port: 8092,
+        max_connections: 1000
+    };
+
+    let wsServer = WebSocket.server(config);
+    wsServer.startEcho();
+    print("✓ Echo server started on ws://127.0.0.1:8092");
+
+    let client = WebSocket.connect("ws://127.0.0.1:8092");
+    client.sendText("Hello Server");
+    let reply = client.receive();
+    print("Received from server: " + reply.payload);
+
+    client.close(1000, "Done");
+    wsServer.close();
+    print("✓ Server test complete.");
+}
+
+runServer();

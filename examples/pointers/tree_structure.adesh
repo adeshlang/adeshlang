@@ -1,0 +1,277 @@
+// =============================================================================
+// AdeshLang v0.2.0 - Tree Structure with Smart Pointers
+// =============================================================================
+// This example demonstrates building a tree data structure using smart pointers:
+// - Shared<T> for child references (owned by parent)
+// - Weak<T> for parent back-references (breaks cycles)
+//
+// What this demonstrates:
+// - Safe cycle-breaking patterns
+// - Reference counting in practice
+// - Tree traversal with smart pointers
+//
+// Memory Model Notes:
+// - Children use Shared to maintain ownership
+// - Parent references use Weak to prevent memory leaks
+// - When parent is dropped, weak references become null
+// =============================================================================
+
+print("=== Tree Structure with Smart Pointers ===\n");
+
+// -----------------------------------------------------------------------------
+// 1. TreeNode with Safe Back-References
+// -----------------------------------------------------------------------------
+
+print("--- TreeNode Implementation ---");
+
+class TreeNode {
+    fn init(value) {
+        this.value = value;
+        this.children = [];      // Shared<TreeNode>[] - owned children
+        this.parent = null;      // Weak<TreeNode> - non-owning back-reference
+    }
+    
+    // Add a child node - takes ownership via Shared
+    fn addChild(child) {
+        // Child becomes owned by this node (Shared reference)
+        this.children.push(child);
+        // Set parent as weak reference (doesn't prevent our deallocation)
+        child.parent = this;
+        return child;
+    }
+    
+    // Remove a child by value
+    fn removeChild(value) {
+        let newChildren = [];
+        for (child in this.children) {
+            if (child.value != value) {
+                newChildren.push(child);
+            }
+        }
+        this.children = newChildren;
+    }
+    
+    // Get parent (upgrade weak reference)
+    fn getParent() {
+        // In full implementation: return this.parent.upgrade()
+        return this.parent;
+    }
+    
+    // Check if this is root
+    fn isRoot() {
+        return this.parent == null;
+    }
+    
+    // Check if this is leaf
+    fn isLeaf() {
+        return len(this.children) == 0;
+    }
+    
+    // Get depth from root
+    fn getDepth() {
+        let depth = 0;
+        let current = this.parent;
+        while (current != null) {
+            depth = depth + 1;
+            current = current.parent;
+        }
+        return depth;
+    }
+    
+    // Print tree structure
+    fn printTree(indent) {
+        let prefix = "";
+        for (i in range(0, indent)) {
+            prefix = prefix + "  ";
+        }
+        print(prefix + "├─ " + str(this.value));
+        for (child in this.children) {
+            child.printTree(indent + 1);
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// 2. Building a Tree
+// -----------------------------------------------------------------------------
+
+print("--- Building a Tree ---\n");
+
+// Create root node
+let root = new TreeNode("root");
+print("Created root: " + root.value);
+print("Is root? " + str(root.isRoot()));
+
+// Add first level children
+let nodeA = root.addChild(new TreeNode("A"));
+let nodeB = root.addChild(new TreeNode("B"));
+let nodeC = root.addChild(new TreeNode("C"));
+
+print("Added children: A, B, C");
+print("Root has " + str(len(root.children)) + " children");
+
+// Add second level children
+let nodeA1 = nodeA.addChild(new TreeNode("A1"));
+let nodeA2 = nodeA.addChild(new TreeNode("A2"));
+let nodeB1 = nodeB.addChild(new TreeNode("B1"));
+
+print("Added grandchildren: A1, A2, B1");
+
+// Add third level
+let nodeA1a = nodeA1.addChild(new TreeNode("A1a"));
+
+print("\nTree structure:");
+root.printTree(0);
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 3. Navigating with Weak References
+// -----------------------------------------------------------------------------
+
+print("--- Navigating with Weak References ---\n");
+
+print("Node A1a:");
+print("  Value: " + nodeA1a.value);
+print("  Is leaf? " + str(nodeA1a.isLeaf()));
+print("  Depth: " + str(nodeA1a.getDepth()));
+
+// Navigate up using weak parent reference
+print("\nNavigating up from A1a to root:");
+let current = nodeA1a;
+while (current != null) {
+    print("  → " + current.value);
+    current = current.getParent();
+}
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 4. Why Weak References Matter
+// -----------------------------------------------------------------------------
+
+print("--- Why Weak References Matter ---\n");
+
+print("Without Weak references (Shared for both directions):");
+print("  Parent ←Shared→ Child");
+print("  ref_count never reaches 0 → MEMORY LEAK!");
+print("");
+
+print("With Weak for parent reference:");
+print("  Parent ─Shared→ Child");
+print("  Parent ←Weak── Child");
+print("  Parent can be freed, weak.upgrade() returns null");
+print("");
+
+// Demonstrate the pattern
+print("Safe pattern in AdeshLang:");
+print("  child.parent = parent;  // Conceptually Weak<Parent>");
+print("  if (child.parent != null) {");
+print("      // Parent still alive");
+print("      print(child.parent.value);");
+print("  } else {");
+print("      // Parent was freed");
+print("      print('Orphaned node');");
+print("  }");
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 5. Doubly-Linked List Pattern
+// -----------------------------------------------------------------------------
+
+print("--- Doubly-Linked List Pattern ---\n");
+
+class ListNode {
+    fn init(value) {
+        this.value = value;
+        this.next = null;    // Shared<ListNode> - owns next
+        this.prev = null;    // Weak<ListNode> - non-owning
+    }
+}
+
+class DoublyLinkedList {
+    fn init() {
+        this.head = null;
+        this.tail = null;
+        this.length = 0;
+    }
+    
+    fn append(value) {
+        let node = new ListNode(value);
+        
+        if (this.head == null) {
+            this.head = node;
+            this.tail = node;
+        } else {
+            node.prev = this.tail;  // Weak reference to previous
+            this.tail.next = node;  // Shared reference to next
+            this.tail = node;
+        }
+        
+        this.length = this.length + 1;
+    }
+    
+    fn traverse() {
+        print("Forward: ");
+        let current = this.head;
+        let values = [];
+        while (current != null) {
+            values.push(str(current.value));
+            current = current.next;
+        }
+        print("  " + values.join(" → "));
+    }
+    
+    fn traverseBackward() {
+        print("Backward: ");
+        let current = this.tail;
+        let values = [];
+        while (current != null) {
+            values.push(str(current.value));
+            current = current.prev;
+        }
+        print("  " + values.join(" → "));
+    }
+}
+
+let list = new DoublyLinkedList();
+list.append(1);
+list.append(2);
+list.append(3);
+list.append(4);
+list.append(5);
+
+print("Doubly-linked list with " + str(list.length) + " elements:");
+list.traverse();
+list.traverseBackward();
+
+print("");
+
+// -----------------------------------------------------------------------------
+// 6. Memory Safety Guarantees
+// -----------------------------------------------------------------------------
+
+print("--- Memory Safety Guarantees ---\n");
+
+print("Smart pointer patterns ensure:");
+print("");
+print("1. No dangling pointers:");
+print("   • Shared keeps data alive while referenced");
+print("   • Weak returns null if data is freed");
+print("");
+print("2. No memory leaks:");
+print("   • Weak breaks ownership cycles");
+print("   • ref_count reaches 0 → automatic cleanup");
+print("");
+print("3. No use-after-free:");
+print("   • Debug poisoning catches misuse");
+print("   • Weak.upgrade() validates before access");
+print("");
+print("4. Clear ownership semantics:");
+print("   • Shared = shared ownership");
+print("   • Unique = exclusive ownership");
+print("   • Weak = observer, no ownership");
+
+print("");
+print("=== Demo Complete ===");

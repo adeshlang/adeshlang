@@ -1,0 +1,86 @@
+// Summary of working OOP features in AdeshLang
+
+print("=== AdeshLang OOP Features Summary ===");
+
+// ✅ 1. Basic Classes and Objects
+print("\n✅ 1. Basic Classes and Objects:");
+class Person {
+    Person(name, age) {
+        this.name = name;
+        this.age = age;
+    }
+    
+    fn greet() {
+        print("Hello, I'm " + this.name);
+    }
+    
+    fn getAge() {
+        return this.age;
+    }
+}
+
+let person = new Person("Alice", 30);
+person.greet();
+print("Age:", person.getAge());
+
+// ✅ 2. Inheritance and Method Overriding
+print("\n✅ 2. Inheritance and Method Overriding:");
+class Employee extends Person {
+    Employee(name, age, department) {
+        super(name, age);
+        this.department = department;
+    }
+    
+    fn greet() {
+        print("Hello, I'm " + this.name + " from " + this.department);
+    }
+    
+    fn getInfo() {
+        return this.name + " - " + this.department;
+    }
+}
+
+let emp = new Employee("Bob", 25, "Engineering");
+emp.greet();  // Uses overridden method
+print("Info:", emp.getInfo());
+
+// ✅ 3. Property Access
+print("\n✅ 3. Property Access:");
+print("Direct property access:");
+print("  Person name:", person.name);
+print("  Employee department:", emp.department);
+
+// ✅ 4. Method Inheritance
+print("\n✅ 4. Method Inheritance:");
+print("Employee age (inherited method):", emp.getAge());
+
+// ✅ 5. Polymorphism
+print("\n✅ 5. Polymorphism:");
+let people = [person, emp];
+print("Calling greet() on different types:");
+for ( p in people) {
+    p.greet();  // Calls appropriate implementation
+}
+
+print("\n=== Working Features Summary ===");
+print("✅ Class definition with 'class' keyword");
+print("✅ Constructor method with 'fn init()'");
+print("✅ Instance methods with 'fn methodName()'");
+print("✅ Property access with 'this.property'");
+print("✅ Object instantiation with 'new ClassName()'");
+print("✅ Inheritance with 'extends' keyword");
+print("✅ Method overriding");
+print("✅ Property inheritance");
+print("✅ Polymorphism");
+
+print("\n=== Features Not Yet Implemented ===");
+print("❌ Method overloading (same name, different parameters)");
+print("❌ Operator overloading (operator+ syntax)");
+print("❌ Static methods and properties");
+print("❌ Constructor keyword (use 'fn init' instead)");
+print("❌ 'self' keyword (use 'this' instead)");
+print("❌ 'super' calls to parent methods");
+print("❌ Abstract classes and methods");
+print("❌ Property getters and setters");
+
+print("\n=== All tests completed! ===");

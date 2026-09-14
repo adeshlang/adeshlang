@@ -1,0 +1,22 @@
+// 23 — lock-free atomic counter (lock-free fetch_add, not wait-free)
+import thread;
+
+let c = thread.Atomic.AtomicI64.new(0);
+let n = 0;
+let handles = [];
+while n < 4 {
+    handles.push(thread.spawn(fn() {
+        let k = 0;
+        while k < 1000 {
+            c.fetch_add(1, "Relaxed");
+            k = k + 1;
+        }
+    }));
+    n = n + 1;
+}
+let j = 0;
+while j < handles.len() {
+    handles[j].join();
+    j = j + 1;
+}
+print(c.load("Relaxed"));

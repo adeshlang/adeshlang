@@ -1,0 +1,11 @@
+// Example 06: Seeking and Position Tracking
+
+import { MemoryReader, IO } from "IO";
+
+fn main() {
+    let r = new MemoryReader("0123456789ABCDEF");
+    IO.println("Initial Position: " + r.position());
+    r.seek(5, "start");
+    let line = r.readLine();
+    IO.println("Seek 5 from start, read line: " + line + ", new pos: " + r.position());
+}

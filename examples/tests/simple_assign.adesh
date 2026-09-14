@@ -1,0 +1,6 @@
+// Minimal test for assignment
+let x = 10;
+print("x initial:", x);
+x = 20;
+x= x + 5;
+print("x after assign:", x);

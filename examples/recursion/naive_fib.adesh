@@ -1,0 +1,48 @@
+// Naive Fibonacci - Demonstrates Memoization Optimization
+// Run: adesh run examples/recursion/naive_fib.adesh --jit --fast-recursion
+
+// Classic naive recursive fibonacci - O(2^n) without optimization
+fn fib(n: i64): i64 {
+    if n <= 1 {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+// Benchmark function
+fn benchmark(n: i64) {
+    print(`Computing fib(${n})...`);
+    let start = clock();
+    let result = fib(n);
+    let elapsed = clock() - start;
+    print(`fib(${n}) = ${result}`);
+    print("Time:",` ${elapsed}s`);
+    print("");
+}
+
+// Main entry point
+fn main() {
+    print("╔════════════════════════════════════════════════════╗");
+    print("║  NAIVE FIBONACCI BENCHMARK - AdeshLang              ║");
+    print("║  Use --jit --fast-recursion for memoization        ║");
+    print("╚════════════════════════════════════════════════════╝");
+    print("");
+    
+    // Small values (fast even without optimization)
+    benchmark(10);
+    benchmark(20);
+    
+    // Medium values (slow without memoization)
+    benchmark(30);
+    // benchmark(35);
+    
+    // Large values (requires memoization)
+    // benchmark(40);
+    // benchmark(45);
+    // benchmark(50);
+    // benchmark(60);
+    benchmark(70);
+    
+    print("Benchmark complete!");
+}
+

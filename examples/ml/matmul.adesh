@@ -1,0 +1,52 @@
+// Matrix Multiplication Benchmark
+// Run: adeshlang run examples/ml/matmul.adesh --jit
+
+import std:ml;
+
+fn benchmark_matmul(size: i64, iterations: i64) {
+    print(`Benchmarking ${size}x${size} matrix multiplication (${iterations} iterations)...`);
+    
+    // Create random matrices
+    let a = Tensor.randn([size, size], dtype="f32");
+    let b = Tensor.randn([size, size], dtype="f32");
+    
+    // Warmup
+    let _ = a.matmul(b);
+    
+    // Benchmark
+    let start = clock();
+    for i in range(0, iterations) {
+        let c = a.matmul(b);
+    }
+    let elapsed = clock() - start;
+    
+    let ops_per_sec = iterations / elapsed;
+    let gflops = (2.0 * size * size * size * iterations) / (elapsed * 1e9);
+    
+    print(`  Time: ${elapsed}s`);
+    print(`  Ops/sec: ${ops_per_sec}`);
+    print(`  GFLOPS: ${gflops}`);
+    print("");
+}
+
+fn main() {
+    print("╔════════════════════════════════════════════════════╗");
+    print("║  MATRIX MULTIPLICATION BENCHMARK                   ║");
+    print("╚════════════════════════════════════════════════════╝");
+    print("");
+    
+    // Small matrices
+    benchmark_matmul(32, 1000);
+    
+    // Medium matrices
+    benchmark_matmul(64, 500);
+    benchmark_matmul(128, 100);
+    
+    // Large matrices
+    benchmark_matmul(256, 50);
+    benchmark_matmul(512, 10);
+    
+    print("Matrix multiplication benchmark complete!");
+}
+
+main();

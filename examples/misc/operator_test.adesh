@@ -1,0 +1,30 @@
+// Test operator overloading
+
+class Vector {
+    fn init(x, y) {
+        this.x = x;
+        this.y = y;
+    }
+    
+    fn operator+(other) {
+        return new Vector(this.x + other.x, this.y + other.y);
+    }
+    
+    fn toString() {
+        return "Vector(" + this.x + ", " + this.y + ")";
+    }
+    fn operator>(other) {
+        return this.x * other.x + this.y * other.y;
+    }
+}
+
+let v1 = new Vector(1, 2);
+let v2 = new Vector(3, 4);
+let v3 = v1 + v2;
+let dot_product = v1 > v2;
+print("v1:", v1.toString());
+print("v2:", v2.toString());
+print("v3 = v1 + v2:", v3.toString());
+print("v1 >> v2 (dot product):", dot_product);
+
+print("Operator overloading test completed!");

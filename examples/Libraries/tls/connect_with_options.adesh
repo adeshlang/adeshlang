@@ -1,0 +1,31 @@
+// Example 7: Connecting with Custom Security Options (ALPN, Verification, Custom CA)
+import TLS;
+
+let host = "1.1.1.1";
+let port = 443;
+
+print("--- Establishing TLS Connection with Custom Options ---");
+
+let options = {
+    "alpn": ["http/1.1", "h2"],
+    "verifyCertificates": true,
+    "verifyHostname": true,
+    "minVersion": "TLS1.2"
+};
+
+let handle = TLS.connectWithOptions(host, port, options);
+
+print("Connected successfully with handle: " + handle);
+print("Negotiated Protocol: " + TLS.version(handle));
+print("Negotiated ALPN: " + (TLS.alpn(handle) == "" ? "None" : TLS.alpn(handle)));
+
+// Inspect peer certificate chain length
+let peerCerts = TLS.peerCertificates(handle);
+print("Received " + peerCerts.length + " certificate(s) in peer chain.");
+
+TLS.write(handle, "HEAD / HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n");
+let data = TLS.read(handle, 1024);
+print("\nReceived Response Header:\n" + data);
+
+TLS.close(handle);
+print("TLS Session Closed.");

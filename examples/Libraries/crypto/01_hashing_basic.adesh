@@ -1,0 +1,13 @@
+// 01 - Hashing Basic Data (SHA-256, SHA-512, BLAKE3)
+import Crypto;
+
+let message = "AdeshLang Production Cryptography Ecosystem 2026";
+
+let sha256 = Crypto.sha256(message);
+print("SHA-256 Digest:", sha256);
+
+let sha512 = Crypto.sha512(message);
+print("SHA-512 Digest:", sha512);
+
+let blake3 = Crypto.blake3(message);
+print("BLAKE3 Digest: ", blake3);

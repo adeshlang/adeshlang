@@ -1,0 +1,41 @@
+// Parallel Reduction on GPU
+// Run: adeshlang run examples/gpu/reduction.adesh --device=cuda
+//
+// NOTE: This example demonstrates planned GPU API functionality.
+// GPU support is currently under development.
+
+// Placeholder stubs for GPU functions
+fn sync_device(device_name) { return null; }
+fn clock() { return 0; }
+fn get_default_device() { return "cpu"; }
+
+fn main() {
+    print("╔════════════════════════════════════════════════════╗");
+    print("║  GPU PARALLEL REDUCTION BENCHMARK                  ║");
+    print("╚════════════════════════════════════════════════════╝");
+    print("");
+    
+    print("NOTE: GPU support is currently under development.");
+    print("This example demonstrates the planned API.");
+    print("");
+    
+    let device = get_default_device();
+    print("Using device: " + device);
+    print("");
+    
+    print("Planned API example:");
+    print("  let data = Tensor.randn([1000000], dtype='f32', device='cuda');");
+    print("  let sum_result = data.sum();");
+    print("  let mean_result = data.mean();");
+    print("  let max_result = data.max();");
+    print("  let min_result = data.min();");
+    print("");
+    
+    print("Reduction operations (sum, mean, max, min) are highly");
+    print("parallelizable and benefit significantly from GPU acceleration.");
+    print("");
+    
+    print("GPU reduction benchmark (placeholder) complete!");
+}
+
+main();

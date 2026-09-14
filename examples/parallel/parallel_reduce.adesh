@@ -1,0 +1,23 @@
+// Parallel Reduce — import Parallel; Parallel.reduce() / Parallel.sum()
+import Parallel;
+import Simd;
+
+let data = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0,
+            9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0];
+
+let sum = Parallel.sum(data);
+print("Parallel.sum = ", sum);
+
+let simd_total = Simd.sum(data);
+print("Simd.sum = ", simd_total);
+
+let product = Parallel.reduce(data, 1.0, fn(acc, x) {
+    return acc * x;
+});
+print("Parallel.reduce product = ", product);
+
+let minimum = Simd.min(data);
+let maximum = Simd.max(data);
+print("Simd.min = ", minimum, " Simd.max = ", maximum);
+
+print("Parallel reduce demo complete!");

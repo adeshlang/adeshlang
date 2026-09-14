@@ -1,0 +1,36 @@
+fn binarySearch(arr: [int], target: int) : int {
+    let left = 0;
+    let right = arr.length() - 1;
+    
+    while left <= right {
+        let mid = (left + right) ~/ 2;
+        let midValue = arr[mid];
+        
+        if midValue == target {
+            return mid;
+        }elif left == target {
+            return left;
+        }elif right == target {
+            return right;
+        } elif midValue < target {
+            left = mid + 1;
+        } else {
+            right = mid - 1;
+        }
+    }
+    
+    return -1;
+}
+
+fn main() {
+    let numbers = [2, 5, 8, 12, 16, 23, 38, 45, 56, 67, 78];
+    let target = 2;
+    
+    let result = binarySearch(numbers, target);
+    
+    if result != -1 {
+        println("Element found at index: " + result);
+    } else {
+        println("Element not found in array");
+    }
+}

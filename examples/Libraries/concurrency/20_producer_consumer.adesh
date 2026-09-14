@@ -1,0 +1,30 @@
+// 20 — producer consumer
+import thread;
+
+thread.watchdog(15000);
+let pair = thread.Channel.bounded(4);
+let tx = pair[0];
+let rx = pair[1];
+let prod = thread.spawn(fn() {
+    let i = 0;
+    while i < 8 {
+        tx.send(i);
+        i = i + 1;
+    }
+    tx.close();
+});
+let cons = thread.spawn(fn() {
+    let sum = 0;
+    let n = 0;
+    let m = rx.try_recv();
+    while n < 8 {
+        m = rx.recv();
+        if (m.ok) {
+            sum = sum + m.value;
+        }
+        n = n + 1;
+    }
+    return sum;
+});
+prod.join();
+print(cons.join());

@@ -1,0 +1,57 @@
+// Threading demo (sleep + spawn). Top-level `await` is not valid outside async fn.
+
+import thread;
+
+fn fetch_data(id) {
+    print(`  Starting fetch ${id}...`);
+    thread.sleep(50);
+    print(`  Completed fetch ${id}`);
+    return `data_${id}`;
+}
+
+fn fetch_sequential() {
+    print("Fetching data sequentially...");
+    let start = clock();
+    let result1 = fetch_data(1);
+    let result2 = fetch_data(2);
+    let result3 = fetch_data(3);
+    let elapsed = clock() - start;
+    print("");
+    print(`  ${result1}`);
+    print(`  ${result2}`);
+    print(`  ${result3}`);
+    print(`Total time: ${elapsed}s (sequential)`);
+}
+
+fn fetch_all() {
+    print("Fetching data in parallel...");
+    let start = clock();
+    let t1 = thread.spawn(fn() { return fetch_data(1); });
+    let t2 = thread.spawn(fn() { return fetch_data(2); });
+    let t3 = thread.spawn(fn() { return fetch_data(3); });
+    let result1 = t1.join();
+    let result2 = t2.join();
+    let result3 = t3.join();
+    let elapsed = clock() - start;
+    print("");
+    print("Results:");
+    print(`  ${result1}`);
+    print(`  ${result2}`);
+    print(`  ${result3}`);
+    print(`Total time: ${elapsed}s (parallel)`);
+}
+
+print("╔════════════════════════════════════════════════════╗");
+print("║  THREADS - sequential vs parallel                  ║");
+print("╚════════════════════════════════════════════════════╝");
+print("");
+
+print("1. Sequential Execution:");
+fetch_sequential();
+print("");
+
+print("2. Parallel Execution:");
+fetch_all();
+print("");
+
+print("Demo complete!");

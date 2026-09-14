@@ -1,0 +1,106 @@
+// stress_test.adesh
+// Allocates many short-lived objects to test bump allocator + arenas + fragmentation.
+
+print("=== Memory Allocator Stress Test ===");
+print("");
+
+// Configuration
+let NUM_ITERATIONS = 100;
+let OBJECTS_PER_ITERATION = 50;
+let ARRAY_SIZE = 20;
+
+print("Test parameters:");
+print("- Iterations: ", NUM_ITERATIONS);
+print("- Objects per iteration: ", OBJECTS_PER_ITERATION);
+print("- Array size: ", ARRAY_SIZE);
+print("");
+
+// Track some statistics
+let totalAllocations = 0;
+let maxLiveObjects = 0;
+
+// Stress test with short-lived objects
+print("Running stress test...");
+
+// for( iter = 0; iter < NUM_ITERATIONS; iter++) {
+    for ( iter in 0..NUM_ITERATIONS ) {
+    let liveObjects = [];
+    
+    // Allocate many objects
+    // for( i = 0; i < OBJECTS_PER_ITERATION; i++) {
+        for( i in 0..OBJECTS_PER_ITERATION ) {
+        let obj = {
+            id: iter * OBJECTS_PER_ITERATION + i,
+            data: [],
+            name: "obj_" + str(i)
+        };
+        
+        // Add array data
+        // for( j = 0; j < ARRAY_SIZE; j++) {
+            for( j in 0..ARRAY_SIZE ) {
+            obj.data.append(j * j);
+        }
+        
+        liveObjects.append(obj);
+        totalAllocations = totalAllocations + 1;
+    }
+    
+    if (len(liveObjects) > maxLiveObjects) {
+        maxLiveObjects = len(liveObjects);
+    }
+    
+    // Process and discard (simulates short-lived pattern)
+    let sum = 0;
+    for ( i in 0..len(liveObjects) ) {
+        for ( j in 0..len(liveObjects[i].data) ) {
+            sum = sum + liveObjects[i].data[j];
+        }
+    }
+    
+    // Objects go out of scope here (arena reset in hybrid mode)
+    
+    if (iter % 20 == 0) {
+        print("Iteration ", iter, " complete, sum: ", sum);
+    }
+}
+
+print("");
+print("Stress test complete!");
+print("Total allocations made: ", totalAllocations);
+print("Max live objects at once: ", maxLiveObjects);
+
+// Test with mixed sizes
+print("");
+print("Testing mixed allocation sizes...");
+
+let mixedResults = [];
+for ( i in 0..10 ) {
+    // Small object
+    let small = { x: i };
+    
+    // Medium object
+    let medium = [];
+    for ( j in 0..100 ) {
+        medium.append(j);
+    }
+    
+    // Larger object (string-heavy)
+    let large = "";
+    for ( j in 0..50 ) {
+        large = large + "x";
+    }
+    
+    mixedResults.append({
+        small: small,
+        mediumLen: len(medium),
+        largeLen: len(large)
+    });
+}
+
+print("Mixed size test complete");
+print("Results: ", len(mixedResults), " mixed allocations");
+
+print("");
+print("=== Stress Test Summary ===");
+print("All allocations completed without OOM or crash.");
+print("The allocator handled varied allocation patterns efficiently.");

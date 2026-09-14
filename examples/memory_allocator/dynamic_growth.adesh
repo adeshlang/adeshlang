@@ -1,0 +1,64 @@
+// dynamic_growth.adesh
+// Shows dynamic expansion and memoryReport inspection.
+
+// This example demonstrates dynamic memory allocation:
+// - Heap automatically grows as needed
+// - Growth strategy can be configured (doubling, linear, slab)
+// - Memory reports show allocation statistics
+
+print("=== Dynamic Memory Growth Demo ===");
+print("");
+
+// Arrays to track allocations
+let allocations = [];
+
+// Make several allocations of varying sizes
+print("Making allocations...");
+
+let arrays = [];
+for (i in 0..10) {
+    let arr = [];
+    for (j in 0..100) {
+        arr.append(j * i);
+    }
+    arrays.append(arr);
+}
+
+print("Allocated 10 arrays with 100 elements each");
+
+// Allocate some objects
+let objects = [];
+for (i in 0..50) {
+    objects.append({
+        id: i,
+        name: "object_" + str(i),
+        data: [1, 2, 3, 4, 5]
+    });
+}
+
+print("Allocated 50 objects with nested arrays");
+
+// In a full implementation, memoryReport() would show:
+// - Total allocations
+// - Current memory usage
+// - Peak memory usage
+// - Heap expansions (how many times the heap grew)
+// - Fragmentation ratio
+
+print("");
+print("Dynamic mode allows the heap to grow as needed.");
+print("The doubling strategy ensures O(1) amortized allocation.");
+print("");
+
+// Show allocation count
+print("Total outer allocations: ", len(arrays) + len(objects));
+
+// Demonstrate that we can keep allocating
+let more = [];
+for (i in 0..100) {
+    more.append("string_" + str(i));
+}
+print("Additional 100 string allocations successful");
+
+print("");
+print("Dynamic growth demo complete.");

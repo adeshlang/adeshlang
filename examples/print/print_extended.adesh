@@ -1,0 +1,23 @@
+// Extended print examples with optional parameters
+
+// Simple usage (default: space separator, newline end)
+print("hello", "world");
+
+// Custom separator
+print("a", "b", "c", { sep: ", " });
+
+// Custom end (no newline)
+print("same", "line", { end: "" });
+print(" continued");
+
+// With color (ANSI RGB)
+print("colored text", { color: "#FF9900" });
+
+// Multiple options
+print("custom", "output", { sep: " | ", end: "!\n", color: "#00FF00" });
+
+// Write to file
+print("logged message", { file: "output.txt" });
+
+// Flush output immediately
+print("flushed", { flush: true });

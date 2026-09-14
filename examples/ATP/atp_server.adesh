@@ -1,0 +1,81 @@
+// ╔═══════════════════════════════════════════════════════════════════════════════╗
+// ║  ATP Server — real echo + chat + datagram relay (self-contained)             ║
+// ║  Run: cargo run --bin adeshlang -- run examples/Libraries/atp/atp_server.adesh ║
+// ╚═══════════════════════════════════════════════════════════════════════════════╝
+
+import ATP;
+import thread;
+import "./lib/atp_ports.adesh" as Ports;
+
+fn acceptConn(server: any, maxMs: any): any {
+    let elapsed = 0;
+    while elapsed < maxMs {
+        let c = server.accept();
+        if (c != null && c.type == "AtpConnection") { return c; }
+        thread.sleep(10);
+        elapsed = elapsed + 10;
+    }
+    return null;
+}
+
+fn recvMessage(conn: any, maxMs: any): any {
+    let elapsed = 0;
+    while elapsed < maxMs {
+        let ev = conn.receive();
+        if (ev != null && ev.type == "message") { return ev; }
+        if (ev != null && ev.type == "closed") { return ev; }
+        thread.sleep(10);
+        elapsed = elapsed + 10;
+    }
+    return null;
+}
+
+fn runServer(port: any): any {
+    let server = ATP.listen(Ports.DEFAULT_HOST, port);
+    print("[server] listening on", Ports.DEFAULT_HOST + ":" + port);
+
+    let conn = acceptConn(server, 10000);
+    if (conn == null) {
+        print("[server] accept timeout");
+        server.close();
+        return;
+    }
+    print("[server] client connected, id=" + conn.connectionId);
+
+    let handled = 0;
+    while (handled < 20) {
+        let ev = conn.receive();
+        if (ev == null) {
+            thread.sleep(10);
+            continue;
+        }
+        if (ev.type == "connected") {
+            print("[server] handshake complete");
+        } else if (ev.type == "datagram") {
+            let text = ev.data;
+            print("[server] datagram:", text);
+            conn.datagram("echo-dgram:" + text);
+        } else if (ev.type == "message") {
+            let text = ev.data;
+            print("[server] message stream=" + ev.streamId + ":", text);
+            if (text == "/quit") {
+                conn.send("bye", true, true);
+                break;
+            }
+            conn.send("echo:" + text, true, true);
+            handled = handled + 1;
+        } else if (ev.type == "closed") {
+            print("[server] closed:", ev.reason);
+            break;
+        }
+    }
+
+    let sm = server.metrics();
+    print("[server] metrics connections=" + sm.connections + " established=" + sm.established);
+    conn.close();
+    server.close();
+    print("[server] shutdown");
+}
+
+let port = Ports.port(1);
+runServer(port);

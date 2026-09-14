@@ -1,0 +1,16 @@
+// Test colored output
+print("This is red text", { color: "#FF0000" });
+print("This is green text", { color: "#00FF00" });
+print("This is blue text", { color: "#0000FF" });
+print("Normal text again");
+
+// Test separator
+print("Item1", "Item2", "Item3", { sep: " | " });
+
+// Test custom end
+print("No newline", { end: "" });
+print(" - continued on same line");
+
+// Test file output
+print("This goes to a file", { file: "test_output.txt" });
+print("File written!");

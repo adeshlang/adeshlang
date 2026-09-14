@@ -1,0 +1,88 @@
+// ================================================
+// Stacking Multiple Decorators
+// ================================================
+//
+// This example demonstrates how to apply multiple decorators
+// to the same function. Decorators are applied from bottom to top.
+//
+// Execution Order:
+// When you stack decorators like:
+//   @decorator1
+//   @decorator2
+//   @decorator3
+//   fn myFunc() { ... }
+//
+// They are applied as:
+//   decorator1(decorator2(decorator3(myFunc)))
+//
+// So decorator3 wraps the original function first,
+// then decorator2 wraps that result,
+// and finally decorator1 wraps everything.
+//
+// In this example:
+//   @log
+//   @measureTime
+//   fn multiply() { ... }
+//
+// Becomes: log(measureTime(multiply))
+// When called: log wrapper -> measureTime wrapper -> multiply
+//
+// ================================================
+
+/**
+ * Logging decorator
+ * Logs function arguments and results
+ */
+decorator log(target, meta) {
+  return fn(a, b) {
+    print("📝 [LOG]", meta.name, "- arguments:", a, b);
+    let result = target(a, b);
+    print("📝 [LOG]", meta.name, "- result:", result);
+    return result;
+  };
+}
+
+/**
+ * Performance timing decorator
+ * Measures and reports execution time
+ */
+decorator measureTime(target, meta) {
+  return fn(a, b) {
+    print("⏱ [TIMING]", meta.name, "- starting...");
+    let startTime = Date.now();
+    
+    let result = target(a, b);
+    
+    let endTime = Date.now();
+    let duration = endTime - startTime;
+    print("⏱ [TIMING]", meta.name, "- completed in", duration, "ms");
+    
+    return result;
+  };
+}
+
+// Apply both decorators to the multiply function
+// Execution flow when multiply(4, 5) is called:
+//   1. log wrapper receives the call
+//   2. log prints "arguments: 4 5"
+//   3. log calls measureTime wrapper
+//   4. measureTime records start time
+//   5. measureTime calls original multiply(4, 5)
+//   6. multiply returns 20
+//   7. measureTime records end time and prints duration
+//   8. log prints "result: 20"
+//   9. Final result 20 is returned
+@log
+@measureTime
+fn multiply(a, b) {
+  return a * b;
+}
+
+// Test the stacked decorators
+print("\n=== Testing Stacked Decorators ===\n");
+print("Calling multiply(4, 5):\n");
+
+let result = multiply(4, 5);
+
+print("\nFinal returned value:", result);
+print("\n✓ Stacking decorators demo complete!");
