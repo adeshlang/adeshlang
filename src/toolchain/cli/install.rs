@@ -638,7 +638,9 @@ fn install_via_system_packages() -> Result<(), String> {
 
         // Distro packages install versioned names (clang-18, mlir-opt-18).
         // Link the canonical names into /usr/local/bin for all users.
-        if which("sudo").is_none() || std::env::var_os("USER").as_deref() == Some("root") {
+        if which("sudo").is_none()
+            || std::env::var_os("USER").as_deref() == Some(std::ffi::OsStr::new("root"))
+        {
             link_versioned_tools()?;
         } else {
             println!("  ! Skipping /usr/local/bin links (not root); re-run with sudo or call:");

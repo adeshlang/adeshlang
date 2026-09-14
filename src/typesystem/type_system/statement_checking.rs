@@ -144,7 +144,7 @@ pub(crate) fn expr_matches_expected_type(expr: &Expr, inferred: &Ty, expected: &
                     .all(|(x, y)| is_compatible(x, y, is_concrete_int, is_ptr))
             }
             (Ty::Nullable(a), Ty::Nullable(b)) => is_compatible(a, b, is_concrete_int, is_ptr),
-            (Ty::Nullable(a), b) if **a == Ty::Any => true,
+            (Ty::Nullable(a), _b) if **a == Ty::Any => true,
             (Ty::Nullable(a), b) => is_compatible(a, b, is_concrete_int, is_ptr) && *b == Ty::Null,
             (a, Ty::Nullable(b)) => is_compatible(a, b, is_concrete_int, is_ptr) || *a == Ty::Null,
             (Ty::Union(sources), target) => sources

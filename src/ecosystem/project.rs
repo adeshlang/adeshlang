@@ -322,6 +322,7 @@ impl ProjectLayout {
     }
 
     pub fn create_template(&self, template: ProjectTemplate, name: &str) -> Result<(), String> {
+        self.ensure_layout()?;
         fs::create_dir_all(&self.root).map_err(|error| error.to_string())?;
         fs::create_dir_all(self.root.join("src")).map_err(|error| error.to_string())?;
 
@@ -774,6 +775,18 @@ mod tests {
             layout.bin_dir().join("main")
         };
         fs::write(&adl_bin_exe, b"mock_main_exe").unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&target_exe).unwrap().permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&target_exe, perms).unwrap();
+
+            let mut perms_main = fs::metadata(&adl_bin_exe).unwrap().permissions();
+            perms_main.set_mode(0o755);
+            fs::set_permissions(&adl_bin_exe, perms_main).unwrap();
+        }
 
         let located = layout.locate_binary("tool");
         assert!(located.is_some());
