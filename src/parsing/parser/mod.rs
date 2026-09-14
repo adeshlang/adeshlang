@@ -208,17 +208,17 @@ let e = 2.718f64;
             if let StmtKind::Let(_name, Some(init), _, _, _, _) = &stmt.kind {
                 if let ExprKind::Literal(val) = &init.kind {
                     // All should be typed numeric literals
-                        match val {
-                            Value::U8(_)
-                            | Value::U16(_)
-                            | Value::U32(_)
-                            | Value::I32(_)
-                            | Value::I64(_)
-                            | Value::F32(_)
-                            | Value::F64(_)
-                            | Value::Number(_) => {}
-                            _ => panic!("Expected typed numeric literal"),
-                        }
+                    match val {
+                        Value::U8(_)
+                        | Value::U16(_)
+                        | Value::U32(_)
+                        | Value::I32(_)
+                        | Value::I64(_)
+                        | Value::F32(_)
+                        | Value::F64(_)
+                        | Value::Number(_) => {}
+                        _ => panic!("Expected typed numeric literal"),
+                    }
                 }
             }
         }

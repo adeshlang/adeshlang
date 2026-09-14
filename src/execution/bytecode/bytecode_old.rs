@@ -745,7 +745,10 @@ fn disassemble_file_internal(path: &Path, out_path: Option<&Path>) -> Result<(),
                     let count = u32::from_le_bytes(data[pc..pc + 4].try_into().unwrap()) as usize;
                     pc += 4;
                     pc += count * 4;
-                    output.push_str(&format!("  MAKE_CLOSURE r{} <- @{} (captures={})\n", dst, off, count));
+                    output.push_str(&format!(
+                        "  MAKE_CLOSURE r{} <- @{} (captures={})\n",
+                        dst, off, count
+                    ));
                 }
                 Some(ROp::CallMethod) => {
                     let dst = u32::from_le_bytes(data[pc..pc + 4].try_into().unwrap());
@@ -757,7 +760,10 @@ fn disassemble_file_internal(path: &Path, out_path: Option<&Path>) -> Result<(),
                     let argc = u32::from_le_bytes(data[pc..pc + 4].try_into().unwrap()) as usize;
                     pc += 4;
                     pc += argc * 4;
-                    output.push_str(&format!("  CALL_METHOD r{} <- r{}.k{} (argc={})\n", dst, obj, m, argc));
+                    output.push_str(&format!(
+                        "  CALL_METHOD r{} <- r{}.k{} (argc={})\n",
+                        dst, obj, m, argc
+                    ));
                 }
                 Some(ROp::GetIndex) => {
                     let dst = u32::from_le_bytes(data[pc..pc + 4].try_into().unwrap());
@@ -1620,15 +1626,23 @@ fn emit_stmt_v2(s: &Stmt, ctx: &mut REmit) -> Result<(), LangError> {
                 if let StmtKind::Block(stmts) = &body.kind {
                     if stmts.len() == 1 {
                         if let StmtKind::ExprStmt(loop_expr) = &stmts[0].kind {
-                            if let ExprKind::AssignOp(lhs_expr, assign_op, rhs_expr) = &loop_expr.kind {
+                            if let ExprKind::AssignOp(lhs_expr, assign_op, rhs_expr) =
+                                &loop_expr.kind
+                            {
                                 if let ExprKind::Variable(target_name) = &lhs_expr.kind {
                                     if *assign_op == TokenKind::Equal {
-                                        if let ExprKind::Binary(bin_lhs, op, bin_rhs) = &rhs_expr.kind {
+                                        if let ExprKind::Binary(bin_lhs, op, bin_rhs) =
+                                            &rhs_expr.kind
+                                        {
                                             if let ExprKind::Variable(lhs_name) = &bin_lhs.kind {
-                                                if lhs_name == target_name && *op == TokenKind::Plus {
+                                                if lhs_name == target_name && *op == TokenKind::Plus
+                                                {
                                                     if let ExprKind::Literal(lit) = &bin_rhs.kind {
                                                         let lit_num = crate::execution::runtime_core::ops::num(lit.clone()).unwrap_or(1.0);
-                                                        let r_target_opt = ctx.locals.as_ref().and_then(|lm| lm.get(target_name).copied());
+                                                        let r_target_opt =
+                                                            ctx.locals.as_ref().and_then(|lm| {
+                                                                lm.get(target_name).copied()
+                                                            });
                                                         if let Some(r_target) = r_target_opt {
                                                             let r_diff = ctx.reg();
                                                             ctx.emit_u8(ROp::Sub as u8);
@@ -1651,7 +1665,8 @@ fn emit_stmt_v2(s: &Stmt, ctx: &mut REmit) -> Result<(), LangError> {
                                                             let r_scale = if lit_num == 1.0 {
                                                                 r_diff
                                                             } else {
-                                                                let k_lit = ctx.add_const_num(lit_num);
+                                                                let k_lit =
+                                                                    ctx.add_const_num(lit_num);
                                                                 let r_lit = ctx.reg();
                                                                 ctx.emit_u8(ROp::LoadConst as u8);
                                                                 ctx.emit_u32(r_lit);

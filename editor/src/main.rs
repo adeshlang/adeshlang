@@ -3,14 +3,13 @@ use std::io;
 use std::panic;
 use std::path::PathBuf;
 
-use crossterm::{
-    event,
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
-use crossterm::event::{EnableMouseCapture, DisableMouseCapture};
 use crossterm::cursor::SetCursorStyle;
-use ratatui::{backend::CrosstermBackend, Terminal};
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+use crossterm::{
+    event, execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
+use ratatui::{Terminal, backend::CrosstermBackend};
 
 use adesh_editor::app::App;
 use adesh_editor::input::handle_event;

@@ -50,8 +50,18 @@ pub enum SimdInst {
     CmpLe(SimdValueId, SimdValueId, SimdValueId),
     CmpGt(SimdValueId, SimdValueId, SimdValueId),
     CmpGe(SimdValueId, SimdValueId, SimdValueId),
-    Select(SimdValueId, SimdValueId /* mask */, SimdValueId, SimdValueId),
-    Blend(SimdValueId, SimdValueId, SimdValueId, SimdValueId /* mask */),
+    Select(
+        SimdValueId,
+        SimdValueId, /* mask */
+        SimdValueId,
+        SimdValueId,
+    ),
+    Blend(
+        SimdValueId,
+        SimdValueId,
+        SimdValueId,
+        SimdValueId, /* mask */
+    ),
 
     // --- Shuffle / permute ---
     Shuffle(SimdValueId, SimdValueId, SimdValueId, Vec<u32>),
@@ -64,8 +74,17 @@ pub enum SimdInst {
     ReduceMax(SimdValueId, SimdValueId),
 
     // --- Mask operations ---
-    MaskLoad(SimdValueId, SimdType, SimdValueId /* ptr */, SimdValueId /* mask */),
-    MaskStore(SimdValueId /* ptr */, SimdValueId, SimdValueId /* mask */),
+    MaskLoad(
+        SimdValueId,
+        SimdType,
+        SimdValueId, /* ptr */
+        SimdValueId, /* mask */
+    ),
+    MaskStore(
+        SimdValueId, /* ptr */
+        SimdValueId,
+        SimdValueId, /* mask */
+    ),
 
     // --- Extract / insert lane ---
     ExtractLane(SimdValueId, SimdValueId, u32),

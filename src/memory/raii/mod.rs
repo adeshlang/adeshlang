@@ -76,7 +76,11 @@ fn find_explicit_frees_in_stmt(stmt: &Stmt, freed: &mut HashSet<String>) {
                 find_explicit_frees_in_stmt(s, freed);
             }
         }
-        StmtKind::If { cond, then_branch, else_branch } => {
+        StmtKind::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
             find_explicit_frees_in_expr(cond, freed);
             find_explicit_frees_in_stmt(then_branch, freed);
             if let Some(eb) = else_branch {
@@ -96,7 +100,10 @@ fn find_explicit_frees_in_stmt(stmt: &Stmt, freed: &mut HashSet<String>) {
 /// Transform a block to inject free() calls for allocated pointers
 /// Handles early exits (return, break, continue)
 /// `parent_ptrs` are pointers from enclosing scopes that must also be freed on early exit
-fn transform_block_with_raii_internal(stmts: Vec<Stmt>, parent_ptrs: &[AllocatedPointer]) -> Vec<Stmt> {
+fn transform_block_with_raii_internal(
+    stmts: Vec<Stmt>,
+    parent_ptrs: &[AllocatedPointer],
+) -> Vec<Stmt> {
     let mut explicitly_freed = HashSet::default();
     for s in &stmts {
         find_explicit_frees_in_stmt(s, &mut explicitly_freed);

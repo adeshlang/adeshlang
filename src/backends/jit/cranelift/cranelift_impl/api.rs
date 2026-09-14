@@ -159,7 +159,9 @@ mod tests {
 
     #[test]
     fn test_jit_while_loop() {
-        unsafe { std::env::set_var("ADESH_USE_VIR", "0"); }
+        unsafe {
+            std::env::set_var("ADESH_USE_VIR", "0");
+        }
         let result = jit_run(
             r#"
             let i = 0;

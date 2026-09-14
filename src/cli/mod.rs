@@ -26,11 +26,11 @@ pub mod directives;
 pub mod editor_launcher;
 pub mod ir_utils;
 pub mod memory_stats;
+pub mod native_engine;
 pub mod parsing;
 pub mod path_utils;
 pub mod ui;
 pub mod validation;
-pub mod native_engine;
 
 // Re-export key types and functions for convenience
 pub use build_args::BuildArgParser;

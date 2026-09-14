@@ -126,10 +126,7 @@ impl LifetimeContext {
 
     /// Add an outlives constraint: `a` outlives `b` (a >= b)
     pub fn add_outlives_constraint(&mut self, a: Lifetime, b: Lifetime) {
-        self.outlives_graph
-            .entry(a)
-            .or_default()
-            .push(b);
+        self.outlives_graph.entry(a).or_default().push(b);
     }
 
     /// Record the last use position of a variable (for NLL)
@@ -162,7 +159,12 @@ impl LifetimeContext {
     }
 
     /// DFS to check if lifetime `a` reaches lifetime `b` in the outlives graph
-    fn reaches(&self, a: Lifetime, b: Lifetime, visited: &mut std::collections::HashSet<Lifetime>) -> bool {
+    fn reaches(
+        &self,
+        a: Lifetime,
+        b: Lifetime,
+        visited: &mut std::collections::HashSet<Lifetime>,
+    ) -> bool {
         if a == b {
             return true;
         }

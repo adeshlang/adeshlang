@@ -6,41 +6,17 @@
 //!   t2 = a + b  --> replaced with t1, removing redundant evaluation.
 
 use super::{OptLevel, OptResult, VirOptimization};
-use crate::ir::vir::{
-    ValueId, VirFunction, VirInstruction, VirModule, VirTerminator,
-};
+use crate::ir::vir::{ValueId, VirFunction, VirInstruction, VirModule, VirTerminator};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum PureExpr {
-    IntBin {
-        op: u8,
-        lhs: ValueId,
-        rhs: ValueId,
-    },
-    FloatBin {
-        op: u8,
-        lhs: ValueId,
-        rhs: ValueId,
-    },
-    IntUn {
-        op: u8,
-        operand: ValueId,
-    },
-    FloatUn {
-        op: u8,
-        operand: ValueId,
-    },
-    IntCmp {
-        op: u8,
-        lhs: ValueId,
-        rhs: ValueId,
-    },
-    FloatCmp {
-        op: u8,
-        lhs: ValueId,
-        rhs: ValueId,
-    },
+    IntBin { op: u8, lhs: ValueId, rhs: ValueId },
+    FloatBin { op: u8, lhs: ValueId, rhs: ValueId },
+    IntUn { op: u8, operand: ValueId },
+    FloatUn { op: u8, operand: ValueId },
+    IntCmp { op: u8, lhs: ValueId, rhs: ValueId },
+    FloatCmp { op: u8, lhs: ValueId, rhs: ValueId },
 }
 
 pub struct CommonSubexpressionElimination;
@@ -63,46 +39,34 @@ impl CommonSubexpressionElimination {
                 Self::remap_instruction_operands(&mut inst, &alias_map);
 
                 let pure_expr = match &inst {
-                    VirInstruction::IntBinOp { op, lhs, rhs, .. } => {
-                        Some(PureExpr::IntBin {
-                            op: *op as u8,
-                            lhs: *lhs,
-                            rhs: *rhs,
-                        })
-                    }
-                    VirInstruction::FloatBinOp { op, lhs, rhs, .. } => {
-                        Some(PureExpr::FloatBin {
-                            op: *op as u8,
-                            lhs: *lhs,
-                            rhs: *rhs,
-                        })
-                    }
-                    VirInstruction::IntUnOp { op, operand, .. } => {
-                        Some(PureExpr::IntUn {
-                            op: *op as u8,
-                            operand: *operand,
-                        })
-                    }
-                    VirInstruction::FloatUnOp { op, operand, .. } => {
-                        Some(PureExpr::FloatUn {
-                            op: *op as u8,
-                            operand: *operand,
-                        })
-                    }
-                    VirInstruction::IntCmp { op, lhs, rhs, .. } => {
-                        Some(PureExpr::IntCmp {
-                            op: *op as u8,
-                            lhs: *lhs,
-                            rhs: *rhs,
-                        })
-                    }
-                    VirInstruction::FloatCmp { op, lhs, rhs, .. } => {
-                        Some(PureExpr::FloatCmp {
-                            op: *op as u8,
-                            lhs: *lhs,
-                            rhs: *rhs,
-                        })
-                    }
+                    VirInstruction::IntBinOp { op, lhs, rhs, .. } => Some(PureExpr::IntBin {
+                        op: *op as u8,
+                        lhs: *lhs,
+                        rhs: *rhs,
+                    }),
+                    VirInstruction::FloatBinOp { op, lhs, rhs, .. } => Some(PureExpr::FloatBin {
+                        op: *op as u8,
+                        lhs: *lhs,
+                        rhs: *rhs,
+                    }),
+                    VirInstruction::IntUnOp { op, operand, .. } => Some(PureExpr::IntUn {
+                        op: *op as u8,
+                        operand: *operand,
+                    }),
+                    VirInstruction::FloatUnOp { op, operand, .. } => Some(PureExpr::FloatUn {
+                        op: *op as u8,
+                        operand: *operand,
+                    }),
+                    VirInstruction::IntCmp { op, lhs, rhs, .. } => Some(PureExpr::IntCmp {
+                        op: *op as u8,
+                        lhs: *lhs,
+                        rhs: *rhs,
+                    }),
+                    VirInstruction::FloatCmp { op, lhs, rhs, .. } => Some(PureExpr::FloatCmp {
+                        op: *op as u8,
+                        lhs: *lhs,
+                        rhs: *rhs,
+                    }),
                     _ => None,
                 };
 
@@ -199,7 +163,9 @@ impl CommonSubexpressionElimination {
             VirInstruction::ExtractField { struct_val, .. } => {
                 remap(struct_val);
             }
-            VirInstruction::InsertField { struct_val, value, .. } => {
+            VirInstruction::InsertField {
+                struct_val, value, ..
+            } => {
                 remap(struct_val);
                 remap(value);
             }

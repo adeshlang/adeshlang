@@ -214,9 +214,7 @@ thread.sleep(1);
 fn native_thread_id_unique() {
     use adeshlang::runtime::thread::ThreadId;
     let a = ThreadId::current();
-    let b = std::thread::spawn(ThreadId::current)
-        .join()
-        .unwrap();
+    let b = std::thread::spawn(ThreadId::current).join().unwrap();
     assert_ne!(a, b);
 }
 

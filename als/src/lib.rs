@@ -1,8 +1,8 @@
 //! Adesh Language Server (ALS)
-//! 
+//!
 //! A high-performance Language Server Protocol implementation for the Adesh programming language.
 //! Uses the shared semantic engine from the compiler crate for type-aware IDE features.
-//! 
+//!
 //! ## Features
 //! - Type-aware auto-completion (resolves member types, not text matching)
 //! - Real-time diagnostics (syntax, semantic, type, ownership errors)
@@ -17,19 +17,19 @@
 //! - Code formatting
 //! - Code actions and quick fixes
 
-mod server;
+pub mod adl;
 mod analysis;
 mod completion;
 mod diagnostics;
-mod hover;
-mod symbols;
-mod formatting;
 mod document;
-mod workspace;
-pub mod semantic_tokens;
+mod formatting;
+mod hover;
 pub mod inlay_hints;
-pub mod adl;
+pub mod semantic_tokens;
+mod server;
+mod symbols;
+mod workspace;
 
-pub use server::AdeshLanguageServer;
 pub use document::Document;
+pub use server::AdeshLanguageServer;
 pub use workspace::WorkspaceIndex;

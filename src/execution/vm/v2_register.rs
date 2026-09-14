@@ -168,8 +168,8 @@ pub(super) fn execute_v2(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                     let nan_b = vm_to_nanvalue(&vb);
                     match abi_add_nan(&nan_a, &nan_b) {
                         Ok(result) => {
-                            let ast_result =
-                                nanvalue_to_value(&result).unwrap_or(crate::parsing::ast::Value::Null);
+                            let ast_result = nanvalue_to_value(&result)
+                                .unwrap_or(crate::parsing::ast::Value::Null);
                             regs[dst] = value_to_vm(ast_result);
                         }
                         Err(_) => regs[dst] = VMValue::Null,
@@ -193,8 +193,8 @@ pub(super) fn execute_v2(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                     let nan_b = vm_to_nanvalue(&vb);
                     match abi_sub_nan(&nan_a, &nan_b) {
                         Ok(result) => {
-                            let ast_result =
-                                nanvalue_to_value(&result).unwrap_or(crate::parsing::ast::Value::Null);
+                            let ast_result = nanvalue_to_value(&result)
+                                .unwrap_or(crate::parsing::ast::Value::Null);
                             regs[dst] = value_to_vm(ast_result);
                         }
                         Err(_) => regs[dst] = VMValue::Null,
@@ -218,8 +218,8 @@ pub(super) fn execute_v2(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                     let nan_b = vm_to_nanvalue(&vb);
                     match abi_mul_nan(&nan_a, &nan_b) {
                         Ok(result) => {
-                            let ast_result =
-                                nanvalue_to_value(&result).unwrap_or(crate::parsing::ast::Value::Null);
+                            let ast_result = nanvalue_to_value(&result)
+                                .unwrap_or(crate::parsing::ast::Value::Null);
                             regs[dst] = value_to_vm(ast_result);
                         }
                         Err(_) => regs[dst] = VMValue::Null,
@@ -243,8 +243,8 @@ pub(super) fn execute_v2(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                     let nan_b = vm_to_nanvalue(&vb);
                     match abi_div_nan(&nan_a, &nan_b) {
                         Ok(result) => {
-                            let ast_result =
-                                nanvalue_to_value(&result).unwrap_or(crate::parsing::ast::Value::Null);
+                            let ast_result = nanvalue_to_value(&result)
+                                .unwrap_or(crate::parsing::ast::Value::Null);
                             regs[dst] = value_to_vm(ast_result);
                         }
                         Err(_) => regs[dst] = VMValue::Null,
@@ -268,8 +268,8 @@ pub(super) fn execute_v2(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                     let nan_b = vm_to_nanvalue(&vb);
                     match abi_mod_nan(&nan_a, &nan_b) {
                         Ok(result) => {
-                            let ast_result =
-                                nanvalue_to_value(&result).unwrap_or(crate::parsing::ast::Value::Null);
+                            let ast_result = nanvalue_to_value(&result)
+                                .unwrap_or(crate::parsing::ast::Value::Null);
                             regs[dst] = value_to_vm(ast_result);
                         }
                         Err(_) => regs[dst] = VMValue::Null,
@@ -299,23 +299,29 @@ pub(super) fn execute_v2(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                         writeln!(out, "0x{:x}", u).map_err(|e| e.to_string())?;
                     }
                     VMValue::Array(arr) => {
-                        let elements: Vec<String> = arr.iter().map(|v| match v {
-                            VMValue::Number(n) => format!("{}", n),
-                            VMValue::Bool(b) => format!("{}", b),
-                            VMValue::Str(s) => format!("\"{}\"", s),
-                            VMValue::Null => "null".to_string(),
-                            _ => "{...}".to_string(),
-                        }).collect();
+                        let elements: Vec<String> = arr
+                            .iter()
+                            .map(|v| match v {
+                                VMValue::Number(n) => format!("{}", n),
+                                VMValue::Bool(b) => format!("{}", b),
+                                VMValue::Str(s) => format!("\"{}\"", s),
+                                VMValue::Null => "null".to_string(),
+                                _ => "{...}".to_string(),
+                            })
+                            .collect();
                         writeln!(out, "[{}]", elements.join(", ")).map_err(|e| e.to_string())?;
                     }
                     VMValue::Tuple(tup) => {
-                        let elements: Vec<String> = tup.iter().map(|v| match v {
-                            VMValue::Number(n) => format!("{}", n),
-                            VMValue::Bool(b) => format!("{}", b),
-                            VMValue::Str(s) => format!("\"{}\"", s),
-                            VMValue::Null => "null".to_string(),
-                            _ => "{...}".to_string(),
-                        }).collect();
+                        let elements: Vec<String> = tup
+                            .iter()
+                            .map(|v| match v {
+                                VMValue::Number(n) => format!("{}", n),
+                                VMValue::Bool(b) => format!("{}", b),
+                                VMValue::Str(s) => format!("\"{}\"", s),
+                                VMValue::Null => "null".to_string(),
+                                _ => "{...}".to_string(),
+                            })
+                            .collect();
                         writeln!(out, "({})", elements.join(", ")).map_err(|e| e.to_string())?;
                     }
                     VMValue::Object(o) => {
@@ -409,15 +415,16 @@ pub(super) fn execute_v2(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                     let nan_a = vm_to_nanvalue(&va);
                     let nan_b = vm_to_nanvalue(&vb);
                     let res = match abi_cmp_lt_nan(&nan_a, &nan_b) {
-                        Ok(nan_result) => {
-                            nanvalue_to_value(&nan_result).ok().and_then(|v| {
+                        Ok(nan_result) => nanvalue_to_value(&nan_result)
+                            .ok()
+                            .and_then(|v| {
                                 if let crate::parsing::ast::Value::Bool(b) = v {
                                     Some(b)
                                 } else {
                                     None
                                 }
-                            }).unwrap_or(false)
-                        }
+                            })
+                            .unwrap_or(false),
                         _ => false,
                     };
                     regs[dst] = VMValue::Number(if res { 1.0 } else { 0.0 });
@@ -439,15 +446,16 @@ pub(super) fn execute_v2(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                     let nan_a = vm_to_nanvalue(&va);
                     let nan_b = vm_to_nanvalue(&vb);
                     let res = match abi_cmp_le_nan(&nan_a, &nan_b) {
-                        Ok(nan_result) => {
-                            nanvalue_to_value(&nan_result).ok().and_then(|v| {
+                        Ok(nan_result) => nanvalue_to_value(&nan_result)
+                            .ok()
+                            .and_then(|v| {
                                 if let crate::parsing::ast::Value::Bool(b) = v {
                                     Some(b)
                                 } else {
                                     None
                                 }
-                            }).unwrap_or(false)
-                        }
+                            })
+                            .unwrap_or(false),
                         _ => false,
                     };
                     regs[dst] = VMValue::Number(if res { 1.0 } else { 0.0 });
@@ -469,15 +477,16 @@ pub(super) fn execute_v2(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                     let nan_a = vm_to_nanvalue(&va);
                     let nan_b = vm_to_nanvalue(&vb);
                     let res = match abi_cmp_gt_nan(&nan_a, &nan_b) {
-                        Ok(nan_result) => {
-                            nanvalue_to_value(&nan_result).ok().and_then(|v| {
+                        Ok(nan_result) => nanvalue_to_value(&nan_result)
+                            .ok()
+                            .and_then(|v| {
                                 if let crate::parsing::ast::Value::Bool(b) = v {
                                     Some(b)
                                 } else {
                                     None
                                 }
-                            }).unwrap_or(false)
-                        }
+                            })
+                            .unwrap_or(false),
                         _ => false,
                     };
                     regs[dst] = VMValue::Number(if res { 1.0 } else { 0.0 });
@@ -499,15 +508,16 @@ pub(super) fn execute_v2(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                     let nan_a = vm_to_nanvalue(&va);
                     let nan_b = vm_to_nanvalue(&vb);
                     let res = match abi_cmp_ge_nan(&nan_a, &nan_b) {
-                        Ok(nan_result) => {
-                            nanvalue_to_value(&nan_result).ok().and_then(|v| {
+                        Ok(nan_result) => nanvalue_to_value(&nan_result)
+                            .ok()
+                            .and_then(|v| {
                                 if let crate::parsing::ast::Value::Bool(b) = v {
                                     Some(b)
                                 } else {
                                     None
                                 }
-                            }).unwrap_or(false)
-                        }
+                            })
+                            .unwrap_or(false),
                         _ => false,
                     };
                     regs[dst] = VMValue::Number(if res { 1.0 } else { 0.0 });
@@ -529,15 +539,16 @@ pub(super) fn execute_v2(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                     let nan_a = vm_to_nanvalue(&va);
                     let nan_b = vm_to_nanvalue(&vb);
                     let res = match abi_cmp_eq_nan(&nan_a, &nan_b) {
-                        Ok(nan_result) => {
-                            nanvalue_to_value(&nan_result).ok().and_then(|v| {
+                        Ok(nan_result) => nanvalue_to_value(&nan_result)
+                            .ok()
+                            .and_then(|v| {
                                 if let crate::parsing::ast::Value::Bool(b) = v {
                                     Some(b)
                                 } else {
                                     None
                                 }
-                            }).unwrap_or(false)
-                        }
+                            })
+                            .unwrap_or(false),
                         _ => false,
                     };
                     regs[dst] = VMValue::Number(if res { 1.0 } else { 0.0 });
@@ -559,15 +570,16 @@ pub(super) fn execute_v2(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                     let nan_a = vm_to_nanvalue(&va);
                     let nan_b = vm_to_nanvalue(&vb);
                     let res = match abi_cmp_ne_nan(&nan_a, &nan_b) {
-                        Ok(nan_result) => {
-                            nanvalue_to_value(&nan_result).ok().and_then(|v| {
+                        Ok(nan_result) => nanvalue_to_value(&nan_result)
+                            .ok()
+                            .and_then(|v| {
                                 if let crate::parsing::ast::Value::Bool(b) = v {
                                     Some(b)
                                 } else {
                                     None
                                 }
-                            }).unwrap_or(false)
-                        }
+                            })
+                            .unwrap_or(false),
                         _ => false,
                     };
                     regs[dst] = VMValue::Number(if res { 1.0 } else { 0.0 });
@@ -769,7 +781,8 @@ pub(super) fn execute_v2(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                 pc += 4;
                 let mut arr = Vec::with_capacity(count);
                 for _ in 0..count {
-                    let elem_reg = u32::from_le_bytes(data[pc..pc + 4].try_into().unwrap()) as usize;
+                    let elem_reg =
+                        u32::from_le_bytes(data[pc..pc + 4].try_into().unwrap()) as usize;
                     pc += 4;
                     let val = regs.get(elem_reg).cloned().unwrap_or(VMValue::Null);
                     arr.push(val);
@@ -783,7 +796,8 @@ pub(super) fn execute_v2(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                 pc += 4;
                 let mut tup = Vec::with_capacity(count);
                 for _ in 0..count {
-                    let elem_reg = u32::from_le_bytes(data[pc..pc + 4].try_into().unwrap()) as usize;
+                    let elem_reg =
+                        u32::from_le_bytes(data[pc..pc + 4].try_into().unwrap()) as usize;
                     pc += 4;
                     let val = regs.get(elem_reg).cloned().unwrap_or(VMValue::Null);
                     tup.push(val);
@@ -802,7 +816,9 @@ pub(super) fn execute_v2(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                     _ => "",
                 };
                 let val = match regs.get(obj_reg) {
-                    Some(VMValue::Object(map)) => map.get(field_name).cloned().unwrap_or(VMValue::Null),
+                    Some(VMValue::Object(map)) => {
+                        map.get(field_name).cloned().unwrap_or(VMValue::Null)
+                    }
                     _ => VMValue::Null,
                 };
                 regs[dst] = val;
@@ -875,14 +891,14 @@ pub(super) fn execute_v2(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                             VMValue::Bool(false)
                         }
                     }
-                    (Some(VMValue::Object(map)), "len") | (Some(VMValue::Object(map)), "length") => {
-                        VMValue::Number(map.len() as f64)
-                    }
+                    (Some(VMValue::Object(map)), "len")
+                    | (Some(VMValue::Object(map)), "length") => VMValue::Number(map.len() as f64),
                     (Some(VMValue::Str(s)), "len") | (Some(VMValue::Str(s)), "length") => {
                         VMValue::Number(s.len() as f64)
                     }
                     (Some(receiver), "mock") => {
-                        let mut mock_rvals: Vec<crate::backends::builtins::RuntimeValue> = Vec::new();
+                        let mut mock_rvals: Vec<crate::backends::builtins::RuntimeValue> =
+                            Vec::new();
                         for a in args {
                             mock_rvals.push(vm_value_to_builtin_runtime_value(a));
                         }
@@ -1119,7 +1135,8 @@ pub(super) fn execute_v2_with_args(
                 globals_vals[i] = VMValue::Number(args.len() as f64);
             }
             "__argv" => {
-                globals_vals[i] = VMValue::Array(args.iter().map(|a| VMValue::Str(a.clone())).collect());
+                globals_vals[i] =
+                    VMValue::Array(args.iter().map(|a| VMValue::Str(a.clone())).collect());
             }
             "__execName" => {
                 // Use the bytecode file path as executable name
@@ -1373,7 +1390,11 @@ pub(super) fn execute_v2_with_args(
                 pc += 4;
                 let res = unsafe {
                     let divisor = *regs_f64.get_unchecked(b);
-                    let r = if divisor != 0.0 { *regs_f64.get_unchecked(a) / divisor } else { 0.0 };
+                    let r = if divisor != 0.0 {
+                        *regs_f64.get_unchecked(a) / divisor
+                    } else {
+                        0.0
+                    };
                     *regs_f64.get_unchecked_mut(dst) = r;
                     r
                 };
@@ -1389,7 +1410,11 @@ pub(super) fn execute_v2_with_args(
                 pc += 4;
                 let res = unsafe {
                     let divisor = *regs_f64.get_unchecked(b);
-                    let r = if divisor != 0.0 { *regs_f64.get_unchecked(a) % divisor } else { 0.0 };
+                    let r = if divisor != 0.0 {
+                        *regs_f64.get_unchecked(a) % divisor
+                    } else {
+                        0.0
+                    };
                     *regs_f64.get_unchecked_mut(dst) = r;
                     r
                 };
@@ -1422,23 +1447,29 @@ pub(super) fn execute_v2_with_args(
                             let _ = write!(out, "0x{:x}", u);
                         }
                         VMValue::Array(arr) => {
-                            let elements: Vec<String> = arr.iter().map(|v| match v {
-                                VMValue::Number(n) => format!("{}", n),
-                                VMValue::Bool(b) => format!("{}", b),
-                                VMValue::Str(s) => format!("\"{}\"", s),
-                                VMValue::Null => "null".to_string(),
-                                _ => "{...}".to_string(),
-                            }).collect();
+                            let elements: Vec<String> = arr
+                                .iter()
+                                .map(|v| match v {
+                                    VMValue::Number(n) => format!("{}", n),
+                                    VMValue::Bool(b) => format!("{}", b),
+                                    VMValue::Str(s) => format!("\"{}\"", s),
+                                    VMValue::Null => "null".to_string(),
+                                    _ => "{...}".to_string(),
+                                })
+                                .collect();
                             let _ = write!(out, "[{}]", elements.join(", "));
                         }
                         VMValue::Tuple(tup) => {
-                            let elements: Vec<String> = tup.iter().map(|v| match v {
-                                VMValue::Number(n) => format!("{}", n),
-                                VMValue::Bool(b) => format!("{}", b),
-                                VMValue::Str(s) => format!("\"{}\"", s),
-                                VMValue::Null => "null".to_string(),
-                                _ => "{...}".to_string(),
-                            }).collect();
+                            let elements: Vec<String> = tup
+                                .iter()
+                                .map(|v| match v {
+                                    VMValue::Number(n) => format!("{}", n),
+                                    VMValue::Bool(b) => format!("{}", b),
+                                    VMValue::Str(s) => format!("\"{}\"", s),
+                                    VMValue::Null => "null".to_string(),
+                                    _ => "{...}".to_string(),
+                                })
+                                .collect();
                             let _ = write!(out, "({})", elements.join(", "));
                         }
                         VMValue::Object(o) => {
@@ -1854,7 +1885,8 @@ pub(super) fn execute_v2_with_args(
                 pc += 4;
                 let mut arr = Vec::with_capacity(count);
                 for _ in 0..count {
-                    let elem_reg = u32::from_le_bytes(data[pc..pc + 4].try_into().unwrap()) as usize;
+                    let elem_reg =
+                        u32::from_le_bytes(data[pc..pc + 4].try_into().unwrap()) as usize;
                     pc += 4;
                     let val = match regs.get(elem_reg) {
                         Some(VMValue::Number(_)) => VMValue::Number(regs_f64[elem_reg]),
@@ -1873,7 +1905,8 @@ pub(super) fn execute_v2_with_args(
                 pc += 4;
                 let mut tup = Vec::with_capacity(count);
                 for _ in 0..count {
-                    let elem_reg = u32::from_le_bytes(data[pc..pc + 4].try_into().unwrap()) as usize;
+                    let elem_reg =
+                        u32::from_le_bytes(data[pc..pc + 4].try_into().unwrap()) as usize;
                     pc += 4;
                     let val = match regs.get(elem_reg) {
                         Some(VMValue::Number(_)) => VMValue::Number(regs_f64[elem_reg]),
@@ -1897,7 +1930,9 @@ pub(super) fn execute_v2_with_args(
                     _ => "",
                 };
                 let val = match regs.get(obj_reg) {
-                    Some(VMValue::Object(map)) => map.get(field_name).cloned().unwrap_or(VMValue::Null),
+                    Some(VMValue::Object(map)) => {
+                        map.get(field_name).cloned().unwrap_or(VMValue::Null)
+                    }
                     _ => VMValue::Null,
                 };
                 if let VMValue::Number(n) = val {
@@ -1990,14 +2025,14 @@ pub(super) fn execute_v2_with_args(
                             VMValue::Bool(false)
                         }
                     }
-                    (Some(VMValue::Object(map)), "len") | (Some(VMValue::Object(map)), "length") => {
-                        VMValue::Number(map.len() as f64)
-                    }
+                    (Some(VMValue::Object(map)), "len")
+                    | (Some(VMValue::Object(map)), "length") => VMValue::Number(map.len() as f64),
                     (Some(VMValue::Str(s)), "len") | (Some(VMValue::Str(s)), "length") => {
                         VMValue::Number(s.len() as f64)
                     }
                     (Some(receiver), "mock") => {
-                        let mut mock_rvals: Vec<crate::backends::builtins::RuntimeValue> = Vec::new();
+                        let mut mock_rvals: Vec<crate::backends::builtins::RuntimeValue> =
+                            Vec::new();
                         for a in args {
                             mock_rvals.push(vm_value_to_builtin_runtime_value(a));
                         }

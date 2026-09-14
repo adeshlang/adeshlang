@@ -27,8 +27,7 @@ pub struct Exec {
     pub(in crate::execution::runtime_core) recursion_memo:
         FxHashMap<(String, i64), crate::parsing::ast::Value>,
     // Purity status cache for user functions
-    pub(in crate::execution::runtime_core) pure_fn_cache:
-        FxHashMap<String, bool>,
+    pub(in crate::execution::runtime_core) pure_fn_cache: FxHashMap<String, bool>,
 }
 
 impl Exec {

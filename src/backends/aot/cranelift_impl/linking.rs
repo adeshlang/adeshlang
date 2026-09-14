@@ -36,15 +36,28 @@ pub(crate) fn link_library_only(
         OutputFormat::StaticLib => {
             let clang_path = find_clang()?;
             let llvm_bin = clang_path.parent().ok_or("Invalid clang path")?;
-            let ar_name = if cfg!(windows) { "llvm-ar.exe" } else { "llvm-ar" };
+            let ar_name = if cfg!(windows) {
+                "llvm-ar.exe"
+            } else {
+                "llvm-ar"
+            };
             let ar_path = llvm_bin.join(ar_name);
-            let mut cmd = Command::new(if ar_path.exists() { ar_path } else { std::path::PathBuf::from("ar") });
+            let mut cmd = Command::new(if ar_path.exists() {
+                ar_path
+            } else {
+                std::path::PathBuf::from("ar")
+            });
             cmd.arg("rcs").arg(output).arg(obj_path);
-            let result = cmd.output().map_err(|e| format!("Failed to run ar: {}", e))?;
+            let result = cmd
+                .output()
+                .map_err(|e| format!("Failed to run ar: {}", e))?;
             if result.status.success() {
                 Ok(())
             } else {
-                Err(format!("Static library archiving failed: {}", String::from_utf8_lossy(&result.stderr)))
+                Err(format!(
+                    "Static library archiving failed: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                ))
             }
         }
         OutputFormat::SharedLib => {
@@ -53,11 +66,16 @@ pub(crate) fn link_library_only(
             cmd.arg("-shared").arg("-fuse-ld=lld");
             cmd.arg(format!("--target={}", target_triple));
             cmd.arg("-o").arg(output).arg(obj_path);
-            let result = cmd.output().map_err(|e| format!("Failed to run clang: {}", e))?;
+            let result = cmd
+                .output()
+                .map_err(|e| format!("Failed to run clang: {}", e))?;
             if result.status.success() {
                 Ok(())
             } else {
-                Err(format!("Shared library linking failed: {}", String::from_utf8_lossy(&result.stderr)))
+                Err(format!(
+                    "Shared library linking failed: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                ))
             }
         }
         _ => Err("link_library_only called for non-library format".to_string()),
@@ -138,7 +156,14 @@ fn link_with_llvm_toolchain(
                 && target_triple.environment == target_lexicon::Environment::Msvc
             {
                 // Use lld-link directly for MSVC compatibility
-                link_with_lld_link(options, &lld_path, obj_path, runtime_obj, output, output_format)
+                link_with_lld_link(
+                    options,
+                    &lld_path,
+                    obj_path,
+                    runtime_obj,
+                    output,
+                    output_format,
+                )
             } else {
                 // MinGW target - use clang with lld
                 link_with_clang_lld(
@@ -726,74 +751,121 @@ fn get_linux_dynamic_linker(target_triple: &Triple) -> Result<String, String> {
 
 /// Compile the runtime C library to an object file
 pub(crate) fn get_static_runtime_lib(target_triple: &Triple) -> Result<std::path::PathBuf, String> {
-    // Get the path to the adeshlang static library
-    // This library contains all the runtime functions exported with #[no_mangle]
-
-    // The runtime library must be compiled for the TARGET architecture, not the host
-    // to ensure object file format compatibility (COFF for Windows, ELF for Linux, etc.)
-
-    let target_dir = match std::env::var("CARGO_MANIFEST_DIR") {
-        Ok(dir) => {
-            // When building, CARGO_MANIFEST_DIR is the project root
-            std::path::PathBuf::from(dir).join("target")
-        }
-        Err(_) => {
-            // Fallback: assume executable is in target/debug/ or similar
-            let exe_path = std::env::current_exe()
-                .map_err(|_| "Could not determine executable path".to_string())?;
-            exe_path
-                .parent()
-                .and_then(|p| {
-                    // Go up until we find 'target' directory or reach project root
-                    if p.file_name().map_or(false, |n| {
-                        n == "debug" || n == "release" || n.to_string_lossy().contains("unknown")
-                    }) {
-                        p.parent().map(|pp| pp.to_path_buf())
-                    } else {
-                        Some(p.to_path_buf())
-                    }
-                })
-                .ok_or_else(|| "Could not determine project root".to_string())?
-        }
-    };
-
-    // Determine the library name based on the TARGET OS (not host)
-    // This ensures we load the correct format for the target architecture
+    // Determine library name based on the target OS
     let target_triple_str = target_triple.to_string();
     let lib_name = match target_triple.operating_system {
         target_lexicon::OperatingSystem::Windows => "adeshlang.lib",
         _ => "libadeshlang.a",
     };
 
-    // For cross-compilation, look in target/{triple}/debug/ directory
-    let target_specific_lib = target_dir
-        .join(&target_triple_str)
-        .join("debug")
-        .join(&lib_name);
+    let mut searched_paths = Vec::new();
 
-    if target_specific_lib.exists() {
-        if target_triple.to_string() != Triple::host().to_string() {
-            eprintln!(
-                "✓ Cross-compiling for {}: found target-specific runtime library",
-                target_triple_str
-            );
+    // 1. Check ADESH_HOME / ADESHLANG_HOME environment variable
+    for env_var in ["ADESH_HOME", "ADESHLANG_HOME"] {
+        if let Ok(home_str) = std::env::var(env_var) {
+            let home = std::path::PathBuf::from(home_str);
+            let candidates = [
+                home.join("lib").join(&target_triple_str).join(lib_name),
+                home.join("lib").join(lib_name),
+                home.join("bin").join(lib_name),
+                home.join(lib_name),
+            ];
+            for cand in candidates {
+                if cand.exists() {
+                    return Ok(cand);
+                }
+                searched_paths.push(cand);
+            }
         }
-        return Ok(target_specific_lib);
     }
 
-    // Fallback: check in host debug directory (for native builds)
-    let host_lib = target_dir.join("debug").join(&lib_name);
-    if host_lib.exists() {
-        return Ok(host_lib);
+    // 2. Check executable-relative paths
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let is_bin_dir = exe_dir.file_name().and_then(|n| n.to_str()) == Some("bin");
+            let install_root = if is_bin_dir {
+                exe_dir.parent().unwrap_or(exe_dir)
+            } else {
+                exe_dir
+            };
+
+            let candidates = [
+                install_root
+                    .join("lib")
+                    .join(&target_triple_str)
+                    .join(lib_name),
+                install_root.join("lib").join(lib_name),
+                exe_dir.join(lib_name),
+                install_root.join(lib_name),
+            ];
+            for cand in candidates {
+                if cand.exists() {
+                    return Ok(cand);
+                }
+                searched_paths.push(cand);
+            }
+        }
     }
 
-    // Not found in either location
-    let build_cmd = format!("cargo build --target {}", target_triple_str);
+    // 3. Check Cargo build / source checkout directories (CARGO_MANIFEST_DIR or target/ directory)
+    let project_roots = {
+        let mut roots = Vec::new();
+        if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+            roots.push(std::path::PathBuf::from(manifest_dir));
+        }
+        if let Ok(exe_path) = std::env::current_exe() {
+            let mut curr = exe_path.parent();
+            while let Some(dir) = curr {
+                if dir.join("Cargo.toml").exists() {
+                    roots.push(dir.to_path_buf());
+                    break;
+                }
+                if dir.file_name().map_or(false, |n| n == "target") {
+                    if let Some(parent) = dir.parent() {
+                        roots.push(parent.to_path_buf());
+                    }
+                    break;
+                }
+                curr = dir.parent();
+            }
+        }
+        roots
+    };
+
+    for root in project_roots {
+        let target_dir = root.join("target");
+        let target_candidates = [
+            target_dir
+                .join(&target_triple_str)
+                .join("release")
+                .join(lib_name),
+            target_dir.join("release").join(lib_name),
+            target_dir
+                .join(&target_triple_str)
+                .join("debug")
+                .join(lib_name),
+            target_dir.join("debug").join(lib_name),
+        ];
+        for cand in target_candidates {
+            if cand.exists() {
+                return Ok(cand);
+            }
+            searched_paths.push(cand);
+        }
+    }
+
+    // Format a helpful error message
+    let mut searched_display = String::new();
+    for path in &searched_paths {
+        searched_display.push_str(&format!("  {}\n", path.display()));
+    }
+
     Err(format!(
-        "Static runtime library not found. Build it with:\n  {}\n\nSearched in:\n  {}\n  {}",
-        build_cmd,
-        target_specific_lib.display(),
-        host_lib.display()
+        "Static runtime library ({lib_name}) not found for target {target_triple_str}.\n\n\
+        Searched in:\n{searched_display}\n\
+        To resolve this:\n\
+        • If using an installed AdeshLang, run `adl doctor` or `adl repair` to check/repair the installation.\n\
+        • If developing AdeshLang, build the library with: `cargo build --release --target {target_triple_str}`"
     ))
 }
 

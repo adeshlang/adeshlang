@@ -1,8 +1,8 @@
 //! Path validation and connection migration state machine.
 
 use super::errors::{AtpError, AtpResult};
-use rand::rngs::OsRng;
 use rand::RngCore;
+use rand::rngs::OsRng;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
@@ -164,7 +164,11 @@ mod tests {
         let now = Instant::now();
         let mut pm = PathManager::new(addr1, now);
         let challenge = pm.begin_validation(addr2, now).unwrap();
-        assert!(pm.on_path_response(challenge, addr3, now).unwrap().is_none());
+        assert!(
+            pm.on_path_response(challenge, addr3, now)
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(pm.migration_state, MigrationState::Validating);
         assert!(pm.pending_challenge.is_some());
         // Valid response still works after bad packet.

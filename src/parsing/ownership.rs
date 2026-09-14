@@ -697,11 +697,7 @@ fn check_function_moves(
 
 /// Check a statement for move violations
 /// Tracks moves, partial moves (field-level), and use-after-move
-fn check_stmt_moves(
-    stmt: &HirStmt,
-    ctx: &mut OwnershipContext,
-    errors: &mut Vec<OwnershipError>,
-) {
+fn check_stmt_moves(stmt: &HirStmt, ctx: &mut OwnershipContext, errors: &mut Vec<OwnershipError>) {
     match stmt {
         HirStmt::Let { name, ty, init, .. } => {
             // Register new variable as owned
@@ -850,11 +846,7 @@ fn check_stmt_moves(
 }
 
 /// Check an expression for use of moved variables
-fn check_expr_moves(
-    expr: &HirExpr,
-    ctx: &mut OwnershipContext,
-    errors: &mut Vec<OwnershipError>,
-) {
+fn check_expr_moves(expr: &HirExpr, ctx: &mut OwnershipContext, errors: &mut Vec<OwnershipError>) {
     match expr {
         HirExpr::LoadVar(name) => {
             // Check if variable has been moved

@@ -134,7 +134,11 @@ impl AsyncBodyStream {
                 queue: Mutex::new(VecDeque::new()),
                 read_cond: Condvar::new(),
                 write_cond: Condvar::new(),
-                max_bytes: if max_bytes_capacity == 0 { 1024 * 1024 } else { max_bytes_capacity },
+                max_bytes: if max_bytes_capacity == 0 {
+                    1024 * 1024
+                } else {
+                    max_bytes_capacity
+                },
                 current_bytes: Mutex::new(0),
                 eof: AtomicBool::new(false),
                 cancelled: AtomicBool::new(false),
@@ -165,7 +169,12 @@ impl AsyncBodyStream {
             if self.inner.cancelled.load(Ordering::SeqCst) {
                 return Err(HttpError::new(HttpErrorKind::Cancelled, "Stream cancelled"));
             }
-            cur = self.inner.write_cond.wait_timeout(cur, Duration::from_millis(100)).unwrap().0;
+            cur = self
+                .inner
+                .write_cond
+                .wait_timeout(cur, Duration::from_millis(100))
+                .unwrap()
+                .0;
         }
 
         *cur += chunk_len;
@@ -237,7 +246,12 @@ impl AsyncBodyStream {
                 return Ok(None);
             }
 
-            q = self.inner.read_cond.wait_timeout(q, Duration::from_millis(100)).unwrap().0;
+            q = self
+                .inner
+                .read_cond
+                .wait_timeout(q, Duration::from_millis(100))
+                .unwrap()
+                .0;
         }
     }
 
@@ -249,4 +263,3 @@ impl AsyncBodyStream {
         Ok(full)
     }
 }
-

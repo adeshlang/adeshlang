@@ -8,9 +8,9 @@ pub mod engine;
 
 // Re-export key types from the engine
 pub use engine::{
-    index_source, index_source_in, SemanticIndex, SymbolEntry, SemanticSymbolKind,
-    TypeDefinition, TypeMember, CompletionCandidate, ResolvedSymbol,
-    VisibilityKind, ScopeInfo, ScopeKind, ImportInfo, ImportKind,
+    CompletionCandidate, ImportInfo, ImportKind, ResolvedSymbol, ScopeInfo, ScopeKind,
+    SemanticIndex, SemanticSymbolKind, SymbolEntry, TypeDefinition, TypeMember, VisibilityKind,
+    index_source, index_source_in,
 };
 
 // Re-export semantic analysis components from parsing module

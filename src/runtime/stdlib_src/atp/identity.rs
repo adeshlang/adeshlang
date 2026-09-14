@@ -6,8 +6,8 @@
 
 use super::errors::{AtpError, AtpResult};
 use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
-use rand::rngs::OsRng;
 use rand::RngCore;
+use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
 
 pub const ED25519_PUBKEY_LEN: usize = 32;
@@ -160,8 +160,8 @@ pub fn empty_transcript_hash() -> [u8; 32] {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::config::ATP_VERSION;
+    use super::*;
 
     #[test]
     fn test_domain_separation_differs_by_role() {
@@ -180,10 +180,7 @@ mod tests {
             role: IdentityRole::Server,
             ..ctx_client.clone()
         };
-        assert_ne!(
-            ctx_client.signing_material(),
-            ctx_server.signing_material()
-        );
+        assert_ne!(ctx_client.signing_material(), ctx_server.signing_material());
     }
 
     #[test]

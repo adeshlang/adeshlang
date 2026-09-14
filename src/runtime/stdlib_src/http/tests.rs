@@ -319,7 +319,9 @@ mod tests {
     #[test]
     fn test_websocket_server_handshake_validation_and_response() {
         let mut req = Request::get("http://example.com/chat").unwrap();
-        req.headers.insert("connection", "keep-alive, Upgrade").unwrap();
+        req.headers
+            .insert("connection", "keep-alive, Upgrade")
+            .unwrap();
         req.headers.insert("upgrade", "websocket").unwrap();
         req.headers
             .insert("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
@@ -457,8 +459,8 @@ mod tests {
     fn test_websocket_tcp_echo_roundtrip() {
         use super::super::websocket::connection::WebSocketMessage;
         use super::super::websocket::session::{
-            accept_session, bind_listener, connect_uri, echo_until_close, WsClientOptions,
-            WsServerOptions,
+            WsClientOptions, WsServerOptions, accept_session, bind_listener, connect_uri,
+            echo_until_close,
         };
 
         let mut server_opts = WsServerOptions::default();
@@ -491,8 +493,8 @@ mod tests {
     fn test_websocket_permessage_deflate_compression_roundtrip() {
         use super::super::websocket::connection::WebSocketMessage;
         use super::super::websocket::session::{
-            accept_session, bind_listener, connect_uri, echo_until_close, WsClientOptions,
-            WsServerOptions,
+            WsClientOptions, WsServerOptions, accept_session, bind_listener, connect_uri,
+            echo_until_close,
         };
 
         let mut server_opts = WsServerOptions::default();
@@ -548,28 +550,40 @@ mod tests {
 
         // Valid payload validation
         let mut valid_data = crate::utils::collections::FastMap::default();
-        valid_data.insert("email".to_string(), Value::Str("admin@adeshlang.org".to_string()));
+        valid_data.insert(
+            "email".to_string(),
+            Value::Str("admin@adeshlang.org".to_string()),
+        );
         valid_data.insert("invite_code".to_string(), Value::Str("PROD88".to_string()));
         let valid_val = Value::Object(std::sync::Arc::new(valid_data));
 
         let res = user_schema.validate(&valid_val);
-        assert!(res.is_ok(), "Valid DTO payload with regex should pass validation");
+        assert!(
+            res.is_ok(),
+            "Valid DTO payload with regex should pass validation"
+        );
 
         // Invalid payload validation (invalid email & code)
         let mut invalid_data = crate::utils::collections::FastMap::default();
         invalid_data.insert("email".to_string(), Value::Str("not-an-email".to_string()));
-        invalid_data.insert("invite_code".to_string(), Value::Str("bad_code_123".to_string()));
+        invalid_data.insert(
+            "invite_code".to_string(),
+            Value::Str("bad_code_123".to_string()),
+        );
         let invalid_val = Value::Object(std::sync::Arc::new(invalid_data));
 
         let res_err = user_schema.validate(&invalid_val);
-        assert!(res_err.is_err(), "Invalid Regex DTO payload must fail validation");
+        assert!(
+            res_err.is_err(),
+            "Invalid Regex DTO payload must fail validation"
+        );
     }
 
     #[test]
     fn test_websocket_multithreaded_parallel_clients() {
         use super::super::websocket::connection::WebSocketMessage;
         use super::super::websocket::session::{
-            accept_session, bind_listener, connect_uri, WsClientOptions, WsServerOptions,
+            WsClientOptions, WsServerOptions, accept_session, bind_listener, connect_uri,
         };
 
         let mut server_opts = WsServerOptions::default();
@@ -630,16 +644,34 @@ mod tests {
         if let Value::Object(map) = &module_val {
             assert!(matches!(map.get("ClientConfig"), Some(Value::Function(_))));
             assert!(matches!(map.get("ServerConfig"), Some(Value::Function(_))));
-            assert!(matches!(map.get("WebSocketError"), Some(Value::Function(_))));
-            assert!(matches!(map.get("WebSocketMessage"), Some(Value::Function(_))));
-            assert!(matches!(map.get("WebSocketFrame"), Some(Value::Function(_))));
-            assert!(matches!(map.get("WebSocketConnection"), Some(Value::Function(_))));
-            assert!(matches!(map.get("WebSocketServer"), Some(Value::Function(_))));
+            assert!(matches!(
+                map.get("WebSocketError"),
+                Some(Value::Function(_))
+            ));
+            assert!(matches!(
+                map.get("WebSocketMessage"),
+                Some(Value::Function(_))
+            ));
+            assert!(matches!(
+                map.get("WebSocketFrame"),
+                Some(Value::Function(_))
+            ));
+            assert!(matches!(
+                map.get("WebSocketConnection"),
+                Some(Value::Function(_))
+            ));
+            assert!(matches!(
+                map.get("WebSocketServer"),
+                Some(Value::Function(_))
+            ));
             assert!(matches!(map.get("connect"), Some(Value::Function(_))));
             assert!(matches!(map.get("connectAsync"), Some(Value::Function(_))));
             assert!(matches!(map.get("server"), Some(Value::Function(_))));
             assert!(matches!(map.get("isError"), Some(Value::Function(_))));
-            assert!(matches!(map.get("computeAcceptKey"), Some(Value::Function(_))));
+            assert!(matches!(
+                map.get("computeAcceptKey"),
+                Some(Value::Function(_))
+            ));
             assert!(matches!(map.get("generateKey"), Some(Value::Function(_))));
             assert!(matches!(map.get("CloseCode"), Some(Value::Object(_))));
             assert!(matches!(map.get("Opcode"), Some(Value::Object(_))));
@@ -824,11 +856,18 @@ mod tests {
         use super::super::websocket::handshake::{negotiate_subprotocol, validate_origin};
 
         let mut req = Request::new(HttpMethod::Get, Uri::parse("/ws").unwrap());
-        req.headers.insert("origin", "https://app.adeshlang.org").unwrap();
-        req.headers.insert("sec-websocket-protocol", "v1.json, v2.proto").unwrap();
+        req.headers
+            .insert("origin", "https://app.adeshlang.org")
+            .unwrap();
+        req.headers
+            .insert("sec-websocket-protocol", "v1.json, v2.proto")
+            .unwrap();
 
         // Origin validation tests
-        let allowed = vec!["https://app.adeshlang.org".to_string(), "https://dashboard.adeshlang.org".to_string()];
+        let allowed = vec![
+            "https://app.adeshlang.org".to_string(),
+            "https://dashboard.adeshlang.org".to_string(),
+        ];
         assert!(validate_origin(&req, &allowed).is_ok());
 
         let disallowed = vec!["https://malicious.com".to_string()];
@@ -1394,7 +1433,12 @@ mod tests {
         // Check value export
         let stats_val = get_http3_stats_value();
         if let crate::parsing::ast::Value::Object(obj) = stats_val {
-            let get_int = |key: &str| obj.get(key).and_then(|v| match v { crate::parsing::ast::Value::I64(n) => Some(*n), _ => None });
+            let get_int = |key: &str| {
+                obj.get(key).and_then(|v| match v {
+                    crate::parsing::ast::Value::I64(n) => Some(*n),
+                    _ => None,
+                })
+            };
             assert_eq!(get_int("totalStreams"), Some(5));
             assert_eq!(get_int("completedStreams"), Some(3));
             assert_eq!(get_int("resetStreams"), Some(1));
@@ -1482,8 +1526,8 @@ mod tests {
     fn test_phase5_async_concurrency_1000_requests() {
         use super::super::client::HttpClient;
         use super::super::request::Request;
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
         let client = HttpClient::new();
         let counter = Arc::new(AtomicUsize::new(0));
@@ -1526,13 +1570,22 @@ mod tests {
 
         let mut user_schema = Schema::new("CreateUser").with_mode(DTOMode::Strict);
         user_schema.add_field(FieldSpec::new("username", FieldType::String));
-        user_schema.add_field(FieldSpec::new("email", FieldType::Domain(DomainTypeKind::Email)));
+        user_schema.add_field(FieldSpec::new(
+            "email",
+            FieldType::Domain(DomainTypeKind::Email),
+        ));
         user_schema.add_field(FieldSpec::new("password", FieldType::String).secret());
 
         let mut valid_map = FastMap::default();
         valid_map.insert("username".to_string(), Value::Str("ajay".to_string()));
-        valid_map.insert("email".to_string(), Value::Str("ajay@example.com".to_string()));
-        valid_map.insert("password".to_string(), Value::Str("super-secret".to_string()));
+        valid_map.insert(
+            "email".to_string(),
+            Value::Str("ajay@example.com".to_string()),
+        );
+        valid_map.insert(
+            "password".to_string(),
+            Value::Str("super-secret".to_string()),
+        );
         let valid_input = Value::Object(Arc::new(valid_map));
 
         let res = user_schema.validate(&valid_input);
@@ -1549,8 +1602,14 @@ mod tests {
         // Strict mode unknown property rejection test
         let mut invalid_map = FastMap::default();
         invalid_map.insert("username".to_string(), Value::Str("ajay".to_string()));
-        invalid_map.insert("email".to_string(), Value::Str("ajay@example.com".to_string()));
-        invalid_map.insert("password".to_string(), Value::Str("super-secret".to_string()));
+        invalid_map.insert(
+            "email".to_string(),
+            Value::Str("ajay@example.com".to_string()),
+        );
+        invalid_map.insert(
+            "password".to_string(),
+            Value::Str("super-secret".to_string()),
+        );
         invalid_map.insert("admin".to_string(), Value::Bool(true)); // Unknown property!
         let invalid_input = Value::Object(Arc::new(invalid_map));
 
@@ -1560,7 +1619,13 @@ mod tests {
 
         let problem = err.to_problem_details(422, "/api/v1/users");
         if let Value::Object(prob_map) = problem {
-            assert_eq!(prob_map.get("status").and_then(|v| match v { Value::I64(i) => Some(*i as u16), _ => None }), Some(422));
+            assert_eq!(
+                prob_map.get("status").and_then(|v| match v {
+                    Value::I64(i) => Some(*i as u16),
+                    _ => None,
+                }),
+                Some(422)
+            );
         }
     }
 
@@ -1629,7 +1694,9 @@ mod tests {
 
         // 4. Invalid Transfer-Encoding value (not ending with chunked)
         let mut headers_te = Headers::new();
-        headers_te.insert("transfer-encoding", "gzip, identity").unwrap();
+        headers_te
+            .insert("transfer-encoding", "gzip, identity")
+            .unwrap();
         assert!(validate_framing_security(&headers_te).is_err());
 
         // 5. Negative Content-Length
@@ -1681,10 +1748,7 @@ mod tests {
 
         let (decoded, parsed_trailers, _) = decode_chunked(&wire).unwrap();
         assert_eq!(String::from_utf8(decoded).unwrap(), "Part 1; Part 2.");
-        assert_eq!(
-            parsed_trailers.unwrap().get("x-audit-trailer"),
-            Some("OK")
-        );
+        assert_eq!(parsed_trailers.unwrap().get("x-audit-trailer"), Some("OK"));
 
         // 2. Malformed chunk length (invalid hex)
         let bad_hex = b"XYZ\r\ndata\r\n0\r\n\r\n";
@@ -1702,8 +1766,10 @@ mod tests {
         use super::super::http2::frames::Http2Frame;
 
         // 1. Stream cancellation state transition
-        let mut conn = Http2Connection::new(Box::new(std::io::Cursor::new(Vec::<u8>::new())), false);
-        conn.active_streams.insert(1, super::super::http2::streams::Http2Stream::new(1, 65535));
+        let mut conn =
+            Http2Connection::new(Box::new(std::io::Cursor::new(Vec::<u8>::new())), false);
+        conn.active_streams
+            .insert(1, super::super::http2::streams::Http2Stream::new(1, 65535));
 
         let rst_frame = Http2Frame::RstStream {
             stream_id: 1,
@@ -1787,14 +1853,20 @@ mod tests {
         let block = encoder.encode(&headers);
         let decoded = decoder.decode(&block).unwrap();
         assert_eq!(decoded.len(), 3);
-        assert_eq!(decoded[1], ("content-type".to_string(), "application/json".to_string()));
+        assert_eq!(
+            decoded[1],
+            ("content-type".to_string(), "application/json".to_string())
+        );
 
         // 3. HTTP/3 Out-of-order multiplexing frame handling
         let mut conn = Http3Connection::new(false);
         let resp = Response::text("stream-8-data").unwrap();
         let payload = conn.encode_full_response(8, &resp, false).unwrap();
         assert!(!payload.is_empty());
-        assert_eq!(conn.active_streams.get(&8).unwrap().state, Http3StreamState::Completed);
+        assert_eq!(
+            conn.active_streams.get(&8).unwrap().state,
+            Http3StreamState::Completed
+        );
     }
 
     #[test]
@@ -1853,7 +1925,10 @@ mod tests {
 
         // 2. Email domain validation
         let mut email_schema = Schema::new("EmailDTO");
-        email_schema.add_field(FieldSpec::new("email", FieldType::Domain(DomainTypeKind::Email)));
+        email_schema.add_field(FieldSpec::new(
+            "email",
+            FieldType::Domain(DomainTypeKind::Email),
+        ));
 
         let mut bad_email_map = FastMap::default();
         bad_email_map.insert("email".to_string(), Value::Str("not-an-email".to_string()));
@@ -1864,7 +1939,7 @@ mod tests {
 
     #[test]
     fn test_audit_security_ssrf_decompression_and_redirects() {
-        use super::super::compression::{decompress_body, ContentEncoding};
+        use super::super::compression::{ContentEncoding, decompress_body};
         use super::super::security::audit_request_security;
         use crate::runtime::stdlib_src::url::security::URLSecurityPolicy;
         use crate::runtime::stdlib_src::url::url_object::URL;
@@ -1887,21 +1962,33 @@ mod tests {
         // 2. Redirect HTTPS -> HTTP downgrade attack check
         let secure_origin = URL::parse("https://example.com/checkout").unwrap();
         let insecure_redirect = URL::parse("http://example.com/checkout").unwrap();
-        assert!(ssrf_policy.validate_redirect(&secure_origin, &insecure_redirect).is_err());
+        assert!(
+            ssrf_policy
+                .validate_redirect(&secure_origin, &insecure_redirect)
+                .is_err()
+        );
 
         // 3. Decompression bomb protection (reject output exceeding max_decompressed limit)
         let uncompressed = vec![b'A'; 10000];
         let compressed_gzip = super::super::compression::compress_gzip(&uncompressed).unwrap();
-        
+
         // Allowed size limit 5000 bytes < 10000 bytes decompressed output => must fail with SecurityViolation
         let decomp_res = decompress_body(&compressed_gzip, ContentEncoding::Gzip, 5000);
         assert!(decomp_res.is_err());
-        assert_eq!(decomp_res.unwrap_err().kind, super::super::errors::HttpErrorKind::SecurityViolation);
+        assert_eq!(
+            decomp_res.unwrap_err().kind,
+            super::super::errors::HttpErrorKind::SecurityViolation
+        );
 
         // 4. Transport Security Audit Report
         let insecure_req = Request::get("http://example.com/login").unwrap();
         let audit = audit_request_security(&insecure_req);
         assert!(!audit.is_secure);
-        assert!(audit.findings.iter().any(|f| f.contains("Insecure transport")));
+        assert!(
+            audit
+                .findings
+                .iter()
+                .any(|f| f.contains("Insecure transport"))
+        );
     }
 }

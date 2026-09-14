@@ -337,7 +337,9 @@ fn convert_val_to_handle(
             let mut elem_handles = Vec::with_capacity(elem_types.len());
             for (idx, elem_ty) in elem_types.iter().enumerate() {
                 let off = idx as i32 * 8;
-                let elem_raw = builder.ins().load(types::I64, MemFlags::new(), val_raw, off);
+                let elem_raw = builder
+                    .ins()
+                    .load(types::I64, MemFlags::new(), val_raw, off);
                 let elem_handle = match elem_ty {
                     AotValueType::String => {
                         let c = builder.ins().call(ctors.make_string, &[elem_raw]);
@@ -409,10 +411,14 @@ fn convert_val_to_handle(
             ));
             let tuple_ptr = builder.ins().stack_addr(types::I64, tuple_slot, 0);
             for (i, h) in elem_handles.iter().enumerate() {
-                builder.ins().store(MemFlags::new(), *h, tuple_ptr, (i * 8) as i32);
+                builder
+                    .ins()
+                    .store(MemFlags::new(), *h, tuple_ptr, (i * 8) as i32);
             }
             let tuple_count = builder.ins().iconst(types::I64, elem_handles.len() as i64);
-            let c = builder.ins().call(ctors.make_tuple, &[tuple_ptr, tuple_count]);
+            let c = builder
+                .ins()
+                .call(ctors.make_tuple, &[tuple_ptr, tuple_count]);
             Ok(builder.inst_results(c)[0])
         }
         AotValueType::Set(elem_ty, arr_len) => {
@@ -520,7 +526,9 @@ fn convert_val_to_handle(
             ));
             let set_ptr = builder.ins().stack_addr(types::I64, set_slot, 0);
             for (i, h) in elem_handles.iter().enumerate() {
-                builder.ins().store(MemFlags::new(), *h, set_ptr, (i * 8) as i32);
+                builder
+                    .ins()
+                    .store(MemFlags::new(), *h, set_ptr, (i * 8) as i32);
             }
             let set_count = builder.ins().iconst(types::I64, elem_handles.len() as i64);
             let c = builder.ins().call(ctors.make_set, &[set_ptr, set_count]);
@@ -631,7 +639,9 @@ fn convert_val_to_handle(
             ));
             let arr_ptr = builder.ins().stack_addr(types::I64, arr_slot, 0);
             for (i, h) in elem_handles.iter().enumerate() {
-                builder.ins().store(MemFlags::new(), *h, arr_ptr, (i * 8) as i32);
+                builder
+                    .ins()
+                    .store(MemFlags::new(), *h, arr_ptr, (i * 8) as i32);
             }
             let arr_count = builder.ins().iconst(types::I64, elem_handles.len() as i64);
             let c = builder.ins().call(ctors.make_arr, &[arr_ptr, arr_count]);
@@ -650,7 +660,11 @@ fn convert_val_to_handle(
                         };
                         let key_call = builder.ins().call(ctors.make_string, &[key_val]);
                         let key_handle = builder.inst_results(key_call)[0];
-                        let field_raw = ctx.value_map.get(&field_id).copied().unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let field_raw = ctx
+                            .value_map
+                            .get(&field_id)
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
                         let field_handle = convert_val_to_handle(
                             ctx, builder, module, &field_id, field_raw, &field_ty, ctors,
                         )?;
@@ -665,7 +679,9 @@ fn convert_val_to_handle(
                         ));
                         let obj_ptr = builder.ins().stack_addr(types::I64, obj_slot, 0);
                         for (i, h) in kv_handles.iter().enumerate() {
-                            builder.ins().store(MemFlags::new(), *h, obj_ptr, (i * 8) as i32);
+                            builder
+                                .ins()
+                                .store(MemFlags::new(), *h, obj_ptr, (i * 8) as i32);
                         }
                         let obj_count = builder.ins().iconst(types::I64, kv_handles.len() as i64);
                         let c = builder.ins().call(ctors.make_obj, &[obj_ptr, obj_count]);
@@ -1917,12 +1933,18 @@ pub(crate) fn handle_call_builtin(
             let input_fn = module.declare_func_in_func(input_fn_id, builder.func);
 
             let prompt_val = if let Some(arg0) = args.first() {
-                ctx.value_map.get(arg0).copied().unwrap_or_else(|| builder.ins().iconst(types::I64, 0))
+                ctx.value_map
+                    .get(arg0)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0))
             } else {
                 builder.ins().iconst(types::I64, 0)
             };
             let opts_val = if let Some(arg1) = args.get(1) {
-                ctx.value_map.get(arg1).copied().unwrap_or_else(|| builder.ins().iconst(types::I64, 0))
+                ctx.value_map
+                    .get(arg1)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0))
             } else {
                 builder.ins().iconst(types::I64, 0)
             };
@@ -1957,17 +1979,33 @@ pub(crate) fn handle_call_builtin(
                 _ => "aot_input_mock",
             };
 
-            let arg0 = args.get(0).and_then(|id| ctx.value_map.get(id).copied()).unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-            let arg1 = args.get(1).and_then(|id| ctx.value_map.get(id).copied()).unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-            let arg2 = args.get(2).and_then(|id| ctx.value_map.get(id).copied()).unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-            let arg3 = args.get(3).and_then(|id| ctx.value_map.get(id).copied()).unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-            let arg4 = args.get(4).and_then(|id| ctx.value_map.get(id).copied()).unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+            let arg0 = args
+                .get(0)
+                .and_then(|id| ctx.value_map.get(id).copied())
+                .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+            let arg1 = args
+                .get(1)
+                .and_then(|id| ctx.value_map.get(id).copied())
+                .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+            let arg2 = args
+                .get(2)
+                .and_then(|id| ctx.value_map.get(id).copied())
+                .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+            let arg3 = args
+                .get(3)
+                .and_then(|id| ctx.value_map.get(id).copied())
+                .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+            let arg4 = args
+                .get(4)
+                .and_then(|id| ctx.value_map.get(id).copied())
+                .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
 
             let num_params = match sub_method {
                 "slider" => 5,
                 "table" => 4,
                 "checkbox" | "radio" | "select" | "diff" | "tree" | "pin" => 3,
-                "confirm" | "password" | "fuzzy" | "datepicker" | "datetime" | "datetimepicker" | "timepicker" | "color" | "hotkey" | "form" => 2,
+                "confirm" | "password" | "fuzzy" | "datepicker" | "datetime" | "datetimepicker"
+                | "timepicker" | "color" | "hotkey" | "form" => 2,
                 _ => 1, // mock
             };
 
@@ -2092,8 +2130,7 @@ pub(crate) fn handle_call_builtin(
             }
 
             let print_opts_sig = {
-                let mut sig =
-                    Signature::new(isa::CallConv::triple_default(module.isa().triple()));
+                let mut sig = Signature::new(isa::CallConv::triple_default(module.isa().triple()));
                 sig.params.push(AbiParam::new(types::I64)); // values_ptr
                 sig.params.push(AbiParam::new(types::I64)); // values_count
                 sig.params.push(AbiParam::new(types::I64)); // options_handle
@@ -2117,8 +2154,7 @@ pub(crate) fn handle_call_builtin(
                     .get(arg_id)
                     .cloned()
                     .unwrap_or(AotValueType::Int);
-                let handle =
-                    convert_val_to_handle(ctx, builder, module, arg_id, val, &ty, &ctors)?;
+                let handle = convert_val_to_handle(ctx, builder, module, arg_id, val, &ty, &ctors)?;
                 arg_values.push(handle);
             }
 
@@ -2135,14 +2171,13 @@ pub(crate) fn handle_call_builtin(
                     .store(MemFlags::new(), *val, array_ptr, offset);
             }
             let count = builder.ins().iconst(types::I64, arg_values.len() as i64);
-            let opts_handle_i64 =
-                if builder.func.dfg.value_type(options_handle) == types::I64 {
-                    options_handle
-                } else if builder.func.dfg.value_type(options_handle).is_int() {
-                    builder.ins().uextend(types::I64, options_handle)
-                } else {
-                    builder.ins().iconst(types::I64, 0)
-                };
+            let opts_handle_i64 = if builder.func.dfg.value_type(options_handle) == types::I64 {
+                options_handle
+            } else if builder.func.dfg.value_type(options_handle).is_int() {
+                builder.ins().uextend(types::I64, options_handle)
+            } else {
+                builder.ins().iconst(types::I64, 0)
+            };
             builder
                 .ins()
                 .call(print_opts_ref, &[array_ptr, count, opts_handle_i64]);
@@ -2152,8 +2187,7 @@ pub(crate) fn handle_call_builtin(
         "println" => {
             let ctors = RuntimeValueConstructors::declare(module, builder)?;
             let print_opts_sig = {
-                let mut sig =
-                    Signature::new(isa::CallConv::triple_default(module.isa().triple()));
+                let mut sig = Signature::new(isa::CallConv::triple_default(module.isa().triple()));
                 sig.params.push(AbiParam::new(types::I64)); // values_ptr
                 sig.params.push(AbiParam::new(types::I64)); // values_count
                 sig.params.push(AbiParam::new(types::I64)); // options_handle
@@ -2177,8 +2211,7 @@ pub(crate) fn handle_call_builtin(
                     .get(arg_id)
                     .cloned()
                     .unwrap_or(AotValueType::Int);
-                let handle =
-                    convert_val_to_handle(ctx, builder, module, arg_id, val, &ty, &ctors)?;
+                let handle = convert_val_to_handle(ctx, builder, module, arg_id, val, &ty, &ctors)?;
                 arg_values.push(handle);
             }
 
@@ -2482,12 +2515,14 @@ pub(crate) fn handle_call_builtin(
                     base + entries
                 } else {
                     match val_type {
-                        Some(AotValueType::U8) | Some(AotValueType::I8) | Some(AotValueType::Bool) => 1,
+                        Some(AotValueType::U8)
+                        | Some(AotValueType::I8)
+                        | Some(AotValueType::Bool) => 1,
                         Some(AotValueType::Char) => 4,
                         Some(AotValueType::U16) | Some(AotValueType::I16) => 2,
-                        Some(AotValueType::U32) | Some(AotValueType::I32) | Some(AotValueType::F32) => {
-                            4
-                        }
+                        Some(AotValueType::U32)
+                        | Some(AotValueType::I32)
+                        | Some(AotValueType::F32) => 4,
                         Some(AotValueType::U64)
                         | Some(AotValueType::I64)
                         | Some(AotValueType::F64)
@@ -3402,7 +3437,8 @@ pub(crate) fn handle_call_builtin(
                             let key_handle = builder.inst_results(key_call)[0];
                             kv_handles.push(key_handle);
 
-                            let value_handle = if let Some(&value_raw) = ctx.value_map.get(&val_id) {
+                            let value_handle = if let Some(&value_raw) = ctx.value_map.get(&val_id)
+                            {
                                 convert_val_to_handle(
                                     ctx, builder, module, &val_id, value_raw, &val_type, &ctors,
                                 )?
@@ -3664,7 +3700,9 @@ pub(crate) fn handle_call_builtin(
                         let handle_val = convert_val_to_handle(
                             ctx, builder, module, arg_id, raw_val, &elem_type, ctors_ref,
                         )?;
-                        builder.ins().store(MemFlags::new(), handle_val, elem_ptr, 0);
+                        builder
+                            .ins()
+                            .store(MemFlags::new(), handle_val, elem_ptr, 0);
                         continue;
                     }
 
@@ -3689,11 +3727,13 @@ pub(crate) fn handle_call_builtin(
                         // Store based on element type
                         match first_type {
                             AotValueType::F32 => {
-                                let fval = if matches!(elem_type, AotValueType::F64 | AotValueType::Float) {
-                                    builder.ins().fdemote(types::F32, elem_val)
-                                } else {
-                                    elem_val
-                                };
+                                let fval =
+                                    if matches!(elem_type, AotValueType::F64 | AotValueType::Float)
+                                    {
+                                        builder.ins().fdemote(types::F32, elem_val)
+                                    } else {
+                                        elem_val
+                                    };
                                 builder.ins().store(MemFlags::new(), fval, elem_ptr, 0);
                             }
                             AotValueType::F64 | AotValueType::Float => {

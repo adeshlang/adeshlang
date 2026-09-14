@@ -123,7 +123,10 @@ fn connect(url: &Url) -> Result<StreamOwned<ClientConnection, TcpStream>, String
             Err(e) => last_err = e.to_string(),
         }
     }
-    Err(format!("Failed to connect to {}:{}: {last_err}", url.host, url.port))
+    Err(format!(
+        "Failed to connect to {}:{}: {last_err}",
+        url.host, url.port
+    ))
 }
 
 struct Response {
@@ -149,9 +152,7 @@ fn read_line(stream: &mut StreamOwned<ClientConnection, TcpStream>) -> Result<St
     Ok(String::from_utf8_lossy(&line).trim().to_string())
 }
 
-fn read_headers(
-    stream: &mut StreamOwned<ClientConnection, TcpStream>,
-) -> Result<Response, String> {
+fn read_headers(stream: &mut StreamOwned<ClientConnection, TcpStream>) -> Result<Response, String> {
     let status_line = read_line(stream)?;
     let status = status_line
         .split_ascii_whitespace()
@@ -251,11 +252,9 @@ pub fn download_to(url: &str, dest: &Path) -> Result<DownloadResult, String> {
                 if size_line.is_empty() {
                     continue;
                 }
-                let size = usize::from_str_radix(
-                    size_line.split(';').next().unwrap_or("").trim(),
-                    16,
-                )
-                .map_err(|_| format!("Malformed chunk size `{size_line}`"))?;
+                let size =
+                    usize::from_str_radix(size_line.split(';').next().unwrap_or("").trim(), 16)
+                        .map_err(|_| format!("Malformed chunk size `{size_line}`"))?;
                 if size == 0 {
                     // Trailers until blank line.
                     while !read_line(&mut stream)?.is_empty() {}
@@ -286,9 +285,7 @@ pub fn download_to(url: &str, dest: &Path) -> Result<DownloadResult, String> {
                     .read(&mut buf[..want])
                     .map_err(|e| format!("read: {e}"))?;
                 if n == 0 {
-                    return Err(format!(
-                        "Connection closed early at {total} of {len} bytes"
-                    ));
+                    return Err(format!("Connection closed early at {total} of {len} bytes"));
                 }
                 body_chunk(&buf[..n])?;
                 remaining -= n as u64;

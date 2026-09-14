@@ -21,10 +21,7 @@ pub(super) enum VMValue {
     Array(Vec<VMValue>),
     Tuple(Vec<VMValue>),
     Object(std::collections::HashMap<String, VMValue>),
-    Closure {
-        fn_offset: u32,
-        env: Vec<VMValue>,
-    },
+    Closure { fn_offset: u32, env: Vec<VMValue> },
     U64(u64), // For pointer addresses
     Null,
 }
@@ -107,12 +104,16 @@ pub(super) fn vm_value_to_builtin_runtime_value(
         VMValue::Str(s) => BRV::String(s),
         VMValue::BigInt(b) => BRV::BigInt(b),
         VMValue::U64(u) => BRV::U64(u), // Support pointer addresses
-        VMValue::Array(arr) => {
-            BRV::Array(arr.into_iter().map(vm_value_to_builtin_runtime_value).collect())
-        }
-        VMValue::Tuple(tup) => {
-            BRV::Tuple(tup.into_iter().map(vm_value_to_builtin_runtime_value).collect())
-        }
+        VMValue::Array(arr) => BRV::Array(
+            arr.into_iter()
+                .map(vm_value_to_builtin_runtime_value)
+                .collect(),
+        ),
+        VMValue::Tuple(tup) => BRV::Tuple(
+            tup.into_iter()
+                .map(vm_value_to_builtin_runtime_value)
+                .collect(),
+        ),
         VMValue::Object(map) => {
             let mut runtime_map = crate::utils::collections::FastMap::default();
             for (k, v) in map {
@@ -137,12 +138,16 @@ pub(super) fn builtin_runtime_value_to_vm_value(
         BRV::Bool(b) => VMValue::Bool(b),
         BRV::BigInt(b) => VMValue::BigInt(b),
         BRV::U64(u) => VMValue::U64(u), // Support pointer addresses
-        BRV::Array(arr) => {
-            VMValue::Array(arr.into_iter().map(builtin_runtime_value_to_vm_value).collect())
-        }
-        BRV::Tuple(tup) => {
-            VMValue::Tuple(tup.into_iter().map(builtin_runtime_value_to_vm_value).collect())
-        }
+        BRV::Array(arr) => VMValue::Array(
+            arr.into_iter()
+                .map(builtin_runtime_value_to_vm_value)
+                .collect(),
+        ),
+        BRV::Tuple(tup) => VMValue::Tuple(
+            tup.into_iter()
+                .map(builtin_runtime_value_to_vm_value)
+                .collect(),
+        ),
         BRV::Object(map) => {
             let mut vm_map = std::collections::HashMap::new();
             for (k, v) in map {

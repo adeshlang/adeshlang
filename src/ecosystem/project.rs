@@ -181,7 +181,15 @@ impl ProjectLayout {
                 if let Some(ref ext_str) = ext {
                     if matches!(
                         ext_str.as_str(),
-                        "d" | "pdb" | "tag" | "lock" | "adl" | "adesh" | "tmp" | "rs" | "md" | "txt"
+                        "d" | "pdb"
+                            | "tag"
+                            | "lock"
+                            | "adl"
+                            | "adesh"
+                            | "tmp"
+                            | "rs"
+                            | "md"
+                            | "txt"
                     ) {
                         continue;
                     }
@@ -314,14 +322,62 @@ impl ProjectLayout {
     }
 
     pub fn create_template(&self, template: ProjectTemplate, name: &str) -> Result<(), String> {
-        self.ensure_layout()?;
+        fs::create_dir_all(&self.root).map_err(|error| error.to_string())?;
         fs::create_dir_all(self.root.join("src")).map_err(|error| error.to_string())?;
-        fs::create_dir_all(self.root.join("tests")).map_err(|error| error.to_string())?;
-        fs::create_dir_all(self.root.join("examples")).map_err(|error| error.to_string())?;
-        fs::create_dir_all(self.root.join("assets")).map_err(|error| error.to_string())?;
 
         self.template_manifest(template, name)
             .save(self.manifest_path())?;
+
+        // Create standard .gitignore
+        let gitignore_path = self.root.join(".gitignore");
+        if !gitignore_path.exists() {
+            let gitignore_content = "\
+# ADL build artifacts and dependencies
+target/
+.adl/
+adl_modules/
+.adesh_cache/
+*.exe
+*.lib
+*.dll
+*.so
+*.dylib
+*.o
+*.obj
+";
+            let _ = fs::write(gitignore_path, gitignore_content);
+        }
+
+        // Create README.md
+        let readme_path = self.root.join("README.md");
+        if !readme_path.exists() {
+            let readme_content = format!(
+                "# {name}\n\n\
+A modern AdeshLang project managed with ADL (AdeshLang Package Manager).\n\n\
+## 🚀 Quick Start\n\n\
+### Run the project\n\
+```bash\n\
+adl run\n\
+# or\n\
+adesh run src/main.adesh\n\
+```\n\n\
+### Build native executable (AOT)\n\
+```bash\n\
+adl build\n\
+# or\n\
+adesh build src/main.adesh\n\
+```\n\n\
+### Add dependencies\n\
+```bash\n\
+adl add <package_name> <version>\n\
+adl install\n\
+```\n\n\
+## 📁 Project Structure\n\
+- `src/` — Main source code files\n\
+- `adesh.adl` — Project configuration and dependency manifest\n"
+            );
+            let _ = fs::write(readme_path, readme_content);
+        }
 
         match template {
             ProjectTemplate::App | ProjectTemplate::Package | ProjectTemplate::Plugin => {
@@ -530,11 +586,61 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
 }
 
 fn default_app_source(name: &str) -> String {
-    format!("print(\"Hello from {name}\");\n")
+    format!(
+        "// Welcome to your AdeshLang project: {name}!\n\
+//\n\
+// 🚀 Useful commands:\n\
+//   adl run              Run this project\n\
+//   adl build            Compile to native binary\n\
+//   adl test             Run project tests\n\
+//   adl add <pkg> <ver>  Add a package dependency\n\n\
+fn greet(name: String): String {{\n\
+    return \"Hello, \" + name + \"! Welcome to AdeshLang.\";\n\
+}}\n\n\
+fn calculate_fibonacci(n: i64): i64 {{\n\
+    if n <= 1 {{\n\
+        return n;\n\
+    }}\n\
+    return calculate_fibonacci(n - 1) + calculate_fibonacci(n - 2);\n\
+}}\n\n\
+fn main(): void {{\n\
+    let app_title: String = \"{name}\";\n\
+    print(\"🚀 Initializing project:\", app_title);\n\
+    print(greet(\"Developer\"));\n\n\
+    // Type-safe collections and transformations\n\
+    let numbers: [i64] = [1, 2, 3, 4, 5];\n\
+    let squares: [i64] = map(numbers, fn(x: i64): i64 {{\n\
+        return x * x;\n\
+    }});\n\n\
+    print(\"🔢 Numbers:\", numbers);\n\
+    print(\"✨ Squares:\", squares);\n\
+    print(\"📈 Fibonacci(10):\", calculate_fibonacci(10));\n\
+}}\n"
+    )
 }
 
 fn default_library_source(name: &str) -> String {
-    format!("export fn hello() {{ return \"Hello from {name}\"; }}\n")
+    format!(
+        "// AdeshLang Library Module: {name}\n\
+//\n\
+// 🚀 Useful commands:\n\
+//   adl build --lib      Compile this library\n\
+//   adl test             Run library unit tests\n\n\
+export fn add(a: i64, b: i64): i64 {{\n\
+    return a + b;\n\
+}}\n\n\
+export fn multiply(a: i64, b: i64): i64 {{\n\
+    return a * b;\n\
+}}\n\n\
+export fn greet(name: String): String {{\n\
+    return \"Hello, \" + name + \" from the {name} library!\";\n\
+}}\n\n\
+export class MathHelper {{\n\
+    fn square(x: i64): i64 {{\n\
+        return x * x;\n\
+    }}\n\
+}}\n"
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -606,25 +712,47 @@ mod tests {
     #[test]
     fn test_project_layout_directories() {
         let layout = ProjectLayout::new(PathBuf::from("/test/project"));
-        assert_eq!(layout.manifest_path(), PathBuf::from("/test/project/adesh.adl"));
-        assert_eq!(layout.lockfile_path(), PathBuf::from("/test/project/adesh.lock.adl"));
+        assert_eq!(
+            layout.manifest_path(),
+            PathBuf::from("/test/project/adesh.adl")
+        );
+        assert_eq!(
+            layout.lockfile_path(),
+            PathBuf::from("/test/project/adesh.lock.adl")
+        );
         assert_eq!(layout.adl_dir(), PathBuf::from("/test/project/.adl"));
         assert_eq!(layout.bin_dir(), PathBuf::from("/test/project/.adl/bin"));
         assert_eq!(layout.target_dir(), PathBuf::from("/test/project/target"));
-        assert_eq!(layout.target_bin_dir(), PathBuf::from("/test/project/target/bin"));
+        assert_eq!(
+            layout.target_bin_dir(),
+            PathBuf::from("/test/project/target/bin")
+        );
         assert_eq!(layout.src_bin_dir(), PathBuf::from("/test/project/src/bin"));
-        assert_eq!(layout.artifacts_dir(), PathBuf::from("/test/project/.adl/artifacts"));
+        assert_eq!(
+            layout.artifacts_dir(),
+            PathBuf::from("/test/project/.adl/artifacts")
+        );
     }
 
     #[test]
     fn test_locate_binaries_and_sources() {
-        let temp_dir = std::env::temp_dir().join(format!("adl_test_bin_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let temp_dir = std::env::temp_dir().join(format!(
+            "adl_test_bin_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         let layout = ProjectLayout::new(&temp_dir);
         layout.ensure_layout().unwrap();
 
         // Create src/main.adesh and src/bin/cli.adesh
         fs::create_dir_all(layout.src_bin_dir()).unwrap();
-        fs::write(layout.root.join("src").join("main.adesh"), "print(\"hello\");").unwrap();
+        fs::write(
+            layout.root.join("src").join("main.adesh"),
+            "print(\"hello\");",
+        )
+        .unwrap();
         fs::write(layout.src_bin_dir().join("tool.adesh"), "print(\"tool\");").unwrap();
 
         let sources = layout.list_binary_sources();
@@ -657,8 +785,16 @@ mod tests {
 
         let all_builds = layout.locate_binary_builds(None);
         assert!(all_builds.len() >= 2);
-        assert!(all_builds.iter().any(|b| b.name == "tool" && b.is_executable));
-        assert!(all_builds.iter().any(|b| b.name == "main" && b.is_executable));
+        assert!(
+            all_builds
+                .iter()
+                .any(|b| b.name == "tool" && b.is_executable)
+        );
+        assert!(
+            all_builds
+                .iter()
+                .any(|b| b.name == "main" && b.is_executable)
+        );
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

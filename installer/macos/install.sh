@@ -210,7 +210,7 @@ else
 fi
 
 # Toolchain manifest v2 ships at <home>/config/toolchain-manifest.json; it
-# pins the LLVM 18.1.8 URLs + SHA-256 that `adesh toolchain install` uses.
+# pins the LLVM 23.1.1 URLs + SHA-256 that `adesh toolchain install` uses.
 if [[ -d "$PAYLOAD_DIR/config" ]]; then
     run_root /usr/bin/ditto "$PAYLOAD_DIR/config" "$INSTALL_DIR/config"
 else
@@ -270,7 +270,7 @@ fi
 echo "==> Stripping quarantine attributes from installed files (idempotent)"
 run_root /usr/bin/xattr -dr com.apple.quarantine "$INSTALL_DIR/bin" 2>/dev/null || true
 
-# --- Toolchain (LLVM 18.1.8) ----------------------------------------------------
+# --- Toolchain (LLVM 23.1.1) ----------------------------------------------------
 ask_toolchain() {
     if [[ "$SKIP_TOOLCHAIN" == "1" ]]; then
         return 1
@@ -280,10 +280,10 @@ ask_toolchain() {
     fi
     local ans=""
     if [[ -t 0 ]]; then
-        read -r -p "Download and install the pinned LLVM 18.1.8 toolchain now? [Y/n] " ans || ans=""
+        read -r -p "Download and install pinned LLVM 23.1.1 toolchain now (~190 MB download, ~900 MB disk space)? [Y/n] " ans || ans=""
     elif [[ -r /dev/tty ]]; then
         # curl | bash: stdin is the pipe, so prompt on /dev/tty instead.
-        read -r -p "Download and install the pinned LLVM 18.1.8 toolchain now? [Y/n] " ans < /dev/tty || ans=""
+        read -r -p "Download and install pinned LLVM 23.1.1 toolchain now (~190 MB download, ~900 MB disk space)? [Y/n] " ans < /dev/tty || ans=""
     fi
     case "${ans:-y}" in
         n|N|no) return 1 ;;
@@ -304,7 +304,7 @@ install_toolchain() {
     elif [[ "$WITH_GPU" == "1" ]]; then
         mode_flag="--build-mlir-source"
     fi
-    echo "==> Installing the pinned LLVM 18.1.8 toolchain (this can take a while)"
+    echo "==> Installing pinned LLVM 23.1.1 toolchain (~190 MB compressed download, ~900 MB disk space)"
     if [[ "$MODE" == "system" ]]; then
         sudo ADESH_HOME="$INSTALL_DIR" "$INSTALL_DIR/bin/adesh" toolchain install "$scope" $mode_flag
     else
@@ -320,7 +320,7 @@ install_toolchain() {
 
 if ask_toolchain; then
     if install_toolchain; then
-        echo "    LLVM 18.1.8 toolchain installed and exposed."
+        echo "    LLVM 23.1.1 toolchain installed and exposed."
     else
         cat <<MSG
 

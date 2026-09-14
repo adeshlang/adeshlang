@@ -39,7 +39,6 @@ impl TieredJitContext {
             let mut current_block = current_func.entry_block;
 
             'block_loop: loop {
-
                 let block = current_func
                     .get_block(current_block)
                     .ok_or_else(|| format!("Block {} not found", current_block))?;
@@ -99,7 +98,6 @@ impl TieredJitContext {
             let mut current_block = current_func.entry_block;
 
             'block_loop: loop {
-
                 let block = current_func
                     .get_block(current_block)
                     .ok_or_else(|| format!("Block {} not found", current_block))?;
@@ -157,7 +155,6 @@ impl TieredJitContext {
             let mut current_block = current_func.entry_block;
 
             'block_loop: loop {
-
                 let block = current_func
                     .get_block(current_block)
                     .ok_or_else(|| format!("Block {} not found", current_block))?;
@@ -215,7 +212,6 @@ impl TieredJitContext {
             let mut current_block = current_func.entry_block;
 
             'block_loop: loop {
-
                 let block = current_func
                     .get_block(current_block)
                     .ok_or_else(|| format!("Block {} not found", current_block))?;
@@ -276,7 +272,6 @@ impl TieredJitContext {
             let mut current_block = current_func.entry_block;
 
             'block_loop: loop {
-
                 let block = current_func
                     .get_block(current_block)
                     .ok_or_else(|| format!("Block {} not found", current_block))?;

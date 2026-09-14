@@ -6,10 +6,10 @@ use adesh_editor::completion::{CandidateKind, CompletionCandidate, CompletionSta
 use adesh_editor::config::Theme;
 use adesh_editor::discovery::find_executable;
 use adesh_editor::explorer::FileExplorer;
-use adesh_editor::highlighter::{highlight_line, Language};
+use adesh_editor::highlighter::{Language, highlight_line};
 use adesh_editor::palette::{CommandItem, PaletteState};
 use adesh_editor::runner::Backend;
-use adesh_editor::search::{fuzzy_match_score, SearchState};
+use adesh_editor::search::{SearchState, fuzzy_match_score};
 use adesh_editor::split::{SplitDirection, SplitTree};
 use adesh_editor::workspace::Workspace;
 
@@ -77,8 +77,18 @@ fn test_command_palette_filtering() {
     assert_eq!(palette.filtered_items.len(), CommandItem::all().len());
 
     palette.update_query("Run".to_string());
-    assert!(palette.filtered_items.iter().any(|item| item == &CommandItem::Run));
-    assert!(palette.filtered_items.iter().any(|item| item == &CommandItem::RunWithBackend));
+    assert!(
+        palette
+            .filtered_items
+            .iter()
+            .any(|item| item == &CommandItem::Run)
+    );
+    assert!(
+        palette
+            .filtered_items
+            .iter()
+            .any(|item| item == &CommandItem::RunWithBackend)
+    );
 }
 
 #[test]
@@ -146,7 +156,11 @@ fn test_multi_cursor_editing() {
         "line two".to_string(),
         "line three".to_string(),
     ];
-    buf.cursor = Cursor { line: 0, col: 4, desired_col: 4 };
+    buf.cursor = Cursor {
+        line: 0,
+        col: 4,
+        desired_col: 4,
+    };
     buf.add_cursor_below();
     assert_eq!(buf.secondary_cursors.len(), 1);
 
@@ -167,13 +181,24 @@ fn test_vim_text_objects() {
         "fn calculate(a: i32, b: i32) -> i32 { return a + b; }".to_string(),
     ];
 
-    buf.cursor = Cursor { line: 0, col: 18, desired_col: 18 };
+    buf.cursor = Cursor {
+        line: 0,
+        col: 18,
+        desired_col: 18,
+    };
     let quotes = buf.find_quotes('"', true).unwrap();
     assert_eq!(&buf.lines[0][quotes.0..quotes.1], "production grade");
 
-    buf.cursor = Cursor { line: 1, col: 15, desired_col: 15 };
+    buf.cursor = Cursor {
+        line: 1,
+        col: 15,
+        desired_col: 15,
+    };
     let brackets = buf.find_brackets('(', ')', true).unwrap();
-    assert_eq!(&buf.lines[brackets.0][brackets.1..brackets.3], "a: i32, b: i32");
+    assert_eq!(
+        &buf.lines[brackets.0][brackets.1..brackets.3],
+        "a: i32, b: i32"
+    );
 }
 
 #[test]
@@ -208,7 +233,10 @@ fn test_auto_completion_state() {
     assert_eq!(completion.filtered.len(), 2);
 
     completion.select_next();
-    assert_eq!(completion.selected_candidate().unwrap().label, "function_two");
+    assert_eq!(
+        completion.selected_candidate().unwrap().label,
+        "function_two"
+    );
 }
 
 #[test]
@@ -320,19 +348,35 @@ fn test_compiler_ir_generation() {
 
         let hir_lines: Vec<String> = app.dump_compiler_ir("--dump-hir", "HIR");
         assert!(!hir_lines.is_empty());
-        assert!(hir_lines.iter().any(|l: &String| l.contains("HIR") || l.contains("hir.function")));
+        assert!(
+            hir_lines
+                .iter()
+                .any(|l: &String| l.contains("HIR") || l.contains("hir.function"))
+        );
 
         let lir_lines: Vec<String> = app.dump_compiler_ir("--dump-lir", "LIR");
         assert!(!lir_lines.is_empty());
-        assert!(lir_lines.iter().any(|l: &String| l.contains("LIR") || l.contains("target triple")));
+        assert!(
+            lir_lines
+                .iter()
+                .any(|l: &String| l.contains("LIR") || l.contains("target triple"))
+        );
 
         let mlir_lines: Vec<String> = app.dump_compiler_ir("--dump-mlir", "MLIR");
         assert!(!mlir_lines.is_empty());
-        assert!(mlir_lines.iter().any(|l: &String| l.contains("MLIR") || l.contains("func.func")));
+        assert!(
+            mlir_lines
+                .iter()
+                .any(|l: &String| l.contains("MLIR") || l.contains("func.func"))
+        );
 
         let bc_lines: Vec<String> = app.dump_compiler_ir("--dump-bytecode", "Bytecode");
         assert!(!bc_lines.is_empty());
-        assert!(bc_lines.iter().any(|l: &String| l.contains("Bytecode") || l.contains("OP_")));
+        assert!(
+            bc_lines
+                .iter()
+                .any(|l: &String| l.contains("Bytecode") || l.contains("OP_"))
+        );
     });
 }
 
@@ -562,34 +606,62 @@ fn test_vim_count_prefix_navigation() {
         let mut app = adesh_editor::app::App::new(None);
         let buf = app.current_buffer_mut();
         buf.lines = (1..=20).map(|i| format!("line number {}", i)).collect();
-        buf.cursor = Cursor { line: 0, col: 0, desired_col: 0 };
+        buf.cursor = Cursor {
+            line: 0,
+            col: 0,
+            desired_col: 0,
+        };
 
         // Test 5j -> jumps 5 lines down
-        let key_5 = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('5'), crossterm::event::KeyModifiers::NONE);
-        let key_j = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('j'), crossterm::event::KeyModifiers::NONE);
+        let key_5 = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('5'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let key_j = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('j'),
+            crossterm::event::KeyModifiers::NONE,
+        );
         adesh_editor::input::handle_key_event(&mut app, key_5).await;
         adesh_editor::input::handle_key_event(&mut app, key_j).await;
         assert_eq!(app.current_buffer().cursor.line, 5);
 
         // Test 3k -> jumps 3 lines up
-        let key_3 = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('3'), crossterm::event::KeyModifiers::NONE);
-        let key_k = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('k'), crossterm::event::KeyModifiers::NONE);
+        let key_3 = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('3'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let key_k = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('k'),
+            crossterm::event::KeyModifiers::NONE,
+        );
         adesh_editor::input::handle_key_event(&mut app, key_3).await;
         adesh_editor::input::handle_key_event(&mut app, key_k).await;
         assert_eq!(app.current_buffer().cursor.line, 2);
 
         // Test 2dd -> deletes 2 lines
         let orig_len = app.current_buffer().lines.len();
-        let key_2 = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('2'), crossterm::event::KeyModifiers::NONE);
-        let key_d = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('d'), crossterm::event::KeyModifiers::NONE);
+        let key_2 = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('2'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let key_d = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('d'),
+            crossterm::event::KeyModifiers::NONE,
+        );
         adesh_editor::input::handle_key_event(&mut app, key_2).await;
         adesh_editor::input::handle_key_event(&mut app, key_d).await;
         adesh_editor::input::handle_key_event(&mut app, key_d).await;
         assert_eq!(app.current_buffer().lines.len(), orig_len - 2);
 
         // Test 4x -> deletes 4 characters
-        let key_4 = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('4'), crossterm::event::KeyModifiers::NONE);
-        let key_x = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('x'), crossterm::event::KeyModifiers::NONE);
+        let key_4 = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('4'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let key_x = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('x'),
+            crossterm::event::KeyModifiers::NONE,
+        );
         let line_before = app.current_buffer().lines[app.current_buffer().cursor.line].clone();
         adesh_editor::input::handle_key_event(&mut app, key_4).await;
         adesh_editor::input::handle_key_event(&mut app, key_x).await;
@@ -604,38 +676,65 @@ fn test_home_end_pageup_pagedown_keys() {
     rt.block_on(async {
         let mut app = adesh_editor::app::App::new(None);
         let buf = app.current_buffer_mut();
-        buf.lines = (1..=50).map(|i| format!("    indented line number {}", i)).collect();
-        buf.cursor = Cursor { line: 0, col: 0, desired_col: 0 };
+        buf.lines = (1..=50)
+            .map(|i| format!("    indented line number {}", i))
+            .collect();
+        buf.cursor = Cursor {
+            line: 0,
+            col: 0,
+            desired_col: 0,
+        };
 
         // Test End in Normal Mode
-        let key_end = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::End, crossterm::event::KeyModifiers::NONE);
+        let key_end = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::End,
+            crossterm::event::KeyModifiers::NONE,
+        );
         adesh_editor::input::handle_key_event(&mut app, key_end).await;
-        assert_eq!(app.current_buffer().cursor.col, app.current_buffer().lines[0].len());
+        assert_eq!(
+            app.current_buffer().cursor.col,
+            app.current_buffer().lines[0].len()
+        );
 
         // Test Home in Normal Mode (jumps to start of line col 0)
-        let key_home = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Home, crossterm::event::KeyModifiers::NONE);
+        let key_home = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Home,
+            crossterm::event::KeyModifiers::NONE,
+        );
         adesh_editor::input::handle_key_event(&mut app, key_home).await;
         assert_eq!(app.current_buffer().cursor.col, 0);
 
         // Test ^ in Normal Mode (jumps to first non-whitespace col 4)
-        let key_caret = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('^'), crossterm::event::KeyModifiers::NONE);
+        let key_caret = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('^'),
+            crossterm::event::KeyModifiers::NONE,
+        );
         adesh_editor::input::handle_key_event(&mut app, key_caret).await;
         assert_eq!(app.current_buffer().cursor.col, 4);
 
         // Test PageDown in Normal Mode (jumps ~15 lines)
-        let key_pgdn = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::PageDown, crossterm::event::KeyModifiers::NONE);
+        let key_pgdn = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::PageDown,
+            crossterm::event::KeyModifiers::NONE,
+        );
         adesh_editor::input::handle_key_event(&mut app, key_pgdn).await;
         assert_eq!(app.current_buffer().cursor.line, 15);
 
         // Test PageUp in Normal Mode
-        let key_pgup = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::PageUp, crossterm::event::KeyModifiers::NONE);
+        let key_pgup = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::PageUp,
+            crossterm::event::KeyModifiers::NONE,
+        );
         adesh_editor::input::handle_key_event(&mut app, key_pgup).await;
         assert_eq!(app.current_buffer().cursor.line, 0);
 
         // Switch to Insert Mode and test End, Home, PageDown
         app.mode = adesh_editor::mode::Mode::Insert;
         adesh_editor::input::handle_key_event(&mut app, key_end).await;
-        assert_eq!(app.current_buffer().cursor.col, app.current_buffer().lines[0].len());
+        assert_eq!(
+            app.current_buffer().cursor.col,
+            app.current_buffer().lines[0].len()
+        );
         adesh_editor::input::handle_key_event(&mut app, key_home).await;
         assert_eq!(app.current_buffer().cursor.col, 0); // In insert mode, home goes to column 0
         adesh_editor::input::handle_key_event(&mut app, key_pgdn).await;
@@ -708,12 +807,18 @@ fn test_output_and_terminal_scrolling() {
         app.terminal.history = (1..=30).map(|i| format!("log line {}", i)).collect();
 
         // Test PageUp in terminal mode
-        let key_pgup = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::PageUp, crossterm::event::KeyModifiers::NONE);
+        let key_pgup = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::PageUp,
+            crossterm::event::KeyModifiers::NONE,
+        );
         adesh_editor::input::handle_key_event(&mut app, key_pgup).await;
         assert_eq!(app.terminal_scroll, 10);
 
         // Test Ctrl+D in terminal mode
-        let key_ctrld = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('d'), crossterm::event::KeyModifiers::CONTROL);
+        let key_ctrld = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('d'),
+            crossterm::event::KeyModifiers::CONTROL,
+        );
         adesh_editor::input::handle_key_event(&mut app, key_ctrld).await;
         assert_eq!(app.terminal_scroll, 0);
     });
@@ -728,7 +833,12 @@ fn test_ansi_color_parsing_to_spans() {
     // Span 0: "Error:" with bold red
     assert_eq!(line.spans[0].content, "Error:");
     assert_eq!(line.spans[0].style.fg, Some(ratatui::style::Color::Red));
-    assert!(line.spans[0].style.add_modifier.contains(ratatui::style::Modifier::BOLD));
+    assert!(
+        line.spans[0]
+            .style
+            .add_modifier
+            .contains(ratatui::style::Modifier::BOLD)
+    );
 
     // Span 2: "File parsed successfully" with green
     assert_eq!(line.spans[2].content, "File parsed successfully");
@@ -736,11 +846,17 @@ fn test_ansi_color_parsing_to_spans() {
 
     // Span 4: "[orange]" with 256 color index 208
     assert_eq!(line.spans[4].content, "[orange]");
-    assert_eq!(line.spans[4].style.fg, Some(ratatui::style::Color::Indexed(208)));
+    assert_eq!(
+        line.spans[4].style.fg,
+        Some(ratatui::style::Color::Indexed(208))
+    );
 
     // Span 6: "[sky_blue]" with TrueColor RGB
     assert_eq!(line.spans[6].content, "[sky_blue]");
-    assert_eq!(line.spans[6].style.fg, Some(ratatui::style::Color::Rgb(100, 200, 255)));
+    assert_eq!(
+        line.spans[6].style.fg,
+        Some(ratatui::style::Color::Rgb(100, 200, 255))
+    );
 }
 
 #[test]
@@ -778,7 +894,10 @@ fn test_mouse_drag_to_select() {
         adesh_editor::input::handle_mouse_event(&mut app, mouse_drag).await;
         assert!(app.current_buffer().selection.is_some());
         let sel = app.current_buffer().selection.unwrap();
-        assert_eq!((sel.start_line, sel.start_col, sel.end_line, sel.end_col), (1, 4, 2, 12));
+        assert_eq!(
+            (sel.start_line, sel.start_col, sel.end_line, sel.end_col),
+            (1, 4, 2, 12)
+        );
 
         // 3. Mouse Up
         let mouse_up = crossterm::event::MouseEvent {
@@ -792,7 +911,10 @@ fn test_mouse_drag_to_select() {
         assert!(app.current_buffer().selection.is_some());
 
         // 4. Cut selection with 'x' in normal mode
-        let key_x = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('x'), crossterm::event::KeyModifiers::NONE);
+        let key_x = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('x'),
+            crossterm::event::KeyModifiers::NONE,
+        );
         adesh_editor::input::handle_key_event(&mut app, key_x).await;
         assert!(app.current_buffer().selection.is_none());
         assert!(!app.clipboard.is_empty());
@@ -806,7 +928,11 @@ fn test_ctrl_backspace_word_deletion() {
         let mut app = adesh_editor::app::App::new(None);
         let buf = app.current_buffer_mut();
         buf.lines = vec!["let message = 42;".to_string()];
-        buf.cursor = Cursor { line: 0, col: 17, desired_col: 17 };
+        buf.cursor = Cursor {
+            line: 0,
+            col: 17,
+            desired_col: 17,
+        };
 
         // Test buffer backspace_word
         buf.backspace_word();
@@ -827,9 +953,16 @@ fn test_ctrl_backspace_word_deletion() {
         // Test in Insert Mode with Ctrl+Backspace event
         app.mode = adesh_editor::mode::Mode::Insert;
         app.current_buffer_mut().lines = vec!["pub fn calculate_total()".to_string()];
-        app.current_buffer_mut().cursor = Cursor { line: 0, col: 24, desired_col: 24 };
+        app.current_buffer_mut().cursor = Cursor {
+            line: 0,
+            col: 24,
+            desired_col: 24,
+        };
 
-        let ctrl_bs = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Backspace, crossterm::event::KeyModifiers::CONTROL);
+        let ctrl_bs = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Backspace,
+            crossterm::event::KeyModifiers::CONTROL,
+        );
         adesh_editor::input::handle_key_event(&mut app, ctrl_bs).await;
         assert_eq!(app.current_buffer().lines[0], "pub fn calculate_total");
 
@@ -838,7 +971,10 @@ fn test_ctrl_backspace_word_deletion() {
         app.terminal_focused = true;
         app.terminal.input = "cargo build --release".to_string();
 
-        let ctrl_w = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('w'), crossterm::event::KeyModifiers::CONTROL);
+        let ctrl_w = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('w'),
+            crossterm::event::KeyModifiers::CONTROL,
+        );
         adesh_editor::input::handle_key_event(&mut app, ctrl_w).await;
         assert_eq!(app.terminal.input, "cargo build --");
 
@@ -846,8 +982,3 @@ fn test_ctrl_backspace_word_deletion() {
         assert_eq!(app.terminal.input, "cargo build ");
     });
 }
-
-
-
-
-

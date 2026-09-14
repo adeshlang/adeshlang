@@ -6,7 +6,7 @@
     * core      - AdeshLang compiler + tools. ALWAYS installed: it is hidden
                   (visible="false") and selected by default, so the user
                   cannot deselect it from the customize pane.
-    * toolchain - "Download LLVM 18.1.8 toolchain (~400 MB)", checked by
+    * toolchain - "Download LLVM 23.1.1 toolchain (~400 MB)", checked by
                   default. Checking it does NOT download anything itself:
                   the choice maps to the tiny, payload-free
                   org.adeshlang.pkg.toolchain-trigger package whose
@@ -73,8 +73,8 @@
     </choice>
 
     <choice id="toolchain"
-            title="Download LLVM 18.1.8 toolchain (~400 MB)"
-            description="Downloads the pinned LLVM 18.1.8 toolchain (clang, clang++, lld, llc, llvm-ar, mlir-opt, mlir-translate) from the official llvm-project releases, verifies its SHA-256 against the bundled toolchain manifest, and exposes it system-wide. Required for AOT compilation; can be installed later with: sudo adesh toolchain install --system"
+            title="Download LLVM 23.1.1 toolchain (~190 MB compressed download, ~900 MB disk space)"
+            description="Downloads the compressed LLVM 23.1.1 toolchain archive (clang, clang++, lld, llc, llvm-ar, mlir-opt, mlir-translate) from official llvm-project releases, verifies its SHA-256 against the bundled toolchain manifest, and exposes it system-wide. Requires ~190 MB download and ~900 MB installed disk space. Can be installed later with: sudo adesh toolchain install --system"
             start_selected="true">
         <pkg-ref id="org.adeshlang.pkg.toolchain-trigger"/>
     </choice>

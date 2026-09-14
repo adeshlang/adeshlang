@@ -15,4 +15,3 @@ pub mod search;
 pub mod split;
 pub mod ui;
 pub mod workspace;
-

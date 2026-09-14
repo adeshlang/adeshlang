@@ -1594,7 +1594,12 @@ impl CraneliftAotCompiler {
         }
 
         // Try to handle comparison instructions
-        match comparisons::lower_comparison_instruction(builder, &mut ctx.value_map, &mut ctx.value_types, inst) {
+        match comparisons::lower_comparison_instruction(
+            builder,
+            &mut ctx.value_map,
+            &mut ctx.value_types,
+            inst,
+        ) {
             Ok(true) => return Ok(()), // Comparison instruction handled
             Ok(false) => {}            // Not a comparison instruction, continue
             Err(e) => return Err(e),   // Error occurred

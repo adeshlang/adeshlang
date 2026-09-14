@@ -40,7 +40,10 @@ pub fn execute_env_command_with_format(json: bool, shell: bool) {
             eprintln!("Unable to determine AdeshLang installation home");
             return;
         };
-        let bin = bin_directory().unwrap_or_else(|| home.join("bin")).display().to_string();
+        let bin = bin_directory()
+            .unwrap_or_else(|| home.join("bin"))
+            .display()
+            .to_string();
         let home = home.display().to_string();
         match env::var("SHELL").ok().as_deref() {
             Some("fish") => println!(

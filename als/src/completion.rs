@@ -8,21 +8,72 @@
 //! - In expression position → shows visible symbols + builtins
 
 use crate::analysis::{SymbolInfo, SymbolKind};
-use adeshlang::semantics::{SemanticIndex, SemanticSymbolKind, CompletionCandidate};
+use adeshlang::semantics::{CompletionCandidate, SemanticIndex, SemanticSymbolKind};
 use adeshlang::typesystem::checker::Ty;
 use lsp_types::{
-    CompletionItem, CompletionItemKind, Documentation,
-    InsertTextFormat, MarkupContent, MarkupKind,
+    CompletionItem, CompletionItemKind, Documentation, InsertTextFormat, MarkupContent, MarkupKind,
 };
 
 /// Built-in keywords in Adesh (CFG v2.2)
 const KEYWORDS: &[&str] = &[
-    "let", "const", "readonly", "test", "fn", "class", "extend", "raw", "decorator",
-    "if", "else", "elif", "while", "do", "for", "in", "return", "break", "continue",
-    "try", "catch", "throw", "import", "export", "from", "as", "new", "this", "super",
-    "true", "false", "null", "async", "await", "enum", "interface", "extends", "implements",
-    "static", "abstract", "type", "match", "struct", "pub", "mut", "yield", "defer",
-    "where", "is", "typeof", "sizeof", "alignof", "get", "set", "sealed", "on", "region", "unsafe",
+    "let",
+    "const",
+    "readonly",
+    "test",
+    "fn",
+    "class",
+    "extend",
+    "raw",
+    "decorator",
+    "if",
+    "else",
+    "elif",
+    "while",
+    "do",
+    "for",
+    "in",
+    "return",
+    "break",
+    "continue",
+    "try",
+    "catch",
+    "throw",
+    "import",
+    "export",
+    "from",
+    "as",
+    "new",
+    "this",
+    "super",
+    "true",
+    "false",
+    "null",
+    "async",
+    "await",
+    "enum",
+    "interface",
+    "extends",
+    "implements",
+    "static",
+    "abstract",
+    "type",
+    "match",
+    "struct",
+    "pub",
+    "mut",
+    "yield",
+    "defer",
+    "where",
+    "is",
+    "typeof",
+    "sizeof",
+    "alignof",
+    "get",
+    "set",
+    "sealed",
+    "on",
+    "region",
+    "unsafe",
 ];
 
 /// Built-in functions with signatures
@@ -59,7 +110,11 @@ const MATH_MEMBERS: &[(&str, &str, &str)] = &[
     ("abs", "fn abs(x: number): number", "Absolute value"),
     ("floor", "fn floor(x: number): number", "Floor value"),
     ("ceil", "fn ceil(x: number): number", "Ceiling value"),
-    ("round", "fn round(x: number): number", "Round to nearest integer"),
+    (
+        "round",
+        "fn round(x: number): number",
+        "Round to nearest integer",
+    ),
     ("sqrt", "fn sqrt(x: number): number", "Square root"),
     ("pow", "fn pow(base, exp): number", "Power function"),
     ("sin", "fn sin(x: number): number", "Sine (radians)"),
@@ -69,8 +124,16 @@ const MATH_MEMBERS: &[(&str, &str, &str)] = &[
     ("log", "fn log(x: number): number", "Natural logarithm"),
     ("log10", "fn log10(x: number): number", "Base-10 logarithm"),
     ("random", "fn random(): number", "Random number [0, 1)"),
-    ("randomInt", "fn randomInt(min, max): number", "Random integer [min, max]"),
-    ("randomRange", "fn randomRange(min, max): number", "Random float [min, max)"),
+    (
+        "randomInt",
+        "fn randomInt(min, max): number",
+        "Random integer [min, max]",
+    ),
+    (
+        "randomRange",
+        "fn randomRange(min, max): number",
+        "Random float [min, max)",
+    ),
     ("seed", "fn seed(n: number)", "Seed the RNG"),
     ("min", "fn min(...args): number", "Minimum value"),
     ("max", "fn max(...args): number", "Maximum value"),
@@ -79,11 +142,23 @@ const MATH_MEMBERS: &[(&str, &str, &str)] = &[
 /// Time namespace members
 const TIME_MEMBERS: &[(&str, &str, &str)] = &[
     ("now", "fn now(): number", "Current time in nanoseconds"),
-    ("nowMs", "fn nowMs(): number", "Current time in milliseconds"),
-    ("nowUs", "fn nowUs(): number", "Current time in microseconds"),
+    (
+        "nowMs",
+        "fn nowMs(): number",
+        "Current time in milliseconds",
+    ),
+    (
+        "nowUs",
+        "fn nowUs(): number",
+        "Current time in microseconds",
+    ),
     ("nowSecs", "fn nowSecs(): number", "Current time in seconds"),
     ("epoch", "fn epoch(): number", "Unix timestamp in seconds"),
-    ("epochNanos", "fn epochNanos(): number", "Unix timestamp in nanoseconds"),
+    (
+        "epochNanos",
+        "fn epochNanos(): number",
+        "Unix timestamp in nanoseconds",
+    ),
 ];
 
 /// Generate type-aware, context-sensitive completions using the semantic engine.
@@ -125,8 +200,14 @@ pub fn get_completions_semantic(
             items.extend(get_symbol_completions_semantic(index));
 
             // Add namespace suggestions
-            items.push(namespace_completion("Math", "Mathematical functions and constants"));
-            items.push(namespace_completion("time", "High-resolution time functions"));
+            items.push(namespace_completion(
+                "Math",
+                "Mathematical functions and constants",
+            ));
+            items.push(namespace_completion(
+                "time",
+                "High-resolution time functions",
+            ));
 
             // Add type names for constructor context
             items.extend(get_type_name_completions(index));
@@ -158,13 +239,11 @@ fn get_member_completions(
     _col: u32,
 ) -> Vec<CompletionItem> {
     // Determine the receiver expression before the dot
-    let receiver = receiver_name
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| {
-            // Extract the expression before the last dot on the line
-            let before_dot = line_text.rfind('.').map(|i| &line_text[..i]).unwrap_or("");
-            before_dot.trim().to_string()
-        });
+    let receiver = receiver_name.map(|s| s.to_string()).unwrap_or_else(|| {
+        // Extract the expression before the last dot on the line
+        let before_dot = line_text.rfind('.').map(|i| &line_text[..i]).unwrap_or("");
+        before_dot.trim().to_string()
+    });
 
     if receiver.is_empty() {
         return vec![];
@@ -185,7 +264,10 @@ fn get_member_completions(
         Some(ty) => {
             // Get completions for the resolved type
             let candidates = index.completions_for_type(&ty);
-            candidates.into_iter().map(candidate_to_completion_item).collect()
+            candidates
+                .into_iter()
+                .map(candidate_to_completion_item)
+                .collect()
         }
         None => {
             // Fallback: if we can't resolve the type, try to find it as a known type name
@@ -195,7 +277,10 @@ fn get_member_completions(
                     name: receiver.clone(),
                     args: vec![],
                 });
-                return candidates.into_iter().map(candidate_to_completion_item).collect();
+                return candidates
+                    .into_iter()
+                    .map(candidate_to_completion_item)
+                    .collect();
             }
             vec![]
         }
@@ -273,7 +358,11 @@ fn candidate_to_completion_item(candidate: CompletionCandidate) -> CompletionIte
         SemanticSymbolKind::Import => CompletionItemKind::MODULE,
     };
 
-    let insert_text_format = if candidate.insert_text.as_ref().map_or(false, |t| t.contains("$0")) {
+    let insert_text_format = if candidate
+        .insert_text
+        .as_ref()
+        .map_or(false, |t| t.contains("$0"))
+    {
         Some(InsertTextFormat::SNIPPET)
     } else {
         Some(InsertTextFormat::PLAIN_TEXT)
@@ -296,76 +385,105 @@ fn candidate_to_completion_item(candidate: CompletionCandidate) -> CompletionIte
 }
 
 fn get_keyword_completions() -> Vec<CompletionItem> {
-    KEYWORDS.iter().map(|kw| CompletionItem {
-        label: (*kw).to_string(),
-        kind: Some(CompletionItemKind::KEYWORD),
-        detail: Some("keyword".to_string()),
-        ..Default::default()
-    }).collect()
+    KEYWORDS
+        .iter()
+        .map(|kw| CompletionItem {
+            label: (*kw).to_string(),
+            kind: Some(CompletionItemKind::KEYWORD),
+            detail: Some("keyword".to_string()),
+            ..Default::default()
+        })
+        .collect()
 }
 
 fn get_builtin_completions() -> Vec<CompletionItem> {
-    BUILTINS.iter().map(|(name, sig, doc)| CompletionItem {
-        label: (*name).to_string(),
-        kind: Some(CompletionItemKind::FUNCTION),
-        detail: Some((*sig).to_string()),
-        documentation: Some(Documentation::MarkupContent(MarkupContent {
-            kind: MarkupKind::Markdown,
-            value: format!("```adesh\n{}\n```\n\n{}", sig, doc),
-        })),
-        insert_text: Some(format!("{}($0)", name)),
-        insert_text_format: Some(InsertTextFormat::SNIPPET),
-        ..Default::default()
-    }).collect()
-}
-
-fn get_math_completions() -> Vec<CompletionItem> {
-    MATH_MEMBERS.iter().map(|(name, sig, doc)| {
-        let is_const = sig.starts_with("const");
-        CompletionItem {
+    BUILTINS
+        .iter()
+        .map(|(name, sig, doc)| CompletionItem {
             label: (*name).to_string(),
-            kind: Some(if is_const { CompletionItemKind::CONSTANT } else { CompletionItemKind::FUNCTION }),
+            kind: Some(CompletionItemKind::FUNCTION),
             detail: Some((*sig).to_string()),
             documentation: Some(Documentation::MarkupContent(MarkupContent {
                 kind: MarkupKind::Markdown,
                 value: format!("```adesh\n{}\n```\n\n{}", sig, doc),
             })),
-            insert_text: if is_const { Some((*name).to_string()) } else { Some(format!("{}($0)", name)) },
+            insert_text: Some(format!("{}($0)", name)),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
             ..Default::default()
-        }
-    }).collect()
+        })
+        .collect()
+}
+
+fn get_math_completions() -> Vec<CompletionItem> {
+    MATH_MEMBERS
+        .iter()
+        .map(|(name, sig, doc)| {
+            let is_const = sig.starts_with("const");
+            CompletionItem {
+                label: (*name).to_string(),
+                kind: Some(if is_const {
+                    CompletionItemKind::CONSTANT
+                } else {
+                    CompletionItemKind::FUNCTION
+                }),
+                detail: Some((*sig).to_string()),
+                documentation: Some(Documentation::MarkupContent(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: format!("```adesh\n{}\n```\n\n{}", sig, doc),
+                })),
+                insert_text: if is_const {
+                    Some((*name).to_string())
+                } else {
+                    Some(format!("{}($0)", name))
+                },
+                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                ..Default::default()
+            }
+        })
+        .collect()
 }
 
 fn get_time_completions() -> Vec<CompletionItem> {
-    TIME_MEMBERS.iter().map(|(name, sig, doc)| CompletionItem {
-        label: (*name).to_string(),
-        kind: Some(CompletionItemKind::FUNCTION),
-        detail: Some((*sig).to_string()),
-        documentation: Some(Documentation::MarkupContent(MarkupContent {
-            kind: MarkupKind::Markdown,
-            value: format!("```adesh\n{}\n```\n\n{}", sig, doc),
-        })),
-        insert_text: Some(format!("{}()", name)),
-        insert_text_format: Some(InsertTextFormat::SNIPPET),
-        ..Default::default()
-    }).collect()
+    TIME_MEMBERS
+        .iter()
+        .map(|(name, sig, doc)| CompletionItem {
+            label: (*name).to_string(),
+            kind: Some(CompletionItemKind::FUNCTION),
+            detail: Some((*sig).to_string()),
+            documentation: Some(Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: format!("```adesh\n{}\n```\n\n{}", sig, doc),
+            })),
+            insert_text: Some(format!("{}()", name)),
+            insert_text_format: Some(InsertTextFormat::SNIPPET),
+            ..Default::default()
+        })
+        .collect()
 }
 
 fn get_type_completions_semantic(index: &SemanticIndex) -> Vec<CompletionItem> {
     let candidates = index.type_completions();
-    candidates.into_iter().map(candidate_to_completion_item).collect()
+    candidates
+        .into_iter()
+        .map(candidate_to_completion_item)
+        .collect()
 }
 
 fn get_symbol_completions_semantic(index: &SemanticIndex) -> Vec<CompletionItem> {
     let candidates = index.visible_symbols_at(usize::MAX, 0);
-    candidates.into_iter().map(candidate_to_completion_item).collect()
+    candidates
+        .into_iter()
+        .map(candidate_to_completion_item)
+        .collect()
 }
 
 fn get_filtered_symbol_completions(index: &SemanticIndex, prefix: &str) -> Vec<CompletionItem> {
     let mut candidates = index.visible_symbols_at(usize::MAX, 0);
     candidates.retain(|c| c.label.to_lowercase().starts_with(&prefix.to_lowercase()));
-    candidates.into_iter().map(candidate_to_completion_item).collect()
+    candidates
+        .into_iter()
+        .map(candidate_to_completion_item)
+        .collect()
 }
 
 fn namespace_completion(name: &str, doc: &str) -> CompletionItem {
@@ -394,15 +512,18 @@ fn get_decorator_completions() -> Vec<CompletionItem> {
         ("derive", "Auto-derive trait implementations"),
     ];
 
-    DECORATORS.iter().map(|(name, doc)| CompletionItem {
-        label: (*name).to_string(),
-        kind: Some(CompletionItemKind::KEYWORD),
-        detail: Some("decorator".to_string()),
-        documentation: Some(Documentation::String((*doc).to_string())),
-        insert_text: Some(format!("{}($0)", name)),
-        insert_text_format: Some(InsertTextFormat::SNIPPET),
-        ..Default::default()
-    }).collect()
+    DECORATORS
+        .iter()
+        .map(|(name, doc)| CompletionItem {
+            label: (*name).to_string(),
+            kind: Some(CompletionItemKind::KEYWORD),
+            detail: Some("decorator".to_string()),
+            documentation: Some(Documentation::String((*doc).to_string())),
+            insert_text: Some(format!("{}($0)", name)),
+            insert_text_format: Some(InsertTextFormat::SNIPPET),
+            ..Default::default()
+        })
+        .collect()
 }
 
 /// Get type name completions for constructor context (e.g., `new User`).
@@ -469,28 +590,31 @@ pub fn get_completions(
 }
 
 fn get_symbol_completions(symbols: &[SymbolInfo]) -> Vec<CompletionItem> {
-    symbols.iter().map(|sym| {
-        let kind = match sym.kind {
-            SymbolKind::Function => CompletionItemKind::FUNCTION,
-            SymbolKind::Class => CompletionItemKind::CLASS,
-            SymbolKind::Variable => CompletionItemKind::VARIABLE,
-            SymbolKind::Constant => CompletionItemKind::CONSTANT,
-            SymbolKind::Parameter => CompletionItemKind::VARIABLE,
-            SymbolKind::Method => CompletionItemKind::METHOD,
-            SymbolKind::Property => CompletionItemKind::PROPERTY,
-            SymbolKind::Enum => CompletionItemKind::ENUM,
-            SymbolKind::Interface => CompletionItemKind::INTERFACE,
-            SymbolKind::Module => CompletionItemKind::MODULE,
-        };
+    symbols
+        .iter()
+        .map(|sym| {
+            let kind = match sym.kind {
+                SymbolKind::Function => CompletionItemKind::FUNCTION,
+                SymbolKind::Class => CompletionItemKind::CLASS,
+                SymbolKind::Variable => CompletionItemKind::VARIABLE,
+                SymbolKind::Constant => CompletionItemKind::CONSTANT,
+                SymbolKind::Parameter => CompletionItemKind::VARIABLE,
+                SymbolKind::Method => CompletionItemKind::METHOD,
+                SymbolKind::Property => CompletionItemKind::PROPERTY,
+                SymbolKind::Enum => CompletionItemKind::ENUM,
+                SymbolKind::Interface => CompletionItemKind::INTERFACE,
+                SymbolKind::Module => CompletionItemKind::MODULE,
+            };
 
-        CompletionItem {
-            label: sym.name.clone(),
-            kind: Some(kind),
-            detail: sym.signature.clone(),
-            documentation: sym.documentation.clone().map(Documentation::String),
-            ..Default::default()
-        }
-    }).collect()
+            CompletionItem {
+                label: sym.name.clone(),
+                kind: Some(kind),
+                detail: sym.signature.clone(),
+                documentation: sym.documentation.clone().map(Documentation::String),
+                ..Default::default()
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -532,7 +656,8 @@ mod tests {
 
     #[test]
     fn test_member_completion_for_struct() {
-        let source = "struct Point {\n    x: f64,\n    y: f64,\n}\n\nlet p: Point = Point(1.0, 2.0);\np.\n";
+        let source =
+            "struct Point {\n    x: f64,\n    y: f64,\n}\n\nlet p: Point = Point(1.0, 2.0);\np.\n";
         let labels = member_completions(source, "p", 6, 2);
         assert!(has(&labels, "x"), "Labels: {:?}", labels);
         assert!(has(&labels, "y"), "Labels: {:?}", labels);
@@ -542,7 +667,10 @@ mod tests {
     fn test_print_builtin_completion_documentation() {
         let index = adeshlang::semantics::index_source("print(x);\n");
         let items = get_completions_semantic(&index, None, None, "", 0, 6);
-        let print_item = items.into_iter().find(|i| i.label == "print").expect("print completion");
+        let print_item = items
+            .into_iter()
+            .find(|i| i.label == "print")
+            .expect("print completion");
         let doc = match print_item.documentation {
             Some(Documentation::MarkupContent(m)) => m.value,
             _ => String::new(),

@@ -34,9 +34,10 @@ UninstallDisplayIcon={app}\bin\{#MyAppExeName}
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "downloadtoolchain"; Description: "Install the pinned LLVM 18.1.8 toolchain now (from the official llvm-project releases, ~400 MB). It is installed immediately after you click Install, before the core files."; Flags: checkedonce
+Name: "downloadtoolchain"; Description: "Install pinned LLVM 23.1.1 Toolchain (~180 MB compressed download, ~850 MB installed disk space; includes clang, lld, llc, llvm-ar). Configured automatically after setup."; Flags: checkedonce
+Name: "vsbuildtools"; Description: "Install Visual Studio Build Tools + Windows SDK (required for MSVC-target AOT native linking, ~2 GB)"; Flags: unchecked; Check: ShouldShowVSBuildTools
+Name: "python"; Description: "Install Python 3.12 (required for full AI features: `adesh ai train/evaluate/generate` and MLIR source builds)"; Flags: unchecked; Check: ShouldShowPython
 Name: "buildmlir"; Description: "Build MLIR GPU tools from source (adds 30–90 minutes; requires Visual Studio C++ Build Tools + CMake + Python 3)"; Flags: unchecked
-Name: "vsbuildtools"; Description: "Install Visual Studio Build Tools + Windows SDK (required for MSVC-target AOT linking, ~2 GB)"; Flags: unchecked; Check: ShouldShowVSBuildTools
 Name: "fileassoc"; Description: "Associate .adl and .adesh files with AdeshLang"; Flags: unchecked
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
@@ -53,6 +54,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "..\..\dist\windows-x86_64\bin\adesh.exe"; DestDir: "{tmp}"; Flags: ignoreversion deleteafterinstall
 Source: "..\manifests\toolchain-manifest.json"; DestDir: "{tmp}"; Flags: ignoreversion deleteafterinstall
 Source: "..\..\dist\windows-x86_64\bin\*"; DestDir: "{app}\bin"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\..\dist\windows-x86_64\lib\*"; DestDir: "{app}\lib"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\..\dist\windows-x86_64\std\*"; DestDir: "{app}\std"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\..\dist\windows-x86_64\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\..\dist\windows-x86_64\ai\*"; DestDir: "{app}\ai"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -201,6 +203,89 @@ begin
   Result := not HasVSBuildTools;
 end;
 
+function HasPython: Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := False;
+  if RegKeyExists(HKEY_LOCAL_MACHINE, 'SOFTWARE\Python\PythonCore\3.13') or
+     RegKeyExists(HKEY_LOCAL_MACHINE, 'SOFTWARE\Python\PythonCore\3.12') or
+     RegKeyExists(HKEY_LOCAL_MACHINE, 'SOFTWARE\Python\PythonCore\3.11') or
+     RegKeyExists(HKEY_LOCAL_MACHINE, 'SOFTWARE\Python\PythonCore\3.10') or
+     RegKeyExists(HKEY_CURRENT_USER, 'SOFTWARE\Python\PythonCore\3.13') or
+     RegKeyExists(HKEY_CURRENT_USER, 'SOFTWARE\Python\PythonCore\3.12') or
+     RegKeyExists(HKEY_CURRENT_USER, 'SOFTWARE\Python\PythonCore\3.11') or
+     RegKeyExists(HKEY_CURRENT_USER, 'SOFTWARE\Python\PythonCore\3.10') then
+  begin
+    Result := True;
+    Exit;
+  end;
+  if FileExists('C:\Program Files\Python312\python.exe') or
+     FileExists('C:\Program Files\Python311\python.exe') or
+     FileExists('C:\Python312\python.exe') or
+     FileExists('C:\Python311\python.exe') then
+  begin
+    Result := True;
+    Exit;
+  end;
+  if Exec('py.exe', '-3 --version', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+  begin
+    Result := True;
+    Exit;
+  end;
+end;
+
+function ShouldShowPython: Boolean;
+begin
+  Result := not HasPython;
+end;
+
+function InstallPython: Boolean;
+var
+  InstallerPath: String;
+  DownloadCommand: String;
+  ResultCode: Integer;
+  PowerShellPath: String;
+  ShowMode: Integer;
+  PythonURL: String;
+begin
+  PythonURL := 'https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe';
+  InstallerPath := ExpandConstant('{tmp}\python_installer.exe');
+  PowerShellPath := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  if WizardSilent then
+    ShowMode := SW_HIDE
+  else
+    ShowMode := SW_SHOW;
+
+  // Try winget first if available
+  if Exec('winget.exe', 'install --id Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements',
+      '', ShowMode, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+  begin
+    Result := True;
+    Exit;
+  end;
+
+  // Fallback to web download
+  DownloadCommand := '$ProgressPreference=''SilentlyContinue''; Invoke-WebRequest -UseBasicParsing -Uri ''' +
+    PythonURL + ''' -OutFile ''' + InstallerPath + '''';
+  if not Exec(PowerShellPath,
+      '-NoLogo -NoProfile -ExecutionPolicy Bypass -Command "' + DownloadCommand + '"',
+      '', ShowMode, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
+  begin
+    if not WizardSilent then
+      MsgBox('Python 3.12 could not be downloaded. AI features may require manual Python installation.', mbError, MB_OK);
+    Result := False;
+    Exit;
+  end;
+
+  Result := Exec(InstallerPath,
+    '/quiet InstallAllUsers=1 PrependPath=1 Include_pip=1',
+    '', ShowMode, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
+  if not Result then
+    if not WizardSilent then
+      MsgBox('Python 3.12 installation returned an error. You can install it manually from https://www.python.org/downloads/.', mbError, MB_OK);
+end;
+
 function InstallVSBuildTools: Boolean;
 var
   InstallerPath: String;
@@ -306,6 +391,8 @@ begin
       ExpandConstant('{app}\toolchain-install.log'), False);
   if WizardIsTaskSelected('vsbuildtools') and not HasVSBuildTools then
     InstallVSBuildTools;
+  if WizardIsTaskSelected('python') and not HasPython then
+    InstallPython;
   // Silent installs never show wizard pages, so NextButtonClick did not run;
   // drive the toolchain from the post-install step there.
   if not ToolchainInstalledByWizard and

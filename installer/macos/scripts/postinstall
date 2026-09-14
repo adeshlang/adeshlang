@@ -10,7 +10,7 @@
 #   2. Symlink the AdeshLang CLI tools (adesh, adl, als, adesh-editor) into
 #      /usr/local/bin.
 #   3. Write /etc/profile.d/adeshlang.sh exporting ADESH_HOME/PATH/STD.
-#   4. Install the pinned LLVM 18.1.8 toolchain via `adesh toolchain install
+#   4. Install the pinned LLVM 23.1.1 toolchain via `adesh toolchain install
 #      --system` ONLY when:
 #        - the product's "toolchain" choice was selected — the tiny
 #          org.adeshlang.pkg.toolchain-trigger package then installed and its
@@ -82,9 +82,9 @@ fi
 
 if [[ "$install_toolchain" == "1" ]]; then
     echo
-    echo "AdeshLang: installing the pinned LLVM 18.1.8 toolchain (~400 MB download)..."
+    echo "AdeshLang: installing pinned LLVM 23.1.1 toolchain (~190 MB compressed download, ~900 MB disk space)..."
     if [[ -x "$BIN_DIR/adesh" ]] && "$BIN_DIR/adesh" toolchain install --system; then
-        echo "AdeshLang: LLVM 18.1.8 toolchain installed and exposed."
+        echo "AdeshLang: LLVM 23.1.1 toolchain installed and exposed."
     else
         cat <<MSG
 

@@ -36,7 +36,11 @@ fn test_unbiased_integer_range_bounds() {
     }
     for _ in 0..5000 {
         let val = bounded::next_i64_range_inclusive(&mut rng, 10, 20).unwrap();
-        assert!((10..=20).contains(&val), "val {} out of range [10, 20]", val);
+        assert!(
+            (10..=20).contains(&val),
+            "val {} out of range [10, 20]",
+            val
+        );
     }
 }
 

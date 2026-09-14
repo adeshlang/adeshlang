@@ -31,7 +31,12 @@ pub struct FusedExpr {
 
 impl FusedExpr {
     /// sqrt((a * b) + c) fusion
-    pub fn sqrt_mul_add(a: impl Into<String>, b: impl Into<String>, c: impl Into<String>, out: impl Into<String>) -> Self {
+    pub fn sqrt_mul_add(
+        a: impl Into<String>,
+        b: impl Into<String>,
+        c: impl Into<String>,
+        out: impl Into<String>,
+    ) -> Self {
         FusedExpr {
             ops: vec![
                 FusedOp::LoadA,
@@ -48,7 +53,12 @@ impl FusedExpr {
     }
 
     /// (a * b) + d fusion (SAXPY-like)
-    pub fn mul_add(a: impl Into<String>, b: impl Into<String>, d: impl Into<String>, out: impl Into<String>) -> Self {
+    pub fn mul_add(
+        a: impl Into<String>,
+        b: impl Into<String>,
+        d: impl Into<String>,
+        out: impl Into<String>,
+    ) -> Self {
         FusedExpr {
             ops: vec![
                 FusedOp::LoadA,
@@ -69,11 +79,7 @@ pub fn execute_fused(
     expr: &FusedExpr,
     arrays: &std::collections::HashMap<String, Vec<Value>>,
 ) -> Result<Vec<Value>, String> {
-    let len = arrays
-        .values()
-        .next()
-        .map(|a| a.len())
-        .unwrap_or(0);
+    let len = arrays.values().next().map(|a| a.len()).unwrap_or(0);
 
     let mut result = Vec::with_capacity(len);
 
@@ -129,11 +135,7 @@ pub fn execute_fused(
 }
 
 /// Fused element-wise: c[i] = a[i] * b[i] + d[i]
-pub fn fused_mul_add(
-    a: &[Value],
-    b: &[Value],
-    d: &[Value],
-) -> Result<Vec<Value>, String> {
+pub fn fused_mul_add(a: &[Value], b: &[Value], d: &[Value]) -> Result<Vec<Value>, String> {
     if a.len() != b.len() || a.len() != d.len() {
         return Err(format!(
             "fused_mul_add: length mismatch ({} vs {} vs {})",
@@ -153,11 +155,7 @@ pub fn fused_mul_add(
 }
 
 /// Fused: result[i] = sqrt(a[i] * b[i] + c[i])
-pub fn fused_sqrt_mul_add(
-    a: &[Value],
-    b: &[Value],
-    c: &[Value],
-) -> Result<Vec<Value>, String> {
+pub fn fused_sqrt_mul_add(a: &[Value], b: &[Value], c: &[Value]) -> Result<Vec<Value>, String> {
     if a.len() != b.len() || a.len() != c.len() {
         return Err("fused_sqrt_mul_add: length mismatch".to_string());
     }

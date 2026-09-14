@@ -23,9 +23,9 @@ mod math;
 pub(crate) mod objects;
 mod promises;
 mod regex;
+pub mod stdlib_bridge;
 mod strings;
 mod thread;
-pub mod stdlib_bridge;
 
 use stdlib_bridge::*;
 
@@ -829,7 +829,10 @@ impl BuiltinRegistry {
         // Native threading (portable scheduling; spawn of language closures is interpreter)
         self.register("thread.sleep", runtime_thread_sleep);
         self.register("thread.yield", runtime_thread_yield);
-        self.register("thread.hardware_concurrency", runtime_thread_hardware_concurrency);
+        self.register(
+            "thread.hardware_concurrency",
+            runtime_thread_hardware_concurrency,
+        );
         self.register("thread.cpu_count", runtime_thread_hardware_concurrency);
         self.register("thread.id", runtime_thread_id);
         self.register("thread.park", runtime_thread_park);
@@ -1008,11 +1011,23 @@ impl BuiltinRegistry {
         self.register("Encoding.hexEncode", runtime_encoding_hex_encode);
         self.register("Encoding.hexDecode", runtime_encoding_hex_decode);
 
-        self.register("compression.gzipCompress", runtime_compression_gzip_compress);
-        self.register("compression.gzipDecompress", runtime_compression_gzip_decompress);
+        self.register(
+            "compression.gzipCompress",
+            runtime_compression_gzip_compress,
+        );
+        self.register(
+            "compression.gzipDecompress",
+            runtime_compression_gzip_decompress,
+        );
 
-        self.register("Compression.gzipCompress", runtime_compression_gzip_compress);
-        self.register("Compression.gzipDecompress", runtime_compression_gzip_decompress);
+        self.register(
+            "Compression.gzipCompress",
+            runtime_compression_gzip_compress,
+        );
+        self.register(
+            "Compression.gzipDecompress",
+            runtime_compression_gzip_decompress,
+        );
 
         self.register("url.parse", runtime_url_parse);
         self.register("url.format", runtime_url_format);
@@ -1138,8 +1153,10 @@ mod tests {
         let mut opts = FastMap::default();
         opts.insert("sep".to_string(), RuntimeValue::String(", ".to_string()));
         opts.insert("end".to_string(), RuntimeValue::String("".to_string()));
-        let _args = [RuntimeValue::String("hello".to_string()),
-            RuntimeValue::Object(opts)];
+        let _args = [
+            RuntimeValue::String("hello".to_string()),
+            RuntimeValue::Object(opts),
+        ];
         // Test requires parse_print_options which is in io module
         // let (values, sep, end, _c, _b, _u, _bo, _i, _st, _f, _flush, _pretty) =
         //     io::parse_print_options(&args);

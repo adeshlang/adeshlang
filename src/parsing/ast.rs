@@ -1123,7 +1123,9 @@ impl Value {
             }
             Object(map) => {
                 let is_method_instance = !map.is_empty()
-                    && map.values().all(|v| matches!(v, Function(_) | UserFunction(_) | BoundNative(_, _)));
+                    && map
+                        .values()
+                        .all(|v| matches!(v, Function(_) | UserFunction(_) | BoundNative(_, _)));
                 if is_method_instance {
                     write!(f, "<Collection Instance>")
                 } else {

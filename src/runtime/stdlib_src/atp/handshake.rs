@@ -11,13 +11,12 @@
 use super::config::{ATP_VERSION, MAX_HANDSHAKE_SIZE};
 use super::errors::{AtpError, AtpResult};
 use super::id::WireConnectionId;
-use super::security::{
-    derive_application_keys, derive_finished_mac, derive_handshake_keys, EphemeralKeyPair,
-    HandshakeSecrets, FINISHED_LEN,
-};
 use super::identity::{
-    verify_identity_proof, IdentityKeyPair, IdentityProofContext,
-    IdentityRole, ED25519_PUBKEY_LEN,
+    ED25519_PUBKEY_LEN, IdentityKeyPair, IdentityProofContext, IdentityRole, verify_identity_proof,
+};
+use super::security::{
+    EphemeralKeyPair, FINISHED_LEN, HandshakeSecrets, derive_application_keys, derive_finished_mac,
+    derive_handshake_keys,
 };
 use super::wire::Frame;
 use sha2::{Digest, Sha256};
@@ -93,7 +92,11 @@ pub struct ClientHandshake {
 }
 
 impl ClientHandshake {
-    pub fn new(ephemeral: EphemeralKeyPair, local_cid: WireConnectionId, started_at: Instant) -> Self {
+    pub fn new(
+        ephemeral: EphemeralKeyPair,
+        local_cid: WireConnectionId,
+        started_at: Instant,
+    ) -> Self {
         ClientHandshake {
             state: HandshakeState::Initial,
             local_cid,
@@ -124,9 +127,7 @@ impl ClientHandshake {
             retry_token,
             transcript_hash,
         };
-        let identity_proof = identity
-            .map(|id| id.sign_context(&ctx))
-            .unwrap_or_default();
+        let identity_proof = identity.map(|id| id.sign_context(&ctx)).unwrap_or_default();
         let frame = Frame::ConnectionInit {
             version: ATP_VERSION,
             src_conn_id: self.local_cid.as_bytes().to_vec(),
@@ -184,7 +185,12 @@ impl ClientHandshake {
             retry_token: &[],
             transcript_hash,
         };
-        verify_identity_proof(identity_proof, &ctx.signing_material(), trusted, require_identity)?;
+        verify_identity_proof(
+            identity_proof,
+            &ctx.signing_material(),
+            trusted,
+            require_identity,
+        )?;
 
         self.transcript.append(frame_bytes);
         self.remote_cid = Some(WireConnectionId::from_slice(server_cid)?);
@@ -204,7 +210,9 @@ impl ClientHandshake {
             .as_ref()
             .ok_or_else(|| AtpError::security("no handshake secrets"))?;
         let mac = derive_finished_mac(&secrets.finished_key, &self.transcript.hash())?;
-        let frame = Frame::Handshake { confirm: mac.to_vec() };
+        let frame = Frame::Handshake {
+            confirm: mac.to_vec(),
+        };
         let encoded = frame.encode();
         self.transcript.append(&encoded);
         self.state = HandshakeState::FinishedSent;
@@ -280,7 +288,10 @@ impl ServerHandshake {
         require_identity: bool,
     ) -> AtpResult<()> {
         if version != ATP_VERSION {
-            return Err(AtpError::protocol(format!("unsupported version {}", version)));
+            return Err(AtpError::protocol(format!(
+                "unsupported version {}",
+                version
+            )));
         }
         if self.state != HandshakeState::Initial {
             return Err(AtpError::protocol("duplicate CONNECTION_INIT"));
@@ -307,7 +318,12 @@ impl ServerHandshake {
             retry_token: &retry_token,
             transcript_hash,
         };
-        verify_identity_proof(identity_proof, &ctx.signing_material(), trusted, require_identity)?;
+        verify_identity_proof(
+            identity_proof,
+            &ctx.signing_material(),
+            trusted,
+            require_identity,
+        )?;
 
         self.transcript.append(frame_bytes);
         self.remote_cid = Some(WireConnectionId::from_slice(client_cid)?);
@@ -359,9 +375,7 @@ impl ServerHandshake {
             retry_token: &[],
             transcript_hash,
         };
-        let identity_proof = identity
-            .map(|id| id.sign_context(&ctx))
-            .unwrap_or_default();
+        let identity_proof = identity.map(|id| id.sign_context(&ctx)).unwrap_or_default();
         let frame = Frame::ConnectionInitAck {
             version: ATP_VERSION,
             src_conn_id: self.local_cid.as_bytes().to_vec(),
@@ -406,7 +420,9 @@ impl ServerHandshake {
             .as_ref()
             .ok_or_else(|| AtpError::security("no handshake secrets"))?;
         let mac = derive_finished_mac(&secrets.finished_key, &self.transcript.hash())?;
-        let frame = Frame::Handshake { confirm: mac.to_vec() };
+        let frame = Frame::Handshake {
+            confirm: mac.to_vec(),
+        };
         let encoded = frame.encode();
         self.transcript.append(&encoded);
         self.state = HandshakeState::Established;
@@ -435,8 +451,8 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::security::EphemeralKeyPair;
+    use super::*;
 
     #[test]
     fn test_transcript_hash_deterministic() {
@@ -462,13 +478,24 @@ mod tests {
         let init = client.build_init(tp, &[], None).unwrap();
         let init_bytes = init.encode();
 
-        let Frame::ConnectionInit { ephemeral_pubkey, .. } = init else {
+        let Frame::ConnectionInit {
+            ephemeral_pubkey, ..
+        } = init
+        else {
             panic!("expected init");
         };
 
         let mut server = ServerHandshake::new(server_cid, now);
         server
-            .process_init(ATP_VERSION, client_cid.as_bytes(), &ephemeral_pubkey, &[], &init_bytes, &[], false)
+            .process_init(
+                ATP_VERSION,
+                client_cid.as_bytes(),
+                &ephemeral_pubkey,
+                &[],
+                &init_bytes,
+                &[],
+                false,
+            )
             .unwrap();
 
         let ack = server.build_init_ack(tp, None).unwrap();
@@ -484,11 +511,22 @@ mod tests {
         };
 
         client
-            .process_init_ack(&src_conn_id, &server_pubkey, &transport_params, &[], &ack_bytes, &[], false)
+            .process_init_ack(
+                &src_conn_id,
+                &server_pubkey,
+                &transport_params,
+                &[],
+                &ack_bytes,
+                &[],
+                false,
+            )
             .unwrap();
         let client_finished = client.build_finished().unwrap();
         let client_finished_bytes = client_finished.encode();
-        let Frame::Handshake { confirm: client_confirm } = client_finished else {
+        let Frame::Handshake {
+            confirm: client_confirm,
+        } = client_finished
+        else {
             panic!("expected finished");
         };
 
@@ -497,7 +535,10 @@ mod tests {
             .unwrap();
         let server_finished = server.build_finished().unwrap();
         let server_finished_bytes = server_finished.encode();
-        let Frame::Handshake { confirm: server_confirm } = server_finished else {
+        let Frame::Handshake {
+            confirm: server_confirm,
+        } = server_finished
+        else {
             panic!("expected finished");
         };
 
@@ -523,9 +564,7 @@ mod tests {
         let server_cid = WireConnectionId::random();
 
         let mut client = ClientHandshake::new(client_eph, client_cid, now);
-        let init = client
-            .build_init(tp, retry_token, Some(client_id))
-            .unwrap();
+        let init = client.build_init(tp, retry_token, Some(client_id)).unwrap();
         let init_bytes = init.encode();
         let Frame::ConnectionInit {
             ephemeral_pubkey,
@@ -576,7 +615,10 @@ mod tests {
 
         let client_finished = client.build_finished().unwrap();
         let client_finished_bytes = client_finished.encode();
-        let Frame::Handshake { confirm: client_confirm } = client_finished else {
+        let Frame::Handshake {
+            confirm: client_confirm,
+        } = client_finished
+        else {
             panic!("expected finished");
         };
         server
@@ -585,7 +627,10 @@ mod tests {
 
         let server_finished = server.build_finished().unwrap();
         let server_finished_bytes = server_finished.encode();
-        let Frame::Handshake { confirm: server_confirm } = server_finished else {
+        let Frame::Handshake {
+            confirm: server_confirm,
+        } = server_finished
+        else {
             panic!("expected finished");
         };
         client
@@ -626,8 +671,14 @@ mod tests {
         let tp = b"tp";
         let retry_token = b"retry";
 
-        let mut client = ClientHandshake::new(EphemeralKeyPair::generate(), WireConnectionId::random(), now);
-        let init = client.build_init(tp, retry_token, Some(&client_id)).unwrap();
+        let mut client = ClientHandshake::new(
+            EphemeralKeyPair::generate(),
+            WireConnectionId::random(),
+            now,
+        );
+        let init = client
+            .build_init(tp, retry_token, Some(&client_id))
+            .unwrap();
         let init_bytes = init.encode();
         let Frame::ConnectionInit {
             ephemeral_pubkey,
@@ -664,17 +715,19 @@ mod tests {
             panic!();
         };
 
-        assert!(client
-            .process_init_ack(
-                &src_conn_id,
-                &server_pubkey,
-                &transport_params,
-                &server_proof,
-                &ack_bytes,
-                &[server_id.public_bytes()],
-                true,
-            )
-            .is_err());
+        assert!(
+            client
+                .process_init_ack(
+                    &src_conn_id,
+                    &server_pubkey,
+                    &transport_params,
+                    &server_proof,
+                    &ack_bytes,
+                    &[server_id.public_bytes()],
+                    true,
+                )
+                .is_err()
+        );
     }
 
     #[test]
@@ -684,8 +737,14 @@ mod tests {
         let tp = b"transport-params";
         let retry_token = b"retry";
 
-        let mut client = ClientHandshake::new(EphemeralKeyPair::generate(), WireConnectionId::random(), now);
-        let init = client.build_init(tp, retry_token, Some(&client_id)).unwrap();
+        let mut client = ClientHandshake::new(
+            EphemeralKeyPair::generate(),
+            WireConnectionId::random(),
+            now,
+        );
+        let init = client
+            .build_init(tp, retry_token, Some(&client_id))
+            .unwrap();
         let init_bytes = init.encode();
         let Frame::ConnectionInit {
             ephemeral_pubkey,
@@ -711,13 +770,15 @@ mod tests {
             retry_token,
             transcript_hash,
         };
-        assert!(verify_identity_proof(
-            &identity_proof,
-            &bad_ctx.signing_material(),
-            &[client_id.public_bytes()],
-            true
-        )
-        .is_err());
+        assert!(
+            verify_identity_proof(
+                &identity_proof,
+                &bad_ctx.signing_material(),
+                &[client_id.public_bytes()],
+                true
+            )
+            .is_err()
+        );
 
         server
             .process_init(
@@ -741,7 +802,9 @@ mod tests {
 
         let client_cid = WireConnectionId::random();
         let mut client = ClientHandshake::new(EphemeralKeyPair::generate(), client_cid, now);
-        let init = client.build_init(tp, retry_token, Some(&client_id)).unwrap();
+        let init = client
+            .build_init(tp, retry_token, Some(&client_id))
+            .unwrap();
         let _init_bytes = init.encode();
         let Frame::ConnectionInit {
             ephemeral_pubkey,
@@ -764,13 +827,15 @@ mod tests {
             retry_token,
             transcript_hash: HandshakeTranscript::new().hash(),
         };
-        assert!(verify_identity_proof(
-            &identity_proof,
-            &bad_ctx.signing_material(),
-            &[client_id.public_bytes()],
-            true
-        )
-        .is_err());
+        assert!(
+            verify_identity_proof(
+                &identity_proof,
+                &bad_ctx.signing_material(),
+                &[client_id.public_bytes()],
+                true
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -780,8 +845,14 @@ mod tests {
         let tp = b"tp";
         let retry_token = &[];
 
-        let mut client = ClientHandshake::new(EphemeralKeyPair::generate(), WireConnectionId::random(), now);
-        let init = client.build_init(tp, retry_token, Some(&client_id)).unwrap();
+        let mut client = ClientHandshake::new(
+            EphemeralKeyPair::generate(),
+            WireConnectionId::random(),
+            now,
+        );
+        let init = client
+            .build_init(tp, retry_token, Some(&client_id))
+            .unwrap();
         let Frame::ConnectionInit {
             ephemeral_pubkey,
             identity_proof,
@@ -804,13 +875,15 @@ mod tests {
             retry_token,
             transcript_hash: HandshakeTranscript::new().hash(),
         };
-        assert!(verify_identity_proof(
-            &identity_proof,
-            &bad_ctx.signing_material(),
-            &[client_id.public_bytes()],
-            true
-        )
-        .is_err());
+        assert!(
+            verify_identity_proof(
+                &identity_proof,
+                &bad_ctx.signing_material(),
+                &[client_id.public_bytes()],
+                true
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -820,8 +893,14 @@ mod tests {
         let tp = b"tp";
         let retry_token = b"valid-retry-token";
 
-        let mut client = ClientHandshake::new(EphemeralKeyPair::generate(), WireConnectionId::random(), now);
-        let init = client.build_init(tp, retry_token, Some(&client_id)).unwrap();
+        let mut client = ClientHandshake::new(
+            EphemeralKeyPair::generate(),
+            WireConnectionId::random(),
+            now,
+        );
+        let init = client
+            .build_init(tp, retry_token, Some(&client_id))
+            .unwrap();
         let Frame::ConnectionInit {
             ephemeral_pubkey,
             identity_proof,
@@ -842,12 +921,14 @@ mod tests {
             retry_token: b"tampered-retry-token",
             transcript_hash: HandshakeTranscript::new().hash(),
         };
-        assert!(verify_identity_proof(
-            &identity_proof,
-            &bad_ctx.signing_material(),
-            &[client_id.public_bytes()],
-            true
-        )
-        .is_err());
+        assert!(
+            verify_identity_proof(
+                &identity_proof,
+                &bad_ctx.signing_material(),
+                &[client_id.public_bytes()],
+                true
+            )
+            .is_err()
+        );
     }
 }

@@ -12,7 +12,7 @@ use crate::lsp::{DocumentSymbolInfo, LspClient};
 use crate::mode::Mode;
 use crate::palette::{CommandItem, PaletteState};
 use crate::runner::{Backend, Runner, Terminal};
-use crate::search::{fuzzy_match_score, search_workspace, SearchState};
+use crate::search::{SearchState, fuzzy_match_score, search_workspace};
 use crate::split::{SplitDirection, SplitTree};
 use crate::workspace::Workspace;
 
@@ -158,10 +158,7 @@ impl MenuTab {
                 "Search Stdlib Docs (:doc)",
                 "Run Benchmark (:bench)",
             ],
-            MenuTab::Info => vec![
-                "Keybindings Cheatsheet (F1)",
-                "About Adesh Editor",
-            ],
+            MenuTab::Info => vec!["Keybindings Cheatsheet (F1)", "About Adesh Editor"],
             MenuTab::None => vec![],
         }
     }
@@ -294,7 +291,8 @@ impl App {
             split_tree,
             git,
             prompt_input: String::new(),
-            status_message: "Ready. F1:Help | Ctrl+P:Files | Ctrl+G:Git | F5:Run | : for commands".to_string(),
+            status_message: "Ready. F1:Help | Ctrl+P:Files | Ctrl+G:Git | F5:Run | : for commands"
+                .to_string(),
             runner: Runner::new(),
             lsp: LspClient::new(),
             running: true,
@@ -388,7 +386,8 @@ impl App {
     }
 
     pub fn cleanup_toasts(&mut self) {
-        self.toasts.retain(|t| t.created_at.elapsed() < Duration::from_secs(4));
+        self.toasts
+            .retain(|t| t.created_at.elapsed() < Duration::from_secs(4));
     }
 
     pub fn remove_toast(&mut self, idx: usize) {
@@ -425,27 +424,48 @@ impl App {
                     self.file_clipboard = None;
                     self.file_clipboard_cut = false;
                     self.explorer.refresh();
-                    self.toast(&format!("Moved to {}", dest.file_name().unwrap_or_default().to_string_lossy()), "SUCCESS");
+                    self.toast(
+                        &format!(
+                            "Moved to {}",
+                            dest.file_name().unwrap_or_default().to_string_lossy()
+                        ),
+                        "SUCCESS",
+                    );
                 } else if let Ok(()) = copy_path_recursive(src, &dest) {
                     let _ = std::fs::remove_file(src).or_else(|_| std::fs::remove_dir_all(src));
                     self.file_clipboard = None;
                     self.file_clipboard_cut = false;
                     self.explorer.refresh();
-                    self.toast(&format!("Moved to {}", dest.file_name().unwrap_or_default().to_string_lossy()), "SUCCESS");
+                    self.toast(
+                        &format!(
+                            "Moved to {}",
+                            dest.file_name().unwrap_or_default().to_string_lossy()
+                        ),
+                        "SUCCESS",
+                    );
                 } else {
                     self.toast("Failed to move file/folder", "ERROR");
                 }
             } else {
                 let final_dest = if dest.exists() && dest == *src {
                     let stem = src.file_stem().unwrap_or_default().to_string_lossy();
-                    let ext = src.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+                    let ext = src
+                        .extension()
+                        .map(|e| format!(".{}", e.to_string_lossy()))
+                        .unwrap_or_default();
                     target_dir.join(format!("{}_copy{}", stem, ext))
                 } else {
                     dest
                 };
                 if let Ok(()) = copy_path_recursive(src, &final_dest) {
                     self.explorer.refresh();
-                    self.toast(&format!("Pasted {}", final_dest.file_name().unwrap_or_default().to_string_lossy()), "SUCCESS");
+                    self.toast(
+                        &format!(
+                            "Pasted {}",
+                            final_dest.file_name().unwrap_or_default().to_string_lossy()
+                        ),
+                        "SUCCESS",
+                    );
                 } else {
                     self.toast("Failed to copy file/folder", "ERROR");
                 }
@@ -478,25 +498,46 @@ impl App {
                     self.modal = Modal::NewDirPrompt;
                 }
                 3 => {
-                    self.prompt_input = target.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                    self.prompt_input = target
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default();
                     self.modal = Modal::RenameFilePrompt;
                 }
                 4 => {
                     self.file_clipboard = Some(target.clone());
                     self.file_clipboard_cut = false;
-                    self.toast(&format!("Copied folder: {}", target.file_name().unwrap_or_default().to_string_lossy()), "INFO");
+                    self.toast(
+                        &format!(
+                            "Copied folder: {}",
+                            target.file_name().unwrap_or_default().to_string_lossy()
+                        ),
+                        "INFO",
+                    );
                 }
                 5 => {
                     self.file_clipboard = Some(target.clone());
                     self.file_clipboard_cut = true;
-                    self.toast(&format!("Cut folder: {}", target.file_name().unwrap_or_default().to_string_lossy()), "INFO");
+                    self.toast(
+                        &format!(
+                            "Cut folder: {}",
+                            target.file_name().unwrap_or_default().to_string_lossy()
+                        ),
+                        "INFO",
+                    );
                 }
                 6 => {
                     self.paste_file_clipboard(&target);
                 }
                 7 => {
                     if let Ok(()) = self.explorer.delete_file(&target) {
-                        self.toast(&format!("Deleted folder: {}", target.file_name().unwrap_or_default().to_string_lossy()), "WARN");
+                        self.toast(
+                            &format!(
+                                "Deleted folder: {}",
+                                target.file_name().unwrap_or_default().to_string_lossy()
+                            ),
+                            "WARN",
+                        );
                     }
                 }
                 _ => {}
@@ -507,26 +548,50 @@ impl App {
                     let _ = self.open_file(&target);
                 }
                 1 => {
-                    self.prompt_input = target.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                    self.prompt_input = target
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default();
                     self.modal = Modal::RenameFilePrompt;
                 }
                 2 => {
                     self.file_clipboard = Some(target.clone());
                     self.file_clipboard_cut = false;
-                    self.toast(&format!("Copied file: {}", target.file_name().unwrap_or_default().to_string_lossy()), "INFO");
+                    self.toast(
+                        &format!(
+                            "Copied file: {}",
+                            target.file_name().unwrap_or_default().to_string_lossy()
+                        ),
+                        "INFO",
+                    );
                 }
                 3 => {
                     self.file_clipboard = Some(target.clone());
                     self.file_clipboard_cut = true;
-                    self.toast(&format!("Cut file: {}", target.file_name().unwrap_or_default().to_string_lossy()), "INFO");
+                    self.toast(
+                        &format!(
+                            "Cut file: {}",
+                            target.file_name().unwrap_or_default().to_string_lossy()
+                        ),
+                        "INFO",
+                    );
                 }
                 4 => {
-                    let parent = target.parent().unwrap_or(&self.workspace.root).to_path_buf();
+                    let parent = target
+                        .parent()
+                        .unwrap_or(&self.workspace.root)
+                        .to_path_buf();
                     self.paste_file_clipboard(&parent);
                 }
                 5 => {
                     if let Ok(()) = self.explorer.delete_file(&target) {
-                        self.toast(&format!("Deleted file: {}", target.file_name().unwrap_or_default().to_string_lossy()), "WARN");
+                        self.toast(
+                            &format!(
+                                "Deleted file: {}",
+                                target.file_name().unwrap_or_default().to_string_lossy()
+                            ),
+                            "WARN",
+                        );
                     }
                 }
                 6 => {
@@ -773,25 +838,47 @@ impl App {
     pub fn toggle_line_numbers(&mut self) {
         self.line_number_mode = self.line_number_mode.cycle();
         self.config.line_numbers = self.line_number_mode.name().to_string();
-        self.toast(&format!("Line numbers: {}", self.line_number_mode.name()), "INFO");
+        self.toast(
+            &format!("Line numbers: {}", self.line_number_mode.name()),
+            "INFO",
+        );
     }
 
     pub fn toggle_word_wrap(&mut self) {
         self.word_wrap = !self.word_wrap;
         self.config.word_wrap = self.word_wrap;
-        self.toast(&format!("Word wrap: {}", if self.word_wrap { "on" } else { "off" }), "INFO");
+        self.toast(
+            &format!("Word wrap: {}", if self.word_wrap { "on" } else { "off" }),
+            "INFO",
+        );
     }
 
     pub fn toggle_rainbow_brackets(&mut self) {
         self.rainbow_brackets = !self.rainbow_brackets;
         self.config.rainbow_brackets = self.rainbow_brackets;
-        self.toast(&format!("Rainbow brackets: {}", if self.rainbow_brackets { "on" } else { "off" }), "INFO");
+        self.toast(
+            &format!(
+                "Rainbow brackets: {}",
+                if self.rainbow_brackets { "on" } else { "off" }
+            ),
+            "INFO",
+        );
     }
 
     pub fn toggle_line_highlight(&mut self) {
         self.show_line_highlight = !self.show_line_highlight;
         self.config.show_line_highlight = self.show_line_highlight;
-        self.toast(&format!("Line highlight: {}", if self.show_line_highlight { "on" } else { "off" }), "INFO");
+        self.toast(
+            &format!(
+                "Line highlight: {}",
+                if self.show_line_highlight {
+                    "on"
+                } else {
+                    "off"
+                }
+            ),
+            "INFO",
+        );
     }
 
     pub fn execute_command_line(&mut self) {
@@ -831,7 +918,8 @@ impl App {
                 } else {
                     None
                 };
-                self.split_tree.split_active(SplitDirection::Vertical, target_buf);
+                self.split_tree
+                    .split_active(SplitDirection::Vertical, target_buf);
                 self.toast("Split vertical (Ctrl+W v)", "INFO");
             }
             "split" | "sp" => {
@@ -841,7 +929,8 @@ impl App {
                 } else {
                     None
                 };
-                self.split_tree.split_active(SplitDirection::Horizontal, target_buf);
+                self.split_tree
+                    .split_active(SplitDirection::Horizontal, target_buf);
                 self.toast("Split horizontal (Ctrl+W s)", "INFO");
             }
             "close" | "clo" => {
@@ -975,23 +1064,30 @@ impl App {
                 self.modal = Modal::HirViewer;
             }
             "ir" => {
-                self.ir_view_content = self.dump_compiler_ir("--dump-ir", "IR (Intermediate Representation)");
+                self.ir_view_content =
+                    self.dump_compiler_ir("--dump-ir", "IR (Intermediate Representation)");
                 self.modal = Modal::IrViewer;
             }
             "lir" => {
-                self.lir_view_content = self.dump_compiler_ir("--dump-lir", "LIR (Low-Level SSA IR)");
+                self.lir_view_content =
+                    self.dump_compiler_ir("--dump-lir", "LIR (Low-Level SSA IR)");
                 self.modal = Modal::LirViewer;
             }
             "mlir" => {
-                self.mlir_view_content = self.dump_compiler_ir("--dump-mlir", "MLIR (Multi-Level IR)");
+                self.mlir_view_content =
+                    self.dump_compiler_ir("--dump-mlir", "MLIR (Multi-Level IR)");
                 self.modal = Modal::MlirViewer;
             }
             "bytecode" | "disasm" => {
-                self.bytecode_view_content = self.dump_compiler_ir("--dump-bytecode", "Bytecode Disassembly");
+                self.bytecode_view_content =
+                    self.dump_compiler_ir("--dump-bytecode", "Bytecode Disassembly");
                 self.modal = Modal::BytecodeViewer;
             }
             "tokens" => {
-                let mut tokens = vec![format!("--- Lexer Tokens for {} ---", self.current_buffer().file_name())];
+                let mut tokens = vec![format!(
+                    "--- Lexer Tokens for {} ---",
+                    self.current_buffer().file_name()
+                )];
                 for (idx, line) in self.current_buffer().lines.iter().enumerate() {
                     tokens.push(format!("Line {:>3}: {}", idx + 1, line));
                 }
@@ -999,7 +1095,10 @@ impl App {
                 self.modal = Modal::TokensViewer;
             }
             "check" | "c" => {
-                let mut content = vec![format!("--- Adesh Syntax & Type Diagnostics for {} ---", self.current_buffer().file_name())];
+                let mut content = vec![format!(
+                    "--- Adesh Syntax & Type Diagnostics for {} ---",
+                    self.current_buffer().file_name()
+                )];
                 if let Some(ref p) = self.current_buffer().path.clone() {
                     if let Some(adesh_exe) = crate::discovery::find_executable("adesh") {
                         if let Ok(output) = std::process::Command::new(&adesh_exe)
@@ -1139,11 +1238,26 @@ impl App {
                 for (idx, line) in buf.lines.iter().enumerate() {
                     let trimmed = line.trim();
                     if trimmed.starts_with("fn ") || trimmed.starts_with("function ") {
-                        lines.push(format!("    FunctionDecl {{ line: {}, signature: \"{}\" }},", idx + 1, trimmed));
+                        lines.push(format!(
+                            "    FunctionDecl {{ line: {}, signature: \"{}\" }},",
+                            idx + 1,
+                            trimmed
+                        ));
                     } else if trimmed.starts_with("struct ") || trimmed.starts_with("type ") {
-                        lines.push(format!("    StructDecl {{ line: {}, signature: \"{}\" }},", idx + 1, trimmed));
-                    } else if trimmed.starts_with("let ") || trimmed.starts_with("const ") || trimmed.starts_with("var ") {
-                        lines.push(format!("    VarDecl {{ line: {}, expr: \"{}\" }},", idx + 1, trimmed));
+                        lines.push(format!(
+                            "    StructDecl {{ line: {}, signature: \"{}\" }},",
+                            idx + 1,
+                            trimmed
+                        ));
+                    } else if trimmed.starts_with("let ")
+                        || trimmed.starts_with("const ")
+                        || trimmed.starts_with("var ")
+                    {
+                        lines.push(format!(
+                            "    VarDecl {{ line: {}, expr: \"{}\" }},",
+                            idx + 1,
+                            trimmed
+                        ));
                     }
                 }
                 lines.push("  ]".to_string());
@@ -1157,7 +1271,11 @@ impl App {
                 for (idx, line) in buf.lines.iter().enumerate() {
                     let trimmed = line.trim();
                     if !trimmed.is_empty() {
-                        lines.push(format!("    %v{} = hir.eval \"{}\" : !adesh.any", idx, trimmed.replace('"', "\\\"")));
+                        lines.push(format!(
+                            "    %v{} = hir.eval \"{}\" : !adesh.any",
+                            idx,
+                            trimmed.replace('"', "\\\"")
+                        ));
                     }
                 }
                 lines.push("    hir.return".to_string());
@@ -1186,7 +1304,11 @@ impl App {
                 for (idx, line) in buf.lines.iter().enumerate().take(12) {
                     let trimmed = line.trim();
                     if !trimmed.is_empty() {
-                        lines.push(format!("    %res{} = adesh.exec(%scope, \"{}\") : i32", idx, trimmed.replace('"', "\\\"")));
+                        lines.push(format!(
+                            "    %res{} = adesh.exec(%scope, \"{}\") : i32",
+                            idx,
+                            trimmed.replace('"', "\\\"")
+                        ));
                     }
                 }
                 lines.push("    return %c0 : i32".to_string());
@@ -1201,7 +1323,8 @@ impl App {
                 lines.push("0003    OP_LOAD_CONST   0x0001 (10)     Push integer 10".to_string());
                 lines.push("0006    OP_STORE_LOCAL  0x0000 (x)      Store to local x".to_string());
                 lines.push("0009    OP_LOAD_LOCAL   0x0000 (x)      Load local x".to_string());
-                lines.push("000C    OP_CALL_STDLIB  0x0004 (print)  Call builtin print".to_string());
+                lines
+                    .push("000C    OP_CALL_STDLIB  0x0004 (print)  Call builtin print".to_string());
                 lines.push("000F    OP_RETURN_VOID                  Exit function".to_string());
             }
             _ => {
@@ -1228,7 +1351,10 @@ impl App {
                 let mut indent: usize = 0;
                 for line in lines {
                     let trimmed = line.trim();
-                    if trimmed.starts_with('}') || trimmed.starts_with(']') || trimmed.starts_with(')') {
+                    if trimmed.starts_with('}')
+                        || trimmed.starts_with(']')
+                        || trimmed.starts_with(')')
+                    {
                         indent = indent.saturating_sub(4);
                     }
                     let indent_str = " ".repeat(indent);
@@ -1348,7 +1474,8 @@ impl App {
                     self.toast("Split vertical", "INFO");
                 }
                 1 => {
-                    self.split_tree.split_active(SplitDirection::Horizontal, None);
+                    self.split_tree
+                        .split_active(SplitDirection::Horizontal, None);
                     self.toast("Split horizontal", "INFO");
                 }
                 2 => {

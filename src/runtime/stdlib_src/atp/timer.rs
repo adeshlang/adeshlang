@@ -50,7 +50,13 @@ impl TimerWheel {
         }
     }
 
-    pub fn schedule(&mut self, deadline: Instant, kind: TimerKind, stream_id: u64, message_id: u64) {
+    pub fn schedule(
+        &mut self,
+        deadline: Instant,
+        kind: TimerKind,
+        stream_id: u64,
+        message_id: u64,
+    ) {
         let entry = TimerEntry {
             deadline,
             kind,

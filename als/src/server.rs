@@ -16,12 +16,12 @@ use crate::diagnostics::compute_diagnostics_semantic;
 use crate::document::DocumentStore;
 use crate::formatting::format_document;
 use crate::hover::get_hover_semantic;
+use crate::inlay_hints::get_inlay_hints;
+use crate::semantic_tokens::{get_semantic_tokens, get_semantic_tokens_range};
 use crate::symbols::{
     do_rename_semantic, find_definition_semantic, find_references_semantic,
     get_document_symbols_semantic, prepare_rename_semantic,
 };
-use crate::semantic_tokens::{get_semantic_tokens, get_semantic_tokens_range};
-use crate::inlay_hints::get_inlay_hints;
 use crate::workspace::WorkspaceIndex;
 
 /// Adesh Language Server
@@ -71,7 +71,9 @@ impl AdeshLanguageServer {
             "textDocument/signatureHelp" => self.handle_signature_help(id, req.params),
             "completionItem/resolve" => self.handle_completion_resolve(id, req.params),
             "textDocument/semanticTokens/full" => self.handle_semantic_tokens_full(id, req.params),
-            "textDocument/semanticTokens/range" => self.handle_semantic_tokens_range(id, req.params),
+            "textDocument/semanticTokens/range" => {
+                self.handle_semantic_tokens_range(id, req.params)
+            }
             "textDocument/inlayHint" => self.handle_inlay_hint(id, req.params),
             "textDocument/declaration" => self.handle_declaration(id, req.params),
             "textDocument/typeDefinition" => self.handle_type_definition(id, req.params),
@@ -147,7 +149,14 @@ impl AdeshLanguageServer {
         self.workspace.index_document(uri, &doc.content);
         let index = self.workspace.get_index(uri)?;
 
-        let items = get_completions_semantic(index, trigger.as_deref(), word.as_deref(), line_text, pos.line, pos.character);
+        let items = get_completions_semantic(
+            index,
+            trigger.as_deref(),
+            word.as_deref(),
+            line_text,
+            pos.line,
+            pos.character,
+        );
 
         let response = CompletionResponse::Array(items);
         Some(Response::new_ok(id, response))
@@ -186,7 +195,8 @@ impl AdeshLanguageServer {
         self.workspace.index_document(uri, &doc.content);
         let index = self.workspace.get_index(uri)?;
 
-        let location = find_definition_semantic(index, &self.workspace, doc, pos.line, pos.character);
+        let location =
+            find_definition_semantic(index, &self.workspace, doc, pos.line, pos.character);
 
         let response: Option<GotoDefinitionResponse> = location.map(GotoDefinitionResponse::Scalar);
         Some(Response::new_ok(id, response))
@@ -204,7 +214,14 @@ impl AdeshLanguageServer {
         self.workspace.index_document(uri, &doc.content);
         let index = self.workspace.get_index(uri)?;
 
-        let locations = find_references_semantic(index, &self.workspace, doc, pos.line, pos.character, include_declaration);
+        let locations = find_references_semantic(
+            index,
+            &self.workspace,
+            doc,
+            pos.line,
+            pos.character,
+            include_declaration,
+        );
 
         Some(Response::new_ok(id, locations))
     }
@@ -260,7 +277,9 @@ impl AdeshLanguageServer {
                     adeshlang::semantics::SemanticSymbolKind::Struct => SymbolKind::STRUCT,
                     adeshlang::semantics::SemanticSymbolKind::Enum => SymbolKind::ENUM,
                     adeshlang::semantics::SemanticSymbolKind::Interface => SymbolKind::INTERFACE,
-                    adeshlang::semantics::SemanticSymbolKind::TypeAlias => SymbolKind::TYPE_PARAMETER,
+                    adeshlang::semantics::SemanticSymbolKind::TypeAlias => {
+                        SymbolKind::TYPE_PARAMETER
+                    }
                     _ => SymbolKind::VARIABLE,
                 };
 
@@ -326,7 +345,14 @@ impl AdeshLanguageServer {
         self.workspace.index_document(uri, &doc.content);
         let index = self.workspace.get_index(uri)?;
 
-        let workspace_edit = do_rename_semantic(index, &self.workspace, doc, pos.line, pos.character, new_name);
+        let workspace_edit = do_rename_semantic(
+            index,
+            &self.workspace,
+            doc,
+            pos.line,
+            pos.character,
+            new_name,
+        );
 
         Some(Response::new_ok(id, workspace_edit))
     }
@@ -399,8 +425,13 @@ impl AdeshLanguageServer {
             // ADL files use schema-driven validation diagnostics
             if crate::adl::is_adl_uri(&uri) {
                 let diagnostics = crate::adl::compute_adl_diagnostics(&content, &uri);
-                self.diagnostics_cache.insert(uri.clone(), diagnostics.clone());
-                return Some(Self::build_publish_diagnostics(uri, diagnostics, Some(version)));
+                self.diagnostics_cache
+                    .insert(uri.clone(), diagnostics.clone());
+                return Some(Self::build_publish_diagnostics(
+                    uri,
+                    diagnostics,
+                    Some(version),
+                ));
             }
 
             self.workspace.index_document(&uri, &content);
@@ -409,8 +440,13 @@ impl AdeshLanguageServer {
                 self.workspace.index_document(&uri, &doc.content);
                 let index = self.workspace.get_index(&uri)?;
                 let diagnostics = compute_diagnostics_semantic(index, doc);
-                self.diagnostics_cache.insert(uri.clone(), diagnostics.clone());
-                return Some(Self::build_publish_diagnostics(uri, diagnostics, Some(version)));
+                self.diagnostics_cache
+                    .insert(uri.clone(), diagnostics.clone());
+                return Some(Self::build_publish_diagnostics(
+                    uri,
+                    diagnostics,
+                    Some(version),
+                ));
             }
         }
         None
@@ -427,8 +463,13 @@ impl AdeshLanguageServer {
                 // ADL files use schema-driven validation diagnostics
                 if crate::adl::is_adl_uri(&uri) {
                     let diagnostics = crate::adl::compute_adl_diagnostics(&change.text, &uri);
-                    self.diagnostics_cache.insert(uri.clone(), diagnostics.clone());
-                    return Some(Self::build_publish_diagnostics(uri, diagnostics, Some(version)));
+                    self.diagnostics_cache
+                        .insert(uri.clone(), diagnostics.clone());
+                    return Some(Self::build_publish_diagnostics(
+                        uri,
+                        diagnostics,
+                        Some(version),
+                    ));
                 }
 
                 self.workspace.index_document(&uri, &change.text);
@@ -436,8 +477,13 @@ impl AdeshLanguageServer {
                 if let Some(doc) = self.documents.get(&uri) {
                     let index = self.workspace.get_index(&uri)?;
                     let diagnostics = compute_diagnostics_semantic(index, doc);
-                    self.diagnostics_cache.insert(uri.clone(), diagnostics.clone());
-                    return Some(Self::build_publish_diagnostics(uri, diagnostics, Some(version)));
+                    self.diagnostics_cache
+                        .insert(uri.clone(), diagnostics.clone());
+                    return Some(Self::build_publish_diagnostics(
+                        uri,
+                        diagnostics,
+                        Some(version),
+                    ));
                 }
             }
         }
@@ -462,8 +508,13 @@ impl AdeshLanguageServer {
                 self.workspace.index_document(&uri, &doc.content);
                 let index = self.workspace.get_index(&uri)?;
                 let diagnostics = compute_diagnostics_semantic(index, doc);
-                self.diagnostics_cache.insert(uri.clone(), diagnostics.clone());
-                return Some(Self::build_publish_diagnostics(uri, diagnostics, Some(doc.version)));
+                self.diagnostics_cache
+                    .insert(uri.clone(), diagnostics.clone());
+                return Some(Self::build_publish_diagnostics(
+                    uri,
+                    diagnostics,
+                    Some(doc.version),
+                ));
             }
         }
         None
@@ -601,7 +652,9 @@ impl AdeshLanguageServer {
                     },
                     ParameterInformation {
                         label: ParameterLabel::Simple("options?".to_string()),
-                        documentation: Some(Documentation::String("Print options (color, sep, end, etc.)".to_string())),
+                        documentation: Some(Documentation::String(
+                            "Print options (color, sep, end, etc.)".to_string(),
+                        )),
                     },
                 ],
             ),
@@ -618,7 +671,9 @@ impl AdeshLanguageServer {
                 "Get length of array/string/collection",
                 vec![ParameterInformation {
                     label: ParameterLabel::Simple("collection".to_string()),
-                    documentation: Some(Documentation::String("Array, string, or collection".to_string())),
+                    documentation: Some(Documentation::String(
+                        "Array, string, or collection".to_string(),
+                    )),
                 }],
             ),
             "range" => (
@@ -627,15 +682,21 @@ impl AdeshLanguageServer {
                 vec![
                     ParameterInformation {
                         label: ParameterLabel::Simple("start".to_string()),
-                        documentation: Some(Documentation::String("Start value (inclusive)".to_string())),
+                        documentation: Some(Documentation::String(
+                            "Start value (inclusive)".to_string(),
+                        )),
                     },
                     ParameterInformation {
                         label: ParameterLabel::Simple("end".to_string()),
-                        documentation: Some(Documentation::String("End value (exclusive)".to_string())),
+                        documentation: Some(Documentation::String(
+                            "End value (exclusive)".to_string(),
+                        )),
                     },
                     ParameterInformation {
                         label: ParameterLabel::Simple("step?".to_string()),
-                        documentation: Some(Documentation::String("Step increment (default: 1)".to_string())),
+                        documentation: Some(Documentation::String(
+                            "Step increment (default: 1)".to_string(),
+                        )),
                     },
                 ],
             ),
@@ -645,11 +706,15 @@ impl AdeshLanguageServer {
                 vec![
                     ParameterInformation {
                         label: ParameterLabel::Simple("array".to_string()),
-                        documentation: Some(Documentation::String("Array to transform".to_string())),
+                        documentation: Some(Documentation::String(
+                            "Array to transform".to_string(),
+                        )),
                     },
                     ParameterInformation {
                         label: ParameterLabel::Simple("fn".to_string()),
-                        documentation: Some(Documentation::String("Transformation function".to_string())),
+                        documentation: Some(Documentation::String(
+                            "Transformation function".to_string(),
+                        )),
                     },
                 ],
             ),
@@ -663,7 +728,9 @@ impl AdeshLanguageServer {
                     },
                     ParameterInformation {
                         label: ParameterLabel::Simple("fn".to_string()),
-                        documentation: Some(Documentation::String("Predicate function".to_string())),
+                        documentation: Some(Documentation::String(
+                            "Predicate function".to_string(),
+                        )),
                     },
                 ],
             ),
@@ -677,11 +744,15 @@ impl AdeshLanguageServer {
                     },
                     ParameterInformation {
                         label: ParameterLabel::Simple("fn".to_string()),
-                        documentation: Some(Documentation::String("Reducer function (acc, item) -> acc".to_string())),
+                        documentation: Some(Documentation::String(
+                            "Reducer function (acc, item) -> acc".to_string(),
+                        )),
                     },
                     ParameterInformation {
                         label: ParameterLabel::Simple("initial".to_string()),
-                        documentation: Some(Documentation::String("Initial accumulator value".to_string())),
+                        documentation: Some(Documentation::String(
+                            "Initial accumulator value".to_string(),
+                        )),
                     },
                 ],
             ),
@@ -691,11 +762,15 @@ impl AdeshLanguageServer {
                 vec![
                     ParameterInformation {
                         label: ParameterLabel::Simple("condition".to_string()),
-                        documentation: Some(Documentation::String("Condition to check".to_string())),
+                        documentation: Some(Documentation::String(
+                            "Condition to check".to_string(),
+                        )),
                     },
                     ParameterInformation {
                         label: ParameterLabel::Simple("message?".to_string()),
-                        documentation: Some(Documentation::String("Optional error message".to_string())),
+                        documentation: Some(Documentation::String(
+                            "Optional error message".to_string(),
+                        )),
                     },
                 ],
             ),
@@ -822,11 +897,7 @@ impl AdeshLanguageServer {
         self.handle_definition(id, serde_json::to_value(params).unwrap_or_default())
     }
 
-    fn handle_document_highlight(
-        &mut self,
-        id: RequestId,
-        params: Value,
-    ) -> Option<Response> {
+    fn handle_document_highlight(&mut self, id: RequestId, params: Value) -> Option<Response> {
         let params: DocumentHighlightParams = serde_json::from_value(params).ok()?;
         let uri = &params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
@@ -928,14 +999,23 @@ impl AdeshLanguageServer {
         ranges
     }
 
-    fn collect_folding_ranges(&self, stmt: &adeshlang::parsing::ast::Stmt, ranges: &mut Vec<FoldingRange>) {
+    fn collect_folding_ranges(
+        &self,
+        stmt: &adeshlang::parsing::ast::Stmt,
+        ranges: &mut Vec<FoldingRange>,
+    ) {
         use adeshlang::parsing::ast::StmtKind;
 
         match &stmt.kind {
             StmtKind::Function(func, _) => {
                 if let Some(first) = func.body.first() {
                     let start_line = (first.span.line.saturating_sub(1)) as u32;
-                    let end_line = (func.body.last().map(|s| s.span.line).unwrap_or(start_line as usize + 1).saturating_sub(1)) as u32;
+                    let end_line = (func
+                        .body
+                        .last()
+                        .map(|s| s.span.line)
+                        .unwrap_or(start_line as usize + 1)
+                        .saturating_sub(1)) as u32;
                     if end_line > start_line {
                         ranges.push(FoldingRange {
                             start_line,
@@ -965,8 +1045,16 @@ impl AdeshLanguageServer {
             }
             StmtKind::Block(stmts) => {
                 if stmts.len() > 2 {
-                    let start_line = (stmts.first().map(|s| s.span.line).unwrap_or(0).saturating_sub(1)) as u32;
-                    let end_line = (stmts.last().map(|s| s.span.line).unwrap_or(0).saturating_sub(1)) as u32;
+                    let start_line = (stmts
+                        .first()
+                        .map(|s| s.span.line)
+                        .unwrap_or(0)
+                        .saturating_sub(1)) as u32;
+                    let end_line = (stmts
+                        .last()
+                        .map(|s| s.span.line)
+                        .unwrap_or(0)
+                        .saturating_sub(1)) as u32;
                     if end_line > start_line {
                         ranges.push(FoldingRange {
                             start_line,
@@ -982,7 +1070,11 @@ impl AdeshLanguageServer {
                     self.collect_folding_ranges(s, ranges);
                 }
             }
-            StmtKind::If { then_branch, else_branch, .. } => {
+            StmtKind::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
                 self.collect_folding_ranges(then_branch, ranges);
                 if let Some(e) = else_branch {
                     self.collect_folding_ranges(e, ranges);
@@ -990,7 +1082,11 @@ impl AdeshLanguageServer {
             }
             StmtKind::While { body, .. } => self.collect_folding_ranges(body, ranges),
             StmtKind::ForIn { body, .. } => self.collect_folding_ranges(body, ranges),
-            StmtKind::TryCatch { try_block, catch_block, .. } => {
+            StmtKind::TryCatch {
+                try_block,
+                catch_block,
+                ..
+            } => {
                 self.collect_folding_ranges(try_block, ranges);
                 self.collect_folding_ranges(catch_block, ranges);
             }

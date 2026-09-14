@@ -42,7 +42,10 @@ pub fn decompress_body(
             if data.len() > max_decompressed {
                 return Err(HttpError::new(
                     HttpErrorKind::SecurityViolation,
-                    format!("Body exceeds maximum decompressed size of {} bytes", max_decompressed),
+                    format!(
+                        "Body exceeds maximum decompressed size of {} bytes",
+                        max_decompressed
+                    ),
                 ));
             }
             Ok(data.to_vec())
@@ -60,7 +63,10 @@ pub fn decompress_body(
             if out.len() > max_decompressed {
                 return Err(HttpError::new(
                     HttpErrorKind::SecurityViolation,
-                    format!("Decompressed body exceeds size limit of {} bytes (Decompression bomb rejected)", max_decompressed),
+                    format!(
+                        "Decompressed body exceeds size limit of {} bytes (Decompression bomb rejected)",
+                        max_decompressed
+                    ),
                 ));
             }
             Ok(out)
@@ -78,7 +84,10 @@ pub fn decompress_body(
             if out.len() > max_decompressed {
                 return Err(HttpError::new(
                     HttpErrorKind::SecurityViolation,
-                    format!("Decompressed body exceeds size limit of {} bytes (Decompression bomb rejected)", max_decompressed),
+                    format!(
+                        "Decompressed body exceeds size limit of {} bytes (Decompression bomb rejected)",
+                        max_decompressed
+                    ),
                 ));
             }
             Ok(out)
@@ -96,7 +105,10 @@ pub fn decompress_body(
             if out.len() > max_decompressed {
                 return Err(HttpError::new(
                     HttpErrorKind::SecurityViolation,
-                    format!("Decompressed body exceeds size limit of {} bytes (Decompression bomb rejected)", max_decompressed),
+                    format!(
+                        "Decompressed body exceeds size limit of {} bytes (Decompression bomb rejected)",
+                        max_decompressed
+                    ),
                 ));
             }
             Ok(out)
@@ -119,7 +131,10 @@ pub fn decompress_body(
             if out.len() > max_decompressed {
                 return Err(HttpError::new(
                     HttpErrorKind::SecurityViolation,
-                    format!("Decompressed body exceeds size limit of {} bytes (Decompression bomb rejected)", max_decompressed),
+                    format!(
+                        "Decompressed body exceeds size limit of {} bytes (Decompression bomb rejected)",
+                        max_decompressed
+                    ),
                 ));
             }
             Ok(out)

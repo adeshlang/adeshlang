@@ -118,13 +118,23 @@ pub(super) fn execute_v1(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                             out.write_all(b"[").map_err(|e| e.to_string())?;
                             let mut first = true;
                             for elem in arr.iter() {
-                                if !first { out.write_all(b", ").map_err(|e| e.to_string())?; }
+                                if !first {
+                                    out.write_all(b", ").map_err(|e| e.to_string())?;
+                                }
                                 first = false;
                                 match elem {
-                                    VMValue::Number(n) => write!(out, "{}", n).map_err(|e| e.to_string())?,
-                                    VMValue::Bool(b) => write!(out, "{}", b).map_err(|e| e.to_string())?,
-                                    VMValue::Str(s) => write!(out, "\"{}\"", s).map_err(|e| e.to_string())?,
-                                    VMValue::Null => out.write_all(b"null").map_err(|e| e.to_string())?,
+                                    VMValue::Number(n) => {
+                                        write!(out, "{}", n).map_err(|e| e.to_string())?
+                                    }
+                                    VMValue::Bool(b) => {
+                                        write!(out, "{}", b).map_err(|e| e.to_string())?
+                                    }
+                                    VMValue::Str(s) => {
+                                        write!(out, "\"{}\"", s).map_err(|e| e.to_string())?
+                                    }
+                                    VMValue::Null => {
+                                        out.write_all(b"null").map_err(|e| e.to_string())?
+                                    }
                                     _ => out.write_all(b"{...}").map_err(|e| e.to_string())?,
                                 }
                             }
@@ -134,13 +144,23 @@ pub(super) fn execute_v1(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                             out.write_all(b"(").map_err(|e| e.to_string())?;
                             let mut first = true;
                             for elem in tup.iter() {
-                                if !first { out.write_all(b", ").map_err(|e| e.to_string())?; }
+                                if !first {
+                                    out.write_all(b", ").map_err(|e| e.to_string())?;
+                                }
                                 first = false;
                                 match elem {
-                                    VMValue::Number(n) => write!(out, "{}", n).map_err(|e| e.to_string())?,
-                                    VMValue::Bool(b) => write!(out, "{}", b).map_err(|e| e.to_string())?,
-                                    VMValue::Str(s) => write!(out, "\"{}\"", s).map_err(|e| e.to_string())?,
-                                    VMValue::Null => out.write_all(b"null").map_err(|e| e.to_string())?,
+                                    VMValue::Number(n) => {
+                                        write!(out, "{}", n).map_err(|e| e.to_string())?
+                                    }
+                                    VMValue::Bool(b) => {
+                                        write!(out, "{}", b).map_err(|e| e.to_string())?
+                                    }
+                                    VMValue::Str(s) => {
+                                        write!(out, "\"{}\"", s).map_err(|e| e.to_string())?
+                                    }
+                                    VMValue::Null => {
+                                        out.write_all(b"null").map_err(|e| e.to_string())?
+                                    }
                                     _ => out.write_all(b"{...}").map_err(|e| e.to_string())?,
                                 }
                             }

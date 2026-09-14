@@ -49,7 +49,14 @@ pub unsafe extern "C" fn adesh_run(
     let code_str = unsafe { c_str_to_str(code) };
     let fn_str = unsafe { c_str_to_str(filename) };
 
-    let result = session.run(code_str, if fn_str.is_empty() { None } else { Some(fn_str) });
+    let result = session.run(
+        code_str,
+        if fn_str.is_empty() {
+            None
+        } else {
+            Some(fn_str)
+        },
+    );
     string_to_c_str(result.to_json())
 }
 
@@ -64,10 +71,24 @@ pub unsafe extern "C" fn adesh_check(
 
     let diagnostics = if !session.is_null() {
         let session = unsafe { &*session };
-        session.check(code_str, if fn_str.is_empty() { None } else { Some(fn_str) })
+        session.check(
+            code_str,
+            if fn_str.is_empty() {
+                None
+            } else {
+                Some(fn_str)
+            },
+        )
     } else {
         let temp_session = AdeshSession::new();
-        temp_session.check(code_str, if fn_str.is_empty() { None } else { Some(fn_str) })
+        temp_session.check(
+            code_str,
+            if fn_str.is_empty() {
+                None
+            } else {
+                Some(fn_str)
+            },
+        )
     };
 
     let json = serde_json::to_string(&diagnostics).unwrap_or_else(|_| "[]".to_string());

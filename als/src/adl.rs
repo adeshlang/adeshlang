@@ -9,16 +9,11 @@
 //! editing experience in the JavaScript ecosystem.
 
 use lsp_types::{
-    CodeAction, CodeActionKind, CodeActionOrCommand,
-    CompletionItem, CompletionItemKind,
-    Diagnostic, DiagnosticSeverity,
-    DocumentLink, DocumentSymbol, Documentation,
-    FoldingRange, FoldingRangeKind,
-    Hover, HoverContents, InsertTextFormat,
-    MarkupContent, MarkupKind, Position, Range,
-    SelectionRange, SemanticTokenModifier, SemanticTokenType,
-    SemanticToken, SemanticTokens, SymbolKind,
-    TextEdit, Url, WorkspaceEdit,
+    CodeAction, CodeActionKind, CodeActionOrCommand, CompletionItem, CompletionItemKind,
+    Diagnostic, DiagnosticSeverity, DocumentLink, DocumentSymbol, Documentation, FoldingRange,
+    FoldingRangeKind, Hover, HoverContents, InsertTextFormat, MarkupContent, MarkupKind, Position,
+    Range, SelectionRange, SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens,
+    SymbolKind, TextEdit, Url, WorkspaceEdit,
 };
 
 // ============================================================================
@@ -441,19 +436,40 @@ static SECTIONS: &[AdlSection] = &[
 ];
 
 /// Known section names.
-const KNOWN_SECTIONS: &[&str] = &["project", "compiler", "dependencies", "scripts", "workspace"];
+const KNOWN_SECTIONS: &[&str] = &[
+    "project",
+    "compiler",
+    "dependencies",
+    "scripts",
+    "workspace",
+];
 
 /// Known lockfile top-level keys.
 const KNOWN_LOCK_KEYS: &[&str] = &[
-    "version", "generated-at", "compiler-version", "adl-version",
-    "package-id", "dependencies", "confidential", "signature",
+    "version",
+    "generated-at",
+    "compiler-version",
+    "adl-version",
+    "package-id",
+    "dependencies",
+    "confidential",
+    "signature",
 ];
 
 /// Known lockfile dependency entry keys.
 const KNOWN_LOCK_DEP_KEYS: &[&str] = &[
-    "package-id", "name", "version", "requirement", "checksum",
-    "sha256", "source", "features", "registries", "transitive",
-    "target", "profile",
+    "package-id",
+    "name",
+    "version",
+    "requirement",
+    "checksum",
+    "sha256",
+    "source",
+    "features",
+    "registries",
+    "transitive",
+    "target",
+    "profile",
 ];
 
 /// Known source object keys.
@@ -514,7 +530,13 @@ pub fn detect_context(content: &str, line: u32, _character: u32) -> AdlContext {
         // Skip empty lines and comments
         if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with('#') {
             if i == current_line {
-                return current_context(current_section, in_lock, in_dep_object, in_source_object, in_confidential);
+                return current_context(
+                    current_section,
+                    in_lock,
+                    in_dep_object,
+                    in_source_object,
+                    in_confidential,
+                );
             }
             continue;
         }
@@ -552,7 +574,8 @@ pub fn detect_context(content: &str, line: u32, _character: u32) -> AdlContext {
             }
 
             // Track confidential block
-            if trimmed.starts_with("confidential") && trimmed.contains('=') && trimmed.contains('{') {
+            if trimmed.starts_with("confidential") && trimmed.contains('=') && trimmed.contains('{')
+            {
                 in_confidential = true;
                 if i == current_line {
                     return AdlContext::ConfidentialObject;
@@ -571,7 +594,8 @@ pub fn detect_context(content: &str, line: u32, _character: u32) -> AdlContext {
             }
 
             // Track dependencies array
-            if trimmed.starts_with("dependencies") && trimmed.contains('=') && trimmed.contains('[') {
+            if trimmed.starts_with("dependencies") && trimmed.contains('=') && trimmed.contains('[')
+            {
                 in_dep_array = true;
                 bracket_depth = 1;
                 // Count closing brackets on same line
@@ -625,7 +649,11 @@ pub fn detect_context(content: &str, line: u32, _character: u32) -> AdlContext {
                         if trimmed.contains("source") && trimmed.contains("{") {
                             return AdlContext::SourceObject;
                         }
-                        return if in_dep_object { AdlContext::LockDependency } else { AdlContext::LockFile };
+                        return if in_dep_object {
+                            AdlContext::LockDependency
+                        } else {
+                            AdlContext::LockFile
+                        };
                     }
                     continue;
                 }
@@ -693,9 +721,7 @@ pub fn detect_context(content: &str, line: u32, _character: u32) -> AdlContext {
 
         // Track section headers
         if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            let section_name = trimmed
-                .trim_start_matches('[')
-                .trim_end_matches(']');
+            let section_name = trimmed.trim_start_matches('[').trim_end_matches(']');
             current_section = SECTIONS
                 .iter()
                 .find(|s| s.name == section_name)
@@ -704,7 +730,13 @@ pub fn detect_context(content: &str, line: u32, _character: u32) -> AdlContext {
         }
     }
 
-    current_context(current_section, in_lock, in_dep_object, false, in_confidential)
+    current_context(
+        current_section,
+        in_lock,
+        in_dep_object,
+        false,
+        in_confidential,
+    )
 }
 
 fn current_context(
@@ -748,14 +780,14 @@ fn detect_value_position(line: &str, character: u32) -> ValuePosition {
 // ============================================================================
 
 /// Generate completion items for an ADL file at the given position.
-pub fn get_adl_completions(
-    content: &str,
-    line: u32,
-    character: u32,
-) -> Vec<CompletionItem> {
+pub fn get_adl_completions(content: &str, line: u32, character: u32) -> Vec<CompletionItem> {
     let context = detect_context(content, line, character);
     let lines: Vec<&str> = content.lines().collect();
-    let line_text = if (line as usize) < lines.len() { lines[line as usize] } else { "" };
+    let line_text = if (line as usize) < lines.len() {
+        lines[line as usize]
+    } else {
+        ""
+    };
     let value_pos = detect_value_position(line_text, character);
 
     let mut items = Vec::new();
@@ -979,7 +1011,11 @@ pub fn get_adl_hover(content: &str, line: u32, character: u32) -> Option<Hover> 
         AdlContext::SourceObject => SOURCE_FIELDS,
         AdlContext::TopLevel => {
             if let Some(section) = SECTIONS.iter().find(|s| s.name == word) {
-                return Some(make_hover(&format!("[{}]", section.name), "section", section.doc));
+                return Some(make_hover(
+                    &format!("[{}]", section.name),
+                    "section",
+                    section.doc,
+                ));
             }
             return None;
         }
@@ -997,7 +1033,11 @@ pub fn get_adl_hover(content: &str, line: u32, character: u32) -> Option<Hover> 
 
     // Check if the word is a section name
     if let Some(section) = SECTIONS.iter().find(|s| s.name == word) {
-        return Some(make_hover(&format!("[{}]", section.name), "section", section.doc));
+        return Some(make_hover(
+            &format!("[{}]", section.name),
+            "section",
+            section.doc,
+        ));
     }
 
     // Check if the word is a known lockfile key
@@ -1178,7 +1218,9 @@ fn validate_manifest(content: &str) -> Vec<Diagnostic> {
                                 diagnostics.push(Diagnostic {
                                     range: value_range(i, trimmed, eq_pos),
                                     severity: Some(DiagnosticSeverity::ERROR),
-                                    code: Some(lsp_types::NumberOrString::String("ADL004".to_string())),
+                                    code: Some(lsp_types::NumberOrString::String(
+                                        "ADL004".to_string(),
+                                    )),
                                     code_description: None,
                                     source: Some("adl".to_string()),
                                     message: format!(
@@ -1246,8 +1288,14 @@ fn validate_manifest(content: &str) -> Vec<Diagnostic> {
         if section.required && !found_sections.iter().any(|s| s == section.name) {
             diagnostics.push(Diagnostic {
                 range: Range {
-                    start: Position { line: 0, character: 0 },
-                    end: Position { line: 0, character: 1 },
+                    start: Position {
+                        line: 0,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 1,
+                    },
                 },
                 severity: Some(DiagnosticSeverity::ERROR),
                 code: Some(lsp_types::NumberOrString::String("ADL007".to_string())),
@@ -1282,8 +1330,14 @@ fn validate_manifest(content: &str) -> Vec<Diagnostic> {
                     if !key_exists {
                         diagnostics.push(Diagnostic {
                             range: Range {
-                                start: Position { line: 0, character: 0 },
-                                end: Position { line: 0, character: 1 },
+                                start: Position {
+                                    line: 0,
+                                    character: 0,
+                                },
+                                end: Position {
+                                    line: 0,
+                                    character: 1,
+                                },
                             },
                             severity: Some(DiagnosticSeverity::ERROR),
                             code: Some(lsp_types::NumberOrString::String("ADL008".to_string())),
@@ -1345,7 +1399,8 @@ fn validate_lockfile(content: &str) -> Vec<Diagnostic> {
                 continue;
             }
 
-            if trimmed.starts_with("dependencies") && trimmed.contains('=') && trimmed.contains('[') {
+            if trimmed.starts_with("dependencies") && trimmed.contains('=') && trimmed.contains('[')
+            {
                 in_dep_array = true;
                 bracket_depth = 1;
                 continue;
@@ -1387,7 +1442,9 @@ fn validate_lockfile(content: &str) -> Vec<Diagnostic> {
                                 diagnostics.push(Diagnostic {
                                     range: line_range(i, trimmed),
                                     severity: Some(DiagnosticSeverity::WARNING),
-                                    code: Some(lsp_types::NumberOrString::String("ADL010".to_string())),
+                                    code: Some(lsp_types::NumberOrString::String(
+                                        "ADL010".to_string(),
+                                    )),
                                     code_description: None,
                                     source: Some("adl".to_string()),
                                     message: format!(
@@ -1474,7 +1531,9 @@ fn is_valid_semver(s: &str) -> bool {
     if main_parts.len() != 3 {
         return false;
     }
-    main_parts.iter().all(|p| p.chars().all(|c| c.is_ascii_digit()) && !p.is_empty())
+    main_parts
+        .iter()
+        .all(|p| p.chars().all(|c| c.is_ascii_digit()) && !p.is_empty())
 }
 
 fn is_valid_version_req(s: &str) -> bool {
@@ -1483,9 +1542,7 @@ fn is_valid_version_req(s: &str) -> bool {
         return true;
     }
     // Remove leading operator
-    let version_part = s
-        .trim_start_matches(['^', '~', '>', '<', '='])
-        .trim();
+    let version_part = s.trim_start_matches(['^', '~', '>', '<', '=']).trim();
     // Check if the remaining part looks like a semver
     let parts: Vec<&str> = version_part.split('-').collect();
     let main = parts[0];
@@ -1493,9 +1550,9 @@ fn is_valid_version_req(s: &str) -> bool {
     if main_parts.is_empty() {
         return false;
     }
-    main_parts.iter().all(|p| {
-        !p.is_empty() && p.chars().all(|c| c.is_ascii_digit() || c == '*')
-    })
+    main_parts
+        .iter()
+        .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit() || c == '*'))
 }
 
 // ============================================================================
@@ -1525,13 +1582,22 @@ pub fn get_adl_code_actions(
                             edit: Some(WorkspaceEdit {
                                 changes: Some({
                                     let mut m = std::collections::HashMap::new();
-                                    m.insert(uri.clone(), vec![TextEdit {
-                                        range: Range {
-                                            start: Position { line: 0, character: 0 },
-                                            end: Position { line: 0, character: 0 },
-                                        },
-                                        new_text: format!("{}\n", snippet),
-                                    }]);
+                                    m.insert(
+                                        uri.clone(),
+                                        vec![TextEdit {
+                                            range: Range {
+                                                start: Position {
+                                                    line: 0,
+                                                    character: 0,
+                                                },
+                                                end: Position {
+                                                    line: 0,
+                                                    character: 0,
+                                                },
+                                            },
+                                            new_text: format!("{}\n", snippet),
+                                        }],
+                                    );
                                     m
                                 }),
                                 document_changes: None,
@@ -1546,24 +1612,42 @@ pub fn get_adl_code_actions(
                 }
                 "ADL008" => {
                     // Extract field name and section from message
-                    if let Some((field_key, section_name)) = extract_field_from_message(&diag.message) {
-                        if let Some(section) = SECTIONS.iter().find(|s| s.name == section_name.as_str()) {
-                            if let Some(field) = section.fields.iter().find(|f| f.key == field_key.as_str()) {
+                    if let Some((field_key, section_name)) =
+                        extract_field_from_message(&diag.message)
+                    {
+                        if let Some(section) =
+                            SECTIONS.iter().find(|s| s.name == section_name.as_str())
+                        {
+                            if let Some(field) =
+                                section.fields.iter().find(|f| f.key == field_key.as_str())
+                            {
                                 let snippet = field.snippet.unwrap_or(field.key);
                                 actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                                    title: format!("Add `{}` field to [{}]", field_key, section_name),
+                                    title: format!(
+                                        "Add `{}` field to [{}]",
+                                        field_key, section_name
+                                    ),
                                     kind: Some(CodeActionKind::QUICKFIX),
                                     diagnostics: Some(vec![diag.clone()]),
                                     edit: Some(WorkspaceEdit {
                                         changes: Some({
                                             let mut m = std::collections::HashMap::new();
-                                            m.insert(uri.clone(), vec![TextEdit {
-                                                range: Range {
-                                                    start: Position { line: 0, character: 0 },
-                                                    end: Position { line: 0, character: 0 },
-                                                },
-                                                new_text: format!("{}\n", snippet),
-                                            }]);
+                                            m.insert(
+                                                uri.clone(),
+                                                vec![TextEdit {
+                                                    range: Range {
+                                                        start: Position {
+                                                            line: 0,
+                                                            character: 0,
+                                                        },
+                                                        end: Position {
+                                                            line: 0,
+                                                            character: 0,
+                                                        },
+                                                    },
+                                                    new_text: format!("{}\n", snippet),
+                                                }],
+                                            );
                                             m
                                         }),
                                         document_changes: None,
@@ -1584,7 +1668,9 @@ pub fn get_adl_code_actions(
                     if let Some(key) = extract_key_from_invalid_value_message(&diag.message) {
                         // Search all sections for the field
                         for section in SECTIONS {
-                            if let Some(field) = section.fields.iter().find(|f| f.key == key.as_str()) {
+                            if let Some(field) =
+                                section.fields.iter().find(|f| f.key == key.as_str())
+                            {
                                 for (val, _desc) in field.enum_values {
                                     actions.push(CodeActionOrCommand::CodeAction(CodeAction {
                                         title: format!("Use \"{}\" for `{}`", val, key),
@@ -1593,10 +1679,13 @@ pub fn get_adl_code_actions(
                                         edit: Some(WorkspaceEdit {
                                             changes: Some({
                                                 let mut m = std::collections::HashMap::new();
-                                                m.insert(uri.clone(), vec![TextEdit {
-                                                    range: diag.range,
-                                                    new_text: format!("\"{}\"", val),
-                                                }]);
+                                                m.insert(
+                                                    uri.clone(),
+                                                    vec![TextEdit {
+                                                        range: diag.range,
+                                                        new_text: format!("\"{}\"", val),
+                                                    }],
+                                                );
                                                 m
                                             }),
                                             document_changes: None,
@@ -1611,7 +1700,8 @@ pub fn get_adl_code_actions(
                             }
                         }
                         // Also check lockfile dependency fields
-                        if let Some(field) = LOCK_DEP_FIELDS.iter().find(|f| f.key == key.as_str()) {
+                        if let Some(field) = LOCK_DEP_FIELDS.iter().find(|f| f.key == key.as_str())
+                        {
                             for (val, _desc) in field.enum_values {
                                 actions.push(CodeActionOrCommand::CodeAction(CodeAction {
                                     title: format!("Use \"{}\" for `{}`", val, key),
@@ -1620,10 +1710,13 @@ pub fn get_adl_code_actions(
                                     edit: Some(WorkspaceEdit {
                                         changes: Some({
                                             let mut m = std::collections::HashMap::new();
-                                            m.insert(uri.clone(), vec![TextEdit {
-                                                range: diag.range,
-                                                new_text: format!("\"{}\"", val),
-                                            }]);
+                                            m.insert(
+                                                uri.clone(),
+                                                vec![TextEdit {
+                                                    range: diag.range,
+                                                    new_text: format!("\"{}\"", val),
+                                                }],
+                                            );
                                             m
                                         }),
                                         document_changes: None,
@@ -1652,13 +1745,22 @@ pub fn get_adl_code_actions(
             edit: Some(WorkspaceEdit {
                 changes: Some({
                     let mut m = std::collections::HashMap::new();
-                    m.insert(uri.clone(), vec![TextEdit {
-                        range: Range {
-                            start: Position { line: 0, character: 0 },
-                            end: Position { line: 0, character: 0 },
-                        },
-                        new_text: DEFAULT_MANIFEST_TEMPLATE.to_string(),
-                    }]);
+                    m.insert(
+                        uri.clone(),
+                        vec![TextEdit {
+                            range: Range {
+                                start: Position {
+                                    line: 0,
+                                    character: 0,
+                                },
+                                end: Position {
+                                    line: 0,
+                                    character: 0,
+                                },
+                            },
+                            new_text: DEFAULT_MANIFEST_TEMPLATE.to_string(),
+                        }],
+                    );
                     m
                 }),
                 document_changes: None,
@@ -1723,7 +1825,9 @@ fn extract_key_from_invalid_value_message(msg: &str) -> Option<String> {
 
 fn generate_section_snippet(section_name: &str) -> String {
     match section_name {
-        "project" => "[project]\nname = \"my_project\"\nversion = \"0.1.0\"\ntemplate = \"app\"".to_string(),
+        "project" => {
+            "[project]\nname = \"my_project\"\nversion = \"0.1.0\"\ntemplate = \"app\"".to_string()
+        }
         "compiler" => "[compiler]\nbackend = \"interpreter\"\nopt-level = \"debug\"".to_string(),
         "dependencies" => "[dependencies]".to_string(),
         "scripts" => "[scripts]\nconst build = \"default\"".to_string(),
@@ -1750,7 +1854,10 @@ pub fn format_adl_document(content: &str) -> Vec<TextEdit> {
 
     vec![TextEdit {
         range: Range {
-            start: Position { line: 0, character: 0 },
+            start: Position {
+                line: 0,
+                character: 0,
+            },
             end: Position {
                 line: lines.len() as u32,
                 character: 0,
@@ -1858,21 +1965,21 @@ fn compute_indent_level(trimmed: &str, in_lock: &mut bool, brace_depth: &mut i32
 
 /// Custom semantic token types for ADL.
 pub const ADL_TOKEN_TYPES: &[SemanticTokenType] = &[
-    SemanticTokenType::PROPERTY,      // 0: property keys
-    SemanticTokenType::KEYWORD,       // 1: keywords (lock, import, if, let, const)
-    SemanticTokenType::STRING,       // 2: string values
-    SemanticTokenType::NUMBER,        // 3: numeric values
-    SemanticTokenType::ENUM,          // 4: enum values
-    SemanticTokenType::MACRO,         // 5: section headers
-    SemanticTokenType::COMMENT,       // 6: comments
-    SemanticTokenType::OPERATOR,      // 7: operators (=)
-    SemanticTokenType::NAMESPACE,     // 8: section names
+    SemanticTokenType::PROPERTY,  // 0: property keys
+    SemanticTokenType::KEYWORD,   // 1: keywords (lock, import, if, let, const)
+    SemanticTokenType::STRING,    // 2: string values
+    SemanticTokenType::NUMBER,    // 3: numeric values
+    SemanticTokenType::ENUM,      // 4: enum values
+    SemanticTokenType::MACRO,     // 5: section headers
+    SemanticTokenType::COMMENT,   // 6: comments
+    SemanticTokenType::OPERATOR,  // 7: operators (=)
+    SemanticTokenType::NAMESPACE, // 8: section names
 ];
 
 pub const ADL_TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[
-    SemanticTokenModifier::DECLARATION,   // 0: declaration
-    SemanticTokenModifier::READONLY,      // 1: readonly (const)
-    SemanticTokenModifier::MODIFICATION,  // 2: modification (let)
+    SemanticTokenModifier::DECLARATION,  // 0: declaration
+    SemanticTokenModifier::READONLY,     // 1: readonly (const)
+    SemanticTokenModifier::MODIFICATION, // 2: modification (let)
 ];
 
 /// Compute semantic tokens for an ADL file.
@@ -2081,7 +2188,10 @@ pub fn get_adl_semantic_tokens(content: &str) -> SemanticTokens {
                     2, // STRING
                     0,
                 );
-            } else if value.chars().all(|c| c.is_ascii_digit() || c == '.' || c == '-') {
+            } else if value
+                .chars()
+                .all(|c| c.is_ascii_digit() || c == '.' || c == '-')
+            {
                 // Numeric value
                 push_token(
                     &mut tokens,
@@ -2186,11 +2296,12 @@ pub fn get_adl_document_links(content: &str, uri: &Url) -> Vec<DocumentLink> {
             if let Some(str_start_rel) = trimmed.find('"') {
                 if let Some(str_end_rel) = trimmed[str_start_rel + 1..].find('"') {
                     let location = &trimmed[str_start_rel + 1..str_start_rel + 1 + str_end_rel];
-                    let target = if location.starts_with("http://") || location.starts_with("https://") {
-                        Url::parse(location).ok()
-                    } else {
-                        resolve_path(uri, location)
-                    };
+                    let target =
+                        if location.starts_with("http://") || location.starts_with("https://") {
+                            Url::parse(location).ok()
+                        } else {
+                            resolve_path(uri, location)
+                        };
                     if let Some(target) = target {
                         let abs_start = line.len() - line.trim_start().len() + str_start_rel;
                         links.push(DocumentLink {
@@ -2236,7 +2347,10 @@ fn resolve_path(base: &Url, relative: &str) -> Option<Url> {
 // ============================================================================
 
 /// Compute selection ranges for smart selection expansion in ADL files.
-pub fn get_adl_selection_ranges(content: &str, positions: &[Position]) -> Vec<Option<SelectionRange>> {
+pub fn get_adl_selection_ranges(
+    content: &str,
+    positions: &[Position],
+) -> Vec<Option<SelectionRange>> {
     let lines: Vec<&str> = content.lines().collect();
     let mut results = Vec::new();
 
@@ -2267,24 +2381,42 @@ pub fn get_adl_selection_ranges(content: &str, positions: &[Position]) -> Vec<Op
                 let key = trimmed[..eq_pos].trim();
                 let key_start = leading_ws + trimmed.find(key).unwrap_or(0);
                 ranges.push(Range {
-                    start: Position { line: pos.line, character: key_start as u32 },
-                    end: Position { line: pos.line, character: (key_start + key.len()) as u32 },
+                    start: Position {
+                        line: pos.line,
+                        character: key_start as u32,
+                    },
+                    end: Position {
+                        line: pos.line,
+                        character: (key_start + key.len()) as u32,
+                    },
                 });
             } else {
                 // Value side
                 let value = trimmed[eq_pos + 1..].trim();
                 let val_start = leading_ws + trimmed.find(value).unwrap_or(eq_pos + 1);
                 ranges.push(Range {
-                    start: Position { line: pos.line, character: val_start as u32 },
-                    end: Position { line: pos.line, character: (val_start + value.len()) as u32 },
+                    start: Position {
+                        line: pos.line,
+                        character: val_start as u32,
+                    },
+                    end: Position {
+                        line: pos.line,
+                        character: (val_start + value.len()) as u32,
+                    },
                 });
             }
         }
 
         // 3. Entire line
         ranges.push(Range {
-            start: Position { line: pos.line, character: 0 },
-            end: Position { line: pos.line, character: line.len() as u32 },
+            start: Position {
+                line: pos.line,
+                character: 0,
+            },
+            end: Position {
+                line: pos.line,
+                character: line.len() as u32,
+            },
         });
 
         // 4. Entire section (from section header to next section or EOF)
@@ -2295,7 +2427,10 @@ pub fn get_adl_selection_ranges(content: &str, positions: &[Position]) -> Vec<Op
 
         // 5. Entire document
         ranges.push(Range {
-            start: Position { line: 0, character: 0 },
+            start: Position {
+                line: 0,
+                character: 0,
+            },
             end: Position {
                 line: lines.len() as u32,
                 character: 0,
@@ -2457,12 +2592,24 @@ pub fn get_adl_document_symbols(content: &str, _uri: &Url) -> Vec<DocumentSymbol
                 detail: Some("section".to_string()),
                 kind: SymbolKind::MODULE,
                 range: Range {
-                    start: Position { line: i as u32, character: 0 },
-                    end: Position { line: i as u32, character: trimmed.len() as u32 },
+                    start: Position {
+                        line: i as u32,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: i as u32,
+                        character: trimmed.len() as u32,
+                    },
                 },
                 selection_range: Range {
-                    start: Position { line: i as u32, character: 0 },
-                    end: Position { line: i as u32, character: trimmed.len() as u32 },
+                    start: Position {
+                        line: i as u32,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: i as u32,
+                        character: trimmed.len() as u32,
+                    },
                 },
                 children: None,
                 tags: None,
@@ -2477,12 +2624,24 @@ pub fn get_adl_document_symbols(content: &str, _uri: &Url) -> Vec<DocumentSymbol
                 detail: Some("lockfile block".to_string()),
                 kind: SymbolKind::OBJECT,
                 range: Range {
-                    start: Position { line: i as u32, character: 0 },
-                    end: Position { line: i as u32, character: trimmed.len() as u32 },
+                    start: Position {
+                        line: i as u32,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: i as u32,
+                        character: trimmed.len() as u32,
+                    },
                 },
                 selection_range: Range {
-                    start: Position { line: i as u32, character: 0 },
-                    end: Position { line: i as u32, character: 4 },
+                    start: Position {
+                        line: i as u32,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: i as u32,
+                        character: 4,
+                    },
                 },
                 children: None,
                 tags: None,
@@ -2505,12 +2664,24 @@ pub fn get_adl_document_symbols(content: &str, _uri: &Url) -> Vec<DocumentSymbol
                     detail: Some("field".to_string()),
                     kind: SymbolKind::FIELD,
                     range: Range {
-                        start: Position { line: i as u32, character: 0 },
-                        end: Position { line: i as u32, character: trimmed.len() as u32 },
+                        start: Position {
+                            line: i as u32,
+                            character: 0,
+                        },
+                        end: Position {
+                            line: i as u32,
+                            character: trimmed.len() as u32,
+                        },
                     },
                     selection_range: Range {
-                        start: Position { line: i as u32, character: col as u32 },
-                        end: Position { line: i as u32, character: (col + key.len()) as u32 },
+                        start: Position {
+                            line: i as u32,
+                            character: col as u32,
+                        },
+                        end: Position {
+                            line: i as u32,
+                            character: (col + key.len()) as u32,
+                        },
                     },
                     children: None,
                     tags: None,
@@ -2532,12 +2703,24 @@ pub fn get_adl_document_symbols(content: &str, _uri: &Url) -> Vec<DocumentSymbol
                         detail: Some("script binding".to_string()),
                         kind: SymbolKind::CONSTANT,
                         range: Range {
-                            start: Position { line: i as u32, character: 0 },
-                            end: Position { line: i as u32, character: trimmed.len() as u32 },
+                            start: Position {
+                                line: i as u32,
+                                character: 0,
+                            },
+                            end: Position {
+                                line: i as u32,
+                                character: trimmed.len() as u32,
+                            },
                         },
                         selection_range: Range {
-                            start: Position { line: i as u32, character: col as u32 },
-                            end: Position { line: i as u32, character: (col + binding_parts[1].trim().len()) as u32 },
+                            start: Position {
+                                line: i as u32,
+                                character: col as u32,
+                            },
+                            end: Position {
+                                line: i as u32,
+                                character: (col + binding_parts[1].trim().len()) as u32,
+                            },
                         },
                         children: None,
                         tags: None,
@@ -2557,8 +2740,14 @@ pub fn get_adl_document_symbols(content: &str, _uri: &Url) -> Vec<DocumentSymbol
 
 fn line_range(line: usize, text: &str) -> Range {
     Range {
-        start: Position { line: line as u32, character: 0 },
-        end: Position { line: line as u32, character: text.len() as u32 },
+        start: Position {
+            line: line as u32,
+            character: 0,
+        },
+        end: Position {
+            line: line as u32,
+            character: text.len() as u32,
+        },
     }
 }
 
@@ -2566,8 +2755,14 @@ fn value_range(line: usize, line_text: &str, eq_pos: usize) -> Range {
     let value_start = line_text[eq_pos + 1..].trim_start();
     let value_offset = eq_pos + 1 + (line_text[eq_pos + 1..].len() - value_start.len());
     Range {
-        start: Position { line: line as u32, character: value_offset as u32 },
-        end: Position { line: line as u32, character: line_text.trim().len() as u32 },
+        start: Position {
+            line: line as u32,
+            character: value_offset as u32,
+        },
+        end: Position {
+            line: line as u32,
+            character: line_text.trim().len() as u32,
+        },
     }
 }
 
@@ -2594,13 +2789,19 @@ mod tests {
     #[test]
     fn test_detect_context_section() {
         let content = "[project]\nname = \"test\"\n";
-        assert_eq!(detect_context(content, 1, 0), AdlContext::Section("project"));
+        assert_eq!(
+            detect_context(content, 1, 0),
+            AdlContext::Section("project")
+        );
     }
 
     #[test]
     fn test_detect_context_compiler_section() {
         let content = "[compiler]\nbackend = \"interpreter\"\n";
-        assert_eq!(detect_context(content, 1, 0), AdlContext::Section("compiler"));
+        assert_eq!(
+            detect_context(content, 1, 0),
+            AdlContext::Section("compiler")
+        );
     }
 
     #[test]
@@ -2684,10 +2885,13 @@ mod tests {
 
     #[test]
     fn test_completion_source_kind() {
-        let content = "lock {\n  dependencies = [\n    {\n      source = { kind = \n    }\n  ]\n}\n";
+        let content =
+            "lock {\n  dependencies = [\n    {\n      source = { kind = \n    }\n  ]\n}\n";
         let items = get_adl_completions(content, 3, 0);
         // Should suggest source object keys
-        assert!(items.iter().any(|i| i.label == "kind" || i.label == "location"));
+        assert!(items
+            .iter()
+            .any(|i| i.label == "kind" || i.label == "location"));
     }
 
     // --- Hover ---
@@ -2719,35 +2923,47 @@ mod tests {
     fn test_diagnostics_valid_manifest() {
         let content = "[project]\nname = \"test\"\nversion = \"0.1.0\"\ntemplate = \"app\"\n";
         let diags = compute_adl_diagnostics(content, &make_url("adesh.adl"));
-        assert!(diags.is_empty(), "Expected no diagnostics for valid manifest");
+        assert!(
+            diags.is_empty(),
+            "Expected no diagnostics for valid manifest"
+        );
     }
 
     #[test]
     fn test_diagnostics_missing_project_section() {
         let content = "[compiler]\nbackend = \"interpreter\"\n";
         let diags = compute_adl_diagnostics(content, &make_url("adesh.adl"));
-        assert!(diags.iter().any(|d| d.message.contains("Missing required section `[project]`")));
+        assert!(diags
+            .iter()
+            .any(|d| d.message.contains("Missing required section `[project]`")));
     }
 
     #[test]
     fn test_diagnostics_missing_required_field() {
         let content = "[project]\nversion = \"0.1.0\"\ntemplate = \"app\"\n";
         let diags = compute_adl_diagnostics(content, &make_url("adesh.adl"));
-        assert!(diags.iter().any(|d| d.message.contains("Missing required field `name`")));
+        assert!(diags
+            .iter()
+            .any(|d| d.message.contains("Missing required field `name`")));
     }
 
     #[test]
     fn test_diagnostics_invalid_enum_value() {
         let content = "[project]\nname = \"test\"\nversion = \"0.1.0\"\ntemplate = \"invalid\"\n";
         let diags = compute_adl_diagnostics(content, &make_url("adesh.adl"));
-        assert!(diags.iter().any(|d| d.message.contains("Invalid value") && d.message.contains("template")));
+        assert!(diags
+            .iter()
+            .any(|d| d.message.contains("Invalid value") && d.message.contains("template")));
     }
 
     #[test]
     fn test_diagnostics_invalid_semver() {
-        let content = "[project]\nname = \"test\"\nversion = \"not-a-version\"\ntemplate = \"app\"\n";
+        let content =
+            "[project]\nname = \"test\"\nversion = \"not-a-version\"\ntemplate = \"app\"\n";
         let diags = compute_adl_diagnostics(content, &make_url("adesh.adl"));
-        assert!(diags.iter().any(|d| d.message.contains("Invalid semantic version")));
+        assert!(diags
+            .iter()
+            .any(|d| d.message.contains("Invalid semantic version")));
     }
 
     #[test]
@@ -2761,7 +2977,9 @@ mod tests {
     fn test_diagnostics_duplicate_section() {
         let content = "[project]\nname = \"test\"\nversion = \"0.1.0\"\ntemplate = \"app\"\n[project]\nname = \"test2\"\n";
         let diags = compute_adl_diagnostics(content, &make_url("adesh.adl"));
-        assert!(diags.iter().any(|d| d.message.contains("Duplicate section")));
+        assert!(diags
+            .iter()
+            .any(|d| d.message.contains("Duplicate section")));
     }
 
     #[test]
@@ -2775,7 +2993,11 @@ mod tests {
     fn test_diagnostics_lockfile_valid() {
         let content = "lock {\n  version = \"1\"\n  generated-at = \"2026-01-01T00:00:00Z\"\n  compiler-version = \"0.3.0\"\n  adl-version = \"0.3.0\"\n  package-id = \"test\"\n  dependencies = []\n  signature = \"abc123\"\n}\n";
         let diags = compute_adl_diagnostics(content, &make_url("adesh.lock.adl"));
-        assert!(diags.is_empty(), "Expected no diagnostics for valid lockfile, got: {:?}", diags);
+        assert!(
+            diags.is_empty(),
+            "Expected no diagnostics for valid lockfile, got: {:?}",
+            diags
+        );
     }
 
     #[test]
@@ -2885,8 +3107,12 @@ mod tests {
         let content = "[scripts]\nconst build = \"default\"\nlet test = \"default\"\n";
         let uri = make_url("test.adl");
         let symbols = get_adl_document_symbols(content, &uri);
-        assert!(symbols.iter().any(|s| s.name == "build" && s.kind == SymbolKind::CONSTANT));
-        assert!(symbols.iter().any(|s| s.name == "test" && s.kind == SymbolKind::CONSTANT));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "build" && s.kind == SymbolKind::CONSTANT));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "test" && s.kind == SymbolKind::CONSTANT));
     }
 
     // --- Folding ranges ---
@@ -2923,7 +3149,10 @@ mod tests {
     #[test]
     fn test_selection_ranges() {
         let content = "[project]\nname = \"test\"\n[compiler]\nbackend = \"interpreter\"\n";
-        let positions = vec![Position { line: 1, character: 3 }];
+        let positions = vec![Position {
+            line: 1,
+            character: 3,
+        }];
         let ranges = get_adl_selection_ranges(content, &positions);
         assert!(ranges[0].is_some());
         let sr = ranges[0].as_ref().unwrap();

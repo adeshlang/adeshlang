@@ -55,9 +55,7 @@ impl Drop for JoinOnDrop {
 fn make_handle_object(inner: Arc<JoinOnDrop>) -> Value {
     let mut m = HashMap::default();
     let a = inner.clone();
-    insert_fn(&mut m, "join", move |_env, _args| {
-        join_inner(&a, None)
-    });
+    insert_fn(&mut m, "join", move |_env, _args| join_inner(&a, None));
     let a = inner.clone();
     insert_fn(&mut m, "join_timeout", move |_env, args| {
         let dur = parse_duration(args.first().ok_or("join_timeout(duration)")?)?;
@@ -217,11 +215,20 @@ fn run_thread_job(job: SendJob, result_t: Arc<ThreadResult>, id: ThreadId, name_
     let stored = match out {
         Ok(Ok(v)) => Ok(CrossThread(v)),
         Ok(Err(e)) => {
-            eprintln!("[thread '{}' (id={:?}) error]: {}", name_t.as_deref().unwrap_or("unnamed"), id, e);
+            eprintln!(
+                "[thread '{}' (id={:?}) error]: {}",
+                name_t.as_deref().unwrap_or("unnamed"),
+                id,
+                e
+            );
             Err(e)
         }
         Err(_) => {
-            eprintln!("[thread '{}' (id={:?}) panicked]", name_t.as_deref().unwrap_or("unnamed"), id);
+            eprintln!(
+                "[thread '{}' (id={:?}) panicked]",
+                name_t.as_deref().unwrap_or("unnamed"),
+                id
+            );
             Err("thread panicked".into())
         }
     };
@@ -349,8 +356,8 @@ pub fn builtin_get_affinity(_env: &mut dyn BuiltinEnv, _args: Vec<Value>) -> Res
 }
 
 pub fn builtin_set_priority(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, String> {
-    let p = num_of(args.first().ok_or("thread.set_priority(n)")?)
-        .ok_or("priority must be a number")?;
+    let p =
+        num_of(args.first().ok_or("thread.set_priority(n)")?).ok_or("priority must be a number")?;
     native::platform::set_current_priority(p as i32).map(|_| Value::Null)
 }
 
@@ -365,10 +372,7 @@ pub fn builtin_list(_env: &mut dyn BuiltinEnv, _args: Vec<Value>) -> Result<Valu
         .map(|(id, name)| {
             let mut m = HashMap::default();
             m.insert("id".into(), Value::Number(id as f64));
-            m.insert(
-                "name".into(),
-                name.map(Value::Str).unwrap_or(Value::Null),
-            );
+            m.insert("name".into(), name.map(Value::Str).unwrap_or(Value::Null));
             Value::Object(Arc::new(m))
         })
         .collect();
@@ -540,7 +544,9 @@ fn make_source(inner: Arc<native::CancellationInner>) -> Value {
         Ok(Value::Bool(i.is_cancelled()))
     });
     let i = inner.clone();
-    insert_fn(&mut m, "token", move |_env, _args| Ok(make_token(i.clone())));
+    insert_fn(&mut m, "token", move |_env, _args| {
+        Ok(make_token(i.clone()))
+    });
     with_kind(m, "CancellationSource")
 }
 

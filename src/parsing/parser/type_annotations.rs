@@ -82,7 +82,7 @@ impl Parser {
                 if self.matchk(&[TokenKind::Semicolon, TokenKind::Comma]) {
                     let mut specifiers: Vec<String> = Vec::new();
                     let mut is_raw = false;
-                    
+
                     loop {
                         if self.matchk(&[TokenKind::Raw]) {
                             is_raw = true;
@@ -97,19 +97,21 @@ impl Parser {
                                 "Expect size (number) or 'raw' in array type annotation",
                             ));
                         }
-                        
+
                         if !self.matchk(&[TokenKind::Semicolon, TokenKind::Comma]) {
                             break;
                         }
                     }
-                    
+
                     self.consume(TokenKind::RightBracket, "Expect ']' after array type")?;
-                    
+
                     if specifiers.is_empty() {
                         if is_raw {
                             format!("[{};raw]", elem_type)
                         } else {
-                            return Err(self.format_err(self.peek(), "Invalid empty array specifiers"));
+                            return Err(
+                                self.format_err(self.peek(), "Invalid empty array specifiers")
+                            );
                         }
                     } else {
                         // Reconstruct nested arrays from right to left (outermost size is leftmost)
@@ -137,8 +139,15 @@ impl Parser {
                 let mut fields: Vec<String> = Vec::new();
                 while !self.check(TokenKind::RightBrace) && !self.is_end() {
                     let fname = self.consume_ident("Expect field name in record type")?;
-                    let opt = if self.matchk(&[TokenKind::Question]) { "?" } else { "" };
-                    self.consume(TokenKind::Colon, "Expect ':' after field name in record type")?;
+                    let opt = if self.matchk(&[TokenKind::Question]) {
+                        "?"
+                    } else {
+                        ""
+                    };
+                    self.consume(
+                        TokenKind::Colon,
+                        "Expect ':' after field name in record type",
+                    )?;
                     let ftype = self.parse_type_name("Expect field type")?;
                     fields.push(format!("{}{}: {}", fname, opt, ftype));
                     if !self.matchk(&[TokenKind::Comma]) {
@@ -225,13 +234,15 @@ impl Parser {
             // Simd<T, N> type: Simd<f32, 8>
             if base == "Simd" && self.matchk(&[TokenKind::Less]) {
                 let elem_type = self.parse_type_name("Expect element type in Simd")?;
-                self.consume(TokenKind::Comma, "Expect ',' after element type in Simd<T, N>")?;
+                self.consume(
+                    TokenKind::Comma,
+                    "Expect ',' after element type in Simd<T, N>",
+                )?;
                 let lanes_tok = self.advance();
                 if !matches!(lanes_tok.kind, TokenKind::Number) {
-                    return Err(self.format_err(
-                        self.peek(),
-                        "Expect lane count (number) in Simd<T, N>",
-                    ));
+                    return Err(
+                        self.format_err(self.peek(), "Expect lane count (number) in Simd<T, N>")
+                    );
                 }
                 let lanes = lanes_tok.lexeme.clone();
                 self.consume_generic_greater("Expect '>' after Simd type arguments")?;
@@ -297,7 +308,10 @@ impl Parser {
 
         // Postfix array syntax: e.g. T[], T[][], etc.
         while self.matchk(&[TokenKind::LeftBracket]) {
-            self.consume(TokenKind::RightBracket, "Expect ']' after '[' for array type")?;
+            self.consume(
+                TokenKind::RightBracket,
+                "Expect ']' after '[' for array type",
+            )?;
             res = format!("[{}]", res);
         }
 

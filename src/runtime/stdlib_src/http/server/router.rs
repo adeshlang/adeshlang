@@ -122,12 +122,19 @@ impl Router {
             // Automatic OPTIONS fallback for CORS preflight
             let allowed = self.allowed_methods_for_path(path);
             if !allowed.is_empty() {
-                let allow_str = allowed.iter().map(|m| m.as_str()).collect::<Vec<_>>().join(", ");
+                let allow_str = allowed
+                    .iter()
+                    .map(|m| m.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 let dummy_handler: HandlerFn = Arc::new(move |_ctx| {
                     let mut resp = Response::new(super::super::status::HttpStatus::NO_CONTENT);
                     let _ = resp.headers.insert("allow", &allow_str);
                     let _ = resp.headers.insert("access-control-allow-origin", "*");
-                    let _ = resp.headers.insert("access-control-allow-methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
+                    let _ = resp.headers.insert(
+                        "access-control-allow-methods",
+                        "GET, POST, PUT, DELETE, PATCH, OPTIONS",
+                    );
                     let _ = resp.headers.insert("access-control-allow-headers", "*");
                     Ok(resp)
                 });

@@ -1,7 +1,7 @@
 //! Stress tests for threading primitives (debug profile; no --release required).
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[test]
 fn stress_atomic_counter() {

@@ -33,6 +33,33 @@ use rustc_hash::FxHashMap as HashMap;
 use std::any::Any;
 
 fn cast_value(val: Value, target_ty: &str) -> Value {
+    let target = target_ty.trim();
+    if target.starts_with('[') && target.ends_with(']') {
+        let inner = target[1..target.len() - 1].trim();
+        let elem_target = if let Some(idx) = inner.find(';') {
+            inner[..idx].trim()
+        } else {
+            inner
+        };
+        match val {
+            Value::Array(arr) => {
+                let converted: Vec<Value> = arr
+                    .into_iter()
+                    .map(|item| cast_value(item, elem_target))
+                    .collect();
+                return Value::Array(converted);
+            }
+            Value::RawArray(ty, arr) => {
+                let converted: Vec<Value> = arr
+                    .into_iter()
+                    .map(|item| cast_value(item, elem_target))
+                    .collect();
+                return Value::RawArray(ty, converted);
+            }
+            _ => return val,
+        }
+    }
+
     let num_val = match &val {
         Value::Number(n) => *n,
         Value::U8(n) => *n as f64,
@@ -57,7 +84,7 @@ fn cast_value(val: Value, target_ty: &str) -> Value {
         _ => return val,
     };
 
-    match target_ty {
+    match target {
         "u8" => Value::U8(num_val as u8),
         "u16" => Value::U16(num_val as u16),
         "u32" => Value::U32(num_val as u32),
@@ -65,7 +92,7 @@ fn cast_value(val: Value, target_ty: &str) -> Value {
         "u128" => Value::U128(num_val as u128),
         "i8" => Value::I8(num_val as i8),
         "i16" => Value::I16(num_val as i16),
-        "i32" => Value::I32(num_val as i32),
+        "int" | "i32" => Value::I32(num_val as i32),
         "i64" => Value::I64(num_val as i64),
         "i128" => Value::I128(num_val as i128),
         "f32" => Value::F32(num_val as f32),
@@ -88,11 +115,10 @@ use super::interpreter::{
     ModuleLoader, PROGRAM_ARGS, PROMISE_COUNTER, ProgramMemoryStats, PromiseEntry, PromiseState,
     RUNTIME_ENV, RunErr, ThenHandler, UNSAFE_DEPTH, VariableMemoryInfo, ann_matches_value,
     arc_manager, coerce_and_apply_defaults, coerce_to_fixed_width, create_user_class,
-    create_user_fn, err, err_with_span,
-    find_method_in_class_chain, find_method_with_visibility, format_input_type_error, get_prop,
-    in_unsafe_context, infer_numeric_type, is_copy_value, is_field_accessible,
-    is_method_accessible, new_instance, select_best_overload, set_prop, sizeof_value,
-    value_type_name, wrap_foreign_function,
+    create_user_fn, err, err_with_span, find_method_in_class_chain, find_method_with_visibility,
+    format_input_type_error, get_prop, in_unsafe_context, infer_numeric_type, is_copy_value,
+    is_field_accessible, is_method_accessible, new_instance, select_best_overload, set_prop,
+    sizeof_value, value_type_name, wrap_foreign_function,
 };
 
 // Import utility functions from interpreter_impl modules
@@ -364,10 +390,34 @@ fn eval_numeric_expr_with_var(e: &Expr, var_name: &str, var_val: i64) -> Option<
                 TokenKind::Plus => Some(lv.wrapping_add(rv)),
                 TokenKind::Minus => Some(lv.wrapping_sub(rv)),
                 TokenKind::Star => Some(lv.wrapping_mul(rv)),
-                TokenKind::Slash => if rv != 0 { Some(lv / rv) } else { None },
-                TokenKind::Percent => if rv != 0 { Some(lv % rv) } else { None },
-                TokenKind::ShiftLeft => if rv >= 0 && rv < 64 { Some(lv << rv) } else { None },
-                TokenKind::ShiftRight => if rv >= 0 && rv < 64 { Some(lv >> rv) } else { None },
+                TokenKind::Slash => {
+                    if rv != 0 {
+                        Some(lv / rv)
+                    } else {
+                        None
+                    }
+                }
+                TokenKind::Percent => {
+                    if rv != 0 {
+                        Some(lv % rv)
+                    } else {
+                        None
+                    }
+                }
+                TokenKind::ShiftLeft => {
+                    if rv >= 0 && rv < 64 {
+                        Some(lv << rv)
+                    } else {
+                        None
+                    }
+                }
+                TokenKind::ShiftRight => {
+                    if rv >= 0 && rv < 64 {
+                        Some(lv >> rv)
+                    } else {
+                        None
+                    }
+                }
                 TokenKind::Ampersand => Some(lv & rv),
                 TokenKind::Pipe => Some(lv | rv),
                 TokenKind::Caret => Some(lv ^ rv),
@@ -501,13 +551,17 @@ fn is_strictly_positive_polynomial(e: &Expr, var_name: &str) -> bool {
         ExprKind::Literal(Value::Number(n)) => *n >= 0.0,
         ExprKind::Literal(Value::I64(n)) => *n >= 0,
         ExprKind::Literal(Value::I32(n)) => *n >= 0,
-        ExprKind::Literal(Value::U32(_)) | ExprKind::Literal(Value::U64(_)) | ExprKind::Literal(Value::U16(_)) | ExprKind::Literal(Value::U8(_)) => true,
+        ExprKind::Literal(Value::U32(_))
+        | ExprKind::Literal(Value::U64(_))
+        | ExprKind::Literal(Value::U16(_))
+        | ExprKind::Literal(Value::U8(_)) => true,
         ExprKind::Literal(Value::I16(n)) => *n >= 0,
         ExprKind::Literal(Value::I8(n)) => *n >= 0,
         ExprKind::Literal(Value::F32(n)) => *n >= 0.0,
         ExprKind::Literal(Value::F64(n)) => *n >= 0.0,
         ExprKind::Binary(l, TokenKind::Plus | TokenKind::Star, r) => {
-            is_strictly_positive_polynomial(l, var_name) && is_strictly_positive_polynomial(r, var_name)
+            is_strictly_positive_polynomial(l, var_name)
+                && is_strictly_positive_polynomial(r, var_name)
         }
         _ => false,
     }
@@ -540,7 +594,10 @@ fn analyze_scev_expression(e: &Expr, var_name: &str, start: i64, limit: i64) -> 
             };
 
             if sign_stable {
-                ScevAnalysis::EligiblePeriodic { period: m, modulus: m }
+                ScevAnalysis::EligiblePeriodic {
+                    period: m,
+                    modulus: m,
+                }
             } else {
                 ScevAnalysis::Rejected(ScevRejectionReason::SignInstability)
             }
@@ -552,20 +609,48 @@ fn analyze_scev_expression(e: &Expr, var_name: &str, start: i64, limit: i64) -> 
     }
 }
 
-fn apply_accumulated_op_preserving_type(orig: Option<&Value>, operand: i64, op: TokenKind) -> Value {
+fn apply_accumulated_op_preserving_type(
+    orig: Option<&Value>,
+    operand: i64,
+    op: TokenKind,
+) -> Value {
     macro_rules! int_op {
         ($x:expr, $t:ident) => {
             match op {
                 TokenKind::Plus => $x.wrapping_add(operand as $t),
                 TokenKind::Minus => $x.wrapping_sub(operand as $t),
                 TokenKind::Star => $x.wrapping_mul(operand as $t),
-                TokenKind::Slash => if operand != 0 { $x / (operand as $t) } else { *$x },
-                TokenKind::Percent => if operand != 0 { $x % (operand as $t) } else { *$x },
+                TokenKind::Slash => {
+                    if operand != 0 {
+                        $x / (operand as $t)
+                    } else {
+                        *$x
+                    }
+                }
+                TokenKind::Percent => {
+                    if operand != 0 {
+                        $x % (operand as $t)
+                    } else {
+                        *$x
+                    }
+                }
                 TokenKind::Caret => *$x ^ (operand as $t),
                 TokenKind::Ampersand => *$x & (operand as $t),
                 TokenKind::Pipe => *$x | (operand as $t),
-                TokenKind::ShiftLeft => if operand >= 0 && operand < 64 { *$x << (operand as u32) } else { *$x },
-                TokenKind::ShiftRight => if operand >= 0 && operand < 64 { *$x >> (operand as u32) } else { *$x },
+                TokenKind::ShiftLeft => {
+                    if operand >= 0 && operand < 64 {
+                        *$x << (operand as u32)
+                    } else {
+                        *$x
+                    }
+                }
+                TokenKind::ShiftRight => {
+                    if operand >= 0 && operand < 64 {
+                        *$x >> (operand as u32)
+                    } else {
+                        *$x
+                    }
+                }
                 _ => *$x,
             }
         };
@@ -588,8 +673,20 @@ fn apply_accumulated_op_preserving_type(orig: Option<&Value>, operand: i64, op: 
                 TokenKind::Plus => *x + f,
                 TokenKind::Minus => *x - f,
                 TokenKind::Star => *x * f,
-                TokenKind::Slash => if f != 0.0 { *x / f } else { *x },
-                TokenKind::Percent => if f != 0.0 { *x % f } else { *x },
+                TokenKind::Slash => {
+                    if f != 0.0 {
+                        *x / f
+                    } else {
+                        *x
+                    }
+                }
+                TokenKind::Percent => {
+                    if f != 0.0 {
+                        *x % f
+                    } else {
+                        *x
+                    }
+                }
                 _ => *x,
             };
             Value::F32(res)
@@ -600,8 +697,20 @@ fn apply_accumulated_op_preserving_type(orig: Option<&Value>, operand: i64, op: 
                 TokenKind::Plus => *x + f,
                 TokenKind::Minus => *x - f,
                 TokenKind::Star => *x * f,
-                TokenKind::Slash => if f != 0.0 { *x / f } else { *x },
-                TokenKind::Percent => if f != 0.0 { *x % f } else { *x },
+                TokenKind::Slash => {
+                    if f != 0.0 {
+                        *x / f
+                    } else {
+                        *x
+                    }
+                }
+                TokenKind::Percent => {
+                    if f != 0.0 {
+                        *x % f
+                    } else {
+                        *x
+                    }
+                }
                 _ => *x,
             };
             Value::F64(res)
@@ -612,8 +721,20 @@ fn apply_accumulated_op_preserving_type(orig: Option<&Value>, operand: i64, op: 
                 TokenKind::Plus => *x + f,
                 TokenKind::Minus => *x - f,
                 TokenKind::Star => *x * f,
-                TokenKind::Slash => if f != 0.0 { *x / f } else { *x },
-                TokenKind::Percent => if f != 0.0 { *x % f } else { *x },
+                TokenKind::Slash => {
+                    if f != 0.0 {
+                        *x / f
+                    } else {
+                        *x
+                    }
+                }
+                TokenKind::Percent => {
+                    if f != 0.0 {
+                        *x % f
+                    } else {
+                        *x
+                    }
+                }
                 _ => *x,
             };
             Value::Number(res)
@@ -624,8 +745,20 @@ fn apply_accumulated_op_preserving_type(orig: Option<&Value>, operand: i64, op: 
                 TokenKind::Plus => b + &bi,
                 TokenKind::Minus => b - &bi,
                 TokenKind::Star => b * &bi,
-                TokenKind::Slash => if bi != num_bigint::BigInt::from(0) { b / &bi } else { b.clone() },
-                TokenKind::Percent => if bi != num_bigint::BigInt::from(0) { b % &bi } else { b.clone() },
+                TokenKind::Slash => {
+                    if bi != num_bigint::BigInt::from(0) {
+                        b / &bi
+                    } else {
+                        b.clone()
+                    }
+                }
+                TokenKind::Percent => {
+                    if bi != num_bigint::BigInt::from(0) {
+                        b % &bi
+                    } else {
+                        b.clone()
+                    }
+                }
                 TokenKind::Caret => b ^ &bi,
                 TokenKind::Ampersand => b & &bi,
                 TokenKind::Pipe => b | &bi,
@@ -660,7 +793,9 @@ fn eval_accumulator_preserving_type(
                 let iters = (limit - start).max(0) as u64;
                 let res = match op {
                     TokenKind::Plus => (*x as u64).wrapping_add(iters.wrapping_mul(n as u64)) as u8,
-                    TokenKind::Minus => (*x as u64).wrapping_sub(iters.wrapping_mul(n as u64)) as u8,
+                    TokenKind::Minus => {
+                        (*x as u64).wrapping_sub(iters.wrapping_mul(n as u64)) as u8
+                    }
                     _ => *x,
                 };
                 Value::U8(res)
@@ -681,12 +816,18 @@ fn eval_accumulator_preserving_type(
             if let Some(lit) = step {
                 let n = match lit {
                     Value::U16(v) => *v,
-                    _ => crate::execution::runtime_core::ops::num(lit.clone()).unwrap_or(1.0) as u16,
+                    _ => {
+                        crate::execution::runtime_core::ops::num(lit.clone()).unwrap_or(1.0) as u16
+                    }
                 };
                 let iters = (limit - start).max(0) as u64;
                 let res = match op {
-                    TokenKind::Plus => (*x as u64).wrapping_add(iters.wrapping_mul(n as u64)) as u16,
-                    TokenKind::Minus => (*x as u64).wrapping_sub(iters.wrapping_mul(n as u64)) as u16,
+                    TokenKind::Plus => {
+                        (*x as u64).wrapping_add(iters.wrapping_mul(n as u64)) as u16
+                    }
+                    TokenKind::Minus => {
+                        (*x as u64).wrapping_sub(iters.wrapping_mul(n as u64)) as u16
+                    }
                     _ => *x,
                 };
                 Value::U16(res)
@@ -707,12 +848,18 @@ fn eval_accumulator_preserving_type(
             if let Some(lit) = step {
                 let n = match lit {
                     Value::U32(v) => *v,
-                    _ => crate::execution::runtime_core::ops::num(lit.clone()).unwrap_or(1.0) as u32,
+                    _ => {
+                        crate::execution::runtime_core::ops::num(lit.clone()).unwrap_or(1.0) as u32
+                    }
                 };
                 let iters = (limit - start).max(0) as u64;
                 let res = match op {
-                    TokenKind::Plus => (*x as u64).wrapping_add(iters.wrapping_mul(n as u64)) as u32,
-                    TokenKind::Minus => (*x as u64).wrapping_sub(iters.wrapping_mul(n as u64)) as u32,
+                    TokenKind::Plus => {
+                        (*x as u64).wrapping_add(iters.wrapping_mul(n as u64)) as u32
+                    }
+                    TokenKind::Minus => {
+                        (*x as u64).wrapping_sub(iters.wrapping_mul(n as u64)) as u32
+                    }
                     _ => *x,
                 };
                 Value::U32(res)
@@ -733,7 +880,9 @@ fn eval_accumulator_preserving_type(
             if let Some(lit) = step {
                 let n = match lit {
                     Value::U64(v) => *v,
-                    _ => crate::execution::runtime_core::ops::num(lit.clone()).unwrap_or(1.0) as u64,
+                    _ => {
+                        crate::execution::runtime_core::ops::num(lit.clone()).unwrap_or(1.0) as u64
+                    }
                 };
                 let iters = (limit - start).max(0) as u64;
                 let res = match op {
@@ -764,7 +913,9 @@ fn eval_accumulator_preserving_type(
                 let iters = (limit - start).max(0);
                 let res = match op {
                     TokenKind::Plus => (*x as i64).wrapping_add(iters.wrapping_mul(n as i64)) as i8,
-                    TokenKind::Minus => (*x as i64).wrapping_sub(iters.wrapping_mul(n as i64)) as i8,
+                    TokenKind::Minus => {
+                        (*x as i64).wrapping_sub(iters.wrapping_mul(n as i64)) as i8
+                    }
                     _ => *x,
                 };
                 Value::I8(res)
@@ -785,12 +936,18 @@ fn eval_accumulator_preserving_type(
             if let Some(lit) = step {
                 let n = match lit {
                     Value::I16(v) => *v,
-                    _ => crate::execution::runtime_core::ops::num(lit.clone()).unwrap_or(1.0) as i16,
+                    _ => {
+                        crate::execution::runtime_core::ops::num(lit.clone()).unwrap_or(1.0) as i16
+                    }
                 };
                 let iters = (limit - start).max(0);
                 let res = match op {
-                    TokenKind::Plus => (*x as i64).wrapping_add(iters.wrapping_mul(n as i64)) as i16,
-                    TokenKind::Minus => (*x as i64).wrapping_sub(iters.wrapping_mul(n as i64)) as i16,
+                    TokenKind::Plus => {
+                        (*x as i64).wrapping_add(iters.wrapping_mul(n as i64)) as i16
+                    }
+                    TokenKind::Minus => {
+                        (*x as i64).wrapping_sub(iters.wrapping_mul(n as i64)) as i16
+                    }
                     _ => *x,
                 };
                 Value::I16(res)
@@ -811,12 +968,18 @@ fn eval_accumulator_preserving_type(
             if let Some(lit) = step {
                 let n = match lit {
                     Value::I32(v) => *v,
-                    _ => crate::execution::runtime_core::ops::num(lit.clone()).unwrap_or(1.0) as i32,
+                    _ => {
+                        crate::execution::runtime_core::ops::num(lit.clone()).unwrap_or(1.0) as i32
+                    }
                 };
                 let iters = (limit - start).max(0);
                 let res = match op {
-                    TokenKind::Plus => (*x as i64).wrapping_add(iters.wrapping_mul(n as i64)) as i32,
-                    TokenKind::Minus => (*x as i64).wrapping_sub(iters.wrapping_mul(n as i64)) as i32,
+                    TokenKind::Plus => {
+                        (*x as i64).wrapping_add(iters.wrapping_mul(n as i64)) as i32
+                    }
+                    TokenKind::Minus => {
+                        (*x as i64).wrapping_sub(iters.wrapping_mul(n as i64)) as i32
+                    }
                     _ => *x,
                 };
                 Value::I32(res)
@@ -837,7 +1000,9 @@ fn eval_accumulator_preserving_type(
             if let Some(lit) = step {
                 let n = match lit {
                     Value::I64(v) => *v,
-                    _ => crate::execution::runtime_core::ops::num(lit.clone()).unwrap_or(1.0) as i64,
+                    _ => {
+                        crate::execution::runtime_core::ops::num(lit.clone()).unwrap_or(1.0) as i64
+                    }
                 };
                 let iters = (limit - start).max(0);
                 let res = match op {
@@ -954,8 +1119,6 @@ impl Interpreter {
 }
 
 /// Helper function to coerce a value to match a target type (e.g., i32, u8, f64)
-
-
 
 impl Interpreter {
     fn get_prop(&mut self, obj: Value, key: &str) -> Result<Value, String> {
@@ -2118,8 +2281,6 @@ impl Interpreter {
     }
 }
 
-
-
 impl Interpreter {
     pub fn new() -> Self {
         let mut envs = Vec::new();
@@ -2341,14 +2502,20 @@ impl Interpreter {
                     match &args[0] {
                         Value::Array(arr) => {
                             for item in arr {
-                                if !unique.iter().any(|x| crate::execution::runtime_core::ops::equals(x, item)) {
+                                if !unique
+                                    .iter()
+                                    .any(|x| crate::execution::runtime_core::ops::equals(x, item))
+                                {
                                     unique.push(item.clone());
                                 }
                             }
                         }
                         Value::DynArray(da) => {
                             for item in &da.data {
-                                if !unique.iter().any(|x| crate::execution::runtime_core::ops::equals(x, item)) {
+                                if !unique
+                                    .iter()
+                                    .any(|x| crate::execution::runtime_core::ops::equals(x, item))
+                                {
                                     unique.push(item.clone());
                                 }
                             }
@@ -4987,7 +5154,12 @@ fn count_unclosed_delimiters(code: &str) -> (i32, i32, i32, bool) {
         i += 1;
     }
 
-    (brace_depth, paren_depth, bracket_depth, in_string || in_block_comment)
+    (
+        brace_depth,
+        paren_depth,
+        bracket_depth,
+        in_string || in_block_comment,
+    )
 }
 
 fn is_incomplete_input(code: &str) -> bool {
@@ -5032,7 +5204,6 @@ fn is_incomplete_input(code: &str) -> bool {
 }
 
 impl Interpreter {
-
     fn exec_program_in_env(
         &mut self,
         stmts: &Vec<Stmt>,
@@ -6123,7 +6294,9 @@ impl Interpreter {
                         || lowered.starts_with("map<"))
                         && matches!(&v, Value::Array(a) if a.is_empty())
                     {
-                        v = Value::Object(std::sync::Arc::new(std::collections::HashMap::default()));
+                        v = Value::Object(
+                            std::sync::Arc::new(std::collections::HashMap::default()),
+                        );
                     }
 
                     // Try to coerce and apply defaults
@@ -6480,20 +6653,45 @@ impl Interpreter {
                                     &loop_expr.kind
                                 {
                                     if let ExprKind::Variable(target_name) = &lhs_expr.kind {
-                                        let maybe_acc: Option<(TokenKind, &Expr)> = match assign_op {
-                                            TokenKind::PlusEqual => Some((TokenKind::Plus, rhs_expr.as_ref())),
-                                            TokenKind::MinusEqual => Some((TokenKind::Minus, rhs_expr.as_ref())),
-                                            TokenKind::StarEqual => Some((TokenKind::Star, rhs_expr.as_ref())),
-                                            TokenKind::SlashEqual => Some((TokenKind::Slash, rhs_expr.as_ref())),
-                                            TokenKind::PercentEqual => Some((TokenKind::Percent, rhs_expr.as_ref())),
-                                            TokenKind::CaretEqual => Some((TokenKind::Caret, rhs_expr.as_ref())),
-                                            TokenKind::AmpersandEqual => Some((TokenKind::Ampersand, rhs_expr.as_ref())),
-                                            TokenKind::PipeEqual => Some((TokenKind::Pipe, rhs_expr.as_ref())),
-                                            TokenKind::ShiftLeftEqual => Some((TokenKind::ShiftLeft, rhs_expr.as_ref())),
-                                            TokenKind::ShiftRightEqual => Some((TokenKind::ShiftRight, rhs_expr.as_ref())),
+                                        let maybe_acc: Option<(TokenKind, &Expr)> = match assign_op
+                                        {
+                                            TokenKind::PlusEqual => {
+                                                Some((TokenKind::Plus, rhs_expr.as_ref()))
+                                            }
+                                            TokenKind::MinusEqual => {
+                                                Some((TokenKind::Minus, rhs_expr.as_ref()))
+                                            }
+                                            TokenKind::StarEqual => {
+                                                Some((TokenKind::Star, rhs_expr.as_ref()))
+                                            }
+                                            TokenKind::SlashEqual => {
+                                                Some((TokenKind::Slash, rhs_expr.as_ref()))
+                                            }
+                                            TokenKind::PercentEqual => {
+                                                Some((TokenKind::Percent, rhs_expr.as_ref()))
+                                            }
+                                            TokenKind::CaretEqual => {
+                                                Some((TokenKind::Caret, rhs_expr.as_ref()))
+                                            }
+                                            TokenKind::AmpersandEqual => {
+                                                Some((TokenKind::Ampersand, rhs_expr.as_ref()))
+                                            }
+                                            TokenKind::PipeEqual => {
+                                                Some((TokenKind::Pipe, rhs_expr.as_ref()))
+                                            }
+                                            TokenKind::ShiftLeftEqual => {
+                                                Some((TokenKind::ShiftLeft, rhs_expr.as_ref()))
+                                            }
+                                            TokenKind::ShiftRightEqual => {
+                                                Some((TokenKind::ShiftRight, rhs_expr.as_ref()))
+                                            }
                                             TokenKind::Equal => {
-                                                if let ExprKind::Binary(bin_lhs, bin_op, bin_rhs) = &rhs_expr.kind {
-                                                    if let ExprKind::Variable(lhs_name) = &bin_lhs.kind {
+                                                if let ExprKind::Binary(bin_lhs, bin_op, bin_rhs) =
+                                                    &rhs_expr.kind
+                                                {
+                                                    if let ExprKind::Variable(lhs_name) =
+                                                        &bin_lhs.kind
+                                                    {
                                                         if lhs_name == target_name {
                                                             Some((*bin_op, bin_rhs.as_ref()))
                                                         } else {
@@ -6514,9 +6712,22 @@ impl Interpreter {
                                             if let ExprKind::Variable(rhs_name) = &accum_rhs.kind {
                                                 if rhs_name == name {
                                                     let orig_val = self.get_fast(env, target_name);
-                                                    let final_val = eval_accumulator_preserving_type(orig_val.as_ref(), start_num, limit, None, accum_op);
-                                                    if !self.assign(env, target_name, final_val.clone()) {
-                                                        self.envs[env].values.insert(target_name.clone(), final_val);
+                                                    let final_val =
+                                                        eval_accumulator_preserving_type(
+                                                            orig_val.as_ref(),
+                                                            start_num,
+                                                            limit,
+                                                            None,
+                                                            accum_op,
+                                                        );
+                                                    if !self.assign(
+                                                        env,
+                                                        target_name,
+                                                        final_val.clone(),
+                                                    ) {
+                                                        self.envs[env]
+                                                            .values
+                                                            .insert(target_name.clone(), final_val);
                                                     }
                                                     return Ok(Flow::Next);
                                                 }
@@ -6525,15 +6736,26 @@ impl Interpreter {
                                             // Special-case 2: x op= literal (constant step)
                                             if let ExprKind::Literal(lit) = &accum_rhs.kind {
                                                 let orig_val = self.get_fast(env, target_name);
-                                                let final_val = eval_accumulator_preserving_type(orig_val.as_ref(), start_num, limit, Some(lit), accum_op);
-                                                if !self.assign(env, target_name, final_val.clone()) {
-                                                    self.envs[env].values.insert(target_name.clone(), final_val);
+                                                let final_val = eval_accumulator_preserving_type(
+                                                    orig_val.as_ref(),
+                                                    start_num,
+                                                    limit,
+                                                    Some(lit),
+                                                    accum_op,
+                                                );
+                                                if !self.assign(env, target_name, final_val.clone())
+                                                {
+                                                    self.envs[env]
+                                                        .values
+                                                        .insert(target_name.clone(), final_val);
                                                 }
                                                 return Ok(Flow::Next);
                                             }
 
                                             // General expression in terms of induction variable: x op= expr(i)
-                                            if let Some(_) = eval_numeric_expr_with_var(accum_rhs, name, start_num) {
+                                            if let Some(_) = eval_numeric_expr_with_var(
+                                                accum_rhs, name, start_num,
+                                            ) {
                                                 let count = limit - start_num;
                                                 if count <= 0 {
                                                     return Ok(Flow::Next);
@@ -6541,19 +6763,33 @@ impl Interpreter {
 
                                                 let mut handled = false;
                                                 if accum_op == TokenKind::Plus {
-                                                    match analyze_scev_expression(accum_rhs, name, start_num, limit) {
-                                                        ScevAnalysis::EligiblePeriodic { period, .. } => {
+                                                    match analyze_scev_expression(
+                                                        accum_rhs, name, start_num, limit,
+                                                    ) {
+                                                        ScevAnalysis::EligiblePeriodic {
+                                                            period,
+                                                            ..
+                                                        } => {
                                                             let num_steps = count.min(period);
                                                             let mut cycle_sum: i64 = 0;
-                                                            let mut prefix = Vec::with_capacity(num_steps as usize);
+                                                            let mut prefix = Vec::with_capacity(
+                                                                num_steps as usize,
+                                                            );
                                                             let mut valid = true;
                                                             for offset in 0..num_steps {
-                                                                if let Some(val) = eval_numeric_expr_with_var(accum_rhs, name, start_num + offset) {
+                                                                if let Some(val) =
+                                                                    eval_numeric_expr_with_var(
+                                                                        accum_rhs,
+                                                                        name,
+                                                                        start_num + offset,
+                                                                    )
+                                                                {
                                                                     if val < 0 {
                                                                         valid = false;
                                                                         break;
                                                                     }
-                                                                    cycle_sum = cycle_sum.wrapping_add(val);
+                                                                    cycle_sum =
+                                                                        cycle_sum.wrapping_add(val);
                                                                     prefix.push(cycle_sum);
                                                                 } else {
                                                                     valid = false;
@@ -6564,15 +6800,30 @@ impl Interpreter {
                                                                 let total_add = if count <= period {
                                                                     prefix[(count - 1) as usize]
                                                                 } else {
-                                                                    let full_cycles = count / period;
+                                                                    let full_cycles =
+                                                                        count / period;
                                                                     let rem = count % period;
-                                                                    let rem_sum = if rem > 0 { prefix[(rem - 1) as usize] } else { 0 };
-                                                                    full_cycles.wrapping_mul(cycle_sum).wrapping_add(rem_sum)
+                                                                    let rem_sum = if rem > 0 {
+                                                                        prefix[(rem - 1) as usize]
+                                                                    } else {
+                                                                        0
+                                                                    };
+                                                                    full_cycles
+                                                                        .wrapping_mul(cycle_sum)
+                                                                        .wrapping_add(rem_sum)
                                                                 };
-                                                                let orig_val = self.get_fast(env, target_name);
+                                                                let orig_val =
+                                                                    self.get_fast(env, target_name);
                                                                 let final_val = apply_accumulated_op_preserving_type(orig_val.as_ref(), total_add, TokenKind::Plus);
-                                                                if !self.assign(env, target_name, final_val.clone()) {
-                                                                    self.envs[env].values.insert(target_name.clone(), final_val);
+                                                                if !self.assign(
+                                                                    env,
+                                                                    target_name,
+                                                                    final_val.clone(),
+                                                                ) {
+                                                                    self.envs[env].values.insert(
+                                                                        target_name.clone(),
+                                                                        final_val,
+                                                                    );
                                                                 }
                                                                 handled = true;
                                                             }
@@ -6584,14 +6835,25 @@ impl Interpreter {
                                                 if !handled {
                                                     // Tight in-place native evaluation for all operators and all types
                                                     let orig_val = self.get_fast(env, target_name);
-                                                    let mut cur_val = orig_val.unwrap_or(Value::Number(0.0));
+                                                    let mut cur_val =
+                                                        orig_val.unwrap_or(Value::Number(0.0));
                                                     for c in start_num..limit {
-                                                        if let Some(val) = eval_numeric_expr_with_var(accum_rhs, name, c) {
+                                                        if let Some(val) =
+                                                            eval_numeric_expr_with_var(
+                                                                accum_rhs, name, c,
+                                                            )
+                                                        {
                                                             cur_val = apply_accumulated_op_preserving_type(Some(&cur_val), val, accum_op);
                                                         }
                                                     }
-                                                    if !self.assign(env, target_name, cur_val.clone()) {
-                                                        self.envs[env].values.insert(target_name.clone(), cur_val);
+                                                    if !self.assign(
+                                                        env,
+                                                        target_name,
+                                                        cur_val.clone(),
+                                                    ) {
+                                                        self.envs[env]
+                                                            .values
+                                                            .insert(target_name.clone(), cur_val);
                                                     }
                                                 }
                                                 return Ok(Flow::Next);
@@ -8130,7 +8392,9 @@ impl Interpreter {
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        return Err(RunErr::Msg("Compression module is not available in WebAssembly".to_string()));
+                        return Err(RunErr::Msg(
+                            "Compression module is not available in WebAssembly".to_string(),
+                        ));
                     }
                 }
                 if path == "URL" || path == "std:URL" || path == "url" || path == "std:url" {
@@ -8141,49 +8405,61 @@ impl Interpreter {
                 if path == "Net" || path == "std:Net" || path == "net" || path == "std:net" {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        let net_val = crate::runtime::stdlib_src::net::api::build_net_module_object();
+                        let net_val =
+                            crate::runtime::stdlib_src::net::api::build_net_module_object();
                         self.define_at(env, alias.clone(), net_val, None);
                         return Ok(Flow::Next);
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        return Err(RunErr::Msg("Net module is not available in WebAssembly".to_string()));
+                        return Err(RunErr::Msg(
+                            "Net module is not available in WebAssembly".to_string(),
+                        ));
                     }
                 }
                 if path == "ATP" || path == "std:ATP" || path == "atp" || path == "std:atp" {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        let atp_val = crate::runtime::stdlib_src::atp::api::build_atp_module_object();
+                        let atp_val =
+                            crate::runtime::stdlib_src::atp::api::build_atp_module_object();
                         self.define_at(env, alias.clone(), atp_val, None);
                         return Ok(Flow::Next);
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        return Err(RunErr::Msg("ATP module is not available in WebAssembly".to_string()));
+                        return Err(RunErr::Msg(
+                            "ATP module is not available in WebAssembly".to_string(),
+                        ));
                     }
                 }
                 if path == "DNS" || path == "std:DNS" || path == "dns" || path == "std:dns" {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        let dns_val = crate::runtime::stdlib_src::dns::api::build_dns_module_object();
+                        let dns_val =
+                            crate::runtime::stdlib_src::dns::api::build_dns_module_object();
                         self.define_at(env, alias.clone(), dns_val, None);
                         return Ok(Flow::Next);
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        return Err(RunErr::Msg("DNS module is not available in WebAssembly".to_string()));
+                        return Err(RunErr::Msg(
+                            "DNS module is not available in WebAssembly".to_string(),
+                        ));
                     }
                 }
                 if path == "TLS" || path == "std:TLS" || path == "tls" || path == "std:tls" {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        let tls_val = crate::runtime::stdlib_src::tls::api::build_tls_module_object();
+                        let tls_val =
+                            crate::runtime::stdlib_src::tls::api::build_tls_module_object();
                         self.define_at(env, alias.clone(), tls_val, None);
                         return Ok(Flow::Next);
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        return Err(RunErr::Msg("TLS module is not available in WebAssembly".to_string()));
+                        return Err(RunErr::Msg(
+                            "TLS module is not available in WebAssembly".to_string(),
+                        ));
                     }
                 }
                 if path == "HTTP" || path == "std:HTTP" || path == "http" || path == "std:http" {
@@ -8196,7 +8472,9 @@ impl Interpreter {
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        return Err(RunErr::Msg("HTTP module is not available in WebAssembly".to_string()));
+                        return Err(RunErr::Msg(
+                            "HTTP module is not available in WebAssembly".to_string(),
+                        ));
                     }
                 }
                 if path == "WebSocket"
@@ -8215,7 +8493,9 @@ impl Interpreter {
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        return Err(RunErr::Msg("WebSocket module is not available in WebAssembly".to_string()));
+                        return Err(RunErr::Msg(
+                            "WebSocket module is not available in WebAssembly".to_string(),
+                        ));
                     }
                 }
                 if path == "Collections"
@@ -8688,7 +8968,10 @@ impl Interpreter {
                 }
                 #[cfg(target_arch = "wasm32")]
                 if full.ends_with(".wasm") {
-                    return Err(RunErr::Msg("Dynamic wasm module loading is not supported in the browser runtime".to_string()));
+                    return Err(RunErr::Msg(
+                        "Dynamic wasm module loading is not supported in the browser runtime"
+                            .to_string(),
+                    ));
                 }
 
                 let src = std::fs::read_to_string(&full)
@@ -8797,49 +9080,61 @@ impl Interpreter {
                 if path == "Net" || path == "std:Net" || path == "net" || path == "std:net" {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        let net_val = crate::runtime::stdlib_src::net::api::build_net_module_object();
+                        let net_val =
+                            crate::runtime::stdlib_src::net::api::build_net_module_object();
                         self.define_at(env, alias.clone(), net_val, None);
                         return Ok(Flow::Next);
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        return Err(RunErr::Msg("Net module is not available in WebAssembly".to_string()));
+                        return Err(RunErr::Msg(
+                            "Net module is not available in WebAssembly".to_string(),
+                        ));
                     }
                 }
                 if path == "ATP" || path == "std:ATP" || path == "atp" || path == "std:atp" {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        let atp_val = crate::runtime::stdlib_src::atp::api::build_atp_module_object();
+                        let atp_val =
+                            crate::runtime::stdlib_src::atp::api::build_atp_module_object();
                         self.define_at(env, alias.clone(), atp_val, None);
                         return Ok(Flow::Next);
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        return Err(RunErr::Msg("ATP module is not available in WebAssembly".to_string()));
+                        return Err(RunErr::Msg(
+                            "ATP module is not available in WebAssembly".to_string(),
+                        ));
                     }
                 }
                 if path == "DNS" || path == "std:DNS" || path == "dns" || path == "std:dns" {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        let dns_val = crate::runtime::stdlib_src::dns::api::build_dns_module_object();
+                        let dns_val =
+                            crate::runtime::stdlib_src::dns::api::build_dns_module_object();
                         self.define_at(env, alias.clone(), dns_val, None);
                         return Ok(Flow::Next);
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        return Err(RunErr::Msg("DNS module is not available in WebAssembly".to_string()));
+                        return Err(RunErr::Msg(
+                            "DNS module is not available in WebAssembly".to_string(),
+                        ));
                     }
                 }
                 if path == "TLS" || path == "std:TLS" || path == "tls" || path == "std:tls" {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        let tls_val = crate::runtime::stdlib_src::tls::api::build_tls_module_object();
+                        let tls_val =
+                            crate::runtime::stdlib_src::tls::api::build_tls_module_object();
                         self.define_at(env, alias.clone(), tls_val, None);
                         return Ok(Flow::Next);
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        return Err(RunErr::Msg("TLS module is not available in WebAssembly".to_string()));
+                        return Err(RunErr::Msg(
+                            "TLS module is not available in WebAssembly".to_string(),
+                        ));
                     }
                 }
                 if path == "HTTP" || path == "std:HTTP" || path == "http" || path == "std:http" {
@@ -8852,7 +9147,9 @@ impl Interpreter {
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        return Err(RunErr::Msg("HTTP module is not available in WebAssembly".to_string()));
+                        return Err(RunErr::Msg(
+                            "HTTP module is not available in WebAssembly".to_string(),
+                        ));
                     }
                 }
                 if path == "WebSocket"
@@ -8871,7 +9168,9 @@ impl Interpreter {
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        return Err(RunErr::Msg("WebSocket module is not available in WebAssembly".to_string()));
+                        return Err(RunErr::Msg(
+                            "WebSocket module is not available in WebAssembly".to_string(),
+                        ));
                     }
                 }
                 if path == "Compression"
@@ -8887,7 +9186,9 @@ impl Interpreter {
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        return Err(RunErr::Msg("Compression module is not available in WebAssembly".to_string()));
+                        return Err(RunErr::Msg(
+                            "Compression module is not available in WebAssembly".to_string(),
+                        ));
                     }
                 }
                 if path == "Collections"
@@ -9315,8 +9616,9 @@ impl Interpreter {
                             call_wasm_function, list_wasm_exports, load_wasm_module,
                         };
 
-                        load_wasm_module(std::path::Path::new(&full))
-                            .map_err(|e| RunErr::Msg(format!("Failed to load WASM module: {}", e)))?;
+                        load_wasm_module(std::path::Path::new(&full)).map_err(|e| {
+                            RunErr::Msg(format!("Failed to load WASM module: {}", e))
+                        })?;
 
                         let exports = list_wasm_exports();
                         let mut namespace: HashMap<String, Value> = HashMap::default();
@@ -9345,7 +9647,10 @@ impl Interpreter {
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        return Err(RunErr::Msg("Dynamic wasm module loading is not supported in the browser runtime".to_string()));
+                        return Err(RunErr::Msg(
+                            "Dynamic wasm module loading is not supported in the browser runtime"
+                                .to_string(),
+                        ));
                     }
                 } else {
                     let src = std::fs::read_to_string(&full)
@@ -9572,7 +9877,8 @@ impl Interpreter {
                 if path == "Net" || path == "std:Net" || path == "net" || path == "std:net" {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        let net_val = crate::runtime::stdlib_src::net::api::build_net_module_object();
+                        let net_val =
+                            crate::runtime::stdlib_src::net::api::build_net_module_object();
                         if let Value::Object(map) = net_val {
                             for name in names {
                                 if let Some(val) = map.get(name) {
@@ -9589,13 +9895,17 @@ impl Interpreter {
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        return Err(RunErr::Msg("Net module is not available in the WebAssembly browser environment".to_string()));
+                        return Err(RunErr::Msg(
+                            "Net module is not available in the WebAssembly browser environment"
+                                .to_string(),
+                        ));
                     }
                 }
                 if path == "ATP" || path == "std:ATP" || path == "atp" || path == "std:atp" {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        let atp_val = crate::runtime::stdlib_src::atp::api::build_atp_module_object();
+                        let atp_val =
+                            crate::runtime::stdlib_src::atp::api::build_atp_module_object();
                         if let Value::Object(map) = atp_val {
                             for name in names {
                                 if let Some(val) = map.get(name) {
@@ -9612,13 +9922,17 @@ impl Interpreter {
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        return Err(RunErr::Msg("ATP module is not available in the WebAssembly browser environment".to_string()));
+                        return Err(RunErr::Msg(
+                            "ATP module is not available in the WebAssembly browser environment"
+                                .to_string(),
+                        ));
                     }
                 }
                 if path == "DNS" || path == "std:DNS" || path == "dns" || path == "std:dns" {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        let dns_val = crate::runtime::stdlib_src::dns::api::build_dns_module_object();
+                        let dns_val =
+                            crate::runtime::stdlib_src::dns::api::build_dns_module_object();
                         if let Value::Object(map) = dns_val {
                             for name in names {
                                 if let Some(val) = map.get(name) {
@@ -9635,13 +9949,17 @@ impl Interpreter {
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        return Err(RunErr::Msg("DNS module is not available in the WebAssembly browser environment".to_string()));
+                        return Err(RunErr::Msg(
+                            "DNS module is not available in the WebAssembly browser environment"
+                                .to_string(),
+                        ));
                     }
                 }
                 if path == "TLS" || path == "std:TLS" || path == "tls" || path == "std:tls" {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        let tls_val = crate::runtime::stdlib_src::tls::api::build_tls_module_object();
+                        let tls_val =
+                            crate::runtime::stdlib_src::tls::api::build_tls_module_object();
                         if let Value::Object(map) = tls_val {
                             for name in names {
                                 if let Some(val) = map.get(name) {
@@ -9658,7 +9976,10 @@ impl Interpreter {
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        return Err(RunErr::Msg("TLS module is not available in the WebAssembly browser environment".to_string()));
+                        return Err(RunErr::Msg(
+                            "TLS module is not available in the WebAssembly browser environment"
+                                .to_string(),
+                        ));
                     }
                 }
                 if path == "HTTP" || path == "std:HTTP" || path == "http" || path == "std:http" {
@@ -9682,7 +10003,10 @@ impl Interpreter {
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        return Err(RunErr::Msg("HTTP module is not available in the WebAssembly browser environment".to_string()));
+                        return Err(RunErr::Msg(
+                            "HTTP module is not available in the WebAssembly browser environment"
+                                .to_string(),
+                        ));
                     }
                 }
                 if path == "WebSocket"
@@ -11071,7 +11395,9 @@ impl Interpreter {
                                 match container {
                                     Value::Array(a) => a.iter().any(|x| equals(x, val)),
                                     Value::DynArray(d) => d.data.iter().any(|x| equals(x, val)),
-                                    Value::RawArray(_, elems) => elems.iter().any(|x| equals(x, val)),
+                                    Value::RawArray(_, elems) => {
+                                        elems.iter().any(|x| equals(x, val))
+                                    }
                                     _ => false,
                                 }
                             };
@@ -11530,7 +11856,8 @@ impl Interpreter {
                         if !in_unsafe_context() {
                             return Err(err("pointer dereference requires unsafe { ... } block"));
                         }
-                        let offset = crate::execution::runtime_core::ops::to_index(&iv).map_err(|e| err(e))?;
+                        let offset = crate::execution::runtime_core::ops::to_index(&iv)
+                            .map_err(|e| err(e))?;
                         let elem_size = crate::backends::unsafe_heap::elem_size_of_ptr(ptr_addr)
                             .map_err(|e| err(e))?;
                         if elem_size == 1 {
@@ -11551,7 +11878,8 @@ impl Interpreter {
                             return Err(err("pointer dereference requires unsafe { ... } block"));
                         }
                         let ptr_u64 = ptr_addr as u64;
-                        let offset = crate::execution::runtime_core::ops::to_index(&iv).map_err(|e| err(e))?;
+                        let offset = crate::execution::runtime_core::ops::to_index(&iv)
+                            .map_err(|e| err(e))?;
                         let elem_size = crate::backends::unsafe_heap::elem_size_of_ptr(ptr_u64)
                             .map_err(|e| err(e))?;
                         if elem_size == 1 {
@@ -11582,11 +11910,15 @@ impl Interpreter {
                         } else {
                             match &av[0] {
                                 Value::Array(a) => a.iter().map(value_to_string).collect(),
-                                Value::DynArray(da) => da.data.iter().map(value_to_string).collect(),
+                                Value::DynArray(da) => {
+                                    da.data.iter().map(value_to_string).collect()
+                                }
                                 other => vec![value_to_string(other)],
                             }
                         };
-                        crate::backends::common::builtins_modules::io::set_thread_mock_input(strings.clone());
+                        crate::backends::common::builtins_modules::io::set_thread_mock_input(
+                            strings.clone(),
+                        );
                         let mut q = INPUT_PLAYBACK
                             .get_or_init(|| Mutex::new(VecDeque::new()))
                             .lock()
@@ -11597,7 +11929,8 @@ impl Interpreter {
                         }
                         drop(q);
 
-                        if matches!(&obj.kind, ExprKind::Variable(v) if v == "input" || v == "Input") {
+                        if matches!(&obj.kind, ExprKind::Variable(v) if v == "input" || v == "Input")
+                        {
                             return Ok(Value::Null);
                         }
                         return self.eval_expr(obj, env, loader);
@@ -11793,10 +12126,16 @@ impl Interpreter {
                                             )));
                                         }
                                         match name.as_str() {
-                                             "input.mock" | "input.play" => {
+                                            "input.mock" | "input.play" => {
                                                 let strings: Vec<String> = match &av[0] {
-                                                    Value::Array(a) => a.iter().map(value_to_string).collect(),
-                                                    Value::DynArray(da) => da.data.iter().map(value_to_string).collect(),
+                                                    Value::Array(a) => {
+                                                        a.iter().map(value_to_string).collect()
+                                                    }
+                                                    Value::DynArray(da) => da
+                                                        .data
+                                                        .iter()
+                                                        .map(value_to_string)
+                                                        .collect(),
                                                     other => vec![value_to_string(other)],
                                                 };
                                                 crate::backends::common::builtins_modules::io::set_thread_mock_input(strings.clone());
@@ -12007,7 +12346,10 @@ impl Interpreter {
                             } else {
                                 &callee.span
                             };
-                            let msg = format!("cannot call class '{}' as a function; use 'new' for classes", c.name);
+                            let msg = format!(
+                                "cannot call class '{}' as a function; use 'new' for classes",
+                                c.name
+                            );
                             let mut lang_err = LangError::new(
                                 ErrorKind::Runtime,
                                 msg,
@@ -12021,7 +12363,10 @@ impl Interpreter {
                             if let Some(mod_id) = &self.current_module {
                                 lang_err = lang_err.with_file(mod_id.clone());
                             }
-                            lang_err = lang_err.with_help(format!("use `new {}(...)` to instantiate class `{}`", c.name, c.name));
+                            lang_err = lang_err.with_help(format!(
+                                "use `new {}(...)` to instantiate class `{}`",
+                                c.name, c.name
+                            ));
                             Err(lang_err.to_string())
                         }
                     }
@@ -13514,13 +13859,21 @@ impl Interpreter {
                                     _ => "Select option: ".to_string(),
                                 };
                                 let opts: Vec<String> = match av.get(1) {
-                                    Some(Value::Array(a)) => a.iter().map(value_to_string).collect(),
-                                    Some(Value::DynArray(da)) => da.data.iter().map(value_to_string).collect(),
-                                    Some(Value::Tuple(tup)) => tup.iter().map(value_to_string).collect(),
+                                    Some(Value::Array(a)) => {
+                                        a.iter().map(value_to_string).collect()
+                                    }
+                                    Some(Value::DynArray(da)) => {
+                                        da.data.iter().map(value_to_string).collect()
+                                    }
+                                    Some(Value::Tuple(tup)) => {
+                                        tup.iter().map(value_to_string).collect()
+                                    }
                                     _ => Vec::new(),
                                 };
                                 let config = crate::runtime::tui_input::SelectConfig::default();
-                                match crate::runtime::tui_input::prompt_select(&prompt, &opts, &config) {
+                                match crate::runtime::tui_input::prompt_select(
+                                    &prompt, &opts, &config,
+                                ) {
                                     Ok(sel) => {
                                         let idx = opts.iter().position(|x| x == &sel).unwrap_or(0);
                                         Ok(Value::Number((idx + 1) as f64))
@@ -13544,9 +13897,12 @@ impl Interpreter {
                                     labels.push(fmt(v));
                                 }
                                 let config = crate::runtime::tui_input::SelectConfig::default();
-                                match crate::runtime::tui_input::prompt_select(&prompt, &labels, &config) {
+                                match crate::runtime::tui_input::prompt_select(
+                                    &prompt, &labels, &config,
+                                ) {
                                     Ok(sel) => {
-                                        let idx = labels.iter().position(|x| x == &sel).unwrap_or(0);
+                                        let idx =
+                                            labels.iter().position(|x| x == &sel).unwrap_or(0);
                                         let key = keys.get(idx).cloned().unwrap_or_default();
                                         Ok(Value::Str(key))
                                     }
@@ -13614,7 +13970,9 @@ impl Interpreter {
                                 }
                                 let strings: Vec<String> = match &av[0] {
                                     Value::Array(a) => a.iter().map(value_to_string).collect(),
-                                    Value::DynArray(da) => da.data.iter().map(value_to_string).collect(),
+                                    Value::DynArray(da) => {
+                                        da.data.iter().map(value_to_string).collect()
+                                    }
                                     Value::Tuple(tup) => tup.iter().map(value_to_string).collect(),
                                     other => vec![value_to_string(other)],
                                 };
@@ -13638,7 +13996,10 @@ impl Interpreter {
                                     Some(Value::Bool(b)) => *b,
                                     _ => false,
                                 };
-                                match crate::runtime::tui_input::prompt_confirm(&prompt, default_val) {
+                                match crate::runtime::tui_input::prompt_confirm(
+                                    &prompt,
+                                    default_val,
+                                ) {
                                     Ok(b) => Ok(Value::Bool(b)),
                                     Err(e) => Err(err(&e)),
                                 }
@@ -13649,26 +14010,43 @@ impl Interpreter {
                                     _ => "Select options: ".to_string(),
                                 };
                                 let options: Vec<String> = match av.get(1) {
-                                    Some(Value::Array(arr)) => arr.iter().map(value_to_string).collect(),
-                                    Some(Value::DynArray(da)) => da.data.iter().map(value_to_string).collect(),
-                                    Some(Value::Tuple(tup)) => tup.iter().map(value_to_string).collect(),
+                                    Some(Value::Array(arr)) => {
+                                        arr.iter().map(value_to_string).collect()
+                                    }
+                                    Some(Value::DynArray(da)) => {
+                                        da.data.iter().map(value_to_string).collect()
+                                    }
+                                    Some(Value::Tuple(tup)) => {
+                                        tup.iter().map(value_to_string).collect()
+                                    }
                                     _ => Vec::new(),
                                 };
-                                let mut config = crate::runtime::tui_input::CheckboxConfig::default();
+                                let mut config =
+                                    crate::runtime::tui_input::CheckboxConfig::default();
                                 if let Some(Value::Object(m)) = av.get(2) {
                                     if let Some(d_val) = m.get("default") {
                                         config.default = match d_val {
-                                            Value::Array(arr) => arr.iter().map(value_to_string).collect(),
-                                            Value::DynArray(da) => da.data.iter().map(value_to_string).collect(),
-                                            Value::Tuple(tup) => tup.iter().map(value_to_string).collect(),
+                                            Value::Array(arr) => {
+                                                arr.iter().map(value_to_string).collect()
+                                            }
+                                            Value::DynArray(da) => {
+                                                da.data.iter().map(value_to_string).collect()
+                                            }
+                                            Value::Tuple(tup) => {
+                                                tup.iter().map(value_to_string).collect()
+                                            }
                                             _ => Vec::new(),
                                         };
                                     }
                                 }
-                                match crate::runtime::tui_input::prompt_checkbox(&prompt, &options, &config) {
-                                    Ok(selected) => Ok(Value::DynArray(Box::new(crate::parsing::ast::DynamicArray::new(
-                                        selected.into_iter().map(Value::Str).collect(),
-                                    )))),
+                                match crate::runtime::tui_input::prompt_checkbox(
+                                    &prompt, &options, &config,
+                                ) {
+                                    Ok(selected) => Ok(Value::DynArray(Box::new(
+                                        crate::parsing::ast::DynamicArray::new(
+                                            selected.into_iter().map(Value::Str).collect(),
+                                        ),
+                                    ))),
                                     Err(e) => Err(err(&e)),
                                 }
                             }
@@ -13678,13 +14056,21 @@ impl Interpreter {
                                     _ => "Select option: ".to_string(),
                                 };
                                 let options: Vec<String> = match av.get(1) {
-                                    Some(Value::Array(arr)) => arr.iter().map(value_to_string).collect(),
-                                    Some(Value::DynArray(da)) => da.data.iter().map(value_to_string).collect(),
-                                    Some(Value::Tuple(tup)) => tup.iter().map(value_to_string).collect(),
+                                    Some(Value::Array(arr)) => {
+                                        arr.iter().map(value_to_string).collect()
+                                    }
+                                    Some(Value::DynArray(da)) => {
+                                        da.data.iter().map(value_to_string).collect()
+                                    }
+                                    Some(Value::Tuple(tup)) => {
+                                        tup.iter().map(value_to_string).collect()
+                                    }
                                     _ => Vec::new(),
                                 };
                                 let config = crate::runtime::tui_input::RadioConfig::default();
-                                match crate::runtime::tui_input::prompt_radio(&prompt, &options, &config) {
+                                match crate::runtime::tui_input::prompt_radio(
+                                    &prompt, &options, &config,
+                                ) {
                                     Ok(s) => Ok(Value::Str(s)),
                                     Err(e) => Err(err(&e)),
                                 }
@@ -13695,14 +14081,22 @@ impl Interpreter {
                                     _ => "Select option: ".to_string(),
                                 };
                                 let options: Vec<String> = match av.get(1) {
-                                    Some(Value::Array(arr)) => arr.iter().map(value_to_string).collect(),
-                                    Some(Value::DynArray(da)) => da.data.iter().map(value_to_string).collect(),
-                                    Some(Value::Tuple(tup)) => tup.iter().map(value_to_string).collect(),
+                                    Some(Value::Array(arr)) => {
+                                        arr.iter().map(value_to_string).collect()
+                                    }
+                                    Some(Value::DynArray(da)) => {
+                                        da.data.iter().map(value_to_string).collect()
+                                    }
+                                    Some(Value::Tuple(tup)) => {
+                                        tup.iter().map(value_to_string).collect()
+                                    }
                                     Some(Value::Object(m)) => m.keys().cloned().collect(),
                                     _ => Vec::new(),
                                 };
                                 let config = crate::runtime::tui_input::SelectConfig::default();
-                                match crate::runtime::tui_input::prompt_select(&prompt, &options, &config) {
+                                match crate::runtime::tui_input::prompt_select(
+                                    &prompt, &options, &config,
+                                ) {
                                     Ok(s) => Ok(Value::Str(s)),
                                     Err(e) => Err(err(&e)),
                                 }
@@ -13714,8 +14108,14 @@ impl Interpreter {
                                         Value::Array(arr) => {
                                             for item in arr {
                                                 if let Value::Object(m) = item {
-                                                    let name = m.get("name").map(value_to_string).unwrap_or_default();
-                                                    let prompt_str = m.get("prompt").map(value_to_string).unwrap_or_else(|| name.clone());
+                                                    let name = m
+                                                        .get("name")
+                                                        .map(value_to_string)
+                                                        .unwrap_or_default();
+                                                    let prompt_str = m
+                                                        .get("prompt")
+                                                        .map(value_to_string)
+                                                        .unwrap_or_else(|| name.clone());
                                                     let field_cfg = crate::runtime::tui_input::FormFieldConfig {
                                                         prompt: prompt_str,
                                                         default: m.get("default").map(value_to_string),
@@ -13729,8 +14129,14 @@ impl Interpreter {
                                         Value::DynArray(da) => {
                                             for item in &da.data {
                                                 if let Value::Object(m) = item {
-                                                    let name = m.get("name").map(value_to_string).unwrap_or_default();
-                                                    let prompt_str = m.get("prompt").map(value_to_string).unwrap_or_else(|| name.clone());
+                                                    let name = m
+                                                        .get("name")
+                                                        .map(value_to_string)
+                                                        .unwrap_or_default();
+                                                    let prompt_str = m
+                                                        .get("prompt")
+                                                        .map(value_to_string)
+                                                        .unwrap_or_else(|| name.clone());
                                                     let field_cfg = crate::runtime::tui_input::FormFieldConfig {
                                                         prompt: prompt_str,
                                                         default: m.get("default").map(value_to_string),
@@ -13745,19 +14151,32 @@ impl Interpreter {
                                             for (k, v) in m.iter() {
                                                 let (prompt_str, default_val, masked) = match v {
                                                     Value::Object(vm) => {
-                                                        let p = vm.get("prompt").map(value_to_string).unwrap_or_else(|| k.clone());
-                                                        let d = vm.get("default").map(value_to_string);
-                                                        let m = vm.get("masked").and_then(|v| match v { Value::Bool(b) => Some(*b), _ => None }).unwrap_or(false);
+                                                        let p = vm
+                                                            .get("prompt")
+                                                            .map(value_to_string)
+                                                            .unwrap_or_else(|| k.clone());
+                                                        let d =
+                                                            vm.get("default").map(value_to_string);
+                                                        let m = vm
+                                                            .get("masked")
+                                                            .and_then(|v| match v {
+                                                                Value::Bool(b) => Some(*b),
+                                                                _ => None,
+                                                            })
+                                                            .unwrap_or(false);
                                                         (p, d, m)
                                                     }
-                                                    _ => (k.clone(), Some(value_to_string(v)), false),
+                                                    _ => {
+                                                        (k.clone(), Some(value_to_string(v)), false)
+                                                    }
                                                 };
-                                                let field_cfg = crate::runtime::tui_input::FormFieldConfig {
-                                                    prompt: prompt_str,
-                                                    default: default_val,
-                                                    masked,
-                                                    ..Default::default()
-                                                };
+                                                let field_cfg =
+                                                    crate::runtime::tui_input::FormFieldConfig {
+                                                        prompt: prompt_str,
+                                                        default: default_val,
+                                                        masked,
+                                                        ..Default::default()
+                                                    };
                                                 fields.push((k.clone(), field_cfg));
                                             }
                                         }
@@ -13804,13 +14223,21 @@ impl Interpreter {
                                     _ => "Search: ".to_string(),
                                 };
                                 let items: Vec<String> = match av.get(1) {
-                                    Some(Value::Array(arr)) => arr.iter().map(value_to_string).collect(),
-                                    Some(Value::DynArray(da)) => da.data.iter().map(value_to_string).collect(),
-                                    Some(Value::Tuple(tup)) => tup.iter().map(value_to_string).collect(),
+                                    Some(Value::Array(arr)) => {
+                                        arr.iter().map(value_to_string).collect()
+                                    }
+                                    Some(Value::DynArray(da)) => {
+                                        da.data.iter().map(value_to_string).collect()
+                                    }
+                                    Some(Value::Tuple(tup)) => {
+                                        tup.iter().map(value_to_string).collect()
+                                    }
                                     _ => Vec::new(),
                                 };
                                 let config = crate::runtime::tui_input::FuzzyConfig::default();
-                                match crate::runtime::tui_input::prompt_fuzzy(&prompt, &items, &config) {
+                                match crate::runtime::tui_input::prompt_fuzzy(
+                                    &prompt, &items, &config,
+                                ) {
                                     Ok(s) => Ok(Value::Str(s)),
                                     Err(e) => Err(err(&e)),
                                 }
@@ -13841,22 +14268,43 @@ impl Interpreter {
                                     }
                                 }
                                 if let Some(Value::Object(m)) = av.get(1) {
-                                    if let Some(n) = to_f64_val(m.get("min")) { min = n; }
-                                    if let Some(n) = to_f64_val(m.get("max")) { max = n; }
-                                    if let Some(n) = to_f64_val(m.get("step")) { step = n; }
-                                    if let Some(n) = to_f64_val(m.get("default")).or_else(|| to_f64_val(m.get("initial"))).or_else(|| to_f64_val(m.get("value"))) {
+                                    if let Some(n) = to_f64_val(m.get("min")) {
+                                        min = n;
+                                    }
+                                    if let Some(n) = to_f64_val(m.get("max")) {
+                                        max = n;
+                                    }
+                                    if let Some(n) = to_f64_val(m.get("step")) {
+                                        step = n;
+                                    }
+                                    if let Some(n) = to_f64_val(m.get("default"))
+                                        .or_else(|| to_f64_val(m.get("initial")))
+                                        .or_else(|| to_f64_val(m.get("value")))
+                                    {
                                         initial = n;
                                     } else {
                                         initial = min;
                                     }
                                 } else {
-                                    if let Some(n) = to_f64_val(av.get(1)) { min = n; initial = min; }
-                                    if let Some(n) = to_f64_val(av.get(2)) { max = n; initial = (min + max) / 2.0; }
-                                    if let Some(n) = to_f64_val(av.get(3)) { step = n; }
-                                    if let Some(n) = to_f64_val(av.get(4)) { initial = n; }
+                                    if let Some(n) = to_f64_val(av.get(1)) {
+                                        min = n;
+                                        initial = min;
+                                    }
+                                    if let Some(n) = to_f64_val(av.get(2)) {
+                                        max = n;
+                                        initial = (min + max) / 2.0;
+                                    }
+                                    if let Some(n) = to_f64_val(av.get(3)) {
+                                        step = n;
+                                    }
+                                    if let Some(n) = to_f64_val(av.get(4)) {
+                                        initial = n;
+                                    }
                                 }
                                 let config = crate::runtime::tui_input::SliderConfig::default();
-                                match crate::runtime::tui_input::prompt_slider(&prompt, min, max, step, initial, &config) {
+                                match crate::runtime::tui_input::prompt_slider(
+                                    &prompt, min, max, step, initial, &config,
+                                ) {
                                     Ok(n) => Ok(Value::Number(n)),
                                     Err(e) => Err(err(&e)),
                                 }
@@ -13866,31 +14314,47 @@ impl Interpreter {
                                     Some(Value::Str(s)) => s.clone(),
                                     _ => "Select Node: ".to_string(),
                                 };
-                                let mut nodes: Vec<crate::runtime::tui_input::TreeNode> = Vec::new();
-                                fn parse_tree_node(v: &Value) -> Option<crate::runtime::tui_input::TreeNode> {
+                                let mut nodes: Vec<crate::runtime::tui_input::TreeNode> =
+                                    Vec::new();
+                                fn parse_tree_node(
+                                    v: &Value,
+                                ) -> Option<crate::runtime::tui_input::TreeNode>
+                                {
                                     match v {
-                                        Value::Str(s) => Some(crate::runtime::tui_input::TreeNode {
-                                            id: s.clone(),
-                                            label: s.clone(),
-                                            children: Vec::new(),
-                                            expanded: false,
-                                        }),
+                                        Value::Str(s) => {
+                                            Some(crate::runtime::tui_input::TreeNode {
+                                                id: s.clone(),
+                                                label: s.clone(),
+                                                children: Vec::new(),
+                                                expanded: false,
+                                            })
+                                        }
                                         Value::Object(m) => {
-                                            let label = m.get("label").map(value_to_string).unwrap_or_default();
-                                            let id = m.get("id").map(value_to_string).unwrap_or_else(|| label.clone());
+                                            let label = m
+                                                .get("label")
+                                                .map(value_to_string)
+                                                .unwrap_or_default();
+                                            let id = m
+                                                .get("id")
+                                                .map(value_to_string)
+                                                .unwrap_or_else(|| label.clone());
                                             let mut children = Vec::new();
                                             if let Some(ch_arr) = m.get("children") {
                                                 match ch_arr {
                                                     Value::Array(arr) => {
                                                         for ch in arr {
-                                                            if let Some(c_node) = parse_tree_node(ch) {
+                                                            if let Some(c_node) =
+                                                                parse_tree_node(ch)
+                                                            {
                                                                 children.push(c_node);
                                                             }
                                                         }
                                                     }
                                                     Value::DynArray(da) => {
                                                         for ch in &da.data {
-                                                            if let Some(c_node) = parse_tree_node(ch) {
+                                                            if let Some(c_node) =
+                                                                parse_tree_node(ch)
+                                                            {
                                                                 children.push(c_node);
                                                             }
                                                         }
@@ -13898,7 +14362,12 @@ impl Interpreter {
                                                     _ => {}
                                                 }
                                             }
-                                            Some(crate::runtime::tui_input::TreeNode { id, label, children, expanded: false })
+                                            Some(crate::runtime::tui_input::TreeNode {
+                                                id,
+                                                label,
+                                                children,
+                                                expanded: false,
+                                            })
                                         }
                                         _ => None,
                                     }
@@ -13923,7 +14392,9 @@ impl Interpreter {
                                     }
                                 }
                                 let config = crate::runtime::tui_input::TreeConfig::default();
-                                match crate::runtime::tui_input::prompt_tree(&prompt, &nodes, &config) {
+                                match crate::runtime::tui_input::prompt_tree(
+                                    &prompt, &nodes, &config,
+                                ) {
                                     Ok(s) => Ok(Value::Str(s)),
                                     Err(e) => Err(err(&e)),
                                 }
@@ -13934,18 +14405,30 @@ impl Interpreter {
                                     _ => "Table Selection: ".to_string(),
                                 };
                                 let headers: Vec<String> = match av.get(1) {
-                                    Some(Value::Array(arr)) => arr.iter().map(value_to_string).collect(),
-                                    Some(Value::DynArray(da)) => da.data.iter().map(value_to_string).collect(),
-                                    Some(Value::Tuple(tup)) => tup.iter().map(value_to_string).collect(),
+                                    Some(Value::Array(arr)) => {
+                                        arr.iter().map(value_to_string).collect()
+                                    }
+                                    Some(Value::DynArray(da)) => {
+                                        da.data.iter().map(value_to_string).collect()
+                                    }
+                                    Some(Value::Tuple(tup)) => {
+                                        tup.iter().map(value_to_string).collect()
+                                    }
                                     _ => Vec::new(),
                                 };
                                 let mut rows: Vec<Vec<String>> = Vec::new();
                                 if let Some(arg) = av.get(2) {
                                     let parse_row = |r: &Value| -> Vec<String> {
                                         match r {
-                                            Value::Array(row_arr) => row_arr.iter().map(value_to_string).collect(),
-                                            Value::DynArray(da) => da.data.iter().map(value_to_string).collect(),
-                                            Value::Tuple(tup) => tup.iter().map(value_to_string).collect(),
+                                            Value::Array(row_arr) => {
+                                                row_arr.iter().map(value_to_string).collect()
+                                            }
+                                            Value::DynArray(da) => {
+                                                da.data.iter().map(value_to_string).collect()
+                                            }
+                                            Value::Tuple(tup) => {
+                                                tup.iter().map(value_to_string).collect()
+                                            }
                                             _ => Vec::new(),
                                         }
                                     };
@@ -13964,7 +14447,9 @@ impl Interpreter {
                                     }
                                 }
                                 let config = crate::runtime::tui_input::TableConfig::default();
-                                match crate::runtime::tui_input::prompt_table(&prompt, &headers, &rows, &config) {
+                                match crate::runtime::tui_input::prompt_table(
+                                    &prompt, &headers, &rows, &config,
+                                ) {
                                     Ok(sel) => {
                                         let mut m = HashMap::default();
                                         let r_idx = sel.selected_row;
@@ -13972,65 +14457,151 @@ impl Interpreter {
 
                                         m.insert("row".to_string(), Value::Number(r_idx as f64));
                                         m.insert("col".to_string(), Value::Number(c_idx as f64));
-                                        m.insert("rowIndex".to_string(), Value::Number(r_idx as f64));
-                                        m.insert("colIndex".to_string(), Value::Number(c_idx as f64));
+                                        m.insert(
+                                            "rowIndex".to_string(),
+                                            Value::Number(r_idx as f64),
+                                        );
+                                        m.insert(
+                                            "colIndex".to_string(),
+                                            Value::Number(c_idx as f64),
+                                        );
 
                                         // Selected cell value
-                                        let cell_val = rows.get(r_idx).and_then(|r| r.get(c_idx)).cloned().unwrap_or_default();
+                                        let cell_val = rows
+                                            .get(r_idx)
+                                            .and_then(|r| r.get(c_idx))
+                                            .cloned()
+                                            .unwrap_or_default();
                                         m.insert("value".to_string(), Value::Str(cell_val.clone()));
                                         m.insert("cell".to_string(), Value::Str(cell_val));
 
                                         // Selected column header name
-                                        let header_name = headers.get(c_idx).cloned().unwrap_or_default();
-                                        m.insert("header".to_string(), Value::Str(header_name.clone()));
-                                        m.insert("colName".to_string(), Value::Str(header_name.clone()));
+                                        let header_name =
+                                            headers.get(c_idx).cloned().unwrap_or_default();
+                                        m.insert(
+                                            "header".to_string(),
+                                            Value::Str(header_name.clone()),
+                                        );
+                                        m.insert(
+                                            "colName".to_string(),
+                                            Value::Str(header_name.clone()),
+                                        );
                                         m.insert("columnName".to_string(), Value::Str(header_name));
 
                                         // Selected row array
-                                        let selected_row_vec: Vec<Value> = rows.get(r_idx)
+                                        let selected_row_vec: Vec<Value> = rows
+                                            .get(r_idx)
                                             .cloned()
                                             .unwrap_or_default()
                                             .into_iter()
                                             .map(Value::Str)
                                             .collect();
-                                        m.insert("rowData".to_string(), Value::DynArray(Box::new(crate::parsing::ast::DynamicArray::new(selected_row_vec.clone()))));
-                                        m.insert("row_data".to_string(), Value::DynArray(Box::new(crate::parsing::ast::DynamicArray::new(selected_row_vec.clone()))));
-                                        m.insert("rowValues".to_string(), Value::DynArray(Box::new(crate::parsing::ast::DynamicArray::new(selected_row_vec))));
+                                        m.insert(
+                                            "rowData".to_string(),
+                                            Value::DynArray(Box::new(
+                                                crate::parsing::ast::DynamicArray::new(
+                                                    selected_row_vec.clone(),
+                                                ),
+                                            )),
+                                        );
+                                        m.insert(
+                                            "row_data".to_string(),
+                                            Value::DynArray(Box::new(
+                                                crate::parsing::ast::DynamicArray::new(
+                                                    selected_row_vec.clone(),
+                                                ),
+                                            )),
+                                        );
+                                        m.insert(
+                                            "rowValues".to_string(),
+                                            Value::DynArray(Box::new(
+                                                crate::parsing::ast::DynamicArray::new(
+                                                    selected_row_vec,
+                                                ),
+                                            )),
+                                        );
 
                                         // Selected column array across all rows
-                                        let selected_col_vec: Vec<Value> = rows.iter()
+                                        let selected_col_vec: Vec<Value> = rows
+                                            .iter()
                                             .filter_map(|r| r.get(c_idx).cloned())
                                             .map(Value::Str)
                                             .collect();
-                                        m.insert("colData".to_string(), Value::DynArray(Box::new(crate::parsing::ast::DynamicArray::new(selected_col_vec.clone()))));
-                                        m.insert("col_data".to_string(), Value::DynArray(Box::new(crate::parsing::ast::DynamicArray::new(selected_col_vec.clone()))));
-                                        m.insert("colValues".to_string(), Value::DynArray(Box::new(crate::parsing::ast::DynamicArray::new(selected_col_vec))));
+                                        m.insert(
+                                            "colData".to_string(),
+                                            Value::DynArray(Box::new(
+                                                crate::parsing::ast::DynamicArray::new(
+                                                    selected_col_vec.clone(),
+                                                ),
+                                            )),
+                                        );
+                                        m.insert(
+                                            "col_data".to_string(),
+                                            Value::DynArray(Box::new(
+                                                crate::parsing::ast::DynamicArray::new(
+                                                    selected_col_vec.clone(),
+                                                ),
+                                            )),
+                                        );
+                                        m.insert(
+                                            "colValues".to_string(),
+                                            Value::DynArray(Box::new(
+                                                crate::parsing::ast::DynamicArray::new(
+                                                    selected_col_vec,
+                                                ),
+                                            )),
+                                        );
 
                                         // Headers array
-                                        let headers_vec: Vec<Value> = headers.iter().cloned().map(Value::Str).collect();
-                                        m.insert("headers".to_string(), Value::DynArray(Box::new(crate::parsing::ast::DynamicArray::new(headers_vec))));
+                                        let headers_vec: Vec<Value> =
+                                            headers.iter().cloned().map(Value::Str).collect();
+                                        m.insert(
+                                            "headers".to_string(),
+                                            Value::DynArray(Box::new(
+                                                crate::parsing::ast::DynamicArray::new(headers_vec),
+                                            )),
+                                        );
 
                                         // Row object mapping header -> value
                                         let mut row_obj_map = HashMap::default();
                                         if let Some(r) = rows.get(r_idx) {
                                             for (i, h) in headers.iter().enumerate() {
                                                 if let Some(v) = r.get(i) {
-                                                    row_obj_map.insert(h.clone(), Value::Str(v.clone()));
+                                                    row_obj_map
+                                                        .insert(h.clone(), Value::Str(v.clone()));
                                                 }
                                             }
                                         }
-                                        m.insert("rowObject".to_string(), Value::Object(std::sync::Arc::new(row_obj_map)));
+                                        m.insert(
+                                            "rowObject".to_string(),
+                                            Value::Object(std::sync::Arc::new(row_obj_map)),
+                                        );
 
                                         // Full 2D grid matrix
-                                        let grid_matrix: Vec<Value> = rows.iter()
+                                        let grid_matrix: Vec<Value> = rows
+                                            .iter()
                                             .map(|r| {
-                                                Value::DynArray(Box::new(crate::parsing::ast::DynamicArray::new(
-                                                    r.iter().cloned().map(Value::Str).collect()
-                                                )))
+                                                Value::DynArray(Box::new(
+                                                    crate::parsing::ast::DynamicArray::new(
+                                                        r.iter().cloned().map(Value::Str).collect(),
+                                                    ),
+                                                ))
                                             })
                                             .collect();
-                                        m.insert("data".to_string(), Value::DynArray(Box::new(crate::parsing::ast::DynamicArray::new(grid_matrix.clone()))));
-                                        m.insert("grid".to_string(), Value::DynArray(Box::new(crate::parsing::ast::DynamicArray::new(grid_matrix))));
+                                        m.insert(
+                                            "data".to_string(),
+                                            Value::DynArray(Box::new(
+                                                crate::parsing::ast::DynamicArray::new(
+                                                    grid_matrix.clone(),
+                                                ),
+                                            )),
+                                        );
+                                        m.insert(
+                                            "grid".to_string(),
+                                            Value::DynArray(Box::new(
+                                                crate::parsing::ast::DynamicArray::new(grid_matrix),
+                                            )),
+                                        );
 
                                         Ok(Value::Object(std::sync::Arc::new(m)))
                                     }
@@ -14043,7 +14614,8 @@ impl Interpreter {
                                     _ => "Select Date: ".to_string(),
                                 };
                                 let config = crate::runtime::tui_input::DatepickerConfig::default();
-                                match crate::runtime::tui_input::prompt_datepicker(&prompt, &config) {
+                                match crate::runtime::tui_input::prompt_datepicker(&prompt, &config)
+                                {
                                     Ok(s) => Ok(Value::Str(s)),
                                     Err(e) => Err(err(&e)),
                                 }
@@ -14054,7 +14626,9 @@ impl Interpreter {
                                     _ => "Select Date & Time: ".to_string(),
                                 };
                                 let config = crate::runtime::tui_input::DatetimeConfig::default();
-                                match crate::runtime::tui_input::prompt_datetimepicker(&prompt, &config) {
+                                match crate::runtime::tui_input::prompt_datetimepicker(
+                                    &prompt, &config,
+                                ) {
                                     Ok(s) => Ok(Value::Str(s)),
                                     Err(e) => Err(err(&e)),
                                 }
@@ -14065,7 +14639,8 @@ impl Interpreter {
                                     _ => "Select Time: ".to_string(),
                                 };
                                 let config = crate::runtime::tui_input::TimepickerConfig::default();
-                                match crate::runtime::tui_input::prompt_timepicker(&prompt, &config) {
+                                match crate::runtime::tui_input::prompt_timepicker(&prompt, &config)
+                                {
                                     Ok(s) => Ok(Value::Str(s)),
                                     Err(e) => Err(err(&e)),
                                 }
@@ -14091,7 +14666,9 @@ impl Interpreter {
                                     _ => 4,
                                 };
                                 let config = crate::runtime::tui_input::PinConfig::default();
-                                match crate::runtime::tui_input::prompt_pin(&prompt, digits, &config) {
+                                match crate::runtime::tui_input::prompt_pin(
+                                    &prompt, digits, &config,
+                                ) {
                                     Ok(s) => Ok(Value::Str(s)),
                                     Err(e) => Err(err(&e)),
                                 }
@@ -14106,7 +14683,9 @@ impl Interpreter {
                                     _ => String::new(),
                                 };
                                 let config = crate::runtime::tui_input::DiffConfig::default();
-                                match crate::runtime::tui_input::prompt_diff(&prompt, &original, &config) {
+                                match crate::runtime::tui_input::prompt_diff(
+                                    &prompt, &original, &config,
+                                ) {
                                     Ok(s) => Ok(Value::Str(s)),
                                     Err(e) => Err(err(&e)),
                                 }
@@ -14133,11 +14712,15 @@ impl Interpreter {
                                     _ => "AI Input: ".to_string(),
                                 };
                                 let context: Vec<String> = match av.get(1) {
-                                    Some(Value::Array(arr)) => arr.iter().map(value_to_string).collect(),
+                                    Some(Value::Array(arr)) => {
+                                        arr.iter().map(value_to_string).collect()
+                                    }
                                     _ => Vec::new(),
                                 };
                                 let config = crate::runtime::tui_input::AiPredictConfig::default();
-                                match crate::runtime::tui_input::prompt_ai(&prompt, &context, &config) {
+                                match crate::runtime::tui_input::prompt_ai(
+                                    &prompt, &context, &config,
+                                ) {
                                     Ok(s) => Ok(Value::Str(s)),
                                     Err(e) => Err(err(&e)),
                                 }
@@ -14149,7 +14732,9 @@ impl Interpreter {
                                 };
                                 let config = crate::runtime::tui_input::StreamConfig::default();
                                 match crate::runtime::tui_input::prompt_stream(&prompt, &config) {
-                                    Ok(tokens) => Ok(Value::Array(tokens.into_iter().map(Value::Str).collect())),
+                                    Ok(tokens) => Ok(Value::Array(
+                                        tokens.into_iter().map(Value::Str).collect(),
+                                    )),
                                     Err(e) => Err(err(&e)),
                                 }
                             }
@@ -14366,7 +14951,8 @@ impl Interpreter {
                         if let Some(mod_id) = &self.current_module {
                             lang_err = lang_err.with_file(mod_id.clone());
                         }
-                        lang_err = lang_err.with_help("only functions and methods can be called with `()`");
+                        lang_err = lang_err
+                            .with_help("only functions and methods can be called with `()`");
                         Err(lang_err.to_string())
                     }
                 }
@@ -16297,8 +16883,6 @@ impl Interpreter {
     }
 }
 
-
-
 impl Interpreter {
     // Synchronously block this interpreter until the given promise settles.
     fn wait_promise_blocking(&mut self, pid: u64) -> Result<Value, String> {
@@ -16578,7 +17162,10 @@ impl Interpreter {
     /// the body without growing the call stack.
     pub fn call_user_function(&mut self, u: &UserFn, args: Vec<Value>) -> Result<Value, String> {
         if u.is_unsafe && !in_unsafe_context() {
-            return Err(format!("call to unsafe function '{}' requires unsafe block", u.name));
+            return Err(format!(
+                "call to unsafe function '{}' requires unsafe block",
+                u.name
+            ));
         }
 
         // Memoize deterministic single-argument integer functions before
@@ -16602,12 +17189,9 @@ impl Interpreter {
             None
         };
         let should_memoize = if let Some(k) = memo_key {
-            let is_pure = *self
-                .pure_fn_cache
-                .entry(u.name.clone())
-                .or_insert_with(|| {
-                    crate::execution::runtime_core::exec::expression_eval::is_pure_user_fn(u)
-                });
+            let is_pure = *self.pure_fn_cache.entry(u.name.clone()).or_insert_with(|| {
+                crate::execution::runtime_core::exec::expression_eval::is_pure_user_fn(u)
+            });
             if is_pure {
                 if let Some(cached) = self.recursion_memo.get(&(u.name.clone(), k)) {
                     return Ok(cached.clone());
@@ -16907,7 +17491,10 @@ impl Interpreter {
         this_val: Value,
     ) -> Result<(Value, Value), String> {
         if u.is_unsafe && !in_unsafe_context() {
-            return Err(format!("call to unsafe function '{}' requires unsafe block", u.name));
+            return Err(format!(
+                "call to unsafe function '{}' requires unsafe block",
+                u.name
+            ));
         }
         let closure_env = u.closure;
         let fn_env = self.acquire_scope(Some(closure_env));
@@ -17284,8 +17871,6 @@ pub(crate) fn push_env(envs: &mut Vec<Env>, enclosing: Option<usize>) -> usize {
     envs.push(Env::new(enclosing));
     envs.len() - 1
 }
-
-
 
 impl Interpreter {
     /// Collect detailed memory statistics about the current program state
@@ -17713,7 +18298,10 @@ pub(crate) fn call_user_with_this(
     native_side: Option<Arc<Mutex<Vec<NativeEffect>>>>,
 ) -> Result<(Value, UserInstance), String> {
     if u.is_unsafe && !in_unsafe_context() {
-        return Err(format!("call to unsafe function '{}' requires unsafe block", u.name));
+        return Err(format!(
+            "call to unsafe function '{}' requires unsafe block",
+            u.name
+        ));
     }
 
     // Store class context for visibility checking
@@ -18326,7 +18914,9 @@ impl ExecLegacy {
                         || lowered.starts_with("map<"))
                         && matches!(&val, Value::Array(a) if a.is_empty())
                     {
-                        val = Value::Object(std::sync::Arc::new(std::collections::HashMap::default()));
+                        val = Value::Object(std::sync::Arc::new(
+                            std::collections::HashMap::default(),
+                        ));
                     }
 
                     // Try to coerce and apply defaults
@@ -18855,38 +19445,71 @@ impl ExecLegacy {
                 if let ExprKind::Range(start_expr, end_expr, inclusive) = &iter.kind {
                     let start_val = self.eval_expr(start_expr)?;
                     let end_val = self.eval_expr(end_expr)?;
-                    let start_num = crate::execution::runtime::ops::num(start_val)
-                        .map_err(|e| err(&e))? as i64;
-                    let end_num = crate::execution::runtime::ops::num(end_val)
-                        .map_err(|e| err(&e))? as i64;
+                    let start_num =
+                        crate::execution::runtime::ops::num(start_val).map_err(|e| err(&e))? as i64;
+                    let end_num =
+                        crate::execution::runtime::ops::num(end_val).map_err(|e| err(&e))? as i64;
                     let limit = if *inclusive { end_num + 1 } else { end_num };
 
                     // ULTRA FAST PATH: Detect accumulator patterns
                     if let StmtKind::Block(stmts) = &body.kind {
                         if stmts.len() == 1 {
                             if let StmtKind::ExprStmt(loop_expr) = &stmts[0].kind {
-                                if let ExprKind::AssignOp(lhs_expr, assign_op, rhs_expr) = &loop_expr.kind {
+                                if let ExprKind::AssignOp(lhs_expr, assign_op, rhs_expr) =
+                                    &loop_expr.kind
+                                {
                                     if let ExprKind::Variable(target_name) = &lhs_expr.kind {
                                         if *assign_op == TokenKind::Equal {
-                                            if let ExprKind::Binary(bin_lhs, op, bin_rhs) = &rhs_expr.kind {
-                                                if let ExprKind::Variable(lhs_name) = &bin_lhs.kind {
+                                            if let ExprKind::Binary(bin_lhs, op, bin_rhs) =
+                                                &rhs_expr.kind
+                                            {
+                                                if let ExprKind::Variable(lhs_name) = &bin_lhs.kind
+                                                {
                                                     if lhs_name == target_name {
-                                                        if let ExprKind::Variable(rhs_name) = &bin_rhs.kind {
+                                                        if let ExprKind::Variable(rhs_name) =
+                                                            &bin_rhs.kind
+                                                        {
                                                             if rhs_name == name {
-                                                                let orig_val = self.get(target_name);
+                                                                let orig_val =
+                                                                    self.get(target_name);
                                                                 let final_val = eval_accumulator_preserving_type(orig_val.as_ref(), start_num, limit, None, *op);
-                                                                if !self.assign(target_name, final_val.clone()) {
-                                                                    self.envs[self.current].values.insert(target_name.clone(), final_val);
+                                                                if !self.assign(
+                                                                    target_name,
+                                                                    final_val.clone(),
+                                                                ) {
+                                                                    self.envs[self.current]
+                                                                        .values
+                                                                        .insert(
+                                                                            target_name.clone(),
+                                                                            final_val,
+                                                                        );
                                                                 }
                                                                 return Ok(ExecFlow::Next);
                                                             }
                                                         }
 
-                                                        if let ExprKind::Literal(lit) = &bin_rhs.kind {
+                                                        if let ExprKind::Literal(lit) =
+                                                            &bin_rhs.kind
+                                                        {
                                                             let orig_val = self.get(target_name);
-                                                            let final_val = eval_accumulator_preserving_type(orig_val.as_ref(), start_num, limit, Some(lit), *op);
-                                                            if !self.assign(target_name, final_val.clone()) {
-                                                                self.envs[self.current].values.insert(target_name.clone(), final_val);
+                                                            let final_val =
+                                                                eval_accumulator_preserving_type(
+                                                                    orig_val.as_ref(),
+                                                                    start_num,
+                                                                    limit,
+                                                                    Some(lit),
+                                                                    *op,
+                                                                );
+                                                            if !self.assign(
+                                                                target_name,
+                                                                final_val.clone(),
+                                                            ) {
+                                                                self.envs[self.current]
+                                                                    .values
+                                                                    .insert(
+                                                                        target_name.clone(),
+                                                                        final_val,
+                                                                    );
                                                             }
                                                             return Ok(ExecFlow::Next);
                                                         }
@@ -19276,7 +19899,8 @@ impl ExecLegacy {
                         if !in_unsafe_context() {
                             return Err(err("pointer dereference requires unsafe { ... } block"));
                         }
-                        let offset = crate::execution::runtime_core::ops::to_index(&iv).map_err(|e| err(e))?;
+                        let offset = crate::execution::runtime_core::ops::to_index(&iv)
+                            .map_err(|e| err(e))?;
                         let elem_size = crate::backends::unsafe_heap::elem_size_of_ptr(ptr_addr)
                             .map_err(|e| err(e))?;
                         if elem_size == 1 {
@@ -19297,7 +19921,8 @@ impl ExecLegacy {
                             return Err(err("pointer dereference requires unsafe { ... } block"));
                         }
                         let ptr_u64 = ptr_addr as u64;
-                        let offset = crate::execution::runtime_core::ops::to_index(&iv).map_err(|e| err(e))?;
+                        let offset = crate::execution::runtime_core::ops::to_index(&iv)
+                            .map_err(|e| err(e))?;
                         let elem_size = crate::backends::unsafe_heap::elem_size_of_ptr(ptr_u64)
                             .map_err(|e| err(e))?;
                         if elem_size == 1 {
@@ -20820,7 +21445,9 @@ impl ExecLegacy {
                     Value::DynArray(da) => da.data.iter().map(value_to_string).collect(),
                     other => vec![value_to_string(other)],
                 };
-                crate::backends::common::builtins_modules::io::set_thread_mock_input(strings.clone());
+                crate::backends::common::builtins_modules::io::set_thread_mock_input(
+                    strings.clone(),
+                );
                 let mut q = INPUT_PLAYBACK
                     .get_or_init(|| Mutex::new(VecDeque::new()))
                     .lock()
@@ -21352,8 +21979,6 @@ impl ExecLegacy {
 //
 // Future PRs will gradually migrate code to use these accessors instead of
 // direct field access, reducing coupling and improving testability.
-
-
 
 impl Interpreter {
     // ========== Execution Context Accessors ==========
@@ -22045,4 +22670,3 @@ try { throw "boom"; } catch (e) { got = e; }
         assert!(!is_incomplete_input("if (true) { let y = 1; }"));
     }
 }
-

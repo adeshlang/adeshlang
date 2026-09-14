@@ -189,7 +189,9 @@ impl EscapeAnalyzer {
                 self.collect_local_decls(try_block, local_decls);
                 self.collect_local_decls(catch_block, local_decls);
             }
-            HirStmt::FunctionDef { name, params, body, .. } => {
+            HirStmt::FunctionDef {
+                name, params, body, ..
+            } => {
                 local_decls.insert(name.clone());
                 for (param_name, _, _) in params {
                     local_decls.insert(param_name.clone());
@@ -357,8 +359,11 @@ impl EscapeAnalyzer {
                 self.collect_expr_captures(a, local_decls, captured);
                 self.collect_expr_captures(b, local_decls, captured);
             }
-            HirExpr::Spread(inner) | HirExpr::OptionalGet(inner, _) | HirExpr::Format(inner, _)
-            | HirExpr::NonNull(inner) | HirExpr::Cast(inner, _) => {
+            HirExpr::Spread(inner)
+            | HirExpr::OptionalGet(inner, _)
+            | HirExpr::Format(inner, _)
+            | HirExpr::NonNull(inner)
+            | HirExpr::Cast(inner, _) => {
                 self.collect_expr_captures(inner, local_decls, captured);
             }
             HirExpr::Match(expr, arms) => {
@@ -414,9 +419,7 @@ impl EscapeAnalyzer {
                 // Check nested statements in target/value
                 self.is_mutated_in_expr(target, var_name)
             }
-            HirStmt::Block(stmts) => {
-                stmts.iter().any(|s| self.is_mutated_in_stmt(s, var_name))
-            }
+            HirStmt::Block(stmts) => stmts.iter().any(|s| self.is_mutated_in_stmt(s, var_name)),
             HirStmt::If {
                 then_branch,
                 else_branch,
@@ -617,9 +620,8 @@ impl AsyncAnalyzer {
     pub fn is_send_sync(type_name: &str) -> bool {
         // Primitive integer/float types are safe
         let primitives = [
-            "int", "i8", "i16", "i32", "i64", "i128",
-            "u8", "u16", "u32", "u64", "u128",
-            "f32", "f64", "float", "bool", "char",
+            "int", "i8", "i16", "i32", "i64", "i128", "u8", "u16", "u32", "u64", "u128", "f32",
+            "f64", "float", "bool", "char",
         ];
         if primitives.contains(&type_name.to_lowercase().as_str()) {
             return true;

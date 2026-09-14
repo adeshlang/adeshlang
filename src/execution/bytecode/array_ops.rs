@@ -162,9 +162,7 @@ impl ArrayOps {
                 raw.data[index] = value;
                 Ok(())
             }
-            ArrayKind::SSO(sso) => {
-                sso.set(index, value)
-            }
+            ArrayKind::SSO(sso) => sso.set(index, value),
             ArrayKind::Compact(compact) => {
                 // Set in compact array
                 if index >= compact.len as usize {

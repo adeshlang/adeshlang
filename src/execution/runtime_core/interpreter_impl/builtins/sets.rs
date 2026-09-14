@@ -71,30 +71,67 @@ pub fn call_set_method(obj: &Value, method_name: &str, args: &[Value]) -> Result
                 Ok(Value::Set(result))
             }
             "remove" => {
-                if args.len() != 1 { return Err(err("remove(value)")); }
-                let result: Vec<Value> = s.iter().filter(|v| !equals(v, &args[0])).cloned().collect();
+                if args.len() != 1 {
+                    return Err(err("remove(value)"));
+                }
+                let result: Vec<Value> =
+                    s.iter().filter(|v| !equals(v, &args[0])).cloned().collect();
                 Ok(Value::Set(result))
             }
             "clear" => Ok(Value::Set(Vec::new())),
             "difference" => {
-                if args.len() != 1 { return Err(err("difference(set)")); }
-                let other = match &args[0] { Value::Set(v) | Value::Array(v) => v, _ => return Err(err("difference expects set or array")) };
-                Ok(Value::Set(s.iter().filter(|v| !other.iter().any(|x| equals(x, v))).cloned().collect()))
+                if args.len() != 1 {
+                    return Err(err("difference(set)"));
+                }
+                let other = match &args[0] {
+                    Value::Set(v) | Value::Array(v) => v,
+                    _ => return Err(err("difference expects set or array")),
+                };
+                Ok(Value::Set(
+                    s.iter()
+                        .filter(|v| !other.iter().any(|x| equals(x, v)))
+                        .cloned()
+                        .collect(),
+                ))
             }
             "symmetricDifference" | "symmetric_difference" => {
-                if args.len() != 1 { return Err(err("symmetricDifference(set)")); }
-                let other = match &args[0] { Value::Set(v) | Value::Array(v) => v, _ => return Err(err("symmetricDifference expects set or array")) };
-                let mut result = s.iter().filter(|v| !other.iter().any(|x| equals(x, v))).cloned().collect::<Vec<_>>();
-                result.extend(other.iter().filter(|v| !s.iter().any(|x| equals(x, v))).cloned());
+                if args.len() != 1 {
+                    return Err(err("symmetricDifference(set)"));
+                }
+                let other = match &args[0] {
+                    Value::Set(v) | Value::Array(v) => v,
+                    _ => return Err(err("symmetricDifference expects set or array")),
+                };
+                let mut result = s
+                    .iter()
+                    .filter(|v| !other.iter().any(|x| equals(x, v)))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                result.extend(
+                    other
+                        .iter()
+                        .filter(|v| !s.iter().any(|x| equals(x, v)))
+                        .cloned(),
+                );
                 Ok(Value::Set(result))
             }
             "isSubsetOf" | "is_subset_of" => {
-                let other = match args.first() { Some(Value::Set(v)) | Some(Value::Array(v)) => v, _ => return Err(err("isSubsetOf(set)")) };
-                Ok(Value::Bool(s.iter().all(|v| other.iter().any(|x| equals(x, v)))))
+                let other = match args.first() {
+                    Some(Value::Set(v)) | Some(Value::Array(v)) => v,
+                    _ => return Err(err("isSubsetOf(set)")),
+                };
+                Ok(Value::Bool(
+                    s.iter().all(|v| other.iter().any(|x| equals(x, v))),
+                ))
             }
             "isSupersetOf" | "is_superset_of" => {
-                let other = match args.first() { Some(Value::Set(v)) | Some(Value::Array(v)) => v, _ => return Err(err("isSupersetOf(set)")) };
-                Ok(Value::Bool(other.iter().all(|v| s.iter().any(|x| equals(x, v)))))
+                let other = match args.first() {
+                    Some(Value::Set(v)) | Some(Value::Array(v)) => v,
+                    _ => return Err(err("isSupersetOf(set)")),
+                };
+                Ok(Value::Bool(
+                    other.iter().all(|v| s.iter().any(|x| equals(x, v))),
+                ))
             }
             "toArray" => Ok(Value::Array(s.clone())),
             _ => Err(err(format!("Unknown set method: '{}'", method_name))),

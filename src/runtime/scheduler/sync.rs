@@ -11,11 +11,8 @@ use std::sync::{Condvar, Mutex, RwLock};
 // ============================================================================
 
 pub use Ordering::{
-    Acquire as MemoryOrderAcquire,
-    AcqRel as MemoryOrderAcqRel,
-    Relaxed as MemoryOrderRelaxed,
-    Release as MemoryOrderRelease,
-    SeqCst as MemoryOrderSeqCst,
+    AcqRel as MemoryOrderAcqRel, Acquire as MemoryOrderAcquire, Relaxed as MemoryOrderRelaxed,
+    Release as MemoryOrderRelease, SeqCst as MemoryOrderSeqCst,
 };
 
 // ============================================================================
@@ -49,8 +46,7 @@ impl AdeshAtomicBool {
         success: Ordering,
         failure: Ordering,
     ) -> Result<bool, bool> {
-        self.inner
-            .compare_exchange(current, new, success, failure)
+        self.inner.compare_exchange(current, new, success, failure)
     }
 }
 
@@ -93,8 +89,7 @@ impl AdeshAtomicU64 {
         success: Ordering,
         failure: Ordering,
     ) -> Result<u64, u64> {
-        self.inner
-            .compare_exchange(current, new, success, failure)
+        self.inner.compare_exchange(current, new, success, failure)
     }
 }
 
@@ -302,7 +297,10 @@ impl AdeshCondvar {
         }
     }
 
-    pub fn wait<'a, T>(&self, guard: std::sync::MutexGuard<'a, T>) -> std::sync::LockResult<std::sync::MutexGuard<'a, T>> {
+    pub fn wait<'a, T>(
+        &self,
+        guard: std::sync::MutexGuard<'a, T>,
+    ) -> std::sync::LockResult<std::sync::MutexGuard<'a, T>> {
         self.inner.wait(guard)
     }
 

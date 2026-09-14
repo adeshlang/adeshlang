@@ -345,7 +345,8 @@ impl Buffer {
         }
 
         let in_word = chars[col].is_alphanumeric() || chars[col] == '_';
-        while col < chars.len() && ((chars[col].is_alphanumeric() || chars[col] == '_') == in_word) {
+        while col < chars.len() && ((chars[col].is_alphanumeric() || chars[col] == '_') == in_word)
+        {
             col += 1;
         }
         while col < chars.len() && chars[col].is_whitespace() {
@@ -384,7 +385,10 @@ impl Buffer {
         }
         if col < chars.len() {
             let in_word = chars[col].is_alphanumeric() || chars[col] == '_';
-            while col + 1 < chars.len() && ((chars[col + 1].is_alphanumeric() || chars[col + 1] == '_') == in_word) && !chars[col + 1].is_whitespace() {
+            while col + 1 < chars.len()
+                && ((chars[col + 1].is_alphanumeric() || chars[col + 1] == '_') == in_word)
+                && !chars[col + 1].is_whitespace()
+            {
                 col += 1;
             }
         }
@@ -502,7 +506,11 @@ impl Buffer {
         let idx = self.cursor.col.min(chars.len());
 
         let before_ch = if idx > 0 { Some(chars[idx - 1]) } else { None };
-        let after_ch = if idx < chars.len() { Some(chars[idx]) } else { None };
+        let after_ch = if idx < chars.len() {
+            Some(chars[idx])
+        } else {
+            None
+        };
 
         // Smart Enter between brackets: {|} or (|) or [|]
         let is_bracket_pair = match (before_ch, after_ch) {
@@ -512,15 +520,22 @@ impl Buffer {
 
         let current_part: String = chars[..idx].iter().collect();
         let next_part: String = chars[idx..].iter().collect();
-        let base_indent: String = current_part.chars().take_while(|c| c.is_whitespace()).collect();
+        let base_indent: String = current_part
+            .chars()
+            .take_while(|c| c.is_whitespace())
+            .collect();
 
         if is_bracket_pair {
             let extra_indent = " ".repeat(tab_width);
             let inside_indent = format!("{}{}", base_indent, extra_indent);
 
             self.lines[self.cursor.line] = current_part;
-            self.lines.insert(self.cursor.line + 1, inside_indent.clone());
-            self.lines.insert(self.cursor.line + 2, format!("{}{}", base_indent, next_part.trim_start()));
+            self.lines
+                .insert(self.cursor.line + 1, inside_indent.clone());
+            self.lines.insert(
+                self.cursor.line + 2,
+                format!("{}{}", base_indent, next_part.trim_start()),
+            );
 
             self.cursor.line += 1;
             self.cursor.col = inside_indent.chars().count();
@@ -528,7 +543,8 @@ impl Buffer {
         } else {
             let indent: String = base_indent;
             self.lines[self.cursor.line] = current_part;
-            self.lines.insert(self.cursor.line + 1, format!("{}{}", indent, next_part));
+            self.lines
+                .insert(self.cursor.line + 1, format!("{}{}", indent, next_part));
 
             self.cursor.line += 1;
             self.cursor.col = indent.chars().count();
@@ -559,7 +575,7 @@ impl Buffer {
                     ('(', ')') | ('[', ']') | ('{', '}') | ('"', '"') | ('\'', '\'') | ('`', '`')
                 );
                 if is_pair {
-                    chars.remove(col);     // Remove closing
+                    chars.remove(col); // Remove closing
                     chars.remove(col - 1); // Remove opening
                     *line = chars.into_iter().collect();
                     self.cursor.col -= 1;
@@ -626,9 +642,11 @@ impl Buffer {
         }
 
         if target_col > 0 {
-            let is_word_char = chars[target_col - 1].is_alphanumeric() || chars[target_col - 1] == '_';
+            let is_word_char =
+                chars[target_col - 1].is_alphanumeric() || chars[target_col - 1] == '_';
             while target_col > 0
-                && ((chars[target_col - 1].is_alphanumeric() || chars[target_col - 1] == '_') == is_word_char)
+                && ((chars[target_col - 1].is_alphanumeric() || chars[target_col - 1] == '_')
+                    == is_word_char)
                 && !chars[target_col - 1].is_whitespace()
             {
                 target_col -= 1;
@@ -651,9 +669,12 @@ impl Buffer {
                     c_target -= 1;
                 }
                 if c_target > 0 {
-                    let is_w = l_chars[c_target - 1].is_alphanumeric() || l_chars[c_target - 1] == '_';
+                    let is_w =
+                        l_chars[c_target - 1].is_alphanumeric() || l_chars[c_target - 1] == '_';
                     while c_target > 0
-                        && ((l_chars[c_target - 1].is_alphanumeric() || l_chars[c_target - 1] == '_') == is_w)
+                        && ((l_chars[c_target - 1].is_alphanumeric()
+                            || l_chars[c_target - 1] == '_')
+                            == is_w)
                         && !l_chars[c_target - 1].is_whitespace()
                     {
                         c_target -= 1;
@@ -727,7 +748,11 @@ impl Buffer {
 
         for l in start_line..=end_line {
             let line = &self.lines[l];
-            let spaces = line.chars().take(tab_width).take_while(|c| *c == ' ').count();
+            let spaces = line
+                .chars()
+                .take(tab_width)
+                .take_while(|c| *c == ' ')
+                .count();
             if spaces > 0 {
                 self.lines[l] = line[spaces..].to_string();
                 if l == self.cursor.line {
@@ -781,7 +806,11 @@ impl Buffer {
             }
 
             let end_line_chars: Vec<char> = self.lines[el].chars().collect();
-            result.push(end_line_chars[..ec.min(end_line_chars.len())].iter().collect::<String>());
+            result.push(
+                end_line_chars[..ec.min(end_line_chars.len())]
+                    .iter()
+                    .collect::<String>(),
+            );
 
             Some(result.join("\n"))
         }
@@ -929,7 +958,8 @@ impl Buffer {
 
         let mut end = self.cursor.col;
         let in_word = chars[end].is_alphanumeric() || chars[end] == '_';
-        while end < chars.len() && ((chars[end].is_alphanumeric() || chars[end] == '_') == in_word) {
+        while end < chars.len() && ((chars[end].is_alphanumeric() || chars[end] == '_') == in_word)
+        {
             end += 1;
         }
         while end < chars.len() && chars[end].is_whitespace() {
@@ -975,7 +1005,11 @@ impl Buffer {
             for l in sl..=el {
                 let line_chars: Vec<char> = self.lines[l].chars().collect();
                 let start = if l == sl { sc } else { 0 };
-                let end = if l == el { ec.min(line_chars.len()) } else { line_chars.len() };
+                let end = if l == el {
+                    ec.min(line_chars.len())
+                } else {
+                    line_chars.len()
+                };
                 let mut new_line: Vec<char> = Vec::new();
                 for (i, &ch) in line_chars.iter().enumerate() {
                     if i >= start && i < end {
@@ -1037,9 +1071,8 @@ impl Buffer {
             (self.cursor.line, self.cursor.line)
         };
 
-        let all_commented = (start_line..=end_line).all(|l| {
-            self.lines[l].trim_start().starts_with(comment_str)
-        });
+        let all_commented =
+            (start_line..=end_line).all(|l| self.lines[l].trim_start().starts_with(comment_str));
 
         self.record_snapshot();
         if all_commented {
@@ -1083,12 +1116,18 @@ impl Buffer {
         let in_word = chars[col].is_alphanumeric() || chars[col] == '_';
 
         let mut start = col;
-        while start > 0 && ((chars[start - 1].is_alphanumeric() || chars[start - 1] == '_') == in_word) && !chars[start - 1].is_whitespace() {
+        while start > 0
+            && ((chars[start - 1].is_alphanumeric() || chars[start - 1] == '_') == in_word)
+            && !chars[start - 1].is_whitespace()
+        {
             start -= 1;
         }
 
         let mut end = col;
-        while end + 1 < chars.len() && ((chars[end + 1].is_alphanumeric() || chars[end + 1] == '_') == in_word) && !chars[end + 1].is_whitespace() {
+        while end + 1 < chars.len()
+            && ((chars[end + 1].is_alphanumeric() || chars[end + 1] == '_') == in_word)
+            && !chars[end + 1].is_whitespace()
+        {
             end += 1;
         }
         Some((start, end + 1))
@@ -1134,7 +1173,12 @@ impl Buffer {
         None
     }
 
-    pub fn find_brackets(&self, open_ch: char, close_ch: char, inner: bool) -> Option<(usize, usize, usize, usize)> {
+    pub fn find_brackets(
+        &self,
+        open_ch: char,
+        close_ch: char,
+        inner: bool,
+    ) -> Option<(usize, usize, usize, usize)> {
         // Search forward and backward for surrounding brackets
         let mut depth = 0;
         let mut start_pos = None;
@@ -1411,7 +1455,8 @@ impl Buffer {
         if let Some(ref path) = self.path {
             if let Some(ext) = path.extension() {
                 match ext.to_string_lossy().as_ref() {
-                    "ad" | "adl" | "rs" | "c" | "cpp" | "h" | "hpp" | "java" | "go" | "js" | "ts" | "swift" | "kt" | "scala" => "//",
+                    "ad" | "adl" | "rs" | "c" | "cpp" | "h" | "hpp" | "java" | "go" | "js"
+                    | "ts" | "swift" | "kt" | "scala" => "//",
                     "py" | "sh" | "bash" | "yaml" | "yml" | "toml" | "rb" | "pl" => "#",
                     "sql" => "--",
                     _ => "//",
@@ -1461,19 +1506,31 @@ mod tests {
             "    let result = \"hello\";".to_string(),
             "}".to_string(),
         ];
-        buf.cursor = Cursor { line: 0, col: 4, desired_col: 4 };
+        buf.cursor = Cursor {
+            line: 0,
+            col: 4,
+            desired_col: 4,
+        };
 
         // Test inner word at "calculate"
         let (start, end) = buf.find_inner_word().unwrap();
         assert_eq!(&buf.lines[0][start..end], "calculate");
 
         // Test quotes
-        buf.cursor = Cursor { line: 1, col: 19, desired_col: 19 };
+        buf.cursor = Cursor {
+            line: 1,
+            col: 19,
+            desired_col: 19,
+        };
         let (q_start, q_end) = buf.find_quotes('"', true).unwrap();
         assert_eq!(&buf.lines[1][q_start..q_end], "hello");
 
         // Test matching bracket
-        buf.cursor = Cursor { line: 0, col: 12, desired_col: 12 };
+        buf.cursor = Cursor {
+            line: 0,
+            col: 12,
+            desired_col: 12,
+        };
         let match_pos = buf.matching_bracket_pos();
         assert_eq!(match_pos, Some((0, 19)));
     }

@@ -150,7 +150,10 @@ impl ValidationError {
 
     pub fn to_value(&self) -> Value {
         let mut map = FastMap::default();
-        map.insert("name".to_string(), Value::Str("ValidationError".to_string()));
+        map.insert(
+            "name".to_string(),
+            Value::Str("ValidationError".to_string()),
+        );
         map.insert("message".to_string(), Value::Str(self.message.clone()));
         let err_arr: Vec<Value> = self.errors.iter().map(|e| e.to_value()).collect();
         map.insert("errors".to_string(), Value::Array(err_arr));
@@ -160,8 +163,14 @@ impl ValidationError {
     /// Renders RFC 9457 Problem Details object format (HTTP 422 Unprocessable Entity / 400 Bad Request)
     pub fn to_problem_details(&self, status_code: u16, instance_uri: &str) -> Value {
         let mut map = FastMap::default();
-        map.insert("type".to_string(), Value::Str("https://adesh.dev/errors/validation-failed".to_string()));
-        map.insert("title".to_string(), Value::Str("Validation Failed".to_string()));
+        map.insert(
+            "type".to_string(),
+            Value::Str("https://adesh.dev/errors/validation-failed".to_string()),
+        );
+        map.insert(
+            "title".to_string(),
+            Value::Str("Validation Failed".to_string()),
+        );
         map.insert("status".to_string(), Value::I64(status_code as i64));
         map.insert("detail".to_string(), Value::Str(self.message.clone()));
         map.insert("instance".to_string(), Value::Str(instance_uri.to_string()));
@@ -215,7 +224,10 @@ impl Schema {
                 field_errors.push(FieldError {
                     path: vec![],
                     code: "type_mismatch".to_string(),
-                    message: format!("Expected object for DTO '{}', received non-object", self.name),
+                    message: format!(
+                        "Expected object for DTO '{}', received non-object",
+                        self.name
+                    ),
                     expected: "Object".to_string(),
                     received: format!("{:?}", val),
                 });
@@ -234,7 +246,10 @@ impl Schema {
                     field_errors.push(FieldError {
                         path: vec![key.clone()],
                         code: "unknown_property".to_string(),
-                        message: format!("Unknown property '{}' is not declared in strict DTO '{}'", key, self.name),
+                        message: format!(
+                            "Unknown property '{}' is not declared in strict DTO '{}'",
+                            key, self.name
+                        ),
                         expected: "Declared fields only".to_string(),
                         received: key.clone(),
                     });
@@ -277,7 +292,12 @@ impl Schema {
                     }
                 }
                 (Some(in_val), _) => {
-                    match self.validate_field_type(&spec.field_type, &in_val, self.allow_coercion, &path_stack) {
+                    match self.validate_field_type(
+                        &spec.field_type,
+                        &in_val,
+                        self.allow_coercion,
+                        &path_stack,
+                    ) {
                         Ok(norm_val) => {
                             // Check constraints
                             for constraint in &spec.constraints {
@@ -375,7 +395,10 @@ impl Schema {
                     Err(FieldError {
                         path: path.to_vec(),
                         code: "fractional_rejected".to_string(),
-                        message: format!("Fractional value {} is not a valid integer for Int DTO field", n),
+                        message: format!(
+                            "Fractional value {} is not a valid integer for Int DTO field",
+                            n
+                        ),
                         expected: "Integer".to_string(),
                         received: n.to_string(),
                     })
@@ -430,7 +453,10 @@ impl Schema {
                     Err(FieldError {
                         path: path.to_vec(),
                         code: "fractional_rejected".to_string(),
-                        message: format!("Fractional value {} is not a valid integer for u32 DTO field", n),
+                        message: format!(
+                            "Fractional value {} is not a valid integer for u32 DTO field",
+                            n
+                        ),
                         expected: "u32".to_string(),
                         received: n.to_string(),
                     })
@@ -471,25 +497,30 @@ impl Schema {
 
             // Bool Validation
             (FieldType::Bool, Value::Bool(b)) => Ok(Value::Bool(*b)),
-            (FieldType::Bool, Value::Str(s)) if allow_coercion => match s.trim().to_lowercase().as_str() {
-                "true" | "1" => Ok(Value::Bool(true)),
-                "false" | "0" => Ok(Value::Bool(false)),
-                _ => Err(FieldError {
+            (FieldType::Bool, Value::Str(s)) if allow_coercion => {
+                match s.trim().to_lowercase().as_str() {
+                    "true" | "1" => Ok(Value::Bool(true)),
+                    "false" | "0" => Ok(Value::Bool(false)),
+                    _ => Err(FieldError {
+                        path: path.to_vec(),
+                        code: "invalid_coercion".to_string(),
+                        message: format!("Cannot coerce string '{}' to boolean", s),
+                        expected: "boolean".to_string(),
+                        received: s.clone(),
+                    }),
+                }
+            }
+
+            (FieldType::Domain(kind), Value::Str(s)) => kind
+                .validate_str(s)
+                .map(|_| Value::Str(s.clone()))
+                .map_err(|e| FieldError {
                     path: path.to_vec(),
-                    code: "invalid_coercion".to_string(),
-                    message: format!("Cannot coerce string '{}' to boolean", s),
-                    expected: "boolean".to_string(),
+                    code: "domain_validation_error".to_string(),
+                    message: e,
+                    expected: kind.name().to_string(),
                     received: s.clone(),
                 }),
-            },
-
-            (FieldType::Domain(kind), Value::Str(s)) => kind.validate_str(s).map(|_| Value::Str(s.clone())).map_err(|e| FieldError {
-                path: path.to_vec(),
-                code: "domain_validation_error".to_string(),
-                message: e,
-                expected: kind.name().to_string(),
-                received: s.clone(),
-            }),
 
             (FieldType::Enum(variants), Value::Str(s)) => {
                 if variants.contains(s) {
@@ -498,7 +529,10 @@ impl Schema {
                     Err(FieldError {
                         path: path.to_vec(),
                         code: "invalid_enum_variant".to_string(),
-                        message: format!("Value '{}' is not a valid variant of enum {:?}", s, variants),
+                        message: format!(
+                            "Value '{}' is not a valid variant of enum {:?}",
+                            s, variants
+                        ),
                         expected: format!("{:?}", variants),
                         received: s.clone(),
                     })
@@ -510,19 +544,22 @@ impl Schema {
                 for (idx, elem) in arr.iter().enumerate() {
                     let mut elem_path = path.to_vec();
                     elem_path.push(idx.to_string());
-                    let norm_elem = self.validate_field_type(inner_t, elem, allow_coercion, &elem_path)?;
+                    let norm_elem =
+                        self.validate_field_type(inner_t, elem, allow_coercion, &elem_path)?;
                     norm_arr.push(norm_elem);
                 }
                 Ok(Value::Array(norm_arr))
             }
 
-            (FieldType::Object(schema), obj_val) => schema.validate(obj_val).map_err(|e| FieldError {
-                path: path.to_vec(),
-                code: "nested_validation_error".to_string(),
-                message: e.message,
-                expected: schema.name.clone(),
-                received: format!("{:?}", obj_val),
-            }),
+            (FieldType::Object(schema), obj_val) => {
+                schema.validate(obj_val).map_err(|e| FieldError {
+                    path: path.to_vec(),
+                    code: "nested_validation_error".to_string(),
+                    message: e.message,
+                    expected: schema.name.clone(),
+                    received: format!("{:?}", obj_val),
+                })
+            }
 
             (FieldType::Any, val) => Ok(val.clone()),
 
@@ -540,77 +577,113 @@ impl Schema {
         match (constraint, val) {
             (Constraint::Min(min_val), Value::I64(i)) => {
                 if (*i as f64) < *min_val {
-                    Err(format!("Value {} is less than minimum allowed ({})", i, min_val))
+                    Err(format!(
+                        "Value {} is less than minimum allowed ({})",
+                        i, min_val
+                    ))
                 } else {
                     Ok(())
                 }
             }
             (Constraint::Min(min_val), Value::U32(u)) => {
                 if (*u as f64) < *min_val {
-                    Err(format!("Value {} is less than minimum allowed ({})", u, min_val))
+                    Err(format!(
+                        "Value {} is less than minimum allowed ({})",
+                        u, min_val
+                    ))
                 } else {
                     Ok(())
                 }
             }
             (Constraint::Min(min_val), Value::U64(u)) => {
                 if (*u as f64) < *min_val {
-                    Err(format!("Value {} is less than minimum allowed ({})", u, min_val))
+                    Err(format!(
+                        "Value {} is less than minimum allowed ({})",
+                        u, min_val
+                    ))
                 } else {
                     Ok(())
                 }
             }
             (Constraint::Min(min_val), Value::Number(n)) => {
                 if *n < *min_val {
-                    Err(format!("Value {} is less than minimum allowed ({})", n, min_val))
+                    Err(format!(
+                        "Value {} is less than minimum allowed ({})",
+                        n, min_val
+                    ))
                 } else {
                     Ok(())
                 }
             }
             (Constraint::Max(max_val), Value::I64(i)) => {
                 if (*i as f64) > *max_val {
-                    Err(format!("Value {} is greater than maximum allowed ({})", i, max_val))
+                    Err(format!(
+                        "Value {} is greater than maximum allowed ({})",
+                        i, max_val
+                    ))
                 } else {
                     Ok(())
                 }
             }
             (Constraint::Max(max_val), Value::U32(u)) => {
                 if (*u as f64) > *max_val {
-                    Err(format!("Value {} is greater than maximum allowed ({})", u, max_val))
+                    Err(format!(
+                        "Value {} is greater than maximum allowed ({})",
+                        u, max_val
+                    ))
                 } else {
                     Ok(())
                 }
             }
             (Constraint::Max(max_val), Value::U64(u)) => {
                 if (*u as f64) > *max_val {
-                    Err(format!("Value {} is greater than maximum allowed ({})", u, max_val))
+                    Err(format!(
+                        "Value {} is greater than maximum allowed ({})",
+                        u, max_val
+                    ))
                 } else {
                     Ok(())
                 }
             }
             (Constraint::Max(max_val), Value::Number(n)) => {
                 if *n > *max_val {
-                    Err(format!("Value {} is greater than maximum allowed ({})", n, max_val))
+                    Err(format!(
+                        "Value {} is greater than maximum allowed ({})",
+                        n, max_val
+                    ))
                 } else {
                     Ok(())
                 }
             }
             (Constraint::MinLength(min_len), Value::Str(s)) => {
                 if s.len() < *min_len {
-                    Err(format!("String length {} is less than minimum length ({})", s.len(), min_len))
+                    Err(format!(
+                        "String length {} is less than minimum length ({})",
+                        s.len(),
+                        min_len
+                    ))
                 } else {
                     Ok(())
                 }
             }
             (Constraint::MaxLength(max_len), Value::Str(s)) => {
                 if s.len() > *max_len {
-                    Err(format!("String length {} exceeds maximum length ({})", s.len(), max_len))
+                    Err(format!(
+                        "String length {} exceeds maximum length ({})",
+                        s.len(),
+                        max_len
+                    ))
                 } else {
                     Ok(())
                 }
             }
             (Constraint::ExactLength(exact_len), Value::Str(s)) => {
                 if s.len() != *exact_len {
-                    Err(format!("String length {} does not match exact required length ({})", s.len(), exact_len))
+                    Err(format!(
+                        "String length {} does not match exact required length ({})",
+                        s.len(),
+                        exact_len
+                    ))
                 } else {
                     Ok(())
                 }

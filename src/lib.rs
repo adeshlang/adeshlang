@@ -129,6 +129,7 @@ pub mod testing;
 pub mod toolchain;
 pub mod types;
 pub mod typesystem;
+pub mod update;
 pub mod utils;
 
 // Re-export layered stdlib for easy access
@@ -145,9 +146,9 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 // Re-export AOT runtime functions for static library linking
 // These are needed by AOT-compiled code
 pub use execution::runtime_core::arc_bridge::{
-    adesh_rt_arc_clone, adesh_rt_arc_drop, adesh_rt_arc_get, adesh_rt_arc_new,
-    adesh_rt_arc_set, adesh_rt_arc_strong_count, adesh_rt_arc_weak_count,
-    adesh_rt_assert_heap_allowed, adesh_rt_weak_drop, adesh_rt_weak_new,
+    adesh_rt_arc_clone, adesh_rt_arc_drop, adesh_rt_arc_get, adesh_rt_arc_new, adesh_rt_arc_set,
+    adesh_rt_arc_strong_count, adesh_rt_arc_weak_count, adesh_rt_assert_heap_allowed,
+    adesh_rt_weak_drop, adesh_rt_weak_new,
 };
 
 #[cfg(not(target_arch = "wasm32"))]

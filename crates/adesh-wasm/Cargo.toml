@@ -5,6 +5,9 @@ edition = "2024"
 authors = ["Ajay Tainwala"]
 description = "WebAssembly runtime for Adesh programming language"
 
+[lints]
+workspace = true
+
 [lib]
 name = "adesh_wasm"
 crate-type = ["cdylib", "rlib"]

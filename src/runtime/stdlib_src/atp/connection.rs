@@ -7,14 +7,14 @@ use super::flow::ConnectionFlowControl;
 use super::handshake::{ClientHandshake, ServerHandshake};
 use super::id::{ConnectionHandle, ConnectionId, WireConnectionId};
 use super::memory::{ConnectionMemoryConfig, MemoryBudget};
-use super::message::{fragment_payload, OrderedDelivery, ReliabilityMode, SendMessage};
+use super::message::{OrderedDelivery, ReliabilityMode, SendMessage, fragment_payload};
 use super::path::PathManager;
 use super::reliability::{AckTracker, ReliabilityTracker, RetransmittableRef};
 use super::scheduler::PacketScheduler;
 use super::security::{PacketNumberSpace, SecurityContext};
 use super::stream::{AtpStream, Priority};
 use super::timer::{TimerKind, TimerWheel};
-use super::wire::{Frame, DATA_FLAG_FIN, DATA_FLAG_FIRST};
+use super::wire::{DATA_FLAG_FIN, DATA_FLAG_FIRST, Frame};
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -279,7 +279,10 @@ impl AtpConnection {
         if payload.len() as u64 > self.peer_params.max_message_size {
             return Err(AtpError::message("message exceeds max size"));
         }
-        if !self.congestion.can_send(self.app_reliability.bytes_in_flight) {
+        if !self
+            .congestion
+            .can_send(self.app_reliability.bytes_in_flight)
+        {
             return Err(AtpError::connection("congestion window full"));
         }
 
@@ -438,9 +441,9 @@ impl AtpConnection {
         ranges: &[(u64, u64)],
         now: Instant,
     ) {
-        if let Ok((_, acked_bytes, acked_refs)) = self
-            .app_reliability
-            .process_ack(largest_acked, ack_delay, ranges, now)
+        if let Ok((_, acked_bytes, acked_refs)) =
+            self.app_reliability
+                .process_ack(largest_acked, ack_delay, ranges, now)
         {
             if acked_bytes > 0 {
                 self.congestion.on_acked(acked_bytes);
@@ -536,20 +539,29 @@ impl AtpConnection {
                         s.close_remote();
                     }
                 }
-                Frame::StreamReset { stream_id, reason: _ } => {
+                Frame::StreamReset {
+                    stream_id,
+                    reason: _,
+                } => {
                     if let Some(s) = self.streams.get_mut(&stream_id) {
                         s.reset();
                     }
                 }
                 Frame::MaxData { max_data } => self.flow.send.update_max(max_data),
-                Frame::MaxStreamData { stream_id, max_data } => {
+                Frame::MaxStreamData {
+                    stream_id,
+                    max_data,
+                } => {
                     if let Some(s) = self.streams.get_mut(&stream_id) {
                         s.flow.send.update_max(max_data);
                     }
                 }
                 Frame::Ping => self.push_control_frame(Frame::Pong),
                 Frame::Pong => {}
-                Frame::ConnectionClose { error_code: _, reason } => {
+                Frame::ConnectionClose {
+                    error_code: _,
+                    reason,
+                } => {
                     self.transition(ConnectionState::Closing);
                     self.close_reason = Some(reason);
                 }
@@ -573,9 +585,7 @@ impl AtpConnection {
                     self.push_control_frame(Frame::PathResponse { data });
                 }
                 Frame::PathResponse { data } => {
-                    if let Ok(Some(new_addr)) =
-                        self.paths.on_path_response(data, from_addr, now)
-                    {
+                    if let Ok(Some(new_addr)) = self.paths.on_path_response(data, from_addr, now) {
                         self.peer_addr = new_addr;
                         self.paths.confirm_migration();
                         if self.state == ConnectionState::Migrating {
@@ -636,8 +646,7 @@ impl AtpConnection {
 
     pub fn schedule_keepalive(&mut self, now: Instant) {
         let deadline = now + self.local_params.idle_timeout / 2;
-        self.timers
-            .schedule(deadline, TimerKind::Keepalive, 0, 0);
+        self.timers.schedule(deadline, TimerKind::Keepalive, 0, 0);
     }
 
     pub fn schedule_idle_check(&mut self, now: Instant) {
@@ -647,8 +656,7 @@ impl AtpConnection {
 
     pub fn schedule_handshake_timeout(&mut self, now: Instant) {
         let deadline = now + self.config.handshake_timeout;
-        self.timers
-            .schedule(deadline, TimerKind::Handshake, 0, 0);
+        self.timers.schedule(deadline, TimerKind::Handshake, 0, 0);
     }
 
     pub fn reliability_for_space(&self, space: PacketNumberSpace) -> &ReliabilityTracker {

@@ -74,7 +74,7 @@
            bundle's uninstall. -->
       <ExePackage Id="AdeshToolchain"
                   SourceFile="$(var.AdeshExePath)"
-                  DisplayName="Pinned LLVM 18.1.8 toolchain"
+                  DisplayName="Pinned LLVM 23.1.1 Toolchain (~180 MB compressed download, ~850 MB disk space)"
                   InstallArguments="toolchain install --system --manifest &quot;[ProgramFiles64Folder]AdeshLang\config\toolchain-manifest.json&quot;"
                   DetectCondition="ToolchainInstalled AND ToolchainFilesInstalled"
                   InstallCondition="NOT (ToolchainInstalled AND ToolchainFilesInstalled)"

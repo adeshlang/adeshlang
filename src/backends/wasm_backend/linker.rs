@@ -224,8 +224,11 @@ impl WasmLinker {
                             }
                         }
                     }
-                    let input_val = crate::runtime::tui_input::prompt_input(&prompt, &crate::runtime::tui_input::InputOptions::default())
-                        .unwrap_or_default();
+                    let input_val = crate::runtime::tui_input::prompt_input(
+                        &prompt,
+                        &crate::runtime::tui_input::InputOptions::default(),
+                    )
+                    .unwrap_or_default();
                     let bytes = input_val.as_bytes();
                     let size = bytes.len() + 1;
                     let res_ptr = {
@@ -236,7 +239,8 @@ impl WasmLinker {
                     };
                     if let Some(wasmtime::Extern::Memory(mem)) = caller.get_export("memory") {
                         let _ = mem.write(&mut caller, res_ptr as usize, bytes);
-                        let _ = mem.write(&mut caller, (res_ptr + bytes.len() as u32) as usize, &[0]);
+                        let _ =
+                            mem.write(&mut caller, (res_ptr + bytes.len() as u32) as usize, &[0]);
                     }
                     res_ptr as i32
                 },
@@ -259,8 +263,11 @@ impl WasmLinker {
                             }
                         }
                     }
-                    let input_val = crate::runtime::tui_input::prompt_input(&prompt, &crate::runtime::tui_input::InputOptions::default())
-                        .unwrap_or_default();
+                    let input_val = crate::runtime::tui_input::prompt_input(
+                        &prompt,
+                        &crate::runtime::tui_input::InputOptions::default(),
+                    )
+                    .unwrap_or_default();
                     input_val.trim().parse::<f64>().unwrap_or(0.0)
                 },
             )
@@ -271,7 +278,14 @@ impl WasmLinker {
             .func_wrap(
                 "env",
                 "input_slider",
-                |mut caller: Caller<'_, WasmContext>, p: i32, l: i32, min: f64, max: f64, step: f64, default: f64| -> f64 {
+                |mut caller: Caller<'_, WasmContext>,
+                 p: i32,
+                 l: i32,
+                 min: f64,
+                 max: f64,
+                 step: f64,
+                 default: f64|
+                 -> f64 {
                     let mut prompt = String::new();
                     if let Some(wasmtime::Extern::Memory(mem)) = caller.get_export("memory") {
                         if l > 0 {
@@ -283,8 +297,10 @@ impl WasmLinker {
                         }
                     }
                     let config = crate::runtime::tui_input::SliderConfig::default();
-                    crate::runtime::tui_input::prompt_slider(&prompt, min, max, step, default, &config)
-                        .unwrap_or(default)
+                    crate::runtime::tui_input::prompt_slider(
+                        &prompt, min, max, step, default, &config,
+                    )
+                    .unwrap_or(default)
                 },
             )
             .unwrap();
@@ -306,7 +322,9 @@ impl WasmLinker {
                         }
                     }
                     let def_bool = default_val != 0;
-                    if crate::runtime::tui_input::prompt_confirm(&prompt, def_bool).unwrap_or(def_bool) {
+                    if crate::runtime::tui_input::prompt_confirm(&prompt, def_bool)
+                        .unwrap_or(def_bool)
+                    {
                         1
                     } else {
                         0

@@ -1,4 +1,4 @@
-﻿//! ATP Security Engine
+//! ATP Security Engine
 //!
 //! Provides:
 //! - X25519 ephemeral key agreement (encryption, NOT endpoint identity)
@@ -14,8 +14,8 @@
 use super::config::{AEAD_TAG_LEN, REPLAY_WINDOW_SIZE};
 use super::errors::{AtpError, AtpResult};
 use chacha20poly1305::{
-    aead::{Aead, KeyInit, Payload},
     ChaCha20Poly1305, Nonce,
+    aead::{Aead, KeyInit, Payload},
 };
 use hkdf::Hkdf;
 use rand::rngs::OsRng;
@@ -181,7 +181,10 @@ pub fn derive_application_keys(hs: &HandshakeSecrets) -> AtpResult<HandshakeSecr
 }
 
 /// Compute Finished MAC over transcript hash.
-pub fn derive_finished_mac(finished_key: &[u8; 32], transcript_hash: &[u8; 32]) -> AtpResult<[u8; FINISHED_LEN]> {
+pub fn derive_finished_mac(
+    finished_key: &[u8; 32],
+    transcript_hash: &[u8; 32],
+) -> AtpResult<[u8; FINISHED_LEN]> {
     use hmac::digest::KeyInit;
     use hmac::{Hmac, Mac};
     type HmacSha256 = Hmac<Sha256>;

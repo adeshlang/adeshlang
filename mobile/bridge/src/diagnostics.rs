@@ -59,13 +59,19 @@ pub fn parse_diagnostic_from_error(error_msg: &str) -> Diagnostic {
             line = l;
             if let Some(col_pos) = rest.find("column ") {
                 let col_rest = &rest[col_pos + 7..];
-                let col_num: String = col_rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+                let col_num: String = col_rest
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect();
                 if let Ok(c) = col_num.parse::<usize>() {
                     column = c;
                 }
             } else if let Some(col_pos) = rest.find(':') {
                 let col_rest = &rest[col_pos + 1..];
-                let col_num: String = col_rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+                let col_num: String = col_rest
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect();
                 if let Ok(c) = col_num.parse::<usize>() {
                     column = c;
                 }

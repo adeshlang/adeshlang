@@ -59,7 +59,7 @@ if [[ -n "$target" ]]; then
 fi
 
 echo "Building AdeshLang $version for $os-$arch (target: ${target:-native})..."
-cargo build --release "${target_flags[@]}" --bin adesh --bin adl
+cargo build --release "${target_flags[@]}" --bin adesh --bin adl --lib
 if [[ -f "$root/als/Cargo.toml" ]]; then
   (cd "$root/als" && cargo build --release "${target_flags[@]}" --bin als)
 fi
@@ -78,6 +78,21 @@ editor_bin="$root/editor/target/release/adesh-editor"
 [[ -n "$target" && -f "$root/editor/target/$target/release/adesh-editor" ]] && editor_bin="$root/editor/target/$target/release/adesh-editor"
 [[ ! -f "$editor_bin" && -f "$target_dir/adesh-editor" ]] && editor_bin="$target_dir/adesh-editor"
 [[ -f "$editor_bin" ]] && cp "$editor_bin" "$stage/bin/"
+
+# Static libraries (.a)
+if [[ -f "$target_dir/libadeshlang.a" ]]; then
+  cp "$target_dir/libadeshlang.a" "$stage/lib/"
+fi
+
+# Dynamic / shared libraries (.so on Linux, .dylib on macOS)
+if [[ -f "$target_dir/libadeshlang.so" ]]; then
+  cp "$target_dir/libadeshlang.so" "$stage/lib/"
+  cp "$target_dir/libadeshlang.so" "$stage/bin/"
+fi
+if [[ -f "$target_dir/libadeshlang.dylib" ]]; then
+  cp "$target_dir/libadeshlang.dylib" "$stage/lib/"
+  cp "$target_dir/libadeshlang.dylib" "$stage/bin/"
+fi
 
 cp "$root/LICENSE" "$stage/licenses/AdeshLang-LICENSE"
 cp "$root/LICENSE" "$stage/THIRD_PARTY_LICENSES/AdeshLang-LICENSE"

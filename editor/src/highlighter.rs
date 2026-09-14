@@ -76,13 +76,59 @@ impl Language {
 // ── Adesh Keywords ──────────────────────────────────────────────
 static ADESH_KEYWORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     [
-        "fn", "let", "mut", "const", "static", "type", "struct", "enum", "trait",
-        "impl", "class", "interface", "module", "import", "use", "export", "pub",
-        "extern", "decorator", "if", "else", "for", "while", "do", "loop", "return",
-        "match", "break", "continue", "try", "catch", "throw", "defer", "async",
-        "await", "as", "in", "where", "ref", "new", "this", "share", "alloc",
-        "unsafe", "move", "borrow", "own", "region", "parallel", "simd", "gpu",
-        "wasm", "embedded",
+        "fn",
+        "let",
+        "mut",
+        "const",
+        "static",
+        "type",
+        "struct",
+        "enum",
+        "trait",
+        "impl",
+        "class",
+        "interface",
+        "module",
+        "import",
+        "use",
+        "export",
+        "pub",
+        "extern",
+        "decorator",
+        "if",
+        "else",
+        "for",
+        "while",
+        "do",
+        "loop",
+        "return",
+        "match",
+        "break",
+        "continue",
+        "try",
+        "catch",
+        "throw",
+        "defer",
+        "async",
+        "await",
+        "as",
+        "in",
+        "where",
+        "ref",
+        "new",
+        "this",
+        "share",
+        "alloc",
+        "unsafe",
+        "move",
+        "borrow",
+        "own",
+        "region",
+        "parallel",
+        "simd",
+        "gpu",
+        "wasm",
+        "embedded",
     ]
     .into_iter()
     .collect()
@@ -91,12 +137,11 @@ static ADESH_KEYWORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
 // ── Rust Keywords ──────────────────────────────────────────────
 static RUST_KEYWORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     [
-        "as", "break", "const", "continue", "crate", "else", "enum", "extern",
-        "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod",
-        "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct",
-        "super", "trait", "true", "type", "unsafe", "use", "where", "while",
-        "async", "await", "dyn", "abstract", "become", "box", "do", "final",
-        "macro", "override", "priv", "typeof", "unsized", "virtual", "yield",
+        "as", "break", "const", "continue", "crate", "else", "enum", "extern", "false", "fn",
+        "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref",
+        "return", "self", "Self", "static", "struct", "super", "trait", "true", "type", "unsafe",
+        "use", "where", "while", "async", "await", "dyn", "abstract", "become", "box", "do",
+        "final", "macro", "override", "priv", "typeof", "unsized", "virtual", "yield",
     ]
     .into_iter()
     .collect()
@@ -105,10 +150,10 @@ static RUST_KEYWORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
 // ── Python Keywords ──────────────────────────────────────────────
 static PYTHON_KEYWORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     [
-        "and", "as", "assert", "async", "await", "break", "class", "continue",
-        "def", "del", "elif", "else", "except", "finally", "for", "from", "global",
-        "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass",
-        "raise", "return", "try", "while", "with", "yield", "self",
+        "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del",
+        "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is",
+        "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with",
+        "yield", "self",
     ]
     .into_iter()
     .collect()
@@ -117,12 +162,52 @@ static PYTHON_KEYWORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
 // ── JS/TS Keywords ──────────────────────────────────────────────
 static JS_KEYWORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     [
-        "break", "case", "catch", "class", "const", "continue", "debugger",
-        "default", "delete", "do", "else", "export", "extends", "finally", "for",
-        "function", "if", "import", "in", "instanceof", "new", "return", "super",
-        "switch", "this", "throw", "try", "typeof", "var", "void", "while", "with",
-        "yield", "let", "static", "enum", "await", "async", "interface", "type",
-        "implements", "package", "protected", "private", "public", "readonly",
+        "break",
+        "case",
+        "catch",
+        "class",
+        "const",
+        "continue",
+        "debugger",
+        "default",
+        "delete",
+        "do",
+        "else",
+        "export",
+        "extends",
+        "finally",
+        "for",
+        "function",
+        "if",
+        "import",
+        "in",
+        "instanceof",
+        "new",
+        "return",
+        "super",
+        "switch",
+        "this",
+        "throw",
+        "try",
+        "typeof",
+        "var",
+        "void",
+        "while",
+        "with",
+        "yield",
+        "let",
+        "static",
+        "enum",
+        "await",
+        "async",
+        "interface",
+        "type",
+        "implements",
+        "package",
+        "protected",
+        "private",
+        "public",
+        "readonly",
     ]
     .into_iter()
     .collect()
@@ -131,30 +216,81 @@ static JS_KEYWORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
 // ── C/C++ Keywords ──────────────────────────────────────────────
 static C_KEYWORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     [
-        "auto", "break", "case", "char", "const", "continue", "default", "do",
-        "double", "else", "enum", "extern", "float", "for", "goto", "if", "int",
-        "long", "register", "return", "short", "signed", "sizeof", "static",
-        "struct", "switch", "typedef", "union", "unsigned", "void", "volatile",
-        "while", "class", "namespace", "template", "typename", "using", "virtual",
-        "friend", "inline", "constexpr", "nullptr", "bool", "true", "false",
+        "auto",
+        "break",
+        "case",
+        "char",
+        "const",
+        "continue",
+        "default",
+        "do",
+        "double",
+        "else",
+        "enum",
+        "extern",
+        "float",
+        "for",
+        "goto",
+        "if",
+        "int",
+        "long",
+        "register",
+        "return",
+        "short",
+        "signed",
+        "sizeof",
+        "static",
+        "struct",
+        "switch",
+        "typedef",
+        "union",
+        "unsigned",
+        "void",
+        "volatile",
+        "while",
+        "class",
+        "namespace",
+        "template",
+        "typename",
+        "using",
+        "virtual",
+        "friend",
+        "inline",
+        "constexpr",
+        "nullptr",
+        "bool",
+        "true",
+        "false",
     ]
     .into_iter()
     .collect()
 });
 
 static CONSTANTS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
-    ["true", "false", "null", "none", "nil", "undefined", "NaN", "Infinity", "None", "Some", "Ok", "Err"]
-        .into_iter()
-        .collect()
+    [
+        "true",
+        "false",
+        "null",
+        "none",
+        "nil",
+        "undefined",
+        "NaN",
+        "Infinity",
+        "None",
+        "Some",
+        "Ok",
+        "Err",
+    ]
+    .into_iter()
+    .collect()
 });
 
 static TYPES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     [
-        "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64",
-        "u128", "usize", "int", "uint", "Int", "UInt", "f32", "f64", "float",
-        "Float", "double", "Double", "bool", "Bool", "char", "str", "String",
-        "void", "any", "ptr", "Vec", "Map", "Set", "HashMap", "BTreeMap",
-        "Array", "Slice", "Box", "Arc", "Rc", "Option", "Result", "Self",
+        "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
+        "int", "uint", "Int", "UInt", "f32", "f64", "float", "Float", "double", "Double", "bool",
+        "Bool", "char", "str", "String", "void", "any", "ptr", "Vec", "Map", "Set", "HashMap",
+        "BTreeMap", "Array", "Slice", "Box", "Arc", "Rc", "Option", "Result", "Self",
     ]
     .into_iter()
     .collect()
@@ -162,19 +298,46 @@ static TYPES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
 
 static BUILTINS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     [
-        "print", "println", "eprint", "eprintln", "printf", "scanf", "read", "write",
-        "typeof", "sizeof", "type_of", "size_of", "len", "push", "pop", "insert",
-        "remove", "contains", "sort", "reverse", "map", "filter", "reduce", "find",
-        "abs", "min", "max", "sqrt", "pow", "assert", "assert_eq", "panic",
+        "print",
+        "println",
+        "eprint",
+        "eprintln",
+        "printf",
+        "scanf",
+        "read",
+        "write",
+        "typeof",
+        "sizeof",
+        "type_of",
+        "size_of",
+        "len",
+        "push",
+        "pop",
+        "insert",
+        "remove",
+        "contains",
+        "sort",
+        "reverse",
+        "map",
+        "filter",
+        "reduce",
+        "find",
+        "abs",
+        "min",
+        "max",
+        "sqrt",
+        "pow",
+        "assert",
+        "assert_eq",
+        "panic",
     ]
     .into_iter()
     .collect()
 });
 
 const MULTI_OPS: &[&str] = &[
-    "...", "..=", "<<=", ">>=", "&&=", "||=", "==", "!=", "<=", ">=", "&&",
-    "||", "<<", ">>", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "->",
-    "=>", "..", "::",
+    "...", "..=", "<<=", ">>=", "&&=", "||=", "==", "!=", "<=", ">=", "&&", "||", "<<", ">>", "+=",
+    "-=", "*=", "/=", "%=", "&=", "|=", "^=", "->", "=>", "..", "::",
 ];
 
 fn is_ident_start(ch: char) -> bool {
@@ -214,29 +377,42 @@ pub fn highlight_line<'a>(
     let mut bracket_depth: usize = 0;
 
     let style_fg = Style::default().fg(theme.fg);
-    let style_kw = Style::default().fg(theme.keyword).add_modifier(Modifier::BOLD);
+    let style_kw = Style::default()
+        .fg(theme.keyword)
+        .add_modifier(Modifier::BOLD);
     let style_const = Style::default().fg(theme.number);
     let style_str = Style::default().fg(theme.string);
     let style_num = Style::default().fg(theme.number);
     let style_comment = Style::default().fg(theme.comment);
-    let style_doc = Style::default().fg(theme.comment).add_modifier(Modifier::ITALIC);
+    let style_doc = Style::default()
+        .fg(theme.comment)
+        .add_modifier(Modifier::ITALIC);
     let style_type = Style::default().fg(theme.type_color);
     let style_func = Style::default().fg(theme.function);
     let style_op = Style::default().fg(theme.operator);
     let style_punct = Style::default().fg(theme.comment);
-    let style_attr = Style::default().fg(theme.type_color).add_modifier(Modifier::BOLD);
+    let style_attr = Style::default()
+        .fg(theme.type_color)
+        .add_modifier(Modifier::BOLD);
 
     while i < len {
         let ch = chars[i];
 
         // 1. Comments
         if (ch == '/' && i + 1 < len && (chars[i + 1] == '/' || chars[i + 1] == '*'))
-            || (lang == Language::Python || lang == Language::Shell || lang == Language::Toml || lang == Language::Yaml) && ch == '#'
+            || (lang == Language::Python
+                || lang == Language::Shell
+                || lang == Language::Toml
+                || lang == Language::Yaml)
+                && ch == '#'
         {
             if ch == '#' || (ch == '/' && chars[i + 1] == '/') {
                 let is_doc = i + 2 < len && (chars[i + 2] == '/' || chars[i + 2] == '!');
                 let rest: String = chars[i..].iter().collect();
-                spans.push(Span::styled(rest, if is_doc { style_doc } else { style_comment }));
+                spans.push(Span::styled(
+                    rest,
+                    if is_doc { style_doc } else { style_comment },
+                ));
                 break;
             } else if ch == '/' && chars[i + 1] == '*' {
                 let start = i;
@@ -281,13 +457,20 @@ pub fn highlight_line<'a>(
         // 3. Numbers
         if ch.is_ascii_digit() || (ch == '.' && i + 1 < len && chars[i + 1].is_ascii_digit()) {
             let start = i;
-            if ch == '0' && i + 1 < len && matches!(chars[i + 1], 'x' | 'X' | 'b' | 'B' | 'o' | 'O') {
+            if ch == '0' && i + 1 < len && matches!(chars[i + 1], 'x' | 'X' | 'b' | 'B' | 'o' | 'O')
+            {
                 i += 2;
                 while i < len && (chars[i].is_ascii_hexdigit() || chars[i] == '_') {
                     i += 1;
                 }
             } else {
-                while i < len && (chars[i].is_ascii_digit() || chars[i] == '.' || chars[i] == '_' || chars[i] == 'e' || chars[i] == 'E') {
+                while i < len
+                    && (chars[i].is_ascii_digit()
+                        || chars[i] == '.'
+                        || chars[i] == '_'
+                        || chars[i] == 'e'
+                        || chars[i] == 'E')
+                {
                     i += 1;
                 }
             }
@@ -328,7 +511,9 @@ pub fn highlight_line<'a>(
                 style_kw
             } else if CONSTANTS.contains(word.as_str()) {
                 style_const
-            } else if TYPES.contains(word.as_str()) || (word.starts_with(char::is_uppercase) && !word.contains('_')) {
+            } else if TYPES.contains(word.as_str())
+                || (word.starts_with(char::is_uppercase) && !word.contains('_'))
+            {
                 style_type
             } else if BUILTINS.contains(word.as_str()) {
                 style_func
@@ -572,7 +757,13 @@ mod tests {
     #[test]
     fn test_doc_comment_highlight() {
         let theme = Theme::adesh_dark();
-        let line = highlight_line("/// documentation comment", &theme, Language::Adesh, false, None);
+        let line = highlight_line(
+            "/// documentation comment",
+            &theme,
+            Language::Adesh,
+            false,
+            None,
+        );
         assert_eq!(line.spans[0].content, "/// documentation comment");
     }
 
@@ -586,7 +777,13 @@ mod tests {
     #[test]
     fn test_rainbow_brackets() {
         let theme = Theme::tokyo_night();
-        let line = highlight_line("fn foo(a: [i32; 4]) { }", &theme, Language::Rust, true, None);
+        let line = highlight_line(
+            "fn foo(a: [i32; 4]) { }",
+            &theme,
+            Language::Rust,
+            true,
+            None,
+        );
         assert!(!line.spans.is_empty());
     }
 }

@@ -65,21 +65,21 @@ echo "wrote: /etc/profile.d/adeshlang.sh"
 # 4. Gatekeeper: strip quarantine from the copied files (idempotent).
 sudo /usr/bin/xattr -dr com.apple.quarantine "$DEST_DIR" 2>/dev/null || true
 
-# 5. Optional pinned LLVM 18.1.8 toolchain (~400 MB). Same prompt as
-#    install.sh. (For the 30–90 min GPU-capable MLIR source build, run:
+# 5. Optional pinned LLVM 23.1.1 toolchain (~190 MB download, ~900 MB disk space).
+#    Same prompt as install.sh. (For the 30–90 min GPU-capable MLIR source build, run:
 #    sudo '$DEST_DIR/bin/adesh' toolchain install --system --build-mlir-source)
 if [[ -x "$DEST_DIR/bin/adesh" ]]; then
     echo
     ans=""
-    read -r -p "Download and install the pinned LLVM 18.1.8 toolchain now? [Y/n] " ans || ans=""
+    read -r -p "Download and install pinned LLVM 23.1.1 toolchain now (~190 MB download, ~900 MB disk space)? [Y/n] " ans || ans=""
     case "${ans:-y}" in
         n|N|no)
             echo "Skipping. Install later with: sudo '$DEST_DIR/bin/adesh' toolchain install --system"
             ;;
         *)
-            echo "Installing LLVM 18.1.8 toolchain (~400 MB)..."
+            echo "Installing LLVM 23.1.1 toolchain (~190 MB download, ~900 MB disk space)..."
             if sudo ADESH_HOME="$DEST_DIR" "$DEST_DIR/bin/adesh" toolchain install --system; then
-                echo "LLVM 18.1.8 toolchain installed and exposed."
+                echo "LLVM 23.1.1 toolchain installed and exposed."
             else
                 echo
                 echo "warning: the toolchain install failed."

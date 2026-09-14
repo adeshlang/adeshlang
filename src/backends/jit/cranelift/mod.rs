@@ -416,7 +416,6 @@ impl JitContext {
         let mut current_block = func.entry_block; // Reasonable limit for complex programs
 
         loop {
-
             let block = func
                 .get_block(current_block)
                 .ok_or_else(|| format!("Block {} not found", current_block))?;
@@ -498,7 +497,6 @@ impl JitContext {
             let mut current_block = func.entry_block; // Reasonable limit to prevent infinite loops
 
             loop {
-
                 let block = func
                     .get_block(current_block)
                     .ok_or_else(|| format!("Block {} not found", current_block))?;
@@ -681,7 +679,6 @@ impl JitContext {
         let mut current_block = func.entry_block;
 
         loop {
-
             let block = func
                 .get_block(current_block)
                 .ok_or_else(|| format!("Block {} not found", current_block))?;
@@ -1630,7 +1627,9 @@ impl JitContext {
                                 self.arc_values.remove(&arc_id);
                                 self.arc_strong_counts.remove(&arc_id);
                                 self.arc_weak_counts.remove(&arc_id);
-                                crate::backends::common::builtins::objects::remove_jit_arc_value(arc_id);
+                                crate::backends::common::builtins::objects::remove_jit_arc_value(
+                                    arc_id,
+                                );
                             }
                         }
                         Ok(ControlFlow::Next)
@@ -1712,7 +1711,9 @@ impl JitContext {
                     if let Some(arc_value) = self.arc_values.get(&arc_id) {
                         if let Ok(mut guard) = arc_value.lock() {
                             *guard = value_obj.clone();
-                            crate::backends::common::builtins::objects::insert_jit_arc_value(arc_id, value_obj);
+                            crate::backends::common::builtins::objects::insert_jit_arc_value(
+                                arc_id, value_obj,
+                            );
                             Ok(ControlFlow::Next)
                         } else {
                             Err(format!("Failed to lock ARC value: {}", arc_id))

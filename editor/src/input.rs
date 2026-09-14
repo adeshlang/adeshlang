@@ -1,6 +1,7 @@
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use std::path::PathBuf;
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind, MouseButton};
-
 
 use crate::app::{App, MenuTab, Modal};
 use crate::completion::{CandidateKind, CompletionCandidate};
@@ -26,7 +27,8 @@ pub fn is_ctrl_backspace(key: &KeyEvent) -> bool {
     (key.code == KeyCode::Backspace && key.modifiers.contains(KeyModifiers::CONTROL))
         || key.code == KeyCode::Char('\u{7f}')
         || key.code == KeyCode::Char('\u{8}')
-        || (key.modifiers.contains(KeyModifiers::CONTROL) && (key.code == KeyCode::Char('w') || key.code == KeyCode::Char('W')))
+        || (key.modifiers.contains(KeyModifiers::CONTROL)
+            && (key.code == KeyCode::Char('w') || key.code == KeyCode::Char('W')))
 }
 
 pub fn pop_word_from_string(s: &mut String) {
@@ -49,7 +51,11 @@ pub async fn handle_key_event(app: &mut App, key: KeyEvent) {
     // 0. Global Panel Toggle Keys (Ctrl+J / Ctrl+T / Ctrl+` / F6)
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         match key.code {
-            KeyCode::Char('j') | KeyCode::Char('J') | KeyCode::Char('\n') | KeyCode::Char('t') | KeyCode::Char('T') => {
+            KeyCode::Char('j')
+            | KeyCode::Char('J')
+            | KeyCode::Char('\n')
+            | KeyCode::Char('t')
+            | KeyCode::Char('T') => {
                 app.show_terminal = !app.show_terminal;
                 app.terminal_focused = app.show_terminal;
                 if app.show_terminal {
@@ -341,17 +347,74 @@ pub async fn handle_key_event(app: &mut App, key: KeyEvent) {
                 return;
             }
             KeyCode::Char(' ') => {
-                let word = app.current_buffer().get_word_under_cursor().unwrap_or_default();
+                let word = app
+                    .current_buffer()
+                    .get_word_under_cursor()
+                    .unwrap_or_default();
                 let candidates = vec![
-                    CompletionCandidate { label: "fn".to_string(), insert_text: Some("fn name() {\n    \n}".to_string()), kind: CandidateKind::Snippet, detail: Some("Function declaration".to_string()), documentation: None },
-                    CompletionCandidate { label: "let".to_string(), insert_text: Some("let ".to_string()), kind: CandidateKind::Keyword, detail: None, documentation: None },
-                    CompletionCandidate { label: "mut".to_string(), insert_text: Some("mut ".to_string()), kind: CandidateKind::Keyword, detail: None, documentation: None },
-                    CompletionCandidate { label: "struct".to_string(), insert_text: Some("struct Name {\n    \n}".to_string()), kind: CandidateKind::Snippet, detail: None, documentation: None },
-                    CompletionCandidate { label: "enum".to_string(), insert_text: Some("enum Name {\n    Variant,\n}".to_string()), kind: CandidateKind::Snippet, detail: None, documentation: None },
-                    CompletionCandidate { label: "trait".to_string(), insert_text: Some("trait Name {\n    fn method();\n}".to_string()), kind: CandidateKind::Snippet, detail: None, documentation: None },
-                    CompletionCandidate { label: "impl".to_string(), insert_text: Some("impl Trait for Struct {\n    \n}".to_string()), kind: CandidateKind::Snippet, detail: None, documentation: None },
-                    CompletionCandidate { label: "println".to_string(), insert_text: Some("println(\"\")".to_string()), kind: CandidateKind::Function, detail: Some("Print line to stdout".to_string()), documentation: None },
-                    CompletionCandidate { label: "print".to_string(), insert_text: Some("print(\"\")".to_string()), kind: CandidateKind::Function, detail: None, documentation: None },
+                    CompletionCandidate {
+                        label: "fn".to_string(),
+                        insert_text: Some("fn name() {\n    \n}".to_string()),
+                        kind: CandidateKind::Snippet,
+                        detail: Some("Function declaration".to_string()),
+                        documentation: None,
+                    },
+                    CompletionCandidate {
+                        label: "let".to_string(),
+                        insert_text: Some("let ".to_string()),
+                        kind: CandidateKind::Keyword,
+                        detail: None,
+                        documentation: None,
+                    },
+                    CompletionCandidate {
+                        label: "mut".to_string(),
+                        insert_text: Some("mut ".to_string()),
+                        kind: CandidateKind::Keyword,
+                        detail: None,
+                        documentation: None,
+                    },
+                    CompletionCandidate {
+                        label: "struct".to_string(),
+                        insert_text: Some("struct Name {\n    \n}".to_string()),
+                        kind: CandidateKind::Snippet,
+                        detail: None,
+                        documentation: None,
+                    },
+                    CompletionCandidate {
+                        label: "enum".to_string(),
+                        insert_text: Some("enum Name {\n    Variant,\n}".to_string()),
+                        kind: CandidateKind::Snippet,
+                        detail: None,
+                        documentation: None,
+                    },
+                    CompletionCandidate {
+                        label: "trait".to_string(),
+                        insert_text: Some("trait Name {\n    fn method();\n}".to_string()),
+                        kind: CandidateKind::Snippet,
+                        detail: None,
+                        documentation: None,
+                    },
+                    CompletionCandidate {
+                        label: "impl".to_string(),
+                        insert_text: Some("impl Trait for Struct {\n    \n}".to_string()),
+                        kind: CandidateKind::Snippet,
+                        detail: None,
+                        documentation: None,
+                    },
+                    CompletionCandidate {
+                        label: "println".to_string(),
+                        insert_text: Some("println(\"\")".to_string()),
+                        kind: CandidateKind::Function,
+                        detail: Some("Print line to stdout".to_string()),
+                        documentation: None,
+                    },
+                    CompletionCandidate {
+                        label: "print".to_string(),
+                        insert_text: Some("print(\"\")".to_string()),
+                        kind: CandidateKind::Function,
+                        detail: None,
+                        documentation: None,
+                    },
                 ];
                 let col = app.current_buffer().cursor.col;
                 app.completion.show(col, &word, candidates);
@@ -374,7 +437,8 @@ pub async fn handle_key_event(app: &mut App, key: KeyEvent) {
                 return;
             }
             KeyCode::Char('s') | KeyCode::Char('S') => {
-                app.split_tree.split_active(SplitDirection::Horizontal, None);
+                app.split_tree
+                    .split_active(SplitDirection::Horizontal, None);
                 app.toast("Split horizontal", "INFO");
                 return;
             }
@@ -565,13 +629,19 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) {
             return;
         } else if let Some(p) = app.count_prefix {
             if c.is_ascii_digit() {
-                app.count_prefix = Some(p.saturating_mul(10).saturating_add((c as usize) - ('0' as usize)));
+                app.count_prefix = Some(
+                    p.saturating_mul(10)
+                        .saturating_add((c as usize) - ('0' as usize)),
+                );
                 return;
             }
         }
     }
 
-    let is_operator_init = matches!(key.code, KeyCode::Char('d' | 'c' | 'y' | 'r' | 'f' | 'F' | 't' | 'T'));
+    let is_operator_init = matches!(
+        key.code,
+        KeyCode::Char('d' | 'c' | 'y' | 'r' | 'f' | 'F' | 't' | 'T')
+    );
     let count = if is_operator_init {
         app.count_prefix.unwrap_or(1)
     } else {
@@ -602,7 +672,8 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         KeyCode::Char('o') => {
             let tab_w = app.config.tab_width;
             app.current_buffer_mut().move_end_of_line();
-            app.current_buffer_mut().insert_newline_with_tab_width(tab_w);
+            app.current_buffer_mut()
+                .insert_newline_with_tab_width(tab_w);
             app.mode = Mode::Insert;
         }
         KeyCode::Char('O') => {
@@ -613,7 +684,9 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) {
                 .take_while(|c| c.is_whitespace())
                 .collect();
             let cur_line = app.current_buffer().cursor.line;
-            app.current_buffer_mut().lines.insert(cur_line, indent.clone());
+            app.current_buffer_mut()
+                .lines
+                .insert(cur_line, indent.clone());
             app.current_buffer_mut().cursor.col = indent.chars().count();
             app.mode = Mode::Insert;
         }
@@ -731,7 +804,10 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char('K') => {
             if let Some(word) = app.current_buffer().get_word_under_cursor() {
-                app.hover_content = Some(format!("Documentation for `{}`\nAdesh standard library symbol.", word));
+                app.hover_content = Some(format!(
+                    "Documentation for `{}`\nAdesh standard library symbol.",
+                    word
+                ));
                 app.modal = Modal::HoverTooltip;
             }
         }
@@ -768,7 +844,8 @@ async fn handle_insert_mode(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Enter => {
-            app.current_buffer_mut().insert_newline_with_tab_width(tab_width);
+            app.current_buffer_mut()
+                .insert_newline_with_tab_width(tab_width);
         }
         KeyCode::Backspace => app.current_buffer_mut().backspace(),
         KeyCode::Delete => app.current_buffer_mut().delete_char(),
@@ -835,7 +912,12 @@ async fn handle_visual_mode(app: &mut App, key: KeyEvent) {
             app.current_buffer_mut().transform_selection_case(false);
             app.mode = Mode::Normal;
         }
-        KeyCode::Char('(') | KeyCode::Char('[') | KeyCode::Char('{') | KeyCode::Char('"') | KeyCode::Char('\'') | KeyCode::Char('`') => {
+        KeyCode::Char('(')
+        | KeyCode::Char('[')
+        | KeyCode::Char('{')
+        | KeyCode::Char('"')
+        | KeyCode::Char('\'')
+        | KeyCode::Char('`') => {
             if let KeyCode::Char(c) = key.code {
                 app.current_buffer_mut().insert_char_auto_close(c);
                 app.mode = Mode::Normal;
@@ -928,13 +1010,17 @@ async fn handle_modal_input(app: &mut App, key: KeyEvent) {
         Modal::GitManager => match key.code {
             KeyCode::Esc => app.modal = Modal::None,
             KeyCode::Down | KeyCode::Char('j') => {
-                let total = app.git.staged_files.len() + app.git.unstaged_files.len() + app.git.untracked_files.len();
+                let total = app.git.staged_files.len()
+                    + app.git.unstaged_files.len()
+                    + app.git.untracked_files.len();
                 if total > 0 {
                     app.git_selected = (app.git_selected + 1) % total;
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                let total = app.git.staged_files.len() + app.git.unstaged_files.len() + app.git.untracked_files.len();
+                let total = app.git.staged_files.len()
+                    + app.git.unstaged_files.len()
+                    + app.git.untracked_files.len();
                 if total > 0 {
                     if app.git_selected == 0 {
                         app.git_selected = total - 1;
@@ -957,28 +1043,22 @@ async fn handle_modal_input(app: &mut App, key: KeyEvent) {
                     app.toast(&format!("Unstaged {}", path.display()), "INFO");
                 }
             }
-            KeyCode::Char('a') => {
-                match app.git.stage_all() {
-                    Ok(()) => app.toast("Staged all files", "SUCCESS"),
-                    Err(e) => app.toast(&e, "ERROR"),
-                }
-            }
+            KeyCode::Char('a') => match app.git.stage_all() {
+                Ok(()) => app.toast("Staged all files", "SUCCESS"),
+                Err(e) => app.toast(&e, "ERROR"),
+            },
             KeyCode::Char('c') => {
                 app.prompt_input.clear();
                 app.modal = Modal::GitCommitPrompt;
             }
-            KeyCode::Char('P') => {
-                match app.git.push() {
-                    Ok(m) => app.toast(&m, "SUCCESS"),
-                    Err(e) => app.toast(&e, "ERROR"),
-                }
-            }
-            KeyCode::Char('p') => {
-                match app.git.pull() {
-                    Ok(m) => app.toast(&m, "SUCCESS"),
-                    Err(e) => app.toast(&e, "ERROR"),
-                }
-            }
+            KeyCode::Char('P') => match app.git.push() {
+                Ok(m) => app.toast(&m, "SUCCESS"),
+                Err(e) => app.toast(&e, "ERROR"),
+            },
+            KeyCode::Char('p') => match app.git.pull() {
+                Ok(m) => app.toast(&m, "SUCCESS"),
+                Err(e) => app.toast(&e, "ERROR"),
+            },
             KeyCode::Char('d') => {
                 if let Some(path) = get_git_selected_path(app) {
                     app.git.load_diff(Some(&path));
@@ -1028,7 +1108,8 @@ async fn handle_modal_input(app: &mut App, key: KeyEvent) {
             KeyCode::Esc => app.modal = Modal::None,
             KeyCode::Down | KeyCode::Char('j') => {
                 if !app.git.commit_history.is_empty() {
-                    app.git_log_selected = (app.git_log_selected + 1) % app.git.commit_history.len();
+                    app.git_log_selected =
+                        (app.git_log_selected + 1) % app.git.commit_history.len();
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
@@ -1104,7 +1185,9 @@ async fn handle_modal_input(app: &mut App, key: KeyEvent) {
                     }
                 }
                 KeyCode::Enter => {
-                    if let Some((path, line_num, _)) = app.grep_results.get(app.grep_selected).cloned() {
+                    if let Some((path, line_num, _)) =
+                        app.grep_results.get(app.grep_selected).cloned()
+                    {
                         app.modal = Modal::None;
                         if app.open_file(&path).is_ok() {
                             app.current_buffer_mut().goto_line(line_num);
@@ -1184,12 +1267,18 @@ async fn handle_modal_input(app: &mut App, key: KeyEvent) {
             KeyCode::Esc => app.modal = Modal::None,
             KeyCode::Down => {
                 let all = Backend::all();
-                let idx = all.iter().position(|b| b == &app.active_backend).unwrap_or(0);
+                let idx = all
+                    .iter()
+                    .position(|b| b == &app.active_backend)
+                    .unwrap_or(0);
                 app.active_backend = all[(idx + 1) % all.len()].clone();
             }
             KeyCode::Up => {
                 let all = Backend::all();
-                let idx = all.iter().position(|b| b == &app.active_backend).unwrap_or(0);
+                let idx = all
+                    .iter()
+                    .position(|b| b == &app.active_backend)
+                    .unwrap_or(0);
                 let next = if idx == 0 { all.len() - 1 } else { idx - 1 };
                 app.active_backend = all[next].clone();
             }
@@ -1264,7 +1353,13 @@ async fn handle_modal_input(app: &mut App, key: KeyEvent) {
                     app.modal = Modal::None;
                     if !name.is_empty() {
                         if let Ok(new_path) = app.explorer.rename_file(&name) {
-                            app.toast(&format!("Renamed to: {}", new_path.file_name().unwrap_or_default().to_string_lossy()), "SUCCESS");
+                            app.toast(
+                                &format!(
+                                    "Renamed to: {}",
+                                    new_path.file_name().unwrap_or_default().to_string_lossy()
+                                ),
+                                "SUCCESS",
+                            );
                         }
                     }
                 }
@@ -1373,10 +1468,15 @@ async fn handle_modal_input(app: &mut App, key: KeyEvent) {
             KeyCode::Up | KeyCode::Char('k') => {
                 app.text_viewer_scroll = app.text_viewer_scroll.saturating_sub(1);
             }
-            KeyCode::PageDown | KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) || key.code == KeyCode::PageDown => {
+            KeyCode::PageDown | KeyCode::Char('d')
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    || key.code == KeyCode::PageDown =>
+            {
                 app.text_viewer_scroll = app.text_viewer_scroll.saturating_add(15);
             }
-            KeyCode::PageUp | KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) || key.code == KeyCode::PageUp => {
+            KeyCode::PageUp | KeyCode::Char('u')
+                if key.modifiers.contains(KeyModifiers::CONTROL) || key.code == KeyCode::PageUp =>
+            {
                 app.text_viewer_scroll = app.text_viewer_scroll.saturating_sub(15);
             }
             KeyCode::Home => {
@@ -1413,7 +1513,10 @@ fn get_git_selected_path(app: &App) -> Option<PathBuf> {
 
 async fn handle_menu_key(app: &mut App, key: KeyEvent) {
     let tabs = MenuTab::all();
-    let cur_tab_idx = tabs.iter().position(|(_, t)| *t == app.active_menu).unwrap_or(0);
+    let cur_tab_idx = tabs
+        .iter()
+        .position(|(_, t)| *t == app.active_menu)
+        .unwrap_or(0);
 
     match key.code {
         KeyCode::Esc => {
@@ -1421,7 +1524,11 @@ async fn handle_menu_key(app: &mut App, key: KeyEvent) {
             app.menu_selected = 0;
         }
         KeyCode::Left => {
-            let next_tab_idx = if cur_tab_idx == 0 { tabs.len() - 1 } else { cur_tab_idx - 1 };
+            let next_tab_idx = if cur_tab_idx == 0 {
+                tabs.len() - 1
+            } else {
+                cur_tab_idx - 1
+            };
             app.active_menu = tabs[next_tab_idx].1;
             app.menu_selected = 0;
         }
@@ -1458,7 +1565,11 @@ async fn handle_menu_key(app: &mut App, key: KeyEvent) {
 fn handle_terminal_input(app: &mut App, key: KeyEvent) {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         match key.code {
-            KeyCode::Char('j') | KeyCode::Char('J') | KeyCode::Char('\n') | KeyCode::Char('t') | KeyCode::Char('T') => {
+            KeyCode::Char('j')
+            | KeyCode::Char('J')
+            | KeyCode::Char('\n')
+            | KeyCode::Char('t')
+            | KeyCode::Char('T') => {
                 app.show_terminal = false;
                 app.terminal_focused = false;
                 return;
@@ -1550,7 +1661,11 @@ async fn handle_explorer_input(app: &mut App, key: KeyEvent) {
         KeyCode::Up | KeyCode::Char('k') => {
             app.explorer.select_prev();
         }
-        KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('o') | KeyCode::Right | KeyCode::Char('l') => {
+        KeyCode::Enter
+        | KeyCode::Char(' ')
+        | KeyCode::Char('o')
+        | KeyCode::Right
+        | KeyCode::Char('l') => {
             if let Some(path) = app.explorer.selected_path().cloned() {
                 if path.is_dir() {
                     app.explorer.toggle_expand();
@@ -1562,10 +1677,22 @@ async fn handle_explorer_input(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Left | KeyCode::Char('h') => {
             if let Some(path) = app.explorer.selected_path().cloned() {
-                if path.is_dir() && app.explorer.root_node.find(&path).map(|n| n.expanded).unwrap_or(false) {
+                if path.is_dir()
+                    && app
+                        .explorer
+                        .root_node
+                        .find(&path)
+                        .map(|n| n.expanded)
+                        .unwrap_or(false)
+                {
                     app.explorer.toggle_expand();
                 } else if let Some(parent) = path.parent() {
-                    if let Some(pos) = app.explorer.flat_nodes.iter().position(|(p, _)| p == parent) {
+                    if let Some(pos) = app
+                        .explorer
+                        .flat_nodes
+                        .iter()
+                        .position(|(p, _)| p == parent)
+                    {
                         app.explorer.selected_index = pos;
                         app.explorer.adjust_scroll();
                     }
@@ -1607,7 +1734,13 @@ async fn handle_explorer_input(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char('p') => {
             if let Some(path) = app.explorer.selected_path().cloned() {
-                let target_dir = if path.is_dir() { path } else { path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf() };
+                let target_dir = if path.is_dir() {
+                    path
+                } else {
+                    path.parent()
+                        .unwrap_or(std::path::Path::new("."))
+                        .to_path_buf()
+                };
                 app.paste_file_clipboard(&target_dir);
             }
         }
@@ -1661,7 +1794,11 @@ pub async fn handle_mouse_event(app: &mut App, mouse: MouseEvent) {
 
             // 2. Check clicks on toast notification close buttons / popups
             for &(tx, ty, tw, th, idx) in &app.toast_close_positions {
-                if mouse.column >= tx && mouse.column < tx + tw && mouse.row >= ty && mouse.row < ty + th {
+                if mouse.column >= tx
+                    && mouse.column < tx + tw
+                    && mouse.row >= ty
+                    && mouse.row < ty + th
+                {
                     app.remove_toast(idx);
                     return;
                 }
@@ -1671,7 +1808,11 @@ pub async fn handle_mouse_event(app: &mut App, mouse: MouseEvent) {
             if app.active_menu != MenuTab::None {
                 // Check if clicked inside dropdown box
                 if let Some((dx, dy, dw, dh)) = app.menu_dropdown_rect {
-                    if mouse.column >= dx && mouse.column < dx + dw && mouse.row > dy && mouse.row < dy + dh - 1 {
+                    if mouse.column >= dx
+                        && mouse.column < dx + dw
+                        && mouse.row > dy
+                        && mouse.row < dy + dh - 1
+                    {
                         let item_idx = (mouse.row - (dy + 1)) as usize;
                         let items = app.active_menu.items();
                         if item_idx < items.len() {
@@ -1687,7 +1828,10 @@ pub async fn handle_mouse_event(app: &mut App, mouse: MouseEvent) {
                 // Check if clicked on top menu bar (Row 0)
                 if mouse.row == 0 {
                     // Check Run button
-                    if app.run_button_w > 0 && mouse.column >= app.run_button_x && mouse.column < app.run_button_x + app.run_button_w {
+                    if app.run_button_w > 0
+                        && mouse.column >= app.run_button_x
+                        && mouse.column < app.run_button_x + app.run_button_w
+                    {
                         app.active_menu = MenuTab::None;
                         app.menu_dropdown_rect = None;
                         app.execute_run();
@@ -1720,7 +1864,10 @@ pub async fn handle_mouse_event(app: &mut App, mouse: MouseEvent) {
             // 4. Normal Row 0 clicks (when menu was not open)
             if mouse.row == 0 {
                 // Check if Run Button was clicked
-                if app.run_button_w > 0 && mouse.column >= app.run_button_x && mouse.column < app.run_button_x + app.run_button_w {
+                if app.run_button_w > 0
+                    && mouse.column >= app.run_button_x
+                    && mouse.column < app.run_button_x + app.run_button_w
+                {
                     app.execute_run();
                     return;
                 }
@@ -1751,7 +1898,9 @@ pub async fn handle_mouse_event(app: &mut App, mouse: MouseEvent) {
 
             // 6. Row 1: Buffer tabs
             if mouse.row == 1 {
-                for &(start_x, close_btn_start_x, close_btn_end_x, buf_idx) in &app.tab_close_positions {
+                for &(start_x, close_btn_start_x, close_btn_end_x, buf_idx) in
+                    &app.tab_close_positions
+                {
                     if mouse.column >= start_x && mouse.column < close_btn_start_x {
                         // Clicked on tab body -> switch active buffer
                         app.active_buffer = buf_idx;
@@ -1808,7 +1957,8 @@ pub async fn handle_mouse_event(app: &mut App, mouse: MouseEvent) {
                                 let line_mode = app.line_number_mode;
                                 let buf = &mut app.buffers[buf_idx];
                                 let row_offset = (mouse.row - (pane_rect.y + 1)) as usize;
-                                let target_line = (buf.scroll_top + row_offset).min(buf.lines.len().saturating_sub(1));
+                                let target_line = (buf.scroll_top + row_offset)
+                                    .min(buf.lines.len().saturating_sub(1));
                                 buf.cursor.line = target_line;
 
                                 let digits = buf.lines.len().to_string().len().max(2);
@@ -1859,7 +2009,8 @@ pub async fn handle_mouse_event(app: &mut App, mouse: MouseEvent) {
                             let line_mode = app.line_number_mode;
                             let buf = &mut app.buffers[buf_idx];
                             let row_offset = (mouse.row - (pane_rect.y + 1)) as usize;
-                            let target_line = (buf.scroll_top + row_offset).min(buf.lines.len().saturating_sub(1));
+                            let target_line = (buf.scroll_top + row_offset)
+                                .min(buf.lines.len().saturating_sub(1));
 
                             let digits = buf.lines.len().to_string().len().max(2);
                             let num_width = match line_mode {
@@ -1908,7 +2059,11 @@ pub async fn handle_mouse_event(app: &mut App, mouse: MouseEvent) {
                 }
 
                 if let Some((dx, dy, dw, dh)) = app.menu_dropdown_rect {
-                    if mouse.column >= dx && mouse.column < dx + dw && mouse.row > dy && mouse.row < dy + dh - 1 {
+                    if mouse.column >= dx
+                        && mouse.column < dx + dw
+                        && mouse.row > dy
+                        && mouse.row < dy + dh - 1
+                    {
                         let item_idx = (mouse.row - (dy + 1)) as usize;
                         let items = app.active_menu.items();
                         if item_idx < items.len() {
@@ -1922,7 +2077,11 @@ pub async fn handle_mouse_event(app: &mut App, mouse: MouseEvent) {
             if let Some(mut ctx) = app.explorer_context_menu.clone() {
                 let menu_w = 22u16;
                 let menu_h = 10u16;
-                if mouse.column >= ctx.x && mouse.column < ctx.x + menu_w && mouse.row > ctx.y && mouse.row < ctx.y + menu_h - 1 {
+                if mouse.column >= ctx.x
+                    && mouse.column < ctx.x + menu_w
+                    && mouse.row > ctx.y
+                    && mouse.row < ctx.y + menu_h - 1
+                {
                     let item_idx = (mouse.row - (ctx.y + 1)) as usize;
                     if item_idx < 8 {
                         ctx.selected_index = item_idx;
@@ -1937,8 +2096,10 @@ pub async fn handle_mouse_event(app: &mut App, mouse: MouseEvent) {
                 return;
             }
             if let Some(bottom_rect) = app.bottom_panel_rect {
-                if mouse.row >= bottom_rect.y && mouse.row < bottom_rect.y + bottom_rect.height
-                    && mouse.column >= bottom_rect.x && mouse.column < bottom_rect.x + bottom_rect.width
+                if mouse.row >= bottom_rect.y
+                    && mouse.row < bottom_rect.y + bottom_rect.height
+                    && mouse.column >= bottom_rect.x
+                    && mouse.column < bottom_rect.x + bottom_rect.width
                 {
                     if app.show_output {
                         app.output_scroll = app.output_scroll.saturating_sub(3);
@@ -1961,8 +2122,10 @@ pub async fn handle_mouse_event(app: &mut App, mouse: MouseEvent) {
                 return;
             }
             if let Some(bottom_rect) = app.bottom_panel_rect {
-                if mouse.row >= bottom_rect.y && mouse.row < bottom_rect.y + bottom_rect.height
-                    && mouse.column >= bottom_rect.x && mouse.column < bottom_rect.x + bottom_rect.width
+                if mouse.row >= bottom_rect.y
+                    && mouse.row < bottom_rect.y + bottom_rect.height
+                    && mouse.column >= bottom_rect.x
+                    && mouse.column < bottom_rect.x + bottom_rect.width
                 {
                     if app.show_output {
                         app.output_scroll = app.output_scroll.saturating_add(3);
@@ -1976,7 +2139,8 @@ pub async fn handle_mouse_event(app: &mut App, mouse: MouseEvent) {
             if app.show_explorer && mouse.column < 28 {
                 app.explorer.scroll_up(3);
             } else {
-                app.current_buffer_mut().scroll_top = app.current_buffer().scroll_top.saturating_sub(3);
+                app.current_buffer_mut().scroll_top =
+                    app.current_buffer().scroll_top.saturating_sub(3);
             }
         }
         MouseEventKind::Up(MouseButton::Left) => {

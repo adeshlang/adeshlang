@@ -115,11 +115,21 @@ pub fn call_tuple_method(obj: &Value, name: &str, args: &[Value]) -> Result<Valu
         }
         "indexOf" => {
             let v = args.first().ok_or_else(|| err("indexOf(value)"))?;
-            Ok(Value::Number(values.iter().position(|x| equals(x, v)).map(|i| i as f64).unwrap_or(-1.0)))
+            Ok(Value::Number(
+                values
+                    .iter()
+                    .position(|x| equals(x, v))
+                    .map(|i| i as f64)
+                    .unwrap_or(-1.0),
+            ))
         }
         "slice" => {
             let start = args.first().map(integer).transpose()?.unwrap_or(0);
-            let end = args.get(1).map(integer).transpose()?.unwrap_or(values.len());
+            let end = args
+                .get(1)
+                .map(integer)
+                .transpose()?
+                .unwrap_or(values.len());
             // Normalize bounds: clamp to [0, len], then ensure start <= end.
             let len = values.len();
             let start = start.min(len);
@@ -142,27 +152,50 @@ pub fn call_object_method(obj: &Value, name: &str, args: &[Value]) -> Result<Val
         "has" | "containsKey" | "contains_key" => {
             let key = match args.first().ok_or_else(|| err("has(key)"))? {
                 Value::Str(s) => s,
-                other => return Err(err(format!("dictionary keys must be strings, got {}", fmt(other)))),
+                other => {
+                    return Err(err(format!(
+                        "dictionary keys must be strings, got {}",
+                        fmt(other)
+                    )));
+                }
             };
             Ok(Value::Bool(map.contains_key(key)))
         }
         "get" => {
             let key = match args.first().ok_or_else(|| err("get(key)"))? {
                 Value::Str(s) => s,
-                other => return Err(err(format!("dictionary keys must be strings, got {}", fmt(other)))),
+                other => {
+                    return Err(err(format!(
+                        "dictionary keys must be strings, got {}",
+                        fmt(other)
+                    )));
+                }
             };
             Ok(map.get(key).cloned().unwrap_or(Value::Null))
         }
         "getOr" => {
             let key = match args.first().ok_or_else(|| err("getOr(key, default)"))? {
                 Value::Str(s) => s,
-                other => return Err(err(format!("dictionary keys must be strings, got {}", fmt(other)))),
+                other => {
+                    return Err(err(format!(
+                        "dictionary keys must be strings, got {}",
+                        fmt(other)
+                    )));
+                }
             };
-            Ok(map.get(key).cloned().or_else(|| args.get(1).cloned()).unwrap_or(Value::Null))
+            Ok(map
+                .get(key)
+                .cloned()
+                .or_else(|| args.get(1).cloned())
+                .unwrap_or(Value::Null))
         }
         "keys" => Ok(Value::Array(map.keys().cloned().map(Value::Str).collect())),
         "values" => Ok(Value::Array(map.values().cloned().collect())),
-        "entries" => Ok(Value::Array(map.iter().map(|(k, v)| Value::Tuple(vec![Value::Str(k.clone()), v.clone()])).collect())),
+        "entries" => Ok(Value::Array(
+            map.iter()
+                .map(|(k, v)| Value::Tuple(vec![Value::Str(k.clone()), v.clone()]))
+                .collect(),
+        )),
         "merge" => {
             let other = match args.first().ok_or_else(|| err("merge(dictionary)"))? {
                 Value::Object(v) => v,
@@ -195,14 +228,23 @@ pub fn call_number_method(obj: &Value, name: &str, args: &[Value]) -> Result<Val
         "isInteger" | "is_integer" => Ok(Value::Bool(n.is_finite() && n.fract() == 0.0)),
         "isEven" | "is_even" => Ok(Value::Bool(n.fract() == 0.0 && (n as i128) % 2 == 0)),
         "isOdd" | "is_odd" => Ok(Value::Bool(n.fract() == 0.0 && (n as i128) % 2 != 0)),
-        "pow" => Ok(Value::Number(n.powf(number(args.first().ok_or_else(|| err("pow(exponent)"))?).ok_or_else(|| err("exponent must be numeric"))?))),
+        "pow" => Ok(Value::Number(
+            n.powf(
+                number(args.first().ok_or_else(|| err("pow(exponent)"))?)
+                    .ok_or_else(|| err("exponent must be numeric"))?,
+            ),
+        )),
         "clamp" => {
-            let min = number(args.first().ok_or_else(|| err("clamp(min, max)"))?).ok_or_else(|| err("min must be numeric"))?;
-            let max = number(args.get(1).ok_or_else(|| err("clamp(min, max)"))?).ok_or_else(|| err("max must be numeric"))?;
+            let min = number(args.first().ok_or_else(|| err("clamp(min, max)"))?)
+                .ok_or_else(|| err("min must be numeric"))?;
+            let max = number(args.get(1).ok_or_else(|| err("clamp(min, max)"))?)
+                .ok_or_else(|| err("max must be numeric"))?;
             // Validate that min <= max — Rust's f64::clamp panics if min > max,
             // so we return a language-level error instead.
             if min > max {
-                return Err(err("clamp(min, max): min must be less than or equal to max"));
+                return Err(err(
+                    "clamp(min, max): min must be less than or equal to max",
+                ));
             }
             Ok(Value::Number(n.clamp(min, max)))
         }
@@ -228,7 +270,8 @@ pub fn call_complex_method(obj: &Value, name: &str, args: &[Value]) -> Result<Va
             let (exp_r, exp_i) = match arg {
                 Value::Complex(cr, ci) => (*cr, *ci),
                 other => {
-                    let r = number(other).ok_or_else(|| err("exponent must be numeric or complex"))?;
+                    let r =
+                        number(other).ok_or_else(|| err("exponent must be numeric or complex"))?;
                     (r, 0.0)
                 }
             };

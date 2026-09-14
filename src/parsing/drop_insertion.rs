@@ -156,9 +156,10 @@ impl DropPlanner {
                 is_borrowed,
                 ..
             } => {
-                let needs_drop = is_borrowed.is_none() || init.as_ref().map_or(false, |e| {
-                    matches!(e, HirExpr::Share(_) | HirExpr::Downgrade(_))
-                });
+                let needs_drop = is_borrowed.is_none()
+                    || init.as_ref().map_or(false, |e| {
+                        matches!(e, HirExpr::Share(_) | HirExpr::Downgrade(_))
+                    });
                 if needs_drop {
                     if let Some(top) = scopes.drops_by_scope.last_mut() {
                         top.push(name.clone());

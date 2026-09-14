@@ -6,6 +6,9 @@ description = "Adesh Language Server - LSP implementation for the Adesh programm
 license = "MIT"
 authors = ["Adesh Team"]
 
+[lints]
+workspace = true
+
 [dependencies]
 # LSP Protocol
 lsp-server = "0.7"

@@ -152,7 +152,8 @@ impl AtpStream {
 
     /// Remove completed messages.
     pub fn cleanup_completed(&mut self) {
-        self.send_messages.retain(|_, m| !m.complete && !m.cancelled);
+        self.send_messages
+            .retain(|_, m| !m.complete && !m.cancelled);
     }
 
     /// Get messages that have unacked fragments (need retransmission).
@@ -177,8 +178,8 @@ impl AtpStream {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::message::ReliabilityMode;
+    use super::*;
 
     #[test]
     fn test_stream_lifecycle() {

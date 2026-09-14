@@ -180,7 +180,9 @@ fn u64_atom(init: u64) -> Value {
     let mut m = HashMap::default();
     let x = a.clone();
     insert_fn(&mut m, "load", move |_env, args| {
-        Ok(Value::Number(x.load(memory_order_from(args.first())?) as f64))
+        Ok(Value::Number(
+            x.load(memory_order_from(args.first())?) as f64
+        ))
     });
     let x = a.clone();
     insert_fn(&mut m, "store", move |_env, args| {
@@ -258,10 +260,7 @@ pub fn atomic_namespace() -> Value {
     ] {
         m.insert(k.to_string(), ctor(k));
     }
-    m.insert(
-        "Relaxed".into(),
-        Value::Str("Relaxed".into()),
-    );
+    m.insert("Relaxed".into(), Value::Str("Relaxed".into()));
     m.insert("Acquire".into(), Value::Str("Acquire".into()));
     m.insert("Release".into(), Value::Str("Release".into()));
     m.insert("AcqRel".into(), Value::Str("AcqRel".into()));

@@ -5,7 +5,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub const SUPPORTED_LLVM_MAJOR: u32 = 18;
+pub const SUPPORTED_LLVM_MAJOR: u32 = 23;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolchainPreference {
@@ -53,19 +53,51 @@ fn executable_name(name: &str) -> String {
 }
 
 pub fn installation_home() -> Option<PathBuf> {
-    env::var_os("ADESH_HOME")
-        .or_else(|| env::var_os("ADESHLANG_HOME"))
-        .map(PathBuf::from)
-        .or_else(|| {
-            let exe = env::current_exe().ok()?;
-            let bin = exe.parent()?;
-            let home = if bin.file_name().and_then(|v| v.to_str()) == Some("bin") {
-                bin.parent()?
+    // 1. Check if the currently running executable is inside a valid installation directory
+    if let Ok(exe) = env::current_exe() {
+        if let Some(bin) = exe.parent() {
+            let candidate_root = if bin.file_name().and_then(|v| v.to_str()) == Some("bin") {
+                bin.parent().unwrap_or(bin)
             } else {
                 bin
             };
-            Some(home.to_path_buf())
-        })
+            // If the candidate root exists and contains a standard component (std, lib, bin, or toolchain)
+            if candidate_root.join("std").exists()
+                || candidate_root.join("lib").exists()
+                || candidate_root.join("bin").exists()
+                || candidate_root.join("toolchain").exists()
+            {
+                return Some(candidate_root.to_path_buf());
+            }
+        }
+    }
+
+    // 2. Check explicit ADESH_HOME / ADESHLANG_HOME environment variable (if valid on disk)
+    if let Some(env_path) = env::var_os("ADESH_HOME")
+        .or_else(|| env::var_os("ADESHLANG_HOME"))
+        .map(PathBuf::from)
+    {
+        if env_path.exists() {
+            return Some(env_path);
+        }
+    }
+
+    // 3. Fallback to executable parent directory
+    if let Ok(exe) = env::current_exe() {
+        if let Some(bin) = exe.parent() {
+            let home = if bin.file_name().and_then(|v| v.to_str()) == Some("bin") {
+                bin.parent().unwrap_or(bin)
+            } else {
+                bin
+            };
+            return Some(home.to_path_buf());
+        }
+    }
+
+    // 4. Return environment variable even if missing (for diagnostic reporting)
+    env::var_os("ADESH_HOME")
+        .or_else(|| env::var_os("ADESHLANG_HOME"))
+        .map(PathBuf::from)
 }
 
 pub fn bundled_root() -> Option<PathBuf> {
@@ -132,7 +164,9 @@ pub fn tool_version(tool: &Path) -> Option<String> {
 }
 
 pub fn is_compatible(version: Option<&str>) -> bool {
-    version.and_then(|v| v.split('.').next()?.parse::<u32>().ok()) == Some(SUPPORTED_LLVM_MAJOR)
+    version
+        .and_then(|v| v.split('.').next()?.parse::<u32>().ok())
+        .is_some_and(|major| major >= 18)
 }
 
 /// A pre-existing toolchain is accepted regardless of version: if any LLVM

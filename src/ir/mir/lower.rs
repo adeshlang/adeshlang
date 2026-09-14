@@ -438,68 +438,66 @@ fn lower_statement(
             target,
             value,
             is_move: _,
-        } => {
-            match target {
-                HirExpr::LoadVar(name) => {
-                    let local_id = ctx
-                        .borrow()
-                        .get_var(name)
-                        .ok_or_else(|| format!("Undefined variable: {}", name))?;
+        } => match target {
+            HirExpr::LoadVar(name) => {
+                let local_id = ctx
+                    .borrow()
+                    .get_var(name)
+                    .ok_or_else(|| format!("Undefined variable: {}", name))?;
 
-                    let rvalue = lower_expr_to_rvalue(value, block, func, ctx)?;
-                    block
-                        .statements
-                        .push(MirStatement::Assign(local_id, rvalue));
-                }
-                HirExpr::MemberAccess(obj, field) => {
-                    let set_expr =
-                        HirExpr::SetMember(obj.clone(), field.clone(), Box::new(value.clone()));
-                    let _ = lower_expr_to_rvalue(&set_expr, block, func, ctx)?;
-                }
-                HirExpr::Index(arr, idx) => {
-                    let arr_temp = ctx.borrow_mut().next_local();
-                    let arr_rval = lower_expr_to_rvalue(arr, block, func, ctx)?;
-                    block
-                        .statements
-                        .push(MirStatement::Assign(arr_temp, arr_rval));
-
-                    let idx_temp = ctx.borrow_mut().next_local();
-                    let idx_rval = lower_expr_to_rvalue(idx, block, func, ctx)?;
-                    block
-                        .statements
-                        .push(MirStatement::Assign(idx_temp, idx_rval));
-
-                    let val_temp = ctx.borrow_mut().next_local();
-                    let val_rval = lower_expr_to_rvalue(value, block, func, ctx)?;
-                    block
-                        .statements
-                        .push(MirStatement::Assign(val_temp, val_rval));
-
-                    let dummy = ctx.borrow_mut().next_local();
-                    block.statements.push(MirStatement::Call {
-                        dest: dummy,
-                        func: MirOperand::Constant(MirConstant::String("set_index".to_string())),
-                        args: vec![
-                            MirOperand::Copy(MirPlace {
-                                local: arr_temp,
-                                projection: Vec::new(),
-                            }),
-                            MirOperand::Copy(MirPlace {
-                                local: idx_temp,
-                                projection: Vec::new(),
-                            }),
-                            MirOperand::Copy(MirPlace {
-                                local: val_temp,
-                                projection: Vec::new(),
-                            }),
-                        ],
-                    });
-                }
-                _ => {
-                    return Err(format!("Unsupported assignment target: {:?}", target));
-                }
+                let rvalue = lower_expr_to_rvalue(value, block, func, ctx)?;
+                block
+                    .statements
+                    .push(MirStatement::Assign(local_id, rvalue));
             }
-        }
+            HirExpr::MemberAccess(obj, field) => {
+                let set_expr =
+                    HirExpr::SetMember(obj.clone(), field.clone(), Box::new(value.clone()));
+                let _ = lower_expr_to_rvalue(&set_expr, block, func, ctx)?;
+            }
+            HirExpr::Index(arr, idx) => {
+                let arr_temp = ctx.borrow_mut().next_local();
+                let arr_rval = lower_expr_to_rvalue(arr, block, func, ctx)?;
+                block
+                    .statements
+                    .push(MirStatement::Assign(arr_temp, arr_rval));
+
+                let idx_temp = ctx.borrow_mut().next_local();
+                let idx_rval = lower_expr_to_rvalue(idx, block, func, ctx)?;
+                block
+                    .statements
+                    .push(MirStatement::Assign(idx_temp, idx_rval));
+
+                let val_temp = ctx.borrow_mut().next_local();
+                let val_rval = lower_expr_to_rvalue(value, block, func, ctx)?;
+                block
+                    .statements
+                    .push(MirStatement::Assign(val_temp, val_rval));
+
+                let dummy = ctx.borrow_mut().next_local();
+                block.statements.push(MirStatement::Call {
+                    dest: dummy,
+                    func: MirOperand::Constant(MirConstant::String("set_index".to_string())),
+                    args: vec![
+                        MirOperand::Copy(MirPlace {
+                            local: arr_temp,
+                            projection: Vec::new(),
+                        }),
+                        MirOperand::Copy(MirPlace {
+                            local: idx_temp,
+                            projection: Vec::new(),
+                        }),
+                        MirOperand::Copy(MirPlace {
+                            local: val_temp,
+                            projection: Vec::new(),
+                        }),
+                    ],
+                });
+            }
+            _ => {
+                return Err(format!("Unsupported assignment target: {:?}", target));
+            }
+        },
 
         HirStmt::Expr(expr) => {
             // Expression statement - evaluate for side effects
@@ -605,11 +603,11 @@ fn lower_statement_cfg(
             is_move: _,
         } => {
             let current_id = ctx.borrow().current_block_id;
-            let block_ptr =
-                func.body
-                    .iter_mut()
-                    .find(|b| b.id == current_id)
-                    .ok_or("Current block not found")? as *mut MirBlock;
+            let block_ptr = func
+                .body
+                .iter_mut()
+                .find(|b| b.id == current_id)
+                .ok_or("Current block not found")? as *mut MirBlock;
 
             match target {
                 HirExpr::LoadVar(name) => {
@@ -634,45 +632,40 @@ fn lower_statement_cfg(
                         let _ = lower_expr_to_rvalue(&set_expr, &mut *block_ptr, func, ctx)?;
                     }
                 }
-                HirExpr::Index(arr, idx) => {
-                    unsafe {
-                        let b = &mut *block_ptr;
-                        let arr_temp = ctx.borrow_mut().next_local();
-                        let arr_rval = lower_expr_to_rvalue(arr, b, func, ctx)?;
-                        b.statements
-                            .push(MirStatement::Assign(arr_temp, arr_rval));
+                HirExpr::Index(arr, idx) => unsafe {
+                    let b = &mut *block_ptr;
+                    let arr_temp = ctx.borrow_mut().next_local();
+                    let arr_rval = lower_expr_to_rvalue(arr, b, func, ctx)?;
+                    b.statements.push(MirStatement::Assign(arr_temp, arr_rval));
 
-                        let idx_temp = ctx.borrow_mut().next_local();
-                        let idx_rval = lower_expr_to_rvalue(idx, b, func, ctx)?;
-                        b.statements
-                            .push(MirStatement::Assign(idx_temp, idx_rval));
+                    let idx_temp = ctx.borrow_mut().next_local();
+                    let idx_rval = lower_expr_to_rvalue(idx, b, func, ctx)?;
+                    b.statements.push(MirStatement::Assign(idx_temp, idx_rval));
 
-                        let val_temp = ctx.borrow_mut().next_local();
-                        let val_rval = lower_expr_to_rvalue(value, b, func, ctx)?;
-                        b.statements
-                            .push(MirStatement::Assign(val_temp, val_rval));
+                    let val_temp = ctx.borrow_mut().next_local();
+                    let val_rval = lower_expr_to_rvalue(value, b, func, ctx)?;
+                    b.statements.push(MirStatement::Assign(val_temp, val_rval));
 
-                        let dummy = ctx.borrow_mut().next_local();
-                        b.statements.push(MirStatement::Call {
-                            dest: dummy,
-                            func: MirOperand::Constant(MirConstant::String("set_index".to_string())),
-                            args: vec![
-                                MirOperand::Copy(MirPlace {
-                                    local: arr_temp,
-                                    projection: Vec::new(),
-                                }),
-                                MirOperand::Copy(MirPlace {
-                                    local: idx_temp,
-                                    projection: Vec::new(),
-                                }),
-                                MirOperand::Copy(MirPlace {
-                                    local: val_temp,
-                                    projection: Vec::new(),
-                                }),
-                            ],
-                        });
-                    }
-                }
+                    let dummy = ctx.borrow_mut().next_local();
+                    b.statements.push(MirStatement::Call {
+                        dest: dummy,
+                        func: MirOperand::Constant(MirConstant::String("set_index".to_string())),
+                        args: vec![
+                            MirOperand::Copy(MirPlace {
+                                local: arr_temp,
+                                projection: Vec::new(),
+                            }),
+                            MirOperand::Copy(MirPlace {
+                                local: idx_temp,
+                                projection: Vec::new(),
+                            }),
+                            MirOperand::Copy(MirPlace {
+                                local: val_temp,
+                                projection: Vec::new(),
+                            }),
+                        ],
+                    });
+                },
                 _ => {
                     return Err(format!("Unsupported assignment target: {:?}", target));
                 }
@@ -1793,11 +1786,7 @@ fn lower_expr_to_rvalue(
                 }
             }
 
-            let ret_local = if *is_prefix {
-                new_temp
-            } else {
-                target_temp
-            };
+            let ret_local = if *is_prefix { new_temp } else { target_temp };
             Ok(MirRvalue::Use(MirOperand::Copy(MirPlace {
                 local: ret_local,
                 projection: Vec::new(),

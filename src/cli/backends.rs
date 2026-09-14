@@ -487,7 +487,10 @@ pub fn run_with_mlir_gpu(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Resu
     let toolchain = gpu::detect_toolchain(resolved_target);
     if !toolchain.is_available() {
         if !parsed.config.quiet {
-            println!("  ⚠ GPU toolchain not found (MLIR written to {}). Falling back to interpreter.", mlir_path.display());
+            println!(
+                "  ⚠ GPU toolchain not found (MLIR written to {}). Falling back to interpreter.",
+                mlir_path.display()
+            );
         }
         return run_interpreter_fallback(path, src, parsed, &mlir_path, &mlir_path);
     }
@@ -745,15 +748,17 @@ fn gpu_pass_pipeline(target: crate::toolchain::config::GpuTarget) -> String {
 
 /// Run program using AOT (Ahead-of-Time Cranelift compilation)
 pub fn run_with_aot(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Result<(), String> {
-    use crate::backends::cranelift_aot::aot_compile_with_options;
     use crate::backends::aot::cranelift::AotOptions;
+    use crate::backends::cranelift_aot::aot_compile_with_options;
     use std::process::Command;
 
     let body = super::directives::strip_compile_directive(src).to_string();
     ensure_type_check(&body, Some(&path.to_string_lossy()))?;
 
     let mut progress = if !parsed.config.quiet {
-        Some(BuildProgress::new("Compiling with AOT Cranelift backend..."))
+        Some(BuildProgress::new(
+            "Compiling with AOT Cranelift backend...",
+        ))
     } else {
         None
     };
@@ -795,7 +800,10 @@ pub fn run_with_aot(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Result<()
                 p.fail("AOT compilation failed");
             }
             if parsed.config.verbose {
-                eprintln!("[aot] compile failed: {}\n[aot] Falling back to interpreter...", e);
+                eprintln!(
+                    "[aot] compile failed: {}\n[aot] Falling back to interpreter...",
+                    e
+                );
             }
             match run_with_interpreter(path, src, parsed) {
                 Ok(_) => Ok(()),
@@ -844,7 +852,9 @@ pub fn run_with_wasm(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Result<(
             } else {
                 // If standalone wasm runtime isn't installed, execute via interpreter fallback
                 if parsed.config.verbose {
-                    eprintln!("[wasm] No standalone wasm runtime (wasmtime) found; falling back to interpreter.");
+                    eprintln!(
+                        "[wasm] No standalone wasm runtime (wasmtime) found; falling back to interpreter."
+                    );
                 }
                 match run_with_interpreter(path, src, parsed) {
                     Ok(_) => Ok(()),
@@ -857,7 +867,10 @@ pub fn run_with_wasm(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Result<(
                 p.fail("WebAssembly compilation failed");
             }
             if parsed.config.verbose {
-                eprintln!("[wasm] compile failed: {}\n[wasm] Falling back to interpreter...", e);
+                eprintln!(
+                    "[wasm] compile failed: {}\n[wasm] Falling back to interpreter...",
+                    e
+                );
             }
             match run_with_interpreter(path, src, parsed) {
                 Ok(_) => Ok(()),

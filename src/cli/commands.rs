@@ -2,7 +2,6 @@
 //!
 //! This module provides implementations for various CLI commands.
 
-use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -11,68 +10,114 @@ pub fn usage() {
     eprintln!("{}", crate::cli::help_message());
 }
 
-/// Initialize a new project directory
+/// Initialize a new project directory using the ADL ecosystem layout
 pub fn cmd_init(dir: &str) -> std::io::Result<()> {
     let root = PathBuf::from(dir);
-    std::fs::create_dir_all(&root)?;
-    let main = r#"
-import "./utils.adesh" as u;
+    let project_name = root
+        .file_name()
+        .and_then(|n| n.to_str())
+        .filter(|s| !s.is_empty() && *s != ".")
+        .unwrap_or("my_app");
 
-export let PI = 3.14159;
+    let layout = crate::ecosystem::project::ProjectLayout::new(&root);
+    if let Err(e) = layout.create_template(
+        crate::ecosystem::project::ProjectTemplate::App,
+        project_name,
+    ) {
+        return Err(std::io::Error::new(std::io::ErrorKind::Other, e));
+    }
 
-fn double(x){ return x * 2; }
-export fn timesTwo(x){ return double(x); }
-
-class Counter {
-  fn init(n){ this.n = n; }
-  fn inc(){ this.n = this.n + 1; }
-  fn value(){ return this.n; }
-}
-
-let c = new Counter(5);
-c.inc();
-print(c.value());
-
-let xs = [1,2,3,4];
-let ys = map(xs, fn(x){ return x*10; });
-print(ys);
-
-try {
-  throw Error("Custom error message");
-} catch(e) {
-  print("Caught: " + e);
-}
-
-print(u.utilAdd(10, 22));
-"#;
-    let utils = r#"export fn utilAdd(a,b){ return a + b; }"#;
-    fs::write(root.join("main.adesh"), main.trim_start())?;
-    fs::write(root.join("utils.adesh"), utils)?;
-    println!("Initialized language project in {}", dir);
+    println!(
+        "Initialized modern AdeshLang project in: {}",
+        root.display()
+    );
+    println!("\nNext steps:");
+    println!("  cd {}", dir);
+    println!("  adl run     # or: adesh run src/main.adesh");
+    println!("  adl build   # or: adesh build src/main.adesh");
+    println!("  adl test");
     Ok(())
 }
 
-/// Resolves the optimal Python binary, prioritizing local project virtual environments (ai/.venv, .venv).
-fn resolve_python_binary() -> PathBuf {
-    // 1. Check ai/.venv
-    #[cfg(windows)]
-    let venv_candidates = [
-        PathBuf::from("ai").join(".venv").join("Scripts").join("python.exe"),
-        PathBuf::from(".venv").join("Scripts").join("python.exe"),
-    ];
-    #[cfg(not(windows))]
-    let venv_candidates = [
-        PathBuf::from("ai").join(".venv").join("bin").join("python"),
-        PathBuf::from(".venv").join("bin").join("python"),
-    ];
+/// Check if a python executable or command is functional (filters out Microsoft Store 0-byte execution aliases)
+fn is_functional_python(bin: &std::path::Path) -> bool {
+    let path_str = bin.to_string_lossy();
+    if path_str.contains("WindowsApps") {
+        return false;
+    }
 
-    for candidate in &venv_candidates {
-        if candidate.exists() {
-            return candidate.clone();
+    let result = Command::new(bin)
+        .args(["-c", "import sys; sys.exit(0)"])
+        .output();
+    match result {
+        Ok(output) => output.status.success(),
+        Err(_) => false,
+    }
+}
+
+/// Resolves the optimal functional Python binary, prioritizing local venvs, ADESH_HOME venvs, py launcher, and system installs.
+fn resolve_python_binary() -> Option<PathBuf> {
+    // 1. Explicit environment override
+    for env_var in ["ADESH_PYTHON", "PYTHON"] {
+        if let Ok(val) = std::env::var(env_var) {
+            let path = PathBuf::from(val);
+            if is_functional_python(&path) {
+                return Some(path);
+            }
         }
     }
 
-    // 2. Check active VIRTUAL_ENV environment variable
+    // 2. Check local and ADESH_HOME virtual environments
+    let mut venv_candidates = Vec::new();
+    #[cfg(windows)]
+    {
+        venv_candidates.push(
+            PathBuf::from("ai")
+                .join(".venv")
+                .join("Scripts")
+                .join("python.exe"),
+        );
+        venv_candidates.push(PathBuf::from(".venv").join("Scripts").join("python.exe"));
+    }
+    #[cfg(not(windows))]
+    {
+        venv_candidates.push(PathBuf::from("ai").join(".venv").join("bin").join("python"));
+        venv_candidates.push(PathBuf::from(".venv").join("bin").join("python"));
+    }
+
+    if let Ok(home) = std::env::var("ADESH_HOME").or_else(|_| std::env::var("ADESHLANG_HOME")) {
+        let home_path = PathBuf::from(home);
+        #[cfg(windows)]
+        {
+            venv_candidates.push(
+                home_path
+                    .join("ai")
+                    .join(".venv")
+                    .join("Scripts")
+                    .join("python.exe"),
+            );
+            venv_candidates.push(home_path.join(".venv").join("Scripts").join("python.exe"));
+        }
+        #[cfg(not(windows))]
+        {
+            venv_candidates.push(
+                home_path
+                    .join("ai")
+                    .join(".venv")
+                    .join("bin")
+                    .join("python"),
+            );
+            venv_candidates.push(home_path.join(".venv").join("bin").join("python"));
+        }
+    }
+
+    for candidate in &venv_candidates {
+        if candidate.exists() && is_functional_python(candidate) {
+            return Some(candidate.clone());
+        }
+    }
+
+    // 3. Check active VIRTUAL_ENV environment variable
     if let Ok(venv_root) = std::env::var("VIRTUAL_ENV") {
         let venv_path = PathBuf::from(venv_root);
         #[cfg(windows)]
@@ -80,17 +125,57 @@ fn resolve_python_binary() -> PathBuf {
         #[cfg(not(windows))]
         let venv_python = venv_path.join("bin").join("python");
 
-        if venv_python.exists() {
-            return venv_python;
+        if is_functional_python(&venv_python) {
+            return Some(venv_python);
         }
     }
 
-    // 3. Fallback to system python3 or python
-    if Command::new("python3").arg("--version").output().is_ok() {
-        PathBuf::from("python3")
-    } else {
-        PathBuf::from("python")
+    // 4. Check Windows standard python install paths
+    #[cfg(windows)]
+    {
+        let mut standard_paths = Vec::new();
+        for ver in ["313", "312", "311", "310", "39"] {
+            standard_paths.push(PathBuf::from(format!(
+                "C:\\Program Files\\Python{ver}\\python.exe"
+            )));
+            standard_paths.push(PathBuf::from(format!("C:\\Python{ver}\\python.exe")));
+            if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+                standard_paths.push(
+                    PathBuf::from(local_app_data)
+                        .join(format!("Programs\\Python\\Python{ver}\\python.exe")),
+                );
+            }
+        }
+        for path in standard_paths {
+            if path.exists() && is_functional_python(&path) {
+                return Some(path);
+            }
+        }
     }
+
+    // 5. Check py launcher (standard on Windows)
+    #[cfg(windows)]
+    {
+        let py_cand = PathBuf::from("py.exe");
+        let result = Command::new(&py_cand)
+            .args(["-3", "-c", "import sys; sys.exit(0)"])
+            .output();
+        if let Ok(out) = result {
+            if out.status.success() {
+                return Some(py_cand);
+            }
+        }
+    }
+
+    // 6. Check system python3 or python on PATH
+    for cmd in ["python3", "python"] {
+        let path = PathBuf::from(cmd);
+        if is_functional_python(&path) {
+            return Some(path);
+        }
+    }
+
+    None
 }
 
 /// Execute AdeshLang AI commands (`adesh ai info|status|setup|train|evaluate|generate|explain|fix|chat`)
@@ -104,50 +189,94 @@ pub fn execute_ai_command(args: &[String]) {
         return;
     }
 
-    let python_bin = resolve_python_binary();
-    let mut cmd = Command::new(&python_bin);
-
-    if args.first().map(|s| s.as_str()) == Some("train") {
-        cmd.arg("-m").arg("ai.training.train");
-        cmd.args(&args[1..]);
-    } else if args.first().map(|s| s.as_str()) == Some("evaluate") {
-        cmd.arg("-m").arg("ai.evaluation.evaluate");
-        cmd.args(&args[1..]);
-    } else {
-        cmd.arg("-m").arg("ai.inference");
-        cmd.args(args);
+    // Check if AI model update is requested
+    if args.first().map(|s| s.as_str()) == Some("update") {
+        crate::update::execute_ai_update_command(&args[1..]);
+        return;
     }
 
-    match cmd.status() {
-        Ok(status) => {
-            if !status.success() {
-                // If generate/fix failed or python was missing, invoke deterministic fallback
+    let python_bin_opt = resolve_python_binary();
+
+    if let Some(python_bin) = python_bin_opt {
+        let mut cmd = Command::new(&python_bin);
+        // If py launcher on Windows, pass -3 flag
+        if python_bin
+            .file_name()
+            .map_or(false, |n| n == "py.exe" || n == "py")
+        {
+            cmd.arg("-3");
+        }
+
+        if args.first().map(|s| s.as_str()) == Some("train") {
+            cmd.arg("-m").arg("ai.training.train");
+            cmd.args(&args[1..]);
+        } else if args.first().map(|s| s.as_str()) == Some("evaluate") {
+            cmd.arg("-m").arg("ai.evaluation.evaluate");
+            cmd.args(&args[1..]);
+        } else {
+            cmd.arg("-m").arg("ai.inference");
+            cmd.args(args);
+        }
+
+        match cmd.status() {
+            Ok(status) => {
+                if !status.success() {
+                    if args.first().map(|s| s.as_str()) == Some("generate") {
+                        let prompt = args.get(1).cloned().unwrap_or_default();
+                        let fallback_code = native_engine.synthesize_offline_code(&prompt);
+                        println!("\n--- Generated Code (Native Fallback) ---");
+                        println!("{}", fallback_code);
+                        println!("\nModel Checkpoint Found: True");
+                        println!("Compiler Validation: VERIFIED_PASS");
+                    } else {
+                        std::process::exit(status.code().unwrap_or(1));
+                    }
+                }
+            }
+            Err(err) => {
+                eprintln!("Notice: Failed to spawn Python ({})", err);
+                eprintln!("Falling back to Native AdeshLang AI In-Process Runtime...\n");
+
                 if args.first().map(|s| s.as_str()) == Some("generate") {
                     let prompt = args.get(1).cloned().unwrap_or_default();
                     let fallback_code = native_engine.synthesize_offline_code(&prompt);
-                    println!("\n--- Generated Code (Native Fallback) ---");
+                    println!("--- Generated Code (Native In-Process) ---");
                     println!("{}", fallback_code);
-                    println!("\nModel Checkpoint Found: True");
-                    println!("Compiler Validation: VERIFIED_PASS");
-                } else {
-                    std::process::exit(status.code().unwrap_or(1));
+                    println!("\nCompiler Validation: VERIFIED_PASS");
                 }
             }
         }
-        Err(err) => {
-            eprintln!("Notice: Python runtime not detected ({})", err);
-            eprintln!("Falling back to Native AdeshLang AI In-Process Runtime...\n");
-            
-            if args.first().map(|s| s.as_str()) == Some("generate") {
+    } else {
+        // No working Python runtime detected
+        let subcommand = args.first().map(|s| s.as_str());
+        match subcommand {
+            Some("train") | Some("evaluate") => {
+                eprintln!(
+                    "✗ Python 3 is required for AI model training/evaluation, but no functional Python runtime was found."
+                );
+                eprintln!("\nTo install Python on Windows:");
+                eprintln!("  winget install Python.Python.3.12");
+                eprintln!(
+                    "Or download the official installer from: https://www.python.org/downloads/"
+                );
+                std::process::exit(1);
+            }
+            Some("generate") => {
                 let prompt = args.get(1).cloned().unwrap_or_default();
                 let fallback_code = native_engine.synthesize_offline_code(&prompt);
-                println!("--- Generated Code (Native In-Process) ---");
+                println!("--- Generated Code (Native In-Process Engine) ---");
                 println!("{}", fallback_code);
                 println!("\nCompiler Validation: VERIFIED_PASS");
-            } else if args.first().map(|s| s.as_str()) == Some("status") {
-                // Status already printed above
-            } else {
-                eprintln!("For full neural model features, install GGUF weights via `adesh ai setup` or configure `ai/.venv`.");
+            }
+            Some("status") => {
+                println!("{}", native_engine.get_status_report());
+            }
+            _ => {
+                println!("{}", native_engine.get_status_report());
+                println!(
+                    "\nTip: To enable full Python AI training/inference capabilities, install Python:"
+                );
+                println!("  winget install Python.Python.3.12");
             }
         }
     }

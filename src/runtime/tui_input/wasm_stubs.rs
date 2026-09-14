@@ -211,20 +211,44 @@ pub fn prompt_input(_prompt: &str, opts: &InputOptions) -> Result<String, String
     Ok(opts.default.clone().unwrap_or_default())
 }
 
-pub fn prompt_checkbox(_prompt: &str, _options: &[String], config: &CheckboxConfig) -> Result<Vec<String>, String> {
+pub fn prompt_checkbox(
+    _prompt: &str,
+    _options: &[String],
+    config: &CheckboxConfig,
+) -> Result<Vec<String>, String> {
     Ok(config.default.clone())
 }
 
-pub fn prompt_radio(_prompt: &str, options: &[String], config: &RadioConfig) -> Result<String, String> {
-    Ok(config.default.clone().unwrap_or_else(|| options.first().cloned().unwrap_or_default()))
+pub fn prompt_radio(
+    _prompt: &str,
+    options: &[String],
+    config: &RadioConfig,
+) -> Result<String, String> {
+    Ok(config
+        .default
+        .clone()
+        .unwrap_or_else(|| options.first().cloned().unwrap_or_default()))
 }
 
-pub fn prompt_select(_prompt: &str, options: &[String], config: &SelectConfig) -> Result<String, String> {
-    Ok(config.default.clone().unwrap_or_else(|| options.first().cloned().unwrap_or_default()))
+pub fn prompt_select(
+    _prompt: &str,
+    options: &[String],
+    config: &SelectConfig,
+) -> Result<String, String> {
+    Ok(config
+        .default
+        .clone()
+        .unwrap_or_else(|| options.first().cloned().unwrap_or_default()))
 }
 
-pub fn prompt_form(fields: &[(String, FormFieldConfig)], _config: &FormConfig) -> Result<Vec<(String, String)>, String> {
-    Ok(fields.iter().map(|(name, f)| (name.clone(), f.default.clone().unwrap_or_default())).collect())
+pub fn prompt_form(
+    fields: &[(String, FormFieldConfig)],
+    _config: &FormConfig,
+) -> Result<Vec<(String, String)>, String> {
+    Ok(fields
+        .iter()
+        .map(|(name, f)| (name.clone(), f.default.clone().unwrap_or_default()))
+        .collect())
 }
 
 pub fn prompt_confirm(_prompt: &str, default: bool) -> Result<bool, String> {
@@ -235,7 +259,11 @@ pub fn prompt_password(_prompt: &str, _config: &PasswordConfig) -> Result<String
     Ok(String::new())
 }
 
-pub fn prompt_fuzzy(_prompt: &str, options: &[String], _config: &FuzzyConfig) -> Result<String, String> {
+pub fn prompt_fuzzy(
+    _prompt: &str,
+    options: &[String],
+    _config: &FuzzyConfig,
+) -> Result<String, String> {
     Ok(options.first().cloned().unwrap_or_default())
 }
 
@@ -250,7 +278,11 @@ pub fn prompt_slider(
     Ok(default)
 }
 
-pub fn prompt_tree(_prompt: &str, nodes: &[TreeNode], _config: &TreeConfig) -> Result<String, String> {
+pub fn prompt_tree(
+    _prompt: &str,
+    nodes: &[TreeNode],
+    _config: &TreeConfig,
+) -> Result<String, String> {
     Ok(nodes.first().map(|n| n.id.clone()).unwrap_or_default())
 }
 
@@ -280,7 +312,10 @@ pub fn prompt_datetimepicker(_prompt: &str, config: &DatetimeConfig) -> Result<S
     let day = config.default_day.unwrap_or(8);
     let hour = config.default_hour.unwrap_or(12);
     let min = config.default_minute.unwrap_or(0);
-    Ok(format!("{:04}-{:02}-{:02} {:02}:{:02}", year, month, day, hour, min))
+    Ok(format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}",
+        year, month, day, hour, min
+    ))
 }
 
 pub fn prompt_timepicker(_prompt: &str, _config: &TimepickerConfig) -> Result<String, String> {
@@ -288,7 +323,10 @@ pub fn prompt_timepicker(_prompt: &str, _config: &TimepickerConfig) -> Result<St
 }
 
 pub fn prompt_color(_prompt: &str, config: &ColorConfig) -> Result<String, String> {
-    Ok(config.default_hex.clone().unwrap_or_else(|| "#000000".to_string()))
+    Ok(config
+        .default_hex
+        .clone()
+        .unwrap_or_else(|| "#000000".to_string()))
 }
 
 pub fn prompt_pin(_prompt: &str, digits: usize, _config: &PinConfig) -> Result<String, String> {
@@ -307,7 +345,11 @@ pub fn prompt_hotkey(_prompt: &str, _config: &HotkeyConfig) -> Result<HotkeyResu
     })
 }
 
-pub fn prompt_ai(_prompt: &str, _context: &[String], _config: &AiPredictConfig) -> Result<String, String> {
+pub fn prompt_ai(
+    _prompt: &str,
+    _context: &[String],
+    _config: &AiPredictConfig,
+) -> Result<String, String> {
     Ok(String::new())
 }
 

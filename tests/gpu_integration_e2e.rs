@@ -209,7 +209,8 @@ mod gpu_integration_tests {
     #[test]
     fn gpu_type_safety_chain() {
         // Build a type-safe computation chain
-        let type_chain = [VirInstruction::ConstInt {
+        let type_chain = [
+            VirInstruction::ConstInt {
                 dest: 0,
                 value: 42,
                 ty: VirType::I32,
@@ -232,7 +233,8 @@ mod gpu_integration_tests {
                 value: 2,
                 from_ty: VirType::F32,
                 to_ty: VirType::I32,
-            }];
+            },
+        ];
 
         for (i, op) in type_chain.iter().enumerate() {
             let is_safe = is_gpu_safe_instruction(op);
@@ -344,7 +346,8 @@ mod gpu_integration_tests {
     /// Integration Test 13: Multi-dimensional block configuration
     #[test]
     fn gpu_multidimensional_blocks() {
-        let configs = [GpuKernelConfig {
+        let configs = [
+            GpuKernelConfig {
                 grid_dims: (1, 1, 1),
                 block_dims: (32, 1, 1),
                 shared_memory_size: 0,
@@ -363,7 +366,8 @@ mod gpu_integration_tests {
                 grid_dims: (16, 16, 16),
                 block_dims: (8, 8, 8),
                 shared_memory_size: 0,
-            }];
+            },
+        ];
 
         for (i, config) in configs.iter().enumerate() {
             let grid_product = config.grid_dims.0 * config.grid_dims.1 * config.grid_dims.2;

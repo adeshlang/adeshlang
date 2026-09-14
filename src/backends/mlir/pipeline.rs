@@ -32,8 +32,10 @@ impl Default for MlirToolchain {
             clang: std::env::var_os("ADESH_CLANG")
                 .map(PathBuf::from)
                 .or_else(|| {
-                    crate::toolchain::resolver::bundled_root()
-                        .map(|root| root.join("bin").join(if cfg!(windows) { "clang.exe" } else { "clang" }))
+                    crate::toolchain::resolver::bundled_root().map(|root| {
+                        root.join("bin")
+                            .join(if cfg!(windows) { "clang.exe" } else { "clang" })
+                    })
                 })
                 .unwrap_or_else(|| PathBuf::from("clang")),
         }

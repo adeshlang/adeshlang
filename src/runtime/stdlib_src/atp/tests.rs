@@ -196,7 +196,10 @@ mod identity_integration {
         }
         server.stop();
         client.stop();
-        assert!(connected, "identity-authenticated handshake should complete");
+        assert!(
+            connected,
+            "identity-authenticated handshake should complete"
+        );
     }
 
     #[test]
@@ -264,7 +267,10 @@ mod identity_integration {
 
         server.stop();
         client.stop();
-        assert!(received, "application data should flow after identity handshake");
+        assert!(
+            received,
+            "application data should flow after identity handshake"
+        );
     }
 
     #[test]
@@ -476,8 +482,8 @@ mod adversarial {
 
     #[test]
     fn test_rate_limiter_eviction_under_many_ips() {
-        let mut limiter = HandshakeRateLimiter::new(100, Duration::from_secs(60))
-            .with_max_entries(32);
+        let mut limiter =
+            HandshakeRateLimiter::new(100, Duration::from_secs(60)).with_max_entries(32);
         for i in 0..64u16 {
             let ip = IpAddr::V4(Ipv4Addr::new(192, 0, 2, (i % 256) as u8));
             limiter.allow(&ip);
@@ -492,11 +498,11 @@ mod adversarial {
         let now = Instant::now();
         let mut pm = PathManager::new(addr1, now);
         let challenge = pm.begin_validation(addr2, now).unwrap();
-        assert!(pm
-            .on_path_response([0u8; 8], addr2, now)
-            .unwrap()
-            .is_none());
-        assert_eq!(pm.migration_state, super::super::path::MigrationState::Validating);
+        assert!(pm.on_path_response([0u8; 8], addr2, now).unwrap().is_none());
+        assert_eq!(
+            pm.migration_state,
+            super::super::path::MigrationState::Validating
+        );
         let migrated = pm.on_path_response(challenge, addr2, now).unwrap();
         assert_eq!(migrated, Some(addr2));
     }

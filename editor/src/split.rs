@@ -125,9 +125,7 @@ impl SplitTree {
     fn count_panes(node: &SplitNode) -> usize {
         match node {
             SplitNode::Leaf(_) => 1,
-            SplitNode::Container { children, .. } => {
-                children.iter().map(Self::count_panes).sum()
-            }
+            SplitNode::Container { children, .. } => children.iter().map(Self::count_panes).sum(),
         }
     }
 
@@ -151,14 +149,17 @@ impl SplitTree {
 
     /// Split the active pane in the specified direction.
     /// Clones the buffer index and state of the current active pane into the new pane.
-    pub fn split_active(&mut self, direction: SplitDirection, new_buffer_idx: Option<usize>) -> usize {
+    pub fn split_active(
+        &mut self,
+        direction: SplitDirection,
+        new_buffer_idx: Option<usize>,
+    ) -> usize {
         let new_id = self.next_pane_id;
         self.next_pane_id += 1;
 
         let cur_pane = self.active_pane().cloned();
-        let buffer_idx = new_buffer_idx.unwrap_or_else(|| {
-            cur_pane.as_ref().map(|p| p.buffer_index).unwrap_or(0)
-        });
+        let buffer_idx = new_buffer_idx
+            .unwrap_or_else(|| cur_pane.as_ref().map(|p| p.buffer_index).unwrap_or(0));
 
         let mut new_pane = PaneState::new(new_id, buffer_idx);
         if let Some(ref cur) = cur_pane {
@@ -185,17 +186,18 @@ impl SplitTree {
                     let existing_pane = pane.clone();
                     *node = SplitNode::Container {
                         direction,
-                        children: vec![
-                            SplitNode::Leaf(existing_pane),
-                            SplitNode::Leaf(new_pane),
-                        ],
+                        children: vec![SplitNode::Leaf(existing_pane), SplitNode::Leaf(new_pane)],
                         ratios: vec![50, 50],
                     };
                     return true;
                 }
                 false
             }
-            SplitNode::Container { children, ratios, direction: cont_dir } => {
+            SplitNode::Container {
+                children,
+                ratios,
+                direction: cont_dir,
+            } => {
                 for (idx, child) in children.iter_mut().enumerate() {
                     if let SplitNode::Leaf(p) = child {
                         if p.id == target_id {
@@ -248,7 +250,9 @@ impl SplitTree {
     fn remove_node(node: &mut SplitNode, target_id: usize) -> bool {
         match node {
             SplitNode::Leaf(_) => false,
-            SplitNode::Container { children, ratios, .. } => {
+            SplitNode::Container {
+                children, ratios, ..
+            } => {
                 let mut remove_idx = None;
                 for (i, child) in children.iter().enumerate() {
                     if let SplitNode::Leaf(p) = child {
@@ -320,7 +324,11 @@ impl SplitTree {
             SplitNode::Leaf(pane) => {
                 out.push((pane.id, area));
             }
-            SplitNode::Container { direction, children, ratios } => {
+            SplitNode::Container {
+                direction,
+                children,
+                ratios,
+            } => {
                 if children.is_empty() {
                     return;
                 }
@@ -333,7 +341,10 @@ impl SplitTree {
                         let available_w = area.width;
 
                         for (i, child) in children.iter().enumerate() {
-                            let ratio = ratios.get(i).copied().unwrap_or(100 / children.len() as u16);
+                            let ratio = ratios
+                                .get(i)
+                                .copied()
+                                .unwrap_or(100 / children.len() as u16);
                             let is_last = i == children.len() - 1;
                             let w = if is_last {
                                 (area.x + available_w).saturating_sub(current_x)
@@ -357,7 +368,10 @@ impl SplitTree {
                         let available_h = area.height;
 
                         for (i, child) in children.iter().enumerate() {
-                            let ratio = ratios.get(i).copied().unwrap_or(100 / children.len() as u16);
+                            let ratio = ratios
+                                .get(i)
+                                .copied()
+                                .unwrap_or(100 / children.len() as u16);
                             let is_last = i == children.len() - 1;
                             let h = if is_last {
                                 (area.y + available_h).saturating_sub(current_y)

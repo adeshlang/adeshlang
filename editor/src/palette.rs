@@ -110,7 +110,10 @@ impl PaletteState {
         let q = self.query.to_lowercase();
         self.filtered_items = CommandItem::all()
             .into_iter()
-            .filter(|item| item.name().to_lowercase().contains(&q) || item.shortcut().to_lowercase().contains(&q))
+            .filter(|item| {
+                item.name().to_lowercase().contains(&q)
+                    || item.shortcut().to_lowercase().contains(&q)
+            })
             .collect();
         self.selected_index = 0;
     }

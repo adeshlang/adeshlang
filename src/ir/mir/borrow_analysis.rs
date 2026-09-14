@@ -63,10 +63,7 @@ impl BorrowAnalysis {
             MirStatement::Drop(local) => {
                 // Dropping a moved local is fine; dropping a borrowed local is an error
                 if borrows.iter().any(|(l, _)| l == local) {
-                    return Err(format!(
-                        "Cannot drop local {} while it is borrowed",
-                        local
-                    ));
+                    return Err(format!("Cannot drop local {} while it is borrowed", local));
                 }
             }
             MirStatement::ArcClone(_, _) | MirStatement::ArcDrop(_) => {}

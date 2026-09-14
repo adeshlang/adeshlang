@@ -6,10 +6,10 @@ use super::types::{SimdElement, SimdIsa, SimdType};
 /// Execution strategy selected by the cost model
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionStrategy {
-  Scalar,
-  Simd,
-  Parallel,
-  ParallelSimd,
+    Scalar,
+    Simd,
+    Parallel,
+    ParallelSimd,
 }
 
 /// Cost model for selecting scalar vs SIMD vs parallel execution
@@ -45,8 +45,7 @@ impl VectorizationCostModel {
 
         let scalar_cost = work;
         let simd_cost = self.simd_setup_cost + work / lanes;
-        let parallel_cost =
-            self.thread_overhead_cost + work / num_cores.max(1) as f64;
+        let parallel_cost = self.thread_overhead_cost + work / num_cores.max(1) as f64;
         let parallel_simd_cost =
             self.thread_overhead_cost + work / (num_cores.max(1) as f64 * lanes);
 

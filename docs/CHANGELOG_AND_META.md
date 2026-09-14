@@ -3244,7 +3244,7 @@ We welcome contributions! Areas to help:
 - Bug reports
 - Feature requests
 
-See [CONTRIBUTING.md] for guidelines.
+See [CONTRIBUTING.md](../CONTRIBUTING.md) for guidelines.
 
 ---
 

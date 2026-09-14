@@ -102,7 +102,9 @@ fn runtime_value_to_ast_value(rv: &crate::backends::common::builtins::RuntimeVal
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_arc_new(value: i64) -> u64 {
     #[cfg(not(target_arch = "wasm32"))]
-    let val = if let Some(rv) = crate::backends::jit::native::runtime_bridge::get_runtime_value(value as u64) {
+    let val = if let Some(rv) =
+        crate::backends::jit::native::runtime_bridge::get_runtime_value(value as u64)
+    {
         runtime_value_to_ast_value(&rv)
     } else if let Some(rv) = crate::backends::aot::runtime_bridge::aot_get_value(value as u64) {
         runtime_value_to_ast_value(&rv)
@@ -112,9 +114,7 @@ pub extern "C" fn adesh_rt_arc_new(value: i64) -> u64 {
     #[cfg(target_arch = "wasm32")]
     let val = arc_value_from_i64(value);
     match arc_manager().lock() {
-        Ok(mut mgr) => {
-            mgr.allocate_arc(val)
-        }
+        Ok(mut mgr) => mgr.allocate_arc(val),
         Err(e) => {
             eprintln!("adesh_rt_arc_new: lock failed: {}", e);
             0
@@ -208,7 +208,9 @@ pub extern "C" fn adesh_rt_arc_get(handle: u64) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_arc_set(handle: u64, value: i64) -> u64 {
     #[cfg(not(target_arch = "wasm32"))]
-    let val = if let Some(rv) = crate::backends::jit::native::runtime_bridge::get_runtime_value(value as u64) {
+    let val = if let Some(rv) =
+        crate::backends::jit::native::runtime_bridge::get_runtime_value(value as u64)
+    {
         runtime_value_to_ast_value(&rv)
     } else if let Some(rv) = crate::backends::aot::runtime_bridge::aot_get_value(value as u64) {
         runtime_value_to_ast_value(&rv)

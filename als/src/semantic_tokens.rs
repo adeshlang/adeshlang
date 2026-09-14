@@ -2,9 +2,9 @@
 //!
 //! Provides semantic highlighting for AdeshLang's ownership and borrow states.
 
-use lsp_types::*;
 use crate::analysis::{SymbolInfo, SymbolKind};
 use crate::document::Document;
+use lsp_types::*;
 
 /// Semantic token types for AdeshLang
 pub const SEMANTIC_TOKEN_TYPES: &[SemanticTokenType] = &[
@@ -60,36 +60,36 @@ pub const SEMANTIC_TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[
 /// Get semantic token type index
 fn get_token_type_index(kind: &SymbolKind) -> u32 {
     match kind {
-        SymbolKind::Function => 11,      // FUNCTION
-        SymbolKind::Class => 2,          // CLASS
-        SymbolKind::Variable => 8,       // VARIABLE
-        SymbolKind::Constant => 8,       // VARIABLE with READONLY modifier
-        SymbolKind::Parameter => 7,      // PARAMETER
-        SymbolKind::Method => 12,        // METHOD
-        SymbolKind::Property => 9,       // PROPERTY
-        SymbolKind::Interface => 4,      // INTERFACE
-        SymbolKind::Enum => 3,           // ENUM
-        SymbolKind::Module => 0,         // NAMESPACE (Module is similar)
+        SymbolKind::Function => 11, // FUNCTION
+        SymbolKind::Class => 2,     // CLASS
+        SymbolKind::Variable => 8,  // VARIABLE
+        SymbolKind::Constant => 8,  // VARIABLE with READONLY modifier
+        SymbolKind::Parameter => 7, // PARAMETER
+        SymbolKind::Method => 12,   // METHOD
+        SymbolKind::Property => 9,  // PROPERTY
+        SymbolKind::Interface => 4, // INTERFACE
+        SymbolKind::Enum => 3,      // ENUM
+        SymbolKind::Module => 0,    // NAMESPACE (Module is similar)
     }
 }
 
 /// Generate semantic tokens for a document
 pub fn get_semantic_tokens(doc: &Document, symbols: &[SymbolInfo]) -> SemanticTokens {
     let mut tokens_builder = SemanticTokensBuilder::new();
-    
+
     // Sort symbols by position
     let mut sorted_symbols = symbols.to_vec();
     sorted_symbols.sort_by_key(|s| (s.line, s.col));
-    
+
     for symbol in sorted_symbols.iter() {
         let token_type = get_token_type_index(&symbol.kind);
         let mut modifiers = 0u32;
-        
+
         // Add modifiers based on symbol properties
         if symbol.kind == SymbolKind::Constant {
             modifiers |= 1 << 2; // READONLY
         }
-        
+
         tokens_builder.push(
             symbol.line as u32,
             symbol.col as u32,
@@ -100,7 +100,7 @@ pub fn get_semantic_tokens(doc: &Document, symbols: &[SymbolInfo]) -> SemanticTo
     }
 
     add_keyword_tokens(doc, &mut tokens_builder);
-    
+
     tokens_builder.build()
 }
 
@@ -119,7 +119,7 @@ impl SemanticTokensBuilder {
             prev_char: 0,
         }
     }
-    
+
     fn push(&mut self, line: u32, char: u32, length: u32, token_type: u32, modifiers: u32) {
         let delta_line = line - self.prev_line;
         let delta_start = if delta_line == 0 {
@@ -127,7 +127,7 @@ impl SemanticTokensBuilder {
         } else {
             char
         };
-        
+
         self.data.push(SemanticToken {
             delta_line,
             delta_start,
@@ -135,11 +135,11 @@ impl SemanticTokensBuilder {
             token_type,
             token_modifiers_bitset: modifiers,
         });
-        
+
         self.prev_line = line;
         self.prev_char = char;
     }
-    
+
     fn build(self) -> SemanticTokens {
         SemanticTokens {
             result_id: None,
@@ -155,7 +155,7 @@ pub fn get_semantic_tokens_range(
     range: Range,
 ) -> SemanticTokens {
     let mut tokens_builder = SemanticTokensBuilder::new();
-    
+
     // Filter symbols within range
     let filtered_symbols: Vec<_> = symbols
         .iter()
@@ -164,11 +164,11 @@ pub fn get_semantic_tokens_range(
             pos >= range.start && pos <= range.end
         })
         .collect();
-    
+
     for symbol in filtered_symbols.iter() {
         let token_type = get_token_type_index(&symbol.kind);
         let modifiers = 0u32;
-        
+
         tokens_builder.push(
             symbol.line as u32,
             symbol.col as u32,
@@ -179,7 +179,7 @@ pub fn get_semantic_tokens_range(
     }
 
     add_keyword_tokens(doc, &mut tokens_builder);
-    
+
     tokens_builder.build()
 }
 
@@ -194,10 +194,12 @@ fn add_keyword_tokens(doc: &Document, builder: &mut SemanticTokensBuilder) {
         };
         scan_line_for_word(builder, line_idx as u32, line_text, KEYWORD_TEST, 14); // KEYWORD
         for arc_kw in ARC_KEYWORDS {
-            scan_line_for_word(builder, line_idx as u32, line_text, arc_kw, 14); // KEYWORD
+            scan_line_for_word(builder, line_idx as u32, line_text, arc_kw, 14);
+            // KEYWORD
         }
         for builtin in ASSERT_BUILTINS {
-            scan_line_for_word(builder, line_idx as u32, line_text, builtin, 11); // FUNCTION
+            scan_line_for_word(builder, line_idx as u32, line_text, builtin, 11);
+            // FUNCTION
         }
     }
 }

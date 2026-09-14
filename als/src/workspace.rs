@@ -4,9 +4,11 @@
 //! cross-file symbol resolution, module/import tracking, and workspace-wide
 //! symbol search capabilities.
 
-use std::collections::HashMap;
+use adeshlang::semantics::{
+    index_source_in, SemanticIndex, SymbolEntry, TypeDefinition, TypeMember,
+};
 use lsp_types::Url;
-use adeshlang::semantics::{index_source_in, SemanticIndex, SymbolEntry, TypeDefinition, TypeMember};
+use std::collections::HashMap;
 
 /// Manages semantic indices for all open files in the workspace.
 pub struct WorkspaceIndex {
@@ -23,7 +25,10 @@ impl WorkspaceIndex {
 
     /// Index a document (called on open or change).
     pub fn index_document(&mut self, uri: &Url, content: &str) {
-        let file_path = uri.to_file_path().ok().and_then(|p| p.to_str().map(|s| s.to_string()));
+        let file_path = uri
+            .to_file_path()
+            .ok()
+            .and_then(|p| p.to_str().map(|s| s.to_string()));
         let index = index_source_in(content, file_path.as_deref());
         self.indices.insert(uri.clone(), index);
     }
@@ -50,18 +55,22 @@ impl WorkspaceIndex {
 
     /// Find the semantic index of the file that defines a type with this name.
     pub fn find_type_index(&self, name: &str) -> Option<&SemanticIndex> {
-        self.indices.values().find(|index| index.get_type(name).is_some())
+        self.indices
+            .values()
+            .find(|index| index.get_type(name).is_some())
     }
 
     /// Find a type definition anywhere in the workspace.
     pub fn find_type_definition(&self, name: &str) -> Option<&TypeDefinition> {
-        self.find_type_index(name).and_then(|index| index.get_type(name))
+        self.find_type_index(name)
+            .and_then(|index| index.get_type(name))
     }
 
     /// Get all members (fields, methods, variants) of a type defined anywhere
     /// in the workspace.
     pub fn get_type_members(&self, name: &str) -> Option<Vec<TypeMember>> {
-        self.find_type_index(name).map(|index| index.get_type_members(name))
+        self.find_type_index(name)
+            .map(|index| index.get_type_members(name))
     }
 
     /// Find all references to a symbol across the workspace.

@@ -49,14 +49,16 @@ print("[Target Server] Started listener on 127.0.0.1:" + testPort);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 3. CONNECT ATP CLIENT (X25519 + ChaCha20-Poly1305 SESSION)
-// ═══════════════════════════════════════════════════════════════════════════════
+// ══════════╝
+// 3. CONNECT ATP CLIENT (X25519 + ChaCha20-Poly1305 SESSION)
+// ══════╝
 
 print("\n--- 1. Connecting to ATP Server ---");
 let conn = ATP.connect("127.0.0.1", testPort);
 print("[Client] Connecting to 127.0.0.1:" + testPort + "...");
 
 let established: bool = false;
-let serverConn = null;
+let serverConn: ATP.Connection = null;
 
 for (let attempt = 0; attempt < 50; attempt = attempt + 1) {
     if (serverConn == null) {

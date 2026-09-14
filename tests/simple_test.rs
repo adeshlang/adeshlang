@@ -7,7 +7,9 @@ fn run_test_module(src: &str) -> Result<(), String> {
         .spawn(move || {
             let mut loader = ModuleLoader::new(std::path::Path::new("."));
             let mut interp = Interpreter::new();
-            interp.run_module(&src_owned, &mut loader, None).map_err(|e| e.to_string())
+            interp
+                .run_module(&src_owned, &mut loader, None)
+                .map_err(|e| e.to_string())
         })
         .unwrap()
         .join()

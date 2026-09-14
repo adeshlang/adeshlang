@@ -214,11 +214,9 @@ pub fn connect_uri(uri: &str, options: &WsClientOptions) -> Result<WsSession, Ht
             "WebSocket URL is missing a host",
         ));
     }
-    let port = url.effective_port().unwrap_or(if url.scheme() == "wss" {
-        443
-    } else {
-        80
-    });
+    let port = url
+        .effective_port()
+        .unwrap_or(if url.scheme() == "wss" { 443 } else { 80 });
     let tcp = if let Some(ref proxy_uri) = options.proxy_url {
         let p_url = URL::parse(proxy_uri).map_err(|e| {
             HttpError::new(HttpErrorKind::InvalidUri, format!("Invalid proxy_url: {e}"))
@@ -257,14 +255,8 @@ pub fn connect_uri(uri: &str, options: &WsClientOptions) -> Result<WsSession, Ht
         if let Some(ca) = &options.tls_ca_pem {
             policy.custom_ca_pems.push(ca.clone());
         }
-        let tls = TlsConnection::wrap_client(
-            tcp,
-            &host,
-            &policy,
-            &TlsTrustStore::default(),
-            None,
-        )
-        .map_err(|e| HttpError::new(HttpErrorKind::TlsError, e.to_string()))?;
+        let tls = TlsConnection::wrap_client(tcp, &host, &policy, &TlsTrustStore::default(), None)
+            .map_err(|e| HttpError::new(HttpErrorKind::TlsError, e.to_string()))?;
         WsIo::Tls(tls)
     } else {
         WsIo::Tcp(tcp)
@@ -387,12 +379,8 @@ fn client_handshake(
     let parser = Http1Parser::new();
     let (resp, consumed) = parser.parse_response(&buf)?;
     let leftover = buf[consumed..].to_vec();
-    let protocol = validate_client_upgrade_response(
-        resp.status,
-        &resp.headers,
-        &key,
-        &options.protocols,
-    )?;
+    let protocol =
+        validate_client_upgrade_response(resp.status, &resp.headers, &key, &options.protocols)?;
 
     Ok(finish_session(
         io,
@@ -441,12 +429,8 @@ fn finish_session(
     automatic_pong: bool,
     compression: bool,
 ) -> WsSession {
-    let mut stream = WebSocketStream::with_limits(
-        Box::new(io),
-        is_client,
-        max_frame_size,
-        max_message_size,
-    );
+    let mut stream =
+        WebSocketStream::with_limits(Box::new(io), is_client, max_frame_size, max_message_size);
     stream.read_buffer = leftover;
     stream.automatic_pong = automatic_pong;
     stream.compression_enabled = compression;

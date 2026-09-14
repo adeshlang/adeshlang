@@ -44,7 +44,9 @@ use crate::typesystem::type_system::resolution::{resolve_type_name, type_from_na
 use crate::utils::collections::{FastMap, FastSet};
 
 // Bring AST types into scope
-use crate::parsing::ast::{Stmt, StmtKind, Expr, ExprKind, Function, ClassDecl, TypeAliasDecl, Span};
+use crate::parsing::ast::{
+    ClassDecl, Expr, ExprKind, Function, Span, Stmt, StmtKind, TypeAliasDecl,
+};
 
 /// The kind of a symbol in the semantic model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -401,8 +403,13 @@ impl SemanticIndex {
     /// Resolve a type name string to a `Ty`, using the index's aliases.
     pub fn resolve_type(&self, type_str: &str) -> Option<Ty> {
         let empty_type_params: FastMap<String, Ty> = FastMap::default();
-        resolve_type_name(type_str, &self.aliases, &self.generic_aliases, &empty_type_params)
-            .or_else(|| type_from_name(type_str))
+        resolve_type_name(
+            type_str,
+            &self.aliases,
+            &self.generic_aliases,
+            &empty_type_params,
+        )
+        .or_else(|| type_from_name(type_str))
     }
 
     /// Resolve the type of a symbol (variable/parameter/constant) as robustly
@@ -435,8 +442,7 @@ impl SemanticIndex {
             let base = base_type_name(type_str);
             if let Some(td) = self.types.get(base) {
                 let nominal = nominal_type(td);
-                let nullable = type_str.trim().ends_with('?')
-                    || type_str.trim().starts_with('?');
+                let nullable = type_str.trim().ends_with('?') || type_str.trim().starts_with('?');
                 return Some(if nullable {
                     Ty::Nullable(Box::new(nominal))
                 } else {
@@ -463,29 +469,27 @@ impl SemanticIndex {
 
     /// Find the initializer expression of a `let` binding with the given name.
     fn find_variable_initializer<'a>(&'a self, name: &str) -> Option<&'a Expr> {
-        self.statements
-            .iter()
-            .find_map(|s| find_let_init(s, name))
+        self.statements.iter().find_map(|s| find_let_init(s, name))
     }
 
     /// Find a symbol at a given source position (1-based line, 1-based col).
     pub fn find_symbol_at(&self, line: usize, col: usize) -> Option<&SymbolEntry> {
         // Find the token at this position
-        let token = self.tokens.iter().find(|t| {
-            t.line == line && col >= t.col && col < t.col + t.lexeme.len()
-        })?;
+        let token = self
+            .tokens
+            .iter()
+            .find(|t| t.line == line && col >= t.col && col < t.col + t.lexeme.len())?;
 
         if let TokenKind::Identifier = token.kind {
             // Find matching symbol
-            self.symbols.iter().find(|s| {
-                s.name == token.lexeme
-                    && s.line == token.line
-                    && s.col == token.col
-            }).or_else(|| {
-                // If no exact position match, find any symbol with this name
-                // that could be the declaration
-                self.symbols.iter().find(|s| s.name == token.lexeme)
-            })
+            self.symbols
+                .iter()
+                .find(|s| s.name == token.lexeme && s.line == token.line && s.col == token.col)
+                .or_else(|| {
+                    // If no exact position match, find any symbol with this name
+                    // that could be the declaration
+                    self.symbols.iter().find(|s| s.name == token.lexeme)
+                })
         } else {
             None
         }
@@ -504,9 +508,9 @@ impl SemanticIndex {
 
     /// Find a token at a given position.
     pub fn token_at(&self, line: usize, col: usize) -> Option<&Token> {
-        self.tokens.iter().find(|t| {
-            t.line == line && col >= t.col && col < t.col + t.lexeme.len()
-        })
+        self.tokens
+            .iter()
+            .find(|t| t.line == line && col >= t.col && col < t.col + t.lexeme.len())
     }
 
     /// Get the identifier at a given position, if any.
@@ -584,7 +588,11 @@ impl SemanticIndex {
                         } else {
                             Ty::GenericInstance {
                                 name: name.clone(),
-                                args: td.type_params.iter().map(|p| Ty::GenericParam(p.clone())).collect(),
+                                args: td
+                                    .type_params
+                                    .iter()
+                                    .map(|p| Ty::GenericParam(p.clone()))
+                                    .collect(),
                             }
                         };
                     }
@@ -638,7 +646,11 @@ impl SemanticIndex {
                             } else {
                                 Ty::GenericInstance {
                                     name: name.clone(),
-                                    args: td.type_params.iter().map(|p| Ty::GenericParam(p.clone())).collect(),
+                                    args: td
+                                        .type_params
+                                        .iter()
+                                        .map(|p| Ty::GenericParam(p.clone()))
+                                        .collect(),
                                 }
                             };
                         }
@@ -670,9 +682,7 @@ impl SemanticIndex {
             }
 
             // Enhanced: cast expression
-            ExprKind::Cast(_inner, type_str) => {
-                self.resolve_type(type_str).unwrap_or(Ty::Any)
-            }
+            ExprKind::Cast(_inner, type_str) => self.resolve_type(type_str).unwrap_or(Ty::Any),
 
             // Enhanced: struct literal
             ExprKind::StructLiteral(name, _fields) => {
@@ -973,43 +983,203 @@ impl SemanticIndex {
 
     fn builtin_array_completions(&self) -> Vec<CompletionCandidate> {
         vec![
-            simple_completion("length", SemanticSymbolKind::Field, "number", "Length of array"),
-            simple_completion("push", SemanticSymbolKind::Method, "fn push(item)", "Add item to end"),
-            simple_completion("pop", SemanticSymbolKind::Method, "fn pop(): any", "Remove and return last item"),
-            simple_completion("map", SemanticSymbolKind::Method, "fn map(fn): array", "Transform each element"),
-            simple_completion("filter", SemanticSymbolKind::Method, "fn filter(fn): array", "Filter by predicate"),
-            simple_completion("reduce", SemanticSymbolKind::Method, "fn reduce(fn, init): any", "Reduce to single value"),
-            simple_completion("clone", SemanticSymbolKind::Method, "fn clone(): Self", "Deep copy"),
-            simple_completion("slice", SemanticSymbolKind::Method, "fn slice(start, end?): array", "Extract subarray"),
-            simple_completion("concat", SemanticSymbolKind::Method, "fn concat(other): array", "Concatenate arrays"),
-            simple_completion("reverse", SemanticSymbolKind::Method, "fn reverse(): array", "Reverse array"),
-            simple_completion("sort", SemanticSymbolKind::Method, "fn sort(fn?): array", "Sort array"),
-            simple_completion("indexOf", SemanticSymbolKind::Method, "fn indexOf(item): number", "Find index of item"),
-            simple_completion("contains", SemanticSymbolKind::Method, "fn contains(item): bool", "Check if contains item"),
-            simple_completion("join", SemanticSymbolKind::Method, "fn join(sep?): string", "Join elements as string"),
-            simple_completion("forEach", SemanticSymbolKind::Method, "fn forEach(fn)", "Iterate over elements"),
-            simple_completion("find", SemanticSymbolKind::Method, "fn find(fn): any?", "Find first matching element"),
-            simple_completion("flatMap", SemanticSymbolKind::Method, "fn flatMap(fn): array", "Map and flatten"),
+            simple_completion(
+                "length",
+                SemanticSymbolKind::Field,
+                "number",
+                "Length of array",
+            ),
+            simple_completion(
+                "push",
+                SemanticSymbolKind::Method,
+                "fn push(item)",
+                "Add item to end",
+            ),
+            simple_completion(
+                "pop",
+                SemanticSymbolKind::Method,
+                "fn pop(): any",
+                "Remove and return last item",
+            ),
+            simple_completion(
+                "map",
+                SemanticSymbolKind::Method,
+                "fn map(fn): array",
+                "Transform each element",
+            ),
+            simple_completion(
+                "filter",
+                SemanticSymbolKind::Method,
+                "fn filter(fn): array",
+                "Filter by predicate",
+            ),
+            simple_completion(
+                "reduce",
+                SemanticSymbolKind::Method,
+                "fn reduce(fn, init): any",
+                "Reduce to single value",
+            ),
+            simple_completion(
+                "clone",
+                SemanticSymbolKind::Method,
+                "fn clone(): Self",
+                "Deep copy",
+            ),
+            simple_completion(
+                "slice",
+                SemanticSymbolKind::Method,
+                "fn slice(start, end?): array",
+                "Extract subarray",
+            ),
+            simple_completion(
+                "concat",
+                SemanticSymbolKind::Method,
+                "fn concat(other): array",
+                "Concatenate arrays",
+            ),
+            simple_completion(
+                "reverse",
+                SemanticSymbolKind::Method,
+                "fn reverse(): array",
+                "Reverse array",
+            ),
+            simple_completion(
+                "sort",
+                SemanticSymbolKind::Method,
+                "fn sort(fn?): array",
+                "Sort array",
+            ),
+            simple_completion(
+                "indexOf",
+                SemanticSymbolKind::Method,
+                "fn indexOf(item): number",
+                "Find index of item",
+            ),
+            simple_completion(
+                "contains",
+                SemanticSymbolKind::Method,
+                "fn contains(item): bool",
+                "Check if contains item",
+            ),
+            simple_completion(
+                "join",
+                SemanticSymbolKind::Method,
+                "fn join(sep?): string",
+                "Join elements as string",
+            ),
+            simple_completion(
+                "forEach",
+                SemanticSymbolKind::Method,
+                "fn forEach(fn)",
+                "Iterate over elements",
+            ),
+            simple_completion(
+                "find",
+                SemanticSymbolKind::Method,
+                "fn find(fn): any?",
+                "Find first matching element",
+            ),
+            simple_completion(
+                "flatMap",
+                SemanticSymbolKind::Method,
+                "fn flatMap(fn): array",
+                "Map and flatten",
+            ),
         ]
     }
 
     fn builtin_string_completions(&self) -> Vec<CompletionCandidate> {
         vec![
-            simple_completion("length", SemanticSymbolKind::Field, "number", "Length of string"),
-            simple_completion("toUpperCase", SemanticSymbolKind::Method, "fn toUpperCase(): string", "Convert to uppercase"),
-            simple_completion("toLowerCase", SemanticSymbolKind::Method, "fn toLowerCase(): string", "Convert to lowercase"),
-            simple_completion("trim", SemanticSymbolKind::Method, "fn trim(): string", "Trim whitespace"),
-            simple_completion("split", SemanticSymbolKind::Method, "fn split(sep): array", "Split into array"),
-            simple_completion("replace", SemanticSymbolKind::Method, "fn replace(old, new): string", "Replace substring"),
-            simple_completion("contains", SemanticSymbolKind::Method, "fn contains(s): bool", "Check if contains substring"),
-            simple_completion("startsWith", SemanticSymbolKind::Method, "fn startsWith(s): bool", "Check prefix"),
-            simple_completion("endsWith", SemanticSymbolKind::Method, "fn endsWith(s): bool", "Check suffix"),
-            simple_completion("slice", SemanticSymbolKind::Method, "fn slice(start, end?): string", "Extract substring"),
-            simple_completion("indexOf", SemanticSymbolKind::Method, "fn indexOf(s): number", "Find index of substring"),
-            simple_completion("repeat", SemanticSymbolKind::Method, "fn repeat(n): string", "Repeat string n times"),
-            simple_completion("charAt", SemanticSymbolKind::Method, "fn charAt(i): char", "Get character at index"),
-            simple_completion("charCodeAt", SemanticSymbolKind::Method, "fn charCodeAt(i): number", "Get char code at index"),
-            simple_completion("concat", SemanticSymbolKind::Method, "fn concat(s): string", "Concatenate strings"),
+            simple_completion(
+                "length",
+                SemanticSymbolKind::Field,
+                "number",
+                "Length of string",
+            ),
+            simple_completion(
+                "toUpperCase",
+                SemanticSymbolKind::Method,
+                "fn toUpperCase(): string",
+                "Convert to uppercase",
+            ),
+            simple_completion(
+                "toLowerCase",
+                SemanticSymbolKind::Method,
+                "fn toLowerCase(): string",
+                "Convert to lowercase",
+            ),
+            simple_completion(
+                "trim",
+                SemanticSymbolKind::Method,
+                "fn trim(): string",
+                "Trim whitespace",
+            ),
+            simple_completion(
+                "split",
+                SemanticSymbolKind::Method,
+                "fn split(sep): array",
+                "Split into array",
+            ),
+            simple_completion(
+                "replace",
+                SemanticSymbolKind::Method,
+                "fn replace(old, new): string",
+                "Replace substring",
+            ),
+            simple_completion(
+                "contains",
+                SemanticSymbolKind::Method,
+                "fn contains(s): bool",
+                "Check if contains substring",
+            ),
+            simple_completion(
+                "startsWith",
+                SemanticSymbolKind::Method,
+                "fn startsWith(s): bool",
+                "Check prefix",
+            ),
+            simple_completion(
+                "endsWith",
+                SemanticSymbolKind::Method,
+                "fn endsWith(s): bool",
+                "Check suffix",
+            ),
+            simple_completion(
+                "slice",
+                SemanticSymbolKind::Method,
+                "fn slice(start, end?): string",
+                "Extract substring",
+            ),
+            simple_completion(
+                "indexOf",
+                SemanticSymbolKind::Method,
+                "fn indexOf(s): number",
+                "Find index of substring",
+            ),
+            simple_completion(
+                "repeat",
+                SemanticSymbolKind::Method,
+                "fn repeat(n): string",
+                "Repeat string n times",
+            ),
+            simple_completion(
+                "charAt",
+                SemanticSymbolKind::Method,
+                "fn charAt(i): char",
+                "Get character at index",
+            ),
+            simple_completion(
+                "charCodeAt",
+                SemanticSymbolKind::Method,
+                "fn charCodeAt(i): number",
+                "Get char code at index",
+            ),
+            simple_completion(
+                "concat",
+                SemanticSymbolKind::Method,
+                "fn concat(s): string",
+                "Concatenate strings",
+            ),
         ]
     }
 
@@ -1032,7 +1202,9 @@ impl SemanticIndex {
                     label: sym.name.clone(),
                     kind: sym.kind,
                     detail: sym.signature.clone().or_else(|| {
-                        sym.type_annotation.as_ref().map(|t| format!("{}: {}", sym.name, t))
+                        sym.type_annotation
+                            .as_ref()
+                            .map(|t| format!("{}: {}", sym.name, t))
                     }),
                     documentation: sym.documentation.clone(),
                     insert_text,
@@ -1117,7 +1289,11 @@ fn nominal_type(td: &TypeDefinition) -> Ty {
     } else {
         Ty::GenericInstance {
             name: td.name.clone(),
-            args: td.type_params.iter().map(|p| Ty::GenericParam(p.clone())).collect(),
+            args: td
+                .type_params
+                .iter()
+                .map(|p| Ty::GenericParam(p.clone()))
+                .collect(),
         }
     }
 }
@@ -1125,7 +1301,10 @@ fn nominal_type(td: &TypeDefinition) -> Ty {
 /// Extract the base type name from a type annotation string:
 /// `"User"` → `"User"`, `"User<int>"` → `"User"`, `"User?"` → `"User"`, `"*User"` → `"User"`.
 fn base_type_name(type_str: &str) -> &str {
-    let s = type_str.trim().trim_start_matches('*').trim_end_matches('?');
+    let s = type_str
+        .trim()
+        .trim_start_matches('*')
+        .trim_end_matches('?');
     let s = s.trim();
     if let Some(idx) = s.find('<') {
         s[..idx].trim()
@@ -1155,15 +1334,19 @@ fn find_let_init<'a>(s: &'a Stmt, name: &str) -> Option<&'a Expr> {
             }
             None
         }
-        StmtKind::If { then_branch, else_branch, .. } => {
-            find_let_init(then_branch, name)
-                .or_else(|| else_branch.as_ref().and_then(|e| find_let_init(e, name)))
-        }
+        StmtKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => find_let_init(then_branch, name)
+            .or_else(|| else_branch.as_ref().and_then(|e| find_let_init(e, name))),
         StmtKind::While { body, .. } => find_let_init(body, name),
         StmtKind::ForIn { body, .. } => find_let_init(body, name),
-        StmtKind::TryCatch { try_block, catch_block, .. } => {
-            find_let_init(try_block, name).or_else(|| find_let_init(catch_block, name))
-        }
+        StmtKind::TryCatch {
+            try_block,
+            catch_block,
+            ..
+        } => find_let_init(try_block, name).or_else(|| find_let_init(catch_block, name)),
         StmtKind::Region { body, .. } => find_let_init(body, name),
         StmtKind::UnsafeBlock(body) => find_let_init(body, name),
         StmtKind::Defer(body) => find_let_init(body, name),
@@ -1265,7 +1448,8 @@ fn simple_completion(
     kind: SemanticSymbolKind,
     detail: &str,
     doc: &str,
-) -> CompletionCandidate {    let is_method = matches!(kind, SemanticSymbolKind::Method);
+) -> CompletionCandidate {
+    let is_method = matches!(kind, SemanticSymbolKind::Method);
     CompletionCandidate {
         label: name.to_string(),
         kind,
@@ -1363,12 +1547,21 @@ pub fn index_source_in(source: &str, file: Option<&str>) -> SemanticIndex {
     }
 
     // Collect type aliases
-    collect_type_aliases(&index.statements, &mut index.aliases, &mut index.generic_aliases);
+    collect_type_aliases(
+        &index.statements,
+        &mut index.aliases,
+        &mut index.generic_aliases,
+    );
 
     // Collect struct declarations as record types
     {
         let aliases_snapshot = index.aliases.clone();
-        collect_struct_types(&index.statements, &aliases_snapshot, &index.generic_aliases, &mut index.aliases);
+        collect_struct_types(
+            &index.statements,
+            &aliases_snapshot,
+            &index.generic_aliases,
+            &mut index.aliases,
+        );
     }
 
     // Collect full type definitions
@@ -1422,7 +1615,11 @@ fn collect_custom_types_names(s: &Stmt, aliases: &mut FastMap<String, Ty>) {
                 collect_custom_types_names(b, aliases);
             }
         }
-        StmtKind::If { then_branch, else_branch, .. } => {
+        StmtKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
             collect_custom_types_names(then_branch, aliases);
             if let Some(e) = else_branch {
                 collect_custom_types_names(e, aliases);
@@ -1430,7 +1627,11 @@ fn collect_custom_types_names(s: &Stmt, aliases: &mut FastMap<String, Ty>) {
         }
         StmtKind::While { body, .. } => collect_custom_types_names(body, aliases),
         StmtKind::ForIn { body, .. } => collect_custom_types_names(body, aliases),
-        StmtKind::TryCatch { try_block, catch_block, .. } => {
+        StmtKind::TryCatch {
+            try_block,
+            catch_block,
+            ..
+        } => {
             collect_custom_types_names(try_block, aliases);
             collect_custom_types_names(catch_block, aliases);
         }
@@ -1462,7 +1663,10 @@ fn collect_type_aliases(
                 }
                 aliases.insert(
                     ta.name.clone(),
-                    Ty::Record { required: req, optional: opt },
+                    Ty::Record {
+                        required: req,
+                        optional: opt,
+                    },
                 );
             } else {
                 generic_aliases.insert(ta.name.clone(), ta.clone());
@@ -1482,15 +1686,19 @@ fn collect_struct_types(
         if let StmtKind::Struct(sd, _export) = &s.kind {
             let mut req: Vec<(String, Ty)> = Vec::new();
             for (fname, fty) in &sd.fields {
-                let resolved = resolve_type_name(fty, existing_aliases, generic_aliases, &empty_type_params)
-                    .or_else(|| type_from_name(fty));
+                let resolved =
+                    resolve_type_name(fty, existing_aliases, generic_aliases, &empty_type_params)
+                        .or_else(|| type_from_name(fty));
                 if let Some(ft) = resolved {
                     req.push((fname.clone(), ft));
                 }
             }
             aliases.insert(
                 sd.name.clone(),
-                Ty::Record { required: req, optional: Vec::new() },
+                Ty::Record {
+                    required: req,
+                    optional: Vec::new(),
+                },
             );
         }
     }
@@ -1511,78 +1719,101 @@ fn collect_type_definition(
                 fields.push((fname.clone(), ftype.clone(), map_visibility(fvis)));
             }
 
-            let methods = c.methods.iter().map(|m| function_to_type_member(m, &c.name, tokens, false)).collect();
-            let static_methods = c.static_methods.iter().map(|m| function_to_type_member(m, &c.name, tokens, true)).collect();
-            let static_properties = c.static_properties.iter().map(|(name, _init, _)| {
-                // Try to infer type from the initializer expression
-                (name.clone(), "any".to_string())
-            }).collect();
+            let methods = c
+                .methods
+                .iter()
+                .map(|m| function_to_type_member(m, &c.name, tokens, false))
+                .collect();
+            let static_methods = c
+                .static_methods
+                .iter()
+                .map(|m| function_to_type_member(m, &c.name, tokens, true))
+                .collect();
+            let static_properties = c
+                .static_properties
+                .iter()
+                .map(|(name, _init, _)| {
+                    // Try to infer type from the initializer expression
+                    (name.clone(), "any".to_string())
+                })
+                .collect();
 
-            types.insert(c.name.clone(), TypeDefinition {
-                name: c.name.clone(),
-                kind: SemanticSymbolKind::Class,
-                fields,
-                methods,
-                static_methods,
-                static_properties,
-                variants: vec![],
-                extends: c.extends.clone(),
-                implements: c.implements.clone(),
-                type_params: c.type_params.clone(),
-                line,
-                col,
-                is_abstract: c.is_abstract,
-                is_sealed: c.is_sealed,
-                exported: *exported,
-            });
+            types.insert(
+                c.name.clone(),
+                TypeDefinition {
+                    name: c.name.clone(),
+                    kind: SemanticSymbolKind::Class,
+                    fields,
+                    methods,
+                    static_methods,
+                    static_properties,
+                    variants: vec![],
+                    extends: c.extends.clone(),
+                    implements: c.implements.clone(),
+                    type_params: c.type_params.clone(),
+                    line,
+                    col,
+                    is_abstract: c.is_abstract,
+                    is_sealed: c.is_sealed,
+                    exported: *exported,
+                },
+            );
         }
         StmtKind::Struct(sd, exported) => {
             let (line, col) = find_identifier_position(tokens, &sd.name, TokenKind::Struct)
                 .unwrap_or((s.span.line, s.span.col));
 
-            let fields = sd.fields.iter().map(|(fname, ftype)| {
-                (fname.clone(), ftype.clone(), VisibilityKind::Default)
-            }).collect();
+            let fields = sd
+                .fields
+                .iter()
+                .map(|(fname, ftype)| (fname.clone(), ftype.clone(), VisibilityKind::Default))
+                .collect();
 
-            types.insert(sd.name.clone(), TypeDefinition {
-                name: sd.name.clone(),
-                kind: SemanticSymbolKind::Struct,
-                fields,
-                methods: vec![],
-                static_methods: vec![],
-                static_properties: vec![],
-                variants: vec![],
-                extends: None,
-                implements: vec![],
-                type_params: sd.type_params.clone(),
-                line,
-                col,
-                is_abstract: false,
-                is_sealed: false,
-                exported: *exported,
-            });
+            types.insert(
+                sd.name.clone(),
+                TypeDefinition {
+                    name: sd.name.clone(),
+                    kind: SemanticSymbolKind::Struct,
+                    fields,
+                    methods: vec![],
+                    static_methods: vec![],
+                    static_properties: vec![],
+                    variants: vec![],
+                    extends: None,
+                    implements: vec![],
+                    type_params: sd.type_params.clone(),
+                    line,
+                    col,
+                    is_abstract: false,
+                    is_sealed: false,
+                    exported: *exported,
+                },
+            );
         }
         StmtKind::Enum(e, exported) => {
             let (line, col) = find_identifier_position(tokens, &e.name, TokenKind::Enum)
                 .unwrap_or((s.span.line, s.span.col));
 
-            types.insert(e.name.clone(), TypeDefinition {
-                name: e.name.clone(),
-                kind: SemanticSymbolKind::Enum,
-                fields: vec![],
-                methods: vec![],
-                static_methods: vec![],
-                static_properties: vec![],
-                variants: e.variants.clone(),
-                extends: None,
-                implements: vec![],
-                type_params: vec![],
-                line,
-                col,
-                is_abstract: false,
-                is_sealed: false,
-                exported: *exported,
-            });
+            types.insert(
+                e.name.clone(),
+                TypeDefinition {
+                    name: e.name.clone(),
+                    kind: SemanticSymbolKind::Enum,
+                    fields: vec![],
+                    methods: vec![],
+                    static_methods: vec![],
+                    static_properties: vec![],
+                    variants: e.variants.clone(),
+                    extends: None,
+                    implements: vec![],
+                    type_params: vec![],
+                    line,
+                    col,
+                    is_abstract: false,
+                    is_sealed: false,
+                    exported: *exported,
+                },
+            );
         }
         StmtKind::ExportDefaultClass(c) => {
             let (line, col) = find_identifier_position(tokens, &c.name, TokenKind::Class)
@@ -1593,79 +1824,104 @@ fn collect_type_definition(
                 fields.push((fname.clone(), ftype.clone(), map_visibility(fvis)));
             }
 
-            let methods = c.methods.iter().map(|m| function_to_type_member(m, &c.name, tokens, false)).collect();
-            let static_methods = c.static_methods.iter().map(|m| function_to_type_member(m, &c.name, tokens, true)).collect();
-            let static_properties = c.static_properties.iter().map(|(name, _init, _)| {
-                (name.clone(), "any".to_string())
-            }).collect();
+            let methods = c
+                .methods
+                .iter()
+                .map(|m| function_to_type_member(m, &c.name, tokens, false))
+                .collect();
+            let static_methods = c
+                .static_methods
+                .iter()
+                .map(|m| function_to_type_member(m, &c.name, tokens, true))
+                .collect();
+            let static_properties = c
+                .static_properties
+                .iter()
+                .map(|(name, _init, _)| (name.clone(), "any".to_string()))
+                .collect();
 
-            types.insert(c.name.clone(), TypeDefinition {
-                name: c.name.clone(),
-                kind: SemanticSymbolKind::Class,
-                fields,
-                methods,
-                static_methods,
-                static_properties,
-                variants: vec![],
-                extends: c.extends.clone(),
-                implements: c.implements.clone(),
-                type_params: c.type_params.clone(),
-                line,
-                col,
-                is_abstract: c.is_abstract,
-                is_sealed: c.is_sealed,
-                exported: true,
-            });
+            types.insert(
+                c.name.clone(),
+                TypeDefinition {
+                    name: c.name.clone(),
+                    kind: SemanticSymbolKind::Class,
+                    fields,
+                    methods,
+                    static_methods,
+                    static_properties,
+                    variants: vec![],
+                    extends: c.extends.clone(),
+                    implements: c.implements.clone(),
+                    type_params: c.type_params.clone(),
+                    line,
+                    col,
+                    is_abstract: c.is_abstract,
+                    is_sealed: c.is_sealed,
+                    exported: true,
+                },
+            );
         }
         StmtKind::Interface(i, exported) => {
             let (line, col) = find_identifier_position(tokens, &i.name, TokenKind::Interface)
                 .unwrap_or((s.span.line, s.span.col));
 
-            let methods = i.methods.iter().map(|m| function_to_type_member(m, &i.name, tokens, false)).collect();
+            let methods = i
+                .methods
+                .iter()
+                .map(|m| function_to_type_member(m, &i.name, tokens, false))
+                .collect();
 
-            types.insert(i.name.clone(), TypeDefinition {
-                name: i.name.clone(),
-                kind: SemanticSymbolKind::Interface,
-                fields: vec![],
-                methods,
-                static_methods: vec![],
-                static_properties: vec![],
-                variants: vec![],
-                extends: None,
-                implements: vec![],
-                type_params: i.type_params.clone(),
-                line,
-                col,
-                is_abstract: false,
-                is_sealed: false,
-                exported: *exported,
-            });
+            types.insert(
+                i.name.clone(),
+                TypeDefinition {
+                    name: i.name.clone(),
+                    kind: SemanticSymbolKind::Interface,
+                    fields: vec![],
+                    methods,
+                    static_methods: vec![],
+                    static_properties: vec![],
+                    variants: vec![],
+                    extends: None,
+                    implements: vec![],
+                    type_params: i.type_params.clone(),
+                    line,
+                    col,
+                    is_abstract: false,
+                    is_sealed: false,
+                    exported: *exported,
+                },
+            );
         }
         StmtKind::TypeAlias(ta, exported) => {
             let (line, col) = find_identifier_position(tokens, &ta.name, TokenKind::Type)
                 .unwrap_or((s.span.line, s.span.col));
 
-            let fields = ta.fields.iter().map(|(fname, _opt, ftype)| {
-                (fname.clone(), ftype.clone(), VisibilityKind::Default)
-            }).collect();
+            let fields = ta
+                .fields
+                .iter()
+                .map(|(fname, _opt, ftype)| (fname.clone(), ftype.clone(), VisibilityKind::Default))
+                .collect();
 
-            types.insert(ta.name.clone(), TypeDefinition {
-                name: ta.name.clone(),
-                kind: SemanticSymbolKind::TypeAlias,
-                fields,
-                methods: vec![],
-                static_methods: vec![],
-                static_properties: vec![],
-                variants: vec![],
-                extends: None,
-                implements: vec![],
-                type_params: ta.type_params.clone(),
-                line,
-                col,
-                is_abstract: false,
-                is_sealed: false,
-                exported: *exported,
-            });
+            types.insert(
+                ta.name.clone(),
+                TypeDefinition {
+                    name: ta.name.clone(),
+                    kind: SemanticSymbolKind::TypeAlias,
+                    fields,
+                    methods: vec![],
+                    static_methods: vec![],
+                    static_properties: vec![],
+                    variants: vec![],
+                    extends: None,
+                    implements: vec![],
+                    type_params: ta.type_params.clone(),
+                    line,
+                    col,
+                    is_abstract: false,
+                    is_sealed: false,
+                    exported: *exported,
+                },
+            );
         }
         StmtKind::Block(stmts) => {
             for s in stmts {
@@ -1676,32 +1932,49 @@ fn collect_type_definition(
     }
 }
 
-fn function_to_type_member(func: &Function, _parent: &str, tokens: &[Token], is_static: bool) -> TypeMember {
-    let params: Vec<(String, Option<String>)> = func.params.iter().map(|(name, _, type_ann)| {
-        (name.clone(), type_ann.clone())
-    }).collect();
+fn function_to_type_member(
+    func: &Function,
+    _parent: &str,
+    tokens: &[Token],
+    is_static: bool,
+) -> TypeMember {
+    let params: Vec<(String, Option<String>)> = func
+        .params
+        .iter()
+        .map(|(name, _, type_ann)| (name.clone(), type_ann.clone()))
+        .collect();
 
-    let param_str: Vec<String> = func.params.iter().map(|(name, _, type_ann)| {
-        if let Some(t) = type_ann {
-            format!("{}: {}", name, t)
-        } else {
-            name.clone()
-        }
-    }).collect();
+    let param_str: Vec<String> = func
+        .params
+        .iter()
+        .map(|(name, _, type_ann)| {
+            if let Some(t) = type_ann {
+                format!("{}: {}", name, t)
+            } else {
+                name.clone()
+            }
+        })
+        .collect();
 
     let signature = format!(
         "fn {}({}){}",
         func.name,
         param_str.join(", "),
-        func.ret_type.as_ref().map(|t| format!(" -> {}", t)).unwrap_or_default()
+        func.ret_type
+            .as_ref()
+            .map(|t| format!(" -> {}", t))
+            .unwrap_or_default()
     );
 
-    let (line, col) = find_identifier_position(tokens, &func.name, TokenKind::Fn)
-        .unwrap_or((0, 0));
+    let (line, col) = find_identifier_position(tokens, &func.name, TokenKind::Fn).unwrap_or((0, 0));
 
     TypeMember {
         name: func.name.clone(),
-        kind: if is_static { SemanticSymbolKind::StaticMethod } else { SemanticSymbolKind::Method },
+        kind: if is_static {
+            SemanticSymbolKind::StaticMethod
+        } else {
+            SemanticSymbolKind::Method
+        },
         ty: func.ret_type.as_ref().and_then(|t| type_from_name(t)),
         type_annotation: func.ret_type.clone(),
         signature: Some(signature),
@@ -1715,7 +1988,11 @@ fn function_to_type_member(func: &Function, _parent: &str, tokens: &[Token], is_
     }
 }
 
-fn find_identifier_position(tokens: &[Token], name: &str, keyword: TokenKind) -> Option<(usize, usize)> {
+fn find_identifier_position(
+    tokens: &[Token],
+    name: &str,
+    keyword: TokenKind,
+) -> Option<(usize, usize)> {
     for (i, tok) in tokens.iter().enumerate() {
         if tok.kind == keyword {
             if i + 1 < tokens.len() {
@@ -1736,12 +2013,15 @@ fn collect_symbols(
 ) {
     match &s.kind {
         StmtKind::Let(name, init, type_ann, export, is_const, readonly) => {
-            let (line, col) = find_let_position(tokens, name)
-                .unwrap_or((s.span.line, s.span.col));
+            let (line, col) = find_let_position(tokens, name).unwrap_or((s.span.line, s.span.col));
             let ty = type_ann.as_ref().and_then(|t| type_from_name(t));
             symbols.push(SymbolEntry {
                 name: name.clone(),
-                kind: if *is_const { SemanticSymbolKind::Constant } else { SemanticSymbolKind::Variable },
+                kind: if *is_const {
+                    SemanticSymbolKind::Constant
+                } else {
+                    SemanticSymbolKind::Variable
+                },
                 ty,
                 type_annotation: type_ann.clone(),
                 line,
@@ -1766,8 +2046,8 @@ fn collect_symbols(
         StmtKind::LetTuple(names, type_anns, init, _export, _is_const, _readonly) => {
             for (i, name) in names.iter().enumerate() {
                 let type_ann = type_anns.as_ref().and_then(|v| v.get(i)).cloned();
-                let (line, col) = find_let_position(tokens, name)
-                    .unwrap_or((s.span.line, s.span.col));
+                let (line, col) =
+                    find_let_position(tokens, name).unwrap_or((s.span.line, s.span.col));
                 symbols.push(SymbolEntry {
                     name: name.clone(),
                     kind: SemanticSymbolKind::Variable,
@@ -1797,8 +2077,8 @@ fn collect_symbols(
             for (key, alias) in pairs {
                 let name = alias.clone().unwrap_or_else(|| key.clone());
                 let name_len = name.len();
-                let (line, col) = find_let_position(tokens, &name)
-                    .unwrap_or((s.span.line, s.span.col));
+                let (line, col) =
+                    find_let_position(tokens, &name).unwrap_or((s.span.line, s.span.col));
                 symbols.push(SymbolEntry {
                     name,
                     kind: SemanticSymbolKind::Variable,
@@ -1960,7 +2240,11 @@ fn collect_symbols(
                 collect_symbols(s, symbols, tokens, parent_type);
             }
         }
-        StmtKind::If { then_branch, else_branch, .. } => {
+        StmtKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
             collect_symbols(then_branch, symbols, tokens, parent_type);
             if let Some(e) = else_branch {
                 collect_symbols(e, symbols, tokens, parent_type);
@@ -1969,7 +2253,9 @@ fn collect_symbols(
         StmtKind::While { body, .. } => {
             collect_symbols(body, symbols, tokens, parent_type);
         }
-        StmtKind::ForIn { name, iter, body, .. } => {
+        StmtKind::ForIn {
+            name, iter, body, ..
+        } => {
             // Add the loop variable as a symbol
             symbols.push(SymbolEntry {
                 name: name.clone(),
@@ -2000,7 +2286,11 @@ fn collect_symbols(
         StmtKind::UnsafeBlock(body) => {
             collect_symbols(body, symbols, tokens, parent_type);
         }
-        StmtKind::TryCatch { try_block, catch_block, .. } => {
+        StmtKind::TryCatch {
+            try_block,
+            catch_block,
+            ..
+        } => {
             collect_symbols(try_block, symbols, tokens, parent_type);
             collect_symbols(catch_block, symbols, tokens, parent_type);
         }
@@ -2026,16 +2316,23 @@ fn collect_function_symbols(
     parent_type: Option<&str>,
     exported: bool,
 ) {
-    let (line, col) = find_identifier_position(tokens, &func.name, TokenKind::Fn)
-        .unwrap_or((0, 0));
+    let (line, col) = find_identifier_position(tokens, &func.name, TokenKind::Fn).unwrap_or((0, 0));
 
-    let params: Vec<(String, Option<String>)> = func.params.iter()
+    let params: Vec<(String, Option<String>)> = func
+        .params
+        .iter()
         .map(|(name, _, type_ann)| (name.clone(), type_ann.clone()))
         .collect();
 
-    let param_str: Vec<String> = func.params.iter()
+    let param_str: Vec<String> = func
+        .params
+        .iter()
         .map(|(name, _, type_ann)| {
-            if let Some(t) = type_ann { format!("{}: {}", name, t) } else { name.clone() }
+            if let Some(t) = type_ann {
+                format!("{}: {}", name, t)
+            } else {
+                name.clone()
+            }
         })
         .collect();
 
@@ -2043,11 +2340,18 @@ fn collect_function_symbols(
         "fn {}({}){}",
         func.name,
         param_str.join(", "),
-        func.ret_type.as_ref().map(|t| format!(" -> {}", t)).unwrap_or_default()
+        func.ret_type
+            .as_ref()
+            .map(|t| format!(" -> {}", t))
+            .unwrap_or_default()
     );
 
     let kind = if parent_type.is_some() {
-        if func.is_static { SemanticSymbolKind::StaticMethod } else { SemanticSymbolKind::Method }
+        if func.is_static {
+            SemanticSymbolKind::StaticMethod
+        } else {
+            SemanticSymbolKind::Method
+        }
     } else {
         SemanticSymbolKind::Function
     };
@@ -2115,8 +2419,8 @@ fn collect_class_symbols(
     tokens: &[Token],
     exported: bool,
 ) {
-    let (line, col) = find_identifier_position(tokens, &class.name, TokenKind::Class)
-        .unwrap_or((0, 0));
+    let (line, col) =
+        find_identifier_position(tokens, &class.name, TokenKind::Class).unwrap_or((0, 0));
 
     let mut sig = format!("class {}", class.name);
     if let Some(parent) = &class.extends {
@@ -2192,8 +2496,14 @@ fn collect_symbols_from_expr(expr: &Expr, symbols: &mut Vec<SymbolEntry>, _token
             collect_symbols_from_expr(l, symbols, _tokens);
             collect_symbols_from_expr(r, symbols, _tokens);
         }
-        ExprKind::Unary(_, e) | ExprKind::Grouping(e) | ExprKind::Await(e) | ExprKind::Spawn(e)
-        | ExprKind::Throw(e) | ExprKind::Spread(e) | ExprKind::NonNull(e) | ExprKind::Try(e) => {
+        ExprKind::Unary(_, e)
+        | ExprKind::Grouping(e)
+        | ExprKind::Await(e)
+        | ExprKind::Spawn(e)
+        | ExprKind::Throw(e)
+        | ExprKind::Spread(e)
+        | ExprKind::NonNull(e)
+        | ExprKind::Try(e) => {
             collect_symbols_from_expr(e, symbols, _tokens);
         }
         ExprKind::Assign(_, e) | ExprKind::AssignOp(_, _, e) => {
@@ -2295,25 +2605,39 @@ fn collect_imports(s: &Stmt, imports: &mut Vec<ImportInfo>) {
 fn collect_exports(s: &Stmt, exports: &mut FastSet<String>) {
     match &s.kind {
         StmtKind::Let(name, _, _, export, _, _) => {
-            if *export { exports.insert(name.clone()); }
+            if *export {
+                exports.insert(name.clone());
+            }
         }
         StmtKind::Function(func, export) => {
-            if *export { exports.insert(func.name.clone()); }
+            if *export {
+                exports.insert(func.name.clone());
+            }
         }
         StmtKind::Class(class, export) => {
-            if *export { exports.insert(class.name.clone()); }
+            if *export {
+                exports.insert(class.name.clone());
+            }
         }
         StmtKind::Struct(sd, export) => {
-            if *export { exports.insert(sd.name.clone()); }
+            if *export {
+                exports.insert(sd.name.clone());
+            }
         }
         StmtKind::Enum(e, export) => {
-            if *export { exports.insert(e.name.clone()); }
+            if *export {
+                exports.insert(e.name.clone());
+            }
         }
         StmtKind::Interface(i, export) => {
-            if *export { exports.insert(i.name.clone()); }
+            if *export {
+                exports.insert(i.name.clone());
+            }
         }
         StmtKind::TypeAlias(ta, export) => {
-            if *export { exports.insert(ta.name.clone()); }
+            if *export {
+                exports.insert(ta.name.clone());
+            }
         }
         StmtKind::ExportDefault(name) => {
             exports.insert(name.clone());
@@ -2405,10 +2729,15 @@ fn build_scope_tree(s: &Stmt, scopes: &mut Vec<ScopeInfo>, parent_id: usize, tok
 
             // Process methods
             for method in &class.methods {
-                build_scope_tree(&Stmt {
-                    kind: StmtKind::Function(method.clone(), false),
-                    span: Span::default(),
-                }, scopes, scope_id, tokens);
+                build_scope_tree(
+                    &Stmt {
+                        kind: StmtKind::Function(method.clone(), false),
+                        span: Span::default(),
+                    },
+                    scopes,
+                    scope_id,
+                    tokens,
+                );
             }
         }
         StmtKind::Block(stmts) => {
@@ -2423,7 +2752,11 @@ fn build_scope_tree(s: &Stmt, scopes: &mut Vec<ScopeInfo>, parent_id: usize, tok
                 build_scope_tree(s, scopes, scope_id, tokens);
             }
         }
-        StmtKind::If { then_branch, else_branch, .. } => {
+        StmtKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
             build_scope_tree(then_branch, scopes, parent_id, tokens);
             if let Some(e) = else_branch {
                 build_scope_tree(e, scopes, parent_id, tokens);
@@ -2461,7 +2794,11 @@ fn build_scope_tree(s: &Stmt, scopes: &mut Vec<ScopeInfo>, parent_id: usize, tok
             });
             build_scope_tree(body, scopes, scope_id, tokens);
         }
-        StmtKind::TryCatch { try_block, catch_block, .. } => {
+        StmtKind::TryCatch {
+            try_block,
+            catch_block,
+            ..
+        } => {
             build_scope_tree(try_block, scopes, parent_id, tokens);
             build_scope_tree(catch_block, scopes, parent_id, tokens);
         }
@@ -2598,7 +2935,10 @@ enum Color {
 }
 "#;
         let index = index_source(source);
-        let ty = Ty::GenericInstance { name: "User".to_string(), args: vec![] };
+        let ty = Ty::GenericInstance {
+            name: "User".to_string(),
+            args: vec![],
+        };
         let completions = index.completions_for_type(&ty);
         let labels: Vec<_> = completions.iter().map(|c| c.label.as_str()).collect();
         assert!(labels.contains(&"id"), "Labels: {:?}", labels);
@@ -2641,7 +2981,13 @@ let user: User = User(1, "Ajay");
 "#;
         let index = index_source(source);
         let ty = index.resolve_symbol_type("user").unwrap();
-        assert_eq!(ty, Ty::GenericInstance { name: "User".to_string(), args: vec![] });
+        assert_eq!(
+            ty,
+            Ty::GenericInstance {
+                name: "User".to_string(),
+                args: vec![]
+            }
+        );
     }
 
     #[test]
@@ -2660,7 +3006,13 @@ let user = User(1, "Ajay");
 "#;
         let index = index_source(source);
         let ty = index.resolve_symbol_type("user").unwrap();
-        assert_eq!(ty, Ty::GenericInstance { name: "User".to_string(), args: vec![] });
+        assert_eq!(
+            ty,
+            Ty::GenericInstance {
+                name: "User".to_string(),
+                args: vec![]
+            }
+        );
     }
 
     #[test]
@@ -2674,7 +3026,13 @@ let p = Point(1.0, 2.0);
 "#;
         let index = index_source(source);
         let ty = index.resolve_symbol_type("p").unwrap();
-        assert_eq!(ty, Ty::GenericInstance { name: "Point".to_string(), args: vec![] });
+        assert_eq!(
+            ty,
+            Ty::GenericInstance {
+                name: "Point".to_string(),
+                args: vec![]
+            }
+        );
 
         let completions = index.completions_for_type(&ty);
         let labels: Vec<_> = completions.iter().map(|c| c.label.as_str()).collect();

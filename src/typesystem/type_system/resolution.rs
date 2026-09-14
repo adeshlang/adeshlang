@@ -30,10 +30,14 @@ pub fn resolve_type(
                 .into_iter()
                 .map(|arg| resolve_type(arg, aliases, generic_aliases, type_params))
                 .collect();
-            if (name.eq_ignore_ascii_case("Array") || name.eq_ignore_ascii_case("List")) && resolved_args.len() == 1 {
+            if (name.eq_ignore_ascii_case("Array") || name.eq_ignore_ascii_case("List"))
+                && resolved_args.len() == 1
+            {
                 return Ty::Array(Box::new(resolved_args[0].clone()));
             }
-            if (name.eq_ignore_ascii_case("Map") || name.eq_ignore_ascii_case("Dict")) && resolved_args.len() == 2 {
+            if (name.eq_ignore_ascii_case("Map") || name.eq_ignore_ascii_case("Dict"))
+                && resolved_args.len() == 2
+            {
                 return Ty::Map(
                     Box::new(resolved_args[0].clone()),
                     Box::new(resolved_args[1].clone()),
@@ -258,7 +262,11 @@ pub fn type_from_name(s: &str) -> Option<Ty> {
             '>' => depth_angle = (depth_angle - 1).max(0),
             '{' => depth_brace += 1,
             '}' => depth_brace = (depth_brace - 1).max(0),
-            '|' if depth_bracket == 0 && depth_paren == 0 && depth_angle == 0 && depth_brace == 0 => {
+            '|' if depth_bracket == 0
+                && depth_paren == 0
+                && depth_angle == 0
+                && depth_brace == 0 =>
+            {
                 union_parts.push(&ls[last_idx..i]);
                 last_idx = i + 1;
             }

@@ -6,7 +6,7 @@ use crate::ir::simd::types::{SimdElement, SimdType};
 #[derive(Debug, Clone, PartialEq)]
 pub struct SimdValue {
     pub simd_type: SimdType,
-  pub lanes: Vec<f64>, // unified f64 storage; typed ops cast as needed
+    pub lanes: Vec<f64>, // unified f64 storage; typed ops cast as needed
 }
 
 impl SimdValue {
@@ -45,13 +45,7 @@ impl SimdValue {
     }
 
     pub fn div(&self, other: &SimdValue) -> Result<SimdValue, String> {
-        self.binary_op(other, |a, b| {
-            if b == 0.0 {
-                f64::NAN
-            } else {
-                a / b
-            }
-        })
+        self.binary_op(other, |a, b| if b == 0.0 { f64::NAN } else { a / b })
     }
 
     pub fn abs(&self) -> SimdValue {
@@ -140,11 +134,7 @@ pub fn make_simd(elem_type: &str, lanes: u32, data: Vec<f64>) -> Result<SimdValu
         .ok_or_else(|| format!("unknown SIMD element type: {}", elem_type))?;
     let simd_type = SimdType::new(elem, lanes);
     if data.len() != lanes as usize {
-        return Err(format!(
-            "expected {} lanes, got {}",
-            lanes,
-            data.len()
-        ));
+        return Err(format!("expected {} lanes, got {}", lanes, data.len()));
     }
     Ok(SimdValue::from_lanes(simd_type, data))
 }

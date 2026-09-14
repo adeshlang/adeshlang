@@ -1,10 +1,10 @@
 //! SIMD + Parallel execution tests
 
+use adeshlang::ir::parallel::analysis::ParallelLoopAnalyzer;
+use adeshlang::ir::parallel::transform::ParallelTransformer;
 use adeshlang::ir::simd::cost_model::{ExecutionStrategy, VectorizationCostModel};
 use adeshlang::ir::simd::types::{SimdElement, SimdType};
 use adeshlang::ir::simd::vectorize::{AutoVectorizer, VectorOp};
-use adeshlang::ir::parallel::transform::ParallelTransformer;
-use adeshlang::ir::parallel::analysis::ParallelLoopAnalyzer;
 use adeshlang::parsing::ast::Value;
 use adeshlang::runtime::scheduler::{is_parallel_runtime_active, parallel_for};
 use adeshlang::runtime::simd::ops::{
@@ -73,8 +73,16 @@ fn test_simd_value_fma() {
 
 #[test]
 fn test_array_element_wise_add() {
-    let a = Value::Array(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]);
-    let b = Value::Array(vec![Value::Number(10.0), Value::Number(20.0), Value::Number(30.0)]);
+    let a = Value::Array(vec![
+        Value::Number(1.0),
+        Value::Number(2.0),
+        Value::Number(3.0),
+    ]);
+    let b = Value::Array(vec![
+        Value::Number(10.0),
+        Value::Number(20.0),
+        Value::Number(30.0),
+    ]);
     let c = array_add(&a, &b).unwrap();
     if let Value::Array(result) = c {
         assert_eq!(result.len(), 3);
@@ -91,7 +99,11 @@ fn test_array_element_wise_add() {
 
 #[test]
 fn test_array_broadcast_scalar_add() {
-    let a = Value::Array(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]);
+    let a = Value::Array(vec![
+        Value::Number(1.0),
+        Value::Number(2.0),
+        Value::Number(3.0),
+    ]);
     let scalar = Value::Number(10.0);
     let c = array_add(&a, &scalar).unwrap();
     if let Value::Array(result) = c {
@@ -105,8 +117,16 @@ fn test_array_broadcast_scalar_add() {
 
 #[test]
 fn test_array_element_wise_mul() {
-    let a = Value::Array(vec![Value::Number(2.0), Value::Number(3.0), Value::Number(4.0)]);
-    let b = Value::Array(vec![Value::Number(5.0), Value::Number(6.0), Value::Number(7.0)]);
+    let a = Value::Array(vec![
+        Value::Number(2.0),
+        Value::Number(3.0),
+        Value::Number(4.0),
+    ]);
+    let b = Value::Array(vec![
+        Value::Number(5.0),
+        Value::Number(6.0),
+        Value::Number(7.0),
+    ]);
     let c = array_mul(&a, &b).unwrap();
     if let Value::Array(result) = c {
         if let Value::Number(n) = result[0] {
@@ -193,8 +213,16 @@ fn test_array_mean() {
 
 #[test]
 fn test_array_dot_product() {
-    let a = Value::Array(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]);
-    let b = Value::Array(vec![Value::Number(4.0), Value::Number(5.0), Value::Number(6.0)]);
+    let a = Value::Array(vec![
+        Value::Number(1.0),
+        Value::Number(2.0),
+        Value::Number(3.0),
+    ]);
+    let b = Value::Array(vec![
+        Value::Number(4.0),
+        Value::Number(5.0),
+        Value::Number(6.0),
+    ]);
     let d = array_dot(&a, &b).unwrap();
     if let Value::Number(n) = d {
         assert!((n - 32.0).abs() < 1e-10); // 1*4 + 2*5 + 3*6
@@ -251,9 +279,10 @@ fn test_single_element_array() {
     let b = Value::Array(vec![Value::Number(8.0)]);
     let c = array_add(&a, &b).unwrap();
     if let Value::Array(result) = c
-        && let Value::Number(n) = result[0] {
-            assert!((n - 50.0).abs() < 1e-10);
-        }
+        && let Value::Number(n) = result[0]
+    {
+        assert!((n - 50.0).abs() < 1e-10);
+    }
 }
 
 #[test]
@@ -278,7 +307,13 @@ fn test_non_multiple_of_lane_length() {
 #[test]
 fn test_cost_model_small_loop_scalar() {
     let model = VectorizationCostModel::default();
-    let strategy = model.select_strategy(4, 1.0, 4, adeshlang::ir::simd::types::SimdIsa::Avx2, SimdElement::F32);
+    let strategy = model.select_strategy(
+        4,
+        1.0,
+        4,
+        adeshlang::ir::simd::types::SimdIsa::Avx2,
+        SimdElement::F32,
+    );
     assert_eq!(strategy, ExecutionStrategy::Scalar);
 }
 
@@ -352,8 +387,8 @@ fn test_parallel_transform_large_loop() {
 
 #[test]
 fn test_parallel_for_execution() {
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
     let counter = Arc::new(AtomicU64::new(0));
     let c = Arc::clone(&counter);
     parallel_for(0, 1000, move |i| {

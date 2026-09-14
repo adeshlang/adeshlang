@@ -27,21 +27,42 @@ pub enum AtpError {
 }
 
 impl AtpError {
-    pub fn transport(msg: impl Into<String>) -> Self { AtpError::Transport(msg.into()) }
-    pub fn protocol(msg: impl Into<String>) -> Self { AtpError::Protocol(msg.into()) }
-    pub fn security(msg: impl Into<String>) -> Self { AtpError::Security(msg.into()) }
-    pub fn connection(msg: impl Into<String>) -> Self { AtpError::Connection(msg.into()) }
-    pub fn stream(msg: impl Into<String>) -> Self { AtpError::Stream(msg.into()) }
-    pub fn message(msg: impl Into<String>) -> Self { AtpError::Message(msg.into()) }
-    pub fn timeout(msg: impl Into<String>) -> Self { AtpError::Timeout(msg.into()) }
-    pub fn memory(msg: impl Into<String>) -> Self { AtpError::Memory(msg.into()) }
+    pub fn transport(msg: impl Into<String>) -> Self {
+        AtpError::Transport(msg.into())
+    }
+    pub fn protocol(msg: impl Into<String>) -> Self {
+        AtpError::Protocol(msg.into())
+    }
+    pub fn security(msg: impl Into<String>) -> Self {
+        AtpError::Security(msg.into())
+    }
+    pub fn connection(msg: impl Into<String>) -> Self {
+        AtpError::Connection(msg.into())
+    }
+    pub fn stream(msg: impl Into<String>) -> Self {
+        AtpError::Stream(msg.into())
+    }
+    pub fn message(msg: impl Into<String>) -> Self {
+        AtpError::Message(msg.into())
+    }
+    pub fn timeout(msg: impl Into<String>) -> Self {
+        AtpError::Timeout(msg.into())
+    }
+    pub fn memory(msg: impl Into<String>) -> Self {
+        AtpError::Memory(msg.into())
+    }
 
     /// Human-readable message.
     pub fn message_str(&self) -> &str {
         match self {
-            AtpError::Transport(m) | AtpError::Protocol(m) | AtpError::Security(m)
-            | AtpError::Connection(m) | AtpError::Stream(m) | AtpError::Message(m)
-            | AtpError::Timeout(m) | AtpError::Memory(m) => m,
+            AtpError::Transport(m)
+            | AtpError::Protocol(m)
+            | AtpError::Security(m)
+            | AtpError::Connection(m)
+            | AtpError::Stream(m)
+            | AtpError::Message(m)
+            | AtpError::Timeout(m)
+            | AtpError::Memory(m) => m,
         }
     }
 

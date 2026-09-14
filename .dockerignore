@@ -1,0 +1,44 @@
+# Rust build artifacts
+target/
+target-docker-*/
+*.pdb
+*.exe
+*.dll
+*.so
+*.dylib
+*.rlib
+
+# Release and distribution packages
+dist/
+release/
+docs_out/
+downloads_web/
+
+# Git and version control
+.git/
+.github/
+.gitignore
+
+# Environment and sensitive files
+.env
+.env.*
+*.secret
+
+# IDE and Editor files
+.vscode/
+.idea/
+.agents/
+*.swp
+*.swo
+*~
+
+# Node modules and web editor caches
+node_modules/
+**/node_modules/
+.adesh_cache/
+.adl/
+
+# Temporary and log files
+tmp/
+temp/
+*.log

@@ -44,10 +44,14 @@ pub fn execute_toolchain_command_with_preference(
                 std::process::exit(1);
             }
         },
-        "update" => println!(
-            "Toolchain updates are delivered with AdeshLang releases. To re-download the \
-             curated toolchain now, run: adesh toolchain install --force"
-        ),
+        "update" => {
+            println!(
+                "AdeshLang Update Guidance:\n\
+                 • Incremental Update (binaries, lib, std): Run 'powershell -ExecutionPolicy Bypass -File .\\scripts\\update_installed.ps1'\n\
+                 • In-Place Upgrade: Run the latest setup installer without uninstalling\n\
+                 • Re-download curated LLVM toolchain: Run 'adesh toolchain install --force'"
+            );
+        }
         "install" => super::install::execute_install_command(&args[1..]),
         "expose" => super::install::execute_expose_command(&args[1..]),
         "current" | _ => match resolve(preference) {

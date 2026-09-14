@@ -175,27 +175,29 @@ pub(in crate::execution::runtime_core) fn ann_matches_value(
         "any" => true,
         "char" => matches!(v, Char(_)) || matches!(v, Str(_)),
         "string" | "str" => matches!(v, Str(_)),
-        "int" => matches!(
-            v,
-            Number(_)
-                | U8(_)
-                | U16(_)
-                | U32(_)
-                | U64(_)
-                | U128(_)
-                | I8(_)
-                | I16(_)
-                | I32(_)
-                | I64(_)
-                | I128(_)
-                | BigInt(_)
-        ) || {
-            if let Some(n) = get_numeric_value(v) {
-                n.fract().abs() < 1e-12
-            } else {
-                false
+        "int" => {
+            matches!(
+                v,
+                Number(_)
+                    | U8(_)
+                    | U16(_)
+                    | U32(_)
+                    | U64(_)
+                    | U128(_)
+                    | I8(_)
+                    | I16(_)
+                    | I32(_)
+                    | I64(_)
+                    | I128(_)
+                    | BigInt(_)
+            ) || {
+                if let Some(n) = get_numeric_value(v) {
+                    n.fract().abs() < 1e-12
+                } else {
+                    false
+                }
             }
-        },
+        }
         "number" | "float" => matches!(
             v,
             Number(_)
@@ -219,107 +221,205 @@ pub(in crate::execution::runtime_core) fn ann_matches_value(
         "set" => matches!(v, Set(_)),
         "map" | "object" => matches!(v, Object(_)),
         // Fixed-width integer types (unsigned)
-        "u8" => matches!(v, Value::U8(_)) || match v {
-            Value::U16(x) => *x <= u8::MAX as u16,
-            Value::U32(x) => *x <= u8::MAX as u32,
-            Value::U64(x) => *x <= u8::MAX as u64,
-            Value::U128(x) => *x <= u8::MAX as u128,
-            Value::I8(x) => *x >= 0,
-            Value::I16(x) => *x >= 0 && *x <= u8::MAX as i16,
-            Value::I32(x) => *x >= 0 && *x <= u8::MAX as i32,
-            Value::I64(x) => *x >= 0 && *x <= u8::MAX as i64,
-            Value::I128(x) => *x >= 0 && *x <= u8::MAX as i128,
-            Value::Number(n) => n.fract().abs() < 1e-12 && *n >= 0.0 && *n <= u8::MAX as f64,
-            Value::BigInt(bi) => bi >= &num_bigint::BigInt::from(0u8) && bi <= &num_bigint::BigInt::from(u8::MAX),
-            _ => false,
-        },
-        "u16" => matches!(v, Value::U8(_) | Value::U16(_)) || match v {
-            Value::U32(x) => *x <= u16::MAX as u32,
-            Value::U64(x) => *x <= u16::MAX as u64,
-            Value::U128(x) => *x <= u16::MAX as u128,
-            Value::I8(x) => *x >= 0,
-            Value::I16(x) => *x >= 0,
-            Value::I32(x) => *x >= 0 && *x <= u16::MAX as i32,
-            Value::I64(x) => *x >= 0 && *x <= u16::MAX as i64,
-            Value::I128(x) => *x >= 0 && *x <= u16::MAX as i128,
-            Value::Number(n) => n.fract().abs() < 1e-12 && *n >= 0.0 && *n <= u16::MAX as f64,
-            Value::BigInt(bi) => bi >= &num_bigint::BigInt::from(0u16) && bi <= &num_bigint::BigInt::from(u16::MAX),
-            _ => false,
-        },
-        "u32" => matches!(v, Value::U8(_) | Value::U16(_) | Value::U32(_)) || match v {
-            Value::U64(x) => *x <= u32::MAX as u64,
-            Value::U128(x) => *x <= u32::MAX as u128,
-            Value::I8(x) => *x >= 0,
-            Value::I16(x) => *x >= 0,
-            Value::I32(x) => *x >= 0,
-            Value::I64(x) => *x >= 0 && *x <= u32::MAX as i64,
-            Value::I128(x) => *x >= 0 && *x <= u32::MAX as i128,
-            Value::Number(n) => n.fract().abs() < 1e-12 && *n >= 0.0 && *n <= u32::MAX as f64,
-            Value::BigInt(bi) => bi >= &num_bigint::BigInt::from(0u32) && bi <= &num_bigint::BigInt::from(u32::MAX),
-            _ => false,
-        },
-        "u64" => matches!(v, Value::U8(_) | Value::U16(_) | Value::U32(_) | Value::U64(_)) || match v {
-            Value::U128(x) => *x <= u64::MAX as u128,
-            Value::I8(x) => *x >= 0,
-            Value::I16(x) => *x >= 0,
-            Value::I32(x) => *x >= 0,
-            Value::I64(x) => *x >= 0,
-            Value::I128(x) => *x >= 0 && *x <= u64::MAX as i128,
-            Value::Number(n) => n.fract().abs() < 1e-12 && *n >= 0.0 && *n <= u64::MAX as f64,
-            Value::BigInt(bi) => bi >= &num_bigint::BigInt::from(0u64) && bi <= &num_bigint::BigInt::from(u64::MAX),
-            _ => false,
-        },
-        "u128" => matches!(v, Value::U8(_) | Value::U16(_) | Value::U32(_) | Value::U64(_) | Value::U128(_)) || match v {
-            Value::I8(x) => *x >= 0,
-            Value::I16(x) => *x >= 0,
-            Value::I32(x) => *x >= 0,
-            Value::I64(x) => *x >= 0,
-            Value::I128(x) => *x >= 0,
-            Value::Number(n) => n.fract().abs() < 1e-12 && *n >= 0.0,
-            Value::BigInt(bi) => bi >= &num_bigint::BigInt::from(0u128) && bi <= &num_bigint::BigInt::from(u128::MAX),
-            _ => false,
-        },
+        "u8" => {
+            matches!(v, Value::U8(_))
+                || match v {
+                    Value::U16(x) => *x <= u8::MAX as u16,
+                    Value::U32(x) => *x <= u8::MAX as u32,
+                    Value::U64(x) => *x <= u8::MAX as u64,
+                    Value::U128(x) => *x <= u8::MAX as u128,
+                    Value::I8(x) => *x >= 0,
+                    Value::I16(x) => *x >= 0 && *x <= u8::MAX as i16,
+                    Value::I32(x) => *x >= 0 && *x <= u8::MAX as i32,
+                    Value::I64(x) => *x >= 0 && *x <= u8::MAX as i64,
+                    Value::I128(x) => *x >= 0 && *x <= u8::MAX as i128,
+                    Value::Number(n) => {
+                        n.fract().abs() < 1e-12 && *n >= 0.0 && *n <= u8::MAX as f64
+                    }
+                    Value::BigInt(bi) => {
+                        bi >= &num_bigint::BigInt::from(0u8)
+                            && bi <= &num_bigint::BigInt::from(u8::MAX)
+                    }
+                    _ => false,
+                }
+        }
+        "u16" => {
+            matches!(v, Value::U8(_) | Value::U16(_))
+                || match v {
+                    Value::U32(x) => *x <= u16::MAX as u32,
+                    Value::U64(x) => *x <= u16::MAX as u64,
+                    Value::U128(x) => *x <= u16::MAX as u128,
+                    Value::I8(x) => *x >= 0,
+                    Value::I16(x) => *x >= 0,
+                    Value::I32(x) => *x >= 0 && *x <= u16::MAX as i32,
+                    Value::I64(x) => *x >= 0 && *x <= u16::MAX as i64,
+                    Value::I128(x) => *x >= 0 && *x <= u16::MAX as i128,
+                    Value::Number(n) => {
+                        n.fract().abs() < 1e-12 && *n >= 0.0 && *n <= u16::MAX as f64
+                    }
+                    Value::BigInt(bi) => {
+                        bi >= &num_bigint::BigInt::from(0u16)
+                            && bi <= &num_bigint::BigInt::from(u16::MAX)
+                    }
+                    _ => false,
+                }
+        }
+        "u32" => {
+            matches!(v, Value::U8(_) | Value::U16(_) | Value::U32(_))
+                || match v {
+                    Value::U64(x) => *x <= u32::MAX as u64,
+                    Value::U128(x) => *x <= u32::MAX as u128,
+                    Value::I8(x) => *x >= 0,
+                    Value::I16(x) => *x >= 0,
+                    Value::I32(x) => *x >= 0,
+                    Value::I64(x) => *x >= 0 && *x <= u32::MAX as i64,
+                    Value::I128(x) => *x >= 0 && *x <= u32::MAX as i128,
+                    Value::Number(n) => {
+                        n.fract().abs() < 1e-12 && *n >= 0.0 && *n <= u32::MAX as f64
+                    }
+                    Value::BigInt(bi) => {
+                        bi >= &num_bigint::BigInt::from(0u32)
+                            && bi <= &num_bigint::BigInt::from(u32::MAX)
+                    }
+                    _ => false,
+                }
+        }
+        "u64" => {
+            matches!(
+                v,
+                Value::U8(_) | Value::U16(_) | Value::U32(_) | Value::U64(_)
+            ) || match v {
+                Value::U128(x) => *x <= u64::MAX as u128,
+                Value::I8(x) => *x >= 0,
+                Value::I16(x) => *x >= 0,
+                Value::I32(x) => *x >= 0,
+                Value::I64(x) => *x >= 0,
+                Value::I128(x) => *x >= 0 && *x <= u64::MAX as i128,
+                Value::Number(n) => n.fract().abs() < 1e-12 && *n >= 0.0 && *n <= u64::MAX as f64,
+                Value::BigInt(bi) => {
+                    bi >= &num_bigint::BigInt::from(0u64)
+                        && bi <= &num_bigint::BigInt::from(u64::MAX)
+                }
+                _ => false,
+            }
+        }
+        "u128" => {
+            matches!(
+                v,
+                Value::U8(_) | Value::U16(_) | Value::U32(_) | Value::U64(_) | Value::U128(_)
+            ) || match v {
+                Value::I8(x) => *x >= 0,
+                Value::I16(x) => *x >= 0,
+                Value::I32(x) => *x >= 0,
+                Value::I64(x) => *x >= 0,
+                Value::I128(x) => *x >= 0,
+                Value::Number(n) => n.fract().abs() < 1e-12 && *n >= 0.0,
+                Value::BigInt(bi) => {
+                    bi >= &num_bigint::BigInt::from(0u128)
+                        && bi <= &num_bigint::BigInt::from(u128::MAX)
+                }
+                _ => false,
+            }
+        }
         // Fixed-width integer types (signed)
-        "i8" => matches!(v, Value::I8(_)) || match v {
-            Value::U8(x) => *x <= i8::MAX as u8,
-            Value::I16(x) => *x >= i8::MIN as i16 && *x <= i8::MAX as i16,
-            Value::I32(x) => *x >= i8::MIN as i32 && *x <= i8::MAX as i32,
-            Value::I64(x) => *x >= i8::MIN as i64 && *x <= i8::MAX as i64,
-            Value::I128(x) => *x >= i8::MIN as i128 && *x <= i8::MAX as i128,
-            Value::Number(n) => n.fract().abs() < 1e-12 && *n >= i8::MIN as f64 && *n <= i8::MAX as f64,
-            Value::BigInt(bi) => bi >= &num_bigint::BigInt::from(i8::MIN) && bi <= &num_bigint::BigInt::from(i8::MAX),
-            _ => false,
-        },
-        "i16" => matches!(v, Value::I8(_) | Value::I16(_) | Value::U8(_)) || match v {
-            Value::U16(x) => *x <= i16::MAX as u16,
-            Value::I32(x) => *x >= i16::MIN as i32 && *x <= i16::MAX as i32,
-            Value::I64(x) => *x >= i16::MIN as i64 && *x <= i16::MAX as i64,
-            Value::I128(x) => *x >= i16::MIN as i128 && *x <= i16::MAX as i128,
-            Value::Number(n) => n.fract().abs() < 1e-12 && *n >= i16::MIN as f64 && *n <= i16::MAX as f64,
-            Value::BigInt(bi) => bi >= &num_bigint::BigInt::from(i16::MIN) && bi <= &num_bigint::BigInt::from(i16::MAX),
-            _ => false,
-        },
-        "i32" => matches!(v, Value::I8(_) | Value::I16(_) | Value::I32(_) | Value::U8(_) | Value::U16(_)) || match v {
-            Value::U32(x) => *x <= i32::MAX as u32,
-            Value::I64(x) => *x >= i32::MIN as i64 && *x <= i32::MAX as i64,
-            Value::I128(x) => *x >= i32::MIN as i128 && *x <= i32::MAX as i128,
-            Value::Number(n) => n.fract().abs() < 1e-12 && *n >= i32::MIN as f64 && *n <= i32::MAX as f64,
-            Value::BigInt(bi) => bi >= &num_bigint::BigInt::from(i32::MIN) && bi <= &num_bigint::BigInt::from(i32::MAX),
-            _ => false,
-        },
-        "i64" => matches!(v, Value::I8(_) | Value::I16(_) | Value::I32(_) | Value::I64(_) | Value::U8(_) | Value::U16(_) | Value::U32(_)) || match v {
-            Value::U64(x) => *x <= i64::MAX as u64,
-            Value::I128(x) => *x >= i64::MIN as i128 && *x <= i64::MAX as i128,
-            Value::Number(n) => n.fract().abs() < 1e-12 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64,
-            Value::BigInt(bi) => bi >= &num_bigint::BigInt::from(i64::MIN) && bi <= &num_bigint::BigInt::from(i64::MAX),
-            _ => false,
-        },
-        "i128" => matches!(v, Value::I8(_) | Value::I16(_) | Value::I32(_) | Value::I64(_) | Value::I128(_) | Value::U8(_) | Value::U16(_) | Value::U32(_) | Value::U64(_)) || match v {
-            Value::U128(x) => *x <= i128::MAX as u128,
-            Value::Number(n) => n.fract().abs() < 1e-12,
-            Value::BigInt(bi) => bi >= &num_bigint::BigInt::from(i128::MIN) && bi <= &num_bigint::BigInt::from(i128::MAX),
-            _ => false,
-        },
+        "i8" => {
+            matches!(v, Value::I8(_))
+                || match v {
+                    Value::U8(x) => *x <= i8::MAX as u8,
+                    Value::I16(x) => *x >= i8::MIN as i16 && *x <= i8::MAX as i16,
+                    Value::I32(x) => *x >= i8::MIN as i32 && *x <= i8::MAX as i32,
+                    Value::I64(x) => *x >= i8::MIN as i64 && *x <= i8::MAX as i64,
+                    Value::I128(x) => *x >= i8::MIN as i128 && *x <= i8::MAX as i128,
+                    Value::Number(n) => {
+                        n.fract().abs() < 1e-12 && *n >= i8::MIN as f64 && *n <= i8::MAX as f64
+                    }
+                    Value::BigInt(bi) => {
+                        bi >= &num_bigint::BigInt::from(i8::MIN)
+                            && bi <= &num_bigint::BigInt::from(i8::MAX)
+                    }
+                    _ => false,
+                }
+        }
+        "i16" => {
+            matches!(v, Value::I8(_) | Value::I16(_) | Value::U8(_))
+                || match v {
+                    Value::U16(x) => *x <= i16::MAX as u16,
+                    Value::I32(x) => *x >= i16::MIN as i32 && *x <= i16::MAX as i32,
+                    Value::I64(x) => *x >= i16::MIN as i64 && *x <= i16::MAX as i64,
+                    Value::I128(x) => *x >= i16::MIN as i128 && *x <= i16::MAX as i128,
+                    Value::Number(n) => {
+                        n.fract().abs() < 1e-12 && *n >= i16::MIN as f64 && *n <= i16::MAX as f64
+                    }
+                    Value::BigInt(bi) => {
+                        bi >= &num_bigint::BigInt::from(i16::MIN)
+                            && bi <= &num_bigint::BigInt::from(i16::MAX)
+                    }
+                    _ => false,
+                }
+        }
+        "i32" => {
+            matches!(
+                v,
+                Value::I8(_) | Value::I16(_) | Value::I32(_) | Value::U8(_) | Value::U16(_)
+            ) || match v {
+                Value::U32(x) => *x <= i32::MAX as u32,
+                Value::I64(x) => *x >= i32::MIN as i64 && *x <= i32::MAX as i64,
+                Value::I128(x) => *x >= i32::MIN as i128 && *x <= i32::MAX as i128,
+                Value::Number(n) => {
+                    n.fract().abs() < 1e-12 && *n >= i32::MIN as f64 && *n <= i32::MAX as f64
+                }
+                Value::BigInt(bi) => {
+                    bi >= &num_bigint::BigInt::from(i32::MIN)
+                        && bi <= &num_bigint::BigInt::from(i32::MAX)
+                }
+                _ => false,
+            }
+        }
+        "i64" => {
+            matches!(
+                v,
+                Value::I8(_)
+                    | Value::I16(_)
+                    | Value::I32(_)
+                    | Value::I64(_)
+                    | Value::U8(_)
+                    | Value::U16(_)
+                    | Value::U32(_)
+            ) || match v {
+                Value::U64(x) => *x <= i64::MAX as u64,
+                Value::I128(x) => *x >= i64::MIN as i128 && *x <= i64::MAX as i128,
+                Value::Number(n) => {
+                    n.fract().abs() < 1e-12 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64
+                }
+                Value::BigInt(bi) => {
+                    bi >= &num_bigint::BigInt::from(i64::MIN)
+                        && bi <= &num_bigint::BigInt::from(i64::MAX)
+                }
+                _ => false,
+            }
+        }
+        "i128" => {
+            matches!(
+                v,
+                Value::I8(_)
+                    | Value::I16(_)
+                    | Value::I32(_)
+                    | Value::I64(_)
+                    | Value::I128(_)
+                    | Value::U8(_)
+                    | Value::U16(_)
+                    | Value::U32(_)
+                    | Value::U64(_)
+            ) || match v {
+                Value::U128(x) => *x <= i128::MAX as u128,
+                Value::Number(n) => n.fract().abs() < 1e-12,
+                Value::BigInt(bi) => {
+                    bi >= &num_bigint::BigInt::from(i128::MIN)
+                        && bi <= &num_bigint::BigInt::from(i128::MAX)
+                }
+                _ => false,
+            }
+        }
         // Fixed-width float types
         "f32" => matches!(v, Value::F32(_)) || get_numeric_value(v).is_some(),
         "f64" => matches!(v, Value::F64(_)) || get_numeric_value(v).is_some(),
@@ -450,42 +550,78 @@ pub(in crate::execution::runtime_core) fn coerce_to_fixed_width(
     // Handle BigInt values directly
     if let Value::BigInt(bi) = v {
         return match ann.to_lowercase().as_str() {
-            "u8" => bi.to_u8().map(U8).map(Some).ok_or_else(|| {
-                format!("value {} is out of range for u8 (0..{})", bi, u8::MAX)
-            }),
-            "u16" => bi.to_u16().map(U16).map(Some).ok_or_else(|| {
-                format!("value {} is out of range for u16 (0..{})", bi, u16::MAX)
-            }),
-            "u32" => bi.to_u32().map(U32).map(Some).ok_or_else(|| {
-                format!("value {} is out of range for u32 (0..{})", bi, u32::MAX)
-            }),
-            "u64" => bi.to_u64().map(U64).map(Some).ok_or_else(|| {
-                format!("value {} is out of range for u64 (0..{})", bi, u64::MAX)
-            }),
-            "u128" => bi.to_u128().map(U128).map(Some).ok_or_else(|| {
-                format!("value {} is out of range for u128", bi)
-            }),
+            "u8" => bi
+                .to_u8()
+                .map(U8)
+                .map(Some)
+                .ok_or_else(|| format!("value {} is out of range for u8 (0..{})", bi, u8::MAX)),
+            "u16" => {
+                bi.to_u16().map(U16).map(Some).ok_or_else(|| {
+                    format!("value {} is out of range for u16 (0..{})", bi, u16::MAX)
+                })
+            }
+            "u32" => {
+                bi.to_u32().map(U32).map(Some).ok_or_else(|| {
+                    format!("value {} is out of range for u32 (0..{})", bi, u32::MAX)
+                })
+            }
+            "u64" => {
+                bi.to_u64().map(U64).map(Some).ok_or_else(|| {
+                    format!("value {} is out of range for u64 (0..{})", bi, u64::MAX)
+                })
+            }
+            "u128" => bi
+                .to_u128()
+                .map(U128)
+                .map(Some)
+                .ok_or_else(|| format!("value {} is out of range for u128", bi)),
             "i8" => bi.to_i8().map(I8).map(Some).ok_or_else(|| {
-                format!("value {} is out of range for i8 ({}..{})", bi, i8::MIN, i8::MAX)
+                format!(
+                    "value {} is out of range for i8 ({}..{})",
+                    bi,
+                    i8::MIN,
+                    i8::MAX
+                )
             }),
             "i16" => bi.to_i16().map(I16).map(Some).ok_or_else(|| {
-                format!("value {} is out of range for i16 ({}..{})", bi, i16::MIN, i16::MAX)
+                format!(
+                    "value {} is out of range for i16 ({}..{})",
+                    bi,
+                    i16::MIN,
+                    i16::MAX
+                )
             }),
             "i32" => bi.to_i32().map(I32).map(Some).ok_or_else(|| {
-                format!("value {} is out of range for i32 ({}..{})", bi, i32::MIN, i32::MAX)
+                format!(
+                    "value {} is out of range for i32 ({}..{})",
+                    bi,
+                    i32::MIN,
+                    i32::MAX
+                )
             }),
             "i64" => bi.to_i64().map(I64).map(Some).ok_or_else(|| {
-                format!("value {} is out of range for i64 ({}..{})", bi, i64::MIN, i64::MAX)
+                format!(
+                    "value {} is out of range for i64 ({}..{})",
+                    bi,
+                    i64::MIN,
+                    i64::MAX
+                )
             }),
-            "i128" => bi.to_i128().map(I128).map(Some).ok_or_else(|| {
-                format!("value {} is out of range for i128", bi)
-            }),
-            "f32" => bi.to_f32().map(F32).map(Some).ok_or_else(|| {
-                format!("value {} is out of range for f32", bi)
-            }),
-            "f64" => bi.to_f64().map(F64).map(Some).ok_or_else(|| {
-                format!("value {} is out of range for f64", bi)
-            }),
+            "i128" => bi
+                .to_i128()
+                .map(I128)
+                .map(Some)
+                .ok_or_else(|| format!("value {} is out of range for i128", bi)),
+            "f32" => bi
+                .to_f32()
+                .map(F32)
+                .map(Some)
+                .ok_or_else(|| format!("value {} is out of range for f32", bi)),
+            "f64" => bi
+                .to_f64()
+                .map(F64)
+                .map(Some)
+                .ok_or_else(|| format!("value {} is out of range for f64", bi)),
             "uint" => {
                 if *bi < num_bigint::BigInt::from(0u8) {
                     return Err(format!("uint requires a non-negative integer, got {}", bi));
@@ -561,65 +697,125 @@ pub(in crate::execution::runtime_core) fn coerce_to_fixed_width(
         "u8" => match num_val {
             IntegerOrFloat::Unsigned(x) if x <= u8::MAX as u128 => Ok(Some(U8(x as u8))),
             IntegerOrFloat::Signed(x) if x >= 0 && x <= u8::MAX as i128 => Ok(Some(U8(x as u8))),
-            IntegerOrFloat::Float(f) if f.fract().abs() < 1e-12 && f >= 0.0 && f <= u8::MAX as f64 => Ok(Some(U8(f as u8))),
+            IntegerOrFloat::Float(f)
+                if f.fract().abs() < 1e-12 && f >= 0.0 && f <= u8::MAX as f64 =>
+            {
+                Ok(Some(U8(f as u8)))
+            }
             IntegerOrFloat::Float(f) => Err(format!("u8 requires an integer, got {}", f)),
             _ => Err(format!("value is out of range for u8 (0..{})", u8::MAX)),
         },
         "u16" => match num_val {
             IntegerOrFloat::Unsigned(x) if x <= u16::MAX as u128 => Ok(Some(U16(x as u16))),
             IntegerOrFloat::Signed(x) if x >= 0 && x <= u16::MAX as i128 => Ok(Some(U16(x as u16))),
-            IntegerOrFloat::Float(f) if f.fract().abs() < 1e-12 && f >= 0.0 && f <= u16::MAX as f64 => Ok(Some(U16(f as u16))),
+            IntegerOrFloat::Float(f)
+                if f.fract().abs() < 1e-12 && f >= 0.0 && f <= u16::MAX as f64 =>
+            {
+                Ok(Some(U16(f as u16)))
+            }
             IntegerOrFloat::Float(f) => Err(format!("u16 requires an integer, got {}", f)),
             _ => Err(format!("value is out of range for u16 (0..{})", u16::MAX)),
         },
         "u32" => match num_val {
             IntegerOrFloat::Unsigned(x) if x <= u32::MAX as u128 => Ok(Some(U32(x as u32))),
             IntegerOrFloat::Signed(x) if x >= 0 && x <= u32::MAX as i128 => Ok(Some(U32(x as u32))),
-            IntegerOrFloat::Float(f) if f.fract().abs() < 1e-12 && f >= 0.0 && f <= u32::MAX as f64 => Ok(Some(U32(f as u32))),
+            IntegerOrFloat::Float(f)
+                if f.fract().abs() < 1e-12 && f >= 0.0 && f <= u32::MAX as f64 =>
+            {
+                Ok(Some(U32(f as u32)))
+            }
             IntegerOrFloat::Float(f) => Err(format!("u32 requires an integer, got {}", f)),
             _ => Err(format!("value is out of range for u32 (0..{})", u32::MAX)),
         },
         "u64" => match num_val {
             IntegerOrFloat::Unsigned(x) if x <= u64::MAX as u128 => Ok(Some(U64(x as u64))),
-            IntegerOrFloat::Signed(x) if x >= 0 && (x as u128) <= u64::MAX as u128 => Ok(Some(U64(x as u64))),
-            IntegerOrFloat::Float(f) if f.fract().abs() < 1e-12 && f >= 0.0 && f <= u64::MAX as f64 => Ok(Some(U64(f as u64))),
+            IntegerOrFloat::Signed(x) if x >= 0 && (x as u128) <= u64::MAX as u128 => {
+                Ok(Some(U64(x as u64)))
+            }
+            IntegerOrFloat::Float(f)
+                if f.fract().abs() < 1e-12 && f >= 0.0 && f <= u64::MAX as f64 =>
+            {
+                Ok(Some(U64(f as u64)))
+            }
             IntegerOrFloat::Float(f) => Err(format!("u64 requires an integer, got {}", f)),
             _ => Err(format!("value is out of range for u64 (0..{})", u64::MAX)),
         },
         "u128" => match num_val {
             IntegerOrFloat::Unsigned(x) => Ok(Some(U128(x))),
             IntegerOrFloat::Signed(x) if x >= 0 => Ok(Some(U128(x as u128))),
-            IntegerOrFloat::Float(f) if f.fract().abs() < 1e-12 && f >= 0.0 => Ok(Some(U128(f as u128))),
+            IntegerOrFloat::Float(f) if f.fract().abs() < 1e-12 && f >= 0.0 => {
+                Ok(Some(U128(f as u128)))
+            }
             IntegerOrFloat::Float(f) => Err(format!("u128 requires an integer, got {}", f)),
             _ => Err("value is out of range for u128".to_string()),
         },
         "i8" => match num_val {
             IntegerOrFloat::Unsigned(x) if x <= i8::MAX as u128 => Ok(Some(I8(x as i8))),
-            IntegerOrFloat::Signed(x) if x >= i8::MIN as i128 && x <= i8::MAX as i128 => Ok(Some(I8(x as i8))),
-            IntegerOrFloat::Float(f) if f.fract().abs() < 1e-12 && f >= i8::MIN as f64 && f <= i8::MAX as f64 => Ok(Some(I8(f as i8))),
+            IntegerOrFloat::Signed(x) if x >= i8::MIN as i128 && x <= i8::MAX as i128 => {
+                Ok(Some(I8(x as i8)))
+            }
+            IntegerOrFloat::Float(f)
+                if f.fract().abs() < 1e-12 && f >= i8::MIN as f64 && f <= i8::MAX as f64 =>
+            {
+                Ok(Some(I8(f as i8)))
+            }
             IntegerOrFloat::Float(f) => Err(format!("i8 requires an integer, got {}", f)),
-            _ => Err(format!("value is out of range for i8 ({}..{})", i8::MIN, i8::MAX)),
+            _ => Err(format!(
+                "value is out of range for i8 ({}..{})",
+                i8::MIN,
+                i8::MAX
+            )),
         },
         "i16" => match num_val {
             IntegerOrFloat::Unsigned(x) if x <= i16::MAX as u128 => Ok(Some(I16(x as i16))),
-            IntegerOrFloat::Signed(x) if x >= i16::MIN as i128 && x <= i16::MAX as i128 => Ok(Some(I16(x as i16))),
-            IntegerOrFloat::Float(f) if f.fract().abs() < 1e-12 && f >= i16::MIN as f64 && f <= i16::MAX as f64 => Ok(Some(I16(f as i16))),
+            IntegerOrFloat::Signed(x) if x >= i16::MIN as i128 && x <= i16::MAX as i128 => {
+                Ok(Some(I16(x as i16)))
+            }
+            IntegerOrFloat::Float(f)
+                if f.fract().abs() < 1e-12 && f >= i16::MIN as f64 && f <= i16::MAX as f64 =>
+            {
+                Ok(Some(I16(f as i16)))
+            }
             IntegerOrFloat::Float(f) => Err(format!("i16 requires an integer, got {}", f)),
-            _ => Err(format!("value is out of range for i16 ({}..{})", i16::MIN, i16::MAX)),
+            _ => Err(format!(
+                "value is out of range for i16 ({}..{})",
+                i16::MIN,
+                i16::MAX
+            )),
         },
         "i32" => match num_val {
             IntegerOrFloat::Unsigned(x) if x <= i32::MAX as u128 => Ok(Some(I32(x as i32))),
-            IntegerOrFloat::Signed(x) if x >= i32::MIN as i128 && x <= i32::MAX as i128 => Ok(Some(I32(x as i32))),
-            IntegerOrFloat::Float(f) if f.fract().abs() < 1e-12 && f >= i32::MIN as f64 && f <= i32::MAX as f64 => Ok(Some(I32(f as i32))),
+            IntegerOrFloat::Signed(x) if x >= i32::MIN as i128 && x <= i32::MAX as i128 => {
+                Ok(Some(I32(x as i32)))
+            }
+            IntegerOrFloat::Float(f)
+                if f.fract().abs() < 1e-12 && f >= i32::MIN as f64 && f <= i32::MAX as f64 =>
+            {
+                Ok(Some(I32(f as i32)))
+            }
             IntegerOrFloat::Float(f) => Err(format!("i32 requires an integer, got {}", f)),
-            _ => Err(format!("value is out of range for i32 ({}..{})", i32::MIN, i32::MAX)),
+            _ => Err(format!(
+                "value is out of range for i32 ({}..{})",
+                i32::MIN,
+                i32::MAX
+            )),
         },
         "i64" => match num_val {
             IntegerOrFloat::Unsigned(x) if x <= i64::MAX as u128 => Ok(Some(I64(x as i64))),
-            IntegerOrFloat::Signed(x) if x >= i64::MIN as i128 && x <= i64::MAX as i128 => Ok(Some(I64(x as i64))),
-            IntegerOrFloat::Float(f) if f.fract().abs() < 1e-12 && f >= i64::MIN as f64 && f <= i64::MAX as f64 => Ok(Some(I64(f as i64))),
+            IntegerOrFloat::Signed(x) if x >= i64::MIN as i128 && x <= i64::MAX as i128 => {
+                Ok(Some(I64(x as i64)))
+            }
+            IntegerOrFloat::Float(f)
+                if f.fract().abs() < 1e-12 && f >= i64::MIN as f64 && f <= i64::MAX as f64 =>
+            {
+                Ok(Some(I64(f as i64)))
+            }
             IntegerOrFloat::Float(f) => Err(format!("i64 requires an integer, got {}", f)),
-            _ => Err(format!("value is out of range for i64 ({}..{})", i64::MIN, i64::MAX)),
+            _ => Err(format!(
+                "value is out of range for i64 ({}..{})",
+                i64::MIN,
+                i64::MAX
+            )),
         },
         "i128" => match num_val {
             IntegerOrFloat::Unsigned(x) if x <= i128::MAX as u128 => Ok(Some(I128(x as i128))),
@@ -666,7 +862,9 @@ pub(in crate::execution::runtime_core) fn coerce_to_fixed_width(
                     Ok(Some(U128(u)))
                 }
             }
-            IntegerOrFloat::Signed(x) => Err(format!("uint requires a non-negative integer, got {}", x)),
+            IntegerOrFloat::Signed(x) => {
+                Err(format!("uint requires a non-negative integer, got {}", x))
+            }
             IntegerOrFloat::Float(f) if f.fract().abs() < 1e-12 && f >= 0.0 => {
                 let u = f as u128;
                 if u <= u8::MAX as u128 {
@@ -681,7 +879,9 @@ pub(in crate::execution::runtime_core) fn coerce_to_fixed_width(
                     Ok(Some(U128(u)))
                 }
             }
-            IntegerOrFloat::Float(f) => Err(format!("uint requires a non-negative integer, got {}", f)),
+            IntegerOrFloat::Float(f) => {
+                Err(format!("uint requires a non-negative integer, got {}", f))
+            }
         },
         "int" => match num_val {
             IntegerOrFloat::Unsigned(x) => {

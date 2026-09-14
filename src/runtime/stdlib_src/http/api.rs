@@ -129,8 +129,16 @@ fn get_callbacks_for_router(router_id: &str) -> FastMap<String, Value> {
 }
 
 fn template_matches(template: &str, path: &str) -> bool {
-    let t_segs: Vec<&str> = template.trim_matches('/').split('/').filter(|s| !s.is_empty()).collect();
-    let p_segs: Vec<&str> = path.trim_matches('/').split('/').filter(|s| !s.is_empty()).collect();
+    let t_segs: Vec<&str> = template
+        .trim_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+    let p_segs: Vec<&str> = path
+        .trim_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
     if t_segs.len() != p_segs.len() {
         return false;
     }
@@ -685,7 +693,11 @@ pub fn build_http_module_object() -> Value {
     map.insert(
         "getAsync".to_string(),
         Value::Function(NativeFn(Arc::new(|env, args| {
-            let url = args.first().and_then(val_as_str).ok_or("URL required")?.to_string();
+            let url = args
+                .first()
+                .and_then(val_as_str)
+                .ok_or("URL required")?
+                .to_string();
             spawn_promise_work(env, move || {
                 let client = HttpClient::shared();
                 let req = Request::get(&url).map_err(|e| e.to_string())?;
@@ -698,7 +710,11 @@ pub fn build_http_module_object() -> Value {
     map.insert(
         "postAsync".to_string(),
         Value::Function(NativeFn(Arc::new(|env, args| {
-            let url = args.first().and_then(val_as_str).ok_or("URL required")?.to_string();
+            let url = args
+                .first()
+                .and_then(val_as_str)
+                .ok_or("URL required")?
+                .to_string();
             let body_str = args.get(1).and_then(val_as_str).unwrap_or("").to_string();
             spawn_promise_work(env, move || {
                 let client = HttpClient::shared();
@@ -714,7 +730,11 @@ pub fn build_http_module_object() -> Value {
     map.insert(
         "putAsync".to_string(),
         Value::Function(NativeFn(Arc::new(|env, args| {
-            let url = args.first().and_then(val_as_str).ok_or("URL required")?.to_string();
+            let url = args
+                .first()
+                .and_then(val_as_str)
+                .ok_or("URL required")?
+                .to_string();
             let body_str = args.get(1).and_then(val_as_str).unwrap_or("").to_string();
             spawn_promise_work(env, move || {
                 let client = HttpClient::shared();
@@ -730,7 +750,11 @@ pub fn build_http_module_object() -> Value {
     map.insert(
         "deleteAsync".to_string(),
         Value::Function(NativeFn(Arc::new(|env, args| {
-            let url = args.first().and_then(val_as_str).ok_or("URL required")?.to_string();
+            let url = args
+                .first()
+                .and_then(val_as_str)
+                .ok_or("URL required")?
+                .to_string();
             spawn_promise_work(env, move || {
                 let client = HttpClient::shared();
                 let req = Request::delete(&url).map_err(|e| e.to_string())?;
@@ -740,12 +764,19 @@ pub fn build_http_module_object() -> Value {
         }))),
     );
 
-    map.insert("delAsync".to_string(), map.get("deleteAsync").unwrap().clone());
+    map.insert(
+        "delAsync".to_string(),
+        map.get("deleteAsync").unwrap().clone(),
+    );
 
     map.insert(
         "patchAsync".to_string(),
         Value::Function(NativeFn(Arc::new(|env, args| {
-            let url = args.first().and_then(val_as_str).ok_or("URL required")?.to_string();
+            let url = args
+                .first()
+                .and_then(val_as_str)
+                .ok_or("URL required")?
+                .to_string();
             let body_str = args.get(1).and_then(val_as_str).unwrap_or("").to_string();
             spawn_promise_work(env, move || {
                 let client = HttpClient::shared();
@@ -761,7 +792,11 @@ pub fn build_http_module_object() -> Value {
     map.insert(
         "headAsync".to_string(),
         Value::Function(NativeFn(Arc::new(|env, args| {
-            let url = args.first().and_then(val_as_str).ok_or("URL required")?.to_string();
+            let url = args
+                .first()
+                .and_then(val_as_str)
+                .ok_or("URL required")?
+                .to_string();
             spawn_promise_work(env, move || {
                 let client = HttpClient::shared();
                 let req = Request::head(&url).map_err(|e| e.to_string())?;
@@ -774,7 +809,11 @@ pub fn build_http_module_object() -> Value {
     map.insert(
         "optionsAsync".to_string(),
         Value::Function(NativeFn(Arc::new(|env, args| {
-            let url = args.first().and_then(val_as_str).ok_or("URL required")?.to_string();
+            let url = args
+                .first()
+                .and_then(val_as_str)
+                .ok_or("URL required")?
+                .to_string();
             spawn_promise_work(env, move || {
                 let client = HttpClient::shared();
                 let req = Request::options(&url).map_err(|e| e.to_string())?;
@@ -787,7 +826,11 @@ pub fn build_http_module_object() -> Value {
     map.insert(
         "queryAsync".to_string(),
         Value::Function(NativeFn(Arc::new(|env, args| {
-            let url = args.first().and_then(val_as_str).ok_or("URL required")?.to_string();
+            let url = args
+                .first()
+                .and_then(val_as_str)
+                .ok_or("URL required")?
+                .to_string();
             let body_str = args.get(1).and_then(val_as_str).unwrap_or("").to_string();
             spawn_promise_work(env, move || {
                 let client = HttpClient::shared();
@@ -800,7 +843,11 @@ pub fn build_http_module_object() -> Value {
     map.insert(
         "connectAsync".to_string(),
         Value::Function(NativeFn(Arc::new(|env, args| {
-            let url = args.first().and_then(val_as_str).ok_or("URL required")?.to_string();
+            let url = args
+                .first()
+                .and_then(val_as_str)
+                .ok_or("URL required")?
+                .to_string();
             spawn_promise_work(env, move || {
                 let client = HttpClient::shared();
                 let req = Request::connect(&url).map_err(|e| e.to_string())?;
@@ -813,7 +860,11 @@ pub fn build_http_module_object() -> Value {
     map.insert(
         "sendAsync".to_string(),
         Value::Function(NativeFn(Arc::new(|env, args| {
-            let url = args.first().and_then(val_as_str).unwrap_or("http://127.0.0.1").to_string();
+            let url = args
+                .first()
+                .and_then(val_as_str)
+                .unwrap_or("http://127.0.0.1")
+                .to_string();
             spawn_promise_work(env, move || {
                 let client = HttpClient::shared();
                 let req = Request::get(&url).map_err(|e| e.to_string())?;
@@ -826,7 +877,11 @@ pub fn build_http_module_object() -> Value {
     map.insert(
         "resolveAsync".to_string(),
         Value::Function(NativeFn(Arc::new(move |env, args| {
-            let host = args.first().and_then(val_as_str).unwrap_or("127.0.0.1").to_string();
+            let host = args
+                .first()
+                .and_then(val_as_str)
+                .unwrap_or("127.0.0.1")
+                .to_string();
             spawn_promise_work(env, move || {
                 use std::net::ToSocketAddrs;
                 let addrs_str = format!("{}:80", host);
@@ -847,7 +902,11 @@ pub fn build_http_module_object() -> Value {
     map.insert(
         "resolve".to_string(),
         Value::Function(NativeFn(Arc::new(move |env, args| {
-            let host = args.first().and_then(val_as_str).unwrap_or("127.0.0.1").to_string();
+            let host = args
+                .first()
+                .and_then(val_as_str)
+                .unwrap_or("127.0.0.1")
+                .to_string();
             spawn_promise_work(env, move || {
                 use std::net::ToSocketAddrs;
                 let addrs_str = format!("{}:80", host);
@@ -868,15 +927,16 @@ pub fn build_http_module_object() -> Value {
     map.insert(
         "join".to_string(),
         Value::Function(NativeFn(Arc::new(move |env, args| {
-            let items: Vec<Value> = if args.len() == 1 && matches!(args.first(), Some(Value::Array(_))) {
-                if let Some(Value::Array(arr)) = args.first() {
-                    arr.clone()
+            let items: Vec<Value> =
+                if args.len() == 1 && matches!(args.first(), Some(Value::Array(_))) {
+                    if let Some(Value::Array(arr)) = args.first() {
+                        arr.clone()
+                    } else {
+                        args.clone()
+                    }
                 } else {
                     args.clone()
-                }
-            } else {
-                args.clone()
-            };
+                };
             let send_items = SendValue(Value::Array(items));
             spawn_promise_work(env, move || Ok(send_items))
         }))),
@@ -885,15 +945,16 @@ pub fn build_http_module_object() -> Value {
     map.insert(
         "all".to_string(),
         Value::Function(NativeFn(Arc::new(move |env, args| {
-            let items: Vec<Value> = if args.len() == 1 && matches!(args.first(), Some(Value::Array(_))) {
-                if let Some(Value::Array(arr)) = args.first() {
-                    arr.clone()
+            let items: Vec<Value> =
+                if args.len() == 1 && matches!(args.first(), Some(Value::Array(_))) {
+                    if let Some(Value::Array(arr)) = args.first() {
+                        arr.clone()
+                    } else {
+                        args.clone()
+                    }
                 } else {
                     args.clone()
-                }
-            } else {
-                args.clone()
-            };
+                };
             let send_items = SendValue(Value::Array(items));
             spawn_promise_work(env, move || Ok(send_items))
         }))),
@@ -1574,7 +1635,11 @@ pub fn build_response_val(resp: Response) -> Value {
     map.insert(
         "fileAsync".to_string(),
         Value::Function(NativeFn(Arc::new(move |env, args| {
-            let path = args.first().and_then(val_as_str).ok_or("File path required")?.to_string();
+            let path = args
+                .first()
+                .and_then(val_as_str)
+                .ok_or("File path required")?
+                .to_string();
             let b = file_bytes.clone();
             spawn_promise_work(env, move || {
                 std::fs::write(&path, b).map_err(|e| e.to_string())?;
@@ -1611,7 +1676,11 @@ fn build_client_object(client: HttpClient) -> Value {
     map.insert(
         "getAsync".to_string(),
         Value::Function(NativeFn(Arc::new(move |env, args| {
-            let url = args.first().and_then(val_as_str).ok_or("URL required")?.to_string();
+            let url = args
+                .first()
+                .and_then(val_as_str)
+                .ok_or("URL required")?
+                .to_string();
             let client = c_get_async.clone();
             spawn_promise_work(env, move || {
                 let req = Request::get(&url).map_err(|e| e.to_string())?;
@@ -1639,7 +1708,11 @@ fn build_client_object(client: HttpClient) -> Value {
     map.insert(
         "postAsync".to_string(),
         Value::Function(NativeFn(Arc::new(move |env, args| {
-            let url = args.first().and_then(val_as_str).ok_or("URL required")?.to_string();
+            let url = args
+                .first()
+                .and_then(val_as_str)
+                .ok_or("URL required")?
+                .to_string();
             let body_str = args.get(1).and_then(val_as_str).unwrap_or("").to_string();
             let client = c_post_async.clone();
             spawn_promise_work(env, move || {
@@ -1667,7 +1740,11 @@ fn build_client_object(client: HttpClient) -> Value {
     map.insert(
         "queryAsync".to_string(),
         Value::Function(NativeFn(Arc::new(move |env, args| {
-            let url = args.first().and_then(val_as_str).ok_or("URL required")?.to_string();
+            let url = args
+                .first()
+                .and_then(val_as_str)
+                .ok_or("URL required")?
+                .to_string();
             let body_str = args.get(1).and_then(val_as_str).unwrap_or("").to_string();
             let client = c_query_async.clone();
             spawn_promise_work(env, move || {
@@ -1735,7 +1812,11 @@ fn build_client_object(client: HttpClient) -> Value {
     map.insert(
         "putAsync".to_string(),
         Value::Function(NativeFn(Arc::new(move |env, args| {
-            let url = args.first().and_then(val_as_str).ok_or("URL required")?.to_string();
+            let url = args
+                .first()
+                .and_then(val_as_str)
+                .ok_or("URL required")?
+                .to_string();
             let body_str = args.get(1).and_then(val_as_str).unwrap_or("").to_string();
             let client = c_put_async.clone();
             spawn_promise_work(env, move || {
@@ -1763,7 +1844,11 @@ fn build_client_object(client: HttpClient) -> Value {
     map.insert(
         "deleteAsync".to_string(),
         Value::Function(NativeFn(Arc::new(move |env, args| {
-            let url = args.first().and_then(val_as_str).ok_or("URL required")?.to_string();
+            let url = args
+                .first()
+                .and_then(val_as_str)
+                .ok_or("URL required")?
+                .to_string();
             let client = c_delete_async.clone();
             spawn_promise_work(env, move || {
                 let req = Request::delete(&url).map_err(|e| e.to_string())?;
@@ -1773,7 +1858,10 @@ fn build_client_object(client: HttpClient) -> Value {
         }))),
     );
 
-    map.insert("delAsync".to_string(), map.get("deleteAsync").unwrap().clone());
+    map.insert(
+        "delAsync".to_string(),
+        map.get("deleteAsync").unwrap().clone(),
+    );
     map.insert("del".to_string(), map.get("delete").unwrap().clone());
 
     let c_send_async = c.clone();
@@ -1781,7 +1869,11 @@ fn build_client_object(client: HttpClient) -> Value {
         "sendAsync".to_string(),
         Value::Function(NativeFn(Arc::new(move |env, args| {
             let client = c_send_async.clone();
-            let url = args.first().and_then(val_as_str).unwrap_or("http://127.0.0.1").to_string();
+            let url = args
+                .first()
+                .and_then(val_as_str)
+                .unwrap_or("http://127.0.0.1")
+                .to_string();
             spawn_promise_work(env, move || {
                 let req = Request::get(&url).map_err(|e| e.to_string())?;
                 let resp = client.send(req).map_err(|e| e.to_string())?;
@@ -1966,7 +2058,8 @@ fn build_server_object(server: HttpServer, router_id: Option<String>) -> Value {
                                 if let Ok(reg) = ROUTER_REGISTRY.lock() {
                                     if let Some(r_mutex) = reg.get(rid) {
                                         if let Ok(r) = r_mutex.lock() {
-                                            if let Some((_, p)) = r.match_route(&req.method, &path) {
+                                            if let Some((_, p)) = r.match_route(&req.method, &path)
+                                            {
                                                 // Find registered user callback for method:path_template or fallback
                                                 if let Ok(m) = route_map.lock() {
                                                     let exact = m.get(&lookup_key).cloned();
@@ -1976,7 +2069,10 @@ fn build_server_object(server: HttpServer, router_id: Option<String>) -> Value {
                                                         // Search matching template
                                                         let mut found = None;
                                                         for (k, cb_val) in m.iter() {
-                                                            if k.starts_with(&format!("{}:", method)) {
+                                                            if k.starts_with(&format!(
+                                                                "{}:",
+                                                                method
+                                                            )) {
                                                                 let tpl = &k[method.len() + 1..];
                                                                 if template_matches(tpl, &path) {
                                                                     found = Some(cb_val.clone());
@@ -2002,7 +2098,10 @@ fn build_server_object(server: HttpServer, router_id: Option<String>) -> Value {
                                     (None, FastMap::default())
                                 }
                             } else {
-                                let cb = route_map.lock().ok().and_then(|m| m.get(&lookup_key).cloned());
+                                let cb = route_map
+                                    .lock()
+                                    .ok()
+                                    .and_then(|m| m.get(&lookup_key).cloned());
                                 (cb, FastMap::default())
                             };
 
@@ -2011,10 +2110,18 @@ fn build_server_object(server: HttpServer, router_id: Option<String>) -> Value {
                             let (req_val, res_val, response_slot) = ctx.build_req_res_tuple();
 
                             let resp = if is_options {
-                                let mut r = super::response::Response::new(super::status::HttpStatus::NO_CONTENT);
+                                let mut r = super::response::Response::new(
+                                    super::status::HttpStatus::NO_CONTENT,
+                                );
                                 let _ = r.headers.insert("Access-Control-Allow-Origin", "*");
-                                let _ = r.headers.insert("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
-                                let _ = r.headers.insert("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept");
+                                let _ = r.headers.insert(
+                                    "Access-Control-Allow-Methods",
+                                    "GET, POST, PUT, DELETE, PATCH, OPTIONS",
+                                );
+                                let _ = r.headers.insert(
+                                    "Access-Control-Allow-Headers",
+                                    "Content-Type, Authorization, X-Requested-With, Accept",
+                                );
                                 r
                             } else if let Some(cb) = user_cb {
                                 match call_value(interp, &cb, vec![req_val, res_val]) {
@@ -2079,11 +2186,14 @@ fn build_server_object(server: HttpServer, router_id: Option<String>) -> Value {
     map.insert(
         "shutdownGracefully".to_string(),
         Value::Function(NativeFn(Arc::new(move |_, args| {
-            let _timeout_ms = args.first().and_then(|v| match v {
-                Value::I64(n) => Some(*n as u64),
-                Value::Number(n) => Some(*n as u64),
-                _ => None,
-            }).unwrap_or(5000);
+            let _timeout_ms = args
+                .first()
+                .and_then(|v| match v {
+                    Value::I64(n) => Some(*n as u64),
+                    Value::Number(n) => Some(*n as u64),
+                    _ => None,
+                })
+                .unwrap_or(5000);
             let guard = srv_sg
                 .lock()
                 .map_err(|_| "Server lock poisoned".to_string())?;
@@ -2096,11 +2206,14 @@ fn build_server_object(server: HttpServer, router_id: Option<String>) -> Value {
     map.insert(
         "shutdownGracefullyAsync".to_string(),
         Value::Function(NativeFn(Arc::new(move |env, args| {
-            let _timeout_ms = args.first().and_then(|v| match v {
-                Value::I64(n) => Some(*n as u64),
-                Value::Number(n) => Some(*n as u64),
-                _ => None,
-            }).unwrap_or(5000);
+            let _timeout_ms = args
+                .first()
+                .and_then(|v| match v {
+                    Value::I64(n) => Some(*n as u64),
+                    Value::Number(n) => Some(*n as u64),
+                    _ => None,
+                })
+                .unwrap_or(5000);
             let srv = srv_sg_async.clone();
             spawn_promise_work(env, move || {
                 if let Ok(guard) = srv.lock() {
@@ -2315,12 +2428,19 @@ fn val_as_f64(v: &Value) -> Option<f64> {
 
 fn val_as_string_list(v: &Value) -> Option<Vec<String>> {
     match v {
-        Value::Array(arr) | Value::RawArray(_, arr) => {
-            Some(arr.iter().filter_map(val_as_str).map(String::from).collect())
-        }
-        Value::DynArray(da) => {
-            Some(da.data.iter().filter_map(val_as_str).map(String::from).collect())
-        }
+        Value::Array(arr) | Value::RawArray(_, arr) => Some(
+            arr.iter()
+                .filter_map(val_as_str)
+                .map(String::from)
+                .collect(),
+        ),
+        Value::DynArray(da) => Some(
+            da.data
+                .iter()
+                .filter_map(val_as_str)
+                .map(String::from)
+                .collect(),
+        ),
         Value::Ref(inner, _) => val_as_string_list(inner),
         Value::Share(sr) => unsafe { val_as_string_list(&(*sr.ptr).value) },
         _ => None,
@@ -2470,7 +2590,10 @@ pub fn build_types_object() -> Value {
     map.insert("IPv6".to_string(), Value::Str("IPv6".to_string()));
     map.insert("IP".to_string(), Value::Str("IP".to_string()));
     map.insert("Hostname".to_string(), Value::Str("Hostname".to_string()));
-    map.insert("HttpMethod".to_string(), Value::Str("HttpMethod".to_string()));
+    map.insert(
+        "HttpMethod".to_string(),
+        Value::Str("HttpMethod".to_string()),
+    );
     map.insert("MediaType".to_string(), Value::Str("MediaType".to_string()));
     map.insert("DateTime".to_string(), Value::Str("DateTime".to_string()));
     map.insert("ETag".to_string(), Value::Str("ETag".to_string()));
@@ -2629,7 +2752,9 @@ pub fn build_schema_object() -> Value {
                 _ => DTOMode::Strict,
             };
 
-            let mut schema = Schema::new(name).with_mode(mode).with_coercion(allow_coercion);
+            let mut schema = Schema::new(name)
+                .with_mode(mode)
+                .with_coercion(allow_coercion);
             if let Value::Object(fields_map) = fields_obj {
                 for (fname, fval) in fields_map.iter() {
                     schema.add_field(parse_field_spec(fname, fval));

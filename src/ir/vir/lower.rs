@@ -400,7 +400,9 @@ fn lower_terminator(
         MirTerminator::Drop { place, target, .. } => {
             // Emit Drop instruction for the place, then jump to target
             let place_val = ctx.borrow().get_value_for_local(place.local);
-            block.instructions.push(VirInstruction::Drop { value: place_val });
+            block
+                .instructions
+                .push(VirInstruction::Drop { value: place_val });
             VirTerminator::Jump { target: *target }
         }
         MirTerminator::Unreachable => VirTerminator::Unreachable,

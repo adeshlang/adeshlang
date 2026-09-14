@@ -7,21 +7,18 @@
 //! - Semantic warnings (unused variables, unreachable code)
 //! - Ownership/borrow checking diagnostics
 
-use crate::analysis::{AnalysisResult, analyze, error_to_diagnostic};
+use crate::analysis::{analyze, error_to_diagnostic, AnalysisResult};
 use crate::document::Document;
+use adeshlang::parsing::ast::{Stmt, StmtKind};
 use adeshlang::semantics::SemanticIndex;
 use adeshlang::typesystem::type_system::check_module_in;
 use lsp_types::{
     Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, DiagnosticTag, Location,
     NumberOrString, Position, Range,
 };
-use adeshlang::parsing::ast::{Stmt, StmtKind};
 
 /// Compute diagnostics for a document using both the semantic engine and the compiler's type checker.
-pub fn compute_diagnostics_semantic(
-    index: &SemanticIndex,
-    doc: &Document,
-) -> Vec<Diagnostic> {
+pub fn compute_diagnostics_semantic(index: &SemanticIndex, doc: &Document) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     // 1. Parse errors from the semantic engine (recovering parser)
@@ -30,7 +27,11 @@ pub fn compute_diagnostics_semantic(
     }
 
     // 2. Type checking errors from the compiler's type checker
-    let file_path = doc.uri.to_file_path().ok().and_then(|p| p.to_str().map(|s| s.to_string()));
+    let file_path = doc
+        .uri
+        .to_file_path()
+        .ok()
+        .and_then(|p| p.to_str().map(|s| s.to_string()));
     if let Err(type_error) = check_module_in(&doc.content, file_path.as_deref()) {
         diagnostics.push(error_to_diagnostic_semantic(&type_error, doc));
     }
@@ -96,7 +97,10 @@ fn error_to_diagnostic_semantic(
     Diagnostic {
         range: Range { start, end },
         severity: Some(severity),
-        code: error.code.as_deref().map(|c| NumberOrString::String(c.to_string())),
+        code: error
+            .code
+            .as_deref()
+            .map(|c| NumberOrString::String(c.to_string())),
         code_description: None,
         source: Some("als".to_string()),
         message: error.message.clone(),
@@ -122,8 +126,7 @@ fn check_unused_variables_semantic(index: &SemanticIndex, _doc: &Document) -> Ve
             .tokens
             .iter()
             .filter(|t| {
-                t.kind == adeshlang::parsing::ast::TokenKind::Identifier
-                    && t.lexeme == sym.name
+                t.kind == adeshlang::parsing::ast::TokenKind::Identifier && t.lexeme == sym.name
             })
             .collect();
 
@@ -204,7 +207,11 @@ fn check_unreachable_in_stmt(stmt: &Stmt, diagnostics: &mut Vec<Diagnostic>, sou
                 check_unreachable_in_stmt(s, diagnostics, source);
             }
         }
-        StmtKind::If { then_branch, else_branch, .. } => {
+        StmtKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
             check_unreachable_in_stmt(then_branch, diagnostics, source);
             if let Some(e) = else_branch {
                 check_unreachable_in_stmt(e, diagnostics, source);
@@ -212,7 +219,11 @@ fn check_unreachable_in_stmt(stmt: &Stmt, diagnostics: &mut Vec<Diagnostic>, sou
         }
         StmtKind::While { body, .. } => check_unreachable_in_stmt(body, diagnostics, source),
         StmtKind::ForIn { body, .. } => check_unreachable_in_stmt(body, diagnostics, source),
-        StmtKind::TryCatch { try_block, catch_block, .. } => {
+        StmtKind::TryCatch {
+            try_block,
+            catch_block,
+            ..
+        } => {
             check_unreachable_in_stmt(try_block, diagnostics, source);
             check_unreachable_in_stmt(catch_block, diagnostics, source);
         }
@@ -248,7 +259,8 @@ pub fn compute_diagnostics(doc: &Document) -> Vec<Diagnostic> {
 
 fn check_unused_variables(result: &AnalysisResult, _doc: &Document) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
-    let symbols = crate::analysis::extract_symbols_with_positions(&result.statements, &result.tokens);
+    let symbols =
+        crate::analysis::extract_symbols_with_positions(&result.statements, &result.tokens);
 
     for sym in &symbols {
         if sym.kind != crate::analysis::SymbolKind::Variable
@@ -306,5 +318,18 @@ fn check_unreachable_code(result: &AnalysisResult, doc: &Document) -> Vec<Diagno
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BorrowErrorCode {
-    E0501, E0502, E0503, E0504, E0505, E0506, E0507, E0508, E0509, E0510, E0511, E0512, E0513, E0514,
+    E0501,
+    E0502,
+    E0503,
+    E0504,
+    E0505,
+    E0506,
+    E0507,
+    E0508,
+    E0509,
+    E0510,
+    E0511,
+    E0512,
+    E0513,
+    E0514,
 }

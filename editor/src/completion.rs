@@ -34,15 +34,23 @@ impl CandidateKind {
 
     pub fn from_lsp_kind(kind: Option<CompletionItemKind>) -> Self {
         match kind {
-            Some(CompletionItemKind::FUNCTION) | Some(CompletionItemKind::METHOD) => CandidateKind::Function,
+            Some(CompletionItemKind::FUNCTION) | Some(CompletionItemKind::METHOD) => {
+                CandidateKind::Function
+            }
             Some(CompletionItemKind::VARIABLE) => CandidateKind::Variable,
-            Some(CompletionItemKind::STRUCT) | Some(CompletionItemKind::CLASS) | Some(CompletionItemKind::INTERFACE) => CandidateKind::Struct,
-            Some(CompletionItemKind::ENUM) | Some(CompletionItemKind::ENUM_MEMBER) => CandidateKind::Enum,
+            Some(CompletionItemKind::STRUCT)
+            | Some(CompletionItemKind::CLASS)
+            | Some(CompletionItemKind::INTERFACE) => CandidateKind::Struct,
+            Some(CompletionItemKind::ENUM) | Some(CompletionItemKind::ENUM_MEMBER) => {
+                CandidateKind::Enum
+            }
             Some(CompletionItemKind::MODULE) => CandidateKind::Module,
             Some(CompletionItemKind::SNIPPET) => CandidateKind::Snippet,
             Some(CompletionItemKind::CONSTANT) => CandidateKind::Constant,
             Some(CompletionItemKind::KEYWORD) => CandidateKind::Keyword,
-            Some(CompletionItemKind::FIELD) | Some(CompletionItemKind::PROPERTY) => CandidateKind::Field,
+            Some(CompletionItemKind::FIELD) | Some(CompletionItemKind::PROPERTY) => {
+                CandidateKind::Field
+            }
             Some(CompletionItemKind::FILE) => CandidateKind::File,
             _ => CandidateKind::Keyword,
         }

@@ -49,16 +49,15 @@ fn strip_ansi_codes(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
     while let Some(ch) = chars.next() {
-        if ch == '\u{1b}'
-            && chars.peek() == Some(&'[') {
-                chars.next();
-                for c in chars.by_ref() {
-                    if c.is_ascii_alphabetic() {
-                        break;
-                    }
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            for c in chars.by_ref() {
+                if c.is_ascii_alphabetic() {
+                    break;
                 }
-                continue;
             }
+            continue;
+        }
         out.push(ch);
     }
     out

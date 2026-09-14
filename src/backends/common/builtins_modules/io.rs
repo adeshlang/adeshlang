@@ -178,15 +178,27 @@ pub(super) fn runtime_print(args: &[RuntimeValue]) -> RuntimeValue {
             let stdout = std::io::stdout();
             let mut writer = BufWriter::with_capacity(8192, stdout.lock());
 
-            let needs_styling =
-                color.is_some() || background.is_some() || underline || bold || italic || strikethrough;
+            let needs_styling = color.is_some()
+                || background.is_some()
+                || underline
+                || bold
+                || italic
+                || strikethrough;
 
             if needs_styling {
                 let mut codes = Vec::with_capacity(6);
-                if bold { codes.push("1".to_string()); }
-                if italic { codes.push("3".to_string()); }
-                if underline { codes.push("4".to_string()); }
-                if strikethrough { codes.push("9".to_string()); }
+                if bold {
+                    codes.push("1".to_string());
+                }
+                if italic {
+                    codes.push("3".to_string());
+                }
+                if underline {
+                    codes.push("4".to_string());
+                }
+                if strikethrough {
+                    codes.push("9".to_string());
+                }
                 if let Some(hex) = color.as_deref() {
                     if let Some((r, g, b)) = parse_hex_color(hex) {
                         codes.push(format!("38;2;{};{};{}", r, g, b));
@@ -403,8 +415,20 @@ fn get_pretty_opt(opts: &FastMap<String, RuntimeValue>) -> Option<String> {
     opts.get("pretty").and_then(|v| match v {
         RuntimeValue::Bool(true) => Some("full".to_string()),
         RuntimeValue::Bool(false) => Some("none".to_string()),
-        RuntimeValue::Int(i) => if *i != 0 { Some("full".to_string()) } else { Some("none".to_string()) },
-        RuntimeValue::Float(f) => if *f != 0.0 { Some("full".to_string()) } else { Some("none".to_string()) },
+        RuntimeValue::Int(i) => {
+            if *i != 0 {
+                Some("full".to_string())
+            } else {
+                Some("none".to_string())
+            }
+        }
+        RuntimeValue::Float(f) => {
+            if *f != 0.0 {
+                Some("full".to_string())
+            } else {
+                Some("none".to_string())
+            }
+        }
         RuntimeValue::String(s) => Some(s.clone()),
         _ => None,
     })
@@ -824,7 +848,7 @@ fn format_with_commas_runtime(n: f64, decimal_places: usize) -> String {
 
 #[allow(dead_code)]
 pub(super) fn runtime_input(args: &[RuntimeValue]) -> RuntimeValue {
-    use crate::runtime::tui_input::{prompt_input, InputOptions};
+    use crate::runtime::tui_input::{InputOptions, prompt_input};
 
     let prompt = if let Some(p) = args.first() {
         p.as_string()
@@ -1132,7 +1156,7 @@ fn validate_type_conversion(
 
 #[allow(dead_code)]
 pub(super) fn runtime_input_checkbox(args: &[RuntimeValue]) -> RuntimeValue {
-    use crate::runtime::tui_input::{prompt_checkbox, CheckboxConfig};
+    use crate::runtime::tui_input::{CheckboxConfig, prompt_checkbox};
 
     let (prompt_val, opts_val, cfg_val) = if args.len() >= 3 {
         (&args[0], &args[1], Some(&args[2]))
@@ -1168,7 +1192,9 @@ pub(super) fn runtime_input_checkbox(args: &[RuntimeValue]) -> RuntimeValue {
     }
 
     match prompt_checkbox(&prompt, &options, &config) {
-        Ok(selections) => RuntimeValue::Array(selections.into_iter().map(RuntimeValue::String).collect()),
+        Ok(selections) => {
+            RuntimeValue::Array(selections.into_iter().map(RuntimeValue::String).collect())
+        }
         Err(_) => RuntimeValue::Array(Vec::new()),
     }
 }
@@ -1179,7 +1205,7 @@ pub(super) fn runtime_input_checkbox(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 pub(super) fn runtime_input_radio(args: &[RuntimeValue]) -> RuntimeValue {
-    use crate::runtime::tui_input::{prompt_radio, RadioConfig};
+    use crate::runtime::tui_input::{RadioConfig, prompt_radio};
 
     let (prompt_val, opts_val, cfg_val) = if args.len() >= 3 {
         (&args[0], &args[1], Some(&args[2]))
@@ -1226,7 +1252,7 @@ pub(super) fn runtime_input_select(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 pub(super) fn runtime_input_form(args: &[RuntimeValue]) -> RuntimeValue {
-    use crate::runtime::tui_input::{prompt_form, FormConfig, FormFieldConfig};
+    use crate::runtime::tui_input::{FormConfig, FormFieldConfig, prompt_form};
 
     if args.is_empty() {
         return RuntimeValue::Null;
@@ -1278,7 +1304,10 @@ pub(super) fn runtime_input_form(args: &[RuntimeValue]) -> RuntimeValue {
 pub(super) fn runtime_input_confirm(args: &[RuntimeValue]) -> RuntimeValue {
     use crate::runtime::tui_input::prompt_confirm;
 
-    let prompt = args.first().map(|v| v.as_string()).unwrap_or_else(|| "Confirm?".into());
+    let prompt = args
+        .first()
+        .map(|v| v.as_string())
+        .unwrap_or_else(|| "Confirm?".into());
     let default = args.get(1).and_then(|v| v.as_bool()).unwrap_or(true);
 
     match prompt_confirm(&prompt, default) {
@@ -1289,9 +1318,12 @@ pub(super) fn runtime_input_confirm(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 pub(super) fn runtime_input_password(args: &[RuntimeValue]) -> RuntimeValue {
-    use crate::runtime::tui_input::{prompt_password, PasswordConfig};
+    use crate::runtime::tui_input::{PasswordConfig, prompt_password};
 
-    let prompt = args.first().map(|v| v.as_string()).unwrap_or_else(|| "Password: ".into());
+    let prompt = args
+        .first()
+        .map(|v| v.as_string())
+        .unwrap_or_else(|| "Password: ".into());
     let config = PasswordConfig::default();
 
     match prompt_password(&prompt, &config) {
@@ -1307,9 +1339,12 @@ pub(super) fn runtime_input_password(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 pub(super) fn runtime_input_fuzzy(args: &[RuntimeValue]) -> RuntimeValue {
-    use crate::runtime::tui_input::{prompt_fuzzy, FuzzyConfig};
+    use crate::runtime::tui_input::{FuzzyConfig, prompt_fuzzy};
 
-    let prompt = args.first().map(|v| v.as_string()).unwrap_or_else(|| "Search: ".into());
+    let prompt = args
+        .first()
+        .map(|v| v.as_string())
+        .unwrap_or_else(|| "Search: ".into());
     let options: Vec<String> = match args.get(1) {
         Some(RuntimeValue::Array(arr)) => arr.iter().map(|v| v.as_string()).collect(),
         Some(RuntimeValue::DynArray { data, .. }) => data.iter().map(|v| v.as_string()).collect(),
@@ -1325,19 +1360,33 @@ pub(super) fn runtime_input_fuzzy(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 pub(super) fn runtime_input_slider(args: &[RuntimeValue]) -> RuntimeValue {
-    use crate::runtime::tui_input::{prompt_slider, SliderConfig};
+    use crate::runtime::tui_input::{SliderConfig, prompt_slider};
 
-    let prompt = args.first().map(|v| v.as_string()).unwrap_or_else(|| "Value: ".into());
+    let prompt = args
+        .first()
+        .map(|v| v.as_string())
+        .unwrap_or_else(|| "Value: ".into());
     let mut min = 0.0;
     let mut max = 100.0;
     let mut step = 1.0;
     let mut default = 50.0;
 
     if let Some(RuntimeValue::Object(m)) = args.get(1) {
-        if let Some(n) = m.get("min").and_then(|v| v.as_float()) { min = n; }
-        if let Some(n) = m.get("max").and_then(|v| v.as_float()) { max = n; }
-        if let Some(n) = m.get("step").and_then(|v| v.as_float()) { step = n; }
-        if let Some(n) = m.get("default").or_else(|| m.get("initial")).or_else(|| m.get("value")).and_then(|v| v.as_float()) {
+        if let Some(n) = m.get("min").and_then(|v| v.as_float()) {
+            min = n;
+        }
+        if let Some(n) = m.get("max").and_then(|v| v.as_float()) {
+            max = n;
+        }
+        if let Some(n) = m.get("step").and_then(|v| v.as_float()) {
+            step = n;
+        }
+        if let Some(n) = m
+            .get("default")
+            .or_else(|| m.get("initial"))
+            .or_else(|| m.get("value"))
+            .and_then(|v| v.as_float())
+        {
             default = n;
         } else {
             default = min;
@@ -1368,9 +1417,12 @@ pub(super) fn runtime_input_slider(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 pub(super) fn runtime_input_tree(args: &[RuntimeValue]) -> RuntimeValue {
-    use crate::runtime::tui_input::{prompt_tree, TreeConfig, TreeNode};
+    use crate::runtime::tui_input::{TreeConfig, TreeNode, prompt_tree};
 
-    let prompt = args.first().map(|v| v.as_string()).unwrap_or_else(|| "Select node: ".into());
+    let prompt = args
+        .first()
+        .map(|v| v.as_string())
+        .unwrap_or_else(|| "Select node: ".into());
     let mut nodes = Vec::new();
 
     if let Some(RuntimeValue::Array(arr)) = args.get(1) {
@@ -1393,14 +1445,18 @@ pub(super) fn runtime_input_tree(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 pub(super) fn runtime_input_table(args: &[RuntimeValue]) -> RuntimeValue {
-    use crate::runtime::tui_input::{prompt_table, TableConfig};
+    use crate::runtime::tui_input::{TableConfig, prompt_table};
 
     let (prompt, headers_val, rows_val) = if args.len() >= 3 {
         (args[0].as_string(), &args[1], &args[2])
     } else if args.len() == 2 {
         ("Select Table Cell: ".to_string(), &args[0], &args[1])
     } else {
-        ("Table: ".to_string(), &RuntimeValue::Null, &RuntimeValue::Null)
+        (
+            "Table: ".to_string(),
+            &RuntimeValue::Null,
+            &RuntimeValue::Null,
+        )
     };
 
     let headers: Vec<String> = match headers_val {
@@ -1438,7 +1494,11 @@ pub(super) fn runtime_input_table(args: &[RuntimeValue]) -> RuntimeValue {
             out.insert("rowIndex".into(), RuntimeValue::Int(r_idx as i64));
             out.insert("colIndex".into(), RuntimeValue::Int(c_idx as i64));
 
-            let cell_val = rows.get(r_idx).and_then(|r| r.get(c_idx)).cloned().unwrap_or_default();
+            let cell_val = rows
+                .get(r_idx)
+                .and_then(|r| r.get(c_idx))
+                .cloned()
+                .unwrap_or_default();
             out.insert("value".into(), RuntimeValue::String(cell_val.clone()));
             out.insert("cell".into(), RuntimeValue::String(cell_val));
 
@@ -1447,25 +1507,40 @@ pub(super) fn runtime_input_table(args: &[RuntimeValue]) -> RuntimeValue {
             out.insert("colName".into(), RuntimeValue::String(header_name.clone()));
             out.insert("columnName".into(), RuntimeValue::String(header_name));
 
-            let selected_row_vec: Vec<RuntimeValue> = rows.get(r_idx)
+            let selected_row_vec: Vec<RuntimeValue> = rows
+                .get(r_idx)
                 .cloned()
                 .unwrap_or_default()
                 .into_iter()
                 .map(RuntimeValue::String)
                 .collect();
-            out.insert("rowData".into(), RuntimeValue::Array(selected_row_vec.clone()));
-            out.insert("row_data".into(), RuntimeValue::Array(selected_row_vec.clone()));
+            out.insert(
+                "rowData".into(),
+                RuntimeValue::Array(selected_row_vec.clone()),
+            );
+            out.insert(
+                "row_data".into(),
+                RuntimeValue::Array(selected_row_vec.clone()),
+            );
             out.insert("rowValues".into(), RuntimeValue::Array(selected_row_vec));
 
-            let selected_col_vec: Vec<RuntimeValue> = rows.iter()
+            let selected_col_vec: Vec<RuntimeValue> = rows
+                .iter()
                 .filter_map(|r| r.get(c_idx).cloned())
                 .map(RuntimeValue::String)
                 .collect();
-            out.insert("colData".into(), RuntimeValue::Array(selected_col_vec.clone()));
-            out.insert("col_data".into(), RuntimeValue::Array(selected_col_vec.clone()));
+            out.insert(
+                "colData".into(),
+                RuntimeValue::Array(selected_col_vec.clone()),
+            );
+            out.insert(
+                "col_data".into(),
+                RuntimeValue::Array(selected_col_vec.clone()),
+            );
             out.insert("colValues".into(), RuntimeValue::Array(selected_col_vec));
 
-            let headers_vec: Vec<RuntimeValue> = headers.iter().cloned().map(RuntimeValue::String).collect();
+            let headers_vec: Vec<RuntimeValue> =
+                headers.iter().cloned().map(RuntimeValue::String).collect();
             out.insert("headers".into(), RuntimeValue::Array(headers_vec));
 
             let mut row_obj_map = FastMap::default();
@@ -1478,7 +1553,8 @@ pub(super) fn runtime_input_table(args: &[RuntimeValue]) -> RuntimeValue {
             }
             out.insert("rowObject".into(), RuntimeValue::Object(row_obj_map));
 
-            let grid_matrix: Vec<RuntimeValue> = rows.iter()
+            let grid_matrix: Vec<RuntimeValue> = rows
+                .iter()
                 .map(|r| RuntimeValue::Array(r.iter().cloned().map(RuntimeValue::String).collect()))
                 .collect();
             out.insert("data".into(), RuntimeValue::Array(grid_matrix.clone()));
@@ -1492,9 +1568,12 @@ pub(super) fn runtime_input_table(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 pub(super) fn runtime_input_datepicker(args: &[RuntimeValue]) -> RuntimeValue {
-    use crate::runtime::tui_input::{prompt_datepicker, DatepickerConfig};
+    use crate::runtime::tui_input::{DatepickerConfig, prompt_datepicker};
 
-    let prompt = args.first().map(|v| v.as_string()).unwrap_or_else(|| "Date: ".into());
+    let prompt = args
+        .first()
+        .map(|v| v.as_string())
+        .unwrap_or_else(|| "Date: ".into());
     let config = DatepickerConfig::default();
 
     match prompt_datepicker(&prompt, &config) {
@@ -1505,9 +1584,12 @@ pub(super) fn runtime_input_datepicker(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 pub(super) fn runtime_input_datetime(args: &[RuntimeValue]) -> RuntimeValue {
-    use crate::runtime::tui_input::{prompt_datetimepicker, DatetimeConfig};
+    use crate::runtime::tui_input::{DatetimeConfig, prompt_datetimepicker};
 
-    let prompt = args.first().map(|v| v.as_string()).unwrap_or_else(|| "DateTime: ".into());
+    let prompt = args
+        .first()
+        .map(|v| v.as_string())
+        .unwrap_or_else(|| "DateTime: ".into());
     let config = DatetimeConfig::default();
 
     match prompt_datetimepicker(&prompt, &config) {
@@ -1518,9 +1600,12 @@ pub(super) fn runtime_input_datetime(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 pub(super) fn runtime_input_timepicker(args: &[RuntimeValue]) -> RuntimeValue {
-    use crate::runtime::tui_input::{prompt_timepicker, TimepickerConfig};
+    use crate::runtime::tui_input::{TimepickerConfig, prompt_timepicker};
 
-    let prompt = args.first().map(|v| v.as_string()).unwrap_or_else(|| "Time: ".into());
+    let prompt = args
+        .first()
+        .map(|v| v.as_string())
+        .unwrap_or_else(|| "Time: ".into());
     let config = TimepickerConfig::default();
 
     match prompt_timepicker(&prompt, &config) {
@@ -1531,9 +1616,12 @@ pub(super) fn runtime_input_timepicker(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 pub(super) fn runtime_input_color(args: &[RuntimeValue]) -> RuntimeValue {
-    use crate::runtime::tui_input::{prompt_color, ColorConfig};
+    use crate::runtime::tui_input::{ColorConfig, prompt_color};
 
-    let prompt = args.first().map(|v| v.as_string()).unwrap_or_else(|| "Color: ".into());
+    let prompt = args
+        .first()
+        .map(|v| v.as_string())
+        .unwrap_or_else(|| "Color: ".into());
     let config = ColorConfig::default();
 
     match prompt_color(&prompt, &config) {
@@ -1544,9 +1632,12 @@ pub(super) fn runtime_input_color(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 pub(super) fn runtime_input_pin(args: &[RuntimeValue]) -> RuntimeValue {
-    use crate::runtime::tui_input::{prompt_pin, PinConfig};
+    use crate::runtime::tui_input::{PinConfig, prompt_pin};
 
-    let prompt = args.first().map(|v| v.as_string()).unwrap_or_else(|| "PIN: ".into());
+    let prompt = args
+        .first()
+        .map(|v| v.as_string())
+        .unwrap_or_else(|| "PIN: ".into());
     let digits = args.get(1).and_then(|v| v.as_int()).unwrap_or(4) as usize;
     let config = PinConfig::default();
 
@@ -1558,7 +1649,7 @@ pub(super) fn runtime_input_pin(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 pub(super) fn runtime_input_diff(args: &[RuntimeValue]) -> RuntimeValue {
-    use crate::runtime::tui_input::{prompt_diff, DiffConfig};
+    use crate::runtime::tui_input::{DiffConfig, prompt_diff};
 
     let (prompt, original) = if args.len() >= 2 {
         let p = args[0].as_string();
@@ -1579,9 +1670,12 @@ pub(super) fn runtime_input_diff(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 pub(super) fn runtime_input_hotkey(args: &[RuntimeValue]) -> RuntimeValue {
-    use crate::runtime::tui_input::{prompt_hotkey, HotkeyConfig};
+    use crate::runtime::tui_input::{HotkeyConfig, prompt_hotkey};
 
-    let prompt = args.first().map(|v| v.as_string()).unwrap_or_else(|| "Hotkey: ".into());
+    let prompt = args
+        .first()
+        .map(|v| v.as_string())
+        .unwrap_or_else(|| "Hotkey: ".into());
     let config = HotkeyConfig::default();
 
     match prompt_hotkey(&prompt, &config) {
@@ -1597,9 +1691,12 @@ pub(super) fn runtime_input_hotkey(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 pub(super) fn runtime_input_ai(args: &[RuntimeValue]) -> RuntimeValue {
-    use crate::runtime::tui_input::{prompt_ai, AiPredictConfig};
+    use crate::runtime::tui_input::{AiPredictConfig, prompt_ai};
 
-    let prompt = args.first().map(|v| v.as_string()).unwrap_or_else(|| "Prompt: ".into());
+    let prompt = args
+        .first()
+        .map(|v| v.as_string())
+        .unwrap_or_else(|| "Prompt: ".into());
     let context: Vec<String> = match args.get(1) {
         Some(RuntimeValue::Array(arr)) => arr.iter().map(|v| v.as_string()).collect(),
         _ => Vec::new(),
@@ -1614,9 +1711,12 @@ pub(super) fn runtime_input_ai(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 pub(super) fn runtime_input_stream(args: &[RuntimeValue]) -> RuntimeValue {
-    use crate::runtime::tui_input::{prompt_stream, StreamConfig};
+    use crate::runtime::tui_input::{StreamConfig, prompt_stream};
 
-    let prompt = args.first().map(|v| v.as_string()).unwrap_or_else(|| "Stream: ".into());
+    let prompt = args
+        .first()
+        .map(|v| v.as_string())
+        .unwrap_or_else(|| "Stream: ".into());
     let config = StreamConfig::default();
 
     match prompt_stream(&prompt, &config) {
@@ -1624,4 +1724,3 @@ pub(super) fn runtime_input_stream(args: &[RuntimeValue]) -> RuntimeValue {
         Err(_) => RuntimeValue::Array(Vec::new()),
     }
 }
-

@@ -494,7 +494,10 @@ impl Frame {
                 out.push(FrameType::MaxData as u8);
                 push_varint(&mut out, *max_data);
             }
-            Frame::MaxStreamData { stream_id, max_data } => {
+            Frame::MaxStreamData {
+                stream_id,
+                max_data,
+            } => {
                 out.push(FrameType::MaxStreamData as u8);
                 push_varint(&mut out, *stream_id);
                 push_varint(&mut out, *max_data);
@@ -577,7 +580,8 @@ impl Frame {
                 if off + 4 > buf.len() {
                     return Err(AtpError::protocol("ConnectionInit: version truncated"));
                 }
-                let version = u32::from_be_bytes([buf[off], buf[off + 1], buf[off + 2], buf[off + 3]]);
+                let version =
+                    u32::from_be_bytes([buf[off], buf[off + 1], buf[off + 2], buf[off + 3]]);
                 off += 4;
                 if off >= buf.len() {
                     return Err(AtpError::protocol("ConnectionInit: CID length truncated"));
@@ -633,16 +637,21 @@ impl Frame {
                 if off + 4 > buf.len() {
                     return Err(AtpError::protocol("ConnectionInitAck: version truncated"));
                 }
-                let version = u32::from_be_bytes([buf[off], buf[off + 1], buf[off + 2], buf[off + 3]]);
+                let version =
+                    u32::from_be_bytes([buf[off], buf[off + 1], buf[off + 2], buf[off + 3]]);
                 off += 4;
                 if off >= buf.len() {
-                    return Err(AtpError::protocol("ConnectionInitAck: src CID len truncated"));
+                    return Err(AtpError::protocol(
+                        "ConnectionInitAck: src CID len truncated",
+                    ));
                 }
                 let src_cid_len = buf[off] as usize;
                 off += 1;
                 let src_conn_id = read_bytes!(src_cid_len);
                 if off >= buf.len() {
-                    return Err(AtpError::protocol("ConnectionInitAck: dst CID len truncated"));
+                    return Err(AtpError::protocol(
+                        "ConnectionInitAck: dst CID len truncated",
+                    ));
                 }
                 let dst_cid_len = buf[off] as usize;
                 off += 1;
@@ -829,8 +838,17 @@ mod tests {
     #[test]
     fn test_varint_roundtrip() {
         let values = [
-            0u64, 1, 63, 64, 16383, 16384, 1_073_741_823, 1_073_741_824,
-            (1u64 << 30) - 1, 1u64 << 30, (1u64 << 62) - 1,
+            0u64,
+            1,
+            63,
+            64,
+            16383,
+            16384,
+            1_073_741_823,
+            1_073_741_824,
+            (1u64 << 30) - 1,
+            1u64 << 30,
+            (1u64 << 62) - 1,
         ];
         for &v in &values {
             let enc = encode_varint(v);
@@ -878,16 +896,34 @@ mod tests {
             Frame::Pong,
             Frame::StreamOpen { stream_id: 5 },
             Frame::StreamClose { stream_id: 5 },
-            Frame::StreamReset { stream_id: 5, reason: 1 },
-            Frame::MaxData { max_data: 1_000_000 },
-            Frame::MaxStreamData { stream_id: 1, max_data: 500_000 },
+            Frame::StreamReset {
+                stream_id: 5,
+                reason: 1,
+            },
+            Frame::MaxData {
+                max_data: 1_000_000,
+            },
+            Frame::MaxStreamData {
+                stream_id: 1,
+                max_data: 500_000,
+            },
             Frame::PathChallenge { data: [1; 8] },
             Frame::PathResponse { data: [2; 8] },
             Frame::KeyUpdate { epoch: 1 },
-            Frame::Cancel { stream_id: 1, message_id: 2 },
-            Frame::Datagram { payload: b"dg".to_vec() },
-            Frame::ConnectionClose { error_code: 0, reason: "bye".to_string() },
-            Frame::Handshake { confirm: vec![0; 32] },
+            Frame::Cancel {
+                stream_id: 1,
+                message_id: 2,
+            },
+            Frame::Datagram {
+                payload: b"dg".to_vec(),
+            },
+            Frame::ConnectionClose {
+                error_code: 0,
+                reason: "bye".to_string(),
+            },
+            Frame::Handshake {
+                confirm: vec![0; 32],
+            },
             Frame::Data {
                 stream_id: 1,
                 message_id: 1,

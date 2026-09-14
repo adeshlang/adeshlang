@@ -207,4 +207,3 @@ pub(crate) fn lower_comparison_instruction(
         _ => Ok(false), // Not a comparison instruction
     }
 }
-

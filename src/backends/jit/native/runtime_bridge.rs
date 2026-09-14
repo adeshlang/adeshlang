@@ -242,7 +242,10 @@ fn runtime_bridge_sizeof_value(value: &RuntimeValue) -> usize {
         }
         RuntimeValue::Object(obj) => {
             let base = 48;
-            let entries: usize = obj.iter().map(|(k, v)| k.len() + runtime_bridge_sizeof_value(v)).sum();
+            let entries: usize = obj
+                .iter()
+                .map(|(k, v)| k.len() + runtime_bridge_sizeof_value(v))
+                .sum();
             base + entries
         }
         RuntimeValue::Promise(_) => 8,
@@ -622,7 +625,11 @@ pub unsafe extern "C" fn jit_object_set_str(
 
 /// Set a field on an object (int value)
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn jit_object_set_int(obj_handle: u64, field: *const c_char, value: i64) -> u64 {
+pub unsafe extern "C" fn jit_object_set_int(
+    obj_handle: u64,
+    field: *const c_char,
+    value: i64,
+) -> u64 {
     let field_name = if field.is_null() {
         String::new()
     } else {
@@ -639,7 +646,11 @@ pub unsafe extern "C" fn jit_object_set_int(obj_handle: u64, field: *const c_cha
 
 /// Set a field on an object (float value)
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn jit_object_set_float(obj_handle: u64, field: *const c_char, value: f64) -> u64 {
+pub unsafe extern "C" fn jit_object_set_float(
+    obj_handle: u64,
+    field: *const c_char,
+    value: f64,
+) -> u64 {
     let field_name = if field.is_null() {
         String::new()
     } else {
@@ -656,7 +667,11 @@ pub unsafe extern "C" fn jit_object_set_float(obj_handle: u64, field: *const c_c
 
 /// Set a field on an object (bool value)
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn jit_object_set_bool(obj_handle: u64, field: *const c_char, value: i64) -> u64 {
+pub unsafe extern "C" fn jit_object_set_bool(
+    obj_handle: u64,
+    field: *const c_char,
+    value: i64,
+) -> u64 {
     let field_name = if field.is_null() {
         String::new()
     } else {
@@ -1493,106 +1508,107 @@ pub unsafe extern "C" fn jit_print_values_with_options(
         unsafe { std::slice::from_raw_parts(values_ptr, count) }
     };
 
-    let (has_options, mode, sep, end, style_prefix, style_reset, file_opt) = match get_value(options_handle) {
-        Some(RuntimeValue::Object(opts))
-            if opts.keys().any(|k| {
-                let key = normalize_key(k);
-                matches!(
-                    key.as_str(),
-                    "pretty"
-                        | "sep"
-                        | "end"
-                        | "file"
-                        | "color"
-                        | "background"
-                        | "bold"
-                        | "italic"
-                        | "underline"
-                        | "strikethrough"
-                        | "flush"
-                )
-            }) =>
-        {
-            let get_str = |name: &str| -> Option<String> {
-                opts.iter().find_map(|(k, v)| {
-                    if normalize_key(k) == name {
-                        if let RuntimeValue::String(s) = v {
-                            Some(s.clone())
+    let (has_options, mode, sep, end, style_prefix, style_reset, file_opt) =
+        match get_value(options_handle) {
+            Some(RuntimeValue::Object(opts))
+                if opts.keys().any(|k| {
+                    let key = normalize_key(k);
+                    matches!(
+                        key.as_str(),
+                        "pretty"
+                            | "sep"
+                            | "end"
+                            | "file"
+                            | "color"
+                            | "background"
+                            | "bold"
+                            | "italic"
+                            | "underline"
+                            | "strikethrough"
+                            | "flush"
+                    )
+                }) =>
+            {
+                let get_str = |name: &str| -> Option<String> {
+                    opts.iter().find_map(|(k, v)| {
+                        if normalize_key(k) == name {
+                            if let RuntimeValue::String(s) = v {
+                                Some(s.clone())
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         }
-                    } else {
-                        None
-                    }
-                })
-            };
-            let get_bool = |name: &str| -> Option<bool> {
-                opts.iter().find_map(|(k, v)| {
-                    if normalize_key(k) == name {
-                        if let RuntimeValue::Bool(b) = v {
-                            Some(*b)
+                    })
+                };
+                let get_bool = |name: &str| -> Option<bool> {
+                    opts.iter().find_map(|(k, v)| {
+                        if normalize_key(k) == name {
+                            if let RuntimeValue::Bool(b) = v {
+                                Some(*b)
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         }
-                    } else {
-                        None
-                    }
-                })
-            };
-            let get_int = |name: &str| -> Option<i64> {
-                opts.iter().find_map(|(k, v)| {
-                    if normalize_key(k) == name {
-                        if let RuntimeValue::Int(n) = v {
-                            Some(*n)
+                    })
+                };
+                let get_int = |name: &str| -> Option<i64> {
+                    opts.iter().find_map(|(k, v)| {
+                        if normalize_key(k) == name {
+                            if let RuntimeValue::Int(n) = v {
+                                Some(*n)
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         }
-                    } else {
-                        None
-                    }
-                })
-            };
+                    })
+                };
 
-            let mode = match get_str("pretty") {
-                Some(s) => match s.as_str() {
-                    "compact" => 2,
-                    "simple" => 3,
-                    "full" | "true" => 1,
-                    "none" | "false" => 0,
-                    _ => 1,
-                },
-                None => get_bool("pretty")
-                    .map(|b| if b { 1 } else { 0 })
-                    .unwrap_or_else(|| {
-                        get_int("pretty")
-                            .map(|n| if n == 0 { 0 } else { 1 })
-                            .unwrap_or(0)
-                    }),
-            };
+                let mode = match get_str("pretty") {
+                    Some(s) => match s.as_str() {
+                        "compact" => 2,
+                        "simple" => 3,
+                        "full" | "true" => 1,
+                        "none" | "false" => 0,
+                        _ => 1,
+                    },
+                    None => get_bool("pretty")
+                        .map(|b| if b { 1 } else { 0 })
+                        .unwrap_or_else(|| {
+                            get_int("pretty")
+                                .map(|n| if n == 0 { 0 } else { 1 })
+                                .unwrap_or(0)
+                        }),
+                };
 
-            let sep = get_str("sep").unwrap_or_else(|| " ".to_string());
-            let end = get_str("end").unwrap_or_else(|| "\n".to_string());
-            let file_opt = get_str("file");
+                let sep = get_str("sep").unwrap_or_else(|| " ".to_string());
+                let end = get_str("end").unwrap_or_else(|| "\n".to_string());
+                let file_opt = get_str("file");
 
-            let style_prefix = build_style_prefix(&opts);
-            let style_reset = if style_prefix.is_empty() {
-                String::new()
-            } else {
-                "\x1b[0m".to_string()
-            };
+                let style_prefix = build_style_prefix(&opts);
+                let style_reset = if style_prefix.is_empty() {
+                    String::new()
+                } else {
+                    "\x1b[0m".to_string()
+                };
 
-            (true, mode, sep, end, style_prefix, style_reset, file_opt)
-        }
-        _ => (
-            false,
-            0,
-            " ".to_string(),
-            "\n".to_string(),
-            String::new(),
-            String::new(),
-            None,
-        ),
-    };
+                (true, mode, sep, end, style_prefix, style_reset, file_opt)
+            }
+            _ => (
+                false,
+                0,
+                " ".to_string(),
+                "\n".to_string(),
+                String::new(),
+                String::new(),
+                None,
+            ),
+        };
 
     let effective_values: &[u64] = if has_options && values.last() == Some(&options_handle) {
         &values[..values.len().saturating_sub(1)]
@@ -1614,7 +1630,9 @@ pub unsafe extern "C" fn jit_print_values_with_options(
             if let Some(v) = get_value(*handle) {
                 let ast_value = runtime_value_to_ast_value(&v);
                 if mode > 0 {
-                    use crate::execution::runtime_core::pretty_print::{PrettyPrintOptions, pretty_print};
+                    use crate::execution::runtime_core::pretty_print::{
+                        PrettyPrintOptions, pretty_print,
+                    };
                     let pretty_opts = match mode {
                         2 => PrettyPrintOptions::compact(),
                         3 => PrettyPrintOptions::simple_color(),
@@ -1632,7 +1650,11 @@ pub unsafe extern "C" fn jit_print_values_with_options(
         if !end.is_empty() {
             file_content.push_str(&end);
         }
-        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&file_path) {
+        if let Ok(mut f) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&file_path)
+        {
             let _ = f.write_all(file_content.as_bytes());
             let _ = f.flush();
         }
@@ -1990,7 +2012,9 @@ pub extern "C" fn jit_get_field(obj_handle: u64, field_handle: u64) -> u64 {
                                 crate::parsing::ast::Value::Number(n) => RuntimeValue::Float(*n),
                                 crate::parsing::ast::Value::I64(n) => RuntimeValue::Int(*n),
                                 crate::parsing::ast::Value::U64(n) => RuntimeValue::Int(*n as i64),
-                                crate::parsing::ast::Value::Str(s) => RuntimeValue::String(s.clone()),
+                                crate::parsing::ast::Value::Str(s) => {
+                                    RuntimeValue::String(s.clone())
+                                }
                                 crate::parsing::ast::Value::Bool(b) => RuntimeValue::Bool(*b),
                                 _ => RuntimeValue::Null,
                             };
@@ -2013,9 +2037,7 @@ pub extern "C" fn jit_get_field(obj_handle: u64, field_handle: u64) -> u64 {
     }
 
     match get_value(obj_handle) {
-        Some(RuntimeValue::U64(handle)) => {
-            jit_get_field(handle, field_handle)
-        }
+        Some(RuntimeValue::U64(handle)) => jit_get_field(handle, field_handle),
         Some(RuntimeValue::Object(obj)) => {
             let value = obj.get(&field).cloned().unwrap_or(RuntimeValue::Null);
             store_value(value)
@@ -2936,9 +2958,18 @@ pub extern "C" fn jit_runtime_input_method(
 pub fn get_runtime_symbols() -> Vec<(&'static str, *const u8)> {
     vec![
         ("jit_runtime_input", jit_runtime_input as *const u8),
-        ("jit_runtime_input_generic", jit_runtime_input_generic as *const u8),
-        ("jit_runtime_input_method", jit_runtime_input_method as *const u8),
-        ("jit_runtime_call_input_builtin", jit_runtime_call_input_builtin as *const u8),
+        (
+            "jit_runtime_input_generic",
+            jit_runtime_input_generic as *const u8,
+        ),
+        (
+            "jit_runtime_input_method",
+            jit_runtime_input_method as *const u8,
+        ),
+        (
+            "jit_runtime_call_input_builtin",
+            jit_runtime_call_input_builtin as *const u8,
+        ),
         ("jit_clock", jit_clock as *const u8),
         ("jit_sizeof_handle", jit_sizeof_handle as *const u8),
         ("jit_wrap_i64", jit_wrap_i64 as *const u8),

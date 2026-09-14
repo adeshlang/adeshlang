@@ -188,9 +188,7 @@ struct RwState {
 pub fn rwlock_type() -> Value {
     let mut m = HashMap::default();
     insert_fn(&mut m, "new", |_env, args| {
-        Ok(make_rwlock(
-            args.first().cloned().unwrap_or(Value::Null),
-        ))
+        Ok(make_rwlock(args.first().cloned().unwrap_or(Value::Null)))
     });
     with_kind(m, "RwLockType")
 }
@@ -216,19 +214,23 @@ fn make_rwlock(initial: Value) -> Value {
         }
     });
     let s = state.clone();
-    insert_fn(&mut m, "try_read", move |_env, _args| match s.data.try_read() {
-        Ok(g) => Ok(ok_obj(g.clone())),
-        Err(_) => Ok(err_obj("would_block", "rwlock busy")),
+    insert_fn(&mut m, "try_read", move |_env, _args| {
+        match s.data.try_read() {
+            Ok(g) => Ok(ok_obj(g.clone())),
+            Err(_) => Ok(err_obj("would_block", "rwlock busy")),
+        }
     });
     let s = state.clone();
-    insert_fn(&mut m, "try_write", move |_env, args| match s.data.try_write() {
-        Ok(mut g) => {
-            if let Some(v) = args.first() {
-                *g = v.clone();
+    insert_fn(&mut m, "try_write", move |_env, args| {
+        match s.data.try_write() {
+            Ok(mut g) => {
+                if let Some(v) = args.first() {
+                    *g = v.clone();
+                }
+                Ok(ok_obj(g.clone()))
             }
-            Ok(ok_obj(g.clone()))
+            Err(_) => Ok(err_obj("would_block", "rwlock busy")),
         }
-        Err(_) => Ok(err_obj("would_block", "rwlock busy")),
     });
     let s = state.clone();
     insert_fn(&mut m, "with_read", move |env, args| {
@@ -571,11 +573,21 @@ fn make_once() -> Value {
     insert_fn(&mut m, "call_once", move |env, args| {
         let func = require_fn(&args, 0, "Once.call_once")?;
         if s.done.load(Ordering::Acquire) {
-            return Ok(s.cell.lock().map_err(|e| e.to_string())?.clone().unwrap_or(Value::Null));
+            return Ok(s
+                .cell
+                .lock()
+                .map_err(|e| e.to_string())?
+                .clone()
+                .unwrap_or(Value::Null));
         }
         let _g = s.lock.lock().map_err(|e| e.to_string())?;
         if s.done.load(Ordering::Acquire) {
-            return Ok(s.cell.lock().map_err(|e| e.to_string())?.clone().unwrap_or(Value::Null));
+            return Ok(s
+                .cell
+                .lock()
+                .map_err(|e| e.to_string())?
+                .clone()
+                .unwrap_or(Value::Null));
         }
         let v = call_fn(env, &func, vec![])?;
         *s.cell.lock().map_err(|e| e.to_string())? = Some(v.clone());
@@ -606,11 +618,21 @@ pub fn lazy_type() -> Value {
         let s = st.clone();
         insert_fn(&mut obj, "get", move |env, _args| {
             if s.done.load(Ordering::Acquire) {
-                return Ok(s.cell.lock().map_err(|e| e.to_string())?.clone().unwrap_or(Value::Null));
+                return Ok(s
+                    .cell
+                    .lock()
+                    .map_err(|e| e.to_string())?
+                    .clone()
+                    .unwrap_or(Value::Null));
             }
             let _g = s.lock.lock().map_err(|e| e.to_string())?;
             if s.done.load(Ordering::Acquire) {
-                return Ok(s.cell.lock().map_err(|e| e.to_string())?.clone().unwrap_or(Value::Null));
+                return Ok(s
+                    .cell
+                    .lock()
+                    .map_err(|e| e.to_string())?
+                    .clone()
+                    .unwrap_or(Value::Null));
             }
             let v = call_fn(env, &func, vec![])?;
             *s.cell.lock().map_err(|e| e.to_string())? = Some(v.clone());

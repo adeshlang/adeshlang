@@ -5,6 +5,9 @@ edition = "2024"
 authors = ["Ajay Tainwala"]
 description = "C-compatible mobile bridge for AdeshLang runtime"
 
+[lints]
+workspace = true
+
 [lib]
 name = "adesh_mobile_bridge"
 crate-type = ["cdylib", "staticlib", "rlib"]

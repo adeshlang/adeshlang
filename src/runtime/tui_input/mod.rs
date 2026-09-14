@@ -11,10 +11,6 @@ pub mod widgets;
 pub use widgets::*;
 
 #[cfg(not(target_arch = "wasm32"))]
-use std::io::{self, Stdout, Write};
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Duration;
-#[cfg(not(target_arch = "wasm32"))]
 use crossterm::{
     cursor,
     event::{self, Event, KeyEvent, KeyEventKind},
@@ -22,10 +18,11 @@ use crossterm::{
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
 #[cfg(not(target_arch = "wasm32"))]
-use ratatui::{
-    backend::CrosstermBackend,
-    Terminal, TerminalOptions, Viewport,
-};
+use ratatui::{Terminal, TerminalOptions, Viewport, backend::CrosstermBackend};
+#[cfg(not(target_arch = "wasm32"))]
+use std::io::{self, Stdout, Write};
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Duration;
 
 #[cfg(not(target_arch = "wasm32"))]
 /// Helper to drain any pending input events from the console buffer
@@ -81,7 +78,11 @@ impl Drop for TerminalGuard {
             let _ = execute!(stdout, LeaveAlternateScreen);
         } else {
             if self.height > 0 {
-                let _ = execute!(stdout, cursor::MoveToColumn(0), cursor::MoveDown(self.height));
+                let _ = execute!(
+                    stdout,
+                    cursor::MoveToColumn(0),
+                    cursor::MoveDown(self.height)
+                );
             }
             let _ = writeln!(stdout);
             let _ = stdout.flush();

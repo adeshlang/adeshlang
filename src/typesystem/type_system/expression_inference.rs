@@ -1343,10 +1343,15 @@ pub(crate) fn infer_expr_type(
                 ExprKind::Get(obj, key) => {
                     // Check if obj is Collections namespace and key is a constructor
                     if let ExprKind::Variable(mod_name) = &obj.kind {
-                        if mod_name == "Collections" || mod_name == "std:Collections" || mod_name == "collections" {
+                        if mod_name == "Collections"
+                            || mod_name == "std:Collections"
+                            || mod_name == "collections"
+                        {
                             let mut gargs = Vec::new();
                             for tname in call_type_args {
-                                if let Some(resolved) = resolve_type_name(tname, aliases, generic_aliases, type_params) {
+                                if let Some(resolved) =
+                                    resolve_type_name(tname, aliases, generic_aliases, type_params)
+                                {
                                     gargs.push(resolved);
                                 }
                             }
@@ -1368,11 +1373,23 @@ pub(crate) fn infer_expr_type(
                         generic_aliases,
                         type_params,
                     ) {
-                        if let Ty::GenericInstance { name: _, args: gen_args } = &obj_ty {
+                        if let Ty::GenericInstance {
+                            name: _,
+                            args: gen_args,
+                        } = &obj_ty
+                        {
                             if !gen_args.is_empty() {
                                 let expected_ty = &gen_args[0];
-                                if key == "push" || key == "insert" || key == "set" || key == "enqueue" || key == "push_back" || key == "push_front" {
-                                    let arg_to_check = if (key == "insert" || key == "set") && args.len() >= 2 {
+                                if key == "push"
+                                    || key == "insert"
+                                    || key == "set"
+                                    || key == "enqueue"
+                                    || key == "push_back"
+                                    || key == "push_front"
+                                {
+                                    let arg_to_check = if (key == "insert" || key == "set")
+                                        && args.len() >= 2
+                                    {
                                         &args[1]
                                     } else if !args.is_empty() {
                                         &args[0]
@@ -1391,7 +1408,13 @@ pub(crate) fn infer_expr_type(
                                         type_params,
                                     )?;
 
-                                    if expected_ty != &Ty::Any && !expr_matches_expected_type(arg_to_check, &at, expected_ty) {
+                                    if expected_ty != &Ty::Any
+                                        && !expr_matches_expected_type(
+                                            arg_to_check,
+                                            &at,
+                                            expected_ty,
+                                        )
+                                    {
                                         return Err(format!(
                                             "type mismatch for method '{}': expected {}, found {}",
                                             key, expected_ty, at
@@ -1890,7 +1913,11 @@ pub(crate) fn infer_expr_type(
                 generic_aliases,
                 type_params,
             )?;
-            Ok(type_from_name(target_ty_ann).unwrap_or(Ty::Unknown))
+            Ok(
+                resolve_type_name(target_ty_ann, aliases, generic_aliases, type_params)
+                    .or_else(|| type_from_name(target_ty_ann))
+                    .unwrap_or(Ty::Unknown),
+            )
         }
     }
 }

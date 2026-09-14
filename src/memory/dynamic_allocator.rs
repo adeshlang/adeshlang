@@ -441,7 +441,11 @@ impl Slab {
     fn free(&mut self, ptr: NonNull<u8>) {
         assert!(self.contains(ptr), "Pointer does not belong to this slab");
         let offset = unsafe { ptr.as_ptr().offset_from(self.base.as_ptr()) } as usize;
-        assert_eq!(offset % self.object_size, 0, "Pointer is not aligned to object size");
+        assert_eq!(
+            offset % self.object_size,
+            0,
+            "Pointer is not aligned to object size"
+        );
         let idx = offset / self.object_size;
         assert!(idx < self.capacity, "Index out of bounds");
 
@@ -668,7 +672,11 @@ impl DynamicAllocator {
     /// Try to allocate from slab
     fn try_slab_alloc(&self, size: usize) -> Result<Option<NonNull<u8>>, LangError> {
         // Fast O(1) bit-manipulation for power-of-two slab size class
-        let size_class = if size <= 16 { 16 } else { size.next_power_of_two() };
+        let size_class = if size <= 16 {
+            16
+        } else {
+            size.next_power_of_two()
+        };
 
         let mut slabs = self.slabs.lock().unwrap();
         let class_slabs = slabs.entry(size_class).or_insert_with(Vec::new);

@@ -147,9 +147,10 @@ fn symbol_member_type_name(sym: &SymbolEntry) -> Option<String> {
         | SemanticSymbolKind::TypeAlias => Some(sym.name.clone()),
         SemanticSymbolKind::Variable
         | SemanticSymbolKind::Constant
-        | SemanticSymbolKind::Parameter => {
-            sym.type_annotation.as_ref().map(|t| base_type_name(t).to_string())
-        }
+        | SemanticSymbolKind::Parameter => sym
+            .type_annotation
+            .as_ref()
+            .map(|t| base_type_name(t).to_string()),
         _ => None,
     }
 }
@@ -157,7 +158,11 @@ fn symbol_member_type_name(sym: &SymbolEntry) -> Option<String> {
 /// Strip generics/nullability/pointer syntax from an annotation:
 /// `"User<int>"` → `"User"`, `"User?"` → `"User"`.
 fn base_type_name(type_str: &str) -> &str {
-    let s = type_str.trim().trim_start_matches('*').trim_end_matches('?').trim();
+    let s = type_str
+        .trim()
+        .trim_start_matches('*')
+        .trim_end_matches('?')
+        .trim();
     match s.find('<') {
         Some(idx) => s[..idx].trim(),
         None => s,
@@ -229,13 +234,19 @@ fn type_definition_hover(td: &TypeDefinition) -> Hover {
     if !td.methods.is_empty() {
         content.push_str("\n**Methods:**\n");
         for m in &td.methods {
-            content.push_str(&format!("- `{}`\n", m.signature.as_deref().unwrap_or(&m.name)));
+            content.push_str(&format!(
+                "- `{}`\n",
+                m.signature.as_deref().unwrap_or(&m.name)
+            ));
         }
     }
     if !td.static_methods.is_empty() {
         content.push_str("\n**Static methods:**\n");
         for m in &td.static_methods {
-            content.push_str(&format!("- `{}`\n", m.signature.as_deref().unwrap_or(&m.name)));
+            content.push_str(&format!(
+                "- `{}`\n",
+                m.signature.as_deref().unwrap_or(&m.name)
+            ));
         }
     }
     if !td.static_properties.is_empty() {
@@ -535,9 +546,25 @@ mod tests {
         let source = "let x = 1;\nprint(x);\n";
         let h = hover_value(source, 1, 1).expect("hover for print");
         // All print options are documented.
-        for opt in ["sep", "end", "file", "flush", "color", "background",
-                    "bold", "italic", "underline", "strikethrough", "pretty"] {
-            assert!(h.contains(opt), "print hover missing option '{}': {}", opt, h);
+        for opt in [
+            "sep",
+            "end",
+            "file",
+            "flush",
+            "color",
+            "background",
+            "bold",
+            "italic",
+            "underline",
+            "strikethrough",
+            "pretty",
+        ] {
+            assert!(
+                h.contains(opt),
+                "print hover missing option '{}': {}",
+                opt,
+                h
+            );
         }
         assert!(h.contains("Examples"));
         assert!(h.contains("...args"));

@@ -86,7 +86,11 @@ pub fn ann_matches_value(
             '>' => depth_angle = (depth_angle - 1).max(0),
             '{' => depth_brace += 1,
             '}' => depth_brace = (depth_brace - 1).max(0),
-            '|' if depth_bracket == 0 && depth_paren == 0 && depth_angle == 0 && depth_brace == 0 => {
+            '|' if depth_bracket == 0
+                && depth_paren == 0
+                && depth_angle == 0
+                && depth_brace == 0 =>
+            {
                 union_parts.push(&s[last_idx..i]);
                 last_idx = i + 1;
             }
@@ -191,7 +195,10 @@ pub fn ann_matches_value(
     };
     use crate::parsing::ast::Value::*;
     if let Null = v {
-        return nullable || base.eq_ignore_ascii_case("null") || base.eq_ignore_ascii_case("any") || base.eq_ignore_ascii_case("undefined");
+        return nullable
+            || base.eq_ignore_ascii_case("null")
+            || base.eq_ignore_ascii_case("any")
+            || base.eq_ignore_ascii_case("undefined");
     }
 
     // Handle array type annotations: [T], [T;N], [T;N;raw]
@@ -266,10 +273,21 @@ pub fn ann_matches_value(
     if lowered_base.starts_with("set<") || lowered_base == "set" {
         return matches!(v, Set(_));
     }
-    if lowered_base.starts_with("dict<") || lowered_base.starts_with("map<") || lowered_base == "dict" || lowered_base == "map" || lowered_base == "object" || lowered_base == "{}" {
+    if lowered_base.starts_with("dict<")
+        || lowered_base.starts_with("map<")
+        || lowered_base == "dict"
+        || lowered_base == "map"
+        || lowered_base == "object"
+        || lowered_base == "{}"
+    {
         return matches!(v, Object(_));
     }
-    if lowered_base.starts_with("array<") || lowered_base.starts_with("list<") || lowered_base == "array" || lowered_base == "list" || lowered_base == "[]" {
+    if lowered_base.starts_with("array<")
+        || lowered_base.starts_with("list<")
+        || lowered_base == "array"
+        || lowered_base == "list"
+        || lowered_base == "[]"
+    {
         return matches!(v, Array(_) | RawArray(_, _) | DynArray(_));
     }
 

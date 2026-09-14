@@ -119,4 +119,4 @@ adesh run examples/memory/pointer_return.adesh
 
 - [docs/pointers.md](../../docs/pointers.md) - Complete pointer system documentation
 - [docs/memory_model.md](../../docs/memory_model.md) - Memory model overview
-- [README.md](../../README.md) - AdeshLang main documentation
+- [docs/README.md](../../docs/README.md) - AdeshLang main documentation

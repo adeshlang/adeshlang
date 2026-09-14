@@ -15,7 +15,7 @@ fn twoSumBruteForce(nums: [int], target: int): [int] {
             }
         }
     }
-    return [];
+    return [] as [int];
 }
 
 // Approach 2: Optimized Hash Map (O(N) Time Complexity, O(N) Space Complexity)
@@ -30,14 +30,15 @@ fn twoSumHashMap(nums: [int], target: int): [int] {
         // Check if the complement exists in our map
         let complementKey = str(complement);
         if (map[complementKey] != null) {
-            return [map[complementKey], i];
+            let complementIndex = map[complementKey] as int;
+            return [complementIndex, i] as [int];
         }
         
         // Store current number's index
         let numKey = str(num);
         map[numKey] = i;
     }
-    return [];
+    return [] as [int];
 }
 
 // =============================================================================

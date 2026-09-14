@@ -247,12 +247,20 @@
     "operators": {
       "patterns": [
         {
-          "name": "keyword.operator.comparison.adesh",
-          "match": "(==|!=|<=|>=|<|>)"
+          "name": "keyword.operator.pipe.adesh",
+          "match": "\\|>"
         },
         {
           "name": "keyword.operator.logical.adesh",
           "match": "(&&|\\|\\||!)"
+        },
+        {
+          "name": "keyword.operator.assignment.adesh",
+          "match": "(=|\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^=|<<=|>>=)"
+        },
+        {
+          "name": "keyword.operator.comparison.adesh",
+          "match": "(===|==|!=|<=|>=|<|>)"
         },
         {
           "name": "keyword.operator.arithmetic.adesh",
@@ -261,10 +269,6 @@
         {
           "name": "keyword.operator.bitwise.adesh",
           "match": "(&|\\||\\^|~|<<|>>)"
-        },
-        {
-          "name": "keyword.operator.assignment.adesh",
-          "match": "(=|\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^=|<<=|>>=)"
         },
         {
           "name": "keyword.operator.range.adesh",
@@ -343,7 +347,11 @@
       "patterns": [
         {
           "name": "support.type.primitive.adesh",
-          "match": "\\b(int|i8|i16|i32|i64|i128|u8|u16|u32|u64|u128|f32|f64|float|double|bool|string|char|tuple|set|object|map|complex|void|any|never|unknown)\\b"
+          "match": "\\b(int|i8|i16|i32|i64|i128|u8|u16|u32|u64|u128|f32|f64|float|double|bool|string|str|char|tuple|set|object|map|complex|void|any|never|unknown)\\b"
+        },
+        {
+          "name": "keyword.operator.type.union.adesh",
+          "match": "\\|"
         },
         {
           "name": "support.type.pointer.adesh",

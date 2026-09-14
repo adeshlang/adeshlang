@@ -14,11 +14,7 @@ pub struct FileNode {
 impl FileNode {
     pub fn icon(&self) -> &'static str {
         if self.is_dir {
-            if self.expanded {
-                "📂"
-            } else {
-                "📁"
-            }
+            if self.expanded { "📂" } else { "📁" }
         } else {
             let ext = self
                 .path
@@ -119,14 +115,20 @@ impl FileExplorer {
             for entry in entries_vec {
                 let p = entry.path();
                 let name = entry.file_name().to_string_lossy().to_string();
-                if !show_hidden && (name.starts_with('.') || name == "target" || name == "node_modules") {
+                if !show_hidden
+                    && (name.starts_with('.') || name == "target" || name == "node_modules")
+                {
                     continue;
                 }
                 let is_dir = p.is_dir();
 
                 let (expanded, children_loaded, existing_children) =
                     if let Some(existing) = node.children.iter().find(|c| c.path == p) {
-                        (existing.expanded, existing.children_loaded, existing.children.clone())
+                        (
+                            existing.expanded,
+                            existing.children_loaded,
+                            existing.children.clone(),
+                        )
                     } else {
                         (false, false, Vec::new())
                     };
@@ -294,7 +296,12 @@ impl FileExplorer {
     pub fn rename_file(&mut self, new_name: &str) -> std::io::Result<PathBuf> {
         let src = match self.selected_path() {
             Some(p) => p.clone(),
-            None => return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "No selection")),
+            None => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "No selection",
+                ));
+            }
         };
         let parent = src.parent().unwrap_or(&self.root_path);
         let dest = parent.join(new_name);

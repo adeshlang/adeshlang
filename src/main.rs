@@ -166,6 +166,22 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                 parsed.toolchain_preference,
             );
         }
+        "update" => {
+            let mut update_args = Vec::new();
+            if let Some(ref input) = parsed.input_file {
+                update_args.push(input.clone());
+            }
+            update_args.extend(parsed.program_args.clone());
+            adeshlang::update::execute_update_command(&update_args);
+        }
+        "rollback" => {
+            let mut rollback_args = Vec::new();
+            if let Some(ref input) = parsed.input_file {
+                rollback_args.push(input.clone());
+            }
+            rollback_args.extend(parsed.program_args.clone());
+            adeshlang::update::execute_rollback_command(&rollback_args);
+        }
         "run" => {
             let (path, src) = if let Some(ref eval_code) = parsed.eval_code {
                 (PathBuf::from("<eval>"), eval_code.clone())
@@ -227,14 +243,15 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             // BEFORE any backend execution, ensuring all programs are verified.
 
             if parsed.config.verbose {
-                eprintln!("🔒 Performing mandatory compile-time type & memory safety validation...");
+                eprintln!(
+                    "🔒 Performing mandatory compile-time type & memory safety validation..."
+                );
             }
 
             // Perform mandatory static type checking
-            if let Err(e) = adeshlang::types::type_system::check_module_in(
-                &src,
-                Some(&path.to_string_lossy()),
-            ) {
+            if let Err(e) =
+                adeshlang::types::type_system::check_module_in(&src, Some(&path.to_string_lossy()))
+            {
                 eprintln!("{}", e);
                 std::process::exit(1);
             }
@@ -1026,7 +1043,8 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                 }
             };
             // 1. Language syntax and semantic analysis
-            let semantic_index = adeshlang::semantics::index_source_in(&src, Some(&_path.to_string_lossy()));
+            let semantic_index =
+                adeshlang::semantics::index_source_in(&src, Some(&_path.to_string_lossy()));
             if !semantic_index.errors.is_empty() {
                 for err in &semantic_index.errors {
                     eprintln!("{}", err);

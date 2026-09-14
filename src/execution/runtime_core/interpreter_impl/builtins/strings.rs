@@ -15,62 +15,125 @@ pub fn call_string_method(obj: &Value, method_name: &str, args: &[Value]) -> Res
 
     match method_name {
         "length" | "len" => {
-            let s = match obj { Value::Str(s) => s, _ => return Err(err("length requires string".to_string())) };
+            let s = match obj {
+                Value::Str(s) => s,
+                _ => return Err(err("length requires string".to_string())),
+            };
             Ok(Value::Number(s.chars().count() as f64))
         }
         "isEmpty" | "is_empty" => {
-            let s = match obj { Value::Str(s) => s, _ => return Err(err("isEmpty requires string".to_string())) };
+            let s = match obj {
+                Value::Str(s) => s,
+                _ => return Err(err("isEmpty requires string".to_string())),
+            };
             Ok(Value::Bool(s.is_empty()))
         }
         "trimStart" => {
-            let s = match obj { Value::Str(s) => s, _ => return Err(err("trimStart requires string".to_string())) };
+            let s = match obj {
+                Value::Str(s) => s,
+                _ => return Err(err("trimStart requires string".to_string())),
+            };
             Ok(Value::Str(s.trim_start().to_string()))
         }
         "trimEnd" => {
-            let s = match obj { Value::Str(s) => s, _ => return Err(err("trimEnd requires string".to_string())) };
+            let s = match obj {
+                Value::Str(s) => s,
+                _ => return Err(err("trimEnd requires string".to_string())),
+            };
             Ok(Value::Str(s.trim_end().to_string()))
         }
         "lines" => {
-            let s = match obj { Value::Str(s) => s, _ => return Err(err("lines requires string".to_string())) };
-            Ok(Value::Array(s.lines().map(|v| Value::Str(v.to_string())).collect()))
+            let s = match obj {
+                Value::Str(s) => s,
+                _ => return Err(err("lines requires string".to_string())),
+            };
+            Ok(Value::Array(
+                s.lines().map(|v| Value::Str(v.to_string())).collect(),
+            ))
         }
         "chars" => {
-            let s = match obj { Value::Str(s) => s, _ => return Err(err("chars requires string".to_string())) };
+            let s = match obj {
+                Value::Str(s) => s,
+                _ => return Err(err("chars requires string".to_string())),
+            };
             Ok(Value::Array(s.chars().map(Value::Char).collect()))
         }
         "reverse" => {
-            let s = match obj { Value::Str(s) => s, _ => return Err(err("reverse requires string".to_string())) };
+            let s = match obj {
+                Value::Str(s) => s,
+                _ => return Err(err("reverse requires string".to_string())),
+            };
             Ok(Value::Str(s.chars().rev().collect()))
         }
         "capitalize" => {
-            let s = match obj { Value::Str(s) => s, _ => return Err(err("capitalize requires string".to_string())) };
+            let s = match obj {
+                Value::Str(s) => s,
+                _ => return Err(err("capitalize requires string".to_string())),
+            };
             let mut chars = s.chars();
-            Ok(Value::Str(chars.next().map(|c| c.to_uppercase().collect::<String>() + chars.as_str()).unwrap_or_default()))
+            Ok(Value::Str(
+                chars
+                    .next()
+                    .map(|c| c.to_uppercase().collect::<String>() + chars.as_str())
+                    .unwrap_or_default(),
+            ))
         }
         "isAscii" | "is_ascii" => {
-            let s = match obj { Value::Str(s) => s, _ => return Err(err("isAscii requires string".to_string())) };
+            let s = match obj {
+                Value::Str(s) => s,
+                _ => return Err(err("isAscii requires string".to_string())),
+            };
             Ok(Value::Bool(s.is_ascii()))
         }
         "isNumeric" | "is_numeric" => {
-            let s = match obj { Value::Str(s) => s, _ => return Err(err("isNumeric requires string".to_string())) };
-            Ok(Value::Bool(!s.is_empty() && s.chars().all(|c| c.is_numeric())))
+            let s = match obj {
+                Value::Str(s) => s,
+                _ => return Err(err("isNumeric requires string".to_string())),
+            };
+            Ok(Value::Bool(
+                !s.is_empty() && s.chars().all(|c| c.is_numeric()),
+            ))
         }
         "isAlphabetic" | "is_alphabetic" => {
-            let s = match obj { Value::Str(s) => s, _ => return Err(err("isAlphabetic requires string".to_string())) };
-            Ok(Value::Bool(!s.is_empty() && s.chars().all(|c| c.is_alphabetic())))
+            let s = match obj {
+                Value::Str(s) => s,
+                _ => return Err(err("isAlphabetic requires string".to_string())),
+            };
+            Ok(Value::Bool(
+                !s.is_empty() && s.chars().all(|c| c.is_alphabetic()),
+            ))
         }
         "isAlphanumeric" | "is_alphanumeric" => {
-            let s = match obj { Value::Str(s) => s, _ => return Err(err("isAlphanumeric requires string".to_string())) };
-            Ok(Value::Bool(!s.is_empty() && s.chars().all(|c| c.is_alphanumeric())))
+            let s = match obj {
+                Value::Str(s) => s,
+                _ => return Err(err("isAlphanumeric requires string".to_string())),
+            };
+            Ok(Value::Bool(
+                !s.is_empty() && s.chars().all(|c| c.is_alphanumeric()),
+            ))
         }
         "padStart" | "padEnd" => {
-            let s = match obj { Value::Str(s) => s, _ => return Err(err("padding requires string".to_string())) };
-            let width = args.first().and_then(Value::as_f64).ok_or_else(|| err("padding width must be numeric".to_string()))? as usize;
-            let fill = match args.get(1) { Some(Value::Str(v)) if !v.is_empty() => v, _ => " " };
+            let s = match obj {
+                Value::Str(s) => s,
+                _ => return Err(err("padding requires string".to_string())),
+            };
+            let width = args
+                .first()
+                .and_then(Value::as_f64)
+                .ok_or_else(|| err("padding width must be numeric".to_string()))?
+                as usize;
+            let fill = match args.get(1) {
+                Some(Value::Str(v)) if !v.is_empty() => v,
+                _ => " ",
+            };
             let current = s.chars().count();
             let count = width.saturating_sub(current);
             let padding: String = fill.chars().cycle().take(count).collect();
-            if method_name == "padStart" { Ok(Value::Str(format!("{}{}", padding, s))) } else { Ok(Value::Str(format!("{}{}", s, padding))) }
+            if method_name == "padStart" {
+                Ok(Value::Str(format!("{}{}", padding, s)))
+            } else {
+                Ok(Value::Str(format!("{}{}", s, padding)))
+            }
         }
         "split" => {
             if method_args.len() < 2 {

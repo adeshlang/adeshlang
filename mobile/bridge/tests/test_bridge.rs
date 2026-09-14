@@ -1,5 +1,5 @@
-use std::ffi::{CStr, CString};
 use adesh_mobile_bridge::*;
+use std::ffi::{CStr, CString};
 
 #[test]
 fn test_session_creation_and_destruction() {

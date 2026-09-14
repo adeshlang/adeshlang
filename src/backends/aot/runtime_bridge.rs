@@ -962,7 +962,11 @@ pub unsafe extern "C" fn aot_print_with_options(
         if !end.is_empty() {
             file_output.push_str(&end);
         }
-        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&file_path) {
+        if let Ok(mut f) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&file_path)
+        {
             let _ = f.write_all(file_output.as_bytes());
             let _ = f.flush();
         }
@@ -1331,7 +1335,11 @@ pub extern "C" fn aot_input_password(arg0: u64, arg1: u64) -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_input_select(arg0: u64, arg1: u64, arg2: u64) -> u64 {
-    let args = vec![unpack_aot_arg(arg0), unpack_aot_arg(arg1), unpack_aot_arg(arg2)];
+    let args = vec![
+        unpack_aot_arg(arg0),
+        unpack_aot_arg(arg1),
+        unpack_aot_arg(arg2),
+    ];
     let registry = crate::backends::common::builtins::BuiltinRegistry::new();
     let res = if let Some(func) = registry.get("input.select") {
         func(&args)
@@ -1343,7 +1351,11 @@ pub extern "C" fn aot_input_select(arg0: u64, arg1: u64, arg2: u64) -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_input_checkbox(arg0: u64, arg1: u64, arg2: u64) -> u64 {
-    let args = vec![unpack_aot_arg(arg0), unpack_aot_arg(arg1), unpack_aot_arg(arg2)];
+    let args = vec![
+        unpack_aot_arg(arg0),
+        unpack_aot_arg(arg1),
+        unpack_aot_arg(arg2),
+    ];
     let registry = crate::backends::common::builtins::BuiltinRegistry::new();
     let res = if let Some(func) = registry.get("input.checkbox") {
         func(&args)
@@ -1355,7 +1367,11 @@ pub extern "C" fn aot_input_checkbox(arg0: u64, arg1: u64, arg2: u64) -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_input_radio(arg0: u64, arg1: u64, arg2: u64) -> u64 {
-    let args = vec![unpack_aot_arg(arg0), unpack_aot_arg(arg1), unpack_aot_arg(arg2)];
+    let args = vec![
+        unpack_aot_arg(arg0),
+        unpack_aot_arg(arg1),
+        unpack_aot_arg(arg2),
+    ];
     let registry = crate::backends::common::builtins::BuiltinRegistry::new();
     let res = if let Some(func) = registry.get("input.radio") {
         func(&args)
@@ -1397,7 +1413,11 @@ pub extern "C" fn aot_input_slider(arg0: u64, arg1: u64, arg2: u64, arg3: u64, a
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_input_tree(arg0: u64, arg1: u64, arg2: u64) -> u64 {
-    let args = vec![unpack_aot_arg(arg0), unpack_aot_arg(arg1), unpack_aot_arg(arg2)];
+    let args = vec![
+        unpack_aot_arg(arg0),
+        unpack_aot_arg(arg1),
+        unpack_aot_arg(arg2),
+    ];
     let registry = crate::backends::common::builtins::BuiltinRegistry::new();
     let res = if let Some(func) = registry.get("input.tree") {
         func(&args)
@@ -1474,7 +1494,11 @@ pub extern "C" fn aot_input_color(arg0: u64, arg1: u64) -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_input_pin(arg0: u64, arg1: u64, arg2: u64) -> u64 {
-    let args = vec![unpack_aot_arg(arg0), unpack_aot_arg(arg1), unpack_aot_arg(arg2)];
+    let args = vec![
+        unpack_aot_arg(arg0),
+        unpack_aot_arg(arg1),
+        unpack_aot_arg(arg2),
+    ];
     let registry = crate::backends::common::builtins::BuiltinRegistry::new();
     let res = if let Some(func) = registry.get("input.pin") {
         func(&args)
@@ -1486,7 +1510,11 @@ pub extern "C" fn aot_input_pin(arg0: u64, arg1: u64, arg2: u64) -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_input_diff(arg0: u64, arg1: u64, arg2: u64) -> u64 {
-    let args = vec![unpack_aot_arg(arg0), unpack_aot_arg(arg1), unpack_aot_arg(arg2)];
+    let args = vec![
+        unpack_aot_arg(arg0),
+        unpack_aot_arg(arg1),
+        unpack_aot_arg(arg2),
+    ];
     let registry = crate::backends::common::builtins::BuiltinRegistry::new();
     let res = if let Some(func) = registry.get("input.diff") {
         func(&args)
@@ -1536,7 +1564,11 @@ pub extern "C" fn aot_input_method(
         Err(_) => return aot_store_value(RuntimeValue::Null),
     };
 
-    let args = vec![unpack_aot_arg(arg0), unpack_aot_arg(arg1), unpack_aot_arg(arg2)];
+    let args = vec![
+        unpack_aot_arg(arg0),
+        unpack_aot_arg(arg1),
+        unpack_aot_arg(arg2),
+    ];
 
     let registry = crate::backends::common::builtins::BuiltinRegistry::new();
     let res = if let Some(func) = registry.get(method_name) {

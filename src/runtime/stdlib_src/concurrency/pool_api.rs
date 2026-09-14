@@ -94,9 +94,7 @@ fn make_pool(workers: usize) -> Value {
         Ok(Value::Null)
     });
     let p = inner.clone();
-    insert_fn(&mut m, "join", move |_env, _args| {
-        pool_join(&p, None)
-    });
+    insert_fn(&mut m, "join", move |_env, _args| pool_join(&p, None));
     let p = inner.clone();
     insert_fn(&mut m, "join_timeout", move |_env, args| {
         let d = parse_duration(args.first().ok_or("ThreadPool.join_timeout(duration)")?)?;
@@ -134,7 +132,11 @@ fn make_pool(workers: usize) -> Value {
     with_kind(m, "ThreadPool")
 }
 
-fn submit(pool: &Arc<PoolInner>, func: Value, want_result: bool) -> Result<Option<Arc<JobResult>>, String> {
+fn submit(
+    pool: &Arc<PoolInner>,
+    func: Value,
+    want_result: bool,
+) -> Result<Option<Arc<JobResult>>, String> {
     if pool.stop.load(Ordering::Acquire) {
         return Err("thread pool is shut down".into());
     }
@@ -175,7 +177,10 @@ fn pool_join(pool: &Arc<PoolInner>, timeout: Option<std::time::Duration>) -> Res
             break;
         }
         let slice = timeout
-            .map(|d| d.saturating_sub(start.elapsed()).min(std::time::Duration::from_millis(50)))
+            .map(|d| {
+                d.saturating_sub(start.elapsed())
+                    .min(std::time::Duration::from_millis(50))
+            })
             .unwrap_or(std::time::Duration::from_millis(50));
         drop(pool.cvar.wait_timeout(g, slice));
     }
@@ -211,7 +216,10 @@ fn worker_loop(pool: Arc<PoolInner>, id: usize) {
                 if pool.stop.load(Ordering::Acquire) {
                     break;
                 }
-                drop(pool.cvar.wait_timeout(g, std::time::Duration::from_millis(50)));
+                drop(
+                    pool.cvar
+                        .wait_timeout(g, std::time::Duration::from_millis(50)),
+                );
             }
         }
     }
@@ -315,7 +323,11 @@ pub fn builtin_parallel_map(env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Resul
     let chunk = (n / workers).max(1);
     for w in 0..workers {
         let start = w * chunk;
-        let end = if w + 1 == workers { n } else { (start + chunk).min(n) };
+        let end = if w + 1 == workers {
+            n
+        } else {
+            (start + chunk).min(n)
+        };
         if start >= n {
             break;
         }
@@ -345,7 +357,12 @@ pub fn builtin_parallel_map(env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Resul
     }
     let mut out = Vec::with_capacity(n);
     for s in slots.iter() {
-        out.push(s.lock().map_err(|e| e.to_string())?.clone().unwrap_or(Value::Null));
+        out.push(
+            s.lock()
+                .map_err(|e| e.to_string())?
+                .clone()
+                .unwrap_or(Value::Null),
+        );
     }
     Ok(Value::Array(out))
 }
@@ -363,7 +380,10 @@ pub fn builtin_parallel_for(env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Resul
     Ok(Value::Null)
 }
 
-pub fn builtin_parallel_reduce(env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, String> {
+pub fn builtin_parallel_reduce(
+    env: &mut dyn BuiltinEnv,
+    args: Vec<Value>,
+) -> Result<Value, String> {
     if args.len() < 3 {
         return Err("thread.parallel_reduce(array, init, fn)".into());
     }
@@ -416,7 +436,7 @@ pub fn concurrent_queue_type() -> Value {
         let qq = q.clone();
         insert_fn(&mut o, "len", move |_env, _args| {
             Ok(Value::Number(
-                qq.lock().map_err(|e| e.to_string())?.len() as f64,
+                qq.lock().map_err(|e| e.to_string())?.len() as f64
             ))
         });
         Ok(with_kind(o, "ConcurrentQueue"))

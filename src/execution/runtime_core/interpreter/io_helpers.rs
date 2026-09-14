@@ -78,5 +78,8 @@ pub(crate) fn ct_read() -> Result<CtEvent, std::io::Error> {
 #[cfg(target_arch = "wasm32")]
 #[inline]
 pub(crate) fn ct_read() -> Result<Event, std::io::Error> {
-    Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "Terminal raw reading is not supported in browser WASM"))
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "Terminal raw reading is not supported in browser WASM",
+    ))
 }

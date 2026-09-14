@@ -15,9 +15,7 @@ use std::path::{Path, PathBuf};
 
 use super::super::expose::{self, Scope};
 use super::super::manifest::{self, ToolchainManifest};
-use super::super::resolver::{
-    bundled_root, installation_home, is_usable_existing, tool_version,
-};
+use super::super::resolver::{bundled_root, installation_home, is_usable_existing, tool_version};
 use super::super::source_build;
 
 pub struct InstallOptions {
@@ -86,7 +84,9 @@ pub fn parse_install_options(args: &[String]) -> Result<InstallOptions, String> 
                     .collect();
             }
             flag if flag.starts_with('-') => {
-                return Err(format!("Unknown option `{flag}` for `adesh toolchain install`"));
+                return Err(format!(
+                    "Unknown option `{flag}` for `adesh toolchain install`"
+                ));
             }
             component => options.components.push(component.to_string()),
         }
@@ -191,7 +191,9 @@ pub fn execute_install_command(args: &[String]) {
         Err(e) => {
             eprintln!("  ✗ Failed to load toolchain manifest: {e}");
             eprintln!("    Install offline later with: adesh toolchain install --manifest <path>");
-            eprintln!("    Or use the system package manager: adesh toolchain install --use-system-packages");
+            eprintln!(
+                "    Or use the system package manager: adesh toolchain install --use-system-packages"
+            );
             std::process::exit(1);
         }
     };
@@ -235,7 +237,9 @@ pub fn execute_install_command(args: &[String]) {
                 .unwrap_or(true);
             if required {
                 eprintln!("  ✗ Component `{component}` has no download URL for {platform} yet");
-                eprintln!("    Try the system package manager: adesh toolchain install --use-system-packages");
+                eprintln!(
+                    "    Try the system package manager: adesh toolchain install --use-system-packages"
+                );
                 std::process::exit(1);
             }
             println!(
@@ -377,10 +381,7 @@ pub fn execute_install_command(args: &[String]) {
     let clang = toolchain.join("bin").join(exe_name("clang"));
     if clang.is_file() {
         match tool_version(&clang) {
-            Some(version) => println!(
-                "\n  ✓ clang {version} ready at {}",
-                toolchain.display()
-            ),
+            Some(version) => println!("\n  ✓ clang {version} ready at {}", toolchain.display()),
             None => println!("\n  ⚠ Could not determine the resolved clang version"),
         }
     }
@@ -445,10 +446,14 @@ fn run_mlir_source_build_if_requested(home: &Path, options: &InstallOptions) {
     if !mlir_opt.is_file() {
         println!("\n▶ mlir-opt not present; building MLIR from upstream source");
     } else if source_build::mlir_gpu_dialects_available(&bin) {
-        println!("\n  ✓ mlir-opt/mlir-translate already support GPU dialects — no source build needed");
+        println!(
+            "\n  ✓ mlir-opt/mlir-translate already support GPU dialects — no source build needed"
+        );
         return;
     } else {
-        println!("\n▶ Installed MLIR tools lack NVVM/ROCDL GPU dialects; building from upstream source");
+        println!(
+            "\n▶ Installed MLIR tools lack NVVM/ROCDL GPU dialects; building from upstream source"
+        );
     }
     let llvm_root = home.join("toolchain").join("llvm");
     match source_build::build_mlir_from_source(&source_build::source_url(), &llvm_root) {
@@ -456,7 +461,9 @@ fn run_mlir_source_build_if_requested(home: &Path, options: &InstallOptions) {
             if source_build::mlir_gpu_dialects_available(&llvm_root.join("bin")) {
                 println!("  ✓ GPU dialect support verified (NVVM/ROCDL)");
             } else {
-                println!("  ⚠ Built MLIR still lacks GPU dialects — GPU runs will use the interpreter fallback");
+                println!(
+                    "  ⚠ Built MLIR still lacks GPU dialects — GPU runs will use the interpreter fallback"
+                );
             }
         }
         Err(e) => {
@@ -547,9 +554,9 @@ fn install_via_system_packages() -> Result<(), String> {
     #[cfg(windows)]
     {
         let winget = which("winget").ok_or("winget is not available on this system")?;
-        println!("  ▶ Installing LLVM 18.1.8 via winget (may prompt for elevation)");
+        println!("  ▶ Installing LLVM via winget (may prompt for elevation)");
         let status = std::process::Command::new(&winget)
-            .args(["install", "--id", "LLVM.LLVM", "-e", "--version", "18.1.8"])
+            .args(["install", "--id", "LLVM.LLVM", "-e"])
             .status()
             .map_err(|e| format!("Failed to run winget: {e}"))?;
         if !status.success() {
@@ -605,7 +612,10 @@ fn install_via_system_packages() -> Result<(), String> {
             );
         };
 
-        println!("  ▶ Installing {:?} via the system package manager", packages);
+        println!(
+            "  ▶ Installing {:?} via the system package manager",
+            packages
+        );
         let mut command = std::process::Command::new(&manager);
         if manager.ends_with("apt") {
             command.args(["install", "-y"]);
@@ -708,7 +718,12 @@ pub fn execute_expose_command(args: &[String]) {
         std::process::exit(2);
     };
     let home = installation_home().unwrap_or_else(|| PathBuf::from("."));
-    if bundled_root().is_none() && expose::active_toolchain_root(&home).join("bin").join(exe_name("clang")).is_file() {
+    if bundled_root().is_none()
+        && expose::active_toolchain_root(&home)
+            .join("bin")
+            .join(exe_name("clang"))
+            .is_file()
+    {
         // Upstream-installer location still counts as a usable toolchain.
     } else if bundled_root().is_none() {
         eprintln!("Toolchain is not installed — run `adesh toolchain install` first");

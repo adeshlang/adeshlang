@@ -111,12 +111,14 @@ impl EscapeAnalyzer {
 
     /// Mark a variable as escaping (e.g. returned, stored in heap, passed to unknown func)
     pub fn mark_escaped(&mut self, name: &str) {
-        self.statuses.insert(name.to_string(), EscapeStatus::Escapes);
+        self.statuses
+            .insert(name.to_string(), EscapeStatus::Escapes);
     }
 
     /// Mark a variable as non-escaping (stack allocatable)
     pub fn mark_no_escape(&mut self, name: &str) {
-        self.statuses.insert(name.to_string(), EscapeStatus::NoEscape);
+        self.statuses
+            .insert(name.to_string(), EscapeStatus::NoEscape);
     }
 
     /// Check if a variable can be stack-allocated
@@ -129,11 +131,19 @@ impl EscapeAnalyzer {
 
     /// Get escape status
     pub fn get_status(&self, name: &str) -> EscapeStatus {
-        self.statuses.get(name).copied().unwrap_or(EscapeStatus::Unknown)
+        self.statuses
+            .get(name)
+            .copied()
+            .unwrap_or(EscapeStatus::Unknown)
     }
 
     /// Analyze a list of statement variable names and return expression references
-    pub fn analyze_local_flow(&mut self, declared_locals: &[&str], returned_vars: &[&str], heap_stored_vars: &[&str]) {
+    pub fn analyze_local_flow(
+        &mut self,
+        declared_locals: &[&str],
+        returned_vars: &[&str],
+        heap_stored_vars: &[&str],
+    ) {
         for &local in declared_locals {
             if returned_vars.contains(&local) || heap_stored_vars.contains(&local) {
                 self.mark_escaped(local);

@@ -13,7 +13,7 @@ use crate::runtime::simd::ops::{
     array_abs, array_add, array_div, array_dot, array_fused_mul_add, array_fused_sqrt_mul_add,
     array_max, array_mean, array_min, array_mul, array_sqrt, array_sub, array_sum,
 };
-use crate::runtime::simd::value::{make_simd, SimdValue};
+use crate::runtime::simd::value::{SimdValue, make_simd};
 use crate::stdlib::registry::BuiltinRegistry;
 use rustc_hash::FxHashMap as HashMap;
 use std::sync::{Arc, Mutex};
@@ -184,7 +184,7 @@ fn builtin_concat(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, 
 
 fn builtin_workers(_env: &mut dyn BuiltinEnv, _args: Vec<Value>) -> Result<Value, String> {
     Ok(Value::Number(
-        crate::runtime::scheduler::num_workers() as f64,
+        crate::runtime::scheduler::num_workers() as f64
     ))
 }
 
@@ -289,10 +289,7 @@ fn wrap_vector(data: Vec<Value>) -> Value {
         "scale".to_string(),
         Value::Function(NativeFn(Arc::new(move |_env, args| {
             require_len(&args, 1, "vector.scale")?;
-            array_mul(
-                &Value::Array(st.lock().unwrap().clone()),
-                &args[0],
-            )
+            array_mul(&Value::Array(st.lock().unwrap().clone()), &args[0])
         }))),
     );
 
@@ -331,7 +328,11 @@ pub fn simd_value_to_runtime(sv: &SimdValue) -> Value {
 }
 
 /// Create SimdValue from runtime array
-pub fn runtime_to_simd_value(arr: &Value, elem_type: &str, lanes: u32) -> Result<SimdValue, String> {
+pub fn runtime_to_simd_value(
+    arr: &Value,
+    elem_type: &str,
+    lanes: u32,
+) -> Result<SimdValue, String> {
     let data: Vec<f64> = match arr {
         Value::Array(v) => v.iter().map(value_to_f64).collect(),
         _ => return Err("expected array for SIMD load".to_string()),

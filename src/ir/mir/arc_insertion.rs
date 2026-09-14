@@ -40,8 +40,12 @@ impl ArcInsertion {
                     MirStatement::Assign(dest, rvalue) => {
                         if arc_locals.contains(dest) {
                             let src_local_opt = match rvalue {
-                                super::MirRvalue::Use(super::MirOperand::Move(place)) => Some(place.local),
-                                super::MirRvalue::Use(super::MirOperand::Copy(place)) => Some(place.local),
+                                super::MirRvalue::Use(super::MirOperand::Move(place)) => {
+                                    Some(place.local)
+                                }
+                                super::MirRvalue::Use(super::MirOperand::Copy(place)) => {
+                                    Some(place.local)
+                                }
                                 _ => None,
                             };
                             if let Some(src_local) = src_local_opt {

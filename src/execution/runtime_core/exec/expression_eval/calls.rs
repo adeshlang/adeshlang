@@ -158,7 +158,9 @@ impl Exec {
                         other => vec![value_to_string(other)],
                     }
                 };
-                crate::backends::common::builtins_modules::io::set_thread_mock_input(strings.clone());
+                crate::backends::common::builtins_modules::io::set_thread_mock_input(
+                    strings.clone(),
+                );
                 let mut q = crate::execution::runtime_core::INPUT_PLAYBACK
                     .get_or_init(|| std::sync::Mutex::new(std::collections::VecDeque::new()))
                     .lock()

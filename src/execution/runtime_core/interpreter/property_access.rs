@@ -255,7 +255,10 @@ pub(in crate::execution::runtime_core) fn get_prop(
             }
             match key {
                 "index" => Ok(BoundNative("index".to_string(), Box::new(Str(s.clone())))),
-                "mock" => Ok(BoundNative("input.mock".to_string(), Box::new(Str(s.clone())))),
+                "mock" => Ok(BoundNative(
+                    "input.mock".to_string(),
+                    Box::new(Str(s.clone())),
+                )),
                 "len" | "length" => Ok(Number(s.chars().count() as f64)),
                 _ => Ok(Null),
             }
@@ -374,7 +377,10 @@ pub(in crate::execution::runtime_core) fn get_prop(
             "tree" => Ok(BoundNative("input.tree".to_string(), Box::new(Null))),
             "table" => Ok(BoundNative("input.table".to_string(), Box::new(Null))),
             "datepicker" => Ok(BoundNative("input.datepicker".to_string(), Box::new(Null))),
-            "datetimepicker" | "datetime" => Ok(BoundNative("input.datetimepicker".to_string(), Box::new(Null))),
+            "datetimepicker" | "datetime" => Ok(BoundNative(
+                "input.datetimepicker".to_string(),
+                Box::new(Null),
+            )),
             "timepicker" => Ok(BoundNative("input.timepicker".to_string(), Box::new(Null))),
             "color" => Ok(BoundNative("input.color".to_string(), Box::new(Null))),
             "pin" => Ok(BoundNative("input.pin".to_string(), Box::new(Null))),

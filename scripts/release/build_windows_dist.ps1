@@ -36,10 +36,10 @@ if ($Arch -eq "aarch64") {
 
 $TargetBinAdesh = "$TargetBinDir\adesh.exe"
 
-# 1. Build the official `adesh` CLI binary.
-Write-Host "[1/6] Compiling AdeshLang Release Binary (adesh.exe for $Arch)..." -ForegroundColor Yellow
+# 1. Build the official `adesh` CLI binary and libraries (static & dynamic).
+Write-Host "[1/6] Compiling AdeshLang Release Binaries & Libraries ($Arch)..." -ForegroundColor Yellow
 Set-Location $RootDir
-cargo build --release @TargetFlag --bin adesh --bin adl
+cargo build --release @TargetFlag --bin adesh --bin adl --lib
 if (Test-Path "$RootDir\als\Cargo.toml") {
     Push-Location "$RootDir\als"
     cargo build --release @TargetFlag --bin als
@@ -58,13 +58,30 @@ if (Test-Path $DistDir) {
 }
 
 New-Item -ItemType Directory -Force -Path "$DistDir\bin" | Out-Null
+New-Item -ItemType Directory -Force -Path "$DistDir\lib" | Out-Null
+New-Item -ItemType Directory -Force -Path "$DistDir\include" | Out-Null
 New-Item -ItemType Directory -Force -Path "$DistDir\licenses" | Out-Null
 New-Item -ItemType Directory -Force -Path "$DistDir\config" | Out-Null
 New-Item -ItemType Directory -Force -Path "$DistDir\std" | Out-Null
-# 3. Copy Compiler Executables, Standard Library, Licenses, and Toolchain Manifest
-Write-Host "[3/6] Copying Core Binary and Manifest..." -ForegroundColor Yellow
+
+# 3. Copy Executables, Dynamic & Static Libraries, Standard Library, Licenses, and Toolchain Manifest
+Write-Host "[3/6] Copying Core Binaries, Dynamic & Static Libraries, and Manifest..." -ForegroundColor Yellow
 Copy-Item $TargetBinAdesh "$DistDir\bin\adesh.exe" -Force
 if (Test-Path "$TargetBinDir\adl.exe") { Copy-Item "$TargetBinDir\adl.exe" "$DistDir\bin\adl.exe" -Force }
+
+# Dynamic libraries (.dll)
+if (Test-Path "$TargetBinDir\adeshlang.dll") {
+    Copy-Item "$TargetBinDir\adeshlang.dll" "$DistDir\bin\adeshlang.dll" -Force
+    Copy-Item "$TargetBinDir\adeshlang.dll" "$DistDir\lib\adeshlang.dll" -Force
+    Write-Host "      Copied dynamic library adeshlang.dll to bin\ and lib\" -ForegroundColor Green
+}
+
+# Static and Import libraries (.lib, .dll.lib, .a)
+Get-ChildItem "$TargetBinDir" -Include "adeshlang.lib", "adeshlang.dll.lib", "libadeshlang.a", "*.lib" -File | ForEach-Object {
+    Copy-Item $_.FullName "$DistDir\lib\$($_.Name)" -Force
+    Write-Host "      Copied library $($_.Name) to lib\" -ForegroundColor Green
+}
+
 $AlsBin = if ($Arch -eq "aarch64") { "$RootDir\als\target\aarch64-pc-windows-msvc\release\als.exe" } else { "$RootDir\als\target\release\als.exe" }
 if (-not (Test-Path $AlsBin)) { $AlsBin = "$TargetBinDir\als.exe" }
 if (Test-Path $AlsBin) { Copy-Item $AlsBin "$DistDir\bin\als.exe" -Force }

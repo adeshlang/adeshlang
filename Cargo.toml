@@ -22,12 +22,18 @@ path = "src/main.rs"
 name = "adl"
 path = "src/bin/adl.rs"
 
-[lints.clippy]
+[workspace.lints.clippy]
 all = "allow"
+
+[workspace.lints.rust]
+warnings = "allow"
+
+[lints]
+workspace = true
 
 [lib]
 name = "adeshlang"
-crate-type = ["staticlib", "rlib"]
+crate-type = ["staticlib", "cdylib", "rlib"]
 path = "src/lib.rs"
 
 [features]

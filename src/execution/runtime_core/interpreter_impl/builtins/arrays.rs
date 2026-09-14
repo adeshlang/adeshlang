@@ -85,7 +85,7 @@ pub fn call_simple_array_method(
             _ => match (value_to_f64(a), value_to_f64(b)) {
                 (Some(na), Some(nb)) => na.partial_cmp(&nb).unwrap_or(Ordering::Equal),
                 _ => fmt(a).cmp(&fmt(b)),
-            }
+            },
         }
     }
 
@@ -342,29 +342,53 @@ pub fn call_simple_array_method(
         }
         "lastIndexOf" => {
             let search = args.first().ok_or_else(|| err("lastIndexOf(value)"))?;
-            Ok(Value::Number(arr_ref.iter().rposition(|v| equals(v, search)).map(|i| i as f64).unwrap_or(-1.0)))
+            Ok(Value::Number(
+                arr_ref
+                    .iter()
+                    .rposition(|v| equals(v, search))
+                    .map(|i| i as f64)
+                    .unwrap_or(-1.0),
+            ))
         }
         "distinct" => {
             let mut result = Vec::new();
             for value in arr_ref {
-                if !result.iter().any(|v| equals(v, value)) { result.push(value.clone()); }
+                if !result.iter().any(|v| equals(v, value)) {
+                    result.push(value.clone());
+                }
             }
             Ok(Value::Array(result))
         }
         "sum" => {
             let mut total = 0.0;
-            for value in arr_ref { total += value.as_f64().ok_or_else(|| err("sum requires numeric elements"))?; }
+            for value in arr_ref {
+                total += value
+                    .as_f64()
+                    .ok_or_else(|| err("sum requires numeric elements"))?;
+            }
             Ok(Value::Number(total))
         }
         "min" | "max" => {
             let mut values = arr_ref.iter().filter_map(Value::as_f64);
-            let first = values.next().ok_or_else(|| err("min/max requires numeric elements"))?;
-            let result = values.fold(first, |a, b| if method_name == "min" { a.min(b) } else { a.max(b) });
+            let first = values
+                .next()
+                .ok_or_else(|| err("min/max requires numeric elements"))?;
+            let result = values.fold(first, |a, b| {
+                if method_name == "min" {
+                    a.min(b)
+                } else {
+                    a.max(b)
+                }
+            });
             Ok(Value::Number(result))
         }
         "toSet" => {
             let mut result = Vec::new();
-            for value in arr_ref { if !result.iter().any(|v| equals(v, value)) { result.push(value.clone()); } }
+            for value in arr_ref {
+                if !result.iter().any(|v| equals(v, value)) {
+                    result.push(value.clone());
+                }
+            }
             Ok(Value::Set(result))
         }
         "toTuple" => Ok(Value::Tuple(arr_ref.to_vec())),

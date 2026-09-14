@@ -634,10 +634,7 @@ impl Theme {
 
     pub fn cycle(&self) -> Self {
         let themes = Self::all_themes();
-        let idx = themes
-            .iter()
-            .position(|t| t.name == self.name)
-            .unwrap_or(0);
+        let idx = themes.iter().position(|t| t.name == self.name).unwrap_or(0);
         themes[(idx + 1) % themes.len()].clone()
     }
 }

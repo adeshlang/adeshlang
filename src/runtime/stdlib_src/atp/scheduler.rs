@@ -93,7 +93,8 @@ impl PacketScheduler {
         if !bucket.streams.contains_key(&stream_id) {
             bucket.order.push_back(stream_id);
         }
-        bucket.streams
+        bucket
+            .streams
             .entry(stream_id)
             .or_default()
             .frames
@@ -359,8 +360,20 @@ mod tests {
         }
 
         let ratio = |a: f64, b: f64| a / b.max(1.0);
-        assert!((ratio(bc, bh) - 2.0).abs() / 2.0 < TOLERANCE, "c/h={}", ratio(bc, bh));
-        assert!((ratio(bh, bm) - 2.0).abs() / 2.0 < TOLERANCE, "h/m={}", ratio(bh, bm));
-        assert!((ratio(bm, bl) - 2.0).abs() / 2.0 < TOLERANCE, "m/l={}", ratio(bm, bl));
+        assert!(
+            (ratio(bc, bh) - 2.0).abs() / 2.0 < TOLERANCE,
+            "c/h={}",
+            ratio(bc, bh)
+        );
+        assert!(
+            (ratio(bh, bm) - 2.0).abs() / 2.0 < TOLERANCE,
+            "h/m={}",
+            ratio(bh, bm)
+        );
+        assert!(
+            (ratio(bm, bl) - 2.0).abs() / 2.0 < TOLERANCE,
+            "m/l={}",
+            ratio(bm, bl)
+        );
     }
 }

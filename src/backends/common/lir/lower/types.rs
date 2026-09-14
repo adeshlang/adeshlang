@@ -50,7 +50,7 @@ pub(super) fn hir_type_to_lir_type(hir_type: &HirType) -> LirType {
         HirType::BorrowImmut(_)
         | HirType::BorrowMut(_)
         | HirType::Borrow(_, _)
-        |         HirType::Shared(_)
+        | HirType::Shared(_)
         | HirType::Weak(_)
         | HirType::Simd(_, _) => LirType::Ptr,
         _ => LirType::I64, // Default to I64 for complex types

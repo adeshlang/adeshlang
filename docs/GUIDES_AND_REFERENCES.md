@@ -402,7 +402,7 @@ See [docs/](docs/) folder for comprehensive language reference:
 → Read [TODO.md](TODO.md) (20 min)
 
 **...learn the language:**
-→ Read [Readme.md](Readme.md) (30 min)
+→ Read [README.md](README.md) (30 min)
 
 **...use the GPU/MLIR backend:**
 → Read [GPU_GUIDE.md](GPU_GUIDE.md) (15 min)

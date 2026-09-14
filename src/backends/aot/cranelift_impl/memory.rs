@@ -325,11 +325,7 @@ fn lower_arc_new<T>(
     sig.params.push(AbiParam::new(types::I64));
     sig.returns.push(AbiParam::new(types::I64));
     let func = module
-        .declare_function(
-            "adesh_rt_arc_new",
-            Linkage::Import,
-            &sig,
-        )
+        .declare_function("adesh_rt_arc_new", Linkage::Import, &sig)
         .map_err(|e| format!("declare adesh_rt_arc_new failed: {}", e))?;
     let fref = module.declare_func_in_func(func, builder.func);
     let call = builder.ins().call(fref, &[v]);
@@ -355,11 +351,7 @@ fn lower_arc_clone<T>(
     sig.params.push(AbiParam::new(types::I64));
     sig.returns.push(AbiParam::new(types::I64));
     let func = module
-        .declare_function(
-            "adesh_rt_arc_clone",
-            Linkage::Import,
-            &sig,
-        )
+        .declare_function("adesh_rt_arc_clone", Linkage::Import, &sig)
         .map_err(|e| format!("declare adesh_rt_arc_clone failed: {}", e))?;
     let fref = module.declare_func_in_func(func, builder.func);
     let call = builder.ins().call(fref, &[a]);
@@ -382,11 +374,7 @@ fn lower_arc_drop(
     sig.params.push(AbiParam::new(types::I64));
     sig.returns.push(AbiParam::new(types::I64));
     let func = module
-        .declare_function(
-            "adesh_rt_arc_drop",
-            Linkage::Import,
-            &sig,
-        )
+        .declare_function("adesh_rt_arc_drop", Linkage::Import, &sig)
         .map_err(|e| format!("declare adesh_rt_arc_drop failed: {}", e))?;
     let fref = module.declare_func_in_func(func, builder.func);
     let _ = builder.ins().call(fref, &[a]);
@@ -409,11 +397,7 @@ fn lower_arc_get<T>(
     sig.params.push(AbiParam::new(types::I64));
     sig.returns.push(AbiParam::new(types::I64));
     let func = module
-        .declare_function(
-            "adesh_rt_arc_get",
-            Linkage::Import,
-            &sig,
-        )
+        .declare_function("adesh_rt_arc_get", Linkage::Import, &sig)
         .map_err(|e| format!("declare adesh_rt_arc_get failed: {}", e))?;
     let fref = module.declare_func_in_func(func, builder.func);
     let call = builder.ins().call(fref, &[a]);
@@ -441,11 +425,7 @@ fn lower_arc_set(
     sig.params.push(AbiParam::new(types::I64));
     sig.returns.push(AbiParam::new(types::I64));
     let func = module
-        .declare_function(
-            "adesh_rt_arc_set",
-            Linkage::Import,
-            &sig,
-        )
+        .declare_function("adesh_rt_arc_set", Linkage::Import, &sig)
         .map_err(|e| format!("declare adesh_rt_arc_set failed: {}", e))?;
     let fref = module.declare_func_in_func(func, builder.func);
     let _ = builder.ins().call(fref, &[a, v]);
@@ -468,11 +448,7 @@ fn lower_arc_strong_count<T>(
     sig.params.push(AbiParam::new(types::I64));
     sig.returns.push(AbiParam::new(types::I64));
     let func = module
-        .declare_function(
-            "adesh_rt_arc_strong_count",
-            Linkage::Import,
-            &sig,
-        )
+        .declare_function("adesh_rt_arc_strong_count", Linkage::Import, &sig)
         .map_err(|e| format!("declare adesh_rt_arc_strong_count failed: {}", e))?;
     let fref = module.declare_func_in_func(func, builder.func);
     let call = builder.ins().call(fref, &[a]);
@@ -498,11 +474,7 @@ fn lower_arc_weak_count<T>(
     sig.params.push(AbiParam::new(types::I64));
     sig.returns.push(AbiParam::new(types::I64));
     let func = module
-        .declare_function(
-            "adesh_rt_arc_weak_count",
-            Linkage::Import,
-            &sig,
-        )
+        .declare_function("adesh_rt_arc_weak_count", Linkage::Import, &sig)
         .map_err(|e| format!("declare adesh_rt_arc_weak_count failed: {}", e))?;
     let fref = module.declare_func_in_func(func, builder.func);
     let call = builder.ins().call(fref, &[a]);
@@ -528,11 +500,7 @@ fn lower_weak_new<T>(
     sig.params.push(AbiParam::new(types::I64));
     sig.returns.push(AbiParam::new(types::I64));
     let func = module
-        .declare_function(
-            "adesh_rt_weak_new",
-            Linkage::Import,
-            &sig,
-        )
+        .declare_function("adesh_rt_weak_new", Linkage::Import, &sig)
         .map_err(|e| format!("declare adesh_rt_weak_new failed: {}", e))?;
     let fref = module.declare_func_in_func(func, builder.func);
     let call = builder.ins().call(fref, &[a]);
@@ -555,11 +523,7 @@ fn lower_weak_drop(
     sig.params.push(AbiParam::new(types::I64));
     sig.returns.push(AbiParam::new(types::I64));
     let func = module
-        .declare_function(
-            "adesh_rt_weak_drop",
-            Linkage::Import,
-            &sig,
-        )
+        .declare_function("adesh_rt_weak_drop", Linkage::Import, &sig)
         .map_err(|e| format!("declare adesh_rt_weak_drop failed: {}", e))?;
     let fref = module.declare_func_in_func(func, builder.func);
     let _ = builder.ins().call(fref, &[w]);

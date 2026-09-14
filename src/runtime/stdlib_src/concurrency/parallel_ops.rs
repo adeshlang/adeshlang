@@ -115,7 +115,7 @@ fn builtin_sum(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, Str
 
 fn builtin_workers(_env: &mut dyn BuiltinEnv, _args: Vec<Value>) -> Result<Value, String> {
     Ok(Value::Number(
-        crate::runtime::scheduler::num_workers() as f64,
+        crate::runtime::scheduler::num_workers() as f64
     ))
 }
 
@@ -160,6 +160,9 @@ fn as_u64(v: &Value, name: &str) -> Result<u64, String> {
         Value::U32(u) => Ok(*u as u64),
         Value::U16(u) => Ok(*u as u64),
         Value::U8(u) => Ok(*u as u64),
-        _ => Err(format!("Parallel.forEach: {} must be number (got {:?})", name, v)),
+        _ => Err(format!(
+            "Parallel.forEach: {} must be number (got {:?})",
+            name, v
+        )),
     }
 }

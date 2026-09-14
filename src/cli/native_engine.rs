@@ -85,8 +85,14 @@ impl NativeAIEngine {
 
         let gguf_path = self.find_local_gguf();
         if let Some(ref p) = gguf_path {
-            let size_mb = fs::metadata(p).map(|m| m.len() as f64 / (1024.0 * 1024.0)).unwrap_or(0.0);
-            report.push_str(&format!("• Tier 1 (Native GGUF): ACTIVE [{} ({:.1} MB)]\n", p.display(), size_mb));
+            let size_mb = fs::metadata(p)
+                .map(|m| m.len() as f64 / (1024.0 * 1024.0))
+                .unwrap_or(0.0);
+            report.push_str(&format!(
+                "• Tier 1 (Native GGUF): ACTIVE [{} ({:.1} MB)]\n",
+                p.display(),
+                size_mb
+            ));
             report.push_str("  Status: Zero-dependency SIMD AVX2/NEON CPU execution ready.\n");
         } else {
             report.push_str("• Tier 1 (Native GGUF): STANDBY (run `adesh ai setup` to download)\n");
@@ -97,7 +103,10 @@ impl NativeAIEngine {
             .map(|root| root.join("ai").join(".venv"))
             .find(|venv| venv.exists());
         if let Some(ref venv) = python_venv {
-            report.push_str(&format!("• Tier 2 (GPU PyTorch/CUDA): READY ({} detected)\n", venv.display()));
+            report.push_str(&format!(
+                "• Tier 2 (GPU PyTorch/CUDA): READY ({} detected)\n",
+                venv.display()
+            ));
         } else {
             report.push_str("• Tier 2 (GPU PyTorch/CUDA): NOT INSTALLED\n");
         }
@@ -125,21 +134,27 @@ fn main() {
     };
     print("Person Name:", person.name);
     print("Person Age:", person.age);
-}"#.to_string();
+}"#
+            .to_string();
         } else if p_lower.contains("add") || p_lower.contains("sum") {
             return r#"fn add(a: i64, b: i64): i64 {
     return a + b;
-}"#.to_string();
+}"#
+            .to_string();
         } else if p_lower.contains("factorial") {
             return r#"fn factorial(n: i64): i64 {
     if n <= 1 {
         return 1;
     }
     return n * factorial(n - 1);
-}"#.to_string();
+}"#
+            .to_string();
         }
 
-        format!("// AdeshLang AI Synthesizer\n// Prompt: {}\nfn run(): void {{\n    print(\"Hello from AdeshLang AI!\");\n}}", prompt)
+        format!(
+            "// AdeshLang AI Synthesizer\n// Prompt: {}\nfn run(): void {{\n    print(\"Hello from AdeshLang AI!\");\n}}",
+            prompt
+        )
     }
 }
 
@@ -180,10 +195,17 @@ mod tests {
     #[test]
     fn finds_bundled_q4_model_in_first_root() {
         let root = temp_layout("first");
-        fs::write(root.join("ai").join("models").join(GGUF_CANDIDATES[0]), b"weights").unwrap();
+        fs::write(
+            root.join("ai").join("models").join(GGUF_CANDIDATES[0]),
+            b"weights",
+        )
+        .unwrap();
 
         let found = find_gguf_in_roots(&[root.clone()], &[]).unwrap();
-        assert_eq!(found, root.join("ai").join("models").join(GGUF_CANDIDATES[0]));
+        assert_eq!(
+            found,
+            root.join("ai").join("models").join(GGUF_CANDIDATES[0])
+        );
 
         let _ = fs::remove_dir_all(&root);
     }
@@ -206,11 +228,18 @@ mod tests {
         let empty_root = temp_layout("empty");
         let full_root = temp_layout("full");
         let cache_root = temp_layout("cache");
-        fs::write(full_root.join("ai").join("models").join(GGUF_CANDIDATES[0]), b"w").unwrap();
+        fs::write(
+            full_root.join("ai").join("models").join(GGUF_CANDIDATES[0]),
+            b"w",
+        )
+        .unwrap();
 
         // Second bundled root wins even when the first exists but is empty.
         let found = find_gguf_in_roots(&[empty_root.clone(), full_root.clone()], &[]).unwrap();
-        assert_eq!(found, full_root.join("ai").join("models").join(GGUF_CANDIDATES[0]));
+        assert_eq!(
+            found,
+            full_root.join("ai").join("models").join(GGUF_CANDIDATES[0])
+        );
 
         // Cache roots are used only when no bundled model exists.
         fs::write(cache_root.join(GGUF_CANDIDATES[1]), b"w").unwrap();

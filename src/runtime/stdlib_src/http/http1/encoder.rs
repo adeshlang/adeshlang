@@ -39,10 +39,16 @@ pub fn encode_response(resp: &Response) -> Result<Vec<u8>, HttpError> {
         let _ = headers.insert("Access-Control-Allow-Origin", "*");
     }
     if !headers.contains("Access-Control-Allow-Methods") {
-        let _ = headers.insert("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
+        let _ = headers.insert(
+            "Access-Control-Allow-Methods",
+            "GET, POST, PUT, DELETE, PATCH, OPTIONS",
+        );
     }
     if !headers.contains("Access-Control-Allow-Headers") {
-        let _ = headers.insert("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept");
+        let _ = headers.insert(
+            "Access-Control-Allow-Headers",
+            "Content-Type, Authorization, X-Requested-With, Accept",
+        );
     }
     if !headers.contains("Access-Control-Allow-Credentials") {
         let _ = headers.insert("Access-Control-Allow-Credentials", "true");

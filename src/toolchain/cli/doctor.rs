@@ -54,12 +54,25 @@ pub fn execute_doctor_command() {
         issues += 1;
     }
 
-    // 4. ADESHLANG_HOME Resolution
+    // 4. Installation Home Resolution
     let home = installation_home();
+    let env_home = env::var_os("ADESH_HOME")
+        .or_else(|| env::var_os("ADESHLANG_HOME"))
+        .map(PathBuf::from);
 
     if let Some(h) = &home {
         if h.exists() {
             println!("  {}✓{} Installation Home : {}", green, reset, h.display());
+            if let Some(eh) = env_home {
+                if !eh.exists() {
+                    println!(
+                        "  {}!{} Stale Env Var     : ADESH_HOME is set to non-existent path ({})",
+                        yellow,
+                        reset,
+                        eh.display()
+                    );
+                }
+            }
         } else {
             println!(
                 "  {}✗{} Installation Home : Directory does not exist ({})",
@@ -71,45 +84,76 @@ pub fn execute_doctor_command() {
         }
     } else {
         println!(
-            "  {}!{} Installation Home : ADESHLANG_HOME env variable not set (using executable folder fallback)",
+            "  {}!{} Installation Home : Not set (using executable-relative fallback)",
             yellow, reset
         );
     }
 
-    // 5. Native toolchain: bundled is deterministic; system tools are informational.
+    // 5. Toolchain Resolution
+    let mut active_clang_path = None;
     match resolve(Some(ToolchainPreference::Bundled)) {
-        Ok(toolchain) => println!(
-            "  {}✓{} Bundled Toolchain : LLVM/Clang {} ({})",
-            green,
-            reset,
-            toolchain.version.as_deref().unwrap_or("unknown"),
-            toolchain.root.display()
-        ),
+        Ok(toolchain) => {
+            active_clang_path = Some(toolchain.clang.clone());
+            println!(
+                "  {}✓{} Active Toolchain  : LLVM/Clang {} ({})",
+                green,
+                reset,
+                toolchain.version.as_deref().unwrap_or("unknown"),
+                toolchain.root.display()
+            );
+        }
         Err(error) => {
-            println!("  {}✗{} Bundled Toolchain : {}", red, reset, error);
+            println!("  {}✗{} Active Toolchain  : {}", red, reset, error);
             issues += 1;
         }
     }
     if let Some((path, version)) = detect_system_toolchain() {
-        println!(
-            "  {}i{} System Clang       : {} ({})",
-            yellow,
-            reset,
-            version.as_deref().unwrap_or("unknown"),
-            path.display()
-        );
+        let is_same = active_clang_path.as_ref().map_or(false, |ac| ac == &path);
+        if !is_same {
+            let info_note = if cfg!(windows) {
+                " (Informational: Adesh uses its LLVM MSVC toolchain)"
+            } else {
+                " (Additional compiler found on PATH)"
+            };
+            println!(
+                "  {}i{} Extra System Clang : {} ({}){}",
+                "\x1b[36m", // cyan for info
+                reset,
+                version.as_deref().unwrap_or("unknown"),
+                path.display(),
+                info_note
+            );
+        }
     }
 
     // 6. Standard Library Check
-    let std_candidates = vec![
-        home.as_ref().map(|h| h.join("std")),
-        home.as_ref().map(|h| h.join("lib").join("std")),
-        env::current_dir().ok().map(|cd| cd.join("lib").join("std")),
-        env::current_dir().ok().map(|cd| cd.join("std")),
-    ];
+    let mut std_candidates = Vec::new();
+    if let Some(h) = &home {
+        std_candidates.push(h.join("std"));
+        std_candidates.push(h.join("lib").join("std"));
+        std_candidates.push(h.join("src").join("stdlib"));
+    }
+    if let Ok(exe_path) = env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            std_candidates.push(exe_dir.join("std"));
+            if let Some(install_root) = exe_dir.parent() {
+                std_candidates.push(install_root.join("std"));
+                std_candidates.push(install_root.join("lib").join("std"));
+                std_candidates.push(install_root.join("src").join("stdlib"));
+            }
+        }
+    }
+    if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
+        std_candidates.push(PathBuf::from(manifest_dir).join("src").join("stdlib"));
+    }
+    if let Ok(cd) = env::current_dir() {
+        std_candidates.push(cd.join("std"));
+        std_candidates.push(cd.join("lib").join("std"));
+        std_candidates.push(cd.join("src").join("stdlib"));
+    }
 
     let mut std_found = false;
-    for cand in std_candidates.into_iter().flatten() {
+    for cand in std_candidates {
         if cand.exists() && cand.is_dir() {
             println!(
                 "  {}✓{} Standard Library  : {}",
@@ -129,7 +173,96 @@ pub fn execute_doctor_command() {
         issues += 1;
     }
 
-    // 7. PATH Check
+    // 7. Static Runtime Library Check (for AOT native compilation)
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let host_triple = target_lexicon::Triple::host();
+        match crate::backends::aot::cranelift_impl::linking::get_static_runtime_lib(&host_triple) {
+            Ok(runtime_path) => {
+                println!(
+                    "  {}✓{} Runtime Library   : {}",
+                    green,
+                    reset,
+                    runtime_path.display()
+                );
+            }
+            Err(_) => {
+                let lib_name = if cfg!(windows) {
+                    "adeshlang.lib"
+                } else {
+                    "libadeshlang.a"
+                };
+                println!(
+                    "  {}✗{} Runtime Library   : {} not found (AOT native build will fail; run `adl repair` or reinstall)",
+                    red, reset, lib_name
+                );
+                issues += 1;
+            }
+        }
+    }
+
+    // 8. Python Runtime & AI Environment Check
+    let python_opt = {
+        let mut found_py = None;
+        for cmd in ["python3", "python", "py"] {
+            let res = std::process::Command::new(cmd)
+                .args(["-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')"])
+                .output();
+            if let Ok(out) = res {
+                if out.status.success() {
+                    let ver = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if !ver.is_empty() {
+                        found_py = Some((cmd.to_string(), ver));
+                        break;
+                    }
+                }
+            }
+        }
+        found_py
+    };
+
+    if let Some((py_cmd, py_ver)) = python_opt {
+        println!(
+            "  {}✓{} Python Runtime    : Python {} ({}) - Full AI features available",
+            green, reset, py_ver, py_cmd
+        );
+    } else {
+        println!(
+            "  {}i{} Python Runtime    : Not detected (AI runs via Native In-Process Engine; install Python 3.12 for neural training)",
+            yellow, reset
+        );
+    }
+
+    // 9. Windows SDK / MSVC Linker Check (Windows-only)
+    #[cfg(windows)]
+    {
+        let has_vs = {
+            let root19 = Path::new("C:\\Program Files (x86)\\Microsoft Visual Studio\\2019");
+            let root22_x86 = Path::new("C:\\Program Files (x86)\\Microsoft Visual Studio\\2022");
+            let root22 = Path::new("C:\\Program Files\\Microsoft Visual Studio\\2022");
+            root19.join("BuildTools\\VC\\Tools\\MSVC").exists()
+                || root19.join("Community\\VC\\Tools\\MSVC").exists()
+                || root22_x86.join("BuildTools\\VC\\Tools\\MSVC").exists()
+                || root22_x86.join("Community\\VC\\Tools\\MSVC").exists()
+                || root22.join("BuildTools\\VC\\Tools\\MSVC").exists()
+                || root22.join("Community\\VC\\Tools\\MSVC").exists()
+                || std::env::var("VCToolsInstallDir").is_ok()
+                || std::env::var("WindowsSdkDir").is_ok()
+        };
+        if has_vs {
+            println!(
+                "  {}✓{} Windows MSVC SDK  : Detected (ready for AOT native MSVC linking)",
+                green, reset
+            );
+        } else {
+            println!(
+                "  {}!{} Windows MSVC SDK  : Visual Studio Build Tools / Windows SDK not detected in standard locations",
+                yellow, reset
+            );
+        }
+    }
+
+    // 10. PATH Check
     if let Ok(path_var) = env::var("PATH") {
         let in_path = env::current_exe()
             .ok()
@@ -150,7 +283,7 @@ pub fn execute_doctor_command() {
         }
     }
 
-    // 8. Incremental Compilation & Build Cache
+    // 11. Incremental Compilation & Build Cache
     let cache_dir = PathBuf::from(".adesh_cache");
     if cache_dir.exists() {
         let tc_file = cache_dir.join("toolchain.json");

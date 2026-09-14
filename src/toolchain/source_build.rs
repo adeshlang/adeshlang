@@ -6,7 +6,7 @@
 //! Official LLVM release binaries usually do not include them, so
 //! `adesh toolchain install --build-mlir-source` builds `mlir-opt`,
 //! `mlir-translate`, `llc`, and `clang` from the pinned upstream source
-//! (`llvm-project-18.1.8.src.tar.xz`) with:
+//! (`llvm-project-23.1.1.src.tar.xz`) with:
 //!
 //! - `-DMLIR_ENABLE_CUDA=ON` and `-DMLIR_ENABLE_ROCM=ON`
 //! - `-DLLVM_ENABLE_PROJECTS="mlir;clang"` (mlir pulls in llvm)
@@ -35,7 +35,7 @@ pub fn source_url() -> String {
         return repo;
     }
     format!(
-        "https://github.com/llvm/llvm-project/releases/download/{tag}/llvm-project-18.1.8.src.tar.xz",
+        "https://github.com/llvm/llvm-project/releases/download/{tag}/llvm-project-23.1.1.src.tar.xz",
         tag = LLVM_RELEASE_TAG
     )
 }
@@ -220,7 +220,10 @@ pub fn build_mlir_from_source(source_url: &str, llvm_root: &Path) -> Result<Path
         };
         let src = bin_out.join(&tool_name);
         if !src.is_file() {
-            return Err(format!("Build completed but `{}` was not produced — report this bug", src.display()));
+            return Err(format!(
+                "Build completed but `{}` was not produced — report this bug",
+                src.display()
+            ));
         }
         std::fs::copy(&src, dest_bin.join(&tool_name))
             .map_err(|e| format!("Failed to install {tool_name}: {e}"))?;
@@ -237,7 +240,7 @@ mod tests {
     fn source_url_points_at_upstream_llvm() {
         let url = source_url();
         assert!(url.starts_with("https://github.com/llvm/llvm-project/releases/"));
-        assert!(url.ends_with("llvm-project-18.1.8.src.tar.xz"));
+        assert!(url.ends_with("llvm-project-23.1.1.src.tar.xz"));
     }
 
     #[test]

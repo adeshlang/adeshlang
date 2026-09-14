@@ -103,7 +103,11 @@ pub(super) fn emit_drops_for_location(
     if let Some(plan) = drop_plan {
         for event in plan.events.iter().filter(|e| e.location == loc) {
             if let Some(val) = func.get_var(&event.var) {
-                let kind = ctx.drop_kinds.get(&event.var).copied().unwrap_or(DropLoweringKind::Unknown);
+                let kind = ctx
+                    .drop_kinds
+                    .get(&event.var)
+                    .copied()
+                    .unwrap_or(DropLoweringKind::Unknown);
                 match kind {
                     DropLoweringKind::Shared => {
                         func.push_to_block(ctx.current_block, LirInst::ArcDrop(val))

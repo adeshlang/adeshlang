@@ -5,6 +5,9 @@ edition = "2024"
 description = "Cross-Platform TUI Code Editor for AdeshLang"
 authors = ["Adesh Team"]
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "adesh-editor"
 path = "src/main.rs"

@@ -39,7 +39,9 @@ pub fn sha256_matches(actual: &str, expected: &str) -> bool {
     actual
         .bytes()
         .zip(expected.bytes())
-        .fold(true, |acc, (a, b)| acc & (a.to_ascii_lowercase() == b.to_ascii_lowercase()))
+        .fold(true, |acc, (a, b)| {
+            acc & (a.to_ascii_lowercase() == b.to_ascii_lowercase())
+        })
 }
 
 /// Reject absolute paths and `..` traversal inside archives.
@@ -83,10 +85,7 @@ pub fn extract(archive_path: &Path, format: &str, dest: &Path) -> Result<u64, St
     fs::create_dir_all(dest).map_err(|e| format!("Failed to create {}: {e}", dest.display()))?;
     match format {
         "zip" => extract_zip(archive_path, dest),
-        "tar" => extract_tar_stream(
-            Box::new(fs::File::open(archive_path).map_err(ioerr)?),
-            dest,
-        ),
+        "tar" => extract_tar_stream(Box::new(fs::File::open(archive_path).map_err(ioerr)?), dest),
         "tar.xz" => {
             let file = fs::File::open(archive_path).map_err(ioerr)?;
             let temp = tempfile_path(archive_path, "xz-out")?;
@@ -95,10 +94,7 @@ pub fn extract(archive_path: &Path, format: &str, dest: &Path) -> Result<u64, St
                 &mut fs::File::create(&temp).map_err(ioerr)?,
             )
             .map_err(|e| format!("Failed to decompress xz: {e}"))?;
-            let result = extract_tar_stream(
-                Box::new(fs::File::open(&temp).map_err(ioerr)?),
-                dest,
-            );
+            let result = extract_tar_stream(Box::new(fs::File::open(&temp).map_err(ioerr)?), dest);
             let _ = fs::remove_file(&temp);
             result
         }

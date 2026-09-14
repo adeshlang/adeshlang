@@ -98,11 +98,7 @@ impl ConnectionRouter {
     }
 
     /// Update peer address for a connection (after path validation).
-    pub fn update_peer_addr(
-        &mut self,
-        id: ConnectionId,
-        addr: SocketAddr,
-    ) -> AtpResult<()> {
+    pub fn update_peer_addr(&mut self, id: ConnectionId, addr: SocketAddr) -> AtpResult<()> {
         let conn = self
             .connections
             .get_mut(&id)

@@ -1275,7 +1275,9 @@ impl AdaptiveJitContext {
                                 self.arc_values.remove(&arc_id);
                                 self.arc_strong_counts.remove(&arc_id);
                                 self.arc_weak_counts.remove(&arc_id);
-                                crate::backends::common::builtins::objects::remove_jit_arc_value(arc_id);
+                                crate::backends::common::builtins::objects::remove_jit_arc_value(
+                                    arc_id,
+                                );
                             }
                             // If weak references exist, keep the control block but mark as dropped
                         }
@@ -1367,7 +1369,9 @@ impl AdaptiveJitContext {
                         if let Some(arc_val) = self.arc_values.get(&arc_id) {
                             if let Ok(mut guard) = arc_val.lock() {
                                 *guard = new_value.clone();
-                                crate::backends::common::builtins::objects::insert_jit_arc_value(arc_id, new_value);
+                                crate::backends::common::builtins::objects::insert_jit_arc_value(
+                                    arc_id, new_value,
+                                );
                             }
                         }
                     }

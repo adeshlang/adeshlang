@@ -31,8 +31,7 @@ pub(in crate::execution::runtime_core) static INPUT_RECORD: OnceLock<Mutex<Optio
     OnceLock::new();
 
 /// Playback queue for input() calls in test mode.
-pub static INPUT_PLAYBACK: OnceLock<Mutex<VecDeque<String>>> =
-    OnceLock::new();
+pub static INPUT_PLAYBACK: OnceLock<Mutex<VecDeque<String>>> = OnceLock::new();
 
 // Thread-local storage for generic type context (used by input<T>() and similar builtins)
 thread_local! {

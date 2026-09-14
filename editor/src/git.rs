@@ -105,7 +105,11 @@ impl GitManager {
             .output()
         {
             let b = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            self.branch = if b.is_empty() { "HEAD (detached)".to_string() } else { b };
+            self.branch = if b.is_empty() {
+                "HEAD (detached)".to_string()
+            } else {
+                b
+            };
         }
 
         // Get status porcelain
@@ -131,7 +135,8 @@ impl GitManager {
                 let full_path = workspace_root.join(path_str);
 
                 if index_status == '?' && work_status == '?' {
-                    self.file_statuses.insert(full_path.clone(), FileGitStatus::Untracked);
+                    self.file_statuses
+                        .insert(full_path.clone(), FileGitStatus::Untracked);
                     self.untracked_files.push(full_path);
                     continue;
                 }
@@ -162,7 +167,10 @@ impl GitManager {
     }
 
     pub fn get_file_status(&self, path: &Path) -> FileGitStatus {
-        self.file_statuses.get(path).copied().unwrap_or(FileGitStatus::Clean)
+        self.file_statuses
+            .get(path)
+            .copied()
+            .unwrap_or(FileGitStatus::Clean)
     }
 
     pub fn stage_file(&mut self, path: &Path) -> Result<(), String> {
@@ -331,7 +339,11 @@ impl GitManager {
     }
 
     /// Calculate gutter diff markers (Added/Modified/Deleted) for lines in an open buffer.
-    pub fn compute_gutter_diff(&self, file_path: Option<&Path>, lines: &[String]) -> HashMap<usize, GutterDiffKind> {
+    pub fn compute_gutter_diff(
+        &self,
+        file_path: Option<&Path>,
+        lines: &[String],
+    ) -> HashMap<usize, GutterDiffKind> {
         let mut map = HashMap::new();
         let path = match file_path {
             Some(p) => p,

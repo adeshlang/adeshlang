@@ -58,9 +58,17 @@ impl Backend {
 
     pub fn all() -> Vec<Backend> {
         vec![
-            Backend::Interpreter, Backend::Jit, Backend::NativeJit, Backend::Bytecode,
-            Backend::AdaptiveJit, Backend::TieredJit, Backend::Mixed, Backend::Safe,
-            Backend::Aot, Backend::Wasm, Backend::Gpu,
+            Backend::Interpreter,
+            Backend::Jit,
+            Backend::NativeJit,
+            Backend::Bytecode,
+            Backend::AdaptiveJit,
+            Backend::TieredJit,
+            Backend::Mixed,
+            Backend::Safe,
+            Backend::Aot,
+            Backend::Wasm,
+            Backend::Gpu,
         ]
     }
 }
@@ -74,7 +82,12 @@ pub struct ExecutionOutput {
 
 impl ExecutionOutput {
     pub fn new() -> Self {
-        Self { lines: Vec::new(), is_running: false, exit_code: None, duration_ms: None }
+        Self {
+            lines: Vec::new(),
+            is_running: false,
+            exit_code: None,
+            duration_ms: None,
+        }
     }
 }
 
@@ -99,7 +112,12 @@ pub fn clean_terminal_output(raw: &str) -> Vec<String> {
                             let mut seq = String::new();
                             while let Some(&nc) = chars.peek() {
                                 chars.next();
-                                if (nc >= '@' && nc <= '~') || nc == 'm' || nc == 'K' || nc == 'H' || nc == 'J' {
+                                if (nc >= '@' && nc <= '~')
+                                    || nc == 'm'
+                                    || nc == 'K'
+                                    || nc == 'H'
+                                    || nc == 'J'
+                                {
                                     if nc == 'm' {
                                         cleaned.push_str("\x1b[");
                                         cleaned.push_str(&seq);
@@ -166,14 +184,16 @@ impl Runner {
     pub fn run_program(&self, file_path: &Path, backend: &Backend) -> Result<(), String> {
         self.stop_flag.store(false, Ordering::SeqCst);
 
-        let adesh_bin = find_executable("adesh")
-            .ok_or_else(|| "Adesh compiler/runtime not found in PATH or environment.".to_string())?;
+        let adesh_bin = find_executable("adesh").ok_or_else(|| {
+            "Adesh compiler/runtime not found in PATH or environment.".to_string()
+        })?;
 
         let mut cmd = Command::new(adesh_bin);
         cmd.arg("run").arg(backend.flag()).arg(file_path);
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-        let mut child = cmd.spawn()
+        let mut child = cmd
+            .spawn()
             .map_err(|e| format!("Failed to spawn adesh process: {}", e))?;
 
         let stdout = child.stdout.take();
@@ -187,7 +207,8 @@ impl Runner {
             {
                 if let Ok(mut out) = output_arc.lock() {
                     out.lines.clear();
-                    out.lines.push(format!("Compiling & executing with {}...", backend_name));
+                    out.lines
+                        .push(format!("Compiling & executing with {}...", backend_name));
                     out.is_running = true;
                     out.exit_code = None;
                     out.duration_ms = None;
@@ -243,7 +264,10 @@ impl Runner {
                                 Ok(s) => {
                                     let code: i32 = s.code().unwrap_or(-1);
                                     out.exit_code = Some(code);
-                                    out.lines.push(format!("Process exited with code {} ({} ms)", code, duration));
+                                    out.lines.push(format!(
+                                        "Process exited with code {} ({} ms)",
+                                        code, duration
+                                    ));
                                 }
                                 Err(e) => out.lines.push(format!("Process error: {}", e)),
                             }

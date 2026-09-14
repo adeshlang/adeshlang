@@ -5,7 +5,7 @@
 
 #![allow(deprecated)]
 
-use super::{init_inline_terminal, poll_key_event, TerminalGuard};
+use super::{TerminalGuard, init_inline_terminal, poll_key_event};
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     layout::{Constraint, Direction, Layout},
@@ -275,14 +275,19 @@ pub fn prompt_input(prompt: &str, opts: &InputOptions) -> Result<String, String>
                     };
 
                     let prompt_style = if let Some((r, g, b)) = opts.style_color {
-                        Style::default().fg(Color::Rgb(r, g, b)).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(Color::Rgb(r, g, b))
+                            .add_modifier(Modifier::BOLD)
                     } else {
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
                     };
 
-                    let title_line = Line::from(vec![
-                        Span::styled(format!("{}{}", prompt, remaining_sec), prompt_style),
-                    ]);
+                    let title_line = Line::from(vec![Span::styled(
+                        format!("{}{}", prompt, remaining_sec),
+                        prompt_style,
+                    )]);
 
                     let p = Paragraph::new(display_text)
                         .block(Block::default().borders(Borders::ALL).title(title_line));
@@ -370,7 +375,11 @@ pub fn prompt_input(prompt: &str, opts: &InputOptions) -> Result<String, String>
 // 2. Checkbox Multi-Select Widget
 // ============================================================================
 
-pub fn prompt_checkbox(prompt: &str, options: &[String], config: &CheckboxConfig) -> Result<Vec<String>, String> {
+pub fn prompt_checkbox(
+    prompt: &str,
+    options: &[String],
+    config: &CheckboxConfig,
+) -> Result<Vec<String>, String> {
     if let Some(mock) = get_mock_input() {
         if mock.starts_with('[') && mock.ends_with(']') {
             let inner = &mock[1..mock.len() - 1];
@@ -408,7 +417,10 @@ pub fn prompt_checkbox(prompt: &str, options: &[String], config: &CheckboxConfig
                     let size = f.size();
                     let chunks = Layout::default()
                         .direction(Direction::Vertical)
-                        .constraints([Constraint::Length(options.len() as u16 + 3), Constraint::Min(0)])
+                        .constraints([
+                            Constraint::Length(options.len() as u16 + 3),
+                            Constraint::Min(0),
+                        ])
                         .split(size);
 
                     let items: Vec<ListItem> = options
@@ -433,7 +445,9 @@ pub fn prompt_checkbox(prompt: &str, options: &[String], config: &CheckboxConfig
                             let style = if is_disabled {
                                 Style::default().fg(Color::DarkGray)
                             } else if is_cursor {
-                                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD)
                             } else if is_checked {
                                 Style::default().fg(Color::Green)
                             } else {
@@ -445,7 +459,8 @@ pub fn prompt_checkbox(prompt: &str, options: &[String], config: &CheckboxConfig
                         .collect();
 
                     let title = format!("{} (Space: Toggle, 'a': All, Enter: Confirm)", prompt);
-                    let list = List::new(items).block(Block::default().borders(Borders::ALL).title(title));
+                    let list =
+                        List::new(items).block(Block::default().borders(Borders::ALL).title(title));
 
                     f.render_widget(list, chunks[0]);
                 });
@@ -521,7 +536,11 @@ pub fn prompt_checkbox(prompt: &str, options: &[String], config: &CheckboxConfig
     // Interactive fallback: print numbered options and wait for user selection
     println!("{}", prompt);
     for (i, opt) in options.iter().enumerate() {
-        let mark = if config.default.contains(opt) { "[✓]" } else { "[ ]" };
+        let mark = if config.default.contains(opt) {
+            "[✓]"
+        } else {
+            "[ ]"
+        };
         println!("  {}. {} {}", i + 1, mark, opt);
     }
     let line = read_line_prompt("Select options (e.g. 1, 2) or Enter for defaults: ");
@@ -547,7 +566,11 @@ pub fn prompt_checkbox(prompt: &str, options: &[String], config: &CheckboxConfig
 // 3. Radio / Select Single Selection Widget
 // ============================================================================
 
-pub fn prompt_radio(prompt: &str, options: &[String], config: &RadioConfig) -> Result<String, String> {
+pub fn prompt_radio(
+    prompt: &str,
+    options: &[String],
+    config: &RadioConfig,
+) -> Result<String, String> {
     if let Some(mock) = get_mock_input() {
         if options.contains(&mock) {
             return Ok(mock);
@@ -583,7 +606,10 @@ pub fn prompt_radio(prompt: &str, options: &[String], config: &RadioConfig) -> R
                     let size = f.size();
                     let chunks = Layout::default()
                         .direction(Direction::Vertical)
-                        .constraints([Constraint::Length(options.len() as u16 + 3), Constraint::Min(0)])
+                        .constraints([
+                            Constraint::Length(options.len() as u16 + 3),
+                            Constraint::Min(0),
+                        ])
                         .split(size);
 
                     let items: Vec<ListItem> = options
@@ -600,7 +626,9 @@ pub fn prompt_radio(prompt: &str, options: &[String], config: &RadioConfig) -> R
                             let style = if is_disabled {
                                 Style::default().fg(Color::DarkGray)
                             } else if is_active {
-                                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                                Style::default()
+                                    .fg(Color::Cyan)
+                                    .add_modifier(Modifier::BOLD)
                             } else {
                                 Style::default().fg(Color::White)
                             };
@@ -610,7 +638,8 @@ pub fn prompt_radio(prompt: &str, options: &[String], config: &RadioConfig) -> R
                         .collect();
 
                     let title = format!("{} (Arrows/Enter: Select)", prompt);
-                    let list = List::new(items).block(Block::default().borders(Borders::ALL).title(title));
+                    let list =
+                        List::new(items).block(Block::default().borders(Borders::ALL).title(title));
 
                     f.render_widget(list, chunks[0]);
                 });
@@ -650,7 +679,11 @@ pub fn prompt_radio(prompt: &str, options: &[String], config: &RadioConfig) -> R
     // Interactive fallback: print numbered list and wait for input
     println!("{}", prompt);
     for (i, opt) in options.iter().enumerate() {
-        let mark = if config.default.as_ref() == Some(opt) { "(●)" } else { "( )" };
+        let mark = if config.default.as_ref() == Some(opt) {
+            "(●)"
+        } else {
+            "( )"
+        };
         println!("  {}. {} {}", i + 1, mark, opt);
     }
     let line = read_line_prompt("Select option (number or name): ");
@@ -679,7 +712,11 @@ pub fn prompt_radio(prompt: &str, options: &[String], config: &RadioConfig) -> R
     Ok(options.first().cloned().unwrap_or_default())
 }
 
-pub fn prompt_select(prompt: &str, options: &[String], config: &SelectConfig) -> Result<String, String> {
+pub fn prompt_select(
+    prompt: &str,
+    options: &[String],
+    config: &SelectConfig,
+) -> Result<String, String> {
     let radio_cfg = RadioConfig {
         default: config.default.clone(),
         required: true,
@@ -692,11 +729,17 @@ pub fn prompt_select(prompt: &str, options: &[String], config: &SelectConfig) ->
 // 4. Form Multi-Field Widget
 // ============================================================================
 
-pub fn prompt_form(fields: &[(String, FormFieldConfig)], config: &FormConfig) -> Result<Vec<(String, String)>, String> {
+pub fn prompt_form(
+    fields: &[(String, FormFieldConfig)],
+    config: &FormConfig,
+) -> Result<Vec<(String, String)>, String> {
     if let Some(mock) = get_mock_input() {
         let mut results = Vec::new();
         for (name, field) in fields {
-            results.push((name.clone(), field.default.clone().unwrap_or_else(|| mock.clone())));
+            results.push((
+                name.clone(),
+                field.default.clone().unwrap_or_else(|| mock.clone()),
+            ));
         }
         return Ok(results);
     }
@@ -724,14 +767,16 @@ pub fn prompt_form(fields: &[(String, FormFieldConfig)], config: &FormConfig) ->
                         .constraints([Constraint::Length(total_height), Constraint::Min(0)])
                         .split(size);
 
-                    let form_title = config.title.clone().unwrap_or_else(|| "Form (Tab: Next, Enter: Submit)".into());
+                    let form_title = config
+                        .title
+                        .clone()
+                        .unwrap_or_else(|| "Form (Tab: Next, Enter: Submit)".into());
                     let form_block = Block::default().borders(Borders::ALL).title(form_title);
                     let inner_area = form_block.inner(chunks[0]);
                     f.render_widget(form_block, chunks[0]);
 
-                    let field_constraints: Vec<Constraint> = (0..fields.len())
-                        .map(|_| Constraint::Length(3))
-                        .collect();
+                    let field_constraints: Vec<Constraint> =
+                        (0..fields.len()).map(|_| Constraint::Length(3)).collect();
 
                     let field_chunks = Layout::default()
                         .direction(Direction::Vertical)
@@ -753,7 +798,9 @@ pub fn prompt_form(fields: &[(String, FormFieldConfig)], config: &FormConfig) ->
                         };
 
                         let border_style = if is_active {
-                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD)
                         } else {
                             Style::default().fg(Color::DarkGray)
                         };
@@ -815,8 +862,16 @@ pub fn prompt_form(fields: &[(String, FormFieldConfig)], config: &FormConfig) ->
     }
     let mut results = Vec::new();
     for (name, field) in fields {
-        let label = if field.prompt.is_empty() { name } else { &field.prompt };
-        let hint = if let Some(d) = &field.default { format!(" (default: {})", d) } else { String::new() };
+        let label = if field.prompt.is_empty() {
+            name
+        } else {
+            &field.prompt
+        };
+        let hint = if let Some(d) = &field.default {
+            format!(" (default: {})", d)
+        } else {
+            String::new()
+        };
         let line = read_line_prompt(&format!("{}{}: ", label, hint));
         let final_val = if line.trim().is_empty() {
             field.default.clone().unwrap_or_default()
@@ -851,9 +906,13 @@ pub fn prompt_confirm(prompt: &str, default: bool) -> Result<bool, String> {
                         .constraints([Constraint::Length(3), Constraint::Min(0)])
                         .split(size);
 
-                    let p = Paragraph::new(Line::from(vec![
-                        Span::styled(&full_prompt, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                    ])).block(Block::default().borders(Borders::ALL).title("Confirmation"));
+                    let p = Paragraph::new(Line::from(vec![Span::styled(
+                        &full_prompt,
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    )]))
+                    .block(Block::default().borders(Borders::ALL).title("Confirmation"));
 
                     f.render_widget(p, chunks[0]);
                 });
@@ -897,7 +956,11 @@ pub fn prompt_password(prompt: &str, _config: &PasswordConfig) -> Result<String,
 // 7. World-First: Fuzzy Neural-Search Selector (`input.fuzzy`)
 // ============================================================================
 
-pub fn prompt_fuzzy(prompt: &str, options: &[String], _config: &FuzzyConfig) -> Result<String, String> {
+pub fn prompt_fuzzy(
+    prompt: &str,
+    options: &[String],
+    _config: &FuzzyConfig,
+) -> Result<String, String> {
     if let Some(mock) = get_mock_input() {
         if options.contains(&mock) {
             return Ok(mock);
@@ -906,7 +969,10 @@ pub fn prompt_fuzzy(prompt: &str, options: &[String], _config: &FuzzyConfig) -> 
         if options.contains(&clean) {
             return Ok(clean);
         }
-        return options.first().cloned().ok_or_else(|| "Empty options".into());
+        return options
+            .first()
+            .cloned()
+            .ok_or_else(|| "Empty options".into());
     }
 
     if options.is_empty() {
@@ -955,11 +1021,18 @@ pub fn prompt_fuzzy(prompt: &str, options: &[String], _config: &FuzzyConfig) -> 
                     let size = f.size();
                     let chunks = Layout::default()
                         .direction(Direction::Vertical)
-                        .constraints([Constraint::Length(3), Constraint::Length(8), Constraint::Min(0)])
+                        .constraints([
+                            Constraint::Length(3),
+                            Constraint::Length(8),
+                            Constraint::Min(0),
+                        ])
                         .split(size);
 
-                    let search_input = Paragraph::new(query.clone())
-                        .block(Block::default().borders(Borders::ALL).title(format!("{} (Search: {})", prompt, count)));
+                    let search_input = Paragraph::new(query.clone()).block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(format!("{} (Search: {})", prompt, count)),
+                    );
 
                     f.render_widget(search_input, chunks[0]);
 
@@ -970,7 +1043,9 @@ pub fn prompt_fuzzy(prompt: &str, options: &[String], _config: &FuzzyConfig) -> 
                             let is_active = i == selected_idx;
                             let cursor_sym = if is_active { "▶ " } else { "  " };
                             let style = if is_active {
-                                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD)
                             } else {
                                 Style::default().fg(Color::White)
                             };
@@ -978,7 +1053,11 @@ pub fn prompt_fuzzy(prompt: &str, options: &[String], _config: &FuzzyConfig) -> 
                         })
                         .collect();
 
-                    let list = List::new(items).block(Block::default().borders(Borders::ALL).title("Matches (Arrows: Nav, Enter: Select)"));
+                    let list = List::new(items).block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title("Matches (Arrows: Nav, Enter: Select)"),
+                    );
                     f.render_widget(list, chunks[1]);
                 });
 
@@ -1075,10 +1154,17 @@ pub fn prompt_slider(
                     let ratio = ((current_val - min) / (max - min)).clamp(0.0, 1.0);
                     let percent = (ratio * 100.0) as u16;
 
-                    let label = format!("{:.2} / {:.2} {} ({}%)", current_val, max, config.unit, percent);
+                    let label = format!(
+                        "{:.2} / {:.2} {} ({}%)",
+                        current_val, max, config.unit, percent
+                    );
 
                     let gauge = Gauge::default()
-                        .block(Block::default().borders(Borders::ALL).title(format!("{} (◀/▶: Adjust, Enter: Confirm)", prompt)))
+                        .block(
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .title(format!("{} (◀/▶: Adjust, Enter: Confirm)", prompt)),
+                        )
                         .gauge_style(Style::default().fg(Color::Cyan).bg(Color::DarkGray))
                         .percent(percent)
                         .label(label);
@@ -1120,7 +1206,10 @@ pub fn prompt_slider(
     }
 
     // Interactive fallback: print range and wait for user to type number
-    let line = read_line_prompt(&format!("{} [{:.2} - {:.2}, default: {:.2} {}]: ", prompt, min, max, default, config.unit));
+    let line = read_line_prompt(&format!(
+        "{} [{:.2} - {:.2}, default: {:.2} {}]: ",
+        prompt, min, max, default, config.unit
+    ));
     if let Ok(n) = line.trim().parse::<f64>() {
         Ok(n.clamp(min, max))
     } else {
@@ -1132,7 +1221,11 @@ pub fn prompt_slider(
 // 9. World-First: Hierarchical Tree Selector (`input.tree`)
 // ============================================================================
 
-pub fn prompt_tree(prompt: &str, nodes: &[TreeNode], _config: &TreeConfig) -> Result<String, String> {
+pub fn prompt_tree(
+    prompt: &str,
+    nodes: &[TreeNode],
+    _config: &TreeConfig,
+) -> Result<String, String> {
     if let Some(mock) = get_mock_input() {
         return Ok(mock);
     }
@@ -1159,7 +1252,10 @@ pub fn prompt_tree(prompt: &str, nodes: &[TreeNode], _config: &TreeConfig) -> Re
                     let size = f.size();
                     let chunks = Layout::default()
                         .direction(Direction::Vertical)
-                        .constraints([Constraint::Length(flat_items.len() as u16 + 3), Constraint::Min(0)])
+                        .constraints([
+                            Constraint::Length(flat_items.len() as u16 + 3),
+                            Constraint::Min(0),
+                        ])
                         .split(size);
 
                     let items: Vec<ListItem> = flat_items
@@ -1170,7 +1266,9 @@ pub fn prompt_tree(prompt: &str, nodes: &[TreeNode], _config: &TreeConfig) -> Re
                             let indent = "  ".repeat(*depth);
                             let prefix = if is_active { "▶ " } else { "  " };
                             let style = if is_active {
-                                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD)
                             } else {
                                 Style::default().fg(Color::White)
                             };
@@ -1178,7 +1276,11 @@ pub fn prompt_tree(prompt: &str, nodes: &[TreeNode], _config: &TreeConfig) -> Re
                         })
                         .collect();
 
-                    let list = List::new(items).block(Block::default().borders(Borders::ALL).title(format!("{} (Tree)", prompt)));
+                    let list = List::new(items).block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(format!("{} (Tree)", prompt)),
+                    );
                     f.render_widget(list, chunks[0]);
                 });
 
@@ -1268,11 +1370,17 @@ pub fn prompt_table(
                     let size = f.size();
                     let chunks = Layout::default()
                         .direction(Direction::Vertical)
-                        .constraints([Constraint::Length(table_data.len() as u16 + 4), Constraint::Min(0)])
+                        .constraints([
+                            Constraint::Length(table_data.len() as u16 + 4),
+                            Constraint::Min(0),
+                        ])
                         .split(size);
 
-                    let header_row = Row::new(headers.iter().map(|h| h.clone()))
-                        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+                    let header_row = Row::new(headers.iter().map(|h| h.clone())).style(
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    );
 
                     let table_rows: Vec<Row> = table_data
                         .iter()
@@ -1287,7 +1395,9 @@ pub fn prompt_table(
                                 }
                             });
                             let row_style = if is_active_row {
-                                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD)
                             } else {
                                 Style::default().fg(Color::White)
                             };
@@ -1299,9 +1409,11 @@ pub fn prompt_table(
                         .map(|_| Constraint::Ratio(1, headers.len().max(1) as u32))
                         .collect();
 
-                    let table = Table::new(table_rows, col_widths)
-                        .header(header_row)
-                        .block(Block::default().borders(Borders::ALL).title(format!("{} (Arrows: Move, Enter: Pick)", prompt)));
+                    let table = Table::new(table_rows, col_widths).header(header_row).block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(format!("{} (Arrows: Move, Enter: Pick)", prompt)),
+                    );
 
                     f.render_widget(table, chunks[0]);
                 });
@@ -1414,14 +1526,30 @@ pub fn prompt_datepicker(prompt: &str, config: &DatepickerConfig) -> Result<Stri
                     };
 
                     let date_str = match field {
-                        0 => format!("📅 [{:04}] - {:02} - {:02}  |  Editing: {}", year, month, day, field_name),
-                        1 => format!("📅 {:04} - [{:02}] - {:02}  |  Editing: {}", year, month, day, field_name),
-                        _ => format!("📅 {:04} - {:02} - [{:02}]  |  Editing: {}", year, month, day, field_name),
+                        0 => format!(
+                            "📅 [{:04}] - {:02} - {:02}  |  Editing: {}",
+                            year, month, day, field_name
+                        ),
+                        1 => format!(
+                            "📅 {:04} - [{:02}] - {:02}  |  Editing: {}",
+                            year, month, day, field_name
+                        ),
+                        _ => format!(
+                            "📅 {:04} - {:02} - [{:02}]  |  Editing: {}",
+                            year, month, day, field_name
+                        ),
                     };
 
-                    let p = Paragraph::new(Line::from(vec![
-                        Span::styled(date_str, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                    ])).block(Block::default().borders(Borders::ALL).title(format!("{} (Tab/◀/▶: Field, ▲/▼: Inc/Dec, PgUp/PgDn: ±10y, Enter: Pick)", prompt)));
+                    let p = Paragraph::new(Line::from(vec![Span::styled(
+                        date_str,
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    )]))
+                    .block(Block::default().borders(Borders::ALL).title(format!(
+                        "{} (Tab/◀/▶: Field, ▲/▼: Inc/Dec, PgUp/PgDn: ±10y, Enter: Pick)",
+                        prompt
+                    )));
 
                     f.render_widget(p, chunks[0]);
                 });
@@ -1434,26 +1562,22 @@ pub fn prompt_datepicker(prompt: &str, config: &DatepickerConfig) -> Result<Stri
                         KeyCode::BackTab | KeyCode::Left => {
                             field = (field + 2) % 3;
                         }
-                        KeyCode::Up => {
-                            match field {
-                                0 => year += 1,
-                                1 => month = if month < 12 { month + 1 } else { 1 },
-                                _ => {
-                                    let max_d = days_in_month(year, month);
-                                    day = if day < max_d { day + 1 } else { 1 };
-                                }
+                        KeyCode::Up => match field {
+                            0 => year += 1,
+                            1 => month = if month < 12 { month + 1 } else { 1 },
+                            _ => {
+                                let max_d = days_in_month(year, month);
+                                day = if day < max_d { day + 1 } else { 1 };
                             }
-                        }
-                        KeyCode::Down => {
-                            match field {
-                                0 => year = (year - 1).max(1),
-                                1 => month = if month > 1 { month - 1 } else { 12 },
-                                _ => {
-                                    let max_d = days_in_month(year, month);
-                                    day = if day > 1 { day - 1 } else { max_d };
-                                }
+                        },
+                        KeyCode::Down => match field {
+                            0 => year = (year - 1).max(1),
+                            1 => month = if month > 1 { month - 1 } else { 12 },
+                            _ => {
+                                let max_d = days_in_month(year, month);
+                                day = if day > 1 { day - 1 } else { max_d };
                             }
-                        }
+                        },
                         KeyCode::PageUp => {
                             year += 10;
                         }
@@ -1475,7 +1599,10 @@ pub fn prompt_datepicker(prompt: &str, config: &DatepickerConfig) -> Result<Stri
 
     // Interactive fallback: prompt and wait for date
     let default_str = format!("{:04}-{:02}-{:02}", year, month, day);
-    let line = read_line_prompt(&format!("{} [YYYY-MM-DD, default: {}]: ", prompt, default_str));
+    let line = read_line_prompt(&format!(
+        "{} [YYYY-MM-DD, default: {}]: ",
+        prompt, default_str
+    ));
     let trimmed = line.trim();
     if trimmed.is_empty() {
         Ok(default_str)
@@ -1531,17 +1658,42 @@ pub fn prompt_datetimepicker(prompt: &str, config: &DatetimeConfig) -> Result<St
                     };
 
                     let dt_str = match field {
-                        0 => format!("📅 [{:04}]-{:02}-{:02} ⏰ {:02}:{:02}:{:02} | Editing: {}", year, month, day, hour, minute, second, field_name),
-                        1 => format!("📅 {:04}-[{:02}]-{:02} ⏰ {:02}:{:02}:{:02} | Editing: {}", year, month, day, hour, minute, second, field_name),
-                        2 => format!("📅 {:04}-{:02}-[{:02}] ⏰ {:02}:{:02}:{:02} | Editing: {}", year, month, day, hour, minute, second, field_name),
-                        3 => format!("📅 {:04}-{:02}-{:02} ⏰ [{:02}]:{:02}:{:02} | Editing: {}", year, month, day, hour, minute, second, field_name),
-                        4 => format!("📅 {:04}-{:02}-{:02} ⏰ {:02}:[{:02}]:{:02} | Editing: {}", year, month, day, hour, minute, second, field_name),
-                        _ => format!("📅 {:04}-{:02}-{:02} ⏰ {:02}:{:02}:[{:02}] | Editing: {}", year, month, day, hour, minute, second, field_name),
+                        0 => format!(
+                            "📅 [{:04}]-{:02}-{:02} ⏰ {:02}:{:02}:{:02} | Editing: {}",
+                            year, month, day, hour, minute, second, field_name
+                        ),
+                        1 => format!(
+                            "📅 {:04}-[{:02}]-{:02} ⏰ {:02}:{:02}:{:02} | Editing: {}",
+                            year, month, day, hour, minute, second, field_name
+                        ),
+                        2 => format!(
+                            "📅 {:04}-{:02}-[{:02}] ⏰ {:02}:{:02}:{:02} | Editing: {}",
+                            year, month, day, hour, minute, second, field_name
+                        ),
+                        3 => format!(
+                            "📅 {:04}-{:02}-{:02} ⏰ [{:02}]:{:02}:{:02} | Editing: {}",
+                            year, month, day, hour, minute, second, field_name
+                        ),
+                        4 => format!(
+                            "📅 {:04}-{:02}-{:02} ⏰ {:02}:[{:02}]:{:02} | Editing: {}",
+                            year, month, day, hour, minute, second, field_name
+                        ),
+                        _ => format!(
+                            "📅 {:04}-{:02}-{:02} ⏰ {:02}:{:02}:[{:02}] | Editing: {}",
+                            year, month, day, hour, minute, second, field_name
+                        ),
                     };
 
-                    let p = Paragraph::new(Line::from(vec![
-                        Span::styled(dt_str, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                    ])).block(Block::default().borders(Borders::ALL).title(format!("{} (Tab/◀/▶: Field, ▲/▼: Inc/Dec, PgUp/PgDn: ±10y, Enter: Pick)", prompt)));
+                    let p = Paragraph::new(Line::from(vec![Span::styled(
+                        dt_str,
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    )]))
+                    .block(Block::default().borders(Borders::ALL).title(format!(
+                        "{} (Tab/◀/▶: Field, ▲/▼: Inc/Dec, PgUp/PgDn: ±10y, Enter: Pick)",
+                        prompt
+                    )));
 
                     f.render_widget(p, chunks[0]);
                 });
@@ -1554,32 +1706,28 @@ pub fn prompt_datetimepicker(prompt: &str, config: &DatetimeConfig) -> Result<St
                         KeyCode::BackTab | KeyCode::Left => {
                             field = (field + 5) % 6;
                         }
-                        KeyCode::Up => {
-                            match field {
-                                0 => year += 1,
-                                1 => month = if month < 12 { month + 1 } else { 1 },
-                                2 => {
-                                    let max_d = days_in_month(year, month);
-                                    day = if day < max_d { day + 1 } else { 1 };
-                                }
-                                3 => hour = (hour + 1) % 24,
-                                4 => minute = (minute + 1) % 60,
-                                _ => second = (second + 1) % 60,
+                        KeyCode::Up => match field {
+                            0 => year += 1,
+                            1 => month = if month < 12 { month + 1 } else { 1 },
+                            2 => {
+                                let max_d = days_in_month(year, month);
+                                day = if day < max_d { day + 1 } else { 1 };
                             }
-                        }
-                        KeyCode::Down => {
-                            match field {
-                                0 => year = (year - 1).max(1),
-                                1 => month = if month > 1 { month - 1 } else { 12 },
-                                2 => {
-                                    let max_d = days_in_month(year, month);
-                                    day = if day > 1 { day - 1 } else { max_d };
-                                }
-                                3 => hour = (hour + 23) % 24,
-                                4 => minute = (minute + 59) % 60,
-                                _ => second = (second + 59) % 60,
+                            3 => hour = (hour + 1) % 24,
+                            4 => minute = (minute + 1) % 60,
+                            _ => second = (second + 1) % 60,
+                        },
+                        KeyCode::Down => match field {
+                            0 => year = (year - 1).max(1),
+                            1 => month = if month > 1 { month - 1 } else { 12 },
+                            2 => {
+                                let max_d = days_in_month(year, month);
+                                day = if day > 1 { day - 1 } else { max_d };
                             }
-                        }
+                            3 => hour = (hour + 23) % 24,
+                            4 => minute = (minute + 59) % 60,
+                            _ => second = (second + 59) % 60,
+                        },
                         KeyCode::PageUp => {
                             year += 10;
                         }
@@ -1587,7 +1735,10 @@ pub fn prompt_datetimepicker(prompt: &str, config: &DatetimeConfig) -> Result<St
                             year = (year - 10).max(1);
                         }
                         KeyCode::Enter => {
-                            return Ok(format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", year, month, day, hour, minute, second));
+                            return Ok(format!(
+                                "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+                                year, month, day, hour, minute, second
+                            ));
                         }
                         KeyCode::Esc => {
                             return Err("Datetimepicker cancelled".into());
@@ -1599,8 +1750,14 @@ pub fn prompt_datetimepicker(prompt: &str, config: &DatetimeConfig) -> Result<St
         }
     }
 
-    let default_str = format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", year, month, day, hour, minute, second);
-    let line = read_line_prompt(&format!("{} [YYYY-MM-DD HH:MM:SS, default: {}]: ", prompt, default_str));
+    let default_str = format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        year, month, day, hour, minute, second
+    );
+    let line = read_line_prompt(&format!(
+        "{} [YYYY-MM-DD HH:MM:SS, default: {}]: ",
+        prompt, default_str
+    ));
     let trimmed = line.trim();
     if trimmed.is_empty() {
         Ok(default_str)
@@ -1633,15 +1790,28 @@ pub fn prompt_timepicker(prompt: &str, config: &TimepickerConfig) -> Result<Stri
                         .constraints([Constraint::Length(4), Constraint::Min(0)])
                         .split(size);
 
-                    let time_str = format!("⏰ {:02}:{:02}:{:02} (Selected Column: {})", hours, mins, secs, match column {
-                        0 => "Hours",
-                        1 => "Minutes",
-                        _ => "Seconds",
-                    });
+                    let time_str = format!(
+                        "⏰ {:02}:{:02}:{:02} (Selected Column: {})",
+                        hours,
+                        mins,
+                        secs,
+                        match column {
+                            0 => "Hours",
+                            1 => "Minutes",
+                            _ => "Seconds",
+                        }
+                    );
 
-                    let p = Paragraph::new(Line::from(vec![
-                        Span::styled(time_str, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                    ])).block(Block::default().borders(Borders::ALL).title(format!("{} (Tab: Column, ▲/▼: Inc/Dec, Enter: Pick)", prompt)));
+                    let p = Paragraph::new(Line::from(vec![Span::styled(
+                        time_str,
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    )]))
+                    .block(Block::default().borders(Borders::ALL).title(format!(
+                        "{} (Tab: Column, ▲/▼: Inc/Dec, Enter: Pick)",
+                        prompt
+                    )));
 
                     f.render_widget(p, chunks[0]);
                 });
@@ -1654,20 +1824,16 @@ pub fn prompt_timepicker(prompt: &str, config: &TimepickerConfig) -> Result<Stri
                         KeyCode::BackTab | KeyCode::Left => {
                             column = (column + 2) % 3;
                         }
-                        KeyCode::Up => {
-                            match column {
-                                0 => hours = (hours + 1) % 24,
-                                1 => mins = (mins + 1) % 60,
-                                _ => secs = (secs + 1) % 60,
-                            }
-                        }
-                        KeyCode::Down => {
-                            match column {
-                                0 => hours = (hours + 23) % 24,
-                                1 => mins = (mins + 59) % 60,
-                                _ => secs = (secs + 59) % 60,
-                            }
-                        }
+                        KeyCode::Up => match column {
+                            0 => hours = (hours + 1) % 24,
+                            1 => mins = (mins + 1) % 60,
+                            _ => secs = (secs + 1) % 60,
+                        },
+                        KeyCode::Down => match column {
+                            0 => hours = (hours + 23) % 24,
+                            1 => mins = (mins + 59) % 60,
+                            _ => secs = (secs + 59) % 60,
+                        },
                         KeyCode::Enter => {
                             return Ok(format!("{:02}:{:02}:{:02}", hours, mins, secs));
                         }
@@ -1682,8 +1848,15 @@ pub fn prompt_timepicker(prompt: &str, config: &TimepickerConfig) -> Result<Stri
     }
 
     // Interactive fallback: prompt and wait for time
-    let default_str = if config.include_seconds { "12:00:00" } else { "12:00" };
-    let line = read_line_prompt(&format!("{} [HH:MM:SS, default: {}]: ", prompt, default_str));
+    let default_str = if config.include_seconds {
+        "12:00:00"
+    } else {
+        "12:00"
+    };
+    let line = read_line_prompt(&format!(
+        "{} [HH:MM:SS, default: {}]: ",
+        prompt, default_str
+    ));
     let trimmed = line.trim();
     if trimmed.is_empty() {
         Ok(default_str.to_string())
@@ -1723,11 +1896,21 @@ pub fn prompt_color(prompt: &str, config: &ColorConfig) -> Result<String, String
                         _ => "BLUE",
                     };
 
-                    let swatch = format!("🎨 Hex: {} | R: {} G: {} B: {} | Editing: {}", hex, r, g, b, channel_name);
+                    let swatch = format!(
+                        "🎨 Hex: {} | R: {} G: {} B: {} | Editing: {}",
+                        hex, r, g, b, channel_name
+                    );
 
-                    let p = Paragraph::new(Line::from(vec![
-                        Span::styled(swatch, Style::default().fg(Color::Rgb(r, g, b)).add_modifier(Modifier::BOLD)),
-                    ])).block(Block::default().borders(Borders::ALL).title(format!("{} (Tab: Channel, ▲/▼: Value, Enter: Pick)", prompt)));
+                    let p = Paragraph::new(Line::from(vec![Span::styled(
+                        swatch,
+                        Style::default()
+                            .fg(Color::Rgb(r, g, b))
+                            .add_modifier(Modifier::BOLD),
+                    )]))
+                    .block(Block::default().borders(Borders::ALL).title(format!(
+                        "{} (Tab: Channel, ▲/▼: Value, Enter: Pick)",
+                        prompt
+                    )));
 
                     f.render_widget(p, chunks[0]);
                 });
@@ -1740,20 +1923,16 @@ pub fn prompt_color(prompt: &str, config: &ColorConfig) -> Result<String, String
                         KeyCode::BackTab | KeyCode::Left => {
                             channel = (channel + 2) % 3;
                         }
-                        KeyCode::Up => {
-                            match channel {
-                                0 => r = r.saturating_add(5),
-                                1 => g = g.saturating_add(5),
-                                _ => b = b.saturating_add(5),
-                            }
-                        }
-                        KeyCode::Down => {
-                            match channel {
-                                0 => r = r.saturating_sub(5),
-                                1 => g = g.saturating_sub(5),
-                                _ => b = b.saturating_sub(5),
-                            }
-                        }
+                        KeyCode::Up => match channel {
+                            0 => r = r.saturating_add(5),
+                            1 => g = g.saturating_add(5),
+                            _ => b = b.saturating_add(5),
+                        },
+                        KeyCode::Down => match channel {
+                            0 => r = r.saturating_sub(5),
+                            1 => g = g.saturating_sub(5),
+                            _ => b = b.saturating_sub(5),
+                        },
                         KeyCode::Enter => {
                             return Ok(format!("#{:02X}{:02X}{:02X}", r, g, b));
                         }
@@ -1809,9 +1988,17 @@ pub fn prompt_pin(prompt: &str, digits: usize, _config: &PinConfig) -> Result<St
                         }
                     }
 
-                    let p = Paragraph::new(Line::from(vec![
-                        Span::styled(boxes, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-                    ])).block(Block::default().borders(Borders::ALL).title(format!("{} (Enter {} Digits)", prompt, num_digits)));
+                    let p = Paragraph::new(Line::from(vec![Span::styled(
+                        boxes,
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    )]))
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(format!("{} (Enter {} Digits)", prompt, num_digits)),
+                    );
 
                     f.render_widget(p, chunks[0]);
                 });
@@ -1827,13 +2014,24 @@ pub fn prompt_pin(prompt: &str, digits: usize, _config: &PinConfig) -> Result<St
                                         let size = f.size();
                                         let chunks = Layout::default()
                                             .direction(Direction::Vertical)
-                                            .constraints([Constraint::Length(4), Constraint::Min(0)])
+                                            .constraints([
+                                                Constraint::Length(4),
+                                                Constraint::Min(0),
+                                            ])
                                             .split(size);
 
                                         let boxes = "[ ● ] ".repeat(num_digits);
-                                        let p = Paragraph::new(Line::from(vec![
-                                            Span::styled(boxes, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-                                        ])).block(Block::default().borders(Borders::ALL).title(format!("{} (Verified)", prompt)));
+                                        let p = Paragraph::new(Line::from(vec![Span::styled(
+                                            boxes,
+                                            Style::default()
+                                                .fg(Color::Green)
+                                                .add_modifier(Modifier::BOLD),
+                                        )]))
+                                        .block(
+                                            Block::default()
+                                                .borders(Borders::ALL)
+                                                .title(format!("{} (Verified)", prompt)),
+                                        );
 
                                         f.render_widget(p, chunks[0]);
                                     });
@@ -1929,7 +2127,9 @@ pub fn prompt_diff(prompt: &str, original: &str, _config: &DiffConfig) -> Result
                             let prefix = if is_cur { "▶" } else { " " };
                             let text = format!("{} {:2} | + {}", prefix, i + 1, l);
                             let style = if is_cur {
-                                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD)
                             } else {
                                 Style::default().fg(Color::Green)
                             };
@@ -1937,9 +2137,7 @@ pub fn prompt_diff(prompt: &str, original: &str, _config: &DiffConfig) -> Result
                         })
                         .collect();
                     let edit_title = format!("{} (Ctrl+S: Save, Esc: Cancel)", prompt);
-                    let edit_block = Block::default()
-                        .borders(Borders::ALL)
-                        .title(edit_title);
+                    let edit_block = Block::default().borders(Borders::ALL).title(edit_title);
                     let edit_list = List::new(edit_items).block(edit_block);
                     f.render_widget(edit_list, panes[1]);
 
@@ -2028,7 +2226,9 @@ pub fn prompt_diff(prompt: &str, original: &str, _config: &DiffConfig) -> Result
                             }
                         }
                         KeyCode::Char(c) => {
-                            if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) {
+                            if !key.modifiers.contains(KeyModifiers::CONTROL)
+                                && !key.modifiers.contains(KeyModifiers::ALT)
+                            {
                                 edited_lines[cursor_row].insert(cursor_col, c);
                                 cursor_col += 1;
                             }
@@ -2071,8 +2271,9 @@ pub fn prompt_hotkey(prompt: &str, _config: &HotkeyConfig) -> Result<HotkeyResul
                         .constraints([Constraint::Length(3), Constraint::Min(0)])
                         .split(size);
 
-                    let p = Paragraph::new("Press any key combination or chord (e.g. Ctrl+Alt+K)...")
-                        .block(Block::default().borders(Borders::ALL).title(prompt));
+                    let p =
+                        Paragraph::new("Press any key combination or chord (e.g. Ctrl+Alt+K)...")
+                            .block(Block::default().borders(Borders::ALL).title(prompt));
 
                     f.render_widget(p, chunks[0]);
                 });
@@ -2123,8 +2324,15 @@ pub fn prompt_hotkey(prompt: &str, _config: &HotkeyConfig) -> Result<HotkeyResul
     }
 
     // Interactive fallback: prompt and wait for hotkey chord typed by user
-    let line = read_line_prompt(&format!("{} (Type hotkey chord e.g. Ctrl+K or Enter): ", prompt));
-    let chord = if line.trim().is_empty() { "Enter".to_string() } else { line.trim().to_string() };
+    let line = read_line_prompt(&format!(
+        "{} (Type hotkey chord e.g. Ctrl+K or Enter): ",
+        prompt
+    ));
+    let chord = if line.trim().is_empty() {
+        "Enter".to_string()
+    } else {
+        line.trim().to_string()
+    };
     Ok(HotkeyResult {
         key: chord.clone(),
         modifiers: Vec::new(),
@@ -2136,7 +2344,11 @@ pub fn prompt_hotkey(prompt: &str, _config: &HotkeyConfig) -> Result<HotkeyResul
 // 17. World-First: AI-Assisted Smart Prediction Input (`input.ai`)
 // ============================================================================
 
-pub fn prompt_ai(prompt: &str, context: &[String], _config: &AiPredictConfig) -> Result<String, String> {
+pub fn prompt_ai(
+    prompt: &str,
+    context: &[String],
+    _config: &AiPredictConfig,
+) -> Result<String, String> {
     let opts = InputOptions {
         suggestions: context.to_vec(),
         ..Default::default()

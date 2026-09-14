@@ -4,10 +4,15 @@
 //! including control flow, variable binding, and exception handling.
 
 use super::super::{LirFunction, LirInst, LirModule, LirType};
-use super::core::{DropLoweringKind, LowerCtx, has_return, is_block_terminated, push_defer_scope, pop_defer_scope};
+use super::core::{
+    DropLoweringKind, LowerCtx, has_return, is_block_terminated, pop_defer_scope, push_defer_scope,
+};
 use super::expressions::lower_expr;
 use super::functions::{collect_free_vars, lower_class_def, lower_hir_function};
-use super::memory::{emit_drops_for_location, emit_scope_defers, emit_all_defers, emit_defers_until_depth, record_var_kind};
+use super::memory::{
+    emit_all_defers, emit_defers_until_depth, emit_drops_for_location, emit_scope_defers,
+    record_var_kind,
+};
 use super::types::{apply_type_conversion, hir_type_to_lir};
 use crate::parsing::drop_insertion::DropPlan;
 use crate::parsing::hir::{BinOp, HirExpr, HirLiteral, HirStmt, HirType};
@@ -36,14 +41,16 @@ pub(super) fn lower_stmt(
                 // Auto-detect and record ARC drop kinds when type annotations are missing
                 match init_expr {
                     HirExpr::Share(_) => {
-                        ctx.drop_kinds.insert(name.clone(), DropLoweringKind::Shared);
+                        ctx.drop_kinds
+                            .insert(name.clone(), DropLoweringKind::Shared);
                     }
                     HirExpr::Downgrade(_) => {
                         ctx.drop_kinds.insert(name.clone(), DropLoweringKind::Weak);
                     }
                     // `handle.upgrade()` produces a new strong clone — must be dropped at scope exit
                     HirExpr::MethodCall(_, method, _) if method == "upgrade" => {
-                        ctx.drop_kinds.insert(name.clone(), DropLoweringKind::Shared);
+                        ctx.drop_kinds
+                            .insert(name.clone(), DropLoweringKind::Shared);
                     }
                     _ => {}
                 }
@@ -247,8 +254,14 @@ pub(super) fn lower_stmt(
                 if let HirStmt::Block(stmts) = &**body {
                     if stmts.len() == 1 {
                         let assign_opt: Option<(&String, &HirExpr)> = match &stmts[0] {
-                            HirStmt::Assign { target: HirExpr::LoadVar(target_name), value, .. } => Some((target_name, value)),
-                            HirStmt::Expr(HirExpr::StoreVar(target_name, value)) => Some((target_name, value.as_ref())),
+                            HirStmt::Assign {
+                                target: HirExpr::LoadVar(target_name),
+                                value,
+                                ..
+                            } => Some((target_name, value)),
+                            HirStmt::Expr(HirExpr::StoreVar(target_name, value)) => {
+                                Some((target_name, value.as_ref()))
+                            }
                             _ => None,
                         };
                         if let Some((target_name, rhs)) = assign_opt {
@@ -272,17 +285,29 @@ pub(super) fn lower_stmt(
                                             let start_val = lower_expr(lir, func, ctx, start)?;
                                             let end_val = lower_expr(lir, func, ctx, end)?;
                                             let target_val = func.alloc_value();
-                                            func.push_to_block(ctx.current_block, LirInst::LoadVar(target_val, target_name.clone()));
+                                            func.push_to_block(
+                                                ctx.current_block,
+                                                LirInst::LoadVar(target_val, target_name.clone()),
+                                            );
 
                                             let diff_val = func.alloc_value();
-                                            func.push_to_block(ctx.current_block, LirInst::SubI64(diff_val, end_val, start_val));
+                                            func.push_to_block(
+                                                ctx.current_block,
+                                                LirInst::SubI64(diff_val, end_val, start_val),
+                                            );
 
                                             let mut count_val = diff_val;
                                             if *inclusive {
                                                 let one_val = func.alloc_value();
-                                                func.push_to_block(ctx.current_block, LirInst::ConstI64(one_val, 1));
+                                                func.push_to_block(
+                                                    ctx.current_block,
+                                                    LirInst::ConstI64(one_val, 1),
+                                                );
                                                 let inc_val = func.alloc_value();
-                                                func.push_to_block(ctx.current_block, LirInst::AddI64(inc_val, diff_val, one_val));
+                                                func.push_to_block(
+                                                    ctx.current_block,
+                                                    LirInst::AddI64(inc_val, diff_val, one_val),
+                                                );
                                                 count_val = inc_val;
                                             }
 
@@ -290,15 +315,27 @@ pub(super) fn lower_stmt(
                                                 count_val
                                             } else {
                                                 let lit_val = func.alloc_value();
-                                                func.push_to_block(ctx.current_block, LirInst::ConstI64(lit_val, lit_num));
+                                                func.push_to_block(
+                                                    ctx.current_block,
+                                                    LirInst::ConstI64(lit_val, lit_num),
+                                                );
                                                 let scaled = func.alloc_value();
-                                                func.push_to_block(ctx.current_block, LirInst::MulI64(scaled, count_val, lit_val));
+                                                func.push_to_block(
+                                                    ctx.current_block,
+                                                    LirInst::MulI64(scaled, count_val, lit_val),
+                                                );
                                                 scaled
                                             };
 
                                             let final_val = func.alloc_value();
-                                            func.push_to_block(ctx.current_block, LirInst::AddI64(final_val, target_val, scale_val));
-                                            func.push_to_block(ctx.current_block, LirInst::StoreVar(target_name.clone(), final_val));
+                                            func.push_to_block(
+                                                ctx.current_block,
+                                                LirInst::AddI64(final_val, target_val, scale_val),
+                                            );
+                                            func.push_to_block(
+                                                ctx.current_block,
+                                                LirInst::StoreVar(target_name.clone(), final_val),
+                                            );
                                             return Ok(());
                                         }
                                     }

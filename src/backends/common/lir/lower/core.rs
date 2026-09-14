@@ -4,8 +4,8 @@
 //! context structures, and core initialization logic.
 
 use super::super::{BlockId, LirFunction, LirInst, LirModule, LirType, ValueId};
-use crate::parsing::hir::{HirClass, HirFunction, HirModule, HirStmt};
 use crate::parsing::drop_insertion::DropPlan;
+use crate::parsing::hir::{HirClass, HirFunction, HirModule, HirStmt};
 use crate::parsing::hir_passes::plan_function_drops;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};

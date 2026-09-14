@@ -89,7 +89,13 @@ pub fn check_ownership_and_parse_in(
 
     // Run ownership and borrow checking if enabled (legacy checks)
     if config.check_ownership || config.check_moves {
-        let pass_results = run_safety_passes_with_location(&hir, config.check_ownership, config.check_moves, file, Some(&clean_src))?;
+        let pass_results = run_safety_passes_with_location(
+            &hir,
+            config.check_ownership,
+            config.check_moves,
+            file,
+            Some(&clean_src),
+        )?;
 
         if config.verbose {
             eprintln!("✅ Ownership and borrow checking passed");

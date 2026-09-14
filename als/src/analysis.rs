@@ -3,11 +3,11 @@
 //! Provides semantic analysis using Adesh's parsing infrastructure.
 //! Updated for AdeshLang CFG v2.1/v2.2 with ownership and borrowing support.
 
-use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 use adeshlang::parsing::ast::{ClassDecl, Expr, ExprKind, Function, Stmt, StmtKind, TokenKind};
 use adeshlang::parsing::error::LangError;
 use adeshlang::parsing::lexer::{Lexer, Token};
 use adeshlang::parsing::parser::Parser;
+use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 
 /// Analysis result containing parsed AST, errors, and token positions
 pub struct AnalysisResult {
@@ -132,9 +132,8 @@ pub fn error_to_diagnostic(error: &LangError) -> Diagnostic {
         | adeshlang::parsing::error::ErrorKind::Parse
         | adeshlang::parsing::error::ErrorKind::Type
         | adeshlang::parsing::error::ErrorKind::Compile => DiagnosticSeverity::ERROR,
-        adeshlang::parsing::error::ErrorKind::Runtime | adeshlang::parsing::error::ErrorKind::Jit => {
-            DiagnosticSeverity::WARNING
-        }
+        adeshlang::parsing::error::ErrorKind::Runtime
+        | adeshlang::parsing::error::ErrorKind::Jit => DiagnosticSeverity::WARNING,
         _ => DiagnosticSeverity::INFORMATION,
     };
 

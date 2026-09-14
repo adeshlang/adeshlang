@@ -41,7 +41,10 @@ pub(in crate::execution::runtime_core) fn err_with_span<T: Into<String>>(
 
 /// Create a runtime error with location, file, and optional help message.
 #[allow(dead_code)]
-pub(in crate::execution::runtime_core) fn err_with_span_file_help<T: Into<String>, H: Into<String>>(
+pub(in crate::execution::runtime_core) fn err_with_span_file_help<
+    T: Into<String>,
+    H: Into<String>,
+>(
     message: T,
     span: &crate::parsing::ast::Span,
     file: Option<String>,

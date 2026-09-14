@@ -1,4 +1,4 @@
-﻿use std::fs;
+use std::fs;
 use std::path::Path;
 
 #[test]
@@ -20,16 +20,29 @@ fn test_memory_examples_diagnostics() {
             let index = adeshlang::semantics::index_source_in(&content, Some(&path_str));
             if !index.errors.is_empty() {
                 parse_errors += 1;
-                eprintln!("[PARSE/SEMANTIC ERROR] {}: {:?}", path.file_name().unwrap().to_string_lossy(), index.errors);
+                eprintln!(
+                    "[PARSE/SEMANTIC ERROR] {}: {:?}",
+                    path.file_name().unwrap().to_string_lossy(),
+                    index.errors
+                );
             }
 
             // 2. Check typesystem
-            if let Err(e) = adeshlang::typesystem::type_system::check_module_in(&content, Some(&path_str)) {
+            if let Err(e) =
+                adeshlang::typesystem::type_system::check_module_in(&content, Some(&path_str))
+            {
                 type_errors += 1;
-                eprintln!("[TYPE ERROR] {}: {}", path.file_name().unwrap().to_string_lossy(), e);
+                eprintln!(
+                    "[TYPE ERROR] {}: {}",
+                    path.file_name().unwrap().to_string_lossy(),
+                    e
+                );
             }
         }
     }
 
-    eprintln!("\nSUMMARY: Total: {}, Parse Errors: {}, Type Errors: {}", total, parse_errors, type_errors);
+    eprintln!(
+        "\nSUMMARY: Total: {}, Parse Errors: {}, Type Errors: {}",
+        total, parse_errors, type_errors
+    );
 }

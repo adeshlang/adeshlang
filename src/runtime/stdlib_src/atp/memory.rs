@@ -273,11 +273,11 @@ pub struct ConnectionMemoryConfig {
 impl Default for ConnectionMemoryConfig {
     fn default() -> Self {
         ConnectionMemoryConfig {
-            total_budget: 16 * 1024 * 1024, // 16 MB
-            max_stream_memory: 2 * 1024 * 1024, // 2 MB
+            total_budget: 16 * 1024 * 1024,         // 16 MB
+            max_stream_memory: 2 * 1024 * 1024,     // 2 MB
             max_reassembly_memory: 4 * 1024 * 1024, // 4 MB
-            max_send_queue: 2 * 1024 * 1024, // 2 MB
-            max_receive_queue: 2 * 1024 * 1024, // 2 MB
+            max_send_queue: 2 * 1024 * 1024,        // 2 MB
+            max_receive_queue: 2 * 1024 * 1024,     // 2 MB
         }
     }
 }

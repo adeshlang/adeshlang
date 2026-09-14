@@ -16,7 +16,10 @@ pub enum BroadcastMode {
 }
 
 fn is_array(v: &Value) -> bool {
-    matches!(v, Value::Array(_) | Value::DynArray(_) | Value::RawArray(_, _))
+    matches!(
+        v,
+        Value::Array(_) | Value::DynArray(_) | Value::RawArray(_, _)
+    )
 }
 
 /// Determine broadcast mode for a binary operation

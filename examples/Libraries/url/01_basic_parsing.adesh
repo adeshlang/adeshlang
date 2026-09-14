@@ -3,12 +3,12 @@ import URL;
 let rawUrlStr: String = "https://user:pass123@api.example.com:8443/v1/users?page=2&limit=50#active";
 let url: URL = URL.parse(rawUrlStr);
 
-let scheme: String = url.scheme;
-let host: String = url.host;
-let port: Option<Int> = url.port;
-let path: String = url.path;
-let query: String = url.query;
-let redactedStr: String = url.redacted();
+let scheme: String = url.scheme as String;
+let host: String = url.host as String;
+let port: i32 = url.port as i32;
+let path: String = url.path as String;
+let query: String = url.query as String;
+let redactedStr: String = url.redacted() as String;
 
 print("--- 01 Basic Parsing Example ---");
 print("Scheme:", scheme);

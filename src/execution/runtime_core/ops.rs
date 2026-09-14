@@ -297,7 +297,8 @@ pub fn equals(a: &Value, b: &Value) -> bool {
             x.len() == y.len() && x.iter().zip(y.iter()).all(|(a, b)| equals(a, b))
         }
         (DynArray(x), DynArray(y)) => {
-            x.data.len() == y.data.len() && x.data.iter().zip(y.data.iter()).all(|(a, b)| equals(a, b))
+            x.data.len() == y.data.len()
+                && x.data.iter().zip(y.data.iter()).all(|(a, b)| equals(a, b))
         }
         (RawArray(_, x), RawArray(_, y)) => {
             x.len() == y.len() && x.iter().zip(y.iter()).all(|(a, b)| equals(a, b))
@@ -315,7 +316,8 @@ pub fn equals(a: &Value, b: &Value) -> bool {
             if x.len() != y.len() {
                 return false;
             }
-            x.iter().all(|(k, v)| y.get(k).map_or(false, |yv| equals(v, yv)))
+            x.iter()
+                .all(|(k, v)| y.get(k).map_or(false, |yv| equals(v, yv)))
         }
         (Complex(ar, ai), Complex(br, bi)) => (ar - br).abs() < 1e-12 && (ai - bi).abs() < 1e-12,
         (Share(x), Share(y)) => x.ptr == y.ptr,

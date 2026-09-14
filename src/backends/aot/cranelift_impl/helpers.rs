@@ -62,7 +62,6 @@ pub(crate) fn expand_header_imports_aot(mut ast: Vec<Stmt>) -> Result<Vec<Stmt>,
     Ok(expanded)
 }
 
-
 /// Parse a hex color string and return RGB components
 pub(crate) fn parse_hex_color(hex: &str) -> Option<(u8, u8, u8)> {
     let h = hex.trim_start_matches('#');

@@ -1,0 +1,38 @@
+services:
+  # Interactive Adesh CLI & REPL session
+  adesh:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: adeshlang:latest
+    container_name: adesh-cli
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./:/workspace
+    working_dir: /workspace
+    command: ["repl"]
+
+  # Run an Adesh script or project directly
+  runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: adeshlang:latest
+    container_name: adesh-runner
+    volumes:
+      - ./:/workspace
+    working_dir: /workspace
+    command: ["adesh", "doctor"]
+
+  # Language Server for remote container / DevContainer setups
+  als:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: adeshlang:latest
+    container_name: adesh-lsp
+    volumes:
+      - ./:/workspace
+    working_dir: /workspace
+    command: ["als"]

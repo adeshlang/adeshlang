@@ -151,9 +151,7 @@ impl Ord for SortableValue {
 }
 
 fn get_generic_type_context() -> std::vec::Vec<String> {
-    crate::execution::runtime_core::GENERIC_TYPE_CONTEXT.with(|ctx| {
-        ctx.borrow().clone()
-    })
+    crate::execution::runtime_core::GENERIC_TYPE_CONTEXT.with(|ctx| ctx.borrow().clone())
 }
 
 fn validate_and_coerce_type(val: Value, expected_type: &str) -> Result<Value, String> {
@@ -171,7 +169,9 @@ fn validate_and_coerce_type(val: Value, expected_type: &str) -> Result<Value, St
     match clean.to_lowercase().as_str() {
         "u8" => match val {
             Value::U8(_) => Ok(val),
-            Value::Number(n) if n >= 0.0 && n <= 255.0 && n.fract() == 0.0 => Ok(Value::U8(n as u8)),
+            Value::Number(n) if n >= 0.0 && n <= 255.0 && n.fract() == 0.0 => {
+                Ok(Value::U8(n as u8))
+            }
             Value::I32(n) if n >= 0 && n <= 255 => Ok(Value::U8(n as u8)),
             Value::I64(n) if n >= 0 && n <= 255 => Ok(Value::U8(n as u8)),
             Value::U32(n) if n <= 255 => Ok(Value::U8(n as u8)),
@@ -543,10 +543,9 @@ fn collections_vec_new(
                 }
                 let target = &args[0];
                 let guard = st_contains.lock().unwrap();
-                let has = guard
-                    .as_slice()
-                    .iter()
-                    .any(|item: &Value| SortableValue(item.clone()) == SortableValue(target.clone()));
+                let has = guard.as_slice().iter().any(|item: &Value| {
+                    SortableValue(item.clone()) == SortableValue(target.clone())
+                });
                 Ok(Value::Bool(has))
             }))),
         );
@@ -583,8 +582,12 @@ fn collections_vec_new(
             "sort".to_string(),
             Value::Function(NativeFn(Arc::new(move |_env, _args| {
                 let mut guard = st_sort.lock().unwrap();
-                let mut sortable: std::vec::Vec<SortableValue> =
-                    guard.as_slice().iter().cloned().map(SortableValue).collect();
+                let mut sortable: std::vec::Vec<SortableValue> = guard
+                    .as_slice()
+                    .iter()
+                    .cloned()
+                    .map(SortableValue)
+                    .collect();
                 sortable.sort();
                 guard.clear();
                 for sv in sortable {
@@ -766,9 +769,20 @@ fn collections_hashmap_new(
         (Some(type_ctx[0].clone()), Some(type_ctx[1].clone()))
     } else if type_ctx.len() == 1 {
         (Some(type_ctx[0].clone()), None)
-    } else if args.len() >= 2 && matches!(&args[0], Value::Str(_)) && matches!(&args[1], Value::Str(_)) {
-        let k = if let Value::Str(s) = &args[0] { s.clone() } else { String::new() };
-        let v = if let Value::Str(s) = &args[1] { s.clone() } else { String::new() };
+    } else if args.len() >= 2
+        && matches!(&args[0], Value::Str(_))
+        && matches!(&args[1], Value::Str(_))
+    {
+        let k = if let Value::Str(s) = &args[0] {
+            s.clone()
+        } else {
+            String::new()
+        };
+        let v = if let Value::Str(s) = &args[1] {
+            s.clone()
+        } else {
+            String::new()
+        };
         (Some(k), Some(v))
     } else {
         (None, None)
@@ -886,7 +900,9 @@ fn collections_hashmap_new(
                     Value::Bool(b) => b.to_string(),
                     _ => crate::execution::runtime::format::fmt(&key_val),
                 };
-                Ok(Value::Bool(st_contains.lock().unwrap().contains_key(&key_str)))
+                Ok(Value::Bool(
+                    st_contains.lock().unwrap().contains_key(&key_str),
+                ))
             }))),
         );
 
@@ -1366,9 +1382,20 @@ fn collections_btreemap_new(
         (Some(type_ctx[0].clone()), Some(type_ctx[1].clone()))
     } else if type_ctx.len() == 1 {
         (Some(type_ctx[0].clone()), None)
-    } else if args.len() >= 2 && matches!(&args[0], Value::Str(_)) && matches!(&args[1], Value::Str(_)) {
-        let k = if let Value::Str(s) = &args[0] { s.clone() } else { String::new() };
-        let v = if let Value::Str(s) = &args[1] { s.clone() } else { String::new() };
+    } else if args.len() >= 2
+        && matches!(&args[0], Value::Str(_))
+        && matches!(&args[1], Value::Str(_))
+    {
+        let k = if let Value::Str(s) = &args[0] {
+            s.clone()
+        } else {
+            String::new()
+        };
+        let v = if let Value::Str(s) = &args[1] {
+            s.clone()
+        } else {
+            String::new()
+        };
         (Some(k), Some(v))
     } else {
         (None, None)
@@ -1486,7 +1513,9 @@ fn collections_btreemap_new(
                     Value::Bool(b) => b.to_string(),
                     _ => crate::execution::runtime::format::fmt(&key_val),
                 };
-                Ok(Value::Bool(st_contains.lock().unwrap().get(&key_str).is_some()))
+                Ok(Value::Bool(
+                    st_contains.lock().unwrap().get(&key_str).is_some(),
+                ))
             }))),
         );
 
@@ -1922,10 +1951,7 @@ fn collections_priorityqueue_new(
                 } else {
                     args[1].clone()
                 };
-                st_push
-                    .lock()
-                    .unwrap()
-                    .push(val, SortableValue(prio));
+                st_push.lock().unwrap().push(val, SortableValue(prio));
                 Ok(Value::Null)
             }))),
         );
@@ -2365,9 +2391,20 @@ fn collections_orderedmap_new(
         (Some(type_ctx[0].clone()), Some(type_ctx[1].clone()))
     } else if type_ctx.len() == 1 {
         (Some(type_ctx[0].clone()), None)
-    } else if args.len() >= 2 && matches!(&args[0], Value::Str(_)) && matches!(&args[1], Value::Str(_)) {
-        let k = if let Value::Str(s) = &args[0] { s.clone() } else { String::new() };
-        let v = if let Value::Str(s) = &args[1] { s.clone() } else { String::new() };
+    } else if args.len() >= 2
+        && matches!(&args[0], Value::Str(_))
+        && matches!(&args[1], Value::Str(_))
+    {
+        let k = if let Value::Str(s) = &args[0] {
+            s.clone()
+        } else {
+            String::new()
+        };
+        let v = if let Value::Str(s) = &args[1] {
+            s.clone()
+        } else {
+            String::new()
+        };
         (Some(k), Some(v))
     } else {
         (None, None)
@@ -2485,7 +2522,9 @@ fn collections_orderedmap_new(
                     Value::Bool(b) => b.to_string(),
                     _ => crate::execution::runtime::format::fmt(&key_val),
                 };
-                Ok(Value::Bool(st_contains.lock().unwrap().contains_key(&key_str)))
+                Ok(Value::Bool(
+                    st_contains.lock().unwrap().contains_key(&key_str),
+                ))
             }))),
         );
 

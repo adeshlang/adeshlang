@@ -1,6 +1,6 @@
+use std::alloc::{Layout, alloc_zeroed, dealloc};
 use std::cell::RefCell;
 use std::ptr::NonNull;
-use std::alloc::{Layout, alloc_zeroed, dealloc};
 /// Advanced memory allocators for AdeshLang
 /// - Arena allocators: fast bump allocation in fixed regions
 /// - Region allocators: automatic deallocation on scope exit
@@ -75,10 +75,7 @@ impl Arena {
         let base = unsafe {
             let ptr = alloc_zeroed(layout);
             if ptr.is_null() {
-                return Err(format!(
-                    "Arena allocation failed: {} bytes",
-                    aligned_cap
-                ));
+                return Err(format!("Arena allocation failed: {} bytes", aligned_cap));
             }
             NonNull::new_unchecked(ptr)
         };
@@ -445,7 +442,7 @@ mod tests {
     #[test]
     fn test_arena_overflow_check() {
         // Capacity near usize::MAX must fail via checked_add, not silently wrap.
-    let result = Arena::new(usize::MAX);
+        let result = Arena::new(usize::MAX);
         assert!(result.is_err());
     }
 

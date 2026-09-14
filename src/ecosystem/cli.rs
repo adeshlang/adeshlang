@@ -131,17 +131,37 @@ pub fn dispatch(options: CliOptions) -> Result<(), String> {
     match options.command {
         AdlCommand::New | AdlCommand::Init => {
             let (template, name, target_dir) = parse_scaffold_args(&options.args, options.command)?;
-            let layout = ProjectLayout::new(target_dir);
+            let layout = ProjectLayout::new(&target_dir);
             if options.dry_run {
                 println!(
-                    "Would create {:?} project at {}",
+                    "Would create {:?} project '{}' at {}",
                     template,
+                    name,
                     layout.root.display()
                 );
                 return Ok(());
             }
             layout.create_template(template, &name)?;
-            println!("Initialized project: {}", layout.root.display());
+            let is_new = matches!(options.command, AdlCommand::New);
+            if is_new {
+                println!(
+                    "✨ Created new AdeshLang project '{}' in {}",
+                    name,
+                    layout.root.display()
+                );
+                println!("\nNext steps:");
+                println!("  cd {}", name);
+                println!("  adl run     # or: adesh run src/main.adesh");
+                println!("  adl build   # or: adesh build src/main.adesh");
+            } else {
+                println!(
+                    "✨ Initialized AdeshLang project in {}",
+                    layout.root.display()
+                );
+                println!("\nNext steps:");
+                println!("  adl run     # or: adesh run src/main.adesh");
+                println!("  adl build   # or: adesh build src/main.adesh");
+            }
         }
         AdlCommand::Add => {
             let (name, requirement) = parse_dependency_args(&options.args)?;
@@ -372,7 +392,10 @@ fn build_plan(
     }
     lines.push(format!("Lockfile: {}", layout.lockfile_path().display()));
     lines.push(format!("Bin directory: {}", layout.bin_dir().display()));
-    lines.push(format!("Target directory: {}", layout.target_dir().display()));
+    lines.push(format!(
+        "Target directory: {}",
+        layout.target_dir().display()
+    ));
     lines.push(format!(
         "Package cache: {}",
         layout.packages_dir().display()
@@ -430,7 +453,11 @@ fn handle_metadata_command(
                 if let Some(exact_path) = layout.locate_binary(target_name) {
                     println!("{}", exact_path.display());
                 } else if !builds.is_empty() {
-                    println!("Found {} binary build(s) matching '{}':", builds.len(), target_name);
+                    println!(
+                        "Found {} binary build(s) matching '{}':",
+                        builds.len(),
+                        target_name
+                    );
                     for build in &builds {
                         println!(
                             "  {} ({}, {} bytes) -> {}",
@@ -447,7 +474,10 @@ fn handle_metadata_command(
                         println!("  {}", dir.display());
                     }
                     if sources.iter().any(|s| s == target_name) {
-                        println!("\nHint: Source entry point for '{}' exists. Build it with:", target_name);
+                        println!(
+                            "\nHint: Source entry point for '{}' exists. Build it with:",
+                            target_name
+                        );
                         println!("  adl build --bin {}", target_name);
                     }
                 }
@@ -464,7 +494,11 @@ fn handle_metadata_command(
                 } else {
                     println!("Located Binary Builds ({}):", builds.len());
                     for build in &builds {
-                        let exec_tag = if build.is_executable { " [executable]" } else { "" };
+                        let exec_tag = if build.is_executable {
+                            " [executable]"
+                        } else {
+                            ""
+                        };
                         println!(
                             "  • {:<16} {:<18} {:>8} bytes{} -> {}",
                             build.name,
@@ -623,27 +657,54 @@ fn parse_scaffold_args(
     command: AdlCommand,
 ) -> Result<(ProjectTemplate, String, PathBuf), String> {
     let mut template = ProjectTemplate::App;
-    let mut name = "example".to_string();
-    let mut target_dir = env::current_dir().map_err(|error| error.to_string())?;
+    let mut name_opt: Option<String> = None;
+    let mut dir_opt: Option<PathBuf> = None;
 
     for value in args {
         match value.as_str() {
-            "app" => template = ProjectTemplate::App,
-            "lib" => template = ProjectTemplate::Library,
-            "workspace" => template = ProjectTemplate::Workspace,
-            "plugin" => template = ProjectTemplate::Plugin,
-            "package" => template = ProjectTemplate::Package,
-            other if name == "example" => name = other.to_string(),
-            other => target_dir = PathBuf::from(other),
+            "--app" | "app" => template = ProjectTemplate::App,
+            "--lib" | "lib" | "library" => template = ProjectTemplate::Library,
+            "--workspace" | "workspace" => template = ProjectTemplate::Workspace,
+            "--plugin" | "plugin" => template = ProjectTemplate::Plugin,
+            "--package" | "package" => template = ProjectTemplate::Package,
+            other if name_opt.is_none() && !other.starts_with('-') => {
+                name_opt = Some(other.to_string())
+            }
+            other if !other.starts_with('-') => dir_opt = Some(PathBuf::from(other)),
+            _ => {}
         }
     }
 
-    if matches!(command, AdlCommand::Init)
-        && target_dir == env::current_dir().map_err(|error| error.to_string())?
-    {
-        target_dir = env::current_dir().map_err(|error| error.to_string())?;
+    let cwd = env::current_dir().map_err(|error| error.to_string())?;
+
+    match command {
+        AdlCommand::New => {
+            let name = name_opt.ok_or_else(|| {
+                "adl new requires a project name.\n\nUsage: adl new <project_name> [--lib]"
+                    .to_string()
+            })?;
+            let target_dir = dir_opt.unwrap_or_else(|| cwd.join(&name));
+            Ok((template, name, target_dir))
+        }
+        AdlCommand::Init => {
+            let target_dir = dir_opt
+                .or_else(|| name_opt.as_ref().map(PathBuf::from))
+                .unwrap_or_else(|| cwd.clone());
+            let name = target_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .filter(|s| !s.is_empty() && *s != ".")
+                .map(String::from)
+                .or(name_opt)
+                .unwrap_or_else(|| "my_app".to_string());
+            Ok((template, name, target_dir))
+        }
+        _ => {
+            let name = name_opt.unwrap_or_else(|| "my_app".to_string());
+            let target_dir = dir_opt.unwrap_or(cwd);
+            Ok((template, name, target_dir))
+        }
     }
-    Ok((template, name, target_dir))
 }
 
 fn parse_dependency_args(args: &[String]) -> Result<(String, String), String> {
@@ -708,8 +769,8 @@ fn parse_command(command: &str) -> Result<AdlCommand, String> {
 }
 
 fn print_help() {
-    let colors = std::env::var("NO_COLOR").is_err()
-        && std::env::var("TERM").map_or(true, |t| t != "dumb");
+    let colors =
+        std::env::var("NO_COLOR").is_err() && std::env::var("TERM").map_or(true, |t| t != "dumb");
 
     let c_reset = if colors { "\x1b[0m" } else { "" };
     let c_bold = if colors { "\x1b[1m" } else { "" };
@@ -721,10 +782,14 @@ fn print_help() {
     let c_white = if colors { "\x1b[1;37m" } else { "" };
 
     println!("{c_bold}{c_cyan}📦 ADL — AdeshLang Package Manager & Toolchain (v0.3.0){c_reset}");
-    println!("{c_gray}Official package manager, dependency resolver, and build orchestrator for AdeshLang.{c_reset}\n");
+    println!(
+        "{c_gray}Official package manager, dependency resolver, and build orchestrator for AdeshLang.{c_reset}\n"
+    );
 
     println!("{c_bold}{c_cyan}USAGE:{c_reset}");
-    println!("  {c_green}adl{c_reset} {c_yellow}<COMMAND>{c_reset} [{c_yellow}FLAGS{c_reset}] [{c_yellow}OPTIONS{c_reset}]\n");
+    println!(
+        "  {c_green}adl{c_reset} {c_yellow}<COMMAND>{c_reset} [{c_yellow}FLAGS{c_reset}] [{c_yellow}OPTIONS{c_reset}]\n"
+    );
 
     println!("{c_bold}{c_cyan}COMMANDS:{c_reset}");
 
@@ -732,48 +797,96 @@ fn print_help() {
         (
             "Project & Scaffold",
             &[
-                ("new <name>", "Create a new AdeshLang project with boilerplate layout"),
-                ("init [dir]", "Initialize an AdeshLang project in existing directory"),
+                (
+                    "new <name>",
+                    "Create a new AdeshLang project with boilerplate layout",
+                ),
+                (
+                    "init [dir]",
+                    "Initialize an AdeshLang project in existing directory",
+                ),
             ],
         ),
         (
             "Build, Run & Testing",
             &[
-                ("build", "Compile the project into target binaries or libraries"),
-                ("run [-- <args>]", "Build and execute the main project script"),
-                ("locate-bin [name]", "Locate binary builds (.exe, libs) or display bin directory"),
+                (
+                    "build",
+                    "Compile the project into target binaries or libraries",
+                ),
+                (
+                    "run [-- <args>]",
+                    "Build and execute the main project script",
+                ),
+                (
+                    "locate-bin [name]",
+                    "Locate binary builds (.exe, libs) or display bin directory",
+                ),
                 ("test", "Execute project test suite and embedded assertions"),
-                ("check", "Run type checker and memory-safety analysis without building"),
+                (
+                    "check",
+                    "Run type checker and memory-safety analysis without building",
+                ),
                 ("clean", "Remove target build artifacts and cache directory"),
             ],
         ),
         (
             "Dependency Management",
             &[
-                ("add <pkg>", "Add a new package dependency to adesh.adl manifest"),
-                ("remove <pkg>", "Remove a package dependency from project manifest"),
-                ("install", "Resolve and download dependencies into adl_modules/"),
+                (
+                    "add <pkg>",
+                    "Add a new package dependency to adesh.adl manifest",
+                ),
+                (
+                    "remove <pkg>",
+                    "Remove a package dependency from project manifest",
+                ),
+                (
+                    "install",
+                    "Resolve and download dependencies into adl_modules/",
+                ),
                 ("restore", "Restore dependencies matching lockfile state"),
-                ("update", "Update package dependencies to latest compatible versions"),
-                ("upgrade", "Upgrade project manifest dependencies to newest versions"),
+                (
+                    "update",
+                    "Update package dependencies to latest compatible versions",
+                ),
+                (
+                    "upgrade",
+                    "Upgrade project manifest dependencies to newest versions",
+                ),
                 ("resolve", "Solve dependency graph and write adesh.lock.adl"),
             ],
         ),
         (
             "Registry & Package Inspection",
             &[
-                ("search <query>", "Search global registry for published packages"),
-                ("info <pkg>", "Display metadata, dependencies, and specs for a package"),
+                (
+                    "search <query>",
+                    "Search global registry for published packages",
+                ),
+                (
+                    "info <pkg>",
+                    "Display metadata, dependencies, and specs for a package",
+                ),
                 ("list", "List installed dependencies and resolved versions"),
                 ("tree", "Display hierarchical dependency tree structure"),
-                ("graph", "Generate module and dependency visualization graph"),
-                ("why <pkg>", "Explain why a dependency is present in project graph"),
+                (
+                    "graph",
+                    "Generate module and dependency visualization graph",
+                ),
+                (
+                    "why <pkg>",
+                    "Explain why a dependency is present in project graph",
+                ),
             ],
         ),
         (
             "Formatting, Linting & Docs",
             &[
-                ("fmt", "Format source code according to official style guidelines"),
+                (
+                    "fmt",
+                    "Format source code according to official style guidelines",
+                ),
                 ("lint", "Run static analyzer to identify warnings and bugs"),
                 ("doc", "Generate HTML documentation for project API"),
             ],
@@ -784,23 +897,38 @@ fn print_help() {
                 ("login", "Authenticate with global package registry"),
                 ("logout", "Clear stored registry authentication tokens"),
                 ("publish", "Publish package version to registry"),
-                ("unpublish <pkg>", "Remove a published package version from registry"),
+                (
+                    "unpublish <pkg>",
+                    "Remove a published package version from registry",
+                ),
             ],
         ),
         (
             "Toolchain & Diagnostics",
             &[
                 ("doctor", "Diagnose environment health, linkers, and paths"),
-                ("bins", "List all compiled binary builds and available binary targets"),
-                ("vendor", "Vendor all external module dependencies into vendor/"),
+                (
+                    "bins",
+                    "List all compiled binary builds and available binary targets",
+                ),
+                (
+                    "vendor",
+                    "Vendor all external module dependencies into vendor/",
+                ),
                 ("benchmark", "Execute performance benchmark suite"),
                 ("profile", "Profile runtime memory and CPU performance"),
                 ("cache", "Inspect or purge global package cache"),
                 ("workspace", "Manage multi-package workspace manifest"),
-                ("script <name>", "Execute custom scripts defined in adesh.adl"),
+                (
+                    "script <name>",
+                    "Execute custom scripts defined in adesh.adl",
+                ),
                 ("version", "Display ADL package manager version info"),
                 ("config", "Inspect or update user configuration settings"),
-                ("env", "Display environment paths and active toolchain config"),
+                (
+                    "env",
+                    "Display environment paths and active toolchain config",
+                ),
                 ("target", "Display or configure active compilation targets"),
                 ("backend", "Select or configure execution backend"),
                 ("generate", "Generate code templates or bindings"),
@@ -813,7 +941,10 @@ fn print_help() {
     for (cat_title, cmds) in categories {
         println!("  {c_magenta}{cat_title}{c_reset}");
         for (cmd, desc) in *cmds {
-            println!("    {c_green}{:<22}{c_reset} {c_gray}•{c_reset} {desc}", cmd);
+            println!(
+                "    {c_green}{:<22}{c_reset} {c_gray}•{c_reset} {desc}",
+                cmd
+            );
         }
         println!();
     }
@@ -822,11 +953,21 @@ fn print_help() {
     println!("  {c_yellow}-h, --help{c_reset}       Print help information and command specs");
     println!("  {c_yellow}-v, --verbose{c_reset}    Enable detailed verbose debug logging");
     println!("  {c_yellow}--release{c_reset}        Execute build/run in optimized release mode");
-    println!("  {c_yellow}--debug{c_reset}          Enable debug symbols and intermediate IR dumps");
-    println!("  {c_yellow}--offline{c_reset}        Run operations without contacting remote network");
-    println!("  {c_yellow}--force{c_reset}          Force operation bypassing non-critical warnings");
-    println!("  {c_yellow}--dry-run{c_reset}        Preview operation without modifying disk or network");
-    println!("  {c_yellow}--locate-bin{c_reset}     Locate built binaries in project bin/target dirs\n");
+    println!(
+        "  {c_yellow}--debug{c_reset}          Enable debug symbols and intermediate IR dumps"
+    );
+    println!(
+        "  {c_yellow}--offline{c_reset}        Run operations without contacting remote network"
+    );
+    println!(
+        "  {c_yellow}--force{c_reset}          Force operation bypassing non-critical warnings"
+    );
+    println!(
+        "  {c_yellow}--dry-run{c_reset}        Preview operation without modifying disk or network"
+    );
+    println!(
+        "  {c_yellow}--locate-bin{c_reset}     Locate built binaries in project bin/target dirs\n"
+    );
 
     println!("{c_cyan}EXAMPLE USAGE:{c_reset}");
     println!("  {c_gray}# Create a new binary application project{c_reset}");
@@ -953,10 +1094,13 @@ mod tests {
 
     #[test]
     fn test_parse_locate_bin_flag() {
-        let args = vec!["adl".to_string(), "--locate-bin".to_string(), "my_app".to_string()];
+        let args = vec![
+            "adl".to_string(),
+            "--locate-bin".to_string(),
+            "my_app".to_string(),
+        ];
         let parsed = parse_args(args).unwrap();
         assert_eq!(parsed.command, AdlCommand::LocateBin);
         assert_eq!(parsed.args, vec!["my_app".to_string()]);
     }
 }
-

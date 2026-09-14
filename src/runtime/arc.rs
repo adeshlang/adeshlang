@@ -92,9 +92,7 @@ pub unsafe extern "C" fn arc_alloc_with_drop(
 
         // Store destructor function pointer (null if none)
         let drop_fn_ptr = ptr.add(DROPFN_OFFSET) as *mut *mut u8;
-        (*drop_fn_ptr) = drop_fn
-            .map(|f| f as *mut u8)
-            .unwrap_or(ptr::null_mut());
+        (*drop_fn_ptr) = drop_fn.map(|f| f as *mut u8).unwrap_or(ptr::null_mut());
 
         // Return pointer to data (after header)
         ptr.add(HEADER_SIZE)
@@ -195,9 +193,7 @@ pub unsafe extern "C" fn arc_get_count(ptr: *mut u8) -> usize {
             return 0;
         }
 
-        let ref_count_ptr = ptr
-            .sub(HEADER_SIZE)
-            .add(REFCOUNT_OFFSET) as *mut AtomicUsize;
+        let ref_count_ptr = ptr.sub(HEADER_SIZE).add(REFCOUNT_OFFSET) as *mut AtomicUsize;
         (*ref_count_ptr).load(Ordering::Relaxed)
     }
 }
@@ -239,12 +235,8 @@ pub unsafe extern "C" fn arc_set_drop_fn(ptr: *mut u8, drop_fn: Option<ArcDropFn
             return;
         }
 
-        let drop_fn_ptr = ptr
-            .sub(HEADER_SIZE)
-            .add(DROPFN_OFFSET) as *mut *mut u8;
-        (*drop_fn_ptr) = drop_fn
-            .map(|f| f as *mut u8)
-            .unwrap_or(ptr::null_mut());
+        let drop_fn_ptr = ptr.sub(HEADER_SIZE).add(DROPFN_OFFSET) as *mut *mut u8;
+        (*drop_fn_ptr) = drop_fn.map(|f| f as *mut u8).unwrap_or(ptr::null_mut());
     }
 }
 

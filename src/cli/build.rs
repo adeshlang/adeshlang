@@ -804,7 +804,11 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
 
             // If inside an ADL project, ensure .adl/bin has a copy of the built binary
             if let Some(layout) = crate::ecosystem::project::ProjectLayout::discover(&output)
-                .or_else(|| std::env::current_dir().ok().and_then(|cwd| crate::ecosystem::project::ProjectLayout::discover(cwd)))
+                .or_else(|| {
+                    std::env::current_dir()
+                        .ok()
+                        .and_then(|cwd| crate::ecosystem::project::ProjectLayout::discover(cwd))
+                })
             {
                 let _ = layout.ensure_layout();
                 if let Some(fname) = output.file_name() {

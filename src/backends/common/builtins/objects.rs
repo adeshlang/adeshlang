@@ -13,27 +13,38 @@ use super::RuntimeValue;
 use super::arrays::infer_array_type;
 use super::io::{runtime_input_checkbox, runtime_input_radio};
 use crate::utils::collections::FastMap;
-use std::sync::{Mutex, OnceLock};
 use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 pub static JIT_ARC_VALUES: OnceLock<Mutex<HashMap<u64, RuntimeValue>>> = OnceLock::new();
 
 pub fn get_jit_arc_value(handle: u64) -> Option<RuntimeValue> {
-    JIT_ARC_VALUES.get_or_init(|| Mutex::new(HashMap::new()))
-        .lock().ok()?
-        .get(&handle).cloned()
+    JIT_ARC_VALUES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .ok()?
+        .get(&handle)
+        .cloned()
 }
 
 #[allow(dead_code)]
 pub fn insert_jit_arc_value(handle: u64, value: RuntimeValue) {
-    if let Some(mut guard) = JIT_ARC_VALUES.get_or_init(|| Mutex::new(HashMap::new())).lock().ok() {
+    if let Some(mut guard) = JIT_ARC_VALUES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .ok()
+    {
         guard.insert(handle, value);
     }
 }
 
 #[allow(dead_code)]
 pub fn remove_jit_arc_value(handle: u64) {
-    if let Some(mut guard) = JIT_ARC_VALUES.get_or_init(|| Mutex::new(HashMap::new())).lock().ok() {
+    if let Some(mut guard) = JIT_ARC_VALUES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .ok()
+    {
         guard.remove(&handle);
     }
 }
@@ -222,17 +233,29 @@ pub(crate) fn runtime_get_field(args: &[RuntimeValue]) -> RuntimeValue {
                                 crate::parsing::ast::Value::Number(n) => RuntimeValue::Float(*n),
                                 crate::parsing::ast::Value::I64(n) => RuntimeValue::Int(*n),
                                 crate::parsing::ast::Value::U64(n) => RuntimeValue::Int(*n as i64),
-                                crate::parsing::ast::Value::Str(s) => RuntimeValue::String(s.clone()),
+                                crate::parsing::ast::Value::Str(s) => {
+                                    RuntimeValue::String(s.clone())
+                                }
                                 crate::parsing::ast::Value::Bool(b) => RuntimeValue::Bool(*b),
                                 crate::parsing::ast::Value::Object(m) => {
                                     let mut map = crate::utils::collections::FastMap::default();
                                     for (k, val_inner) in m.iter() {
                                         let v_rv = match val_inner {
-                                            crate::parsing::ast::Value::Number(n) => RuntimeValue::Float(*n),
-                                            crate::parsing::ast::Value::I64(n) => RuntimeValue::Int(*n),
-                                            crate::parsing::ast::Value::U64(n) => RuntimeValue::Int(*n as i64),
-                                            crate::parsing::ast::Value::Str(s) => RuntimeValue::String(s.clone()),
-                                            crate::parsing::ast::Value::Bool(b) => RuntimeValue::Bool(*b),
+                                            crate::parsing::ast::Value::Number(n) => {
+                                                RuntimeValue::Float(*n)
+                                            }
+                                            crate::parsing::ast::Value::I64(n) => {
+                                                RuntimeValue::Int(*n)
+                                            }
+                                            crate::parsing::ast::Value::U64(n) => {
+                                                RuntimeValue::Int(*n as i64)
+                                            }
+                                            crate::parsing::ast::Value::Str(s) => {
+                                                RuntimeValue::String(s.clone())
+                                            }
+                                            crate::parsing::ast::Value::Bool(b) => {
+                                                RuntimeValue::Bool(*b)
+                                            }
                                             _ => RuntimeValue::Null,
                                         };
                                         map.insert(k.clone(), v_rv);
@@ -751,7 +774,11 @@ pub(crate) fn runtime_call_method(args: &[RuntimeValue]) -> RuntimeValue {
         _ => {
             // Universal Stdlib Method Fallback for any module/object method call (e.g. FS.readFile, Path.join, Crypto.sha256, etc.)
             if let RuntimeValue::Object(m) = obj {
-                let target_name = if let Some(type_str) = m.get("__name").or_else(|| m.get("__type")).map(|v| v.as_string()) {
+                let target_name = if let Some(type_str) = m
+                    .get("__name")
+                    .or_else(|| m.get("__type"))
+                    .map(|v| v.as_string())
+                {
                     format!("{}.{}", type_str, method_name)
                 } else {
                     method_name.clone()

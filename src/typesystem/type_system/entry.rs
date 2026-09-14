@@ -124,9 +124,8 @@ pub fn check_module_in(src: &str, file: Option<&str>) -> Result<(), LangError> {
     for (sd, span) in all_structs {
         let mut req: Vec<(String, Ty)> = Vec::new();
         for (fname, fty) in &sd.fields {
-            let resolved =
-                resolve_type_name(fty, &aliases, &generic_aliases, &empty_type_params)
-                    .or_else(|| type_from_name(fty));
+            let resolved = resolve_type_name(fty, &aliases, &generic_aliases, &empty_type_params)
+                .or_else(|| type_from_name(fty));
             if let Some(ft) = resolved {
                 req.push((fname.clone(), ft));
             } else {
@@ -169,12 +168,26 @@ pub fn check_module_in(src: &str, file: Option<&str>) -> Result<(), LangError> {
                 let (m, rest) = msg.split_at(idx);
                 let span_info = &rest["@@span:".len()..];
                 let parts: Vec<&str> = span_info.splitn(3, ':').collect();
-                let l = parts.get(0).and_then(|x| x.parse().ok()).unwrap_or(s.span.line);
-                let c = parts.get(1).and_then(|x| x.parse().ok()).unwrap_or(s.span.col);
-                let text = parts.get(2).map(|x| x.to_string()).unwrap_or_else(|| s.span.line_text.clone());
+                let l = parts
+                    .get(0)
+                    .and_then(|x| x.parse().ok())
+                    .unwrap_or(s.span.line);
+                let c = parts
+                    .get(1)
+                    .and_then(|x| x.parse().ok())
+                    .unwrap_or(s.span.col);
+                let text = parts
+                    .get(2)
+                    .map(|x| x.to_string())
+                    .unwrap_or_else(|| s.span.line_text.clone());
                 (m.to_string(), l, c, text)
             } else {
-                (msg.clone(), s.span.line, s.span.col, s.span.line_text.clone())
+                (
+                    msg.clone(),
+                    s.span.line,
+                    s.span.col,
+                    s.span.line_text.clone(),
+                )
             };
             let code = if clean_msg.contains("await is only valid inside async functions") {
                 "E_ASYNC_CONTEXT"

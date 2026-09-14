@@ -1,8 +1,8 @@
 //! OpenAPI 3.0.3 & JSON Schema Document Generator for AdeshLang HTTP Standard Library.
 
 use crate::parsing::ast::Value;
-use crate::utils::collections::FastMap;
 use crate::runtime::stdlib_src::http::schema::{FieldType, Schema};
+use crate::utils::collections::FastMap;
 use std::sync::Arc;
 
 /// OpenAPI Document Generator
@@ -44,11 +44,13 @@ impl OpenAPIGenerator {
                 }
                 FieldType::Domain(kind) => {
                     field_schema.insert("type".to_string(), Value::Str("string".to_string()));
-                    field_schema.insert("format".to_string(), Value::Str(kind.name().to_lowercase()));
+                    field_schema
+                        .insert("format".to_string(), Value::Str(kind.name().to_lowercase()));
                 }
                 FieldType::Enum(variants) => {
                     field_schema.insert("type".to_string(), Value::Str("string".to_string()));
-                    let enum_arr: Vec<Value> = variants.iter().map(|v| Value::Str(v.clone())).collect();
+                    let enum_arr: Vec<Value> =
+                        variants.iter().map(|v| Value::Str(v.clone())).collect();
                     field_schema.insert("enum".to_string(), Value::Array(enum_arr));
                 }
                 FieldType::Array(inner) => {
@@ -94,7 +96,10 @@ impl OpenAPIGenerator {
         }
 
         components.insert("schemas".to_string(), Value::Object(Arc::new(schemas_map)));
-        root.insert("components".to_string(), Value::Object(Arc::new(components)));
+        root.insert(
+            "components".to_string(),
+            Value::Object(Arc::new(components)),
+        );
 
         Value::Object(Arc::new(root))
     }

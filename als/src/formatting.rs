@@ -2,8 +2,8 @@
 //!
 //! Integrates with Adesh's formatter for document formatting.
 
-use lsp_types::{TextEdit, Range, Position};
 use crate::document::Document;
+use lsp_types::{Position, Range, TextEdit};
 
 /// Format an entire document
 pub fn format_document(doc: &Document) -> Vec<TextEdit> {
@@ -14,7 +14,10 @@ pub fn format_document(doc: &Document) -> Vec<TextEdit> {
             if formatted != doc.content {
                 vec![TextEdit {
                     range: Range {
-                        start: Position { line: 0, character: 0 },
+                        start: Position {
+                            line: 0,
+                            character: 0,
+                        },
                         end: Position {
                             line: doc.line_count() as u32,
                             character: 0,
@@ -50,7 +53,7 @@ mod tests {
     fn test_format_document() {
         let uri = Url::parse("file:///test.adesh").unwrap();
         let doc = Document::new(uri, "let x=1;".to_string(), 1);
-        
+
         let edits = format_document(&doc);
         assert!(!edits.is_empty());
         assert!(edits[0].new_text.contains("let x = 1;"));
@@ -60,7 +63,7 @@ mod tests {
     fn test_format_already_formatted() {
         let uri = Url::parse("file:///test.adesh").unwrap();
         let doc = Document::new(uri, "let x = 1;\n".to_string(), 1);
-        
+
         let edits = format_document(&doc);
         // Should return empty if already formatted
         assert!(edits.is_empty() || edits[0].new_text == doc.content);
@@ -70,7 +73,7 @@ mod tests {
     fn test_format_syntax_error() {
         let uri = Url::parse("file:///test.adesh").unwrap();
         let doc = Document::new(uri, "let x = ".to_string(), 1);
-        
+
         let edits = format_document(&doc);
         // Should return empty on syntax error
         assert!(edits.is_empty());

@@ -45,13 +45,13 @@
 use num_bigint::BigInt;
 #[cfg(test)]
 use num_traits::ToPrimitive;
-use std::sync::Arc;
 use once_cell::sync::Lazy;
-use std::sync::RwLock;
-use std::sync::Mutex;
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, AtomicU32, AtomicUsize, Ordering};
 use std::alloc::Layout;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::RwLock;
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 // ============================================
 // CONSTANTS
@@ -65,34 +65,34 @@ const CHUNK_SIZE: usize = 4096;
 pub struct NanValue(u64);
 
 // 16-bit Tag constants using quiet NaN range (0xFFF8 to 0xFFFF)
-const TAG_I64: u64     = 0xFFF8_0000_0000_0000;
-const TAG_U64: u64     = 0xFFF9_0000_0000_0000;
+const TAG_I64: u64 = 0xFFF8_0000_0000_0000;
+const TAG_U64: u64 = 0xFFF9_0000_0000_0000;
 const TAG_POINTER: u64 = 0xFFFA_0000_0000_0000;
-const TAG_NULL: u64    = 0xFFFC_0000_0000_0000;
-const TAG_FALSE: u64   = 0xFFFD_0000_0000_0000;
-const TAG_TRUE: u64    = 0xFFFD_0000_0000_0001;
-const TAG_CHAR: u64    = 0xFFFE_0000_0000_0000;
+const TAG_NULL: u64 = 0xFFFC_0000_0000_0000;
+const TAG_FALSE: u64 = 0xFFFD_0000_0000_0000;
+const TAG_TRUE: u64 = 0xFFFD_0000_0000_0001;
+const TAG_CHAR: u64 = 0xFFFE_0000_0000_0000;
 
 // Sub-tagged small types under 0xFFFB
-const TAG_I8: u64      = 0xFFFB_0100_0000_0000;
-const TAG_I16: u64    = 0xFFFB_0200_0000_0000;
-const TAG_I32: u64    = 0xFFFB_0300_0000_0000;
-const TAG_U8: u64     = 0xFFFB_0400_0000_0000;
-const TAG_U16: u64    = 0xFFFB_0500_0000_0000;
-const TAG_U32: u64    = 0xFFFB_0600_0000_0000;
-const TAG_F32: u64    = 0xFFFB_0700_0000_0000;
-const TAG_I128: u64   = 0xFFFB_0800_0000_0000;
-const TAG_U128: u64   = 0xFFFB_0900_0000_0000;
+const TAG_I8: u64 = 0xFFFB_0100_0000_0000;
+const TAG_I16: u64 = 0xFFFB_0200_0000_0000;
+const TAG_I32: u64 = 0xFFFB_0300_0000_0000;
+const TAG_U8: u64 = 0xFFFB_0400_0000_0000;
+const TAG_U16: u64 = 0xFFFB_0500_0000_0000;
+const TAG_U32: u64 = 0xFFFB_0600_0000_0000;
+const TAG_F32: u64 = 0xFFFB_0700_0000_0000;
+const TAG_I128: u64 = 0xFFFB_0800_0000_0000;
+const TAG_U128: u64 = 0xFFFB_0900_0000_0000;
 
 // Masks for tag and payload extractions
-const TAG_16_MASK: u64         = 0xFFFF_0000_0000_0000;
-const TAG_24_MASK: u64         = 0xFFFF_FF00_0000_0000;
-const PAYLOAD_48_MASK: u64     = 0x0000_FFFF_FFFF_FFFF;
-const PAYLOAD_40_MASK: u64     = 0x0000_00FF_FFFF_FFFF;
+const TAG_16_MASK: u64 = 0xFFFF_0000_0000_0000;
+const TAG_24_MASK: u64 = 0xFFFF_FF00_0000_0000;
+const PAYLOAD_48_MASK: u64 = 0x0000_FFFF_FFFF_FFFF;
+const PAYLOAD_40_MASK: u64 = 0x0000_00FF_FFFF_FFFF;
 
 // Handle packing: 32-bit index + 16-bit generation in the 48-bit payload
-const INDEX_MASK: u64   = 0x0000_0000_FFFF_FFFF; // lower 32 bits of payload
-const GEN_SHIFT: u32     = 32;                     // generation is in bits 32-47 of payload
+const INDEX_MASK: u64 = 0x0000_0000_FFFF_FFFF; // lower 32 bits of payload
+const GEN_SHIFT: u32 = 32; // generation is in bits 32-47 of payload
 // GEN_MASK omitted — not needed; generation is extracted via shift + mask inline.
 
 // State packing for chunk slots: 16-bit generation (high) + 1 DYING bit + 47-bit refcount (low)
@@ -282,7 +282,9 @@ impl ObjectRegistry {
     /// 4. Rejects when `refcount >= MAX_REFCOUNT` (overflow protection).
     /// 5. Performs a lock-free compare-exchange loop to increment refcount by 1.
     pub fn try_increment_ref(&self, index: u32, generation: u16) -> Result<(), IncrementRefError> {
-        let chunk_ptr = self.get_chunk(index).ok_or(IncrementRefError::InvalidIndex)?;
+        let chunk_ptr = self
+            .get_chunk(index)
+            .ok_or(IncrementRefError::InvalidIndex)?;
         let offset = (index as usize) % CHUNK_SIZE;
 
         loop {
@@ -670,9 +672,15 @@ impl NanValue {
                     let top24 = (self.0 >> 40) as u32;
                     matches!(
                         top24,
-                        0xFFFB01 | 0xFFFB02 | 0xFFFB03 |
-                        0xFFFB04 | 0xFFFB05 | 0xFFFB06 |
-                        0xFFFB07 | 0xFFFB08 | 0xFFFB09
+                        0xFFFB01
+                            | 0xFFFB02
+                            | 0xFFFB03
+                            | 0xFFFB04
+                            | 0xFFFB05
+                            | 0xFFFB06
+                            | 0xFFFB07
+                            | 0xFFFB08
+                            | 0xFFFB09
                     )
                 }
                 0xFFFC => self.0 == TAG_NULL, // TAG_NULL — payload must be exactly 0
@@ -715,23 +723,64 @@ impl NanValue {
     }
 
     /// Type-checking methods for individual integer/float types
-    #[inline(always)] pub fn is_i8(&self) -> bool { (self.0 & TAG_24_MASK) == TAG_I8 }
-    #[inline(always)] pub fn is_i16(&self) -> bool { (self.0 & TAG_24_MASK) == TAG_I16 }
-    #[inline(always)] pub fn is_i32(&self) -> bool { (self.0 & TAG_24_MASK) == TAG_I32 }
-    #[inline(always)] pub fn is_i64(&self) -> bool { (self.0 & TAG_16_MASK) == TAG_I64 }
-    #[inline(always)] pub fn is_u8(&self) -> bool { (self.0 & TAG_24_MASK) == TAG_U8 }
-    #[inline(always)] pub fn is_u16(&self) -> bool { (self.0 & TAG_24_MASK) == TAG_U16 }
-    #[inline(always)] pub fn is_u32(&self) -> bool { (self.0 & TAG_24_MASK) == TAG_U32 }
-    #[inline(always)] pub fn is_u64(&self) -> bool { (self.0 & TAG_16_MASK) == TAG_U64 }
-    #[inline(always)] pub fn is_f32(&self) -> bool { (self.0 & TAG_24_MASK) == TAG_F32 }
-    #[inline(always)] pub fn is_i128(&self) -> bool { (self.0 & TAG_24_MASK) == TAG_I128 }
-    #[inline(always)] pub fn is_u128(&self) -> bool { (self.0 & TAG_24_MASK) == TAG_U128 }
+    #[inline(always)]
+    pub fn is_i8(&self) -> bool {
+        (self.0 & TAG_24_MASK) == TAG_I8
+    }
+    #[inline(always)]
+    pub fn is_i16(&self) -> bool {
+        (self.0 & TAG_24_MASK) == TAG_I16
+    }
+    #[inline(always)]
+    pub fn is_i32(&self) -> bool {
+        (self.0 & TAG_24_MASK) == TAG_I32
+    }
+    #[inline(always)]
+    pub fn is_i64(&self) -> bool {
+        (self.0 & TAG_16_MASK) == TAG_I64
+    }
+    #[inline(always)]
+    pub fn is_u8(&self) -> bool {
+        (self.0 & TAG_24_MASK) == TAG_U8
+    }
+    #[inline(always)]
+    pub fn is_u16(&self) -> bool {
+        (self.0 & TAG_24_MASK) == TAG_U16
+    }
+    #[inline(always)]
+    pub fn is_u32(&self) -> bool {
+        (self.0 & TAG_24_MASK) == TAG_U32
+    }
+    #[inline(always)]
+    pub fn is_u64(&self) -> bool {
+        (self.0 & TAG_16_MASK) == TAG_U64
+    }
+    #[inline(always)]
+    pub fn is_f32(&self) -> bool {
+        (self.0 & TAG_24_MASK) == TAG_F32
+    }
+    #[inline(always)]
+    pub fn is_i128(&self) -> bool {
+        (self.0 & TAG_24_MASK) == TAG_I128
+    }
+    #[inline(always)]
+    pub fn is_u128(&self) -> bool {
+        (self.0 & TAG_24_MASK) == TAG_U128
+    }
 
     /// Check if this value is any boxed integer type
     #[inline(always)]
     pub fn is_int48(&self) -> bool {
-        self.is_i64() || self.is_u64() || self.is_i8() || self.is_i16() || self.is_i32() ||
-        self.is_u8() || self.is_u16() || self.is_u32() || self.is_i128() || self.is_u128()
+        self.is_i64()
+            || self.is_u64()
+            || self.is_i8()
+            || self.is_i16()
+            || self.is_i32()
+            || self.is_u8()
+            || self.is_u16()
+            || self.is_u32()
+            || self.is_i128()
+            || self.is_u128()
     }
 
     // ----------------------------------------
@@ -761,9 +810,30 @@ impl NanValue {
     }
 
     /// Getters for type-preserving values
-    #[inline(always)] pub fn as_i8(&self) -> Option<i8> { if self.is_i8() { Some((self.0 & PAYLOAD_40_MASK) as u8 as i8) } else { None } }
-    #[inline(always)] pub fn as_i16(&self) -> Option<i16> { if self.is_i16() { Some((self.0 & PAYLOAD_40_MASK) as u16 as i16) } else { None } }
-    #[inline(always)] pub fn as_i32(&self) -> Option<i32> { if self.is_i32() { Some((self.0 & PAYLOAD_40_MASK) as u32 as i32) } else { None } }
+    #[inline(always)]
+    pub fn as_i8(&self) -> Option<i8> {
+        if self.is_i8() {
+            Some((self.0 & PAYLOAD_40_MASK) as u8 as i8)
+        } else {
+            None
+        }
+    }
+    #[inline(always)]
+    pub fn as_i16(&self) -> Option<i16> {
+        if self.is_i16() {
+            Some((self.0 & PAYLOAD_40_MASK) as u16 as i16)
+        } else {
+            None
+        }
+    }
+    #[inline(always)]
+    pub fn as_i32(&self) -> Option<i32> {
+        if self.is_i32() {
+            Some((self.0 & PAYLOAD_40_MASK) as u32 as i32)
+        } else {
+            None
+        }
+    }
 
     #[inline]
     pub fn as_i64(&self) -> Option<i64> {
@@ -781,11 +851,46 @@ impl NanValue {
         }
     }
 
-    #[inline(always)] pub fn as_u8(&self) -> Option<u8> { if self.is_u8() { Some((self.0 & PAYLOAD_40_MASK) as u8) } else { None } }
-    #[inline(always)] pub fn as_u16(&self) -> Option<u16> { if self.is_u16() { Some((self.0 & PAYLOAD_40_MASK) as u16) } else { None } }
-    #[inline(always)] pub fn as_u32(&self) -> Option<u32> { if self.is_u32() { Some((self.0 & PAYLOAD_40_MASK) as u32) } else { None } }
-    #[inline(always)] pub fn as_u64(&self) -> Option<u64> { if self.is_u64() { Some(self.0 & PAYLOAD_48_MASK) } else { None } }
-    #[inline(always)] pub fn as_f32(&self) -> Option<f32> { if self.is_f32() { Some(f32::from_bits((self.0 & PAYLOAD_40_MASK) as u32)) } else { None } }
+    #[inline(always)]
+    pub fn as_u8(&self) -> Option<u8> {
+        if self.is_u8() {
+            Some((self.0 & PAYLOAD_40_MASK) as u8)
+        } else {
+            None
+        }
+    }
+    #[inline(always)]
+    pub fn as_u16(&self) -> Option<u16> {
+        if self.is_u16() {
+            Some((self.0 & PAYLOAD_40_MASK) as u16)
+        } else {
+            None
+        }
+    }
+    #[inline(always)]
+    pub fn as_u32(&self) -> Option<u32> {
+        if self.is_u32() {
+            Some((self.0 & PAYLOAD_40_MASK) as u32)
+        } else {
+            None
+        }
+    }
+    #[inline(always)]
+    pub fn as_u64(&self) -> Option<u64> {
+        if self.is_u64() {
+            Some(self.0 & PAYLOAD_48_MASK)
+        } else {
+            None
+        }
+    }
+    #[inline(always)]
+    pub fn as_f32(&self) -> Option<f32> {
+        if self.is_f32() {
+            Some(f32::from_bits((self.0 & PAYLOAD_40_MASK) as u32))
+        } else {
+            None
+        }
+    }
 
     #[inline]
     pub fn as_i128(&self) -> Option<i128> {
@@ -803,7 +908,14 @@ impl NanValue {
         }
     }
 
-    #[inline(always)] pub fn as_u128(&self) -> Option<u128> { if self.is_u128() { Some((self.0 & PAYLOAD_40_MASK) as u128) } else { None } }
+    #[inline(always)]
+    pub fn as_u128(&self) -> Option<u128> {
+        if self.is_u128() {
+            Some((self.0 & PAYLOAD_40_MASK) as u128)
+        } else {
+            None
+        }
+    }
 
     /// Extract any boxed integer value as i64 (Legacy API compatibility)
     #[inline]
@@ -976,7 +1088,10 @@ impl Clone for NanValue {
                     );
                 }
                 Err(IncrementRefError::RefcountOverflow) => {
-                    panic!("NanValue::clone failed: reference count overflow (index={})", index);
+                    panic!(
+                        "NanValue::clone failed: reference count overflow (index={})",
+                        index
+                    );
                 }
             }
         }
@@ -1405,7 +1520,10 @@ mod tests {
         // (The free list is per-shard, so we may need several allocations.)
         let mut keep = Vec::new();
         for i in 0..256 {
-            keep.push(NanValue::from_heap(HeapValue::String(format!("recycled_{}", i))));
+            keep.push(NanValue::from_heap(HeapValue::String(format!(
+                "recycled_{}",
+                i
+            ))));
         }
 
         // The stale bits should not resolve to a valid heap value.
@@ -1637,7 +1755,9 @@ mod tests {
         use std::thread;
 
         // Create an object on one thread, share it with another, verify access.
-        let v = Arc::new(NanValue::from_heap(HeapValue::String("cross_thread".to_string())));
+        let v = Arc::new(NanValue::from_heap(HeapValue::String(
+            "cross_thread".to_string(),
+        )));
 
         let v_clone = v.clone();
         let handle = thread::spawn(move || {
@@ -1662,7 +1782,9 @@ mod tests {
         use std::thread;
 
         // Concurrently create objects and try_from_bits their handles.
-        let v = Arc::new(NanValue::from_heap(HeapValue::String("bits_test".to_string())));
+        let v = Arc::new(NanValue::from_heap(HeapValue::String(
+            "bits_test".to_string(),
+        )));
         let bits = v.as_bits();
 
         let mut handles = vec![];
@@ -1742,14 +1864,20 @@ mod tests {
         // child values reside in the same shard as the parent.
         let mut current_layer = Vec::new();
         for i in 0..50 {
-            current_layer.push(NanValue::from_heap(HeapValue::String(format!("leaf_{}", i))));
+            current_layer.push(NanValue::from_heap(HeapValue::String(format!(
+                "leaf_{}",
+                i
+            ))));
         }
 
         for level in 0..10 {
             let mut next_layer = Vec::new();
             for i in 0..10 {
                 let mut map = std::collections::HashMap::new();
-                map.insert(format!("key_{}_{}", level, i), NanValue::from_heap(HeapValue::Array(current_layer.clone())));
+                map.insert(
+                    format!("key_{}_{}", level, i),
+                    NanValue::from_heap(HeapValue::Array(current_layer.clone())),
+                );
                 next_layer.push(NanValue::from_heap(HeapValue::Object(map)));
             }
             current_layer = next_layer;
@@ -1807,7 +1935,11 @@ mod tests {
         // Free list for this shard should not contain this slot with next generation wrapped
         let shard_idx = (index % (SHARD_COUNT as u32)) as usize;
         let free_list = REGISTRY.shards[shard_idx].free_list.lock().unwrap();
-        assert!(!free_list.iter().any(|e| e.index == index && e.next_generation == 0));
+        assert!(
+            !free_list
+                .iter()
+                .any(|e| e.index == index && e.next_generation == 0)
+        );
     }
 
     #[test]
@@ -1833,11 +1965,21 @@ mod tests {
             // (bits, expected_is_double, expected_is_valid, description)
             (0x0000_0000_0000_0000, true, true, "zero float"),
             (0x3FF0_0000_0000_0000, true, true, "1.0 float"),
-            (0x7FF7_FFFF_FFFF_FFFF, true, true, "boundary before quiet NaN"),
+            (
+                0x7FF7_FFFF_FFFF_FFFF,
+                true,
+                true,
+                "boundary before quiet NaN",
+            ),
             (0x7FF8_0000_0000_0000, true, true, "canonical quiet NaN"),
             (0x7FFF_FFFF_FFFF_FFFF, true, true, "max quiet NaN float"),
             (0xFFF0_0000_0000_0000, true, true, "-Infinity"),
-            (0xFFF7_FFFF_FFFF_FFFF, true, true, "boundary before tagged space"),
+            (
+                0xFFF7_FFFF_FFFF_FFFF,
+                true,
+                true,
+                "boundary before tagged space",
+            ),
             (TAG_I64, false, true, "TAG_I64"),
             (TAG_U64, false, true, "TAG_U64"),
             (TAG_POINTER, false, true, "TAG_POINTER"),
@@ -1853,12 +1995,27 @@ mod tests {
             (0xFFFB_0000_0000_0000, false, false, "invalid subtype 00"),
             (0xFFFB_0A00_0000_0000, false, false, "invalid subtype 0A"),
             (TAG_NULL, false, true, "TAG_NULL"),
-            (TAG_NULL | 0x1, false, false, "TAG_NULL with non-zero payload"),
+            (
+                TAG_NULL | 0x1,
+                false,
+                false,
+                "TAG_NULL with non-zero payload",
+            ),
             (TAG_FALSE, false, true, "TAG_FALSE"),
             (TAG_TRUE, false, true, "TAG_TRUE"),
-            (0xFFFD_0000_0000_0002, false, false, "invalid boolean payload"),
+            (
+                0xFFFD_0000_0000_0002,
+                false,
+                false,
+                "invalid boolean payload",
+            ),
             (TAG_CHAR | 0x41, false, true, "TAG_CHAR ('A')"),
-            (TAG_CHAR | 0x0011_0000, false, false, "invalid char code point"),
+            (
+                TAG_CHAR | 0x0011_0000,
+                false,
+                false,
+                "invalid char code point",
+            ),
             (0xFFFF_0000_0000_0000, false, false, "TAG 0xFFFF reserved"),
         ];
 

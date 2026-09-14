@@ -188,7 +188,11 @@ pub fn validate_client_upgrade_response(
     }
 }
 
-fn ensure_header_token(headers: &Headers, name: &str, expected_token: &str) -> Result<(), HttpError> {
+fn ensure_header_token(
+    headers: &Headers,
+    name: &str,
+    expected_token: &str,
+) -> Result<(), HttpError> {
     let raw = headers.get(name).ok_or_else(|| {
         HttpError::new(
             HttpErrorKind::InvalidHeader,

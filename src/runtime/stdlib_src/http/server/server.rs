@@ -332,7 +332,9 @@ fn read_request(stream: &mut TcpStream) -> Result<Vec<u8>, HttpError> {
                     for line in header_str.lines() {
                         let lower = line.to_ascii_lowercase();
                         if lower.starts_with("content-length:") {
-                            if let Ok(len) = lower["content-length:".len()..].trim().parse::<usize>() {
+                            if let Ok(len) =
+                                lower["content-length:".len()..].trim().parse::<usize>()
+                            {
                                 content_len = len;
                             }
                         }
@@ -367,9 +369,17 @@ fn read_request(stream: &mut TcpStream) -> Result<Vec<u8>, HttpError> {
 fn write_response(stream: &mut TcpStream, resp: &Response) {
     let mut mut_resp = resp.clone();
     let _ = mut_resp.headers.insert("Access-Control-Allow-Origin", "*");
-    let _ = mut_resp.headers.insert("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
-    let _ = mut_resp.headers.insert("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept");
-    let _ = mut_resp.headers.insert("Access-Control-Allow-Credentials", "true");
+    let _ = mut_resp.headers.insert(
+        "Access-Control-Allow-Methods",
+        "GET, POST, PUT, DELETE, PATCH, OPTIONS",
+    );
+    let _ = mut_resp.headers.insert(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Authorization, X-Requested-With, Accept",
+    );
+    let _ = mut_resp
+        .headers
+        .insert("Access-Control-Allow-Credentials", "true");
 
     if let Ok(wire) = encode_response(&mut_resp) {
         let mut writer = BufWriter::with_capacity(8192, stream);

@@ -49,13 +49,25 @@ impl DomainTypeKind {
                     return Err(format!("Invalid email address format: '{}'", val));
                 }
                 let parts: Vec<&str> = val.split('@').collect();
-                if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() || !parts[1].contains('.') {
+                if parts.len() != 2
+                    || parts[0].is_empty()
+                    || parts[1].is_empty()
+                    || !parts[1].contains('.')
+                {
                     return Err(format!("Invalid email address format: '{}'", val));
                 }
             }
             DomainTypeKind::URL => {
-                if !(val.starts_with("http://") || val.starts_with("https://") || val.starts_with("ftp://") || val.starts_with("ws://") || val.starts_with("wss://")) {
-                    return Err(format!("Invalid URL format (must specify valid scheme): '{}'", val));
+                if !(val.starts_with("http://")
+                    || val.starts_with("https://")
+                    || val.starts_with("ftp://")
+                    || val.starts_with("ws://")
+                    || val.starts_with("wss://"))
+                {
+                    return Err(format!(
+                        "Invalid URL format (must specify valid scheme): '{}'",
+                        val
+                    ));
                 }
             }
             DomainTypeKind::UUID => {
@@ -84,7 +96,11 @@ impl DomainTypeKind {
                     return Err(format!("Invalid hostname format: '{}'", val));
                 }
                 for label in val.split('.') {
-                    if label.is_empty() || label.len() > 63 || label.starts_with('-') || label.ends_with('-') {
+                    if label.is_empty()
+                        || label.len() > 63
+                        || label.starts_with('-')
+                        || label.ends_with('-')
+                    {
                         return Err(format!("Invalid hostname label in '{}'", val));
                     }
                 }
@@ -92,7 +108,8 @@ impl DomainTypeKind {
             DomainTypeKind::HttpMethod => {
                 let m = val.to_uppercase();
                 match m.as_str() {
-                    "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS" | "CONNECT" | "TRACE" | "QUERY" => {}
+                    "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS"
+                    | "CONNECT" | "TRACE" | "QUERY" => {}
                     _ => return Err(format!("Invalid HTTP method: '{}'", val)),
                 }
             }
@@ -104,12 +121,20 @@ impl DomainTypeKind {
             DomainTypeKind::DateTime => {
                 // Accepts ISO-8601 / RFC 3339 formats, e.g. 2026-08-16T22:00:00Z
                 if !val.contains('T') && !val.contains(' ') {
-                    return Err(format!("Invalid DateTime format (expected ISO-8601 / RFC-3339): '{}'", val));
+                    return Err(format!(
+                        "Invalid DateTime format (expected ISO-8601 / RFC-3339): '{}'",
+                        val
+                    ));
                 }
             }
             DomainTypeKind::ETag => {
-                if !(val.starts_with('"') && val.ends_with('"')) && !(val.starts_with("W/\"") && val.ends_with('"')) {
-                    return Err(format!("Invalid ETag format (must be quoted or weak-quoted): '{}'", val));
+                if !(val.starts_with('"') && val.ends_with('"'))
+                    && !(val.starts_with("W/\"") && val.ends_with('"'))
+                {
+                    return Err(format!(
+                        "Invalid ETag format (must be quoted or weak-quoted): '{}'",
+                        val
+                    ));
                 }
             }
         }

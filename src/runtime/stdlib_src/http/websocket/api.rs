@@ -2,9 +2,9 @@ use super::connection::WebSocketMessage;
 use super::frame::{WebSocketFrame, WebSocketOpcode};
 use super::handshake::{calculate_websocket_accept, generate_websocket_key};
 use super::session::{
-    accept_session, bind_listener, connect_uri, echo_until_close, handshake_existing,
-    WsClientOptions, WsIoOwned, WsServerOptions, WsSession, STATE_CLOSED, STATE_CLOSING,
-    STATE_CONNECTING, STATE_FAILED, STATE_HANDSHAKING, STATE_OPEN,
+    STATE_CLOSED, STATE_CLOSING, STATE_CONNECTING, STATE_FAILED, STATE_HANDSHAKING, STATE_OPEN,
+    WsClientOptions, WsIoOwned, WsServerOptions, WsSession, accept_session, bind_listener,
+    connect_uri, echo_until_close, handshake_existing,
 };
 use crate::parsing::ast::{BuiltinEnv, NativeFn, UserFn, Value};
 use crate::runtime::stdlib_src::http::errors::{HttpError, HttpErrorKind};
@@ -43,8 +43,7 @@ static CONNECTIONS: Lazy<Mutex<FastMap<u64, Arc<Mutex<WsConnEntry>>>>> =
     Lazy::new(|| Mutex::new(FastMap::default()));
 static SERVERS: Lazy<Mutex<FastMap<u64, Arc<Mutex<WsServerEntry>>>>> =
     Lazy::new(|| Mutex::new(FastMap::default()));
-static ROOMS: Lazy<Mutex<FastMap<String, Vec<u64>>>> =
-    Lazy::new(|| Mutex::new(FastMap::default()));
+static ROOMS: Lazy<Mutex<FastMap<String, Vec<u64>>>> = Lazy::new(|| Mutex::new(FastMap::default()));
 
 struct BoundedThreadPool {
     sender: std::sync::mpsc::SyncSender<Box<dyn FnOnce() + Send + 'static>>,
@@ -52,19 +51,22 @@ struct BoundedThreadPool {
 
 impl BoundedThreadPool {
     fn new(num_workers: usize, max_queue: usize) -> Self {
-        let (tx, rx) = std::sync::mpsc::sync_channel::<Box<dyn FnOnce() + Send + 'static>>(max_queue);
+        let (tx, rx) =
+            std::sync::mpsc::sync_channel::<Box<dyn FnOnce() + Send + 'static>>(max_queue);
         let rx = Arc::new(Mutex::new(rx));
         for _ in 0..num_workers {
             let rx = rx.clone();
-            std::thread::spawn(move || loop {
-                let task = {
-                    let lock = rx.lock().unwrap();
-                    match lock.recv() {
-                        Ok(task) => task,
-                        Err(_) => break,
-                    }
-                };
-                task();
+            std::thread::spawn(move || {
+                loop {
+                    let task = {
+                        let lock = rx.lock().unwrap();
+                        match lock.recv() {
+                            Ok(task) => task,
+                            Err(_) => break,
+                        }
+                    };
+                    task();
+                }
             });
         }
         Self { sender: tx }
@@ -138,20 +140,14 @@ pub fn build_websocket_module_object() -> Value {
                 .and_then(val_as_str)
                 .unwrap_or("Error")
                 .to_string();
-            let message = args
-                .get(1)
-                .and_then(val_as_str)
-                .unwrap_or("")
-                .to_string();
+            let message = args.get(1).and_then(val_as_str).unwrap_or("").to_string();
             let cause = args.get(2).cloned().unwrap_or(Value::Null);
             Ok(error_object(&kind, &message, cause))
         }))),
     );
     map.insert(
         "WebSocketMessage".to_string(),
-        Value::Function(NativeFn(Arc::new(|_, args| {
-            Ok(message_from_ctor(args))
-        }))),
+        Value::Function(NativeFn(Arc::new(|_, args| Ok(message_from_ctor(args))))),
     );
     map.insert(
         "WebSocketFrame".to_string(),
@@ -181,7 +177,9 @@ pub fn build_websocket_module_object() -> Value {
     map.insert(
         "isError".to_string(),
         Value::Function(NativeFn(Arc::new(|_, args| {
-            Ok(Value::Bool(is_ws_error(args.first().unwrap_or(&Value::Null))))
+            Ok(Value::Bool(is_ws_error(
+                args.first().unwrap_or(&Value::Null),
+            )))
         }))),
     );
     map.insert(
@@ -383,15 +381,11 @@ fn connection_object(id: u64) -> Value {
     );
     map.insert(
         "lastPing".to_string(),
-        Value::Function(NativeFn(Arc::new(move |_, _| {
-            Ok(Value::Number(0.0))
-        }))),
+        Value::Function(NativeFn(Arc::new(move |_, _| Ok(Value::Number(0.0))))),
     );
     map.insert(
         "lastPong".to_string(),
-        Value::Function(NativeFn(Arc::new(move |_, _| {
-            Ok(Value::Number(0.0))
-        }))),
+        Value::Function(NativeFn(Arc::new(move |_, _| Ok(Value::Number(0.0))))),
     );
     map.insert(
         "sendText".to_string(),
@@ -504,10 +498,11 @@ fn connection_object(id: u64) -> Value {
                 .map(value_to_bytes)
                 .unwrap_or_else(|| Ok(Vec::new()))?;
             spawn_promise_work(env, move || {
-                let res_val = with_conn(id, |entry| match entry.session.send_binary(bytes.clone()) {
-                    Ok(()) => Ok(Value::Null),
-                    Err(err) => Ok(http_to_ws_error(&err)),
-                })?;
+                let res_val =
+                    with_conn(id, |entry| match entry.session.send_binary(bytes.clone()) {
+                        Ok(()) => Ok(Value::Null),
+                        Err(err) => Ok(http_to_ws_error(&err)),
+                    })?;
                 Ok(SendValue(res_val))
             })
         }))),
@@ -521,10 +516,11 @@ fn connection_object(id: u64) -> Value {
                 .transpose()?
                 .unwrap_or_default();
             spawn_promise_work(env, move || {
-                let res_val = with_conn(id, |entry| match entry.session.send_ping(bytes.clone()) {
-                    Ok(()) => Ok(Value::Null),
-                    Err(err) => Ok(http_to_ws_error(&err)),
-                })?;
+                let res_val =
+                    with_conn(id, |entry| match entry.session.send_ping(bytes.clone()) {
+                        Ok(()) => Ok(Value::Null),
+                        Err(err) => Ok(http_to_ws_error(&err)),
+                    })?;
                 Ok(SendValue(res_val))
             })
         }))),
@@ -538,10 +534,11 @@ fn connection_object(id: u64) -> Value {
                 .transpose()?
                 .unwrap_or_default();
             spawn_promise_work(env, move || {
-                let res_val = with_conn(id, |entry| match entry.session.send_pong(bytes.clone()) {
-                    Ok(()) => Ok(Value::Null),
-                    Err(err) => Ok(http_to_ws_error(&err)),
-                })?;
+                let res_val =
+                    with_conn(id, |entry| match entry.session.send_pong(bytes.clone()) {
+                        Ok(()) => Ok(Value::Null),
+                        Err(err) => Ok(http_to_ws_error(&err)),
+                    })?;
                 Ok(SendValue(res_val))
             })
         }))),
@@ -563,8 +560,12 @@ fn connection_object(id: u64) -> Value {
     map.insert(
         "sendDTO".to_string(),
         Value::Function(NativeFn(Arc::new(move |env, args| {
-            let dto_def = args.first().ok_or_else(|| "sendDTO requires DTO schema or instance".to_string())?;
-            let data = args.get(1).ok_or_else(|| "sendDTO requires data object".to_string())?;
+            let dto_def = args
+                .first()
+                .ok_or_else(|| "sendDTO requires DTO schema or instance".to_string())?;
+            let data = args
+                .get(1)
+                .ok_or_else(|| "sendDTO requires data object".to_string())?;
             let json_str = validate_and_serialize_dto(env, dto_def, data)?;
             with_conn(id, |entry| match entry.session.send_text(&json_str) {
                 Ok(()) => Ok(Value::Null),
@@ -575,8 +576,14 @@ fn connection_object(id: u64) -> Value {
     map.insert(
         "sendDTOAsync".to_string(),
         Value::Function(NativeFn(Arc::new(move |env, args| {
-            let dto_def = args.first().ok_or_else(|| "sendDTOAsync requires DTO schema".to_string())?.clone();
-            let data = args.get(1).ok_or_else(|| "sendDTOAsync requires data object".to_string())?.clone();
+            let dto_def = args
+                .first()
+                .ok_or_else(|| "sendDTOAsync requires DTO schema".to_string())?
+                .clone();
+            let data = args
+                .get(1)
+                .ok_or_else(|| "sendDTOAsync requires data object".to_string())?
+                .clone();
             let json_str = validate_and_serialize_dto(env, &dto_def, &data)?;
             spawn_promise_work(env, move || {
                 let res_val = with_conn(id, |entry| match entry.session.send_text(&json_str) {
@@ -608,9 +615,10 @@ fn connection_object(id: u64) -> Value {
                 let res_val = with_conn(id, |entry| match entry.session.receive() {
                     Ok(msg) => {
                         let text = extract_msg_text(&msg)?;
-                        let parsed: serde_json::Value = serde_json::from_str(&text)
-                            .map_err(|e| format!("InvalidJSON: {e}"))?;
-                        let val = crate::runtime::stdlib_src::http::api::serde_json_to_adesh_val(&parsed);
+                        let parsed: serde_json::Value =
+                            serde_json::from_str(&text).map_err(|e| format!("InvalidJSON: {e}"))?;
+                        let val =
+                            crate::runtime::stdlib_src::http::api::serde_json_to_adesh_val(&parsed);
                         if let Some(SendValue(dto)) = &dto_def_send {
                             if let Value::Object(m) = dto {
                                 if let Some(val_fn) = m.get("validate") {
@@ -650,7 +658,9 @@ fn pending_connection_object(socket: Value, options: WsClientOptions) -> Value {
     map.insert(
         "isOpen".to_string(),
         Value::Function(NativeFn(Arc::new(move |_, _| {
-            let id = *sid.lock().map_err(|_| "WebSocket connection lock poisoned")? ;
+            let id = *sid
+                .lock()
+                .map_err(|_| "WebSocket connection lock poisoned")?;
             match id {
                 Some(id) => with_conn(id, |entry| Ok(Value::Bool(entry.session.is_open()))),
                 None => Ok(Value::Bool(false)),
@@ -661,7 +671,9 @@ fn pending_connection_object(socket: Value, options: WsClientOptions) -> Value {
     map.insert(
         "getState".to_string(),
         Value::Function(NativeFn(Arc::new(move |_, _| {
-            let id = *sid.lock().map_err(|_| "WebSocket connection lock poisoned")?;
+            let id = *sid
+                .lock()
+                .map_err(|_| "WebSocket connection lock poisoned")?;
             match id {
                 Some(id) => with_conn(id, |entry| Ok(Value::Number(entry.session.state as f64))),
                 None => Ok(Value::Number(STATE_CONNECTING as f64)),
@@ -780,10 +792,11 @@ fn pending_connection_object(socket: Value, options: WsClientOptions) -> Value {
                 .unwrap_or_else(|| Ok(Vec::new()))?;
             spawn_promise_work(env, move || {
                 let id = get_pending_sid(&sid_clone)?;
-                let res_val = with_conn(id, |entry| match entry.session.send_binary(bytes.clone()) {
-                    Ok(()) => Ok(Value::Null),
-                    Err(err) => Ok(http_to_ws_error(&err)),
-                })?;
+                let res_val =
+                    with_conn(id, |entry| match entry.session.send_binary(bytes.clone()) {
+                        Ok(()) => Ok(Value::Null),
+                        Err(err) => Ok(http_to_ws_error(&err)),
+                    })?;
                 Ok(SendValue(res_val))
             })
         }))),
@@ -817,7 +830,8 @@ fn pending_connection_object(socket: Value, options: WsClientOptions) -> Value {
             match handshake_existing(io, &url, key, options_ref.as_ref()) {
                 Ok(session) => {
                     let id = register_session(session);
-                    *sid.lock().map_err(|_| "WebSocket connection lock poisoned")? = Some(id);
+                    *sid.lock()
+                        .map_err(|_| "WebSocket connection lock poisoned")? = Some(id);
                     Ok(Value::Null)
                 }
                 Err(err) => Ok(http_to_ws_error(&err)),
@@ -931,7 +945,9 @@ fn server_object(id: u64) -> Value {
                 }
             });
             let start_time = std::time::Instant::now();
-            while !started.load(Ordering::SeqCst) && start_time.elapsed() < Duration::from_millis(500) {
+            while !started.load(Ordering::SeqCst)
+                && start_time.elapsed() < Duration::from_millis(500)
+            {
                 std::thread::sleep(Duration::from_millis(5));
             }
             std::thread::sleep(Duration::from_millis(50));
@@ -1023,11 +1039,14 @@ fn server_object(id: u64) -> Value {
     map.insert(
         "broadcast".to_string(),
         Value::Function(NativeFn(Arc::new(move |_, args| {
-            let msg_val = args.first().ok_or_else(|| "broadcast requires message".to_string())?;
+            let msg_val = args
+                .first()
+                .ok_or_else(|| "broadcast requires message".to_string())?;
             let text = match msg_val {
                 Value::Str(s) => s.clone(),
                 _ => {
-                    let json_val = crate::runtime::stdlib_src::http::api::adesh_val_to_serde_json(msg_val)?;
+                    let json_val =
+                        crate::runtime::stdlib_src::http::api::adesh_val_to_serde_json(msg_val)?;
                     serde_json::to_string(&json_val).map_err(|e| e.to_string())?
                 }
             };
@@ -1038,11 +1057,14 @@ fn server_object(id: u64) -> Value {
     map.insert(
         "broadcastAsync".to_string(),
         Value::Function(NativeFn(Arc::new(move |env, args| {
-            let msg_val = args.first().ok_or_else(|| "broadcastAsync requires message".to_string())?;
+            let msg_val = args
+                .first()
+                .ok_or_else(|| "broadcastAsync requires message".to_string())?;
             let text = match msg_val {
                 Value::Str(s) => s.clone(),
                 _ => {
-                    let json_val = crate::runtime::stdlib_src::http::api::adesh_val_to_serde_json(msg_val)?;
+                    let json_val =
+                        crate::runtime::stdlib_src::http::api::adesh_val_to_serde_json(msg_val)?;
                     serde_json::to_string(&json_val).map_err(|e| e.to_string())?
                 }
             };
@@ -1118,11 +1140,7 @@ fn server_should_stop(id: u64) -> Result<bool, String> {
     with_server(id, |server| Ok(server.stop.load(Ordering::SeqCst)))
 }
 
-fn call_value(
-    env: &mut dyn BuiltinEnv,
-    val: &Value,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+fn call_value(env: &mut dyn BuiltinEnv, val: &Value, args: Vec<Value>) -> Result<Value, String> {
     match val {
         Value::Function(NativeFn(f)) => (f)(env, args),
         Value::UserFunction(u) => call_user(env, u, args),
@@ -1131,11 +1149,7 @@ fn call_value(
     }
 }
 
-fn call_user(
-    env: &mut dyn BuiltinEnv,
-    u: &UserFn,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+fn call_user(env: &mut dyn BuiltinEnv, u: &UserFn, args: Vec<Value>) -> Result<Value, String> {
     if let Some(interp) = env
         .as_any_mut()
         .downcast_mut::<crate::execution::runtime::Interpreter>()
@@ -1161,10 +1175,7 @@ struct SendSideEffects(Arc<std::sync::Mutex<Vec<crate::parsing::ast::NativeEffec
 unsafe impl Send for SendSideEffects {}
 unsafe impl Sync for SendSideEffects {}
 
-fn spawn_promise_work<F>(
-    env: &mut dyn BuiltinEnv,
-    work: F,
-) -> Result<Value, String>
+fn spawn_promise_work<F>(env: &mut dyn BuiltinEnv, work: F) -> Result<Value, String>
 where
     F: FnOnce() -> Result<SendValue, String> + Send + 'static,
 {
@@ -1201,8 +1212,9 @@ where
 fn extract_msg_text(msg: &WebSocketMessage) -> Result<String, String> {
     match msg {
         WebSocketMessage::Text(t) => Ok(t.clone()),
-        WebSocketMessage::Binary(b) => String::from_utf8(b.clone())
-            .map_err(|e| format!("Invalid UTF-8 binary frame: {e}")),
+        WebSocketMessage::Binary(b) => {
+            String::from_utf8(b.clone()).map_err(|e| format!("Invalid UTF-8 binary frame: {e}"))
+        }
         _ => Err("Received non-data WebSocket frame".to_string()),
     }
 }
@@ -1217,7 +1229,11 @@ fn validate_and_serialize_dto(
             let res = call_value(env, val_fn, vec![data.clone()])?;
             if is_ws_error(&res) {
                 let msg = match &res {
-                    Value::Object(m) => m.get("message").and_then(val_as_str).unwrap_or("Validation failed").to_string(),
+                    Value::Object(m) => m
+                        .get("message")
+                        .and_then(val_as_str)
+                        .unwrap_or("Validation failed")
+                        .to_string(),
                     _ => "Validation failed".to_string(),
                 };
                 return Err(format!("ValidationError: {msg}"));
@@ -1233,8 +1249,8 @@ fn parse_and_validate_dto(
     dto: Option<&Value>,
     text: &str,
 ) -> Result<Value, String> {
-    let parsed: serde_json::Value = serde_json::from_str(text)
-        .map_err(|e| format!("InvalidJSON: {e}"))?;
+    let parsed: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| format!("InvalidJSON: {e}"))?;
     let val = crate::runtime::stdlib_src::http::api::serde_json_to_adesh_val(&parsed);
     if let Some(dto_val) = dto {
         if let Value::Object(map) = dto_val {
@@ -1289,8 +1305,7 @@ fn extract_io(socket: &Value) -> Result<WsIoOwned, String> {
             }
         }
     }
-    crate::runtime::stdlib_src::tls::api::extract_tcp_stream(socket)
-        .map(WsIoOwned::Tcp)
+    crate::runtime::stdlib_src::tls::api::extract_tcp_stream(socket).map(WsIoOwned::Tcp)
 }
 
 fn url_from_handshake_arg(arg: Option<&Value>) -> Result<String, String> {
@@ -1493,8 +1508,14 @@ fn opcode_object() -> Value {
 
 fn state_object() -> Value {
     let mut map = FastMap::default();
-    map.insert("CONNECTING".to_string(), Value::Number(STATE_CONNECTING as f64));
-    map.insert("HANDSHAKING".to_string(), Value::Number(STATE_HANDSHAKING as f64));
+    map.insert(
+        "CONNECTING".to_string(),
+        Value::Number(STATE_CONNECTING as f64),
+    );
+    map.insert(
+        "HANDSHAKING".to_string(),
+        Value::Number(STATE_HANDSHAKING as f64),
+    );
     map.insert("OPEN".to_string(), Value::Number(STATE_OPEN as f64));
     map.insert("CLOSING".to_string(), Value::Number(STATE_CLOSING as f64));
     map.insert("CLOSED".to_string(), Value::Number(STATE_CLOSED as f64));
@@ -1522,7 +1543,10 @@ fn close_code_object() -> Value {
 fn client_config_object() -> Value {
     let mut map = FastMap::default();
     map.insert("uri".to_string(), Value::Null);
-    map.insert("headers".to_string(), Value::Object(Arc::new(FastMap::default())));
+    map.insert(
+        "headers".to_string(),
+        Value::Object(Arc::new(FastMap::default())),
+    );
     map.insert("protocols".to_string(), Value::Array(Vec::new()));
     map.insert("extensions".to_string(), Value::Array(Vec::new()));
     map.insert("origin".to_string(), Value::Null);
@@ -1532,8 +1556,14 @@ fn client_config_object() -> Value {
     map.insert("idle_timeout".to_string(), Value::Number(60_000.0));
     map.insert("max_message_size".to_string(), Value::Number(16_777_216.0));
     map.insert("max_frame_size".to_string(), Value::Number(4_194_304.0));
-    map.insert("max_send_queue_messages".to_string(), Value::Number(1_000.0));
-    map.insert("max_send_queue_bytes".to_string(), Value::Number(16_777_216.0));
+    map.insert(
+        "max_send_queue_messages".to_string(),
+        Value::Number(1_000.0),
+    );
+    map.insert(
+        "max_send_queue_bytes".to_string(),
+        Value::Number(16_777_216.0),
+    );
     map.insert("automatic_pong".to_string(), Value::Bool(true));
     map.insert("compression".to_string(), Value::Bool(false));
     map.insert("verify_tls".to_string(), Value::Bool(true));
@@ -1543,14 +1573,23 @@ fn client_config_object() -> Value {
 
 fn server_config_object() -> Value {
     let mut map = FastMap::default();
-    map.insert("bind_address".to_string(), Value::Str("127.0.0.1".to_string()));
+    map.insert(
+        "bind_address".to_string(),
+        Value::Str("127.0.0.1".to_string()),
+    );
     map.insert("port".to_string(), Value::Number(8099.0));
     map.insert("max_connections".to_string(), Value::Number(10_000.0));
     map.insert("max_connections_per_ip".to_string(), Value::Number(100.0));
     map.insert("max_message_size".to_string(), Value::Number(16_777_216.0));
     map.insert("max_frame_size".to_string(), Value::Number(4_194_304.0));
-    map.insert("max_send_queue_messages".to_string(), Value::Number(1_000.0));
-    map.insert("max_send_queue_bytes".to_string(), Value::Number(16_777_216.0));
+    map.insert(
+        "max_send_queue_messages".to_string(),
+        Value::Number(1_000.0),
+    );
+    map.insert(
+        "max_send_queue_bytes".to_string(),
+        Value::Number(16_777_216.0),
+    );
     map.insert("handshake_timeout".to_string(), Value::Number(5_000.0));
     map.insert("idle_timeout".to_string(), Value::Number(60_000.0));
     map.insert("ping_interval".to_string(), Value::Number(30_000.0));
@@ -1755,15 +1794,14 @@ fn http_to_ws_error(err: &HttpError) -> Value {
 
 fn is_ws_error(val: &Value) -> bool {
     match val {
-        Value::Object(map) => map
-            .get("__wsError")
-            .and_then(val_as_bool)
-            .unwrap_or(false)
-            || map
-                .get("__type")
-                .and_then(val_as_str)
-                .map(|s| s == "WebSocketError")
-                .unwrap_or(false),
+        Value::Object(map) => {
+            map.get("__wsError").and_then(val_as_bool).unwrap_or(false)
+                || map
+                    .get("__type")
+                    .and_then(val_as_str)
+                    .map(|s| s == "WebSocketError")
+                    .unwrap_or(false)
+        }
         Value::Instance(inst) => inst.class_name.contains("WebSocketError"),
         _ => false,
     }
@@ -1788,7 +1826,9 @@ fn value_to_bytes(val: &Value) -> Result<Vec<u8>, String> {
     match val {
         Value::Null => Ok(Vec::new()),
         Value::Str(s) => Ok(s.as_bytes().to_vec()),
-        Value::Array(arr) | Value::RawArray(_, arr) => Ok(arr.iter().filter_map(val_as_u8).collect()),
+        Value::Array(arr) | Value::RawArray(_, arr) => {
+            Ok(arr.iter().filter_map(val_as_u8).collect())
+        }
         Value::DynArray(da) => Ok(da.data.iter().filter_map(val_as_u8).collect()),
         _ => Err("Expected byte array or string".to_string()),
     }
@@ -1805,12 +1845,19 @@ fn val_as_str(v: &Value) -> Option<&str> {
 
 fn val_as_string_list(v: &Value) -> Option<Vec<String>> {
     match v {
-        Value::Array(arr) | Value::RawArray(_, arr) => {
-            Some(arr.iter().filter_map(val_as_str).map(String::from).collect())
-        }
-        Value::DynArray(da) => {
-            Some(da.data.iter().filter_map(val_as_str).map(String::from).collect())
-        }
+        Value::Array(arr) | Value::RawArray(_, arr) => Some(
+            arr.iter()
+                .filter_map(val_as_str)
+                .map(String::from)
+                .collect(),
+        ),
+        Value::DynArray(da) => Some(
+            da.data
+                .iter()
+                .filter_map(val_as_str)
+                .map(String::from)
+                .collect(),
+        ),
         Value::Ref(inner, _) => val_as_string_list(inner),
         Value::Share(sr) => unsafe { val_as_string_list(&(*sr.ptr).value) },
         _ => None,

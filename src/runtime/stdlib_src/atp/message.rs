@@ -254,7 +254,12 @@ impl OrderedDelivery {
     }
 
     /// Insert a completed message; returns messages ready for delivery in order.
-    pub fn deliver(&mut self, message_id: u64, data: Vec<u8>, ordered: bool) -> Vec<(u64, Vec<u8>)> {
+    pub fn deliver(
+        &mut self,
+        message_id: u64,
+        data: Vec<u8>,
+        ordered: bool,
+    ) -> Vec<(u64, Vec<u8>)> {
         if !ordered {
             return vec![(message_id, data)];
         }
@@ -299,11 +304,20 @@ mod tests {
     #[test]
     fn test_reassembly_validation() {
         let mut r = MessageReassembly::new(1, 1, 2, 0, ReliabilityMode::Reliable, 1024);
-        assert!(r
-            .add_fragment(0, 2, super::super::wire::DATA_FLAG_FIRST, vec![0; 10], 100, 1_000_000)
-            .is_ok());
-        assert!(r
-            .add_fragment(2, 2, 0, vec![0; 10], 100, 1_000_000)
-            .is_err()); // invalid fragment num
+        assert!(
+            r.add_fragment(
+                0,
+                2,
+                super::super::wire::DATA_FLAG_FIRST,
+                vec![0; 10],
+                100,
+                1_000_000
+            )
+            .is_ok()
+        );
+        assert!(
+            r.add_fragment(2, 2, 0, vec![0; 10], 100, 1_000_000)
+                .is_err()
+        ); // invalid fragment num
     }
 }

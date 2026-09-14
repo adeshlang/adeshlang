@@ -62,7 +62,6 @@ pub(super) fn stmt_has_return(stmt: &Stmt) -> bool {
     }
 }
 
-
 fn bigint_literal_fits_expected(n: &BigInt, expected: &Ty) -> bool {
     match expected {
         Ty::F32 | Ty::F64Ty | Ty::Float => n.to_f64().is_some_and(|value| value.is_finite()),
@@ -133,7 +132,8 @@ pub(crate) fn expr_matches_expected_type(expr: &Expr, inferred: &Ty, expected: &
                 true
             }
             (Ty::Array(a), Ty::Array(b)) => {
-                matches!(**a, Ty::Unknown | Ty::Never) || is_compatible(a, b, is_concrete_int, is_ptr)
+                matches!(**a, Ty::Unknown | Ty::Never | Ty::Any)
+                    || is_compatible(a, b, is_concrete_int, is_ptr)
             }
             (Ty::Tuple(a), Ty::Tuple(b)) => {
                 if a.len() != b.len() {
@@ -147,12 +147,12 @@ pub(crate) fn expr_matches_expected_type(expr: &Expr, inferred: &Ty, expected: &
             (Ty::Nullable(a), b) if **a == Ty::Any => true,
             (Ty::Nullable(a), b) => is_compatible(a, b, is_concrete_int, is_ptr) && *b == Ty::Null,
             (a, Ty::Nullable(b)) => is_compatible(a, b, is_concrete_int, is_ptr) || *a == Ty::Null,
-            (Ty::Union(sources), target) => {
-                sources.iter().all(|s| is_compatible(s, target, is_concrete_int, is_ptr))
-            }
-            (source, Ty::Union(targets)) => {
-                targets.iter().any(|t| is_compatible(source, t, is_concrete_int, is_ptr))
-            }
+            (Ty::Union(sources), target) => sources
+                .iter()
+                .all(|s| is_compatible(s, target, is_concrete_int, is_ptr)),
+            (source, Ty::Union(targets)) => targets
+                .iter()
+                .any(|t| is_compatible(source, t, is_concrete_int, is_ptr)),
             _ => is_subtype(inf, exp),
         }
     }
@@ -748,11 +748,7 @@ fn check_stmt_types_inner(
                     ExprKind::Range(_, _, _) => Ty::Int,
                     ExprKind::Call(callee, _, _) => {
                         if let ExprKind::Variable(fname) = &callee.kind {
-                            if fname == "range" {
-                                Ty::Int
-                            } else {
-                                Ty::Any
-                            }
+                            if fname == "range" { Ty::Int } else { Ty::Any }
                         } else {
                             Ty::Any
                         }

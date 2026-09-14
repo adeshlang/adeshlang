@@ -50,10 +50,7 @@ pub fn active_toolchain_root(home: &Path) -> std::path::PathBuf {
         return bundled;
     }
     if cfg!(windows) {
-        for candidate in [
-            "C:\\Program Files\\LLVM",
-            "C:\\Program Files (x86)\\LLVM",
-        ] {
+        for candidate in ["C:\\Program Files\\LLVM", "C:\\Program Files (x86)\\LLVM"] {
             let root = Path::new(candidate);
             if root.join("bin").join(exe("clang")).is_file() {
                 return root.to_path_buf();
@@ -125,7 +122,9 @@ fn symlink_bin(home: &Path, link_dir: &Path) -> Result<usize, String> {
         if !path.is_file() {
             continue;
         }
-        let Some(name) = path.file_name() else { continue };
+        let Some(name) = path.file_name() else {
+            continue;
+        };
         let link = link_dir.join(name);
         let _ = std::fs::remove_file(&link); // refresh existing links
         std::os::unix::fs::symlink(&path, &link).map_err(|e| {
@@ -168,7 +167,10 @@ fn expose_unix_system(home: &Path) -> Result<(), String> {
         );
     }
     let linked = symlink_bin(home, Path::new("/usr/local/bin"))?;
-    write_profile_file(Path::new("/etc/profile.d/adeshlang.sh"), &profile_script(home))?;
+    write_profile_file(
+        Path::new("/etc/profile.d/adeshlang.sh"),
+        &profile_script(home),
+    )?;
     println!(
         "  ✓ Exposed {linked} toolchain executables via /usr/local/bin and wrote /etc/profile.d/adeshlang.sh"
     );
@@ -206,8 +208,8 @@ fn expose_unix_user(home: &Path) -> Result<(), String> {
 #[cfg(windows)]
 pub fn expose(home: &Path, scope: Scope) -> Result<(), String> {
     use windows_sys::Win32::System::Registry::{
-        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
-        HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_EXPAND_SZ, REG_SZ, REG_VALUE_TYPE,
+        HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_EXPAND_SZ, REG_SZ,
+        REG_VALUE_TYPE, RegCloseKey, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
     };
 
     fn to_wide(value: &str) -> Vec<u16> {
@@ -257,7 +259,9 @@ pub fn expose(home: &Path, scope: Scope) -> Result<(), String> {
             return Ok(None); // not present
         }
         if status != 0 {
-            return Err(format!("Failed to read registry value `{name}` (error {status})"));
+            return Err(format!(
+                "Failed to read registry value `{name}` (error {status})"
+            ));
         }
         if len == 0 || len % 2 != 0 {
             return Ok(None);
@@ -275,7 +279,9 @@ pub fn expose(home: &Path, scope: Scope) -> Result<(), String> {
             )
         };
         if status != 0 {
-            return Err(format!("Failed to read registry value `{name}` (error {status})"));
+            return Err(format!(
+                "Failed to read registry value `{name}` (error {status})"
+            ));
         }
         while buf.last() == Some(&0) {
             buf.pop();
@@ -302,14 +308,16 @@ pub fn expose(home: &Path, scope: Scope) -> Result<(), String> {
             )
         };
         if status != 0 {
-            return Err(format!("Failed to write registry value `{name}` (error {status})"));
+            return Err(format!(
+                "Failed to write registry value `{name}` (error {status})"
+            ));
         }
         Ok(())
     }
 
     fn broadcast_change() {
         use windows_sys::Win32::UI::WindowsAndMessaging::{
-            SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE,
+            HWND_BROADCAST, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_SETTINGCHANGE,
         };
         let environment = to_wide("Environment");
         // SAFETY: informational broadcast with a valid string LPARAM.
@@ -338,10 +346,7 @@ pub fn expose(home: &Path, scope: Scope) -> Result<(), String> {
     }
 
     // 2. PATH: append <home>\bin and the active toolchain's bin when missing.
-    let path_entries = [
-        home.join("bin"),
-        active_toolchain_root(home).join("bin"),
-    ];
+    let path_entries = [home.join("bin"), active_toolchain_root(home).join("bin")];
     let existing = query_string(key, "PATH")?;
     let mut parts: Vec<String> = existing
         .as_deref()
@@ -390,14 +395,18 @@ mod tests {
     fn env_pairs_always_include_home_and_toolchain() {
         let home = Path::new("/opt/adeshlang");
         let pairs = env_pairs(home);
-        assert!(pairs
-            .iter()
-            .any(|(k, v)| k == "ADESH_HOME" && v == "/opt/adeshlang"));
+        assert!(
+            pairs
+                .iter()
+                .any(|(k, v)| k == "ADESH_HOME" && v == "/opt/adeshlang")
+        );
         // ADESH_TOOLCHAIN always tracks the active (found) toolchain root.
         let expected_root = active_toolchain_root(home).display().to_string();
-        assert!(pairs
-            .iter()
-            .any(|(k, v)| k == "ADESH_TOOLCHAIN" && *v == expected_root));
+        assert!(
+            pairs
+                .iter()
+                .any(|(k, v)| k == "ADESH_TOOLCHAIN" && *v == expected_root)
+        );
     }
 
     #[test]

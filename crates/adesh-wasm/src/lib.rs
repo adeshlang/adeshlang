@@ -6,11 +6,11 @@
 //! - Source code formatting via `format_source`
 //! - Memory management and version introspection
 
+use serde::Serialize;
 use std::ffi::CString;
 use std::os::raw::c_char;
 use std::path::Path;
 use std::time::Instant;
-use serde::Serialize;
 
 use adeshlang::execution::runtime::{Interpreter, ModuleLoader};
 use adeshlang::execution::runtime_core::stdio;
@@ -83,7 +83,9 @@ pub unsafe extern "C" fn adesh_wasm_free_string(ptr: *mut c_char) {
 }
 
 fn string_to_c_ptr(s: String) -> *mut c_char {
-    CString::new(s).unwrap_or_else(|_| CString::new("{}").unwrap()).into_raw()
+    CString::new(s)
+        .unwrap_or_else(|_| CString::new("{}").unwrap())
+        .into_raw()
 }
 
 #[unsafe(no_mangle)]
@@ -143,26 +145,22 @@ pub unsafe extern "C" fn adesh_wasm_run(
     let duration_ms = elapsed.as_secs_f64() * 1000.0;
 
     let response = match exec_res {
-        Ok(()) => {
-            RunResult {
-                ok: true,
-                stdout,
-                stderr: String::new(),
-                result: None,
-                error: None,
-                duration_ms,
-            }
-        }
-        Err(err) => {
-            RunResult {
-                ok: false,
-                stdout,
-                stderr: err.clone(),
-                result: None,
-                error: Some(err),
-                duration_ms,
-            }
-        }
+        Ok(()) => RunResult {
+            ok: true,
+            stdout,
+            stderr: String::new(),
+            result: None,
+            error: None,
+            duration_ms,
+        },
+        Err(err) => RunResult {
+            ok: false,
+            stdout,
+            stderr: err.clone(),
+            result: None,
+            error: Some(err),
+            duration_ms,
+        },
     };
 
     string_to_c_ptr(serde_json::to_string(&response).unwrap_or_default())
@@ -211,8 +209,16 @@ pub unsafe extern "C" fn adesh_wasm_check(
     if let Err(lang_err) = check_res {
         let start_line = if lang_err.line > 0 { lang_err.line } else { 1 };
         let start_col = if lang_err.col > 0 { lang_err.col } else { 1 };
-        let end_line = if lang_err.end_line > 0 { lang_err.end_line } else { start_line };
-        let end_col = if lang_err.end_col > 0 { lang_err.end_col } else { start_col + 1 };
+        let end_line = if lang_err.end_line > 0 {
+            lang_err.end_line
+        } else {
+            start_line
+        };
+        let end_col = if lang_err.end_col > 0 {
+            lang_err.end_col
+        } else {
+            start_col + 1
+        };
 
         diagnostics.push(Diagnostic {
             severity: "error".to_string(),
@@ -235,10 +241,7 @@ pub unsafe extern "C" fn adesh_wasm_check(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn adesh_wasm_format(
-    code_ptr: *const u8,
-    code_len: usize,
-) -> *mut c_char {
+pub unsafe extern "C" fn adesh_wasm_format(code_ptr: *const u8, code_len: usize) -> *mut c_char {
     let code_slice = unsafe { std::slice::from_raw_parts(code_ptr, code_len) };
     let code = match std::str::from_utf8(code_slice) {
         Ok(s) => s,

@@ -173,8 +173,14 @@ pub(crate) fn handle_call_builtin_generic(
                 .map_err(|e| format!("Failed to declare aot_input: {}", e))?;
             let input_fn = module.declare_func_in_func(input_fn_id, builder.func);
 
-            let prompt_val = arg_vals.get(0).copied().unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-            let opts_val = arg_vals.get(1).copied().unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+            let prompt_val = arg_vals
+                .get(0)
+                .copied()
+                .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+            let opts_val = arg_vals
+                .get(1)
+                .copied()
+                .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
 
             let call = builder.ins().call(input_fn, &[prompt_val, opts_val]);
             let res = builder.inst_results(call)[0];
@@ -189,9 +195,7 @@ pub(crate) fn handle_call_builtin_generic(
                 builder.ins().iconst(types::I64, 0)
             }
         }
-        _ => {
-            builder.ins().iconst(types::I64, 0)
-        }
+        _ => builder.ins().iconst(types::I64, 0),
     };
 
     ctx.value_map.insert(*dst, result);

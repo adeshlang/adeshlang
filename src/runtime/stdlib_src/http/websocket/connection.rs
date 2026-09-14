@@ -3,8 +3,8 @@ use super::super::http1::connection::ReadWriteSendSync;
 use super::frame::{WebSocketFrame, WebSocketFrameDecodeConfig, WebSocketOpcode};
 use std::io::{Read, Write};
 
-use flate2::read::{DeflateDecoder, DeflateEncoder};
 use flate2::Compression;
+use flate2::read::{DeflateDecoder, DeflateEncoder};
 
 const DEFAULT_MAX_FRAME_SIZE: usize = 4 * 1024 * 1024;
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
@@ -109,7 +109,11 @@ impl WebSocketStream {
         for (i, chunk) in chunks.into_iter().enumerate() {
             let is_first = i == 0;
             let is_last = i == total_chunks - 1;
-            let frame_opcode = if is_first { opcode } else { WebSocketOpcode::Continuation };
+            let frame_opcode = if is_first {
+                opcode
+            } else {
+                WebSocketOpcode::Continuation
+            };
             let frame = WebSocketFrame {
                 fin: is_last,
                 rsv1: if is_first { is_compressed } else { false },
@@ -140,11 +144,11 @@ impl WebSocketStream {
 
     pub fn send_frame(&mut self, frame: &WebSocketFrame) -> Result<(), HttpError> {
         validate_outbound_frame(
-        frame,
-        self.is_client,
-        self.max_frame_size,
-        self.compression_enabled,
-    )?;
+            frame,
+            self.is_client,
+            self.max_frame_size,
+            self.compression_enabled,
+        )?;
 
         let mut outbound = frame.clone();
         if self.is_client {
@@ -255,7 +259,9 @@ impl WebSocketStream {
                 }
                 WebSocketOpcode::Continuation => {
                     let opcode = self.fragmented_opcode.ok_or_else(|| {
-                        protocol_error("Received continuation frame without an active fragmented message")
+                        protocol_error(
+                            "Received continuation frame without an active fragmented message",
+                        )
                     })?;
 
                     let new_len = self
@@ -319,7 +325,9 @@ impl WebSocketStream {
                 Ok(WebSocketMessage::Text(text))
             }
             WebSocketOpcode::Binary => Ok(WebSocketMessage::Binary(raw_payload)),
-            _ => Err(protocol_error("Invalid opcode for assembled WebSocket message")),
+            _ => Err(protocol_error(
+                "Invalid opcode for assembled WebSocket message",
+            )),
         }
     }
 }
@@ -328,7 +336,10 @@ fn compress_deflate_payload(payload: &[u8]) -> Result<Vec<u8>, HttpError> {
     let mut encoder = DeflateEncoder::new(payload, Compression::default());
     let mut compressed = Vec::new();
     encoder.read_to_end(&mut compressed).map_err(|e| {
-        HttpError::new(HttpErrorKind::IoError, format!("Deflate compression error: {e}"))
+        HttpError::new(
+            HttpErrorKind::IoError,
+            format!("Deflate compression error: {e}"),
+        )
     })?;
     if compressed.ends_with(&[0x00, 0x00, 0xff, 0xff]) {
         compressed.truncate(compressed.len() - 4);
@@ -344,7 +355,10 @@ fn decompress_deflate_payload(payload: &[u8], max_size: usize) -> Result<Vec<u8>
     let mut buffer = [0u8; 4096];
     loop {
         let n = decoder.read(&mut buffer).map_err(|e| {
-            HttpError::new(HttpErrorKind::ProtocolError, format!("Deflate decompression error: {e}"))
+            HttpError::new(
+                HttpErrorKind::ProtocolError,
+                format!("Deflate decompression error: {e}"),
+            )
         })?;
         if n == 0 {
             break;
@@ -432,19 +446,8 @@ fn validate_close_payload(code: u16, reason: &[u8]) -> Result<(), HttpError> {
 fn validate_close_code(code: u16) -> Result<(), HttpError> {
     let valid = matches!(
         code,
-        1000
-            | 1001
-            | 1002
-            | 1003
-            | 1007
-            | 1008
-            | 1009
-            | 1010
-            | 1011
-            | 1012
-            | 1013
-            | 1014
-            | 3000..=4999
+        1000 | 1001 | 1002 | 1003 | 1007 | 1008 | 1009 | 1010 | 1011 | 1012 | 1013 | 1014 | 3000
+            ..=4999
     );
     if !valid {
         return Err(protocol_error(&format!(

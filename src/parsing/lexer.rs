@@ -32,7 +32,11 @@ pub struct Lexer<'a> {
 impl<'a> Lexer<'a> {
     pub fn new(input: &'a str) -> Self {
         let bytes = input.as_bytes();
-        let start = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) { 3 } else { 0 };
+        let start = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+            3
+        } else {
+            0
+        };
         Self {
             src: bytes,
             start,
@@ -888,10 +892,9 @@ impl<'a> Lexer<'a> {
         // variable.
         if peek_char == 'j' && !is_ident_continue(self.peek2() as char) {
             self.adv();
-            return Ok(Some(self.build_token(
-                TokenKind::ComplexLit,
-                format!("{}j", num_str),
-            )));
+            return Ok(Some(
+                self.build_token(TokenKind::ComplexLit, format!("{}j", num_str)),
+            ));
         }
 
         // Check for typed integer suffixes: u8, u16, u32, u64, u128, i8, i16, i32, i64, i128

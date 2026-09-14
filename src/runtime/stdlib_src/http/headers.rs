@@ -26,7 +26,11 @@ impl HeaderName {
 
     pub fn new_with_mode(name: &str, mode: HeaderValidationMode) -> Result<Self, HttpError> {
         if mode == HeaderValidationMode::Strict {
-            if name.starts_with(' ') || name.starts_with('\t') || name.ends_with(' ') || name.ends_with('\t') {
+            if name.starts_with(' ')
+                || name.starts_with('\t')
+                || name.ends_with(' ')
+                || name.ends_with('\t')
+            {
                 return Err(HttpError::new(
                     HttpErrorKind::InvalidHeader,
                     "Header name contains illegal leading or trailing whitespace",

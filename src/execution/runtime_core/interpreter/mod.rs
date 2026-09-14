@@ -46,9 +46,7 @@ pub(super) use class_access::{
 pub(super) use construction_helpers::{create_user_class, create_user_fn, err, err_with_span};
 pub(super) use env::Env;
 pub use globals::INPUT_PLAYBACK;
-pub(super) use globals::{
-    INPUT_RECORD, PROGRAM_ARGS, PROMISE_COUNTER, RUNTIME_ENV,
-};
+pub(super) use globals::{INPUT_RECORD, PROGRAM_ARGS, PROMISE_COUNTER, RUNTIME_ENV};
 pub(super) use helpers::{format_input_type_error, wrap_foreign_function};
 #[allow(unused_imports)]
 pub(super) use io_helpers::{ct_disable_raw, ct_enable_raw, ct_poll, ct_read};

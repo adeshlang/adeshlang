@@ -1,6 +1,8 @@
 //! ATP Engine — event-driven transport I/O loop.
 
-use super::config::{AtpConfig, ATP_VERSION, MAX_CONNECTIONS_PER_CYCLE, MAX_PACKETS_PER_CYCLE, UDP_RECV_BUFFER_SIZE};
+use super::config::{
+    ATP_VERSION, AtpConfig, MAX_CONNECTIONS_PER_CYCLE, MAX_PACKETS_PER_CYCLE, UDP_RECV_BUFFER_SIZE,
+};
 use super::connection::{AtpConnection, ConnectionState, ReceivedData, TransportParams};
 use super::errors::{AtpError, AtpResult};
 use super::handshake::{ClientHandshake, ServerHandshake};
@@ -126,7 +128,13 @@ impl AtpEngine {
         socket
             .set_nonblocking(true)
             .map_err(|e| AtpError::transport(format!("set_nonblocking: {}", e)))?;
-        Ok(Self::build_engine(socket, true, Some(listen_addr), None, config))
+        Ok(Self::build_engine(
+            socket,
+            true,
+            Some(listen_addr),
+            None,
+            config,
+        ))
     }
 
     pub fn new_client(target: SocketAddr) -> AtpResult<Arc<Self>> {
@@ -143,7 +151,13 @@ impl AtpEngine {
         socket
             .set_nonblocking(true)
             .map_err(|e| AtpError::transport(format!("set_nonblocking: {}", e)))?;
-        Ok(Self::build_engine(socket, false, None, Some(target), config))
+        Ok(Self::build_engine(
+            socket,
+            false,
+            None,
+            Some(target),
+            config,
+        ))
     }
 
     fn build_engine(
@@ -185,7 +199,10 @@ impl AtpEngine {
 
     /// Attach a loss simulator for integration tests (test-only).
     #[cfg(test)]
-    pub fn set_loss_simulator(self: &Arc<Self>, sim: std::sync::Arc<Mutex<super::loss_sim::LossSimulator>>) {
+    pub fn set_loss_simulator(
+        self: &Arc<Self>,
+        sim: std::sync::Arc<Mutex<super::loss_sim::LossSimulator>>,
+    ) {
         if let Ok(mut guard) = self.loss_sim.lock() {
             *guard = Some(sim);
         }
@@ -235,7 +252,11 @@ impl AtpEngine {
     }
 
     fn compute_sleep_duration(&self) -> Duration {
-        let wake = self.next_wake.lock().map(|w| *w).unwrap_or_else(|_| Instant::now());
+        let wake = self
+            .next_wake
+            .lock()
+            .map(|w| *w)
+            .unwrap_or_else(|_| Instant::now());
         let now = Instant::now();
         if wake > now {
             (wake - now).min(Duration::from_millis(50))
@@ -306,7 +327,10 @@ impl AtpEngine {
     }
 
     fn send_udp_direct(&self, data: &[u8], addr: SocketAddr) -> AtpResult<()> {
-        let guard = self.socket.lock().map_err(|_| AtpError::transport("mutex"))?;
+        let guard = self
+            .socket
+            .lock()
+            .map_err(|_| AtpError::transport("mutex"))?;
         let socket = guard
             .as_ref()
             .ok_or_else(|| AtpError::transport("socket closed"))?;
@@ -467,7 +491,11 @@ impl AtpEngine {
             return;
         }
 
-        if self.token_issuer.validate(retry_token, &src_addr.ip()).is_err() {
+        if self
+            .token_issuer
+            .validate(retry_token, &src_addr.ip())
+            .is_err()
+        {
             let token = self.token_issuer.issue(&src_addr.ip());
             let payload = Frame::encode_all(&[Frame::Retry { token }]);
             let header = LongHeader {
@@ -540,14 +568,7 @@ impl AtpEngine {
         router.insert(conn);
         drop(router);
 
-        self.send_long_handshake(
-            id,
-            src_addr,
-            local_cid,
-            client_wire,
-            vec![init_ack],
-            0,
-        );
+        self.send_long_handshake(id, src_addr, local_cid, client_wire, vec![init_ack], 0);
     }
 
     fn handle_client_init_ack(
@@ -662,7 +683,9 @@ impl AtpEngine {
                     conn.schedule_keepalive(now);
                     conn.schedule_idle_check(now);
                     drop(router);
-                    self.deliver(Delivery::Connected { connection_id: conn_id });
+                    self.deliver(Delivery::Connected {
+                        connection_id: conn_id,
+                    });
                 }
             }
         } else if let Some(hs) = &mut conn.server_handshake {
@@ -687,7 +710,8 @@ impl AtpEngine {
                         if let Some(conn) = router.get_mut(conn_id) {
                             if let Some(hs) = &conn.server_handshake {
                                 if let Ok(app_keys) = hs.application_keys() {
-                                    let mut sec = SecurityContext::from_handshake_secrets(&app_keys);
+                                    let mut sec =
+                                        SecurityContext::from_handshake_secrets(&app_keys);
                                     sec.activate_application(&app_keys);
                                     conn.security = Some(sec);
                                 }
@@ -698,7 +722,9 @@ impl AtpEngine {
                             conn.schedule_idle_check(now);
                         }
                     }
-                    self.deliver(Delivery::Connected { connection_id: conn_id });
+                    self.deliver(Delivery::Connected {
+                        connection_id: conn_id,
+                    });
                 }
             }
         }
@@ -1032,7 +1058,10 @@ impl AtpEngine {
         refs: Vec<RetransmittableRef>,
         ack_eliciting: bool,
     ) -> AtpResult<()> {
-        if !conn.congestion.can_send(conn.app_reliability.bytes_in_flight) {
+        if !conn
+            .congestion
+            .can_send(conn.app_reliability.bytes_in_flight)
+        {
             return Err(AtpError::connection("cwnd full"));
         }
 
@@ -1135,10 +1164,7 @@ impl AtpEngine {
 
     pub fn connection_id_for_client(&self) -> Option<ConnectionId> {
         let router = self.router.lock().ok()?;
-        router
-            .iter()
-            .find(|(_, c)| c.is_client)
-            .map(|(id, _)| *id)
+        router.iter().find(|(_, c)| c.is_client).map(|(id, _)| *id)
     }
 
     /// Ensure client handshake has been initiated (callable before the event loop runs).

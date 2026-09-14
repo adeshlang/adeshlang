@@ -46,8 +46,9 @@ impl ParallelCostModel {
         let work = iterations as f64 * op_cost;
         let chunk_count = (iterations / self.min_chunk_size).max(1);
         let static_cost = self.thread_spawn_cost + work / num_workers.max(1) as f64;
-        let steal_cost =
-            self.thread_spawn_cost + work / num_workers.max(1) as f64 + chunk_count as f64 * self.steal_cost;
+        let steal_cost = self.thread_spawn_cost
+            + work / num_workers.max(1) as f64
+            + chunk_count as f64 * self.steal_cost;
 
         if static_cost <= steal_cost && chunk_count <= num_workers as u64 * 2 {
             ParallelStrategy::StaticChunks

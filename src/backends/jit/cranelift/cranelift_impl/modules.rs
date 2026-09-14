@@ -109,7 +109,11 @@ impl JitContext {
         // Resolve path and read module source
         let source = if path == "Time" || path == "std:Time" {
             include_str!("../../../../stdlib/Time.adesh").to_string()
-        } else if path == "System" || path == "std:System" || path == "system" || path == "std:system" {
+        } else if path == "System"
+            || path == "std:System"
+            || path == "system"
+            || path == "std:system"
+        {
             include_str!("../../../../stdlib/System.adesh").to_string()
         } else if path == "Env" || path == "std:Env" || path == "env" || path == "std:env" {
             include_str!("../../../../stdlib/Env.adesh").to_string()

@@ -264,7 +264,11 @@ fn test_jit_and_native_jit_input_parity() {
     }
     "#;
     let jit_res = jit_run(jit_code);
-    assert!(jit_res.is_ok(), "JIT slider test failed: {:?}", jit_res.err());
+    assert!(
+        jit_res.is_ok(),
+        "JIT slider test failed: {:?}",
+        jit_res.err()
+    );
 
     // Test Native JIT backend
     let native_code = r#"
@@ -275,9 +279,9 @@ fn test_jit_and_native_jit_input_parity() {
     }
     "#;
     let native_res = native_jit_run(native_code);
-    assert!(native_res.is_ok(), "Native JIT slider test failed: {:?}", native_res.err());
+    assert!(
+        native_res.is_ok(),
+        "Native JIT slider test failed: {:?}",
+        native_res.err()
+    );
 }
-
-
-
-

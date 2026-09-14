@@ -413,8 +413,12 @@ impl LangError {
             if !rel_line_text.is_empty() || rel.line > 0 {
                 let r_line = rel.line.max(1);
                 let r_width = r_line.to_string().len().max(2);
-                let r_empty = format!("{:>width$} |", "", width = r_width).blue().to_string();
-                let r_gutter = format!("{:>width$} | ", r_line, width = r_width).blue().to_string();
+                let r_empty = format!("{:>width$} |", "", width = r_width)
+                    .blue()
+                    .to_string();
+                let r_gutter = format!("{:>width$} | ", r_line, width = r_width)
+                    .blue()
+                    .to_string();
                 let caret = format_caret(rel.col, 1);
                 let inline_label = if !rel.label.is_empty() {
                     format!(" {}", rel.label).yellow().to_string()

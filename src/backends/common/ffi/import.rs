@@ -1059,7 +1059,10 @@ pub fn call_foreign(func: &ForeignFunction, args: &[Value]) -> Result<Value, Str
 #[cfg(any(target_os = "android", target_arch = "wasm32"))]
 /// Call a foreign function using libffi and marshal to Adesh `Value` (fallback on Android and WebAssembly)
 pub fn call_foreign(_func: &ForeignFunction, _args: &[Value]) -> Result<Value, String> {
-    Err("Foreign function calls (FFI) are not supported in the WebAssembly browser environment".to_string())
+    Err(
+        "Foreign function calls (FFI) are not supported in the WebAssembly browser environment"
+            .to_string(),
+    )
 }
 
 #[cfg(test)]

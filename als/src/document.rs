@@ -2,8 +2,8 @@
 //!
 //! Manages open documents, their content, and parsed state.
 
-use std::collections::HashMap;
 use lsp_types::Url;
+use std::collections::HashMap;
 
 /// Represents an open document in the editor
 #[derive(Debug, Clone)]
@@ -42,14 +42,14 @@ impl Document {
         if line >= self.line_offsets.len() {
             return None;
         }
-        
+
         let start = self.line_offsets[line];
         let end = if line + 1 < self.line_offsets.len() {
             self.line_offsets[line + 1] - 1 // Exclude newline
         } else {
             self.content.len()
         };
-        
+
         Some(&self.content[start..end.min(self.content.len())])
     }
 
@@ -59,14 +59,14 @@ impl Document {
         if line >= self.line_offsets.len() {
             return None;
         }
-        
+
         let line_start = self.line_offsets[line];
         let line_text = self.get_line(line)?;
-        
+
         // Convert column (UTF-16 code units) to byte offset
         let mut byte_offset = 0;
         let mut utf16_offset = 0;
-        
+
         for ch in line_text.chars() {
             if utf16_offset >= col as usize {
                 break;
@@ -74,26 +74,27 @@ impl Document {
             byte_offset += ch.len_utf8();
             utf16_offset += ch.len_utf16();
         }
-        
+
         Some(line_start + byte_offset)
     }
 
     /// Convert byte offset to line/column
     pub fn offset_to_position(&self, offset: usize) -> (u32, u32) {
         // Find line
-        let line = self.line_offsets
+        let line = self
+            .line_offsets
             .iter()
             .rposition(|&o| o <= offset)
             .unwrap_or(0);
-        
+
         let line_start = self.line_offsets[line];
         let col_bytes = offset - line_start;
-        
+
         // Convert byte column to UTF-16 code units
         let line_text = self.get_line(line).unwrap_or("");
         let mut utf16_col = 0;
         let mut byte_count = 0;
-        
+
         for ch in line_text.chars() {
             if byte_count >= col_bytes {
                 break;
@@ -101,7 +102,7 @@ impl Document {
             byte_count += ch.len_utf8();
             utf16_col += ch.len_utf16();
         }
-        
+
         (line as u32, utf16_col as u32)
     }
 
@@ -109,18 +110,18 @@ impl Document {
     pub fn get_word_at(&self, line: u32, col: u32) -> Option<String> {
         let line_text = self.get_line(line as usize)?;
         let col = col as usize;
-        
+
         // Find word boundaries
         let start = line_text[..col.min(line_text.len())]
             .rfind(|c: char| !c.is_alphanumeric() && c != '_')
             .map(|i| i + 1)
             .unwrap_or(0);
-        
+
         let end = line_text[col.min(line_text.len())..]
             .find(|c: char| !c.is_alphanumeric() && c != '_')
             .map(|i| col + i)
             .unwrap_or(line_text.len());
-        
+
         if start < end {
             Some(line_text[start..end].to_string())
         } else {
@@ -159,7 +160,8 @@ impl DocumentStore {
 
     /// Open a new document
     pub fn open(&mut self, uri: Url, content: String, version: i32) {
-        self.documents.insert(uri.clone(), Document::new(uri, content, version));
+        self.documents
+            .insert(uri.clone(), Document::new(uri, content, version));
     }
 
     /// Update an existing document
@@ -201,7 +203,7 @@ mod tests {
         let uri = Url::parse("file:///test.adesh").unwrap();
         let content = "let x = 1;\nlet y = 2;\nlet z = 3;".to_string();
         let doc = Document::new(uri, content, 1);
-        
+
         assert_eq!(doc.line_count(), 3);
         assert_eq!(doc.get_line(0), Some("let x = 1;"));
         assert_eq!(doc.get_line(1), Some("let y = 2;"));
@@ -213,7 +215,7 @@ mod tests {
         let uri = Url::parse("file:///test.adesh").unwrap();
         let content = "hello\nworld".to_string();
         let doc = Document::new(uri, content, 1);
-        
+
         assert_eq!(doc.position_to_offset(0, 0), Some(0));
         assert_eq!(doc.position_to_offset(0, 5), Some(5));
         assert_eq!(doc.position_to_offset(1, 0), Some(6));
@@ -225,7 +227,7 @@ mod tests {
         let uri = Url::parse("file:///test.adesh").unwrap();
         let content = "let myVar = 42;".to_string();
         let doc = Document::new(uri, content, 1);
-        
+
         assert_eq!(doc.get_word_at(0, 0), Some("let".to_string()));
         assert_eq!(doc.get_word_at(0, 4), Some("myVar".to_string()));
         assert_eq!(doc.get_word_at(0, 6), Some("myVar".to_string()));

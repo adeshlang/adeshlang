@@ -448,15 +448,17 @@ impl InterproceduralAnalyzer {
                                             && callee_sig.return_lifetime.is_some()
                                         {
                                             // The reference could escape through the callee's return value
-                                            self.errors
-                                                .push(InterproceduralError::ReferenceEscape {
+                                            self.errors.push(
+                                                InterproceduralError::ReferenceEscape {
                                                     function: func_name.to_string(),
                                                     param_name: var_name.clone(),
                                                     return_location: format!(
                                                         "call to `{}` at argument {}",
-                                                        callee_name, arg_idx + 1
+                                                        callee_name,
+                                                        arg_idx + 1
                                                     ),
-                                                });
+                                                },
+                                            );
                                         }
                                     }
                                 }

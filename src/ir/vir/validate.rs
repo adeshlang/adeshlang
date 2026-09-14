@@ -22,10 +22,7 @@ fn validate_function(func: &VirFunction) -> Result<(), String> {
     let block_ids: HashSet<u32> = func.blocks.iter().map(|b| b.id).collect();
 
     if func.blocks.is_empty() {
-        return Err(format!(
-            "Function `{}` has no blocks",
-            func.name
-        ));
+        return Err(format!("Function `{}` has no blocks", func.name));
     }
 
     // Ensure block 0 exists (entry block)
@@ -168,7 +165,11 @@ fn check_uses_defined(inst: &super::VirInstruction, defined: &HashSet<u32>) -> O
         | VI::ConstNull { .. }
         | VI::Nop => vec![],
         VI::Alloc { size, .. } => vec![*size],
-        VI::Free { ptr } | VI::ArcIncrement { ptr } | VI::ArcDecrement { ptr } | VI::ArcDrop { ptr } | VI::Drop { value: ptr } => vec![*ptr],
+        VI::Free { ptr }
+        | VI::ArcIncrement { ptr }
+        | VI::ArcDecrement { ptr }
+        | VI::ArcDrop { ptr }
+        | VI::Drop { value: ptr } => vec![*ptr],
         VI::Load { ptr, .. } => vec![*ptr],
         VI::Store { ptr, value } => vec![*ptr, *value],
         VI::LoadLocal { .. } => vec![],
@@ -180,7 +181,9 @@ fn check_uses_defined(inst: &super::VirInstruction, defined: &HashSet<u32>) -> O
         VI::Cast { value, .. } | VI::Bitcast { value, .. } => vec![*value],
         VI::BuildStruct { fields, .. } => fields.clone(),
         VI::ExtractField { struct_val, .. } => vec![*struct_val],
-        VI::InsertField { struct_val, value, .. } => vec![*struct_val, *value],
+        VI::InsertField {
+            struct_val, value, ..
+        } => vec![*struct_val, *value],
         VI::BuildArray { elements, .. } => elements.clone(),
         VI::ArrayIndex { array, index, .. } => vec![*array, *index],
         VI::BuildTuple { elements, .. } => elements.clone(),

@@ -46,11 +46,36 @@ fn unregister_engine(handle: u64) {
 }
 
 pub fn register_all(registry: &mut BuiltinRegistry) {
-    registry.register("atp_listen", "atp", "Listen for ATP connections", builtin_atp_listen);
-    registry.register("atp_connect", "atp", "Connect to an ATP server", builtin_atp_connect);
-    registry.register("atp_generate_identity_key", "atp", "Generate Ed25519 identity key", builtin_generate_identity_key);
-    registry.register("atp_get_public_key", "atp", "Get Ed25519 public key from private key", builtin_get_public_key);
-    registry.register("atp_default_config", "atp", "Get default ATP config", builtin_default_config);
+    registry.register(
+        "atp_listen",
+        "atp",
+        "Listen for ATP connections",
+        builtin_atp_listen,
+    );
+    registry.register(
+        "atp_connect",
+        "atp",
+        "Connect to an ATP server",
+        builtin_atp_connect,
+    );
+    registry.register(
+        "atp_generate_identity_key",
+        "atp",
+        "Generate Ed25519 identity key",
+        builtin_generate_identity_key,
+    );
+    registry.register(
+        "atp_get_public_key",
+        "atp",
+        "Get Ed25519 public key from private key",
+        builtin_get_public_key,
+    );
+    registry.register(
+        "atp_default_config",
+        "atp",
+        "Get default ATP config",
+        builtin_default_config,
+    );
 }
 
 fn unwrap_value(mut v: &Value) -> &Value {
@@ -76,7 +101,8 @@ fn parse_32_bytes(v: &Value, field: &str) -> Result<[u8; 32], String> {
     let v = unwrap_value(v);
     match v {
         Value::Str(hex_str) => {
-            let bytes = hex::decode(hex_str.trim()).map_err(|e| format!("invalid hex in {}: {}", field, e))?;
+            let bytes = hex::decode(hex_str.trim())
+                .map_err(|e| format!("invalid hex in {}: {}", field, e))?;
             if bytes.len() != 32 {
                 return Err(format!("{} must be 32 bytes (got {})", field, bytes.len()));
             }
@@ -87,7 +113,11 @@ fn parse_32_bytes(v: &Value, field: &str) -> Result<[u8; 32], String> {
         _ => {
             if let Some(arr) = val_as_slice(v) {
                 if arr.len() != 32 {
-                    return Err(format!("{} array must have 32 elements (got {})", field, arr.len()));
+                    return Err(format!(
+                        "{} array must have 32 elements (got {})",
+                        field,
+                        arr.len()
+                    ));
                 }
                 let mut out = [0u8; 32];
                 for (i, elem) in arr.iter().enumerate() {
@@ -97,7 +127,8 @@ fn parse_32_bytes(v: &Value, field: &str) -> Result<[u8; 32], String> {
                         Value::Number(n) if *n >= 0.0 && *n <= 255.0 => *n as u8,
                         Value::BigInt(b) => {
                             use num_traits::ToPrimitive;
-                            b.to_u8().ok_or_else(|| format!("byte out of range at index {}", i))?
+                            b.to_u8()
+                                .ok_or_else(|| format!("byte out of range at index {}", i))?
                         }
                         Value::I32(n) if *n >= 0 && *n <= 255 => *n as u8,
                         Value::I64(n) if *n >= 0 && *n <= 255 => *n as u8,
@@ -131,7 +162,10 @@ fn parse_config(v: Option<&Value>) -> Result<AtpConfig, String> {
         config.local_identity = Some(Arc::new(IdentityKeyPair::from_seed(bytes)));
     }
 
-    if let Some(trusted_val) = obj.get("trustedPeers").or_else(|| obj.get("trustedPeerKeys")) {
+    if let Some(trusted_val) = obj
+        .get("trustedPeers")
+        .or_else(|| obj.get("trustedPeerKeys"))
+    {
         let trusted_val = unwrap_value(trusted_val);
         if let Some(arr) = val_as_slice(trusted_val) {
             let mut peers = Vec::new();
@@ -144,7 +178,10 @@ fn parse_config(v: Option<&Value>) -> Result<AtpConfig, String> {
         }
     }
 
-    if let Some(req_val) = obj.get("requireIdentity").or_else(|| obj.get("requirePeerIdentity")) {
+    if let Some(req_val) = obj
+        .get("requireIdentity")
+        .or_else(|| obj.get("requirePeerIdentity"))
+    {
         let req_val = unwrap_value(req_val);
         if let Value::Bool(b) = req_val {
             config.require_peer_identity = *b;
@@ -157,7 +194,10 @@ fn parse_config(v: Option<&Value>) -> Result<AtpConfig, String> {
         }
     }
 
-    if let Some(rate_val) = obj.get("rateLimit").or_else(|| obj.get("handshakeRateLimit")) {
+    if let Some(rate_val) = obj
+        .get("rateLimit")
+        .or_else(|| obj.get("handshakeRateLimit"))
+    {
         if let Some(lim) = parse_u64_opt(Some(rate_val)) {
             config.handshake_rate_limit = lim as u32;
         }
@@ -191,34 +231,57 @@ fn parse_config(v: Option<&Value>) -> Result<AtpConfig, String> {
 }
 
 fn builtin_atp_listen(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, String> {
-    let host = args.first().map(unwrap_value).and_then(|v| match v {
-        Value::Str(s) => Some(s.as_str()),
-        _ => None,
-    }).unwrap_or("0.0.0.0");
+    let host = args
+        .first()
+        .map(unwrap_value)
+        .and_then(|v| match v {
+            Value::Str(s) => Some(s.as_str()),
+            _ => None,
+        })
+        .unwrap_or("0.0.0.0");
     let port = parse_port(args.get(1))?;
     let config = parse_config(args.get(2))?;
     atp_listen(host, port, config).map_err(|e| e.to_string())
 }
 
 fn builtin_atp_connect(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, String> {
-    let host = args.first().map(unwrap_value).and_then(|v| match v {
-        Value::Str(s) => Some(s.as_str()),
-        _ => None,
-    }).ok_or("atp.connect requires (host, port)")?;
+    let host = args
+        .first()
+        .map(unwrap_value)
+        .and_then(|v| match v {
+            Value::Str(s) => Some(s.as_str()),
+            _ => None,
+        })
+        .ok_or("atp.connect requires (host, port)")?;
     let port = parse_port(args.get(1))?;
     let config = parse_config(args.get(2))?;
     atp_connect(host, port, config).map_err(|e| e.to_string())
 }
 
-fn builtin_generate_identity_key(_env: &mut dyn BuiltinEnv, _args: Vec<Value>) -> Result<Value, String> {
+fn builtin_generate_identity_key(
+    _env: &mut dyn BuiltinEnv,
+    _args: Vec<Value>,
+) -> Result<Value, String> {
     let keypair = IdentityKeyPair::generate();
     let priv_bytes = keypair.seed_bytes();
     let pub_bytes = keypair.public_bytes();
     let mut obj = FastMap::default();
-    obj.insert("privateKey".to_string(), Value::Array(priv_bytes.iter().map(|b| Value::U8(*b)).collect()));
-    obj.insert("publicKey".to_string(), Value::Array(pub_bytes.iter().map(|b| Value::U8(*b)).collect()));
-    obj.insert("privateKeyHex".to_string(), Value::Str(hex::encode(priv_bytes)));
-    obj.insert("publicKeyHex".to_string(), Value::Str(hex::encode(pub_bytes)));
+    obj.insert(
+        "privateKey".to_string(),
+        Value::Array(priv_bytes.iter().map(|b| Value::U8(*b)).collect()),
+    );
+    obj.insert(
+        "publicKey".to_string(),
+        Value::Array(pub_bytes.iter().map(|b| Value::U8(*b)).collect()),
+    );
+    obj.insert(
+        "privateKeyHex".to_string(),
+        Value::Str(hex::encode(priv_bytes)),
+    );
+    obj.insert(
+        "publicKeyHex".to_string(),
+        Value::Str(hex::encode(pub_bytes)),
+    );
     Ok(Value::Object(Arc::new(obj)))
 }
 
@@ -228,8 +291,14 @@ fn builtin_get_public_key(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result
     let keypair = IdentityKeyPair::from_seed(priv_bytes);
     let pub_bytes = keypair.public_bytes();
     let mut obj = FastMap::default();
-    obj.insert("publicKey".to_string(), Value::Array(pub_bytes.iter().map(|b| Value::U8(*b)).collect()));
-    obj.insert("publicKeyHex".to_string(), Value::Str(hex::encode(pub_bytes)));
+    obj.insert(
+        "publicKey".to_string(),
+        Value::Array(pub_bytes.iter().map(|b| Value::U8(*b)).collect()),
+    );
+    obj.insert(
+        "publicKeyHex".to_string(),
+        Value::Str(hex::encode(pub_bytes)),
+    );
     Ok(Value::Object(Arc::new(obj)))
 }
 
@@ -257,7 +326,10 @@ fn parse_port(v: Option<&Value>) -> Result<u16, String> {
             use num_traits::ToPrimitive;
             b.to_u16().ok_or_else(|| "port out of range".to_string())
         }
-        Value::Str(s) => s.trim().parse::<u16>().map_err(|_| format!("invalid port string '{}'", s)),
+        Value::Str(s) => s
+            .trim()
+            .parse::<u16>()
+            .map_err(|_| format!("invalid port string '{}'", s)),
         Value::U8(p) => Ok(*p as u16),
         Value::U16(p) => Ok(*p),
         Value::U32(p) if *p <= 65535 => Ok(*p as u16),
@@ -338,16 +410,28 @@ pub fn build_atp_module_object() -> Value {
     priority_map.insert("High".to_string(), Value::Str("high".to_string()));
     priority_map.insert("Medium".to_string(), Value::Str("medium".to_string()));
     priority_map.insert("Low".to_string(), Value::Str("low".to_string()));
-    map.insert("Priority".to_string(), Value::Object(Arc::new(priority_map)));
+    map.insert(
+        "Priority".to_string(),
+        Value::Object(Arc::new(priority_map)),
+    );
 
     let mut delivery_map = FastMap::default();
     delivery_map.insert("Connected".to_string(), Value::Str("connected".to_string()));
     delivery_map.insert("Message".to_string(), Value::Str("message".to_string()));
     delivery_map.insert("Datagram".to_string(), Value::Str("datagram".to_string()));
     delivery_map.insert("Closed".to_string(), Value::Str("closed".to_string()));
-    delivery_map.insert("StreamReset".to_string(), Value::Str("stream_reset".to_string()));
-    delivery_map.insert("StreamClosed".to_string(), Value::Str("stream_closed".to_string()));
-    map.insert("DeliveryType".to_string(), Value::Object(Arc::new(delivery_map)));
+    delivery_map.insert(
+        "StreamReset".to_string(),
+        Value::Str("stream_reset".to_string()),
+    );
+    delivery_map.insert(
+        "StreamClosed".to_string(),
+        Value::Str("stream_closed".to_string()),
+    );
+    map.insert(
+        "DeliveryType".to_string(),
+        Value::Object(Arc::new(delivery_map)),
+    );
 
     Value::Object(Arc::new(map))
 }
@@ -400,10 +484,7 @@ fn build_connection_object(
     let mut map = FastMap::default();
     map.insert("id".to_string(), Value::U64(connection_id.0));
     map.insert("type".to_string(), Value::Str("AtpConnection".to_string()));
-    map.insert(
-        "connectionId".to_string(),
-        Value::U64(connection_id.0),
-    );
+    map.insert("connectionId".to_string(), Value::U64(connection_id.0));
 
     // Ensure default stream exists conceptually (stream 1 for client-initiated).
     let default_stream = if engine.is_server { 2 } else { 1 };
@@ -508,9 +589,7 @@ fn build_connection_object(
     map.insert(
         "metrics".to_string(),
         Value::Function(NativeFn(Arc::new(move |_, _| {
-            let m = e8
-                .connection_metrics(cid8)
-                .unwrap_or_default();
+            let m = e8.connection_metrics(cid8).unwrap_or_default();
             Ok(connection_metrics_value(&m))
         }))),
     );
@@ -520,12 +599,16 @@ fn build_connection_object(
     map.insert(
         "migrate".to_string(),
         Value::Function(NativeFn(Arc::new(move |_, args| {
-            let host = args.first().and_then(|v| match v {
-                Value::Str(s) => Some(s.as_str()),
-                _ => None,
-            }).ok_or("migrate requires (host, port)")?;
+            let host = args
+                .first()
+                .and_then(|v| match v {
+                    Value::Str(s) => Some(s.as_str()),
+                    _ => None,
+                })
+                .ok_or("migrate requires (host, port)")?;
             let port = parse_port(args.get(1))?;
-            let ip = parse_host(host).map_err(|e| format!("migrate host resolution failed: {}", e))?;
+            let ip =
+                parse_host(host).map_err(|e| format!("migrate host resolution failed: {}", e))?;
             let new_addr = SocketAddr::new(ip, port);
             e9.submit_request(SendRequest::Migrate {
                 connection_id: cid9,
@@ -602,7 +685,10 @@ fn build_stream_object(
     Value::Object(Arc::new(map))
 }
 
-fn poll_connection_delivery(engine: &Arc<AtpEngine>, conn_id: ConnectionId) -> Result<Value, String> {
+fn poll_connection_delivery(
+    engine: &Arc<AtpEngine>,
+    conn_id: ConnectionId,
+) -> Result<Value, String> {
     let deliveries = engine.poll_deliveries();
     for d in deliveries {
         match d {
@@ -827,7 +913,10 @@ fn connection_metrics_value(m: &super::connection::ConnectionMetrics) -> Value {
     obj.insert("bytesSent".to_string(), Value::U64(m.bytes_sent));
     obj.insert("bytesReceived".to_string(), Value::U64(m.bytes_received));
     obj.insert("packetsSent".to_string(), Value::U64(m.packets_sent));
-    obj.insert("packetsReceived".to_string(), Value::U64(m.packets_received));
+    obj.insert(
+        "packetsReceived".to_string(),
+        Value::U64(m.packets_received),
+    );
     obj.insert("messagesSent".to_string(), Value::U64(m.messages_sent));
     obj.insert(
         "messagesReceived".to_string(),

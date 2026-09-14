@@ -520,8 +520,9 @@ fn builtin_generate_self_signed_cert(
 ) -> Result<Value, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let (cert_pem, key_pem) = crate::runtime::stdlib_src::tls::cert::generate_self_signed_cert()
-            .map_err(|e| e.to_string())?;
+        let (cert_pem, key_pem) =
+            crate::runtime::stdlib_src::tls::cert::generate_self_signed_cert()
+                .map_err(|e| e.to_string())?;
 
         // Automatically write cert.pem and key.pem to the root directory
         let _ = std::fs::write("cert.pem", &cert_pem);
@@ -654,21 +655,52 @@ pub fn build_crypto_module_object() -> Value {
     map.insert(
         "randomInt".to_string(),
         Value::Function(crate::parsing::ast::NativeFn(Arc::new(|_env, args| {
-            let min = args.first().and_then(|v| match v { Value::Number(n) => Some(*n as i64), Value::I64(n) => Some(*n), _ => None }).unwrap_or(0);
-            let max = args.get(1).and_then(|v| match v { Value::Number(n) => Some(*n as i64), Value::I64(n) => Some(*n), _ => None }).unwrap_or(255);
-            let mut g = crate::runtime::stdlib_src::random::api::DEFAULT_GLOBAL_PRNG.lock().unwrap();
-            let res = crate::runtime::stdlib_src::random::bounded::next_i64_range_inclusive(&mut g, min, max).unwrap_or(min);
+            let min = args
+                .first()
+                .and_then(|v| match v {
+                    Value::Number(n) => Some(*n as i64),
+                    Value::I64(n) => Some(*n),
+                    _ => None,
+                })
+                .unwrap_or(0);
+            let max = args
+                .get(1)
+                .and_then(|v| match v {
+                    Value::Number(n) => Some(*n as i64),
+                    Value::I64(n) => Some(*n),
+                    _ => None,
+                })
+                .unwrap_or(255);
+            let mut g = crate::runtime::stdlib_src::random::api::DEFAULT_GLOBAL_PRNG
+                .lock()
+                .unwrap();
+            let res = crate::runtime::stdlib_src::random::bounded::next_i64_range_inclusive(
+                &mut g, min, max,
+            )
+            .unwrap_or(min);
             Ok(Value::Number(res as f64))
         }))),
     );
     map.insert(
         "randomBytes".to_string(),
         Value::Function(crate::parsing::ast::NativeFn(Arc::new(|_env, args| {
-            let len = args.first().and_then(|v| match v { Value::Number(n) => Some(*n as usize), Value::I64(n) => Some(*n as usize), _ => None }).unwrap_or(16);
-            let mut g = crate::runtime::stdlib_src::random::api::DEFAULT_GLOBAL_PRNG.lock().unwrap();
+            let len = args
+                .first()
+                .and_then(|v| match v {
+                    Value::Number(n) => Some(*n as usize),
+                    Value::I64(n) => Some(*n as usize),
+                    _ => None,
+                })
+                .unwrap_or(16);
+            let mut g = crate::runtime::stdlib_src::random::api::DEFAULT_GLOBAL_PRNG
+                .lock()
+                .unwrap();
             let mut vals: Vec<Value> = Vec::with_capacity(len);
             for _ in 0..len {
-                let b = crate::runtime::stdlib_src::random::bounded::next_i64_range_inclusive(&mut g, 0, 255).unwrap_or(0) as u8;
+                let b = crate::runtime::stdlib_src::random::bounded::next_i64_range_inclusive(
+                    &mut g, 0, 255,
+                )
+                .unwrap_or(0) as u8;
                 vals.push(Value::Number(b as f64));
             }
             Ok(Value::Array(vals))
@@ -683,11 +715,20 @@ pub fn build_crypto_module_object() -> Value {
         Value::Function(crate::parsing::ast::NativeFn(Arc::new(|_env, args| {
             let input = match args.first() {
                 Some(Value::Str(s)) => s.as_bytes().to_vec(),
-                Some(Value::Array(arr)) => arr.iter().filter_map(|v| match v { Value::Number(n) => Some(*n as u8), _ => None }).collect(),
+                Some(Value::Array(arr)) => arr
+                    .iter()
+                    .filter_map(|v| match v {
+                        Value::Number(n) => Some(*n as u8),
+                        _ => None,
+                    })
+                    .collect(),
                 _ => Vec::new(),
             };
             let digest = hash_bytes(&HashAlgo::Sha1, &input);
-            let vals: Vec<Value> = digest.into_iter().map(|b| Value::Number(b as f64)).collect();
+            let vals: Vec<Value> = digest
+                .into_iter()
+                .map(|b| Value::Number(b as f64))
+                .collect();
             Ok(Value::Array(vals))
         }))),
     );

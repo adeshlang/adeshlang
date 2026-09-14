@@ -1,8 +1,8 @@
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::sync::{Mutex, MutexGuard};
 #[cfg(unix)]
 use std::thread::JoinHandle;
-use once_cell::sync::Lazy;
 
 use crate::diagnostics::Diagnostic;
 

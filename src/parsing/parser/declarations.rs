@@ -554,7 +554,8 @@ impl Parser {
             let mut names = vec![first_name];
             let mut type_anns = vec![first_type];
             while self.matchk(&[TokenKind::Comma]) {
-                let name = self.consume_ident("Expect variable name in multi-variable declaration")?;
+                let name =
+                    self.consume_ident("Expect variable name in multi-variable declaration")?;
                 let type_ann = if self.matchk(&[TokenKind::Colon]) {
                     Some(self.parse_type_name("Expect type name after ':'")?)
                 } else {
@@ -588,7 +589,14 @@ impl Parser {
             };
             self.consume(TokenKind::Semicolon, "Expect ';'")?;
             return Ok(Stmt {
-                kind: StmtKind::LetTuple(names, final_type_anns, init, exp, is_const, final_readonly),
+                kind: StmtKind::LetTuple(
+                    names,
+                    final_type_anns,
+                    init,
+                    exp,
+                    is_const,
+                    final_readonly,
+                ),
                 span: self.previous_span(),
             });
         }
@@ -616,7 +624,10 @@ impl Parser {
                 span: self.previous_span(),
             }];
 
-            while !self.check(TokenKind::Semicolon) && !self.check(TokenKind::RightParen) && !self.is_end() {
+            while !self.check(TokenKind::Semicolon)
+                && !self.check(TokenKind::RightParen)
+                && !self.is_end()
+            {
                 let next_name = self.consume_ident("Expect variable name in multi-declaration")?;
                 let next_type = if self.matchk(&[TokenKind::Colon]) {
                     Some(self.parse_type_name("Expect type name after ':'")?)
@@ -637,7 +648,14 @@ impl Parser {
                 };
 
                 stmts.push(Stmt {
-                    kind: StmtKind::Let(next_name, next_init, next_type, exp, is_const, next_readonly),
+                    kind: StmtKind::Let(
+                        next_name,
+                        next_init,
+                        next_type,
+                        exp,
+                        is_const,
+                        next_readonly,
+                    ),
                     span: self.previous_span(),
                 });
 

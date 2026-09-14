@@ -102,100 +102,92 @@ impl Exec {
 
         // ULTRA-FAST direct unboxed primitive path for high-performance numerical workloads
         match (&lv, &rv) {
-            (Value::Number(a), Value::Number(b)) => {
-                match op {
-                    TokenKind::Plus => return Ok(Value::Number(a + b)),
-                    TokenKind::Minus => return Ok(Value::Number(a - b)),
-                    TokenKind::Star => return Ok(Value::Number(a * b)),
-                    TokenKind::Slash => {
-                        if *b == 0.0 {
-                            return Err(err("Division by zero"));
-                        }
-                        return Ok(Value::Number(a / b));
+            (Value::Number(a), Value::Number(b)) => match op {
+                TokenKind::Plus => return Ok(Value::Number(a + b)),
+                TokenKind::Minus => return Ok(Value::Number(a - b)),
+                TokenKind::Star => return Ok(Value::Number(a * b)),
+                TokenKind::Slash => {
+                    if *b == 0.0 {
+                        return Err(err("Division by zero"));
                     }
-                    TokenKind::Percent => return Ok(Value::Number(a % b)),
-                    TokenKind::Less => return Ok(Value::Bool(a < b)),
-                    TokenKind::LessEqual => return Ok(Value::Bool(a <= b)),
-                    TokenKind::Greater => return Ok(Value::Bool(a > b)),
-                    TokenKind::GreaterEqual => return Ok(Value::Bool(a >= b)),
-                    TokenKind::EqualEqual => return Ok(Value::Bool((a - b).abs() < f64::EPSILON)),
-                    TokenKind::BangEqual => return Ok(Value::Bool((a - b).abs() >= f64::EPSILON)),
-                    _ => {}
+                    return Ok(Value::Number(a / b));
                 }
-            }
-            (Value::I64(a), Value::I64(b)) => {
-                match op {
-                    TokenKind::Plus => return Ok(Value::I64(a.wrapping_add(*b))),
-                    TokenKind::Minus => return Ok(Value::I64(a.wrapping_sub(*b))),
-                    TokenKind::Star => return Ok(Value::I64(a.wrapping_mul(*b))),
-                    TokenKind::Slash => {
-                        if *b == 0 {
-                            return Err(err("Division by zero"));
-                        }
-                        return Ok(Value::I64(a / b));
+                TokenKind::Percent => return Ok(Value::Number(a % b)),
+                TokenKind::Less => return Ok(Value::Bool(a < b)),
+                TokenKind::LessEqual => return Ok(Value::Bool(a <= b)),
+                TokenKind::Greater => return Ok(Value::Bool(a > b)),
+                TokenKind::GreaterEqual => return Ok(Value::Bool(a >= b)),
+                TokenKind::EqualEqual => return Ok(Value::Bool((a - b).abs() < f64::EPSILON)),
+                TokenKind::BangEqual => return Ok(Value::Bool((a - b).abs() >= f64::EPSILON)),
+                _ => {}
+            },
+            (Value::I64(a), Value::I64(b)) => match op {
+                TokenKind::Plus => return Ok(Value::I64(a.wrapping_add(*b))),
+                TokenKind::Minus => return Ok(Value::I64(a.wrapping_sub(*b))),
+                TokenKind::Star => return Ok(Value::I64(a.wrapping_mul(*b))),
+                TokenKind::Slash => {
+                    if *b == 0 {
+                        return Err(err("Division by zero"));
                     }
-                    TokenKind::Percent => {
-                        if *b == 0 {
-                            return Err(err("Division by zero"));
-                        }
-                        return Ok(Value::I64(a % b));
-                    }
-                    TokenKind::Less => return Ok(Value::Bool(a < b)),
-                    TokenKind::LessEqual => return Ok(Value::Bool(a <= b)),
-                    TokenKind::Greater => return Ok(Value::Bool(a > b)),
-                    TokenKind::GreaterEqual => return Ok(Value::Bool(a >= b)),
-                    TokenKind::EqualEqual => return Ok(Value::Bool(a == b)),
-                    TokenKind::BangEqual => return Ok(Value::Bool(a != b)),
-                    _ => {}
+                    return Ok(Value::I64(a / b));
                 }
-            }
-            (Value::I32(a), Value::I32(b)) => {
-                match op {
-                    TokenKind::Plus => return Ok(Value::I32(a.wrapping_add(*b))),
-                    TokenKind::Minus => return Ok(Value::I32(a.wrapping_sub(*b))),
-                    TokenKind::Star => return Ok(Value::I32(a.wrapping_mul(*b))),
-                    TokenKind::Slash => {
-                        if *b == 0 {
-                            return Err(err("Division by zero"));
-                        }
-                        return Ok(Value::I32(a / b));
+                TokenKind::Percent => {
+                    if *b == 0 {
+                        return Err(err("Division by zero"));
                     }
-                    TokenKind::Percent => {
-                        if *b == 0 {
-                            return Err(err("Division by zero"));
-                        }
-                        return Ok(Value::I32(a % b));
-                    }
-                    TokenKind::Less => return Ok(Value::Bool(a < b)),
-                    TokenKind::LessEqual => return Ok(Value::Bool(a <= b)),
-                    TokenKind::Greater => return Ok(Value::Bool(a > b)),
-                    TokenKind::GreaterEqual => return Ok(Value::Bool(a >= b)),
-                    TokenKind::EqualEqual => return Ok(Value::Bool(a == b)),
-                    TokenKind::BangEqual => return Ok(Value::Bool(a != b)),
-                    _ => {}
+                    return Ok(Value::I64(a % b));
                 }
-            }
-            (Value::F64(a), Value::F64(b)) => {
-                match op {
-                    TokenKind::Plus => return Ok(Value::F64(a + b)),
-                    TokenKind::Minus => return Ok(Value::F64(a - b)),
-                    TokenKind::Star => return Ok(Value::F64(a * b)),
-                    TokenKind::Slash => {
-                        if *b == 0.0 {
-                            return Err(err("Division by zero"));
-                        }
-                        return Ok(Value::F64(a / b));
+                TokenKind::Less => return Ok(Value::Bool(a < b)),
+                TokenKind::LessEqual => return Ok(Value::Bool(a <= b)),
+                TokenKind::Greater => return Ok(Value::Bool(a > b)),
+                TokenKind::GreaterEqual => return Ok(Value::Bool(a >= b)),
+                TokenKind::EqualEqual => return Ok(Value::Bool(a == b)),
+                TokenKind::BangEqual => return Ok(Value::Bool(a != b)),
+                _ => {}
+            },
+            (Value::I32(a), Value::I32(b)) => match op {
+                TokenKind::Plus => return Ok(Value::I32(a.wrapping_add(*b))),
+                TokenKind::Minus => return Ok(Value::I32(a.wrapping_sub(*b))),
+                TokenKind::Star => return Ok(Value::I32(a.wrapping_mul(*b))),
+                TokenKind::Slash => {
+                    if *b == 0 {
+                        return Err(err("Division by zero"));
                     }
-                    TokenKind::Percent => return Ok(Value::F64(a % b)),
-                    TokenKind::Less => return Ok(Value::Bool(a < b)),
-                    TokenKind::LessEqual => return Ok(Value::Bool(a <= b)),
-                    TokenKind::Greater => return Ok(Value::Bool(a > b)),
-                    TokenKind::GreaterEqual => return Ok(Value::Bool(a >= b)),
-                    TokenKind::EqualEqual => return Ok(Value::Bool((a - b).abs() < f64::EPSILON)),
-                    TokenKind::BangEqual => return Ok(Value::Bool((a - b).abs() >= f64::EPSILON)),
-                    _ => {}
+                    return Ok(Value::I32(a / b));
                 }
-            }
+                TokenKind::Percent => {
+                    if *b == 0 {
+                        return Err(err("Division by zero"));
+                    }
+                    return Ok(Value::I32(a % b));
+                }
+                TokenKind::Less => return Ok(Value::Bool(a < b)),
+                TokenKind::LessEqual => return Ok(Value::Bool(a <= b)),
+                TokenKind::Greater => return Ok(Value::Bool(a > b)),
+                TokenKind::GreaterEqual => return Ok(Value::Bool(a >= b)),
+                TokenKind::EqualEqual => return Ok(Value::Bool(a == b)),
+                TokenKind::BangEqual => return Ok(Value::Bool(a != b)),
+                _ => {}
+            },
+            (Value::F64(a), Value::F64(b)) => match op {
+                TokenKind::Plus => return Ok(Value::F64(a + b)),
+                TokenKind::Minus => return Ok(Value::F64(a - b)),
+                TokenKind::Star => return Ok(Value::F64(a * b)),
+                TokenKind::Slash => {
+                    if *b == 0.0 {
+                        return Err(err("Division by zero"));
+                    }
+                    return Ok(Value::F64(a / b));
+                }
+                TokenKind::Percent => return Ok(Value::F64(a % b)),
+                TokenKind::Less => return Ok(Value::Bool(a < b)),
+                TokenKind::LessEqual => return Ok(Value::Bool(a <= b)),
+                TokenKind::Greater => return Ok(Value::Bool(a > b)),
+                TokenKind::GreaterEqual => return Ok(Value::Bool(a >= b)),
+                TokenKind::EqualEqual => return Ok(Value::Bool((a - b).abs() < f64::EPSILON)),
+                TokenKind::BangEqual => return Ok(Value::Bool((a - b).abs() >= f64::EPSILON)),
+                _ => {}
+            },
             (Value::Number(a), Value::I64(b)) => {
                 let b_f = *b as f64;
                 match op {
@@ -213,8 +205,12 @@ impl Exec {
                     TokenKind::LessEqual => return Ok(Value::Bool(a <= &b_f)),
                     TokenKind::Greater => return Ok(Value::Bool(a > &b_f)),
                     TokenKind::GreaterEqual => return Ok(Value::Bool(a >= &b_f)),
-                    TokenKind::EqualEqual => return Ok(Value::Bool((a - b_f).abs() < f64::EPSILON)),
-                    TokenKind::BangEqual => return Ok(Value::Bool((a - b_f).abs() >= f64::EPSILON)),
+                    TokenKind::EqualEqual => {
+                        return Ok(Value::Bool((a - b_f).abs() < f64::EPSILON));
+                    }
+                    TokenKind::BangEqual => {
+                        return Ok(Value::Bool((a - b_f).abs() >= f64::EPSILON));
+                    }
                     _ => {}
                 }
             }
@@ -235,8 +231,12 @@ impl Exec {
                     TokenKind::LessEqual => return Ok(Value::Bool(&a_f <= b)),
                     TokenKind::Greater => return Ok(Value::Bool(&a_f > b)),
                     TokenKind::GreaterEqual => return Ok(Value::Bool(&a_f >= b)),
-                    TokenKind::EqualEqual => return Ok(Value::Bool((a_f - b).abs() < f64::EPSILON)),
-                    TokenKind::BangEqual => return Ok(Value::Bool((a_f - b).abs() >= f64::EPSILON)),
+                    TokenKind::EqualEqual => {
+                        return Ok(Value::Bool((a_f - b).abs() < f64::EPSILON));
+                    }
+                    TokenKind::BangEqual => {
+                        return Ok(Value::Bool((a_f - b).abs() >= f64::EPSILON));
+                    }
                     _ => {}
                 }
             }

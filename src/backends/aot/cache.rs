@@ -42,9 +42,7 @@ pub enum CacheLookupResult {
         cache_hash: String,
     },
     /// No cache match; full compilation is needed.
-    Miss {
-        cache_hash: String,
-    },
+    Miss { cache_hash: String },
 }
 
 /// Compilation cache manager
@@ -73,11 +71,7 @@ impl AotCompilationCache {
     }
 
     /// Compute a unique hash signature for source code and compilation options
-    pub fn compute_hash(
-        src: &str,
-        options: &AotOptions,
-        extra_inputs: Option<&[&str]>,
-    ) -> String {
+    pub fn compute_hash(src: &str, options: &AotOptions, extra_inputs: Option<&[&str]>) -> String {
         let mut hasher = DefaultHasher::new();
 
         // 1. Compiler version / build discriminator
@@ -217,8 +211,13 @@ impl AotCompilationCache {
             .map_err(|e| format!("Failed to create cache directory: {}", e))?;
 
         let cached_obj = self.cached_obj_path(hash);
-        fs::write(&cached_obj, obj_bytes)
-            .map_err(|e| format!("Failed to write cached object file {}: {}", cached_obj.display(), e))?;
+        fs::write(&cached_obj, obj_bytes).map_err(|e| {
+            format!(
+                "Failed to write cached object file {}: {}",
+                cached_obj.display(),
+                e
+            )
+        })?;
 
         Ok(cached_obj)
     }
@@ -238,9 +237,7 @@ impl AotCompilationCache {
         self.ensure_cache_dir()
             .map_err(|e| format!("Failed to create cache directory: {}", e))?;
 
-        let output_size = fs::metadata(output_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let output_size = fs::metadata(output_path).map(|m| m.len()).unwrap_or(0);
 
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -332,7 +329,9 @@ mod tests {
         let res = cache.query(src, &opt, &out_path, None);
         match res {
             CacheLookupResult::Miss { cache_hash } => {
-                let stored_obj = cache.store_object(&cache_hash, b"dummy object bytes").unwrap();
+                let stored_obj = cache
+                    .store_object(&cache_hash, b"dummy object bytes")
+                    .unwrap();
                 assert!(stored_obj.exists());
             }
             _ => panic!("Expected cache miss"),
@@ -341,7 +340,9 @@ mod tests {
         // Now query again: should be ObjectHit
         let res2 = cache.query(src, &opt, &out_path, None);
         match res2 {
-            CacheLookupResult::ObjectHit { cached_obj_path, .. } => {
+            CacheLookupResult::ObjectHit {
+                cached_obj_path, ..
+            } => {
                 assert!(cached_obj_path.exists());
             }
             _ => panic!("Expected ObjectHit"),

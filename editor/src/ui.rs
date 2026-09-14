@@ -1,16 +1,16 @@
-use std::path::Path;
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph},
-    Frame,
 };
+use std::path::Path;
 
 use crate::app::{App, MenuTab, Modal};
 use crate::config::LineNumberMode;
 use crate::git::{FileGitStatus, GutterDiffKind};
-use crate::highlighter::{highlight_line, parse_ansi_to_line, Language};
+use crate::highlighter::{Language, highlight_line, parse_ansi_to_line};
 use crate::mode::Mode;
 use crate::runner::Backend;
 
@@ -19,7 +19,8 @@ pub fn render_ui(f: &mut Frame, app: &mut App) {
     f.render_widget(Clear, area);
 
     let bottom_height = if app.show_terminal || app.show_output {
-        app.bottom_panel_height.clamp(3, area.height.saturating_sub(8))
+        app.bottom_panel_height
+            .clamp(3, area.height.saturating_sub(8))
     } else {
         0
     };
@@ -30,7 +31,11 @@ pub fn render_ui(f: &mut Frame, app: &mut App) {
             Constraint::Length(1), // Menu bar
             Constraint::Length(1), // Tab bar
             Constraint::Min(5),    // Main editor/split area
-            Constraint::Length(if app.show_output && !app.show_terminal { bottom_height } else { 0 }),
+            Constraint::Length(if app.show_output && !app.show_terminal {
+                bottom_height
+            } else {
+                0
+            }),
             Constraint::Length(if app.show_terminal { bottom_height } else { 0 }),
             Constraint::Length(if app.show_command_line { 1 } else { 0 }),
             Constraint::Length(1), // Powerline status bar
@@ -81,19 +86,74 @@ pub fn render_ui(f: &mut Frame, app: &mut App) {
         Modal::DiagnosticsList => render_diagnostics_list(f, app, area),
         Modal::HoverTooltip => render_hover_tooltip(f, app, area),
         Modal::KeybindingsHelp => render_keybindings_help(f, app, area),
-        Modal::AstViewer => render_text_viewer(f, app, area, "AST Inspector (:ast)", &app.ast_view_content),
-        Modal::BytecodeViewer => render_text_viewer(f, app, area, "Bytecode Disassembler (:bytecode)", &app.bytecode_view_content),
-        Modal::HirViewer => render_text_viewer(f, app, area, "HIR — High-Level IR (:hir)", &app.hir_view_content),
-        Modal::IrViewer => render_text_viewer(f, app, area, "IR — Intermediate Representation (:ir)", &app.ir_view_content),
-        Modal::LirViewer => render_text_viewer(f, app, area, "LIR — Low-Level SSA IR (:lir)", &app.lir_view_content),
-        Modal::MlirViewer => render_text_viewer(f, app, area, "MLIR — Multi-Level Intermediate Representation (:mlir)", &app.mlir_view_content),
-        Modal::TokensViewer => render_text_viewer(f, app, area, "Lexer Token Stream (:tokens)", &app.tokens_view_content),
-        Modal::AdeshDocViewer => render_text_viewer(f, app, area, "Adesh Standard Library Documentation (:doc)", &app.doc_view_content),
-        Modal::AdeshCheckViewer => render_text_viewer(f, app, area, "Adesh Syntax & Type Diagnostics (:check)", &app.check_view_content),
+        Modal::AstViewer => {
+            render_text_viewer(f, app, area, "AST Inspector (:ast)", &app.ast_view_content)
+        }
+        Modal::BytecodeViewer => render_text_viewer(
+            f,
+            app,
+            area,
+            "Bytecode Disassembler (:bytecode)",
+            &app.bytecode_view_content,
+        ),
+        Modal::HirViewer => render_text_viewer(
+            f,
+            app,
+            area,
+            "HIR — High-Level IR (:hir)",
+            &app.hir_view_content,
+        ),
+        Modal::IrViewer => render_text_viewer(
+            f,
+            app,
+            area,
+            "IR — Intermediate Representation (:ir)",
+            &app.ir_view_content,
+        ),
+        Modal::LirViewer => render_text_viewer(
+            f,
+            app,
+            area,
+            "LIR — Low-Level SSA IR (:lir)",
+            &app.lir_view_content,
+        ),
+        Modal::MlirViewer => render_text_viewer(
+            f,
+            app,
+            area,
+            "MLIR — Multi-Level Intermediate Representation (:mlir)",
+            &app.mlir_view_content,
+        ),
+        Modal::TokensViewer => render_text_viewer(
+            f,
+            app,
+            area,
+            "Lexer Token Stream (:tokens)",
+            &app.tokens_view_content,
+        ),
+        Modal::AdeshDocViewer => render_text_viewer(
+            f,
+            app,
+            area,
+            "Adesh Standard Library Documentation (:doc)",
+            &app.doc_view_content,
+        ),
+        Modal::AdeshCheckViewer => render_text_viewer(
+            f,
+            app,
+            area,
+            "Adesh Syntax & Type Diagnostics (:check)",
+            &app.check_view_content,
+        ),
         Modal::GitManager => render_git_manager_modal(f, app, area),
         Modal::GitDiff => render_git_diff_modal(f, app, area),
         Modal::GitLog => render_git_log_modal(f, app, area),
-        Modal::GitCommitPrompt => render_prompt_modal(f, app, area, "Git Commit Message (Enter to commit, Esc to cancel)"),
+        Modal::GitCommitPrompt => render_prompt_modal(
+            f,
+            app,
+            area,
+            "Git Commit Message (Enter to commit, Esc to cancel)",
+        ),
         Modal::GitBranchSelector => render_git_branch_selector(f, app, area),
         Modal::Search | Modal::Replace => render_search_modal(f, app, area),
         Modal::SelectBackend => render_backend_selector(f, app, area),
@@ -101,7 +161,9 @@ pub fn render_ui(f: &mut Frame, app: &mut App) {
         Modal::SaveAsPrompt => render_prompt_modal(f, app, area, "Save As — Enter Path"),
         Modal::NewFilePrompt => render_prompt_modal(f, app, area, "New File — Enter Name"),
         Modal::NewDirPrompt => render_prompt_modal(f, app, area, "New Directory — Enter Name"),
-        Modal::RenameFilePrompt => render_prompt_modal(f, app, area, "Rename File — Enter New Name"),
+        Modal::RenameFilePrompt => {
+            render_prompt_modal(f, app, area, "Rename File — Enter New Name")
+        }
         Modal::GotoLinePrompt => render_prompt_modal(f, app, area, "Go to Line Number"),
         Modal::ThemeSelector => render_theme_selector(f, app, area),
         Modal::CloseUnsavedConfirm(idx) => render_close_unsaved_modal(f, app, area, idx),
@@ -138,7 +200,9 @@ fn render_menu_bar(f: &mut Frame, app: &mut App, area: Rect) {
     let hint = " F1:Help  F2:Save  F3:Tree  F4:Nums  Ctrl+P:Files  Ctrl+G:Git  ::Cmd ";
     spans.push(Span::styled(
         hint,
-        Style::default().fg(app.theme.comment).bg(app.theme.status_bg),
+        Style::default()
+            .fg(app.theme.comment)
+            .bg(app.theme.status_bg),
     ));
 
     let run_btn_text = " [▶ Run (F5)] ";
@@ -156,14 +220,20 @@ fn render_menu_bar(f: &mut Frame, app: &mut App, area: Rect) {
     let run_btn_rect = Rect::new(area.x + run_btn_x, area.y, run_btn_len, 1);
     let run_p = Paragraph::new(Span::styled(
         run_btn_text,
-        Style::default().fg(Color::Black).bg(app.theme.string).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Black)
+            .bg(app.theme.string)
+            .add_modifier(Modifier::BOLD),
     ));
     f.render_widget(run_p, run_btn_rect);
 }
 
 fn render_menu_dropdown(f: &mut Frame, app: &mut App, menu_bar_area: Rect) {
     let tabs = MenuTab::all();
-    let idx = tabs.iter().position(|(_, t)| *t == app.active_menu).unwrap_or(0);
+    let idx = tabs
+        .iter()
+        .position(|(_, t)| *t == app.active_menu)
+        .unwrap_or(0);
     let (tab_start, _) = MenuTab::tab_rect(idx);
 
     let items = app.active_menu.items();
@@ -177,7 +247,12 @@ fn render_menu_dropdown(f: &mut Frame, app: &mut App, menu_bar_area: Rect) {
         dropdown_height,
     );
 
-    app.menu_dropdown_rect = Some((dropdown_area.x, dropdown_area.y, dropdown_area.width, dropdown_area.height));
+    app.menu_dropdown_rect = Some((
+        dropdown_area.x,
+        dropdown_area.y,
+        dropdown_area.width,
+        dropdown_area.height,
+    ));
 
     f.render_widget(Clear, dropdown_area);
 
@@ -204,7 +279,11 @@ fn render_menu_dropdown(f: &mut Frame, app: &mut App, menu_bar_area: Rect) {
             .title(title)
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .style(Style::default().bg(app.theme.popup_bg).fg(app.theme.popup_border)),
+            .style(
+                Style::default()
+                    .bg(app.theme.popup_bg)
+                    .fg(app.theme.popup_border),
+            ),
     );
     f.render_widget(list, dropdown_area);
 }
@@ -236,7 +315,9 @@ fn render_tab_bar(f: &mut Frame, app: &mut App, area: Rect) {
                 .bg(app.theme.current_line_bg)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(app.theme.comment).bg(app.theme.status_bg)
+            Style::default()
+                .fg(app.theme.comment)
+                .bg(app.theme.status_bg)
         };
 
         let close_style = if is_active {
@@ -245,15 +326,23 @@ fn render_tab_bar(f: &mut Frame, app: &mut App, area: Rect) {
                 .bg(app.theme.current_line_bg)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(app.theme.comment).bg(app.theme.status_bg)
+            Style::default()
+                .fg(app.theme.comment)
+                .bg(app.theme.status_bg)
         };
 
         spans.push(Span::styled(tab_name_text, name_style));
         spans.push(Span::styled(close_btn_text, close_style));
-        app.tab_close_positions.push((tab_start_x, close_btn_start_x, close_btn_end_x, idx));
+        app.tab_close_positions
+            .push((tab_start_x, close_btn_start_x, close_btn_end_x, idx));
         current_x = close_btn_end_x;
 
-        spans.push(Span::styled("│", Style::default().fg(app.theme.comment).bg(app.theme.status_bg)));
+        spans.push(Span::styled(
+            "│",
+            Style::default()
+                .fg(app.theme.comment)
+                .bg(app.theme.status_bg),
+        ));
         current_x += 1;
     }
 
@@ -277,7 +366,12 @@ fn render_workspace(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn render_explorer(f: &mut Frame, app: &App, area: Rect) {
-    let root_name = app.workspace.root.file_name().unwrap_or_default().to_string_lossy();
+    let root_name = app
+        .workspace
+        .root
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy();
     let branch_info = if app.git.is_repo {
         format!(" [{}]", app.git.branch)
     } else {
@@ -285,7 +379,9 @@ fn render_explorer(f: &mut Frame, app: &App, area: Rect) {
     };
     let title = format!(" 📁 EXPLORER: {}{} ", root_name, branch_info);
     let border_style = if app.explorer_focused {
-        Style::default().fg(app.theme.line_number_curr).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(app.theme.line_number_curr)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(app.theme.comment)
     };
@@ -302,7 +398,10 @@ fn render_explorer(f: &mut Frame, app: &App, area: Rect) {
             let is_sel = idx == app.explorer.selected_index && app.explorer_focused;
             let node = app.explorer.root_node.find(path);
             let icon = node.map(|n| n.icon()).unwrap_or("📄");
-            let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
             let indent = "  ".repeat(*depth);
 
             // Git status indicator & styling
@@ -320,16 +419,29 @@ fn render_explorer(f: &mut Frame, app: &App, area: Rect) {
             };
 
             let style = if is_sel {
-                Style::default().fg(Color::Black).bg(app.theme.line_number_curr).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(app.theme.line_number_curr)
+                    .add_modifier(Modifier::BOLD)
             } else if path.is_dir() {
-                Style::default().fg(app.theme.function).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(app.theme.function)
+                    .add_modifier(Modifier::BOLD)
             } else if !git_badge.is_empty() {
                 Style::default().fg(git_color)
             } else {
                 Style::default().fg(app.theme.fg)
             };
 
-            ListItem::new(format!("{}{}{} {}{}", indent, icon, if path.is_dir() { "" } else { "" }, name, git_badge)).style(style)
+            ListItem::new(format!(
+                "{}{}{} {}{}",
+                indent,
+                icon,
+                if path.is_dir() { "" } else { "" },
+                name,
+                git_badge
+            ))
+            .style(style)
         })
         .collect();
 
@@ -351,7 +463,11 @@ fn render_editor_splits(f: &mut Frame, app: &mut App, area: Rect) {
 
     for (pane_id, pane_rect) in pane_layouts {
         let is_active = pane_id == app.split_tree.active_pane_id;
-        let buf_idx = app.split_tree.find_pane_by_id(pane_id).map(|p| p.buffer_index).unwrap_or(0);
+        let buf_idx = app
+            .split_tree
+            .find_pane_by_id(pane_id)
+            .map(|p| p.buffer_index)
+            .unwrap_or(0);
         let buf_idx = buf_idx.min(app.buffers.len().saturating_sub(1));
 
         app.pane_positions.push((pane_id, buf_idx, pane_rect));
@@ -371,7 +487,17 @@ fn render_single_editor_pane(
         return;
     }
 
-    let (buf_path, buf_lines, cursor_line, cursor_col, matching_pos, scroll_top, scroll_left, modified, file_name) = {
+    let (
+        buf_path,
+        buf_lines,
+        cursor_line,
+        cursor_col,
+        matching_pos,
+        scroll_top,
+        scroll_left,
+        modified,
+        file_name,
+    ) = {
         let buf = &mut app.buffers[buf_idx];
         let view_height = area.height.saturating_sub(2) as usize;
         let view_width = area.width.saturating_sub(10) as usize;
@@ -421,8 +547,12 @@ fn render_single_editor_pane(
         // Git gutter diff marker
         let diff_span = match gutter_diff.get(&line_idx) {
             Some(GutterDiffKind::Added) => Span::styled("▎", Style::default().fg(app.theme.string)),
-            Some(GutterDiffKind::Modified) => Span::styled("▎", Style::default().fg(app.theme.line_number_curr)),
-            Some(GutterDiffKind::Deleted) => Span::styled("▶", Style::default().fg(app.theme.error)),
+            Some(GutterDiffKind::Modified) => {
+                Span::styled("▎", Style::default().fg(app.theme.line_number_curr))
+            }
+            Some(GutterDiffKind::Deleted) => {
+                Span::styled("▶", Style::default().fg(app.theme.error))
+            }
             None => Span::styled(" ", Style::default().fg(app.theme.comment)),
         };
 
@@ -441,7 +571,9 @@ fn render_single_editor_pane(
         };
 
         let num_style = if is_curr {
-            Style::default().fg(app.theme.line_number_curr).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(app.theme.line_number_curr)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(app.theme.line_number)
         };
@@ -467,7 +599,13 @@ fn render_single_editor_pane(
     }
 
     // Breadcrumb title: 🏠 workspace ❯ folder ❯ filename
-    let breadcrumb = format_breadcrumb(&app.workspace.root, buf_path.as_deref(), &file_name, modified, lang);
+    let breadcrumb = format_breadcrumb(
+        &app.workspace.root,
+        buf_path.as_deref(),
+        &file_name,
+        modified,
+        lang,
+    );
 
     let paragraph = Paragraph::new(rendered_lines).block(
         Block::default()
@@ -481,7 +619,12 @@ fn render_single_editor_pane(
     f.render_widget(paragraph, area);
 
     // Set hardware blinking cursor if active and not in overlay modal or command line
-    if is_active && app.modal == Modal::None && !app.show_command_line && !app.terminal_focused && !app.explorer_focused {
+    if is_active
+        && app.modal == Modal::None
+        && !app.show_command_line
+        && !app.terminal_focused
+        && !app.explorer_focused
+    {
         if cursor_line >= scroll_top && cursor_line < scroll_top + view_height {
             let num_width = match app.line_number_mode {
                 LineNumberMode::None => 0,
@@ -493,7 +636,9 @@ fn render_single_editor_pane(
             let cursor_x = area.x + 1 + gutter_width as u16 + cursor_screen_col;
             let cursor_y = area.y + 1 + cursor_screen_row;
 
-            if cursor_x < area.x + area.width.saturating_sub(1) && cursor_y < area.y + area.height.saturating_sub(1) {
+            if cursor_x < area.x + area.width.saturating_sub(1)
+                && cursor_y < area.y + area.height.saturating_sub(1)
+            {
                 f.set_cursor(cursor_x, cursor_y);
             }
         }
@@ -519,7 +664,13 @@ fn format_breadcrumb(
             if parts.is_empty() {
                 format!(" ❯ {} ({}){} ", file_name, lang.display_name(), mod_dot)
             } else {
-                format!(" ❯ {} ❯ {} ({}){} ", parts.join(" ❯ "), file_name, lang.display_name(), mod_dot)
+                format!(
+                    " ❯ {} ❯ {} ({}){} ",
+                    parts.join(" ❯ "),
+                    file_name,
+                    lang.display_name(),
+                    mod_dot
+                )
             }
         } else {
             format!(" ❯ {} ({}){} ", file_name, lang.display_name(), mod_dot)
@@ -542,7 +693,11 @@ fn render_output_panel(f: &mut Frame, app: &mut App, area: Rect) {
         format!(
             " ⚙ OUTPUT: {} [{}] (Line {}/{} — Scroll / PgUp / PgDn) ",
             app.active_backend.name(),
-            if out.is_running { "RUNNING..." } else { "FINISHED" },
+            if out.is_running {
+                "RUNNING..."
+            } else {
+                "FINISHED"
+            },
             total_lines.saturating_sub(scroll),
             total_lines
         )
@@ -550,7 +705,11 @@ fn render_output_panel(f: &mut Frame, app: &mut App, area: Rect) {
         format!(
             " ⚙ OUTPUT: {} [{}] (Ctrl+` to toggle, drag border to resize, mouse wheel to scroll) ",
             app.active_backend.name(),
-            if out.is_running { "RUNNING..." } else { "FINISHED" }
+            if out.is_running {
+                "RUNNING..."
+            } else {
+                "FINISHED"
+            }
         )
     };
 
@@ -605,7 +764,8 @@ fn render_terminal_panel(f: &mut Frame, app: &mut App, area: Rect) {
             scroll
         )
     } else {
-        " 💻 INTEGRATED TERMINAL (Ctrl+J to toggle, drag border to resize, mouse wheel to scroll) ".to_string()
+        " 💻 INTEGRATED TERMINAL (Ctrl+J to toggle, drag border to resize, mouse wheel to scroll) "
+            .to_string()
     };
 
     let start_idx = (total_history.saturating_sub(max_history_lines)).saturating_sub(scroll);
@@ -620,30 +780,43 @@ fn render_terminal_panel(f: &mut Frame, app: &mut App, area: Rect) {
     for line in visible_history {
         if line.starts_with("> ") || line.starts_with("$ ") {
             lines.push(Line::from(vec![
-                Span::styled("❯ ", Style::default().fg(app.theme.function).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "❯ ",
+                    Style::default()
+                        .fg(app.theme.function)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(&line[2..], Style::default().fg(app.theme.line_number_curr)),
             ]));
         } else if line.contains('\x1b') {
             lines.push(parse_ansi_to_line(line));
         } else if line.starts_with("[err]") {
-            lines.push(Line::from(vec![
-                Span::styled(line.as_str(), Style::default().fg(app.theme.error)),
-            ]));
+            lines.push(Line::from(vec![Span::styled(
+                line.as_str(),
+                Style::default().fg(app.theme.error),
+            )]));
         } else if line.starts_with("[exit:") || line.starts_with("[terminated]") {
-            lines.push(Line::from(vec![
-                Span::styled(line.as_str(), Style::default().fg(app.theme.comment)),
-            ]));
+            lines.push(Line::from(vec![Span::styled(
+                line.as_str(),
+                Style::default().fg(app.theme.comment),
+            )]));
         } else {
-            lines.push(Line::from(vec![
-                Span::styled(line.as_str(), Style::default().fg(app.theme.fg)),
-            ]));
+            lines.push(Line::from(vec![Span::styled(
+                line.as_str(),
+                Style::default().fg(app.theme.fg),
+            )]));
         }
     }
 
     // Active input line (when not scrolled up into past history):
     if scroll == 0 {
         lines.push(Line::from(vec![
-            Span::styled("❯ ", Style::default().fg(app.theme.function).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "❯ ",
+                Style::default()
+                    .fg(app.theme.function)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(app.terminal.get_input(), Style::default().fg(app.theme.fg)),
         ]));
     }
@@ -654,7 +827,9 @@ fn render_terminal_panel(f: &mut Frame, app: &mut App, area: Rect) {
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(if app.terminal_focused {
-                Style::default().fg(app.theme.function).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(app.theme.function)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(app.theme.comment)
             })
@@ -667,13 +842,21 @@ fn render_terminal_panel(f: &mut Frame, app: &mut App, area: Rect) {
         let input_line_y = area.y + 1 + (visible_history.len() as u16);
         let cur_x = (area.x + 3 + app.terminal.get_input().chars().count() as u16)
             .min(area.x + area.width.saturating_sub(2));
-        f.set_cursor(cur_x, input_line_y.min(area.y + area.height.saturating_sub(2)));
+        f.set_cursor(
+            cur_x,
+            input_line_y.min(area.y + area.height.saturating_sub(2)),
+        );
     }
 }
 
 fn render_command_line_bar(f: &mut Frame, app: &App, area: Rect) {
     let line = Line::from(vec![
-        Span::styled(":", Style::default().fg(app.theme.line_number_curr).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            ":",
+            Style::default()
+                .fg(app.theme.line_number_curr)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(&app.command_line, Style::default().fg(app.theme.fg)),
     ]);
     let p = Paragraph::new(line).style(Style::default().bg(app.theme.status_bg));
@@ -697,14 +880,33 @@ fn render_powerline_status_bar(f: &mut Frame, app: &App, area: Rect) {
 
     let mode_span = Span::styled(
         mode_str,
-        Style::default().fg(Color::Black).bg(mode_bg).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Black)
+            .bg(mode_bg)
+            .add_modifier(Modifier::BOLD),
     );
 
-    let file_info = format!(" 📄 {} {} ", buf.file_name(), if buf.modified { "●" } else { "" });
-    let file_span = Span::styled(file_info, Style::default().fg(app.theme.fg).bg(app.theme.status_bg));
+    let file_info = format!(
+        " 📄 {} {} ",
+        buf.file_name(),
+        if buf.modified { "●" } else { "" }
+    );
+    let file_span = Span::styled(
+        file_info,
+        Style::default().fg(app.theme.fg).bg(app.theme.status_bg),
+    );
 
-    let split_info = format!(" [Pane {}/{}] ", app.split_tree.active_pane_id + 1, app.split_tree.pane_count());
-    let split_span = Span::styled(split_info, Style::default().fg(app.theme.comment).bg(app.theme.status_bg));
+    let split_info = format!(
+        " [Pane {}/{}] ",
+        app.split_tree.active_pane_id + 1,
+        app.split_tree.pane_count()
+    );
+    let split_span = Span::styled(
+        split_info,
+        Style::default()
+            .fg(app.theme.comment)
+            .bg(app.theme.status_bg),
+    );
 
     let git_span = if app.git.is_repo {
         let ahead_behind = match (app.git.ahead, app.git.behind) {
@@ -713,23 +915,44 @@ fn render_powerline_status_bar(f: &mut Frame, app: &App, area: Rect) {
             (0, b) => format!(" ⇣{}", b),
             (a, b) => format!(" ⇡{}⇣{}", a, b),
         };
-        let status_count = app.git.staged_files.len() + app.git.unstaged_files.len() + app.git.untracked_files.len();
-        let changes = if status_count > 0 { format!(" *{}", status_count) } else { String::new() };
+        let status_count = app.git.staged_files.len()
+            + app.git.unstaged_files.len()
+            + app.git.untracked_files.len();
+        let changes = if status_count > 0 {
+            format!(" *{}", status_count)
+        } else {
+            String::new()
+        };
         Span::styled(
             format!("  {}{}{} ", app.git.branch, ahead_behind, changes),
-            Style::default().fg(app.theme.line_number_curr).bg(app.theme.status_bg),
+            Style::default()
+                .fg(app.theme.line_number_curr)
+                .bg(app.theme.status_bg),
         )
     } else {
-        Span::styled(" [No Git] ", Style::default().fg(app.theme.comment).bg(app.theme.status_bg))
+        Span::styled(
+            " [No Git] ",
+            Style::default()
+                .fg(app.theme.comment)
+                .bg(app.theme.status_bg),
+        )
     };
 
     let backend_info = format!(" [{}] ", app.active_backend.name());
-    let backend_span = Span::styled(backend_info, Style::default().fg(app.theme.type_color).bg(app.theme.status_bg));
+    let backend_span = Span::styled(
+        backend_info,
+        Style::default()
+            .fg(app.theme.type_color)
+            .bg(app.theme.status_bg),
+    );
 
     let pos_info = format!(" Ln {}, Col {} ", buf.cursor.line + 1, buf.cursor.col + 1);
     let pos_span = Span::styled(
         pos_info,
-        Style::default().fg(Color::Black).bg(app.theme.line_number_curr).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Black)
+            .bg(app.theme.line_number_curr)
+            .add_modifier(Modifier::BOLD),
     );
 
     let lang_span = Span::styled(
@@ -743,7 +966,12 @@ fn render_powerline_status_bar(f: &mut Frame, app: &App, area: Rect) {
         split_span,
         git_span,
         backend_span,
-        Span::styled(format!("  {}  ", app.status_message), Style::default().fg(app.theme.comment).bg(app.theme.status_bg)),
+        Span::styled(
+            format!("  {}  ", app.status_message),
+            Style::default()
+                .fg(app.theme.comment)
+                .bg(app.theme.status_bg),
+        ),
         lang_span,
         pos_span,
     ];
@@ -754,8 +982,10 @@ fn render_powerline_status_bar(f: &mut Frame, app: &App, area: Rect) {
 
 fn render_completion_popup(f: &mut Frame, app: &App, workspace_area: Rect) {
     let buf = app.current_buffer();
-    let col_offset = (buf.cursor.col.saturating_sub(buf.scroll_left) as u16 + 8).min(workspace_area.width.saturating_sub(30));
-    let row_offset = (buf.cursor.line.saturating_sub(buf.scroll_top) as u16 + 2).min(workspace_area.height.saturating_sub(10));
+    let col_offset = (buf.cursor.col.saturating_sub(buf.scroll_left) as u16 + 8)
+        .min(workspace_area.width.saturating_sub(30));
+    let row_offset = (buf.cursor.line.saturating_sub(buf.scroll_top) as u16 + 2)
+        .min(workspace_area.height.saturating_sub(10));
 
     let popup_w = 34u16;
     let popup_h = (app.completion.filtered.len() as u16 + 2).min(10);
@@ -777,7 +1007,10 @@ fn render_completion_popup(f: &mut Frame, app: &App, workspace_area: Rect) {
         .map(|(idx, item)| {
             let is_sel = idx == app.completion.selected_index;
             let style = if is_sel {
-                Style::default().fg(Color::Black).bg(app.theme.line_number_curr).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(app.theme.line_number_curr)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(app.theme.fg)
             };
@@ -845,17 +1078,25 @@ fn render_git_manager_modal(f: &mut Frame, app: &App, area: Rect) {
     if !app.git.staged_files.is_empty() {
         items.push(ListItem::new(Span::styled(
             "── Staged Changes ────────────────────────────────────────",
-            Style::default().fg(app.theme.string).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(app.theme.string)
+                .add_modifier(Modifier::BOLD),
         )));
         for (path, status) in &app.git.staged_files {
             let is_sel = current_item_idx == app.git_selected;
             let file_name = path.file_name().unwrap_or_default().to_string_lossy();
             let style = if is_sel {
-                Style::default().fg(Color::Black).bg(app.theme.line_number_curr).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(app.theme.line_number_curr)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(app.theme.string)
             };
-            items.push(ListItem::new(format!("  [{}] {} (Staged)", status.badge(), file_name)).style(style));
+            items.push(
+                ListItem::new(format!("  [{}] {} (Staged)", status.badge(), file_name))
+                    .style(style),
+            );
             current_item_idx += 1;
         }
     }
@@ -864,13 +1105,18 @@ fn render_git_manager_modal(f: &mut Frame, app: &App, area: Rect) {
     if !app.git.unstaged_files.is_empty() {
         items.push(ListItem::new(Span::styled(
             "── Changes Not Staged ────────────────────────────────────",
-            Style::default().fg(app.theme.line_number_curr).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(app.theme.line_number_curr)
+                .add_modifier(Modifier::BOLD),
         )));
         for (path, status) in &app.git.unstaged_files {
             let is_sel = current_item_idx == app.git_selected;
             let file_name = path.file_name().unwrap_or_default().to_string_lossy();
             let style = if is_sel {
-                Style::default().fg(Color::Black).bg(app.theme.line_number_curr).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(app.theme.line_number_curr)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(app.theme.line_number_curr)
             };
@@ -883,13 +1129,18 @@ fn render_git_manager_modal(f: &mut Frame, app: &App, area: Rect) {
     if !app.git.untracked_files.is_empty() {
         items.push(ListItem::new(Span::styled(
             "── Untracked Files ───────────────────────────────────────",
-            Style::default().fg(app.theme.error).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(app.theme.error)
+                .add_modifier(Modifier::BOLD),
         )));
         for path in &app.git.untracked_files {
             let is_sel = current_item_idx == app.git_selected;
             let file_name = path.file_name().unwrap_or_default().to_string_lossy();
             let style = if is_sel {
-                Style::default().fg(Color::Black).bg(app.theme.line_number_curr).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(app.theme.line_number_curr)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(app.theme.fg)
             };
@@ -899,7 +1150,10 @@ fn render_git_manager_modal(f: &mut Frame, app: &App, area: Rect) {
     }
 
     if items.is_empty() {
-        items.push(ListItem::new("  ✔ Working tree clean, nothing to commit.").style(Style::default().fg(app.theme.string)));
+        items.push(
+            ListItem::new("  ✔ Working tree clean, nothing to commit.")
+                .style(Style::default().fg(app.theme.string)),
+        );
     }
 
     let list = List::new(items).block(
@@ -918,7 +1172,11 @@ fn render_git_manager_modal(f: &mut Frame, app: &App, area: Rect) {
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(app.theme.function))
-            .style(Style::default().bg(app.theme.popup_bg).fg(app.theme.comment)),
+            .style(
+                Style::default()
+                    .bg(app.theme.popup_bg)
+                    .fg(app.theme.comment),
+            ),
     );
     f.render_widget(footer, chunks[2]);
 }
@@ -947,9 +1205,13 @@ fn render_git_diff_modal(f: &mut Frame, app: &App, area: Rect) {
             } else if line.starts_with('-') && !line.starts_with("---") {
                 Style::default().fg(app.theme.error)
             } else if line.starts_with('@') {
-                Style::default().fg(app.theme.line_number_curr).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(app.theme.line_number_curr)
+                    .add_modifier(Modifier::BOLD)
             } else if line.starts_with("diff ") || line.starts_with("index ") {
-                Style::default().fg(app.theme.function).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(app.theme.function)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(app.theme.fg)
             };
@@ -961,10 +1223,18 @@ fn render_git_diff_modal(f: &mut Frame, app: &App, area: Rect) {
     let total_lines = diff_lines.len();
     let max_scroll = total_lines.saturating_sub(view_height);
     let scroll = app.text_viewer_scroll.min(max_scroll);
-    let visible_lines: Vec<Line> = diff_lines.into_iter().skip(scroll).take(view_height).collect();
+    let visible_lines: Vec<Line> = diff_lines
+        .into_iter()
+        .skip(scroll)
+        .take(view_height)
+        .collect();
 
     let title_info = if total_lines > view_height {
-        format!(" 📄 Git Diff Viewer (:diff — Line {}/{} — ↑/↓/Scroll, Esc to close) ", scroll + 1, total_lines)
+        format!(
+            " 📄 Git Diff Viewer (:diff — Line {}/{} — ↑/↓/Scroll, Esc to close) ",
+            scroll + 1,
+            total_lines
+        )
     } else {
         " 📄 Git Diff Viewer (:diff — Esc to close) ".to_string()
     };
@@ -992,7 +1262,9 @@ fn render_git_log_modal(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Clear, popup_area);
 
     let items: Vec<ListItem> = if app.git.commit_history.is_empty() {
-        vec![ListItem::new("No commit history found.").style(Style::default().fg(app.theme.comment))]
+        vec![
+            ListItem::new("No commit history found.").style(Style::default().fg(app.theme.comment)),
+        ]
     } else {
         app.git
             .commit_history
@@ -1000,9 +1272,15 @@ fn render_git_log_modal(f: &mut Frame, app: &App, area: Rect) {
             .enumerate()
             .map(|(idx, commit)| {
                 let is_sel = idx == app.git_log_selected;
-                let text = format!(" ⬢ {} │ {} │ {} │ {}", commit.hash, commit.author, commit.date, commit.message);
+                let text = format!(
+                    " ⬢ {} │ {} │ {} │ {}",
+                    commit.hash, commit.author, commit.date, commit.message
+                );
                 let style = if is_sel {
-                    Style::default().fg(Color::Black).bg(app.theme.line_number_curr).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(app.theme.line_number_curr)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(app.theme.fg)
                 };
@@ -1040,7 +1318,9 @@ fn render_git_branch_selector(f: &mut Frame, app: &App, area: Rect) {
             let is_current = b == &app.git.branch;
             let icon = if is_current { "* " } else { "  " };
             let style = if is_current {
-                Style::default().fg(app.theme.string).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(app.theme.string)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(app.theme.fg)
             };
@@ -1093,7 +1373,10 @@ fn render_fuzzy_file_finder(f: &mut Frame, app: &App, area: Rect) {
         .map(|(idx, (name, _, _))| {
             let is_sel = idx == app.fuzzy_selected;
             let style = if is_sel {
-                Style::default().fg(Color::Black).bg(app.theme.line_number_curr).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(app.theme.line_number_curr)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(app.theme.fg)
             };
@@ -1147,7 +1430,10 @@ fn render_workspace_grep(f: &mut Frame, app: &App, area: Rect) {
             let file_name = path.file_name().unwrap_or_default().to_string_lossy();
             let text = format!("{}:{}: {}", file_name, line_num, content.trim());
             let style = if is_sel {
-                Style::default().fg(Color::Black).bg(app.theme.line_number_curr).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(app.theme.line_number_curr)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(app.theme.fg)
             };
@@ -1179,7 +1465,8 @@ fn render_document_symbols(f: &mut Frame, app: &App, area: Rect) {
     let items = vec![
         ListItem::new(" ✦ main (fn) — line 1").style(Style::default().fg(app.theme.function)),
         ListItem::new(" ✦ calculate (fn) — line 12").style(Style::default().fg(app.theme.function)),
-        ListItem::new(" ✦ Config (struct) — line 45").style(Style::default().fg(app.theme.type_color)),
+        ListItem::new(" ✦ Config (struct) — line 45")
+            .style(Style::default().fg(app.theme.type_color)),
     ];
 
     let list = List::new(items).block(
@@ -1206,12 +1493,16 @@ fn render_diagnostics_list(f: &mut Frame, app: &App, area: Rect) {
 
     let diags = app.lsp.diagnostics.lock().unwrap();
     let items: Vec<ListItem> = if diags.is_empty() {
-        vec![ListItem::new(" ✔ No problems found in workspace.").style(Style::default().fg(app.theme.string))]
+        vec![
+            ListItem::new(" ✔ No problems found in workspace.")
+                .style(Style::default().fg(app.theme.string)),
+        ]
     } else {
         diags
             .iter()
             .map(|d| {
-                ListItem::new(format!(" ✘ Line {}: {}", d.line + 1, d.message)).style(Style::default().fg(app.theme.error))
+                ListItem::new(format!(" ✘ Line {}: {}", d.line + 1, d.message))
+                    .style(Style::default().fg(app.theme.error))
             })
             .collect()
     };
@@ -1238,7 +1529,10 @@ fn render_hover_tooltip(f: &mut Frame, app: &App, area: Rect) {
     );
     f.render_widget(Clear, popup_area);
 
-    let content = app.hover_content.as_deref().unwrap_or("No documentation available.");
+    let content = app
+        .hover_content
+        .as_deref()
+        .unwrap_or("No documentation available.");
     let p = Paragraph::new(content).block(
         Block::default()
             .title(" 💡 Hover Info (K) ")
@@ -1262,7 +1556,12 @@ fn render_keybindings_help(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Clear, popup_area);
 
     let help_text = vec![
-        Line::from(vec![Span::styled("--- Quick Navigation & Panels ---", Style::default().fg(app.theme.line_number_curr).add_modifier(Modifier::BOLD))]),
+        Line::from(vec![Span::styled(
+            "--- Quick Navigation & Panels ---",
+            Style::default()
+                .fg(app.theme.line_number_curr)
+                .add_modifier(Modifier::BOLD),
+        )]),
         Line::from("  Ctrl+J / Ctrl+T Toggle Terminal (PgUp/PgDn/Ctrl+U/Ctrl+D to scroll history)"),
         Line::from("  Ctrl+`          Toggle Output Panel (Mouse wheel to scroll)"),
         Line::from("  Ctrl+P          Fuzzy File Finder"),
@@ -1272,14 +1571,26 @@ fn render_keybindings_help(f: &mut Frame, app: &App, area: Rect) {
         Line::from("  Home / End      Start of line (col 0) / End of line"),
         Line::from("  PageUp / PageDn Scroll view by 15 lines"),
         Line::from(""),
-        Line::from(vec![Span::styled("--- Mouse & Drag Operations ---", Style::default().fg(app.theme.line_number_curr).add_modifier(Modifier::BOLD))]),
+        Line::from(vec![Span::styled(
+            "--- Mouse & Drag Operations ---",
+            Style::default()
+                .fg(app.theme.line_number_curr)
+                .add_modifier(Modifier::BOLD),
+        )]),
         Line::from("  Left Click      Click anywhere in code to position cursor directly"),
         Line::from("  Drag to Select  Click and drag across text to select range"),
         Line::from("  Cut/Copy/Del    Ctrl+X/x cut, Ctrl+C/y copy, Backspace/Delete/d delete"),
         Line::from("  Drag Border     Drag bottom panel top border to resize height (3-35)"),
-        Line::from("  Right Click     Open File Explorer context menu (New, Rename, Copy, Cut, Del)"),
+        Line::from(
+            "  Right Click     Open File Explorer context menu (New, Rename, Copy, Cut, Del)",
+        ),
         Line::from(""),
-        Line::from(vec![Span::styled("--- Editing, Text Objects & Word Control ---", Style::default().fg(app.theme.line_number_curr).add_modifier(Modifier::BOLD))]),
+        Line::from(vec![Span::styled(
+            "--- Editing, Text Objects & Word Control ---",
+            Style::default()
+                .fg(app.theme.line_number_curr)
+                .add_modifier(Modifier::BOLD),
+        )]),
         Line::from("  Ctrl+Backspace  Delete entire preceding word in a single keystroke"),
         Line::from("  Vim Counts      5j, 5k, 4w, 3dd (cut 3 lines), 4x (del 4 chars), 2yy, 10G"),
         Line::from("  Auto-Close      Auto-closes (), [], {}, \"\", '', `` with smart overtyping"),
@@ -1287,7 +1598,12 @@ fn render_keybindings_help(f: &mut Frame, app: &App, area: Rect) {
         Line::from("  ciw / di\" / yiw Vim Text Objects (Inner Word, In Quotes, In Brackets)"),
         Line::from("  Ctrl+Alt+Up/Dn  Multi-Cursor Column Editing"),
         Line::from(""),
-        Line::from(vec![Span::styled("--- Adesh Tooling & Compilers ---", Style::default().fg(app.theme.line_number_curr).add_modifier(Modifier::BOLD))]),
+        Line::from(vec![Span::styled(
+            "--- Adesh Tooling & Compilers ---",
+            Style::default()
+                .fg(app.theme.line_number_curr)
+                .add_modifier(Modifier::BOLD),
+        )]),
         Line::from("  F5 / Ctrl+F5    Run Program / Run with Backend Selection"),
         Line::from("  :ast / :hir     Abstract Syntax Tree / High-Level IR Inspector"),
         Line::from("  :ir / :lir      Intermediate Representation / Low-Level SSA IR"),
@@ -1335,7 +1651,12 @@ fn render_text_viewer(f: &mut Frame, app: &App, area: Rect, title: &str, content
     };
 
     let title_info = if total_lines > view_height {
-        format!(" ⚙ {} (Line {}/{} — ↑/↓/Scroll/PgDn, Esc to close) ", title, scroll + 1, total_lines)
+        format!(
+            " ⚙ {} (Line {}/{} — ↑/↓/Scroll/PgDn, Esc to close) ",
+            title,
+            scroll + 1,
+            total_lines
+        )
     } else {
         format!(" ⚙ {} (Esc to close) ", title)
     };
@@ -1389,7 +1710,10 @@ fn render_command_palette(f: &mut Frame, app: &App, area: Rect) {
         .map(|(idx, item)| {
             let is_sel = idx == app.palette.selected_index;
             let style = if is_sel {
-                Style::default().fg(Color::Black).bg(app.theme.line_number_curr).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(app.theme.line_number_curr)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(app.theme.fg)
             };
@@ -1410,15 +1734,14 @@ fn render_command_palette(f: &mut Frame, app: &App, area: Rect) {
 fn render_search_modal(f: &mut Frame, app: &App, area: Rect) {
     let w = 45u16.min(area.width);
     let h = 5u16.min(area.height);
-    let popup_area = Rect::new(
-        area.x + area.width.saturating_sub(w + 2),
-        area.y + 2,
-        w,
-        h,
-    );
+    let popup_area = Rect::new(area.x + area.width.saturating_sub(w + 2), area.y + 2, w, h);
     f.render_widget(Clear, popup_area);
 
-    let title = format!(" Find ({}/{}) ", app.search.matches.len(), app.search.matches.len());
+    let title = format!(
+        " Find ({}/{}) ",
+        app.search.matches.len(),
+        app.search.matches.len()
+    );
     let p = Paragraph::new(format!("Query: {}", app.search.query)).block(
         Block::default()
             .title(title)
@@ -1450,7 +1773,10 @@ fn render_backend_selector(f: &mut Frame, app: &App, area: Rect) {
         .map(|b| {
             let is_sel = b == &app.active_backend;
             let style = if is_sel {
-                Style::default().fg(Color::Black).bg(app.theme.line_number_curr).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(app.theme.line_number_curr)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(app.theme.fg)
             };
@@ -1485,7 +1811,10 @@ fn render_theme_selector(f: &mut Frame, app: &App, area: Rect) {
         .map(|t| {
             let is_sel = t.name == app.theme.name;
             let style = if is_sel {
-                Style::default().fg(Color::Black).bg(app.theme.line_number_curr).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(app.theme.line_number_curr)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(app.theme.fg)
             };
@@ -1619,8 +1948,16 @@ fn render_toasts(f: &mut Frame, app: &mut App, area: Rect) {
         };
 
         let line = Line::from(vec![
-            Span::styled(format!(" {}", toast.message), Style::default().fg(app.theme.fg)),
-            Span::styled(" ✕", Style::default().fg(app.theme.error).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!(" {}", toast.message),
+                Style::default().fg(app.theme.fg),
+            ),
+            Span::styled(
+                " ✕",
+                Style::default()
+                    .fg(app.theme.error)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]);
 
         let p = Paragraph::new(line).block(
@@ -1633,7 +1970,13 @@ fn render_toasts(f: &mut Frame, app: &mut App, area: Rect) {
         );
         f.render_widget(p, toast_rect);
 
-        app.toast_close_positions.push((toast_rect.x, toast_rect.y, toast_rect.width, toast_rect.height, idx));
+        app.toast_close_positions.push((
+            toast_rect.x,
+            toast_rect.y,
+            toast_rect.width,
+            toast_rect.height,
+            idx,
+        ));
 
         if toast_y >= 3 {
             toast_y -= 3;
@@ -1700,7 +2043,11 @@ fn render_explorer_context_menu(f: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    let title = if ctx.is_dir { " 📁 Folder Actions " } else { " 📄 File Actions " };
+    let title = if ctx.is_dir {
+        " 📁 Folder Actions "
+    } else {
+        " 📄 File Actions "
+    };
     let list = List::new(list_items).block(
         Block::default()
             .title(title)

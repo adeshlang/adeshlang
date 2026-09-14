@@ -4,11 +4,11 @@
 mod targets {
     use super::super::config::ATP_VERSION;
     use super::super::handshake::{ClientHandshake, ServerHandshake};
-    use super::super::identity::{
-        empty_transcript_hash, verify_identity_proof, IdentityKeyPair, IdentityProofContext,
-        IdentityRole,
-    };
     use super::super::id::WireConnectionId;
+    use super::super::identity::{
+        IdentityKeyPair, IdentityProofContext, IdentityRole, empty_transcript_hash,
+        verify_identity_proof,
+    };
     use super::super::security::EphemeralKeyPair;
     use super::super::wire::{Frame, PacketHeader};
     use std::time::Instant;

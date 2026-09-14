@@ -9,8 +9,7 @@ use crate::document::Document;
 use crate::workspace::WorkspaceIndex;
 use adeshlang::semantics::{SemanticIndex, SemanticSymbolKind, SymbolEntry};
 use lsp_types::{
-    DocumentSymbol, Location, Position, Range, SymbolKind, TextEdit,
-    Url, WorkspaceEdit,
+    DocumentSymbol, Location, Position, Range, SymbolKind, TextEdit, Url, WorkspaceEdit,
 };
 
 /// Find the definition of a symbol at a position using semantic resolution.
@@ -144,16 +143,19 @@ pub fn do_rename_semantic(
 
     let identifier = match index.identifier_at(internal_line, internal_col) {
         Some(id) => id.to_string(),
-        None => return WorkspaceEdit {
-            changes: None,
-            document_changes: None,
-            change_annotations: None,
-        },
+        None => {
+            return WorkspaceEdit {
+                changes: None,
+                document_changes: None,
+                change_annotations: None,
+            }
+        }
     };
 
     let refs = workspace.find_references_workspace(&identifier);
 
-    let mut changes: std::collections::HashMap<Url, Vec<TextEdit>> = std::collections::HashMap::new();
+    let mut changes: std::collections::HashMap<Url, Vec<TextEdit>> =
+        std::collections::HashMap::new();
 
     for (uri, ref_line, ref_col, ref_end_col) in refs {
         let start = Position {
@@ -207,7 +209,9 @@ pub fn get_document_symbols_semantic(index: &SemanticIndex) -> Vec<DocumentSymbo
         };
 
         let detail = sym.signature.clone().or_else(|| {
-            sym.type_annotation.as_ref().map(|t| format!("{}: {}", sym.name, t))
+            sym.type_annotation
+                .as_ref()
+                .map(|t| format!("{}: {}", sym.name, t))
         });
 
         symbols.push(DocumentSymbol {
@@ -218,7 +222,11 @@ pub fn get_document_symbols_semantic(index: &SemanticIndex) -> Vec<DocumentSymbo
             deprecated: None,
             range: Range { start, end },
             selection_range: Range { start, end },
-            children: if children.is_empty() { None } else { Some(children) },
+            children: if children.is_empty() {
+                None
+            } else {
+                Some(children)
+            },
         });
     }
 
@@ -244,11 +252,13 @@ fn get_type_children(index: &SemanticIndex, type_name: &str) -> Vec<DocumentSymb
             children.push(DocumentSymbol {
                 name: sym.name.clone(),
                 detail: sym.signature.clone().or_else(|| {
-                    sym.type_annotation.as_ref().map(|t| format!("{}: {}", sym.name, t))
+                    sym.type_annotation
+                        .as_ref()
+                        .map(|t| format!("{}: {}", sym.name, t))
                 }),
                 kind,
                 tags: None,
-            deprecated: None,
+                deprecated: None,
                 range: Range { start, end },
                 selection_range: Range { start, end },
                 children: None,
@@ -266,9 +276,12 @@ fn get_type_children(index: &SemanticIndex, type_name: &str) -> Vec<DocumentSymb
                 detail: Some(format!("{}: {}", fname, ftype)),
                 kind: SymbolKind::FIELD,
                 tags: None,
-            deprecated: None,
+                deprecated: None,
                 range: Range::new(Position::new(0, 0), Position::new(0, fname.len() as u32)),
-                selection_range: Range::new(Position::new(0, 0), Position::new(0, fname.len() as u32)),
+                selection_range: Range::new(
+                    Position::new(0, 0),
+                    Position::new(0, fname.len() as u32),
+                ),
                 children: None,
             });
         }
@@ -282,9 +295,12 @@ fn get_type_children(index: &SemanticIndex, type_name: &str) -> Vec<DocumentSymb
                 detail: m.signature.clone(),
                 kind: SymbolKind::METHOD,
                 tags: None,
-            deprecated: None,
+                deprecated: None,
                 range: Range::new(Position::new(0, 0), Position::new(0, m.name.len() as u32)),
-                selection_range: Range::new(Position::new(0, 0), Position::new(0, m.name.len() as u32)),
+                selection_range: Range::new(
+                    Position::new(0, 0),
+                    Position::new(0, m.name.len() as u32),
+                ),
                 children: None,
             });
         }
@@ -298,9 +314,12 @@ fn get_type_children(index: &SemanticIndex, type_name: &str) -> Vec<DocumentSymb
                 detail: None,
                 kind: SymbolKind::ENUM_MEMBER,
                 tags: None,
-            deprecated: None,
+                deprecated: None,
                 range: Range::new(Position::new(0, 0), Position::new(0, vname.len() as u32)),
-                selection_range: Range::new(Position::new(0, 0), Position::new(0, vname.len() as u32)),
+                selection_range: Range::new(
+                    Position::new(0, 0),
+                    Position::new(0, vname.len() as u32),
+                ),
                 children: None,
             });
         }
@@ -377,7 +396,12 @@ pub fn find_definition(doc: &Document, line: u32, col: u32) -> Option<Location> 
 
 /// Find references (legacy API)
 #[allow(dead_code)]
-pub fn find_references(doc: &Document, line: u32, col: u32, _include_declaration: bool) -> Vec<Location> {
+pub fn find_references(
+    doc: &Document,
+    line: u32,
+    col: u32,
+    _include_declaration: bool,
+) -> Vec<Location> {
     let word = match doc.get_word_at(line, col) {
         Some(w) => w,
         None => return vec![],
@@ -386,20 +410,23 @@ pub fn find_references(doc: &Document, line: u32, col: u32, _include_declaration
     let result = analyze(&doc.content);
     let occurrences = crate::analysis::find_all_identifier_occurrences(&result.tokens, &word);
 
-    occurrences.into_iter().map(|(l, c)| {
-        let start = Position {
-            line: (l.saturating_sub(1)) as u32,
-            character: (c.saturating_sub(1)) as u32,
-        };
-        let end = Position {
-            line: start.line,
-            character: start.character + word.len() as u32,
-        };
-        Location {
-            uri: doc.uri.clone(),
-            range: Range { start, end },
-        }
-    }).collect()
+    occurrences
+        .into_iter()
+        .map(|(l, c)| {
+            let start = Position {
+                line: (l.saturating_sub(1)) as u32,
+                character: (c.saturating_sub(1)) as u32,
+            };
+            let end = Position {
+                line: start.line,
+                character: start.character + word.len() as u32,
+            };
+            Location {
+                uri: doc.uri.clone(),
+                range: Range { start, end },
+            }
+        })
+        .collect()
 }
 
 /// Get document symbols (legacy API)
@@ -408,44 +435,47 @@ pub fn get_document_symbols(doc: &Document) -> Vec<DocumentSymbol> {
     let result = analyze(&doc.content);
     let symbols = extract_symbols_with_positions(&result.statements, &result.tokens);
 
-    symbols.iter().filter_map(|sym| {
-        if sym.line == 0 {
-            return None;
-        }
+    symbols
+        .iter()
+        .filter_map(|sym| {
+            if sym.line == 0 {
+                return None;
+            }
 
-        let kind = match sym.kind {
-            crate::analysis::SymbolKind::Function => SymbolKind::FUNCTION,
-            crate::analysis::SymbolKind::Class => SymbolKind::CLASS,
-            crate::analysis::SymbolKind::Variable => SymbolKind::VARIABLE,
-            crate::analysis::SymbolKind::Constant => SymbolKind::CONSTANT,
-            crate::analysis::SymbolKind::Parameter => SymbolKind::VARIABLE,
-            crate::analysis::SymbolKind::Method => SymbolKind::METHOD,
-            crate::analysis::SymbolKind::Property => SymbolKind::PROPERTY,
-            crate::analysis::SymbolKind::Enum => SymbolKind::ENUM,
-            crate::analysis::SymbolKind::Interface => SymbolKind::INTERFACE,
-            crate::analysis::SymbolKind::Module => SymbolKind::MODULE,
-        };
+            let kind = match sym.kind {
+                crate::analysis::SymbolKind::Function => SymbolKind::FUNCTION,
+                crate::analysis::SymbolKind::Class => SymbolKind::CLASS,
+                crate::analysis::SymbolKind::Variable => SymbolKind::VARIABLE,
+                crate::analysis::SymbolKind::Constant => SymbolKind::CONSTANT,
+                crate::analysis::SymbolKind::Parameter => SymbolKind::VARIABLE,
+                crate::analysis::SymbolKind::Method => SymbolKind::METHOD,
+                crate::analysis::SymbolKind::Property => SymbolKind::PROPERTY,
+                crate::analysis::SymbolKind::Enum => SymbolKind::ENUM,
+                crate::analysis::SymbolKind::Interface => SymbolKind::INTERFACE,
+                crate::analysis::SymbolKind::Module => SymbolKind::MODULE,
+            };
 
-        let start = Position {
-            line: (sym.line.saturating_sub(1)) as u32,
-            character: (sym.col.saturating_sub(1)) as u32,
-        };
-        let end = Position {
-            line: (sym.end_line.saturating_sub(1)) as u32,
-            character: (sym.end_col.saturating_sub(1)) as u32,
-        };
+            let start = Position {
+                line: (sym.line.saturating_sub(1)) as u32,
+                character: (sym.col.saturating_sub(1)) as u32,
+            };
+            let end = Position {
+                line: (sym.end_line.saturating_sub(1)) as u32,
+                character: (sym.end_col.saturating_sub(1)) as u32,
+            };
 
-        Some(DocumentSymbol {
-            name: sym.name.clone(),
-            detail: sym.signature.clone(),
-            kind,
-            tags: None,
-            deprecated: None,
-            range: Range { start, end },
-            selection_range: Range { start, end },
-            children: None,
+            Some(DocumentSymbol {
+                name: sym.name.clone(),
+                detail: sym.signature.clone(),
+                kind,
+                tags: None,
+                deprecated: None,
+                range: Range { start, end },
+                selection_range: Range { start, end },
+                children: None,
+            })
         })
-    }).collect()
+        .collect()
 }
 
 /// Prepare rename (legacy API)
@@ -454,8 +484,14 @@ pub fn prepare_rename(doc: &Document, line: u32, col: u32) -> Option<Range> {
     let word = doc.get_word_at(line, col)?;
     let _line_text = doc.get_line(line as usize)?;
 
-    let start = Position { line, character: col.saturating_sub(1) };
-    let end = Position { line, character: start.character + word.len() as u32 };
+    let start = Position {
+        line,
+        character: col.saturating_sub(1),
+    };
+    let end = Position {
+        line,
+        character: start.character + word.len() as u32,
+    };
     Some(Range { start, end })
 }
 
@@ -470,15 +506,18 @@ pub fn do_rename(doc: &Document, line: u32, col: u32, new_name: &str) -> Vec<(Ra
     let result = analyze(&doc.content);
     let occurrences = crate::analysis::find_all_identifier_occurrences(&result.tokens, &word);
 
-    occurrences.into_iter().map(|(l, c)| {
-        let start = Position {
-            line: (l.saturating_sub(1)) as u32,
-            character: (c.saturating_sub(1)) as u32,
-        };
-        let end = Position {
-            line: start.line,
-            character: start.character + word.len() as u32,
-        };
-        (Range { start, end }, new_name.to_string())
-    }).collect()
+    occurrences
+        .into_iter()
+        .map(|(l, c)| {
+            let start = Position {
+                line: (l.saturating_sub(1)) as u32,
+                character: (c.saturating_sub(1)) as u32,
+            };
+            let end = Position {
+                line: start.line,
+                character: start.character + word.len() as u32,
+            };
+            (Range { start, end }, new_name.to_string())
+        })
+        .collect()
 }

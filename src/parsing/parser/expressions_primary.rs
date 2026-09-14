@@ -97,11 +97,7 @@ impl Parser {
                 let body = self.block()?;
                 let span = self.previous_span();
                 let fn_expr = Expr {
-                    kind: ExprKind::Fn(
-                        vec![],
-                        std::sync::Arc::new(body),
-                        true,
-                    ),
+                    kind: ExprKind::Fn(vec![], std::sync::Arc::new(body), true),
                     span: span.clone(),
                 };
                 return Ok(Expr {
@@ -844,11 +840,7 @@ impl Parser {
                 let body = self.block()?;
                 let span = self.previous_span();
                 let fn_expr = Expr {
-                    kind: ExprKind::Fn(
-                        vec![],
-                        std::sync::Arc::new(body),
-                        false,
-                    ),
+                    kind: ExprKind::Fn(vec![], std::sync::Arc::new(body), false),
                     span: span.clone(),
                 };
                 return Ok(Expr {
@@ -857,7 +849,8 @@ impl Parser {
                 });
             }
             // Object if: any token followed by colon OR starts with spread (...)
-            let is_object = (matches!(second, TokenKind::Colon) && !matches!(first, TokenKind::RightBrace | TokenKind::Eof))
+            let is_object = (matches!(second, TokenKind::Colon)
+                && !matches!(first, TokenKind::RightBrace | TokenKind::Eof))
                 || matches!(first, TokenKind::DotDotDot);
             if is_object {
                 let mut kv = Vec::new();
@@ -963,8 +956,12 @@ impl Parser {
                         span: s,
                     };
                 } else if self.matchk(&[TokenKind::Less]) {
-                    while !self.check(TokenKind::Greater) && !self.check(TokenKind::RightParen) && !self.check(TokenKind::Eof) {
-                        let _type_arg = self.parse_type_name("Expect type argument in generic constructor")?;
+                    while !self.check(TokenKind::Greater)
+                        && !self.check(TokenKind::RightParen)
+                        && !self.check(TokenKind::Eof)
+                    {
+                        let _type_arg =
+                            self.parse_type_name("Expect type argument in generic constructor")?;
                         if !self.matchk(&[TokenKind::Comma]) {
                             break;
                         }

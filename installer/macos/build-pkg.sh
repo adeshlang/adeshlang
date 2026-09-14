@@ -128,7 +128,7 @@ else
 fi
 
 # config/ — toolchain manifest v2 consumed by `adesh toolchain install`
-# (it pins LLVM 18.1.8 URLs + SHA-256; resolver looks at
+# (it pins LLVM 23.1.1 URLs + SHA-256; resolver looks at
 # <home>/config/toolchain-manifest.json — see src/toolchain/manifest.rs).
 if [[ -f "$DIST_DIR/config/toolchain-manifest.json" ]]; then
     cp "$DIST_DIR/config/toolchain-manifest.json" "$PAYLOAD/config/toolchain-manifest.json"

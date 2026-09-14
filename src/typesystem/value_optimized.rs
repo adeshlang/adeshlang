@@ -438,7 +438,8 @@ impl Value {
                 if a.len() != b.len() {
                     return false;
                 }
-                a.iter().all(|(k, v)| b.get(k).map_or(false, |bv| v.equals(bv)))
+                a.iter()
+                    .all(|(k, v)| b.get(k).map_or(false, |bv| v.equals(bv)))
             }
             (Value::Complex(ar, ai), Value::Complex(br, bi)) => {
                 (ar - br).abs() < 1e-12 && (ai - bi).abs() < 1e-12

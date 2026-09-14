@@ -150,8 +150,14 @@ impl NativeJitCompiler {
         builder.symbol("adesh_rt_weak_drop", adesh_rt_weak_drop as *const u8);
         builder.symbol("adesh_rt_arc_get", adesh_rt_arc_get as *const u8);
         builder.symbol("adesh_rt_arc_set", adesh_rt_arc_set as *const u8);
-        builder.symbol("adesh_rt_arc_strong_count", adesh_rt_arc_strong_count as *const u8);
-        builder.symbol("adesh_rt_arc_weak_count", adesh_rt_arc_weak_count as *const u8);
+        builder.symbol(
+            "adesh_rt_arc_strong_count",
+            adesh_rt_arc_strong_count as *const u8,
+        );
+        builder.symbol(
+            "adesh_rt_arc_weak_count",
+            adesh_rt_arc_weak_count as *const u8,
+        );
 
         // Create the JIT module
         let module = JITModule::new(builder);
@@ -2120,32 +2126,73 @@ impl NativeJitCompiler {
                         value_types.insert(*dst, AotValueType::Handle);
                     }
                     "strong_count" => {
-                        let handle_val = args.first().and_then(|id| value_map.get(id)).copied().unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-                        let sc = Self::call_runtime_fn_1(builder, module, "adesh_rt_arc_strong_count", handle_val)?;
+                        let handle_val = args
+                            .first()
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let sc = Self::call_runtime_fn_1(
+                            builder,
+                            module,
+                            "adesh_rt_arc_strong_count",
+                            handle_val,
+                        )?;
                         value_map.insert(*dst, sc);
                         value_types.insert(*dst, AotValueType::I64);
                     }
                     "weak_count" => {
-                        let handle_val = args.first().and_then(|id| value_map.get(id)).copied().unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-                        let wc = Self::call_runtime_fn_1(builder, module, "adesh_rt_arc_weak_count", handle_val)?;
+                        let handle_val = args
+                            .first()
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let wc = Self::call_runtime_fn_1(
+                            builder,
+                            module,
+                            "adesh_rt_arc_weak_count",
+                            handle_val,
+                        )?;
                         value_map.insert(*dst, wc);
                         value_types.insert(*dst, AotValueType::I64);
                     }
                     "is_alive" => {
-                        let handle_val = args.first().and_then(|id| value_map.get(id)).copied().unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-                        let sc = Self::call_runtime_fn_1(builder, module, "adesh_rt_arc_strong_count", handle_val)?;
+                        let handle_val = args
+                            .first()
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let sc = Self::call_runtime_fn_1(
+                            builder,
+                            module,
+                            "adesh_rt_arc_strong_count",
+                            handle_val,
+                        )?;
                         let is_gt_zero = builder.ins().icmp_imm(IntCC::SignedGreaterThan, sc, 0);
                         let res = builder.ins().uextend(types::I64, is_gt_zero);
                         value_map.insert(*dst, res);
                         value_types.insert(*dst, AotValueType::Bool);
                     }
                     "upgrade" => {
-                        let handle_val = args.first().and_then(|id| value_map.get(id)).copied().unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-                        let sc = Self::call_runtime_fn_1(builder, module, "adesh_rt_arc_strong_count", handle_val)?;
+                        let handle_val = args
+                            .first()
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let sc = Self::call_runtime_fn_1(
+                            builder,
+                            module,
+                            "adesh_rt_arc_strong_count",
+                            handle_val,
+                        )?;
                         let is_gt_zero = builder.ins().icmp_imm(IntCC::SignedGreaterThan, sc, 0);
-                        
+
                         // If strong count > 0, clone the arc and return the handle, else return 0 (null)
-                        let cloned_handle = Self::call_runtime_fn_1(builder, module, "adesh_rt_arc_clone", handle_val)?;
+                        let cloned_handle = Self::call_runtime_fn_1(
+                            builder,
+                            module,
+                            "adesh_rt_arc_clone",
+                            handle_val,
+                        )?;
                         let zero = builder.ins().iconst(types::I64, 0);
                         let final_res = builder.ins().select(is_gt_zero, cloned_handle, zero);
                         value_map.insert(*dst, final_res);
@@ -2311,12 +2358,7 @@ impl NativeJitCompiler {
                         let name_c_str = format!("{}\0", name);
                         let name_sym = format!("__jit_bname_{}", name.replace('.', "_"));
                         let name_data_id = module
-                            .declare_data(
-                                &name_sym,
-                                cranelift_module::Linkage::Local,
-                                true,
-                                false,
-                            )
+                            .declare_data(&name_sym, cranelift_module::Linkage::Local, true, false)
                             .map_err(|e| format!("Failed to declare builtin name data: {}", e))?;
                         let mut data_desc = DataDescription::new();
                         data_desc.define(name_c_str.into_bytes().into_boxed_slice());
@@ -2324,14 +2366,45 @@ impl NativeJitCompiler {
                         let name_global = module.declare_data_in_func(name_data_id, builder.func);
                         let name_ptr = builder.ins().global_value(types::I64, name_global);
 
-                        let a0 = args.get(0).and_then(|id| value_map.get(id)).copied().unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-                        let a1 = args.get(1).and_then(|id| value_map.get(id)).copied().unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-                        let a2 = args.get(2).and_then(|id| value_map.get(id)).copied().unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-                        let a3 = args.get(3).and_then(|id| value_map.get(id)).copied().unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-                        let a4 = args.get(4).and_then(|id| value_map.get(id)).copied().unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let a0 = args
+                            .get(0)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let a1 = args
+                            .get(1)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let a2 = args
+                            .get(2)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let a3 = args
+                            .get(3)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let a4 = args
+                            .get(4)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
                         let argc = builder.ins().iconst(types::I64, args.len() as i64);
 
-                        let handle = Self::call_runtime_fn_7(builder, module, "jit_runtime_call_input_builtin", name_ptr, a0, a1, a2, a3, a4, argc)?;
+                        let handle = Self::call_runtime_fn_7(
+                            builder,
+                            module,
+                            "jit_runtime_call_input_builtin",
+                            name_ptr,
+                            a0,
+                            a1,
+                            a2,
+                            a3,
+                            a4,
+                            argc,
+                        )?;
                         value_map.insert(*dst, handle);
                         value_types.insert(*dst, AotValueType::Handle);
                     }
@@ -2346,17 +2419,29 @@ impl NativeJitCompiler {
             LirInst::CallBuiltinGeneric(dst, builtin_name, args, _generic_type) => {
                 if builtin_name == "input" {
                     let prompt_val = if let Some(arg0) = args.first() {
-                        value_map.get(arg0).copied().unwrap_or_else(|| builder.ins().iconst(types::I64, 0))
+                        value_map
+                            .get(arg0)
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0))
                     } else {
                         builder.ins().iconst(types::I64, 0)
                     };
                     let opts_val = if let Some(arg1) = args.get(1) {
-                        value_map.get(arg1).copied().unwrap_or_else(|| builder.ins().iconst(types::I64, 0))
+                        value_map
+                            .get(arg1)
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0))
                     } else {
                         builder.ins().iconst(types::I64, 0)
                     };
 
-                    let handle = Self::call_runtime_fn_2(builder, module, "jit_runtime_input", prompt_val, opts_val)?;
+                    let handle = Self::call_runtime_fn_2(
+                        builder,
+                        module,
+                        "jit_runtime_input",
+                        prompt_val,
+                        opts_val,
+                    )?;
                     value_map.insert(*dst, handle);
                     value_types.insert(*dst, AotValueType::Handle);
                 } else {
@@ -2374,7 +2459,8 @@ impl NativeJitCompiler {
                 } else {
                     builder.ins().iconst(types::I64, 0)
                 };
-                let handle = Self::call_runtime_fn_1(builder, module, "adesh_rt_arc_new", val_input)?;
+                let handle =
+                    Self::call_runtime_fn_1(builder, module, "adesh_rt_arc_new", val_input)?;
                 value_map.insert(*dst, handle);
                 value_types.insert(*dst, AotValueType::Handle);
                 Ok(())
@@ -2385,7 +2471,8 @@ impl NativeJitCompiler {
                 } else {
                     builder.ins().iconst(types::I64, 0)
                 };
-                let handle = Self::call_runtime_fn_1(builder, module, "adesh_rt_arc_clone", handle_input)?;
+                let handle =
+                    Self::call_runtime_fn_1(builder, module, "adesh_rt_arc_clone", handle_input)?;
                 value_map.insert(*dst, handle);
                 value_types.insert(*dst, AotValueType::Handle);
                 Ok(())
@@ -2402,7 +2489,8 @@ impl NativeJitCompiler {
                 } else {
                     builder.ins().iconst(types::I64, 0)
                 };
-                let weak_handle = Self::call_runtime_fn_1(builder, module, "adesh_rt_weak_new", handle_input)?;
+                let weak_handle =
+                    Self::call_runtime_fn_1(builder, module, "adesh_rt_weak_new", handle_input)?;
                 value_map.insert(*dst, weak_handle);
                 value_types.insert(*dst, AotValueType::Handle);
                 Ok(())
@@ -2419,7 +2507,8 @@ impl NativeJitCompiler {
                 } else {
                     builder.ins().iconst(types::I64, 0)
                 };
-                let val = Self::call_runtime_fn_1(builder, module, "adesh_rt_arc_get", handle_input)?;
+                let val =
+                    Self::call_runtime_fn_1(builder, module, "adesh_rt_arc_get", handle_input)?;
                 value_map.insert(*dst, val);
                 value_types.insert(*dst, AotValueType::I64);
                 Ok(())
@@ -2435,7 +2524,13 @@ impl NativeJitCompiler {
                 } else {
                     builder.ins().iconst(types::I64, 0)
                 };
-                Self::call_runtime_fn_2(builder, module, "adesh_rt_arc_set", handle_input, val_input)?;
+                Self::call_runtime_fn_2(
+                    builder,
+                    module,
+                    "adesh_rt_arc_set",
+                    handle_input,
+                    val_input,
+                )?;
                 Ok(())
             }
             LirInst::LoadVar(dst, var_name) => {
@@ -2805,7 +2900,12 @@ impl NativeJitCompiler {
                 } else {
                     builder.ins().iconst(types::I64, 0)
                 };
-                let count = Self::call_runtime_fn_1(builder, module, "adesh_rt_arc_strong_count", handle_input)?;
+                let count = Self::call_runtime_fn_1(
+                    builder,
+                    module,
+                    "adesh_rt_arc_strong_count",
+                    handle_input,
+                )?;
                 value_map.insert(*dst, count);
                 value_types.insert(*dst, AotValueType::I64);
                 Ok(())
@@ -2816,7 +2916,12 @@ impl NativeJitCompiler {
                 } else {
                     builder.ins().iconst(types::I64, 0)
                 };
-                let count = Self::call_runtime_fn_1(builder, module, "adesh_rt_arc_weak_count", handle_input)?;
+                let count = Self::call_runtime_fn_1(
+                    builder,
+                    module,
+                    "adesh_rt_arc_weak_count",
+                    handle_input,
+                )?;
                 value_map.insert(*dst, count);
                 value_types.insert(*dst, AotValueType::I64);
                 Ok(())
@@ -3050,9 +3155,7 @@ impl NativeJitCompiler {
                         AotValueType::F64 | AotValueType::Float => {
                             Self::call_wrap_f64(builder, module, val)?
                         }
-                        AotValueType::F32 => {
-                            Self::call_wrap_f32(builder, module, val)?
-                        }
+                        AotValueType::F32 => Self::call_wrap_f32(builder, module, val)?,
                         AotValueType::String => Self::call_wrap_str(builder, module, val)?,
                         AotValueType::Ptr => {
                             let is_null = builder.ins().icmp_imm(IntCC::Equal, val, 0);
@@ -3396,9 +3499,7 @@ impl NativeJitCompiler {
                             AotValueType::F64 | AotValueType::Float => {
                                 Self::call_wrap_f64(builder, module, val)?
                             }
-                            AotValueType::F32 => {
-                                Self::call_wrap_f32(builder, module, val)?
-                            }
+                            AotValueType::F32 => Self::call_wrap_f32(builder, module, val)?,
                             AotValueType::String => Self::call_wrap_str(builder, module, val)?,
                             AotValueType::Ptr => Self::call_wrap_null(builder, module)?,
                             AotValueType::U8 => {

@@ -143,7 +143,9 @@ impl Parser {
                         return false;
                     }
                 }
-                TokenKind::Question if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
+                TokenKind::Question
+                    if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 =>
+                {
                     if idx + 1 < self.tokens.len()
                         && !matches!(
                             &self.tokens[idx + 1].kind,

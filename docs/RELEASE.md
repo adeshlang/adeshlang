@@ -314,7 +314,7 @@ The automated path builds all five host platforms from a tag.
 | `installer/linux/deb/build-deb.sh` | default `version` argument |
 | `installer/linux/rpm/build-rpm.sh` + `adeshlang.spec` | default `version` / spec `Version:` |
 | `installer/macos/scripts/choices.xml` | `version="0.4.0"` |
-| `Readme.md` version badge/heading | marketing version |
+| `README.md` and `docs/README.md` version badge/heading | marketing version |
 
 ### 7.3 Tag and push
 

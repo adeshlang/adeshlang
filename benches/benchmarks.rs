@@ -1,13 +1,11 @@
 // Comprehensive benchmarks for AdeshLang
 // Run with: cargo bench
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 use adeshlang::parsing::ast::Value;
 use adeshlang::parsing::hir_lower::ast_to_hir;
-use adeshlang::parsing::hir_passes::{
-    fold_module_constants, run_phase3_passes, run_safety_passes,
-};
+use adeshlang::parsing::hir_passes::{fold_module_constants, run_phase3_passes, run_safety_passes};
 use adeshlang::parsing::lexer::Lexer;
 use adeshlang::parsing::parser::Parser;
 use adeshlang::parsing::unified_safety_pass::UnifiedSafetyPass;
@@ -47,9 +45,7 @@ fn bench_value_clone(c: &mut Criterion) {
         obj.insert(format!("key{}", i), Value::Number(i as f64));
     }
     let obj_val = Value::Object(std::sync::Arc::new(obj));
-    group.bench_function("object_10_props", |b| {
-        b.iter(|| black_box(obj_val.clone()))
-    });
+    group.bench_function("object_10_props", |b| b.iter(|| black_box(obj_val.clone())));
 
     group.finish();
 }
@@ -72,7 +68,9 @@ fn bench_string_interning(c: &mut Criterion) {
 
     // Cache hit (same string repeatedly)
     intern("cached_string_benchmark");
-    group.bench_function("intern_hit", |b| b.iter(|| black_box(intern("cached_string_benchmark"))));
+    group.bench_function("intern_hit", |b| {
+        b.iter(|| black_box(intern("cached_string_benchmark")))
+    });
 
     // Interned string equality (pointer comparison)
     let s1 = intern("equality_test");

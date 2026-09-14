@@ -433,8 +433,8 @@ mod tests {
 
     #[test]
     fn concurrent_upgrade_race_with_final_drop() {
-        use std::sync::atomic::AtomicBool;
         use std::sync::Arc;
+        use std::sync::atomic::AtomicBool;
         use std::thread;
 
         for _ in 0..32 {
@@ -496,8 +496,8 @@ mod tests {
 
     #[test]
     fn adversarial_upgrade_vs_final_strong_release() {
-        use std::sync::atomic::AtomicBool;
         use std::sync::Arc;
+        use std::sync::atomic::AtomicBool;
         use std::thread;
 
         for _ in 0..1_000 {
@@ -532,8 +532,8 @@ mod tests {
 
     #[test]
     fn randomized_concurrent_arc_operations() {
-        use std::sync::atomic::AtomicBool;
         use std::sync::Arc;
+        use std::sync::atomic::AtomicBool;
         use std::thread;
 
         for seed in 0..50 {
@@ -616,8 +616,8 @@ mod tests {
 
     #[test]
     fn three_way_concurrent_upgrade_strong_drop_weak() {
-        use std::sync::atomic::{AtomicBool, AtomicUsize};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, AtomicUsize};
         use std::thread;
 
         for _ in 0..500 {

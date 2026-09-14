@@ -139,9 +139,11 @@ fn format_hir_safety_errors(
                     }
                 }
 
-                let primary = use_occ
-                    .or_else(|| occurrences.last().cloned())
-                    .unwrap_or((1, 1, String::new()));
+                let primary = use_occ.or_else(|| occurrences.last().cloned()).unwrap_or((
+                    1,
+                    1,
+                    String::new(),
+                ));
                 let related = move_occ.or_else(|| occurrences.first().cloned());
 
                 let mut le = LangError::located(
@@ -187,7 +189,10 @@ fn format_hir_safety_errors(
                 .with_code("E0505");
                 le.end_col = primary.1 + variable.len();
                 le.push_note(format!("variable `{}` is currently borrowed", variable))
-                    .with_help(format!("ensure all borrows of `{}` are finished before moving it", variable))
+                    .with_help(format!(
+                        "ensure all borrows of `{}` are finished before moving it",
+                        variable
+                    ))
             }
 
             OwnershipError::BorrowAfterMove { variable, .. } => {
@@ -211,7 +216,10 @@ fn format_hir_safety_errors(
                 let primary = occurrences.last().cloned().unwrap_or((1, 1, String::new()));
                 let mut le = LangError::located(
                     ErrorKind::Ownership,
-                    format!("cannot borrow `{}` because it is already borrowed", variable),
+                    format!(
+                        "cannot borrow `{}` because it is already borrowed",
+                        variable
+                    ),
                     file.map(String::from),
                     primary.0,
                     primary.1,
@@ -228,7 +236,10 @@ fn format_hir_safety_errors(
                 let primary = occurrences.last().cloned().unwrap_or((1, 1, String::new()));
                 let mut le = LangError::located(
                     ErrorKind::Ownership,
-                    format!("cannot borrow `{}` as mutable more than once at a time", variable),
+                    format!(
+                        "cannot borrow `{}` as mutable more than once at a time",
+                        variable
+                    ),
                     file.map(String::from),
                     primary.0,
                     primary.1,
@@ -236,12 +247,18 @@ fn format_hir_safety_errors(
                 )
                 .with_code("E0499");
                 le.end_col = primary.1 + variable.len();
-                le.push_note(format!("first mutable borrow of `{}` is still active", variable))
-                    .with_help("only one mutable borrow is permitted in any scope at a time")
+                le.push_note(format!(
+                    "first mutable borrow of `{}` is still active",
+                    variable
+                ))
+                .with_help("only one mutable borrow is permitted in any scope at a time")
             }
 
             OwnershipError::UnknownVariable { variable } => {
-                let primary = occurrences.first().cloned().unwrap_or((1, 1, String::new()));
+                let primary = occurrences
+                    .first()
+                    .cloned()
+                    .unwrap_or((1, 1, String::new()));
                 let mut le = LangError::located(
                     ErrorKind::Ownership,
                     format!("cannot find value `{}` in this scope", variable),
@@ -272,13 +289,15 @@ fn format_hir_safety_errors(
         for occ in &occurrences {
             let line_t = &occ.2;
             let is_let = line_t.trim_start().starts_with("let ");
-            if (line_t.contains(&format!("{} =", var_name)) || line_t.contains(&format!("{}=", var_name)))
+            if (line_t.contains(&format!("{} =", var_name))
+                || line_t.contains(&format!("{}=", var_name)))
                 && !is_let
                 && assign_occ.is_none()
             {
                 assign_occ = Some(occ.clone());
             }
-            if (line_t.contains(&format!("&{}", var_name)) || line_t.contains(&format!("&mut {}", var_name)))
+            if (line_t.contains(&format!("&{}", var_name))
+                || line_t.contains(&format!("&mut {}", var_name)))
                 && borrow_occ.is_none()
             {
                 borrow_occ = Some(occ.clone());
@@ -397,7 +416,13 @@ pub fn run_safety_passes(
     check_ownership_enabled: bool,
     check_moves_enabled: bool,
 ) -> Result<HirPassResults, String> {
-    run_safety_passes_with_location(module, check_ownership_enabled, check_moves_enabled, None, None)
+    run_safety_passes_with_location(
+        module,
+        check_ownership_enabled,
+        check_moves_enabled,
+        None,
+        None,
+    )
 }
 
 // ============================================

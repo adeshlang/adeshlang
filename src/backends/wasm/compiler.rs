@@ -53,96 +53,94 @@ fn gen_expr_f64(
     ctx: &mut CompilerContext,
 ) -> Result<Option<String>, String> {
     match &e.kind {
-        ExprKind::Literal(v) => {
-            match v {
-                crate::parsing::ast::Value::Number(n) => {
-                    out.push(0x44);
-                    out.extend(&n.to_bits().to_le_bytes());
-                    Ok(None)
-                }
-                crate::parsing::ast::Value::F64(n) => {
-                    out.push(0x44);
-                    out.extend(&n.to_bits().to_le_bytes());
-                    Ok(None)
-                }
-                crate::parsing::ast::Value::F32(n) => {
-                    let n64 = *n as f64;
-                    out.push(0x44);
-                    out.extend(&n64.to_bits().to_le_bytes());
-                    Ok(None)
-                }
-                crate::parsing::ast::Value::I64(n) => {
-                    let n64 = *n as f64;
-                    out.push(0x44);
-                    out.extend(&n64.to_bits().to_le_bytes());
-                    Ok(None)
-                }
-                crate::parsing::ast::Value::I32(n) => {
-                    let n64 = *n as f64;
-                    out.push(0x44);
-                    out.extend(&n64.to_bits().to_le_bytes());
-                    Ok(None)
-                }
-                crate::parsing::ast::Value::I16(n) => {
-                    let n64 = *n as f64;
-                    out.push(0x44);
-                    out.extend(&n64.to_bits().to_le_bytes());
-                    Ok(None)
-                }
-                crate::parsing::ast::Value::I8(n) => {
-                    let n64 = *n as f64;
-                    out.push(0x44);
-                    out.extend(&n64.to_bits().to_le_bytes());
-                    Ok(None)
-                }
-                crate::parsing::ast::Value::U64(n) => {
-                    let n64 = *n as f64;
-                    out.push(0x44);
-                    out.extend(&n64.to_bits().to_le_bytes());
-                    Ok(None)
-                }
-                crate::parsing::ast::Value::U32(n) => {
-                    let n64 = *n as f64;
-                    out.push(0x44);
-                    out.extend(&n64.to_bits().to_le_bytes());
-                    Ok(None)
-                }
-                crate::parsing::ast::Value::U16(n) => {
-                    let n64 = *n as f64;
-                    out.push(0x44);
-                    out.extend(&n64.to_bits().to_le_bytes());
-                    Ok(None)
-                }
-                crate::parsing::ast::Value::U8(n) => {
-                    let n64 = *n as f64;
-                    out.push(0x44);
-                    out.extend(&n64.to_bits().to_le_bytes());
-                    Ok(None)
-                }
-                crate::parsing::ast::Value::Bool(b) => {
-                    let n64: f64 = if *b { 1.0 } else { 0.0 };
-                    out.push(0x44);
-                    out.extend(&n64.to_bits().to_le_bytes());
-                    Ok(None)
-                }
-                crate::parsing::ast::Value::Str(s) => {
-                    let off = ctx
-                        .strings
-                        .iter()
-                        .find(|(x, _)| x == s)
-                        .map(|(_, o)| *o)
-                        .unwrap_or(1024) as f64;
-                    out.push(0x44);
-                    out.extend(&off.to_bits().to_le_bytes());
-                    Ok(None)
-                }
-                _ => {
-                    out.push(0x44);
-                    out.extend(&0f64.to_bits().to_le_bytes());
-                    Ok(None)
-                }
+        ExprKind::Literal(v) => match v {
+            crate::parsing::ast::Value::Number(n) => {
+                out.push(0x44);
+                out.extend(&n.to_bits().to_le_bytes());
+                Ok(None)
             }
-        }
+            crate::parsing::ast::Value::F64(n) => {
+                out.push(0x44);
+                out.extend(&n.to_bits().to_le_bytes());
+                Ok(None)
+            }
+            crate::parsing::ast::Value::F32(n) => {
+                let n64 = *n as f64;
+                out.push(0x44);
+                out.extend(&n64.to_bits().to_le_bytes());
+                Ok(None)
+            }
+            crate::parsing::ast::Value::I64(n) => {
+                let n64 = *n as f64;
+                out.push(0x44);
+                out.extend(&n64.to_bits().to_le_bytes());
+                Ok(None)
+            }
+            crate::parsing::ast::Value::I32(n) => {
+                let n64 = *n as f64;
+                out.push(0x44);
+                out.extend(&n64.to_bits().to_le_bytes());
+                Ok(None)
+            }
+            crate::parsing::ast::Value::I16(n) => {
+                let n64 = *n as f64;
+                out.push(0x44);
+                out.extend(&n64.to_bits().to_le_bytes());
+                Ok(None)
+            }
+            crate::parsing::ast::Value::I8(n) => {
+                let n64 = *n as f64;
+                out.push(0x44);
+                out.extend(&n64.to_bits().to_le_bytes());
+                Ok(None)
+            }
+            crate::parsing::ast::Value::U64(n) => {
+                let n64 = *n as f64;
+                out.push(0x44);
+                out.extend(&n64.to_bits().to_le_bytes());
+                Ok(None)
+            }
+            crate::parsing::ast::Value::U32(n) => {
+                let n64 = *n as f64;
+                out.push(0x44);
+                out.extend(&n64.to_bits().to_le_bytes());
+                Ok(None)
+            }
+            crate::parsing::ast::Value::U16(n) => {
+                let n64 = *n as f64;
+                out.push(0x44);
+                out.extend(&n64.to_bits().to_le_bytes());
+                Ok(None)
+            }
+            crate::parsing::ast::Value::U8(n) => {
+                let n64 = *n as f64;
+                out.push(0x44);
+                out.extend(&n64.to_bits().to_le_bytes());
+                Ok(None)
+            }
+            crate::parsing::ast::Value::Bool(b) => {
+                let n64: f64 = if *b { 1.0 } else { 0.0 };
+                out.push(0x44);
+                out.extend(&n64.to_bits().to_le_bytes());
+                Ok(None)
+            }
+            crate::parsing::ast::Value::Str(s) => {
+                let off = ctx
+                    .strings
+                    .iter()
+                    .find(|(x, _)| x == s)
+                    .map(|(_, o)| *o)
+                    .unwrap_or(1024) as f64;
+                out.push(0x44);
+                out.extend(&off.to_bits().to_le_bytes());
+                Ok(None)
+            }
+            _ => {
+                out.push(0x44);
+                out.extend(&0f64.to_bits().to_le_bytes());
+                Ok(None)
+            }
+        },
         ExprKind::Variable(name) => {
             if let Some(idx) = ctx.locals_f64.get(name) {
                 out.push(0x20);
@@ -357,7 +355,7 @@ fn gen_expr_f64(
             out.push(0x0B); // end
             Ok(None)
         }
-                ExprKind::Array(_) | ExprKind::Tuple(_) | ExprKind::Object(_) => {
+        ExprKind::Array(_) | ExprKind::Tuple(_) | ExprKind::Object(_) => {
             out.push(0x44);
             out.extend(&0f64.to_bits().to_le_bytes());
             Ok(None)
@@ -383,7 +381,13 @@ fn gen_expr_i32(
                 crate::parsing::ast::Value::U32(n) => *n as i32,
                 crate::parsing::ast::Value::U16(n) => *n as i32,
                 crate::parsing::ast::Value::U8(n) => *n as i32,
-                crate::parsing::ast::Value::Bool(b) => if *b { 1 } else { 0 },
+                crate::parsing::ast::Value::Bool(b) => {
+                    if *b {
+                        1
+                    } else {
+                        0
+                    }
+                }
                 _ => 0,
             };
             out.push(0x41);
@@ -614,8 +618,20 @@ fn wasm_hex_or_named_to_ansi(color_str: &str, is_bg: bool) -> String {
         "magenta" => format!("\x1b[{}m", if is_bg { 45 } else { 35 }),
         "cyan" => format!("\x1b[{}m", if is_bg { 46 } else { 36 }),
         "white" => format!("\x1b[{}m", if is_bg { 47 } else { 37 }),
-        "orange" => if is_bg { "\x1b[48;2;255;165;0m".to_string() } else { "\x1b[38;2;255;165;0m".to_string() },
-        "purple" => if is_bg { "\x1b[48;2;128;0;128m".to_string() } else { "\x1b[38;2;128;0;128m".to_string() },
+        "orange" => {
+            if is_bg {
+                "\x1b[48;2;255;165;0m".to_string()
+            } else {
+                "\x1b[38;2;255;165;0m".to_string()
+            }
+        }
+        "purple" => {
+            if is_bg {
+                "\x1b[48;2;128;0;128m".to_string()
+            } else {
+                "\x1b[38;2;128;0;128m".to_string()
+            }
+        }
         "gray" | "grey" => format!("\x1b[{}m", if is_bg { 100 } else { 90 }),
         _ => String::new(),
     }
@@ -639,7 +655,12 @@ fn emit_wasm_print_str_call(s: &str, out: &mut Vec<u8>, ctx: &CompilerContext) {
     write_u32_leb(1, out);
 }
 
-fn emit_wasm_file_write_str_call(file_path: &str, s: &str, out: &mut Vec<u8>, ctx: &CompilerContext) {
+fn emit_wasm_file_write_str_call(
+    file_path: &str,
+    s: &str,
+    out: &mut Vec<u8>,
+    ctx: &CompilerContext,
+) {
     if s.is_empty() {
         return;
     }
@@ -750,7 +771,9 @@ fn expr_to_value(e: &Expr) -> Option<Value> {
     }
 }
 
-fn extract_pretty_options(entries: &[(String, Expr)]) -> Option<crate::execution::runtime_core::pretty_print::PrettyPrintOptions> {
+fn extract_pretty_options(
+    entries: &[(String, Expr)],
+) -> Option<crate::execution::runtime_core::pretty_print::PrettyPrintOptions> {
     use crate::execution::runtime_core::pretty_print::PrettyPrintOptions;
     for (k, v) in entries {
         if k == "pretty" {
@@ -789,7 +812,9 @@ fn format_print_arg(
     }?;
 
     if let Some(opts) = pretty_opt {
-        Some(crate::execution::runtime_core::pretty_print::pretty_print(&val, opts))
+        Some(crate::execution::runtime_core::pretty_print::pretty_print(
+            &val, opts,
+        ))
     } else {
         match &val {
             Value::Str(_) => None,
@@ -805,21 +830,31 @@ fn get_wasm_ansi_prefix(entries: &[(String, Expr)]) -> (String, bool) {
         if k == "color" {
             if let ExprKind::Literal(Value::Str(s)) = &v.kind {
                 let ansi = wasm_hex_or_named_to_ansi(s, false);
-                if !ansi.is_empty() { ansi_prefix.push_str(&ansi); has_style = true; }
+                if !ansi.is_empty() {
+                    ansi_prefix.push_str(&ansi);
+                    has_style = true;
+                }
             }
         } else if k == "background" {
             if let ExprKind::Literal(Value::Str(s)) = &v.kind {
                 let ansi = wasm_hex_or_named_to_ansi(s, true);
-                if !ansi.is_empty() { ansi_prefix.push_str(&ansi); has_style = true; }
+                if !ansi.is_empty() {
+                    ansi_prefix.push_str(&ansi);
+                    has_style = true;
+                }
             }
         } else if k == "bold" {
-            ansi_prefix.push_str("\x1b[1m"); has_style = true;
+            ansi_prefix.push_str("\x1b[1m");
+            has_style = true;
         } else if k == "italic" {
-            ansi_prefix.push_str("\x1b[3m"); has_style = true;
+            ansi_prefix.push_str("\x1b[3m");
+            has_style = true;
         } else if k == "underline" {
-            ansi_prefix.push_str("\x1b[4m"); has_style = true;
+            ansi_prefix.push_str("\x1b[4m");
+            has_style = true;
         } else if k == "strikethrough" {
-            ansi_prefix.push_str("\x1b[9m"); has_style = true;
+            ansi_prefix.push_str("\x1b[9m");
+            has_style = true;
         }
     }
     (ansi_prefix, has_style)
@@ -869,7 +904,9 @@ fn collect_all_wasm_strings_expr(
                             pretty_opt = extract_pretty_options(entries);
                             for (k, v) in entries {
                                 if k == "sep" || k == "end" || k == "file" {
-                                    if let ExprKind::Literal(Value::Str(s)) = &v.kind { add_wasm_string(s, strings, cur_off); }
+                                    if let ExprKind::Literal(Value::Str(s)) = &v.kind {
+                                        add_wasm_string(s, strings, cur_off);
+                                    }
                                 }
                             }
                             for a in &args[..args.len() - 1] {
@@ -886,7 +923,9 @@ fn collect_all_wasm_strings_expr(
                         }
                     }
                     for a in non_opt_args {
-                        if let Some(formatted) = format_print_arg(a, pretty_opt.as_ref(), var_values) {
+                        if let Some(formatted) =
+                            format_print_arg(a, pretty_opt.as_ref(), var_values)
+                        {
                             add_wasm_string(&formatted, strings, cur_off);
                         }
                     }
@@ -897,7 +936,9 @@ fn collect_all_wasm_strings_expr(
             collect_all_wasm_strings_expr(l, strings, cur_off, var_values);
             collect_all_wasm_strings_expr(r, strings, cur_off, var_values);
         }
-        ExprKind::Unary(_, inner) => collect_all_wasm_strings_expr(inner, strings, cur_off, var_values),
+        ExprKind::Unary(_, inner) => {
+            collect_all_wasm_strings_expr(inner, strings, cur_off, var_values)
+        }
         ExprKind::Assign(_, r) => collect_all_wasm_strings_expr(r, strings, cur_off, var_values),
         _ => {}
     }
@@ -912,18 +953,34 @@ fn collect_all_wasm_strings_stmt(
     match &s.kind {
         StmtKind::ExprStmt(e) => collect_all_wasm_strings_expr(e, strings, cur_off, var_values),
         StmtKind::Let(_, init, _, _, _, _) => {
-            if let Some(e) = init { collect_all_wasm_strings_expr(e, strings, cur_off, var_values); }
+            if let Some(e) = init {
+                collect_all_wasm_strings_expr(e, strings, cur_off, var_values);
+            }
         }
-        StmtKind::ShareDeclaration(decl, _) => collect_all_wasm_strings_expr(&decl.expr, strings, cur_off, var_values),
-        StmtKind::StrongDeclaration(decl, _) => collect_all_wasm_strings_expr(&decl.expr, strings, cur_off, var_values),
-        StmtKind::WeakDeclaration(decl, _) => collect_all_wasm_strings_expr(&decl.expr, strings, cur_off, var_values),
+        StmtKind::ShareDeclaration(decl, _) => {
+            collect_all_wasm_strings_expr(&decl.expr, strings, cur_off, var_values)
+        }
+        StmtKind::StrongDeclaration(decl, _) => {
+            collect_all_wasm_strings_expr(&decl.expr, strings, cur_off, var_values)
+        }
+        StmtKind::WeakDeclaration(decl, _) => {
+            collect_all_wasm_strings_expr(&decl.expr, strings, cur_off, var_values)
+        }
         StmtKind::Block(stmts) => {
-            for st in stmts { collect_all_wasm_strings_stmt(st, strings, cur_off, var_values); }
+            for st in stmts {
+                collect_all_wasm_strings_stmt(st, strings, cur_off, var_values);
+            }
         }
-        StmtKind::If { cond, then_branch, else_branch } => {
+        StmtKind::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
             collect_all_wasm_strings_expr(cond, strings, cur_off, var_values);
             collect_all_wasm_strings_stmt(then_branch, strings, cur_off, var_values);
-            if let Some(eb) = else_branch { collect_all_wasm_strings_stmt(eb, strings, cur_off, var_values); }
+            if let Some(eb) = else_branch {
+                collect_all_wasm_strings_stmt(eb, strings, cur_off, var_values);
+            }
         }
         StmtKind::While { cond, body } => {
             collect_all_wasm_strings_expr(cond, strings, cur_off, var_values);
@@ -1043,7 +1100,20 @@ fn gen_stmt(
                         if let Some(last) = args.last() {
                             if let ExprKind::Object(entries) = &last.kind {
                                 let is_known_opt = entries.iter().all(|(k, _)| {
-                                    matches!(k.as_str(), "sep" | "end" | "color" | "background" | "bold" | "italic" | "underline" | "strikethrough" | "pretty" | "flush" | "file")
+                                    matches!(
+                                        k.as_str(),
+                                        "sep"
+                                            | "end"
+                                            | "color"
+                                            | "background"
+                                            | "bold"
+                                            | "italic"
+                                            | "underline"
+                                            | "strikethrough"
+                                            | "pretty"
+                                            | "flush"
+                                            | "file"
+                                    )
                                 });
                                 if is_known_opt && !entries.is_empty() {
                                     has_opt_map = true;
@@ -1053,11 +1123,17 @@ fn gen_stmt(
                                     pretty_opt = extract_pretty_options(entries);
                                     for (k, v) in entries {
                                         if k == "sep" {
-                                            if let ExprKind::Literal(Value::Str(s)) = &v.kind { sep = s.clone(); }
+                                            if let ExprKind::Literal(Value::Str(s)) = &v.kind {
+                                                sep = s.clone();
+                                            }
                                         } else if k == "end" {
-                                            if let ExprKind::Literal(Value::Str(s)) = &v.kind { end = s.clone(); }
+                                            if let ExprKind::Literal(Value::Str(s)) = &v.kind {
+                                                end = s.clone();
+                                            }
                                         } else if k == "file" {
-                                            if let ExprKind::Literal(Value::Str(s)) = &v.kind { file_opt = Some(s.clone()); }
+                                            if let ExprKind::Literal(Value::Str(s)) = &v.kind {
+                                                file_opt = Some(s.clone());
+                                            }
                                         }
                                     }
                                 }
@@ -1078,9 +1154,16 @@ fn gen_stmt(
                         if let Some(file_path) = file_opt.as_deref() {
                             for (i, arg) in non_opt_args.iter().enumerate() {
                                 if has_style {
-                                    emit_wasm_file_write_str_call(file_path, &ansi_prefix, out, ctx);
+                                    emit_wasm_file_write_str_call(
+                                        file_path,
+                                        &ansi_prefix,
+                                        out,
+                                        ctx,
+                                    );
                                 }
-                                if let Some(formatted) = format_print_arg(arg, pretty_opt.as_ref(), ctx.var_values) {
+                                if let Some(formatted) =
+                                    format_print_arg(arg, pretty_opt.as_ref(), ctx.var_values)
+                                {
                                     emit_wasm_file_write_str_call(file_path, &formatted, out, ctx);
                                 } else {
                                     match &arg.kind {
@@ -1088,14 +1171,26 @@ fn gen_stmt(
                                             emit_wasm_file_write_str_call(file_path, st, out, ctx);
                                         }
                                         ExprKind::Literal(Value::Bool(b)) => {
-                                            emit_wasm_file_write_str_call(file_path, if *b { "true" } else { "false" }, out, ctx);
+                                            emit_wasm_file_write_str_call(
+                                                file_path,
+                                                if *b { "true" } else { "false" },
+                                                out,
+                                                ctx,
+                                            );
                                         }
                                         ExprKind::Literal(Value::Null) => {
-                                            emit_wasm_file_write_str_call(file_path, "null", out, ctx);
+                                            emit_wasm_file_write_str_call(
+                                                file_path, "null", out, ctx,
+                                            );
                                         }
                                         ExprKind::Variable(vname) => {
                                             if let Some((off, len)) = ctx.str_vars.get(vname) {
-                                                let file_off = ctx.strings.iter().find(|(x, _)| x == file_path).map(|(_, o)| *o).unwrap_or(1024);
+                                                let file_off = ctx
+                                                    .strings
+                                                    .iter()
+                                                    .find(|(x, _)| x == file_path)
+                                                    .map(|(_, o)| *o)
+                                                    .unwrap_or(1024);
                                                 out.push(0x41);
                                                 write_i32_leb(file_off as i32, out);
                                                 out.push(0x41);
@@ -1106,8 +1201,15 @@ fn gen_stmt(
                                                 write_i32_leb(*len as i32, out);
                                                 out.push(0x10);
                                                 write_u32_leb(4, out);
-                                            } else if let Some((off, len)) = ctx.complex_vars.get(vname) {
-                                                let file_off = ctx.strings.iter().find(|(x, _)| x == file_path).map(|(_, o)| *o).unwrap_or(1024);
+                                            } else if let Some((off, len)) =
+                                                ctx.complex_vars.get(vname)
+                                            {
+                                                let file_off = ctx
+                                                    .strings
+                                                    .iter()
+                                                    .find(|(x, _)| x == file_path)
+                                                    .map(|(_, o)| *o)
+                                                    .unwrap_or(1024);
                                                 out.push(0x41);
                                                 write_i32_leb(file_off as i32, out);
                                                 out.push(0x41);
@@ -1138,7 +1240,9 @@ fn gen_stmt(
                                 if has_style {
                                     emit_wasm_print_str_call(&ansi_prefix, out, ctx);
                                 }
-                                if let Some(formatted) = format_print_arg(arg, pretty_opt.as_ref(), ctx.var_values) {
+                                if let Some(formatted) =
+                                    format_print_arg(arg, pretty_opt.as_ref(), ctx.var_values)
+                                {
                                     emit_wasm_print_str_call(&formatted, out, ctx);
                                 } else {
                                     match &arg.kind {
@@ -1146,7 +1250,11 @@ fn gen_stmt(
                                             emit_wasm_print_str_call(st, out, ctx);
                                         }
                                         ExprKind::Literal(Value::Bool(b)) => {
-                                            emit_wasm_print_str_call(if *b { "true" } else { "false" }, out, ctx);
+                                            emit_wasm_print_str_call(
+                                                if *b { "true" } else { "false" },
+                                                out,
+                                                ctx,
+                                            );
                                         }
                                         ExprKind::Literal(Value::Null) => {
                                             emit_wasm_print_str_call("null", out, ctx);
@@ -1159,7 +1267,9 @@ fn gen_stmt(
                                                 write_i32_leb(*len as i32, out);
                                                 out.push(0x10);
                                                 write_u32_leb(1, out);
-                                            } else if let Some((off, len)) = ctx.complex_vars.get(vname) {
+                                            } else if let Some((off, len)) =
+                                                ctx.complex_vars.get(vname)
+                                            {
                                                 out.push(0x41);
                                                 write_i32_leb(*off as i32, out);
                                                 out.push(0x41);
@@ -1805,8 +1915,8 @@ pub fn compile_to_file(src: &str, out: &Path) -> Result<(), LangError> {
         funcs: &funcs_index_map,
         strings: &strings,
         str_vars: &mut str_vars,
-            complex_vars: &complex_vars,
-            var_values: &var_values,
+        complex_vars: &complex_vars,
+        var_values: &var_values,
         struct_layouts: &struct_layouts,
         locals_types: &mut main_types,
         defer_scopes: vec![Vec::new()],

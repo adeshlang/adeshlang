@@ -76,23 +76,21 @@ impl Exec {
 
             // Array / Set methods
             "push" | "pop" | "shift" | "unshift" | "append" | "insert" | "remove" | "clear"
-            | "extend" | "set_index" | "count" | "index" | "sort" | "reverse" => {
-                match obj {
-                    Value::Array(_) | Value::DynArray(_) => {
-                        self.call_array_method(obj, method_name, args)
-                    }
-                    Value::Set(_) | Value::Object(_)
-                        if matches!(method_name, "insert" | "remove" | "clear") =>
-                    {
-                        self.call_set_method(obj, method_name, args)
-                    }
-                    _ => Err(err(format!(
-                        "'{}' is not a method of {}",
-                        method_name,
-                        fmt(obj)
-                    ))),
+            | "extend" | "set_index" | "count" | "index" | "sort" | "reverse" => match obj {
+                Value::Array(_) | Value::DynArray(_) => {
+                    self.call_array_method(obj, method_name, args)
                 }
-            }
+                Value::Set(_) | Value::Object(_)
+                    if matches!(method_name, "insert" | "remove" | "clear") =>
+                {
+                    self.call_set_method(obj, method_name, args)
+                }
+                _ => Err(err(format!(
+                    "'{}' is not a method of {}",
+                    method_name,
+                    fmt(obj)
+                ))),
+            },
 
             // String methods
             "split" => match obj {
@@ -112,7 +110,9 @@ impl Exec {
                 Value::Array(_) | Value::DynArray(_) => {
                     self.call_array_method(obj, method_name, args)
                 }
-                Value::Set(_) | Value::Object(_) if method_name == "contains" || method_name == "includes" => {
+                Value::Set(_) | Value::Object(_)
+                    if method_name == "contains" || method_name == "includes" =>
+                {
                     self.call_set_method(obj, method_name, args)
                 }
                 _ => Err(err(format!("'{}' not supported on this type", method_name))),

@@ -80,10 +80,7 @@ pub fn set_current_affinity(cpu_mask: u64) -> Result<(), String> {
     {
         return windows_set_affinity(cpu_mask);
     }
-    #[cfg(not(any(
-        windows,
-        all(target_os = "linux", not(target_arch = "wasm32"))
-    )))]
+    #[cfg(not(any(windows, all(target_os = "linux", not(target_arch = "wasm32")))))]
     {
         let _ = cpu_mask;
         Err(unsupported_msg("set_affinity"))

@@ -949,13 +949,19 @@ pub(super) fn lower_expr(
             match field.as_str() {
                 "strong_count" => {
                     let result = func.alloc_value();
-                    func.push_to_block(ctx.current_block, LirInst::ArcStrongCount(result, target_val));
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::ArcStrongCount(result, target_val),
+                    );
                     ctx.value_types.insert(result, LirType::I64);
                     return Ok(result);
                 }
                 "weak_count" => {
                     let result = func.alloc_value();
-                    func.push_to_block(ctx.current_block, LirInst::ArcWeakCount(result, target_val));
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::ArcWeakCount(result, target_val),
+                    );
                     ctx.value_types.insert(result, LirType::I64);
                     return Ok(result);
                 }
@@ -965,10 +971,7 @@ pub(super) fn lower_expr(
                     let zero = func.alloc_value();
                     func.push_to_block(ctx.current_block, LirInst::ConstI64(zero, 0));
                     let result = func.alloc_value();
-                    func.push_to_block(
-                        ctx.current_block,
-                        LirInst::CmpGtI64(result, sc, zero),
-                    );
+                    func.push_to_block(ctx.current_block, LirInst::CmpGtI64(result, sc, zero));
                     ctx.value_types.insert(result, LirType::Bool);
                     return Ok(result);
                 }
@@ -1172,10 +1175,7 @@ pub(super) fn lower_expr(
                     let zero = func.alloc_value();
                     func.push_to_block(ctx.current_block, LirInst::ConstI64(zero, 0));
                     let result = func.alloc_value();
-                    func.push_to_block(
-                        ctx.current_block,
-                        LirInst::CmpGtI64(result, sc, zero),
-                    );
+                    func.push_to_block(ctx.current_block, LirInst::CmpGtI64(result, sc, zero));
                     ctx.value_types.insert(result, LirType::Bool);
                     return Ok(result);
                 }

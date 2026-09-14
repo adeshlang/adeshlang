@@ -11,7 +11,10 @@ const EPSILON: f64 = 1e-12;
 
 #[inline]
 fn involves_array(v: &Value) -> bool {
-    matches!(v, Value::Array(_) | Value::DynArray(_) | Value::RawArray(_, _))
+    matches!(
+        v,
+        Value::Array(_) | Value::DynArray(_) | Value::RawArray(_, _)
+    )
 }
 
 /// Helper function to extract numeric value as f64
@@ -107,8 +110,7 @@ pub fn abi_add(left: &Value, right: &Value) -> Result<Value, RuntimeError> {
         }
         // Element-wise / broadcast array addition (SIMD-optimized when numeric)
         _ if involves_array(left) || involves_array(right) => {
-            crate::runtime::simd::ops::array_add(left, right)
-                .map_err(RuntimeError::new)
+            crate::runtime::simd::ops::array_add(left, right).map_err(RuntimeError::new)
         }
         // Numeric addition
         _ => {
@@ -135,8 +137,7 @@ pub fn abi_sub(left: &Value, right: &Value) -> Result<Value, RuntimeError> {
         }
         // Element-wise / broadcast array subtraction
         _ if involves_array(left) || involves_array(right) => {
-            crate::runtime::simd::ops::array_sub(left, right)
-                .map_err(RuntimeError::new)
+            crate::runtime::simd::ops::array_sub(left, right).map_err(RuntimeError::new)
         }
         // Numeric subtraction
         _ => {
@@ -163,8 +164,7 @@ pub fn abi_mul(left: &Value, right: &Value) -> Result<Value, RuntimeError> {
         }
         // Element-wise / broadcast array multiplication
         _ if involves_array(left) || involves_array(right) => {
-            crate::runtime::simd::ops::array_mul(left, right)
-                .map_err(RuntimeError::new)
+            crate::runtime::simd::ops::array_mul(left, right).map_err(RuntimeError::new)
         }
         // Numeric multiplication
         _ => {
@@ -194,8 +194,7 @@ pub fn abi_div(left: &Value, right: &Value) -> Result<Value, RuntimeError> {
         }
         // Element-wise / broadcast array division
         _ if involves_array(left) || involves_array(right) => {
-            crate::runtime::simd::ops::array_div(left, right)
-                .map_err(RuntimeError::new)
+            crate::runtime::simd::ops::array_div(left, right).map_err(RuntimeError::new)
         }
         // Numeric division
         _ => {

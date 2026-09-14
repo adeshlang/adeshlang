@@ -25,6 +25,7 @@
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLDIR" Name="AdeshLang">
         <Directory Id="BINDIR" Name="bin" />
+        <Directory Id="LIBDIR" Name="lib" />
         <Directory Id="STDDIR" Name="std" />
         <Directory Id="CONFIGDIR" Name="config" />
         <Directory Id="LICENSEDIR" Name="licenses" />
@@ -64,6 +65,7 @@
         <Exclude Files="$(var.SourceDir)\bin\adesh.exe" />
         <Exclude Files="$(var.SourceDir)\bin\**\*.pdb" />
       </Files>
+      <Files Include="$(var.SourceDir)\lib\**" Directory="LIBDIR" />
       <Files Include="$(var.SourceDir)\std\**" Directory="STDDIR" />
       <Files Include="$(var.SourceDir)\config\**" Directory="CONFIGDIR" />
       <Files Include="$(var.SourceDir)\licenses\**" Directory="LICENSEDIR" />

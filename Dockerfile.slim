@@ -1,0 +1,68 @@
+# ==============================================================================
+# Ultra-Slim Dockerfile for AdeshLang Microservices & Serverless
+# ==============================================================================
+
+FROM rust:1-bookworm AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libffi-dev \
+    clang \
+    make \
+    gcc \
+    ca-certificates \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /usr/src/adeshlang
+
+COPY Cargo.toml Cargo.lock build.rs ./
+COPY src/ ./src/
+COPY als/ ./als/
+COPY editor/ ./editor/
+COPY crates/ ./crates/
+COPY mobile/ ./mobile/
+COPY benches/ ./benches/
+COPY lib/ ./lib/
+COPY installer/ ./installer/
+COPY LICENSE ./
+
+RUN cargo build --release --bin adesh --bin adl
+
+RUN mkdir -p /opt/adeshlang/bin /opt/adeshlang/std /opt/adeshlang/licenses && \
+    cp target/release/adesh /opt/adeshlang/bin/ && \
+    cp target/release/adl /opt/adeshlang/bin/ && \
+    cp -r src/stdlib/* /opt/adeshlang/std/ && \
+    cp LICENSE /opt/adeshlang/licenses/
+
+# ------------------------------------------------------------------------------
+# Minimal Runtime
+# ------------------------------------------------------------------------------
+FROM debian:bookworm-slim AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libffi8 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /opt/adeshlang /opt/adeshlang
+
+RUN ln -sf /opt/adeshlang/bin/adesh /usr/local/bin/adesh && \
+    ln -sf /opt/adeshlang/bin/adl /usr/local/bin/adl
+
+COPY scripts/docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+RUN groupadd -g 1000 adesh && \
+    useradd -u 1000 -g adesh -m -s /bin/sh adesh && \
+    mkdir -p /workspace && \
+    chown -R adesh:adesh /workspace /home/adesh
+
+ENV ADESH_HOME=/opt/adeshlang
+ENV PATH="/opt/adeshlang/bin:${PATH}"
+
+WORKDIR /workspace
+USER adesh
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["repl"]

@@ -1,7 +1,7 @@
 //! Lightweight task representation for the parallel scheduler
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 static NEXT_TASK_ID: AtomicU32 = AtomicU32::new(1);
 

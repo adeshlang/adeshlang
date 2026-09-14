@@ -15,9 +15,7 @@ pub fn runtime_val_to_ast_val(rv: &RuntimeValue) -> Value {
         RuntimeValue::Bool(b) => Value::Bool(*b),
         RuntimeValue::Char(c) => Value::Char(*c),
         RuntimeValue::String(s) => Value::Str(s.clone()),
-        RuntimeValue::Array(arr) => {
-            Value::Array(arr.iter().map(runtime_val_to_ast_val).collect())
-        }
+        RuntimeValue::Array(arr) => Value::Array(arr.iter().map(runtime_val_to_ast_val).collect()),
         RuntimeValue::Object(map) => {
             let mut res = std::collections::HashMap::default();
             for (k, v) in map.iter() {
@@ -25,12 +23,8 @@ pub fn runtime_val_to_ast_val(rv: &RuntimeValue) -> Value {
             }
             Value::Object(std::sync::Arc::new(res))
         }
-        RuntimeValue::Tuple(t) => {
-            Value::Tuple(t.iter().map(runtime_val_to_ast_val).collect())
-        }
-        RuntimeValue::Set(s) => {
-            Value::Set(s.iter().map(runtime_val_to_ast_val).collect())
-        }
+        RuntimeValue::Tuple(t) => Value::Tuple(t.iter().map(runtime_val_to_ast_val).collect()),
+        RuntimeValue::Set(s) => Value::Set(s.iter().map(runtime_val_to_ast_val).collect()),
         RuntimeValue::U8(n) => Value::U8(*n),
         RuntimeValue::U16(n) => Value::U16(*n),
         RuntimeValue::U32(n) => Value::U32(*n),
@@ -55,9 +49,7 @@ pub fn ast_val_to_runtime_val(v: &Value) -> RuntimeValue {
         Value::Bool(b) => RuntimeValue::Bool(*b),
         Value::Char(c) => RuntimeValue::Char(*c),
         Value::Str(s) => RuntimeValue::String(s.clone()),
-        Value::Array(arr) => {
-            RuntimeValue::Array(arr.iter().map(ast_val_to_runtime_val).collect())
-        }
+        Value::Array(arr) => RuntimeValue::Array(arr.iter().map(ast_val_to_runtime_val).collect()),
         Value::Object(map) => {
             let mut res = FastMap::default();
             for (k, val) in map.iter() {
@@ -65,12 +57,8 @@ pub fn ast_val_to_runtime_val(v: &Value) -> RuntimeValue {
             }
             RuntimeValue::Object(res)
         }
-        Value::Tuple(t) => {
-            RuntimeValue::Tuple(t.iter().map(ast_val_to_runtime_val).collect())
-        }
-        Value::Set(s) => {
-            RuntimeValue::Set(s.iter().map(ast_val_to_runtime_val).collect())
-        }
+        Value::Tuple(t) => RuntimeValue::Tuple(t.iter().map(ast_val_to_runtime_val).collect()),
+        Value::Set(s) => RuntimeValue::Set(s.iter().map(ast_val_to_runtime_val).collect()),
         Value::U8(n) => RuntimeValue::U8(*n),
         Value::U16(n) => RuntimeValue::U16(*n),
         Value::U32(n) => RuntimeValue::U32(*n),
@@ -178,8 +166,14 @@ stdlib_wrapper!(runtime_encoding_base64_decode, "encoding.base64Decode");
 stdlib_wrapper!(runtime_encoding_hex_encode, "encoding.hexEncode");
 stdlib_wrapper!(runtime_encoding_hex_decode, "encoding.hexDecode");
 
-stdlib_wrapper!(runtime_compression_gzip_compress, "compression.gzipCompress");
-stdlib_wrapper!(runtime_compression_gzip_decompress, "compression.gzipDecompress");
+stdlib_wrapper!(
+    runtime_compression_gzip_compress,
+    "compression.gzipCompress"
+);
+stdlib_wrapper!(
+    runtime_compression_gzip_decompress,
+    "compression.gzipDecompress"
+);
 
 stdlib_wrapper!(runtime_url_parse, "url.parse");
 stdlib_wrapper!(runtime_url_format, "url.format");

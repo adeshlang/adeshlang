@@ -205,7 +205,8 @@ impl Parser {
                     is_constructor = true;
                     self.advance();
                 }
-            } else if self.check(TokenKind::Identifier) && self.peek_next_kind(TokenKind::LeftParen) {
+            } else if self.check(TokenKind::Identifier) && self.peek_next_kind(TokenKind::LeftParen)
+            {
                 // Method without 'fn' keyword (e.g. emit(event: string))
             } else {
                 // Instance field declaration

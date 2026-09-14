@@ -3,7 +3,7 @@
 use super::analysis::LoopVectorizer;
 use super::cost_model::{ExecutionStrategy, VectorizationCostModel};
 use super::instructions::{SimdBlock, SimdInst};
-use super::lowering::{detect_host_isa, SimdLoweringTarget};
+use super::lowering::{SimdLoweringTarget, detect_host_isa};
 use super::types::{SimdElement, SimdType};
 
 /// Result of the vectorization pass
@@ -93,9 +93,7 @@ impl AutoVectorizer {
             };
         }
 
-        let simd_type = self
-            .cost_model
-            .optimal_simd_type(elem, detect_host_isa());
+        let simd_type = self.cost_model.optimal_simd_type(elem, detect_host_isa());
         let lanes = simd_type.lanes as u64;
         let vectorized_iters = (iterations / lanes) * lanes;
         let remainder = iterations - vectorized_iters;

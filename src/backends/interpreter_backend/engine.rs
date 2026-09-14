@@ -365,28 +365,49 @@ impl InterpreterEngine {
                             Value::Null
                         }
                         "Sin" => {
-                            let x = evaluated_args.first().and_then(|v| v.as_number()).unwrap_or(0.0);
+                            let x = evaluated_args
+                                .first()
+                                .and_then(|v| v.as_number())
+                                .unwrap_or(0.0);
                             Value::Number(x.sin())
                         }
                         "Cos" => {
-                            let x = evaluated_args.first().and_then(|v| v.as_number()).unwrap_or(0.0);
+                            let x = evaluated_args
+                                .first()
+                                .and_then(|v| v.as_number())
+                                .unwrap_or(0.0);
                             Value::Number(x.cos())
                         }
                         "Tan" => {
-                            let x = evaluated_args.first().and_then(|v| v.as_number()).unwrap_or(0.0);
+                            let x = evaluated_args
+                                .first()
+                                .and_then(|v| v.as_number())
+                                .unwrap_or(0.0);
                             Value::Number(x.tan())
                         }
                         "Log" => {
-                            let x = evaluated_args.first().and_then(|v| v.as_number()).unwrap_or(0.0);
+                            let x = evaluated_args
+                                .first()
+                                .and_then(|v| v.as_number())
+                                .unwrap_or(0.0);
                             Value::Number(x.ln())
                         }
                         "Exp" => {
-                            let x = evaluated_args.first().and_then(|v| v.as_number()).unwrap_or(0.0);
+                            let x = evaluated_args
+                                .first()
+                                .and_then(|v| v.as_number())
+                                .unwrap_or(0.0);
                             Value::Number(x.exp())
                         }
                         "Pow" => {
-                            let base = evaluated_args.first().and_then(|v| v.as_number()).unwrap_or(0.0);
-                            let exp = evaluated_args.get(1).and_then(|v| v.as_number()).unwrap_or(1.0);
+                            let base = evaluated_args
+                                .first()
+                                .and_then(|v| v.as_number())
+                                .unwrap_or(0.0);
+                            let exp = evaluated_args
+                                .get(1)
+                                .and_then(|v| v.as_number())
+                                .unwrap_or(1.0);
                             Value::Number(base.powf(exp))
                         }
                         _ => Value::Null,
@@ -409,7 +430,8 @@ impl InterpreterEngine {
                 InterpreterOp::ConstString(string_id, dest) => {
                     // String constants are referenced by ID from the module's string pool.
                     // The engine doesn't have access to the pool, so store a placeholder.
-                    self.values.insert(*dest, Value::Str(format!("_str_{}", string_id).into()));
+                    self.values
+                        .insert(*dest, Value::Str(format!("_str_{}", string_id).into()));
                 }
                 InterpreterOp::LoadLocal(local_idx, dest) => {
                     // Stack locals are modeled as memory at offset (local_idx + 1) * 1024

@@ -336,9 +336,7 @@ impl VirToInterpreter {
             VI::Move { dest, src } => InterpreterOp::Move(*src, *dest),
 
             // String constant
-            VI::ConstString { dest, string_id } => {
-                InterpreterOp::ConstString(*string_id, *dest)
-            }
+            VI::ConstString { dest, string_id } => InterpreterOp::ConstString(*string_id, *dest),
 
             // Local variable load/store
             VI::LoadLocal { dest, local } => InterpreterOp::LoadLocal(*local, *dest),
@@ -354,16 +352,11 @@ impl VirToInterpreter {
                 let alloc_dest = *dest;
                 self.stats.instructions_lowered += 1;
                 // Emit alloc + stores for each field
-                self.operations.push(InterpreterOp::Alloc(
-                    fields.len().max(1) * 8,
-                    alloc_dest,
-                ));
+                self.operations
+                    .push(InterpreterOp::Alloc(fields.len().max(1) * 8, alloc_dest));
                 for (idx, field_val) in fields.iter().enumerate() {
-                    self.operations.push(InterpreterOp::Store(
-                        alloc_dest,
-                        idx * 8,
-                        *field_val,
-                    ));
+                    self.operations
+                        .push(InterpreterOp::Store(alloc_dest, idx * 8, *field_val));
                 }
                 return Ok(());
             }
@@ -371,18 +364,12 @@ impl VirToInterpreter {
                 dest,
                 struct_val,
                 field,
-            } => {
-                InterpreterOp::Load(*struct_val, *field as usize * 8, *dest)
-            }
-            VI::BuildArray {
-                dest, elements, ..
-            } => {
+            } => InterpreterOp::Load(*struct_val, *field as usize * 8, *dest),
+            VI::BuildArray { dest, elements, .. } => {
                 let alloc_dest = *dest;
                 self.stats.instructions_lowered += 1;
-                self.operations.push(InterpreterOp::Alloc(
-                    elements.len().max(1) * 8,
-                    alloc_dest,
-                ));
+                self.operations
+                    .push(InterpreterOp::Alloc(elements.len().max(1) * 8, alloc_dest));
                 for (idx, elem) in elements.iter().enumerate() {
                     self.operations
                         .push(InterpreterOp::Store(alloc_dest, idx * 8, *elem));
@@ -400,10 +387,8 @@ impl VirToInterpreter {
             VI::BuildTuple { dest, elements } => {
                 let alloc_dest = *dest;
                 self.stats.instructions_lowered += 1;
-                self.operations.push(InterpreterOp::Alloc(
-                    elements.len().max(1) * 8,
-                    alloc_dest,
-                ));
+                self.operations
+                    .push(InterpreterOp::Alloc(elements.len().max(1) * 8, alloc_dest));
                 for (idx, elem) in elements.iter().enumerate() {
                     self.operations
                         .push(InterpreterOp::Store(alloc_dest, idx * 8, *elem));
@@ -450,51 +435,52 @@ impl VirToInterpreter {
     fn lower_terminator(&mut self, terminator: &VirTerminator) -> LoweringResult<()> {
         use VirTerminator as VT;
 
-        let op = match terminator {
-            VT::Return { value } => InterpreterOp::Return(*value),
-            VT::Jump { target } => {
-                let block_id = *target as usize;
-                let label = *self.block_labels.get(&block_id).ok_or_else(|| {
-                    LoweringError::BlockNotFound(format!("Block {}", block_id))
-                })?;
-                InterpreterOp::Jump(label)
-            }
-            VT::Branch {
-                cond,
-                true_target,
-                false_target,
-            } => {
-                let then_id = *true_target as usize;
-                let else_id = *false_target as usize;
-                let then_label = *self.block_labels.get(&then_id).ok_or_else(|| {
-                    LoweringError::BlockNotFound(format!("Block {}", then_id))
-                })?;
-                let else_label = *self.block_labels.get(&else_id).ok_or_else(|| {
-                    LoweringError::BlockNotFound(format!("Block {}", else_id))
-                })?;
-                InterpreterOp::Branch(*cond, then_label, else_label)
-            }
-            VT::Switch {
-                value,
-                cases,
-                default,
-            } => {
-                let default_id = *default as usize;
-                let default_label = *self.block_labels.get(&default_id).ok_or_else(|| {
-                    LoweringError::BlockNotFound(format!("Block {}", default_id))
-                })?;
-                let mut case_labels = Vec::new();
-                for (case_val, target) in cases {
-                    let target_id = *target as usize;
-                    let target_label = *self.block_labels.get(&target_id).ok_or_else(|| {
-                        LoweringError::BlockNotFound(format!("Block {}", target_id))
+        let op =
+            match terminator {
+                VT::Return { value } => InterpreterOp::Return(*value),
+                VT::Jump { target } => {
+                    let block_id = *target as usize;
+                    let label = *self.block_labels.get(&block_id).ok_or_else(|| {
+                        LoweringError::BlockNotFound(format!("Block {}", block_id))
                     })?;
-                    case_labels.push((*case_val, target_label));
+                    InterpreterOp::Jump(label)
                 }
-                InterpreterOp::Switch(*value, case_labels, default_label)
-            }
-            VT::Unreachable => InterpreterOp::Unreachable,
-        };
+                VT::Branch {
+                    cond,
+                    true_target,
+                    false_target,
+                } => {
+                    let then_id = *true_target as usize;
+                    let else_id = *false_target as usize;
+                    let then_label = *self.block_labels.get(&then_id).ok_or_else(|| {
+                        LoweringError::BlockNotFound(format!("Block {}", then_id))
+                    })?;
+                    let else_label = *self.block_labels.get(&else_id).ok_or_else(|| {
+                        LoweringError::BlockNotFound(format!("Block {}", else_id))
+                    })?;
+                    InterpreterOp::Branch(*cond, then_label, else_label)
+                }
+                VT::Switch {
+                    value,
+                    cases,
+                    default,
+                } => {
+                    let default_id = *default as usize;
+                    let default_label = *self.block_labels.get(&default_id).ok_or_else(|| {
+                        LoweringError::BlockNotFound(format!("Block {}", default_id))
+                    })?;
+                    let mut case_labels = Vec::new();
+                    for (case_val, target) in cases {
+                        let target_id = *target as usize;
+                        let target_label = *self.block_labels.get(&target_id).ok_or_else(|| {
+                            LoweringError::BlockNotFound(format!("Block {}", target_id))
+                        })?;
+                        case_labels.push((*case_val, target_label));
+                    }
+                    InterpreterOp::Switch(*value, case_labels, default_label)
+                }
+                VT::Unreachable => InterpreterOp::Unreachable,
+            };
 
         self.operations.push(op);
         Ok(())

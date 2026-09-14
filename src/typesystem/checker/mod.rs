@@ -268,19 +268,27 @@ pub fn is_subtype(sub: &Ty, sup: &Ty) -> bool {
         (Nullable(s), sup) => is_subtype(s, sup) && is_subtype(&Ty::Null, sup),
         (sub, Nullable(target)) => is_subtype(sub, target) || *sub == Ty::Null,
         (Union(sources), sup) => sources.iter().all(|c| is_subtype(c, sup)),
-        (Array(s), Array(t)) => matches!(**s, Ty::Unknown | Ty::Never) || is_subtype(s, t),
-        (
-            Record { required, optional },
-            GenericInstance { name, .. },
-        ) if required.is_empty() && optional.is_empty() && (name == "Set" || name == "Dict" || name == "Map") => true,
-        (
-            Array(inner),
-            GenericInstance { name, .. },
-        ) if matches!(**inner, Ty::Unknown | Ty::Never) && (name == "Set" || name == "Array" || name == "List") => true,
-        (
-            Record { required, optional },
-            Map(_, _),
-        ) if required.is_empty() && optional.is_empty() => true,
+        (Array(s), Array(t)) => {
+            matches!(**s, Ty::Unknown | Ty::Never | Ty::Any) || is_subtype(s, t)
+        }
+        (Record { required, optional }, GenericInstance { name, .. })
+            if required.is_empty()
+                && optional.is_empty()
+                && (name == "Set" || name == "Dict" || name == "Map") =>
+        {
+            true
+        }
+        (Array(inner), GenericInstance { name, .. })
+            if matches!(**inner, Ty::Unknown | Ty::Never)
+                && (name == "Set" || name == "Array" || name == "List") =>
+        {
+            true
+        }
+        (Record { required, optional }, Map(_, _))
+            if required.is_empty() && optional.is_empty() =>
+        {
+            true
+        }
         (GenericInstance { name: na, args: aa }, GenericInstance { name: nb, args: ab }) => {
             if na != nb {
                 return false;

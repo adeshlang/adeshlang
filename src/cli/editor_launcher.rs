@@ -118,7 +118,10 @@ pub fn execute_editor_command(args: &[String]) {
             std::process::exit(code);
         }
         Err(e) => {
-            eprintln!("Failed to execute editor binary '{:?}': {}", editor_binary, e);
+            eprintln!(
+                "Failed to execute editor binary '{:?}': {}",
+                editor_binary, e
+            );
             std::process::exit(1);
         }
     }

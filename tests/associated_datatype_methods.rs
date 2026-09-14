@@ -18,8 +18,7 @@ fn run(source: &str) -> Result<(), String> {
 
 #[test]
 fn associated_methods_cover_native_datatypes() {
-    run(
-        r#"
+    run(r#"
         let text = "  hello  ";
         assert(text.trim().toUpperCase() == "HELLO");
         assert(text.trimStart().startsWith("hello"));
@@ -50,15 +49,13 @@ fn associated_methods_cover_native_datatypes() {
         let z = complex(3, 4);
         assert(z.real() == 3);
         assert(z.magnitude() == 5);
-        "#,
-    )
+        "#)
     .expect("associated datatype methods should execute");
 }
 
 #[test]
 fn typed_collections_and_complex_literals_are_supported() {
-    run(
-        r#"
+    run(r#"
         let numbers: [i32] = [1, 2, 3];
         let pair: (string, i32) = ("port", 8080);
         let tags: set = {"typed", "native"};
@@ -73,7 +70,6 @@ fn typed_collections_and_complex_literals_are_supported() {
         assert(imaginary.imag() == 5);
         assert(combined.real() == 2);
         assert(combined.imag() == 5);
-        "#,
-    )
+        "#)
     .expect("typed datatype and complex literal syntax should execute");
 }

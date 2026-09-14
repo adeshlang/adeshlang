@@ -116,8 +116,8 @@ jobs:
         run: |
           $root = $env:GITHUB_WORKSPACE
           $stage = Join-Path $root "dist\windows-${{ matrix.arch }}"
-          $dist = Join-Path $root "dist"
           New-Item -ItemType Directory -Force -Path (Join-Path $stage "std") | Out-Null
+          New-Item -ItemType Directory -Force -Path (Join-Path $stage "lib") | Out-Null
           New-Item -ItemType Directory -Force -Path (Join-Path $stage "config") | Out-Null
           New-Item -ItemType Directory -Force -Path (Join-Path $stage "licenses") | Out-Null
           Copy-Item -Path (Join-Path $root "src\stdlib\*.adesh") `
@@ -126,6 +126,14 @@ jobs:
             -Destination (Join-Path $stage "config\toolchain-manifest.json") -Force
           Copy-Item -Path (Join-Path $root "LICENSE") `
             -Destination (Join-Path $stage "licenses\LICENSE.txt") -Force
+          $runtimeLib = Join-Path $root "target\release\adeshlang.lib"
+          if ($Arch -eq "aarch64" -or "${{ matrix.arch }}" -eq "aarch64") {
+            $aarch64Lib = Join-Path $root "target\aarch64-pc-windows-msvc\release\adeshlang.lib"
+            if (Test-Path $aarch64Lib) { $runtimeLib = $aarch64Lib }
+          }
+          if (Test-Path $runtimeLib) {
+            Copy-Item -Path $runtimeLib -Destination (Join-Path $stage "lib\adeshlang.lib") -Force
+          }
 
           # build_windows_dist.ps1 creates the portable archive before the
           # common std/config layout is added, so refresh that archive here.

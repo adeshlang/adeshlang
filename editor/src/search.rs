@@ -168,7 +168,11 @@ pub fn search_workspace(
                 let path = entry.path();
                 let name = entry.file_name().to_string_lossy().to_string();
 
-                if name.starts_with('.') || name == "target" || name == "node_modules" || name == "build" {
+                if name.starts_with('.')
+                    || name == "target"
+                    || name == "node_modules"
+                    || name == "build"
+                {
                     continue;
                 }
 

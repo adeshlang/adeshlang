@@ -1012,7 +1012,7 @@ The framework is ready for use with the interpreter backend and can be extended 
 ## See Also
 
 - [examples/testing/README.md](examples/testing/README.md) - Quick start guide with examples
-- [Readme.md](Readme.md) - Main AdeshLang documentation
+- [README.md](README.md) - Main AdeshLang documentation
 - [MEMORY_SAFETY.md](MEMORY_SAFETY.md) - Memory safety guidelines
 
 

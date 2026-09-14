@@ -17,9 +17,9 @@ pub mod nanvalue;
 pub mod scheduler;
 pub mod simd;
 pub mod stdlib;
-pub mod thread;
 pub mod stdlib_src;
 pub mod system;
+pub mod thread;
 pub mod tui_input;
 
 // Re-export stdlib for easy access
@@ -27,6 +27,6 @@ pub use stdlib::*;
 
 // Re-export ARC runtime
 pub use arc::{
-    arc_alloc, arc_alloc_with_drop, arc_clone, arc_get_count, arc_release, arc_retain,
-    arc_set_drop_fn, ArcDropFn,
+    ArcDropFn, arc_alloc, arc_alloc_with_drop, arc_clone, arc_get_count, arc_release, arc_retain,
+    arc_set_drop_fn,
 };

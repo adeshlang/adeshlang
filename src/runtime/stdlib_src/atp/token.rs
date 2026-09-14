@@ -6,8 +6,8 @@
 use super::errors::{AtpError, AtpResult};
 use hmac::digest::KeyInit;
 use hmac::{Hmac, Mac};
-use rand::rngs::OsRng;
 use rand::RngCore;
+use rand::rngs::OsRng;
 use sha2::Sha256;
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
@@ -96,8 +96,8 @@ impl RetryTokenIssuer {
         let binding = address_binding(peer_ip);
         body[8..24].copy_from_slice(&binding);
 
-        let mut mac = <HmacSha256 as KeyInit>::new_from_slice(secret)
-            .expect("HMAC key length valid");
+        let mut mac =
+            <HmacSha256 as KeyInit>::new_from_slice(secret).expect("HMAC key length valid");
         mac.update(&body);
         let tag = mac.finalize().into_bytes();
 
@@ -176,13 +176,10 @@ impl HandshakeRateLimiter {
             self.lru.remove(pos);
         }
 
-        let entry = self
-            .attempts
-            .entry(*peer_ip)
-            .or_insert(LimitEntry {
-                attempts: 0,
-                window_start: now,
-            });
+        let entry = self.attempts.entry(*peer_ip).or_insert(LimitEntry {
+            attempts: 0,
+            window_start: now,
+        });
         if now.duration_since(entry.window_start) > self.window {
             *entry = LimitEntry {
                 attempts: 0,
@@ -279,8 +276,8 @@ mod tests {
 
     #[test]
     fn test_rate_limiter_bounded_entries() {
-        let mut limiter = HandshakeRateLimiter::new(100, Duration::from_secs(10))
-            .with_max_entries(4);
+        let mut limiter =
+            HandshakeRateLimiter::new(100, Duration::from_secs(10)).with_max_entries(4);
         for i in 0..8u8 {
             let ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, i));
             limiter.allow(&ip);

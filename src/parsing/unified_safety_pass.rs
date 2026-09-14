@@ -464,7 +464,10 @@ impl UnifiedSafetyPass {
                             "E0623".to_string(),
                             format!(
                                 "lifetime mismatch in function `{}` parameter `{}`: expected {}, got {}",
-                                function, param, expected.id(), actual.id()
+                                function,
+                                param,
+                                expected.id(),
+                                actual.id()
                             ),
                         ),
                     };
@@ -740,7 +743,8 @@ impl UnifiedSafetyPass {
 
             // Verify that all declared variables have corresponding drop events
             // (either at scope exit, return, or region exit)
-            let mut declared_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut declared_vars: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
             for stmt in func.body.iter() {
                 self.collect_declared_vars(stmt, &mut declared_vars);
             }
@@ -843,9 +847,7 @@ impl UnifiedSafetyPass {
                 try_block,
                 catch_block,
                 ..
-            } => {
-                self.count_moves_in_stmt(try_block) + self.count_moves_in_stmt(catch_block)
-            }
+            } => self.count_moves_in_stmt(try_block) + self.count_moves_in_stmt(catch_block),
             _ => 0,
         }
     }

@@ -448,12 +448,16 @@ impl InterpreterExecutor {
                     .set_value(*dest, InterpreterValue::Bool(*value));
             }
 
-            VirInstruction::ConstString { dest, string_id, .. } => {
+            VirInstruction::ConstString {
+                dest, string_id, ..
+            } => {
                 // Store the string ID as a string reference.
                 // The executor doesn't have direct access to the module's
                 // string pool, so we store a reference by ID.
-                self.context_mut()
-                    .set_value(*dest, InterpreterValue::String(format!("_str_{}", string_id)));
+                self.context_mut().set_value(
+                    *dest,
+                    InterpreterValue::String(format!("_str_{}", string_id)),
+                );
             }
 
             VirInstruction::ConstNull { dest } => {
@@ -702,27 +706,31 @@ impl InterpreterExecutor {
                 }
             }
 
-            VirInstruction::Intrinsic { dest, intrinsic, args } => {
+            VirInstruction::Intrinsic {
+                dest,
+                intrinsic,
+                args,
+            } => {
                 let arg_vals: Vec<InterpreterValue> = args
                     .iter()
                     .filter_map(|a| self.context().get_value(*a))
                     .collect();
                 let result = match intrinsic {
-                    crate::ir::vir::Intrinsic::Sin => {
-                        InterpreterValue::Float(arg_vals.first().map(|v| v.as_float().sin()).unwrap_or(0.0))
-                    }
-                    crate::ir::vir::Intrinsic::Cos => {
-                        InterpreterValue::Float(arg_vals.first().map(|v| v.as_float().cos()).unwrap_or(0.0))
-                    }
-                    crate::ir::vir::Intrinsic::Tan => {
-                        InterpreterValue::Float(arg_vals.first().map(|v| v.as_float().tan()).unwrap_or(0.0))
-                    }
-                    crate::ir::vir::Intrinsic::Log => {
-                        InterpreterValue::Float(arg_vals.first().map(|v| v.as_float().ln()).unwrap_or(0.0))
-                    }
-                    crate::ir::vir::Intrinsic::Exp => {
-                        InterpreterValue::Float(arg_vals.first().map(|v| v.as_float().exp()).unwrap_or(0.0))
-                    }
+                    crate::ir::vir::Intrinsic::Sin => InterpreterValue::Float(
+                        arg_vals.first().map(|v| v.as_float().sin()).unwrap_or(0.0),
+                    ),
+                    crate::ir::vir::Intrinsic::Cos => InterpreterValue::Float(
+                        arg_vals.first().map(|v| v.as_float().cos()).unwrap_or(0.0),
+                    ),
+                    crate::ir::vir::Intrinsic::Tan => InterpreterValue::Float(
+                        arg_vals.first().map(|v| v.as_float().tan()).unwrap_or(0.0),
+                    ),
+                    crate::ir::vir::Intrinsic::Log => InterpreterValue::Float(
+                        arg_vals.first().map(|v| v.as_float().ln()).unwrap_or(0.0),
+                    ),
+                    crate::ir::vir::Intrinsic::Exp => InterpreterValue::Float(
+                        arg_vals.first().map(|v| v.as_float().exp()).unwrap_or(0.0),
+                    ),
                     crate::ir::vir::Intrinsic::Pow => {
                         let base = arg_vals.first().map(|v| v.as_float()).unwrap_or(0.0);
                         let exp = arg_vals.get(1).map(|v| v.as_float()).unwrap_or(1.0);
@@ -747,8 +755,14 @@ impl InterpreterExecutor {
                 self.context_mut()
                     .set_value(*dest, InterpreterValue::Pointer(addr));
             }
-            VirInstruction::ExtractField { dest, struct_val, field, .. } => {
-                if let Some(InterpreterValue::Pointer(addr)) = self.context().get_value(*struct_val) {
+            VirInstruction::ExtractField {
+                dest,
+                struct_val,
+                field,
+                ..
+            } => {
+                if let Some(InterpreterValue::Pointer(addr)) = self.context().get_value(*struct_val)
+                {
                     let data = self.context().mem_read(addr + *field as usize * 8, 8);
                     let value = i64::from_le_bytes(data.try_into().unwrap_or([0; 8]));
                     self.context_mut()
@@ -779,7 +793,9 @@ impl InterpreterExecutor {
                 self.context_mut()
                     .set_value(*dest, InterpreterValue::Pointer(addr));
             }
-            VirInstruction::ExtractTuple { dest, tuple, index, .. } => {
+            VirInstruction::ExtractTuple {
+                dest, tuple, index, ..
+            } => {
                 if let Some(InterpreterValue::Pointer(addr)) = self.context().get_value(*tuple) {
                     let data = self.context().mem_read(addr + *index as usize * 8, 8);
                     let value = i64::from_le_bytes(data.try_into().unwrap_or([0; 8]));
@@ -802,7 +818,8 @@ impl InterpreterExecutor {
                 if let Some(val) = self.context().get_value(*enum_val) {
                     self.context_mut().set_value(*dest, val);
                 } else {
-                    self.context_mut().set_value(*dest, InterpreterValue::Int(0));
+                    self.context_mut()
+                        .set_value(*dest, InterpreterValue::Int(0));
                 }
             }
             VirInstruction::ExtractPayload { dest, .. } => {

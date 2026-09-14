@@ -13,7 +13,8 @@ pub mod sync_api;
 pub mod thread_api;
 
 pub use api::{
-    build_concurrency_module_object, build_thread_module_object, register_thread, thread_module_value,
+    build_concurrency_module_object, build_thread_module_object, register_thread,
+    thread_module_value,
 };
 pub use parallel_ops::build_parallel_module_object;
 

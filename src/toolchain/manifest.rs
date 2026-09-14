@@ -20,17 +20,17 @@
 //!   "adeshVersion": "0.3.0",
 //!   "defaultComponents": ["llvm", "mlir"],
 //!   "components": {
-//!     "llvm": { "version": "18.1.8", "required": true,  "description": "..." },
-//!     "mlir": { "version": "18.1.8", "required": false, "description": "..." }
+//!     "llvm": { "version": "23.1.1", "required": true,  "description": "..." },
+//!     "mlir": { "version": "23.1.1", "required": false, "description": "..." }
 //!   },
 //!   "platforms": {
 //!     "windows-x86_64": {
 //!       "llvm": {
-//!         "url": "https://github.com/llvm/llvm-project/releases/.../LLVM-18.1.8-win64.exe",
+//!         "url": "https://github.com/llvm/llvm-project/releases/.../LLVM-23.1.1-win64.exe",
 //!         "sha256": "…", "size": 123, "kind": "installer"
 //!       },
 //!       "mlir": {
-//!         "url": "https://github.com/llvm/llvm-project/releases/.../clang+llvm-18.1.8-....tar.xz",
+//!         "url": "https://github.com/llvm/llvm-project/releases/.../LLVM-23.1.1-....tar.xz",
 //!         "sha256": "…", "size": 123, "format": "tar.xz", "kind": "archive"
 //!       }
 //!     }
@@ -55,14 +55,16 @@ pub const OFFICIAL_REPO: &str = "adeshlang/adeshlang";
 /// Stable URL of the toolchain manifest published with each release.
 pub fn manifest_url() -> String {
     if let Ok(repo) = env::var("ADESH_REPO") {
-        return format!("https://github.com/{repo}/releases/latest/download/toolchain-manifest.json");
+        return format!(
+            "https://github.com/{repo}/releases/latest/download/toolchain-manifest.json"
+        );
     }
     format!("https://github.com/{OFFICIAL_REPO}/releases/latest/download/toolchain-manifest.json")
 }
 
 /// Upstream LLVM release tag the toolchain is pinned to. Must match
 /// `SUPPORTED_LLVM_MAJOR` in the resolver and the versions in the manifest.
-pub const LLVM_RELEASE_TAG: &str = "llvmorg-18.1.8";
+pub const LLVM_RELEASE_TAG: &str = "llvmorg-23.1.1";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -114,11 +116,7 @@ impl ComponentDownload {
 
 impl ToolchainManifest {
     /// Validate structure and return the download spec for a platform component.
-    pub fn component(
-        &self,
-        platform: &str,
-        component: &str,
-    ) -> Result<&ComponentDownload, String> {
+    pub fn component(&self, platform: &str, component: &str) -> Result<&ComponentDownload, String> {
         let platform_entry = self.platforms.get(platform).ok_or_else(|| {
             format!(
                 "Toolchain manifest has no entry for platform `{platform}` (available: {})",
@@ -190,8 +188,8 @@ pub fn load_from_file(path: &Path) -> Result<ToolchainManifest, String> {
 
 /// Parse and validate a manifest document.
 pub fn parse_manifest(text: &str) -> Result<ToolchainManifest, String> {
-    let manifest: ToolchainManifest = serde_json::from_str(text)
-        .map_err(|e| format!("Invalid toolchain manifest JSON: {e}"))?;
+    let manifest: ToolchainManifest =
+        serde_json::from_str(text).map_err(|e| format!("Invalid toolchain manifest JSON: {e}"))?;
     if manifest.schema != 2 {
         return Err(format!(
             "Unsupported toolchain manifest schema `{}` (expected 2)",
@@ -215,7 +213,11 @@ pub fn local_manifest_candidates(home: Option<&Path>) -> Vec<std::path::PathBuf>
         candidates.push(home.join("config").join("toolchain-manifest.json"));
     }
     // Development-tree convenience.
-    candidates.push(std::path::PathBuf::from("installer").join("manifests").join("toolchain-manifest.json"));
+    candidates.push(
+        std::path::PathBuf::from("installer")
+            .join("manifests")
+            .join("toolchain-manifest.json"),
+    );
     candidates
 }
 
