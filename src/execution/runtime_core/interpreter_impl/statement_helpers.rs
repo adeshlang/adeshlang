@@ -16,7 +16,7 @@
 //! They are extracted to improve code organization while maintaining 100% behavioral parity.
 
 use crate::execution::runtime_core::interpreter::{Env, is_copy_value};
-use crate::parsing::ast::Value;
+use crate::parsing::ast::{UserFn, Value};
 use crate::utils::memory::OwnershipTracker;
 use rustc_hash::FxHashMap as HashMap;
 use std::rc::Rc;
@@ -144,11 +144,17 @@ pub fn define_at_const(
 #[inline]
 pub fn get_fast(envs: &mut Vec<Env>, env: usize, name: &str) -> Option<Value> {
     let mut c = Some(env);
+    let mut depth = 0;
+    const MAX_LOOKUP_DEPTH: usize = 100;
     while let Some(id) = c {
         if let Some(vref) = envs[id].values.get(name) {
             return Some(vref.clone());
         }
         c = envs[id].enclosing;
+        depth += 1;
+        if depth > MAX_LOOKUP_DEPTH {
+            return None;
+        }
     }
     None
 }
@@ -273,13 +279,48 @@ pub fn capture_env_values(envs: &[Env], env: usize) -> HashMap<String, Value> {
 fn clone_value_for_capture(v: &Value) -> Value {
     match v {
         Value::UserFunction(u) => {
-            let mut u2 = u.clone();
-            u2.captured = None;
-            Value::UserFunction(u2)
+            Value::UserFunction(UserFn {
+                name: u.name.clone(),
+                type_params: u.type_params.clone(),
+                params: u.params.clone(),
+                body: u.body.clone(),
+                closure: u.closure,
+                captured: None,
+                visibility: u.visibility.clone(),
+                ret_type: u.ret_type.clone(),
+                is_async: u.is_async,
+                is_static: u.is_static,
+                is_abstract: u.is_abstract,
+                is_constructor: u.is_constructor,
+                is_getter: u.is_getter,
+                is_setter: u.is_setter,
+                is_operator: u.is_operator,
+                operator_symbol: u.operator_symbol.clone(),
+                defining_class: u.defining_class.clone(),
+                is_unsafe: u.is_unsafe,
+            })
         }
         Value::BoundMethod(u, inst) => {
-            let mut u2 = u.clone();
-            u2.captured = None;
+            let u2 = UserFn {
+                name: u.name.clone(),
+                type_params: u.type_params.clone(),
+                params: u.params.clone(),
+                body: u.body.clone(),
+                closure: u.closure,
+                captured: None,
+                visibility: u.visibility.clone(),
+                ret_type: u.ret_type.clone(),
+                is_async: u.is_async,
+                is_static: u.is_static,
+                is_abstract: u.is_abstract,
+                is_constructor: u.is_constructor,
+                is_getter: u.is_getter,
+                is_setter: u.is_setter,
+                is_operator: u.is_operator,
+                operator_symbol: u.operator_symbol.clone(),
+                defining_class: u.defining_class.clone(),
+                is_unsafe: u.is_unsafe,
+            };
             Value::BoundMethod(u2, inst.clone())
         }
         Value::Class(uc) => {

@@ -479,7 +479,7 @@ fn check_borrows(module: &HirModule) -> Result<(), Vec<LifetimeError>> {
     }
 
     for func in &module.functions {
-        let mut func_ctx = BorrowContext::new();
+        let mut func_ctx = ctx.clone();
         for param in &func.params {
             func_ctx.borrows.insert(param.0.clone(), BorrowState::Owned);
         }

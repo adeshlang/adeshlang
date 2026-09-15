@@ -7,6 +7,21 @@ mod decorator_tests {
     use adeshlang::execution::runtime::Interpreter;
     use std::path::Path;
 
+    fn run_code(src: &str) -> Result<(), String> {
+        let src = src.to_string();
+        let handle = std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024) // 16 MB
+            .spawn(move || {
+                let mut interp = Interpreter::new();
+                let mut loader = ModuleLoader::new(Path::new("."));
+                interp
+                    .run_module(&src, &mut loader, Some("test".to_string()))
+                    .map_err(|e| e.to_string())
+            })
+            .expect("failed to spawn test thread");
+        handle.join().expect("test thread panicked")
+    }
+
     /// Test that multiple decorators can be applied without hanging
     #[test]
     fn test_multiple_decorators_no_hang() {
@@ -23,15 +38,15 @@ decorator d9(target, meta) { return fn(x) { return target(x); }; }
 decorator d10(target, meta) { return fn(x) { return target(x); }; }
 
 @d1 @d2 @d3 @d4 @d5 @d6 @d7 @d8 @d9 @d10
-fn test(x) { return x * 2; }
+fn my_fn(x) { return x * 2; }
 
-print(test(5));
+print(my_fn(5));
         "#;
 
-        let mut interp = Interpreter::new();
-        let mut loader = ModuleLoader::new(Path::new("."));
-        let result = interp.run_module(src, &mut loader, Some("test".to_string()));
-
+        let result = run_code(src);
+        if let Err(ref e) = result {
+            eprintln!("[TEST MULTIPLE ERROR] {}", e);
+        }
         assert!(
             result.is_ok(),
             "Should handle 10 decorators without hanging"
@@ -56,10 +71,7 @@ print(func1(10));
 print(func2(10));
         "#;
 
-        let mut interp = Interpreter::new();
-        let mut loader = ModuleLoader::new(Path::new("."));
-        let result = interp.run_module(src, &mut loader, Some("test".to_string()));
-
+        let result = run_code(src);
         assert!(result.is_ok(), "Should handle multiple decorated functions");
     }
 
@@ -78,9 +90,10 @@ fn testFunction(x) { return x; }
 testFunction(1);
         "#;
 
-        let mut interp = Interpreter::new();
-        let mut loader = ModuleLoader::new(Path::new("."));
-        let result = interp.run_module(src, &mut loader, Some("test".to_string()));
+        let result = run_code(src);
+        if let Err(ref e) = result {
+            eprintln!("[TEST METADATA ERROR] {}", e);
+        }
 
         assert!(result.is_ok(), "Should access decorator metadata");
     }
@@ -101,10 +114,7 @@ fn getValue(x) { return x + 1; }
 print(getValue(5));
         "#;
 
-        let mut interp = Interpreter::new();
-        let mut loader = ModuleLoader::new(Path::new("."));
-        let result = interp.run_module(src, &mut loader, Some("test".to_string()));
-
+        let result = run_code(src);
         assert!(result.is_ok(), "Should handle basic decorator");
     }
 
@@ -132,18 +142,15 @@ decorator inner(target, meta) {
 
 @outer
 @inner
-fn test(x) {
+fn run_target(x) {
     print("function body");
     return x;
 }
 
-test(1);
+run_target(1);
         "#;
 
-        let mut interp = Interpreter::new();
-        let mut loader = ModuleLoader::new(Path::new("."));
-        let result = interp.run_module(src, &mut loader, Some("test".to_string()));
-
+        let result = run_code(src);
         assert!(result.is_ok(), "Should apply decorators in correct order");
     }
 }

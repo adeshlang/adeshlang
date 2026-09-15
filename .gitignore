@@ -109,3 +109,4 @@ ai/llama_cpp_repo/
 /target-docker-x86_64
 /release
 /downloads_web
+.factory

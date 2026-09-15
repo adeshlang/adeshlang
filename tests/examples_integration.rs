@@ -1,12 +1,39 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+fn resolve_adesh_exe() -> PathBuf {
+    if let Ok(exe) = std::env::var("CARGO_BIN_EXE_adesh") {
+        return PathBuf::from(exe);
+    }
+    if let Ok(exe) = std::env::var("CARGO_BIN_EXE_adeshlang") {
+        return PathBuf::from(exe);
+    }
+
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.push("target");
+    path.push("debug");
+    let candidate = if cfg!(windows) {
+        path.join("adesh.exe")
+    } else {
+        path.join("adesh")
+    };
+    if candidate.exists() {
+        return candidate;
+    }
+    if cfg!(windows) {
+        path.push("adeshlang.exe");
+    } else {
+        path.push("adeshlang");
+    }
+    path
+}
+
 fn run_example(path: &str) -> String {
-    let exe = std::env::var("CARGO_BIN_EXE_adeshlang").expect("CARGO_BIN_EXE_adeshlang not set; run `cargo test` from workspace root which builds the binary");
+    let exe = resolve_adesh_exe();
     let output = Command::new(exe)
         .args(["run", path])
         .output()
-        .expect("failed to run adeshlang binary");
+        .expect("failed to run adesh binary");
     String::from_utf8_lossy(&output.stdout).to_string()
 }
 

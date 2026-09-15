@@ -7528,13 +7528,22 @@ impl Interpreter {
                         })
                         .unwrap_or_else(|| std::sync::Arc::new(vec![]));
 
+                    let is_module_level =
+                        env == self.global || self.envs[env].enclosing == Some(self.global);
+                    let captured_env = if is_module_level {
+                        None
+                    } else {
+                        self.mark_env_captured(env);
+                        Some(self.capture_function_env(env))
+                    };
+
                     Value::UserFunction(create_user_fn(
                         def.name.clone(),
                         Vec::new(),
                         def.params.clone(),
                         body,
                         env,
-                        Some(self.capture_function_env(env)),
+                        captured_env,
                         None,
                         None,
                         false,
@@ -7549,7 +7558,7 @@ impl Interpreter {
                 Ok(Flow::Next)
             }
             StmtKind::Function(f, is_export) => {
-                if !self.in_pre_registration && env == self.global {
+                if !self.in_pre_registration && env == self.global && f.decorators.is_empty() {
                     return Ok(Flow::Next);
                 }
                 #[cfg(debug_assertions)]
@@ -7677,7 +7686,11 @@ impl Interpreter {
             }
 
             StmtKind::Class(c, is_export) => {
-                if !self.in_pre_registration && env == self.global {
+                if !self.in_pre_registration
+                    && env == self.global
+                    && c.decorators.is_empty()
+                    && c.methods.iter().all(|m| m.decorators.is_empty())
+                {
                     return Ok(Flow::Next);
                 }
                 let is_module_level =

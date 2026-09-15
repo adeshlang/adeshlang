@@ -19,16 +19,16 @@ impl super::CompileTimeMemorySafety {
         &mut self,
         module: &HirModule,
     ) -> Result<(), Vec<CompileTimeMemoryError>> {
-        for stmt in &module.statements {
-            self.process_stmt_ownership(stmt, &mut 0)?;
-        }
-
         for func in &module.functions {
             self.process_function_ownership(func)?;
         }
 
         for class in &module.classes {
             self.process_class_ownership(class)?;
+        }
+
+        for stmt in &module.statements {
+            self.process_stmt_ownership(stmt, &mut 0)?;
         }
 
         Ok(())
@@ -416,6 +416,20 @@ impl super::CompileTimeMemorySafety {
     ) -> Result<(), Vec<CompileTimeMemoryError>> {
         // Set function context for better error messages
         self.set_current_function(Some(func.name.clone()));
+        let saved_graph = self.ownership_graph.clone();
+
+        for param in &func.params {
+            self.ownership_graph.insert(
+                param.0.clone(),
+                OwnershipNode {
+                    owner: param.0.clone(),
+                    owned_values: FastSet::default(),
+                    state: OwnershipState::Owned,
+                    location: self.get_source_location(0),
+                    is_copy_type: false,
+                },
+            );
+        }
 
         let mut scope_id = 0;
         for (idx, stmt) in func.body.iter().enumerate() {
@@ -424,6 +438,7 @@ impl super::CompileTimeMemorySafety {
             self.process_stmt_ownership(stmt, &mut scope_id)?;
         }
 
+        self.ownership_graph = saved_graph;
         self.set_current_function(None);
         Ok(())
     }
@@ -434,17 +449,45 @@ impl super::CompileTimeMemorySafety {
         class: &HirClass,
     ) -> Result<(), Vec<CompileTimeMemoryError>> {
         for method in &class.methods {
+            let saved_graph = self.ownership_graph.clone();
+            for param in &method.params {
+                self.ownership_graph.insert(
+                    param.0.clone(),
+                    OwnershipNode {
+                        owner: param.0.clone(),
+                        owned_values: FastSet::default(),
+                        state: OwnershipState::Owned,
+                        location: self.get_source_location(0),
+                        is_copy_type: false,
+                    },
+                );
+            }
             let mut scope_id = 0;
             for stmt in method.body.iter() {
                 self.process_stmt_ownership(stmt, &mut scope_id)?;
             }
+            self.ownership_graph = saved_graph;
         }
 
         for method in &class.static_methods {
+            let saved_graph = self.ownership_graph.clone();
+            for param in &method.params {
+                self.ownership_graph.insert(
+                    param.0.clone(),
+                    OwnershipNode {
+                        owner: param.0.clone(),
+                        owned_values: FastSet::default(),
+                        state: OwnershipState::Owned,
+                        location: self.get_source_location(0),
+                        is_copy_type: false,
+                    },
+                );
+            }
             let mut scope_id = 0;
             for stmt in method.body.iter() {
                 self.process_stmt_ownership(stmt, &mut scope_id)?;
             }
+            self.ownership_graph = saved_graph;
         }
 
         Ok(())

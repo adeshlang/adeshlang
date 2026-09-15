@@ -741,63 +741,7 @@ fn unify_two_types(a: &AotValueType, b: &AotValueType) -> AotValueType {
     if a == b {
         return a.clone();
     }
-    // If either is Handle or Array or Tuple or Ptr, unify to Handle
-    if *a == AotValueType::Handle
-        || *b == AotValueType::Handle
-        || matches!(a, AotValueType::Array(_, _))
-        || matches!(b, AotValueType::Array(_, _))
-        || matches!(a, AotValueType::Tuple(_))
-        || matches!(b, AotValueType::Tuple(_))
-        || *a == AotValueType::Ptr
-        || *b == AotValueType::Ptr
-    {
-        return AotValueType::Handle;
-    }
-
-    // If one is String and the other is not:
-    if *a == AotValueType::String || *b == AotValueType::String {
-        return AotValueType::Handle;
-    }
-
-    // If one is Bool and the other is not:
-    if *a == AotValueType::Bool || *b == AotValueType::Bool {
-        return AotValueType::Handle;
-    }
-
-    // If both are numeric, unify numeric types:
-    if is_numeric_type(a) && is_numeric_type(b) {
-        if matches!(a, AotValueType::F64 | AotValueType::Float)
-            || matches!(b, AotValueType::F64 | AotValueType::Float)
-            || matches!(a, AotValueType::F32)
-            || matches!(b, AotValueType::F32)
-        {
-            return AotValueType::F64;
-        }
-        if matches!(a, AotValueType::U128 | AotValueType::I128)
-            || matches!(b, AotValueType::U128 | AotValueType::I128)
-        {
-            return AotValueType::I128;
-        }
-        if matches!(a, AotValueType::U64 | AotValueType::I64 | AotValueType::Int)
-            || matches!(b, AotValueType::U64 | AotValueType::I64 | AotValueType::Int)
-        {
-            return AotValueType::I64;
-        }
-        if matches!(a, AotValueType::U32) || matches!(b, AotValueType::U32) {
-            return AotValueType::U32;
-        }
-        if matches!(a, AotValueType::I32) || matches!(b, AotValueType::I32) {
-            return AotValueType::I32;
-        }
-        if matches!(a, AotValueType::U16) || matches!(b, AotValueType::U16) {
-            return AotValueType::U16;
-        }
-        if matches!(a, AotValueType::I16) || matches!(b, AotValueType::I16) {
-            return AotValueType::I16;
-        }
-        return AotValueType::I64;
-    }
-
+    // Heterogeneous types unify to Handle to preserve each element's specific type tag
     AotValueType::Handle
 }
 

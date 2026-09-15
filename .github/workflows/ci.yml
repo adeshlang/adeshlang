@@ -2,7 +2,28 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'Logo/**'
+      - 'LICENSE'
+      - 'THIRD_PARTY_LICENSES/**'
+      - '.gitignore'
+      - '.gitattributes'
   pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'Logo/**'
+      - 'LICENSE'
+      - 'THIRD_PARTY_LICENSES/**'
+      - '.gitignore'
+      - '.gitattributes'
+  workflow_dispatch:
 
 # Repository migration: origin is currently ajaytainwala-dev/mylang; keep the
 # official destination in one overridable workflow-level variable.
@@ -13,7 +34,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -34,11 +55,16 @@ jobs:
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: ci-${{ matrix.os }}
+          cache-all-crates: "true"
+          cache-on-failure: "true"
+          cache-targets: "true"
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -49,9 +75,9 @@ jobs:
       - name: Test library
         run: cargo test --lib
 
+      - name: Build adesh binary
+        run: cargo build --bin adesh
+
       - name: Test integration suites
         if: matrix.os == 'ubuntu-latest'
         run: cargo test --tests
-
-      - name: Check adesh binary
-        run: cargo check --bin adesh
