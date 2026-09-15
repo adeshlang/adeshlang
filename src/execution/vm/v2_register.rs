@@ -646,16 +646,31 @@ pub(super) fn execute_v2(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                     args.push(vm_value_to_builtin_runtime_value(val));
                 }
 
-                // Call the builtin function
-                let builtins = crate::backends::builtins::BuiltinRegistry::new();
-                let result = if let Some(func) = builtins.get(&builtin_name) {
-                    func(&args)
+                if builtin_name == "print" || builtin_name == "println" {
+                    let mut is_first = true;
+                    for v in &args {
+                        if !is_first {
+                            let _ = write!(out, " ");
+                        }
+                        let _ = write!(out, "{}", v.as_string());
+                        is_first = false;
+                    }
+                    if builtin_name == "println" {
+                        let _ = writeln!(out);
+                    }
+                    regs[dst] = VMValue::Null;
                 } else {
-                    return Err(format!("Unknown builtin function: {}", builtin_name));
-                };
+                    // Call the builtin function
+                    let builtins = crate::backends::builtins::BuiltinRegistry::new();
+                    let result = if let Some(func) = builtins.get(&builtin_name) {
+                        func(&args)
+                    } else {
+                        return Err(format!("Unknown builtin function: {}", builtin_name));
+                    };
 
-                // Convert result back to VMValue
-                regs[dst] = builtin_runtime_value_to_vm_value(result);
+                    // Convert result back to VMValue
+                    regs[dst] = builtin_runtime_value_to_vm_value(result);
+                }
             }
             Some(ROp::EnvRuntimeLoadFile) => {
                 let dst = u32::from_le_bytes(data[pc..pc + 4].try_into().unwrap()) as usize;
@@ -1739,18 +1754,34 @@ pub(super) fn execute_v2_with_args(
                     args.push(vm_value_to_builtin_runtime_value(val));
                 }
 
-                // Call the builtin function
-                let builtins = crate::backends::builtins::BuiltinRegistry::new();
-                let result = if let Some(func) = builtins.get(&builtin_name) {
-                    func(&args)
+                if builtin_name == "print" || builtin_name == "println" {
+                    let mut is_first = true;
+                    for v in &args {
+                        if !is_first {
+                            let _ = write!(out, " ");
+                        }
+                        let _ = write!(out, "{}", v.as_string());
+                        is_first = false;
+                    }
+                    if builtin_name == "println" {
+                        let _ = writeln!(out);
+                    }
+                    regs[dst] = VMValue::Null;
+                    regs_f64[dst] = 0.0;
                 } else {
-                    return Err(format!("Unknown builtin function: {}", builtin_name));
-                };
+                    // Call the builtin function
+                    let builtins = crate::backends::builtins::BuiltinRegistry::new();
+                    let result = if let Some(func) = builtins.get(&builtin_name) {
+                        func(&args)
+                    } else {
+                        return Err(format!("Unknown builtin function: {}", builtin_name));
+                    };
 
-                // Convert result back to VMValue
-                regs[dst] = builtin_runtime_value_to_vm_value(result);
-                if let VMValue::Number(num) = regs[dst] {
-                    regs_f64[dst] = num;
+                    // Convert result back to VMValue
+                    regs[dst] = builtin_runtime_value_to_vm_value(result);
+                    if let VMValue::Number(num) = regs[dst] {
+                        regs_f64[dst] = num;
+                    }
                 }
             }
             70 => {
