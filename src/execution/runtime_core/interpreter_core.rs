@@ -1071,31 +1071,50 @@ fn eval_accumulator_preserving_type(
                 Value::F64(cur)
             }
         }
-        _ => {
-            let acc = orig
-                .and_then(|v| crate::execution::runtime_core::ops::num((*v).clone()).ok())
-                .unwrap_or(0.0);
-            if let Some(lit) = step {
-                let n = crate::execution::runtime_core::ops::num(lit.clone()).unwrap_or(1.0);
-                let iters = (limit - start).max(0) as f64;
-                let a = match op {
-                    TokenKind::Plus => acc + iters * n,
-                    TokenKind::Minus => acc - iters * n,
-                    _ => acc,
-                };
-                Value::Number(a)
-            } else {
-                let mut a = acc;
-                for c in start..limit {
-                    a = match op {
-                        TokenKind::Plus => a + c as f64,
-                        TokenKind::Minus => a - c as f64,
-                        TokenKind::Star => a * c as f64,
-                        TokenKind::Slash => a / c as f64,
-                        _ => a,
-                    };
+        Some(Value::Str(s)) => {
+            if op == TokenKind::Plus {
+                let iters = (limit - start).max(0) as usize;
+                if let Some(Value::Str(rhs)) = step {
+                    let mut res = String::with_capacity(s.len() + rhs.len() * iters);
+                    res.push_str(s);
+                    for _ in 0..iters {
+                        res.push_str(rhs);
+                    }
+                    Value::Str(res)
+                } else if let Some(lit) = step {
+                    let rhs = fmt(lit);
+                    let mut res = String::with_capacity(s.len() + rhs.len() * iters);
+                    res.push_str(s);
+                    for _ in 0..iters {
+                        res.push_str(&rhs);
+                    }
+                    Value::Str(res)
+                } else {
+                    Value::Str(s.clone())
                 }
-                Value::Number(a)
+            } else {
+                Value::Str(s.clone())
+            }
+        }
+        _ => {
+            if let Some(v) = orig {
+                if let Ok(n) = crate::execution::runtime_core::ops::num(v.clone()) {
+                    let mut a = n;
+                    for c in start..limit {
+                        a = match op {
+                            TokenKind::Plus => a + c as f64,
+                            TokenKind::Minus => a - c as f64,
+                            TokenKind::Star => a * c as f64,
+                            TokenKind::Slash => a / c as f64,
+                            _ => a,
+                        };
+                    }
+                    Value::Number(a)
+                } else {
+                    v.clone()
+                }
+            } else {
+                Value::Number(0.0)
             }
         }
     }

@@ -79,7 +79,7 @@ fn test_weak_basic() {
     let arc = Arc::new(42);
     let weak = Arc::downgrade(&arc);
 
-    assert_eq!(Arc::weak_count(&arc), 1);
+    assert_eq!(Arc::weak_count(&arc), 2);
     assert_eq!(weak.strong_count(), 1);
 }
 

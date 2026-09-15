@@ -15,7 +15,7 @@ use crate::mode::Mode;
 use crate::runner::Backend;
 
 pub fn render_ui(f: &mut Frame, app: &mut App) {
-    let area = f.size();
+    let area = f.area();
     f.render_widget(Clear, area);
 
     let bottom_height = if app.show_terminal || app.show_output {
@@ -639,7 +639,7 @@ fn render_single_editor_pane(
             if cursor_x < area.x + area.width.saturating_sub(1)
                 && cursor_y < area.y + area.height.saturating_sub(1)
             {
-                f.set_cursor(cursor_x, cursor_y);
+                f.set_cursor_position((cursor_x, cursor_y));
             }
         }
     }
@@ -842,10 +842,10 @@ fn render_terminal_panel(f: &mut Frame, app: &mut App, area: Rect) {
         let input_line_y = area.y + 1 + (visible_history.len() as u16);
         let cur_x = (area.x + 3 + app.terminal.get_input().chars().count() as u16)
             .min(area.x + area.width.saturating_sub(2));
-        f.set_cursor(
+        f.set_cursor_position((
             cur_x,
             input_line_y.min(area.y + area.height.saturating_sub(2)),
-        );
+        ));
     }
 }
 
@@ -864,7 +864,7 @@ fn render_command_line_bar(f: &mut Frame, app: &App, area: Rect) {
 
     let cur_x = (area.x + 1 + app.command_line.chars().count() as u16)
         .min(area.x + area.width.saturating_sub(1));
-    f.set_cursor(cur_x, area.y);
+    f.set_cursor_position((cur_x, area.y));
 }
 
 fn render_powerline_status_bar(f: &mut Frame, app: &App, area: Rect) {
@@ -1700,7 +1700,7 @@ fn render_command_palette(f: &mut Frame, app: &App, area: Rect) {
 
     let cur_x = (chunks[0].x + 3 + app.palette.query.chars().count() as u16)
         .min(chunks[0].x + chunks[0].width.saturating_sub(2));
-    f.set_cursor(cur_x, chunks[0].y + 1);
+    f.set_cursor_position((cur_x, chunks[0].y + 1));
 
     let items: Vec<ListItem> = app
         .palette
@@ -1754,7 +1754,7 @@ fn render_search_modal(f: &mut Frame, app: &App, area: Rect) {
 
     let cur_x = (popup_area.x + 8 + app.search.query.chars().count() as u16)
         .min(popup_area.x + popup_area.width.saturating_sub(2));
-    f.set_cursor(cur_x, popup_area.y + 1);
+    f.set_cursor_position((cur_x, popup_area.y + 1));
 }
 
 fn render_backend_selector(f: &mut Frame, app: &App, area: Rect) {
@@ -1856,7 +1856,7 @@ fn render_prompt_modal(f: &mut Frame, app: &App, area: Rect, title: &str) {
 
     let cur_x = (popup_area.x + 3 + app.prompt_input.chars().count() as u16)
         .min(popup_area.x + popup_area.width.saturating_sub(2));
-    f.set_cursor(cur_x, popup_area.y + 1);
+    f.set_cursor_position((cur_x, popup_area.y + 1));
 }
 
 fn render_close_unsaved_modal(f: &mut Frame, app: &App, area: Rect, _idx: usize) {

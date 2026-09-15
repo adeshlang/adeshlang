@@ -506,20 +506,23 @@ fn task_runner_up_to_date_works() {
     fs::write(&input_file, "input content").unwrap();
 
     let mut runner = adeshlang::ecosystem::TaskRunner::default();
+    let (cmd, flag) = if cfg!(windows) {
+        ("cmd".to_string(), "/C".to_string())
+    } else {
+        ("sh".to_string(), "-c".to_string())
+    };
+
     let task = adeshlang::ecosystem::TaskDefinition {
         name: "test_task".to_string(),
-        command: "cmd".to_string(),
-        args: vec![
-            "/C".to_string(),
-            format!("echo updated > {}", output_file.display()),
-        ],
+        command: cmd,
+        args: vec![flag, format!("echo updated > {}", output_file.display())],
         env: std::collections::BTreeMap::new(),
         dependencies: Vec::new(),
         parallel: Vec::new(),
         condition: None,
         inputs: vec![input_file.clone()],
         outputs: vec![output_file.clone()],
-        platform: Some("windows".to_string()),
+        platform: None,
     };
     runner.register(task);
 

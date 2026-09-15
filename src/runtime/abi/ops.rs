@@ -108,6 +108,42 @@ pub fn abi_add(left: &Value, right: &Value) -> Result<Value, RuntimeError> {
             result.push_str(b);
             Ok(Value::Str(result))
         }
+        // Array concatenation
+        (Value::Array(a), Value::Array(b)) => {
+            let mut result = Vec::with_capacity(a.len() + b.len());
+            result.extend(a.iter().cloned());
+            result.extend(b.iter().cloned());
+            Ok(Value::Array(result))
+        }
+        (Value::DynArray(a), Value::DynArray(b)) => {
+            let mut result = a.data.clone();
+            result.extend(b.data.iter().cloned());
+            Ok(Value::DynArray(Box::new(
+                crate::parsing::ast::DynamicArray {
+                    data: result,
+                    element_type: a.element_type.clone(),
+                    concrete_type: a.concrete_type.clone(),
+                    tracked_capacity: a.tracked_capacity,
+                },
+            )))
+        }
+        (Value::DynArray(a), Value::Array(b)) => {
+            let mut result = a.data.clone();
+            result.extend(b.iter().cloned());
+            Ok(Value::DynArray(Box::new(
+                crate::parsing::ast::DynamicArray {
+                    data: result,
+                    element_type: a.element_type.clone(),
+                    concrete_type: a.concrete_type.clone(),
+                    tracked_capacity: a.tracked_capacity,
+                },
+            )))
+        }
+        (Value::Array(a), Value::DynArray(b)) => {
+            let mut result = a.clone();
+            result.extend(b.data.iter().cloned());
+            Ok(Value::Array(result))
+        }
         // Element-wise / broadcast array addition (SIMD-optimized when numeric)
         _ if involves_array(left) || involves_array(right) => {
             crate::runtime::simd::ops::array_add(left, right).map_err(RuntimeError::new)
