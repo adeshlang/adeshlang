@@ -7,7 +7,7 @@
 **A Rust-Inspired, Multi-Backend, High-Performance Systems & Application Programming Language**
 
 [![Rust](https://img.shields.io/badge/Rust-2024%20Edition%20%7C%201.70%2B-orange.svg)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/License-AdeshLang%20v2.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-AdeshLang%20v0.3.0-blue.svg)](LICENSE)
 [![Build](https://img.shields.io/badge/Build-Passing-brightgreen.svg)](https://github.com/adeshlang/adeshlang)
 [![Tests](https://img.shields.io/badge/Tests-Passing%20(100%25)-brightgreen.svg)]()
 [![Code Quality](https://img.shields.io/badge/Code%20Quality-Zero%20Errors%20%26%20Warnings-brightgreen.svg)]()
