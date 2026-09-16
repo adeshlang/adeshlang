@@ -1,37 +1,6 @@
 # ==============================================================================
 # AdeshLang Release Workflow
 # ==============================================================================
-#
-# Release process:
-#
-#   1. Update Cargo.toml version.
-#   2. Commit and push the changes.
-#   3. Create and push a tag:
-#
-#        git tag v0.3.1
-#        git push origin v0.3.1
-#
-#   4. GitHub Actions builds all supported platforms in parallel:
-#
-#        - Windows x86_64
-#        - Windows ARM64
-#        - Linux x86_64
-#        - Linux ARM64
-#        - macOS ARM64
-#        - macOS Intel x86_64
-#
-#   5. Optional native packages are generated where supported.
-#   6. All artifacts are collected.
-#   7. SHA256SUMS.txt is generated.
-#   8. The toolchain manifest is included.
-#   9. A GitHub Release is created automatically.
-#  10. All release assets are uploaded to that release.
-#
-# The LLVM/MLIR toolchain is intentionally NOT bundled in the release.
-# Installers use toolchain-manifest.json to download the pinned toolchain
-# at installation time.
-#
-# ==============================================================================
 
 name: Release
 
@@ -43,50 +12,27 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: "Release tag to publish, for example v0.3.1"
+        description: "Release tag to publish (e.g. v0.3.1)"
         required: true
         type: string
 
-# ==============================================================================
-# Global environment
-# ==============================================================================
-
 env:
   ADESH_REPO: adeshlang/adeshlang
-
-  # Rust build optimization
   CARGO_INCREMENTAL: "0"
-
-  # sccache
   RUSTC_WRAPPER: sccache
   SCCACHE_GHA_ENABLED: "true"
-
-  # Do not download/build the AI model during release builds.
   ADESH_SKIP_AI_MODEL: "1"
-
-# ==============================================================================
-# Permissions
-# ==============================================================================
 
 permissions:
   contents: write
   actions: write
-
-# ==============================================================================
-# Concurrency
-# ==============================================================================
-#
-# Prevent two releases for the exact same ref from running simultaneously.
-# Different tags can still build in parallel.
-#
-# ==============================================================================
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 # ==============================================================================
-# BUILD JOB
+# BUILD
 # ==============================================================================
 
 jobs:
@@ -100,34 +46,28 @@ jobs:
 
     strategy:
       fail-fast: false
-
-      # All six platforms can build concurrently.
       max-parallel: 6
 
       matrix:
         include:
 
-          # --------------------------------------------------------------------
           # Windows x86_64
-          # --------------------------------------------------------------------
           - platform: windows-x86_64
             runner: windows-latest
             kind: windows
             os: windows
             arch: x86_64
+            target: x86_64-pc-windows-msvc
 
-          # --------------------------------------------------------------------
           # Windows ARM64
-          # --------------------------------------------------------------------
           - platform: windows-aarch64
             runner: windows-latest
             kind: windows
             os: windows
             arch: aarch64
+            target: aarch64-pc-windows-msvc
 
-          # --------------------------------------------------------------------
           # Linux x86_64
-          # --------------------------------------------------------------------
           - platform: linux-x86_64
             runner: ubuntu-latest
             kind: unix
@@ -135,9 +75,7 @@ jobs:
             arch: x86_64
             target: x86_64-unknown-linux-gnu
 
-          # --------------------------------------------------------------------
           # Linux ARM64
-          # --------------------------------------------------------------------
           - platform: linux-aarch64
             runner: ubuntu-24.04-arm
             kind: unix
@@ -145,9 +83,7 @@ jobs:
             arch: aarch64
             target: aarch64-unknown-linux-gnu
 
-          # --------------------------------------------------------------------
-          # macOS ARM64 / Apple Silicon
-          # --------------------------------------------------------------------
+          # macOS ARM64
           - platform: macos-arm64
             runner: macos-15
             kind: unix
@@ -155,13 +91,11 @@ jobs:
             arch: aarch64
             target: aarch64-apple-darwin
 
-          # --------------------------------------------------------------------
           # macOS Intel x86_64
           #
           # IMPORTANT:
           # macos-13 is retired.
-          # macos-15-intel is the current Intel runner.
-          # --------------------------------------------------------------------
+          # macos-15-intel is the Intel runner.
           - platform: macos-x86_64
             runner: macos-15-intel
             kind: unix
@@ -171,34 +105,34 @@ jobs:
 
     steps:
 
-      # ========================================================================
+      # ------------------------------------------------------------------------
       # Checkout
-      # ========================================================================
+      # ------------------------------------------------------------------------
 
       - name: Check out source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # ========================================================================
+      # ------------------------------------------------------------------------
       # Rust
-      # ========================================================================
+      # ------------------------------------------------------------------------
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      # ========================================================================
+      # ------------------------------------------------------------------------
       # sccache
-      # ========================================================================
+      # ------------------------------------------------------------------------
 
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@v0.0.8
 
-      # ========================================================================
+      # ------------------------------------------------------------------------
       # Cargo cache
-      # ========================================================================
+      # ------------------------------------------------------------------------
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -214,9 +148,9 @@ jobs:
           cache-on-failure: "true"
           cache-targets: "true"
 
-      # ========================================================================
-      # Windows distribution
-      # ========================================================================
+      # =========================================================================
+      # WINDOWS
+      # =========================================================================
 
       - name: Build Windows portable distribution
         if: matrix.kind == 'windows'
@@ -238,11 +172,6 @@ jobs:
             throw "Windows distribution script failed with exit code $LASTEXITCODE."
           }
 
-          # -------------------------------------------------------------------
-          # Remove any accidentally generated/bundled toolchain.
-          # LLVM/MLIR is downloaded by the installer at installation time.
-          # -------------------------------------------------------------------
-
           $bundledToolchain = Join-Path `
             $env:GITHUB_WORKSPACE `
             "dist\windows-${{ matrix.arch }}\toolchain"
@@ -263,10 +192,12 @@ jobs:
               -ErrorAction SilentlyContinue |
               Sort-Object FullName -Descending |
               Where-Object {
-                -not (Get-ChildItem `
-                  -LiteralPath $_.FullName `
-                  -Force `
-                  -ErrorAction SilentlyContinue)
+                -not (
+                  Get-ChildItem `
+                    -LiteralPath $_.FullName `
+                    -Force `
+                    -ErrorAction SilentlyContinue
+                )
               } |
               Remove-Item -Force
 
@@ -283,9 +214,9 @@ jobs:
             }
           }
 
-      # ========================================================================
-      # Windows common distribution files
-      # ========================================================================
+      # ------------------------------------------------------------------------
+      # Windows distribution files
+      # ------------------------------------------------------------------------
 
       - name: Add required Windows distribution files
         if: matrix.kind == 'windows'
@@ -321,27 +252,20 @@ jobs:
             -Path (Join-Path $stage "licenses") |
             Out-Null
 
-          # Standard library
           Copy-Item `
             -Path (Join-Path $root "src\stdlib\*.adesh") `
             -Destination (Join-Path $stage "std") `
             -Force
 
-          # Toolchain manifest
           Copy-Item `
             -Path (Join-Path $root "installer\manifests\toolchain-manifest.json") `
             -Destination (Join-Path $stage "config\toolchain-manifest.json") `
             -Force
 
-          # License
           Copy-Item `
             -Path (Join-Path $root "LICENSE") `
             -Destination (Join-Path $stage "licenses\LICENSE.txt") `
             -Force
-
-          # -------------------------------------------------------------------
-          # Runtime library
-          # -------------------------------------------------------------------
 
           $runtimeLib = Join-Path `
             $root `
@@ -365,10 +289,6 @@ jobs:
               -Destination (Join-Path $stage "lib\adeshlang.lib") `
               -Force
           }
-
-          # -------------------------------------------------------------------
-          # Re-create portable archive with the complete distribution layout.
-          # -------------------------------------------------------------------
 
           $versionLine = Get-Content `
             -LiteralPath (Join-Path $root "Cargo.toml") |
@@ -409,12 +329,12 @@ jobs:
             -Force
 
           if (-not (Test-Path -LiteralPath $portable)) {
-            throw "Failed to create Windows portable archive: $portable"
+            throw "Failed to create Windows portable archive."
           }
 
-      # ========================================================================
-      # Windows optional installers
-      # ========================================================================
+      # ------------------------------------------------------------------------
+      # Windows installers
+      # ------------------------------------------------------------------------
 
       - name: Build optional Windows installers
         if: matrix.kind == 'windows' && matrix.arch == 'x86_64'
@@ -425,10 +345,7 @@ jobs:
           $root = $env:GITHUB_WORKSPACE
           $dist = Join-Path $root "dist"
 
-          # -------------------------------------------------------------------
           # Inno Setup
-          # -------------------------------------------------------------------
-
           $iss = Join-Path `
             $root `
             "installer\windows\installer.iss"
@@ -502,14 +419,14 @@ jobs:
               catch {
 
                 Write-Warning `
-                  "Inno Setup could not compile the installer: $($_.Exception.Message)"
+                  "Inno Setup failed: $($_.Exception.Message)"
               }
 
             }
             else {
 
               Write-Warning `
-                "ISCC.exe is unavailable; skipping Inno Setup."
+                "ISCC.exe unavailable; skipping Inno Setup."
             }
 
           }
@@ -519,10 +436,7 @@ jobs:
               "installer/windows/installer.iss not found; skipping Inno Setup."
           }
 
-          # -------------------------------------------------------------------
           # WiX
-          # -------------------------------------------------------------------
-
           $msiScript = Join-Path `
             $root `
             "installer\windows\msi\build-msi.ps1"
@@ -544,9 +458,7 @@ jobs:
 
                 Write-Host "Installing WiX..."
 
-                & dotnet tool install `
-                  --global `
-                  wix
+                & dotnet tool install --global wix
 
                 if ($LASTEXITCODE -ne 0) {
                   throw "dotnet tool install exited with code $LASTEXITCODE."
@@ -581,19 +493,15 @@ jobs:
             else {
 
               Write-Warning `
-                ".NET is unavailable; cannot install WiX."
-            }
-
-            if (-not $wix) {
-
-              Write-Warning `
-                "WiX is unavailable; MSI/bundle builds will be skipped."
+                ".NET unavailable; cannot install WiX."
             }
           }
 
-          # -------------------------------------------------------------------
-          # Run MSI / bundle scripts
-          # -------------------------------------------------------------------
+          if (-not $wix) {
+
+            Write-Warning `
+              "WiX unavailable; MSI/bundle builds will be skipped."
+          }
 
           foreach ($script in @(
             $msiScript,
@@ -625,24 +533,19 @@ jobs:
                   Write-Warning `
                     "$script failed: $($_.Exception.Message)"
                 }
-
-              }
-              else {
-
-                Write-Warning `
-                  "Skipping $script because WiX is unavailable."
               }
             }
           }
 
-          # -------------------------------------------------------------------
-          # Collect generated installers.
-          # -------------------------------------------------------------------
+          # Collect EXE/MSI files.
+          $installerRoot = Join-Path `
+            $root `
+            "installer\windows"
 
-          if (Test-Path -LiteralPath (Join-Path $root "installer\windows")) {
+          if (Test-Path -LiteralPath $installerRoot) {
 
             Get-ChildItem `
-              -LiteralPath (Join-Path $root "installer\windows") `
+              -LiteralPath $installerRoot `
               -Recurse `
               -File `
               -ErrorAction SilentlyContinue |
@@ -658,9 +561,9 @@ jobs:
               }
           }
 
-      # ========================================================================
-      # Unix distribution
-      # ========================================================================
+      # =========================================================================
+      # UNIX
+      # =========================================================================
 
       - name: Build and stage Unix distribution
         if: matrix.kind == 'unix'
@@ -669,9 +572,7 @@ jobs:
           set -euo pipefail
 
           version="$(
-            sed \
-              -n 's/^version = "\(.*\)"/\1/p' \
-              Cargo.toml |
+            sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml |
             head -n1
           )"
 
@@ -691,27 +592,18 @@ jobs:
           stage="$GITHUB_WORKSPACE/dist/AdeshLang-${version}-${{ matrix.os }}-${{ matrix.arch }}"
           archive="$GITHUB_WORKSPACE/dist/AdeshLang-${version}-${{ matrix.os }}-${{ matrix.arch }}.tar.xz"
 
-          # -------------------------------------------------------------------
           # Remove toolchain from release archive.
-          # -------------------------------------------------------------------
-
           if [ -d "$stage/toolchain" ]; then
             find "$stage/toolchain" -type f -delete
             find "$stage/toolchain" -depth -type d -empty -delete
           fi
-
-          # -------------------------------------------------------------------
-          # Required distribution layout
-          # -------------------------------------------------------------------
 
           mkdir -p \
             "$stage/std" \
             "$stage/config" \
             "$stage/licenses"
 
-          cp \
-            src/stdlib/*.adesh \
-            "$stage/std/"
+          cp src/stdlib/*.adesh "$stage/std/"
 
           cp \
             installer/manifests/toolchain-manifest.json \
@@ -721,10 +613,6 @@ jobs:
             LICENSE \
             "$stage/licenses/LICENSE.txt"
 
-          # -------------------------------------------------------------------
-          # Re-create final archive.
-          # -------------------------------------------------------------------
-
           rm -f "$archive"
 
           tar \
@@ -733,13 +621,13 @@ jobs:
             "$(basename "$stage")"
 
           if [ ! -f "$archive" ]; then
-            echo "::error::Unix archive was not created: $archive"
+            echo "::error::Unix archive was not created."
             exit 1
           fi
 
-      # ========================================================================
-      # Linux packages
-      # ========================================================================
+      # =========================================================================
+      # LINUX PACKAGES
+      # =========================================================================
 
       - name: Build optional Linux packages
         if: matrix.os == 'linux'
@@ -747,10 +635,7 @@ jobs:
         run: |
           set -u
 
-          # -------------------------------------------------------------------
           # Debian
-          # -------------------------------------------------------------------
-
           if [ -f installer/linux/deb/build-deb.sh ]; then
 
             if command -v dpkg-deb >/dev/null 2>&1; then
@@ -759,18 +644,19 @@ jobs:
                 echo "::warning::Debian package build failed."
               fi
 
-            else {
+            else
 
-              echo "::warning::dpkg-deb is unavailable; skipping Debian package."
-            }
+              echo "::warning::dpkg-deb unavailable; skipping Debian package."
+
+            fi
+
           else
+
             echo "::notice::Debian build script not found."
+
           fi
 
-          # -------------------------------------------------------------------
           # RPM
-          # -------------------------------------------------------------------
-
           if [ -f installer/linux/rpm/build-rpm.sh ]; then
 
             if ! command -v rpmbuild >/dev/null 2>&1; then
@@ -799,19 +685,14 @@ jobs:
 
           fi
 
-          # -------------------------------------------------------------------
           # Collect packages.
-          # -------------------------------------------------------------------
-
           mkdir -p dist
 
           if [ -d installer/linux ]; then
 
             while IFS= read -r -d '' package; do
 
-              cp -f \
-                "$package" \
-                dist/
+              cp -f "$package" dist/
 
             done < <(
               find installer/linux \
@@ -823,11 +704,12 @@ jobs:
                 \) \
                 -print0
             )
+
           fi
 
-      # ========================================================================
-      # macOS packages
-      # ========================================================================
+      # =========================================================================
+      # macOS PACKAGES
+      # =========================================================================
 
       - name: Build optional macOS packages
         if: matrix.os == 'macos'
@@ -837,10 +719,7 @@ jobs:
 
           mkdir -p dist
 
-          # -------------------------------------------------------------------
           # PKG
-          # -------------------------------------------------------------------
-
           if [ -f installer/macos/build-pkg.sh ]; then
 
             chmod +x installer/macos/build-pkg.sh
@@ -851,14 +730,11 @@ jobs:
 
           else
 
-            echo "::notice::macOS PKG build script not found."
+            echo "::notice::macOS PKG script not found."
 
           fi
 
-          # -------------------------------------------------------------------
           # DMG
-          # -------------------------------------------------------------------
-
           if [ -f installer/macos/build-dmg.sh ]; then
 
             chmod +x installer/macos/build-dmg.sh
@@ -869,21 +745,16 @@ jobs:
 
           else
 
-            echo "::notice::macOS DMG build script not found."
+            echo "::notice::macOS DMG script not found."
 
           fi
 
-          # -------------------------------------------------------------------
-          # Collect packages.
-          # -------------------------------------------------------------------
-
+          # Collect PKG/DMG.
           if [ -d installer/macos ]; then
 
             while IFS= read -r -d '' package; do
 
-              cp -f \
-                "$package" \
-                dist/
+              cp -f "$package" dist/
 
             done < <(
               find installer/macos \
@@ -895,11 +766,12 @@ jobs:
                 \) \
                 -print0
             )
+
           fi
 
-      # ========================================================================
-      # Validate platform output
-      # ========================================================================
+      # =========================================================================
+      # VALIDATE
+      # =========================================================================
 
       - name: Validate release artifacts
         shell: bash
@@ -907,7 +779,7 @@ jobs:
           set -euo pipefail
 
           echo "========================================"
-          echo "Release artifacts for ${{ matrix.platform }}"
+          echo "Artifacts for ${{ matrix.platform }}"
           echo "========================================"
 
           if [ ! -d dist ]; then
@@ -921,7 +793,6 @@ jobs:
             -printf '%f\n' |
             sort
 
-          # Every platform must produce at least one archive.
           archive_count="$(
             find dist \
               -maxdepth 1 \
@@ -939,9 +810,9 @@ jobs:
             exit 1
           fi
 
-      # ========================================================================
-      # Upload platform artifacts
-      # ========================================================================
+      # =========================================================================
+      # UPLOAD ARTIFACT
+      # =========================================================================
 
       - name: Upload platform artifacts
         uses: actions/upload-artifact@v4
@@ -961,7 +832,7 @@ jobs:
             dist/*.msi
 
 # ==============================================================================
-# CHECKSUM JOB
+# CHECKSUMS
 # ==============================================================================
 
   checksums:
@@ -976,18 +847,8 @@ jobs:
 
     steps:
 
-      # ========================================================================
-      # Checkout
-      # ========================================================================
-
       - name: Check out source
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      # ========================================================================
-      # Download all platform artifacts
-      # ========================================================================
 
       - name: Download platform artifacts
         uses: actions/download-artifact@v4
@@ -995,10 +856,6 @@ jobs:
           pattern: release-*
           path: dist
           merge-multiple: true
-
-      # ========================================================================
-      # Add toolchain manifest
-      # ========================================================================
 
       - name: Add toolchain manifest
         shell: bash
@@ -1010,10 +867,6 @@ jobs:
           cp \
             installer/manifests/toolchain-manifest.json \
             dist/toolchain-manifest.json
-
-      # ========================================================================
-      # Generate SHA256SUMS.txt
-      # ========================================================================
 
       - name: Generate SHA256SUMS.txt
         shell: bash
@@ -1027,16 +880,19 @@ jobs:
 
           if command -v sha256sum >/dev/null 2>&1; then
 
-            find . \
-              -maxdepth 1 \
-              -type f \
-              ! -name 'SHA256SUMS' \
-              ! -name 'SHA256SUMS.txt' \
-              -printf '%f\0' |
-              sort -z |
-              xargs -0 sha256sum |
-              sed 's#  \./#  #' \
-              > SHA256SUMS.txt
+            while IFS= read -r -d '' file; do
+
+              sha256sum "$file"
+
+            done < <(
+              find . \
+                -maxdepth 1 \
+                -type f \
+                ! -name 'SHA256SUMS' \
+                ! -name 'SHA256SUMS.txt' \
+                -printf '%f\0' |
+              sort -z
+            ) > SHA256SUMS.txt
 
           elif command -v shasum >/dev/null 2>&1; then
 
@@ -1063,7 +919,7 @@ jobs:
 
           else
 
-            echo "::error::No SHA256 utility is available."
+            echo "::error::No SHA256 utility available."
             exit 1
 
           fi
@@ -1076,10 +932,6 @@ jobs:
 
           test -s SHA256SUMS.txt
 
-      # ========================================================================
-      # Upload checksums
-      # ========================================================================
-
       - name: Upload checksums
         uses: actions/upload-artifact@v4
         with:
@@ -1089,20 +941,7 @@ jobs:
           path: dist/SHA256SUMS.txt
 
 # ==============================================================================
-# RELEASE JOB
-# ==============================================================================
-#
-# This job ONLY starts after:
-#
-#   build
-#      ↓
-#   checksums
-#      ↓
-#   release
-#
-# Therefore the GitHub Release is not created until every platform build
-# succeeds and SHA256SUMS.txt has been generated.
-#
+# RELEASE
 # ==============================================================================
 
   release:
@@ -1121,18 +960,10 @@ jobs:
 
     steps:
 
-      # ========================================================================
-      # Checkout
-      # ========================================================================
-
       - name: Check out source
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-
-      # ========================================================================
-      # Download all artifacts
-      # ========================================================================
 
       - name: Download all release assets
         uses: actions/download-artifact@v4
@@ -1140,10 +971,6 @@ jobs:
           pattern: release-*
           path: dist
           merge-multiple: true
-
-      # ========================================================================
-      # Validate final asset directory
-      # ========================================================================
 
       - name: Validate final release assets
         shell: bash
@@ -1159,8 +986,6 @@ jobs:
             -type f \
             -printf '%f\n' |
             sort
-
-          echo
 
           asset_count="$(
             find dist \
@@ -1179,23 +1004,15 @@ jobs:
             exit 1
           fi
 
-          echo "Found $asset_count release assets."
-
-      # ========================================================================
-      # Remove duplicate manifest
-      #
-      # The manifest from the checksum artifact is removed because the source
-      # repository version is uploaded explicitly below.
-      # ========================================================================
-
-      - name: Avoid duplicate manifest asset
+      # The manifest is uploaded directly from the repository below.
+      - name: Remove duplicate manifest
         shell: bash
         run: |
           rm -f dist/toolchain-manifest.json
 
-      # ========================================================================
-      # Determine release tag
-      # ========================================================================
+      # ------------------------------------------------------------------------
+      # Determine tag
+      # ------------------------------------------------------------------------
 
       - name: Determine release tag
         id: release_tag
@@ -1204,502 +1021,35 @@ jobs:
           set -euo pipefail
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-
             tag="${{ inputs.tag_name }}"
-
           else
-
             tag="${GITHUB_REF_NAME}"
-
           fi
 
           if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::Invalid release tag: $tag"
-            echo "::error::Expected format such as v0.3.1"
+            echo "::error::Expected something like v0.3.1"
             exit 1
           fi
 
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-          echo "Publishing release: $tag"
+          echo "Release tag: $tag"
 
-      # ========================================================================
-      # Create GitHub Release
-      # ========================================================================
-      #
-      # softprops/action-gh-release will:
-      #
-      #   - create the release if it doesn't exist
-      #   - use the tag determined above
-      #   - generate release notes
-      #   - upload all artifacts
-      #   - upload the stable toolchain manifest
-      #
-      # ========================================================================
+      # ------------------------------------------------------------------------
+      # Create release and upload all assets
+      # ------------------------------------------------------------------------
 
       - name: Create and publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release_tag.outputs.tag }}
-
           generate_release_notes: true
-
           fail_on_unmatched_files: true
 
           files: |
             dist/*
             installer/manifests/toolchain-manifest.json
 
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  actions: write
-
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
-
-jobs:
-  build:
-    name: Build ${{ matrix.platform }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: windows-x86_64
-            runner: windows-latest
-            kind: windows
-            os: windows
-            arch: x86_64
-          - platform: windows-aarch64
-            runner: windows-latest
-            kind: windows
-            os: windows
-            arch: aarch64
-          - platform: linux-x86_64
-            runner: ubuntu-latest
-            kind: unix
-            os: linux
-            arch: x86_64
-            target: x86_64-unknown-linux-gnu
-          - platform: linux-aarch64
-            runner: ubuntu-24.04-arm
-            kind: unix
-            os: linux
-            arch: aarch64
-            target: aarch64-unknown-linux-gnu
-          - platform: macos-arm64
-            runner: macos-14
-            kind: unix
-            os: macos
-            arch: aarch64
-            target: aarch64-apple-darwin
-          - platform: macos-x86_64
-            runner: macos-13
-            kind: unix
-            os: macos
-            arch: x86_64
-            target: x86_64-apple-darwin
-
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Install stable Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.arch == 'aarch64' && 'aarch64-pc-windows-msvc' || '' }}
-
-      - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.8
-
-      - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: release-${{ matrix.platform }}
-          workspaces: |
-            . -> target
-            als -> als/target
-            editor -> editor/target
-          cache-all-crates: "true"
-          cache-on-failure: "true"
-          cache-targets: "true"
-
-      - name: Build Windows portable distribution
-        if: matrix.kind == 'windows'
-        shell: pwsh
-        run: |
-          & "$env:GITHUB_WORKSPACE/scripts/release/build_windows_dist.ps1" -Arch "${{ matrix.arch }}"
-          if ($LASTEXITCODE -ne 0) {
-            throw "The Windows distribution script failed with exit code $LASTEXITCODE."
-          }
-          $bundledToolchain = Join-Path $env:GITHUB_WORKSPACE "dist\windows-${{ matrix.arch }}\toolchain"
-          if (Test-Path -LiteralPath $bundledToolchain) {
-            # LLVM is fetched by installers at install time and is never a
-            # release payload, even if a runner workspace contains a copy.
-            Get-ChildItem -LiteralPath $bundledToolchain -Recurse -File |
-              Remove-Item -Force
-            Get-ChildItem -LiteralPath $bundledToolchain -Recurse -Directory |
-              Sort-Object FullName -Descending |
-              Where-Object { -not (Get-ChildItem -LiteralPath $_.FullName -Force) } |
-              Remove-Item -Force
-            if (-not (Get-ChildItem -LiteralPath $bundledToolchain -Force)) {
-              Remove-Item -LiteralPath $bundledToolchain -Force
-            }
-          }
-
-      - name: Add required Windows distribution files
-        if: matrix.kind == 'windows'
-        shell: pwsh
-        run: |
-          $root = $env:GITHUB_WORKSPACE
-          $dist = Join-Path $root "dist"
-          $stage = Join-Path $root "dist\windows-${{ matrix.arch }}"
-          New-Item -ItemType Directory -Force -Path (Join-Path $stage "std") | Out-Null
-          New-Item -ItemType Directory -Force -Path (Join-Path $stage "lib") | Out-Null
-          New-Item -ItemType Directory -Force -Path (Join-Path $stage "config") | Out-Null
-          New-Item -ItemType Directory -Force -Path (Join-Path $stage "licenses") | Out-Null
-          Copy-Item -Path (Join-Path $root "src\stdlib\*.adesh") `
-            -Destination (Join-Path $stage "std") -Force
-          Copy-Item -Path (Join-Path $root "installer\manifests\toolchain-manifest.json") `
-            -Destination (Join-Path $stage "config\toolchain-manifest.json") -Force
-          Copy-Item -Path (Join-Path $root "LICENSE") `
-            -Destination (Join-Path $stage "licenses\LICENSE.txt") -Force
-          $runtimeLib = Join-Path $root "target\release\adeshlang.lib"
-          if ("${{ matrix.arch }}" -eq "aarch64") {
-            $aarch64Lib = Join-Path $root "target\aarch64-pc-windows-msvc\release\adeshlang.lib"
-            if (Test-Path $aarch64Lib) { $runtimeLib = $aarch64Lib }
-          }
-          if (Test-Path $runtimeLib) {
-            Copy-Item -Path $runtimeLib -Destination (Join-Path $stage "lib\adeshlang.lib") -Force
-          }
-
-          # build_windows_dist.ps1 creates the portable archive before the
-          # common std/config layout is added, so refresh that archive here.
-          $version = (Get-Content -LiteralPath (Join-Path $root "Cargo.toml") |
-            Where-Object { $_ -match '^version = "(.+)"' } |
-            Select-Object -First 1) -replace '^version = "(.+)"', '$1'
-          $oldPortable = Get-ChildItem -LiteralPath $dist -Filter "*windows-portable.zip" -File |
-            Select-Object -First 1
-          if (-not $oldPortable) {
-            throw "The Windows portable archive was not created."
-          }
-          $portable = Join-Path $dist "AdeshLang-$version-${{ matrix.arch }}-windows-portable.zip"
-          Remove-Item -LiteralPath $oldPortable.FullName -Force
-          Compress-Archive -Path (Join-Path $stage "*") `
-            -DestinationPath $portable -Force
-
-      - name: Build optional Windows installers
-        # The setup EXE and the MSI/bundle are x64-only; ARM64 ships the
-        # portable ZIP.
-        if: matrix.kind == 'windows' && matrix.arch == 'x86_64'
-        shell: pwsh
-        run: |
-          $root = $env:GITHUB_WORKSPACE
-          $iss = Join-Path $root "installer\windows\installer.iss"
-
-          if (Test-Path -LiteralPath $iss) {
-            $iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
-            if (-not $iscc) {
-              try {
-                # The core ZIP must remain shippable if Chocolatey or Inno
-                # Setup is temporarily unavailable on the hosted runner.
-                & choco install innosetup --version=6.4.3 --yes --no-progress
-                if ($LASTEXITCODE -ne 0) {
-                  throw "Chocolatey exited with code $LASTEXITCODE."
-                }
-              } catch {
-                Write-Warning "Inno Setup installation skipped: $($_.Exception.Message)"
-              }
-              $iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
-              if (-not $iscc) {
-                foreach ($candidate in @(
-                  "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
-                  "C:\Program Files\Inno Setup 6\ISCC.exe"
-                )) {
-                  if (Test-Path -LiteralPath $candidate) {
-                    $iscc = $candidate
-                    break
-                  }
-                }
-              }
-            }
-            if ($iscc) {
-              try {
-                & $iscc $iss
-                if ($LASTEXITCODE -ne 0) {
-                  Write-Warning "ISCC failed with exit code $LASTEXITCODE; continuing with core packages."
-                }
-              } catch {
-                Write-Warning "ISCC could not compile the installer: $($_.Exception.Message)"
-              }
-            } else {
-              Write-Warning "ISCC.exe is unavailable; skipping installer/windows/installer.iss."
-            }
-          } else {
-            Write-Warning "installer/windows/installer.iss is absent; skipping Inno Setup."
-          }
-
-          $msiScript = Join-Path $root "installer\windows\msi\build-msi.ps1"
-          $bundleScript = Join-Path $root "installer\windows\bundle\build-bundle.ps1"
-          $wix = $null
-          if ((Test-Path -LiteralPath $msiScript) -or (Test-Path -LiteralPath $bundleScript)) {
-            if (Get-Command dotnet -ErrorAction SilentlyContinue) {
-              try {
-                & dotnet tool install --global wix
-                if ($LASTEXITCODE -ne 0) {
-                  throw "dotnet tool install exited with code $LASTEXITCODE."
-                }
-              } catch {
-                Write-Warning "WiX installation skipped: $($_.Exception.Message)"
-              }
-              $env:PATH = "$env:USERPROFILE\.dotnet\tools;$env:PATH"
-              $wix = (Get-Command wix.exe -ErrorAction SilentlyContinue).Source
-              if (-not $wix) {
-                $wix = (Get-Command wix -ErrorAction SilentlyContinue).Source
-              }
-            } else {
-              Write-Warning "dotnet is unavailable; cannot install WiX."
-            }
-            if (-not $wix) {
-              Write-Warning "WiX v5 is unavailable; optional MSI/bundle builds will be skipped."
-            }
-          }
-
-          foreach ($script in @($msiScript, $bundleScript)) {
-            if (Test-Path -LiteralPath $script) {
-              if ($wix) {
-                try {
-                  & pwsh -NoProfile -ExecutionPolicy Bypass -File $script
-                  if ($LASTEXITCODE -ne 0) {
-                    Write-Warning "$script failed with exit code $LASTEXITCODE."
-                  }
-                } catch {
-                  Write-Warning "$script could not run: $($_.Exception.Message)"
-                }
-              } else {
-                Write-Warning "Skipping $script because WiX is unavailable."
-              }
-            }
-          }
-
-          # Installer scripts choose their own output directories. Bring their
-          # package files into dist so the common artifact upload sees them.
-          $dist = Join-Path $root "dist"
-          Get-ChildItem -LiteralPath (Join-Path $root "installer\windows") `
-            -Recurse -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Extension -in ".exe", ".msi" } |
-            ForEach-Object {
-              Copy-Item -LiteralPath $_.FullName `
-                -Destination (Join-Path $dist $_.Name) -Force
-            }
-
-      - name: Build and stage Unix distribution
-        if: matrix.kind == 'unix'
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
-          chmod +x scripts/release/package_unix.sh
-          ./scripts/release/package_unix.sh \
-            "$version" "${{ matrix.arch }}" "${{ matrix.os }}" "${{ matrix.target }}"
-
-          stage="$GITHUB_WORKSPACE/dist/AdeshLang-${version}-${{ matrix.os }}-${{ matrix.arch }}"
-          archive="$GITHUB_WORKSPACE/dist/AdeshLang-${version}-${{ matrix.os }}-${{ matrix.arch }}.tar.xz"
-          # Keep the toolchain out of release archives; installers fetch the
-          # pinned upstream LLVM artifact using the published manifest.
-          if [ -d "$stage/toolchain" ]; then
-            find "$stage/toolchain" -type f -delete
-            find "$stage/toolchain" -depth -type d -empty -delete
-          fi
-          mkdir -p "$stage/std" "$stage/config" "$stage/licenses"
-          cp src/stdlib/*.adesh "$stage/std/"
-          cp installer/manifests/toolchain-manifest.json "$stage/config/toolchain-manifest.json"
-          cp LICENSE "$stage/licenses/LICENSE.txt"
-
-          # package_unix.sh owns the build and initial archive; re-pack after
-          # adding the release-wide std/config/licenses layout.
-          rm -f "$archive"
-          tar -C "$GITHUB_WORKSPACE/dist" -cJf "$archive" "$(basename "$stage")"
-
-      - name: Build optional Linux packages
-        if: matrix.os == 'linux'
-        shell: bash
-        run: |
-          set -u
-          if [ -f installer/linux/deb/build-deb.sh ]; then
-            if command -v dpkg-deb >/dev/null 2>&1; then
-              if ! bash installer/linux/deb/build-deb.sh; then
-                echo "::warning::The Debian package script failed; continuing with core archives."
-              fi
-            else
-              echo "::warning::dpkg-deb is unavailable; skipping Debian packaging."
-            fi
-          else
-            echo "::notice::installer/linux/deb/build-deb.sh is absent; skipping Debian packaging."
-          fi
-
-          if [ -f installer/linux/rpm/build-rpm.sh ]; then
-            if ! command -v rpmbuild >/dev/null 2>&1; then
-              if sudo apt-get update && sudo apt-get install -y rpm; then
-                echo "Installed rpm tooling."
-              else
-                echo "::warning::Unable to install rpm tooling; attempting the package script anyway."
-              fi
-            fi
-            if ! bash installer/linux/rpm/build-rpm.sh; then
-              echo "::warning::The RPM package script failed; continuing with core archives."
-            fi
-          else
-            echo "::notice::installer/linux/rpm/build-rpm.sh is absent; skipping RPM packaging."
-          fi
-
-          mkdir -p dist
-          if [ -d installer/linux ]; then
-            while IFS= read -r -d '' package; do
-              cp -f "$package" dist/
-            done < <(find installer/linux -type f \( -name '*.deb' -o -name '*.rpm' \) -print0)
-          fi
-
-      - name: Build optional macOS packages
-        if: matrix.os == 'macos'
-        shell: bash
-        run: |
-          set -u
-          if [ -f installer/macos/build-pkg.sh ]; then
-            chmod +x installer/macos/build-pkg.sh
-            if ! bash installer/macos/build-pkg.sh; then
-              echo "::warning::The macOS PKG script failed; continuing with core archives."
-            fi
-          else
-            echo "::notice::installer/macos/build-pkg.sh is absent; skipping PKG packaging."
-          fi
-
-          if [ -f installer/macos/build-dmg.sh ]; then
-            chmod +x installer/macos/build-dmg.sh
-            if ! bash installer/macos/build-dmg.sh; then
-              echo "::warning::The macOS DMG script failed; continuing with core archives."
-            fi
-          else
-            echo "::notice::installer/macos/build-dmg.sh is absent; skipping DMG packaging."
-          fi
-
-          mkdir -p dist
-          if [ -d installer/macos ]; then
-            while IFS= read -r -d '' package; do
-              cp -f "$package" dist/
-            done < <(find installer/macos -type f \( -name '*.pkg' -o -name '*.dmg' \) -print0)
-          fi
-
-      - name: Upload platform artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-${{ matrix.platform }}
-          if-no-files-found: error
-          retention-days: 7
-          path: |
-            dist/*.zip
-            dist/*.tar.xz
-            dist/*.deb
-            dist/*.rpm
-            dist/*.pkg
-            dist/*.dmg
-            dist/*.exe
-            dist/*.msi
-
-  checksums:
-    name: Generate checksums
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Download platform artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: release-*
-          path: dist
-          merge-multiple: true
-
-      - name: Generate SHA256SUMS.txt
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Include the separately published manifest in the checksum set.
-          cp installer/manifests/toolchain-manifest.json dist/
-          if command -v pwsh >/dev/null 2>&1; then
-            # Run the repository helper first, then write the required .txt
-            # name and include optional MSI files the helper predates.
-            pwsh -NoProfile -File scripts/release/generate_checksums.ps1 -Dist "$PWD/dist"
-            rm -f dist/SHA256SUMS
-            rm -f dist/SHA256SUMS.txt
-            pwsh -NoProfile -Command '
-              $dist = (Resolve-Path "dist").Path
-              Get-ChildItem -LiteralPath $dist -File |
-                Where-Object { $_.Name -notin @("SHA256SUMS", "SHA256SUMS.txt") } |
-                Sort-Object Name |
-                ForEach-Object {
-                  $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-                  "$hash  $($_.Name)"
-                } | Set-Content -LiteralPath (Join-Path $dist "SHA256SUMS.txt") -Encoding ascii
-            '
-          else
-            echo "::warning::pwsh is unavailable; using the runner SHA256 utility."
-            (
-              cd dist
-              : > SHA256SUMS.txt
-              while IFS= read -r -d '' file; do
-                if command -v sha256sum >/dev/null 2>&1; then
-                  sha256sum "$file" >> SHA256SUMS.txt
-                elif command -v sha256 >/dev/null 2>&1; then
-                  sha256 -r "$file" >> SHA256SUMS.txt
-                else
-                  echo "No sha256sum or sha256 utility is available." >&2
-                  exit 1
-                fi
-              done < <(find . -maxdepth 1 -type f ! -name 'SHA256SUMS*' -printf '%f\0' | sort -z)
-            )
-          fi
-
-      - name: Upload checksums
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-checksums
-          if-no-files-found: error
-          retention-days: 7
-          path: dist/SHA256SUMS.txt
-
-  release:
-    name: Publish GitHub release
-    needs: checksums
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: write
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Download all release assets
-        uses: actions/download-artifact@v4
-        with:
-          pattern: release-*
-          path: dist
-          merge-multiple: true
-
-      - name: Avoid duplicate manifest asset
-        shell: bash
-        run: rm -f dist/toolchain-manifest.json
-
-      - name: Publish release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event.inputs.tag_name != '' && github.event.inputs.tag_name || github.ref_name }}
-          generate_release_notes: true
-          files: |
-            dist/*
-            installer/manifests/toolchain-manifest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
