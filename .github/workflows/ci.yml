@@ -75,8 +75,8 @@ jobs:
       - name: Test library
         run: cargo test --lib
 
-      - name: Build adesh binary
-        run: cargo build --bin adesh
+      - name: Build adesh binary and runtime library
+        run: cargo build --lib --bin adesh
 
       - name: Test integration suites
         if: matrix.os == 'ubuntu-latest'
