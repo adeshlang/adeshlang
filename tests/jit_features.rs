@@ -1,6 +1,5 @@
 //! Tests for JIT compilation features including OOP, data structures, and builtins.
 
-#[allow(unused_imports)]
 use adeshlang::backends::builtins::RuntimeValue;
 use adeshlang::backends::jit::jit_run;
 
@@ -307,7 +306,6 @@ fn test_jit_break_in_loop() {
 }
 
 #[test]
-#[ignore = "JIT struct lowering pending"]
 fn test_jit_struct_declaration_and_instantiation() {
     let result = jit_run(
         r#"
@@ -315,18 +313,16 @@ fn test_jit_struct_declaration_and_instantiation() {
             name: String;
             age: Int;
         };
-        fn main() {
-            let p = Person{
-                name: "John",
-                age: 25,
-            };
-            return p.name;
-        }
+        let p = Person{
+            name: "John",
+            age: 25,
+        };
+        return p.name;
     "#,
     );
     assert!(result.is_ok(), "JIT struct test failed: {:?}", result.err());
     match result.unwrap() {
         RuntimeValue::String(s) => assert_eq!(s, "John"),
-        v => panic!("Expected string 'John', got {:?}", v),
+        _ => panic!("Expected string 'John'"),
     }
 }

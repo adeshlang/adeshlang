@@ -550,11 +550,11 @@ export class Path {
     }
 
     fn exists(): boolean {
-        return path_exists(self._raw);
+        return fs.exists(self._raw);
     }
 
     fn isFile(): boolean {
-        return path_is_file(self._raw);
+        return fs.isFile(self._raw);
     }
 
     static fn join(p1, p2, p3 = null, p4 = null): Path {

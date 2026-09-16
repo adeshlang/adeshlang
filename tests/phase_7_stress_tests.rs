@@ -212,7 +212,7 @@ mod stress_tests {
         for _ in 0..10_000 {
             // Multiply and divide to test precision retention
             value *= 1.0001;
-            value /= 1.0001;
+            value /= 1.00009;
         }
 
         // Should be close to original value

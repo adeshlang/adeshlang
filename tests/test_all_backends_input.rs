@@ -21,11 +21,6 @@ fn run_code(src: &str) -> Result<(), String> {
         .name("adesh_input_test".into())
         .stack_size(32 * 1024 * 1024)
         .spawn(move || {
-            if let Some(m) = adeshlang::execution::runtime_core::INPUT_PLAYBACK.get() {
-                if let Ok(mut q) = m.lock() {
-                    q.clear();
-                }
-            }
             let mut loader = ModuleLoader::new(Path::new("."));
             let mut interp = Interpreter::new();
             interp.run_module(&src_str, &mut loader, None)
