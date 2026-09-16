@@ -1,6 +1,25 @@
 # ==============================================================================
 # AdeshLang Release Workflow
 # ==============================================================================
+#
+# Behaviour:
+#   - Builds all supported platforms independently.
+#   - A failure on one platform does NOT cancel other platform builds.
+#   - Every successful platform uploads its own release artifact.
+#   - The release job always runs after the build matrix finishes.
+#   - Only artifacts from successful builds are published.
+#   - If at least one platform succeeds, a GitHub Release is created.
+#   - If every platform fails, no release is created.
+#
+# Supported platforms:
+#   - Windows x86_64
+#   - Windows ARM64
+#   - Linux x86_64
+#   - Linux ARM64
+#   - macOS ARM64
+#   - macOS Intel x86_64
+#
+# ==============================================================================
 
 name: Release
 
@@ -12,20 +31,20 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: "Release tag to publish (e.g. v0.3.1)"
+        description: "Release tag to publish, for example v0.3.1"
         required: true
         type: string
 
 env:
-  ADESH_REPO: adeshlang/adeshlang
+  ADESH_REPO: adeshlang/AdeshLang
   CARGO_INCREMENTAL: "0"
   RUSTC_WRAPPER: sccache
   SCCACHE_GHA_ENABLED: "true"
   ADESH_SKIP_AI_MODEL: "1"
 
+# Least-privilege default permissions.
 permissions:
-  contents: write
-  actions: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -35,6 +54,1032 @@ concurrency:
 # BUILD
 # ==============================================================================
 
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+
+    timeout-minutes: 60
+
+    strategy:
+      # IMPORTANT:
+      # A failure in one platform must NOT cancel the other platforms.
+      fail-fast: false
+      max-parallel: 6
+
+      matrix:
+        include:
+          # --------------------------------------------------------------------
+          # Windows x86_64
+          # --------------------------------------------------------------------
+          - platform: windows-x86_64
+            runner: windows-latest
+            kind: windows
+            os: windows
+            arch: x86_64
+            target: x86_64-pc-windows-msvc
+
+          # --------------------------------------------------------------------
+          # Windows ARM64
+          # --------------------------------------------------------------------
+          - platform: windows-aarch64
+            runner: windows-latest
+            kind: windows
+            os: windows
+            arch: aarch64
+            target: aarch64-pc-windows-msvc
+
+          # --------------------------------------------------------------------
+          # Linux x86_64
+          # --------------------------------------------------------------------
+          - platform: linux-x86_64
+            runner: ubuntu-latest
+            kind: unix
+            os: linux
+            arch: x86_64
+            target: x86_64-unknown-linux-gnu
+
+          # --------------------------------------------------------------------
+          # Linux ARM64
+          # --------------------------------------------------------------------
+          - platform: linux-aarch64
+            runner: ubuntu-24.04-arm
+            kind: unix
+            os: linux
+            arch: aarch64
+            target: aarch64-unknown-linux-gnu
+
+          # --------------------------------------------------------------------
+          # macOS ARM64
+          # --------------------------------------------------------------------
+          - platform: macos-arm64
+            runner: macos-15
+            kind: unix
+            os: macos
+            arch: aarch64
+            target: aarch64-apple-darwin
+
+          # --------------------------------------------------------------------
+          # macOS Intel x86_64
+          # --------------------------------------------------------------------
+          #
+          # DO NOT use macos-13.
+          #
+          - platform: macos-x86_64
+            runner: macos-15-intel
+            kind: unix
+            os: macos
+            arch: x86_64
+            target: x86_64-apple-darwin
+
+    steps:
+      # =========================================================================
+      # CHECKOUT
+      # =========================================================================
+
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # =========================================================================
+      # RUST
+      # =========================================================================
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # =========================================================================
+      # SCCACHE
+      # =========================================================================
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.8
+
+      # =========================================================================
+      # CARGO CACHE
+      # =========================================================================
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-${{ matrix.platform }}
+
+          workspaces: |
+            . -> target
+            als -> als/target
+            editor -> editor/target
+
+          cache-all-crates: "true"
+          cache-on-failure: "true"
+          cache-targets: "true"
+
+      # =========================================================================
+      # WINDOWS BUILD
+      # =========================================================================
+
+      - name: Build Windows portable distribution
+        if: matrix.kind == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $root = $env:GITHUB_WORKSPACE
+
+          $script = Join-Path `
+            $root `
+            "scripts/release/build_windows_dist.ps1"
+
+          if (-not (Test-Path -LiteralPath $script)) {
+            throw "Windows distribution script not found: $script"
+          }
+
+          Write-Host "Building Windows distribution..."
+          Write-Host "Architecture: ${{ matrix.arch }}"
+          Write-Host "Target: ${{ matrix.target }}"
+
+          & $script -Arch "${{ matrix.arch }}"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw `
+              "Windows distribution script failed with exit code $LASTEXITCODE."
+          }
+
+      # =========================================================================
+      # WINDOWS STAGING
+      # =========================================================================
+
+      - name: Add Windows distribution files
+        if: matrix.kind == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $root = $env:GITHUB_WORKSPACE
+          $dist = Join-Path $root "dist"
+          $stage = Join-Path $dist "windows-${{ matrix.arch }}"
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path (Join-Path $stage "std") |
+            Out-Null
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path (Join-Path $stage "lib") |
+            Out-Null
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path (Join-Path $stage "config") |
+            Out-Null
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path (Join-Path $stage "licenses") |
+            Out-Null
+
+          # Standard library
+          $stdlibFiles = Get-ChildItem `
+            -Path (Join-Path $root "src\stdlib") `
+            -Filter "*.adesh" `
+            -File `
+            -ErrorAction SilentlyContinue
+
+          if (-not $stdlibFiles) {
+            throw "No AdeshLang standard-library files were found."
+          }
+
+          foreach ($file in $stdlibFiles) {
+            Copy-Item `
+              -LiteralPath $file.FullName `
+              -Destination (Join-Path $stage "std") `
+              -Force
+          }
+
+          # Toolchain manifest
+          $manifest = Join-Path `
+            $root `
+            "installer\manifests\toolchain-manifest.json"
+
+          if (-not (Test-Path -LiteralPath $manifest)) {
+            throw "Toolchain manifest not found: $manifest"
+          }
+
+          Copy-Item `
+            -LiteralPath $manifest `
+            -Destination (Join-Path $stage "config\toolchain-manifest.json") `
+            -Force
+
+          # License
+          $license = Join-Path $root "LICENSE"
+
+          if (Test-Path -LiteralPath $license) {
+            Copy-Item `
+              -LiteralPath $license `
+              -Destination (Join-Path $stage "licenses\LICENSE.txt") `
+              -Force
+          }
+
+          # Runtime library
+          $runtimeLib = Join-Path `
+            $root `
+            "target\release\adeshlang.lib"
+
+          if ("${{ matrix.arch }}" -eq "aarch64") {
+            $aarch64Lib = Join-Path `
+              $root `
+              "target\aarch64-pc-windows-msvc\release\adeshlang.lib"
+
+            if (Test-Path -LiteralPath $aarch64Lib) {
+              $runtimeLib = $aarch64Lib
+            }
+          }
+
+          if (Test-Path -LiteralPath $runtimeLib) {
+            Copy-Item `
+              -LiteralPath $runtimeLib `
+              -Destination (Join-Path $stage "lib\adeshlang.lib") `
+              -Force
+          }
+
+          # Determine version.
+          $versionLine = Get-Content `
+            -LiteralPath (Join-Path $root "Cargo.toml") |
+            Where-Object {
+              $_ -match '^version = "(.+)"'
+            } |
+            Select-Object -First 1
+
+          if (-not $versionLine) {
+            throw "Unable to determine AdeshLang version from Cargo.toml."
+          }
+
+          $version = `
+            $versionLine -replace '^version = "(.+)"', '$1'
+
+          Write-Host "AdeshLang version: $version"
+
+          # Find the archive produced by build_windows_dist.ps1.
+          $oldPortable = Get-ChildItem `
+            -LiteralPath $dist `
+            -Filter "*windows-portable.zip" `
+            -File `
+            -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+
+          if (-not $oldPortable) {
+            throw `
+              "The Windows portable archive was not created by build_windows_dist.ps1."
+          }
+
+          $portable = Join-Path `
+            $dist `
+            "AdeshLang-$version-${{ matrix.arch }}-windows-portable.zip"
+
+          Remove-Item `
+            -LiteralPath $oldPortable.FullName `
+            -Force
+
+          Compress-Archive `
+            -Path (Join-Path $stage "*") `
+            -DestinationPath $portable `
+            -Force
+
+          if (-not (Test-Path -LiteralPath $portable)) {
+            throw "Failed to create Windows portable archive."
+          }
+
+          Write-Host "Created:"
+          Write-Host $portable
+
+      # =========================================================================
+      # WINDOWS INSTALLERS
+      # =========================================================================
+
+      - name: Build optional Windows installers
+        if: matrix.kind == 'windows' && matrix.arch == 'x86_64'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+
+          $root = $env:GITHUB_WORKSPACE
+          $dist = Join-Path $root "dist"
+
+          # ---------------------------------------------------------------------
+          # Inno Setup
+          # ---------------------------------------------------------------------
+
+          $iss = Join-Path `
+            $root `
+            "installer\windows\installer.iss"
+
+          if (Test-Path -LiteralPath $iss) {
+
+            $iscc = (
+              Get-Command `
+                iscc.exe `
+                -ErrorAction SilentlyContinue
+            ).Source
+
+            if (-not $iscc) {
+              try {
+                Write-Host "Installing Inno Setup..."
+
+                & choco install `
+                  innosetup `
+                  --yes `
+                  --no-progress
+
+                if ($LASTEXITCODE -ne 0) {
+                  throw `
+                    "Chocolatey exited with code $LASTEXITCODE."
+                }
+              }
+              catch {
+                Write-Warning `
+                  "Inno Setup installation failed: $($_.Exception.Message)"
+              }
+
+              $iscc = (
+                Get-Command `
+                  iscc.exe `
+                  -ErrorAction SilentlyContinue
+              ).Source
+
+              if (-not $iscc) {
+                foreach ($candidate in @(
+                  "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+                  "C:\Program Files\Inno Setup 6\ISCC.exe"
+                )) {
+                  if (Test-Path -LiteralPath $candidate) {
+                    $iscc = $candidate
+                    break
+                  }
+                }
+              }
+            }
+
+            if ($iscc) {
+              try {
+                Write-Host "Building Inno Setup installer..."
+
+                & $iscc $iss
+
+                if ($LASTEXITCODE -ne 0) {
+                  Write-Warning `
+                    "Inno Setup failed with exit code $LASTEXITCODE."
+                }
+              }
+              catch {
+                Write-Warning `
+                  "Inno Setup failed: $($_.Exception.Message)"
+              }
+            }
+            else {
+              Write-Warning `
+                "ISCC.exe unavailable; skipping Inno Setup."
+            }
+          }
+          else {
+            Write-Host `
+              "installer/windows/installer.iss not found; skipping Inno Setup."
+          }
+
+          # ---------------------------------------------------------------------
+          # WiX
+          # ---------------------------------------------------------------------
+
+          $msiScript = Join-Path `
+            $root `
+            "installer\windows\msi\build-msi.ps1"
+
+          $bundleScript = Join-Path `
+            $root `
+            "installer\windows\bundle\build-bundle.ps1"
+
+          $wix = $null
+
+          if (
+            (Test-Path -LiteralPath $msiScript) -or
+            (Test-Path -LiteralPath $bundleScript)
+          ) {
+            if (Get-Command dotnet -ErrorAction SilentlyContinue) {
+
+              try {
+                Write-Host "Installing WiX..."
+
+                & dotnet tool install --global wix
+
+                if ($LASTEXITCODE -ne 0) {
+                  throw `
+                    "dotnet tool install exited with code $LASTEXITCODE."
+                }
+              }
+              catch {
+                Write-Warning `
+                  "WiX installation failed: $($_.Exception.Message)"
+              }
+
+              $env:PATH = `
+                "$env:USERPROFILE\.dotnet\tools;$env:PATH"
+
+              $wix = (
+                Get-Command `
+                  wix.exe `
+                  -ErrorAction SilentlyContinue
+              ).Source
+
+              if (-not $wix) {
+                $wix = (
+                  Get-Command `
+                    wix `
+                    -ErrorAction SilentlyContinue
+                ).Source
+              }
+            }
+            else {
+              Write-Warning `
+                ".NET unavailable; cannot install WiX."
+            }
+          }
+
+          if (-not $wix) {
+            Write-Warning `
+              "WiX unavailable; MSI/bundle builds will be skipped."
+          }
+
+          foreach ($script in @(
+            $msiScript,
+            $bundleScript
+          )) {
+            if (Test-Path -LiteralPath $script) {
+              if ($wix) {
+                try {
+                  Write-Host "Running $script..."
+
+                  & pwsh `
+                    -NoProfile `
+                    -ExecutionPolicy Bypass `
+                    -File $script
+
+                  if ($LASTEXITCODE -ne 0) {
+                    Write-Warning `
+                      "$script failed with exit code $LASTEXITCODE."
+                  }
+                }
+                catch {
+                  Write-Warning `
+                    "$script failed: $($_.Exception.Message)"
+                }
+              }
+            }
+          }
+
+          # ---------------------------------------------------------------------
+          # Collect generated EXE/MSI files.
+          # ---------------------------------------------------------------------
+
+          $installerRoot = Join-Path `
+            $root `
+            "installer\windows"
+
+          if (Test-Path -LiteralPath $installerRoot) {
+            Get-ChildItem `
+              -LiteralPath $installerRoot `
+              -Recurse `
+              -File `
+              -ErrorAction SilentlyContinue |
+              Where-Object {
+                $_.Extension -in ".exe", ".msi"
+              } |
+              ForEach-Object {
+                Copy-Item `
+                  -LiteralPath $_.FullName `
+                  -Destination (Join-Path $dist $_.Name) `
+                  -Force
+              }
+          }
+
+      # =========================================================================
+      # UNIX BUILD
+      # =========================================================================
+
+      - name: Build Unix distribution
+        if: matrix.kind == 'unix'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(
+            sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml |
+            head -n1
+          )"
+
+          if [ -z "$version" ]; then
+            echo "::error::Unable to determine version from Cargo.toml."
+            exit 1
+          fi
+
+          chmod +x scripts/release/package_unix.sh
+
+          echo "Building Unix distribution..."
+          echo "OS: ${{ matrix.os }}"
+          echo "Architecture: ${{ matrix.arch }}"
+          echo "Target: ${{ matrix.target }}"
+          echo "Version: $version"
+
+          ./scripts/release/package_unix.sh \
+            "$version" \
+            "${{ matrix.arch }}" \
+            "${{ matrix.os }}" \
+            "${{ matrix.target }}"
+
+      # =========================================================================
+      # UNIX STAGING
+      # =========================================================================
+
+      - name: Stage Unix distribution files
+        if: matrix.kind == 'unix'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(
+            sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml |
+            head -n1
+          )"
+
+          if [ -z "$version" ]; then
+            echo "::error::Unable to determine version."
+            exit 1
+          fi
+
+          stage="$GITHUB_WORKSPACE/dist/AdeshLang-${version}-${{ matrix.os }}-${{ matrix.arch }}"
+
+          if [ ! -d "$stage" ]; then
+            echo "::error::Expected Unix staging directory does not exist:"
+            echo "$stage"
+            exit 1
+          fi
+
+          # Never ship a bundled toolchain.
+          if [ -d "$stage/toolchain" ]; then
+            find "$stage/toolchain" -type f -delete
+            find "$stage/toolchain" -depth -type d -empty -delete
+          fi
+
+          mkdir -p \
+            "$stage/std" \
+            "$stage/config" \
+            "$stage/licenses"
+
+          # Standard library.
+          found_stdlib=0
+
+          while IFS= read -r -d '' file; do
+            cp "$file" "$stage/std/"
+            found_stdlib=1
+          done < <(
+            find \
+              "$GITHUB_WORKSPACE/src/stdlib" \
+              -maxdepth 1 \
+              -type f \
+              -name "*.adesh" \
+              -print0
+          )
+
+          if [ "$found_stdlib" -eq 0 ]; then
+            echo "::error::No standard-library files found."
+            exit 1
+          fi
+
+          # Toolchain manifest.
+          manifest="$GITHUB_WORKSPACE/installer/manifests/toolchain-manifest.json"
+
+          if [ ! -f "$manifest" ]; then
+            echo "::error::Toolchain manifest not found: $manifest"
+            exit 1
+          fi
+
+          cp \
+            "$manifest" \
+            "$stage/config/toolchain-manifest.json"
+
+          # License.
+          if [ -f "$GITHUB_WORKSPACE/LICENSE" ]; then
+            cp \
+              "$GITHUB_WORKSPACE/LICENSE" \
+              "$stage/licenses/LICENSE"
+          fi
+
+          # Rebuild archive from staged directory if it exists.
+          archive="$GITHUB_WORKSPACE/dist/AdeshLang-${version}-${{ matrix.os }}-${{ matrix.arch }}.tar.xz"
+
+          rm -f "$archive"
+
+          tar \
+            -cJf "$archive" \
+            -C "$GITHUB_WORKSPACE/dist" \
+            "$(basename "$stage")"
+
+          if [ ! -f "$archive" ]; then
+            echo "::error::Failed to create Unix archive."
+            exit 1
+          fi
+
+          echo "Created:"
+          echo "$archive"
+
+      # =========================================================================
+      # PACKAGE DISCOVERY
+      # =========================================================================
+
+      - name: Verify generated artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "========================================"
+          echo "Artifacts for ${{ matrix.platform }}"
+          echo "========================================"
+
+          if [ ! -d dist ]; then
+            echo "::error::dist directory does not exist."
+            exit 1
+          fi
+
+          found=0
+
+          # IMPORTANT:
+          # macOS uses BSD find.
+          # Do NOT use GNU find's -printf here.
+          while IFS= read -r -d '' file; do
+            printf '%s\n' "$(basename "$file")"
+            found=1
+          done < <(
+            find \
+              dist \
+              -maxdepth 1 \
+              -type f \
+              -print0
+          )
+
+          if [ "$found" -eq 0 ]; then
+            echo "::error::No release artifacts were generated."
+            exit 1
+          fi
+
+          echo ""
+          echo "Artifact sizes:"
+          du -h dist/* 2>/dev/null || true
+
+      # =========================================================================
+      # PLATFORM CHECKSUMS
+      # =========================================================================
+
+      - name: Generate platform SHA256 checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p release-output
+
+          checksum_file="release-output/SHA256SUMS-${{ matrix.platform }}"
+
+          # Collect only actual files in dist/.
+          files=()
+
+          while IFS= read -r -d '' file; do
+            files+=("$file")
+          done < <(
+            find \
+              dist \
+              -maxdepth 1 \
+              -type f \
+              -print0
+          )
+
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::No files found for checksum generation."
+            exit 1
+          fi
+
+          # macOS provides shasum.
+          # Linux provides sha256sum.
+          if command -v sha256sum >/dev/null 2>&1; then
+
+            for file in "${files[@]}"; do
+              sha256sum "$file"
+            done | sed 's#dist/##' | sort > "$checksum_file"
+
+          elif command -v shasum >/dev/null 2>&1; then
+
+            for file in "${files[@]}"; do
+              shasum -a 256 "$file"
+            done | sed 's#dist/##' | sort > "$checksum_file"
+
+          else
+            echo "::error::No SHA256 utility available."
+            exit 1
+          fi
+
+          echo "Generated:"
+          cat "$checksum_file"
+
+      # =========================================================================
+      # PREPARE PLATFORM RELEASE ARTIFACT
+      # =========================================================================
+
+      - name: Prepare platform release artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p release-output/packages
+
+          copied=0
+
+          while IFS= read -r -d '' file; do
+            cp "$file" release-output/packages/
+            copied=1
+          done < <(
+            find \
+              dist \
+              -maxdepth 1 \
+              -type f \
+              -print0
+          )
+
+          if [ "$copied" -eq 0 ]; then
+            echo "::error::No package files were produced."
+            exit 1
+          fi
+
+          echo "Release packages:"
+          find release-output/packages \
+            -maxdepth 1 \
+            -type f \
+            -print
+
+      # =========================================================================
+      # UPLOAD PLATFORM ARTIFACT
+      # =========================================================================
+
+      - name: Upload successful platform build
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: |
+            release-output/packages/*
+            release-output/SHA256SUMS-${{ matrix.platform }}
+          if-no-files-found: error
+          retention-days: 14
+
+# ==============================================================================
+# RELEASE
+# ==============================================================================
+
+  release:
+    name: Publish GitHub Release
+
+    # IMPORTANT:
+    #
+    # always() makes this job run even if one or more matrix builds failed.
+    #
+    if: ${{ always() }}
+
+    needs:
+      - build
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 20
+
+    permissions:
+      contents: write
+      actions: read
+
+    steps:
+      # =========================================================================
+      # CHECKOUT
+      # =========================================================================
+
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # =========================================================================
+      # DETERMINE TAG
+      # =========================================================================
+
+      - name: Determine release tag
+        id: release_tag
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag_name }}
+          GIT_REF: ${{ github.ref }}
+          GIT_REF_TYPE: ${{ github.ref_type }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${INPUT_TAG:-}" ]; then
+            tag="$INPUT_TAG"
+
+          elif [ "$GIT_REF_TYPE" = "tag" ]; then
+            tag="${GIT_REF#refs/tags/}"
+
+          else
+            echo "::error::Unable to determine release tag."
+            exit 1
+          fi
+
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Invalid release tag: $tag"
+            echo "::error::Expected format similar to v0.3.1"
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+          echo "Release tag: $tag"
+
+      # =========================================================================
+      # DOWNLOAD SUCCESSFUL PLATFORM ARTIFACTS
+      # =========================================================================
+      #
+      # The pattern below downloads only artifacts that were successfully
+      # uploaded by completed platform jobs.
+      #
+      # Failed platform jobs never upload their release artifact, so they are
+      # automatically absent from the release.
+      # =========================================================================
+
+      - name: Download successful platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      # =========================================================================
+      # INSPECT RELEASE CONTENT
+      # =========================================================================
+
+      - name: Inspect release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "========================================"
+          echo "Release assets"
+          echo "========================================"
+
+          if [ ! -d release-assets ]; then
+            echo "::error::No release-assets directory was created."
+            exit 1
+          fi
+
+          found_packages=0
+
+          while IFS= read -r -d '' file; do
+            echo "$file"
+            found_packages=1
+          done < <(
+            find \
+              release-assets \
+              -type f \
+              ! -name 'SHA256SUMS-*' \
+              -print0
+          )
+
+          if [ "$found_packages" -eq 0 ]; then
+            echo "::error::No successful platform packages were produced."
+            echo "::error::All platform builds failed."
+            exit 1
+          fi
+
+          echo ""
+          echo "Checksums:"
+          find \
+            release-assets \
+            -type f \
+            -name 'SHA256SUMS-*' \
+            -print \
+            | sort || true
+
+      # =========================================================================
+      # COMBINE CHECKSUMS
+      # =========================================================================
+
+      - name: Combine SHA256 checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          checksum_output="release-assets/SHA256SUMS"
+
+          rm -f "$checksum_output"
+
+          checksum_count=0
+
+          while IFS= read -r -d '' file; do
+            echo "# $(basename "$file")" >> "$checksum_output"
+            cat "$file" >> "$checksum_output"
+            echo "" >> "$checksum_output"
+            checksum_count=$((checksum_count + 1))
+          done < <(
+            find \
+              release-assets \
+              -type f \
+              -name 'SHA256SUMS-*' \
+              -print0 \
+            | sort -z
+          )
+
+          if [ "$checksum_count" -eq 0 ]; then
+            echo "::error::No platform checksum files found."
+            exit 1
+          fi
+
+          echo "Combined checksums:"
+          cat "$checksum_output"
+
+          # Remove individual checksum files.
+          find \
+            release-assets \
+            -type f \
+            -name 'SHA256SUMS-*' \
+            -delete
+
+      # =========================================================================
+      # ADD TOOLCHAIN MANIFEST
+      # =========================================================================
+
+      - name: Add toolchain manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          manifest="installer/manifests/toolchain-manifest.json"
+
+          if [ ! -f "$manifest" ]; then
+            echo "::warning::Toolchain manifest not found; skipping."
+            exit 0
+          fi
+
+          cp \
+            "$manifest" \
+            "release-assets/toolchain-manifest.json"
+
+          echo "Added toolchain-manifest.json"
+
+      # =========================================================================
+      # FINAL RELEASE ASSET LIST
+      # =========================================================================
+
+      - name: Validate final release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "========================================"
+          echo "FINAL RELEASE ASSETS"
+          echo "========================================"
+
+          find \
+            release-assets \
+            -type f \
+            -print \
+            | sort
+
+          echo ""
+          echo "Total files:"
+          find \
+            release-assets \
+            -type f \
+            | wc -l
+
+      # =========================================================================
+      # CREATE GITHUB RELEASE
+      # =========================================================================
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_tag.outputs.tag }}
+          name: AdeshLang ${{ steps.release_tag.outputs.tag }}
+          generate_release_notes: true
+          fail_on_unmatched_files: false
+          files: |
+            release-assets/*
 jobs:
 
   build:
