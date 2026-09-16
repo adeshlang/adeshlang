@@ -112,7 +112,7 @@ mod tests {
             size: 1,
         }));
 
-        assert!(is_gpu_safe_instruction(&VirInstruction::Free { ptr: 0 }));
+        assert!(!is_gpu_safe_instruction(&VirInstruction::Free { ptr: 0 }));
 
         // ARC operations - need special handling
         assert!(is_gpu_safe_instruction(&VirInstruction::ArcIncrement {

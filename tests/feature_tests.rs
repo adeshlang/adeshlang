@@ -141,7 +141,7 @@ print(result);
 
     #[test]
     fn compile_v2_and_run_basic_example() {
-        let path = std::path::Path::new("examples/basic.ind");
+        let path = std::path::Path::new("examples/misc/basic.adesh");
         let src = std::fs::read_to_string(path).expect("read example failed");
         let tmp = std::env::temp_dir().join("india-feature-basic-v2.bin");
         adeshlang::execution::bytecode::compile_to_file_v2(&src, &tmp).expect("compile v2 failed");
