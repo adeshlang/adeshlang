@@ -302,7 +302,10 @@ pub fn execute_ai_setup_command(args: &[String]) {
         "{}",
         "──────────────────────────────────────────────────────".cyan()
     );
-    println!("{}", "  AdeshLang AI Model Downloader & Setup".bold().magenta());
+    println!(
+        "{}",
+        "  AdeshLang AI Model Downloader & Setup".bold().magenta()
+    );
     println!(
         "{}",
         "──────────────────────────────────────────────────────".cyan()
@@ -345,7 +348,9 @@ pub fn execute_ai_setup_command(args: &[String]) {
     // 4. Fallback ~/.adesh/models
     let dest_dir = if let Some(d) = custom_dest {
         d
-    } else if let Ok(home) = std::env::var("ADESH_HOME").or_else(|_| std::env::var("ADESHLANG_HOME")) {
+    } else if let Ok(home) =
+        std::env::var("ADESH_HOME").or_else(|_| std::env::var("ADESHLANG_HOME"))
+    {
         if !home.is_empty() {
             PathBuf::from(home).join("ai").join("models")
         } else {
@@ -373,7 +378,11 @@ pub fn execute_ai_setup_command(args: &[String]) {
     let _ = std::fs::create_dir_all(&dest_dir);
     let dest_file = dest_dir.join(artifact.filename);
 
-    println!("  Model Variant : {} ({})", artifact.filename.cyan(), artifact.quantization.green());
+    println!(
+        "  Model Variant : {} ({})",
+        artifact.filename.cyan(),
+        artifact.quantization.green()
+    );
     println!("  Size          : {:.2} MB", artifact.size_mb);
     println!("  Destination   : {}", dest_file.display());
     println!("  Source URL    : {}", artifact.url);
@@ -384,7 +393,12 @@ pub fn execute_ai_setup_command(args: &[String]) {
         let _ = std::io::stdout().flush();
         if let Ok(true) = verifier::verify_checksum(&dest_file, artifact.sha256) {
             println!("{}", "VALID".bold().green());
-            println!("\n{}", "✓ AdeshLang AI model is already installed and verified!".bold().green());
+            println!(
+                "\n{}",
+                "✓ AdeshLang AI model is already installed and verified!"
+                    .bold()
+                    .green()
+            );
             return;
         } else {
             println!("{}", "Corrupted or outdated. Re-downloading...".yellow());
@@ -401,7 +415,12 @@ pub fn execute_ai_setup_command(args: &[String]) {
             match verifier::verify_checksum(&dest_file, artifact.sha256) {
                 Ok(true) => {
                     println!("{}", "PASS".bold().green());
-                    println!("\n{}", "✓ AdeshLang AI model installed successfully!".bold().green());
+                    println!(
+                        "\n{}",
+                        "✓ AdeshLang AI model installed successfully!"
+                            .bold()
+                            .green()
+                    );
                     println!("You can now run commands like:");
                     println!("  adesh ai generate \"Create a binary search function\"");
                     println!("  adesh ai explain file.adesh");
