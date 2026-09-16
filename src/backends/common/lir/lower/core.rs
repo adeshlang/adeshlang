@@ -140,7 +140,7 @@ fn lower_main(
     func_name: String,
     drop_plan: Option<&DropPlan>,
 ) -> Result<LirFunction, String> {
-    let mut func = LirFunction::new(func_name, vec![], LirType::Void);
+    let mut func = LirFunction::new(func_name, vec![], LirType::I64);
     let entry_block = func.entry_block;
 
     // Collect names of decorated functions - these must use call_indirect
@@ -197,8 +197,10 @@ fn create_entry_main(
     has_user_main: bool,
     has_top_level: bool,
 ) -> Result<LirFunction, String> {
-    let mut func = LirFunction::new("main".to_string(), vec![], LirType::Void);
+    let mut func = LirFunction::new("main".to_string(), vec![], LirType::I64);
     let entry_block = func.entry_block;
+
+    let mut return_value = None;
 
     // First run the top-level initialization wrapper if it exists (to initialize globals)
     if has_top_level {
@@ -207,6 +209,7 @@ fn create_entry_main(
             entry_block,
             LirInst::Call(wrapper_result, "__top_level_wrapper".to_string(), vec![]),
         );
+        return_value = Some(wrapper_result);
     }
 
     // Then call __user_main if the user defined a main() function
@@ -216,10 +219,11 @@ fn create_entry_main(
             entry_block,
             LirInst::Call(user_main_result, "__user_main".to_string(), vec![]),
         );
+        return_value = Some(user_main_result);
     }
 
-    // Return void
-    func.push_to_block(entry_block, LirInst::Return(None));
+    // Return the result of the main execution
+    func.push_to_block(entry_block, LirInst::Return(return_value));
 
     Ok(func)
 }

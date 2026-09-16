@@ -239,17 +239,19 @@ impl JitContext {
         let has_main = self.functions.contains_key("main");
 
         // Prefer the generated entry `main` which handles both wrapper + user main
-        if let Some(entry_main) = self.functions.get("main").cloned() {
-            self.execute_function(&entry_main, vec![])?;
+        let result = if let Some(entry_main) = self.functions.get("main").cloned() {
+            self.execute_function(&entry_main, vec![])?
         } else if has_wrapper {
             // Fallback: run wrapper only
             let wrapper = self.functions.get("__top_level_wrapper").cloned().unwrap();
-            self.execute_function(&wrapper, vec![])?;
+            self.execute_function(&wrapper, vec![])?
         } else if has_main {
             // Fallback: run user main directly
             let user_main = self.functions.get("__user_main").cloned().unwrap();
-            self.execute_function(&user_main, vec![])?;
-        }
+            self.execute_function(&user_main, vec![])?
+        } else {
+            RuntimeValue::Null
+        };
 
         // Process any remaining microtasks (Promise callbacks, timers, etc.)
         // This ensures that all scheduled async work completes before the program exits
@@ -299,7 +301,7 @@ impl JitContext {
             };
             Err(format!("Unhandled exception: {}", msg))
         } else {
-            Ok(RuntimeValue::Null)
+            Ok(result)
         }
     }
 
