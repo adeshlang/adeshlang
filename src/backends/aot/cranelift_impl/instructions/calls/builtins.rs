@@ -706,7 +706,6 @@ fn convert_val_to_handle(
     }
 }
 
-#[allow(dead_code)]
 fn is_numeric_type(t: &AotValueType) -> bool {
     matches!(
         t,
