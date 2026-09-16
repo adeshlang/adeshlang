@@ -14,8 +14,12 @@
 
 use adeshlang::{Interpreter, ModuleLoader};
 use std::path::Path;
+use std::sync::Mutex;
+
+static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 fn run_code(src: &str) -> Result<(), String> {
+    let _guard = TEST_LOCK.lock().unwrap();
     let src_str = src.to_string();
     let h = std::thread::Builder::new()
         .name("adesh_input_test".into())

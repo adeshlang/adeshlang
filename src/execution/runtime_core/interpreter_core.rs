@@ -12046,15 +12046,17 @@ impl Interpreter {
                     // First, try to get the method from the object (for user-defined class methods)
                     let method_val = self.get_prop(obj_val.clone(), method_name)?;
 
-                    let is_array_or_collection = matches!(
-                        obj_val,
-                        Value::Array(_)
-                            | Value::DynArray(_)
-                            | Value::RawArray(_, _)
-                            | Value::Tuple(_)
-                            | Value::Set(_)
-                            | Value::Object(_)
-                    );
+                    let is_function_member =
+                        matches!(&method_val, Value::UserFunction(_) | Value::Function(_));
+                    let is_array_or_collection = !is_function_member
+                        && matches!(
+                            obj_val,
+                            Value::Array(_)
+                                | Value::DynArray(_)
+                                | Value::RawArray(_, _)
+                                | Value::Tuple(_)
+                                | Value::Set(_)
+                        );
                     let is_mutating = is_array_or_collection
                         && matches!(
                             method_name.as_str(),

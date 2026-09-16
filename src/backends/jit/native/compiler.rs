@@ -552,9 +552,11 @@ impl NativeJitCompiler {
                 // Define initial variable value in Cranelift variables
                 if let Some(&(v_i64, v_f64)) = cranelift_vars.get(param_name) {
                     if matches!(aot_type, AotValueType::F64 | AotValueType::F32) {
-                        builder.def_var(v_f64, param_value);
+                        let f64_val = Self::to_f64(&mut builder, param_value);
+                        builder.def_var(v_f64, f64_val);
                     } else {
-                        builder.def_var(v_i64, param_value);
+                        let i64_val = Self::to_i64_unsigned(&mut builder, param_value);
+                        builder.def_var(v_i64, i64_val);
                     }
                 }
             }
@@ -834,7 +836,25 @@ impl NativeJitCompiler {
                     .get(value_id)
                     .copied()
                     .ok_or_else(|| format!("Return value {} not found", value_id))?;
-                builder.ins().return_(&[ret_val]);
+                if let Some(ret_abi) = builder.func.signature.returns.get(0) {
+                    let expected_ty = ret_abi.value_type;
+                    let actual_ty = builder.func.dfg.value_type(ret_val);
+                    let final_val = if actual_ty == expected_ty {
+                        ret_val
+                    } else if expected_ty == types::I64 {
+                        Self::to_i64_signed(builder, ret_val)
+                    } else if expected_ty == types::F64 {
+                        Self::to_f64(builder, ret_val)
+                    } else if expected_ty == types::I8 {
+                        let i64_val = Self::to_i64_signed(builder, ret_val);
+                        builder.ins().ireduce(types::I8, i64_val)
+                    } else {
+                        ret_val
+                    };
+                    builder.ins().return_(&[final_val]);
+                } else {
+                    builder.ins().return_(&[]);
+                }
                 Ok(())
             }
             LirInst::Return(None) => {
@@ -2316,8 +2336,8 @@ impl NativeJitCompiler {
                                 (value_map.get(&args[0]), value_map.get(&args[1]))
                             {
                                 // Convert both operands to f64
-                                let left_f64 = builder.ins().fcvt_from_sint(types::F64, left);
-                                let right_f64 = builder.ins().fcvt_from_sint(types::F64, right);
+                                let left_f64 = Self::to_f64(builder, left);
+                                let right_f64 = Self::to_f64(builder, right);
                                 // Perform float division
                                 let result = builder.ins().fdiv(left_f64, right_f64);
                                 value_map.insert(*dst, result);
@@ -2339,8 +2359,10 @@ impl NativeJitCompiler {
                             if let (Some(&left), Some(&right)) =
                                 (value_map.get(&args[0]), value_map.get(&args[1]))
                             {
+                                let left_i64 = Self::to_i64_signed(builder, left);
+                                let right_i64 = Self::to_i64_signed(builder, right);
                                 // Perform signed integer division
-                                let result = builder.ins().sdiv(left, right);
+                                let result = builder.ins().sdiv(left_i64, right_i64);
                                 value_map.insert(*dst, result);
                                 value_types.insert(*dst, AotValueType::I64);
                             } else {
@@ -2626,9 +2648,11 @@ impl NativeJitCompiler {
                         // Store into Cranelift Variable
                         let ty = builder.func.dfg.value_type(src_val);
                         if ty == types::F64 || ty == types::F32 {
-                            builder.def_var(v_f64, src_val);
+                            let src_val_converted = Self::to_f64(builder, src_val);
+                            builder.def_var(v_f64, src_val_converted);
                         } else {
-                            builder.def_var(v_i64, src_val);
+                            let src_val_converted = Self::to_i64_unsigned(builder, src_val);
+                            builder.def_var(v_i64, src_val_converted);
                         }
                     }
                 } else {
@@ -2992,6 +3016,13 @@ impl NativeJitCompiler {
             value
         } else if ty.is_int() {
             builder.ins().uextend(types::I64, value)
+        } else if ty == types::F64 || ty == types::F32 {
+            let f64_val = if ty == types::F32 {
+                builder.ins().fpromote(types::F64, value)
+            } else {
+                value
+            };
+            builder.ins().fcvt_to_sint(types::I64, f64_val)
         } else {
             value
         }
@@ -3003,6 +3034,27 @@ impl NativeJitCompiler {
             value
         } else if ty.is_int() {
             builder.ins().sextend(types::I64, value)
+        } else if ty == types::F64 || ty == types::F32 {
+            let f64_val = if ty == types::F32 {
+                builder.ins().fpromote(types::F64, value)
+            } else {
+                value
+            };
+            builder.ins().fcvt_to_sint(types::I64, f64_val)
+        } else {
+            value
+        }
+    }
+
+    fn to_f64(builder: &mut FunctionBuilder, value: Value) -> Value {
+        let ty = builder.func.dfg.value_type(value);
+        if ty == types::F64 {
+            value
+        } else if ty == types::F32 {
+            builder.ins().fpromote(types::F64, value)
+        } else if ty.is_int() {
+            let i64_val = Self::to_i64_signed(builder, value);
+            builder.ins().fcvt_from_sint(types::F64, i64_val)
         } else {
             value
         }
