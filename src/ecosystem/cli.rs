@@ -11,6 +11,7 @@ pub enum AdlCommand {
     Build,
     Run,
     Test,
+    Ai,
     Fmt,
     Lint,
     Check,
@@ -129,6 +130,10 @@ pub fn dispatch(options: CliOptions) -> Result<(), String> {
         .unwrap_or_else(|| ProjectLayout::new(&options.project_dir));
 
     match options.command {
+        AdlCommand::Ai => {
+            crate::cli::commands::execute_ai_command(&options.args);
+            return Ok(());
+        }
         AdlCommand::New | AdlCommand::Init => {
             let (template, name, target_dir) = parse_scaffold_args(&options.args, options.command)?;
             let layout = ProjectLayout::new(&target_dir);
@@ -723,6 +728,7 @@ fn parse_command(command: &str) -> Result<AdlCommand, String> {
         "build" => AdlCommand::Build,
         "run" => AdlCommand::Run,
         "test" => AdlCommand::Test,
+        "ai" => AdlCommand::Ai,
         "fmt" | "format" => AdlCommand::Fmt,
         "lint" => AdlCommand::Lint,
         "check" => AdlCommand::Check,
@@ -995,6 +1001,7 @@ fn command_name(command: AdlCommand) -> &'static str {
         AdlCommand::Build => "build",
         AdlCommand::Run => "run",
         AdlCommand::Test => "test",
+        AdlCommand::Ai => "ai",
         AdlCommand::Fmt => "fmt",
         AdlCommand::Lint => "lint",
         AdlCommand::Check => "check",

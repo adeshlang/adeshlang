@@ -195,6 +195,14 @@ pub fn execute_ai_command(args: &[String]) {
         return;
     }
 
+    // Check if AI model setup/download is requested
+    if args.first().map(|s| s.as_str()) == Some("setup")
+        || args.first().map(|s| s.as_str()) == Some("download")
+    {
+        crate::update::execute_ai_setup_command(&args[1..]);
+        return;
+    }
+
     let python_bin_opt = resolve_python_binary();
 
     if let Some(python_bin) = python_bin_opt {

@@ -105,14 +105,14 @@ mod tests {
     /// Test 5: GPU safety for various instruction types
     #[test]
     fn test_gpu_instruction_safety_details() {
-        // Memory operations - safe
+        // Memory operations - safe Alloc, unsafe Free (no host heap on GPU)
         assert!(is_gpu_safe_instruction(&VirInstruction::Alloc {
             dest: 0,
             ty: VirType::I32,
             size: 1,
         }));
 
-        assert!(is_gpu_safe_instruction(&VirInstruction::Free { ptr: 0 }));
+        assert!(!is_gpu_safe_instruction(&VirInstruction::Free { ptr: 0 }));
 
         // ARC operations - need special handling
         assert!(is_gpu_safe_instruction(&VirInstruction::ArcIncrement {

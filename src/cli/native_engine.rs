@@ -168,6 +168,14 @@ pub fn find_gguf_in_roots(bundled_roots: &[PathBuf], cache_roots: &[PathBuf]) ->
             if candidate.is_file() {
                 return Some(candidate);
             }
+            let bin_candidate = root.join("bin").join(name);
+            if bin_candidate.is_file() {
+                return Some(bin_candidate);
+            }
+            let direct_candidate = root.join(name);
+            if direct_candidate.is_file() {
+                return Some(direct_candidate);
+            }
         }
     }
     for name in GGUF_CANDIDATES.iter() {
