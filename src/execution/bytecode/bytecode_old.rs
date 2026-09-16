@@ -2175,20 +2175,25 @@ fn emit_expr_v2(e: &Expr, ctx: &mut REmit) -> Result<u32, LangError> {
         ExprKind::Call(callee, args, _type_args) => {
             if let ExprKind::Variable(name) = &callee.kind {
                 if name == "print" || name == "println" {
-                    let mut arg_regs: Vec<u32> = Vec::new();
-                    for a in args {
-                        arg_regs.push(emit_expr_v2(a, ctx)?);
+                    let mut last_r = 0;
+                    if args.is_empty() {
+                        let k = ctx.add_const_str("".to_string());
+                        let r = ctx.reg();
+                        ctx.emit_u8(ROp::LoadConst as u8);
+                        ctx.emit_u32(r);
+                        ctx.emit_u32(k);
+                        ctx.emit_u8(ROp::Print as u8);
+                        ctx.emit_u32(r);
+                        last_r = r;
+                    } else {
+                        for a in args {
+                            let ra = emit_expr_v2(a, ctx)?;
+                            ctx.emit_u8(ROp::Print as u8);
+                            ctx.emit_u32(ra);
+                            last_r = ra;
+                        }
                     }
-                    let rd = ctx.reg();
-                    let name_idx = ctx.add_const_str(name.clone());
-                    ctx.emit_u8(ROp::CallBuiltin as u8);
-                    ctx.emit_u32(rd);
-                    ctx.emit_u32(name_idx);
-                    ctx.emit_u32(arg_regs.len() as u32);
-                    for ar in arg_regs {
-                        ctx.emit_u32(ar);
-                    }
-                    return Ok(rd);
+                    return Ok(last_r);
                 }
                 if name == "clock" && args.is_empty() {
                     let rd = ctx.reg();

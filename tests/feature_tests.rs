@@ -141,10 +141,14 @@ print(result);
 
     #[test]
     fn compile_v2_and_run_basic_example() {
-        let path = std::path::Path::new("examples/basic.ind");
-        let src = std::fs::read_to_string(path).expect("read example failed");
-        let tmp = std::env::temp_dir().join("india-feature-basic-v2.bin");
-        adeshlang::execution::bytecode::compile_to_file_v2(&src, &tmp).expect("compile v2 failed");
+        let src = r#"
+print("Hello AdeshLang!");
+let a = 2;
+let b = 3;
+print(a + b);
+"#;
+        let tmp = std::env::temp_dir().join("adesh-feature-basic-v2.bin");
+        adeshlang::execution::bytecode::compile_to_file_v2(src, &tmp).expect("compile v2 failed");
         let mut out_buf: Vec<u8> = Vec::new();
         adeshlang::execution::vm::run_file_with_writer(&tmp, &mut out_buf).expect("run v2 failed");
         let output = String::from_utf8_lossy(&out_buf).to_string();
