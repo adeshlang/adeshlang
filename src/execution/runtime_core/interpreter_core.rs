@@ -12086,13 +12086,13 @@ impl Interpreter {
                         _ => false,
                     };
 
-                    // For BoundNative not in shortcut list, and for custom functions, skip to normal call path
+                    // For custom functions or BoundNative not in shortcut list, skip to normal call path
                     // which will properly dispatch through the normal evaluator
-                    let is_custom_member = (matches!(
+                    let is_custom_member = matches!(
                         &method_val,
                         Value::UserFunction(_) | Value::Function(_)
-                    ) || matches!(&method_val, Value::BoundNative(name, _) if !matches!(name.as_str(), "input.mock" | "input.play" | "input.record")))
-                        && !is_mutating;
+                    ) || (matches!(&method_val, Value::BoundNative(name, _) if !matches!(name.as_str(), "input.mock" | "input.play" | "input.record"))
+                        && !is_mutating);
 
                     if should_shortcut {
                         let mut av = Vec::with_capacity(args.len());

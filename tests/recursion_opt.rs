@@ -7,10 +7,19 @@ use adeshlang::backends::recursion_opt::{
     MemoCache, RecursionOptConfig, RecursionOptimizer, TrampolineExecutor,
 };
 
+fn run_jit(src: &'static str) -> Result<adeshlang::backends::builtins::RuntimeValue, String> {
+    let h = std::thread::Builder::new()
+        .name("jit_test_runner".into())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || jit_run(src))
+        .unwrap();
+    h.join().unwrap()
+}
+
 #[test]
 fn test_fibonacci_basic() {
     // Test that basic fibonacci works in JIT
-    let result = jit_run(
+    let result = run_jit(
         r#"
         fn fib(n) {
             if (n <= 1) {
@@ -28,7 +37,7 @@ fn test_fibonacci_basic() {
 
 #[test]
 fn test_factorial_basic() {
-    let result = jit_run(
+    let result = run_jit(
         r#"
         fn factorial(n) {
             if (n <= 1) {
@@ -46,7 +55,7 @@ fn test_factorial_basic() {
 
 #[test]
 fn test_tail_recursive_sum() {
-    let result = jit_run(
+    let result = run_jit(
         r#"
         fn sum_helper(n, acc) {
             if (n <= 0) {
@@ -136,7 +145,7 @@ fn test_recursion_optimizer_creation() {
 
 #[test]
 fn test_gcd_recursive() {
-    let result = jit_run(
+    let result = run_jit(
         r#"
         fn gcd(a, b) {
             if (b == 0) {
@@ -154,8 +163,7 @@ fn test_gcd_recursive() {
 
 #[test]
 fn test_deep_recursion_protection() {
-    // Test that moderate recursion works within JIT limits
-    let result = jit_run(
+    let result = run_jit(
         r#"
         fn deep(n) {
             if (n <= 0) {
@@ -168,7 +176,6 @@ fn test_deep_recursion_protection() {
         }
     "#,
     );
-    // This should succeed with reasonable depth
     assert!(
         result.is_ok(),
         "Moderate recursion should work: {:?}",
@@ -179,7 +186,7 @@ fn test_deep_recursion_protection() {
 #[test]
 fn test_memoization_correctness() {
     // Test that memoization produces correct results
-    let result1 = jit_run(
+    let result1 = run_jit(
         r#"
         fn fib(n) {
             if (n <= 1) { return n; }
@@ -189,7 +196,7 @@ fn test_memoization_correctness() {
     "#,
     );
 
-    let result2 = jit_run(
+    let result2 = run_jit(
         r#"
         fn fib(n) {
             if (n <= 1) { return n; }
@@ -206,7 +213,7 @@ fn test_memoization_correctness() {
 
 #[test]
 fn test_mutual_recursion() {
-    let result = jit_run(
+    let result = run_jit(
         r#"
         fn is_even(n) {
             if (n == 0) { return true; }

@@ -19,6 +19,22 @@ impl Exec {
         method_name: &str,
         args: &[Value],
     ) -> Result<Value, String> {
+        // Check if obj is an Object with a function property - call that instead
+        if let Value::Object(props) = obj {
+            if let Some(func_val) = props.get(method_name) {
+                match func_val {
+                    Value::Function(native_fn) => return (native_fn.0)(self, args.to_vec()),
+                    Value::UserFunction(u) => {
+                        return self._call_user_fn(u, args.to_vec());
+                    }
+                    Value::BoundMethod(u, _) => {
+                        return self._call_user_fn(u, args.to_vec());
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         // ARC introspection: never clone receiver into method_args (that adds a spurious owner).
         if matches!(
             method_name,
