@@ -29,9 +29,13 @@ on:
 # official destination in one overridable workflow-level variable.
 env:
   ADESH_REPO: adeshlang/adeshlang
+  CARGO_INCREMENTAL: "0"
+  RUSTC_WRAPPER: "sccache"
+  SCCACHE_GHA_ENABLED: "true"
 
 permissions:
   contents: read
+  actions: write
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -58,13 +62,15 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.8
+
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: ci-${{ matrix.os }}
           cache-all-crates: "true"
           cache-on-failure: "true"
-          cache-targets: "true"
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -81,3 +87,8 @@ jobs:
       - name: Test integration suites
         if: matrix.os == 'ubuntu-latest'
         run: cargo test --tests
+
+      - name: Display sccache stats
+        shell: bash
+        run: sccache --show-stats
+        if: always()
