@@ -165,7 +165,14 @@ if ($Arch -eq "x86_64") {
 
     if ($IsccPath) {
         Write-Host "      Invoking Inno Setup Compiler ($IsccPath)..." -ForegroundColor Green
-        & $IsccPath "$RootDir\installer\windows\installer.iss"
+        try {
+            & $IsccPath "$RootDir\installer\windows\installer.iss"
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning "Inno Setup Compiler failed with exit code $LASTEXITCODE; continuing with portable distribution."
+            }
+        } catch {
+            Write-Warning "Inno Setup Compiler could not compile the installer: $($_.Exception.Message)"
+        }
     } else {
         Write-Host "      (ISCC.exe not found on PATH or Program Files. Installer compilation skipped. Install Inno Setup to produce GUI installer)" -ForegroundColor DarkYellow
     }
