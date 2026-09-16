@@ -278,28 +278,26 @@ pub fn capture_env_values(envs: &[Env], env: usize) -> HashMap<String, Value> {
 #[inline]
 fn clone_value_for_capture(v: &Value) -> Value {
     match v {
-        Value::UserFunction(u) => {
-            Value::UserFunction(UserFn {
-                name: u.name.clone(),
-                type_params: u.type_params.clone(),
-                params: u.params.clone(),
-                body: u.body.clone(),
-                closure: u.closure,
-                captured: None,
-                visibility: u.visibility.clone(),
-                ret_type: u.ret_type.clone(),
-                is_async: u.is_async,
-                is_static: u.is_static,
-                is_abstract: u.is_abstract,
-                is_constructor: u.is_constructor,
-                is_getter: u.is_getter,
-                is_setter: u.is_setter,
-                is_operator: u.is_operator,
-                operator_symbol: u.operator_symbol.clone(),
-                defining_class: u.defining_class.clone(),
-                is_unsafe: u.is_unsafe,
-            })
-        }
+        Value::UserFunction(u) => Value::UserFunction(UserFn {
+            name: u.name.clone(),
+            type_params: u.type_params.clone(),
+            params: u.params.clone(),
+            body: u.body.clone(),
+            closure: u.closure,
+            captured: None,
+            visibility: u.visibility.clone(),
+            ret_type: u.ret_type.clone(),
+            is_async: u.is_async,
+            is_static: u.is_static,
+            is_abstract: u.is_abstract,
+            is_constructor: u.is_constructor,
+            is_getter: u.is_getter,
+            is_setter: u.is_setter,
+            is_operator: u.is_operator,
+            operator_symbol: u.operator_symbol.clone(),
+            defining_class: u.defining_class.clone(),
+            is_unsafe: u.is_unsafe,
+        }),
         Value::BoundMethod(u, inst) => {
             let u2 = UserFn {
                 name: u.name.clone(),
