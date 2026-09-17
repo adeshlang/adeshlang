@@ -28,4 +28,9 @@ echo "Target output directory: $OUTPUT_DIR"
 
 cargo ndk -t arm64-v8a -t x86_64 -o "$OUTPUT_DIR" --manifest-path "$MANIFEST_PATH" build --release
 
-echo "[SUCCESS] AdeshLang Mobile Bridge libraries built and copied successfully!"
+echo "Copying AdeshLang standard library to Flutter assets..."
+STD_ASSETS="$SCRIPT_DIR/flutter/assets/std"
+mkdir -p "$STD_ASSETS"
+cp "$SCRIPT_DIR/../src/stdlib/"*.adesh "$STD_ASSETS/"
+
+echo "[SUCCESS] AdeshLang Mobile Bridge libraries built and standard library bound successfully!"

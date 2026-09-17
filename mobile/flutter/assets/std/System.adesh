@@ -1,0 +1,57 @@
+// Production-Grade System Standard Library for AdeshLang
+import Env;
+import Process;
+
+export class System {
+    System() {}
+
+    static fn env(key = null) {
+        if (key != null) {
+            return Env.get(key);
+        }
+        return Env.all();
+    }
+
+    static fn args() {
+        return envCommandLine();
+    }
+
+    static fn os(): string {
+        return envPlatformInfo().os;
+    }
+
+    static fn arch(): string {
+        return envPlatformInfo().arch;
+    }
+
+    static fn memoryInfo() {
+        return envSystemInfo();
+    }
+
+    static fn exit(code = 0) {
+        Process.exit(code);
+    }
+}
+
+export fn os(): string {
+    return envPlatformInfo().os;
+}
+
+export fn arch(): string {
+    return envPlatformInfo().arch;
+}
+
+export fn env(key = null) {
+    if (key != null) {
+        return Env.get(key);
+    }
+    return Env.all();
+}
+
+export fn args() {
+    return envCommandLine();
+}
+
+export fn exit(code = 0) {
+    Process.exit(code);
+}

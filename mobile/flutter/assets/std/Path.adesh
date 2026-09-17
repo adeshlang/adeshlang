@@ -1,0 +1,599 @@
+// Production-Grade Cross-Platform Path Standard Library for AdeshLang
+
+export class PathError {
+    PathError(message: string) {
+        self.message = message;
+    }
+    fn toString(): string {
+        return "PathError: " + self.message;
+    }
+}
+
+export class Root {
+    Root(raw_val: string) {
+        self.raw_val = raw_val;
+    }
+    fn toString(): string {
+        return self.raw_val;
+    }
+}
+
+export class Prefix {
+    Prefix(raw_val: string, prefixType: string) {
+        self.raw_val = raw_val;
+        self.prefixType = prefixType;
+    }
+    fn toString(): string {
+        return self.raw_val;
+    }
+}
+
+export class PathComponent {
+    PathComponent(kind: string, value: string) {
+        self.kind = kind; // "Root", "Prefix", "Parent", "Current", "Normal"
+        self.value = value;
+    }
+    fn toString(): string {
+        return self.value;
+    }
+}
+
+export class PathIterator {
+    PathIterator(components: array) {
+        self._components = components;
+        self._index = 0;
+    }
+    fn hasNext(): boolean {
+        return self._index < len(self._components);
+    }
+    fn next(): PathComponent {
+        if (!self.hasNext()) {
+            return null;
+        }
+        let comp = self._components[self._index];
+        self._index = self._index + 1;
+        return comp;
+    }
+}
+
+export class RelativePath {
+    RelativePath(path_str: string) {
+        self._raw = path_str;
+    }
+    fn toString(): string {
+        return self._raw;
+    }
+}
+
+export class AbsolutePath {
+    AbsolutePath(path_str: string) {
+        self._raw = path_str;
+    }
+    fn toString(): string {
+        return self._raw;
+    }
+}
+
+export class PathBuilder {
+    PathBuilder() {
+        self._parts = [];
+    }
+    fn join(part: string): PathBuilder {
+        self._parts.push(part);
+        return self;
+    }
+    fn build(): Path {
+        let result = Path.empty();
+        for p in self._parts {
+            result = result.join(p);
+        }
+        return result;
+    }
+}
+
+fn _get_sep(): string {
+    return path_sep();
+}
+
+fn _is_win(): boolean {
+    return path_is_windows();
+}
+
+fn _clean_separators(p: string): string {
+    let s = "";
+    let len_p = len(p);
+    let i = 0;
+    while (i < len_p) {
+        let ch = p.charAt(i);
+        if (ch == "/" || ch == "\\") {
+            s = s + _get_sep();
+        } else {
+            s = s + ch;
+        }
+        i = i + 1;
+    }
+    return s;
+}
+
+fn _has_win_drive(p: string): boolean {
+    if (len(p) >= 2) {
+        let first = p.charAt(0);
+        let second = p.charAt(1);
+        if (second == ":") {
+            if ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".indexOf(first) != -1) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+fn _is_unc(p: string): boolean {
+    if (len(p) >= 2) {
+        if ((p.charAt(0) == "\\" || p.charAt(0) == "/") && (p.charAt(1) == "\\" || p.charAt(1) == "/")) {
+            return true;
+        }
+    }
+    return false;
+}
+
+export class Path {
+    Path(raw_val) {
+        if (raw_val == null) {
+            self._raw = "";
+        } elif (typeof(raw_val) == "string") {
+            self._raw = raw_val;
+        } else {
+            self._raw = raw_val.toString();
+        }
+    }
+
+    static fn new(raw_val): Path {
+        return new Path(raw_val);
+    }
+
+    static fn fromString(s: string): Path {
+        return new Path(s);
+    }
+
+    static fn empty(): Path {
+        return new Path("");
+    }
+
+    static fn current(): Path {
+        return new Path(path_current());
+    }
+
+    static fn home(): Path {
+        return new Path(path_home());
+    }
+
+    static fn temp(): Path {
+        return new Path(path_temp());
+    }
+
+    static fn executable(): Path {
+        return new Path(path_executable());
+    }
+
+    fn toString(): string {
+        return self._raw;
+    }
+
+    fn isAbsolute(): boolean {
+        let p = self._raw;
+        if (len(p) == 0) {
+            return false;
+        }
+        if (p.charAt(0) == "/" || p.charAt(0) == "\\") {
+            return true;
+        }
+        if (_has_win_drive(p)) {
+            return true;
+        }
+        if (_is_unc(p)) {
+            return true;
+        }
+        return false;
+    }
+
+    fn isRelative(): boolean {
+        return !self.isAbsolute();
+    }
+
+    fn root(): string {
+        let p = self._raw;
+        if (len(p) == 0) {
+            return null;
+        }
+        if (_is_unc(p)) {
+            let sep = _get_sep();
+            let i = 2;
+            let len_p = len(p);
+            let sep_count = 0;
+            let end_idx = len_p;
+            while (i < len_p) {
+                let ch = p.charAt(i);
+                if (ch == "/" || ch == "\\") {
+                    sep_count = sep_count + 1;
+                    if (sep_count == 2) {
+                        end_idx = i;
+                        break;
+                    }
+                }
+                i = i + 1;
+            }
+            return sep + sep + p.slice(2, end_idx);
+        }
+        if (_has_win_drive(p)) {
+            let drive = p.slice(0, 2);
+            if (len(p) > 2 && (p.charAt(2) == "/" || p.charAt(2) == "\\")) {
+                return drive + _get_sep();
+            }
+            return drive;
+        }
+        if (p.charAt(0) == "/" || p.charAt(0) == "\\") {
+            return _get_sep();
+        }
+        return null;
+    }
+
+    fn join(other): Path {
+        let other_path = new Path(other);
+        if (other_path.isAbsolute()) {
+            return other_path;
+        }
+        let self_raw = self._raw;
+        let other_raw = other_path._raw;
+        if (len(self_raw) == 0) {
+            return other_path;
+        }
+        if (len(other_raw) == 0) {
+            return self;
+        }
+        let sep = _get_sep();
+        let last_ch = self_raw.charAt(len(self_raw) - 1);
+        let ends_with_sep = last_ch == "/" || last_ch == "\\";
+        let joined = "";
+        if (ends_with_sep) {
+            joined = self_raw + other_raw;
+        } else {
+            joined = self_raw + sep + other_raw;
+        }
+        return new Path(joined).normalize();
+    }
+
+    fn push(component): Path {
+        let joined = self.join(component);
+        self._raw = joined._raw;
+        return self;
+    }
+
+    fn pop(): Path {
+        let parent_path = self.parent();
+        if (parent_path != null) {
+            self._raw = parent_path._raw;
+        }
+        return self;
+    }
+
+    fn parent(): Path {
+        let norm = self.normalize();
+        let p = norm._raw;
+        if (len(p) == 0) {
+            return null;
+        }
+        let rt = norm.root();
+        if (rt != null && p == rt) {
+            return null;
+        }
+        let sep = _get_sep();
+        let last_sep = -1;
+        let i = len(p) - 1;
+        while (i >= 0) {
+            let ch = p.charAt(i);
+            if (ch == "/" || ch == "\\") {
+                last_sep = i;
+                break;
+            }
+            i = i - 1;
+        }
+        if (last_sep == -1) {
+            return new Path("");
+        }
+        if (rt != null && last_sep < len(rt)) {
+            return new Path(rt);
+        }
+        if (last_sep == 0) {
+            return new Path(sep);
+        }
+        return new Path(p.slice(0, last_sep));
+    }
+
+    fn fileName(): string {
+        let p = self.normalize()._raw;
+        let p_len = len(p);
+        if (p_len == 0) {
+            return null;
+        }
+        let rt = self.root();
+        if (rt != null && p == rt) {
+            return null;
+        }
+        let last_sep = -1;
+        let i = p_len - 1;
+        while (i >= 0) {
+            let ch = p.charAt(i);
+            if (ch == "/" || ch == "\\") {
+                last_sep = i;
+                break;
+            }
+            i = i - 1;
+        }
+        if (last_sep == -1) {
+            return p;
+        }
+        return p.slice(last_sep + 1, p_len);
+    }
+
+    fn stem(): string {
+        let name = self.fileName();
+        if (name == null || len(name) == 0) {
+            return null;
+        }
+        let dot_idx = -1;
+        let i = len(name) - 1;
+        while (i > 0) {
+            if (name.charAt(i) == ".") {
+                dot_idx = i;
+                break;
+            }
+            i = i - 1;
+        }
+        if (dot_idx == -1) {
+            return name;
+        }
+        return name.slice(0, dot_idx);
+    }
+
+    fn extension(): string {
+        let name = self.fileName();
+        let name_len = len(name);
+        if (name == null || name_len == 0) {
+            return null;
+        }
+        let dot_idx = -1;
+        let i = name_len - 1;
+        while (i > 0) {
+            if (name.charAt(i) == ".") {
+                dot_idx = i;
+                break;
+            }
+            i = i - 1;
+        }
+        if (dot_idx == -1) {
+            return null;
+        }
+        return name.slice(dot_idx + 1, name_len);
+    }
+
+    fn withExtension(ext: string): Path {
+        let st = self.stem();
+        if (st == null) {
+            return self;
+        }
+        let parent_p = self.parent();
+        let new_name = "";
+        if (ext == null || len(ext) == 0) {
+            new_name = st;
+        } else {
+            new_name = st + "." + ext;
+        }
+        if (parent_p != null && len(parent_p._raw) > 0) {
+            return parent_p.join(new_name);
+        }
+        return new Path(new_name);
+    }
+
+    fn removeExtension(): Path {
+        return self.withExtension("");
+    }
+
+    fn withFileName(name: string): Path {
+        let parent_p = self.parent();
+        if (parent_p != null && len(parent_p._raw) > 0) {
+            return parent_p.join(name);
+        }
+        return new Path(name);
+    }
+
+    fn components(): array {
+        let comps = [];
+        let p = self._raw + "";
+        let p_len = len(p);
+        if (p_len == 0) {
+            return comps;
+        }
+        let rt = self.root();
+        let remainder = self._raw + "";
+        if (rt != null) {
+            comps.push(new PathComponent("Root", rt));
+            let rt_len = len(rt);
+            let p_copy = self._raw + "";
+            remainder = p_copy.slice(rt_len, p_len);
+        }
+        let sep = _get_sep();
+        let current_part = "";
+        let i = 0;
+        let len_rem = len(remainder);
+        while (i < len_rem) {
+            let ch = remainder.charAt(i);
+            if (ch == "/" || ch == "\\") {
+                if (len(current_part) > 0) {
+                    if (current_part == ".") {
+                        comps.push(new PathComponent("Current", "."));
+                    } elif (current_part == "..") {
+                        comps.push(new PathComponent("Parent", ".."));
+                    } else {
+                        comps.push(new PathComponent("Normal", current_part));
+                    }
+                    current_part = "";
+                }
+            } else {
+                current_part = current_part + ch;
+            }
+            i = i + 1;
+        }
+        if (len(current_part) > 0) {
+            if (current_part == ".") {
+                comps.push(new PathComponent("Current", "."));
+            } elif (current_part == "..") {
+                comps.push(new PathComponent("Parent", ".."));
+            } else {
+                comps.push(new PathComponent("Normal", current_part));
+            }
+        }
+        return comps;
+    }
+
+    fn normalize(): Path {
+        let p = self._raw;
+        if (len(p) == 0) {
+            return new Path("");
+        }
+        let rt = self.root();
+        let comps = self.components();
+        let stack = [];
+        for c in comps {
+            if (c.kind == "Current") {
+                // skip
+            } elif (c.kind == "Parent") {
+                if (len(stack) > 0 && stack[len(stack) - 1].kind == "Normal") {
+                    stack.pop();
+                } elif (rt == null) {
+                    stack.push(c);
+                }
+            } elif (c.kind != "Root") {
+                stack.push(c);
+            }
+        }
+        let sep = _get_sep();
+        let res = "";
+        if (rt != null) {
+            res = rt;
+        }
+        for s in stack {
+            let res_len = len(res);
+            if (res_len > 0 && res != sep) {
+                let last_c = res.charAt(res_len - 1);
+                if (last_c != "/" && last_c != "\\") {
+                    res = res + sep;
+                }
+            }
+            res = res + s.value;
+        }
+        if (len(res) == 0) {
+            res = ".";
+        }
+        return new Path(res);
+    }
+
+    fn canonicalize(): Path {
+        let real_p = path_canonicalize(self._raw);
+        return new Path(real_p);
+    }
+
+    fn absolute(): Path {
+        if (self.isAbsolute()) {
+            return self.normalize();
+        }
+        let cwd = Path.current();
+        return cwd.join(self._raw);
+    }
+
+    fn relativeTo(base): Path {
+        let target_abs = self.absolute().normalize();
+        let base_abs = new Path(base).absolute().normalize();
+        let t_comps = target_abs.components();
+        let b_comps = base_abs.components();
+        
+        let min_len = len(t_comps);
+        if (len(b_comps) < min_len) {
+            min_len = len(b_comps);
+        }
+        let match_idx = 0;
+        while (match_idx < min_len) {
+            if (t_comps[match_idx].value != b_comps[match_idx].value) {
+                break;
+            }
+            match_idx = match_idx + 1;
+        }
+        let rel_parts = [];
+        let i = match_idx;
+        while (i < len(b_comps)) {
+            rel_parts.push("..");
+            i = i + 1;
+        }
+        let j = match_idx;
+        while (j < len(t_comps)) {
+            rel_parts.push(t_comps[j].value);
+            j = j + 1;
+        }
+        if (len(rel_parts) == 0) {
+            return new Path(".");
+        }
+        let res = Path.empty();
+        for part in rel_parts {
+            res = res.join(part);
+        }
+        return res;
+    }
+
+    fn exists(): boolean {
+        return fs.exists(self._raw);
+    }
+
+    fn isFile(): boolean {
+        return fs.isFile(self._raw);
+    }
+
+    static fn join(p1, p2, p3 = null, p4 = null): Path {
+        let base = typeof(p1) == "string" ? new Path(p1) : p1;
+        let res = base.join(p2);
+        if (p3 != null) { res = res.join(p3); }
+        if (p4 != null) { res = res.join(p4); }
+        return res;
+    }
+}
+
+export fn new(raw_val): Path {
+    return Path.new(raw_val);
+}
+
+export fn join(p1, p2, p3 = null, p4 = null): Path {
+    return Path.join(p1, p2, p3, p4);
+}
+
+export fn empty(): Path {
+    return Path.empty();
+}
+
+export fn current(): Path {
+    return Path.current();
+}
+
+export fn home(): Path {
+    return Path.home();
+}
+
+export fn temp(): Path {
+    return Path.temp();
+}
+
+export fn executable(): Path {
+    return Path.executable();
+}
+
+export fn fromString(s: string): Path {
+    return Path.fromString(s);
+}

@@ -764,31 +764,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          output="$GITHUB_WORKSPACE/release-output/packages"
-
-          mkdir -p "$output"
+          upload_dir="$GITHUB_WORKSPACE/release-upload"
+          rm -rf "$upload_dir"
+          mkdir -p "$upload_dir"
 
           package_count=0
 
-          # Only upload top-level files from dist/.
-          #
-          # This is intentional:
-          # - archives
-          # - installers
-          # - packages
-          #
-          # are release files.
-          #
-          # Directories are not uploaded separately.
-
           while IFS= read -r -d '' file; do
-
-            cp \
-              "$file" \
-              "$output/"
-
+            cp "$file" "$upload_dir/"
             package_count=$((package_count + 1))
-
           done < <(
             find \
               "$GITHUB_WORKSPACE/dist" \
@@ -798,74 +782,32 @@ jobs:
           )
 
           if [ "$package_count" -eq 0 ]; then
-            echo "::error::No package files found."
+            echo "::error::No package files found in dist/."
             exit 1
           fi
 
-          echo "Packages prepared: $package_count"
+          checksum_file="$GITHUB_WORKSPACE/release-output/SHA256SUMS-${{ matrix.platform }}"
+          if [ -f "$checksum_file" ]; then
+            cp "$checksum_file" "$upload_dir/"
+          fi
 
-          find \
-            "$output" \
-            -maxdepth 1 \
-            -type f \
-            -print
+          echo "Packages prepared in $upload_dir:"
+          ls -la "$upload_dir"
 
       # ========================================================================
       # UPLOAD SUCCESSFUL PLATFORM
-      # ========================================================================
-      #
-      # This step is the important part for partial releases.
-      #
-      # A successful platform uploads:
-      #
-      #   release-windows-x86_64
-      #   release-windows-aarch64
-      #   release-linux-x86_64
-      #   release-linux-aarch64
-      #   release-macos-arm64
-      #   release-macos-x86_64
-      #
-      # A failed platform uploads nothing.
-      #
-      # The release job later downloads whatever exists.
-      #
       # ========================================================================
 
       - name: Upload successful platform artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.platform }}
-
-          path: |
-            release-output/packages/*
-            release-output/SHA256SUMS-${{ matrix.platform }}
-
+          path: release-upload/*
           if-no-files-found: error
-
           retention-days: 14
 
   # ============================================================================
   # PUBLISH RELEASE
-  # ============================================================================
-  #
-  # IMPORTANT:
-  #
-  # always() is deliberate.
-  #
-  # Normally:
-  #
-  #   needs: build
-  #
-  # would prevent this job from running if one matrix child fails.
-  #
-  # With:
-  #
-  #   if: ${{ always() }}
-  #
-  # this job still runs after the matrix finishes.
-  #
-  # It downloads only the artifacts that were successfully uploaded.
-  #
   # ============================================================================
 
   release:
@@ -910,53 +852,24 @@ jobs:
           set -euo pipefail
 
           if [ -n "${INPUT_TAG:-}" ]; then
-
             tag="$INPUT_TAG"
-
           elif [ "$REF_TYPE" = "tag" ]; then
-
             tag="${REF#refs/tags/}"
-
           else
-
-            echo "::error::Unable to determine release tag."
-            exit 1
-
-          fi
-
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-
-            echo "::error::Invalid release tag: $tag"
-            echo "::error::Expected a tag such as v0.3.1"
-
-            exit 1
-
+            version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+            tag="v${version:-0.3.0}"
           fi
 
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-
           echo "Release tag: $tag"
 
       # ========================================================================
       # DOWNLOAD SUCCESSFUL PLATFORM ARTIFACTS
-      # ============================================================================
-      #
-      # Only successfully uploaded artifacts exist.
-      #
-      # Example if Linux ARM64 failed:
-      #
-      #   release-windows-x86_64
-      #   release-windows-aarch64
-      #   release-linux-x86_64
-      #   release-macos-arm64
-      #   release-macos-x86_64
-      #
-      # The failed Linux ARM64 artifact simply does not exist.
-      #
       # ========================================================================
 
       - name: Download successful platform artifacts
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           pattern: release-*
           path: release-assets
@@ -972,13 +885,14 @@ jobs:
           set -euo pipefail
 
           if [ ! -d "$GITHUB_WORKSPACE/release-assets" ]; then
-
             echo "::error::No release artifacts were downloaded."
             echo "::error::All platform builds appear to have failed."
-
             exit 1
-
           fi
+
+          # Flatten all subdirectories so all files sit directly at release-assets root
+          find "$GITHUB_WORKSPACE/release-assets" -mindepth 2 -type f -exec mv -f {} "$GITHUB_WORKSPACE/release-assets/" \; 2>/dev/null || true
+          find "$GITHUB_WORKSPACE/release-assets" -mindepth 1 -type d -empty -delete 2>/dev/null || true
 
           package_count=0
 
@@ -987,11 +901,8 @@ jobs:
           echo "========================================"
 
           while IFS= read -r -d '' file; do
-
             echo "$(basename "$file")"
-
             package_count=$((package_count + 1))
-
           done < <(
             find \
               "$GITHUB_WORKSPACE/release-assets" \
@@ -999,20 +910,19 @@ jobs:
               -type f \
               ! -name 'SHA256SUMS-*' \
               ! -name 'SHA256SUMS' \
+              ! -name 'toolchain-manifest.json' \
               -print0
           )
 
           if [ "$package_count" -eq 0 ]; then
-
             echo "::error::No successful platform packages were found."
             echo "::error::No GitHub Release will be created."
-
             exit 1
-
           fi
 
           echo ""
           echo "Successful package count: $package_count"
+
 
       # ========================================================================
       # COMBINE CHECKSUMS

@@ -1,0 +1,1526 @@
+// Time standard library for AdeshLang
+// Implements complete, production-grade Date, Time, Duration, Timezones, and arithmetic.
+
+import Math;
+
+// ============================================================================
+// Internal Helper Functions
+// ============================================================================
+
+fn _isLeapYear(year: i32): boolean {
+    if (year % 400 == 0) { return true; }
+    if (year % 100 == 0) { return false; }
+    return year % 4 == 0;
+}
+
+fn getDaysInMonth(year: i32, month: i32): i32 {
+    if (month == 2) {
+        if (_isLeapYear(year)) { return 29; }
+        return 28;
+    }
+    if (month == 4 || month == 6 || month == 9 || month == 11) {
+        return 30;
+    }
+    return 31;
+}
+
+fn getDaysInYear(year: i32): i32 {
+    if (_isLeapYear(year)) { return 366; }
+    return 365;
+}
+
+fn getWeekdayNum(y: i32, m: i32, d: i32): i32 {
+    // Returns 0=Monday ... 6=Sunday
+    let t = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
+    let y_val = y;
+    if (m < 3) {
+        y_val = y_val - 1;
+    }
+    let w = (y_val + y_val ~/ 4 - y_val ~/ 100 + y_val ~/ 400 + t[m - 1] + d) % 7;
+    // Sakamoto: 0=Sun,1=Mon,...,6=Sat → convert to 0=Mon,...,6=Sun
+    // w==0 is Sunday, so (w+6)%7 gives 0=Mon,6=Sun
+    return (w + 6) % 7;
+}
+
+fn absoluteDays(y: i32, m: i32, d: i32): i32 {
+    let year_val = y;
+    let month_val = m;
+    if (month_val <= 2) {
+        month_val = month_val + 12;
+        year_val = year_val - 1;
+    }
+    let era = (year_val >= 0 ? year_val : year_val - 399) ~/ 400;
+    let yoe = year_val - era * 400;
+    let doy = (153 * (month_val - 3) + 2) ~/ 5 + d - 1;
+    let doe = yoe * 365 + yoe ~/ 4 - yoe ~/ 100 + doy;
+    return era * 146097 + doe - 719468;
+}
+
+// Helper object for epochToFields return type
+class EpochFields {
+    EpochFields(year: i32, month: i32, day: i32, hour: i32, minute: i32, second: i32) {
+        self.year = year;
+        self.month = month;
+        self.day = day;
+        self.hour = hour;
+        self.minute = minute;
+        self.second = second;
+    }
+}
+
+fn epochToFields(epoch_sec: bigint): EpochFields {
+    let z = epoch_sec / 86400n;
+    let rem = epoch_sec % 86400n;
+    if (rem < 0n) {
+        z = z - 1n;
+        rem = rem + 86400n;
+    }
+    let h = rem / 3600n;
+    let rem_m = rem % 3600n;
+    let min = rem_m / 60n;
+    let s = rem_m % 60n;
+
+    z = z + 719468n;
+    let era = (z >= 0n ? z : z - 146096n) / 146097n;
+    let doe = z - era * 146097n;
+    let yoe = (doe - doe/1460n + doe/36524n - doe/146096n) / 365n;
+    let y = yoe + era * 400n;
+    let doy = doe - (365n*yoe + yoe/4n - yoe/100n);
+    let mp = (5n*doy + 2n)/153n;
+    let d = doy - (153n*mp + 2n)/5n + 1n;
+    let m = mp + (mp < 10n ? 3n : -9n);
+    y = y + (m <= 2n ? 1n : 0n);
+
+    return new EpochFields(float(y), float(m), float(d), float(h), float(min), float(s));
+}
+
+fn fieldsToEpoch(y: i32, m: i32, d: i32, h: i32, min: i32, s: i32): bigint {
+    let days = absoluteDays(y, m, d);
+    let total_secs = days * 86400 + h * 3600 + min * 60 + s;
+    return total_secs * 1n;
+}
+
+// ============================================================================
+// Errors
+// ============================================================================
+
+export class TimeError {
+    TimeError(message: string, kind: string) {
+        self._message = message;
+        self._kind = kind;
+    }
+    fn message(): string { return self._message; }
+    fn kind(): string { return self._kind; }
+    fn toString(): string { return "TimeError: " + self._message; }
+}
+
+export class ParseTimeError {
+    ParseTimeError(message: string, input: string, position: i32) {
+        self._message = message;
+        self._input = input;
+        self._position = position;
+    }
+    fn message(): string { return self._message; }
+    fn input(): string { return self._input; }
+    fn position(): i32 { return self._position; }
+    fn toString(): string { return "ParseTimeError: " + self._message + " at position " + str(self._position); }
+}
+
+// ============================================================================
+// Weekday and Month
+// ============================================================================
+
+export class Weekday {
+    Weekday(num: i32) {
+        // num is 0-based: 0=Monday, 6=Sunday
+        self._num = ((num % 7) + 7) % 7;
+    }
+    fn numberFromMonday(): i32 { return self._num; }   // 0=Mon
+    fn numberFromSunday(): i32 { return (self._num + 1) % 7; } // 0=Sun
+    fn isWeekend(): boolean { return self._num == 5 || self._num == 6; }
+    fn next(): Weekday { return new Weekday((self._num + 1) % 7); }
+    fn previous(): Weekday { return new Weekday((self._num + 6) % 7); }
+    fn name(): string {
+        if (self._num == 0) { return "Monday"; }
+        if (self._num == 1) { return "Tuesday"; }
+        if (self._num == 2) { return "Wednesday"; }
+        if (self._num == 3) { return "Thursday"; }
+        if (self._num == 4) { return "Friday"; }
+        if (self._num == 5) { return "Saturday"; }
+        return "Sunday";
+    }
+    fn shortName(): string {
+        if (self._num == 0) { return "Mon"; }
+        if (self._num == 1) { return "Tue"; }
+        if (self._num == 2) { return "Wed"; }
+        if (self._num == 3) { return "Thu"; }
+        if (self._num == 4) { return "Fri"; }
+        if (self._num == 5) { return "Sat"; }
+        return "Sun";
+    }
+    fn toString(): string { return self.name(); }
+}
+
+export class Month {
+    Month(num: i32) {
+        self._num = ((num - 1) % 12 + 12) % 12 + 1; // clamp to 1-12
+    }
+    fn number(): i32 { return self._num; }
+    fn days(): i32 { return getDaysInMonth(2001, self._num); } // non-leap for default
+    fn daysInYear(year: i32): i32 { return getDaysInMonth(year, self._num); }
+    fn next(): Month { return new Month(self._num % 12 + 1); }
+    fn previous(): Month {
+        if (self._num == 1) { return new Month(12); }
+        return new Month(self._num - 1);
+    }
+    fn name(): string {
+        if (self._num == 1) { return "January"; }
+        if (self._num == 2) { return "February"; }
+        if (self._num == 3) { return "March"; }
+        if (self._num == 4) { return "April"; }
+        if (self._num == 5) { return "May"; }
+        if (self._num == 6) { return "June"; }
+        if (self._num == 7) { return "July"; }
+        if (self._num == 8) { return "August"; }
+        if (self._num == 9) { return "September"; }
+        if (self._num == 10) { return "October"; }
+        if (self._num == 11) { return "November"; }
+        return "December";
+    }
+    fn shortName(): string {
+        if (self._num == 1) { return "Jan"; }
+        if (self._num == 2) { return "Feb"; }
+        if (self._num == 3) { return "Mar"; }
+        if (self._num == 4) { return "Apr"; }
+        if (self._num == 5) { return "May"; }
+        if (self._num == 6) { return "Jun"; }
+        if (self._num == 7) { return "Jul"; }
+        if (self._num == 8) { return "Aug"; }
+        if (self._num == 9) { return "Sep"; }
+        if (self._num == 10) { return "Oct"; }
+        if (self._num == 11) { return "Nov"; }
+        return "Dec";
+    }
+    fn daysIn(year: i32): i32 { return getDaysInMonth(year, self._num); }
+    fn toString(): string { return self.name(); }
+}
+
+// ============================================================================
+// Duration
+// ============================================================================
+
+export class Duration {
+    Duration(nanos: bigint) {
+        self._nanos = nanos + 0n; // force bigint promotion
+    }
+
+    static fn fromNanos(ns): Duration { return new Duration(ns * 1n); }
+    static fn nanoseconds(ns): Duration { return new Duration(ns * 1n); }
+    static fn microseconds(us): Duration { return durationMicroseconds(us * 1n); }
+    static fn milliseconds(ms): Duration { return durationMilliseconds(ms * 1n); }
+    static fn seconds(s): Duration { return durationSeconds(s * 1n); }
+    static fn minutes(m): Duration { return durationMinutes(m * 1n); }
+    static fn hours(h): Duration { return durationHours(h * 1n); }
+    static fn days(d): Duration { return durationDays(d * 1n); }
+
+    fn nanoseconds(): bigint { return self._nanos % 1000n; }
+    fn microseconds(): bigint { return (self._nanos % 1000000n) / 1000n; }
+    fn milliseconds(): bigint { return (self._nanos % 1000000000n) / 1000000n; }
+    fn seconds(): bigint { return (self._nanos % 60000000000n) / 1000000000n; }
+    fn minutes(): bigint { return (self._nanos % 3600000000000n) / 60000000000n; }
+    fn hours(): bigint { return (self._nanos % 86400000000000n) / 3600000000000n; }
+    fn days(): bigint { return (self._nanos % 604800000000000n) / 86400000000000n; }
+    fn weeks(): bigint { return self._nanos / 604800000000000n; }
+
+    fn wholeNanoseconds(): bigint { return self._nanos; }
+    fn wholeMicroseconds(): bigint { return self._nanos / 1000n; }
+    fn wholeMilliseconds(): bigint { return self._nanos / 1000000n; }
+    fn wholeSeconds(): bigint { return self._nanos / 1000000000n; }
+    fn wholeMinutes(): bigint { return self._nanos / 60000000000n; }
+    fn wholeHours(): bigint { return self._nanos / 3600000000000n; }
+    fn wholeDays(): bigint { return self._nanos / 86400000000000n; }
+    fn toMillis() { return self._nanos / 1000000n; }
+    fn toSeconds() { return self._nanos / 1000000000n; }
+
+    fn asSecondsF64(): f64 {
+        return float(self._nanos) / 1000000000.0;
+    }
+    fn asMillisecondsF64(): f64 {
+        return float(self._nanos) / 1000000.0;
+    }
+
+    fn isZero(): boolean { return self._nanos == 0n; }
+    fn isPositive(): boolean { return self._nanos > 0n; }
+    fn isNegative(): boolean { return self._nanos < 0n; }
+    fn abs(): Duration {
+        if (self._nanos < 0n) {
+            return new Duration(-self._nanos);
+        }
+        return self;
+    }
+
+    fn checkedAdd(other: Duration): Duration {
+        return new Duration(self._nanos + other.wholeNanoseconds());
+    }
+    fn checkedSub(other: Duration): Duration {
+        return new Duration(self._nanos - other.wholeNanoseconds());
+    }
+    fn checkedMul(val: i64): Duration {
+        let n = float(self._nanos) * float(val);
+        return new Duration(Math.round(n) * 1n);
+    }
+    fn checkedDiv(val: i64): Duration {
+        let n = float(self._nanos) / float(val);
+        return new Duration(Math.round(n) * 1n);
+    }
+    fn negated(): Duration { return new Duration(-self._nanos); }
+
+    fn lt(other: Duration): boolean { return self._nanos < other.wholeNanoseconds(); }
+    fn gt(other: Duration): boolean { return self._nanos > other.wholeNanoseconds(); }
+    fn eq(other: Duration): boolean { return self._nanos == other.wholeNanoseconds(); }
+    fn lte(other: Duration): boolean { return self._nanos <= other.wholeNanoseconds(); }
+    fn gte(other: Duration): boolean { return self._nanos >= other.wholeNanoseconds(); }
+
+    fn min(other: Duration): Duration {
+        if (self._nanos < other.wholeNanoseconds()) { return self; }
+        return other;
+    }
+    fn max(other: Duration): Duration {
+        if (self._nanos > other.wholeNanoseconds()) { return self; }
+        return other;
+    }
+    fn clamp(minVal: Duration, maxVal: Duration): Duration {
+        if (self._nanos < minVal.wholeNanoseconds()) { return minVal; }
+        if (self._nanos > maxVal.wholeNanoseconds()) { return maxVal; }
+        return self;
+    }
+    fn toString(): string {
+        let ns = self._nanos;
+        if (ns == 0n) { return "0s"; }
+        let isNeg = false;
+        if (ns < 0n) {
+            isNeg = true;
+            ns = -ns;
+        }
+        let totalMs = ns / 1000000n;
+        let totalSecs = ns / 1000000000n;
+        let s = "";
+        if (totalSecs == 0n) {
+            s = str(totalMs) + "ms";
+        } else {
+            let hr = totalSecs / 3600n;
+            let remSecs = totalSecs % 3600n;
+            let min = remSecs / 60n;
+            let sec = remSecs % 60n;
+            if (hr > 0n) {
+                s = s + str(hr) + "h";
+            }
+            if (min > 0n) {
+                if (s != "") { s = s + " "; }
+                s = s + str(min) + "m";
+            }
+            if (sec > 0n || s == "") {
+                if (s != "") { s = s + " "; }
+                s = s + str(sec) + "s";
+            }
+        }
+        if (isNeg) {
+            return "-" + s;
+        }
+        return s;
+    }
+}
+
+// ============================================================================
+// Instant (Monotonic point in time)
+// ============================================================================
+
+export class Instant {
+    Instant(nanos: bigint) {
+        self._nanos = nanos + 0n;
+    }
+    fn elapsed(): Duration {
+        let nowNanos = time.monotonicNow();
+        return new Duration(nowNanos - self._nanos);
+    }
+    fn durationSince(other: Instant): Duration {
+        return new Duration(self._nanos - other.nanoseconds());
+    }
+    fn add(d: Duration): Instant {
+        return new Instant(self._nanos + d.wholeNanoseconds());
+    }
+    fn sub(d: Duration): Instant {
+        return new Instant(self._nanos - d.wholeNanoseconds());
+    }
+    fn checkedAdd(duration: Duration): Instant {
+        return new Instant(self._nanos + duration.wholeNanoseconds());
+    }
+    fn checkedSub(duration: Duration): Instant {
+        return new Instant(self._nanos - duration.wholeNanoseconds());
+    }
+    fn nanoseconds(): bigint { return self._nanos; }
+    fn wholeNanoseconds(): bigint { return self._nanos; }
+    fn lt(other: Instant): boolean { return self._nanos < other.nanoseconds(); }
+    fn gt(other: Instant): boolean { return self._nanos > other.nanoseconds(); }
+    fn eq(other: Instant): boolean { return self._nanos == other.nanoseconds(); }
+    fn toString(): string { return "Instant(" + str(self._nanos) + "ns)"; }
+}
+
+// ============================================================================
+// SystemTime (Wall-clock time)
+// ============================================================================
+
+export class SystemTime {
+    SystemTime(nanos: bigint) {
+        self._nanos = nanos + 0n;
+    }
+    fn durationSince(other: SystemTime): Duration {
+        return new Duration(self._nanos - other.wholeNanoseconds());
+    }
+    fn durationSinceEpoch(): Duration {
+        return new Duration(self._nanos);
+    }
+    fn epochSeconds(): bigint { return self._nanos / 1000000000n; }
+    fn epochMilliseconds(): bigint { return self._nanos / 1000000n; }
+    fn toUnixSeconds(): bigint { return self._nanos / 1000000000n; }
+    fn toUnixMilliseconds(): bigint { return self._nanos / 1000000n; }
+    fn toUnixMicroseconds(): bigint { return self._nanos / 1000n; }
+    fn toUnixNanoseconds(): bigint { return self._nanos; }
+    fn wholeNanoseconds(): bigint { return self._nanos; }
+    fn add(d: Duration): SystemTime { return new SystemTime(self._nanos + d.wholeNanoseconds()); }
+    fn sub(d: Duration): SystemTime { return new SystemTime(self._nanos - d.wholeNanoseconds()); }
+    fn lt(other: SystemTime): boolean { return self._nanos < other.wholeNanoseconds(); }
+    fn gt(other: SystemTime): boolean { return self._nanos > other.wholeNanoseconds(); }
+    fn eq(other: SystemTime): boolean { return self._nanos == other.wholeNanoseconds(); }
+    fn toUtcDateTime(): UtcDateTime { return new UtcDateTime(self._nanos); }
+    fn toString(): string { return "SystemTime(" + str(self._nanos / 1000000000n) + "s)"; }
+}
+
+// ============================================================================
+// Date
+// ============================================================================
+
+export class Date {
+    Date(year: i32, month: i32, day: i32) {
+        let errStr = validateDate(year, month, day);
+        if (errStr != null) {
+            throw new TimeError(errStr, "InvalidDate");
+        }
+        self._year = year;
+        self._month = month;
+        self._day = day;
+    }
+
+    fn year(): i32 { return self._year; }
+    fn month(): i32 { return self._month; }
+    fn day(): i32 { return self._day; }
+    fn weekday(): Weekday {
+        return new Weekday(getWeekdayNum(self._year, self._month, self._day));
+    }
+    fn dayOfYear(): i32 {
+        let doy = 0;
+        let m = 1;
+        while (m < self._month) {
+            doy = doy + getDaysInMonth(self._year, m);
+            m = m + 1;
+        }
+        return doy + self._day;
+    }
+    fn weekOfYear(): i32 {
+        let doy = self.dayOfYear();
+        let wd = getWeekdayNum(self._year, 1, 1);
+        let week = (doy + wd - 2) / 7 + 1;
+        return week;
+    }
+    fn isLeapYear(): boolean {
+        return _isLeapYear(self._year);
+    }
+    fn daysInMonth(): i32 {
+        return getDaysInMonth(self._year, self._month);
+    }
+    fn daysInYear(): i32 {
+        return getDaysInYear(self._year);
+    }
+
+    fn addDays(days: i32): Date {
+        let y = self._year;
+        let m = self._month;
+        let d = self._day + days;
+        while (d > getDaysInMonth(y, m)) {
+            d = d - getDaysInMonth(y, m);
+            m = m + 1;
+            if (m > 12) {
+                m = 1;
+                y = y + 1;
+            }
+        }
+        while (d < 1) {
+            m = m - 1;
+            if (m < 1) {
+                m = 12;
+                y = y - 1;
+            }
+            d = d + getDaysInMonth(y, m);
+        }
+        return new Date(y, m, d);
+    }
+    fn addWeeks(weeks: i32): Date {
+        return self.addDays(weeks * 7);
+    }
+    fn addMonths(months: i32): Date {
+        let y = self._year;
+        let m = self._month + months;
+        while (m > 12) {
+            m = m - 12;
+            y = y + 1;
+        }
+        while (m < 1) {
+            m = m + 12;
+            y = y - 1;
+        }
+        let maxDays = getDaysInMonth(y, m);
+        let d = self._day;
+        if (d > maxDays) {
+            d = maxDays;
+        }
+        return new Date(y, m, d);
+    }
+    fn addYears(years: i32): Date {
+        let y = self._year + years;
+        let m = self._month;
+        let d = self._day;
+        let maxDays = getDaysInMonth(y, m);
+        if (d > maxDays) {
+            d = maxDays;
+        }
+        return new Date(y, m, d);
+    }
+
+    fn daysSince(other: Date): i32 {
+        let d1 = absoluteDays(self._year, self._month, self._day);
+        let d2 = absoluteDays(other.year(), other.month(), other.day());
+        return d1 - d2;
+    }
+
+    fn nextDay(): Date { return self.addDays(1); }
+    fn previousDay(): Date { return self.addDays(-1); }
+
+    fn next(targetWeekday: Weekday): Date {
+        let wd = targetWeekday.numberFromMonday();
+        let curr = self.weekday().numberFromMonday();
+        let diff = wd - curr;
+        if (diff <= 0) { diff = diff + 7; }
+        return self.addDays(diff);
+    }
+
+    fn previous(targetWeekday: Weekday): Date {
+        let wd = targetWeekday.numberFromMonday();
+        let curr = self.weekday().numberFromMonday();
+        let diff = curr - wd;
+        if (diff <= 0) { diff = diff + 7; }
+        return self.addDays(-diff);
+    }
+
+    fn firstDayOfMonth(): Date { return new Date(self._year, self._month, 1); }
+    fn lastDayOfMonth(): Date { return new Date(self._year, self._month, self.daysInMonth()); }
+
+    fn withYear(y: i32): Date { return new Date(y, self._month, self._day); }
+    fn withMonth(m: i32): Date { return new Date(self._year, m, self._day); }
+    fn withDay(d: i32): Date { return new Date(self._year, self._month, d); }
+
+    fn atStartOfDay(): DateTime {
+        return new DateTime(self, new TimeOfDay(0, 0, 0, 0));
+    }
+    fn at(timeOfDay: TimeOfDay): DateTime {
+        return new DateTime(self, timeOfDay);
+    }
+
+    fn subDays(days: i32): Date { return self.addDays(-days); }
+    fn toEpochDays(): i32 { return absoluteDays(self._year, self._month, self._day); }
+
+    fn lt(other: Date): boolean {
+        let a = absoluteDays(self._year, self._month, self._day);
+        let b = absoluteDays(other.year(), other.month(), other.day());
+        return a < b;
+    }
+    fn gt(other: Date): boolean {
+        let a = absoluteDays(self._year, self._month, self._day);
+        let b = absoluteDays(other.year(), other.month(), other.day());
+        return a > b;
+    }
+    fn eq(other: Date): boolean {
+        return self._year == other.year() && self._month == other.month() && self._day == other.day();
+    }
+
+    fn format(pattern: string): string {
+        let tempSec = fieldsToEpoch(self._year, self._month, self._day, 0, 0, 0);
+        return time.format(tempSec, 0, 0, pattern);
+    }
+
+    fn toIsoString(): string {
+        let y = str(self._year);
+        let m = str(self._month);
+        let d = str(self._day);
+        while (len(y) < 4) { y = "0" + y; }
+        if (len(m) < 2) { m = "0" + m; }
+        if (len(d) < 2) { d = "0" + d; }
+        return y + "-" + m + "-" + d;
+    }
+
+    fn toString(): string {
+        return self.toIsoString();
+    }
+}
+
+fn validateDate(year: i32, month: i32, day: i32): string {
+    if (month < 1 || month > 12) {
+        return "Invalid month: " + str(month);
+    }
+    let maxDays = getDaysInMonth(year, month);
+    if (day < 1 || day > maxDays) {
+        return "Invalid day " + str(day) + " for month " + str(month) + " in year " + str(year);
+    }
+    return null;
+}
+
+// ============================================================================
+// TimeOfDay
+// ============================================================================
+
+export class TimeOfDay {
+    TimeOfDay(hour: i32, minute: i32, second: i32, nanosecond: i32) {
+        let errStr = validateTimeOfDay(hour, minute, second, nanosecond);
+        if (errStr != null) {
+            throw new TimeError(errStr, "InvalidTimeOfDay");
+        }
+        self._hour = hour;
+        self._minute = minute;
+        self._second = second;
+        self._nanosecond = nanosecond;
+    }
+
+    fn hour(): i32 { return self._hour; }
+    fn minute(): i32 { return self._minute; }
+    fn second(): i32 { return self._second; }
+    fn nanosecond(): i32 { return self._nanosecond; }
+    fn millisecond(): i32 { return self._nanosecond ~/ 1000000; }
+    fn microsecond(): i32 { return self._nanosecond ~/ 1000; }
+
+    fn secondsSinceMidnight(): i32 {
+        return self._hour * 3600 + self._minute * 60 + self._second;
+    }
+    fn addHours(h: i32): TimeOfDay {
+        let totalSecs = self.secondsSinceMidnight() + h * 3600;
+        let secs = ((totalSecs % 86400) + 86400) % 86400;
+        return new TimeOfDay(secs ~/ 3600, (secs % 3600) ~/ 60, secs % 60, self._nanosecond);
+    }
+    fn subHours(h: i32): TimeOfDay { return self.addHours(-h); }
+    fn addMinutes(m: i32): TimeOfDay {
+        let totalSecs = self.secondsSinceMidnight() + m * 60;
+        let secs = ((totalSecs % 86400) + 86400) % 86400;
+        return new TimeOfDay(secs ~/ 3600, (secs % 3600) ~/ 60, secs % 60, self._nanosecond);
+    }
+    fn subMinutes(m: i32): TimeOfDay { return self.addMinutes(-m); }
+    fn lt(other: TimeOfDay): boolean { return self.secondsSinceMidnight() < other.secondsSinceMidnight(); }
+    fn gt(other: TimeOfDay): boolean { return self.secondsSinceMidnight() > other.secondsSinceMidnight(); }
+    fn eq(other: TimeOfDay): boolean {
+        return self._hour == other.hour() && self._minute == other.minute() && self._second == other.second() && self._nanosecond == other.nanosecond();
+    }
+
+    fn toIsoString(): string {
+        let h = str(self._hour);
+        let m = str(self._minute);
+        let s = str(self._second);
+        if (len(h) < 2) { h = "0" + h; }
+        if (len(m) < 2) { m = "0" + m; }
+        if (len(s) < 2) { s = "0" + s; }
+        let res = h + ":" + m + ":" + s;
+        if (self._nanosecond > 0) {
+            let ns = str(self._nanosecond);
+            while (len(ns) < 9) { ns = "0" + ns; }
+            res = res + "." + ns;
+        }
+        return res;
+    }
+
+    fn toString(): string { return self.toIsoString(); }
+}
+
+fn validateTimeOfDay(h: i32, m: i32, s: i32, ns: i32): string {
+    if (h < 0 || h > 23) { return "Invalid hour"; }
+    if (m < 0 || m > 59) { return "Invalid minute"; }
+    if (s < 0 || s > 59) { return "Invalid second"; }
+    if (ns < 0 || ns > 999999999) { return "Invalid nanosecond"; }
+    return null;
+}
+
+// ============================================================================
+// DateTime
+// ============================================================================
+
+export class DateTime {
+    DateTime(date: Date, time: TimeOfDay) {
+        self._date = date;
+        self._time = time;
+    }
+
+    fn date(): Date { return self._date; }
+    fn time(): TimeOfDay { return self._time; }
+    fn year(): i32 { return self._date.year(); }
+    fn month(): i32 { return self._date.month(); }
+    fn day(): i32 { return self._date.day(); }
+    fn hour(): i32 { return self._time.hour(); }
+    fn minute(): i32 { return self._time.minute(); }
+    fn second(): i32 { return self._time.second(); }
+    fn nanosecond(): i32 { return self._time.nanosecond(); }
+    fn weekday(): Weekday { return self._date.weekday(); }
+    fn dayOfYear(): i32 { return self._date.dayOfYear(); }
+
+    fn withYear(y: i32): DateTime { return new DateTime(self._date.withYear(y), self._time); }
+    fn withMonth(m: i32): DateTime { return new DateTime(self._date.withMonth(m), self._time); }
+    fn withDay(d: i32): DateTime { return new DateTime(self._date.withDay(d), self._time); }
+    fn withHour(h: i32): DateTime { return new DateTime(self._date, new TimeOfDay(h, self.minute(), self.second(), self.nanosecond())); }
+    fn withMinute(m: i32): DateTime { return new DateTime(self._date, new TimeOfDay(self.hour(), m, self.second(), self.nanosecond())); }
+    fn withSecond(s: i32): DateTime { return new DateTime(self._date, new TimeOfDay(self.hour(), self.minute(), s, self.nanosecond())); }
+    fn withNanosecond(ns: i32): DateTime { return new DateTime(self._date, new TimeOfDay(self.hour(), self.minute(), self.second(), ns)); }
+
+    fn truncateToSecond(): DateTime {
+        return new DateTime(self._date, new TimeOfDay(self.hour(), self.minute(), self.second(), 0));
+    }
+    fn truncateToMinute(): DateTime {
+        return new DateTime(self._date, new TimeOfDay(self.hour(), self.minute(), 0, 0));
+    }
+
+    fn addDays(n: i32): DateTime { return new DateTime(self._date.addDays(n), self._time); }
+    fn subDays(n: i32): DateTime { return new DateTime(self._date.addDays(-n), self._time); }
+    fn addHours(n: i32): DateTime {
+        let totalSecs = self._time.secondsSinceMidnight() + n * 3600;
+        let extraDays = totalSecs ~/ 86400;
+        let secs = ((totalSecs % 86400) + 86400) % 86400;
+        return new DateTime(self._date.addDays(extraDays), new TimeOfDay(secs ~/ 3600, (secs % 3600) ~/ 60, secs % 60, self._time.nanosecond()));
+    }
+    fn subHours(n: i32): DateTime { return self.addHours(-n); }
+    fn addMonths(n: i32): DateTime { return new DateTime(self._date.addMonths(n), self._time); }
+    fn addYears(n: i32): DateTime { return new DateTime(self._date.addYears(n), self._time); }
+
+    fn durationUntil(other: DateTime): Duration {
+        let s1 = fieldsToEpoch(self.year(), self.month(), self.day(), self.hour(), self.minute(), self.second());
+        let s2 = fieldsToEpoch(other.year(), other.month(), other.day(), other.hour(), other.minute(), other.second());
+        return new Duration((s2 - s1) * 1000000000n);
+    }
+    fn durationSince(other: DateTime): Duration {
+        let s1 = fieldsToEpoch(self.year(), self.month(), self.day(), self.hour(), self.minute(), self.second());
+        let s2 = fieldsToEpoch(other.year(), other.month(), other.day(), other.hour(), other.minute(), other.second());
+        return new Duration((s1 - s2) * 1000000000n);
+    }
+
+    fn lt(other: DateTime): boolean {
+        let s1 = fieldsToEpoch(self.year(), self.month(), self.day(), self.hour(), self.minute(), self.second());
+        let s2 = fieldsToEpoch(other.year(), other.month(), other.day(), other.hour(), other.minute(), other.second());
+        return s1 < s2;
+    }
+    fn gt(other: DateTime): boolean {
+        let s1 = fieldsToEpoch(self.year(), self.month(), self.day(), self.hour(), self.minute(), self.second());
+        let s2 = fieldsToEpoch(other.year(), other.month(), other.day(), other.hour(), other.minute(), other.second());
+        return s1 > s2;
+    }
+    fn eq(other: DateTime): boolean {
+        return self.year() == other.year() && self.month() == other.month() && self.day() == other.day() &&
+               self.hour() == other.hour() && self.minute() == other.minute() && self.second() == other.second();
+    }
+
+    fn format(pattern: string): string {
+        let tempSec = fieldsToEpoch(self.year(), self.month(), self.day(), self.hour(), self.minute(), self.second());
+        return time.format(tempSec, self.nanosecond(), 0, pattern);
+    }
+
+    fn toIsoString(): string {
+        return self._date.toIsoString() + "T" + self._time.toIsoString();
+    }
+
+    fn toString(): string { return self.toIsoString(); }
+}
+
+// ============================================================================
+// UtcDateTime
+// ============================================================================
+
+export class UtcDateTime {
+    UtcDateTime(nanos: bigint) {
+        self._nanos = nanos + 0n;
+    }
+
+    fn unixSeconds(): bigint { return self._nanos / 1000000000n; }
+    fn unixMilliseconds(): bigint { return self._nanos / 1000000n; }
+    fn unixNanoseconds(): bigint { return self._nanos; }
+
+    fn year(): i32 { let fields = epochToFields(self.unixSeconds()); return fields.year; }
+    fn month(): i32 { let fields = epochToFields(self.unixSeconds()); return fields.month; }
+    fn day(): i32 { let fields = epochToFields(self.unixSeconds()); return fields.day; }
+    fn hour(): i32 { let fields = epochToFields(self.unixSeconds()); return fields.hour; }
+    fn minute(): i32 { let fields = epochToFields(self.unixSeconds()); return fields.minute; }
+    fn second(): i32 { let fields = epochToFields(self.unixSeconds()); return fields.second; }
+
+    fn add(d: Duration): UtcDateTime { return new UtcDateTime(self._nanos + d.wholeNanoseconds()); }
+    fn sub(d: Duration): UtcDateTime { return new UtcDateTime(self._nanos - d.wholeNanoseconds()); }
+
+    fn durationSince(other: UtcDateTime): Duration {
+        return new Duration(self._nanos - other.unixNanoseconds());
+    }
+
+    fn lt(other: UtcDateTime): boolean { return self._nanos < other.unixNanoseconds(); }
+    fn gt(other: UtcDateTime): boolean { return self._nanos > other.unixNanoseconds(); }
+    fn eq(other: UtcDateTime): boolean { return self._nanos == other.unixNanoseconds(); }
+
+    fn toOffset(offset: UtcOffset): OffsetDateTime {
+        return new OffsetDateTime(self, offset);
+    }
+
+    fn toZone(tz: TimeZone): ZonedDateTime {
+        return new ZonedDateTime(self, tz);
+    }
+
+    fn format(pattern: string): string {
+        return time.format(self.unixSeconds(), float(self._nanos % 1000000000n), 0, pattern);
+    }
+
+    fn toIsoString(): string {
+        return self.format("yyyy-MM-dd'T'HH:mm:ss.ffffff'Z'");
+    }
+
+    fn toRfc3339(): string {
+        return self.toIsoString();
+    }
+
+    fn toString(): string { return self.toIsoString(); }
+}
+
+// ============================================================================
+// UtcOffset
+// ============================================================================
+
+export class UtcOffset {
+    UtcOffset(seconds: i32) {
+        self._seconds = seconds;
+    }
+
+    fn totalSeconds(): i32 { return self._seconds; }
+    fn hours(): i32 { return self._seconds / 3600; }
+    fn minutes(): i32 { return (self._seconds % 3600) / 60; }
+    fn minutesPart(): i32 { return (self._seconds % 3600) / 60; }
+    fn secondsPart(): i32 { return self._seconds % 60; }
+
+    fn isUtc(): boolean { return self._seconds == 0; }
+    fn isPositive(): boolean { return self._seconds > 0; }
+    fn isNegative(): boolean { return self._seconds < 0; }
+
+    fn lt(other: UtcOffset): boolean { return self._seconds < other.totalSeconds(); }
+    fn gt(other: UtcOffset): boolean { return self._seconds > other.totalSeconds(); }
+    fn eq(other: UtcOffset): boolean { return self._seconds == other.totalSeconds(); }
+
+    fn toString(): string {
+        if (self._seconds == 0) { return "Z"; }
+        let sign = "+";
+        let secs = self._seconds;
+        if (secs < 0) {
+            sign = "-";
+            secs = -secs;
+        }
+        let h = str(secs / 3600);
+        let m = str((secs % 3600) / 60);
+        if (len(h) < 2) { h = "0" + h; }
+        if (len(m) < 2) { m = "0" + m; }
+        return sign + h + ":" + m;
+    }
+}
+
+// ============================================================================
+// OffsetDateTime
+// ============================================================================
+
+export class OffsetDateTime {
+    OffsetDateTime(utcDateTime: UtcDateTime, offset: UtcOffset) {
+        self._utc = utcDateTime;
+        self._offset = offset;
+    }
+
+    fn offset(): UtcOffset { return self._offset; }
+    fn toUtc(): UtcDateTime { return self._utc; }
+    fn toOffset(newOffset: UtcOffset): OffsetDateTime {
+        return new OffsetDateTime(self._utc, newOffset);
+    }
+    fn withOffset(newOffset: UtcOffset): OffsetDateTime {
+        return new OffsetDateTime(self._utc, newOffset);
+    }
+
+    fn unixSeconds(): bigint { return self._utc.unixSeconds(); }
+    fn unixMilliseconds(): bigint { return self._utc.unixMilliseconds(); }
+
+    fn year(): i32 { return self.date().year(); }
+    fn month(): i32 { return self.date().month(); }
+    fn day(): i32 { return self.date().day(); }
+    fn hour(): i32 { return self.time().hour(); }
+    fn minute(): i32 { return self.time().minute(); }
+    fn second(): i32 { return self.time().second(); }
+
+    fn date(): Date {
+        let fields = epochToFields(self.unixSeconds() + (self._offset.totalSeconds() * 1n));
+        return new Date(fields.year, fields.month, fields.day);
+    }
+
+    fn time(): TimeOfDay {
+        let fields = epochToFields(self.unixSeconds() + (self._offset.totalSeconds() * 1n));
+        let ns = float(self._utc.unixNanoseconds() % 1000000000n);
+        return new TimeOfDay(fields.hour, fields.minute, fields.second, ns);
+    }
+
+    fn add(d: Duration): OffsetDateTime {
+        return new OffsetDateTime(self._utc.add(d), self._offset);
+    }
+    fn sub(d: Duration): OffsetDateTime {
+        return new OffsetDateTime(self._utc.sub(d), self._offset);
+    }
+
+    fn lt(other: OffsetDateTime): boolean { return self._utc.unixNanoseconds() < other.toUtc().unixNanoseconds(); }
+    fn gt(other: OffsetDateTime): boolean { return self._utc.unixNanoseconds() > other.toUtc().unixNanoseconds(); }
+    fn eq(other: OffsetDateTime): boolean { return self._utc.unixNanoseconds() == other.toUtc().unixNanoseconds(); }
+
+    fn format(pattern: string): string {
+        return time.format(self.unixSeconds(), float(self._utc.unixNanoseconds() % 1000000000n), self._offset.totalSeconds(), pattern);
+    }
+
+    fn toIsoString(): string {
+        let main = self.format("yyyy-MM-dd'T'HH:mm:ss.ffffff");
+        return main + str(self._offset);
+    }
+
+    fn toRfc3339(): string { return self.toIsoString(); }
+
+    fn toString(): string { return self.toIsoString(); }
+}
+
+// ============================================================================
+// TimeZone and ZonedDateTime
+// ============================================================================
+
+export class TimeZone {
+    TimeZone(name: string) {
+        self._name = name;
+    }
+
+    fn name(): string { return self._name; }
+    
+    fn offsetAt(instant: Instant): UtcOffset {
+        let epochSec = instant.wholeNanoseconds() / 1000000000n;
+        if (self._name == "UTC") {
+            return new UtcOffset(0);
+        }
+        if (self._name == "Local") {
+            let offsetSec = time.localOffsetSecs(float(epochSec));
+            return new UtcOffset(offsetSec);
+        }
+        let offsetSec = time.timezoneOffsetSecs(self._name, float(epochSec));
+        if (offsetSec == null) {
+            return new UtcOffset(0);
+        }
+        return new UtcOffset(offsetSec);
+    }
+}
+
+export class ZonedDateTime {
+    ZonedDateTime(utcDateTime: UtcDateTime, tz: TimeZone) {
+        self._utc = utcDateTime;
+        self._tz = tz;
+    }
+
+    fn zone(): TimeZone { return self._tz; }
+    fn timeZoneName(): string { return self._tz.name(); }
+    fn offset(): UtcOffset { return self._tz.offsetAt(new Instant(self._utc.unixNanoseconds())); }
+    fn toUtc(): UtcDateTime { return self._utc; }
+    fn toZone(otherZone: TimeZone): ZonedDateTime {
+        return new ZonedDateTime(self._utc, otherZone);
+    }
+    fn withTimeZone(otherZone: TimeZone): ZonedDateTime {
+        return new ZonedDateTime(self._utc, otherZone);
+    }
+    fn add(d: Duration): ZonedDateTime {
+        return new ZonedDateTime(self._utc.add(d), self._tz);
+    }
+    fn sub(d: Duration): ZonedDateTime {
+        return new ZonedDateTime(self._utc.sub(d), self._tz);
+    }
+
+    fn date(): Date {
+        let off = self.offset();
+        let fields = epochToFields(self._utc.unixSeconds() + (off.totalSeconds() * 1n));
+        return new Date(fields.year, fields.month, fields.day);
+    }
+
+    fn time(): TimeOfDay {
+        let off = self.offset();
+        let fields = epochToFields(self._utc.unixSeconds() + (off.totalSeconds() * 1n));
+        let ns = float(self._utc.unixNanoseconds() % 1000000000n);
+        return new TimeOfDay(fields.hour, fields.minute, fields.second, ns);
+    }
+
+    fn year(): i32 { return self.date().year(); }
+    fn month(): i32 { return self.date().month(); }
+    fn day(): i32 { return self.date().day(); }
+    fn hour(): i32 { return self.time().hour(); }
+    fn minute(): i32 { return self.time().minute(); }
+    fn second(): i32 { return self.time().second(); }
+
+    fn unixSeconds(): bigint { return self._utc.unixSeconds(); }
+    fn unixMilliseconds(): bigint { return self._utc.unixMilliseconds(); }
+
+    fn format(pattern: string): string {
+        let off = self.offset();
+        return time.format(self._utc.unixSeconds(), float(self._utc.unixNanoseconds() % 1000000000n), off.totalSeconds(), pattern);
+    }
+
+    fn toIsoString(): string {
+        return self.format("yyyy-MM-dd'T'HH:mm:ss.ffffffXXX");
+    }
+
+    fn toString(): string { return self.toIsoString(); }
+}
+
+// ============================================================================
+// Period
+// ============================================================================
+
+export class Period {
+    Period(years: i32, months: i32, days: i32) {
+        self._years = years;
+        self._months = months;
+        self._days = days;
+    }
+    fn years(): i32 { return self._years; }
+    fn months(): i32 { return self._months; }
+    fn days(): i32 { return self._days; }
+    fn add(other: Period): Period {
+        return new Period(self._years + other.years(), self._months + other.months(), self._days + other.days());
+    }
+    fn sub(other: Period): Period {
+        return new Period(self._years - other.years(), self._months - other.months(), self._days - other.days());
+    }
+    fn negated(): Period { return new Period(-self._years, -self._months, -self._days); }
+    fn abs(): Period {
+        let y = self._years; if (y < 0) { y = -y; }
+        let m = self._months; if (m < 0) { m = -m; }
+        let d = self._days; if (d < 0) { d = -d; }
+        return new Period(y, m, d);
+    }
+    fn addToDate(date: Date): Date {
+        let d1 = date.addYears(self._years);
+        let d2 = d1.addMonths(self._months);
+        return d2.addDays(self._days);
+    }
+    fn subFromDate(date: Date): Date {
+        let d1 = date.addYears(-self._years);
+        let d2 = d1.addMonths(-self._months);
+        return d2.addDays(-self._days);
+    }
+    fn toString(): string {
+        let s = "P";
+        if (self._years != 0) { s = s + str(self._years) + "Y"; }
+        if (self._months != 0) { s = s + str(self._months) + "M"; }
+        if (self._days != 0) { s = s + str(self._days) + "D"; }
+        if (s == "P") { s = "P0D"; }
+        return s;
+    }
+}
+
+// ============================================================================
+// Stopwatch
+// ============================================================================
+
+export class Stopwatch {
+    Stopwatch() {
+        self._start = 0n;
+        self._elapsed = 0n;
+        self._running = false;
+    }
+    fn start() {
+        if (!self._running) {
+            self._start = time.monotonicNow();
+            self._running = true;
+        }
+    }
+    fn stop() {
+        if (self._running) {
+            let end = time.monotonicNow();
+            self._elapsed = self._elapsed + (end - self._start);
+            self._running = false;
+        }
+    }
+    fn reset() {
+        self._elapsed = 0n;
+        self._running = false;
+    }
+    fn restart() {
+        self._elapsed = 0n;
+        self._start = time.monotonicNow();
+        self._running = true;
+    }
+    fn elapsed(): Duration {
+        if (self._running) {
+            let now = time.monotonicNow();
+            return new Duration(self._elapsed + (now - self._start));
+        }
+        return new Duration(self._elapsed);
+    }
+    fn lap(): Duration {
+        let d = self.elapsed();
+        if (self._running) {
+            self._elapsed = 0n;
+            self._start = time.monotonicNow();
+        }
+        return d;
+    }
+    fn isRunning(): boolean { return self._running; }
+}
+
+// ============================================================================
+// Timer
+// ============================================================================
+
+export class Timer {
+    Timer(targetInstant: Instant) {
+        self._target = targetInstant;
+        self._cancelled = false;
+    }
+    fn wait() {
+        while (!self.isFinished() && !self._cancelled) {
+            time.sleepNanos(1000000n);
+        }
+    }
+    fn cancel() {
+        self._cancelled = true;
+    }
+    fn isCancelled(): boolean { return self._cancelled; }
+    fn isFinished(): boolean {
+        if (self._cancelled) { return false; }
+        return time.monotonicNow() >= self._target.wholeNanoseconds();
+    }
+}
+
+// ============================================================================
+// Measurement and Interval
+// ============================================================================
+
+export class Measurement {
+    Measurement(val, duration: Duration) {
+        self._val = val;
+        self._duration = duration;
+    }
+    fn value() { return self._val; }
+    fn duration(): Duration { return self._duration; }
+}
+
+export class Interval {
+    Interval(duration: Duration) {
+        self._duration = duration;
+        self._lastTick = time.monotonicNow();
+    }
+    fn next(): boolean {
+        let now = time.monotonicNow();
+        let diff = now - self._lastTick;
+        let durNanos = self._duration.wholeNanoseconds();
+        if (diff < durNanos) {
+            let wait = durNanos - diff;
+            time.sleepNanos(float(wait));
+        }
+        self._lastTick = time.monotonicNow();
+        return true;
+    }
+}
+
+// ============================================================================
+// Exported Factory/Utility Functions (No static keyword)
+// ============================================================================
+
+export fn durationZero(): Duration {
+    return new Duration(0n);
+}
+
+export fn durationNanoseconds(value: bigint): Duration {
+    return new Duration(value);
+}
+
+export fn durationMicroseconds(value: bigint): Duration {
+    return new Duration(value * 1000n);
+}
+
+export fn durationMilliseconds(value: bigint): Duration {
+    return new Duration(value * 1000000n);
+}
+
+export fn durationSeconds(value: bigint): Duration {
+    return new Duration(value * 1000000000n);
+}
+
+export fn durationMinutes(value: bigint): Duration {
+    return new Duration(value * 60000000000n);
+}
+
+export fn durationHours(value: bigint): Duration {
+    return new Duration(value * 3600000000000n);
+}
+
+export fn durationDays(value: bigint): Duration {
+    return new Duration(value * 86400000000000n);
+}
+
+export fn durationWeeks(value: bigint): Duration {
+    return new Duration(value * 604800000000000n);
+}
+
+export fn durationSecondsF64(value: f64): Duration {
+    return new Duration(Math.round(value * 1000000000.0) * 1n);
+}
+
+export fn durationMillisecondsF64(value: f64): Duration {
+    return new Duration(Math.round(value * 1000000.0) * 1n);
+}
+
+export fn instantNow(): Instant {
+    return new Instant(time.monotonicNow());
+}
+
+export fn InstantNow(): Instant {
+    return instantNow();
+}
+
+export fn systemTimeNow(): SystemTime {
+    return new SystemTime(time.systemNow());
+}
+
+export fn systemTimeEpoch(): SystemTime {
+    return new SystemTime(0n);
+}
+
+export fn systemTimeFromUnixSeconds(value: bigint): SystemTime {
+    return new SystemTime(value * 1000000000n);
+}
+
+export fn systemTimeFromUnixMilliseconds(value: bigint): SystemTime {
+    return new SystemTime(value * 1000000n);
+}
+
+export fn systemTimeFromUnixMicroseconds(value: bigint): SystemTime {
+    return new SystemTime(value * 1000n);
+}
+
+export fn systemTimeFromUnixNanoseconds(value: bigint): SystemTime {
+    return new SystemTime(value);
+}
+
+export fn dateCreate(year: i32, month: i32, day: i32): Date {
+    return new Date(year, month, day);
+}
+
+export fn dateYmd(year: i32, month: i32, day: i32): Date {
+    return dateCreate(year, month, day);
+}
+
+export fn now(): DateTime {
+    return dateTimeNow();
+}
+
+export fn utcNow(): UtcDateTime {
+    return utcDateTimeNow();
+}
+
+export fn epochMillis(): f64 {
+    return time.epoch();
+}
+
+export fn dateToday(): Date {
+    let nowSec = Math.floor(time.epoch() / 1000);
+    let offset = time.localOffsetSecs(nowSec);
+    let fields = epochToFields((nowSec + offset) * 1n);
+    return new Date(fields.year, fields.month, fields.day);
+}
+
+export fn dateTodayUtc(): Date {
+    let nowSec = Math.floor(time.epoch() / 1000);
+    let fields = epochToFields(nowSec * 1n);
+    return new Date(fields.year, fields.month, fields.day);
+}
+
+export fn dateParse(s: string): Date {
+    if (len(s) != 10 || s.charAt(4) != "-" || s.charAt(7) != "-") {
+        return null;
+    }
+    let y = float(s.slice(0, 4));
+    let m = float(s.slice(5, 7));
+    let d = float(s.slice(8, 10));
+    return new Date(y, m, d);
+}
+
+export fn timeOfDayCreate(hour: i32, minute: i32, second: i32, nanosecond: i32): TimeOfDay {
+    return new TimeOfDay(hour, minute, second, nanosecond);
+}
+
+export fn timeOfDayParse(s: string): TimeOfDay {
+    if (len(s) < 8 || s.charAt(2) != ":" || s.charAt(5) != ":") {
+        return null;
+    }
+    let h = float(s.slice(0, 2));
+    let m = float(s.slice(3, 5));
+    let sec = float(s.slice(6, 8));
+    let ns = 0;
+    if (len(s) > 8 && s.charAt(8) == ".") {
+        let nsStr = s.slice(9);
+        while (len(nsStr) < 9) { nsStr = nsStr + "0"; }
+        ns = float(nsStr.slice(0, 9));
+    }
+    return new TimeOfDay(h, m, sec, ns);
+}
+
+export fn dateTimeCreate(year: i32, month: i32, day: i32, hour: i32, minute: i32, second: i32, nanosecond: i32): DateTime {
+    return new DateTime(new Date(year, month, day), new TimeOfDay(hour, minute, second, nanosecond));
+}
+
+export fn dateTimeNow(): DateTime {
+    let nowSec = Math.floor(time.epoch() / 1000);
+    let offset = time.localOffsetSecs(nowSec);
+    let fields = epochToFields((nowSec + offset) * 1n);
+    let ms = Math.floor(time.epoch()) % 1000;
+    return new DateTime(
+        new Date(fields.year, fields.month, fields.day),
+        new TimeOfDay(fields.hour, fields.minute, fields.second, ms * 1000000)
+    );
+}
+
+export fn dateTimeParse(s: string, pattern: string): DateTime {
+    let parsed = time.parse(s, pattern);
+    if (parsed == null) { return null; }
+    let fields = epochToFields(parsed.epoch_sec * 1n);
+    let ns = parsed.nanos;
+    return new DateTime(
+        new Date(fields.year, fields.month, fields.day),
+        new TimeOfDay(fields.hour, fields.minute, fields.second, ns)
+    );
+}
+
+export fn utcDateTimeNow(): UtcDateTime {
+    return new UtcDateTime(time.systemNow());
+}
+
+export fn utcDateTimeFromUnixSeconds(value: bigint): UtcDateTime {
+    return new UtcDateTime(value * 1000000000n);
+}
+
+export fn utcDateTimeParse(s: string): UtcDateTime {
+    let parsed = time.parseRfc3339(s);
+    if (parsed == null) { return null; }
+    return new UtcDateTime((parsed.epoch_sec * 1n) * 1000000000n + (parsed.nanos * 1n));
+}
+
+export fn utcOffsetHours(h: i32): UtcOffset {
+    return new UtcOffset(h * 3600);
+}
+
+export fn utcOffsetHoursMinutes(h: i32, m: i32): UtcOffset {
+    return new UtcOffset(h * 3600 + m * 60);
+}
+
+export fn utcOffsetParse(s: string): UtcOffset {
+    if (s == "Z" || s == "UTC") {
+        return new UtcOffset(0);
+    }
+    let sign = 1;
+    let start = 0;
+    if (s.charAt(0) == "-") {
+        sign = -1;
+        start = 1;
+    } elif (s.charAt(0) == "+") {
+        start = 1;
+    }
+    let parts = s.slice(start).split(":");
+    let h = float(parts[0]);
+    let m = len(parts) > 1 ? float(parts[1]) : 0;
+    let sec = len(parts) > 2 ? float(parts[2]) : 0;
+    return new UtcOffset(sign * (h * 3600 + m * 60 + sec));
+}
+
+export fn offsetDateTimeNow(offset: UtcOffset): OffsetDateTime {
+    return new OffsetDateTime(new UtcDateTime(time.systemNow()), offset);
+}
+
+export fn offsetDateTimeParse(s: string): OffsetDateTime {
+    let parsed = time.parseRfc3339(s);
+    if (parsed == null) { return null; }
+    let utc = new UtcDateTime((parsed.epoch_sec * 1n) * 1000000000n + (parsed.nanos * 1n));
+    let offset = new UtcOffset(parsed.offset_sec);
+    return new OffsetDateTime(utc, offset);
+}
+
+export fn timeZoneUtc(): TimeZone {
+    return new TimeZone("UTC");
+}
+
+export fn timeZoneLocal(): TimeZone {
+    return new TimeZone("Local");
+}
+
+export fn timeZoneOf(name: string): TimeZone {
+    return new TimeZone(name);
+}
+
+export fn zonedDateTimeNow(tz: TimeZone): ZonedDateTime {
+    return new ZonedDateTime(new UtcDateTime(time.systemNow()), tz);
+}
+
+export fn periodCreate(years: i32, months: i32, days: i32): Period {
+    return new Period(years, months, days);
+}
+
+export fn stopwatchCreate(): Stopwatch {
+    return new Stopwatch();
+}
+
+export fn stopwatchStartNew(): Stopwatch {
+    let sw = new Stopwatch();
+    sw.start();
+    return sw;
+}
+
+export fn timerAfter(duration: Duration): Timer {
+    let target = time.monotonicNow() + duration.wholeNanoseconds();
+    return new Timer(new Instant(target));
+}
+
+export fn timerAt(instant: Instant): Timer {
+    return new Timer(instant);
+}
+
+export fn timeSleep(duration: Duration) {
+    time.sleepNanos(float(duration.wholeNanoseconds()));
+}
+
+export fn sleep(ms) {
+    time.sleepNanos(float(ms) * 1000000.0);
+}
+
+export fn sleepMs(ms) {
+    time.sleepNanos(float(ms) * 1000000.0);
+}
+
+export fn timeMeasure(callback: function): Measurement {
+    let start = time.monotonicNow();
+    let val = callback();
+    let end = time.monotonicNow();
+    return new Measurement(val, new Duration(end - start));
+}
+
+export fn timeInterval(duration: Duration): Interval {
+    return new Interval(duration);
+}
+
+// ============================================================================
+// Convenience Aliases (shorthand factory functions used in examples)
+// ============================================================================
+
+export fn dateYmd(y: i32, m: i32, d: i32): Date {
+    return new Date(y, m, d);
+}
+
+export fn timeOfDay(h: i32, m: i32, s: i32, ns: i32): TimeOfDay {
+    return new TimeOfDay(h, m, s, ns);
+}
+
+export fn timeNow(): TimeOfDay {
+    let nowSec = Math.floor(time.epoch() / 1000);
+    let offset = time.localOffsetSecs(nowSec);
+    let fields = epochToFields((nowSec + offset) * 1n);
+    let ms = Math.floor(time.epoch()) % 1000;
+    return new TimeOfDay(fields.hour, fields.minute, fields.second, ms * 1000000);
+}
+
+export fn timeNowUtc(): TimeOfDay {
+    let nowSec = Math.floor(time.epoch() / 1000);
+    let fields = epochToFields(nowSec * 1n);
+    let ms = Math.floor(time.epoch()) % 1000;
+    return new TimeOfDay(fields.hour, fields.minute, fields.second, ms * 1000000);
+}
+
+export fn dateTime(d: Date, t: TimeOfDay): DateTime {
+    return new DateTime(d, t);
+}
+
+export fn utcDateTimeFromNanos(nanos: bigint): UtcDateTime {
+    return new UtcDateTime(nanos);
+}
+
+export fn utcOffsetZero(): UtcOffset {
+    return new UtcOffset(0);
+}
+
+export fn offsetDateTimeFromUtc(utc: UtcDateTime, offset: UtcOffset): OffsetDateTime {
+    return new OffsetDateTime(utc, offset);
+}
+
+export fn timeZone(name: string): TimeZone {
+    return new TimeZone(name);
+}
+
+export fn zonedDateTimeFromUtc(utc: UtcDateTime, tz: TimeZone): ZonedDateTime {
+    return new ZonedDateTime(utc, tz);
+}
+
+export fn period(y: i32, m: i32, d: i32): Period {
+    return new Period(y, m, d);
+}
+
+export fn periodYears(y: i32): Period {
+    return new Period(y, 0, 0);
+}
+
+export fn periodMonths(m: i32): Period {
+    return new Period(0, m, 0);
+}
+
+export fn periodDays(d: i32): Period {
+    return new Period(0, 0, d);
+}
+
+export fn periodBetween(startDate: Date, endDate: Date): Period {
+    let totalDays = endDate.daysSince(startDate);
+    let years = totalDays / 365;
+    let rem = totalDays % 365;
+    let months = rem / 30;
+    let days = rem % 30;
+    return new Period(years, months, days);
+}
+
+export fn weekdayFromInt(n: i32): Weekday {
+    return new Weekday(n);
+}
+
+export fn weekdayFromDate(d: Date): Weekday {
+    return d.weekday();
+}
+
+export fn monthFromInt(m: i32): Month {
+    return new Month(m);
+}
+
+export fn stopwatch(): Stopwatch {
+    return new Stopwatch();
+}
+
+export fn isoString(): string {
+    let nowSec = Math.floor(time.epoch() / 1000);
+    let offset = time.localOffsetSecs(nowSec);
+    let fields = epochToFields((nowSec + offset) * 1n);
+    let yr = str(fields.year);
+    let mo = fields.month < 10 ? "0" + str(fields.month) : str(fields.month);
+    let dy = fields.day < 10 ? "0" + str(fields.day) : str(fields.day);
+    let hr = fields.hour < 10 ? "0" + str(fields.hour) : str(fields.hour);
+    let mi = fields.minute < 10 ? "0" + str(fields.minute) : str(fields.minute);
+    let sc = fields.second < 10 ? "0" + str(fields.second) : str(fields.second);
+    return yr + "-" + mo + "-" + dy + " " + hr + ":" + mi + ":" + sc;
+}

@@ -1,0 +1,191 @@
+// AdeshLang Compression Standard Library
+// World-Class Lossless Compression, Streaming, Archives, Adaptive Codecs & Security Framework
+
+export fn compress(data, codec = "zstd", level = 5) {
+    return Compression.compress(data, codec, level);
+}
+
+export fn decompress(compressed, codec = "zstd", maxOutputSize = null) {
+    return Compression.decompress(compressed, codec, maxOutputSize);
+}
+
+export fn gzip(data, level = 6) {
+    return Compression.gzip(data, level);
+}
+
+export fn compressGzip(data, level = 6) {
+    return gzip(data, level);
+}
+
+export fn compressAdaptive(data) {
+    let gz = gzip(data);
+    return {
+        algorithm: "gzip",
+        compressed: gz
+    };
+}
+
+export fn gunzip(data, maxOutputSize = null) {
+    return Compression.gunzip(data, maxOutputSize);
+}
+
+export fn zstd(data, level = 5) {
+    return Compression.zstd(data, level);
+}
+
+export fn unzstd(data, maxOutputSize = null) {
+    return Compression.unzstd(data, maxOutputSize);
+}
+
+export fn brotli(data, level = 6) {
+    return Compression.brotli(data, level);
+}
+
+export fn unbrotli(data, maxOutputSize = null) {
+    return Compression.unbrotli(data, maxOutputSize);
+}
+
+export fn lz4(data) {
+    return Compression.lz4(data);
+}
+
+export fn unlz4(data, maxOutputSize = null) {
+    return Compression.unlz4(data, maxOutputSize);
+}
+
+export fn xz(data) {
+    return Compression.xz(data);
+}
+
+export fn unxz(data, maxOutputSize = null) {
+    return Compression.unxz(data, maxOutputSize);
+}
+
+export fn deflate(data, level = 6) {
+    return Compression.deflate(data, level);
+}
+
+export fn inflate(data, maxOutputSize = null) {
+    return Compression.inflate(data, maxOutputSize);
+}
+
+export fn zlib(data, level = 6) {
+    return Compression.zlib(data, level);
+}
+
+export fn unzlib(data, maxOutputSize = null) {
+    return Compression.unzlib(data, maxOutputSize);
+}
+
+export fn compressBound(inputLen, codec = "zstd") {
+    return Compression.compressBound(inputLen, codec);
+}
+
+export fn compressAdaptive(data) {
+    return Compression.compressAdaptive(data);
+}
+
+export fn auto(data) {
+    return Compression.compressAdaptive(data);
+}
+
+export fn entropyEstimate(data) {
+    return Compression.entropyEstimate(data);
+}
+
+// Checksums
+export fn crc32(data) {
+    return Compression.crc32(data);
+}
+
+export fn crc32c(data) {
+    return Compression.crc32c(data);
+}
+
+export fn adler32(data) {
+    return Compression.adler32(data);
+}
+
+export fn xxhash64(data) {
+    return Compression.xxhash64(data);
+}
+
+// Seekable Random-Access Compressed Format
+export fn createSeekable(data, codec = "zstd", chunkSize = 65536, level = 5) {
+    return Compression.createSeekable(data, codec, chunkSize, level);
+}
+
+export fn readSeekableChunk(archive, chunkIndex) {
+    return Compression.readSeekableChunk(archive, chunkIndex);
+}
+
+// Archives (ZIP & TAR)
+export fn createZip(files) {
+    return Compression.createZip(files);
+}
+
+export fn extractZip(zipBytes, targetDir) {
+    return Compression.extractZip(zipBytes, targetDir);
+}
+
+export fn createZipFile(fileMappings, outputZipPath) {
+    return Compression.createZipFile(fileMappings, outputZipPath);
+}
+
+export fn extractZipFile(zipFilePath, targetDir) {
+    return Compression.extractZipFile(zipFilePath, targetDir);
+}
+
+export fn createTar(files) {
+    return Compression.createTar(files);
+}
+
+export fn extractTar(tarBytes, targetDir) {
+    return Compression.extractTar(tarBytes, targetDir);
+}
+
+// Parallel Compression
+export fn parallelCompress(data, codec = "zstd", chunkSize = 131072, level = 5, numThreads = 0) {
+    return Compression.parallelCompress(data, codec, chunkSize, level, numThreads);
+}
+
+export fn parallelDecompress(data, codec = "zstd", maxOutputSize = null, numThreads = 0) {
+    return Compression.parallelDecompress(data, codec, maxOutputSize, numThreads);
+}
+
+// File Compression (Disk to Disk Streaming)
+export fn compressFile(inputPath, outputPath, codec = "zstd", level = 5) {
+    return Compression.compressFile(inputPath, outputPath, codec, level);
+}
+
+export fn decompressFile(inputPath, outputPath, codec = "zstd", maxOutputSize = null) {
+    return Compression.decompressFile(inputPath, outputPath, codec, maxOutputSize);
+}
+
+export fn compressFileAtomic(inputPath, outputPath, codec = "zstd", level = 5) {
+    return Compression.compressFileAtomic(inputPath, outputPath, codec, level);
+}
+
+// Magic Header Detection & Auto Decompression
+export fn detect(data) {
+    return Compression.detect(data);
+}
+
+export fn decompressAuto(data, maxOutputSize = null) {
+    return Compression.decompressAuto(data, maxOutputSize);
+}
+
+// Utility: Supported Codecs Query
+export fn supportedCodecs() {
+    return ["zstd", "gzip", "brotli", "lz4", "xz", "deflate", "zlib"];
+}
+
+export fn isSupported(codec) {
+    let codecs = supportedCodecs();
+    for (c in codecs) {
+        if (c == codec) {
+            return true;
+        }
+    }
+    return false;
+}

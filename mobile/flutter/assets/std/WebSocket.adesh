@@ -1,0 +1,171 @@
+// AdeshLang WebSocket Standard Library
+//
+// Production-grade native RFC 6455 & RFC 6455/WSS WebSocket implementation with
+// non-blocking Async/Await futures, DTO schema validation, and Regex pattern rules.
+// `import WebSocket` binds the native engine from `src/runtime/stdlib_src/http/websocket`.
+
+export class WebSocketError {
+    WebSocketError(message: string) {
+        self.message = message;
+        self.is_error = true;
+    }
+    fn toString(): string {
+        return "WebSocketError: " + self.message;
+    }
+}
+
+export class WebSocketMessage {
+    WebSocketMessage(type_str: string, payload) {
+        self.type = type_str;
+        self.payload = payload;
+    }
+}
+
+export class CloseCode {
+    CloseCode() {}
+    static let NormalClosure: int = 1000;
+    static let GoingAway: int = 1001;
+    static let ProtocolError: int = 1002;
+    static let UnsupportedData: int = 1003;
+}
+
+export class ClientConfig {
+    ClientConfig(options = {}) {
+        self.verify_tls = options["verify_tls"] != null ? options["verify_tls"] : (options.verify_tls != null ? options.verify_tls : true);
+        self.tls_ca_pem = options["tls_ca_pem"] != null ? options["tls_ca_pem"] : options.tls_ca_pem;
+        self.connect_timeout = options["connect_timeout"] != null ? options["connect_timeout"] : (options.connect_timeout != null ? options.connect_timeout : 5000);
+        self.protocols = options["protocols"] != null ? options["protocols"] : (options.protocols != null ? options.protocols : []);
+    }
+}
+
+export class ServerConfig {
+    ServerConfig(options = {}) {
+        self.bind_address = options["bind_address"] != null ? options["bind_address"] : (options.bind_address != null ? options.bind_address : "127.0.0.1");
+        self.port = options["port"] != null ? options["port"] : (options.port != null ? options.port : 8443);
+        self.tls_cert_pem = options["tls_cert_pem"] != null ? options["tls_cert_pem"] : options.tls_cert_pem;
+        self.tls_key_pem = options["tls_key_pem"] != null ? options["tls_key_pem"] : options.tls_key_pem;
+        self.protocols = options["protocols"] != null ? options["protocols"] : (options.protocols != null ? options.protocols : []);
+    }
+}
+
+export class WebSocketConnection {
+    WebSocketConnection(nativeConn = null) {
+        let native = nativeConn;
+        self._native = native;
+        if (native != null && typeof(native) == "object") {
+            self.subprotocol = native.subprotocol;
+            self.id = native.id;
+        }
+    }
+    fn isOpen(): boolean {
+        if (self._native != null && self._native.isOpen != null) { return self._native.isOpen(); }
+        return true;
+    }
+    fn getState(): int {
+        if (self._native != null && self._native.getState != null) { return self._native.getState(); }
+        return 1;
+    }
+    fn sendText(text: string) {
+        if (self._native != null && self._native.sendText != null) { return self._native.sendText(text); }
+        if (self.sendText != null && typeof(self.sendText) == "function") { return self.sendText(text); }
+    }
+    fn sendBinary(bytes) {
+        if (self._native != null && self._native.sendBinary != null) { return self._native.sendBinary(bytes); }
+    }
+    fn sendPing(data = null) {
+        if (self._native != null && self._native.sendPing != null) { return self._native.sendPing(data); }
+    }
+    fn sendPong(data = null) {
+        if (self._native != null && self._native.sendPong != null) { return self._native.sendPong(data); }
+    }
+    fn receive() {
+        if (self._native != null && self._native.receive != null) { return self._native.receive(); }
+    }
+    fn close(code = 1000, reason = "") {
+        if (self._native != null && self._native.close != null) { return self._native.close(code, reason); }
+    }
+    fn sendDTO(dtoSchema, data) {
+        if (self._native != null && self._native.sendDTO != null) { return self._native.sendDTO(dtoSchema, data); }
+    }
+    fn receiveDTO(dtoSchema = null) {
+        if (self._native != null && self._native.receiveDTO != null) { return self._native.receiveDTO(dtoSchema); }
+    }
+    async fn sendTextAsync(text: string) {
+        if (self._native != null && self._native.sendTextAsync != null) { return await self._native.sendTextAsync(text); }
+    }
+    async fn sendBinaryAsync(bytes) {
+        if (self._native != null && self._native.sendBinaryAsync != null) { return await self._native.sendBinaryAsync(bytes); }
+    }
+    async fn sendPingAsync(data = null) {
+        if (self._native != null && self._native.sendPingAsync != null) { return await self._native.sendPingAsync(data); }
+    }
+    async fn sendPongAsync(data = null) {
+        if (self._native != null && self._native.sendPongAsync != null) { return await self._native.sendPongAsync(data); }
+    }
+    async fn receiveAsync() {
+        if (self._native != null && self._native.receiveAsync != null) { return await self._native.receiveAsync(); }
+    }
+    async fn closeAsync(code = 1000, reason = "") {
+        if (self._native != null && self._native.closeAsync != null) { return await self._native.closeAsync(code, reason); }
+    }
+    async fn sendDTOAsync(dtoSchema, data) {
+        if (self._native != null && self._native.sendDTOAsync != null) { return await self._native.sendDTOAsync(dtoSchema, data); }
+    }
+    async fn receiveDTOAsync(dtoSchema = null) {
+        if (self._native != null && self._native.receiveDTOAsync != null) { return await self._native.receiveDTOAsync(dtoSchema); }
+    }
+    fn toString(): string {
+        if (self._native != null && self._native.toString != null) { return self._native.toString(); }
+        return "WebSocketConnection";
+    }
+}
+
+export class WebSocketServer {
+    WebSocketServer(nativeServer = null) {
+        let native = nativeServer;
+        self._native = native;
+        if (native != null && typeof(native) == "object") {
+            self.id = native.id;
+        }
+    }
+    fn onConnection(handler) {
+        if (self._native != null && self._native.onConnection != null) { return self._native.onConnection(handler); }
+    }
+    fn run() {
+        if (self._native != null && self._native.run != null) { return self._native.run(); }
+    }
+    fn startEcho() {
+        if (self._native != null && self._native.startEcho != null) { return self._native.startEcho(); }
+    }
+    async fn runAsync() {
+        if (self._native != null && self._native.runAsync != null) { return await self._native.runAsync(); }
+    }
+    fn close() {
+        if (self._native != null && self._native.close != null) { return self._native.close(); }
+    }
+    fn broadcast(msg) {
+        if (self._native != null && self._native.broadcast != null) { return self._native.broadcast(msg); }
+    }
+    async fn broadcastAsync(msg) {
+        if (self._native != null && self._native.broadcastAsync != null) { return await self._native.broadcastAsync(msg); }
+    }
+}
+
+export class WebSocket {
+    WebSocket() {}
+    static fn isError(val): boolean {
+        if (val == null) { return false; }
+        if (typeof(val) == "object" && (val.message != null && val.is_error == true || val.__wsError == true || val.__type == "WebSocketError")) { return true; }
+        return false;
+    }
+    static fn connect(uri, config = null) {
+        return WebSocket_native.connect(uri, config);
+    }
+    static async fn connectAsync(uri, config = null) {
+        return await WebSocket_native.connectAsync(uri, config);
+    }
+    static fn server(config = null) {
+        return WebSocket_native.server(config);
+    }
+    static let CloseCode = CloseCode;
+}

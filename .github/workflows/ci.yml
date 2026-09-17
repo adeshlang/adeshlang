@@ -4,25 +4,39 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'Logo/**'
-      - 'LICENSE'
-      - 'THIRD_PARTY_LICENSES/**'
-      - '.gitignore'
-      - '.gitattributes'
+    paths:
+      - 'src/**'
+      - 'als/**'
+      - 'editor/**'
+      - 'crates/**'
+      - 'mobile/bridge/**'
+      - 'tests/**'
+      - 'benches/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'clippy.toml'
+      - 'rustfmt.toml'
+      - 'build.rs'
+      - '**.rs'
   pull_request:
     branches:
       - main
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'Logo/**'
-      - 'LICENSE'
-      - 'THIRD_PARTY_LICENSES/**'
-      - '.gitignore'
-      - '.gitattributes'
+    paths:
+      - 'src/**'
+      - 'als/**'
+      - 'editor/**'
+      - 'crates/**'
+      - 'mobile/bridge/**'
+      - 'tests/**'
+      - 'benches/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'clippy.toml'
+      - 'rustfmt.toml'
+      - 'build.rs'
+      - '**.rs'
   workflow_dispatch:
 
 # Repository migration: origin is currently ajaytainwala-dev/mylang; keep the

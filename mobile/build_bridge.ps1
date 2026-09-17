@@ -34,4 +34,9 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-Write-Host "[SUCCESS] AdeshLang Mobile Bridge libraries built and copied successfully!" -ForegroundColor Green
+Write-Host "Copying AdeshLang standard library to Flutter assets..." -ForegroundColor Yellow
+$stdAssets = Join-Path $scriptDir "flutter\assets\std"
+New-Item -ItemType Directory -Force -Path $stdAssets | Out-Null
+Copy-Item (Join-Path $scriptDir "..\src\stdlib\*.adesh") $stdAssets -Force
+
+Write-Host "[SUCCESS] AdeshLang Mobile Bridge libraries built and standard library bound successfully!" -ForegroundColor Green

@@ -1,0 +1,315 @@
+name: Mobile Release (Android / Flutter)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag (e.g. v0.3.0 or mobile-v0.3.0). If left empty, uses current version from Cargo.toml."
+        required: false
+        default: ""
+        type: string
+      build_split_apks:
+        description: "Build per-ABI split APKs (arm64-v8a, x86_64)"
+        required: false
+        default: true
+        type: boolean
+      build_universal_apk:
+        description: "Build universal fat APK"
+        required: false
+        default: true
+        type: boolean
+      build_appbundle:
+        description: "Build Android App Bundle (.aab)"
+        required: false
+        default: false
+        type: boolean
+      create_github_release:
+        description: "Publish to GitHub Releases"
+        required: false
+        default: true
+        type: boolean
+
+env:
+  ADESH_REPO: adeshlang/AdeshLang
+  CARGO_INCREMENTAL: "0"
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: "true"
+  ADESH_SKIP_AI_MODEL: "1"
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: mobile-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-android:
+    name: Build Android Flutter App & Bridge
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      # ========================================================================
+      # CHECKOUT
+      # ========================================================================
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ========================================================================
+      # JAVA & GRADLE SETUP
+      # ========================================================================
+      - name: Set up Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      # ========================================================================
+      # ANDROID NDK SETUP
+      # ========================================================================
+      - name: Set up Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+          link-to-sdk: true
+
+      # ========================================================================
+      # RUST TOOLCHAIN & TARGETS
+      # ========================================================================
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android, armv7-linux-androideabi
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.8
+
+      - name: Cache Cargo & NDK builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: adesh-mobile-android
+          workspaces: |
+            . -> target
+            mobile/bridge -> target
+          cache-all-crates: true
+          cache-on-failure: true
+          cache-targets: true
+
+      - name: Cache cargo-ndk
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-ndk
+          key: cargo-ndk-bin-${{ runner.os }}
+
+      - name: Install cargo-ndk
+        run: |
+          if ! command -v cargo-ndk >/dev/null 2>&1; then
+            echo "Installing cargo-ndk..."
+            cargo install cargo-ndk --locked
+          else
+            echo "cargo-ndk is already installed."
+          fi
+
+      # ========================================================================
+      # FLUTTER SETUP & CACHE
+      # ========================================================================
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          cache: true
+          cache-key: "flutter-:os:-:channel:-:version:-:arch:-:hash:"
+
+      - name: Cache Gradle packages & wrapper
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-cache-${{ runner.os }}-${{ hashFiles('mobile/flutter/android/gradle/wrapper/gradle-wrapper.properties', 'mobile/flutter/android/**/*.gradle*') }}
+          restore-keys: |
+            gradle-cache-${{ runner.os }}-
+
+      # ========================================================================
+      # COMPILE RUST MOBILE BRIDGE (.SO) TO JNILIBS
+      # ========================================================================
+      - name: Compile Native Mobile Bridge (.so)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "==================================================="
+          echo "Building AdeshLang Mobile Bridge (.so) via NDK"
+          echo "==================================================="
+
+          jni_dir="$GITHUB_WORKSPACE/mobile/flutter/android/app/src/main/jniLibs"
+          manifest_path="$GITHUB_WORKSPACE/mobile/bridge/Cargo.toml"
+
+          mkdir -p "$jni_dir"
+
+          echo "Running cargo ndk..."
+          cargo ndk -t arm64-v8a -t x86_64 -o "$jni_dir" --manifest-path "$manifest_path" build --release
+
+          echo "Verifying compiled .so libraries:"
+          ls -lh "$jni_dir"/arm64-v8a/*.so
+          ls -lh "$jni_dir"/x86_64/*.so
+
+      # ========================================================================
+      # BIND STANDARD LIBRARY (src/stdlib/*.adesh -> assets/std)
+      # ========================================================================
+      - name: Bind AdeshLang Standard Library to Flutter Assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "==================================================="
+          echo "Binding AdeshLang Standard Library to Assets"
+          echo "==================================================="
+
+          std_assets="$GITHUB_WORKSPACE/mobile/flutter/assets/std"
+          mkdir -p "$std_assets"
+
+          cp "$GITHUB_WORKSPACE/src/stdlib/"*.adesh "$std_assets/"
+
+          stdlib_count=$(find "$std_assets" -maxdepth 1 -type f -name "*.adesh" | wc -l)
+          echo "Bound $stdlib_count standard library modules to Flutter assets:"
+          ls -la "$std_assets"
+
+          if [ "$stdlib_count" -eq 0 ]; then
+            echo "::error::No standard library files were copied."
+            exit 1
+          fi
+
+      # ========================================================================
+      # DETERMINE VERSION & PREPARE OUTPUTS
+      # ========================================================================
+      - name: Determine version
+        id: version_info
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          if [ -z "$version" ]; then
+            version="0.3.0"
+          fi
+
+          input_tag="${{ inputs.tag_name }}"
+          if [ -n "$input_tag" ]; then
+            tag="$input_tag"
+          else
+            tag="v${version}"
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Building AdeshLang Mobile App version $version (tag: $tag)"
+
+      # ========================================================================
+      # BUILD FLUTTER ANDROID PACKAGES
+      # ========================================================================
+      - name: Build Flutter Android APK(s)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$GITHUB_WORKSPACE/mobile/flutter"
+
+          echo "Fetching Flutter dependencies..."
+          flutter pub get
+
+          out_dir="$GITHUB_WORKSPACE/dist/mobile"
+          mkdir -p "$out_dir"
+
+          version="${{ steps.version_info.outputs.version }}"
+
+          # 1. Build split per-ABI APKs
+          if [ "${{ inputs.build_split_apks }}" = "true" ]; then
+            echo "==================================================="
+            echo "Building Split Per-ABI APKs..."
+            echo "==================================================="
+            flutter build apk --release --split-per-abi
+
+            if [ -f "build/app/outputs/flutter-apk/app-arm64-v8a-release.apk" ]; then
+              cp "build/app/outputs/flutter-apk/app-arm64-v8a-release.apk" "$out_dir/AdeshLang-mobile-${version}-arm64-v8a.apk"
+            fi
+            if [ -f "build/app/outputs/flutter-apk/app-x86_64-release.apk" ]; then
+              cp "build/app/outputs/flutter-apk/app-x86_64-release.apk" "$out_dir/AdeshLang-mobile-${version}-x86_64.apk"
+            fi
+          fi
+
+          # 2. Build Universal Fat APK
+          if [ "${{ inputs.build_universal_apk }}" = "true" ]; then
+            echo "==================================================="
+            echo "Building Universal APK..."
+            echo "==================================================="
+            flutter build apk --release
+
+            if [ -f "build/app/outputs/flutter-apk/app-release.apk" ]; then
+              cp "build/app/outputs/flutter-apk/app-release.apk" "$out_dir/AdeshLang-mobile-${version}-universal.apk"
+            fi
+          fi
+
+          # 3. Build AppBundle (.aab)
+          if [ "${{ inputs.build_appbundle }}" = "true" ]; then
+            echo "==================================================="
+            echo "Building Android AppBundle (.aab)..."
+            echo "==================================================="
+            flutter build appbundle --release
+
+            if [ -f "build/app/outputs/bundle/release/app-release.aab" ]; then
+              cp "build/app/outputs/bundle/release/app-release.aab" "$out_dir/AdeshLang-mobile-${version}.aab"
+            fi
+          fi
+
+      # ========================================================================
+      # GENERATE CHECKSUMS
+      # ========================================================================
+      - name: Generate SHA256 checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          out_dir="$GITHUB_WORKSPACE/dist/mobile"
+          cd "$out_dir"
+
+          echo "Generated Mobile Release Files:"
+          ls -lh
+
+          rm -f SHA256SUMS-mobile.txt
+
+          sha256sum * > SHA256SUMS-mobile.txt
+
+          echo "==================================================="
+          echo "SHA256SUMS-mobile.txt"
+          echo "==================================================="
+          cat SHA256SUMS-mobile.txt
+
+      # ========================================================================
+      # UPLOAD ARTIFACTS
+      # ========================================================================
+      - name: Upload Android Release Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: adeshlang-mobile-android-${{ steps.version_info.outputs.version }}
+          path: dist/mobile/*
+          if-no-files-found: error
+          retention-days: 14
+
+      # ========================================================================
+      # PUBLISH GITHUB RELEASE
+      # ========================================================================
+      - name: Publish to GitHub Releases
+        if: inputs.create_github_release == true
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version_info.outputs.tag }}
+          name: AdeshLang Mobile ${{ steps.version_info.outputs.tag }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/mobile/*
