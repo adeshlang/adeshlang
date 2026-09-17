@@ -145,6 +145,36 @@
       "url": "https://github.com/adeshlang/adeshlang/releases/download/v0.3.0/adesh-editor.exe",
       "target_os": "windows",
       "target_arch": "x86_64"
+    },
+    "mobile_android_arm64": {
+      "version": "0.3.0",
+      "size": 62200000,
+      "sha256": "94b07518478018aaff020389d1b9027ec94f4f836c3849e4f1fa2b546800a071",
+      "url": "https://github.com/adeshlang/adeshlang/releases/download/mobile-v0.3.0/AdeshLang-mobile-0.3.0-arm64-v8a.apk",
+      "target_os": "android",
+      "target_arch": "arm64"
+    },
+    "mobile_android_universal": {
+      "version": "0.3.0",
+      "size": 134000000,
+      "sha256": "1ac32660e0ca611049a7b961c11ed1b315ae31be6173027c77ed8ba0f49b9bf1",
+      "url": "https://github.com/adeshlang/adeshlang/releases/download/mobile-v0.3.0/AdeshLang-mobile-0.3.0-universal.apk",
+      "target_os": "android"
+    },
+    "mobile_android_x86_64": {
+      "version": "0.3.0",
+      "size": 73500000,
+      "sha256": "6392a8432b6ee2b5d21cd9ac85c7896ebd1140449ff53b302d1f428193096bc3",
+      "url": "https://github.com/adeshlang/adeshlang/releases/download/mobile-v0.3.0/AdeshLang-mobile-0.3.0-x86_64.apk",
+      "target_os": "android",
+      "target_arch": "x86_64"
+    },
+    "mobile_android_aab": {
+      "version": "0.3.0",
+      "size": 107000000,
+      "sha256": "b6453465967f1b69c53b8e1079d2c14f06d2afeb1bdc2e096c64163cccd61b10",
+      "url": "https://github.com/adeshlang/adeshlang/releases/download/mobile-v0.3.0/AdeshLang-mobile-0.3.0.aab",
+      "target_os": "android"
     }
   }
 }
