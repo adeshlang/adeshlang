@@ -1,28 +1,34 @@
-name: Publish Docker Image
+name: Publish Docker Image (On-Demand)
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Image tag to publish (e.g. 0.3.0 or latest). If empty, extracted from git tag / Cargo.toml."
+        description: "Image tag to publish (default: 0.3.0)"
         required: false
-        default: ""
+        default: "0.3.0"
         type: string
       push_latest:
-        description: "Tag and push as latest"
+        description: "Also tag and push as :latest"
         required: false
         default: true
         type: boolean
+      dockerfile:
+        description: "Dockerfile to build from (Dockerfile.release or Dockerfile)"
+        required: false
+        default: "Dockerfile.release"
+        type: choice
+        options:
+          - "Dockerfile.release"
+          - "Dockerfile"
 
 concurrency:
-  group: docker-publish-${{ github.ref }}
+  group: docker-publish-manual
   cancel-in-progress: false
 
 jobs:
   build-and-push:
-    name: Build & Push Docker Image to Docker Hub
+    name: Build & Push Multi-Arch Image to Docker Hub
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -113,7 +119,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./Dockerfile
+          file: ./${{ inputs.dockerfile || 'Dockerfile.release' }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}

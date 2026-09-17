@@ -5,6 +5,7 @@ ENV PATH="/usr/lib/adeshlang/bin:${PATH}"
 ENV ADESH_HOME="/usr/lib/adeshlang"
 
 # Install core runtime utilities, build tools, and complete LLVM/Clang/LLD/MLIR toolchain
+ARG TARGETARCH
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         curl \
@@ -19,9 +20,11 @@ RUN apt-get update && \
         git \
         nano \
         procps && \
-    curl -sLO https://github.com/adeshlang/adeshlang/releases/download/v0.3.0/adeshlang_0.3.0_amd64.deb && \
-    dpkg -i adeshlang_0.3.0_amd64.deb && \
-    rm adeshlang_0.3.0_amd64.deb && \
+    DEB_ARCH="amd64" && \
+    if [ "$TARGETARCH" = "arm64" ]; then DEB_ARCH="arm64"; fi && \
+    curl -sLO "https://github.com/adeshlang/adeshlang/releases/download/v0.3.0/adeshlang_0.3.0_${DEB_ARCH}.deb" && \
+    dpkg -i "adeshlang_0.3.0_${DEB_ARCH}.deb" && \
+    rm "adeshlang_0.3.0_${DEB_ARCH}.deb" && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
