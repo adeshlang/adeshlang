@@ -5,8 +5,10 @@ usage() {
   printf 'Usage: %s <x86_64|aarch64> [version] [--with-toolchain]\n' "$0"
 }
 
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 arch="${1:-}"
-version="${2:-0.3.0}"
+version="${2:-$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -n1)}"
+[[ -n "$version" ]] || version="0.3.0"
 with_toolchain=0
 if [[ "${3:-}" == "--with-toolchain" ]]; then
   with_toolchain=1
@@ -23,9 +25,8 @@ case "$arch" in
     ;;
 esac
 
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 stage="$root/dist/linux-$arch"
-output_dir="$root/dist/rpm"
+output_dir="$root/dist"
 rpmbuild_root="$root/dist/rpmbuild-$arch"
 spec="$root/installer/linux/rpm/adeshlang.spec"
 

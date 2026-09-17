@@ -133,7 +133,7 @@ target-lexicon = "0.12"
 wasmtime = "36.0.7"
 
 [target.'cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))'.dependencies]
-libffi = "3.2"
+libffi = "5.2"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }

@@ -160,7 +160,7 @@ enum ArgValue {
 
 #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
 impl ArgValue {
-    fn as_arg(&self) -> Arg {
+    fn as_arg(&self) -> Arg<'_> {
         match self {
             ArgValue::I8(v) => Arg::new(v),
             ArgValue::U8(v) => Arg::new(v),

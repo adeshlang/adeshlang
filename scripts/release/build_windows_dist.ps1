@@ -151,8 +151,14 @@ if ($SkipAiModel) {
 }
 
 # 4. Generate Portable ZIP Distribution Package
-Write-Host "[4/6] Packaging AdeshLang-$Arch-windows-portable.zip..." -ForegroundColor Yellow
-$ZipPath = "$RootDir\dist\AdeshLang-0.3.0-$Arch-windows-portable.zip"
+$CargoToml = Get-Content "$RootDir\Cargo.toml" -Raw
+if ($CargoToml -match '(?m)^version\s*=\s*"([^"]+)"') {
+    $Version = $Matches[1]
+} else {
+    $Version = "0.3.0"
+}
+Write-Host "[4/6] Packaging AdeshLang-$Version-$Arch-windows-portable.zip..." -ForegroundColor Yellow
+$ZipPath = "$RootDir\dist\AdeshLang-$Version-$Arch-windows-portable.zip"
 if (Test-Path $ZipPath) { Remove-Item $ZipPath -Force }
 Compress-Archive -Path "$DistDir\*" -DestinationPath $ZipPath -Force
 Write-Host "      Portable package created at: $ZipPath" -ForegroundColor Green

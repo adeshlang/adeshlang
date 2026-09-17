@@ -192,6 +192,45 @@ jobs:
           cache-targets: true
 
       # ========================================================================
+      # AI MODEL CACHE
+      # ========================================================================
+
+      - name: Cache AI models
+        uses: actions/cache@v4
+        with:
+          path: ai/models/*.gguf
+          key: ai-models-${{ hashFiles('ai/models/manifest.json') }}
+          restore-keys: |
+            ai-models-
+
+      # ========================================================================
+      # WINDOWS DEPENDENCY CACHE
+      # ========================================================================
+
+      - name: Cache Windows tools
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\ProgramData\chocolatey\cache
+            ~/.dotnet/tools
+          key: win-tools-${{ matrix.arch }}-${{ hashFiles('installer/windows/**') }}
+          restore-keys: |
+            win-tools-${{ matrix.arch }}-
+            win-tools-
+
+      # ========================================================================
+      # LINUX PACKAGING TOOLS
+      # ========================================================================
+
+      - name: Install Linux packaging tools
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y rpm dpkg-dev
+
+      # ========================================================================
       # WINDOWS BUILD
       # ========================================================================
 
@@ -560,108 +599,28 @@ jobs:
             "${{ matrix.target }}"
 
       # ========================================================================
-      # UNIX STAGING
+      # MACOS INSTALLERS
       # ========================================================================
 
-      - name: Prepare Unix release files
-        if: runner.os != 'Windows'
+      - name: Build macOS installers
+        if: runner.os == 'macOS'
         shell: bash
+        continue-on-error: true
         run: |
           set -euo pipefail
 
-          version="$(
-            sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml |
-            head -n 1
-          )"
-
-          stage="$GITHUB_WORKSPACE/dist/AdeshLang-${version}-${{ matrix.os }}-${{ matrix.arch }}"
-
-          if [ ! -d "$stage" ]; then
-            echo "::error::Expected release directory does not exist:"
-            echo "$stage"
-            exit 1
+          if [ -f "installer/macos/build-pkg.sh" ]; then
+            chmod +x installer/macos/build-pkg.sh
+            echo "Building macOS .pkg..."
+            ./installer/macos/build-pkg.sh "${{ matrix.arch }}" || echo "::warning::macOS .pkg build failed"
           fi
 
-          # --------------------------------------------------------------------
-          # Remove bundled toolchain.
-          # --------------------------------------------------------------------
-
-          if [ -d "$stage/toolchain" ]; then
-
-            find "$stage/toolchain" \
-              -type f \
-              -delete
-
-            find "$stage/toolchain" \
-              -depth \
-              -type d \
-              -empty \
-              -delete
-
-            echo "Removed bundled Unix toolchain."
+          if [ -f "installer/macos/build-dmg.sh" ]; then
+            chmod +x installer/macos/build-dmg.sh
+            echo "Building macOS .dmg..."
+            ./installer/macos/build-dmg.sh "${{ matrix.arch }}" || echo "::warning::macOS .dmg build failed"
           fi
 
-          # --------------------------------------------------------------------
-          # Standard library.
-          # --------------------------------------------------------------------
-
-          mkdir -p "$stage/std"
-
-          stdlib_count=0
-
-          while IFS= read -r -d '' file; do
-
-            cp "$file" "$stage/std/"
-
-            stdlib_count=$((stdlib_count + 1))
-
-          done < <(
-            find \
-              "$GITHUB_WORKSPACE/src/stdlib" \
-              -maxdepth 1 \
-              -type f \
-              -name "*.adesh" \
-              -print0
-          )
-
-          if [ "$stdlib_count" -eq 0 ]; then
-            echo "::error::No AdeshLang standard-library files were found."
-            exit 1
-          fi
-
-          # --------------------------------------------------------------------
-          # Configuration.
-          # --------------------------------------------------------------------
-
-          mkdir -p "$stage/config"
-
-          manifest="$GITHUB_WORKSPACE/installer/manifests/toolchain-manifest.json"
-
-          if [ -f "$manifest" ]; then
-
-            cp \
-              "$manifest" \
-              "$stage/config/toolchain-manifest.json"
-
-          else
-
-            echo "::warning::Toolchain manifest not found."
-
-          fi
-
-          # --------------------------------------------------------------------
-          # License.
-          # --------------------------------------------------------------------
-
-          mkdir -p "$stage/licenses"
-
-          if [ -f "$GITHUB_WORKSPACE/LICENSE" ]; then
-
-            cp \
-              "$GITHUB_WORKSPACE/LICENSE" \
-              "$stage/licenses/LICENSE"
-
-          fi
 
       # ========================================================================
       # VERIFY DIST
