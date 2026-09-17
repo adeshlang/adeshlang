@@ -1,0 +1,121 @@
+name: Publish Docker Image
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to publish (e.g. 0.3.0 or latest). If empty, extracted from git tag / Cargo.toml."
+        required: false
+        default: ""
+        type: string
+      push_latest:
+        description: "Tag and push as latest"
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-push:
+    name: Build & Push Docker Image to Docker Hub
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up QEMU (for multi-platform builds)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@v3
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to GitHub Container Registry (ghcr.io)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine Docker Image Tags & Metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Extract version from Cargo.toml or git tag or input
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          if [ -z "$version" ]; then
+            version="0.3.0"
+          fi
+
+          input_tag="${{ inputs.tag }}"
+          if [ -n "$input_tag" ]; then
+            tag="$input_tag"
+          else
+            tag="$version"
+          fi
+
+          repo_owner="${{ github.repository_owner }}"
+          repo_name="${{ github.event.repository.name }}"
+
+          # Docker Hub targets
+          dockerhub_user="${{ secrets.DOCKERHUB_USERNAME }}"
+          if [ -z "$dockerhub_user" ]; then
+            dockerhub_user="adeshlang"
+          fi
+
+          tags=""
+          # 1. GHCR tags (always generated)
+          tags="${tags}ghcr.io/${repo_owner}/${repo_name}:${tag},"
+          tags="${tags}ghcr.io/${repo_owner}/${repo_name}:v${version},"
+
+          # 2. Docker Hub tags (if secrets configured or default org)
+          tags="${tags}${dockerhub_user}/${repo_name}:${tag},"
+          tags="${tags}${dockerhub_user}/${repo_name}:v${version},"
+          tags="${tags}${dockerhub_user}/adesh:${tag},"
+
+          if [ "${{ inputs.push_latest }}" = "true" ] || [ "${{ github.event_name }}" = "release" ]; then
+            tags="${tags}ghcr.io/${repo_owner}/${repo_name}:latest,"
+            tags="${tags}${dockerhub_user}/${repo_name}:latest,"
+            tags="${tags}${dockerhub_user}/adesh:latest,"
+          fi
+
+          # Trim trailing comma
+          tags="$(echo "$tags" | sed 's/,$//')"
+
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Generated tags: $tags"
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
