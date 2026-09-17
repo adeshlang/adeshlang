@@ -36,11 +36,12 @@ COPY installer/ ./installer/
 COPY LICENSE ./
 COPY THIRD_PARTY_LICENSES/ ./THIRD_PARTY_LICENSES/
 
-# Build all release binaries and shared/static libraries
-RUN cargo build --release --bin adesh --bin adl --bin als --bin adesh-editor --lib
-
-# Stage the complete installation into /opt/adeshlang
-RUN mkdir -p /opt/adeshlang/bin \
+# Build all release binaries and shared/static libraries with Cargo cache mounts
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/usr/src/adeshlang/target \
+    cargo build --release --bin adesh --bin adl --bin als --bin adesh-editor --lib && \
+    mkdir -p /opt/adeshlang/bin \
              /opt/adeshlang/std \
              /opt/adeshlang/lib \
              /opt/adeshlang/include \
