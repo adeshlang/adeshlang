@@ -71,15 +71,20 @@ LABEL org.opencontainers.image.source="https://github.com/adeshlang/adeshlang"
 LABEL org.opencontainers.image.vendor="AdeshLang Community"
 LABEL org.opencontainers.image.licenses="AdeshLang-2.0"
 
-# Install runtime utilities, dynamic linker dependencies, and C compiler for AOT/FFI
+# Install runtime utilities, dynamic linker dependencies, C/C++ compiler, and complete LLVM/Clang/LLD/MLIR toolchain
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     git \
     libffi8 \
     gcc \
+    g++ \
     libc6-dev \
     make \
+    clang \
+    lld \
+    llvm \
+    llvm-dev \
     procps \
     && rm -rf /var/lib/apt/lists/*
 

@@ -2,12 +2,20 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH="/usr/lib/adeshlang/bin:${PATH}"
+ENV ADESH_HOME="/usr/lib/adeshlang"
 
+# Install core runtime utilities, build tools, and complete LLVM/Clang/LLD/MLIR toolchain
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         curl \
         ca-certificates \
         build-essential \
+        clang \
+        lld \
+        llvm \
+        llvm-dev \
+        libclang-dev \
+        mlir-18-tools \
         git \
         nano \
         procps && \
@@ -20,3 +28,4 @@ RUN apt-get update && \
 WORKDIR /workspace
 
 CMD ["/bin/bash"]
+
