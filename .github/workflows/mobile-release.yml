@@ -83,7 +83,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android, x86_64-linux-android, armv7-linux-androideabi
+          targets: aarch64-linux-android, x86_64-linux-android
 
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@v0.0.8
@@ -151,13 +151,12 @@ jobs:
 
           mkdir -p "$jni_dir"
 
-          echo "Running cargo ndk..."
-          cargo ndk -t arm64-v8a -t x86_64 -t armeabi-v7a -o "$jni_dir" --manifest-path "$manifest_path" build --release
+          echo "Running cargo ndk for 64-bit architectures (arm64-v8a, x86_64)..."
+          cargo ndk -t arm64-v8a -t x86_64 -o "$jni_dir" --manifest-path "$manifest_path" build --release
 
           echo "Verifying compiled .so libraries:"
           ls -lh "$jni_dir"/arm64-v8a/*.so
           ls -lh "$jni_dir"/x86_64/*.so
-          ls -lh "$jni_dir"/armeabi-v7a/*.so || true
 
       # ========================================================================
       # BIND STANDARD LIBRARY (src/stdlib/*.adesh -> assets/std)
@@ -233,13 +232,10 @@ jobs:
             echo "==================================================="
             echo "Building Split Per-ABI APKs..."
             echo "==================================================="
-            flutter build apk --release --split-per-abi
+            flutter build apk --release --split-per-abi --target-platform android-arm64,android-x64
 
             if [ -f "build/app/outputs/flutter-apk/app-arm64-v8a-release.apk" ]; then
               cp "build/app/outputs/flutter-apk/app-arm64-v8a-release.apk" "$out_dir/AdeshLang-mobile-${version}-arm64-v8a.apk"
-            fi
-            if [ -f "build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk" ]; then
-              cp "build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk" "$out_dir/AdeshLang-mobile-${version}-armeabi-v7a.apk"
             fi
             if [ -f "build/app/outputs/flutter-apk/app-x86_64-release.apk" ]; then
               cp "build/app/outputs/flutter-apk/app-x86_64-release.apk" "$out_dir/AdeshLang-mobile-${version}-x86_64.apk"
@@ -251,7 +247,7 @@ jobs:
             echo "==================================================="
             echo "Building Universal APK..."
             echo "==================================================="
-            flutter build apk --release
+            flutter build apk --release --target-platform android-arm64,android-x64
 
             if [ -f "build/app/outputs/flutter-apk/app-release.apk" ]; then
               cp "build/app/outputs/flutter-apk/app-release.apk" "$out_dir/AdeshLang-mobile-${version}-universal.apk"
@@ -263,7 +259,7 @@ jobs:
             echo "==================================================="
             echo "Building Android AppBundle (.aab)..."
             echo "==================================================="
-            flutter build appbundle --release
+            flutter build appbundle --release --target-platform android-arm64,android-x64
 
             if [ -f "build/app/outputs/bundle/release/app-release.aab" ]; then
               cp "build/app/outputs/bundle/release/app-release.aab" "$out_dir/AdeshLang-mobile-${version}.aab"
