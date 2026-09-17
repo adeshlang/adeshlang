@@ -616,12 +616,12 @@ fn install_via_system_packages() -> Result<(), String> {
             "  ▶ Installing {:?} via the system package manager",
             packages
         );
-        let mut command = std::process::Command::new(&manager);
-        if manager.ends_with("apt") {
+        let manager_str = manager.to_string_lossy();
+        if manager_str.contains("apt") {
             command.args(["install", "-y"]);
-        } else if manager.ends_with("dnf") {
+        } else if manager_str.contains("dnf") {
             command.args(["install", "-y"]);
-        } else if manager.ends_with("zypper") {
+        } else if manager_str.contains("zypper") {
             command.arg("--non-interactive").arg("install");
         } else {
             command.args(["-S", "--noconfirm"]);
