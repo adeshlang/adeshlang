@@ -7,7 +7,7 @@ print("========================================");
 let map = Collections.HashMap<string, string>();
 map.insert("name", "AdeshLang");
 map.insert("author", "Ajay");
-map.insert("year", 2026);
+map.insert("year", "2026");
 
 print("Map len: ", map.len());
 print("Get 'name': ", map.get("name"));

@@ -1,0 +1,43 @@
+import Parallel;
+import Random;
+
+const ITERATIONS: u64 = 1000000;
+const MODULUS: u64 = 4294967295;
+
+fn compute_iteration(i: u64): u64 {
+    let random_value: u64 = Random.int(1, 1000000);
+
+    let multiplier_1: u64 = (random_value % 997) + 3;
+    let multiplier_2: u64 = (random_value % 991) + 5;
+    let multiplier_3: u64 = (random_value % 983) + 7;
+
+    let a: u64 = (i % 1000003) + 1;
+    let b: u64 = (random_value % 1000033) + 1;
+
+    let p1: u64 = (a * multiplier_1) % MODULUS;
+    let p2: u64 = (b * multiplier_2) % MODULUS;
+    let p3: u64 = ((p1 + p2) * multiplier_3) % MODULUS;
+
+    return (p3 + random_value + i) % MODULUS;
+}
+
+print("AdeshLang Benchmark (Standard Random)");
+print("Iterations: ", ITERATIONS);
+print("Parallel execution: enabled");
+
+let start_time: f64 = clock();
+
+Parallel.forEach(0, ITERATIONS, fn(i) {
+    let result: u64 = compute_iteration(i);
+    if result == 0 {
+        print("");
+    }
+});
+
+let end_time: f64 = clock();
+let elapsed_seconds: f64 = end_time - start_time;
+let iterations_per_second: f64 = ITERATIONS / elapsed_seconds;
+
+print("Benchmark Complete");
+print("Elapsed seconds: ", elapsed_seconds);
+print("Iterations/sec: ", iterations_per_second);

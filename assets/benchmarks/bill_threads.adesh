@@ -1,0 +1,53 @@
+import thread;
+import Random;
+
+fn compute_iteration(i: u64): u64 {
+    let random_value: u64 = Random.int(1, 1000000);
+
+    let multiplier_1: u64 = (random_value % 997) + 3;
+    let multiplier_2: u64 = (random_value % 991) + 5;
+    let multiplier_3: u64 = (random_value % 983) + 7;
+
+    let a: u64 = (i % 1000003) + 1;
+    let b: u64 = (random_value % 1000033) + 1;
+
+    let p1: u64 = (a * multiplier_1) % 4294967295;
+    let p2: u64 = (b * multiplier_2) % 4294967295;
+    let p3: u64 = ((p1 + p2) * multiplier_3) % 4294967295;
+
+    return (p3 + random_value + i) % 4294967295;
+}
+
+fn worker_chunk(start_idx: u64, end_idx: u64) {
+    for (let curr = start_idx; curr < end_idx; curr = curr + 1) {
+        let result: u64 = compute_iteration(curr);
+        if result == 0 {
+            print("");
+        }
+    }
+}
+
+print("AdeshLang Benchmark (Thread Library)");
+print("Iterations: ", 1000000);
+print("Threads: ", 4);
+
+let start_time: f64 = clock();
+
+let h1 = thread.spawn(fn() { worker_chunk(0, 250000); });
+let h2 = thread.spawn(fn() { worker_chunk(250000, 500000); });
+let h3 = thread.spawn(fn() { worker_chunk(500000, 750000); });
+let h4 = thread.spawn(fn() { worker_chunk(750000, 1000000); });
+
+h1.join();
+h2.join();
+h3.join();
+h4.join();
+
+let end_time: f64 = clock();
+let elapsed_seconds: f64 = end_time - start_time;
+let iterations_per_second: f64 = 1000000.0 / elapsed_seconds;
+
+print("Benchmark Complete");
+print("Elapsed seconds: ", elapsed_seconds);
+print("Iterations/sec: ", iterations_per_second);
+

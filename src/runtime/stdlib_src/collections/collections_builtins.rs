@@ -154,7 +154,36 @@ fn get_generic_type_context() -> std::vec::Vec<String> {
     crate::execution::runtime_core::GENERIC_TYPE_CONTEXT.with(|ctx| ctx.borrow().clone())
 }
 
+fn unwrap_ref_val(val: Value) -> Value {
+    match val {
+        Value::Ref(inner, _) => unwrap_ref_val(*inner),
+        Value::Share(sr) => unsafe { unwrap_ref_val((*sr.ptr).value.clone()) },
+        other => other,
+    }
+}
+
+fn unwrap_ref<'a>(mut v: &'a Value) -> &'a Value {
+    loop {
+        match v {
+            Value::Ref(inner, _) => v = inner.as_ref(),
+            Value::Share(sr) => unsafe { v = &(*sr.ptr).value },
+            _ => return v,
+        }
+    }
+}
+
+fn extract_array(val: &Value) -> Option<std::vec::Vec<Value>> {
+    match unwrap_ref(val) {
+        Value::Array(arr) => Some(arr.clone()),
+        Value::RawArray(_, arr) => Some(arr.clone()),
+        Value::DynArray(da) => Some(da.data.clone()),
+        Value::Tuple(tup) => Some(tup.clone()),
+        _ => None,
+    }
+}
+
 fn validate_and_coerce_type(val: Value, expected_type: &str) -> Result<Value, String> {
+    let val = unwrap_ref_val(val);
     let clean = expected_type.trim();
     if clean.is_empty()
         || clean == "T"
@@ -637,9 +666,9 @@ fn collections_slice_new(
         return Err("Slice(array, start?, end?)".to_string());
     }
 
-    let source = match &args[0] {
-        Value::Array(arr) => arr.clone(),
-        _ => return Err("Slice requires an array source".to_string()),
+    let source = match extract_array(&args[0]) {
+        Some(arr) => arr,
+        None => return Err("Slice requires an array source".to_string()),
     };
 
     let start = if args.len() > 1 {
