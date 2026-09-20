@@ -58,6 +58,7 @@ once_cell = "1"
 unicode-width = "0.2"
 itoa = "1.0"
 ryu = "1.0"
+rayon = "1.10"
 
 # Cryptography dependencies
 sha1 = "0.10"

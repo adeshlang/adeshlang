@@ -270,8 +270,16 @@ impl InterpreterExecutor {
             "and" => lhs & rhs,
             "or" => lhs | rhs,
             "xor" => lhs ^ rhs,
-            "shl" => lhs << (rhs & 63),
-            "shr" => lhs >> (rhs & 63),
+            "shl" | "shr" => {
+                // Out-of-range shift counts are an error, not a masked shift —
+                // the same policy the interpreter and native tiers enforce.
+                if rhs < 0 || rhs >= 64 {
+                    self.context.borrow_mut().exception =
+                        Some("invalid shift amount: expected 0 <= count < 64".to_string());
+                    return 0;
+                }
+                if op == "shl" { lhs << rhs } else { lhs >> rhs }
+            }
             _ => 0,
         }
     }

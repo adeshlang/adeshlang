@@ -1,15 +1,15 @@
 {
   "schema": 2,
   "adeshVersion": "0.3.0",
-  "defaultComponents": ["llvm", "mlir"],
+  "defaultComponents": ["llvm"],
   "components": {
     "llvm": {
-      "version": "23.1.1",
+      "version": "18.1.8",
       "required": true,
       "description": "Pinned LLVM/Clang toolchain (clang, clang++, lld/lld-link, llvm-ar, llc) from official llvm-project releases; required for AOT compilation"
     },
     "mlir": {
-      "version": "23.1.1",
+      "version": "18.1.8",
       "required": false,
       "description": "MLIR tools (mlir-opt, mlir-translate) for GPU backend. Where no official prebuilt binary exists, build from pinned upstream source with --build-mlir-source (enables NVVM/ROCDL GPU dialects)"
     }
@@ -17,9 +17,9 @@
   "platforms": {
     "windows-x86_64": {
       "llvm": {
-        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.1/LLVM-23.1.1-win64.exe",
-        "sha256": "",
-        "size": 0,
+        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/LLVM-18.1.8-win64.exe",
+        "sha256": "94af030060d88cc17e9f00ef1663ebdc1126b35e16bebdfa1e807984b70abd8f",
+        "size": 374335885,
         "kind": "installer"
       },
       "mlir": {
@@ -32,57 +32,57 @@
     },
     "linux-x86_64": {
       "llvm": {
-        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.1/LLVM-23.1.1-Linux-X64.tar.xz",
-        "sha256": "",
-        "size": 0,
+        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz",
+        "sha256": "36ab34ec8198f39517596ad5ad01b54a72faeb9cbab6ee77926e838f72365eb2",
+        "size": 1044930068,
         "format": "tar.xz"
       },
       "mlir": {
-        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.1/LLVM-23.1.1-Linux-X64.tar.xz",
-        "sha256": "",
-        "size": 0,
+        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz",
+        "sha256": "36ab34ec8198f39517596ad5ad01b54a72faeb9cbab6ee77926e838f72365eb2",
+        "size": 1044930068,
         "format": "tar.xz"
       }
     },
     "linux-aarch64": {
       "llvm": {
-        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.1/LLVM-23.1.1-Linux-ARM64.tar.xz",
-        "sha256": "",
-        "size": 0,
+        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-aarch64-linux-gnu.tar.xz",
+        "sha256": "eb7d16ee9796ff0f09a5c88c0ab4e1d3e18a2fa42ab6fb3c0dd580e5e40e6de7",
+        "size": 1051625508,
         "format": "tar.xz"
       },
       "mlir": {
-        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.1/LLVM-23.1.1-Linux-ARM64.tar.xz",
-        "sha256": "",
-        "size": 0,
+        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-aarch64-linux-gnu.tar.xz",
+        "sha256": "eb7d16ee9796ff0f09a5c88c0ab4e1d3e18a2fa42ab6fb3c0dd580e5e40e6de7",
+        "size": 1051625508,
         "format": "tar.xz"
       }
     },
     "macos-arm64": {
       "llvm": {
-        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.1/LLVM-23.1.1-macOS-ARM64.tar.xz",
-        "sha256": "",
-        "size": 0,
+        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-arm64-apple-macos11.tar.xz",
+        "sha256": "63fbbe7ec982f6e911eb399ee4eeae344aa1eebe5573432a510523e3ec56a2bb",
+        "size": 838639376,
         "format": "tar.xz"
       },
       "mlir": {
-        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.1/LLVM-23.1.1-macOS-ARM64.tar.xz",
-        "sha256": "",
-        "size": 0,
+        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-arm64-apple-macos11.tar.xz",
+        "sha256": "63fbbe7ec982f6e911eb399ee4eeae344aa1eebe5573432a510523e3ec56a2bb",
+        "size": 838639376,
         "format": "tar.xz"
       }
     },
     "macos-x86_64": {
       "llvm": {
-        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.1/LLVM-23.1.1-macOS-X64.tar.xz",
-        "sha256": "",
-        "size": 0,
+        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-apple-darwin.tar.xz",
+        "sha256": "55e2dcae0f2105e197d195f269a239b0271295ee38c11e737759ad453e023d53",
+        "size": 845000000,
         "format": "tar.xz"
       },
       "mlir": {
-        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.1/LLVM-23.1.1-macOS-X64.tar.xz",
-        "sha256": "",
-        "size": 0,
+        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-apple-darwin.tar.xz",
+        "sha256": "55e2dcae0f2105e197d195f269a239b0271295ee38c11e737759ad453e023d53",
+        "size": 845000000,
         "format": "tar.xz"
       }
     }

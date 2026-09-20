@@ -748,6 +748,14 @@ pub fn set_object_prop(env: usize, mut obj: Value, key: String, val: Value) -> R
 }
 
 pub fn apply_assign_op(cur: Value, op: TokenKind, rhs: Value) -> Result<Value, String> {
+    // Compound assignment may read the current value through a shared borrow.
+    let cur = match cur {
+        Value::Ref(inner, _) => (*inner).clone(),
+        other => other,
+    };
+    if let Some(op) = crate::runtime::abi::bitwise::BitOp::from_token(op) {
+        return crate::runtime::abi::bitwise::binary(op, &cur, &rhs);
+    }
     match op {
         TokenKind::Equal => Ok(rhs),
         TokenKind::PlusEqual => match (cur, rhs) {
@@ -770,75 +778,6 @@ pub fn apply_assign_op(cur: Value, op: TokenKind, rhs: Value) -> Result<Value, S
             }
             _ => Err("**= type error".to_string()),
         },
-        TokenKind::ShiftLeftEqual => {
-            if let (Value::Number(a), Value::Number(b)) = (&cur, &rhs) {
-                let ai = *a as i64;
-                let bi = *b as i64;
-                Ok(Value::Number((ai << bi) as f64))
-            } else if let (Value::BigInt(a), Value::BigInt(b)) = (&cur, &rhs) {
-                use num_traits::ToPrimitive;
-                let s = b.to_usize().ok_or_else(|| "shift".to_string())?;
-                Ok(Value::BigInt(a << s))
-            } else {
-                let ai = as_i64(&cur)?;
-                let bi = as_i64(&rhs)?;
-                Ok(Value::Number((ai << bi) as f64))
-            }
-        }
-        TokenKind::ShiftRightEqual => {
-            if let (Value::Number(a), Value::Number(b)) = (&cur, &rhs) {
-                let ai = *a as i64;
-                let bi = *b as i64;
-                Ok(Value::Number((ai >> bi) as f64))
-            } else if let (Value::BigInt(a), Value::BigInt(b)) = (&cur, &rhs) {
-                use num_traits::ToPrimitive;
-                let s = b.to_usize().ok_or_else(|| "shift".to_string())?;
-                Ok(Value::BigInt(a >> s))
-            } else {
-                let ai = as_i64(&cur)?;
-                let bi = as_i64(&rhs)?;
-                Ok(Value::Number((ai >> bi) as f64))
-            }
-        }
-        TokenKind::AmpersandEqual => {
-            if let (Value::Number(a), Value::Number(b)) = (&cur, &rhs) {
-                let ai = *a as i64;
-                let bi = *b as i64;
-                Ok(Value::Number((ai & bi) as f64))
-            } else if let (Value::BigInt(a), Value::BigInt(b)) = (&cur, &rhs) {
-                Ok(Value::BigInt(a & b))
-            } else {
-                let ai = as_i64(&cur)?;
-                let bi = as_i64(&rhs)?;
-                Ok(Value::Number((ai & bi) as f64))
-            }
-        }
-        TokenKind::PipeEqual => {
-            if let (Value::Number(a), Value::Number(b)) = (&cur, &rhs) {
-                let ai = *a as i64;
-                let bi = *b as i64;
-                Ok(Value::Number((ai | bi) as f64))
-            } else if let (Value::BigInt(a), Value::BigInt(b)) = (&cur, &rhs) {
-                Ok(Value::BigInt(a | b))
-            } else {
-                let ai = as_i64(&cur)?;
-                let bi = as_i64(&rhs)?;
-                Ok(Value::Number((ai | bi) as f64))
-            }
-        }
-        TokenKind::CaretEqual => {
-            if let (Value::Number(a), Value::Number(b)) = (&cur, &rhs) {
-                let ai = *a as i64;
-                let bi = *b as i64;
-                Ok(Value::Number((ai ^ bi) as f64))
-            } else if let (Value::BigInt(a), Value::BigInt(b)) = (&cur, &rhs) {
-                Ok(Value::BigInt(a ^ b))
-            } else {
-                let ai = as_i64(&cur)?;
-                let bi = as_i64(&rhs)?;
-                Ok(Value::Number((ai ^ bi) as f64))
-            }
-        }
         TokenKind::NullCoalesceEqual => match cur {
             Value::Null => Ok(rhs),
             _ => Ok(cur),

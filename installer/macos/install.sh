@@ -270,7 +270,10 @@ fi
 echo "==> Stripping quarantine attributes from installed files (idempotent)"
 run_root /usr/bin/xattr -dr com.apple.quarantine "$INSTALL_DIR/bin" 2>/dev/null || true
 
-# --- Toolchain (LLVM 23.1.1) ----------------------------------------------------
+# --- Toolchain (LLVM 18.1.8) ----------------------------------------------------
+# We offer to download and install the pinned toolchain through `adesh
+# toolchain install --system`, which verifies SHA-256 against the manifest.
+# Skipped when non-interactive (CI) unless --toolchain is explicitly passed.
 ask_toolchain() {
     if [[ "$SKIP_TOOLCHAIN" == "1" ]]; then
         return 1
@@ -279,16 +282,18 @@ ask_toolchain() {
         return 0
     fi
     local ans=""
-    if [[ -t 0 ]]; then
-        read -r -p "Download and install pinned LLVM 23.1.1 toolchain now (~190 MB download, ~900 MB disk space)? [Y/n] " ans || ans=""
-    elif [[ -r /dev/tty ]]; then
-        # curl | bash: stdin is the pipe, so prompt on /dev/tty instead.
-        read -r -p "Download and install pinned LLVM 23.1.1 toolchain now (~190 MB download, ~900 MB disk space)? [Y/n] " ans < /dev/tty || ans=""
+    if [[ "${WANT_TOOLCHAIN:-auto}" == "auto" ]]; then
+        if [[ "${INTERACTIVE:-1}" == "1" ]]; then
+            read -r -p "Download and install pinned LLVM 18.1.8 toolchain now (~190 MB download, ~900 MB disk space)? [Y/n] " ans || ans=""
+            ans="${ans:-y}"
+        elif [[ -t 0 ]]; then
+            read -r -p "Download and install pinned LLVM 18.1.8 toolchain now (~190 MB download, ~900 MB disk space)? [Y/n] " ans < /dev/tty || ans=""
+        fi
+        case "${ans:-y}" in
+            n|N|no) return 1 ;;
+            *) return 0 ;;
+        esac
     fi
-    case "${ans:-y}" in
-        n|N|no) return 1 ;;
-        *) return 0 ;;
-    esac
 }
 
 install_toolchain() {

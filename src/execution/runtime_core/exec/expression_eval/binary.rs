@@ -69,6 +69,9 @@ impl Exec {
     ) -> Result<Value, String> {
         let lv = self.eval_expr(l)?;
         let rv = self.eval_expr(r)?;
+        if let Some(op) = crate::runtime::abi::bitwise::BitOp::from_token(*op) {
+            return crate::runtime::abi::bitwise::binary(op, &lv, &rv);
+        }
 
         // Check for operator overloading
         if let Value::Instance(inst) = lv.clone() {

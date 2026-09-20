@@ -91,7 +91,7 @@ pub fn execute_doctor_command() {
 
     // 5. Toolchain Resolution
     let mut active_clang_path = None;
-    match resolve(Some(ToolchainPreference::Bundled)) {
+    match resolve(None) {
         Ok(toolchain) => {
             active_clang_path = Some(toolchain.clang.clone());
             println!(

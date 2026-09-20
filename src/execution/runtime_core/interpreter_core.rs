@@ -2757,6 +2757,14 @@ impl Interpreter {
             None,
         );
 
+        // Expose the bit-manipulation intrinsics behind the `std` namespace
+        // (accepting `std`, `Std`, and `STD` spellings) with no import needed,
+        // so the bare names never pollute the global function namespace.
+        let std_ns = crate::runtime::stdlib_src::core::operators::build_std_module_object();
+        for &name in &["std", "Std", "STD"] {
+            self.define_at_const(self.global, name.to_string(), std_ns.clone(), true, None);
+        }
+
         // moved earlier
 
         let input_globals_snapshot = self.capture_env_values(self.global);
@@ -11183,14 +11191,7 @@ impl Interpreter {
                         };
                         Ok(Value::Str(t.to_string()))
                     }
-                    TokenKind::Tilde => match rv {
-                        Value::BigInt(b) => Ok(Value::BigInt(!b)),
-                        Value::Number(n) => {
-                            let i = n as i64;
-                            Ok(Value::Number((!i) as f64))
-                        }
-                        _ => Err(err("~ type error")),
-                    },
+                    TokenKind::Tilde => crate::runtime::abi::bitwise::complement(&rv),
                     TokenKind::Ampersand => {
                         // Shared borrow of a variable
                         if let ExprKind::Variable(name) = &r.kind {
@@ -11523,75 +11524,15 @@ impl Interpreter {
                         let b = num(rv)?;
                         Ok(Value::Number(a.powf(b)))
                     }
-                    TokenKind::ShiftLeft => {
-                        if let (Value::BigInt(a), Value::BigInt(b)) = (&lv, &rv) {
-                            use num_traits::ToPrimitive;
-                            let s = b.to_usize().ok_or_else(|| err("shift amount"))?;
-                            Ok(Value::BigInt(a << s))
-                        } else if let (Value::Number(a), Value::Number(b)) = (&lv, &rv) {
-                            let ai = *a as i64;
-                            let bi = *b as i64;
-                            Ok(Value::Number((ai << bi) as f64))
-                        } else {
-                            let ai = as_i64(&lv).map_err(|e| err(&e))?;
-                            let bi = as_i64(&rv).map_err(|e| err(&e))?;
-                            Ok(Value::Number((ai << bi) as f64))
-                        }
-                    }
-                    TokenKind::ShiftRight => {
-                        if let (Value::BigInt(a), Value::BigInt(b)) = (&lv, &rv) {
-                            use num_traits::ToPrimitive;
-                            let s = b.to_usize().ok_or_else(|| err("shift amount"))?;
-                            Ok(Value::BigInt(a >> s))
-                        } else if let (Value::Number(a), Value::Number(b)) = (&lv, &rv) {
-                            let ai = *a as i64;
-                            let bi = *b as i64;
-                            Ok(Value::Number((ai >> bi) as f64))
-                        } else {
-                            let ai = as_i64(&lv).map_err(|e| err(&e))?;
-                            let bi = as_i64(&rv).map_err(|e| err(&e))?;
-                            Ok(Value::Number((ai >> bi) as f64))
-                        }
-                    }
-                    TokenKind::Ampersand => {
-                        if let (Value::BigInt(a), Value::BigInt(b)) = (&lv, &rv) {
-                            Ok(Value::BigInt(a & b))
-                        } else if let (Value::Number(a), Value::Number(b)) = (&lv, &rv) {
-                            let ai = *a as i64;
-                            let bi = *b as i64;
-                            Ok(Value::Number((ai & bi) as f64))
-                        } else {
-                            let ai = as_i64(&lv).map_err(|e| err(&e))?;
-                            let bi = as_i64(&rv).map_err(|e| err(&e))?;
-                            Ok(Value::Number((ai & bi) as f64))
-                        }
-                    }
-                    TokenKind::Pipe => {
-                        if let (Value::BigInt(a), Value::BigInt(b)) = (&lv, &rv) {
-                            Ok(Value::BigInt(a | b))
-                        } else if let (Value::Number(a), Value::Number(b)) = (&lv, &rv) {
-                            let ai = *a as i64;
-                            let bi = *b as i64;
-                            Ok(Value::Number((ai | bi) as f64))
-                        } else {
-                            let ai = as_i64(&lv).map_err(|e| err(&e))?;
-                            let bi = as_i64(&rv).map_err(|e| err(&e))?;
-                            Ok(Value::Number((ai | bi) as f64))
-                        }
-                    }
-                    TokenKind::Caret => {
-                        if let (Value::BigInt(a), Value::BigInt(b)) = (&lv, &rv) {
-                            Ok(Value::BigInt(a ^ b))
-                        } else if let (Value::Number(a), Value::Number(b)) = (&lv, &rv) {
-                            let ai = *a as i64;
-                            let bi = *b as i64;
-                            Ok(Value::Number((ai ^ bi) as f64))
-                        } else {
-                            let ai = as_i64(&lv).map_err(|e| err(&e))?;
-                            let bi = as_i64(&rv).map_err(|e| err(&e))?;
-                            Ok(Value::Number((ai ^ bi) as f64))
-                        }
-                    }
+                    TokenKind::ShiftLeft
+                    | TokenKind::ShiftRight
+                    | TokenKind::Ampersand
+                    | TokenKind::Pipe
+                    | TokenKind::Caret => crate::runtime::abi::bitwise::binary(
+                        crate::runtime::abi::bitwise::BitOp::from_token(*op).unwrap(),
+                        &lv,
+                        &rv,
+                    ),
                     TokenKind::Greater => match (lv, rv) {
                         (Value::BigInt(a), Value::BigInt(b)) => Ok(Value::Bool(a > b)),
                         (Value::Number(a), Value::Number(b)) => {
@@ -15622,13 +15563,40 @@ impl Interpreter {
                         Ok(nv)
                     }
                     ExprKind::Index(obj, idx) => {
-                        let ov = self.eval_expr(obj, env, loader)?;
-                        let iv = self.eval_expr(idx, env, loader)?;
+                        let ov_raw = self.eval_expr(obj, env, loader)?;
+                        let iv_raw = self.eval_expr(idx, env, loader)?;
+                        // Compound assignment may read the container through a
+                        // shared borrow; dereference before reading and storing.
+                        let mut ov = ov_raw;
+                        while let Value::Ref(inner, _) = ov {
+                            ov = (*inner).clone();
+                        }
+                        let mut iv = iv_raw;
+                        while let Value::Ref(inner, _) = iv {
+                            iv = (*inner).clone();
+                        }
                         let cur = match (&ov, iv.clone()) {
                             (Value::Object(m), Value::Str(k)) => {
                                 m.get(&k).cloned().unwrap_or(Value::Null)
                             }
-                            (Value::Array(a), Value::Number(n)) => {
+                            (Value::DynArray(da), idxv) => {
+                                let n = crate::execution::runtime::ops::num(idxv)?;
+                                if (n - n.trunc()).abs() > 1e-12 {
+                                    return Err(err("index must be integer"));
+                                }
+                                let i = n as usize;
+                                da.data.get(i).cloned().unwrap_or(Value::Null)
+                            }
+                            (Value::RawArray(_, a), idxv) => {
+                                let n = crate::execution::runtime::ops::num(idxv)?;
+                                if (n - n.trunc()).abs() > 1e-12 {
+                                    return Err(err("index must be integer"));
+                                }
+                                let i = n as usize;
+                                a.get(i).cloned().unwrap_or(Value::Null)
+                            }
+                            (Value::Array(a), idxv) => {
+                                let n = crate::execution::runtime::ops::num(idxv)?;
                                 if (n - n.trunc()).abs() > 1e-12 {
                                     return Err(err("index must be integer"));
                                 }
@@ -15637,6 +15605,10 @@ impl Interpreter {
                             }
                             _ => Value::Null,
                         };
+                        let mut cur = cur;
+                        while let Value::Ref(inner, _) = cur {
+                            cur = (*inner).clone();
+                        }
                         let nv = apply_assign_op(cur, op.clone(), rv.clone())?;
                         if let Value::Instance(ref inst) = ov {
                             if let Some(fns) = inst.class.methods.get("operator[]=") {
@@ -19710,8 +19682,18 @@ impl ExecLegacy {
                         Ok(nv)
                     }
                     ExprKind::Index(obj, idx) => {
-                        let ov = self.eval_expr(obj)?;
-                        let iv = self.eval_expr(idx)?;
+                        let ov_raw = self.eval_expr(obj)?;
+                        let iv_raw = self.eval_expr(idx)?;
+                        // Compound assignment may read the container through a
+                        // shared borrow; dereference before reading and storing.
+                        let mut ov = ov_raw;
+                        while let Value::Ref(inner, _) = ov {
+                            ov = (*inner).clone();
+                        }
+                        let mut iv = iv_raw;
+                        while let Value::Ref(inner, _) = iv {
+                            iv = (*inner).clone();
+                        }
                         let cur = match (&ov, iv.clone()) {
                             (Value::Object(m), Value::Str(k)) => {
                                 m.get(&k).cloned().unwrap_or(Value::Null)
@@ -19742,6 +19724,10 @@ impl ExecLegacy {
                             }
                             _ => Value::Null,
                         };
+                        let mut cur = cur;
+                        while let Value::Ref(inner, _) = cur {
+                            cur = (*inner).clone();
+                        }
                         let nv = apply_assign_op(cur, op.clone(), rv.clone())?;
                         let modified = set_index_prop(self.current, ov, iv, nv.clone())?;
 
@@ -19982,6 +19968,9 @@ impl ExecLegacy {
             }
             ExprKind::Unary(_op, r) => {
                 let rv = self.eval_expr(r)?;
+                if *_op == TokenKind::Tilde {
+                    return crate::runtime::abi::bitwise::complement(&rv);
+                }
                 match _op {
                     TokenKind::Minus => {
                         // Handle fixed-width types with proper negation
@@ -20007,6 +19996,9 @@ impl ExecLegacy {
             ExprKind::Binary(l, op, r) => {
                 let lv = self.eval_expr(l)?;
                 let rv = self.eval_expr(r)?;
+                if let Some(op) = crate::runtime::abi::bitwise::BitOp::from_token(*op) {
+                    return crate::runtime::abi::bitwise::binary(op, &lv, &rv);
+                }
                 if let Value::Instance(inst) = lv.clone() {
                     let opname = match op {
                         TokenKind::Plus => Some("operator+"),

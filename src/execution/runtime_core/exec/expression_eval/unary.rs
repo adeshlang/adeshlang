@@ -46,6 +46,7 @@ impl Exec {
     pub(super) fn eval_unary(&mut self, op: &TokenKind, r: &Expr) -> Result<Value, String> {
         let rv = self.eval_expr(r)?;
         match op {
+            TokenKind::Tilde => crate::runtime::abi::bitwise::complement(&rv),
             TokenKind::Typeof => {
                 let t = match &rv {
                     Value::Null => "null",
@@ -126,14 +127,6 @@ impl Exec {
                 };
                 Ok(Value::Str(t.to_string()))
             }
-            TokenKind::Tilde => match rv {
-                Value::BigInt(b) => Ok(Value::BigInt(!b)),
-                Value::Number(n) => {
-                    let i = n as i64;
-                    Ok(Value::Number((!i) as f64))
-                }
-                _ => Err(err("~ type error")),
-            },
             TokenKind::Plus => match rv {
                 Value::Number(n) => Ok(Value::Number(n)),
                 _ => Err(err("+ type error")),

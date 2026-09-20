@@ -20,17 +20,17 @@
 //!   "adeshVersion": "0.3.0",
 //!   "defaultComponents": ["llvm", "mlir"],
 //!   "components": {
-//!     "llvm": { "version": "23.1.1", "required": true,  "description": "..." },
-//!     "mlir": { "version": "23.1.1", "required": false, "description": "..." }
+//!     "llvm": { "version": "18.1.8", "required": true,  "description": "..." },
+//!     "mlir": { "version": "18.1.8", "required": false, "description": "..." }
 //!   },
 //!   "platforms": {
 //!     "windows-x86_64": {
 //!       "llvm": {
-//!         "url": "https://github.com/llvm/llvm-project/releases/.../LLVM-23.1.1-win64.exe",
+//!         "url": "https://github.com/llvm/llvm-project/releases/.../LLVM-18.1.8-win64.exe",
 //!         "sha256": "…", "size": 123, "kind": "installer"
 //!       },
 //!       "mlir": {
-//!         "url": "https://github.com/llvm/llvm-project/releases/.../LLVM-23.1.1-....tar.xz",
+//!         "url": "https://github.com/llvm/llvm-project/releases/.../LLVM-18.1.8-....tar.xz",
 //!         "sha256": "…", "size": 123, "format": "tar.xz", "kind": "archive"
 //!       }
 //!     }
@@ -64,7 +64,7 @@ pub fn manifest_url() -> String {
 
 /// Upstream LLVM release tag the toolchain is pinned to. Must match
 /// `SUPPORTED_LLVM_MAJOR` in the resolver and the versions in the manifest.
-pub const LLVM_RELEASE_TAG: &str = "llvmorg-23.1.1";
+pub const LLVM_RELEASE_TAG: &str = "llvmorg-18.1.8";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -270,5 +270,17 @@ mod tests {
         assert_eq!(platform_key_for("linux", "aarch64"), "linux-aarch64");
         assert_eq!(platform_key_for("macos", "aarch64"), "macos-arm64");
         assert_eq!(platform_key_for("macos", "x86_64"), "macos-x86_64");
+    }
+
+    #[test]
+    fn embedded_manifest_is_valid() {
+        let embedded = include_str!("../../installer/manifests/toolchain-manifest.json");
+        let manifest = parse_manifest(embedded).expect("embedded toolchain manifest must be valid JSON matching schema 2");
+        assert_eq!(manifest.schema, 2);
+        assert!(!manifest.platforms.is_empty());
+        assert!(manifest.platforms.contains_key("linux-x86_64"));
+        assert!(manifest.platforms.contains_key("windows-x86_64"));
+        assert!(manifest.platforms.contains_key("macos-arm64"));
+        assert!(manifest.platforms.contains_key("macos-x86_64"));
     }
 }

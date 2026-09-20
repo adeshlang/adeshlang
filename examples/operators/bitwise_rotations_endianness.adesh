@@ -1,0 +1,9 @@
+// Rotations and byte-order transforms on plain numbers.
+
+let w = 0x1234;
+print("rotate L 9:    {}", std.rotate_left(w, 9));
+print("byte swap x2:  {}", std.byte_swap(std.byte_swap(w)) == w);
+print("reverse x2:    {}", std.reverse_bits(std.reverse_bits(w)) == w);
+print("rotate wrap:   {}", std.rotate_right(1, 1) == (1 << 63));
+print("mask 5:        {}", std.bit_mask(5));
+print("mask at 12:    {}", std.bit_mask_at(12, 4));

@@ -33,6 +33,7 @@ pub enum AdlCommand {
     Unpublish,
     Cache,
     Doctor,
+    Repair,
     Workspace,
     Graph,
     Tree,
@@ -132,6 +133,17 @@ pub fn dispatch(options: CliOptions) -> Result<(), String> {
     match options.command {
         AdlCommand::Ai => {
             crate::cli::commands::execute_ai_command(&options.args);
+            return Ok(());
+        }
+        AdlCommand::Repair => {
+            crate::cli::repair::execute_repair_command();
+            return Ok(());
+        }
+        AdlCommand::Doctor => {
+            if layout.manifest_path().exists() {
+                let _ = handle_metadata_command(options.command, &layout, &options.args, options.dry_run);
+            }
+            crate::cli::doctor::execute_doctor_command();
             return Ok(());
         }
         AdlCommand::New | AdlCommand::Init => {
@@ -750,6 +762,7 @@ fn parse_command(command: &str) -> Result<AdlCommand, String> {
         "unpublish" => AdlCommand::Unpublish,
         "cache" => AdlCommand::Cache,
         "doctor" => AdlCommand::Doctor,
+        "repair" => AdlCommand::Repair,
         "workspace" => AdlCommand::Workspace,
         "graph" => AdlCommand::Graph,
         "tree" => AdlCommand::Tree,
@@ -1023,6 +1036,7 @@ fn command_name(command: AdlCommand) -> &'static str {
         AdlCommand::Unpublish => "unpublish",
         AdlCommand::Cache => "cache",
         AdlCommand::Doctor => "doctor",
+        AdlCommand::Repair => "repair",
         AdlCommand::Workspace => "workspace",
         AdlCommand::Graph => "graph",
         AdlCommand::Tree => "tree",

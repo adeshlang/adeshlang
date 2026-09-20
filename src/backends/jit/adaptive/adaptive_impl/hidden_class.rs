@@ -88,6 +88,7 @@ impl HiddenClassSystem {
             let mut new_class = parent.clone();
             new_class.id = new_id;
             new_class.parent = Some(class_id);
+            new_class.transitions.clear();
             new_class
         } else {
             HiddenClass::new(new_id)

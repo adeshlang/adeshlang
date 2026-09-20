@@ -23,6 +23,14 @@ impl CrossThread {
     pub fn into_inner(self) -> Value {
         self.0
     }
+
+    pub fn get_value(&self) -> Value {
+        self.0.clone()
+    }
+
+    pub fn call(&self, args: Vec<Value>) -> Result<Value, String> {
+        call_fn_on_thread(self.0.clone(), args)
+    }
 }
 
 /// Opaque Send wrapper for spawn payloads. `Value` is not auto-Send.

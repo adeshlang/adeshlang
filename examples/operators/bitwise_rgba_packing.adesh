@@ -1,0 +1,33 @@
+// Pack four 8-bit color channels into one integer, then unpack them with
+// shifts, masks, and the std bit-field intrinsics.
+
+const CHANNEL_MASK = 0xFF;
+const ALPHA_SHIFT = 24;
+const RED_SHIFT = 16;
+const GREEN_SHIFT = 8;
+const BLUE_SHIFT = 0;
+
+fn pack_channels(red, green, blue, alpha) {
+    let packed = 0;
+    packed |= alpha << ALPHA_SHIFT;
+    packed |= red << RED_SHIFT;
+    packed |= green << GREEN_SHIFT;
+    packed |= blue << BLUE_SHIFT;
+    return packed;
+}
+
+let red = 0x10;
+let green = 0x20;
+let blue = 0x30;
+let alpha = 0xA0;
+
+let color = pack_channels(red, green, blue, alpha);
+let without_alpha = color & ~(CHANNEL_MASK << ALPHA_SHIFT);
+
+print("packed:        {}", color);
+print("alpha:         {}", std.bit_extract(color, ALPHA_SHIFT, 8));
+print("red:           {}", std.bit_extract(color, RED_SHIFT, 8));
+print("green:         {}", std.bit_extract(color, GREEN_SHIFT, 8));
+print("blue:          {}", std.bit_extract(color, BLUE_SHIFT, 8));
+print("alpha masked:  {}", without_alpha);
+print("bit 31 set:    {}", std.bit_test(color | (1 << 31), 31));

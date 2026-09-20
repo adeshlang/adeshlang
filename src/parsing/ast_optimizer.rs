@@ -16,6 +16,18 @@ fn fold_expr(e: &Expr) -> Expr {
         ExprKind::Binary(l, op, r) => {
             let fl = fold_expr(l);
             let fr = fold_expr(r);
+            if let (Some(bit_op), ExprKind::Literal(a), ExprKind::Literal(b)) = (
+                crate::runtime::abi::bitwise::BitOp::from_token(*op),
+                &fl.kind,
+                &fr.kind,
+            ) {
+                if let Ok(value) = crate::runtime::abi::bitwise::binary(bit_op, a, b) {
+                    return Expr {
+                        kind: ExprKind::Literal(value),
+                        span: e.span.clone(),
+                    };
+                }
+            }
 
             // First, try constant folding
             match (&fl.kind, op, &fr.kind) {
@@ -240,6 +252,14 @@ fn fold_expr(e: &Expr) -> Expr {
         ),
         ExprKind::Unary(op, r) => {
             let fr = fold_expr(r);
+            if let (TokenKind::Tilde, ExprKind::Literal(value)) = (op, &fr.kind) {
+                if let Ok(value) = crate::runtime::abi::bitwise::complement(value) {
+                    return Expr {
+                        kind: ExprKind::Literal(value),
+                        span: e.span.clone(),
+                    };
+                }
+            }
             match (op, &fr.kind) {
                 // Constant folding for unary minus
                 (TokenKind::Minus, ExprKind::Literal(Value::Number(n))) => {

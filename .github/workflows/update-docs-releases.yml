@@ -1,0 +1,80 @@
+name: Update Docs Releases & Checksums
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Target release tag (e.g. v0.3.0, leave empty for latest)"
+        required: false
+        default: ""
+      dry_run:
+        description: "Dry run (test without committing changes)"
+        type: boolean
+        default: false
+  release:
+    types: [published]
+  repository_dispatch:
+    types: [release-published, update-docs]
+
+env:
+  ADESH_REPO: adeshlang/adeshlang
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-docs-releases
+  cancel-in-progress: true
+
+jobs:
+  update-docs:
+    name: Sync GitHub Releases to Docs Website
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Fetch releases, calculate checksums, and update docs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_INPUT: ${{ inputs.tag }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          
+          args=("--repo" "$ADESH_REPO")
+          if [ -n "$TAG_INPUT" ]; then
+            args+=("--tag" "$TAG_INPUT")
+          fi
+          if [ "$DRY_RUN" = "true" ]; then
+            args+=("--dry-run")
+          fi
+          
+          python docs-website/scripts/update-releases.py "${args[@]}"
+
+      - name: Commit and push documentation updates
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          git add docs-website/
+          if git diff --staged --quiet; then
+            echo "No documentation changes detected; already up to date."
+          else
+            git commit -m "docs: auto-update release assets, URLs, and checksums"
+            git push
+            echo "Successfully updated and pushed release documentation."
+          fi

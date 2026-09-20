@@ -480,24 +480,54 @@ parallel_for(0, 100, fn(i) {
 print(results);  // [0, 10, 20, 30, ..., 90]
 ```
 
-## Performance Considerations
+## High-Speed Parallelism Engine (`import Parallel;`)
 
-### Current Implementation
-- Functions execute **sequentially** within each operation
-- Optimized for code clarity and correctness
-- Thread-safe (no thread-local state)
-- Supports all AdeshLang function types
+AdeshLang includes a production-grade multi-core work-stealing parallel computation library backed by Rayon and SIMD vector acceleration.
 
-### Future Optimization
-- True parallelism using work-stealing threadpool
-- Automatic work distribution across CPU cores
-- Cache-aware chunking strategies
-- Async integration for I/O-bound parallelism
+### Available Parallel Primitives
 
-## Limitations
+#### 1. Transformations & Collections
+- `Parallel.map(array, fn)`: True parallel map across CPU cores with strict order preservation.
+- `Parallel.flatMap(array, fn)`: Parallel map with automatic array flattening.
+- `Parallel.filter(array, fn)`: True parallel predicate filtering preserving array order.
+- `Parallel.reduce(array, init, fn)`: Parallel chunked tree reduction with multi-core combine.
+- `Parallel.zipWith(arrayA, arrayB, fn)`: Parallel pairwise combination of elements.
+- `Parallel.chunk(array, size)`: Split array into contiguous chunks.
+- `Parallel.batch(array, batchSize, fn)`: Process fixed-size chunks across workers in parallel.
 
-### JIT Mode
-- Functions may return `null` in JIT compilation mode
+#### 2. Parallel Iteration & Loops
+- `Parallel.forEach(start, end, fn)`: Parallel range execution across available CPU cores.
+- `Parallel.forEach(array, fn)`: Parallel element iteration.
+- `Parallel.for(start, end, [step,] fn)`: Range-based parallel loop with custom step.
+
+#### 3. Short-Circuiting Search & Predicates
+- `Parallel.find(array, fn)`: Short-circuiting parallel element search.
+- `Parallel.findIndex(array, fn)`: Short-circuiting parallel index search.
+- `Parallel.any(array, fn)`: Parallel existential check.
+- `Parallel.all(array, fn)`: Parallel universal check.
+
+#### 4. Parallel Sorting
+- `Parallel.sort(array)`: High-speed multi-core parallel sorting.
+- `Parallel.sortBy(array, keyFn)`: Parallel sorting by custom computed key function.
+
+#### 5. SIMD & Numeric Reductions
+- `Parallel.sum(array)`: Multi-core SIMD-vectorized summation.
+- `Parallel.product(array)`: Multi-core product reduction.
+- `Parallel.min(array)` & `Parallel.max(array)`: Parallel min/max search.
+- `Parallel.mean(array)`: Multi-core mean computation.
+- `Parallel.dot(arrayA, arrayB)`: Multi-core SIMD vector dot product.
+
+#### 6. Concurrency Control & Fork-Join
+- `Parallel.join(fn1, fn2, ...)`: Fork-join parallel execution of multiple distinct tasks simultaneously.
+- `Parallel.scope(fn(scope))`: Scoped parallelism with `scope.spawn(fn)` and automatic synchronization.
+- `Parallel.workers()`: Returns the number of active CPU worker threads.
+- `Parallel.setWorkers(n)`: Dynamically reconfigures worker thread count.
+
+### Performance & Safety
+- **Work-Stealing Scheduler**: Tasks are dynamically distributed across CPU cores with Rayon work stealing.
+- **Adaptive Chunking**: Small workloads (<32 items) execute sequentially to eliminate scheduling latency, while large workloads scale linearly across all CPU cores.
+- **Panic & Error Isolation**: Worker thread errors and panics are safely caught and propagated.
+
 - Full support in interpreter mode
 - Workaround: Use interpreter mode (`--interpreter` flag) for parallel operations
 

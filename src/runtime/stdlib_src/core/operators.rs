@@ -1,6 +1,26 @@
-use crate::parsing::ast::{BuiltinEnv, Value};
+use crate::parsing::ast::{BuiltinEnv, NativeFn, Value};
 use crate::parsing::error::{ErrorKind, LangError};
 use crate::stdlib::registry::BuiltinRegistry;
+use rustc_hash::FxHashMap as HashMap;
+
+/// Namespaced `std` module exposing the bit-manipulation intrinsics.
+///
+/// Use `std.bit_count(x)`, `std.rotate_left(x, n)`, `std.bit_extract(x, o, w)`,
+/// and so on. The bare names are intentionally *not* installed as global
+/// functions so they cannot shadow or collide with user-defined functions;
+/// the namespace is injected at interpreter startup and needs no import.
+pub fn build_std_module_object() -> Value {
+    let mut methods: HashMap<String, Value> = HashMap::default();
+    for &(name, intrinsic) in crate::runtime::abi::bitwise::BitIntrinsic::ALL {
+        methods.insert(
+            name.to_string(),
+            Value::Function(NativeFn(std::sync::Arc::new(move |_env, args| {
+                intrinsic.eval(&args)
+            }))),
+        );
+    }
+    Value::Object(std::sync::Arc::new(methods))
+}
 
 pub fn register(registry: &mut BuiltinRegistry) {
     registry.register("set", "core", "Construct set from array", builtin_set);

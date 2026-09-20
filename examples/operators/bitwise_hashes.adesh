@@ -1,0 +1,19 @@
+// XOR folding, rotations, and bit counting: the building blocks of small
+// checksums and hash routines.
+
+fn fold(checksum, byte) {
+    return checksum ^ byte;
+}
+
+let seed = 0b1010_1010;
+let folded = fold(fold(seed, 0x5A), 0x3C);
+let hashed = std.rotate_left(folded, 3);
+let masked = std.bit_mask(4);
+
+print("xor fold:      {}", folded);
+print("rotated:       {}", hashed);
+print("set bits:      {}", std.bit_count(hashed));
+print("leading zeros: {}", std.leading_zeros(0x80));
+print("low mask:      {}", masked);
+print("bit 5 set:     {}", std.bit_test(hashed, 5));
+print("bit 9 set:     {}", std.bit_test(hashed, 9));

@@ -302,69 +302,32 @@ pub fn builtin_parallel_map(env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Resul
     let arr = match &args[0] {
         Value::Array(a) => a.clone(),
         Value::DynArray(d) => d.data.clone(),
+        Value::RawArray(_, a) => a.clone(),
         _ => return Err("parallel_map expects an array".into()),
     };
-    let func = args[1].clone();
-    let n = arr.len();
-    if n == 0 {
+    if arr.is_empty() {
         return Ok(Value::Array(vec![]));
     }
-    if n < 32 {
-        let mut out = Vec::with_capacity(n);
+    if arr.len() < 32 {
+        let mut out = Vec::with_capacity(arr.len());
         for item in arr {
-            out.push(call_fn(env, &func, vec![item])?);
+            out.push(call_fn(env, &args[1], vec![item])?);
         }
         return Ok(Value::Array(out));
     }
-    let slots: Arc<Vec<Mutex<Option<Value>>>> =
-        Arc::new((0..n).map(|_| Mutex::new(None)).collect());
-    let mut handles = Vec::new();
-    let workers = thread::hardware_concurrency().max(1);
-    let chunk = (n / workers).max(1);
-    for w in 0..workers {
-        let start = w * chunk;
-        let end = if w + 1 == workers {
-            n
-        } else {
-            (start + chunk).min(n)
-        };
-        if start >= n {
-            break;
-        }
-        let items: Vec<Value> = arr[start..end].to_vec();
-        let f = func.clone();
-        let sl = slots.clone();
-        let h = spawn_with(
-            Value::Function(crate::parsing::ast::NativeFn(std::sync::Arc::new(
-                move |_e, _a| {
-                    for (i, item) in items.iter().enumerate() {
-                        let v = call_fn_on_thread(f.clone(), vec![item.clone()])?;
-                        *sl[start + i].lock().map_err(|e| e.to_string())? = Some(v);
-                    }
-                    Ok(Value::Null)
-                },
-            ))),
-            Default::default(),
-        )?;
-        handles.push(h);
-    }
-    for h in handles {
-        if let Value::Object(map) = h {
-            if let Some(Value::Function(nf)) = map.get("join") {
-                let _ = (nf.0)(env, vec![]);
-            }
-        }
-    }
-    let mut out = Vec::with_capacity(n);
-    for s in slots.iter() {
-        out.push(
-            s.lock()
-                .map_err(|e| e.to_string())?
-                .clone()
-                .unwrap_or(Value::Null),
-        );
-    }
-    Ok(Value::Array(out))
+
+    use rayon::prelude::*;
+    let cross_arr: Vec<CrossThread> = arr.into_iter().map(CrossThread).collect();
+    let f = CrossThread(args[1].clone());
+    let sched = crate::runtime::scheduler::global_scheduler();
+    let results: Result<Vec<CrossThread>, String> = sched.install(|| {
+        cross_arr
+            .into_par_iter()
+            .map(|item| f.call(vec![item.get_value()]).map(CrossThread))
+            .collect()
+    });
+    let values: Vec<Value> = results?.into_iter().map(|c| c.into_inner()).collect();
+    Ok(Value::Array(values))
 }
 
 pub fn builtin_parallel_for(env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, String> {
@@ -373,9 +336,38 @@ pub fn builtin_parallel_for(env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Resul
     }
     let start = num_of(&args[0]).ok_or("start")? as i64;
     let end = num_of(&args[1]).ok_or("end")? as i64;
+    if start >= end {
+        return Ok(Value::Null);
+    }
     let func = args[2].clone();
-    for i in start..end {
-        call_fn(env, &func, vec![Value::Number(i as f64)])?;
+    if end - start < 32 {
+        for i in start..end {
+            call_fn(env, &func, vec![Value::Number(i as f64)])?;
+        }
+        return Ok(Value::Null);
+    }
+
+    use rayon::prelude::*;
+    let f = CrossThread(func);
+    let error_slot = Arc::new(Mutex::new(None));
+    let sched = crate::runtime::scheduler::global_scheduler();
+
+    sched.install(|| {
+        (start..end).into_par_iter().for_each(|i| {
+            if error_slot.lock().unwrap().is_some() {
+                return;
+            }
+            if let Err(e) = f.call(vec![Value::Number(i as f64)]) {
+                let mut guard = error_slot.lock().unwrap();
+                if guard.is_none() {
+                    *guard = Some(e);
+                }
+            }
+        });
+    });
+
+    if let Some(e) = error_slot.lock().unwrap().take() {
+        return Err(e);
     }
     Ok(Value::Null)
 }
@@ -390,13 +382,49 @@ pub fn builtin_parallel_reduce(
     let arr = match &args[0] {
         Value::Array(a) => a.clone(),
         Value::DynArray(d) => d.data.clone(),
+        Value::RawArray(_, a) => a.clone(),
         _ => return Err("expected array".into()),
     };
-    let mut acc = args[1].clone();
-    for item in arr {
-        acc = call_fn(env, &args[2], vec![acc, item])?;
+    if arr.is_empty() {
+        return Ok(args[1].clone());
     }
-    Ok(acc)
+    if arr.len() < 32 {
+        let mut acc = args[1].clone();
+        for item in arr {
+            acc = call_fn(env, &args[2], vec![acc, item])?;
+        }
+        return Ok(acc);
+    }
+
+    use rayon::prelude::*;
+    let cross_arr: Vec<CrossThread> = arr.into_iter().map(CrossThread).collect();
+    let workers = crate::runtime::scheduler::num_workers().max(1);
+    let chunk_size = (cross_arr.len() / workers).max(16);
+    let chunks: Vec<Vec<CrossThread>> = cross_arr.chunks(chunk_size).map(|c| c.to_vec()).collect();
+
+    let f = CrossThread(args[2].clone());
+    let init_val = CrossThread(args[1].clone());
+    let sched = crate::runtime::scheduler::global_scheduler();
+
+    let partials: Result<Vec<CrossThread>, String> = sched.install(|| {
+        chunks
+            .into_par_iter()
+            .map(|chunk| {
+                let mut acc = init_val.get_value();
+                for item in chunk {
+                    acc = f.call(vec![acc, item.into_inner()])?;
+                }
+                Ok(CrossThread(acc))
+            })
+            .collect()
+    });
+    let partials = partials?;
+
+    let mut final_acc = args[1].clone();
+    for p in partials {
+        final_acc = call_fn(env, &args[2], vec![final_acc, p.into_inner()])?;
+    }
+    Ok(final_acc)
 }
 
 pub fn builtin_parallel_each(env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, String> {
@@ -406,10 +434,41 @@ pub fn builtin_parallel_each(env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Resu
     let arr = match &args[0] {
         Value::Array(a) => a.clone(),
         Value::DynArray(d) => d.data.clone(),
+        Value::RawArray(_, a) => a.clone(),
         _ => return Err("expected array".into()),
     };
-    for item in arr {
-        call_fn(env, &args[1], vec![item])?;
+    if arr.is_empty() {
+        return Ok(Value::Null);
+    }
+    if arr.len() < 32 {
+        for item in arr {
+            call_fn(env, &args[1], vec![item])?;
+        }
+        return Ok(Value::Null);
+    }
+
+    use rayon::prelude::*;
+    let cross_arr: Vec<CrossThread> = arr.into_iter().map(CrossThread).collect();
+    let f = CrossThread(args[1].clone());
+    let error_slot = Arc::new(Mutex::new(None));
+    let sched = crate::runtime::scheduler::global_scheduler();
+
+    sched.install(|| {
+        cross_arr.into_par_iter().for_each(|item| {
+            if error_slot.lock().unwrap().is_some() {
+                return;
+            }
+            if let Err(e) = f.call(vec![item.into_inner()]) {
+                let mut guard = error_slot.lock().unwrap();
+                if guard.is_none() {
+                    *guard = Some(e);
+                }
+            }
+        });
+    });
+
+    if let Some(e) = error_slot.lock().unwrap().take() {
+        return Err(e);
     }
     Ok(Value::Null)
 }

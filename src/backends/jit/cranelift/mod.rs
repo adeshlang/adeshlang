@@ -1169,37 +1169,52 @@ impl JitContext {
 
             // Bitwise operations
             LirInst::BitAnd(dst, a, b) => {
-                let av = frame.get_value(*a).as_int().unwrap_or(0);
-                let bv = frame.get_value(*b).as_int().unwrap_or(0);
-                frame.set_value(*dst, RuntimeValue::Int(av & bv));
+                let value = crate::backends::common::builtins::stdlib_bridge::bitwise_binary(
+                    crate::runtime::abi::bitwise::BitOp::And,
+                    &frame.get_value(*a),
+                    &frame.get_value(*b),
+                )?;
+                frame.set_value(*dst, value);
                 Ok(ControlFlow::Next)
             }
 
             LirInst::BitOr(dst, a, b) => {
-                let av = frame.get_value(*a).as_int().unwrap_or(0);
-                let bv = frame.get_value(*b).as_int().unwrap_or(0);
-                frame.set_value(*dst, RuntimeValue::Int(av | bv));
+                let value = crate::backends::common::builtins::stdlib_bridge::bitwise_binary(
+                    crate::runtime::abi::bitwise::BitOp::Or,
+                    &frame.get_value(*a),
+                    &frame.get_value(*b),
+                )?;
+                frame.set_value(*dst, value);
                 Ok(ControlFlow::Next)
             }
 
             LirInst::BitXor(dst, a, b) => {
-                let av = frame.get_value(*a).as_int().unwrap_or(0);
-                let bv = frame.get_value(*b).as_int().unwrap_or(0);
-                frame.set_value(*dst, RuntimeValue::Int(av ^ bv));
+                let value = crate::backends::common::builtins::stdlib_bridge::bitwise_binary(
+                    crate::runtime::abi::bitwise::BitOp::Xor,
+                    &frame.get_value(*a),
+                    &frame.get_value(*b),
+                )?;
+                frame.set_value(*dst, value);
                 Ok(ControlFlow::Next)
             }
 
             LirInst::Shl(dst, a, b) => {
-                let av = frame.get_value(*a).as_int().unwrap_or(0);
-                let bv = frame.get_value(*b).as_int().unwrap_or(0);
-                frame.set_value(*dst, RuntimeValue::Int(av << bv));
+                let value = crate::backends::common::builtins::stdlib_bridge::bitwise_binary(
+                    crate::runtime::abi::bitwise::BitOp::Shl,
+                    &frame.get_value(*a),
+                    &frame.get_value(*b),
+                )?;
+                frame.set_value(*dst, value);
                 Ok(ControlFlow::Next)
             }
 
             LirInst::Shr(dst, a, b) => {
-                let av = frame.get_value(*a).as_int().unwrap_or(0);
-                let bv = frame.get_value(*b).as_int().unwrap_or(0);
-                frame.set_value(*dst, RuntimeValue::Int(av >> bv));
+                let value = crate::backends::common::builtins::stdlib_bridge::bitwise_binary(
+                    crate::runtime::abi::bitwise::BitOp::Shr,
+                    &frame.get_value(*a),
+                    &frame.get_value(*b),
+                )?;
+                frame.set_value(*dst, value);
                 Ok(ControlFlow::Next)
             }
 

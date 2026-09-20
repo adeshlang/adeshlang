@@ -120,11 +120,19 @@ fn load_manifest(explicit: Option<&str>, home: Option<&Path>) -> Result<Toolchai
     let url = manifest::manifest_url();
     println!("  No local manifest found; fetching {url}");
     let temp = std::env::temp_dir().join("adesh-toolchain-manifest.json");
-    super::super::download::download_to(&url, &temp)?;
-    let text =
-        std::fs::read_to_string(&temp).map_err(|e| format!("Failed reading manifest: {e}"))?;
-    let _ = std::fs::remove_file(&temp);
-    manifest::parse_manifest(&text)
+    match super::super::download::download_to(&url, &temp) {
+        Ok(_) => {
+            let text = std::fs::read_to_string(&temp)
+                .map_err(|e| format!("Failed reading manifest: {e}"))?;
+            let _ = std::fs::remove_file(&temp);
+            manifest::parse_manifest(&text)
+        }
+        Err(e) => {
+            println!("  ! Warning: Remote manifest download failed ({e}); falling back to embedded manifest");
+            let embedded = include_str!("../../../installer/manifests/toolchain-manifest.json");
+            manifest::parse_manifest(embedded)
+        }
+    }
 }
 
 fn exe_name(name: &str) -> String {
@@ -420,16 +428,28 @@ fn run_upstream_installer(installer: &Path, target_dir: &Path) -> Result<(), Str
     if !status.success() {
         return Err(format!("Installer exited with {status}"));
     }
-    // NSIS /S returns while a child process finishes; wait for the toolchain
-    // to appear at the requested destination.
     let clang = target_dir.join("bin").join(exe_name("clang"));
+    let standard_clang = Path::new("C:\\Program Files\\LLVM\\bin").join(exe_name("clang"));
+    let standard_clang_x86 = Path::new("C:\\Program Files (x86)\\LLVM\\bin").join(exe_name("clang"));
     let mut waited = 0u64;
     while waited < 600 {
         if clang.is_file() {
             return Ok(());
         }
-        std::thread::sleep(std::time::Duration::from_secs(5));
-        waited += 5;
+        if standard_clang.is_file() {
+            merge_into(Path::new("C:\\Program Files\\LLVM"), target_dir);
+            if clang.is_file() {
+                return Ok(());
+            }
+        }
+        if standard_clang_x86.is_file() {
+            merge_into(Path::new("C:\\Program Files (x86)\\LLVM"), target_dir);
+            if clang.is_file() {
+                return Ok(());
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        waited += 2;
     }
     Err("The installer did not produce a usable LLVM within 10 minutes".to_string())
 }
@@ -553,14 +573,27 @@ fn walk(dir: &Path) -> Vec<PathBuf> {
 fn install_via_system_packages() -> Result<(), String> {
     #[cfg(windows)]
     {
-        let winget = which("winget").ok_or("winget is not available on this system")?;
-        println!("  ▶ Installing LLVM via winget (may prompt for elevation)");
+        let winget = which("winget").ok_or(
+            "winget is not available on this system. Run `adesh toolchain install` directly to download LLVM."
+        )?;
+        println!("  ▶ Installing LLVM via winget (source: winget, may prompt for elevation)");
         let status = std::process::Command::new(&winget)
-            .args(["install", "--id", "LLVM.LLVM", "-e"])
+            .args([
+                "install",
+                "--id",
+                "LLVM.LLVM",
+                "-e",
+                "--source",
+                "winget",
+                "--accept-package-agreements",
+                "--accept-source-agreements",
+            ])
             .status()
             .map_err(|e| format!("Failed to run winget: {e}"))?;
         if !status.success() {
-            return Err(format!("winget exited with {status}"));
+            return Err(format!(
+                "winget exited with {status}. Alternatively run `adesh toolchain install` to download LLVM directly."
+            ));
         }
         let home = installation_home().unwrap_or_else(|| PathBuf::from("."));
         let toolchain = expose::active_toolchain_root(&home);
@@ -616,16 +649,29 @@ fn install_via_system_packages() -> Result<(), String> {
             "  ▶ Installing {:?} via the system package manager",
             packages
         );
-        let mut command = std::process::Command::new(&manager);
-        let manager_str = manager.to_string_lossy();
-        if manager_str.contains("apt") {
-            command.args(["install", "-y"]);
-        } else if manager_str.contains("dnf") {
-            command.args(["install", "-y"]);
-        } else if manager_str.contains("zypper") {
-            command.arg("--non-interactive").arg("install");
+        let is_root = std::env::var_os("USER").as_deref() == Some(std::ffi::OsStr::new("root"));
+        let mut command = if !is_root && which("sudo").is_some() {
+            let mut c = std::process::Command::new("sudo");
+            c.arg(&manager);
+            c
         } else {
+            std::process::Command::new(&manager)
+        };
+
+        let manager_name = manager
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        if manager_name.contains("apt") {
+            command.args(["install", "-y"]);
+        } else if manager_name.contains("dnf") {
+            command.args(["install", "-y"]);
+        } else if manager_name.contains("zypper") {
+            command.arg("--non-interactive").arg("install");
+        } else if manager_name.contains("pacman") {
             command.args(["-S", "--noconfirm"]);
+        } else {
+            command.args(["install", "-y"]);
         }
         for package in &packages {
             command.arg(package);

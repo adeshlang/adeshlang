@@ -7,6 +7,33 @@ use crate::backends::common::builtins::RuntimeValue;
 use crate::parsing::ast::{NoopEnv, Value};
 use crate::utils::collections::FastMap;
 
+/// Bitwise operands must not use the general bridge's lossy float coercions.
+pub fn bitwise_operand(value: &RuntimeValue) -> Value {
+    match value {
+        RuntimeValue::Int(n) if n.unsigned_abs() <= 9_007_199_254_740_991 => {
+            Value::Number(*n as f64)
+        }
+        RuntimeValue::Int(n) => Value::I64(*n),
+        RuntimeValue::Float(n) => Value::F64(*n),
+        RuntimeValue::BigInt(n) => Value::BigInt(n.clone()),
+        _ => runtime_val_to_ast_val(value),
+    }
+}
+
+pub fn bitwise_binary(
+    op: crate::runtime::abi::bitwise::BitOp,
+    lhs: &RuntimeValue,
+    rhs: &RuntimeValue,
+) -> Result<RuntimeValue, String> {
+    let value =
+        crate::runtime::abi::bitwise::binary(op, &bitwise_operand(lhs), &bitwise_operand(rhs))?;
+    Ok(match value {
+        Value::Number(n) => RuntimeValue::Int(n as i64),
+        Value::BigInt(n) => RuntimeValue::BigInt(n),
+        value => ast_val_to_runtime_val(&value),
+    })
+}
+
 /// Convert a backend `RuntimeValue` to an AST `Value` for stdlib consumption
 pub fn runtime_val_to_ast_val(rv: &RuntimeValue) -> Value {
     match rv {

@@ -1,4 +1,4 @@
-//! Type System Tests
+//! Type System Integration Test
 //!
 //! Tests for union types, nullable types, visibility, and type narrowing.
 
@@ -23,15 +23,17 @@ mod tests {
         h.join().unwrap().map_err(|e| e.to_string())
     }
 
-    /// Test union type handling placeholder
+    /// Test union type and nullable handling
     #[test]
     fn test_union_types() {
-        // Union types are used internally (e.g. nullable is Union of T | Null)
         let src = r#"
         let x: int? = 10;
+        assert_eq(x, 10);
+        let y: int? = null;
+        assert_eq(y, null);
         "#;
         let res = run_code(src);
-        assert!(res.is_ok());
+        assert!(res.is_ok(), "Union / nullable types test failed: {:?}", res.err());
     }
 
     /// Test nullable type checking
@@ -64,9 +66,10 @@ mod tests {
         let src = r#"
         fn process(x: int?) {
             if (x != null) {
-                let val: int = x; // should be narrowed to int
+                let val: int = x;
             }
         }
+        process(10);
         "#;
         let res = run_code(src);
         assert!(
@@ -86,7 +89,7 @@ mod tests {
         }
         class Child extends Parent {
             fn run_test() {
-                return this.family(); // protected is ok
+                return this.family();
             }
         }
         let c = new Child();
@@ -114,11 +117,22 @@ mod tests {
         );
     }
 
-    // Additional type tests would go here:
-    // - union_narrowing
-    // - nullable_propagation
-    // - visibility_errors
-    // - protected_inheritance
+    /// Test nullable propagation in functions
+    #[test]
+    fn test_nullable_propagation() {
+        let src = r#"
+        fn add_optional(a: int?, b: int): int? {
+            if (a == null) {
+                return null;
+            }
+            return a + b;
+        }
+        assert_eq(add_optional(null, 5), null);
+        assert_eq(add_optional(10, 5), 15);
+        "#;
+        let res = run_code(src);
+        assert!(res.is_ok(), "Nullable propagation test failed: {:?}", res.err());
+    }
 
     /// Test lexing of typed numeric literal suffixes
     #[test]
@@ -167,7 +181,7 @@ mod tests {
         );
     }
 
-    /// Test lexing of float literal suffixes
+    /// Test float literal suffixes
     #[test]
     fn test_float_literal_lexing() {
         let src = "3.14f32 2.718f64";

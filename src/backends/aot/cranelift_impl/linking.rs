@@ -395,6 +395,8 @@ fn link_with_clang_lld(
     // Add shared library flag if needed
     if is_dll {
         cmd.arg("-shared");
+    } else if target_triple.operating_system == target_lexicon::OperatingSystem::Linux {
+        cmd.arg("-no-pie");
     }
 
     // Input object files
@@ -457,15 +459,18 @@ fn find_clang() -> Result<std::path::PathBuf, String> {
 
     let mut candidates = Vec::new();
 
+    let exe_suffix = if cfg!(windows) { ".exe" } else { "" };
+    let clang_bin = format!("clang{}", exe_suffix);
+
     // 1. Explicit toolchain root: ADESH_TOOLCHAIN (ADESHLANG_TOOLCHAIN is a legacy alias)
     for env_var in ["ADESH_TOOLCHAIN", "ADESHLANG_TOOLCHAIN"] {
         if let Ok(tc_path) = std::env::var(env_var) {
             candidates.push(
                 std::path::PathBuf::from(tc_path.clone())
                     .join("bin")
-                    .join("clang.exe"),
+                    .join(&clang_bin),
             );
-            candidates.push(std::path::PathBuf::from(tc_path).join("clang.exe"));
+            candidates.push(std::path::PathBuf::from(tc_path).join(&clang_bin));
         }
     }
 
@@ -477,7 +482,7 @@ fn find_clang() -> Result<std::path::PathBuf, String> {
                     .join("toolchain")
                     .join("llvm")
                     .join("bin")
-                    .join("clang.exe"),
+                    .join(&clang_bin),
             );
         }
     }
@@ -490,7 +495,7 @@ fn find_clang() -> Result<std::path::PathBuf, String> {
                     .join("toolchain")
                     .join("llvm")
                     .join("bin")
-                    .join("clang.exe"),
+                    .join(&clang_bin),
             );
             if let Some(parent) = exe_dir.parent() {
                 candidates.push(
@@ -498,7 +503,7 @@ fn find_clang() -> Result<std::path::PathBuf, String> {
                         .join("toolchain")
                         .join("llvm")
                         .join("bin")
-                        .join("clang.exe"),
+                        .join(&clang_bin),
                 );
             }
         }
@@ -515,6 +520,7 @@ fn find_clang() -> Result<std::path::PathBuf, String> {
     candidates.push(std::path::PathBuf::from(
         "C:/Program Files (x86)/LLVM/bin/clang.exe",
     ));
+    candidates.push(std::path::PathBuf::from("/usr/lib/llvm-18/bin/clang"));
     candidates.push(std::path::PathBuf::from("/usr/bin/clang"));
     candidates.push(std::path::PathBuf::from("/usr/local/bin/clang"));
     candidates.push(std::path::PathBuf::from("clang")); // System PATH fallback

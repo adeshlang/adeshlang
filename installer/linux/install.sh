@@ -277,7 +277,7 @@ else
   fi
   install_toolchain=0
   if (( online )); then
-    if ask_yes_no 'Download and install pinned LLVM 23.1.1 toolchain now (~190 MB download, ~900 MB disk space)? [Y/n]' yes; then
+    if ask_yes_no 'Download and install pinned LLVM 18.1.8 toolchain now (~190 MB download, ~900 MB disk space)? [Y/n]' yes; then
       install_toolchain=1
     fi
   else

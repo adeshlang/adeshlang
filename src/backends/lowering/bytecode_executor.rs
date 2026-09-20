@@ -282,12 +282,20 @@ impl BytecodeVM {
             BytecodeInstr::Shl => {
                 let b = self.pop().ok_or("Stack underflow")?;
                 let a = self.pop().ok_or("Stack underflow")?;
-                self.push(InterpreterValue::Int(a.as_int() << (b.as_int() & 63)));
+                let count = b.as_int();
+                if count < 0 || count >= 64 {
+                    return Err("invalid shift amount: expected 0 <= count < 64".to_string());
+                }
+                self.push(InterpreterValue::Int(a.as_int() << count));
             }
             BytecodeInstr::Shr => {
                 let b = self.pop().ok_or("Stack underflow")?;
                 let a = self.pop().ok_or("Stack underflow")?;
-                self.push(InterpreterValue::Int(a.as_int() >> (b.as_int() & 63)));
+                let count = b.as_int();
+                if count < 0 || count >= 64 {
+                    return Err("invalid shift amount: expected 0 <= count < 64".to_string());
+                }
+                self.push(InterpreterValue::Int(a.as_int() >> count));
             }
 
             // Comparison - Int

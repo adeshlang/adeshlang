@@ -492,7 +492,8 @@ impl LinkerDriver {
             if !self.config.library_mode {
                 match self.config.target_triple.operating_system {
                     target_lexicon::OperatingSystem::Linux => {
-                        cmd.arg("-lc");
+                        cmd.arg("-no-pie");
+                        cmd.arg("-lc").arg("-lpthread").arg("-ldl").arg("-lm");
                     }
                     target_lexicon::OperatingSystem::MacOSX { .. }
                     | target_lexicon::OperatingSystem::Darwin => {

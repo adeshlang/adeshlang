@@ -8,6 +8,49 @@ use crate::parsing::ast::*;
 use crate::typesystem::checker::{Ty, union_merge};
 use crate::utils::collections::FastMap;
 
+fn bitwise_integer_type(ty: &Ty) -> bool {
+    matches!(
+        ty,
+        Ty::Int
+            | Ty::U8
+            | Ty::U16
+            | Ty::U32
+            | Ty::U64
+            | Ty::U128
+            | Ty::I8
+            | Ty::I16
+            | Ty::I32
+            | Ty::I64
+            | Ty::I128
+            | Ty::Any
+            | Ty::Unknown
+    )
+}
+
+fn bitwise_result_type(
+    left: &Ty,
+    right: &Ty,
+    op: crate::runtime::abi::bitwise::BitOp,
+) -> Result<Ty, String> {
+    use crate::runtime::abi::bitwise::BitOp;
+    if !bitwise_integer_type(left) || !bitwise_integer_type(right) {
+        return Err("bitwise operation requires an integer operand".into());
+    }
+    if matches!(op, BitOp::Shl | BitOp::Shr) {
+        return Ok(left.clone());
+    }
+    if matches!(left, Ty::Any | Ty::Unknown) || matches!(right, Ty::Any | Ty::Unknown) {
+        return Ok(Ty::Any);
+    }
+    if left == right || *right == Ty::Int {
+        Ok(left.clone())
+    } else if *left == Ty::Int {
+        Ok(right.clone())
+    } else {
+        Err("bitwise operands must have compatible integer types".into())
+    }
+}
+
 fn numeric_result_type(left: &Ty, right: &Ty) -> Option<Ty> {
     use Ty::*;
 
@@ -203,6 +246,19 @@ pub(crate) fn infer_expr_type(
                 generic_aliases,
                 type_params,
             )?;
+            if let Some(op) = crate::runtime::abi::bitwise::BitOp::from_token(*_op) {
+                let lt = infer_expr_type(
+                    target,
+                    env,
+                    fns,
+                    fns_type_params,
+                    fns_ret_types,
+                    aliases,
+                    generic_aliases,
+                    type_params,
+                )?;
+                return bitwise_result_type(&lt, &rt, op);
+            }
             match &target.kind {
                 ExprKind::Variable(name) => {
                     let mut final_ty = rt.clone();
@@ -328,16 +384,22 @@ pub(crate) fn infer_expr_type(
                 args: vec![t],
             })
         }
-        ExprKind::Unary(_op, r) => infer_expr_type(
-            r,
-            env,
-            fns,
-            fns_type_params,
-            fns_ret_types,
-            aliases,
-            generic_aliases,
-            type_params,
-        ),
+        ExprKind::Unary(_op, r) => {
+            let ty = infer_expr_type(
+                r,
+                env,
+                fns,
+                fns_type_params,
+                fns_ret_types,
+                aliases,
+                generic_aliases,
+                type_params,
+            )?;
+            if *_op == TokenKind::Tilde && !bitwise_integer_type(&ty) {
+                return Err("bitwise operation requires an integer operand".into());
+            }
+            Ok(ty)
+        }
         ExprKind::Binary(l, op, r) => {
             let lt = infer_expr_type(
                 l,
@@ -368,6 +430,9 @@ pub(crate) fn infer_expr_type(
                 other => other,
             };
 
+            if let Some(op) = crate::runtime::abi::bitwise::BitOp::from_token(*op) {
+                return bitwise_result_type(l_base, r_base, op);
+            }
             match op {
                 TokenKind::Plus => {
                     if *l_base == Ty::Any || *r_base == Ty::Any {
@@ -383,15 +448,7 @@ pub(crate) fn infer_expr_type(
                         Err(format!("invalid operands to +: {} and {}", lt, rt))
                     }
                 }
-                TokenKind::Minus
-                | TokenKind::Star
-                | TokenKind::Slash
-                | TokenKind::Percent
-                | TokenKind::Ampersand
-                | TokenKind::Pipe
-                | TokenKind::Caret
-                | TokenKind::ShiftLeft
-                | TokenKind::ShiftRight => {
+                TokenKind::Minus | TokenKind::Star | TokenKind::Slash | TokenKind::Percent => {
                     if *l_base == Ty::Any || *r_base == Ty::Any {
                         Ok(Ty::Any)
                     } else if let Some(t) = array_broadcast_binary(&lt, &rt) {

@@ -106,6 +106,7 @@ dependencies = [
  "quinn",
  "rand 0.8.8",
  "ratatui",
+ "rayon",
  "rcgen",
  "regex",
  "rpassword",

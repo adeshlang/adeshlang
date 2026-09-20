@@ -1,87 +1,45 @@
-//! Worker threads and work-stealing queues
+//! High-performance Rayon-backed work-stealing parallel scheduler
 
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
-use std::thread::{self, JoinHandle};
+use rayon::prelude::*;
+use rayon::ThreadPool;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use super::{decrement_active_tasks, increment_active_tasks};
 
-/// A unit of work for the scheduler
-pub(crate) struct WorkItem {
-    pub start: u64,
-    pub end: u64,
-    pub generation: u64,
-}
-
-/// Per-worker local queue with steal support
-pub(crate) struct WorkerQueue {
-    pub _id: usize,
-    pub local: Mutex<VecDeque<WorkItem>>,
-    pub stolen_count: AtomicUsize,
-}
-
-impl WorkerQueue {
-    fn new(id: usize) -> Self {
-        WorkerQueue {
-            _id: id,
-            local: Mutex::new(VecDeque::new()),
-            stolen_count: AtomicUsize::new(0),
-        }
-    }
-
-    fn push(&self, item: WorkItem) {
-        self.local.lock().unwrap().push_back(item);
-    }
-
-    fn pop(&self) -> Option<WorkItem> {
-        self.local.lock().unwrap().pop_front()
-    }
-
-    fn steal(&self) -> Option<WorkItem> {
-        let mut local = self.local.lock().unwrap();
-        if local.len() > 1 {
-            let item = local.pop_back();
-            if item.is_some() {
-                self.stolen_count.fetch_add(1, Ordering::Relaxed);
-            }
-            item
-        } else {
-            None
-        }
-    }
-
-    fn len(&self) -> usize {
-        self.local.lock().unwrap().len()
-    }
-}
-
-/// Work-stealing scheduler
+/// Work-stealing scheduler backed by a tuned Rayon thread pool
 pub struct Scheduler {
-    workers: Vec<Arc<WorkerQueue>>,
-    handles: Mutex<Vec<JoinHandle<()>>>,
-    running: AtomicBool,
-    shutdown: AtomicBool,
+    pool: Arc<ThreadPool>,
     worker_count: usize,
-    work_available: Condvar,
-    generation: AtomicUsize,
+    running: AtomicBool,
 }
 
 impl Scheduler {
+    /// Create a scheduler with default CPU core worker count
     pub fn new() -> Self {
-        let worker_count = crate::runtime::thread::logical_cpu_count().max(1);
-        let mut workers = Vec::with_capacity(worker_count);
-        for i in 0..worker_count {
-            workers.push(Arc::new(WorkerQueue::new(i)));
-        }
+        let count = crate::runtime::thread::logical_cpu_count().max(1);
+        Self::new_with_workers(count)
+    }
+
+    /// Create a scheduler with a specific worker thread count
+    pub fn new_with_workers(worker_count: usize) -> Self {
+        let count = worker_count.max(1);
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(count)
+            .thread_name(|idx| format!("adesh-worker-{idx}"))
+            .panic_handler(|panic_info| {
+                eprintln!("[adesh-parallel-worker panic]: {:?}", panic_info);
+            })
+            .build()
+            .unwrap_or_else(|e| {
+                eprintln!("[adesh scheduler warning]: Failed to build custom threadpool: {e}, falling back to default");
+                rayon::ThreadPoolBuilder::new().build().unwrap()
+            });
+
         Scheduler {
-            workers,
-            handles: Mutex::new(Vec::new()),
-            running: AtomicBool::new(false),
-            shutdown: AtomicBool::new(false),
-            worker_count,
-            work_available: Condvar::new(),
-            generation: AtomicUsize::new(0),
+            pool: Arc::new(pool),
+            worker_count: count,
+            running: AtomicBool::new(true),
         }
     }
 
@@ -89,130 +47,118 @@ impl Scheduler {
         self.worker_count
     }
 
-    /// Execute parallel_for with static chunking + work stealing fallback
+    /// Execute closure inside the scheduler's thread pool
+    #[inline]
+    pub fn install<R, F>(&self, op: F) -> R
+    where
+        F: FnOnce() -> R + Send,
+        R: Send,
+    {
+        self.pool.install(op)
+    }
+
+    /// Execute parallel_for with adaptive chunking and work stealing
     pub fn parallel_for<F>(&self, start: u64, end: u64, body: F)
     where
         F: Fn(u64) + Send + Sync,
     {
-        let total = end - start;
-        if total == 0 {
+        if start >= end {
             return;
         }
-
-        // For small workloads, execute sequentially to avoid thread overhead
-        if total < 256 {
+        let total = end - start;
+        // For tiny workloads, execute sequentially to eliminate scheduling overhead
+        if total < 32 {
             for i in start..end {
                 body(i);
             }
             return;
         }
 
-        self.ensure_workers();
-        let body = Arc::new(body);
-        let work_gen = self.generation.fetch_add(1, Ordering::Relaxed) as u64;
-
-        // Static chunking
-        let chunk_size = (total / self.worker_count as u64).max(64);
-        let mut chunks = Vec::new();
-        let mut pos = start;
-        while pos < end {
-            let chunk_end = (pos + chunk_size).min(end);
-            chunks.push(WorkItem {
-                start: pos,
-                end: chunk_end,
-                generation: work_gen,
+        increment_active_tasks();
+        self.pool.install(|| {
+            (start..end).into_par_iter().for_each(|i| {
+                body(i);
             });
-            pos = chunk_end;
-        }
-
-        // Distribute chunks round-robin to worker queues
-        for (i, chunk) in chunks.into_iter().enumerate() {
-            let worker_id = i % self.worker_count;
-            self.workers[worker_id].push(chunk);
-        }
-
-        // Signal workers
-        self.work_available.notify_all();
-
-        // Main thread participates in work stealing
-        self.execute_work_stealing(&body, work_gen);
-
-        // Wait for all queues to drain
-        loop {
-            let remaining: usize = self.workers.iter().map(|w| w.len()).sum();
-            if remaining == 0 {
-                break;
-            }
-            thread::yield_now();
-        }
+        });
+        decrement_active_tasks();
     }
 
-    fn execute_work_stealing<F>(&self, body: &Arc<F>, work_gen: u64)
+    /// Execute parallel map over a slice, returning a new vector with preserved order
+    pub fn parallel_map<T, R, F>(&self, data: &[T], op: F) -> Vec<R>
     where
-        F: Fn(u64) + Send + Sync,
+        T: Sync + Send,
+        R: Send,
+        F: Fn(&T) -> R + Sync + Send,
     {
-        // Main thread steals and executes
-        loop {
-            let mut found = false;
-            for worker in &self.workers {
-                if let Some(item) = worker.pop().or_else(|| worker.steal()) {
-                    if item.generation == work_gen {
-                        increment_active_tasks();
-                        for i in item.start..item.end {
-                            body(i);
-                        }
-                        decrement_active_tasks();
-                        found = true;
-                    }
-                }
-            }
-            if !found {
-                break;
-            }
+        if data.is_empty() {
+            return Vec::new();
         }
+        if data.len() < 32 {
+            return data.iter().map(op).collect();
+        }
+
+        increment_active_tasks();
+        let result = self.pool.install(|| data.par_iter().map(op).collect());
+        decrement_active_tasks();
+        result
     }
 
-    /// Tree-structured parallel reduction
+    /// Execute parallel filter over a slice, preserving order
+    pub fn parallel_filter<T, F>(&self, data: &[T], predicate: F) -> Vec<T>
+    where
+        T: Sync + Clone + Send,
+        F: Fn(&T) -> bool + Sync + Send,
+    {
+        if data.is_empty() {
+            return Vec::new();
+        }
+        if data.len() < 32 {
+            return data.iter().filter(|x| predicate(x)).cloned().collect();
+        }
+
+        increment_active_tasks();
+        let result = self
+            .pool
+            .install(|| data.par_iter().filter(|x| predicate(x)).cloned().collect());
+        decrement_active_tasks();
+        result
+    }
+
+    /// Parallel reduction with tree combine
     pub fn parallel_reduce<T, F>(&self, data: &[T], init: T, op: F, _deterministic: bool) -> T
     where
         T: Send + Sync + Clone,
-        F: Fn(T, &T) -> T + Sync,
+        F: Fn(T, &T) -> T + Sync + Send,
     {
         if data.is_empty() {
             return init;
         }
-        if data.len() < 1024 {
+        if data.len() < 32 {
             return data.iter().fold(init, |acc, x| op(acc, x));
         }
 
-        let op = Arc::new(op);
-        let chunk_size = (data.len() / self.worker_count).max(256);
-
-        // Chunk-local reductions then tree combine (sequential combine avoids Send on F)
-        let mut partials: Vec<T> = Vec::new();
-        for chunk in data.chunks(chunk_size) {
-            let local = chunk.iter().fold(init.clone(), |acc, x| op(acc, x));
-            partials.push(local);
-        }
-
-        partials.into_iter().fold(init, |acc, x| op(acc, &x))
+        increment_active_tasks();
+        let result = self.pool.install(|| {
+            data.par_iter()
+                .fold(|| init.clone(), |acc, x| op(acc, x))
+                .reduce(|| init.clone(), |a, b| op(a, &b))
+        });
+        decrement_active_tasks();
+        result
     }
 
-    fn ensure_workers(&self) {
-        if self.running.swap(true, Ordering::SeqCst) {
-            return;
-        }
-        // Workers are implicit via work stealing from main thread + thread pool
-        // For production, persistent worker threads would be spawned here
+    /// Fork-join parallel execution of two operations
+    pub fn parallel_join<A, B, RA, RB>(&self, oper_a: A, oper_b: B) -> (RA, RB)
+    where
+        A: FnOnce() -> RA + Send,
+        B: FnOnce() -> RB + Send,
+        RA: Send,
+        RB: Send,
+    {
+        self.pool.install(|| rayon::join(oper_a, oper_b))
     }
 
     pub fn shutdown(&self) {
-        self.shutdown.store(true, Ordering::SeqCst);
-        self.work_available.notify_all();
-        let handles = self.handles.lock().unwrap().drain(..).collect::<Vec<_>>();
-        for h in handles {
-            let _ = h.join();
-        }
         self.running.store(false, Ordering::SeqCst);
     }
 }

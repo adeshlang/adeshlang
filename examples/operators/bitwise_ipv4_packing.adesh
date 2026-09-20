@@ -1,0 +1,18 @@
+// Encode and decode an IPv4 address as a single integer.
+
+fn pack_ipv4(a, b, c, d) {
+    let ip = 0;
+    ip |= a << 24;
+    ip |= b << 16;
+    ip |= c << 8;
+    ip |= d;
+    return ip;
+}
+
+let ip = pack_ipv4(192, 168, 1, 10);
+print("ip packed:     {}", ip);
+print("octet a:       {}", (ip >> 24) & 0xFF);
+print("octet b:       {}", (ip >> 16) & 0xFF);
+print("octet c:       {}", (ip >> 8) & 0xFF);
+print("octet d:       {}", ip & 0xFF);
+print("round trip:    {}", std.byte_swap(std.byte_swap(ip)) == ip);

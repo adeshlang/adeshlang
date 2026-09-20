@@ -253,7 +253,14 @@ impl Parser {
                 span,
             });
         }
-        if self.matchk(&[TokenKind::Bang]) {
+        if self.matchk(&[TokenKind::Tilde]) {
+            let span = self.previous_span();
+            let r = self.unary()?;
+            Ok(Expr {
+                kind: ExprKind::Unary(TokenKind::Tilde, Box::new(r)),
+                span,
+            })
+        } else if self.matchk(&[TokenKind::Bang]) {
             let span = self.previous_span();
             let r = self.unary()?;
             Ok(Expr {

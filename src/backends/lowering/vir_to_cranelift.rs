@@ -231,7 +231,9 @@ impl VirToCranelift {
                     IBOp::Or => "bor",
                     IBOp::Xor => "bxor",
                     IBOp::Shl => "ishl",
-                    IBOp::Shr => "ushr",
+                    // VIR integers are i64 lanes: >> is an arithmetic shift,
+                    // matching the interpreter's signed/dynamic semantics.
+                    IBOp::Shr => "sshr",
                 };
                 self.output.push_str(&format!(
                     "    {} = {} {}, {}\n",

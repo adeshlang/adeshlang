@@ -65,3 +65,73 @@ fn example_scope_drop() {
     let out = run_example(&p.to_string_lossy());
     assert!(out.contains("scope_ok") && out.contains("scope_ok"));
 }
+
+#[test]
+fn example_bitwise_operations() {
+    let p = PathBuf::from("examples/operators/bitwise_operations.adesh");
+    let out = run_example(&p.to_string_lossy());
+    assert!(out.contains("true"), "permission check missing: {out}");
+    assert!(out.contains("false"), "cleared flag missing: {out}");
+    assert!(out.contains("16"), "rotate_left missing: {out}");
+    assert!(out.contains("188"), "bit_extract missing: {out}");
+}
+
+#[test]
+fn example_bitwise_rgba_packing() {
+    let p = PathBuf::from("examples/operators/bitwise_rgba_packing.adesh");
+    let out = run_example(&p.to_string_lossy());
+    assert!(out.contains("2685411376"), "packed value missing: {out}");
+    assert!(out.contains("160"), "alpha channel missing: {out}");
+    assert!(out.contains("16"), "red channel missing: {out}");
+    assert!(out.contains("1056816"), "alpha mask missing: {out}");
+    assert!(out.contains("true"), "bit 31 missing: {out}");
+}
+
+#[test]
+fn example_bitwise_hashes() {
+    let p = PathBuf::from("examples/operators/bitwise_hashes.adesh");
+    let out = run_example(&p.to_string_lossy());
+    assert!(out.contains("204"), "xor fold missing: {out}");
+    assert!(out.contains("1632"), "rotate missing: {out}");
+    assert!(out.contains("56"), "leading zeros missing: {out}");
+    assert!(out.contains("15"), "mask missing: {out}");
+}
+
+#[test]
+fn example_bitwise_toggle_and_test() {
+    let p = PathBuf::from("examples/operators/bitwise_toggle_and_test.adesh");
+    let out = run_example(&p.to_string_lossy());
+    assert!(out.contains("5"), "flags value missing: {out}");
+    assert!(out.contains("false"), "toggled flag missing: {out}");
+    assert!(out.contains("2"), "bit_count missing: {out}");
+}
+
+#[test]
+fn example_bitwise_ipv4_packing() {
+    let p = PathBuf::from("examples/operators/bitwise_ipv4_packing.adesh");
+    let out = run_example(&p.to_string_lossy());
+    assert!(out.contains("3232235786"), "packed ip missing: {out}");
+    assert!(out.contains("192"), "octet a missing: {out}");
+    assert!(out.contains("10"), "octet d missing: {out}");
+    assert!(out.contains("true"), "round trip missing: {out}");
+}
+
+#[test]
+fn example_bitwise_rotations_endianness() {
+    let p = PathBuf::from("examples/operators/bitwise_rotations_endianness.adesh");
+    let out = run_example(&p.to_string_lossy());
+    assert!(out.contains("2385920"), "rotate_left missing: {out}");
+    assert!(out.contains("31"), "bit_mask missing: {out}");
+    assert!(out.contains("61440"), "bit_mask_at missing: {out}");
+    assert!(out.contains("true"), "round trip missing: {out}");
+}
+
+#[test]
+fn example_bitwise_twos_complement() {
+    let p = PathBuf::from("examples/operators/bitwise_twos_complement.adesh");
+    let out = run_example(&p.to_string_lossy());
+    assert!(out.contains("-1"), "~0 missing: {out}");
+    assert!(out.contains("-2"), "~1 missing: {out}");
+    assert!(out.contains("-32"), "arithmetic shift missing: {out}");
+    assert!(out.contains("8"), "bit_count missing: {out}");
+}

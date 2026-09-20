@@ -1,0 +1,22 @@
+// Bitwise operations and bit-manipulation intrinsics on plain numbers.
+// Intrinsics live under the `std` namespace: std.bit_count(x) and so on.
+// Run with: adesh run examples/operators/bitwise_operations.adesh
+
+const READ = 1 << 0;
+const WRITE = 1 << 1;
+const EXECUTE = 1 << 2;
+
+fn has_permission(flags, permission): bool {
+    return (flags & permission) != 0;
+}
+
+let flags = READ | WRITE | EXECUTE;
+flags &= ~WRITE;
+
+print("flags value:   {}", flags);
+print("can read:      {}", has_permission(flags, READ));
+print("can write:     {}", has_permission(flags, WRITE));
+print("can execute:   {}", has_permission(flags, EXECUTE));
+print("set bits:      {}", std.bit_count(flags));
+print("rotate left 4: {}", std.rotate_left(1, 4));
+print("extract field: {}", std.bit_extract(0xABCD, 4, 8));

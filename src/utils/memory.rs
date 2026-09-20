@@ -1518,6 +1518,24 @@ impl BorrowChecker {
         &self.errors
     }
 
+    /// Get accumulated errors (alias)
+    pub fn get_errors(&self) -> &[BorrowError] {
+        &self.errors
+    }
+
+    /// Get borrow state of a variable
+    pub fn get_state(&self, name: &str) -> Option<&BorrowState> {
+        self.states.get(name)
+    }
+
+    /// Check if variable is currently borrowed (mutably or immutably)
+    pub fn is_borrowed(&self, name: &str) -> bool {
+        matches!(
+            self.states.get(name),
+            Some(BorrowState::ImmutablyBorrowed(_)) | Some(BorrowState::MutablyBorrowed)
+        )
+    }
+
     /// Check if there are any errors
     pub fn has_errors(&self) -> bool {
         !self.errors.is_empty()

@@ -20,6 +20,7 @@
 //! - `math`: Mathematical functions
 //! - `async_ops`: Promise and async primitives
 
+pub mod bitwise;
 pub mod conversions;
 pub mod ops;
 pub mod ops_nanvalue;

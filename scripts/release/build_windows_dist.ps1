@@ -77,7 +77,11 @@ if (Test-Path "$TargetBinDir\adeshlang.dll") {
 }
 
 # Static and Import libraries (.lib, .dll.lib, .a)
-Get-ChildItem "$TargetBinDir" -Include "adeshlang.lib", "adeshlang.dll.lib", "libadeshlang.a", "*.lib" -File | ForEach-Object {
+$LibFiles = @(Get-ChildItem "$TargetBinDir" -Include "adeshlang.lib", "adeshlang.dll.lib", "libadeshlang.a", "*.lib" -File)
+if ($LibFiles.Count -eq 0 -and (Test-Path "$TargetBinDir\deps")) {
+    $LibFiles = @(Get-ChildItem "$TargetBinDir\deps" -Filter "*adeshlang*.lib" -File)
+}
+$LibFiles | ForEach-Object {
     Copy-Item $_.FullName "$DistDir\lib\$($_.Name)" -Force
     Write-Host "      Copied library $($_.Name) to lib\" -ForegroundColor Green
 }
