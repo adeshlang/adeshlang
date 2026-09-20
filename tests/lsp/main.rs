@@ -10,10 +10,7 @@
 
 #[cfg(test)]
 mod tests {
-    use adeshlang::semantics::{
-        ImportKind, SemanticSymbolKind, VisibilityKind, index_source,
-    };
-    use adeshlang::typesystem::checker::Ty;
+    use adeshlang::semantics::{ImportKind, SemanticSymbolKind, VisibilityKind, index_source};
 
     /// Test cross-file go-to-definition and import symbol resolution
     #[test]
@@ -30,18 +27,29 @@ let total = calculate_sum([1, 2, 3]);
         // Verify import resolution in semantic index
         assert_eq!(index.imports.len(), 2, "Expected 2 import declarations");
 
-        let math_import = index.imports.iter().find(|i| i.path == "math_utils").expect("math_utils import missing");
+        let math_import = index
+            .imports
+            .iter()
+            .find(|i| i.path == "math_utils")
+            .expect("math_utils import missing");
         assert_eq!(math_import.alias, "math");
         assert_eq!(math_import.kind, ImportKind::Named);
 
-        let stats_import = index.imports.iter().find(|i| i.path == "stats").expect("stats import missing");
+        let stats_import = index
+            .imports
+            .iter()
+            .find(|i| i.path == "stats")
+            .expect("stats import missing");
         assert_eq!(stats_import.kind, ImportKind::Names);
         assert!(stats_import.names.contains(&"calculate_sum".to_string()));
         assert!(stats_import.names.contains(&"calculate_avg".to_string()));
 
         // Check local declarations resolution
         let res_sym = index.find_declaration("res");
-        assert!(res_sym.is_some(), "Variable 'res' should be found in symbol index");
+        assert!(
+            res_sym.is_some(),
+            "Variable 'res' should be found in symbol index"
+        );
         assert_eq!(res_sym.unwrap().kind, SemanticSymbolKind::Variable);
     }
 
@@ -71,20 +79,30 @@ let default_vector = Vector3D(0.0, 0.0, 0.0);
         let index = index_source(src);
 
         // Verify all top-level symbols are indexed
-        let account_class = index.find_declaration("AccountManager").expect("AccountManager class missing");
+        let account_class = index
+            .find_declaration("AccountManager")
+            .expect("AccountManager class missing");
         assert_eq!(account_class.kind, SemanticSymbolKind::Class);
 
-        let vec_struct = index.find_declaration("Vector3D").expect("Vector3D struct missing");
+        let vec_struct = index
+            .find_declaration("Vector3D")
+            .expect("Vector3D struct missing");
         assert_eq!(vec_struct.kind, SemanticSymbolKind::Struct);
 
-        let compute_fn = index.find_declaration("compute_norm").expect("compute_norm function missing");
+        let compute_fn = index
+            .find_declaration("compute_norm")
+            .expect("compute_norm function missing");
         assert_eq!(compute_fn.kind, SemanticSymbolKind::Function);
 
-        let default_vec = index.find_declaration("default_vector").expect("default_vector variable missing");
+        let default_vec = index
+            .find_declaration("default_vector")
+            .expect("default_vector variable missing");
         assert_eq!(default_vec.kind, SemanticSymbolKind::Variable);
 
         // Verify type members
-        let type_def = index.get_type("AccountManager").expect("AccountManager type definition missing");
+        let type_def = index
+            .get_type("AccountManager")
+            .expect("AccountManager type definition missing");
         assert!(type_def.fields.iter().any(|(f, _, _)| f == "balance"));
         assert!(type_def.methods.iter().any(|m| m.name == "deposit"));
     }
@@ -98,7 +116,9 @@ fn parse_id(raw: string | i32): string {
 }
 "#;
         let index = index_source(src);
-        let fn_sym = index.find_declaration("parse_id").expect("parse_id missing");
+        let fn_sym = index
+            .find_declaration("parse_id")
+            .expect("parse_id missing");
         assert_eq!(fn_sym.kind, SemanticSymbolKind::Function);
 
         // Check parameter types recorded
@@ -123,7 +143,10 @@ class Profile {
 "#;
         let index = index_source(src);
         let type_def = index.get_type("Profile").expect("Profile type missing");
-        let avatar_field = type_def.fields.iter().find(|(name, _, _)| name == "avatar_url");
+        let avatar_field = type_def
+            .fields
+            .iter()
+            .find(|(name, _, _)| name == "avatar_url");
         assert!(avatar_field.is_some(), "avatar_url field should exist");
         let (_, ty_annot, _) = avatar_field.unwrap();
         assert!(
@@ -150,13 +173,25 @@ class SecureVault {
         let index = index_source(src);
         let vault = index.get_type("SecureVault").expect("SecureVault missing");
 
-        let secret = vault.fields.iter().find(|(n, _, _)| n == "secret_key").unwrap();
+        let secret = vault
+            .fields
+            .iter()
+            .find(|(n, _, _)| n == "secret_key")
+            .unwrap();
         assert_eq!(secret.2, VisibilityKind::Private);
 
-        let auth = vault.fields.iter().find(|(n, _, _)| n == "auth_token").unwrap();
+        let auth = vault
+            .fields
+            .iter()
+            .find(|(n, _, _)| n == "auth_token")
+            .unwrap();
         assert_eq!(auth.2, VisibilityKind::Protected);
 
-        let user = vault.fields.iter().find(|(n, _, _)| n == "username").unwrap();
+        let user = vault
+            .fields
+            .iter()
+            .find(|(n, _, _)| n == "username")
+            .unwrap();
         assert_eq!(user.2, VisibilityKind::Public);
 
         let unlock = vault.methods.iter().find(|m| m.name == "unlock").unwrap();
@@ -176,15 +211,25 @@ fn process_node(share_node: share<Node>, weak_node: weak<Node>) {
 }
 "#;
         let index = index_source(src);
-        let fn_sym = index.find_declaration("process_node").expect("process_node missing");
+        let fn_sym = index
+            .find_declaration("process_node")
+            .expect("process_node missing");
         assert_eq!(fn_sym.kind, SemanticSymbolKind::Function);
 
         if let Some(params) = index.fns.get("process_node") {
             assert_eq!(params.len(), 2);
             let p0 = params[0].as_deref().unwrap_or("");
             let p1 = params[1].as_deref().unwrap_or("");
-            assert!(p0.contains("share"), "Ownership hint 'share' expected in signature, got: {}", p0);
-            assert!(p1.contains("weak"), "Ownership hint 'weak' expected in signature, got: {}", p1);
+            assert!(
+                p0.contains("share"),
+                "Ownership hint 'share' expected in signature, got: {}",
+                p0
+            );
+            assert!(
+                p1.contains("weak"),
+                "Ownership hint 'weak' expected in signature, got: {}",
+                p1
+            );
         }
     }
 
@@ -197,16 +242,24 @@ fn create_user(name: string, age: i32, is_admin: bool): string {
 }
 "#;
         let index = index_source(src);
-        let fn_decl = index.find_declaration("create_user").expect("create_user missing");
+        let fn_decl = index
+            .find_declaration("create_user")
+            .expect("create_user missing");
         assert_eq!(fn_decl.kind, SemanticSymbolKind::Function);
 
-        let params = index.fns.get("create_user").expect("params for create_user missing");
+        let params = index
+            .fns
+            .get("create_user")
+            .expect("params for create_user missing");
         assert_eq!(params.len(), 3);
         assert_eq!(params[0].as_deref(), Some("string"));
         assert_eq!(params[1].as_deref(), Some("i32"));
         assert_eq!(params[2].as_deref(), Some("bool"));
 
-        let ret_ty = index.fns_ret_types.get("create_user").expect("return type missing");
+        let ret_ty = index
+            .fns_ret_types
+            .get("create_user")
+            .expect("return type missing");
         assert_eq!(ret_ty.as_deref(), Some("string"));
     }
 

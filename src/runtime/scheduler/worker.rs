@@ -1,9 +1,9 @@
 //! High-performance Rayon-backed work-stealing parallel scheduler
 
-use rayon::prelude::*;
 use rayon::ThreadPool;
-use std::sync::atomic::{AtomicBool, Ordering};
+use rayon::prelude::*;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{decrement_active_tasks, increment_active_tasks};
 

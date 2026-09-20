@@ -115,13 +115,13 @@ mod borrow_tests {
     fn test_sequential_borrows() {
         let mut ctx = BorrowChecker::new();
         ctx.declare("p".to_string());
-        
+
         // First shared borrow
         assert!(ctx.try_borrow("p"));
         assert!(ctx.is_borrowed("p"));
         ctx.release_borrow("p");
         assert!(!ctx.is_borrowed("p"));
-        
+
         // Then mutable borrow
         assert!(ctx.try_borrow_mut("p"));
         assert!(ctx.is_borrowed("p"));
@@ -141,7 +141,7 @@ mod borrow_tests {
         let mut ctx = BorrowChecker::new();
         ctx.declare("x".to_string());
         assert!(ctx.try_borrow("x"));
-        
+
         assert!(!ctx.try_borrow_mut("x"));
         let errors = ctx.errors();
         assert!(!errors.is_empty());

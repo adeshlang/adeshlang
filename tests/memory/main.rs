@@ -13,7 +13,10 @@ mod tests {
     fn test_sso_threshold() {
         // Strings <= 22 bytes use inline storage (no heap allocation)
         let short = SsoString::new("Hello");
-        assert!(short.is_inline(), "Short string 'Hello' should use inline storage");
+        assert!(
+            short.is_inline(),
+            "Short string 'Hello' should use inline storage"
+        );
         assert_eq!(short.as_str(), "Hello");
         assert_eq!(short.len(), 5);
 
@@ -46,7 +49,10 @@ mod tests {
         // Mutable borrowing
         assert!(tracker.try_borrow_mut());
         assert_eq!(tracker.kind(), OwnershipKind::BorrowedMut);
-        assert!(!tracker.try_borrow(), "Cannot immutably borrow while mutably borrowed");
+        assert!(
+            !tracker.try_borrow(),
+            "Cannot immutably borrow while mutably borrowed"
+        );
         tracker.release_borrow_mut();
         assert_eq!(tracker.kind(), OwnershipKind::Unique);
     }

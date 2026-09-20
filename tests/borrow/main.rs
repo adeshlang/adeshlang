@@ -21,9 +21,13 @@ mod tests {
 
     fn check_code_safety(src: &str) -> Result<(), String> {
         let mut lexer = Lexer::new(src);
-        let tokens = lexer.tokenize().map_err(|e| format!("Lex error: {:?}", e))?;
+        let tokens = lexer
+            .tokenize()
+            .map_err(|e| format!("Lex error: {:?}", e))?;
         let mut parser = Parser::new(tokens, Some("borrow_test.adesh".to_string()));
-        let ast = parser.parse_program().map_err(|e| format!("Parse error: {:?}", e))?;
+        let ast = parser
+            .parse_program()
+            .map_err(|e| format!("Parse error: {:?}", e))?;
         let ast = transform_ast_with_raii(ast);
         let hir = ast_to_hir(&ast, false).map_err(|e| format!("HIR error: {:?}", e))?;
         check_memory_safety_compile_time(&hir)
@@ -145,7 +149,9 @@ mod tests {
 
         let errors = checker.get_errors();
         assert!(!errors.is_empty(), "Expected error records");
-        let matched = errors.iter().any(|e| e.variable == "targeted_buffer" && e.message.contains("targeted_buffer"));
+        let matched = errors
+            .iter()
+            .any(|e| e.variable == "targeted_buffer" && e.message.contains("targeted_buffer"));
         assert!(
             matched,
             "Error message must explicitly mention variable name 'targeted_buffer', got: {:?}",
@@ -163,7 +169,8 @@ mod tests {
         assert!(!checker.try_borrow("resource"));
         let errors = checker.get_errors();
         let has_kind_detail = errors.iter().any(|e| {
-            e.message.to_lowercase().contains("immutably") || e.message.to_lowercase().contains("mutably")
+            e.message.to_lowercase().contains("immutably")
+                || e.message.to_lowercase().contains("mutably")
         });
         assert!(
             has_kind_detail,
@@ -200,7 +207,10 @@ mod tests {
         checker.declare("shared_data".to_string());
 
         // Initially unborrowed
-        assert_eq!(checker.get_state("shared_data"), Some(&BorrowState::Unborrowed));
+        assert_eq!(
+            checker.get_state("shared_data"),
+            Some(&BorrowState::Unborrowed)
+        );
 
         // First immutable borrow
         assert!(checker.try_borrow("shared_data"));
@@ -256,8 +266,16 @@ mod tests {
         tracker.register_var("inner_iter".to_string(), false);
 
         // Inner cannot escape to outer loop or global
-        assert!(tracker.validate_no_escape("inner_iter", outer_loop).is_err());
-        assert!(tracker.validate_no_escape("inner_iter", ScopeId(0)).is_err());
+        assert!(
+            tracker
+                .validate_no_escape("inner_iter", outer_loop)
+                .is_err()
+        );
+        assert!(
+            tracker
+                .validate_no_escape("inner_iter", ScopeId(0))
+                .is_err()
+        );
 
         // Outer iter can be accessed in inner loop
         assert!(tracker.validate_no_escape("outer_iter", inner_loop).is_ok());

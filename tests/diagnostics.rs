@@ -68,7 +68,9 @@ fn test_semantic_diagnostic_undefined_symbol() {
 
     // Declaration should not exist in symbol table
     assert!(
-        index.find_declaration("non_existent_symbol_12345").is_none(),
+        index
+            .find_declaration("non_existent_symbol_12345")
+            .is_none(),
         "Undefined symbol must not be in declaration index"
     );
 }

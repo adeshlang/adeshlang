@@ -141,7 +141,12 @@ pub fn dispatch(options: CliOptions) -> Result<(), String> {
         }
         AdlCommand::Doctor => {
             if layout.manifest_path().exists() {
-                let _ = handle_metadata_command(options.command, &layout, &options.args, options.dry_run);
+                let _ = handle_metadata_command(
+                    options.command,
+                    &layout,
+                    &options.args,
+                    options.dry_run,
+                );
             }
             crate::cli::doctor::execute_doctor_command();
             return Ok(());
@@ -326,7 +331,6 @@ pub fn dispatch(options: CliOptions) -> Result<(), String> {
         | AdlCommand::Doc
         | AdlCommand::Clean
         | AdlCommand::Cache
-        | AdlCommand::Doctor
         | AdlCommand::Graph
         | AdlCommand::Tree
         | AdlCommand::Why

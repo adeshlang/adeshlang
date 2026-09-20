@@ -33,7 +33,11 @@ mod tests {
         assert_eq(y, null);
         "#;
         let res = run_code(src);
-        assert!(res.is_ok(), "Union / nullable types test failed: {:?}", res.err());
+        assert!(
+            res.is_ok(),
+            "Union / nullable types test failed: {:?}",
+            res.err()
+        );
     }
 
     /// Test nullable type checking
@@ -131,7 +135,11 @@ mod tests {
         assert_eq(add_optional(10, 5), 15);
         "#;
         let res = run_code(src);
-        assert!(res.is_ok(), "Nullable propagation test failed: {:?}", res.err());
+        assert!(
+            res.is_ok(),
+            "Nullable propagation test failed: {:?}",
+            res.err()
+        );
     }
 
     /// Test lexing of typed numeric literal suffixes

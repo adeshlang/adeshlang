@@ -128,7 +128,9 @@ fn load_manifest(explicit: Option<&str>, home: Option<&Path>) -> Result<Toolchai
             manifest::parse_manifest(&text)
         }
         Err(e) => {
-            println!("  ! Warning: Remote manifest download failed ({e}); falling back to embedded manifest");
+            println!(
+                "  ! Warning: Remote manifest download failed ({e}); falling back to embedded manifest"
+            );
             let embedded = include_str!("../../../installer/manifests/toolchain-manifest.json");
             manifest::parse_manifest(embedded)
         }
@@ -430,7 +432,8 @@ fn run_upstream_installer(installer: &Path, target_dir: &Path) -> Result<(), Str
     }
     let clang = target_dir.join("bin").join(exe_name("clang"));
     let standard_clang = Path::new("C:\\Program Files\\LLVM\\bin").join(exe_name("clang"));
-    let standard_clang_x86 = Path::new("C:\\Program Files (x86)\\LLVM\\bin").join(exe_name("clang"));
+    let standard_clang_x86 =
+        Path::new("C:\\Program Files (x86)\\LLVM\\bin").join(exe_name("clang"));
     let mut waited = 0u64;
     while waited < 600 {
         if clang.is_file() {
@@ -658,10 +661,7 @@ fn install_via_system_packages() -> Result<(), String> {
             std::process::Command::new(&manager)
         };
 
-        let manager_name = manager
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
+        let manager_name = manager.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if manager_name.contains("apt") {
             command.args(["install", "-y"]);
         } else if manager_name.contains("dnf") {

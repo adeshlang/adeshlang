@@ -1,7 +1,7 @@
 //! Installation repair command implementation (`adl repair` / `adesh repair`)
 
 use super::super::expose::{self, Scope};
-use super::super::resolver::{ToolchainPreference, detect_system_toolchain, installation_home, resolve};
+use super::super::resolver::{detect_system_toolchain, installation_home, resolve};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -72,7 +72,9 @@ pub fn execute_repair_command() {
     let manifest_dest = config_dir.join("toolchain-manifest.json");
     if !manifest_dest.exists() {
         let mut manifest_candidates = vec![
-            PathBuf::from("installer").join("manifests").join("toolchain-manifest.json"),
+            PathBuf::from("installer")
+                .join("manifests")
+                .join("toolchain-manifest.json"),
             PathBuf::from("config").join("toolchain-manifest.json"),
         ];
         if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
@@ -166,7 +168,13 @@ pub fn execute_repair_command() {
                     candidates.push(parent.join("lib").join(lib_name));
                     candidates.push(parent.join("target").join("release").join(lib_name));
                     candidates.push(parent.join("target").join("debug").join(lib_name));
-                    candidates.push(parent.join("target").join("release").join("deps").join(lib_name));
+                    candidates.push(
+                        parent
+                            .join("target")
+                            .join("release")
+                            .join("deps")
+                            .join(lib_name),
+                    );
                 }
             }
         }
@@ -178,7 +186,12 @@ pub fn execute_repair_command() {
         }
         candidates.push(PathBuf::from("target").join("release").join(lib_name));
         candidates.push(PathBuf::from("target").join("debug").join(lib_name));
-        candidates.push(PathBuf::from("dist").join(format!("windows-{}", env::consts::ARCH)).join("lib").join(lib_name));
+        candidates.push(
+            PathBuf::from("dist")
+                .join(format!("windows-{}", env::consts::ARCH))
+                .join("lib")
+                .join(lib_name),
+        );
 
         let mut restored = false;
         for cand in &candidates {
@@ -200,7 +213,9 @@ pub fn execute_repair_command() {
         // If not found, attempt to build via cargo if cargo is available in repo
         if !restored {
             if Path::new("Cargo.toml").exists() {
-                println!("  ▶ Compiling missing runtime library via `cargo build --release --lib`...");
+                println!(
+                    "  ▶ Compiling missing runtime library via `cargo build --release --lib`..."
+                );
                 let status = std::process::Command::new("cargo")
                     .args(["build", "--release", "--lib"])
                     .status();
@@ -263,7 +278,9 @@ pub fn execute_repair_command() {
             }
         } else {
             // Automatically run toolchain installer to download pinned LLVM 18.1.8
-            println!("\n▶ Missing LLVM toolchain. Automatically downloading and installing pinned LLVM 18.1.8...");
+            println!(
+                "\n▶ Missing LLVM toolchain. Automatically downloading and installing pinned LLVM 18.1.8..."
+            );
             super::install::execute_install_command(&["--user".to_string()]);
         }
     }

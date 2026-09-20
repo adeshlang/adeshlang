@@ -2,7 +2,6 @@
 //! Tasks are ownership-transferred onto worker threads. Panic isolated per task.
 
 use super::helpers::*;
-use super::thread_api::spawn_with;
 use crate::parsing::ast::{BuiltinEnv, Value};
 use crate::runtime::thread;
 use rustc_hash::FxHashMap as HashMap;

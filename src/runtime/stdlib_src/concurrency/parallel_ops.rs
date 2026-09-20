@@ -17,9 +17,7 @@
 
 use crate::parsing::ast::{BuiltinEnv, NativeFn, Value};
 use crate::runtime::scheduler::{global_scheduler, num_workers, set_global_workers};
-use crate::runtime::stdlib_src::concurrency::helpers::{
-    call_fn, CrossThread,
-};
+use crate::runtime::stdlib_src::concurrency::helpers::{CrossThread, call_fn};
 use crate::stdlib::registry::BuiltinRegistry;
 use rayon::prelude::*;
 use rustc_hash::FxHashMap as HashMap;
@@ -39,44 +37,128 @@ pub fn build_parallel_module_object() -> Value {
     let mut methods = HashMap::default();
 
     // Core transform operations
-    methods.insert("map".into(), Value::Function(NativeFn(Arc::new(builtin_map))));
-    methods.insert("flatMap".into(), Value::Function(NativeFn(Arc::new(builtin_flat_map))));
-    methods.insert("flat_map".into(), Value::Function(NativeFn(Arc::new(builtin_flat_map))));
-    methods.insert("filter".into(), Value::Function(NativeFn(Arc::new(builtin_filter))));
-    methods.insert("reduce".into(), Value::Function(NativeFn(Arc::new(builtin_reduce))));
-    methods.insert("zipWith".into(), Value::Function(NativeFn(Arc::new(builtin_zip_with))));
-    methods.insert("chunk".into(), Value::Function(NativeFn(Arc::new(builtin_chunk))));
-    methods.insert("batch".into(), Value::Function(NativeFn(Arc::new(builtin_batch))));
+    methods.insert(
+        "map".into(),
+        Value::Function(NativeFn(Arc::new(builtin_map))),
+    );
+    methods.insert(
+        "flatMap".into(),
+        Value::Function(NativeFn(Arc::new(builtin_flat_map))),
+    );
+    methods.insert(
+        "flat_map".into(),
+        Value::Function(NativeFn(Arc::new(builtin_flat_map))),
+    );
+    methods.insert(
+        "filter".into(),
+        Value::Function(NativeFn(Arc::new(builtin_filter))),
+    );
+    methods.insert(
+        "reduce".into(),
+        Value::Function(NativeFn(Arc::new(builtin_reduce))),
+    );
+    methods.insert(
+        "zipWith".into(),
+        Value::Function(NativeFn(Arc::new(builtin_zip_with))),
+    );
+    methods.insert(
+        "chunk".into(),
+        Value::Function(NativeFn(Arc::new(builtin_chunk))),
+    );
+    methods.insert(
+        "batch".into(),
+        Value::Function(NativeFn(Arc::new(builtin_batch))),
+    );
 
     // Iteration & Loops
-    methods.insert("forEach".into(), Value::Function(NativeFn(Arc::new(builtin_for_each))));
-    methods.insert("for_each".into(), Value::Function(NativeFn(Arc::new(builtin_for_each))));
-    methods.insert("for".into(), Value::Function(NativeFn(Arc::new(builtin_for))));
+    methods.insert(
+        "forEach".into(),
+        Value::Function(NativeFn(Arc::new(builtin_for_each))),
+    );
+    methods.insert(
+        "for_each".into(),
+        Value::Function(NativeFn(Arc::new(builtin_for_each))),
+    );
+    methods.insert(
+        "for".into(),
+        Value::Function(NativeFn(Arc::new(builtin_for))),
+    );
 
     // Predicates & Search
-    methods.insert("find".into(), Value::Function(NativeFn(Arc::new(builtin_find))));
-    methods.insert("findIndex".into(), Value::Function(NativeFn(Arc::new(builtin_find_index))));
-    methods.insert("any".into(), Value::Function(NativeFn(Arc::new(builtin_any))));
-    methods.insert("all".into(), Value::Function(NativeFn(Arc::new(builtin_all))));
+    methods.insert(
+        "find".into(),
+        Value::Function(NativeFn(Arc::new(builtin_find))),
+    );
+    methods.insert(
+        "findIndex".into(),
+        Value::Function(NativeFn(Arc::new(builtin_find_index))),
+    );
+    methods.insert(
+        "any".into(),
+        Value::Function(NativeFn(Arc::new(builtin_any))),
+    );
+    methods.insert(
+        "all".into(),
+        Value::Function(NativeFn(Arc::new(builtin_all))),
+    );
 
     // Sorting
-    methods.insert("sort".into(), Value::Function(NativeFn(Arc::new(builtin_sort))));
-    methods.insert("sortBy".into(), Value::Function(NativeFn(Arc::new(builtin_sort_by))));
+    methods.insert(
+        "sort".into(),
+        Value::Function(NativeFn(Arc::new(builtin_sort))),
+    );
+    methods.insert(
+        "sortBy".into(),
+        Value::Function(NativeFn(Arc::new(builtin_sort_by))),
+    );
 
     // High-speed SIMD & numeric operations
-    methods.insert("sum".into(), Value::Function(NativeFn(Arc::new(builtin_sum))));
-    methods.insert("product".into(), Value::Function(NativeFn(Arc::new(builtin_product))));
-    methods.insert("min".into(), Value::Function(NativeFn(Arc::new(builtin_min))));
-    methods.insert("max".into(), Value::Function(NativeFn(Arc::new(builtin_max))));
-    methods.insert("mean".into(), Value::Function(NativeFn(Arc::new(builtin_mean))));
-    methods.insert("dot".into(), Value::Function(NativeFn(Arc::new(builtin_dot))));
+    methods.insert(
+        "sum".into(),
+        Value::Function(NativeFn(Arc::new(builtin_sum))),
+    );
+    methods.insert(
+        "product".into(),
+        Value::Function(NativeFn(Arc::new(builtin_product))),
+    );
+    methods.insert(
+        "min".into(),
+        Value::Function(NativeFn(Arc::new(builtin_min))),
+    );
+    methods.insert(
+        "max".into(),
+        Value::Function(NativeFn(Arc::new(builtin_max))),
+    );
+    methods.insert(
+        "mean".into(),
+        Value::Function(NativeFn(Arc::new(builtin_mean))),
+    );
+    methods.insert(
+        "dot".into(),
+        Value::Function(NativeFn(Arc::new(builtin_dot))),
+    );
 
     // Concurrency control & fork-join
-    methods.insert("join".into(), Value::Function(NativeFn(Arc::new(builtin_join))));
-    methods.insert("scope".into(), Value::Function(NativeFn(Arc::new(builtin_scope))));
-    methods.insert("workers".into(), Value::Function(NativeFn(Arc::new(builtin_workers))));
-    methods.insert("setWorkers".into(), Value::Function(NativeFn(Arc::new(builtin_set_workers))));
-    methods.insert("num_workers".into(), Value::Function(NativeFn(Arc::new(builtin_workers))));
+    methods.insert(
+        "join".into(),
+        Value::Function(NativeFn(Arc::new(builtin_join))),
+    );
+    methods.insert(
+        "scope".into(),
+        Value::Function(NativeFn(Arc::new(builtin_scope))),
+    );
+    methods.insert(
+        "workers".into(),
+        Value::Function(NativeFn(Arc::new(builtin_workers))),
+    );
+    methods.insert(
+        "setWorkers".into(),
+        Value::Function(NativeFn(Arc::new(builtin_set_workers))),
+    );
+    methods.insert(
+        "num_workers".into(),
+        Value::Function(NativeFn(Arc::new(builtin_workers))),
+    );
 
     Value::Object(Arc::new(methods))
 }
@@ -275,10 +357,7 @@ fn builtin_chunk(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, S
     }
     let arr = extract_array(&args[0])?;
     let size = as_u64(&args[1], "size")?.max(1) as usize;
-    let chunks: Vec<Value> = arr
-        .chunks(size)
-        .map(|c| Value::Array(c.to_vec()))
-        .collect();
+    let chunks: Vec<Value> = arr.chunks(size).map(|c| Value::Array(c.to_vec())).collect();
     Ok(Value::Array(chunks))
 }
 
@@ -289,10 +368,7 @@ fn builtin_batch(env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, St
     }
     let arr = extract_array(&args[0])?;
     let size = as_u64(&args[1], "batchSize")?.max(1) as usize;
-    let chunks: Vec<Value> = arr
-        .chunks(size)
-        .map(|c| Value::Array(c.to_vec()))
-        .collect();
+    let chunks: Vec<Value> = arr.chunks(size).map(|c| Value::Array(c.to_vec())).collect();
     builtin_map(env, vec![Value::Array(chunks), args[2].clone()])
 }
 
@@ -474,12 +550,12 @@ fn builtin_find(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, St
     let sched = global_scheduler();
 
     let found = sched.install(|| {
-        cross_arr.into_par_iter().find_any(|item| {
-            match f.call(vec![item.get_value()]) {
+        cross_arr
+            .into_par_iter()
+            .find_any(|item| match f.call(vec![item.get_value()]) {
                 Ok(v) => is_truthy(&v),
                 Err(_) => false,
-            }
-        })
+            })
     });
 
     Ok(found.map(|c| c.into_inner()).unwrap_or(Value::Null))
@@ -500,12 +576,13 @@ fn builtin_find_index(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Val
     let sched = global_scheduler();
 
     let found = sched.install(|| {
-        cross_arr.into_par_iter().enumerate().find_any(|(_idx, item)| {
-            match f.call(vec![item.get_value()]) {
+        cross_arr
+            .into_par_iter()
+            .enumerate()
+            .find_any(|(_idx, item)| match f.call(vec![item.get_value()]) {
                 Ok(v) => is_truthy(&v),
                 Err(_) => false,
-            }
-        })
+            })
     });
 
     match found {
@@ -529,12 +606,12 @@ fn builtin_any(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, Str
     let sched = global_scheduler();
 
     let any_matched = sched.install(|| {
-        cross_arr.into_par_iter().any(|item| {
-            match f.call(vec![item.into_inner()]) {
+        cross_arr
+            .into_par_iter()
+            .any(|item| match f.call(vec![item.into_inner()]) {
                 Ok(v) => is_truthy(&v),
                 Err(_) => false,
-            }
-        })
+            })
     });
 
     Ok(Value::Bool(any_matched))
@@ -555,12 +632,12 @@ fn builtin_all(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, Str
     let sched = global_scheduler();
 
     let all_matched = sched.install(|| {
-        cross_arr.into_par_iter().all(|item| {
-            match f.call(vec![item.into_inner()]) {
+        cross_arr
+            .into_par_iter()
+            .all(|item| match f.call(vec![item.into_inner()]) {
                 Ok(v) => is_truthy(&v),
                 Err(_) => false,
-            }
-        })
+            })
     });
 
     Ok(Value::Bool(all_matched))
@@ -617,7 +694,10 @@ fn builtin_sort_by(env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, 
         paired.par_sort_by(|(_, k1), (_, k2)| compare_cross_values(k1, k2));
     });
 
-    let sorted: Vec<Value> = paired.into_iter().map(|(item, _)| item.into_inner()).collect();
+    let sorted: Vec<Value> = paired
+        .into_iter()
+        .map(|(item, _)| item.into_inner())
+        .collect();
     Ok(Value::Array(sorted))
 }
 
@@ -658,7 +738,10 @@ fn builtin_sum(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, Str
     let cross_arr: Vec<CrossThread> = arr.into_iter().map(CrossThread).collect();
     let sched = global_scheduler();
     let total: f64 = sched.install(|| {
-        cross_arr.par_iter().map(|v| value_to_f64(&v.get_value())).sum()
+        cross_arr
+            .par_iter()
+            .map(|v| value_to_f64(&v.get_value()))
+            .sum()
     });
     Ok(Value::Number(total))
 }
@@ -676,7 +759,10 @@ fn builtin_product(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value,
     let cross_arr: Vec<CrossThread> = arr.into_iter().map(CrossThread).collect();
     let sched = global_scheduler();
     let prod: f64 = sched.install(|| {
-        cross_arr.par_iter().map(|v| value_to_f64(&v.get_value())).product()
+        cross_arr
+            .par_iter()
+            .map(|v| value_to_f64(&v.get_value()))
+            .product()
     });
     Ok(Value::Number(prod))
 }

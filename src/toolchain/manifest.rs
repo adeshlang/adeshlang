@@ -275,7 +275,8 @@ mod tests {
     #[test]
     fn embedded_manifest_is_valid() {
         let embedded = include_str!("../../installer/manifests/toolchain-manifest.json");
-        let manifest = parse_manifest(embedded).expect("embedded toolchain manifest must be valid JSON matching schema 2");
+        let manifest = parse_manifest(embedded)
+            .expect("embedded toolchain manifest must be valid JSON matching schema 2");
         assert_eq!(manifest.schema, 2);
         assert!(!manifest.platforms.is_empty());
         assert!(manifest.platforms.contains_key("linux-x86_64"));

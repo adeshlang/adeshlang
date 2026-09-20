@@ -60,7 +60,11 @@ mod tests {
         assert_eq(caught_error, true);
         "#;
         let res = run_code(code);
-        assert!(res.is_ok(), "Exception handling regression failed: {:?}", res.err());
+        assert!(
+            res.is_ok(),
+            "Exception handling regression failed: {:?}",
+            res.err()
+        );
     }
 
     /// Regression: Interpreter timer flag logic and event loop completion
@@ -90,6 +94,10 @@ mod tests {
         });
         "#;
         let res = run_code(code);
-        assert!(res.is_ok(), "Closure capture in promise failed: {:?}", res.err());
+        assert!(
+            res.is_ok(),
+            "Closure capture in promise failed: {:?}",
+            res.err()
+        );
     }
 }

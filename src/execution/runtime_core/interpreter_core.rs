@@ -15,7 +15,7 @@ use super::flow::{ExecFlow, Flow};
 use super::format::{apply_format_spec, fmt};
 use super::interpreter::CONSTRUCTOR_SLOT;
 use super::ops::{
-    apply_assign_op, as_i64, bin_num, cmp_num, equals, num, promote_to_big, set_index_prop,
+    apply_assign_op, bin_num, cmp_num, equals, num, promote_to_big, set_index_prop,
     set_object_prop, strict_equals,
 };
 use crate::backends::common::ffi::import::{

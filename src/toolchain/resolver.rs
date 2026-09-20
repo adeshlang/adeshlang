@@ -157,7 +157,7 @@ fn from_root(root: PathBuf, bundled: bool) -> Result<ToolchainPaths, ToolchainEr
         root.clone()
     };
     let exe_suffix = if cfg!(windows) { ".exe" } else { "" };
-    
+
     // Clang compiler candidate resolution
     let clang_candidates = [
         bin.join(format!("clang{}", exe_suffix)),
@@ -358,8 +358,15 @@ mod tests {
     fn candidate_roots_contain_standard_paths() {
         let roots = candidate_toolchain_roots();
         assert!(!roots.is_empty());
-        let root_strings: Vec<String> = roots.iter().map(|p| p.to_string_lossy().to_string()).collect();
-        assert!(root_strings.iter().any(|s| s.contains("llvm") || s.contains("LLVM") || s.contains("usr")));
+        let root_strings: Vec<String> = roots
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
+        assert!(
+            root_strings
+                .iter()
+                .any(|s| s.contains("llvm") || s.contains("LLVM") || s.contains("usr"))
+        );
     }
 
     #[test]
