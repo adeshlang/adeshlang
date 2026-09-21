@@ -1056,7 +1056,7 @@ pub(crate) fn runtime_array_last_index_of(args: &[RuntimeValue]) -> RuntimeValue
 }
 
 /// Check if array contains element
-pub(crate) fn runtime_includes(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_array_includes(args: &[RuntimeValue]) -> RuntimeValue {
     if args.len() < 2 {
         return RuntimeValue::Bool(false);
     }
@@ -1223,44 +1223,6 @@ pub(crate) fn runtime_spread(args: &[RuntimeValue]) -> RuntimeValue {
         return RuntimeValue::Array(vec![]);
     }
     args[0].clone()
-}
-
-/// Convert array to raw array representation
-pub(crate) fn runtime_array_to_raw(args: &[RuntimeValue]) -> RuntimeValue {
-    if args.is_empty() {
-        return RuntimeValue::Null;
-    }
-
-    match &args[0] {
-        RuntimeValue::Array(arr) => {
-            let elem_type = if arr.is_empty() {
-                "any".to_string()
-            } else {
-                match &arr[0] {
-                    RuntimeValue::Int(_) => "i64".to_string(),
-                    RuntimeValue::Float(_) => "f64".to_string(),
-                    RuntimeValue::Bool(_) => "bool".to_string(),
-                    RuntimeValue::String(_) => "string".to_string(),
-                    RuntimeValue::U8(_) => "u8".to_string(),
-                    RuntimeValue::U16(_) => "u16".to_string(),
-                    RuntimeValue::U32(_) => "u32".to_string(),
-                    RuntimeValue::U64(_) => "u64".to_string(),
-                    RuntimeValue::I8(_) => "i8".to_string(),
-                    RuntimeValue::I16(_) => "i16".to_string(),
-                    RuntimeValue::I32(_) => "i32".to_string(),
-                    RuntimeValue::I64(_) => "i64".to_string(),
-                    RuntimeValue::F32(_) => "f32".to_string(),
-                    RuntimeValue::F64(_) => "f64".to_string(),
-                    _ => "any".to_string(),
-                }
-            };
-            RuntimeValue::RawArray(elem_type, arr.clone())
-        }
-        RuntimeValue::DynArray {
-            data, element_type, ..
-        } => RuntimeValue::RawArray(element_type.clone(), data.clone()),
-        _ => args[0].clone(),
-    }
 }
 
 // ============================================================================

@@ -9,7 +9,7 @@
 //! 4. Direct index assignments, negative indexing (arr[-1]), and bounds-checked safety.
 //! 5. Spread operator ([...a, ...b]) and array/tuple destructuring (let (a, b, c) = arr;).
 
-use adeshlang::backends::lowering::*;
+use adeshlang::backends::lowering::{BytecodeInstr, BytecodeVM};
 use adeshlang::{Interpreter, ModuleLoader};
 use std::path::Path;
 

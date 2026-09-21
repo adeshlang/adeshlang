@@ -7,7 +7,7 @@
 //! 4. Zero-GC compile-time memory safety & ARC lifecycle tracking
 //! 5. Backend semantic parity and safe execution
 
-use adeshlang::cli::{ExecutionBackend, ParsedArgs, RuntimeConfig};
+use adeshlang::cli::ParsedArgs;
 use adeshlang::execution::runtime::{Interpreter, ModuleLoader};
 use std::path::PathBuf;
 

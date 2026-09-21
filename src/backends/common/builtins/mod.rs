@@ -75,12 +75,12 @@ use math::{
 
 // Import array builtin functions for registration
 use arrays::{
-    runtime_array_concat, runtime_array_flat, runtime_array_index_of, runtime_array_last_index_of,
-    runtime_array_max, runtime_array_min, runtime_capacity, runtime_clear, runtime_count,
-    runtime_distinct, runtime_every, runtime_filter, runtime_find, runtime_find_index,
-    runtime_first, runtime_for_each, runtime_get_index, runtime_has_key, runtime_insert,
-    runtime_last, runtime_len, runtime_make_array, runtime_make_array_spread, runtime_map,
-    runtime_metadata_size, runtime_pop, runtime_push, runtime_range, runtime_reduce,
+    runtime_array_concat, runtime_array_flat, runtime_array_includes, runtime_array_index_of,
+    runtime_array_last_index_of, runtime_array_max, runtime_array_min, runtime_capacity,
+    runtime_clear, runtime_count, runtime_distinct, runtime_every, runtime_filter, runtime_find,
+    runtime_find_index, runtime_first, runtime_for_each, runtime_get_index, runtime_has_key,
+    runtime_insert, runtime_last, runtime_len, runtime_make_array, runtime_make_array_spread,
+    runtime_map, runtime_metadata_size, runtime_pop, runtime_push, runtime_range, runtime_reduce,
     runtime_remove, runtime_reverse, runtime_set_index, runtime_shift, runtime_slice_array,
     runtime_some, runtime_sort, runtime_spread, runtime_sum, runtime_to_set, runtime_to_tuple,
     runtime_unshift,

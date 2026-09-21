@@ -665,7 +665,7 @@ pub(crate) fn runtime_call_method(args: &[RuntimeValue]) -> RuntimeValue {
         "join" => super::runtime_join(&method_args),
         "includes" | "contains" => match &method_args[0] {
             RuntimeValue::String(_) => super::runtime_includes(&method_args),
-            _ => super::runtime_includes(&method_args),
+            _ => super::runtime_array_includes(&method_args),
         },
         "flat" => super::runtime_array_flat(&method_args),
         "sum" => super::runtime_sum(&method_args),
@@ -720,22 +720,6 @@ pub(crate) fn runtime_call_method(args: &[RuntimeValue]) -> RuntimeValue {
         "split" => super::runtime_split(&method_args),
         "substring" | "substr" => super::runtime_substr(&method_args),
         "charAt" => super::runtime_char_at(&method_args),
-        "indexOf" => {
-            // Determine if this is a string or array
-            match &method_args[0] {
-                RuntimeValue::String(_) => super::runtime_index_of(&method_args),
-                RuntimeValue::Array(_) => super::runtime_array_index_of(&method_args),
-                _ => RuntimeValue::Null,
-            }
-        }
-        "lastIndexOf" => {
-            // Determine if this is a string or array
-            match &method_args[0] {
-                RuntimeValue::String(_) => super::runtime_last_index_of(&method_args),
-                RuntimeValue::Array(_) => super::runtime_array_last_index_of(&method_args),
-                _ => RuntimeValue::Null,
-            }
-        }
         "startsWith" => super::runtime_starts_with(&method_args),
         "endsWith" => super::runtime_ends_with(&method_args),
         "trim" => super::runtime_trim(&method_args),
@@ -745,14 +729,6 @@ pub(crate) fn runtime_call_method(args: &[RuntimeValue]) -> RuntimeValue {
         "toUpperCase" | "upper" => super::runtime_to_upper_case(&method_args),
         "replace" => super::runtime_replace(&method_args),
         "repeat" => super::runtime_repeat(&method_args),
-        // Array-specific methods
-        "concat" => super::runtime_array_concat(&method_args),
-        "flat" => super::runtime_array_flat(&method_args),
-        "forEach" => super::runtime_for_each(&method_args),
-        "some" => super::runtime_some(&method_args),
-        "every" => super::runtime_every(&method_args),
-        "first" => super::runtime_first(&method_args),
-        "last" => super::runtime_last(&method_args),
         // Input methods
         "mock" => super::io::runtime_input_mock(&method_args),
         "checkbox" => runtime_input_checkbox(&method_args),
