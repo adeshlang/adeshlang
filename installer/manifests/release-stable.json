@@ -6,172 +6,172 @@
   "components": {
     "compiler_windows_x86_64": {
       "version": "0.3.0",
-      "size": 34300000,
-      "sha256": "0c40afe6f43ea7dc23821bd17827c6ac5426dde1274b93f1b0ebbfd870cae79d",
+      "size": 126178473,
+      "sha256": "18bfd32e2f1b1156e7d0ecb308768ccd8c3bcaff1e55f119e90b78bfe18089e6",
       "url": "https://github.com/adeshlang/adeshlang/releases/download/v0.3.0/AdeshLang-0.3.0-x86_64-windows-portable.zip",
       "target_os": "windows",
       "target_arch": "x86_64"
     },
     "compiler_windows_aarch64": {
       "version": "0.3.0",
-      "size": 31100000,
-      "sha256": "c99e7b689e843a72581922ee90fd388fbc2e50544a55feb01dc745a874a96dff",
+      "size": 118623000,
+      "sha256": "b852c97ca87379298c24495064502992ecf2d56ca5b1b53484c332f9fecedfdc",
       "url": "https://github.com/adeshlang/adeshlang/releases/download/v0.3.0/AdeshLang-0.3.0-aarch64-windows-portable.zip",
       "target_os": "windows",
       "target_arch": "aarch64"
     },
     "windows_setup": {
       "version": "0.3.0",
-      "size": 14400000,
-      "sha256": "38fa3fe98b2e6551c22458f67e187ab93207193d65e194fce28fbef3ee301c1c",
+      "size": 73853528,
+      "sha256": "3cef7c704abd37d9c97b2a7bb53478ad06ab0efa850c256ecf6c65ad55eb5bad",
       "url": "https://github.com/adeshlang/adeshlang/releases/download/v0.3.0/AdeshLang-0.3.0-x86_64-windows-setup.exe",
       "target_os": "windows",
       "target_arch": "x86_64"
     },
     "compiler_linux_x86_64": {
       "version": "0.3.0",
-      "size": 82600000,
-      "sha256": "8d17ebdf87e3d9e51e53ac5a8bfb27677c311634e28d7866d86e05a4154900d5",
+      "size": 87589928,
+      "sha256": "aaad0631598cbf9bd42a81651675a93d818a569f68de37e799bce7a37d72e73d",
       "url": "https://github.com/adeshlang/adeshlang/releases/download/v0.3.0/AdeshLang-0.3.0-x86_64-linux-gnu.tar.xz",
       "target_os": "linux",
       "target_arch": "x86_64"
     },
     "compiler_linux_aarch64": {
       "version": "0.3.0",
-      "size": 76200000,
-      "sha256": "a3a6b256f4cc03e28ae9e8105ce31e170695f39c7dcd427b2ed0a8c952cfcd1b",
+      "size": 80704432,
+      "sha256": "7f7c4366a2bbbade34b3b9d18fc7ef5877c453fc076dfb82b6fb570151b25a46",
       "url": "https://github.com/adeshlang/adeshlang/releases/download/v0.3.0/AdeshLang-0.3.0-aarch64-linux-gnu.tar.xz",
       "target_os": "linux",
       "target_arch": "aarch64"
     },
     "deb_linux_amd64": {
       "version": "0.3.0",
-      "size": 89700000,
-      "sha256": "f37751ea6a41946b1e0b0f3c5ad08b804d6d257a8c9580aed2f8d38a1417b4a4",
+      "size": 95066842,
+      "sha256": "03133a698e6d356e03fbd102ae23564a68a6ce6e71f2d47f8aa735c8785ca527",
       "url": "https://github.com/adeshlang/adeshlang/releases/download/v0.3.0/adeshlang_0.3.0_amd64.deb",
       "target_os": "linux",
       "target_arch": "x86_64"
     },
     "deb_linux_arm64": {
       "version": "0.3.0",
-      "size": 85000000,
-      "sha256": "52a8c7ba8110c3e59b9430717fff3241b99b38d0a990f0d1bfd0332fbf39db27",
+      "size": 90169062,
+      "sha256": "7e015d0c5805d31fdacbaa49ae96e57e2a3562b67f1bc8361da31050f487e791",
       "url": "https://github.com/adeshlang/adeshlang/releases/download/v0.3.0/adeshlang_0.3.0_arm64.deb",
       "target_os": "linux",
       "target_arch": "aarch64"
     },
     "rpm_linux_x86_64": {
       "version": "0.3.0",
-      "size": 116000000,
-      "sha256": "1995606c9b71e90df6d3d7e7452fe0edbd90f1d27cbd01e4abe8c259fe1b293f",
+      "size": 123240762,
+      "sha256": "39843e5e8dd6bcee099647448d427a506aa89f29b0b3fb5e3baa055a00a6430c",
       "url": "https://github.com/adeshlang/adeshlang/releases/download/v0.3.0/adeshlang-0.3.0-1.x86_64.rpm",
       "target_os": "linux",
       "target_arch": "x86_64"
     },
     "rpm_linux_aarch64": {
       "version": "0.3.0",
-      "size": 110000000,
-      "sha256": "b269d577b35fc61d24ebaa611f5d349283191e319d75e9b9e9a5ea95cbaafbc0",
+      "size": 116507925,
+      "sha256": "01ad7a71f13de93a403875cc5d6b55589832fced8fc0de832df0ad7fdc815207",
       "url": "https://github.com/adeshlang/adeshlang/releases/download/v0.3.0/adeshlang-0.3.0-1.aarch64.rpm",
       "target_os": "linux",
       "target_arch": "aarch64"
     },
     "pkg_macos_aarch64": {
       "version": "0.3.0",
-      "size": 20700000,
-      "sha256": "a318a9e462c2c0c62a5294bceb9a877909625e3f25586f623df6f6329eb4a6db",
+      "size": 22235155,
+      "sha256": "e380b1137ebb1d5c033f37a644fd22d4e269580b6fa87d88faf707cf7e2940ac",
       "url": "https://github.com/adeshlang/adeshlang/releases/download/v0.3.0/AdeshLang-0.3.0-aarch64-macos.pkg",
       "target_os": "macos",
       "target_arch": "aarch64"
     },
     "dmg_macos_aarch64": {
       "version": "0.3.0",
-      "size": 23000000,
-      "sha256": "1b9e2f1aa6807e7b7a1c7c8cdc65dc9a3a8280585033061c6da52f099ed1ba2c",
+      "size": 24765403,
+      "sha256": "a04c60be0e27c2a6ea09f10d3ff1957248f799ff555212e2b9b0f28d31578e83",
       "url": "https://github.com/adeshlang/adeshlang/releases/download/v0.3.0/AdeshLang-0.3.0-aarch64-macos.dmg",
       "target_os": "macos",
       "target_arch": "aarch64"
     },
     "pkg_macos_x86_64": {
       "version": "0.3.0",
-      "size": 23700000,
-      "sha256": "5868e3fbfc770173cd550ec6380c40925ea2b34a03fe0d77a3a865af63d8321b",
+      "size": 25502942,
+      "sha256": "3a99e53fc73827548a59cc9cff7f0a5cf66feb71c0565c2a6955de6a7ecb6f70",
       "url": "https://github.com/adeshlang/adeshlang/releases/download/v0.3.0/AdeshLang-0.3.0-x86_64-macos.pkg",
       "target_os": "macos",
       "target_arch": "x86_64"
     },
     "dmg_macos_x86_64": {
       "version": "0.3.0",
-      "size": 27000000,
-      "sha256": "3231cf61c6d3d22c893dbdc427250c3bc26ab2a85cb46dfc6940e0e9694833e9",
+      "size": 28932089,
+      "sha256": "25e20534c70aff49fad43d464993db4b32acf75efc0af5e10ba206388ff20d0e",
       "url": "https://github.com/adeshlang/adeshlang/releases/download/v0.3.0/AdeshLang-0.3.0-x86_64-macos.dmg",
       "target_os": "macos",
       "target_arch": "x86_64"
     },
     "vscode_extension": {
       "version": "0.3.0",
-      "size": 11649000,
+      "size": 1162762,
       "sha256": "8394d41f2772a782f25405408916e56b64d871ab087e8d7bfeb6187363257d59",
       "url": "https://github.com/adeshlang/adeshlang/releases/download/vscode-v0.3.0/adesh-vscode-0.3.0.vsix"
     },
     "cli_windows_x86_64": {
       "version": "0.3.0",
-      "size": 27700000,
-      "sha256": "75baeabdb73e84ebfb12c88cbe188e73e4ed7a7ccda8c25b6008f26468ddfa52",
+      "size": 29372928,
+      "sha256": "d4764090859e2df79b17118bed5b7ddbbe4c16f92fd7d3eafef4708c280a909d",
       "url": "https://github.com/adeshlang/adeshlang/releases/download/v0.3.0/adesh.exe",
       "target_os": "windows",
       "target_arch": "x86_64"
     },
     "als_windows_x86_64": {
       "version": "0.3.0",
-      "size": 4440000,
-      "sha256": "2996cf96d739494bc415886f24f27acb6bde0a72050e692d9e6503c8e520b900",
+      "size": 4663296,
+      "sha256": "783131547d7ee3309895312fb6cc35601b44bc308d8cb8f1f53753c011b29f24",
       "url": "https://github.com/adeshlang/adeshlang/releases/download/v0.3.0/als.exe",
       "target_os": "windows",
       "target_arch": "x86_64"
     },
     "adl_windows_x86_64": {
       "version": "0.3.0",
-      "size": 2340000,
-      "sha256": "4cc1c549b1b9c4f3fb6dc66d0c4fb7aa4455eb1271ed2708dc731c046fb66381",
+      "size": 3217408,
+      "sha256": "fd236a9cff9f7e0e5a9620f9d92356e91da0e3ffd76b6c9c117d479e0dcd3fe4",
       "url": "https://github.com/adeshlang/adeshlang/releases/download/v0.3.0/adl.exe",
       "target_os": "windows",
       "target_arch": "x86_64"
     },
     "editor_windows_x86_64": {
       "version": "0.3.0",
-      "size": 2640000,
-      "sha256": "9314a5c23fcb002df891238c01b90cc363d19b09dea3829496c8699c471c59f9",
+      "size": 2766848,
+      "sha256": "5c269098ce40650043d9c58d3a8fae9e394a4fcc5836f25eeb14306f4f974f0f",
       "url": "https://github.com/adeshlang/adeshlang/releases/download/v0.3.0/adesh-editor.exe",
       "target_os": "windows",
       "target_arch": "x86_64"
     },
     "mobile_android_arm64": {
       "version": "0.3.0",
-      "size": 62200000,
-      "sha256": "94b07518478018aaff020389d1b9027ec94f4f836c3849e4f1fa2b546800a071",
+      "size": 65770019,
+      "sha256": "43ef6e42aa3235322b659e71f2a6b942b75cea004477c8177264ea1ff505f296",
       "url": "https://github.com/adeshlang/adeshlang/releases/download/mobile-v0.3.0/AdeshLang-mobile-0.3.0-arm64-v8a.apk",
       "target_os": "android",
       "target_arch": "arm64"
     },
     "mobile_android_universal": {
       "version": "0.3.0",
-      "size": 134000000,
-      "sha256": "1ac32660e0ca611049a7b961c11ed1b315ae31be6173027c77ed8ba0f49b9bf1",
+      "size": 142014601,
+      "sha256": "094fd787e32a573bd0a694288d7ba24ea7ceec38485a1fe747ccf5f1c4550928",
       "url": "https://github.com/adeshlang/adeshlang/releases/download/mobile-v0.3.0/AdeshLang-mobile-0.3.0-universal.apk",
       "target_os": "android"
     },
     "mobile_android_x86_64": {
       "version": "0.3.0",
-      "size": 73500000,
-      "sha256": "6392a8432b6ee2b5d21cd9ac85c7896ebd1140449ff53b302d1f428193096bc3",
+      "size": 77706777,
+      "sha256": "278b048fc55e6317240f9992c2da6e39fb5970a4a2144fcfa63e694aaf2ca0f5",
       "url": "https://github.com/adeshlang/adeshlang/releases/download/mobile-v0.3.0/AdeshLang-mobile-0.3.0-x86_64.apk",
       "target_os": "android",
       "target_arch": "x86_64"
     },
     "mobile_android_aab": {
       "version": "0.3.0",
-      "size": 107000000,
+      "size": 112663136,
       "sha256": "b6453465967f1b69c53b8e1079d2c14f06d2afeb1bdc2e096c64163cccd61b10",
       "url": "https://github.com/adeshlang/adeshlang/releases/download/mobile-v0.3.0/AdeshLang-mobile-0.3.0.aab",
       "target_os": "android"

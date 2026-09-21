@@ -24,11 +24,13 @@ pub fn register_jit_function(name: String, ptr: usize) {
     });
 }
 
+pub const HANDLE_TAG: u64 = 0x4000_0000_0000_0000;
+
 // Global counter for generating unique handles
 static HANDLE_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 fn next_handle() -> u64 {
-    HANDLE_COUNTER.fetch_add(1, Ordering::Relaxed)
+    HANDLE_TAG | HANDLE_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
 fn store_value(value: RuntimeValue) -> u64 {
@@ -40,7 +42,11 @@ fn store_value(value: RuntimeValue) -> u64 {
 }
 
 fn get_value(handle: u64) -> Option<RuntimeValue> {
-    RUNTIME_VALUES.with(|values| values.borrow().get(&handle).cloned())
+    if handle >= HANDLE_TAG {
+        RUNTIME_VALUES.with(|values| values.borrow().get(&handle).cloned())
+    } else {
+        None
+    }
 }
 
 pub fn get_runtime_value(handle: u64) -> Option<RuntimeValue> {
@@ -48,30 +54,31 @@ pub fn get_runtime_value(handle: u64) -> Option<RuntimeValue> {
 }
 
 fn remove_value(handle: u64) -> Option<RuntimeValue> {
-    RUNTIME_VALUES.with(|values| values.borrow_mut().remove(&handle))
+    if handle >= HANDLE_TAG {
+        RUNTIME_VALUES.with(|values| values.borrow_mut().remove(&handle))
+    } else {
+        None
+    }
 }
 
 /// Helper to get a string from either a handle (dynamic) or a pointer (const)
 fn get_string_val(handle_or_ptr: u64) -> Option<String> {
-    // Arbitrary threshold: Handles are small counters, Pointers are large addresses
-    // On x64, user space pointers are typically > 0x10000
-    if handle_or_ptr > 1_000_000_000 {
+    if handle_or_ptr >= HANDLE_TAG {
+        if let Some(RuntimeValue::String(s)) = get_value(handle_or_ptr) {
+            return Some(s);
+        }
+    } else if handle_or_ptr > 0x10000 {
         // Assume pointer
         unsafe {
             let ptr = handle_or_ptr as *const c_char;
-            if ptr.is_null() {
-                return None;
+            if !ptr.is_null() {
+                if let Ok(s) = CStr::from_ptr(ptr).to_str() {
+                    return Some(s.to_string());
+                }
             }
-            CStr::from_ptr(ptr).to_str().ok().map(|s| s.to_string())
-        }
-    } else {
-        // Assume handle
-        if let Some(RuntimeValue::String(s)) = get_value(handle_or_ptr) {
-            Some(s)
-        } else {
-            None
         }
     }
+    None
 }
 
 // ============================================================================
@@ -2885,19 +2892,24 @@ fn ast_value_to_runtime_value(v: &crate::parsing::ast::Value) -> RuntimeValue {
 }
 
 fn unpack_jit_arg(raw: u64) -> RuntimeValue {
-    if let Some(val) = get_value(raw) {
-        val
-    } else if let Some(s) = get_string_val(raw) {
-        RuntimeValue::String(s)
-    } else if let Ok(guard) = crate::execution::arc_bridge::arc_manager().lock() {
-        if let Ok(v) = guard.get_value(raw) {
-            ast_value_to_runtime_value(&v)
-        } else {
-            RuntimeValue::Int(raw as i64)
+    if raw >= HANDLE_TAG {
+        if let Some(val) = get_value(raw) {
+            return val;
         }
-    } else {
-        RuntimeValue::Int(raw as i64)
     }
+    if raw > 0x10000 {
+        if let Some(s) = get_string_val(raw) {
+            return RuntimeValue::String(s);
+        }
+    }
+    if raw != 0 && raw < 0x10000 {
+        if let Ok(guard) = crate::execution::arc_bridge::arc_manager().lock() {
+            if let Ok(v) = guard.get_value(raw) {
+                return ast_value_to_runtime_value(&v);
+            }
+        }
+    }
+    RuntimeValue::Int(raw as i64)
 }
 
 /// JIT C-ABI wrapper for input.* methods
@@ -2952,6 +2964,284 @@ pub extern "C" fn jit_runtime_input_method(
     arg2: u64,
 ) -> u64 {
     jit_runtime_call_input_builtin(method_name_ptr, arg0, arg1, arg2, 0, 0, 3)
+}
+
+// ============================================================================
+// Exception Handling Bridge
+// ============================================================================
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_has_exception() -> i64 {
+    crate::backends::common::builtins::CURRENT_EXCEPTION
+        .with(|exc| if exc.borrow().is_some() { 1 } else { 0 })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_get_exception() -> u64 {
+    crate::backends::common::builtins::CURRENT_EXCEPTION.with(|exc| {
+        if let Some(val) = exc.borrow().clone() {
+            store_value(val)
+        } else {
+            store_value(RuntimeValue::Null)
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_clear_exception() -> i64 {
+    crate::backends::common::builtins::CURRENT_EXCEPTION.with(|exc| {
+        *exc.borrow_mut() = None;
+    });
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_throw(val_handle: u64) -> i64 {
+    let val = unpack_jit_arg(val_handle);
+    crate::backends::common::builtins::CURRENT_EXCEPTION.with(|exc| {
+        *exc.borrow_mut() = Some(val);
+    });
+    0
+}
+
+// ============================================================================
+// Array and Collection Builtins
+// ============================================================================
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_array_to_dynamic(arr_handle: u64, type_handle_or_ptr: u64, cap: i64) -> u64 {
+    let arr = unpack_jit_arg(arr_handle);
+    let type_str = get_string_val(type_handle_or_ptr).unwrap_or_default();
+    let res = crate::backends::common::builtins::objects::runtime_array_to_dynamic(&[
+        arr,
+        RuntimeValue::String(type_str),
+        RuntimeValue::Int(cap),
+    ]);
+    store_value(res)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_array_to_fixed(arr_handle: u64, type_handle_or_ptr: u64, cap: i64) -> u64 {
+    let arr = unpack_jit_arg(arr_handle);
+    let type_str = get_string_val(type_handle_or_ptr).unwrap_or_default();
+    let res = crate::backends::common::builtins::objects::runtime_array_to_fixed(&[
+        arr,
+        RuntimeValue::String(type_str),
+        RuntimeValue::Int(cap),
+    ]);
+    store_value(res)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_array_to_fixed_raw(
+    arr_handle: u64,
+    type_handle_or_ptr: u64,
+    cap: i64,
+) -> u64 {
+    let arr = unpack_jit_arg(arr_handle);
+    let type_str = get_string_val(type_handle_or_ptr).unwrap_or_default();
+    let res = crate::backends::common::builtins::objects::runtime_array_to_fixed_raw(&[
+        arr,
+        RuntimeValue::String(type_str),
+        RuntimeValue::Int(cap),
+    ]);
+    store_value(res)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_array_to_raw(arr_handle: u64, type_handle_or_ptr: u64) -> u64 {
+    let arr = unpack_jit_arg(arr_handle);
+    let type_str = get_string_val(type_handle_or_ptr).unwrap_or_default();
+    let res = crate::backends::common::builtins::objects::runtime_array_to_raw(&[
+        arr,
+        RuntimeValue::String(type_str),
+    ]);
+    store_value(res)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_set_index(arr_handle: u64, idx: i64, val_handle: u64) -> u64 {
+    let arr = unpack_jit_arg(arr_handle);
+    let val = unpack_jit_arg(val_handle);
+    let res = crate::backends::common::builtins::arrays::runtime_set_index(&[
+        arr,
+        RuntimeValue::Int(idx),
+        val,
+    ]);
+    store_value(res)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_get_index(arr_handle: u64, idx: i64) -> u64 {
+    let arr = unpack_jit_arg(arr_handle);
+    let res = crate::backends::common::builtins::arrays::runtime_get_index(&[
+        arr,
+        RuntimeValue::Int(idx),
+    ]);
+    store_value(res)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_first(arr_handle: u64) -> u64 {
+    let arr = unpack_jit_arg(arr_handle);
+    let res = crate::backends::common::builtins::arrays::runtime_first(&[arr]);
+    store_value(res)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_last(arr_handle: u64) -> u64 {
+    let arr = unpack_jit_arg(arr_handle);
+    let res = crate::backends::common::builtins::arrays::runtime_last(&[arr]);
+    store_value(res)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_capacity(arr_handle: u64) -> u64 {
+    let arr = unpack_jit_arg(arr_handle);
+    let res = crate::backends::common::builtins::arrays::runtime_capacity(&[arr]);
+    store_value(res)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_metadata_size(arr_handle: u64) -> u64 {
+    let arr = unpack_jit_arg(arr_handle);
+    let res = crate::backends::common::builtins::arrays::runtime_metadata_size(&[arr]);
+    store_value(res)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_push(arr_handle: u64, val_handle: u64) -> u64 {
+    let arr = unpack_jit_arg(arr_handle);
+    let val = unpack_jit_arg(val_handle);
+    let res = crate::backends::common::builtins::arrays::runtime_push(&[arr, val]);
+    store_value(res)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_pop(arr_handle: u64) -> u64 {
+    let arr = unpack_jit_arg(arr_handle);
+    let res = crate::backends::common::builtins::arrays::runtime_pop(&[arr]);
+    store_value(res)
+}
+
+// ============================================================================
+// Method and Builtin Dispatch
+// ============================================================================
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_call_method(
+    obj_handle: u64,
+    method_name_ptr_or_handle: u64,
+    a0: u64,
+    a1: u64,
+    a2: u64,
+    a3: u64,
+    argc: u64,
+) -> u64 {
+    let method_name = if let Some(s) = get_string_val(method_name_ptr_or_handle) {
+        s
+    } else {
+        return store_value(RuntimeValue::Null);
+    };
+
+    let obj = unpack_jit_arg(obj_handle);
+
+    // Check if it is a user class object method with a JIT function pointer
+    if let RuntimeValue::Object(ref _map) = obj {
+        fn find_method_name(val: &RuntimeValue, name: &str) -> Option<String> {
+            if let RuntimeValue::Object(m) = val {
+                if let Some(field) = m.get(name) {
+                    if let RuntimeValue::String(mangled) = field {
+                        return Some(mangled.clone());
+                    }
+                }
+                if let Some(proto) = m.get("__class__") {
+                    return find_method_name(proto, name);
+                }
+            }
+            None
+        }
+
+        if let Some(mangled) = find_method_name(&obj, &method_name) {
+            let func_ptr = JIT_FUNCTIONS.with(|funcs| *funcs.borrow().get(&mangled).unwrap_or(&0));
+            if func_ptr != 0 {
+                let f: extern "C" fn(u64, u64, u64, u64, u64) -> u64 =
+                    unsafe { std::mem::transmute(func_ptr) };
+                return f(obj_handle, a0, a1, a2, a3);
+            }
+        }
+    }
+
+    // Build args list for runtime_call_method: [obj, method_name, arg0, arg1, ...]
+    let raw_args = [a0, a1, a2, a3];
+    let count = (argc as usize).min(4);
+    let mut method_args = Vec::with_capacity(2 + count);
+    method_args.push(obj);
+    method_args.push(RuntimeValue::String(method_name));
+    for i in 0..count {
+        method_args.push(unpack_jit_arg(raw_args[i]));
+    }
+
+    let res = crate::backends::common::builtins::objects::runtime_call_method(&method_args);
+    store_value(res)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_call_builtin(
+    name_ptr_or_handle: u64,
+    a0: u64,
+    a1: u64,
+    a2: u64,
+    a3: u64,
+    a4: u64,
+    argc: u64,
+) -> u64 {
+    let name = if let Some(s) = get_string_val(name_ptr_or_handle) {
+        s
+    } else {
+        return store_value(RuntimeValue::Null);
+    };
+
+    let raw_args = [a0, a1, a2, a3, a4];
+    let count = (argc as usize).min(5);
+    let mut args = Vec::with_capacity(count);
+    for i in 0..count {
+        args.push(unpack_jit_arg(raw_args[i]));
+    }
+
+    let registry = crate::backends::common::builtins::BuiltinRegistry::new();
+    let res = if let Some(func) = registry.get(&name) {
+        func(&args)
+    } else {
+        match name.as_str() {
+            "metadata_size" => {
+                crate::backends::common::builtins::arrays::runtime_metadata_size(&args)
+            }
+            "capacity" => crate::backends::common::builtins::arrays::runtime_capacity(&args),
+            "first" => crate::backends::common::builtins::arrays::runtime_first(&args),
+            "last" => crate::backends::common::builtins::arrays::runtime_last(&args),
+            "get_index" | "array_get" => {
+                crate::backends::common::builtins::arrays::runtime_get_index(&args)
+            }
+            "set_index" => crate::backends::common::builtins::arrays::runtime_set_index(&args),
+            "push" | "append" => crate::backends::common::builtins::arrays::runtime_push(&args),
+            "pop" => crate::backends::common::builtins::arrays::runtime_pop(&args),
+            "array_to_dynamic" => {
+                crate::backends::common::builtins::objects::runtime_array_to_dynamic(&args)
+            }
+            "array_to_fixed" => {
+                crate::backends::common::builtins::objects::runtime_array_to_fixed(&args)
+            }
+            "array_to_fixed_raw" => {
+                crate::backends::common::builtins::objects::runtime_array_to_fixed_raw(&args)
+            }
+            "array_to_raw" => {
+                crate::backends::common::builtins::objects::runtime_array_to_raw(&args)
+            }
+            _ => RuntimeValue::Null,
+        }
+    };
+    store_value(res)
 }
 
 /// Get all runtime bridge function pointers for registration with JIT
@@ -3074,5 +3364,29 @@ pub fn get_runtime_symbols() -> Vec<(&'static str, *const u8)> {
         ("jit_env_runtime_has", jit_env_runtime_has as *const u8),
         ("jit_env_runtime_all", jit_env_runtime_all as *const u8),
         ("jit_env_runtime_load", jit_env_runtime_load as *const u8),
+        // Exception handling
+        ("jit_has_exception", jit_has_exception as *const u8),
+        ("jit_get_exception", jit_get_exception as *const u8),
+        ("jit_clear_exception", jit_clear_exception as *const u8),
+        ("jit_throw", jit_throw as *const u8),
+        // Array & composite builtins
+        ("jit_array_to_dynamic", jit_array_to_dynamic as *const u8),
+        ("jit_array_to_fixed", jit_array_to_fixed as *const u8),
+        (
+            "jit_array_to_fixed_raw",
+            jit_array_to_fixed_raw as *const u8,
+        ),
+        ("jit_array_to_raw", jit_array_to_raw as *const u8),
+        ("jit_set_index", jit_set_index as *const u8),
+        ("jit_get_index", jit_get_index as *const u8),
+        ("jit_first", jit_first as *const u8),
+        ("jit_last", jit_last as *const u8),
+        ("jit_capacity", jit_capacity as *const u8),
+        ("jit_metadata_size", jit_metadata_size as *const u8),
+        ("jit_push", jit_push as *const u8),
+        ("jit_pop", jit_pop as *const u8),
+        // Unified method & builtin dispatch
+        ("jit_call_method", jit_call_method as *const u8),
+        ("jit_call_builtin", jit_call_builtin as *const u8),
     ]
 }

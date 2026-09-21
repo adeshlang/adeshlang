@@ -1549,50 +1549,55 @@ impl NativeJitCompiler {
                         if args.len() < 2 {
                             let zero = builder.ins().iconst(types::I64, 0);
                             value_map.insert(*dst, zero);
+                            value_types.insert(*dst, AotValueType::Handle);
                         } else {
-                            if let (Some(&obj), Some(&method_name)) =
-                                (value_map.get(&args[0]), value_map.get(&args[1]))
-                            {
-                                // Get function pointer
-                                let func_ptr = Self::call_runtime_fn_2(
-                                    builder,
-                                    module,
-                                    "jit_get_method",
-                                    obj,
-                                    method_name,
-                                )?;
+                            let obj = value_map
+                                .get(&args[0])
+                                .copied()
+                                .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                            let method_name = value_map
+                                .get(&args[1])
+                                .copied()
+                                .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
 
-                                // Call indirect
-                                // Method signature: (obj, arg1, arg2...) -> i64
-                                let mut sig = module.make_signature();
-                                sig.call_conv = CallConv::triple_default(module.isa().triple());
-                                sig.returns.push(AbiParam::new(types::I64)); // Return type
+                            let a0 = args
+                                .get(2)
+                                .and_then(|id| value_map.get(id))
+                                .copied()
+                                .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                            let a1 = args
+                                .get(3)
+                                .and_then(|id| value_map.get(id))
+                                .copied()
+                                .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                            let a2 = args
+                                .get(4)
+                                .and_then(|id| value_map.get(id))
+                                .copied()
+                                .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                            let a3 = args
+                                .get(5)
+                                .and_then(|id| value_map.get(id))
+                                .copied()
+                                .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                            let argc = builder
+                                .ins()
+                                .iconst(types::I64, (args.len().saturating_sub(2)) as i64);
 
-                                // Params
-                                sig.params.push(AbiParam::new(types::I64)); // 'this' (obj)
-
-                                let mut call_args = vec![obj];
-
-                                // Add args
-                                for arg_id in args.iter().skip(2) {
-                                    sig.params.push(AbiParam::new(types::I64));
-                                    if let Some(&val) = value_map.get(arg_id) {
-                                        call_args.push(val);
-                                    } else {
-                                        call_args.push(builder.ins().iconst(types::I64, 0));
-                                    }
-                                }
-
-                                let sig_ref = builder.import_signature(sig);
-                                let call_inst =
-                                    builder.ins().call_indirect(sig_ref, func_ptr, &call_args);
-                                let result = builder.inst_results(call_inst)[0];
-                                value_map.insert(*dst, result);
-                                value_types.insert(*dst, AotValueType::Int);
-                            } else {
-                                let zero = builder.ins().iconst(types::I64, 0);
-                                value_map.insert(*dst, zero);
-                            }
+                            let res = Self::call_runtime_fn_7(
+                                builder,
+                                module,
+                                "jit_call_method",
+                                obj,
+                                method_name,
+                                a0,
+                                a1,
+                                a2,
+                                a3,
+                                argc,
+                            )?;
+                            value_map.insert(*dst, res);
+                            value_types.insert(*dst, AotValueType::Handle);
                         }
                     }
                     "__make_class_object" => {
@@ -1821,9 +1826,30 @@ impl NativeJitCompiler {
                         value_types.insert(*dst, AotValueType::Int);
                     }
                     "__has_exception" => {
-                        // No exceptions in native JIT for now, always return false (0)
-                        let result = builder.ins().iconst(types::I8, 0);
+                        let result = Self::call_runtime_fn_0(builder, module, "jit_has_exception")?;
                         value_map.insert(*dst, result);
+                        value_types.insert(*dst, AotValueType::I64);
+                    }
+                    "__get_exception" => {
+                        let result = Self::call_runtime_fn_0(builder, module, "jit_get_exception")?;
+                        value_map.insert(*dst, result);
+                        value_types.insert(*dst, AotValueType::Handle);
+                    }
+                    "__clear_exception" => {
+                        let result =
+                            Self::call_runtime_fn_0(builder, module, "jit_clear_exception")?;
+                        value_map.insert(*dst, result);
+                        value_types.insert(*dst, AotValueType::I64);
+                    }
+                    "__throw" => {
+                        let val = args
+                            .first()
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let result = Self::call_runtime_fn_1(builder, module, "jit_throw", val)?;
+                        value_map.insert(*dst, result);
+                        value_types.insert(*dst, AotValueType::I64);
                     }
                     "clock" => {
                         let mut sig = module.make_signature();
@@ -2430,10 +2456,270 @@ impl NativeJitCompiler {
                         value_map.insert(*dst, handle);
                         value_types.insert(*dst, AotValueType::Handle);
                     }
+                    "array_to_dynamic" => {
+                        let arr = args
+                            .get(0)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let ty = args
+                            .get(1)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let cap = args
+                            .get(2)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let handle = Self::call_runtime_fn_3(
+                            builder,
+                            module,
+                            "jit_array_to_dynamic",
+                            arr,
+                            ty,
+                            cap,
+                        )?;
+                        value_map.insert(*dst, handle);
+                        value_types.insert(*dst, AotValueType::Handle);
+                    }
+                    "array_to_fixed" => {
+                        let arr = args
+                            .get(0)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let ty = args
+                            .get(1)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let cap = args
+                            .get(2)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let handle = Self::call_runtime_fn_3(
+                            builder,
+                            module,
+                            "jit_array_to_fixed",
+                            arr,
+                            ty,
+                            cap,
+                        )?;
+                        value_map.insert(*dst, handle);
+                        value_types.insert(*dst, AotValueType::Handle);
+                    }
+                    "array_to_fixed_raw" => {
+                        let arr = args
+                            .get(0)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let ty = args
+                            .get(1)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let cap = args
+                            .get(2)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let handle = Self::call_runtime_fn_3(
+                            builder,
+                            module,
+                            "jit_array_to_fixed_raw",
+                            arr,
+                            ty,
+                            cap,
+                        )?;
+                        value_map.insert(*dst, handle);
+                        value_types.insert(*dst, AotValueType::Handle);
+                    }
+                    "array_to_raw" => {
+                        let arr = args
+                            .get(0)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let ty = args
+                            .get(1)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let handle =
+                            Self::call_runtime_fn_2(builder, module, "jit_array_to_raw", arr, ty)?;
+                        value_map.insert(*dst, handle);
+                        value_types.insert(*dst, AotValueType::Handle);
+                    }
+                    "set_index" => {
+                        let arr = args
+                            .get(0)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let idx = args
+                            .get(1)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let val = args
+                            .get(2)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let handle = Self::call_runtime_fn_3(
+                            builder,
+                            module,
+                            "jit_set_index",
+                            arr,
+                            idx,
+                            val,
+                        )?;
+                        value_map.insert(*dst, handle);
+                        value_types.insert(*dst, AotValueType::Handle);
+                    }
+                    "get_index" | "array_get" => {
+                        let arr = args
+                            .get(0)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let idx = args
+                            .get(1)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let handle =
+                            Self::call_runtime_fn_2(builder, module, "jit_get_index", arr, idx)?;
+                        value_map.insert(*dst, handle);
+                        value_types.insert(*dst, AotValueType::Handle);
+                    }
+                    "first" => {
+                        let arr = args
+                            .get(0)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let handle = Self::call_runtime_fn_1(builder, module, "jit_first", arr)?;
+                        value_map.insert(*dst, handle);
+                        value_types.insert(*dst, AotValueType::Handle);
+                    }
+                    "last" => {
+                        let arr = args
+                            .get(0)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let handle = Self::call_runtime_fn_1(builder, module, "jit_last", arr)?;
+                        value_map.insert(*dst, handle);
+                        value_types.insert(*dst, AotValueType::Handle);
+                    }
+                    "capacity" => {
+                        let arr = args
+                            .get(0)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let handle = Self::call_runtime_fn_1(builder, module, "jit_capacity", arr)?;
+                        value_map.insert(*dst, handle);
+                        value_types.insert(*dst, AotValueType::Handle);
+                    }
+                    "metadata_size" => {
+                        let arr = args
+                            .get(0)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let handle =
+                            Self::call_runtime_fn_1(builder, module, "jit_metadata_size", arr)?;
+                        value_map.insert(*dst, handle);
+                        value_types.insert(*dst, AotValueType::Handle);
+                    }
+                    "push" | "append" => {
+                        let arr = args
+                            .get(0)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let val = args
+                            .get(1)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let handle =
+                            Self::call_runtime_fn_2(builder, module, "jit_push", arr, val)?;
+                        value_map.insert(*dst, handle);
+                        value_types.insert(*dst, AotValueType::Handle);
+                    }
+                    "pop" => {
+                        let arr = args
+                            .get(0)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let handle = Self::call_runtime_fn_1(builder, module, "jit_pop", arr)?;
+                        value_map.insert(*dst, handle);
+                        value_types.insert(*dst, AotValueType::Handle);
+                    }
                     _ => {
-                        // Unknown builtin - return 0
-                        let result = builder.ins().iconst(types::I64, 0);
-                        value_map.insert(*dst, result);
+                        // Fallback to jit_call_builtin
+                        let name_c_str = format!("{}\0", builtin_name);
+                        let name_sym = format!(
+                            "__jit_bname_{}",
+                            builtin_name.replace('.', "_").replace('-', "_")
+                        );
+                        let name_data_id = module
+                            .declare_data(&name_sym, cranelift_module::Linkage::Local, true, false)
+                            .map_err(|e| format!("Failed to declare builtin name data: {}", e))?;
+                        let mut data_desc = DataDescription::new();
+                        data_desc.define(name_c_str.into_bytes().into_boxed_slice());
+                        let _ = module.define_data(name_data_id, &data_desc);
+                        let name_global = module.declare_data_in_func(name_data_id, builder.func);
+                        let name_ptr = builder.ins().global_value(types::I64, name_global);
+
+                        let a0 = args
+                            .get(0)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let a1 = args
+                            .get(1)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let a2 = args
+                            .get(2)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let a3 = args
+                            .get(3)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let a4 = args
+                            .get(4)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let argc = builder.ins().iconst(types::I64, args.len() as i64);
+
+                        let handle = Self::call_runtime_fn_7(
+                            builder,
+                            module,
+                            "jit_call_builtin",
+                            name_ptr,
+                            a0,
+                            a1,
+                            a2,
+                            a3,
+                            a4,
+                            argc,
+                        )?;
+                        value_map.insert(*dst, handle);
+                        value_types.insert(*dst, AotValueType::Handle);
                     }
                 }
                 Ok(())

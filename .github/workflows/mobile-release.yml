@@ -313,3 +313,26 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             dist/mobile/*
+
+      # ========================================================================
+      # UPDATE DOCUMENTATION WEBSITE RELEASES & CHECKSUMS
+      # ========================================================================
+      - name: Update documentation website releases & checksums
+        if: inputs.create_github_release == true
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python docs-website/scripts/update-releases.py --repo "$ADESH_REPO" --tag "${{ steps.version_info.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs-website/ installer/manifests/
+          if git diff --staged --quiet; then
+            echo "Documentation already up to date."
+          else
+            git commit -m "docs: auto-update release assets for mobile ${{ steps.version_info.outputs.tag }}"
+            git push origin HEAD:${{ github.ref_name || 'main' }} || git push
+            echo "Successfully updated and pushed release documentation."
+          fi
+

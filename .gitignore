@@ -53,7 +53,8 @@ test.o
 *.tmp
 
 /docs-website/build
-/docs-website
+/docs-website/.docusaurus
+/docs-website/node_modules
 .agents
 /.adesh_cache
 .adl

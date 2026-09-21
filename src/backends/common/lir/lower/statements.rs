@@ -8,7 +8,9 @@ use super::core::{
     DropLoweringKind, LowerCtx, has_return, is_block_terminated, pop_defer_scope, push_defer_scope,
 };
 use super::expressions::lower_expr;
-use super::functions::{collect_free_vars, lower_class_def, lower_hir_function};
+use super::functions::{
+    collect_free_vars, insert_exception_check, lower_class_def, lower_hir_function,
+};
 use super::memory::{
     emit_all_defers, emit_defers_until_depth, emit_drops_for_location, emit_scope_defers,
     record_var_kind,
@@ -147,6 +149,7 @@ pub(super) fn lower_stmt(
                                 vec![obj_val, idx_val, val],
                             ),
                         );
+                        insert_exception_check(func, ctx);
                         func.push_to_block(
                             ctx.current_block,
                             LirInst::StoreVar(name.clone(), updated_obj),
@@ -163,6 +166,7 @@ pub(super) fn lower_stmt(
                                 vec![obj_val, idx_val, val],
                             ),
                         );
+                        insert_exception_check(func, ctx);
                     }
                 }
                 HirExpr::MemberAccess(obj, field) => {

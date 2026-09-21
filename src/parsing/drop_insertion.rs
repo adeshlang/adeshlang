@@ -80,6 +80,7 @@ impl DropPlan {
 
 /// Drop planner: orchestrates drop event planning
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 pub struct DropPlanner {
     builtin_names: HashSet<String>,
     module_fn_names: HashSet<String>,
@@ -336,37 +337,20 @@ impl DropPlanner {
                 } else {
                     self.visit_expr_moves(func, scopes);
                 }
-                // Arguments: detect if any are moved
+                // In AdeshLang, function arguments are borrowed by default.
+                // Local variables remain live in scope until explicit move or scope exit.
                 for arg in args {
-                    if let HirExpr::LoadVar(var) = arg {
-                        // Conservative: assume function consumes argument (move)
-                        self.remove_from_scopes(var, scopes);
-                    } else {
-                        self.visit_expr_moves(arg, scopes);
-                    }
+                    self.visit_expr_moves(arg, scopes);
                 }
             }
             HirExpr::MethodCall(obj, _, args) => {
                 self.visit_expr_moves(obj, scopes);
                 for arg in args {
-                    if let HirExpr::LoadVar(var) = arg {
-                        self.remove_from_scopes(var, scopes);
-                    } else {
-                        self.visit_expr_moves(arg, scopes);
-                    }
+                    self.visit_expr_moves(arg, scopes);
                 }
             }
-            HirExpr::LoadVar(name) => {
-                // Don't warn for builtin functions, module names, or class/type names (uppercase)
-                if self.builtin_names.contains(name)
-                    || self.module_fn_names.contains(name)
-                    || name.chars().next().map_or(false, |c| c.is_uppercase())
-                {
-                    return;
-                }
-                if !self.is_in_scopes(name, scopes) {
-                    eprintln!("Warning: possible use-after-move of '{name}'");
-                }
+            HirExpr::LoadVar(_name) => {
+                // Read of local variable - variables are auto-managed and borrowed as needed
             }
             HirExpr::Lambda(_, body, _) => {
                 // Treat closures as capturing by reference (bodies don't drop captured vars here)
@@ -449,6 +433,7 @@ impl DropPlanner {
     }
 
     /// Remove a variable from the current scope's owned set
+    #[allow(dead_code)]
     fn remove_from_scopes(&self, var: &str, scopes: &mut ScopedDrops) {
         for scope_locals in scopes.drops_by_scope.iter_mut().rev() {
             if let Some(pos) = scope_locals.iter().position(|v| v == var) {
@@ -459,6 +444,7 @@ impl DropPlanner {
     }
 
     /// Check if a variable is still owned in any active scope
+    #[allow(dead_code)]
     fn is_in_scopes(&self, var: &str, scopes: &ScopedDrops) -> bool {
         scopes
             .drops_by_scope

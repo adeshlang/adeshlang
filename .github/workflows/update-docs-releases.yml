@@ -49,7 +49,7 @@ jobs:
       - name: Fetch releases, calculate checksums, and update docs
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG_INPUT: ${{ inputs.tag }}
+          TAG_INPUT: ${{ inputs.tag || github.event.release.tag_name || github.event.client_payload.tag || '' }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
@@ -70,7 +70,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
-          git add docs-website/
+          git add docs-website/ installer/manifests/
           if git diff --staged --quiet; then
             echo "No documentation changes detected; already up to date."
           else

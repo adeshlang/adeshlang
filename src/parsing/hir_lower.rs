@@ -180,6 +180,15 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                             field.clone(),
                             Box::new(hir_value),
                         ))))
+                    } else if let ExprKind::Index(obj, idx) = &target.kind {
+                        // Handle index assignment: obj[idx] = value
+                        let hir_obj = lower_expr(obj)?;
+                        let hir_idx = lower_expr(idx)?;
+                        Ok(LoweredStmt::Stmt(HirStmt::Assign {
+                            target: HirExpr::Index(Box::new(hir_obj), Box::new(hir_idx)),
+                            value: hir_value,
+                            is_move: true,
+                        }))
                     } else {
                         Ok(LoweredStmt::Stmt(HirStmt::Expr(hir_expr)))
                     }
@@ -1011,6 +1020,50 @@ fn type_from_annotation(ann: &str) -> HirType {
         "char" => HirType::Char,
         "null" | "void" => HirType::Null,
         "any" => HirType::Any,
+        _ if ann.contains('|') => {
+            let mut depth_sq = 0;
+            let mut depth_angle = 0;
+            let mut depth_paren = 0;
+            let mut depth_brace = 0;
+            let mut parts = Vec::new();
+            let mut last_idx = 0;
+            for (i, ch) in ann.char_indices() {
+                match ch {
+                    '[' => depth_sq += 1,
+                    ']' => depth_sq -= 1,
+                    '<' => depth_angle += 1,
+                    '>' => depth_angle -= 1,
+                    '(' => depth_paren += 1,
+                    ')' => depth_paren -= 1,
+                    '{' => depth_brace += 1,
+                    '}' => depth_brace -= 1,
+                    '|' if depth_sq == 0
+                        && depth_angle == 0
+                        && depth_paren == 0
+                        && depth_brace == 0 =>
+                    {
+                        parts.push(ann[last_idx..i].trim());
+                        last_idx = i + 1;
+                    }
+                    _ => {}
+                }
+            }
+            if last_idx < ann.len() {
+                parts.push(ann[last_idx..].trim());
+            }
+            if parts.len() > 1 {
+                if let Some(primary) = parts.iter().find(|p| {
+                    let p_lower = p.to_ascii_lowercase();
+                    p_lower != "null" && p_lower != "void" && p_lower != "undefined"
+                }) {
+                    type_from_annotation(primary)
+                } else {
+                    HirType::Unknown
+                }
+            } else {
+                HirType::Class(ann.to_string())
+            }
+        }
         _ if ann.starts_with('[') && ann.ends_with(']') => {
             // Parse [T], [T;N], [T;raw], [T;N;raw] and nested array/matrix forms
             let inner = &ann[1..ann.len() - 1];

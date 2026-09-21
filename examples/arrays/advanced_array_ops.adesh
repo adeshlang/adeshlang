@@ -4,6 +4,8 @@
 // fix in `src/typesystem/type_system/expression_inference.rs` now infers
 // `append`/`pop`/`set_index` as `[i32]` properly, so this workaround will
 // also pass on rebuilt binaries.
+//@allow(warnings)
+
 let a: [i32;6] | null = [1,2,3,4];
 print("Start a:", a);
 print("metadata size", a.metadata_size());

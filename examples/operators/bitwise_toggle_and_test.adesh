@@ -12,10 +12,10 @@ let flags = 0;
 flags |= FEATURE_A | FEATURE_B | FEATURE_C;
 flags ^= 2; // toggle B off
 
-print("flags:        {}", flags);
-print("A enabled:    {}", is_enabled(flags, 1));
-print("B enabled:    {}", is_enabled(flags, 2));
-print("C enabled:    {}", is_enabled(flags, 4));
-print("bit 0 set:    {}", std.bit_test(flags, 0));
-print("bit 1 set:    {}", std.bit_test(flags, 1));
-print("set bits:     {}", std.bit_count(flags));
+print("flags:        ", flags);
+print("A enabled:    ", is_enabled(flags, 1));
+print("B enabled:    ", is_enabled(flags, 2));
+print("C enabled:    ", is_enabled(flags, 4));
+print("bit 0 set:    ", std.bit_test(flags, 0));
+print("bit 1 set:    ", std.bit_test(flags, 1));
+print("set bits:     ", std.bit_count(flags));

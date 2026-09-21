@@ -13,7 +13,7 @@ mod conversion;
 mod control;
 
 // Modularized builtin function groups
-mod arrays;
+pub(crate) mod arrays;
 mod collections;
 mod comparison;
 mod datetime;

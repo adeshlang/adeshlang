@@ -822,7 +822,7 @@ fn coerce_elem_to_type(v: &RuntimeValue, t: &str) -> Option<RuntimeValue> {
 /// Convert an array to a fixed-size dynamic array with type coercion
 /// args[0] = array, args[1] = element type, args[2] = capacity
 pub(crate) fn runtime_array_to_fixed(args: &[RuntimeValue]) -> RuntimeValue {
-    if args.len() < 3 {
+    if args.len() < 3 || matches!(&args[0], RuntimeValue::Null) {
         return RuntimeValue::Null;
     }
     let elem_type = args[1].as_string();
@@ -849,7 +849,7 @@ pub(crate) fn runtime_array_to_fixed(args: &[RuntimeValue]) -> RuntimeValue {
 /// Convert an array to a fixed-size raw array with type coercion and padding
 /// args[0] = array, args[1] = element type, args[2] = size
 pub(crate) fn runtime_array_to_fixed_raw(args: &[RuntimeValue]) -> RuntimeValue {
-    if args.len() < 3 {
+    if args.len() < 3 || matches!(&args[0], RuntimeValue::Null) {
         return RuntimeValue::Null;
     }
     let elem_type = args[1].as_string();
