@@ -634,68 +634,55 @@ pub(crate) fn runtime_call_method(args: &[RuntimeValue]) -> RuntimeValue {
     // so we manually dispatch to implemented methods
     match method_name.as_str() {
         // Array methods
-        "append" => super::runtime_push(&method_args), // append is same as push
-        "push" => super::runtime_push(&method_args),
+        "append" | "push" => super::runtime_push(&method_args),
         "pop" => super::runtime_pop(&method_args),
-        "shift" => super::runtime_first(&method_args), // shift returns and removes first element
-        "unshift" => super::runtime_insert(&method_args), // unshift inserts at beginning
+        "shift" => super::runtime_shift(&method_args),
+        "unshift" => super::runtime_unshift(&method_args),
         "insert" => super::runtime_insert(&method_args),
         "remove" => super::runtime_remove(&method_args),
-        "clear" => {
-            // Clear returns empty array of same type
-            if method_args.is_empty() {
-                return RuntimeValue::Null;
-            }
-            match &method_args[0] {
-                RuntimeValue::Array(_) => RuntimeValue::Array(vec![]),
-                RuntimeValue::DynArray {
-                    element_type,
-                    concrete_type,
-                    ..
-                } => RuntimeValue::DynArray {
-                    data: vec![],
-                    element_type: element_type.clone(),
-                    concrete_type: concrete_type.clone(),
-                    tracked_capacity: None,
-                },
-                _ => RuntimeValue::Null,
-            }
-        }
-        "extend" => super::runtime_array_concat(&method_args), // extend is same as concat
+        "clear" => super::runtime_clear(&method_args),
+        "extend" | "concat" => super::runtime_array_concat(&method_args),
         "set_index" => super::runtime_set_index(&method_args),
+        "get_index" => super::runtime_get_index(&method_args),
         "map" => super::runtime_map(&method_args),
         "filter" => super::runtime_filter(&method_args),
         "reduce" => super::runtime_reduce(&method_args),
-        "count" => super::runtime_len(&method_args), // count is same as len
-        "index" => super::runtime_get_index(&method_args),
-        "sort" => {
-            // Simple ascending sort - returns null if not implemented
-            RuntimeValue::Null
-        }
+        "count" => super::runtime_count(&method_args),
+        "index" | "indexOf" => match &method_args[0] {
+            RuntimeValue::String(_) => super::runtime_index_of(&method_args),
+            _ => super::runtime_array_index_of(&method_args),
+        },
+        "lastIndexOf" => match &method_args[0] {
+            RuntimeValue::String(_) => super::runtime_last_index_of(&method_args),
+            _ => super::runtime_array_last_index_of(&method_args),
+        },
+        "sort" => super::runtime_sort(&method_args),
         "reverse" => super::runtime_reverse(&method_args),
-        "slice" => {
-            // Determine if this is a string or array based on first argument type
-            match &method_args[0] {
-                RuntimeValue::String(_) => super::runtime_slice(&method_args),
-                RuntimeValue::Array(_) | RuntimeValue::DynArray { .. } => {
-                    super::runtime_slice_array(&method_args)
-                }
-                _ => RuntimeValue::Null,
-            }
-        }
-        "join" => {
-            // Join works for both arrays and strings (arrays join elements)
-            super::runtime_join(&method_args)
-        }
-        "includes" | "contains" => {
-            // For now, only string includes is implemented
-            match &method_args[0] {
-                RuntimeValue::String(_) => super::runtime_includes(&method_args),
-                _ => RuntimeValue::Bool(false), // Array includes not yet implemented
-            }
-        }
+        "slice" => match &method_args[0] {
+            RuntimeValue::String(_) => super::runtime_slice(&method_args),
+            _ => super::runtime_slice_array(&method_args),
+        },
+        "join" => super::runtime_join(&method_args),
+        "includes" | "contains" => match &method_args[0] {
+            RuntimeValue::String(_) => super::runtime_includes(&method_args),
+            _ => super::runtime_includes(&method_args),
+        },
+        "flat" => super::runtime_array_flat(&method_args),
+        "sum" => super::runtime_sum(&method_args),
+        "min" => super::runtime_array_min(&method_args),
+        "max" => super::runtime_array_max(&method_args),
+        "distinct" => super::runtime_distinct(&method_args),
+        "toSet" => super::runtime_to_set(&method_args),
+        "toTuple" => super::runtime_to_tuple(&method_args),
+        "metadata_size" => super::runtime_metadata_size(&method_args),
+        "capacity" => super::runtime_capacity(&method_args),
+        "first" => super::runtime_first(&method_args),
+        "last" => super::runtime_last(&method_args),
         "find" => super::runtime_find(&method_args),
         "findIndex" => super::runtime_find_index(&method_args),
+        "forEach" => super::runtime_for_each(&method_args),
+        "some" => super::runtime_some(&method_args),
+        "every" => super::runtime_every(&method_args),
 
         // Date methods
         "toISOString" => super::runtime_date_to_iso_string(&method_args),

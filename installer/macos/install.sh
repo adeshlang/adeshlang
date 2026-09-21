@@ -244,7 +244,12 @@ if [[ "$MODE" == "system" ]]; then
 # AdeshLang environment (managed by the AdeshLang installer; safe to remove)
 export ADESH_HOME='$INSTALL_DIR'
 export ADESH_STD='$INSTALL_DIR/std'
-export PATH='$INSTALL_DIR/bin:\$PATH'
+export ADESH_TOOLCHAIN='$INSTALL_DIR/toolchain/llvm'
+export ADESH_CLANG='$INSTALL_DIR/toolchain/llvm/bin/clang'
+export ADESH_LLC='$INSTALL_DIR/toolchain/llvm/bin/llc'
+export ADESH_MLIR_OPT='$INSTALL_DIR/toolchain/llvm/bin/mlir-opt'
+export ADESH_MLIR_TRANSLATE='$INSTALL_DIR/toolchain/llvm/bin/mlir-translate'
+export PATH='$INSTALL_DIR/bin:$INSTALL_DIR/toolchain/llvm/bin:\$PATH'
 EOF
     echo "    wrote /etc/profile.d/adeshlang.sh"
 else
@@ -260,7 +265,12 @@ else
 # AdeshLang environment (managed by the AdeshLang installer; safe to remove)
 export ADESH_HOME='$INSTALL_DIR'
 export ADESH_STD='$INSTALL_DIR/std'
-export PATH='$INSTALL_DIR/bin:\$PATH'
+export ADESH_TOOLCHAIN='$INSTALL_DIR/toolchain/llvm'
+export ADESH_CLANG='$INSTALL_DIR/toolchain/llvm/bin/clang'
+export ADESH_LLC='$INSTALL_DIR/toolchain/llvm/bin/llc'
+export ADESH_MLIR_OPT='$INSTALL_DIR/toolchain/llvm/bin/mlir-opt'
+export ADESH_MLIR_TRANSLATE='$INSTALL_DIR/toolchain/llvm/bin/mlir-translate'
+export PATH='$INSTALL_DIR/bin:$INSTALL_DIR/toolchain/llvm/bin:\$PATH'
 EOF
         echo "    appended exports to $PROFILE"
     fi
@@ -309,7 +319,7 @@ install_toolchain() {
     elif [[ "$WITH_GPU" == "1" ]]; then
         mode_flag="--build-mlir-source"
     fi
-    echo "==> Installing pinned LLVM 23.1.1 toolchain (~190 MB compressed download, ~900 MB disk space)"
+    echo "==> Installing pinned LLVM 18.1.8 toolchain (~190 MB compressed download, ~900 MB disk space)"
     if [[ "$MODE" == "system" ]]; then
         sudo ADESH_HOME="$INSTALL_DIR" "$INSTALL_DIR/bin/adesh" toolchain install "$scope" $mode_flag
     else
@@ -325,7 +335,7 @@ install_toolchain() {
 
 if ask_toolchain; then
     if install_toolchain; then
-        echo "    LLVM 23.1.1 toolchain installed and exposed."
+        echo "    LLVM 18.1.8 toolchain installed and exposed."
     else
         cat <<MSG
 
@@ -360,6 +370,13 @@ fi
 echo
 echo "=================================================="
 echo " AdeshLang $VERSION installed at: $INSTALL_DIR"
-echo " Open a new terminal and run:  adesh"
+if [[ ! -f "$INSTALL_DIR/ai/models/adesh-coder-0.5b-q4_0.gguf" ]]; then
+    echo " • Note: Local AI coder models are not bundled with this installer."
+    echo " • To download and set up the default offline AI coder model (~275 MB):"
+    echo "     adesh ai setup"
+    echo " • Custom AI training requires Python 3.12 (brew install python@3.12)"
+fi
+echo " • Quick Start: adesh doctor | adesh edit | adesh run hello.adesh"
+echo " • Website:     https://adeshlang.org"
 echo "=================================================="
 exit 0

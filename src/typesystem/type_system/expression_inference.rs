@@ -660,8 +660,8 @@ pub(crate) fn infer_expr_type(
             // represent set as array-of-T for now
             Ok(Ty::Array(Box::new(acc.unwrap_or(Ty::Unknown))))
         }
-        ExprKind::Get(obj, _key) => {
-            let _ot = infer_expr_type(
+        ExprKind::Get(obj, key) => {
+            let ot = infer_expr_type(
                 obj,
                 env,
                 fns,
@@ -671,11 +671,25 @@ pub(crate) fn infer_expr_type(
                 generic_aliases,
                 type_params,
             )?;
-            // Property access is dynamically typed for now
-            Ok(Ty::Any)
+            match ot {
+                Ty::Record { required, optional } => {
+                    for (fname, fty) in &required {
+                        if fname == key {
+                            return Ok(fty.clone());
+                        }
+                    }
+                    for (fname, fty) in &optional {
+                        if fname == key {
+                            return Ok(Ty::Nullable(Box::new(fty.clone())));
+                        }
+                    }
+                    Ok(Ty::Any)
+                }
+                _ => Ok(Ty::Any),
+            }
         }
-        ExprKind::OptGet(obj, _key) => {
-            let _ot = infer_expr_type(
+        ExprKind::OptGet(obj, key) => {
+            let ot = infer_expr_type(
                 obj,
                 env,
                 fns,
@@ -685,7 +699,22 @@ pub(crate) fn infer_expr_type(
                 generic_aliases,
                 type_params,
             )?;
-            Ok(Ty::Any)
+            match ot {
+                Ty::Record { required, optional } => {
+                    for (fname, fty) in &required {
+                        if fname == key {
+                            return Ok(Ty::Nullable(Box::new(fty.clone())));
+                        }
+                    }
+                    for (fname, fty) in &optional {
+                        if fname == key {
+                            return Ok(Ty::Nullable(Box::new(fty.clone())));
+                        }
+                    }
+                    Ok(Ty::Any)
+                }
+                _ => Ok(Ty::Any),
+            }
         }
         ExprKind::Index(target, index) => {
             let tt = infer_expr_type(
@@ -698,7 +727,7 @@ pub(crate) fn infer_expr_type(
                 generic_aliases,
                 type_params,
             )?;
-            let _ = infer_expr_type(
+            let it = infer_expr_type(
                 index,
                 env,
                 fns,
@@ -713,9 +742,52 @@ pub(crate) fn infer_expr_type(
                 | Ty::Ptr(elem)
                 | Ty::PtrOwning(elem)
                 | Ty::PtrShared(elem)
-                | Ty::PtrMut(elem) => Ok((*elem).clone()),
+                | Ty::PtrMut(elem) => {
+                    if !matches!(
+                        it,
+                        Ty::Int
+                            | Ty::U8
+                            | Ty::U16
+                            | Ty::U32
+                            | Ty::U64
+                            | Ty::U128
+                            | Ty::I8
+                            | Ty::I16
+                            | Ty::I32
+                            | Ty::I64
+                            | Ty::I128
+                            | Ty::Any
+                            | Ty::Unknown
+                    ) {
+                        return Err(format!(
+                            "array/pointer index must be an integer, found {}",
+                            it
+                        ));
+                    }
+                    Ok((*elem).clone())
+                }
                 Ty::Map(_k, v) => Ok(Ty::Nullable(v)),
-                Ty::Str => Ok(Ty::Str),
+                Ty::Str => {
+                    if !matches!(
+                        it,
+                        Ty::Int
+                            | Ty::U8
+                            | Ty::U16
+                            | Ty::U32
+                            | Ty::U64
+                            | Ty::U128
+                            | Ty::I8
+                            | Ty::I16
+                            | Ty::I32
+                            | Ty::I64
+                            | Ty::I128
+                            | Ty::Any
+                            | Ty::Unknown
+                    ) {
+                        return Err(format!("string index must be an integer, found {}", it));
+                    }
+                    Ok(Ty::Str)
+                }
                 _ => Ok(Ty::Any),
             }
         }

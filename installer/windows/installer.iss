@@ -1,6 +1,12 @@
-; The project is migrating to the official AdeshLang organization; keep this URL
-; as the one easily changed publisher URL for the installer.
-#define MyAppURL "https://github.com/adeshlang/adeshlang"
+; =====================================================================
+; AdeshLang Windows Distribution Installer Script (Inno Setup 6)
+; Official Website: https://adeshlang.org
+; Repository: https://github.com/adeshlang/adeshlang
+; =====================================================================
+
+#define MyAppURL "https://adeshlang.org"
+#define MyAppDocsURL "https://adeshlang.org/docs"
+#define MyAppRepoURL "https://github.com/adeshlang/adeshlang"
 #define MyAppName "AdeshLang"
 #define MyAppVersion "0.3.0"
 #define MyAppPublisher "AdeshLang"
@@ -14,11 +20,11 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-AppCopyright=Copyright (C) 2026 AdeshLang
+AppCopyright=Copyright (C) 2026 AdeshLang (adeshlang.org)
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=AdeshLang Programming Language Setup
 VersionInfoVersion={#MyAppVersion}
-VersionInfoCopyright=Copyright (C) 2026 AdeshLang
+VersionInfoCopyright=Copyright (C) 2026 AdeshLang (adeshlang.org)
 DefaultDirName={autopf}\AdeshLang
 DefaultGroupName=AdeshLang Programming Language
 DisableProgramGroupPage=yes
@@ -28,36 +34,32 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
-ArchitecturesAllowed=x64
-ArchitecturesInstallIn64BitMode=x64
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 ChangesEnvironment=yes
 SetupIconFile=resources\installer.ico
 UninstallDisplayName={#MyAppName} {#MyAppVersion}
 UninstallDisplayIcon={app}\bin\{#MyAppExeName}
+ExtraDiskSpaceRequired=1939865600
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "downloadtoolchain"; Description: "Install pinned LLVM 18.1.8 Toolchain (official LLVM/Clang compiler, lld linker, llvm-ar; configured automatically)"; Flags: checkedonce
-Name: "vsbuildtools"; Description: "Install Visual Studio Build Tools + Windows SDK (required for MSVC-target AOT native linking, ~2 GB)"; Flags: unchecked; Check: ShouldShowVSBuildTools
+Name: "downloadtoolchain"; Description: "Install pinned LLVM 18.1.8 Toolchain (Clang compiler, LLD linker, llvm-ar, llc; required for AOT & GPU compilation, ~1.5 GB)"; Flags: checkedonce
+Name: "vsbuildtools"; Description: "Install Visual Studio Build Tools + Windows SDK (required for Windows MSVC CRT linking: ucrt.lib, msvcrt.lib, legacy_stdio_definitions.lib, ~2 GB)"; Flags: checkedonce; Check: ShouldShowVSBuildTools
 Name: "python"; Description: "Install Python 3.12 (required for full AI features: `adesh ai train/evaluate/generate` and MLIR source builds)"; Flags: unchecked; Check: ShouldShowPython
 Name: "buildmlir"; Description: "Build MLIR GPU tools from source (adds 30–90 minutes; requires Visual Studio C++ Build Tools + CMake + Python 3)"; Flags: unchecked
-Name: "fileassoc"; Description: "Associate .adl and .adesh files with AdeshLang"; Flags: unchecked
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+Name: "fileassoc"; Description: "Associate .adl and .adesh source files with AdeshLang"; Flags: unchecked
 
 [Files]
 ; The distribution staging script supplies all files below. The toolchain is
-; deliberately downloaded by adesh at install time rather than bundled here.
-; The default AI model (ai\models) ships with the distribution so `adesh ai`
-; works offline right after install; heavier quantizations stay opt-in via
-; `adesh ai setup`.
+; downloaded and configured by `adesh toolchain install` at install time with live logs.
 ;
-; The first two entries are unpacked to {tmp} before the wizard starts so the
-; toolchain can be installed right after the destination page (before the
-; core files are copied); they are removed when setup exits.
+; Temporary files unpacked to {tmp} for bootstrapping
 Source: "..\..\dist\windows-x86_64\bin\adesh.exe"; DestDir: "{tmp}"; Flags: ignoreversion deleteafterinstall
 Source: "..\manifests\toolchain-manifest.json"; DestDir: "{tmp}"; Flags: ignoreversion deleteafterinstall
+; Core application files
 Source: "..\..\dist\windows-x86_64\bin\*"; DestDir: "{app}\bin"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\..\dist\windows-x86_64\lib\*"; DestDir: "{app}\lib"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "..\..\dist\windows-x86_64\std\*"; DestDir: "{app}\std"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -69,17 +71,17 @@ Source: "..\manifests\toolchain-manifest.json"; DestDir: "{app}\config"; Flags: 
 Name: "{group}\AdeshLang Doctor"; Filename: "{app}\bin\{#MyAppExeName}"; Parameters: "doctor"
 Name: "{group}\AdeshLang TUI Editor"; Filename: "{app}\bin\adesh-editor.exe"; Check: EditorExists
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\AdeshLang"; Filename: "{app}\bin\{#MyAppExeName}"; Tasks: desktopicon
 
 [Registry]
-; ADESH_HOME is intentionally machine-wide because this installer is elevated.
+; ADESH_HOME is machine-wide because this installer runs elevated.
 Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: string; ValueName: "ADESH_HOME"; ValueData: "{app}"; Flags: preservestringtype
-; The code constant reads and preserves the existing machine PATH. The entry
-; is REG_EXPAND_SZ, and uninstall removes only the exact entries we added.
+Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: string; ValueName: "ADESH_TOOLCHAIN"; ValueData: "{app}\toolchain\llvm"; Flags: preservestringtype
+Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: string; ValueName: "ADESH_CLANG"; ValueData: "{app}\toolchain\llvm\bin\clang.exe"; Flags: preservestringtype
+Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: string; ValueName: "ADESH_LLC"; ValueData: "{app}\toolchain\llvm\bin\llc.exe"; Flags: preservestringtype
+; Preserve existing system PATH and append AdeshLang bin and toolchain bin directories
 Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: expandsz; ValueName: "PATH"; ValueData: "{code:GetSystemPathWithBin}"; Flags: preservestringtype
 
-; Registry file associations for .adl and .adesh. .adl remains associated with
-; the language source command even though "adl" is also the package manager.
+; Registry file associations for .adl and .adesh source code files
 Root: HKA; Subkey: "Software\Classes\.adl"; ValueType: string; ValueName: ""; ValueData: "AdeshLangSourceFile"; Flags: uninsdeletevalue; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\.adesh"; ValueType: string; ValueName: ""; ValueData: "AdeshLangSourceFile"; Flags: uninsdeletevalue; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\AdeshLangSourceFile"; ValueType: string; ValueName: ""; ValueData: "AdeshLang Source Code File"; Flags: uninsdeletekey; Tasks: fileassoc
@@ -87,15 +89,84 @@ Root: HKA; Subkey: "Software\Classes\AdeshLangSourceFile\DefaultIcon"; ValueType
 Root: HKA; Subkey: "Software\Classes\AdeshLangSourceFile\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\bin\{#MyAppExeName}"" run ""%1"""; Tasks: fileassoc
 
 [UninstallDelete]
+Type: files; Name: "{app}\install.log"
 Type: files; Name: "{app}\toolchain-install.log"
-; The toolchain is downloaded by `adesh toolchain install` at install time, so
-; Inno did not track these files; remove them explicitly on uninstall.
 Type: filesandordirs; Name: "{app}\toolchain"
 
 [Code]
 const
   SystemEnvironmentKey = 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment';
   VSBuildToolsURL = 'https://aka.ms/vs/17/release/vs_buildtools.exe';
+  WM_VSCROLL = $0115;
+  SB_BOTTOM = 7;
+
+function SendMessage(hWnd: HWND; Msg: Cardinal; wParam, lParam: LongInt): LongInt;
+  external 'SendMessageW@user32.dll stdcall';
+
+var
+  LogMemo: TNewMemo;
+  LogLabel: TLabel;
+  FinishedMemo: TNewMemo;
+  InstallLogFilePath: String;
+
+procedure LogMessage(const Msg: String);
+var
+  Timestamp: String;
+  FullLine: String;
+begin
+  Timestamp := GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':');
+  FullLine := '[' + Timestamp + '] ' + Msg;
+  if LogMemo <> nil then
+  begin
+    LogMemo.Lines.Add(FullLine);
+    // Scroll to the bottom of the log memo
+    SendMessage(LogMemo.Handle, WM_VSCROLL, SB_BOTTOM, 0);
+  end;
+  WizardForm.StatusLabel.Caption := Msg;
+  WizardForm.FilenameLabel.Caption := '';
+  if InstallLogFilePath <> '' then
+  begin
+    SaveStringToFile(InstallLogFilePath, FullLine + #13#10, True);
+  end;
+  if LogMemo <> nil then
+    LogMemo.Refresh;
+  WizardForm.Refresh;
+end;
+
+procedure InitializeWizard;
+begin
+  // Create a live terminal log memo on the Installing page for real-time progress visibility
+  LogLabel := TLabel.Create(WizardForm);
+  LogLabel.Parent := WizardForm.InstallingPage;
+  LogLabel.Left := WizardForm.ProgressGauge.Left;
+  LogLabel.Top := WizardForm.ProgressGauge.Top + WizardForm.ProgressGauge.Height + ScaleY(8);
+  LogLabel.Caption := 'Installation Process Logs:';
+  LogLabel.Font.Style := [fsBold];
+
+  LogMemo := TNewMemo.Create(WizardForm);
+  LogMemo.Parent := WizardForm.InstallingPage;
+  LogMemo.Left := WizardForm.ProgressGauge.Left;
+  LogMemo.Top := LogLabel.Top + LogLabel.Height + ScaleY(4);
+  LogMemo.Width := WizardForm.ProgressGauge.Width;
+  LogMemo.Height := WizardForm.InstallingPage.Height - LogMemo.Top - ScaleY(8);
+  LogMemo.ReadOnly := True;
+  LogMemo.ScrollBars := ssVertical;
+  LogMemo.Font.Name := 'Consolas';
+  LogMemo.Font.Size := 8;
+  LogMemo.Lines.Add('[Setup] Initializing AdeshLang Installer...');
+
+  // Create post-install instructions box on the Finished Page
+  FinishedMemo := TNewMemo.Create(WizardForm);
+  FinishedMemo.Parent := WizardForm.FinishedPage;
+  FinishedMemo.Left := WizardForm.FinishedLabel.Left;
+  FinishedMemo.Top := WizardForm.FinishedLabel.Top + WizardForm.FinishedLabel.Height + ScaleY(8);
+  FinishedMemo.Width := WizardForm.FinishedLabel.Width;
+  FinishedMemo.Height := WizardForm.FinishedPage.Height - FinishedMemo.Top - ScaleY(10);
+  FinishedMemo.ReadOnly := True;
+  FinishedMemo.ScrollBars := ssVertical;
+  FinishedMemo.Font.Name := 'Consolas';
+  FinishedMemo.Font.Size := 8;
+end;
 
 function EditorExists: Boolean;
 begin
@@ -163,8 +234,10 @@ function GetSystemPathWithBin(Param: String): String;
 var
   PathValue: String;
   BinDir: String;
+  LLVMBinDir: String;
 begin
   BinDir := ExpandConstant('{app}\bin');
+  LLVMBinDir := ExpandConstant('{app}\toolchain\llvm\bin');
   if not RegQueryStringValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'PATH', PathValue) then
     PathValue := '';
   if not PathHasEntry(PathValue, BinDir) then
@@ -174,6 +247,10 @@ begin
     else
       PathValue := PathValue + ';' + BinDir;
   end;
+  if not PathHasEntry(PathValue, LLVMBinDir) then
+  begin
+    PathValue := PathValue + ';' + LLVMBinDir;
+  end;
   Result := PathValue;
 end;
 
@@ -182,19 +259,55 @@ var
   Root: String;
 begin
   Result := False;
-  Root := 'C:\Program Files (x86)\Microsoft Visual Studio\2019';
+
+  // 1. Check 64-bit Visual Studio 2022 installations
+  Root := 'C:\Program Files\Microsoft Visual Studio\2022';
   if DirExists(Root + '\BuildTools\VC\Tools\MSVC') or
      DirExists(Root + '\Community\VC\Tools\MSVC') or
+     DirExists(Root + '\Professional\VC\Tools\MSVC') or
      DirExists(Root + '\Enterprise\VC\Tools\MSVC') then
+  begin
     Result := True;
+    Exit;
+  end;
+
+  // 2. Check 32-bit Visual Studio 2022 installations
   Root := 'C:\Program Files (x86)\Microsoft Visual Studio\2022';
   if DirExists(Root + '\BuildTools\VC\Tools\MSVC') or
      DirExists(Root + '\Community\VC\Tools\MSVC') or
+     DirExists(Root + '\Professional\VC\Tools\MSVC') or
      DirExists(Root + '\Enterprise\VC\Tools\MSVC') then
+  begin
     Result := True;
-  if RegKeyExists(HKEY_LOCAL_MACHINE, 'SOFTWARE\Microsoft\VisualStudio\Setup\Instances\BuildTools') or
-     RegKeyExists(HKEY_LOCAL_MACHINE, 'SOFTWARE\WOW6432Node\Microsoft\VisualStudio\Setup\Instances\BuildTools') then
+    Exit;
+  end;
+
+  // 3. Check Visual Studio 2019 installations
+  Root := 'C:\Program Files (x86)\Microsoft Visual Studio\2019';
+  if DirExists(Root + '\BuildTools\VC\Tools\MSVC') or
+     DirExists(Root + '\Community\VC\Tools\MSVC') or
+     DirExists(Root + '\Professional\VC\Tools\MSVC') or
+     DirExists(Root + '\Enterprise\VC\Tools\MSVC') then
+  begin
     Result := True;
+    Exit;
+  end;
+
+  // 4. Check Visual Studio Installer Instances registry
+  if RegKeyExists(HKEY_LOCAL_MACHINE, 'SOFTWARE\Microsoft\VisualStudio\Setup\Instances') or
+     RegKeyExists(HKEY_LOCAL_MACHINE, 'SOFTWARE\WOW6432Node\Microsoft\VisualStudio\Setup\Instances') then
+  begin
+    Result := True;
+    Exit;
+  end;
+
+  // 5. Check Windows SDK libraries
+  if DirExists('C:\Program Files (x86)\Windows Kits\10\Lib') and
+     (ExpandConstant('{%VCToolsInstallDir}') <> '') then
+  begin
+    Result := True;
+    Exit;
+  end;
 end;
 
 function ShouldShowVSBuildTools: Boolean;
@@ -219,8 +332,10 @@ begin
     Result := True;
     Exit;
   end;
-  if FileExists('C:\Program Files\Python312\python.exe') or
+  if FileExists('C:\Program Files\Python313\python.exe') or
+     FileExists('C:\Program Files\Python312\python.exe') or
      FileExists('C:\Program Files\Python311\python.exe') or
+     FileExists('C:\Python313\python.exe') or
      FileExists('C:\Python312\python.exe') or
      FileExists('C:\Python311\python.exe') then
   begin
@@ -239,6 +354,120 @@ begin
   Result := not HasPython;
 end;
 
+function RunCommandWithLiveLog(const Title, ExePath, Args, WorkingDir: String): Boolean;
+var
+  TempLogPath: String;
+  RunnerScript: String;
+  PowerShellPath: String;
+  ResultCode: Integer;
+  LastLineRead: Integer;
+  Lines: TArrayOfString;
+  Done: Boolean;
+  DoneFilePath: String;
+  ExitCodeFilePath: String;
+  IterCount: Integer;
+begin
+  LogMessage('▶ Starting ' + Title + '...');
+  TempLogPath := ExpandConstant('{tmp}\adesh_step_output.log');
+  DoneFilePath := ExpandConstant('{tmp}\adesh_step_done.flag');
+  ExitCodeFilePath := ExpandConstant('{tmp}\adesh_step_exit.txt');
+  DeleteFile(TempLogPath);
+  DeleteFile(DoneFilePath);
+  DeleteFile(ExitCodeFilePath);
+
+  PowerShellPath := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+
+  // Launch the command via PowerShell and stream output to a temporary log file while tracking status
+  RunnerScript :=
+    '$env:ADESH_HOME = ''' + ExpandConstant('{app}') + '''; ' +
+    '& ''' + ExePath + ''' ' + Args + ' 2>&1 | Tee-Object -FilePath ''' + TempLogPath + '''; ' +
+    '$code = $LASTEXITCODE; if ($null -eq $code) { $code = 0 }; ' +
+    'Set-Content -Path ''' + ExitCodeFilePath + ''' -Value $code; ' +
+    'Set-Content -Path ''' + DoneFilePath + ''' -Value "done"; exit $code';
+
+  if not Exec(PowerShellPath,
+              '-NoLogo -NoProfile -ExecutionPolicy Bypass -Command "' + RunnerScript + '"',
+              WorkingDir, SW_HIDE, ewNoWait, ResultCode) then
+  begin
+    LogMessage('✗ Error: Failed to execute ' + Title);
+    Result := False;
+    Exit;
+  end;
+
+  LastLineRead := 0;
+  Done := False;
+  IterCount := 0;
+
+  while not Done do
+  begin
+    Sleep(120);
+    IterCount := IterCount + 1;
+    if LogMemo <> nil then
+      LogMemo.Refresh;
+    WizardForm.Refresh;
+
+    if FileExists(TempLogPath) then
+    begin
+      if LoadStringsFromFile(TempLogPath, Lines) then
+      begin
+        while LastLineRead < GetArrayLength(Lines) do
+        begin
+          if Trim(Lines[LastLineRead]) <> '' then
+          begin
+            LogMessage('  ' + Lines[LastLineRead]);
+          end;
+          LastLineRead := LastLineRead + 1;
+        end;
+      end;
+    end;
+
+    if FileExists(DoneFilePath) then
+    begin
+      Done := True;
+    end;
+  end;
+
+  // Flush any final lines
+  if FileExists(TempLogPath) then
+  begin
+    if LoadStringsFromFile(TempLogPath, Lines) then
+    begin
+      while LastLineRead < GetArrayLength(Lines) do
+      begin
+        if Trim(Lines[LastLineRead]) <> '' then
+        begin
+          LogMessage('  ' + Lines[LastLineRead]);
+        end;
+        LastLineRead := LastLineRead + 1;
+      end;
+    end;
+  end;
+
+  ResultCode := 0;
+  if FileExists(ExitCodeFilePath) then
+  begin
+    if LoadStringsFromFile(ExitCodeFilePath, Lines) and (GetArrayLength(Lines) > 0) then
+    begin
+      ResultCode := StrToIntDef(Trim(Lines[0]), 0);
+    end;
+  end;
+
+  // Clean up temporary execution marker files
+  DeleteFile(DoneFilePath);
+  DeleteFile(ExitCodeFilePath);
+
+  if (ResultCode = 0) or (ResultCode = 3010) then
+  begin
+    LogMessage('✓ ' + Title + ' completed successfully.');
+    Result := True;
+  end
+  else
+  begin
+    LogMessage('✗ ' + Title + ' returned non-zero exit code: ' + IntToStr(ResultCode));
+    Result := False;
+  end;
+end;
+
 function InstallPython: Boolean;
 var
   InstallerPath: String;
@@ -247,32 +476,41 @@ var
   PowerShellPath: String;
   PythonURL: String;
 begin
+  LogMessage('====================================================');
+  LogMessage('Python 3.12 Setup (for full AI neural engine)');
+  LogMessage('====================================================');
+
   PythonURL := 'https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe';
   InstallerPath := ExpandConstant('{tmp}\python_installer.exe');
   PowerShellPath := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
 
-  // Try winget first if available (silent, hidden)
+  // Try winget first if available
+  LogMessage('Checking system package manager (winget)...');
   if Exec('winget.exe', 'install --id Python.Python.3.12 --source winget --silent --accept-package-agreements --accept-source-agreements',
       '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
   begin
+    LogMessage('✓ Python 3.12 installed via winget.');
     Result := True;
     Exit;
   end;
 
   // Fallback to web download
+  LogMessage('Downloading Python 3.12.8 from python.org...');
   DownloadCommand := '$ProgressPreference=''SilentlyContinue''; Invoke-WebRequest -UseBasicParsing -Uri ''' +
     PythonURL + ''' -OutFile ''' + InstallerPath + '''';
   if not Exec(PowerShellPath,
       '-NoLogo -NoProfile -ExecutionPolicy Bypass -Command "' + DownloadCommand + '"',
       '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
   begin
+    LogMessage('✗ Failed to download Python 3.12 installer.');
     Result := False;
     Exit;
   end;
 
-  Result := Exec(InstallerPath,
+  Result := RunCommandWithLiveLog('Python 3.12 Installation',
+    InstallerPath,
     '/quiet InstallAllUsers=1 PrependPath=1 Include_pip=1',
-    '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
+    ExpandConstant('{tmp}'));
 end;
 
 function InstallVSBuildTools: Boolean;
@@ -282,70 +520,170 @@ var
   ResultCode: Integer;
   PowerShellPath: String;
 begin
+  LogMessage('====================================================');
+  LogMessage('Visual Studio Build Tools & Windows SDK Setup');
+  LogMessage('====================================================');
+
   InstallerPath := ExpandConstant('{tmp}\vs_buildtools.exe');
   PowerShellPath := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+
+  // Try winget first if available
+  LogMessage('Checking system package manager (winget) for VS Build Tools...');
+  if Exec('winget.exe', 'install --id Microsoft.VisualStudio.2022.BuildTools --override "--passive --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended" --source winget --silent --accept-package-agreements --accept-source-agreements',
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and ((ResultCode = 0) or (ResultCode = 3010)) then
+  begin
+    LogMessage('✓ Visual Studio Build Tools installed via winget.');
+    Result := True;
+    Exit;
+  end;
+
+  // Fallback to web download
+  LogMessage('Downloading Visual Studio Build Tools bootstrapper...');
   DownloadCommand := '$ProgressPreference=''SilentlyContinue''; Invoke-WebRequest -UseBasicParsing -Uri ''' +
     VSBuildToolsURL + ''' -OutFile ''' + InstallerPath + '''';
   if not Exec(PowerShellPath,
       '-NoLogo -NoProfile -ExecutionPolicy Bypass -Command "' + DownloadCommand + '"',
       '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
   begin
+    LogMessage('✗ Failed to download Visual Studio Build Tools bootstrapper.');
     Result := False;
     Exit;
   end;
-  Result := Exec(InstallerPath,
-    '--quiet --wait --norestart --nocache --installPath "' +
-    ExpandConstant('{commonpf32}\Microsoft Visual Studio\2022\BuildTools') +
-    '" --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended',
-    '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
+
+  LogMessage('Running Visual Studio Build Tools installer (MSVC C++ Tools + Windows SDK)...');
+  Result := RunCommandWithLiveLog('Visual Studio Build Tools',
+    InstallerPath,
+    '--passive --wait --norestart --nocache --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended',
+    ExpandConstant('{tmp}'));
 end;
 
 function InstallToolchain: Boolean;
 var
   AdeshPath: String;
   ManifestPath: String;
-  LogPath: String;
   Arguments: String;
-  PowerShellCommand: String;
-  ResultCode: Integer;
 begin
-  // adesh.exe runs from {app}\bin if available, else {tmp}\bin
+  LogMessage('====================================================');
+  LogMessage('AdeshLang Pinned LLVM 18.1.8 Toolchain Setup');
+  LogMessage('====================================================');
+
   AdeshPath := ExpandConstant('{app}\bin\adesh.exe');
   if not FileExists(AdeshPath) then
     AdeshPath := ExpandConstant('{tmp}\adesh.exe');
+
   ManifestPath := ExpandConstant('{app}\config\toolchain-manifest.json');
   if not FileExists(ManifestPath) then
     ManifestPath := ExpandConstant('{tmp}\toolchain-manifest.json');
-  LogPath := ExpandConstant('{tmp}\adesh-toolchain-install.log');
-  Arguments := 'toolchain install --system --manifest ''' + ManifestPath + '''';
+
+  Arguments := 'toolchain install --system --manifest "' + ManifestPath + '"';
   if WizardIsTaskSelected('buildmlir') then
     Arguments := Arguments + ' --build-mlir-source';
 
-  // ADESH_HOME points at the chosen destination so exposure + the resolver
-  // behave exactly as they will after the core files are installed.
-  // Execute completely hidden (SW_HIDE) without terminal popup.
-  PowerShellCommand := '$env:ADESH_HOME = ''' + ExpandConstant('{app}') + '''; & ''' +
-    AdeshPath + ''' ' + Arguments +
-    ' 2>&1 | Out-File -FilePath ''' + LogPath + ''' -Encoding utf8; exit $LASTEXITCODE';
-  Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-    '-NoLogo -NoProfile -ExecutionPolicy Bypass -Command "' + PowerShellCommand + '"',
-    ExpandConstant('{tmp}'), SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
+  Result := RunCommandWithLiveLog('LLVM/Clang Toolchain Installer',
+    AdeshPath,
+    Arguments,
+    ExpandConstant('{app}'));
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ToolchainBin: String;
 begin
-  if CurStep <> ssPostInstall then
-    Exit;
-  if WizardIsTaskSelected('vsbuildtools') and not HasVSBuildTools then
-    InstallVSBuildTools;
-  if WizardIsTaskSelected('python') and not HasPython then
-    InstallPython;
-  if WizardIsTaskSelected('downloadtoolchain') or WizardIsTaskSelected('buildmlir') then
-    InstallToolchain;
-  // Promote the toolchain log into the install directory.
-  if FileExists(ExpandConstant('{tmp}\adesh-toolchain-install.log')) then
-    FileCopy(ExpandConstant('{tmp}\adesh-toolchain-install.log'),
-      ExpandConstant('{app}\toolchain-install.log'), False);
+  if CurStep = ssInstall then
+  begin
+    InstallLogFilePath := ExpandConstant('{app}\install.log');
+    LogMessage('====================================================');
+    LogMessage('AdeshLang v0.3.0 Installation Started');
+    LogMessage('Target: ' + ExpandConstant('{app}'));
+    LogMessage('====================================================');
+  end
+  else if CurStep = ssPostInstall then
+  begin
+    LogMessage('✓ Core binaries, standard library, and runtime extracted.');
+
+    if WizardIsTaskSelected('vsbuildtools') and not HasVSBuildTools then
+      InstallVSBuildTools;
+
+    if WizardIsTaskSelected('python') and not HasPython then
+      InstallPython;
+
+    if WizardIsTaskSelected('downloadtoolchain') or WizardIsTaskSelected('buildmlir') then
+      InstallToolchain;
+
+    // Register active toolchain executables into HKLM
+    ToolchainBin := ExpandConstant('{app}\toolchain\llvm\bin');
+    if FileExists(ToolchainBin + '\clang.exe') then
+      RegWriteStringValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_CLANG', ToolchainBin + '\clang.exe');
+    if FileExists(ToolchainBin + '\llc.exe') then
+      RegWriteStringValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_LLC', ToolchainBin + '\llc.exe');
+    if FileExists(ToolchainBin + '\mlir-opt.exe') then
+      RegWriteStringValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_MLIR_OPT', ToolchainBin + '\mlir-opt.exe');
+    if FileExists(ToolchainBin + '\mlir-translate.exe') then
+      RegWriteStringValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_MLIR_TRANSLATE', ToolchainBin + '\mlir-translate.exe');
+
+    // Promote the toolchain log into the program directory
+    if FileExists(ExpandConstant('{tmp}\adesh-toolchain-install.log')) then
+      FileCopy(ExpandConstant('{tmp}\adesh-toolchain-install.log'),
+        ExpandConstant('{app}\toolchain-install.log'), False);
+
+    LogMessage('====================================================');
+    LogMessage('✓ AdeshLang Installation Complete!');
+    LogMessage('Run `adesh doctor` or `adl doctor` in terminal to verify health.');
+    LogMessage('====================================================');
+  end;
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+var
+  HasModel: Boolean;
+  FinishText: String;
+begin
+  if CurPageID = wpFinished then
+  begin
+    HasModel := FileExists(ExpandConstant('{app}\ai\models\adesh-coder-0.5b-q4_0.gguf'));
+
+    FinishText := 'AdeshLang v0.3.0 has been installed successfully!' + #13#10 + #13#10;
+
+    if not HasModel then
+    begin
+      FinishText := FinishText +
+        '═══════════════════════════════════════════════════════' + #13#10 +
+        ' [AI Features & Model Setup]' + #13#10 +
+        '═══════════════════════════════════════════════════════' + #13#10 +
+        ' • AI models are not bundled with this lightweight installer.' + #13#10 +
+        ' • To download and set up the local AI neural coder model (~275 MB):' + #13#10 +
+        '     adesh ai setup' + #13#10 +
+        ' • To train or fine-tune custom AI models, Python 3.12 is required:' + #13#10 +
+        '     winget install Python.Python.3.12' + #13#10 +
+        ' • To generate code once model is setup:' + #13#10 +
+        '     adesh ai generate "create an HTTP server"' + #13#10 + #13#10;
+    end
+    else
+    begin
+      FinishText := FinishText +
+        '═══════════════════════════════════════════════════════' + #13#10 +
+        ' [AI Features Ready]' + #13#10 +
+        '═══════════════════════════════════════════════════════' + #13#10 +
+        ' • Bundled AI neural coder model is configured.' + #13#10 +
+        ' • Generate code with: adesh ai generate "prompt"' + #13#10 + #13#10;
+    end;
+
+    FinishText := FinishText +
+      '═══════════════════════════════════════════════════════' + #13#10 +
+      ' [Quick Start & Toolchain Verification]' + #13#10 +
+      '═══════════════════════════════════════════════════════' + #13#10 +
+      ' • Verify health & toolchains:  adesh doctor' + #13#10 +
+      ' • Launch TUI editor:           adesh edit (or adesh-editor)' + #13#10 +
+      ' • Run Adesh source file:        adesh run hello.adesh' + #13#10 +
+      ' • AOT native compilation:       adesh build hello.adesh' + #13#10 +
+      ' • GPU kernel compilation:       adesh build --gpu=cuda kernel.adesh' + #13#10 + #13#10 +
+      'Documentation & Guides: https://adeshlang.org';
+
+    if FinishedMemo <> nil then
+    begin
+      FinishedMemo.Text := FinishText;
+    end;
+  end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
@@ -374,8 +712,6 @@ begin
   end
   else if CurUninstallStep = usPostUninstall then
   begin
-    // The toolchain AdeshLang installed lives inside the program directory
-    // and was removed with it. Only a PRE-EXISTING system LLVM remains.
     if DirExists('C:\Program Files\LLVM\bin') then
       MsgBox('AdeshLang has been removed, including the LLVM toolchain it installed.' +
         Chr(13) + Chr(10) + Chr(13) + Chr(10) +

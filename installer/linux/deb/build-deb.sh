@@ -47,6 +47,11 @@ cp "$(dirname "${BASH_SOURCE[0]}")/prerm" "$package_root/DEBIAN/prerm"
 cp "$(dirname "${BASH_SOURCE[0]}")/postrm" "$package_root/DEBIAN/postrm"
 chmod 0755 "$package_root/DEBIAN/postinst" "$package_root/DEBIAN/prerm" "$package_root/DEBIAN/postrm"
 
+# Enforce standard package permissions
+find "$package_root" -type d -exec chmod 0755 {} +
+find "$package_root/usr/lib/adeshlang" -type f -exec chmod 0644 {} +
+find "$package_root/usr/lib/adeshlang/bin" -type f -exec chmod 0755 {} +
+
 sed -i "s/^Version: .*/Version: $version/" "$package_root/DEBIAN/control"
 sed -i "s/^Architecture: .*/Architecture: $arch/" "$package_root/DEBIAN/control"
 mkdir -p "$root/dist"

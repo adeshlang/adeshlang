@@ -17,27 +17,119 @@ pub struct MlirToolchain {
     pub clang: PathBuf,
 }
 
+fn resolve_mlir_tool(env_var: &str, tool_name: &str) -> PathBuf {
+    if let Ok(path) = std::env::var(env_var) {
+        let p = PathBuf::from(path);
+        if p.exists() {
+            return p;
+        }
+    }
+
+    let exe_suffix = if cfg!(windows) { ".exe" } else { "" };
+    let full_name = format!("{}{}", tool_name, exe_suffix);
+
+    // 1. Check bundled toolchain root from resolver
+    if let Some(bundled) = crate::toolchain::resolver::bundled_root() {
+        let p = bundled.join("bin").join(&full_name);
+        if p.is_file() {
+            return p;
+        }
+        let p_root = bundled.join(&full_name);
+        if p_root.is_file() {
+            return p_root;
+        }
+    }
+
+    // 2. Check explicit ADESH_TOOLCHAIN or ADESH_HOME
+    for var in ["ADESH_TOOLCHAIN", "ADESHLANG_TOOLCHAIN"] {
+        if let Ok(tc) = std::env::var(var) {
+            let p1 = PathBuf::from(&tc).join("bin").join(&full_name);
+            if p1.is_file() {
+                return p1;
+            }
+            let p2 = PathBuf::from(&tc).join(&full_name);
+            if p2.is_file() {
+                return p2;
+            }
+        }
+    }
+    for var in ["ADESH_HOME", "ADESHLANG_HOME"] {
+        if let Ok(home) = std::env::var(var) {
+            let p = PathBuf::from(home)
+                .join("toolchain")
+                .join("llvm")
+                .join("bin")
+                .join(&full_name);
+            if p.is_file() {
+                return p;
+            }
+        }
+    }
+
+    // 3. Check executable-relative toolchain
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(bin_dir) = exe.parent() {
+            let p1 = bin_dir
+                .join("toolchain")
+                .join("llvm")
+                .join("bin")
+                .join(&full_name);
+            if p1.is_file() {
+                return p1;
+            }
+            if let Some(parent) = bin_dir.parent() {
+                let p2 = parent
+                    .join("toolchain")
+                    .join("llvm")
+                    .join("bin")
+                    .join(&full_name);
+                if p2.is_file() {
+                    return p2;
+                }
+            }
+        }
+    }
+
+    // 4. Check well-known system LLVM roots
+    #[cfg(windows)]
+    {
+        for root in [
+            "C:\\Program Files\\AdeshLang\\toolchain\\llvm\\bin",
+            "C:\\Program Files\\LLVM\\bin",
+            "C:\\LLVM\\bin",
+            "C:\\Program Files (x86)\\LLVM\\bin",
+        ] {
+            let p = Path::new(root).join(&full_name);
+            if p.is_file() {
+                return p;
+            }
+        }
+    }
+
+    // 5. System PATH search fallback
+    if let Some(path_var) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            let candidate = dir.join(&full_name);
+            if candidate.is_file() {
+                return candidate;
+            }
+            let candidate_raw = dir.join(tool_name);
+            if candidate_raw.is_file() {
+                return candidate_raw;
+            }
+        }
+    }
+
+    PathBuf::from(tool_name)
+}
+
 impl Default for MlirToolchain {
     fn default() -> Self {
         Self {
-            mlir_opt: std::env::var("ADESH_MLIR_OPT")
-                .unwrap_or_else(|_| "mlir-opt".to_string())
-                .into(),
-            mlir_translate: std::env::var("ADESH_MLIR_TRANSLATE")
-                .unwrap_or_else(|_| "mlir-translate".to_string())
-                .into(),
-            llc: std::env::var("ADESH_LLC")
-                .unwrap_or_else(|_| "llc".to_string())
-                .into(),
-            clang: std::env::var_os("ADESH_CLANG")
-                .map(PathBuf::from)
-                .or_else(|| {
-                    crate::toolchain::resolver::bundled_root().map(|root| {
-                        root.join("bin")
-                            .join(if cfg!(windows) { "clang.exe" } else { "clang" })
-                    })
-                })
-                .unwrap_or_else(|| PathBuf::from("clang")),
+            mlir_opt: resolve_mlir_tool("ADESH_MLIR_OPT", "mlir-opt"),
+            mlir_translate: resolve_mlir_tool("ADESH_MLIR_TRANSLATE", "mlir-translate"),
+            llc: resolve_mlir_tool("ADESH_LLC", "llc"),
+            clang: resolve_mlir_tool("ADESH_CLANG", "clang"),
         }
     }
 }

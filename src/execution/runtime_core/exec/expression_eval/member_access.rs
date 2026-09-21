@@ -130,24 +130,33 @@ impl Exec {
             }
             (Value::Object(m), Value::Str(k)) => Ok(m.get(&k).cloned().unwrap_or(Value::Null)),
             (Value::Array(a), i) => {
-                let idx = to_index(&i)?;
-                Ok(a.get(idx).cloned().unwrap_or(Value::Null))
+                let idx = crate::execution::runtime_core::ops::resolve_collection_index(a.len(), &i)?;
+                Ok(idx.and_then(|idx| a.get(idx)).cloned().unwrap_or(Value::Null))
             }
             (Value::DynArray(da), i) => {
-                let idx = to_index(&i)?;
-                Ok(da.data.get(idx).cloned().unwrap_or(Value::Null))
+                let idx = crate::execution::runtime_core::ops::resolve_collection_index(da.data.len(), &i)?;
+                Ok(idx.and_then(|idx| da.data.get(idx)).cloned().unwrap_or(Value::Null))
             }
             (Value::RawArray(_, raw), i) => {
-                let idx = to_index(&i)?;
-                Ok(raw.get(idx).cloned().unwrap_or(Value::Null))
+                let idx = crate::execution::runtime_core::ops::resolve_collection_index(raw.len(), &i)?;
+                Ok(idx.and_then(|idx| raw.get(idx)).cloned().unwrap_or(Value::Null))
             }
             (Value::Tuple(t), i) => {
-                let idx = to_index(&i)?;
-                Ok(t.get(idx).cloned().unwrap_or(Value::Null))
+                let idx = crate::execution::runtime_core::ops::resolve_collection_index(t.len(), &i)?;
+                Ok(idx.and_then(|idx| t.get(idx)).cloned().unwrap_or(Value::Null))
             }
             (Value::Str(s), i) => {
-                let idx = to_index(&i)?;
-                if let Some(ch) = s.chars().nth(idx) { Ok(Value::Char(ch)) } else { Ok(Value::Null) }
+                let char_count = s.chars().count();
+                let idx = crate::execution::runtime_core::ops::resolve_collection_index(char_count, &i)?;
+                if let Some(idx) = idx {
+                    if let Some(ch) = s.chars().nth(idx) {
+                        Ok(Value::Char(ch))
+                    } else {
+                        Ok(Value::Null)
+                    }
+                } else {
+                    Ok(Value::Null)
+                }
             }
             (Value::Instance(inst), idx) => {
                 // Check if operator[] overloading is implemented

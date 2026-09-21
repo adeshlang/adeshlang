@@ -29,7 +29,9 @@ class Box<T> {
     }
 }
 let b = new Box(100);
-print(b.get_value());
+if (b.get_value() != 100) {
+    throw "Generic Box value mismatch: expected 100, got " + string(b.get_value());
+}
 "#;
     let res = run_code(src);
     assert!(
@@ -53,11 +55,14 @@ class Parrot implements Speaker {
 }
 
 fn make_sound(s: Speaker) {
-    print(s.speak());
+    return s.speak();
 }
 
 let p = new Parrot();
-make_sound(p);
+let sound = make_sound(p);
+if (sound != "Polly wants a cracker") {
+    throw "Speaker interface method output mismatch: " + string(sound);
+}
 "#;
     let res = run_code(src);
     assert!(
@@ -84,7 +89,9 @@ class ValueCache<T> implements Cache {
 }
 
 let c = new ValueCache("secret");
-print(c.get());
+if (c.get() != "secret") {
+    throw "ValueCache get mismatch: expected 'secret', got " + string(c.get());
+}
 "#;
     let res = run_code(src);
     assert!(

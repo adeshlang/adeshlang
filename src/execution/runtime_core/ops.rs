@@ -206,6 +206,64 @@ pub fn to_index(v: &Value) -> Result<usize, String> {
     }
 }
 
+/// Extract an `i64` index from any integer-like Value
+pub fn to_i64_index(v: &Value) -> Result<i64, String> {
+    match v {
+        Value::Ref(inner, _) => to_i64_index(inner),
+        Value::U8(n) => Ok(*n as i64),
+        Value::U16(n) => Ok(*n as i64),
+        Value::U32(n) => Ok(*n as i64),
+        Value::U64(n) => i64::try_from(*n).map_err(|_| "index exceeds i64 range".to_string()),
+        Value::U128(n) => i64::try_from(*n).map_err(|_| "index exceeds i64 range".to_string()),
+        Value::I8(n) => Ok(*n as i64),
+        Value::I16(n) => Ok(*n as i64),
+        Value::I32(n) => Ok(*n as i64),
+        Value::I64(n) => Ok(*n),
+        Value::I128(n) => i64::try_from(*n).map_err(|_| "index exceeds i64 range".to_string()),
+        Value::BigInt(b) => {
+            use num_traits::ToPrimitive;
+            b.to_i64()
+                .ok_or_else(|| "index too large for i64 addressable memory".to_string())
+        }
+        Value::Number(n) | Value::F64(n) => {
+            if n.is_nan() || n.is_infinite() {
+                Err("index cannot be NaN or Infinity".to_string())
+            } else if (n - n.trunc()).abs() > 1e-12 {
+                Err("index must be an integer".to_string())
+            } else {
+                Ok(*n as i64)
+            }
+        }
+        Value::F32(n) => {
+            if n.is_nan() || n.is_infinite() {
+                Err("index cannot be NaN or Infinity".to_string())
+            } else if (n - n.trunc()).abs() > 1e-6 {
+                Err("index must be an integer".to_string())
+            } else {
+                Ok(*n as i64)
+            }
+        }
+        Value::Bool(b) => Ok(if *b { 1 } else { 0 }),
+        _ => Err("index must be an integer".to_string()),
+    }
+}
+
+/// Resolve index against a collection length, supporting negative indexing (e.g., -1 for last element)
+pub fn resolve_collection_index(len: usize, v: &Value) -> Result<Option<usize>, String> {
+    let idx = to_i64_index(v)?;
+    if idx >= 0 {
+        let uidx = idx as usize;
+        if uidx < len { Ok(Some(uidx)) } else { Ok(None) }
+    } else {
+        let adjusted = len as i64 + idx;
+        if adjusted >= 0 && (adjusted as usize) < len {
+            Ok(Some(adjusted as usize))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
 pub fn equals(a: &Value, b: &Value) -> bool {
     use crate::parsing::ast::Value::*;
 

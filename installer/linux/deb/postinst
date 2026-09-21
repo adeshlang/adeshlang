@@ -20,8 +20,13 @@ export ADESH_CLANG="/usr/lib/adeshlang/toolchain/llvm/bin/clang"
 export ADESH_LLC="/usr/lib/adeshlang/toolchain/llvm/bin/llc"
 export ADESH_MLIR_OPT="/usr/lib/adeshlang/toolchain/llvm/bin/mlir-opt"
 export ADESH_MLIR_TRANSLATE="/usr/lib/adeshlang/toolchain/llvm/bin/mlir-translate"
-export PATH="/usr/lib/adeshlang/bin:$PATH"
+export PATH="/usr/lib/adeshlang/bin:/usr/lib/adeshlang/toolchain/llvm/bin:$PATH"
 PROFILE
+
+    if [ ! -f "$prefix/ai/models/adesh-coder-0.5b-q4_0.gguf" ]; then
+        echo "Note: AI neural models are not bundled in this package."
+        echo "To download and set up the default local AI coder model (~275 MB), run: adesh ai setup"
+    fi
 
     if [ "${ADESH_DEB_INSTALL_TOOLCHAIN:-0}" = "1" ]; then
         if [ "${ADESH_DEB_USE_SYSTEM_PACKAGES:-${ADESH_USE_SYSTEM_PACKAGES:-0}}" = "1" ]; then

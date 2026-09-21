@@ -545,9 +545,14 @@ impl BytecodeVM {
             BytecodeInstr::ArrayGet => {
                 let idx = self.pop().ok_or("Stack underflow")?;
                 if let Some(InterpreterValue::Array(arr)) = self.pop() {
-                    let i = idx.as_int() as usize;
-                    if i < arr.len() {
-                        self.push(arr[i].clone());
+                    let raw_idx = idx.as_int();
+                    let resolved = if raw_idx < 0 {
+                        arr.len() as i64 + raw_idx
+                    } else {
+                        raw_idx
+                    };
+                    if resolved >= 0 && (resolved as usize) < arr.len() {
+                        self.push(arr[resolved as usize].clone());
                     } else {
                         self.push(InterpreterValue::Null);
                     }
@@ -557,9 +562,14 @@ impl BytecodeVM {
                 let val = self.pop().ok_or("Stack underflow")?;
                 let idx = self.pop().ok_or("Stack underflow")?;
                 if let Some(InterpreterValue::Array(mut arr)) = self.pop() {
-                    let i = idx.as_int() as usize;
-                    if i < arr.len() {
-                        arr[i] = val;
+                    let raw_idx = idx.as_int();
+                    let resolved = if raw_idx < 0 {
+                        arr.len() as i64 + raw_idx
+                    } else {
+                        raw_idx
+                    };
+                    if resolved >= 0 && (resolved as usize) < arr.len() {
+                        arr[resolved as usize] = val;
                     }
                     self.push(InterpreterValue::Array(arr));
                 }

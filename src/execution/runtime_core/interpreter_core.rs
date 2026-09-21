@@ -11736,23 +11736,29 @@ impl Interpreter {
                 };
                 match tv {
                     Value::Array(a) => {
-                        let n = num(iv)?;
+                        let mut n = num(iv)?;
                         if (n - n.trunc()).abs() > 1e-12 {
                             return Err(err("index must be an integer"));
                         }
                         if n < 0.0 {
-                            return Err(err("negative index not supported"));
+                            n = a.len() as f64 + n;
+                        }
+                        if n < 0.0 {
+                            return Err(err("index out of bounds"));
                         }
                         let i = n as usize;
                         a.get(i).cloned().ok_or_else(|| err("index out of bounds"))
                     }
                     Value::DynArray(da) => {
-                        let n = num(iv)?;
+                        let mut n = num(iv)?;
                         if (n - n.trunc()).abs() > 1e-12 {
                             return Err(err("index must be an integer"));
                         }
                         if n < 0.0 {
-                            return Err(err("negative index not supported"));
+                            n = da.data.len() as f64 + n;
+                        }
+                        if n < 0.0 {
+                            return Err(err("index out of bounds"));
                         }
                         let i = n as usize;
                         da.data
@@ -11761,34 +11767,44 @@ impl Interpreter {
                             .ok_or_else(|| err("index out of bounds"))
                     }
                     Value::RawArray(_, a) => {
-                        let n = num(iv)?;
+                        let mut n = num(iv)?;
                         if (n - n.trunc()).abs() > 1e-12 {
                             return Err(err("index must be an integer"));
                         }
                         if n < 0.0 {
-                            return Err(err("negative index not supported"));
+                            n = a.len() as f64 + n;
+                        }
+                        if n < 0.0 {
+                            return Err(err("index out of bounds"));
                         }
                         let i = n as usize;
                         a.get(i).cloned().ok_or_else(|| err("index out of bounds"))
                     }
                     Value::Tuple(t) => {
-                        let n = num(iv)?;
+                        let mut n = num(iv)?;
                         if (n - n.trunc()).abs() > 1e-12 {
                             return Err(err("index must be an integer"));
                         }
                         if n < 0.0 {
-                            return Err(err("negative index not supported"));
+                            n = t.len() as f64 + n;
+                        }
+                        if n < 0.0 {
+                            return Err(err("index out of bounds"));
                         }
                         let i = n as usize;
                         t.get(i).cloned().ok_or_else(|| err("index out of bounds"))
                     }
                     Value::Str(s) => {
-                        let n = crate::execution::runtime::ops::num(iv)?;
+                        let mut n = crate::execution::runtime::ops::num(iv)?;
                         if (n - n.trunc()).abs() > 1e-12 {
                             return Err(err("index must be an integer"));
                         }
+                        let char_count = s.chars().count();
                         if n < 0.0 {
-                            return Err(err("negative index not supported"));
+                            n = char_count as f64 + n;
+                        }
+                        if n < 0.0 {
+                            return Err(err("index out of bounds"));
                         }
                         let i = n as usize;
                         if let Some(ch) = s.chars().nth(i) {
@@ -19839,23 +19855,29 @@ impl ExecLegacy {
                 let iv = self.eval_expr(index)?;
                 match tv {
                     Value::Array(a) => {
-                        let n = crate::execution::runtime::ops::num(iv)?;
+                        let mut n = crate::execution::runtime::ops::num(iv)?;
                         if (n - n.trunc()).abs() > 1e-12 {
                             return Err(err("index must be an integer"));
                         }
                         if n < 0.0 {
-                            return Err(err("negative index not supported"));
+                            n = a.len() as f64 + n;
+                        }
+                        if n < 0.0 {
+                            return Err(err("index out of bounds"));
                         }
                         let i = n as usize;
                         a.get(i).cloned().ok_or_else(|| err("index out of bounds"))
                     }
                     Value::DynArray(da) => {
-                        let n = crate::execution::runtime::ops::num(iv)?;
+                        let mut n = crate::execution::runtime::ops::num(iv)?;
                         if (n - n.trunc()).abs() > 1e-12 {
                             return Err(err("index must be an integer"));
                         }
                         if n < 0.0 {
-                            return Err(err("negative index not supported"));
+                            n = da.data.len() as f64 + n;
+                        }
+                        if n < 0.0 {
+                            return Err(err("index out of bounds"));
                         }
                         let i = n as usize;
                         da.data
@@ -19864,34 +19886,44 @@ impl ExecLegacy {
                             .ok_or_else(|| err("index out of bounds"))
                     }
                     Value::RawArray(_, a) => {
-                        let n = crate::execution::runtime::ops::num(iv)?;
+                        let mut n = crate::execution::runtime::ops::num(iv)?;
                         if (n - n.trunc()).abs() > 1e-12 {
                             return Err(err("index must be an integer"));
                         }
                         if n < 0.0 {
-                            return Err(err("negative index not supported"));
+                            n = a.len() as f64 + n;
+                        }
+                        if n < 0.0 {
+                            return Err(err("index out of bounds"));
                         }
                         let i = n as usize;
                         a.get(i).cloned().ok_or_else(|| err("index out of bounds"))
                     }
                     Value::Tuple(t) => {
-                        let n = crate::execution::runtime::ops::num(iv)?;
+                        let mut n = crate::execution::runtime::ops::num(iv)?;
                         if (n - n.trunc()).abs() > 1e-12 {
                             return Err(err("index must be an integer"));
                         }
                         if n < 0.0 {
-                            return Err(err("negative index not supported"));
+                            n = t.len() as f64 + n;
+                        }
+                        if n < 0.0 {
+                            return Err(err("index out of bounds"));
                         }
                         let i = n as usize;
                         t.get(i).cloned().ok_or_else(|| err("index out of bounds"))
                     }
                     Value::Str(s) => {
-                        let n = crate::execution::runtime::ops::num(iv)?;
+                        let mut n = crate::execution::runtime::ops::num(iv)?;
                         if (n - n.trunc()).abs() > 1e-12 {
                             return Err(err("index must be an integer"));
                         }
+                        let char_count = s.chars().count();
                         if n < 0.0 {
-                            return Err(err("negative index not supported"));
+                            n = char_count as f64 + n;
+                        }
+                        if n < 0.0 {
+                            return Err(err("index out of bounds"));
                         }
                         let i = n as usize;
                         if let Some(ch) = s.chars().nth(i) {

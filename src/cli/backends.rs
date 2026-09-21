@@ -433,6 +433,7 @@ pub fn run_with_mlir_gpu(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Resu
     }
 
     let body = super::directives::strip_compile_directive(src);
+    ensure_type_check(&body, Some(&path.to_string_lossy()))?;
     let (_ast, hir) = check_ownership_and_parse(&body, &parsed.config)?;
 
     let mir = crate::ir::mir::MirModule::from_hir(&hir)?;

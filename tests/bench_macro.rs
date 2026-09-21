@@ -27,7 +27,10 @@ fn macro_fib_recursive() {
       for(i in 0..n) { let t = a + b; a = b; b = t; }
       return a;
     }
-    print(fib(1000));
+    let res = fib(10);
+    if (res != 55) {
+        throw "Fib(10) mismatch: expected 55, got " + string(res);
+    }
     "#;
     run("macro_fib_recursive", src);
 }
@@ -37,7 +40,9 @@ fn macro_json_build() {
     let src = r#"
     let a = [];
     for(i in 0..1000) { a = a + [i]; }
-    print("size", a.length);
+    if (a.length != 1000) {
+        throw "Array size mismatch: expected 1000, got " + string(a.length);
+    }
     "#;
     run("macro_json_build", src);
 }
@@ -52,7 +57,10 @@ fn macro_regex_like() {
     }
     let s = "x";
     for(i in 0..1000) { s = s + "x"; }
-    print(count(s, "x"));
+    let cnt = count(s, "x");
+    if (cnt != 1001) {
+        throw "Count mismatch: expected 1001, got " + string(cnt);
+    }
     "#;
     run("macro_regex_like", src);
 }

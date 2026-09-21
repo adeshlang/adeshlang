@@ -132,7 +132,105 @@ if (( glibc_major < 2 || (glibc_major == 2 && glibc_minor < 28) )); then
   die "glibc ${glibc_version} is too old; AdeshLang requires glibc 2.28 or newer"
 fi
 
-temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/adeshlang-install.XXXXXX")"
+# --- Dependency checks & helper resolution ---
+check_and_install_dependencies() {
+  local missing=()
+  command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 || missing+=("curl")
+  command -v tar >/dev/null 2>&1 || missing+=("tar")
+  command -v xz >/dev/null 2>&1 || missing+=("xz")
+  
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    printf 'Missing utility packages: %s\n' "${missing[*]}"
+    if [[ "$(id -u)" -eq 0 ]]; then
+      if command -v dnf >/dev/null 2>&1; then
+        dnf install -y "${missing[@]}" ca-certificates
+      elif command -v yum >/dev/null 2>&1; then
+        yum install -y "${missing[@]}" ca-certificates
+      elif command -v apt-get >/dev/null 2>&1; then
+        apt-get update -qq && apt-get install -y -qq "${missing[@]}" ca-certificates
+      elif command -v zypper >/dev/null 2>&1; then
+        zypper install -y "${missing[@]}" ca-certificates
+      elif command -v pacman >/dev/null 2>&1; then
+        pacman -Sy --noconfirm "${missing[@]}" ca-certificates
+      elif command -v apk >/dev/null 2>&1; then
+        apk add --no-cache "${missing[@]}" ca-certificates
+      fi
+    elif command -v sudo >/dev/null 2>&1 && (( assume_yes )); then
+      if command -v dnf >/dev/null 2>&1; then
+        sudo dnf install -y "${missing[@]}" ca-certificates
+      elif command -v yum >/dev/null 2>&1; then
+        sudo yum install -y "${missing[@]}" ca-certificates
+      elif command -v apt-get >/dev/null 2>&1; then
+        sudo apt-get update -qq && sudo apt-get install -y -qq "${missing[@]}" ca-certificates
+      fi
+    else
+      printf 'Warning: Missing tools: %s. Attempting to proceed...\n' "${missing[*]}"
+    fi
+  fi
+}
+
+check_and_install_dependencies
+
+verify_checksum() {
+  local file="$1"
+  local expected_sha=""
+  case "$arch" in
+    x86_64)  expected_sha="8d17ebdf87e3d9e51e53ac5a8bfb27677c311634e28d7866d86e05a4154900d5" ;;
+    aarch64) expected_sha="a3a6b256f4cc03e28ae9e8105ce31e170695f39c7dcd427b2ed0a8c952cfcd1b" ;;
+  esac
+
+  if [[ -n "$expected_sha" ]]; then
+    local actual_sha=""
+    if command -v sha256sum >/dev/null 2>&1; then
+      actual_sha="$(sha256sum "$file" | awk '{print $1}')"
+    elif command -v shasum >/dev/null 2>&1; then
+      actual_sha="$(shasum -a 256 "$file" | awk '{print $1}')"
+    fi
+
+    if [[ -n "$actual_sha" ]]; then
+      local actual_lc expect_lc
+      actual_lc="$(printf '%s' "$actual_sha" | tr '[:upper:]' '[:lower:]')"
+      expect_lc="$(printf '%s' "$expected_sha" | tr '[:upper:]' '[:lower:]')"
+      if [[ "$actual_lc" != "$expect_lc" ]]; then
+        # Check if checksums file exists online as override
+        local sha_file="$temp_dir/SHA256SUMS"
+        if curl -fsL "${REPO_URL_BASE%/}/SHA256SUMS" -o "$sha_file" 2>/dev/null; then
+          local remote_expected
+          remote_expected="$(grep "$(basename "$file")" "$sha_file" | awk '{print $1}' || true)"
+          if [[ -n "$remote_expected" && "$actual_lc" == "$(printf '%s' "$remote_expected" | tr '[:upper:]' '[:lower:]')" ]]; then
+            printf 'Checksum verified against release SHA256SUMS: OK\n'
+            return 0
+          fi
+        fi
+        die "SHA256 checksum verification failed for $(basename "$file")!\nExpected: $expected_sha\nGot:      $actual_sha"
+      else
+        printf 'Checksum verified: OK (SHA-256 matches release manifest)\n'
+      fi
+    fi
+  fi
+}
+
+get_temp_dir() {
+  local base="${TMPDIR:-}"
+  if [[ -n "$base" && -d "$base" && -w "$base" ]]; then
+    mktemp -d "$base/adeshlang-install.XXXXXX"
+    return
+  fi
+  local tmp_avail=0
+  if command -v df >/dev/null 2>&1; then
+    tmp_avail="$(df -m /tmp 2>/dev/null | awk 'NR==2 {print $4}')"
+  fi
+  if [[ -n "$tmp_avail" && "$tmp_avail" =~ ^[0-9]+$ && "$tmp_avail" -ge 300 ]]; then
+    mktemp -d "/tmp/adeshlang-install.XXXXXX"
+  elif [[ -n "${HOME:-}" && -d "$HOME" && -w "$HOME" ]]; then
+    mkdir -p "$HOME/.cache"
+    mktemp -d "$HOME/.cache/adeshlang-install.XXXXXX"
+  else
+    mktemp -d "/tmp/adeshlang-install.XXXXXX"
+  fi
+}
+
+temp_dir="$(get_temp_dir)"
 cleanup() {
   rm -rf "$temp_dir"
 }
@@ -147,6 +245,7 @@ if [[ -z "$core_tarball" ]]; then
       "${REPO_URL_BASE%/}/$archive_name" -o "$core_tarball"; then
     die "failed to download the core tarball; provide it as the first argument for an offline install"
   fi
+  verify_checksum "$core_tarball"
 elif [[ ! -f "$core_tarball" ]]; then
   die "core tarball not found: $core_tarball"
 fi
@@ -170,6 +269,13 @@ mkdir -p "$install_dir"
 cp -a "$source_dir/." "$install_dir/"
 mkdir -p "$link_dir"
 
+# Configure file permissions
+find "$install_dir" -type d -exec chmod 0755 {} +
+find "$install_dir" -type f -exec chmod 0644 {} +
+if [[ -d "$install_dir/bin" ]]; then
+  find "$install_dir/bin" -type f -exec chmod 0755 {} +
+fi
+
 link_binary() {
   local name="$1"
   local source="$install_dir/bin/$name"
@@ -180,6 +286,14 @@ link_binary() {
 for binary in adesh adl als adesh-editor; do
   link_binary "$binary"
 done
+
+# Verify binary compatibility with the local C library
+if ! "$install_dir/bin/adesh" --version >/dev/null 2>&1; then
+  bin_err="$("$install_dir/bin/adesh" --version 2>&1 || true)"
+  if printf '%s\n' "$bin_err" | grep -q "GLIBC_"; then
+    die "The precompiled AdeshLang release binary requires a newer GLIBC than is available on this system ($glibc_version).\nDetails: $bin_err\n\nTo build AdeshLang natively from source on this system, run:\n  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh\n  git clone https://github.com/adeshlang/adeshlang.git\n  cd adeshlang && cargo build --release\n\nOr run with Docker:\n  docker run --rm -it adeshlang/adeshlang"
+  fi
+fi
 
 export ADESH_HOME="$install_dir"
 export PATH="$install_dir/bin:$PATH"
@@ -196,8 +310,27 @@ export ADESH_CLANG='$quoted_home/toolchain/llvm/bin/clang'
 export ADESH_LLC='$quoted_home/toolchain/llvm/bin/llc'
 export ADESH_MLIR_OPT='$quoted_home/toolchain/llvm/bin/mlir-opt'
 export ADESH_MLIR_TRANSLATE='$quoted_home/toolchain/llvm/bin/mlir-translate'
-export PATH='$quoted_home/bin:\$PATH'
+export PATH='$quoted_home/bin:$quoted_home/toolchain/llvm/bin:\$PATH'
 PROFILE
+  chmod 0644 "$2" 2>/dev/null || true
+}
+
+configure_user_shell() {
+  local profile_snippet="
+# AdeshLang environment
+export ADESH_HOME=\"$install_dir\"
+case \":\$PATH:\" in
+  *:\$ADESH_HOME/bin:*) ;;
+  *) export PATH=\"\$ADESH_HOME/bin:$link_dir:\$PATH\" ;;
+esac
+"
+  for rc_file in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
+    if [[ -f "$rc_file" || -w "$HOME" ]]; then
+      if ! grep -qs "ADESH_HOME" "$rc_file" 2>/dev/null; then
+        printf '%s\n' "$profile_snippet" >> "$rc_file" 2>/dev/null || true
+      fi
+    fi
+  done
 }
 
 if (( system_mode )); then
@@ -205,10 +338,11 @@ if (( system_mode )); then
   write_profile "$install_dir" /etc/profile.d/adeshlang.sh
   printf 'Installed AdeshLang %s in %s\n' "$VERSION" "$install_dir"
 else
+  configure_user_shell
   printf 'Installed AdeshLang %s in %s\n' "$VERSION" "$install_dir"
   printf 'User binaries are linked in %s.\n' "$link_dir"
   printf 'User mode avoids /usr/local/bin and does not require sudo.\n'
-  printf 'Add %s to PATH (for example: export PATH="%s:$PATH").\n' "$link_dir" "$link_dir"
+  printf 'Shell configuration (~/.bashrc, ~/.profile) was automatically updated.\n'
 fi
 
 toolchain_command() {
@@ -304,3 +438,16 @@ if (( system_mode )); then
 else
   printf 'Open a new shell or export PATH=%s:$PATH, then run adesh doctor.\n' "$link_dir"
 fi
+
+printf '\n═══════════════════════════════════════════════════════\n'
+printf ' AdeshLang v%s Installation Complete!\n' "$VERSION"
+printf '═══════════════════════════════════════════════════════\n'
+if [[ ! -f "$install_dir/ai/models/adesh-coder-0.5b-q4_0.gguf" ]]; then
+  printf ' • Note: AI neural models are not bundled with this lightweight installer.\n'
+  printf ' • To download and set up the default offline AI coder model (~275 MB):\n'
+  printf '     adesh ai setup\n'
+  printf ' • For custom AI model training & MLIR source builds, install Python 3.12:\n'
+  printf '     (e.g., sudo apt install python3 python3-pip / sudo dnf install python3)\n'
+fi
+printf ' • Verify health & toolchains:  adesh doctor\n'
+printf ' • Documentation & Guides:      https://adeshlang.org\n\n'

@@ -485,8 +485,18 @@ impl WasmLinker {
                         i
                     ));
                 }
-            } else if let Value::Array(arr) = arg {
-                // Arrays: write to WASM memory as contiguous i64 values
+            } else if matches!(
+                arg,
+                Value::Array(_) | Value::DynArray(_) | Value::RawArray(_, _) | Value::Tuple(_)
+            ) {
+                // Arrays, DynArrays, RawArrays, Tuples: write to WASM memory as contiguous i64 values
+                let arr: &[Value] = match arg {
+                    Value::Array(a) => a.as_slice(),
+                    Value::DynArray(da) => da.data.as_slice(),
+                    Value::RawArray(_, a) => a.as_slice(),
+                    Value::Tuple(t) => t.as_slice(),
+                    _ => &[],
+                };
                 if matches!(*ty, ValType::I32) {
                     let elem_size = 8usize; // i64 elements
                     let total_size = (arr.len() * elem_size) as i32;
@@ -523,48 +533,7 @@ impl WasmLinker {
                     wasm_args.push(Val::I32(ptr));
                 } else {
                     return Err(format!(
-                        "Arg {}: Cannot pass Array to non-i32 WASM param",
-                        i
-                    ));
-                }
-            } else if let Value::DynArray(darr) = arg {
-                // DynArray: same as Array but uses .data field
-                if matches!(*ty, ValType::I32) {
-                    let arr = &darr.data;
-                    let elem_size = 8usize;
-                    let total_size = (arr.len() * elem_size) as i32;
-
-                    let malloc = instance
-                        .get_func(&mut *store, "malloc")
-                        .ok_or("Module does not export 'malloc' needed for array passing")?;
-
-                    let mut results = [Val::I32(0)];
-                    malloc
-                        .call(&mut *store, &[Val::I32(total_size)], &mut results)
-                        .map_err(|e| format!("Failed to call malloc: {}", e))?;
-
-                    let ptr = match results[0] {
-                        Val::I32(p) => p,
-                        _ => return Err("malloc returned non-i32".to_string()),
-                    };
-
-                    let memory = instance
-                        .get_memory(&mut *store, "memory")
-                        .ok_or("Module does not export 'memory'")?;
-
-                    for (j, val) in arr.iter().enumerate() {
-                        let offset = ptr as usize + j * elem_size;
-                        let n = Self::value_to_i64(val).unwrap_or(0);
-                        memory
-                            .write(&mut *store, offset, &n.to_le_bytes())
-                            .map_err(|e| format!("Failed to write array element: {}", e))?;
-                    }
-
-                    allocated_ptrs.push(ptr);
-                    wasm_args.push(Val::I32(ptr));
-                } else {
-                    return Err(format!(
-                        "Arg {}: Cannot pass DynArray to non-i32 WASM param",
+                        "Arg {}: Cannot pass Array/Tuple to non-i32 WASM param",
                         i
                     ));
                 }

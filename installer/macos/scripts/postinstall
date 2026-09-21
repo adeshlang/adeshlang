@@ -68,9 +68,19 @@ cat > "$PROFILE_FILE" <<EOF
 # AdeshLang environment (managed by the AdeshLang installer; safe to remove)
 export ADESH_HOME='$HOME_DIR'
 export ADESH_STD='$HOME_DIR/std'
-export PATH='$HOME_DIR/bin:\$PATH'
+export ADESH_TOOLCHAIN='$HOME_DIR/toolchain/llvm'
+export ADESH_CLANG='$HOME_DIR/toolchain/llvm/bin/clang'
+export ADESH_LLC='$HOME_DIR/toolchain/llvm/bin/llc'
+export ADESH_MLIR_OPT='$HOME_DIR/toolchain/llvm/bin/mlir-opt'
+export ADESH_MLIR_TRANSLATE='$HOME_DIR/toolchain/llvm/bin/mlir-translate'
+export PATH='$HOME_DIR/bin:$HOME_DIR/toolchain/llvm/bin:\$PATH'
 EOF
 echo "AdeshLang: wrote $PROFILE_FILE"
+
+if [[ ! -f "$HOME_DIR/ai/models/adesh-coder-0.5b-q4_0.gguf" ]]; then
+    echo "AdeshLang: AI models are not bundled in this package."
+    echo "To download and set up the default offline AI coder model (~275 MB), run: adesh ai setup"
+fi
 
 # 4. Toolchain (only when requested) -------------------------------------------
 install_toolchain=0

@@ -1,6 +1,8 @@
 AdeshLang License v2.0
 
-Copyright (c) 2025-2026 Ajay Tainwala. All rights reserved.
+Copyright (c) 2025-2026 AdeshLang (Ajay Tainwala). All rights reserved.
+Official Website: https://adeshlang.org
+Repository: https://github.com/adeshlang/adeshlang
 
 ==============================================================================
 TABLE OF CONTENTS
@@ -22,6 +24,7 @@ TABLE OF CONTENTS
  15. Severability
  16. Entire Agreement
  17. Amendments
+ 18. Third-Party Components and Toolchain Attribution
 
 ==============================================================================
 1. DEFINITIONS
@@ -31,7 +34,7 @@ TABLE OF CONTENTS
 runtime, standard library, language server, tooling, associated documentation
 files, and all source code contained in this repository.
 
-"Licensor" refers to the copyright holder, Ajay Tainwala.
+"Licensor" refers to the copyright holder, AdeshLang (Ajay Tainwala).
 
 "Contributor" refers to any individual or entity that submits original work
 to the Software for inclusion or modification by the Licensor.
@@ -291,10 +294,71 @@ the Software under a prior version of this License may continue to use the
 Software under the terms of that prior version.
 
 ==============================================================================
+18. THIRD-PARTY COMPONENTS AND TOOLCHAIN ATTRIBUTION
+==============================================================================
+
+AdeshLang integrates, interoperates with, or optionally invokes several
+third-party compilers, linkers, runtimes, and intermediate representation
+frameworks. Each of these components remains the intellectual property of
+its respective authors and is governed by its own license terms:
+
+  1. LLVM Project (LLVM, Clang, LLD, LLC, LLVM-AR)
+     - License: Apache License v2.0 with LLVM Exceptions
+     - Copyright (c) LLVM Project Contributors
+     - Purpose: AdeshLang uses LLVM and Clang for Ahead-of-Time (AOT) machine
+       code generation, code optimization (`llc`), object linking (`lld`,
+       `lld-link`), and static archiving (`llvm-ar`).
+     - Details: https://llvm.org/LICENSE.txt
+
+  2. MLIR (Multi-Level Intermediate Representation)
+     - License: Apache License v2.0 with LLVM Exceptions
+     - Copyright (c) LLVM / MLIR Contributors
+     - Purpose: AdeshLang utilizes MLIR dialects (`mlir-opt`, `mlir-translate`)
+       for structured high-level intermediate representation lowering, kernel
+       transformations, and hardware-accelerated GPU targets (NVVM/ROCDL).
+     - Details: https://mlir.llvm.org
+
+  3. Microsoft Visual C++ (MSVC) Runtime & Windows SDK
+     - License: Microsoft Software License Terms
+     - Copyright (c) Microsoft Corporation
+     - Purpose: On Windows, AdeshLang interfaces with the Microsoft Universal C
+       Runtime (UCRT), MSVC CRT (`msvcrt.lib`, `legacy_stdio_definitions.lib`),
+       and Windows SDK system libraries (`kernel32`, `user32`, `advapi32`)
+       for native PE/COFF execution and linking.
+     - Details: https://visualstudio.microsoft.com/license-terms/
+
+  4. GCC & GNU Toolchain (GCC, GNU ld, ar)
+     - License: GNU General Public License v3 (GPLv3) with GCC Runtime
+       Library Exception
+     - Copyright (c) Free Software Foundation, Inc.
+     - Purpose: AdeshLang supports GNU GCC and GNU binutils as backend
+       linkers and cross-compilation drivers across supported POSIX environments.
+     - Details: https://www.gnu.org/licenses/
+
+  5. Cranelift & Wasmtime
+     - License: Apache License v2.0 with LLVM Exceptions / MIT License
+     - Copyright (c) Bytecode Alliance Contributors
+     - Purpose: Fast incremental code generation and JIT execution engine.
+     - Details: https://github.com/bytecodealliance/wasmtime
+
+  6. Cryptographic & Networking Engines
+     - Includes components under MIT, Apache 2.0, and BSD licenses (e.g.,
+       Rustls, ring, OpenSSL compatibility bindings, AES-GCM, ChaCha20,
+       Ed25519, Argon2).
+
+  7. AI Neural Engine & GGUF Runtime
+     - Includes components under MIT / Apache 2.0 / PSF License (llama.cpp,
+       ggml, Python).
+
+The full text of third-party licenses is available in the THIRD_PARTY_LICENSES
+directory distributed with AdeshLang.
+
+==============================================================================
 
 For questions regarding this License, contact:
-  Ajay Tainwala
-  GitHub: https://github.com/ajaytainwala-dev/mylang
+  AdeshLang Team / Ajay Tainwala
+  Website: https://adeshlang.org
+  GitHub: https://github.com/adeshlang/adeshlang
 
 This license is compatible with the MIT License. Recipients may also use
 the Software under the MIT License terms as an alternative to this License.

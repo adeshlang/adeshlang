@@ -2350,8 +2350,93 @@ pub fn resolve_target(requested: GpuTarget) -> GpuTarget {
 
 fn env_override_or_path(env_var: &str, default_cmd: &str) -> Option<PathBuf> {
     if let Ok(path) = env::var(env_var) {
-        return Some(PathBuf::from(path));
+        let p = PathBuf::from(path);
+        if p.exists() {
+            return Some(p);
+        }
     }
+
+    let exe_suffix = if cfg!(windows) { ".exe" } else { "" };
+    let full_name = format!("{}{}", default_cmd, exe_suffix);
+
+    // 1. Check bundled toolchain root from resolver
+    if let Some(bundled) = crate::toolchain::resolver::bundled_root() {
+        let p = bundled.join("bin").join(&full_name);
+        if p.is_file() {
+            return Some(p);
+        }
+        let p_root = bundled.join(&full_name);
+        if p_root.is_file() {
+            return Some(p_root);
+        }
+    }
+
+    // 2. Check explicit ADESH_TOOLCHAIN or ADESH_HOME
+    for var in ["ADESH_TOOLCHAIN", "ADESHLANG_TOOLCHAIN"] {
+        if let Ok(tc) = env::var(var) {
+            let p1 = PathBuf::from(&tc).join("bin").join(&full_name);
+            if p1.is_file() {
+                return Some(p1);
+            }
+            let p2 = PathBuf::from(&tc).join(&full_name);
+            if p2.is_file() {
+                return Some(p2);
+            }
+        }
+    }
+    for var in ["ADESH_HOME", "ADESHLANG_HOME"] {
+        if let Ok(home) = env::var(var) {
+            let p = PathBuf::from(home)
+                .join("toolchain")
+                .join("llvm")
+                .join("bin")
+                .join(&full_name);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+
+    // 3. Check executable-relative toolchain
+    if let Ok(exe) = env::current_exe() {
+        if let Some(bin_dir) = exe.parent() {
+            let p1 = bin_dir
+                .join("toolchain")
+                .join("llvm")
+                .join("bin")
+                .join(&full_name);
+            if p1.is_file() {
+                return Some(p1);
+            }
+            if let Some(parent) = bin_dir.parent() {
+                let p2 = parent
+                    .join("toolchain")
+                    .join("llvm")
+                    .join("bin")
+                    .join(&full_name);
+                if p2.is_file() {
+                    return Some(p2);
+                }
+            }
+        }
+    }
+
+    // 4. Check well-known system LLVM roots
+    #[cfg(windows)]
+    {
+        for root in [
+            "C:\\Program Files\\AdeshLang\\toolchain\\llvm\\bin",
+            "C:\\Program Files\\LLVM\\bin",
+            "C:\\LLVM\\bin",
+            "C:\\Program Files (x86)\\LLVM\\bin",
+        ] {
+            let p = Path::new(root).join(&full_name);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+
     find_in_path(default_cmd)
 }
 

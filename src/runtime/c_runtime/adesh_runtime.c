@@ -683,12 +683,35 @@ void* adesh_rt_range(int64_t start, int64_t end, int64_t inclusive) {
     return array;
 }
 
+// Allocate a typed array: adesh_rt_alloc_typed(count, elem_size) -> array pointer
+// Returns a pointer to an array with metadata: [length_i64][capacity_i64][elements...]
+void* adesh_rt_alloc_typed(int64_t count, int64_t elem_size) {
+    if (count < 0 || elem_size <= 0) return NULL;
+    
+    int64_t total_size = 16 + (count * elem_size);
+    char* array = (char*)malloc(total_size);
+    if (!array) {
+        fprintf(stderr, "Error: malloc failed in adesh_rt_alloc_typed\n");
+        return NULL;
+    }
+    
+    memset(array, 0, total_size);
+    *(int64_t*)array = count;
+    *(int64_t*)(array + 8) = count;
+    return array;
+}
+
 // Get element from array: adesh_rt_get_index(array_ptr, index) -> element value
 int64_t adesh_rt_get_index(void* array_ptr, int64_t index) {
     if (!array_ptr) return 0;
     
     char* array = (char*)array_ptr;
     int64_t length = *(int64_t*)array;
+    
+    // Support negative indexing
+    if (index < 0) {
+        index = length + index;
+    }
     
     // Bounds check
     if (index < 0 || index >= length) {
@@ -707,6 +730,11 @@ int64_t adesh_rt_load_typed(void* array_ptr, int64_t index) {
     char* array = (char*)array_ptr;
     int64_t length = *(int64_t*)array;
     
+    // Support negative indexing
+    if (index < 0) {
+        index = length + index;
+    }
+    
     // Bounds check
     if (index < 0 || index >= length) {
         return 0;
@@ -715,4 +743,25 @@ int64_t adesh_rt_load_typed(void* array_ptr, int64_t index) {
     // Get element at offset 16 (metadata) + index * 8 (8-byte elements)
     int64_t result = *(int64_t*)(array + 16 + index * 8);
     return result;
+}
+
+// Typed store: adesh_rt_store_typed(ptr, index, value) -> 1 on success, 0 on failure/bounds error
+int64_t adesh_rt_store_typed(void* array_ptr, int64_t index, int64_t value) {
+    if (!array_ptr) return 0;
+    
+    char* array = (char*)array_ptr;
+    int64_t length = *(int64_t*)array;
+    
+    // Support negative indexing
+    if (index < 0) {
+        index = length + index;
+    }
+    
+    // Bounds check
+    if (index < 0 || index >= length) {
+        return 0;
+    }
+    
+    *(int64_t*)(array + 16 + index * 8) = value;
+    return 1;
 }

@@ -2,7 +2,7 @@
 # Linux distribution build that runs INSIDE a rust container, so a Windows or
 # macOS host can produce the Linux artifacts:
 #
-#   docker run --rm -v <repo>:/work -w /work rust:1-bookworm \
+#   docker run --rm -v <repo>:/work -w /work rust:1-bullseye \
 #       bash scripts/release/docker/linux-build.sh <x86_64|aarch64>
 #
 # Produces (under /work/dist/): the linux tar.xz for the given architecture,

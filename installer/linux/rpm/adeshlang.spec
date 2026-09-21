@@ -5,8 +5,8 @@ Version:        0.3.0
 Release:        1%{?dist}
 Summary:        AdeshLang compiler, package manager, language server, and editor
 License:        AdeshLang License v2.0
-URL:            https://github.com/adeshlang/adeshlang
-Requires:       glibc >= 2.28
+URL:            https://adeshlang.org
+Requires:       glibc >= 2.28, ca-certificates, tar, xz
 
 %description
 AdeshLang is a programming language toolchain with AOT compilation support.
@@ -19,6 +19,9 @@ AdeshLang is a programming language toolchain with AOT compilation support.
 rm -rf %{buildroot}
 mkdir -p %{buildroot}%{_prefix}/lib/adeshlang
 cp -a "%{_adeshlang_stage}/." %{buildroot}%{_prefix}/lib/adeshlang/
+find %{buildroot}%{_prefix}/lib/adeshlang -type d -exec chmod 0755 {} +
+find %{buildroot}%{_prefix}/lib/adeshlang -type f -exec chmod 0644 {} +
+find %{buildroot}%{_prefix}/lib/adeshlang/bin -type f -exec chmod 0755 {} +
 mkdir -p %{buildroot}%{_sysconfdir}/profile.d
 cat > %{buildroot}%{_sysconfdir}/profile.d/adeshlang.sh <<'PROFILE'
 # AdeshLang environment (managed by the adeshlang package)
@@ -28,7 +31,7 @@ export ADESH_CLANG="/usr/lib/adeshlang/toolchain/llvm/bin/clang"
 export ADESH_LLC="/usr/lib/adeshlang/toolchain/llvm/bin/llc"
 export ADESH_MLIR_OPT="/usr/lib/adeshlang/toolchain/llvm/bin/mlir-opt"
 export ADESH_MLIR_TRANSLATE="/usr/lib/adeshlang/toolchain/llvm/bin/mlir-translate"
-export PATH="/usr/lib/adeshlang/bin:$PATH"
+export PATH="/usr/lib/adeshlang/bin:/usr/lib/adeshlang/toolchain/llvm/bin:$PATH"
 PROFILE
 
 %post
@@ -38,6 +41,10 @@ if [ "$1" -ge 1 ]; then
             ln -sfn "/usr/lib/adeshlang/bin/$binary" "/usr/bin/$binary"
         fi
     done
+    if [ ! -f "/usr/lib/adeshlang/ai/models/adesh-coder-0.5b-q4_0.gguf" ]; then
+        echo "Note: AI neural models are not bundled in this package."
+        echo "To download and set up the default local AI coder model (~275 MB), run: adesh ai setup"
+    fi
 fi
 %if 0%{?with_toolchain}
 if [ "$1" -ge 1 ]; then

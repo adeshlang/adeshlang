@@ -127,13 +127,84 @@ pub(super) fn lower_stmt(
             value,
             is_move: _,
         } => {
-            if let HirExpr::LoadVar(name) = target {
-                let val = lower_expr(lir, func, ctx, value)?;
-                func.push_to_block(ctx.current_block, LirInst::StoreVar(name.clone(), val));
-                func.set_var(name.clone(), val);
-            } else {
-                let val = lower_expr(lir, func, ctx, value)?;
-                let _ = val;
+            match target {
+                HirExpr::LoadVar(name) => {
+                    let val = lower_expr(lir, func, ctx, value)?;
+                    func.push_to_block(ctx.current_block, LirInst::StoreVar(name.clone(), val));
+                    func.set_var(name.clone(), val);
+                }
+                HirExpr::Index(obj, idx) => {
+                    let val = lower_expr(lir, func, ctx, value)?;
+                    let idx_val = lower_expr(lir, func, ctx, idx)?;
+                    if let HirExpr::LoadVar(name) = obj.as_ref() {
+                        let obj_val = lower_expr(lir, func, ctx, obj)?;
+                        let updated_obj = func.alloc_value();
+                        func.push_to_block(
+                            ctx.current_block,
+                            LirInst::CallBuiltin(
+                                updated_obj,
+                                "set_index".to_string(),
+                                vec![obj_val, idx_val, val],
+                            ),
+                        );
+                        func.push_to_block(
+                            ctx.current_block,
+                            LirInst::StoreVar(name.clone(), updated_obj),
+                        );
+                        func.set_var(name.clone(), updated_obj);
+                    } else {
+                        let obj_val = lower_expr(lir, func, ctx, obj)?;
+                        let dummy = func.alloc_value();
+                        func.push_to_block(
+                            ctx.current_block,
+                            LirInst::CallBuiltin(
+                                dummy,
+                                "set_index".to_string(),
+                                vec![obj_val, idx_val, val],
+                            ),
+                        );
+                    }
+                }
+                HirExpr::MemberAccess(obj, field) => {
+                    let val = lower_expr(lir, func, ctx, value)?;
+                    let field_val = func.alloc_value();
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::ConstString(field_val, field.clone()),
+                    );
+                    if let HirExpr::LoadVar(name) = obj.as_ref() {
+                        let obj_val = lower_expr(lir, func, ctx, obj)?;
+                        let updated_obj = func.alloc_value();
+                        func.push_to_block(
+                            ctx.current_block,
+                            LirInst::CallBuiltin(
+                                updated_obj,
+                                "set_field".to_string(),
+                                vec![obj_val, field_val, val],
+                            ),
+                        );
+                        func.push_to_block(
+                            ctx.current_block,
+                            LirInst::StoreVar(name.clone(), updated_obj),
+                        );
+                        func.set_var(name.clone(), updated_obj);
+                    } else {
+                        let obj_val = lower_expr(lir, func, ctx, obj)?;
+                        let dummy = func.alloc_value();
+                        func.push_to_block(
+                            ctx.current_block,
+                            LirInst::CallBuiltin(
+                                dummy,
+                                "set_field".to_string(),
+                                vec![obj_val, field_val, val],
+                            ),
+                        );
+                    }
+                }
+                _ => {
+                    let val = lower_expr(lir, func, ctx, value)?;
+                    let _ = val;
+                }
             }
             emit_drops_for_location(func, ctx, drop_plan, loc);
             Ok(())

@@ -76,12 +76,14 @@ use math::{
 // Import array builtin functions for registration
 use arrays::{
     runtime_array_concat, runtime_array_flat, runtime_array_index_of, runtime_array_last_index_of,
-    runtime_capacity, runtime_every, runtime_filter, runtime_find, runtime_find_index,
+    runtime_array_max, runtime_array_min, runtime_capacity, runtime_clear, runtime_count,
+    runtime_distinct, runtime_every, runtime_filter, runtime_find, runtime_find_index,
     runtime_first, runtime_for_each, runtime_get_index, runtime_has_key, runtime_insert,
     runtime_last, runtime_len, runtime_make_array, runtime_make_array_spread, runtime_map,
     runtime_metadata_size, runtime_pop, runtime_push, runtime_range, runtime_reduce,
-    runtime_remove, runtime_reverse, runtime_set_index, runtime_slice_array, runtime_some,
-    runtime_spread,
+    runtime_remove, runtime_reverse, runtime_set_index, runtime_shift, runtime_slice_array,
+    runtime_some, runtime_sort, runtime_spread, runtime_sum, runtime_to_set, runtime_to_tuple,
+    runtime_unshift,
 };
 
 // Import object builtin functions for registration
@@ -576,12 +578,24 @@ impl BuiltinRegistry {
         self.register("set_field", runtime_set_field);
 
         // Array bound methods
+        self.register("append", runtime_push);
         self.register("insert", runtime_insert);
         self.register("remove", runtime_remove);
+        self.register("clear", runtime_clear);
+        self.register("shift", runtime_shift);
+        self.register("unshift", runtime_unshift);
+        self.register("count", runtime_count);
+        self.register("sort", runtime_sort);
         self.register("first", runtime_first);
         self.register("last", runtime_last);
         self.register("reverse", runtime_reverse);
         self.register("slice", runtime_slice_array);
+        self.register("sum", runtime_sum);
+        self.register("min", runtime_min);
+        self.register("max", runtime_max);
+        self.register("distinct", runtime_distinct);
+        self.register("toSet", runtime_to_set);
+        self.register("toTuple", runtime_to_tuple);
 
         // Operators/utility
         self.register("int_div", runtime_int_div);
@@ -682,6 +696,7 @@ impl BuiltinRegistry {
         self.register("__method_indexOf", runtime_array_index_of);
         self.register("__method_lastIndexOf", runtime_array_last_index_of);
         self.register("__method_reverse", runtime_reverse);
+        self.register("__method_sort", runtime_sort);
         self.register("__method_map", runtime_map);
         self.register("__method_filter", runtime_filter);
         self.register("__method_reduce", runtime_reduce);
@@ -691,9 +706,20 @@ impl BuiltinRegistry {
         self.register("__method_some", runtime_some);
         self.register("__method_every", runtime_every);
         self.register("__method_concat", runtime_array_concat);
+        self.register("__method_extend", runtime_array_concat);
         self.register("__method_flat", runtime_array_flat);
         self.register("__method_insert", runtime_insert);
         self.register("__method_remove", runtime_remove);
+        self.register("__method_clear", runtime_clear);
+        self.register("__method_shift", runtime_shift);
+        self.register("__method_unshift", runtime_unshift);
+        self.register("__method_count", runtime_count);
+        self.register("__method_sum", runtime_sum);
+        self.register("__method_min", runtime_array_min);
+        self.register("__method_max", runtime_array_max);
+        self.register("__method_distinct", runtime_distinct);
+        self.register("__method_toSet", runtime_to_set);
+        self.register("__method_toTuple", runtime_to_tuple);
         self.register("__method_first", runtime_first);
         self.register("__method_last", runtime_last);
 

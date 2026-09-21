@@ -191,6 +191,11 @@ else
     cp "$root/ai/deploy/openrouter/config.json" "$stage/ai/deploy/openrouter/config.json"
 fi
 
+# Enforce standard directory, binary, and file permissions
+find "$stage" -type d -exec chmod 0755 {} +
+find "$stage" -type f -exec chmod 0644 {} +
+find "$stage/bin" -type f -exec chmod 0755 {} +
+
 mkdir -p "$root/dist"
 if [[ "$archive_stage" != "$stage" ]]; then
   mkdir -p "$archive_stage"

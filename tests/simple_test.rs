@@ -18,15 +18,23 @@ fn run_test_module(src: &str) -> Result<(), String> {
 
 #[test]
 fn simple_arithmetic() {
-    let src = "print(2 + 3);";
+    let src = r#"
+    let sum = 2 + 3;
+    if (sum != 5) {
+        throw "Arithmetic assertion failed: expected 5, got " + string(sum);
+    }
+    "#;
     assert!(run_test_module(src).is_ok());
 }
 
 #[test]
 fn simple_function() {
     let src = r#"
-fn add(a, b) { return a + b; }
-print(add(4, 5));
-"#;
+    fn add(a, b) { return a + b; }
+    let res = add(4, 5);
+    if (res != 9) {
+        throw "Function call assertion failed: expected 9, got " + string(res);
+    }
+    "#;
     assert!(run_test_module(src).is_ok());
 }
