@@ -11,8 +11,15 @@
 //! - Construction: make_array, make_array_spread, range
 //! - Utilities: spread, array_to_raw
 
-use super::RuntimeValue;
+use super::{CURRENT_EXCEPTION, RuntimeValue};
 use std::cmp::Ordering;
+
+#[inline]
+pub(crate) fn set_array_error(msg: &str) {
+    CURRENT_EXCEPTION.with(|exc| {
+        *exc.borrow_mut() = Some(RuntimeValue::String(msg.to_string()));
+    });
+}
 
 #[inline]
 pub(crate) fn resolve_idx(idx: i64, len: usize) -> Option<usize> {
@@ -194,7 +201,8 @@ pub(crate) fn runtime_push(args: &[RuntimeValue]) -> RuntimeValue {
     }
     match &args[0] {
         RuntimeValue::RawArray(_, _) => {
-            panic!("Cannot append to raw array (fixed size)");
+            set_array_error("Cannot append to raw array (fixed size)");
+            args[0].clone()
         }
         RuntimeValue::DynArray {
             data,
@@ -204,7 +212,11 @@ pub(crate) fn runtime_push(args: &[RuntimeValue]) -> RuntimeValue {
         } => {
             if let Some(cap) = tracked_capacity {
                 if data.len() >= *cap {
-                    panic!("Cannot append to fixed-capacity array (capacity: {})", cap);
+                    set_array_error(&format!(
+                        "Cannot append to fixed-capacity array (capacity: {})",
+                        cap
+                    ));
+                    return args[0].clone();
                 }
             }
             let mut new_data = data.clone();
@@ -232,7 +244,8 @@ pub(crate) fn runtime_pop(args: &[RuntimeValue]) -> RuntimeValue {
     }
     match &args[0] {
         RuntimeValue::RawArray(_, _) => {
-            panic!("Cannot pop from raw array (fixed size)");
+            set_array_error("Cannot pop from raw array (fixed size)");
+            args[0].clone()
         }
         RuntimeValue::DynArray {
             data,
@@ -281,7 +294,8 @@ pub(crate) fn runtime_shift(args: &[RuntimeValue]) -> RuntimeValue {
     }
     match &args[0] {
         RuntimeValue::RawArray(_, _) => {
-            panic!("Cannot shift raw array (fixed size)");
+            set_array_error("Cannot shift raw array (fixed size)");
+            args[0].clone()
         }
         RuntimeValue::DynArray {
             data,
@@ -324,7 +338,8 @@ pub(crate) fn runtime_unshift(args: &[RuntimeValue]) -> RuntimeValue {
 
     match &args[0] {
         RuntimeValue::RawArray(_, _) => {
-            panic!("Cannot unshift raw array (fixed size)");
+            set_array_error("Cannot unshift raw array (fixed size)");
+            args[0].clone()
         }
         RuntimeValue::DynArray {
             data,
@@ -334,7 +349,11 @@ pub(crate) fn runtime_unshift(args: &[RuntimeValue]) -> RuntimeValue {
         } => {
             if let Some(cap) = tracked_capacity {
                 if data.len() >= *cap {
-                    panic!("Cannot unshift to fixed-capacity array (capacity: {})", cap);
+                    set_array_error(&format!(
+                        "Cannot unshift to fixed-capacity array (capacity: {})",
+                        cap
+                    ));
+                    return args[0].clone();
                 }
             }
             let mut new_data = Vec::with_capacity(data.len() + 1);
@@ -367,7 +386,8 @@ pub(crate) fn runtime_insert(args: &[RuntimeValue]) -> RuntimeValue {
 
     match &args[0] {
         RuntimeValue::RawArray(_, _) => {
-            panic!("Cannot insert into raw array (fixed size)");
+            set_array_error("Cannot insert into raw array (fixed size)");
+            args[0].clone()
         }
         RuntimeValue::DynArray {
             data,
@@ -377,10 +397,11 @@ pub(crate) fn runtime_insert(args: &[RuntimeValue]) -> RuntimeValue {
         } => {
             if let Some(cap) = tracked_capacity {
                 if data.len() >= *cap {
-                    panic!(
+                    set_array_error(&format!(
                         "Cannot insert into fixed-capacity array (capacity: {})",
                         cap
-                    );
+                    ));
+                    return args[0].clone();
                 }
             }
             let mut new_data = data.clone();
@@ -420,7 +441,8 @@ pub(crate) fn runtime_remove(args: &[RuntimeValue]) -> RuntimeValue {
 
     match &args[0] {
         RuntimeValue::RawArray(_, _) => {
-            panic!("Cannot remove from raw array (fixed size)");
+            set_array_error("Cannot remove from raw array (fixed size)");
+            args[0].clone()
         }
         RuntimeValue::DynArray {
             data,
@@ -457,7 +479,8 @@ pub(crate) fn runtime_clear(args: &[RuntimeValue]) -> RuntimeValue {
     }
     match &args[0] {
         RuntimeValue::RawArray(_, _) => {
-            panic!("Cannot clear raw array (fixed size)");
+            set_array_error("Cannot clear raw array (fixed size)");
+            args[0].clone()
         }
         RuntimeValue::DynArray {
             element_type,
@@ -574,11 +597,12 @@ pub(crate) fn runtime_set_index(args: &[RuntimeValue]) -> RuntimeValue {
                 new_arr[idx] = val;
                 RuntimeValue::Array(new_arr)
             } else {
-                panic!(
+                set_array_error(&format!(
                     "Index {} out of bounds for array of length {}",
                     index_raw,
                     arr.len()
-                );
+                ));
+                args[0].clone()
             }
         }
         RuntimeValue::RawArray(elem_type, arr) => {
@@ -587,11 +611,12 @@ pub(crate) fn runtime_set_index(args: &[RuntimeValue]) -> RuntimeValue {
                 new_arr[idx] = val;
                 RuntimeValue::RawArray(elem_type.clone(), new_arr)
             } else {
-                panic!(
+                set_array_error(&format!(
                     "Index {} out of bounds for raw array of length {}",
                     index_raw,
                     arr.len()
-                );
+                ));
+                args[0].clone()
             }
         }
         RuntimeValue::DynArray {
@@ -610,11 +635,12 @@ pub(crate) fn runtime_set_index(args: &[RuntimeValue]) -> RuntimeValue {
                     tracked_capacity: *tracked_capacity,
                 }
             } else {
-                panic!(
+                set_array_error(&format!(
                     "Index {} out of bounds for dynamic array of length {}",
                     index_raw,
                     data.len()
-                );
+                ));
+                args[0].clone()
             }
         }
         RuntimeValue::Tuple(_) => args[0].clone(),
