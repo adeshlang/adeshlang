@@ -482,9 +482,29 @@ pub(in crate::execution::runtime_core) fn coerce_to_fixed_width(
 ) -> Result<Option<Value>, String> {
     use crate::parsing::ast::Value::*;
 
+    let ann = ann.trim();
+    let effective_ann = if ann.contains('|') {
+        let parts: Vec<&str> = ann.split('|').map(|s| s.trim()).collect();
+        if matches!(v, Array(_) | RawArray(_, _) | DynArray(_)) {
+            parts
+                .iter()
+                .find(|p| p.starts_with('[') && p.ends_with(']'))
+                .copied()
+                .unwrap_or(ann)
+        } else {
+            parts
+                .iter()
+                .find(|p| !p.eq_ignore_ascii_case("null") && !p.eq_ignore_ascii_case("void"))
+                .copied()
+                .unwrap_or(ann)
+        }
+    } else {
+        ann
+    };
+
     // Handle array type annotations: [T], [T;N], [T;raw], [T;N;raw]
-    if ann.starts_with('[') && ann.ends_with(']') {
-        let inner = &ann[1..ann.len() - 1];
+    if effective_ann.starts_with('[') && effective_ann.ends_with(']') {
+        let inner = &effective_ann[1..effective_ann.len() - 1];
 
         // Split parts: [ elem_type ; maybe_len ; maybe_raw ]
         let parts: Vec<&str> = inner.split(';').collect();

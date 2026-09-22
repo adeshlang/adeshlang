@@ -48,6 +48,14 @@ pub(super) fn ast_value_to_runtime_value(v: &Value) -> RuntimeValue {
         Value::Bool(b) => RuntimeValue::Bool(*b),
         Value::Char(c) => RuntimeValue::Char(*c),
         Value::Str(s) => RuntimeValue::String(s.clone()),
+        Value::U8(n) => RuntimeValue::U8(*n),
+        Value::U16(n) => RuntimeValue::U16(*n),
+        Value::U32(n) => RuntimeValue::U32(*n),
+        Value::I8(n) => RuntimeValue::I8(*n),
+        Value::I16(n) => RuntimeValue::I16(*n),
+        Value::I32(n) => RuntimeValue::I32(*n),
+        Value::F32(n) => RuntimeValue::F32(*n),
+        Value::F64(n) => RuntimeValue::F64(*n),
         Value::Object(m) => {
             let mut map = FxHashMap::default();
             for (k, val) in m.iter() {
@@ -61,6 +69,25 @@ pub(super) fn ast_value_to_runtime_value(v: &Value) -> RuntimeValue {
                 arr.push(ast_value_to_runtime_value(val));
             }
             RuntimeValue::Array(arr)
+        }
+        Value::RawArray(ty, a) => {
+            let mut arr = Vec::new();
+            for val in a {
+                arr.push(ast_value_to_runtime_value(val));
+            }
+            RuntimeValue::RawArray(ty.clone(), arr)
+        }
+        Value::DynArray(da) => {
+            let mut arr = Vec::new();
+            for val in &da.data {
+                arr.push(ast_value_to_runtime_value(val));
+            }
+            RuntimeValue::DynArray {
+                data: arr,
+                element_type: da.concrete_type.clone(),
+                concrete_type: da.concrete_type.clone(),
+                tracked_capacity: Some(da.tracked_capacity),
+            }
         }
         _ => RuntimeValue::Null,
     }
@@ -80,6 +107,50 @@ pub fn aot_resolve_value(handle: u64) -> RuntimeValue {
     } else {
         RuntimeValue::Null
     }
+}
+
+pub fn get_string_val(ptr_or_handle: u64) -> Option<String> {
+    if ptr_or_handle == 0 {
+        return None;
+    }
+    if let Some(v) = aot_get_value(ptr_or_handle) {
+        return match v {
+            RuntimeValue::String(s) => Some(s),
+            _ => None,
+        };
+    }
+    if ptr_or_handle > 0x10000 {
+        unsafe {
+            if let Ok(c_str) =
+                std::ffi::CStr::from_ptr(ptr_or_handle as *const std::os::raw::c_char).to_str()
+            {
+                return Some(c_str.to_string());
+            }
+        }
+    }
+    None
+}
+
+pub fn unpack_aot_arg(raw: u64) -> RuntimeValue {
+    if raw == 0 {
+        return RuntimeValue::Null;
+    }
+    if let Some(v) = aot_get_value(raw) {
+        return v;
+    }
+    if raw > 0x10000 {
+        if let Some(s) = get_string_val(raw) {
+            return RuntimeValue::String(s);
+        }
+    }
+    if raw < 0x10000 {
+        if let Ok(guard) = crate::execution::arc_bridge::arc_manager().lock() {
+            if let Ok(v) = guard.get_value(raw) {
+                return ast_value_to_runtime_value(&v);
+            }
+        }
+    }
+    RuntimeValue::Int(raw as i64)
 }
 
 fn aot_remove_value(handle: u64) -> Option<RuntimeValue> {
@@ -154,7 +225,9 @@ fn runtime_value_to_ast_value_impl(rv: &RuntimeValue, depth: usize, max_depth: u
         RuntimeValue::F64(n) => Value::F64(*n),
         RuntimeValue::BigInt(bi) => Value::BigInt(bi.clone()),
         RuntimeValue::Null => Value::Null,
-        RuntimeValue::Array(arr) | RuntimeValue::RawArray(_, arr) => Value::Array(
+        RuntimeValue::Array(arr)
+        | RuntimeValue::RawArray(_, arr)
+        | RuntimeValue::DynArray { data: arr, .. } => Value::Array(
             arr.iter()
                 .map(|v| runtime_value_to_ast_value_impl(v, depth + 1, max_depth))
                 .collect(),
@@ -244,12 +317,12 @@ pub extern "C" fn aot_set_field(obj_handle: u64, field_handle: u64, val_handle: 
 /// Get an object field and return it as a value handle.
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_get_field(obj_handle: u64, field_handle: u64) -> u64 {
-    let field_name = match aot_get_value(field_handle) {
-        Some(RuntimeValue::String(s)) => s,
-        _ => return aot_store_value(RuntimeValue::Null),
+    let field_name = match get_string_val(field_handle) {
+        Some(s) => s,
+        None => return aot_store_value(RuntimeValue::Null),
     };
 
-    let resolved_obj = Some(aot_resolve_value(obj_handle));
+    let resolved_obj = Some(unpack_aot_arg(obj_handle));
 
     match resolved_obj {
         Some(RuntimeValue::Object(obj)) => {
@@ -322,6 +395,156 @@ pub extern "C" fn aot_get_field(obj_handle: u64, field_handle: u64) -> u64 {
         }
         _ => aot_store_value(RuntimeValue::Null),
     }
+}
+
+// Exception Handling Bridge
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_has_exception() -> i64 {
+    crate::backends::common::builtins::CURRENT_EXCEPTION
+        .with(|exc| if exc.borrow().is_some() { 1 } else { 0 })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_get_exception() -> u64 {
+    crate::backends::common::builtins::CURRENT_EXCEPTION.with(|exc| {
+        if let Some(val) = exc.borrow_mut().take() {
+            aot_store_value(val)
+        } else {
+            aot_store_value(RuntimeValue::Null)
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_clear_exception() -> i64 {
+    crate::backends::common::builtins::CURRENT_EXCEPTION.with(|exc| {
+        *exc.borrow_mut() = None;
+    });
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_throw_exception(val_handle: u64) -> i64 {
+    let val = unpack_aot_arg(val_handle);
+    crate::backends::common::builtins::CURRENT_EXCEPTION.with(|exc| {
+        *exc.borrow_mut() = Some(val);
+    });
+    0
+}
+
+// Array type conversions
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aot_array_to_fixed(
+    arr_handle: u64,
+    type_handle_or_ptr: u64,
+    cap: i64,
+) -> u64 {
+    let arr = unpack_aot_arg(arr_handle);
+    let type_str = get_string_val(type_handle_or_ptr).unwrap_or_else(|| "any".to_string());
+    let res = crate::backends::common::builtins::objects::runtime_array_to_fixed(&[
+        arr,
+        RuntimeValue::String(type_str),
+        RuntimeValue::Int(cap),
+    ]);
+    aot_store_value(res)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aot_array_to_fixed_raw(
+    arr_handle: u64,
+    type_handle_or_ptr: u64,
+    size: i64,
+) -> u64 {
+    let arr = unpack_aot_arg(arr_handle);
+    let type_str = get_string_val(type_handle_or_ptr).unwrap_or_else(|| "any".to_string());
+    let res = crate::backends::common::builtins::objects::runtime_array_to_fixed_raw(&[
+        arr,
+        RuntimeValue::String(type_str),
+        RuntimeValue::Int(size),
+    ]);
+    aot_store_value(res)
+}
+
+// Method calls and array operations
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aot_call_method(
+    obj_handle: u64,
+    method_name_ptr_or_handle: u64,
+    a0: u64,
+    a1: u64,
+    a2: u64,
+    a3: u64,
+    argc: u64,
+) -> u64 {
+    let method_name = if let Some(s) = get_string_val(method_name_ptr_or_handle) {
+        s
+    } else {
+        return aot_store_value(RuntimeValue::Null);
+    };
+
+    let obj = unpack_aot_arg(obj_handle);
+
+    let raw_args = [a0, a1, a2, a3];
+    let count = (argc as usize).min(4);
+    let mut method_args = Vec::with_capacity(2 + count);
+    method_args.push(obj);
+    method_args.push(RuntimeValue::String(method_name));
+    for i in 0..count {
+        method_args.push(unpack_aot_arg(raw_args[i]));
+    }
+
+    let res = crate::backends::common::builtins::objects::runtime_call_method(&method_args);
+    aot_store_value(res)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aot_set_index(
+    container_handle: u64,
+    index_handle: u64,
+    val_handle: u64,
+) -> u64 {
+    let container = unpack_aot_arg(container_handle);
+    let index = unpack_aot_arg(index_handle);
+    let val = unpack_aot_arg(val_handle);
+    let res =
+        crate::backends::common::builtins::arrays::runtime_set_index(&[container, index, val]);
+    aot_store_value(res)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aot_get_index(container_handle: u64, index_handle: u64) -> u64 {
+    let container = unpack_aot_arg(container_handle);
+    let index = unpack_aot_arg(index_handle);
+    let res = crate::backends::common::builtins::arrays::runtime_get_index(&[container, index]);
+    aot_store_value(res)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_capacity(arr_handle: u64) -> u64 {
+    let arr = unpack_aot_arg(arr_handle);
+    let res = crate::backends::common::builtins::arrays::runtime_capacity(&[arr]);
+    aot_store_value(res)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_metadata_size(arr_handle: u64) -> u64 {
+    let arr = unpack_aot_arg(arr_handle);
+    let res = crate::backends::common::builtins::arrays::runtime_metadata_size(&[arr]);
+    aot_store_value(res)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_first(arr_handle: u64) -> u64 {
+    let arr = unpack_aot_arg(arr_handle);
+    let res = crate::backends::common::builtins::arrays::runtime_first(&[arr]);
+    aot_store_value(res)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_last(arr_handle: u64) -> u64 {
+    let arr = unpack_aot_arg(arr_handle);
+    let res = crate::backends::common::builtins::arrays::runtime_last(&[arr]);
+    aot_store_value(res)
 }
 
 /// Create an array from handles
@@ -1279,22 +1502,6 @@ pub extern "C" fn aot_input_generic(
     };
     crate::backends::common::builtins::clear_jit_generic_type();
     aot_store_value(res)
-}
-
-fn unpack_aot_arg(raw: u64) -> RuntimeValue {
-    if let Some(val) = aot_get_value(raw) {
-        val
-    } else if let Some(s) = get_string_value(raw) {
-        RuntimeValue::String(s)
-    } else if let Ok(guard) = crate::execution::arc_bridge::arc_manager().lock() {
-        if let Ok(v) = guard.get_value(raw) {
-            ast_value_to_runtime_value(&v)
-        } else {
-            RuntimeValue::Int(raw as i64)
-        }
-    } else {
-        RuntimeValue::Int(raw as i64)
-    }
 }
 
 #[unsafe(no_mangle)]

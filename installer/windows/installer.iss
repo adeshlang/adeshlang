@@ -46,7 +46,7 @@ ExtraDiskSpaceRequired=1939865600
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "downloadtoolchain"; Description: "Install pinned LLVM 18.1.8 Toolchain (Clang compiler, LLD linker, llvm-ar, llc; required for AOT & GPU compilation, ~1.5 GB)"; Flags: checkedonce
+Name: "downloadtoolchain"; Description: "Install pinned LLVM 18.1.8 Toolchain (Clang compiler, LLD linker, llvm-ar, llc; required for AOT & GPU compilation, ~1.5 GB)"; Flags: checkedonce; Check: ShouldShowToolchain
 Name: "vsbuildtools"; Description: "Install Visual Studio Build Tools + Windows SDK (required for Windows MSVC CRT linking: ucrt.lib, msvcrt.lib, legacy_stdio_definitions.lib, ~2 GB)"; Flags: checkedonce; Check: ShouldShowVSBuildTools
 Name: "python"; Description: "Install Python 3.12 (required for full AI features: `adesh ai train/evaluate/generate` and MLIR source builds)"; Flags: unchecked; Check: ShouldShowPython
 Name: "buildmlir"; Description: "Build MLIR GPU tools from source (adds 30–90 minutes; requires Visual Studio C++ Build Tools + CMake + Python 3)"; Flags: unchecked
@@ -254,46 +254,95 @@ begin
   Result := PathValue;
 end;
 
+function HasToolchain: Boolean;
+var
+  ToolchainBin: String;
+begin
+  Result := False;
+  ToolchainBin := ExpandConstant('{app}\toolchain\llvm\bin');
+  if (FileExists(ToolchainBin + '\clang.exe') and (FileExists(ToolchainBin + '\lld-link.exe') or FileExists(ToolchainBin + '\lld.exe'))) or
+     (FileExists(ExpandConstant('{pf}\LLVM\bin\clang.exe')) and (FileExists(ExpandConstant('{pf}\LLVM\bin\lld-link.exe')) or FileExists(ExpandConstant('{pf}\LLVM\bin\lld.exe')))) or
+     (FileExists(ExpandConstant('{pf64}\LLVM\bin\clang.exe')) and (FileExists(ExpandConstant('{pf64}\LLVM\bin\lld-link.exe')) or FileExists(ExpandConstant('{pf64}\LLVM\bin\lld.exe')))) or
+     (FileExists(ExpandConstant('{pf32}\LLVM\bin\clang.exe')) and (FileExists(ExpandConstant('{pf32}\LLVM\bin\lld-link.exe')) or FileExists(ExpandConstant('{pf32}\LLVM\bin\lld.exe')))) or
+     (FileExists(ExpandConstant('{sd}\LLVM\bin\clang.exe')) and (FileExists(ExpandConstant('{sd}\LLVM\bin\lld-link.exe')) or FileExists(ExpandConstant('{sd}\LLVM\bin\lld.exe')))) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  if (ExpandConstant('{%ADESH_TOOLCHAIN}') <> '') or (ExpandConstant('{%ADESH_CLANG}') <> '') then
+  begin
+    Result := True;
+    Exit;
+  end;
+end;
+
+function ShouldShowToolchain: Boolean;
+begin
+  Result := not HasToolchain;
+end;
+
 function HasVSBuildTools: Boolean;
 var
-  Root: String;
+  VSWherePath: String;
+  ResultCode: Integer;
+  PFDirs: array[0..3] of String;
+  Years: array[0..3] of String;
+  Editions: array[0..4] of String;
+  i, j, k: Integer;
+  Candidate: String;
 begin
   Result := False;
 
-  // 1. Check 64-bit Visual Studio 2022 installations
-  Root := 'C:\Program Files\Microsoft Visual Studio\2022';
-  if DirExists(Root + '\BuildTools\VC\Tools\MSVC') or
-     DirExists(Root + '\Community\VC\Tools\MSVC') or
-     DirExists(Root + '\Professional\VC\Tools\MSVC') or
-     DirExists(Root + '\Enterprise\VC\Tools\MSVC') then
+  // 1. Check vswhere.exe query dynamically across all Program Files folders
+  VSWherePath := ExpandConstant('{pf32}\Microsoft Visual Studio\Installer\vswhere.exe');
+  if not FileExists(VSWherePath) then
+    VSWherePath := ExpandConstant('{pf64}\Microsoft Visual Studio\Installer\vswhere.exe');
+  if not FileExists(VSWherePath) then
+    VSWherePath := ExpandConstant('{pf}\Microsoft Visual Studio\Installer\vswhere.exe');
+
+  if FileExists(VSWherePath) then
   begin
-    Result := True;
-    Exit;
+    if Exec(VSWherePath, '-latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+    begin
+      Result := True;
+      Exit;
+    end;
   end;
 
-  // 2. Check 32-bit Visual Studio 2022 installations
-  Root := 'C:\Program Files (x86)\Microsoft Visual Studio\2022';
-  if DirExists(Root + '\BuildTools\VC\Tools\MSVC') or
-     DirExists(Root + '\Community\VC\Tools\MSVC') or
-     DirExists(Root + '\Professional\VC\Tools\MSVC') or
-     DirExists(Root + '\Enterprise\VC\Tools\MSVC') then
+  // 2. Dynamically check all Program Files directories, system drive, and editions
+  PFDirs[0] := ExpandConstant('{pf64}\Microsoft Visual Studio');
+  PFDirs[1] := ExpandConstant('{pf32}\Microsoft Visual Studio');
+  PFDirs[2] := ExpandConstant('{pf}\Microsoft Visual Studio');
+  PFDirs[3] := ExpandConstant('{sd}\Microsoft Visual Studio');
+
+  Years[0] := '2022';
+  Years[1] := '2019';
+  Years[2] := '2017';
+  Years[3] := '2025';
+
+  Editions[0] := 'BuildTools';
+  Editions[1] := 'Community';
+  Editions[2] := 'Professional';
+  Editions[3] := 'Enterprise';
+  Editions[4] := 'Preview';
+
+  for i := 0 to 3 do
   begin
-    Result := True;
-    Exit;
+    for j := 0 to 3 do
+    begin
+      for k := 0 to 4 do
+      begin
+        Candidate := PFDirs[i] + '\' + Years[j] + '\' + Editions[k] + '\VC\Tools\MSVC';
+        if DirExists(Candidate) then
+        begin
+          Result := True;
+          Exit;
+        end;
+      end;
+    end;
   end;
 
-  // 3. Check Visual Studio 2019 installations
-  Root := 'C:\Program Files (x86)\Microsoft Visual Studio\2019';
-  if DirExists(Root + '\BuildTools\VC\Tools\MSVC') or
-     DirExists(Root + '\Community\VC\Tools\MSVC') or
-     DirExists(Root + '\Professional\VC\Tools\MSVC') or
-     DirExists(Root + '\Enterprise\VC\Tools\MSVC') then
-  begin
-    Result := True;
-    Exit;
-  end;
-
-  // 4. Check Visual Studio Installer Instances registry
+  // 3. Check Visual Studio Installer Instances registry
   if RegKeyExists(HKEY_LOCAL_MACHINE, 'SOFTWARE\Microsoft\VisualStudio\Setup\Instances') or
      RegKeyExists(HKEY_LOCAL_MACHINE, 'SOFTWARE\WOW6432Node\Microsoft\VisualStudio\Setup\Instances') then
   begin
@@ -301,9 +350,8 @@ begin
     Exit;
   end;
 
-  // 5. Check Windows SDK libraries
-  if DirExists('C:\Program Files (x86)\Windows Kits\10\Lib') and
-     (ExpandConstant('{%VCToolsInstallDir}') <> '') then
+  // 4. Check environment variables
+  if (ExpandConstant('{%VCToolsInstallDir}') <> '') or (ExpandConstant('{%VSINSTALLDIR}') <> '') then
   begin
     Result := True;
     Exit;
@@ -318,6 +366,9 @@ end;
 function HasPython: Boolean;
 var
   ResultCode: Integer;
+  PyDirs: array[0..3] of String;
+  PyVers: array[0..3] of String;
+  i, j: Integer;
 begin
   Result := False;
   if RegKeyExists(HKEY_LOCAL_MACHINE, 'SOFTWARE\Python\PythonCore\3.13') or
@@ -332,17 +383,35 @@ begin
     Result := True;
     Exit;
   end;
-  if FileExists('C:\Program Files\Python313\python.exe') or
-     FileExists('C:\Program Files\Python312\python.exe') or
-     FileExists('C:\Program Files\Python311\python.exe') or
-     FileExists('C:\Python313\python.exe') or
-     FileExists('C:\Python312\python.exe') or
-     FileExists('C:\Python311\python.exe') then
+
+  PyDirs[0] := ExpandConstant('{pf64}');
+  PyDirs[1] := ExpandConstant('{pf}');
+  PyDirs[2] := ExpandConstant('{sd}');
+  PyDirs[3] := ExpandConstant('{localappdata}\Programs\Python');
+
+  PyVers[0] := 'Python313';
+  PyVers[1] := 'Python312';
+  PyVers[2] := 'Python311';
+  PyVers[3] := 'Python310';
+
+  for i := 0 to 3 do
+  begin
+    for j := 0 to 3 do
+    begin
+      if FileExists(PyDirs[i] + '\' + PyVers[j] + '\python.exe') then
+      begin
+        Result := True;
+        Exit;
+      end;
+    end;
+  end;
+
+  if Exec('py.exe', '-3 --version', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
   begin
     Result := True;
     Exit;
   end;
-  if Exec('py.exe', '-3 --version', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+  if Exec('python.exe', '--version', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
   begin
     Result := True;
     Exit;
@@ -700,7 +769,9 @@ begin
     begin
       PathValue := RemovePathEntry(PathValue, BinDir);
       PathValue := RemovePathEntry(PathValue, LLVMBinDir);
-      PathValue := RemovePathEntry(PathValue, 'C:\Program Files\LLVM\bin');
+      PathValue := RemovePathEntry(PathValue, ExpandConstant('{pf}\LLVM\bin'));
+      PathValue := RemovePathEntry(PathValue, ExpandConstant('{pf64}\LLVM\bin'));
+      PathValue := RemovePathEntry(PathValue, ExpandConstant('{pf32}\LLVM\bin'));
       RegWriteExpandStringValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'PATH', PathValue);
     end;
     RegDeleteValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_HOME');
@@ -712,11 +783,10 @@ begin
   end
   else if CurUninstallStep = usPostUninstall then
   begin
-    if DirExists('C:\Program Files\LLVM\bin') then
+    if DirExists(ExpandConstant('{pf}\LLVM\bin')) or DirExists(ExpandConstant('{pf64}\LLVM\bin')) then
       MsgBox('AdeshLang has been removed, including the LLVM toolchain it installed.' +
         Chr(13) + Chr(10) + Chr(13) + Chr(10) +
-        'A separate LLVM installation at C:\Program Files\LLVM was found and left ' +
-        'untouched (it existed before AdeshLang and other programs may use it).',
+        'A separate system LLVM installation was found and left untouched.',
         mbInformation, MB_OK);
   end;
 end;

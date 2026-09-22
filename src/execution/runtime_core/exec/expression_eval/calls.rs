@@ -742,6 +742,51 @@ impl Exec {
                         out.push(av[0].clone());
                         Ok(Value::Array(out))
                     }
+                    ("append", Value::DynArray(da)) => {
+                        if av.len() != 1 {
+                            return Err(err("append expects 1 arg"));
+                        }
+                        let mut new_data = da.data.clone();
+                        if da.tracked_capacity > 0 && new_data.len() >= da.tracked_capacity {
+                            return Err(err(format!(
+                                "Cannot append to fixed-capacity array (capacity: {})",
+                                da.tracked_capacity
+                            )));
+                        }
+                        new_data.push(av[0].clone());
+                        Ok(Value::DynArray(Box::new(
+                            crate::parsing::ast::DynamicArray {
+                                data: new_data,
+                                element_type: da.element_type.clone(),
+                                concrete_type: da.concrete_type.clone(),
+                                tracked_capacity: da.tracked_capacity,
+                            },
+                        )))
+                    }
+                    ("push", Value::DynArray(da)) => {
+                        if av.len() != 1 {
+                            return Err(err("push expects 1 arg"));
+                        }
+                        let mut new_data = da.data.clone();
+                        if da.tracked_capacity > 0 && new_data.len() >= da.tracked_capacity {
+                            return Err(err(format!(
+                                "Cannot append to fixed-capacity array (capacity: {})",
+                                da.tracked_capacity
+                            )));
+                        }
+                        new_data.push(av[0].clone());
+                        Ok(Value::DynArray(Box::new(
+                            crate::parsing::ast::DynamicArray {
+                                data: new_data,
+                                element_type: da.element_type.clone(),
+                                concrete_type: da.concrete_type.clone(),
+                                tracked_capacity: da.tracked_capacity,
+                            },
+                        )))
+                    }
+                    ("append" | "push" | "extend" | "insert", Value::RawArray(_t, _a)) => {
+                        Err(err("Cannot append to raw array (fixed size)"))
+                    }
                     ("map", Value::Array(a)) => {
                         if av.len() != 1 {
                             return Err(err("map(fn)"));
@@ -962,10 +1007,95 @@ impl Exec {
                     ("pop", Value::Array(a)) => {
                         let mut out = a.clone();
                         if out.is_empty() {
-                            return Ok(Value::Null);
+                            return Err(err("Cannot pop from empty array"));
                         }
-                        let v = out.pop().unwrap();
-                        Ok(v)
+                        out.pop();
+                        Ok(Value::Array(out))
+                    }
+                    ("pop", Value::DynArray(da)) => {
+                        let mut new_data = da.data.clone();
+                        if new_data.is_empty() {
+                            return Err(err("Cannot pop from empty array"));
+                        }
+                        new_data.pop();
+                        Ok(Value::DynArray(Box::new(
+                            crate::parsing::ast::DynamicArray {
+                                data: new_data,
+                                element_type: da.element_type.clone(),
+                                concrete_type: da.concrete_type.clone(),
+                                tracked_capacity: da.tracked_capacity,
+                            },
+                        )))
+                    }
+                    ("pop" | "shift" | "unshift" | "remove" | "clear", Value::RawArray(_t, _a)) => {
+                        Err(err("Cannot pop from raw array (fixed size)"))
+                    }
+                    ("set_index", Value::Array(a)) => {
+                        if av.len() != 2 {
+                            return Err(err("set_index(index, value)"));
+                        }
+                        let idx = match av[0] {
+                            Value::Number(n) => {
+                                if (n - n.trunc()).abs() > 1e-12 || n < 0.0 {
+                                    return Err(err("index must be integer and non-negative"));
+                                }
+                                n as usize
+                            }
+                            _ => return Err(err("set_index index must be number")),
+                        };
+                        let mut new_data = a.clone();
+                        if idx >= new_data.len() {
+                            return Err(err("index out of bounds"));
+                        }
+                        new_data[idx] = av[1].clone();
+                        Ok(Value::Array(new_data))
+                    }
+                    ("set_index", Value::DynArray(da)) => {
+                        if av.len() != 2 {
+                            return Err(err("set_index(index, value)"));
+                        }
+                        let idx = match av[0] {
+                            Value::Number(n) => {
+                                if (n - n.trunc()).abs() > 1e-12 || n < 0.0 {
+                                    return Err(err("index must be integer and non-negative"));
+                                }
+                                n as usize
+                            }
+                            _ => return Err(err("set_index index must be number")),
+                        };
+                        let mut new_data = da.data.clone();
+                        if idx >= new_data.len() {
+                            return Err(err("index out of bounds"));
+                        }
+                        new_data[idx] = av[1].clone();
+                        Ok(Value::DynArray(Box::new(
+                            crate::parsing::ast::DynamicArray {
+                                data: new_data,
+                                element_type: da.element_type.clone(),
+                                concrete_type: da.concrete_type.clone(),
+                                tracked_capacity: da.tracked_capacity,
+                            },
+                        )))
+                    }
+                    ("set_index", Value::RawArray(t, a)) => {
+                        if av.len() != 2 {
+                            return Err(err("set_index(index, value)"));
+                        }
+                        let idx = match av[0] {
+                            Value::Number(n) => {
+                                if (n - n.trunc()).abs() > 1e-12 || n < 0.0 {
+                                    return Err(err("index must be integer and non-negative"));
+                                }
+                                n as usize
+                            }
+                            _ => return Err(err("set_index index must be number")),
+                        };
+                        let mut new_data = a.clone();
+                        if idx >= new_data.len() {
+                            return Err(err("index out of bounds"));
+                        }
+                        new_data[idx] = av[1].clone();
+                        Ok(Value::RawArray(t.clone(), new_data))
                     }
                     ("index", Value::Array(a)) => {
                         if av.len() != 1 {

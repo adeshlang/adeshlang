@@ -597,11 +597,7 @@ pub(crate) fn runtime_set_index(args: &[RuntimeValue]) -> RuntimeValue {
                 new_arr[idx] = val;
                 RuntimeValue::Array(new_arr)
             } else {
-                set_array_error(&format!(
-                    "Index {} out of bounds for array of length {}",
-                    index_raw,
-                    arr.len()
-                ));
+                set_array_error("index out of bounds");
                 args[0].clone()
             }
         }
@@ -611,11 +607,7 @@ pub(crate) fn runtime_set_index(args: &[RuntimeValue]) -> RuntimeValue {
                 new_arr[idx] = val;
                 RuntimeValue::RawArray(elem_type.clone(), new_arr)
             } else {
-                set_array_error(&format!(
-                    "Index {} out of bounds for raw array of length {}",
-                    index_raw,
-                    arr.len()
-                ));
+                set_array_error("index out of bounds");
                 args[0].clone()
             }
         }
@@ -635,11 +627,7 @@ pub(crate) fn runtime_set_index(args: &[RuntimeValue]) -> RuntimeValue {
                     tracked_capacity: *tracked_capacity,
                 }
             } else {
-                set_array_error(&format!(
-                    "Index {} out of bounds for dynamic array of length {}",
-                    index_raw,
-                    data.len()
-                ));
+                set_array_error("index out of bounds");
                 args[0].clone()
             }
         }

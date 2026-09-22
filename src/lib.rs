@@ -152,6 +152,4 @@ pub use execution::runtime_core::arc_bridge::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use backends::aot::runtime_bridge::{
-    aot_free_handle, aot_get_value, aot_print_with_options, aot_store_value,
-};
+pub use backends::aot::runtime_bridge::*;

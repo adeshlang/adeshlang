@@ -146,6 +146,7 @@ This folder is AdeshLang's documentation hub. Explore our comprehensive guides:
 - **[Type System Guide](type-system-guide.md)**: Generics, type inference, sum types, numeric types, and type layout
 - **[Memory Safety Guide](memory-safety-guide.md)**: Ownership, borrowing, lifetimes, ARC, and Zero-GC architecture
 - **[Execution Backends](backends-guide.md)**: In-depth breakdown of Interpreter, VM, JIT, NJIT, AOT, WASM
+- **[Native Linker Roadmap](NATIVE_LINKER_ROADMAP.md)**: Design and milestones for toolchain-free AOT builds (first-party ELF/PE linker, syscall runtime, differential testing)
 - **[AdeshLang AI & Specialized LLM Guide](AI_MODEL_GUIDE.md)**: Architecture, dataset pipeline, compiler validation, training, and `adesh ai` CLI integration
 
 ---

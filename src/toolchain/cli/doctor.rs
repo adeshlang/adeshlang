@@ -234,29 +234,54 @@ pub fn execute_doctor_command() {
     // 9. Windows SDK / MSVC Linker Check (Windows-only)
     #[cfg(windows)]
     {
-        let has_vs = {
-            let root19 = Path::new("C:\\Program Files (x86)\\Microsoft Visual Studio\\2019");
-            let root22_x86 = Path::new("C:\\Program Files (x86)\\Microsoft Visual Studio\\2022");
-            let root22 = Path::new("C:\\Program Files\\Microsoft Visual Studio\\2022");
-            root19.join("BuildTools\\VC\\Tools\\MSVC").exists()
-                || root19.join("Community\\VC\\Tools\\MSVC").exists()
-                || root22_x86.join("BuildTools\\VC\\Tools\\MSVC").exists()
-                || root22_x86.join("Community\\VC\\Tools\\MSVC").exists()
-                || root22.join("BuildTools\\VC\\Tools\\MSVC").exists()
-                || root22.join("Community\\VC\\Tools\\MSVC").exists()
-                || std::env::var("VCToolsInstallDir").is_ok()
-                || std::env::var("WindowsSdkDir").is_ok()
-        };
-        if has_vs {
-            println!(
-                "  {}✓{} Windows MSVC SDK  : Detected (ready for AOT native MSVC linking)",
-                green, reset
-            );
-        } else {
-            println!(
-                "  {}!{} Windows MSVC SDK  : Visual Studio Build Tools / Windows SDK not detected in standard locations",
-                yellow, reset
-            );
+        let msvc_opt = crate::backends::aot::cranelift_impl::linking::find_msvc_lib_paths();
+        let sdk_opt = crate::backends::aot::cranelift_impl::linking::find_windows_sdk_paths();
+
+        match (&msvc_opt, &sdk_opt) {
+            (Some(msvc), Some((um, _ucrt))) => {
+                println!(
+                    "  {}✓{} Windows MSVC SDK  : Detected (ready for AOT native MSVC linking)",
+                    green, reset
+                );
+                println!(
+                    "     {}↳ MSVC CRT Libs    : {}{}",
+                    "\x1b[36m",
+                    msvc.display(),
+                    reset
+                );
+                println!(
+                    "     {}↳ Windows SDK Libs : {}{}",
+                    "\x1b[36m",
+                    um.display(),
+                    reset
+                );
+            }
+            (Some(msvc), None) => {
+                println!(
+                    "  {}!{} Windows MSVC SDK  : MSVC found ({}) but Windows SDK libs (ucrt.lib, kernel32.lib) missing",
+                    yellow,
+                    reset,
+                    msvc.display()
+                );
+            }
+            (None, Some((um, _))) => {
+                println!(
+                    "  {}!{} Windows MSVC SDK  : Windows SDK found ({}) but MSVC CRT libs (msvcrt.lib) missing",
+                    yellow,
+                    reset,
+                    um.display()
+                );
+            }
+            (None, None) => {
+                println!(
+                    "  {}!{} Windows MSVC SDK  : Visual Studio Build Tools / Windows SDK not detected",
+                    yellow, reset
+                );
+                println!(
+                    "     {}↳ Required for Windows native CRT linking (ucrt.lib, msvcrt.lib){}",
+                    yellow, reset
+                );
+            }
         }
     }
 

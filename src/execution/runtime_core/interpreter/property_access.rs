@@ -210,7 +210,14 @@ pub(in crate::execution::runtime_core) fn get_prop(
                     };
                     Ok(Number(cap as f64))
                 }
-                "metadata_size" => Ok(Number(da.element_type.metadata_size() as f64)),
+                "metadata_size" => {
+                    let size = if da.element_type.metadata_size() == 4 {
+                        16.0
+                    } else {
+                        24.0
+                    };
+                    Ok(Number(size))
+                }
                 _ => Ok(Null),
             }
         }

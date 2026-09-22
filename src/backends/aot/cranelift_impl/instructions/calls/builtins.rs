@@ -761,1109 +761,233 @@ pub(crate) fn handle_call_builtin(
 ) -> Result<(), String> {
     let builtin_name = builtin_name.strip_prefix("std:").unwrap_or(builtin_name);
     match builtin_name {
+        "__has_exception" => {
+            let mut sig = module.make_signature();
+            sig.returns.push(AbiParam::new(types::I64));
+            let func_id = module
+                .declare_function("aot_has_exception", Linkage::Import, &sig)
+                .map_err(|e| format!("Failed to declare aot_has_exception: {}", e))?;
+            let func_ref = module.declare_func_in_func(func_id, builder.func);
+            let call = builder.ins().call(func_ref, &[]);
+            let result = builder.inst_results(call)[0];
+            ctx.value_map.insert(*dst, result);
+            ctx.value_types.insert(*dst, AotValueType::I64);
+        }
+        "__get_exception" => {
+            let mut sig = module.make_signature();
+            sig.returns.push(AbiParam::new(types::I64));
+            let func_id = module
+                .declare_function("aot_get_exception", Linkage::Import, &sig)
+                .map_err(|e| format!("Failed to declare aot_get_exception: {}", e))?;
+            let func_ref = module.declare_func_in_func(func_id, builder.func);
+            let call = builder.ins().call(func_ref, &[]);
+            let result = builder.inst_results(call)[0];
+            ctx.value_map.insert(*dst, result);
+            ctx.value_types.insert(*dst, AotValueType::Handle);
+            ctx.runtime_handle_values.insert(*dst);
+        }
+        "__clear_exception" => {
+            let mut sig = module.make_signature();
+            sig.returns.push(AbiParam::new(types::I64));
+            let func_id = module
+                .declare_function("aot_clear_exception", Linkage::Import, &sig)
+                .map_err(|e| format!("Failed to declare aot_clear_exception: {}", e))?;
+            let func_ref = module.declare_func_in_func(func_id, builder.func);
+            let call = builder.ins().call(func_ref, &[]);
+            let result = builder.inst_results(call)[0];
+            ctx.value_map.insert(*dst, result);
+            ctx.value_types.insert(*dst, AotValueType::I64);
+        }
+        "__throw" => {
+            let ctors = RuntimeValueConstructors::declare(module, builder)?;
+            let val_id = args.first().copied();
+            let val_handle = if let Some(id) = val_id {
+                let val_raw = ctx
+                    .value_map
+                    .get(&id)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                let val_ty = ctx
+                    .value_types
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or(AotValueType::Int);
+                convert_val_to_handle(ctx, builder, module, &id, val_raw, &val_ty, &ctors)?
+            } else {
+                builder.ins().iconst(types::I64, 0)
+            };
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            sig.returns.push(AbiParam::new(types::I64));
+            let func_id = module
+                .declare_function("aot_throw_exception", Linkage::Import, &sig)
+                .map_err(|e| format!("Failed to declare aot_throw_exception: {}", e))?;
+            let func_ref = module.declare_func_in_func(func_id, builder.func);
+            let call = builder.ins().call(func_ref, &[val_handle]);
+            let result = builder.inst_results(call)[0];
+            ctx.value_map.insert(*dst, result);
+            ctx.value_types.insert(*dst, AotValueType::I64);
+        }
         "__call_method" => {
             if args.len() >= 2 {
+                let ctors = RuntimeValueConstructors::declare(module, builder)?;
+                let mut sig = module.make_signature();
+                sig.params.push(AbiParam::new(types::I64)); // obj
+                sig.params.push(AbiParam::new(types::I64)); // method_name
+                sig.params.push(AbiParam::new(types::I64)); // a0
+                sig.params.push(AbiParam::new(types::I64)); // a1
+                sig.params.push(AbiParam::new(types::I64)); // a2
+                sig.params.push(AbiParam::new(types::I64)); // a3
+                sig.params.push(AbiParam::new(types::I64)); // argc
+                sig.returns.push(AbiParam::new(types::I64));
+
+                let call_method_id = module
+                    .declare_function("aot_call_method", Linkage::Import, &sig)
+                    .map_err(|e| format!("Failed to declare aot_call_method: {}", e))?;
+                let call_method_ref = module.declare_func_in_func(call_method_id, builder.func);
+
                 let obj_id = args[0];
+                let obj_raw = ctx
+                    .value_map
+                    .get(&obj_id)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                let obj_ty = ctx
+                    .value_types
+                    .get(&obj_id)
+                    .cloned()
+                    .unwrap_or(AotValueType::Int);
+                let obj_handle =
+                    convert_val_to_handle(ctx, builder, module, &obj_id, obj_raw, &obj_ty, &ctors)?;
+
                 let method_id = args[1];
-                let method = ctx
-                    .const_strings
+                let method_raw = ctx
+                    .value_map
+                    .get(&method_id)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                let method_ty = ctx
+                    .value_types
                     .get(&method_id)
                     .cloned()
-                    .unwrap_or_default();
-                if let Some(AotValueType::Array(elem_type, arr_len)) =
-                    ctx.value_types.get(&obj_id).cloned()
-                {
-                    let src_ptr = ctx
+                    .unwrap_or(AotValueType::String);
+                let method_handle = convert_val_to_handle(
+                    ctx, builder, module, &method_id, method_raw, &method_ty, &ctors,
+                )?;
+
+                let mut arg_handles = Vec::new();
+                for i in 2..args.len().min(6) {
+                    let a_id = args[i];
+                    let a_raw = ctx
                         .value_map
-                        .get(&obj_id)
+                        .get(&a_id)
                         .copied()
                         .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-                    let elem_size: i64 = match *elem_type {
-                        AotValueType::U8 | AotValueType::I8 | AotValueType::Bool => 1,
-                        AotValueType::U16 | AotValueType::I16 => 2,
-                        AotValueType::U32 | AotValueType::I32 | AotValueType::F32 => 4,
-                        AotValueType::U64
-                        | AotValueType::I64
-                        | AotValueType::F64
-                        | AotValueType::Int
-                        | AotValueType::Float
-                        | AotValueType::Ptr => 8,
-                        AotValueType::U128 | AotValueType::I128 => 16,
-                        _ => 8,
-                    };
-                    let meta_size = elem_type.metadata_size() as i64;
-                    let mut result_ptr = src_ptr;
-                    match method.as_str() {
-                        "map" => {
-                            // map(callback) - apply callback to each element, produce new array
-                            if args.len() >= 3 {
-                                let cb_id = args[2];
-                                if let Some(&func_id) = ctx.func_values.get(&cb_id) {
-                                    let new_len = arr_len as i64;
-                                    let total_size = (meta_size as i64) + (elem_size * new_len);
-                                    let slot = builder.create_sized_stack_slot(StackSlotData::new(
-                                        StackSlotKind::ExplicitSlot,
-                                        total_size as u32,
-                                        8,
-                                    ));
-                                    result_ptr = builder.ins().stack_addr(types::I64, slot, 0);
-                                    let len_i64 = builder.ins().iconst(types::I64, new_len);
-                                    let cap_val =
-                                        ctx.array_capacity.get(&obj_id).copied().unwrap_or(new_len);
-                                    let cap_i64 = builder.ins().iconst(types::I64, cap_val);
-                                    if meta_size == 4 {
-                                        let len_i32 = builder.ins().ireduce(types::I32, len_i64);
-                                        let cap_i32 = builder.ins().ireduce(types::I32, cap_i64);
-                                        builder.ins().store(
-                                            MemFlags::new(),
-                                            len_i32,
-                                            result_ptr,
-                                            0,
-                                        );
-                                        builder.ins().store(
-                                            MemFlags::new(),
-                                            cap_i32,
-                                            result_ptr,
-                                            4,
-                                        );
-                                    } else {
-                                        builder.ins().store(
-                                            MemFlags::new(),
-                                            len_i64,
-                                            result_ptr,
-                                            0,
-                                        );
-                                        builder.ins().store(
-                                            MemFlags::new(),
-                                            cap_i64,
-                                            result_ptr,
-                                            8,
-                                        );
-                                    }
-                                    let src_meta = builder.ins().iconst(types::I64, meta_size);
-                                    let es_const = builder.ins().iconst(types::I64, elem_size);
-                                    let func_ref =
-                                        module.declare_func_in_func(func_id, builder.func);
-                                    for i in 0..arr_len as i64 {
-                                        let i_val = builder.ins().iconst(types::I64, i);
-                                        let off = builder.ins().imul(i_val, es_const);
-                                        let src_off = builder.ins().iadd(src_meta, off);
-                                        let src_elem = builder.ins().iadd(src_ptr, src_off);
-                                        // Load element
-                                        let elem_val = match elem_size {
-                                            1 => {
-                                                let v = builder.ins().load(
-                                                    types::I8,
-                                                    MemFlags::new(),
-                                                    src_elem,
-                                                    0,
-                                                );
-                                                builder.ins().sextend(types::I64, v)
-                                            }
-                                            2 => {
-                                                let v = builder.ins().load(
-                                                    types::I16,
-                                                    MemFlags::new(),
-                                                    src_elem,
-                                                    0,
-                                                );
-                                                builder.ins().sextend(types::I64, v)
-                                            }
-                                            4 => {
-                                                if matches!(*elem_type, AotValueType::F32) {
-                                                    let v32 = builder.ins().load(
-                                                        types::F32,
-                                                        MemFlags::new(),
-                                                        src_elem,
-                                                        0,
-                                                    );
-                                                    let v64 =
-                                                        builder.ins().fpromote(types::F64, v32);
-                                                    builder.ins().bitcast(
-                                                        types::I64,
-                                                        MemFlags::new(),
-                                                        v64,
-                                                    )
-                                                } else {
-                                                    let v = builder.ins().load(
-                                                        types::I32,
-                                                        MemFlags::new(),
-                                                        src_elem,
-                                                        0,
-                                                    );
-                                                    builder.ins().sextend(types::I64, v)
-                                                }
-                                            }
-                                            _ => builder.ins().load(
-                                                types::I64,
-                                                MemFlags::new(),
-                                                src_elem,
-                                                0,
-                                            ),
-                                        };
-                                        // Call callback(elem)
-                                        let call = builder.ins().call(func_ref, &[elem_val]);
-                                        let cb_res = builder.inst_results(call)[0];
-                                        // Store result
-                                        let dst_off = builder.ins().iadd(src_meta, off);
-                                        let dst_elem = builder.ins().iadd(result_ptr, dst_off);
-                                        match elem_size {
-                                            1 => {
-                                                let r = builder.ins().ireduce(types::I8, cb_res);
-                                                builder.ins().store(
-                                                    MemFlags::new(),
-                                                    r,
-                                                    dst_elem,
-                                                    0,
-                                                );
-                                            }
-                                            2 => {
-                                                let r = builder.ins().ireduce(types::I16, cb_res);
-                                                builder.ins().store(
-                                                    MemFlags::new(),
-                                                    r,
-                                                    dst_elem,
-                                                    0,
-                                                );
-                                            }
-                                            4 => {
-                                                if matches!(*elem_type, AotValueType::F32) {
-                                                    let f64v = builder.ins().bitcast(
-                                                        types::F64,
-                                                        MemFlags::new(),
-                                                        cb_res,
-                                                    );
-                                                    let f32v =
-                                                        builder.ins().fdemote(types::F32, f64v);
-                                                    builder.ins().store(
-                                                        MemFlags::new(),
-                                                        f32v,
-                                                        dst_elem,
-                                                        0,
-                                                    );
-                                                } else {
-                                                    let r =
-                                                        builder.ins().ireduce(types::I32, cb_res);
-                                                    builder.ins().store(
-                                                        MemFlags::new(),
-                                                        r,
-                                                        dst_elem,
-                                                        0,
-                                                    );
-                                                }
-                                            }
-                                            _ => {
-                                                builder.ins().store(
-                                                    MemFlags::new(),
-                                                    cb_res,
-                                                    dst_elem,
-                                                    0,
-                                                );
-                                            }
-                                        }
-                                    }
-                                    ctx.value_map.insert(*dst, result_ptr);
-                                    ctx.value_types.insert(
-                                        *dst,
-                                        AotValueType::Array(elem_type.clone(), new_len as usize),
-                                    );
-                                    ctx.array_capacity.insert(*dst, cap_val);
-                                } else {
-                                    ctx.value_map.insert(*dst, src_ptr);
-                                    ctx.value_types.insert(
-                                        *dst,
-                                        AotValueType::Array(elem_type.clone(), arr_len),
-                                    );
-                                }
-                            } else {
-                                ctx.value_map.insert(*dst, src_ptr);
-                                ctx.value_types
-                                    .insert(*dst, AotValueType::Array(elem_type.clone(), arr_len));
-                            }
-                        }
-                        "filter" => {
-                            ctx.value_map.insert(*dst, result_ptr);
-                            ctx.value_types
-                                .insert(*dst, AotValueType::Array(elem_type.clone(), arr_len));
-                        }
-                        "reduce" => {
-                            // reduce(callback, init) - return accumulator, array unchanged
-                            if args.len() >= 4 {
-                                let cb_id = args[2];
-                                let init_id = args[3];
-                                if let (Some(&func_id), Some(acc_init)) = (
-                                    ctx.func_values.get(&cb_id),
-                                    ctx.value_map.get(&init_id).copied(),
-                                ) {
-                                    // acc slot
-                                    let acc_slot = builder.create_sized_stack_slot(
-                                        StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 8),
-                                    );
-                                    let acc_ptr = builder.ins().stack_addr(types::I64, acc_slot, 0);
-                                    builder.ins().store(MemFlags::new(), acc_init, acc_ptr, 0);
-                                    let src_meta = builder.ins().iconst(types::I64, meta_size);
-                                    let es_const = builder.ins().iconst(types::I64, elem_size);
-                                    let func_ref =
-                                        module.declare_func_in_func(func_id, builder.func);
-                                    for i in 0..arr_len as i64 {
-                                        let i_val = builder.ins().iconst(types::I64, i);
-                                        let off = builder.ins().imul(i_val, es_const);
-                                        let src_off = builder.ins().iadd(src_meta, off);
-                                        let src_elem = builder.ins().iadd(src_ptr, src_off);
-                                        let elem_val = match elem_size {
-                                            1 => {
-                                                let v = builder.ins().load(
-                                                    types::I8,
-                                                    MemFlags::new(),
-                                                    src_elem,
-                                                    0,
-                                                );
-                                                builder.ins().sextend(types::I64, v)
-                                            }
-                                            2 => {
-                                                let v = builder.ins().load(
-                                                    types::I16,
-                                                    MemFlags::new(),
-                                                    src_elem,
-                                                    0,
-                                                );
-                                                builder.ins().sextend(types::I64, v)
-                                            }
-                                            4 => {
-                                                if matches!(*elem_type, AotValueType::F32) {
-                                                    let v32 = builder.ins().load(
-                                                        types::F32,
-                                                        MemFlags::new(),
-                                                        src_elem,
-                                                        0,
-                                                    );
-                                                    let v64 =
-                                                        builder.ins().fpromote(types::F64, v32);
-                                                    builder.ins().bitcast(
-                                                        types::I64,
-                                                        MemFlags::new(),
-                                                        v64,
-                                                    )
-                                                } else {
-                                                    let v = builder.ins().load(
-                                                        types::I32,
-                                                        MemFlags::new(),
-                                                        src_elem,
-                                                        0,
-                                                    );
-                                                    builder.ins().sextend(types::I64, v)
-                                                }
-                                            }
-                                            _ => builder.ins().load(
-                                                types::I64,
-                                                MemFlags::new(),
-                                                src_elem,
-                                                0,
-                                            ),
-                                        };
-                                        let acc_cur = builder.ins().load(
-                                            types::I64,
-                                            MemFlags::new(),
-                                            acc_ptr,
-                                            0,
-                                        );
-                                        let call =
-                                            builder.ins().call(func_ref, &[acc_cur, elem_val]);
-                                        let res = builder.inst_results(call)[0];
-                                        builder.ins().store(MemFlags::new(), res, acc_ptr, 0);
-                                    }
-                                    let final_acc =
-                                        builder.ins().load(types::I64, MemFlags::new(), acc_ptr, 0);
-                                    ctx.value_map.insert(*dst, final_acc);
-                                    ctx.value_types.insert(*dst, AotValueType::Int);
-                                } else {
-                                    let v = builder.ins().iconst(types::I64, 0);
-                                    ctx.value_map.insert(*dst, v);
-                                    ctx.value_types.insert(*dst, AotValueType::Int);
-                                }
-                            } else {
-                                let v = builder.ins().iconst(types::I64, 0);
-                                ctx.value_map.insert(*dst, v);
-                                ctx.value_types.insert(*dst, AotValueType::Int);
-                            }
-                            // Array unchanged; callers not treating reduce as mutating
-                        }
-
-                        "append" | "push" => {
-                            if args.len() >= 3 {
-                                let val_id = args[2];
-                                let new_len = arr_len as i64 + 1;
-                                let total_size = (meta_size as i64) + (elem_size * new_len);
-                                let slot = builder.create_sized_stack_slot(StackSlotData::new(
-                                    StackSlotKind::ExplicitSlot,
-                                    total_size as u32,
-                                    8,
-                                ));
-                                result_ptr = builder.ins().stack_addr(types::I64, slot, 0);
-                                let len_i64 = builder.ins().iconst(types::I64, new_len);
-                                let cap_val =
-                                    ctx.array_capacity.get(&obj_id).copied().unwrap_or(new_len);
-                                let cap_i64 = builder.ins().iconst(types::I64, cap_val);
-                                if meta_size == 4 {
-                                    let len_i32 = builder.ins().ireduce(types::I32, len_i64);
-                                    let cap_i32 = builder.ins().ireduce(types::I32, cap_i64);
-                                    builder.ins().store(MemFlags::new(), len_i32, result_ptr, 0);
-                                    builder.ins().store(MemFlags::new(), cap_i32, result_ptr, 4);
-                                } else {
-                                    builder.ins().store(MemFlags::new(), len_i64, result_ptr, 0);
-                                    builder.ins().store(MemFlags::new(), cap_i64, result_ptr, 8);
-                                }
-                                let src_meta = builder.ins().iconst(types::I64, meta_size);
-                                for i in 0..arr_len as i64 {
-                                    let i_val = builder.ins().iconst(types::I64, i);
-                                    let es = builder.ins().iconst(types::I64, elem_size);
-                                    let off = builder.ins().imul(i_val, es);
-                                    let src_off = builder.ins().iadd(src_meta, off);
-                                    let src_elem = builder.ins().iadd(src_ptr, src_off);
-                                    let dst_off = builder.ins().iadd(src_meta, off);
-                                    let dst_elem = builder.ins().iadd(result_ptr, dst_off);
-                                    match elem_size {
-                                        1 => {
-                                            let v = builder.ins().load(
-                                                types::I8,
-                                                MemFlags::new(),
-                                                src_elem,
-                                                0,
-                                            );
-                                            builder.ins().store(MemFlags::new(), v, dst_elem, 0);
-                                        }
-                                        2 => {
-                                            let v = builder.ins().load(
-                                                types::I16,
-                                                MemFlags::new(),
-                                                src_elem,
-                                                0,
-                                            );
-                                            builder.ins().store(MemFlags::new(), v, dst_elem, 0);
-                                        }
-                                        4 => {
-                                            if matches!(*elem_type, AotValueType::F32) {
-                                                let v = builder.ins().load(
-                                                    types::F32,
-                                                    MemFlags::new(),
-                                                    src_elem,
-                                                    0,
-                                                );
-                                                builder.ins().store(
-                                                    MemFlags::new(),
-                                                    v,
-                                                    dst_elem,
-                                                    0,
-                                                );
-                                            } else {
-                                                let v = builder.ins().load(
-                                                    types::I32,
-                                                    MemFlags::new(),
-                                                    src_elem,
-                                                    0,
-                                                );
-                                                builder.ins().store(
-                                                    MemFlags::new(),
-                                                    v,
-                                                    dst_elem,
-                                                    0,
-                                                );
-                                            }
-                                        }
-                                        _ => {
-                                            if matches!(
-                                                *elem_type,
-                                                AotValueType::F64 | AotValueType::Float
-                                            ) {
-                                                let v = builder.ins().load(
-                                                    types::F64,
-                                                    MemFlags::new(),
-                                                    src_elem,
-                                                    0,
-                                                );
-                                                builder.ins().store(
-                                                    MemFlags::new(),
-                                                    v,
-                                                    dst_elem,
-                                                    0,
-                                                );
-                                            } else {
-                                                let v = builder.ins().load(
-                                                    types::I64,
-                                                    MemFlags::new(),
-                                                    src_elem,
-                                                    0,
-                                                );
-                                                builder.ins().store(
-                                                    MemFlags::new(),
-                                                    v,
-                                                    dst_elem,
-                                                    0,
-                                                );
-                                            }
-                                        }
-                                    }
-                                }
-                                let append_off = meta_size + (elem_size * (arr_len as i64));
-                                let append_off_val = builder.ins().iconst(types::I64, append_off);
-                                let dst_elem = builder.ins().iadd(result_ptr, append_off_val);
-                                if let Some(val) = ctx.value_map.get(&val_id).copied() {
-                                    match elem_size {
-                                        1 => {
-                                            let r = builder.ins().ireduce(types::I8, val);
-                                            builder.ins().store(MemFlags::new(), r, dst_elem, 0);
-                                        }
-                                        2 => {
-                                            let r = builder.ins().ireduce(types::I16, val);
-                                            builder.ins().store(MemFlags::new(), r, dst_elem, 0);
-                                        }
-                                        4 => {
-                                            if matches!(*elem_type, AotValueType::F32) {
-                                                builder.ins().store(
-                                                    MemFlags::new(),
-                                                    val,
-                                                    dst_elem,
-                                                    0,
-                                                );
-                                            } else {
-                                                let r = builder.ins().ireduce(types::I32, val);
-                                                builder.ins().store(
-                                                    MemFlags::new(),
-                                                    r,
-                                                    dst_elem,
-                                                    0,
-                                                );
-                                            }
-                                        }
-                                        _ => {
-                                            builder.ins().store(MemFlags::new(), val, dst_elem, 0);
-                                        }
-                                    }
-                                }
-                                // updated length accounted in metadata; no local tracking needed
-                                ctx.value_map.insert(*dst, result_ptr);
-                                ctx.value_types.insert(
-                                    *dst,
-                                    AotValueType::Array(elem_type.clone(), new_len as usize),
-                                );
-                                ctx.array_capacity.insert(*dst, cap_val);
-                            } else {
-                                ctx.value_map.insert(*dst, src_ptr);
-                                ctx.value_types
-                                    .insert(*dst, AotValueType::Array(elem_type.clone(), arr_len));
-                            }
-                        }
-                        "pop" => {
-                            if arr_len > 0 {
-                                let new_len = arr_len as i64 - 1;
-                                let total_size = (meta_size as i64) + (elem_size * new_len);
-                                let slot = builder.create_sized_stack_slot(StackSlotData::new(
-                                    StackSlotKind::ExplicitSlot,
-                                    total_size as u32,
-                                    8,
-                                ));
-                                result_ptr = builder.ins().stack_addr(types::I64, slot, 0);
-                                let len_i64 = builder.ins().iconst(types::I64, new_len);
-                                let cap_val =
-                                    ctx.array_capacity.get(&obj_id).copied().unwrap_or(new_len);
-                                let cap_i64 = builder.ins().iconst(types::I64, cap_val);
-                                if meta_size == 4 {
-                                    let len_i32 = builder.ins().ireduce(types::I32, len_i64);
-                                    let cap_i32 = builder.ins().ireduce(types::I32, cap_i64);
-                                    builder.ins().store(MemFlags::new(), len_i32, result_ptr, 0);
-                                    builder.ins().store(MemFlags::new(), cap_i32, result_ptr, 4);
-                                } else {
-                                    builder.ins().store(MemFlags::new(), len_i64, result_ptr, 0);
-                                    builder.ins().store(MemFlags::new(), cap_i64, result_ptr, 8);
-                                }
-                                let src_meta = builder.ins().iconst(types::I64, meta_size);
-                                for i in 0..new_len {
-                                    let i_val = builder.ins().iconst(types::I64, i);
-                                    let es = builder.ins().iconst(types::I64, elem_size);
-                                    let off = builder.ins().imul(i_val, es);
-                                    let src_off = builder.ins().iadd(src_meta, off);
-                                    let src_elem = builder.ins().iadd(src_ptr, src_off);
-                                    let dst_off = builder.ins().iadd(src_meta, off);
-                                    let dst_elem = builder.ins().iadd(result_ptr, dst_off);
-                                    match elem_size {
-                                        1 => {
-                                            let v = builder.ins().load(
-                                                types::I8,
-                                                MemFlags::new(),
-                                                src_elem,
-                                                0,
-                                            );
-                                            builder.ins().store(MemFlags::new(), v, dst_elem, 0);
-                                        }
-                                        2 => {
-                                            let v = builder.ins().load(
-                                                types::I16,
-                                                MemFlags::new(),
-                                                src_elem,
-                                                0,
-                                            );
-                                            builder.ins().store(MemFlags::new(), v, dst_elem, 0);
-                                        }
-                                        4 => {
-                                            if matches!(*elem_type, AotValueType::F32) {
-                                                let v = builder.ins().load(
-                                                    types::F32,
-                                                    MemFlags::new(),
-                                                    src_elem,
-                                                    0,
-                                                );
-                                                builder.ins().store(
-                                                    MemFlags::new(),
-                                                    v,
-                                                    dst_elem,
-                                                    0,
-                                                );
-                                            } else {
-                                                let v = builder.ins().load(
-                                                    types::I32,
-                                                    MemFlags::new(),
-                                                    src_elem,
-                                                    0,
-                                                );
-                                                builder.ins().store(
-                                                    MemFlags::new(),
-                                                    v,
-                                                    dst_elem,
-                                                    0,
-                                                );
-                                            }
-                                        }
-                                        _ => {
-                                            if matches!(
-                                                *elem_type,
-                                                AotValueType::F64 | AotValueType::Float
-                                            ) {
-                                                let v = builder.ins().load(
-                                                    types::F64,
-                                                    MemFlags::new(),
-                                                    src_elem,
-                                                    0,
-                                                );
-                                                builder.ins().store(
-                                                    MemFlags::new(),
-                                                    v,
-                                                    dst_elem,
-                                                    0,
-                                                );
-                                            } else {
-                                                let v = builder.ins().load(
-                                                    types::I64,
-                                                    MemFlags::new(),
-                                                    src_elem,
-                                                    0,
-                                                );
-                                                builder.ins().store(
-                                                    MemFlags::new(),
-                                                    v,
-                                                    dst_elem,
-                                                    0,
-                                                );
-                                            }
-                                        }
-                                    }
-                                }
-                                // updated length accounted in metadata; no local tracking needed
-                                ctx.value_map.insert(*dst, result_ptr);
-                                ctx.value_types.insert(
-                                    *dst,
-                                    AotValueType::Array(elem_type.clone(), new_len as usize),
-                                );
-                                ctx.array_capacity.insert(*dst, cap_val);
-                            } else {
-                                ctx.value_map.insert(*dst, src_ptr);
-                                ctx.value_types
-                                    .insert(*dst, AotValueType::Array(elem_type.clone(), arr_len));
-                            }
-                        }
-                        "clear" => {
-                            let slot = builder.create_sized_stack_slot(StackSlotData::new(
-                                StackSlotKind::ExplicitSlot,
-                                meta_size as u32,
-                                8,
-                            ));
-                            result_ptr = builder.ins().stack_addr(types::I64, slot, 0);
-                            let zero = builder.ins().iconst(types::I64, 0);
-                            if meta_size == 4 {
-                                let z32 = builder.ins().ireduce(types::I32, zero);
-                                builder.ins().store(MemFlags::new(), z32, result_ptr, 0);
-                                builder.ins().store(MemFlags::new(), z32, result_ptr, 4);
-                            } else {
-                                builder.ins().store(MemFlags::new(), zero, result_ptr, 0);
-                                builder.ins().store(MemFlags::new(), zero, result_ptr, 8);
-                            }
-                            // cleared length accounted in metadata; no local tracking needed
-                            ctx.value_map.insert(*dst, result_ptr);
-                            ctx.value_types
-                                .insert(*dst, AotValueType::Array(elem_type.clone(), 0));
-                            ctx.array_capacity.insert(*dst, 0);
-                        }
-                        "extend" => {
-                            if args.len() >= 3 {
-                                let other_id = args[2];
-                                if let Some(AotValueType::Array(other_elem, other_len)) =
-                                    ctx.value_types.get(&other_id).cloned()
-                                {
-                                    let other_ptr = ctx
-                                        .value_map
-                                        .get(&other_id)
-                                        .copied()
-                                        .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-                                    let new_len = arr_len as i64 + other_len as i64;
-                                    let total_size = (meta_size as i64) + (elem_size * new_len);
-                                    let slot = builder.create_sized_stack_slot(StackSlotData::new(
-                                        StackSlotKind::ExplicitSlot,
-                                        total_size as u32,
-                                        8,
-                                    ));
-                                    result_ptr = builder.ins().stack_addr(types::I64, slot, 0);
-                                    let len_i64 = builder.ins().iconst(types::I64, new_len);
-                                    let cap_val =
-                                        ctx.array_capacity.get(&obj_id).copied().unwrap_or(new_len);
-                                    let cap_i64 = builder.ins().iconst(types::I64, cap_val);
-                                    if meta_size == 4 {
-                                        let len_i32 = builder.ins().ireduce(types::I32, len_i64);
-                                        let cap_i32 = builder.ins().ireduce(types::I32, cap_i64);
-                                        builder.ins().store(
-                                            MemFlags::new(),
-                                            len_i32,
-                                            result_ptr,
-                                            0,
-                                        );
-                                        builder.ins().store(
-                                            MemFlags::new(),
-                                            cap_i32,
-                                            result_ptr,
-                                            4,
-                                        );
-                                    } else {
-                                        builder.ins().store(
-                                            MemFlags::new(),
-                                            len_i64,
-                                            result_ptr,
-                                            0,
-                                        );
-                                        builder.ins().store(
-                                            MemFlags::new(),
-                                            cap_i64,
-                                            result_ptr,
-                                            8,
-                                        );
-                                    }
-                                    let src_meta = builder.ins().iconst(types::I64, meta_size);
-                                    for i in 0..arr_len as i64 {
-                                        let i_val = builder.ins().iconst(types::I64, i);
-                                        let es = builder.ins().iconst(types::I64, elem_size);
-                                        let off = builder.ins().imul(i_val, es);
-                                        let src_off = builder.ins().iadd(src_meta, off);
-                                        let src_elem = builder.ins().iadd(src_ptr, src_off);
-                                        let dst_off = builder.ins().iadd(src_meta, off);
-                                        let dst_elem = builder.ins().iadd(result_ptr, dst_off);
-                                        match elem_size {
-                                            1 => {
-                                                let v = builder.ins().load(
-                                                    types::I8,
-                                                    MemFlags::new(),
-                                                    src_elem,
-                                                    0,
-                                                );
-                                                builder.ins().store(
-                                                    MemFlags::new(),
-                                                    v,
-                                                    dst_elem,
-                                                    0,
-                                                );
-                                            }
-                                            2 => {
-                                                let v = builder.ins().load(
-                                                    types::I16,
-                                                    MemFlags::new(),
-                                                    src_elem,
-                                                    0,
-                                                );
-                                                builder.ins().store(
-                                                    MemFlags::new(),
-                                                    v,
-                                                    dst_elem,
-                                                    0,
-                                                );
-                                            }
-                                            4 => {
-                                                if matches!(*elem_type, AotValueType::F32) {
-                                                    let v = builder.ins().load(
-                                                        types::F32,
-                                                        MemFlags::new(),
-                                                        src_elem,
-                                                        0,
-                                                    );
-                                                    builder.ins().store(
-                                                        MemFlags::new(),
-                                                        v,
-                                                        dst_elem,
-                                                        0,
-                                                    );
-                                                } else {
-                                                    let v = builder.ins().load(
-                                                        types::I32,
-                                                        MemFlags::new(),
-                                                        src_elem,
-                                                        0,
-                                                    );
-                                                    builder.ins().store(
-                                                        MemFlags::new(),
-                                                        v,
-                                                        dst_elem,
-                                                        0,
-                                                    );
-                                                }
-                                            }
-                                            _ => {
-                                                if matches!(
-                                                    *elem_type,
-                                                    AotValueType::F64 | AotValueType::Float
-                                                ) {
-                                                    let v = builder.ins().load(
-                                                        types::F64,
-                                                        MemFlags::new(),
-                                                        src_elem,
-                                                        0,
-                                                    );
-                                                    builder.ins().store(
-                                                        MemFlags::new(),
-                                                        v,
-                                                        dst_elem,
-                                                        0,
-                                                    );
-                                                } else {
-                                                    let v = builder.ins().load(
-                                                        types::I64,
-                                                        MemFlags::new(),
-                                                        src_elem,
-                                                        0,
-                                                    );
-                                                    builder.ins().store(
-                                                        MemFlags::new(),
-                                                        v,
-                                                        dst_elem,
-                                                        0,
-                                                    );
-                                                }
-                                            }
-                                        }
-                                    }
-                                    let other_meta = builder.ins().iconst(types::I64, meta_size);
-                                    let other_elem_size: i64 = match *other_elem {
-                                        AotValueType::U8
-                                        | AotValueType::I8
-                                        | AotValueType::Bool => 1,
-                                        AotValueType::U16 | AotValueType::I16 => 2,
-                                        AotValueType::U32
-                                        | AotValueType::I32
-                                        | AotValueType::F32 => 4,
-                                        AotValueType::U64
-                                        | AotValueType::I64
-                                        | AotValueType::F64
-                                        | AotValueType::Int
-                                        | AotValueType::Float
-                                        | AotValueType::Ptr => 8,
-                                        AotValueType::U128 | AotValueType::I128 => 16,
-                                        _ => 8,
-                                    };
-                                    for i in 0..other_len as i64 {
-                                        let i_val = builder.ins().iconst(types::I64, i);
-                                        let es_src =
-                                            builder.ins().iconst(types::I64, other_elem_size);
-                                        let off = builder.ins().imul(i_val, es_src);
-                                        let src_off = builder.ins().iadd(other_meta, off);
-                                        let src_elem = builder.ins().iadd(other_ptr, src_off);
-                                        let dst_index = arr_len as i64 + i;
-                                        let dst_i = builder.ins().iconst(types::I64, dst_index);
-                                        let es_dst = builder.ins().iconst(types::I64, elem_size);
-                                        let dst_off = builder.ins().imul(dst_i, es_dst);
-                                        let dst_off2 = builder.ins().iadd(other_meta, dst_off);
-                                        let dst_elem = builder.ins().iadd(result_ptr, dst_off2);
-                                        let loaded_val = match other_elem_size {
-                                            1 => builder.ins().load(
-                                                types::I8,
-                                                MemFlags::new(),
-                                                src_elem,
-                                                0,
-                                            ),
-                                            2 => builder.ins().load(
-                                                types::I16,
-                                                MemFlags::new(),
-                                                src_elem,
-                                                0,
-                                            ),
-                                            4 => {
-                                                if matches!(*other_elem, AotValueType::F32) {
-                                                    builder.ins().load(
-                                                        types::F32,
-                                                        MemFlags::new(),
-                                                        src_elem,
-                                                        0,
-                                                    )
-                                                } else {
-                                                    builder.ins().load(
-                                                        types::I32,
-                                                        MemFlags::new(),
-                                                        src_elem,
-                                                        0,
-                                                    )
-                                                }
-                                            }
-                                            _ => {
-                                                if matches!(
-                                                    *other_elem,
-                                                    AotValueType::F64 | AotValueType::Float
-                                                ) {
-                                                    builder.ins().load(
-                                                        types::F64,
-                                                        MemFlags::new(),
-                                                        src_elem,
-                                                        0,
-                                                    )
-                                                } else {
-                                                    builder.ins().load(
-                                                        types::I64,
-                                                        MemFlags::new(),
-                                                        src_elem,
-                                                        0,
-                                                    )
-                                                }
-                                            }
-                                        };
-                                        match elem_size {
-                                            1 => {
-                                                let v8 =
-                                                    builder.ins().ireduce(types::I8, loaded_val);
-                                                builder.ins().store(
-                                                    MemFlags::new(),
-                                                    v8,
-                                                    dst_elem,
-                                                    0,
-                                                );
-                                            }
-                                            2 => {
-                                                let v16 = if other_elem_size > 2 {
-                                                    builder.ins().ireduce(types::I16, loaded_val)
-                                                } else if other_elem_size < 2 {
-                                                    builder.ins().uextend(types::I16, loaded_val)
-                                                } else {
-                                                    loaded_val
-                                                };
-                                                builder.ins().store(
-                                                    MemFlags::new(),
-                                                    v16,
-                                                    dst_elem,
-                                                    0,
-                                                );
-                                            }
-                                            4 => {
-                                                if matches!(*elem_type, AotValueType::F32) {
-                                                    // If source is F64, demote; if integer, reduce then convert
-                                                    let to_store = if matches!(
-                                                        *other_elem,
-                                                        AotValueType::F64 | AotValueType::Float
-                                                    ) {
-                                                        let f64v = loaded_val;
-                                                        builder.ins().fdemote(types::F32, f64v)
-                                                    } else if matches!(
-                                                        *other_elem,
-                                                        AotValueType::F32
-                                                    ) {
-                                                        loaded_val
-                                                    } else {
-                                                        let i32v = builder
-                                                            .ins()
-                                                            .ireduce(types::I32, loaded_val);
-                                                        builder
-                                                            .ins()
-                                                            .fcvt_from_sint(types::F32, i32v)
-                                                    };
-                                                    builder.ins().store(
-                                                        MemFlags::new(),
-                                                        to_store,
-                                                        dst_elem,
-                                                        0,
-                                                    );
-                                                } else {
-                                                    let i32v = if other_elem_size > 4 {
-                                                        builder
-                                                            .ins()
-                                                            .ireduce(types::I32, loaded_val)
-                                                    } else if other_elem_size < 4 {
-                                                        builder
-                                                            .ins()
-                                                            .uextend(types::I32, loaded_val)
-                                                    } else {
-                                                        loaded_val
-                                                    };
-                                                    builder.ins().store(
-                                                        MemFlags::new(),
-                                                        i32v,
-                                                        dst_elem,
-                                                        0,
-                                                    );
-                                                }
-                                            }
-                                            _ => {
-                                                if matches!(
-                                                    *elem_type,
-                                                    AotValueType::F64 | AotValueType::Float
-                                                ) {
-                                                    let to_store =
-                                                        if matches!(*other_elem, AotValueType::F32)
-                                                        {
-                                                            let f32v = loaded_val;
-                                                            builder.ins().fpromote(types::F64, f32v)
-                                                        } else if matches!(
-                                                            *other_elem,
-                                                            AotValueType::F64 | AotValueType::Float
-                                                        ) {
-                                                            loaded_val
-                                                        } else {
-                                                            builder.ins().fcvt_from_sint(
-                                                                types::F64,
-                                                                loaded_val,
-                                                            )
-                                                        };
-                                                    builder.ins().store(
-                                                        MemFlags::new(),
-                                                        to_store,
-                                                        dst_elem,
-                                                        0,
-                                                    );
-                                                } else {
-                                                    let i64v = if other_elem_size < 8 {
-                                                        builder
-                                                            .ins()
-                                                            .uextend(types::I64, loaded_val)
-                                                    } else {
-                                                        loaded_val
-                                                    };
-                                                    builder.ins().store(
-                                                        MemFlags::new(),
-                                                        i64v,
-                                                        dst_elem,
-                                                        0,
-                                                    );
-                                                }
-                                            }
-                                        }
-                                    }
-                                    // updated length accounted in metadata; no local tracking needed
-                                    ctx.value_map.insert(*dst, result_ptr);
-                                    ctx.value_types.insert(
-                                        *dst,
-                                        AotValueType::Array(elem_type.clone(), new_len as usize),
-                                    );
-                                    ctx.array_capacity.insert(*dst, cap_val);
-                                } else {
-                                    ctx.value_map.insert(*dst, src_ptr);
-                                    ctx.value_types.insert(
-                                        *dst,
-                                        AotValueType::Array(elem_type.clone(), arr_len),
-                                    );
-                                }
-                            } else {
-                                ctx.value_map.insert(*dst, src_ptr);
-                                ctx.value_types
-                                    .insert(*dst, AotValueType::Array(elem_type.clone(), arr_len));
-                            }
-                        }
-                        _ => {
-                            ctx.value_map.insert(*dst, src_ptr);
-                            ctx.value_types
-                                .insert(*dst, AotValueType::Array(elem_type.clone(), arr_len));
-                        }
-                    }
-                } else {
-                    let v = builder.ins().iconst(types::I64, 0);
-                    ctx.value_map.insert(*dst, v);
+                    let a_ty = ctx
+                        .value_types
+                        .get(&a_id)
+                        .cloned()
+                        .unwrap_or(AotValueType::Int);
+                    let h =
+                        convert_val_to_handle(ctx, builder, module, &a_id, a_raw, &a_ty, &ctors)?;
+                    arg_handles.push(h);
                 }
+                while arg_handles.len() < 4 {
+                    arg_handles.push(builder.ins().iconst(types::I64, 0));
+                }
+                let argc = builder
+                    .ins()
+                    .iconst(types::I64, (args.len().saturating_sub(2)) as i64);
+
+                let call = builder.ins().call(
+                    call_method_ref,
+                    &[
+                        obj_handle,
+                        method_handle,
+                        arg_handles[0],
+                        arg_handles[1],
+                        arg_handles[2],
+                        arg_handles[3],
+                        argc,
+                    ],
+                );
+                let result = builder.inst_results(call)[0];
+                ctx.value_map.insert(*dst, result);
+                ctx.value_types.insert(*dst, AotValueType::Handle);
+                ctx.runtime_handle_values.insert(*dst);
             } else {
                 let v = builder.ins().iconst(types::I64, 0);
                 ctx.value_map.insert(*dst, v);
+                ctx.value_types.insert(*dst, AotValueType::Handle);
             }
         }
         "set_index" => {
-            // Set element in array at index: set_index(container, index, value)
             if args.len() >= 3 {
-                let container_id = args[0];
-                let index_id = args[1];
-                let value_id = args[2];
-                let container_type = ctx.value_types.get(&container_id).cloned();
-                let container_ptr = ctx
+                let ctors = RuntimeValueConstructors::declare(module, builder)?;
+                let mut sig = module.make_signature();
+                sig.params.push(AbiParam::new(types::I64)); // container
+                sig.params.push(AbiParam::new(types::I64)); // index
+                sig.params.push(AbiParam::new(types::I64)); // value
+                sig.returns.push(AbiParam::new(types::I64));
+
+                let set_index_id = module
+                    .declare_function("aot_set_index", Linkage::Import, &sig)
+                    .map_err(|e| format!("Failed to declare aot_set_index: {}", e))?;
+                let set_index_ref = module.declare_func_in_func(set_index_id, builder.func);
+
+                let c_id = args[0];
+                let c_raw = ctx
                     .value_map
-                    .get(&container_id)
+                    .get(&c_id)
                     .copied()
                     .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-                let index_val = ctx
+                let c_ty = ctx
+                    .value_types
+                    .get(&c_id)
+                    .cloned()
+                    .unwrap_or(AotValueType::Int);
+                let c_handle =
+                    convert_val_to_handle(ctx, builder, module, &c_id, c_raw, &c_ty, &ctors)?;
+
+                let idx_id = args[1];
+                let idx_raw = ctx
                     .value_map
-                    .get(&index_id)
+                    .get(&idx_id)
                     .copied()
                     .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-                if let Some(AotValueType::Array(elem_type, arr_len)) = container_type.clone() {
-                    let elem_size: i64 = match *elem_type {
-                        AotValueType::U8 | AotValueType::I8 | AotValueType::Bool => 1,
-                        AotValueType::U16 | AotValueType::I16 => 2,
-                        AotValueType::U32 | AotValueType::I32 | AotValueType::F32 => 4,
-                        AotValueType::U64
-                        | AotValueType::I64
-                        | AotValueType::F64
-                        | AotValueType::Int
-                        | AotValueType::Float
-                        | AotValueType::Ptr => 8,
-                        AotValueType::U128 | AotValueType::I128 => 16,
-                        _ => 8,
-                    };
-                    let metadata_size = elem_type.metadata_size();
-                    let elem_size_val = builder.ins().iconst(types::I64, elem_size);
-                    let byte_offset = builder.ins().imul(index_val, elem_size_val);
-                    let metadata_offset = builder.ins().iconst(types::I64, metadata_size);
-                    let total_offset = builder.ins().iadd(metadata_offset, byte_offset);
-                    let elem_ptr = builder.ins().iadd(container_ptr, total_offset);
-                    if let Some(val) = ctx.value_map.get(&value_id).copied() {
-                        match elem_size {
-                            1 => {
-                                let r = builder.ins().ireduce(types::I8, val);
-                                builder.ins().store(MemFlags::new(), r, elem_ptr, 0);
-                            }
-                            2 => {
-                                let r = builder.ins().ireduce(types::I16, val);
-                                builder.ins().store(MemFlags::new(), r, elem_ptr, 0);
-                            }
-                            4 => {
-                                if matches!(*elem_type, AotValueType::F32) {
-                                    builder.ins().store(MemFlags::new(), val, elem_ptr, 0);
-                                } else {
-                                    let r = builder.ins().ireduce(types::I32, val);
-                                    builder.ins().store(MemFlags::new(), r, elem_ptr, 0);
-                                }
-                            }
-                            _ => {
-                                builder.ins().store(MemFlags::new(), val, elem_ptr, 0);
-                            }
-                        }
-                    }
-                    // Return container unchanged
-                    ctx.value_map.insert(*dst, container_ptr);
-                    ctx.value_types
-                        .insert(*dst, AotValueType::Array(elem_type.clone(), arr_len));
-                } else {
-                    let v = builder.ins().iconst(types::I64, 0);
-                    ctx.value_map.insert(*dst, v);
-                    ctx.value_types.insert(*dst, AotValueType::Int);
-                }
+                let idx_ty = ctx
+                    .value_types
+                    .get(&idx_id)
+                    .cloned()
+                    .unwrap_or(AotValueType::Int);
+                let idx_handle =
+                    convert_val_to_handle(ctx, builder, module, &idx_id, idx_raw, &idx_ty, &ctors)?;
+
+                let val_id = args[2];
+                let val_raw = ctx
+                    .value_map
+                    .get(&val_id)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                let val_ty = ctx
+                    .value_types
+                    .get(&val_id)
+                    .cloned()
+                    .unwrap_or(AotValueType::Int);
+                let val_handle =
+                    convert_val_to_handle(ctx, builder, module, &val_id, val_raw, &val_ty, &ctors)?;
+
+                let call = builder
+                    .ins()
+                    .call(set_index_ref, &[c_handle, idx_handle, val_handle]);
+                let result = builder.inst_results(call)[0];
+                ctx.value_map.insert(*dst, result);
+                ctx.value_types.insert(*dst, AotValueType::Handle);
+                ctx.runtime_handle_values.insert(*dst);
             } else {
                 let v = builder.ins().iconst(types::I64, 0);
                 ctx.value_map.insert(*dst, v);
-                ctx.value_types.insert(*dst, AotValueType::Int);
+                ctx.value_types.insert(*dst, AotValueType::Handle);
             }
         }
         "input" => {
@@ -3796,180 +2920,119 @@ pub(crate) fn handle_call_builtin(
                 let array_id = args[0];
                 let type_id = args[1];
                 let n_id = args[2];
-                let src_ptr = ctx
+                let ctors = RuntimeValueConstructors::declare(module, builder)?;
+
+                let arr_raw = ctx
                     .value_map
                     .get(&array_id)
                     .copied()
                     .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-                let (src_elem_type, current_len) = match ctx.value_types.get(&array_id).cloned() {
-                    Some(AotValueType::Array(et, len)) => (*et, len),
-                    _ => (AotValueType::Int, 0),
-                };
-                let elem_type_str = ctx
-                    .const_strings
+                let arr_ty = ctx
+                    .value_types
+                    .get(&array_id)
+                    .cloned()
+                    .unwrap_or(AotValueType::Array(Box::new(AotValueType::Int), 0));
+                let arr_handle = convert_val_to_handle(
+                    ctx, builder, module, &array_id, arr_raw, &arr_ty, &ctors,
+                )?;
+
+                let type_raw = ctx
+                    .value_map
+                    .get(&type_id)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                let type_ty = ctx
+                    .value_types
                     .get(&type_id)
                     .cloned()
-                    .unwrap_or_else(|| "any".to_string());
-                let dst_elem_type = match elem_type_str.as_str() {
-                    "u8" => AotValueType::U8,
-                    "i8" => AotValueType::I8,
-                    "u16" => AotValueType::U16,
-                    "i16" => AotValueType::I16,
-                    "u32" => AotValueType::U32,
-                    "i32" => AotValueType::I32,
-                    "u64" => AotValueType::U64,
-                    "i64" => AotValueType::I64,
-                    "u128" => AotValueType::U128,
-                    "i128" => AotValueType::I128,
-                    "f32" => AotValueType::F32,
-                    "f64" | "float" => AotValueType::F64,
-                    "string" | "str" => AotValueType::String,
-                    "bool" | "boolean" => AotValueType::Bool,
-                    _ => AotValueType::Int,
-                };
-                let dst_elem_size: i64 = match dst_elem_type {
-                    AotValueType::U8 | AotValueType::I8 | AotValueType::Bool => 1,
-                    AotValueType::U16 | AotValueType::I16 => 2,
-                    AotValueType::U32 | AotValueType::I32 | AotValueType::F32 => 4,
-                    AotValueType::U64
-                    | AotValueType::I64
-                    | AotValueType::F64
-                    | AotValueType::Int
-                    | AotValueType::Float
-                    | AotValueType::Ptr => 8,
-                    AotValueType::U128 | AotValueType::I128 => 16,
-                    _ => 8,
-                };
-                let src_elem_size: i64 = match src_elem_type {
-                    AotValueType::U8 | AotValueType::I8 | AotValueType::Bool => 1,
-                    AotValueType::U16 | AotValueType::I16 => 2,
-                    AotValueType::U32 | AotValueType::I32 | AotValueType::F32 => 4,
-                    AotValueType::U64
-                    | AotValueType::I64
-                    | AotValueType::F64
-                    | AotValueType::Int
-                    | AotValueType::Float
-                    | AotValueType::Ptr => 8,
-                    AotValueType::U128 | AotValueType::I128 => 16,
-                    _ => 8,
-                };
-                let dst_meta = dst_elem_type.metadata_size() as i64;
-                let src_meta = src_elem_type.metadata_size() as i64;
-                let data_size = dst_elem_size * (current_len as i64);
-                let total_size = (dst_meta as i64) + data_size;
-                let stack_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    total_size as u32,
-                    8,
-                ));
-                let dst_ptr = builder.ins().stack_addr(types::I64, stack_slot, 0);
-                let len_i64 = builder.ins().iconst(types::I64, current_len as i64);
-                let cap_val = ctx
-                    .const_ints
-                    .get(&n_id)
-                    .copied()
-                    .unwrap_or(current_len as i64);
+                    .unwrap_or(AotValueType::String);
+                let type_handle = convert_val_to_handle(
+                    ctx, builder, module, &type_id, type_raw, &type_ty, &ctors,
+                )?;
+
+                let cap_val = ctx.const_ints.get(&n_id).copied().unwrap_or(0);
                 let cap_i64 = builder.ins().iconst(types::I64, cap_val);
-                if dst_meta == 4 {
-                    let len_i32 = builder.ins().ireduce(types::I32, len_i64);
-                    let cap_i32 = builder.ins().ireduce(types::I32, cap_i64);
-                    builder.ins().store(MemFlags::new(), len_i32, dst_ptr, 0);
-                    builder.ins().store(MemFlags::new(), cap_i32, dst_ptr, 4);
-                } else {
-                    builder.ins().store(MemFlags::new(), len_i64, dst_ptr, 0);
-                    builder.ins().store(MemFlags::new(), cap_i64, dst_ptr, 8);
-                }
-                for i in 0..current_len {
-                    let i_val = builder.ins().iconst(types::I64, i as i64);
-                    // Avoid nested builder.ins() borrows by precomputing constants
-                    let src_elem_size_val = builder.ins().iconst(types::I64, src_elem_size);
-                    let src_off_bytes = builder.ins().imul(i_val, src_elem_size_val);
-                    let src_meta_val = builder.ins().iconst(types::I64, src_meta);
-                    let src_data_off = builder.ins().iadd(src_off_bytes, src_meta_val);
-                    let src_elem_ptr = builder.ins().iadd(src_ptr, src_data_off);
-                    let loaded = match src_elem_type {
-                        AotValueType::F32 => {
-                            builder
-                                .ins()
-                                .load(types::F32, MemFlags::new(), src_elem_ptr, 0)
-                        }
-                        AotValueType::F64 | AotValueType::Float => {
-                            builder
-                                .ins()
-                                .load(types::F64, MemFlags::new(), src_elem_ptr, 0)
-                        }
-                        _ => match src_elem_size {
-                            1 => {
-                                let b =
-                                    builder
-                                        .ins()
-                                        .load(types::I8, MemFlags::new(), src_elem_ptr, 0);
-                                builder.ins().uextend(types::I64, b)
-                            }
-                            2 => {
-                                let s = builder.ins().load(
-                                    types::I16,
-                                    MemFlags::new(),
-                                    src_elem_ptr,
-                                    0,
-                                );
-                                builder.ins().uextend(types::I64, s)
-                            }
-                            4 => {
-                                let w = builder.ins().load(
-                                    types::I32,
-                                    MemFlags::new(),
-                                    src_elem_ptr,
-                                    0,
-                                );
-                                builder.ins().uextend(types::I64, w)
-                            }
-                            _ => builder
-                                .ins()
-                                .load(types::I64, MemFlags::new(), src_elem_ptr, 0),
-                        },
-                    };
-                    let dst_elem_size_val = builder.ins().iconst(types::I64, dst_elem_size);
-                    let dst_off_bytes = builder.ins().imul(i_val, dst_elem_size_val);
-                    let dst_meta_val = builder.ins().iconst(types::I64, dst_meta);
-                    let dst_data_off = builder.ins().iadd(dst_off_bytes, dst_meta_val);
-                    let dst_elem_ptr = builder.ins().iadd(dst_ptr, dst_data_off);
-                    match dst_elem_type {
-                        AotValueType::F32 => {
-                            let f = builder.ins().bitcast(types::F32, MemFlags::new(), loaded);
-                            builder.ins().store(MemFlags::new(), f, dst_elem_ptr, 0);
-                        }
-                        AotValueType::F64 | AotValueType::Float => {
-                            let f = builder.ins().bitcast(types::F64, MemFlags::new(), loaded);
-                            builder.ins().store(MemFlags::new(), f, dst_elem_ptr, 0);
-                        }
-                        _ => match dst_elem_size {
-                            1 => {
-                                let r = builder.ins().ireduce(types::I8, loaded);
-                                builder.ins().store(MemFlags::new(), r, dst_elem_ptr, 0);
-                            }
-                            2 => {
-                                let r = builder.ins().ireduce(types::I16, loaded);
-                                builder.ins().store(MemFlags::new(), r, dst_elem_ptr, 0);
-                            }
-                            4 => {
-                                let r = builder.ins().ireduce(types::I32, loaded);
-                                builder.ins().store(MemFlags::new(), r, dst_elem_ptr, 0);
-                            }
-                            _ => {
-                                builder
-                                    .ins()
-                                    .store(MemFlags::new(), loaded, dst_elem_ptr, 0);
-                            }
-                        },
-                    }
-                }
-                ctx.value_map.insert(*dst, dst_ptr);
-                ctx.value_types.insert(
-                    *dst,
-                    AotValueType::Array(Box::new(dst_elem_type), current_len),
-                );
+
+                let mut sig = module.make_signature();
+                sig.params.push(AbiParam::new(types::I64));
+                sig.params.push(AbiParam::new(types::I64));
+                sig.params.push(AbiParam::new(types::I64));
+                sig.returns.push(AbiParam::new(types::I64));
+
+                let func_id = module
+                    .declare_function("aot_array_to_fixed", Linkage::Import, &sig)
+                    .map_err(|e| format!("Failed to declare aot_array_to_fixed: {}", e))?;
+                let func_ref = module.declare_func_in_func(func_id, builder.func);
+                let call = builder
+                    .ins()
+                    .call(func_ref, &[arr_handle, type_handle, cap_i64]);
+                let res = builder.inst_results(call)[0];
+                ctx.value_map.insert(*dst, res);
+                ctx.value_types.insert(*dst, AotValueType::Handle);
+                ctx.runtime_handle_values.insert(*dst);
                 ctx.array_capacity.insert(*dst, cap_val);
+            } else {
+                let v = builder.ins().iconst(types::I64, 0);
+                ctx.value_map.insert(*dst, v);
+                ctx.value_types.insert(*dst, AotValueType::Int);
+            }
+        }
+        "array_to_fixed_raw" => {
+            if args.len() >= 3 {
+                let array_id = args[0];
+                let type_id = args[1];
+                let n_id = args[2];
+                let ctors = RuntimeValueConstructors::declare(module, builder)?;
+
+                let arr_raw = ctx
+                    .value_map
+                    .get(&array_id)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                let arr_ty = ctx
+                    .value_types
+                    .get(&array_id)
+                    .cloned()
+                    .unwrap_or(AotValueType::Array(Box::new(AotValueType::Int), 0));
+                let arr_handle = convert_val_to_handle(
+                    ctx, builder, module, &array_id, arr_raw, &arr_ty, &ctors,
+                )?;
+
+                let type_raw = ctx
+                    .value_map
+                    .get(&type_id)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                let type_ty = ctx
+                    .value_types
+                    .get(&type_id)
+                    .cloned()
+                    .unwrap_or(AotValueType::String);
+                let type_handle = convert_val_to_handle(
+                    ctx, builder, module, &type_id, type_raw, &type_ty, &ctors,
+                )?;
+
+                let size_val = ctx.const_ints.get(&n_id).copied().unwrap_or(0);
+                let size_i64 = builder.ins().iconst(types::I64, size_val);
+
+                let mut sig = module.make_signature();
+                sig.params.push(AbiParam::new(types::I64));
+                sig.params.push(AbiParam::new(types::I64));
+                sig.params.push(AbiParam::new(types::I64));
+                sig.returns.push(AbiParam::new(types::I64));
+
+                let func_id = module
+                    .declare_function("aot_array_to_fixed_raw", Linkage::Import, &sig)
+                    .map_err(|e| format!("Failed to declare aot_array_to_fixed_raw: {}", e))?;
+                let func_ref = module.declare_func_in_func(func_id, builder.func);
+                let call = builder
+                    .ins()
+                    .call(func_ref, &[arr_handle, type_handle, size_i64]);
+                let res = builder.inst_results(call)[0];
+                ctx.value_map.insert(*dst, res);
+                ctx.value_types.insert(*dst, AotValueType::Handle);
+                ctx.runtime_handle_values.insert(*dst);
+                ctx.array_capacity.insert(*dst, -size_val);
             } else {
                 let v = builder.ins().iconst(types::I64, 0);
                 ctx.value_map.insert(*dst, v);
@@ -3980,10 +3043,9 @@ pub(crate) fn handle_call_builtin(
             // Get first element of array (same as get_index(arr, 0))
             if !args.is_empty() {
                 let array_id = args[0];
+                let ty = ctx.value_types.get(&array_id).cloned();
 
-                if let Some(AotValueType::Array(elem_type, _)) =
-                    ctx.value_types.get(&array_id).cloned()
-                {
+                if let Some(AotValueType::Array(elem_type, _)) = ty {
                     let array_ptr = ctx
                         .value_map
                         .get(&array_id)
@@ -4036,9 +3098,7 @@ pub(crate) fn handle_call_builtin(
 
                     ctx.value_map.insert(*dst, elem_val);
                     ctx.value_types.insert(*dst, *elem_type);
-                } else if let Some(AotValueType::Tuple(elem_types)) =
-                    ctx.value_types.get(&array_id).cloned()
-                {
+                } else if let Some(AotValueType::Tuple(elem_types)) = ty {
                     let tuple_ptr = ctx
                         .value_map
                         .get(&array_id)
@@ -4061,9 +3121,33 @@ pub(crate) fn handle_call_builtin(
                     ctx.value_map.insert(*dst, elem_val);
                     ctx.value_types.insert(*dst, elem_type);
                 } else {
-                    let v = builder.ins().iconst(types::I64, 0);
-                    ctx.value_map.insert(*dst, v);
-                    ctx.value_types.insert(*dst, AotValueType::Int);
+                    let ctors = RuntimeValueConstructors::declare(module, builder)?;
+                    let raw = ctx
+                        .value_map
+                        .get(&array_id)
+                        .copied()
+                        .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                    let handle = convert_val_to_handle(
+                        ctx,
+                        builder,
+                        module,
+                        &array_id,
+                        raw,
+                        &ty.unwrap_or(AotValueType::Handle),
+                        &ctors,
+                    )?;
+                    let mut sig = module.make_signature();
+                    sig.params.push(AbiParam::new(types::I64));
+                    sig.returns.push(AbiParam::new(types::I64));
+                    let func_id = module
+                        .declare_function("aot_first", Linkage::Import, &sig)
+                        .map_err(|e| format!("Failed to declare aot_first: {}", e))?;
+                    let func_ref = module.declare_func_in_func(func_id, builder.func);
+                    let call = builder.ins().call(func_ref, &[handle]);
+                    let res = builder.inst_results(call)[0];
+                    ctx.value_map.insert(*dst, res);
+                    ctx.value_types.insert(*dst, AotValueType::Handle);
+                    ctx.runtime_handle_values.insert(*dst);
                 }
             } else {
                 let v = builder.ins().iconst(types::I64, 0);
@@ -4075,10 +3159,9 @@ pub(crate) fn handle_call_builtin(
             // Get last element of array
             if !args.is_empty() {
                 let array_id = args[0];
+                let ty = ctx.value_types.get(&array_id).cloned();
 
-                if let Some(AotValueType::Array(elem_type, arr_len)) =
-                    ctx.value_types.get(&array_id).cloned()
-                {
+                if let Some(AotValueType::Array(elem_type, arr_len)) = ty {
                     if arr_len > 0 {
                         let array_ptr = ctx
                             .value_map
@@ -4146,9 +3229,7 @@ pub(crate) fn handle_call_builtin(
                         ctx.value_map.insert(*dst, v);
                         ctx.value_types.insert(*dst, AotValueType::Int);
                     }
-                } else if let Some(AotValueType::Tuple(elem_types)) =
-                    ctx.value_types.get(&array_id).cloned()
-                {
+                } else if let Some(AotValueType::Tuple(elem_types)) = ty {
                     if !elem_types.is_empty() {
                         let tuple_ptr = ctx
                             .value_map
@@ -4177,9 +3258,33 @@ pub(crate) fn handle_call_builtin(
                         ctx.value_types.insert(*dst, AotValueType::Int);
                     }
                 } else {
-                    let v = builder.ins().iconst(types::I64, 0);
-                    ctx.value_map.insert(*dst, v);
-                    ctx.value_types.insert(*dst, AotValueType::Int);
+                    let ctors = RuntimeValueConstructors::declare(module, builder)?;
+                    let raw = ctx
+                        .value_map
+                        .get(&array_id)
+                        .copied()
+                        .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                    let handle = convert_val_to_handle(
+                        ctx,
+                        builder,
+                        module,
+                        &array_id,
+                        raw,
+                        &ty.unwrap_or(AotValueType::Handle),
+                        &ctors,
+                    )?;
+                    let mut sig = module.make_signature();
+                    sig.params.push(AbiParam::new(types::I64));
+                    sig.returns.push(AbiParam::new(types::I64));
+                    let func_id = module
+                        .declare_function("aot_last", Linkage::Import, &sig)
+                        .map_err(|e| format!("Failed to declare aot_last: {}", e))?;
+                    let func_ref = module.declare_func_in_func(func_id, builder.func);
+                    let call = builder.ins().call(func_ref, &[handle]);
+                    let res = builder.inst_results(call)[0];
+                    ctx.value_map.insert(*dst, res);
+                    ctx.value_types.insert(*dst, AotValueType::Handle);
+                    ctx.runtime_handle_values.insert(*dst);
                 }
             } else {
                 let v = builder.ins().iconst(types::I64, 0);
@@ -4200,9 +3305,31 @@ pub(crate) fn handle_call_builtin(
                     ctx.value_map.insert(*dst, v);
                     ctx.value_types.insert(*dst, AotValueType::Int);
                 } else {
-                    let v = builder.ins().iconst(types::I64, 0);
-                    ctx.value_map.insert(*dst, v);
-                    ctx.value_types.insert(*dst, AotValueType::Int);
+                    let ctors = RuntimeValueConstructors::declare(module, builder)?;
+                    let ty = ctx
+                        .value_types
+                        .get(&arg_id)
+                        .cloned()
+                        .unwrap_or(AotValueType::Handle);
+                    let raw = ctx
+                        .value_map
+                        .get(&arg_id)
+                        .copied()
+                        .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                    let handle =
+                        convert_val_to_handle(ctx, builder, module, &arg_id, raw, &ty, &ctors)?;
+                    let mut sig = module.make_signature();
+                    sig.params.push(AbiParam::new(types::I64));
+                    sig.returns.push(AbiParam::new(types::I64));
+                    let func_id = module
+                        .declare_function("aot_capacity", Linkage::Import, &sig)
+                        .map_err(|e| format!("Failed to declare aot_capacity: {}", e))?;
+                    let func_ref = module.declare_func_in_func(func_id, builder.func);
+                    let call = builder.ins().call(func_ref, &[handle]);
+                    let res = builder.inst_results(call)[0];
+                    ctx.value_map.insert(*dst, res);
+                    ctx.value_types.insert(*dst, AotValueType::Handle);
+                    ctx.runtime_handle_values.insert(*dst);
                 }
             } else {
                 let v = builder.ins().iconst(types::I64, 0);
@@ -4220,9 +3347,31 @@ pub(crate) fn handle_call_builtin(
                     ctx.value_map.insert(*dst, v);
                     ctx.value_types.insert(*dst, AotValueType::Int);
                 } else {
-                    let v = builder.ins().iconst(types::I64, 0);
-                    ctx.value_map.insert(*dst, v);
-                    ctx.value_types.insert(*dst, AotValueType::Int);
+                    let ctors = RuntimeValueConstructors::declare(module, builder)?;
+                    let ty = ctx
+                        .value_types
+                        .get(&arg_id)
+                        .cloned()
+                        .unwrap_or(AotValueType::Handle);
+                    let raw = ctx
+                        .value_map
+                        .get(&arg_id)
+                        .copied()
+                        .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                    let handle =
+                        convert_val_to_handle(ctx, builder, module, &arg_id, raw, &ty, &ctors)?;
+                    let mut sig = module.make_signature();
+                    sig.params.push(AbiParam::new(types::I64));
+                    sig.returns.push(AbiParam::new(types::I64));
+                    let func_id = module
+                        .declare_function("aot_metadata_size", Linkage::Import, &sig)
+                        .map_err(|e| format!("Failed to declare aot_metadata_size: {}", e))?;
+                    let func_ref = module.declare_func_in_func(func_id, builder.func);
+                    let call = builder.ins().call(func_ref, &[handle]);
+                    let res = builder.inst_results(call)[0];
+                    ctx.value_map.insert(*dst, res);
+                    ctx.value_types.insert(*dst, AotValueType::Handle);
+                    ctx.runtime_handle_values.insert(*dst);
                 }
             } else {
                 let v = builder.ins().iconst(types::I64, 0);
@@ -4731,10 +3880,45 @@ pub(crate) fn handle_call_builtin(
                         ctx.value_types.insert(*dst, elem_type);
                     }
                     _ => {
-                        // Unknown container type
-                        let v = builder.ins().iconst(types::I64, 0);
-                        ctx.value_map.insert(*dst, v);
-                        ctx.value_types.insert(*dst, AotValueType::Int);
+                        let ctors = RuntimeValueConstructors::declare(module, builder)?;
+                        let container_handle = convert_val_to_handle(
+                            ctx,
+                            builder,
+                            module,
+                            &container_id,
+                            container_ptr,
+                            &container_type.unwrap_or(AotValueType::Handle),
+                            &ctors,
+                        )?;
+                        let index_type = ctx
+                            .value_types
+                            .get(&index_id)
+                            .cloned()
+                            .unwrap_or(AotValueType::Int);
+                        let index_handle = convert_val_to_handle(
+                            ctx,
+                            builder,
+                            module,
+                            &index_id,
+                            index_val,
+                            &index_type,
+                            &ctors,
+                        )?;
+                        let mut sig = module.make_signature();
+                        sig.params.push(AbiParam::new(types::I64));
+                        sig.params.push(AbiParam::new(types::I64));
+                        sig.returns.push(AbiParam::new(types::I64));
+                        let get_idx_func = module
+                            .declare_function("aot_get_index", Linkage::Import, &sig)
+                            .map_err(|e| format!("Failed to declare aot_get_index: {}", e))?;
+                        let get_idx_ref = module.declare_func_in_func(get_idx_func, builder.func);
+                        let call = builder
+                            .ins()
+                            .call(get_idx_ref, &[container_handle, index_handle]);
+                        let res = builder.inst_results(call)[0];
+                        ctx.value_map.insert(*dst, res);
+                        ctx.value_types.insert(*dst, AotValueType::Handle);
+                        ctx.runtime_handle_values.insert(*dst);
                     }
                 }
             } else {
@@ -5348,42 +4532,51 @@ pub(crate) fn handle_call_builtin(
             if args.len() >= 2 {
                 let obj_id = args[0];
                 let field_id = args[1];
+                let ctors = RuntimeValueConstructors::declare(module, builder)?;
 
-                if let (Some(obj_val), Some(field_val)) = (
-                    ctx.value_map.get(&obj_id).copied(),
-                    ctx.value_map.get(&field_id).copied(),
-                ) {
-                    let mut make_string_sig = module.make_signature();
-                    make_string_sig.params.push(AbiParam::new(types::I64));
-                    make_string_sig.returns.push(AbiParam::new(types::I64));
-                    let make_string_func = module
-                        .declare_function("aot_make_string", Linkage::Import, &make_string_sig)
-                        .map_err(|e| format!("Failed to declare aot_make_string: {}", e))?;
-                    let make_string_ref =
-                        module.declare_func_in_func(make_string_func, builder.func);
+                let obj_val = ctx
+                    .value_map
+                    .get(&obj_id)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                let obj_ty = ctx
+                    .value_types
+                    .get(&obj_id)
+                    .cloned()
+                    .unwrap_or(AotValueType::Handle);
+                let obj_handle =
+                    convert_val_to_handle(ctx, builder, module, &obj_id, obj_val, &obj_ty, &ctors)?;
 
-                    let mut get_field_sig = module.make_signature();
-                    get_field_sig.params.push(AbiParam::new(types::I64));
-                    get_field_sig.params.push(AbiParam::new(types::I64));
-                    get_field_sig.returns.push(AbiParam::new(types::I64));
-                    let get_field_func = module
-                        .declare_function("aot_get_field", Linkage::Import, &get_field_sig)
-                        .map_err(|e| format!("Failed to declare aot_get_field: {}", e))?;
-                    let get_field_ref = module.declare_func_in_func(get_field_func, builder.func);
+                let field_val = ctx
+                    .value_map
+                    .get(&field_id)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                let field_ty = ctx
+                    .value_types
+                    .get(&field_id)
+                    .cloned()
+                    .unwrap_or(AotValueType::String);
+                let field_handle = convert_val_to_handle(
+                    ctx, builder, module, &field_id, field_val, &field_ty, &ctors,
+                )?;
 
-                    let field_call = builder.ins().call(make_string_ref, &[field_val]);
-                    let field_handle = builder.inst_results(field_call)[0];
-                    let call = builder.ins().call(get_field_ref, &[obj_val, field_handle]);
-                    let result = builder.inst_results(call)[0];
-                    ctx.value_map.insert(*dst, result);
-                    ctx.value_types.insert(*dst, AotValueType::Handle);
-                    ctx.runtime_handle_values.insert(*dst);
-                } else {
-                    let v = builder.ins().iconst(types::I64, 0);
-                    ctx.value_map.insert(*dst, v);
-                    ctx.value_types.insert(*dst, AotValueType::Handle);
-                    ctx.runtime_handle_values.insert(*dst);
-                }
+                let mut get_field_sig = module.make_signature();
+                get_field_sig.params.push(AbiParam::new(types::I64));
+                get_field_sig.params.push(AbiParam::new(types::I64));
+                get_field_sig.returns.push(AbiParam::new(types::I64));
+                let get_field_func = module
+                    .declare_function("aot_get_field", Linkage::Import, &get_field_sig)
+                    .map_err(|e| format!("Failed to declare aot_get_field: {}", e))?;
+                let get_field_ref = module.declare_func_in_func(get_field_func, builder.func);
+
+                let call = builder
+                    .ins()
+                    .call(get_field_ref, &[obj_handle, field_handle]);
+                let result = builder.inst_results(call)[0];
+                ctx.value_map.insert(*dst, result);
+                ctx.value_types.insert(*dst, AotValueType::Handle);
+                ctx.runtime_handle_values.insert(*dst);
             } else {
                 let v = builder.ins().iconst(types::I64, 0);
                 ctx.value_map.insert(*dst, v);

@@ -52,7 +52,14 @@ impl Exec {
                         };
                         Ok(Value::Number(cap as f64))
                     }
-                    "metadata_size" => Ok(Value::Number(da.element_type.metadata_size() as f64)),
+                    "metadata_size" => {
+                        let size = if da.element_type.metadata_size() == 4 {
+                            16.0
+                        } else {
+                            24.0
+                        };
+                        Ok(Value::Number(size))
+                    }
                     _ => Err(err("unreachable")),
                 },
                 Value::RawArray(_, a) => match method_name {
@@ -80,6 +87,15 @@ impl Exec {
                 Value::Array(_) | Value::DynArray(_) => {
                     self.call_array_method(obj, method_name, args)
                 }
+                Value::RawArray(_, _) => match method_name {
+                    "push" | "append" | "insert" | "extend" | "unshift" => {
+                        Err(err("Cannot append to raw array (fixed size)"))
+                    }
+                    "pop" | "shift" | "remove" | "clear" => {
+                        Err(err("Cannot pop from raw array (fixed size)"))
+                    }
+                    _ => self.call_array_method(obj, method_name, args),
+                },
                 Value::Set(_) | Value::Object(_)
                     if matches!(method_name, "insert" | "remove" | "clear") =>
                 {
@@ -107,7 +123,7 @@ impl Exec {
             },
             "indexOf" | "lastIndexOf" | "includes" | "contains" | "slice" => match obj {
                 Value::Str(_) => self.call_string_method(obj, method_name, args),
-                Value::Array(_) | Value::DynArray(_) => {
+                Value::Array(_) | Value::DynArray(_) | Value::RawArray(_, _) => {
                     self.call_array_method(obj, method_name, args)
                 }
                 Value::Set(_) | Value::Object(_)
@@ -121,7 +137,7 @@ impl Exec {
             // Array higher-order methods
             "map" | "filter" | "reduce" | "find" | "findIndex" | "join" | "concat" | "flat"
             | "forEach" | "some" | "every" => match obj {
-                Value::Array(_) | Value::DynArray(_) => {
+                Value::Array(_) | Value::DynArray(_) | Value::RawArray(_, _) => {
                     self.call_array_method(obj, method_name, args)
                 }
                 Value::Str(_) if method_name == "join" => {
@@ -132,7 +148,7 @@ impl Exec {
 
             // Shared Array/Set methods
             "union" | "intersection" => match obj {
-                Value::Array(_) | Value::DynArray(_) => {
+                Value::Array(_) | Value::DynArray(_) | Value::RawArray(_, _) => {
                     self.call_array_method(obj, method_name, args)
                 }
                 Value::Set(_) | Value::Object(_) => self.call_set_method(obj, method_name, args),
@@ -516,44 +532,233 @@ impl Exec {
         let arr = match obj {
             Value::Array(a) => a.clone(),
             Value::DynArray(da) => da.data.clone(),
+            Value::RawArray(_, elems) => elems.clone(),
             _ => return Err(err("array method requires array")),
+        };
+
+        let wrap_result = |result: Vec<Value>| -> Value {
+            match obj {
+                Value::DynArray(da) => {
+                    Value::DynArray(Box::new(crate::parsing::ast::DynamicArray {
+                        data: result,
+                        element_type: da.element_type.clone(),
+                        concrete_type: da.concrete_type.clone(),
+                        tracked_capacity: da.tracked_capacity,
+                    }))
+                }
+                Value::RawArray(ty, _) => Value::RawArray(ty.clone(), result),
+                _ => Value::Array(result),
+            }
         };
 
         match method_name {
             "push" => {
+                if let Value::DynArray(da) = obj {
+                    if da.tracked_capacity > 0 && da.data.len() >= da.tracked_capacity {
+                        return Err(err(format!(
+                            "Cannot append to fixed-capacity array (capacity: {})",
+                            da.tracked_capacity
+                        )));
+                    }
+                }
                 if method_args.len() < 2 {
                     return Err(err("push(element)"));
                 }
                 let mut result = arr.clone();
                 result.push(method_args[1].clone());
-                Ok(Value::Array(result))
+                Ok(wrap_result(result))
             }
             "pop" => {
+                if arr.is_empty() {
+                    return Err(err("Cannot pop from empty array"));
+                }
                 let mut result = arr.clone();
                 result.pop();
-                Ok(Value::Array(result))
+                Ok(wrap_result(result))
             }
             "shift" => {
                 let mut result = arr.clone();
                 if !result.is_empty() {
                     result.remove(0);
                 }
-                Ok(Value::Array(result))
+                Ok(wrap_result(result))
             }
             "unshift" => {
+                if let Value::DynArray(da) = obj {
+                    if da.tracked_capacity > 0 && da.data.len() >= da.tracked_capacity {
+                        return Err(err(format!(
+                            "Cannot append to fixed-capacity array (capacity: {})",
+                            da.tracked_capacity
+                        )));
+                    }
+                }
                 if method_args.len() < 2 {
                     return Err(err("unshift(element)"));
                 }
                 let mut result = vec![method_args[1].clone()];
                 result.extend(arr);
-                Ok(Value::Array(result))
+                Ok(wrap_result(result))
             }
             "append" => {
+                if let Value::DynArray(da) = obj {
+                    if da.tracked_capacity > 0 && da.data.len() >= da.tracked_capacity {
+                        return Err(err(format!(
+                            "Cannot append to fixed-capacity array (capacity: {})",
+                            da.tracked_capacity
+                        )));
+                    }
+                }
                 let mut result = arr.clone();
                 if method_args.len() > 1 {
                     result.push(method_args[1].clone());
                 }
-                Ok(Value::Array(result))
+                Ok(wrap_result(result))
+            }
+            "set_index" => {
+                if method_args.len() < 3 {
+                    return Err(err("set_index(index, value)"));
+                }
+                let idx = match &method_args[1] {
+                    Value::Number(n) => {
+                        if (n - n.trunc()).abs() > 1e-12 || *n < 0.0 {
+                            return Err(err("index must be integer and non-negative"));
+                        }
+                        *n as usize
+                    }
+                    Value::BigInt(b) => b.to_usize().unwrap_or(usize::MAX),
+                    Value::I8(n) => {
+                        if *n < 0 {
+                            return Err(err("index out of bounds"));
+                        } else {
+                            *n as usize
+                        }
+                    }
+                    Value::I16(n) => {
+                        if *n < 0 {
+                            return Err(err("index out of bounds"));
+                        } else {
+                            *n as usize
+                        }
+                    }
+                    Value::I32(n) => {
+                        if *n < 0 {
+                            return Err(err("index out of bounds"));
+                        } else {
+                            *n as usize
+                        }
+                    }
+                    Value::I64(n) => {
+                        if *n < 0 {
+                            return Err(err("index out of bounds"));
+                        } else {
+                            *n as usize
+                        }
+                    }
+                    Value::U8(n) => *n as usize,
+                    Value::U16(n) => *n as usize,
+                    Value::U32(n) => *n as usize,
+                    Value::U64(n) => *n as usize,
+                    _ => return Err(err("set_index index must be number")),
+                };
+                if idx >= arr.len() {
+                    return Err(err("index out of bounds"));
+                }
+                let mut result = arr.clone();
+                result[idx] = method_args[2].clone();
+                Ok(wrap_result(result))
+            }
+            "insert" => {
+                if let Value::DynArray(da) = obj {
+                    if da.tracked_capacity > 0 && da.data.len() >= da.tracked_capacity {
+                        return Err(err(format!(
+                            "Cannot append to fixed-capacity array (capacity: {})",
+                            da.tracked_capacity
+                        )));
+                    }
+                }
+                if method_args.len() < 3 {
+                    return Err(err("insert(index, element)"));
+                }
+                let idx = match &method_args[1] {
+                    Value::Number(n) => *n as usize,
+                    _ => return Err(err("insert index must be number")),
+                };
+                if idx > arr.len() {
+                    return Err(err("index out of bounds"));
+                }
+                let mut result = arr.clone();
+                result.insert(idx, method_args[2].clone());
+                Ok(wrap_result(result))
+            }
+            "remove" => {
+                if method_args.len() < 2 {
+                    return Err(err("remove(index)"));
+                }
+                let idx = match &method_args[1] {
+                    Value::Number(n) => *n as usize,
+                    _ => return Err(err("remove index must be number")),
+                };
+                if idx >= arr.len() {
+                    return Err(err("index out of bounds"));
+                }
+                let mut result = arr.clone();
+                result.remove(idx);
+                Ok(wrap_result(result))
+            }
+            "clear" => Ok(wrap_result(Vec::new())),
+            "extend" => {
+                let mut result = arr.clone();
+                for i in 1..method_args.len() {
+                    match &method_args[i] {
+                        Value::Array(other) => result.extend(other.clone()),
+                        Value::DynArray(da) => result.extend(da.data.clone()),
+                        Value::RawArray(_, raw) => result.extend(raw.clone()),
+                        other => result.push(other.clone()),
+                    }
+                }
+                if let Value::DynArray(da) = obj {
+                    if da.tracked_capacity > 0 && result.len() > da.tracked_capacity {
+                        return Err(err(format!(
+                            "Cannot append to fixed-capacity array (capacity: {})",
+                            da.tracked_capacity
+                        )));
+                    }
+                }
+                Ok(wrap_result(result))
+            }
+            "sort" => {
+                let mut result = arr.clone();
+                result.sort_by(|a, b| match (a, b) {
+                    (Value::Number(n1), Value::Number(n2)) => {
+                        n1.partial_cmp(n2).unwrap_or(std::cmp::Ordering::Equal)
+                    }
+                    (Value::Str(s1), Value::Str(s2)) => s1.cmp(s2),
+                    _ => std::cmp::Ordering::Equal,
+                });
+                Ok(wrap_result(result))
+            }
+            "reverse" => {
+                let mut result = arr.clone();
+                result.reverse();
+                Ok(wrap_result(result))
+            }
+            "count" => {
+                if method_args.len() < 2 {
+                    return Ok(Value::Number(arr.len() as f64));
+                }
+                let target = &method_args[1];
+                let count = arr.iter().filter(|v| equals(v, target)).count();
+                Ok(Value::Number(count as f64))
+            }
+            "index" => {
+                if method_args.len() < 2 {
+                    return Err(err("index expects 1 arg"));
+                }
+                if let Value::Number(n) = &method_args[1] {
+                    let i = *n as usize;
+                    return Ok(arr.get(i).cloned().unwrap_or(Value::Null));
+                }
+                Err(err("index expects numeric arg"))
             }
             "join" => {
                 let sep = if method_args.len() > 1 {
@@ -574,16 +779,6 @@ impl Exec {
                 let func = method_args[1].clone();
                 let mut out: Vec<Value> = Vec::with_capacity(arr.len());
 
-                // PERFORMANCE NOTE (Phase 3 TODO):
-                // For UserFunction, call_user() creates a new Exec instance and clones
-                // the entire global environment (line 1927) for EACH element.
-                // This causes O(n * m) complexity where n=array length, m=globals count.
-                //
-                // OPTIMIZATION: Replace call_user() with Interpreter::call_user_function()
-                // which reuses existing execution context (O(1) per call).
-                // Requires refactoring to pass &mut Interpreter instead of &mut Exec.
-                // See PHASE3_IMPLEMENTATION_NOTES.md for details.
-
                 for v in &arr {
                     let res = match &func {
                         Value::Function(NativeFn(f)) => (f)(self, vec![v.clone()]),
@@ -592,7 +787,7 @@ impl Exec {
                     }?;
                     out.push(res);
                 }
-                Ok(Value::Array(out))
+                Ok(wrap_result(out))
             }
             "filter" => {
                 if method_args.len() < 2 {
@@ -600,9 +795,6 @@ impl Exec {
                 }
                 let func = method_args[1].clone();
                 let mut out: Vec<Value> = Vec::new();
-
-                // PERFORMANCE NOTE (Phase 3 TODO): Same optimization needed as map()
-                // See comment in "map" case above and PHASE3_IMPLEMENTATION_NOTES.md
 
                 for v in &arr {
                     let res = match &func {
@@ -614,7 +806,33 @@ impl Exec {
                         out.push(v.clone());
                     }
                 }
-                Ok(Value::Array(out))
+                Ok(wrap_result(out))
+            }
+            "reduce" => {
+                if method_args.len() < 2 || method_args.len() > 3 {
+                    return Err(err("reduce(fn, init?)"));
+                }
+                if arr.is_empty() && method_args.len() == 2 {
+                    return Err(err("reduce of empty array with no initial value"));
+                }
+                let func = method_args[1].clone();
+                let mut acc = if method_args.len() == 3 {
+                    method_args[2].clone()
+                } else {
+                    arr[0].clone()
+                };
+                let start_idx = if method_args.len() == 3 { 0 } else { 1 };
+                for v in arr.iter().skip(start_idx) {
+                    let res = match &func {
+                        Value::Function(NativeFn(f)) => (f)(self, vec![acc.clone(), v.clone()]),
+                        Value::UserFunction(u) => {
+                            self._call_user_fn(u, vec![acc.clone(), v.clone()])
+                        }
+                        _ => return Err(err("reduce requires a function")),
+                    }?;
+                    acc = res;
+                }
+                Ok(acc)
             }
             "find" => {
                 if method_args.len() < 2 {
@@ -656,10 +874,11 @@ impl Exec {
                     match &method_args[i] {
                         Value::Array(other) => result.extend(other.clone()),
                         Value::DynArray(da) => result.extend(da.data.clone()),
+                        Value::RawArray(_, raw) => result.extend(raw.clone()),
                         other => result.push(other.clone()),
                     }
                 }
-                Ok(Value::Array(result))
+                Ok(wrap_result(result))
             }
             "slice" => {
                 let start = if method_args.len() > 1 {
@@ -697,7 +916,7 @@ impl Exec {
                     .take(end_idx.saturating_sub(start_idx))
                     .cloned()
                     .collect();
-                Ok(Value::Array(sliced))
+                Ok(wrap_result(sliced))
             }
             "indexOf" => {
                 let search = if method_args.len() > 1 {
@@ -779,10 +998,11 @@ impl Exec {
                     match v {
                         Value::Array(inner) => result.extend(inner.clone()),
                         Value::DynArray(da) => result.extend(da.data.clone()),
+                        Value::RawArray(_, raw) => result.extend(raw.clone()),
                         other => result.push(other.clone()),
                     }
                 }
-                Ok(Value::Array(result))
+                Ok(wrap_result(result))
             }
             "union" => {
                 if method_args.len() != 2 {
@@ -792,6 +1012,7 @@ impl Exec {
                     Value::Array(o) => o.clone(),
                     Value::Set(o) => o.clone(),
                     Value::DynArray(da) => da.data.clone(),
+                    Value::RawArray(_, raw) => raw.clone(),
                     _ => return Err(err("union expects array or set")),
                 };
                 let mut out = Vec::new();
@@ -805,7 +1026,7 @@ impl Exec {
                         out.push(v.clone());
                     }
                 }
-                Ok(Value::Array(out))
+                Ok(wrap_result(out))
             }
             "intersection" => {
                 if method_args.len() != 2 {
@@ -815,6 +1036,7 @@ impl Exec {
                     Value::Array(o) => o.clone(),
                     Value::Set(o) => o.clone(),
                     Value::DynArray(da) => da.data.clone(),
+                    Value::RawArray(_, raw) => raw.clone(),
                     _ => return Err(err("intersection expects array or set")),
                 };
                 let mut out = Vec::new();
@@ -825,7 +1047,7 @@ impl Exec {
                         }
                     }
                 }
-                Ok(Value::Array(out))
+                Ok(wrap_result(out))
             }
             _ => Err(err(format!("Unknown array method: '{}'", method_name))),
         }

@@ -41,10 +41,30 @@ use std::cmp::Ordering;
 ///
 /// Methods that require callbacks (map, filter, etc.) must remain in interpreter_core
 pub fn call_simple_array_method(
-    arr_ref: &[Value],
+    obj: &Value,
     method_name: &str,
     args: &[Value],
 ) -> Result<Value, String> {
+    let arr_ref = match obj {
+        Value::Array(a) => a.as_slice(),
+        Value::DynArray(da) => da.data.as_slice(),
+        Value::RawArray(_, elems) => elems.as_slice(),
+        _ => return Err(err("array method requires array".to_string())),
+    };
+
+    let wrap_result = |result: Vec<Value>| -> Value {
+        match obj {
+            Value::DynArray(da) => Value::DynArray(Box::new(crate::parsing::ast::DynamicArray {
+                data: result,
+                element_type: da.element_type.clone(),
+                concrete_type: da.concrete_type.clone(),
+                tracked_capacity: da.tracked_capacity,
+            })),
+            Value::RawArray(ty, _) => Value::RawArray(ty.clone(), result),
+            _ => Value::Array(result),
+        }
+    };
+
     fn value_to_f64(value: &Value) -> Option<f64> {
         match value {
             Value::Number(n) => Some(*n),
@@ -95,14 +115,25 @@ pub fn call_simple_array_method(
         "first" => Ok(arr_ref.first().cloned().unwrap_or(Value::Null)),
         "last" => Ok(arr_ref.last().cloned().unwrap_or(Value::Null)),
         "push" => {
+            if let Value::DynArray(da) = obj {
+                if da.tracked_capacity > 0 && da.data.len() >= da.tracked_capacity {
+                    return Err(err(format!(
+                        "Cannot append to fixed-capacity array (capacity: {})",
+                        da.tracked_capacity
+                    )));
+                }
+            }
             if args.is_empty() {
                 return Err(err("push(element)".to_string()));
             }
             let mut result = arr_ref.to_vec();
             result.push(args[0].clone());
-            Ok(Value::Array(result))
+            Ok(wrap_result(result))
         }
         "pop" => {
+            if arr_ref.is_empty() {
+                return Err(err("Cannot pop from empty array".to_string()));
+            }
             let mut result = arr_ref.to_vec();
             if !args.is_empty() {
                 let idx = match &args[0] {
@@ -119,25 +150,41 @@ pub fn call_simple_array_method(
             } else {
                 result.pop();
             }
-            Ok(Value::Array(result))
+            Ok(wrap_result(result))
         }
         "shift" => {
             let mut result = arr_ref.to_vec();
             if !result.is_empty() {
                 result.remove(0);
             }
-            Ok(Value::Array(result))
+            Ok(wrap_result(result))
         }
         "unshift" => {
+            if let Value::DynArray(da) = obj {
+                if da.tracked_capacity > 0 && da.data.len() >= da.tracked_capacity {
+                    return Err(err(format!(
+                        "Cannot append to fixed-capacity array (capacity: {})",
+                        da.tracked_capacity
+                    )));
+                }
+            }
             if args.is_empty() {
                 return Err(err("unshift(element)".to_string()));
             }
             let mut result = Vec::with_capacity(arr_ref.len() + 1);
             result.push(args[0].clone());
             result.extend_from_slice(arr_ref);
-            Ok(Value::Array(result))
+            Ok(wrap_result(result))
         }
         "insert" => {
+            if let Value::DynArray(da) = obj {
+                if da.tracked_capacity > 0 && da.data.len() >= da.tracked_capacity {
+                    return Err(err(format!(
+                        "Cannot append to fixed-capacity array (capacity: {})",
+                        da.tracked_capacity
+                    )));
+                }
+            }
             if args.len() < 2 {
                 return Err(err("insert(index, value)".to_string()));
             }
@@ -156,7 +203,7 @@ pub fn call_simple_array_method(
             } else {
                 result.push(args[1].clone());
             }
-            Ok(Value::Array(result))
+            Ok(wrap_result(result))
         }
         "remove" => {
             if args.is_empty() {
@@ -174,15 +221,23 @@ pub fn call_simple_array_method(
             if idx >= 0 && (idx as usize) < result.len() {
                 result.remove(idx as usize);
             }
-            Ok(Value::Array(result))
+            Ok(wrap_result(result))
         }
-        "clear" => Ok(Value::Array(Vec::new())),
+        "clear" => Ok(wrap_result(Vec::new())),
         "append" => {
+            if let Value::DynArray(da) = obj {
+                if da.tracked_capacity > 0 && da.data.len() >= da.tracked_capacity {
+                    return Err(err(format!(
+                        "Cannot append to fixed-capacity array (capacity: {})",
+                        da.tracked_capacity
+                    )));
+                }
+            }
             let mut result = arr_ref.to_vec();
             if !args.is_empty() {
                 result.push(args[0].clone());
             }
-            Ok(Value::Array(result))
+            Ok(wrap_result(result))
         }
         "extend" => {
             if args.is_empty() {
@@ -192,27 +247,43 @@ pub fn call_simple_array_method(
             match &args[0] {
                 Value::Array(other) => result.extend(other.clone()),
                 Value::DynArray(da) => result.extend(da.data.clone()),
+                Value::RawArray(_, raw) => result.extend(raw.clone()),
                 other => result.push(other.clone()),
             }
-            Ok(Value::Array(result))
+            if let Value::DynArray(da) = obj {
+                if da.tracked_capacity > 0 && result.len() > da.tracked_capacity {
+                    return Err(err(format!(
+                        "Cannot append to fixed-capacity array (capacity: {})",
+                        da.tracked_capacity
+                    )));
+                }
+            }
+            Ok(wrap_result(result))
         }
         "set_index" => {
             if args.len() < 2 {
                 return Err(err("set_index(index, value)".to_string()));
             }
-            let mut result = arr_ref.to_vec();
             let idx = match &args[0] {
-                Value::Number(n) => *n as i32,
-                Value::I64(n) => *n as i32,
-                Value::U64(n) => *n as i32,
-                Value::I32(n) => *n,
-                Value::U32(n) => *n as i32,
-                _ => -1,
+                Value::Number(n) => {
+                    if (n - n.trunc()).abs() > 1e-12 || *n < 0.0 {
+                        return Err(err("index must be integer and non-negative".to_string()));
+                    }
+                    *n as i64
+                }
+                Value::I64(n) => *n,
+                Value::U64(n) => *n as i64,
+                Value::I32(n) => *n as i64,
+                Value::U32(n) => *n as i64,
+                Value::BigInt(b) => b.to_i64().unwrap_or(-1),
+                _ => return Err(err("set_index index must be number".to_string())),
             };
-            if idx >= 0 && (idx as usize) < result.len() {
-                result[idx as usize] = args[1].clone();
+            if idx < 0 || (idx as usize) >= arr_ref.len() {
+                return Err(err("index out of bounds".to_string()));
             }
-            Ok(Value::Array(result))
+            let mut result = arr_ref.to_vec();
+            result[idx as usize] = args[1].clone();
+            Ok(wrap_result(result))
         }
         "count" => {
             if args.is_empty() {
@@ -261,20 +332,21 @@ pub fn call_simple_array_method(
                 match arg {
                     Value::Array(other) => result.extend(other.clone()),
                     Value::DynArray(da) => result.extend(da.data.clone()),
+                    Value::RawArray(_, raw) => result.extend(raw.clone()),
                     other => result.push(other.clone()),
                 }
             }
-            Ok(Value::Array(result))
+            Ok(wrap_result(result))
         }
         "reverse" => {
             let mut result = arr_ref.to_vec();
             result.reverse();
-            Ok(Value::Array(result))
+            Ok(wrap_result(result))
         }
         "sort" => {
             let mut result = arr_ref.to_vec();
             result.sort_by(|a, b| compare_values(a, b));
-            Ok(Value::Array(result))
+            Ok(wrap_result(result))
         }
         "slice" => {
             let start = if !args.is_empty() {
@@ -312,7 +384,7 @@ pub fn call_simple_array_method(
                 .take(end_idx.saturating_sub(start_idx))
                 .cloned()
                 .collect();
-            Ok(Value::Array(sliced))
+            Ok(wrap_result(sliced))
         }
         "indexOf" => {
             let search = if !args.is_empty() {
@@ -357,7 +429,7 @@ pub fn call_simple_array_method(
                     result.push(value.clone());
                 }
             }
-            Ok(Value::Array(result))
+            Ok(wrap_result(result))
         }
         "sum" => {
             let mut total = 0.0;
@@ -398,10 +470,11 @@ pub fn call_simple_array_method(
                 match v {
                     Value::Array(inner) => result.extend(inner.clone()),
                     Value::DynArray(da) => result.extend(da.data.clone()),
+                    Value::RawArray(_, raw) => result.extend(raw.clone()),
                     other => result.push(other.clone()),
                 }
             }
-            Ok(Value::Array(result))
+            Ok(wrap_result(result))
         }
         _ => Err(err(format!(
             "Unknown simple array method: '{}' (callback methods remain in interpreter_core)",
@@ -416,7 +489,7 @@ mod tests {
 
     #[test]
     fn test_push() {
-        let arr = vec![Value::Number(1.0), Value::Number(2.0)];
+        let arr = Value::Array(vec![Value::Number(1.0), Value::Number(2.0)]);
         let result = call_simple_array_method(&arr, "push", &[Value::Number(3.0)]).unwrap();
         match result {
             Value::Array(v) => assert_eq!(v.len(), 3),
@@ -426,7 +499,7 @@ mod tests {
 
     #[test]
     fn test_pop() {
-        let arr = vec![Value::Number(1.0), Value::Number(2.0)];
+        let arr = Value::Array(vec![Value::Number(1.0), Value::Number(2.0)]);
         let result = call_simple_array_method(&arr, "pop", &[]).unwrap();
         match result {
             Value::Array(v) => assert_eq!(v.len(), 1),
@@ -436,7 +509,11 @@ mod tests {
 
     #[test]
     fn test_join() {
-        let arr = vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)];
+        let arr = Value::Array(vec![
+            Value::Number(1.0),
+            Value::Number(2.0),
+            Value::Number(3.0),
+        ]);
         let result =
             call_simple_array_method(&arr, "join", &[Value::Str("-".to_string())]).unwrap();
         match result {
@@ -447,12 +524,12 @@ mod tests {
 
     #[test]
     fn test_slice() {
-        let arr = vec![
+        let arr = Value::Array(vec![
             Value::Number(1.0),
             Value::Number(2.0),
             Value::Number(3.0),
             Value::Number(4.0),
-        ];
+        ]);
         let result =
             call_simple_array_method(&arr, "slice", &[Value::Number(1.0), Value::Number(3.0)])
                 .unwrap();
@@ -464,11 +541,11 @@ mod tests {
 
     #[test]
     fn test_index_of() {
-        let arr = vec![
+        let arr = Value::Array(vec![
             Value::Number(10.0),
             Value::Number(20.0),
             Value::Number(30.0),
-        ];
+        ]);
         let result = call_simple_array_method(&arr, "indexOf", &[Value::Number(20.0)]).unwrap();
         match result {
             Value::Number(n) => assert_eq!(n, 1.0),
@@ -478,7 +555,7 @@ mod tests {
 
     #[test]
     fn test_includes() {
-        let arr = vec![Value::Number(10.0), Value::Number(20.0)];
+        let arr = Value::Array(vec![Value::Number(10.0), Value::Number(20.0)]);
         let result = call_simple_array_method(&arr, "includes", &[Value::Number(20.0)]).unwrap();
         match result {
             Value::Bool(b) => assert!(b),
@@ -488,11 +565,11 @@ mod tests {
 
     #[test]
     fn test_flat() {
-        let arr = vec![
+        let arr = Value::Array(vec![
             Value::Number(1.0),
             Value::Array(vec![Value::Number(2.0), Value::Number(3.0)]),
             Value::Number(4.0),
-        ];
+        ]);
         let result = call_simple_array_method(&arr, "flat", &[]).unwrap();
         match result {
             Value::Array(v) => assert_eq!(v.len(), 4),

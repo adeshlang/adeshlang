@@ -509,20 +509,33 @@ fn find_clang() -> Result<std::path::PathBuf, String> {
         }
     }
 
-    // 4. Common system LLVM locations
-    candidates.push(std::path::PathBuf::from(
-        "C:/Program Files/AdeshLang/toolchain/llvm/bin/clang.exe",
-    ));
-    candidates.push(std::path::PathBuf::from(
-        "C:/Program Files/LLVM/bin/clang.exe",
-    ));
-    candidates.push(std::path::PathBuf::from("C:/LLVM/bin/clang.exe"));
-    candidates.push(std::path::PathBuf::from(
-        "C:/Program Files (x86)/LLVM/bin/clang.exe",
-    ));
+    // 4. Common system LLVM locations (dynamic across all drives & program directories)
+    for pf in get_program_files_roots() {
+        candidates.push(
+            pf.join("AdeshLang")
+                .join("toolchain")
+                .join("llvm")
+                .join("bin")
+                .join(&clang_bin),
+        );
+        candidates.push(pf.join("LLVM").join("bin").join(&clang_bin));
+    }
+    for drive in get_system_drive_roots() {
+        candidates.push(drive.join("LLVM").join("bin").join(&clang_bin));
+        candidates.push(
+            drive
+                .join("AdeshLang")
+                .join("toolchain")
+                .join("llvm")
+                .join("bin")
+                .join(&clang_bin),
+        );
+    }
     candidates.push(std::path::PathBuf::from("/usr/lib/llvm-18/bin/clang"));
+    candidates.push(std::path::PathBuf::from("/usr/lib/llvm-19/bin/clang"));
     candidates.push(std::path::PathBuf::from("/usr/bin/clang"));
     candidates.push(std::path::PathBuf::from("/usr/local/bin/clang"));
+    candidates.push(std::path::PathBuf::from("/opt/homebrew/opt/llvm/bin/clang"));
     candidates.push(std::path::PathBuf::from("clang")); // System PATH fallback
 
     for candidate in candidates {
@@ -794,22 +807,72 @@ pub(crate) fn get_static_runtime_lib(target_triple: &Triple) -> Result<std::path
 
     let mut searched_paths = Vec::new();
 
-    // 1. Check ADESH_HOME / ADESHLANG_HOME environment variable
-    for env_var in ["ADESH_HOME", "ADESHLANG_HOME"] {
-        if let Ok(home_str) = std::env::var(env_var) {
-            let home = std::path::PathBuf::from(home_str);
-            let candidates = [
-                home.join("lib").join(&target_triple_str).join(lib_name),
-                home.join("lib").join(lib_name),
-                home.join("bin").join(lib_name),
-                home.join(lib_name),
-            ];
-            for cand in candidates {
-                if cand.exists() {
-                    return Ok(cand);
-                }
-                searched_paths.push(cand);
+    // Determine if we are running in development / Cargo environment
+    let is_dev_env = std::env::var("CARGO_MANIFEST_DIR").is_ok()
+        || std::env::current_exe()
+            .map_or(false, |p| p.components().any(|c| c.as_os_str() == "target"))
+        || std::path::Path::new("Cargo.toml").exists();
+
+    // Helper closure to search project target directories
+    let search_project_roots =
+        |searched: &mut Vec<std::path::PathBuf>| -> Option<std::path::PathBuf> {
+            let mut roots = Vec::new();
+            if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+                roots.push(std::path::PathBuf::from(manifest_dir));
             }
+            if let Ok(exe_path) = std::env::current_exe() {
+                let mut curr = exe_path.parent();
+                while let Some(dir) = curr {
+                    if dir.join("Cargo.toml").exists() {
+                        roots.push(dir.to_path_buf());
+                        break;
+                    }
+                    if dir.file_name().map_or(false, |n| n == "target") {
+                        if let Some(parent) = dir.parent() {
+                            roots.push(parent.to_path_buf());
+                        }
+                        break;
+                    }
+                    curr = dir.parent();
+                }
+            }
+            if std::path::Path::new("Cargo.toml").exists() {
+                if let Ok(cwd) = std::env::current_dir() {
+                    roots.push(cwd);
+                }
+            }
+
+            for root in roots {
+                let target_dir = root.join("target");
+                let profile_order = if cfg!(debug_assertions) {
+                    ["debug", "release"]
+                } else {
+                    ["release", "debug"]
+                };
+                let mut target_candidates = Vec::new();
+                for profile in profile_order {
+                    target_candidates.push(
+                        target_dir
+                            .join(&target_triple_str)
+                            .join(profile)
+                            .join(lib_name),
+                    );
+                    target_candidates.push(target_dir.join(profile).join(lib_name));
+                }
+                for cand in target_candidates {
+                    if cand.exists() {
+                        return Some(cand);
+                    }
+                    searched.push(cand);
+                }
+            }
+            None
+        };
+
+    // 1. In dev/source checkout mode, check Cargo target/ directory FIRST
+    if is_dev_env {
+        if let Some(cand) = search_project_roots(&mut searched_paths) {
+            return Ok(cand);
         }
     }
 
@@ -841,50 +904,29 @@ pub(crate) fn get_static_runtime_lib(target_triple: &Triple) -> Result<std::path
         }
     }
 
-    // 3. Check Cargo build / source checkout directories (CARGO_MANIFEST_DIR or target/ directory)
-    let project_roots = {
-        let mut roots = Vec::new();
-        if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-            roots.push(std::path::PathBuf::from(manifest_dir));
-        }
-        if let Ok(exe_path) = std::env::current_exe() {
-            let mut curr = exe_path.parent();
-            while let Some(dir) = curr {
-                if dir.join("Cargo.toml").exists() {
-                    roots.push(dir.to_path_buf());
-                    break;
+    // 3. Check ADESH_HOME / ADESHLANG_HOME environment variable
+    for env_var in ["ADESH_HOME", "ADESHLANG_HOME"] {
+        if let Ok(home_str) = std::env::var(env_var) {
+            let home = std::path::PathBuf::from(home_str);
+            let candidates = [
+                home.join("lib").join(&target_triple_str).join(lib_name),
+                home.join("lib").join(lib_name),
+                home.join("bin").join(lib_name),
+                home.join(lib_name),
+            ];
+            for cand in candidates {
+                if cand.exists() {
+                    return Ok(cand);
                 }
-                if dir.file_name().map_or(false, |n| n == "target") {
-                    if let Some(parent) = dir.parent() {
-                        roots.push(parent.to_path_buf());
-                    }
-                    break;
-                }
-                curr = dir.parent();
+                searched_paths.push(cand);
             }
         }
-        roots
-    };
+    }
 
-    for root in project_roots {
-        let target_dir = root.join("target");
-        let target_candidates = [
-            target_dir
-                .join(&target_triple_str)
-                .join("release")
-                .join(lib_name),
-            target_dir.join("release").join(lib_name),
-            target_dir
-                .join(&target_triple_str)
-                .join("debug")
-                .join(lib_name),
-            target_dir.join("debug").join(lib_name),
-        ];
-        for cand in target_candidates {
-            if cand.exists() {
-                return Ok(cand);
-            }
-            searched_paths.push(cand);
+    // 4. Fallback search for Cargo build / source checkout directories (if not already checked)
+    if !is_dev_env {
+        if let Some(cand) = search_project_roots(&mut searched_paths) {
+            return Ok(cand);
         }
     }
 
@@ -1058,8 +1100,53 @@ fn get_target_prefix(target_triple: &Triple) -> Result<String, String> {
     }
 }
 
+/// Dynamically find all active Windows system drive roots (e.g., C:\, D:\, E:\)
+fn get_system_drive_roots() -> Vec<std::path::PathBuf> {
+    let mut roots = Vec::new();
+    if let Ok(sys_drive) = std::env::var("SystemDrive") {
+        let trimmed = sys_drive.trim_end_matches('\\');
+        roots.push(std::path::PathBuf::from(format!("{}\\", trimmed)));
+    }
+    for letter in b'A'..=b'Z' {
+        let drive = format!("{}:\\", letter as char);
+        let p = std::path::PathBuf::from(&drive);
+        if p.exists() && !roots.contains(&p) {
+            roots.push(p);
+        }
+    }
+    roots
+}
+
+/// Dynamically find all Program Files roots across all drives and environment variables
+fn get_program_files_roots() -> Vec<std::path::PathBuf> {
+    let mut roots = Vec::new();
+    for var in [
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "ProgramW6432",
+        "ProgramData",
+        "LOCALAPPDATA",
+    ] {
+        if let Ok(val) = std::env::var(var) {
+            let p = std::path::PathBuf::from(val);
+            if p.exists() && !roots.contains(&p) {
+                roots.push(p);
+            }
+        }
+    }
+    for drive in get_system_drive_roots() {
+        for name in ["Program Files", "Program Files (x86)", "ProgramData"] {
+            let p = drive.join(name);
+            if p.exists() && !roots.contains(&p) {
+                roots.push(p);
+            }
+        }
+    }
+    roots
+}
+
 /// Find Windows SDK library paths (returns (um path, ucrt path) if found)
-fn find_windows_sdk_paths() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+pub fn find_windows_sdk_paths() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
     if let Some(cached) = TOOLCHAIN_CACHE.get() {
         if let Some((ref um, ref ucrt)) = cached.windows_sdk {
             if um.exists() && ucrt.exists() {
@@ -1070,38 +1157,120 @@ fn find_windows_sdk_paths() -> Option<(std::path::PathBuf, std::path::PathBuf)> 
 
     use std::fs;
 
-    // Try standard Windows SDK install location
-    let sdk_base = std::path::Path::new("C:\\Program Files (x86)\\Windows Kits\\10\\Lib");
+    // 1. Check environment variables (WindowsSdkDir, UniversalCRTSdkDir)
+    for env_var in [
+        "WindowsSdkDir",
+        "UniversalCRTSdkDir",
+        "WindowsSDKLibVersion",
+    ] {
+        if let Ok(sdk_dir) = std::env::var(env_var) {
+            let sdk_version = std::env::var("WindowsSDKVersion").unwrap_or_default();
+            let version_trimmed = sdk_version.trim_end_matches('\\');
+            let sdk_base = std::path::PathBuf::from(&sdk_dir);
+            let lib_dir = if sdk_base.join("Lib").exists() {
+                sdk_base.join("Lib")
+            } else {
+                sdk_base.clone()
+            };
 
-    if !sdk_base.exists() {
-        return None;
+            if !version_trimmed.is_empty() {
+                let um_path = lib_dir.join(version_trimmed).join("um").join("x64");
+                let ucrt_path = lib_dir.join(version_trimmed).join("ucrt").join("x64");
+                if um_path.exists() && ucrt_path.exists() {
+                    return Some((um_path, ucrt_path));
+                }
+            }
+
+            // Search any subdirectories under lib_dir
+            if let Ok(rd) = fs::read_dir(&lib_dir) {
+                let mut versions: Vec<_> = rd
+                    .filter_map(|entry| entry.ok())
+                    .filter(|entry| entry.path().is_dir())
+                    .filter_map(|entry| entry.file_name().to_str().map(|s| s.to_string()))
+                    .collect();
+                versions.sort();
+                versions.reverse();
+                for version in versions {
+                    let um_path = lib_dir.join(&version).join("um").join("x64");
+                    let ucrt_path = lib_dir.join(&version).join("ucrt").join("x64");
+                    if um_path.exists() && ucrt_path.exists() {
+                        return Some((um_path, ucrt_path));
+                    }
+                }
+            }
+        }
     }
 
-    // Find the latest SDK version
-    let mut versions: Vec<_> = fs::read_dir(sdk_base)
-        .ok()?
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.path().is_dir())
-        .filter_map(|entry| entry.file_name().to_str().map(|s| s.to_string()))
-        .collect();
+    // 2. Search dynamically discovered Program Files & Drive roots
+    let mut sdk_bases = Vec::new();
+    for pf in get_program_files_roots() {
+        let cand = pf.join("Windows Kits").join("10").join("Lib");
+        if cand.exists() && !sdk_bases.contains(&cand) {
+            sdk_bases.push(cand);
+        }
+    }
+    for drive in get_system_drive_roots() {
+        let cand = drive.join("Windows Kits").join("10").join("Lib");
+        if cand.exists() && !sdk_bases.contains(&cand) {
+            sdk_bases.push(cand);
+        }
+    }
 
-    versions.sort();
-    versions.reverse(); // Get latest version first
+    for sdk_base in &sdk_bases {
+        // Find the latest SDK version
+        let mut versions: Vec<_> = match fs::read_dir(sdk_base) {
+            Ok(rd) => rd
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.path().is_dir())
+                .filter_map(|entry| entry.file_name().to_str().map(|s| s.to_string()))
+                .collect(),
+            Err(_) => continue,
+        };
 
-    for version in versions {
-        let um_path = sdk_base.join(&version).join("um").join("x64");
-        let ucrt_path = sdk_base.join(&version).join("ucrt").join("x64");
+        versions.sort();
+        versions.reverse(); // Get latest version first
 
-        if um_path.exists() && ucrt_path.exists() {
-            return Some((um_path, ucrt_path));
+        for version in versions {
+            let um_path = sdk_base.join(&version).join("um").join("x64");
+            let ucrt_path = sdk_base.join(&version).join("ucrt").join("x64");
+
+            if um_path.exists() && ucrt_path.exists() {
+                return Some((um_path, ucrt_path));
+            }
         }
     }
 
     None
 }
 
+/// Helper to extract the latest MSVC lib\x64 path from a VC\Tools\MSVC directory
+fn find_latest_msvc_in_tools_dir(vc_tools_base: &std::path::Path) -> Option<std::path::PathBuf> {
+    if !vc_tools_base.exists() {
+        return None;
+    }
+    let mut versions: Vec<_> = match std::fs::read_dir(vc_tools_base) {
+        Ok(rd) => rd
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().is_dir())
+            .filter_map(|entry| entry.file_name().to_str().map(|s| s.to_string()))
+            .collect(),
+        Err(_) => return None,
+    };
+
+    versions.sort();
+    versions.reverse();
+
+    for version in versions {
+        let lib_path = vc_tools_base.join(&version).join("lib").join("x64");
+        if lib_path.exists() {
+            return Some(lib_path);
+        }
+    }
+    None
+}
+
 /// Find MSVC library paths
-fn find_msvc_lib_paths() -> Option<std::path::PathBuf> {
+pub fn find_msvc_lib_paths() -> Option<std::path::PathBuf> {
     if let Some(cached) = TOOLCHAIN_CACHE.get() {
         if let Some(ref msvc) = cached.msvc_lib {
             if msvc.exists() {
@@ -1110,75 +1279,105 @@ fn find_msvc_lib_paths() -> Option<std::path::PathBuf> {
         }
     }
 
-    use std::fs;
+    // 1. Check VCToolsInstallDir environment variable
+    if let Ok(vctools) = std::env::var("VCToolsInstallDir") {
+        let base = std::path::PathBuf::from(vctools.trim_end_matches('\\'));
+        let lib_path = base.join("lib").join("x64");
+        if lib_path.exists() {
+            return Some(lib_path);
+        }
+        if base.ends_with("x64") && base.exists() {
+            return Some(base);
+        }
+    }
 
-    // Try Visual Studio 2022
-    let vs2022_base = std::path::Path::new("C:\\Program Files\\Microsoft Visual Studio\\2022");
-
-    // Try different editions: Community, Professional, Enterprise, BuildTools
-    let editions = vec!["Community", "Professional", "Enterprise", "BuildTools"];
-
-    for edition in &editions {
-        let vc_tools_base = vs2022_base
-            .join(edition)
+    // 2. Check VSINSTALLDIR environment variable
+    if let Ok(vsdir) = std::env::var("VSINSTALLDIR") {
+        let vc_tools_base = std::path::PathBuf::from(vsdir.trim_end_matches('\\'))
             .join("VC")
             .join("Tools")
             .join("MSVC");
-
-        if !vc_tools_base.exists() {
-            continue;
+        if let Some(lib_path) = find_latest_msvc_in_tools_dir(&vc_tools_base) {
+            return Some(lib_path);
         }
+    }
 
-        // Find the latest MSVC version
-        let mut versions: Vec<_> = fs::read_dir(&vc_tools_base)
-            .ok()?
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| entry.path().is_dir())
-            .filter_map(|entry| entry.file_name().to_str().map(|s| s.to_string()))
-            .collect();
+    // 3. Query Microsoft's vswhere.exe if available (searched dynamically across all roots and PATH)
+    let mut vswhere_candidates = Vec::new();
+    for pf in get_program_files_roots() {
+        vswhere_candidates.push(
+            pf.join("Microsoft Visual Studio")
+                .join("Installer")
+                .join("vswhere.exe"),
+        );
+    }
+    vswhere_candidates.push(std::path::PathBuf::from("vswhere.exe"));
 
-        versions.sort();
-        versions.reverse(); // Get latest version first
-
-        for version in versions {
-            let lib_path = vc_tools_base.join(&version).join("lib").join("x64");
-
-            if lib_path.exists() {
-                return Some(lib_path);
+    for vswhere in &vswhere_candidates {
+        let res = Command::new(vswhere)
+            .args([
+                "-latest",
+                "-products",
+                "*",
+                "-requires",
+                "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                "-property",
+                "installationPath",
+            ])
+            .output();
+        if let Ok(out) = res {
+            if out.status.success() {
+                let install_path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !install_path.is_empty() {
+                    let vc_tools_base = std::path::PathBuf::from(install_path)
+                        .join("VC")
+                        .join("Tools")
+                        .join("MSVC");
+                    if let Some(lib_path) = find_latest_msvc_in_tools_dir(&vc_tools_base) {
+                        return Some(lib_path);
+                    }
+                }
             }
         }
     }
 
-    // Try Visual Studio 2019
-    let vs2019_base =
-        std::path::Path::new("C:\\Program Files (x86)\\Microsoft Visual Studio\\2019");
+    // 4. Check dynamically discovered filesystem roots across all drives and versions
+    let vs_years = ["2022", "2019", "2017", "2026", "2025"];
+    let editions = [
+        "BuildTools",
+        "Community",
+        "Professional",
+        "Enterprise",
+        "Preview",
+    ];
 
-    for edition in &editions {
-        let vc_tools_base = vs2019_base
-            .join(edition)
-            .join("VC")
-            .join("Tools")
-            .join("MSVC");
-
-        if !vc_tools_base.exists() {
-            continue;
+    let mut vs_parent_dirs = Vec::new();
+    for pf in get_program_files_roots() {
+        let cand = pf.join("Microsoft Visual Studio");
+        if cand.exists() && !vs_parent_dirs.contains(&cand) {
+            vs_parent_dirs.push(cand);
         }
+    }
+    for drive in get_system_drive_roots() {
+        let cand = drive.join("Microsoft Visual Studio");
+        if cand.exists() && !vs_parent_dirs.contains(&cand) {
+            vs_parent_dirs.push(cand);
+        }
+    }
 
-        let mut versions: Vec<_> = fs::read_dir(&vc_tools_base)
-            .ok()?
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| entry.path().is_dir())
-            .filter_map(|entry| entry.file_name().to_str().map(|s| s.to_string()))
-            .collect();
+    for vs_parent in vs_parent_dirs {
+        for year in &vs_years {
+            for edition in &editions {
+                let vc_tools_base = vs_parent
+                    .join(year)
+                    .join(edition)
+                    .join("VC")
+                    .join("Tools")
+                    .join("MSVC");
 
-        versions.sort();
-        versions.reverse();
-
-        for version in versions {
-            let lib_path = vc_tools_base.join(&version).join("lib").join("x64");
-
-            if lib_path.exists() {
-                return Some(lib_path);
+                if let Some(lib_path) = find_latest_msvc_in_tools_dir(&vc_tools_base) {
+                    return Some(lib_path);
+                }
             }
         }
     }

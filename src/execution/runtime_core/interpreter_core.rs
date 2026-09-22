@@ -1763,7 +1763,14 @@ impl Interpreter {
                         };
                         Ok(Number(cap as f64))
                     }
-                    "metadata_size" => Ok(Number(da.element_type.metadata_size() as f64)),
+                    "metadata_size" => {
+                        let size = if da.element_type.metadata_size() == 4 {
+                            16.0
+                        } else {
+                            24.0
+                        };
+                        Ok(Number(size))
+                    }
                     _ => Ok(Null),
                 }
             }
@@ -6345,8 +6352,33 @@ impl Interpreter {
                     // Convert arrays based on annotation:
                     // [type;size] -> DynArray with fixed capacity (allows mutations within capacity)
                     // [type;size;raw] -> RawArray (fixed-size, contiguous memory, rejects size changes)
-                    if ann.starts_with('[') && ann.ends_with(']') {
-                        let inner = &ann[1..ann.len() - 1];
+                    let ann_trimmed = ann.trim();
+                    let effective_ann = if ann_trimmed.contains('|') {
+                        let parts: Vec<&str> = ann_trimmed.split('|').map(|s| s.trim()).collect();
+                        if matches!(
+                            v,
+                            Value::Array(_) | Value::RawArray(_, _) | Value::DynArray(_)
+                        ) {
+                            parts
+                                .iter()
+                                .find(|p| p.starts_with('[') && p.ends_with(']'))
+                                .copied()
+                                .unwrap_or(ann_trimmed)
+                        } else {
+                            parts
+                                .iter()
+                                .find(|p| {
+                                    !p.eq_ignore_ascii_case("null")
+                                        && !p.eq_ignore_ascii_case("void")
+                                })
+                                .copied()
+                                .unwrap_or(ann_trimmed)
+                        }
+                    } else {
+                        ann_trimmed
+                    };
+                    if effective_ann.starts_with('[') && effective_ann.ends_with(']') {
+                        let inner = &effective_ann[1..effective_ann.len() - 1];
                         let parts: Vec<&str> = inner.split(';').map(|s| s.trim()).collect();
 
                         // Parse: [elem_type ; size ; raw?]
@@ -15827,7 +15859,12 @@ impl Interpreter {
                 Value::RawArray(_, _) => return Ok(Value::Number(0.0)),
                 Value::Tuple(_) => return Ok(Value::Number(0.0)),
                 Value::DynArray(da) => {
-                    return Ok(Value::Number(da.element_type.metadata_size() as f64));
+                    let size = if da.element_type.metadata_size() == 4 {
+                        16.0
+                    } else {
+                        24.0
+                    };
+                    return Ok(Value::Number(size));
                 }
                 _ => {}
             }
@@ -16024,6 +16061,15 @@ impl Interpreter {
                     Value::Array(_) | Value::DynArray(_) => {
                         self.call_array_method(obj, method_name, args, env)
                     }
+                    Value::RawArray(_, _) => match method_name {
+                        "push" | "append" | "insert" | "extend" | "unshift" => {
+                            Err(err("Cannot append to raw array (fixed size)".to_string()))
+                        }
+                        "pop" | "shift" | "remove" | "clear" => {
+                            Err(err("Cannot pop from raw array (fixed size)".to_string()))
+                        }
+                        _ => self.call_array_method(obj, method_name, args, env),
+                    },
                     _ => Err(err(format!(
                         "'{}' is not a method of {}",
                         method_name,
@@ -16050,7 +16096,7 @@ impl Interpreter {
             },
             "indexOf" | "includes" | "contains" | "slice" => match obj {
                 Value::Str(_) => self.call_string_method(obj, method_name, args),
-                Value::Array(_) | Value::DynArray(_) => {
+                Value::Array(_) | Value::DynArray(_) | Value::RawArray(_, _) => {
                     self.call_array_method(obj, method_name, args, env)
                 }
                 _ => Err(err(format!("'{}' not supported on this type", method_name))),
@@ -16059,7 +16105,7 @@ impl Interpreter {
             // Array higher-order methods
             "map" | "filter" | "reduce" | "find" | "findIndex" | "join" | "concat" | "flat"
             | "forEach" | "some" | "every" => match obj {
-                Value::Array(_) | Value::DynArray(_) => {
+                Value::Array(_) | Value::DynArray(_) | Value::RawArray(_, _) => {
                     self.call_array_method(obj, method_name, args, env)
                 }
                 Value::Str(_) if method_name == "join" => {
@@ -16070,7 +16116,7 @@ impl Interpreter {
 
             // Shared Array/Set methods
             "union" | "intersection" => match obj {
-                Value::Array(_) | Value::DynArray(_) => {
+                Value::Array(_) | Value::DynArray(_) | Value::RawArray(_, _) => {
                     self.call_array_method(obj, method_name, args, env)
                 }
                 Value::Set(_) | Value::Object(_) => self.call_set_method(obj, method_name, args),
@@ -16509,7 +16555,23 @@ impl Interpreter {
         let arr_ref: &[Value] = match obj {
             Value::Array(a) => a,
             Value::DynArray(da) => &da.data,
+            Value::RawArray(_, elems) => elems,
             _ => return Err(err("array method requires array".to_string())),
+        };
+
+        let wrap_result = |result: Vec<Value>| -> Value {
+            match obj {
+                Value::DynArray(da) => {
+                    Value::DynArray(Box::new(crate::parsing::ast::DynamicArray {
+                        data: result,
+                        element_type: da.element_type.clone(),
+                        concrete_type: da.concrete_type.clone(),
+                        tracked_capacity: da.tracked_capacity,
+                    }))
+                }
+                Value::RawArray(ty, _) => Value::RawArray(ty.clone(), result),
+                _ => Value::Array(result),
+            }
         };
 
         // Delegate simple methods to the extracted module
@@ -16519,7 +16581,7 @@ impl Interpreter {
             | "concat" | "slice" | "indexOf" | "lastIndexOf" | "includes" | "contains" | "flat"
             | "first" | "last" | "distinct" | "sum" | "min" | "max" | "toSet" | "toTuple" => {
                 return super::interpreter_impl::builtins::call_simple_array_method(
-                    arr_ref,
+                    obj,
                     method_name,
                     args,
                 );
@@ -16558,7 +16620,7 @@ impl Interpreter {
                     }?;
                     out.push(res);
                 }
-                Ok(Value::Array(out))
+                Ok(wrap_result(out))
             }
             "filter" => {
                 if method_args.len() < 2 {
@@ -16587,7 +16649,7 @@ impl Interpreter {
                         out.push(v.clone());
                     }
                 }
-                Ok(Value::Array(out))
+                Ok(wrap_result(out))
             }
             "find" => {
                 if method_args.len() < 2 {
@@ -21224,7 +21286,12 @@ impl ExecLegacy {
                 Value::RawArray(_, _) => return Ok(Value::Number(0.0)),
                 Value::Tuple(_) => return Ok(Value::Number(0.0)),
                 Value::DynArray(da) => {
-                    return Ok(Value::Number(da.element_type.metadata_size() as f64));
+                    let size = if da.element_type.metadata_size() == 4 {
+                        16.0
+                    } else {
+                        24.0
+                    };
+                    return Ok(Value::Number(size));
                 }
                 _ => {}
             }
@@ -21413,6 +21480,15 @@ impl ExecLegacy {
                     Value::Array(_) | Value::DynArray(_) => {
                         self.call_array_method(obj, method_name, args)
                     }
+                    Value::RawArray(_, _) => match method_name {
+                        "push" | "append" | "insert" | "extend" | "unshift" => {
+                            Err(err("Cannot append to raw array (fixed size)".to_string()))
+                        }
+                        "pop" | "shift" | "remove" | "clear" => {
+                            Err(err("Cannot pop from raw array (fixed size)".to_string()))
+                        }
+                        _ => self.call_array_method(obj, method_name, args),
+                    },
                     _ => Err(err(format!(
                         "'{}' is not a method of {}",
                         method_name,
@@ -21436,7 +21512,7 @@ impl ExecLegacy {
             },
             "indexOf" | "includes" | "contains" | "slice" => match obj {
                 Value::Str(_) => self.call_string_method(obj, method_name, args),
-                Value::Array(_) | Value::DynArray(_) => {
+                Value::Array(_) | Value::DynArray(_) | Value::RawArray(_, _) => {
                     self.call_array_method(obj, method_name, args)
                 }
                 _ => Err(err(format!("'{}' not supported on this type", method_name))),
@@ -21445,7 +21521,7 @@ impl ExecLegacy {
             // Array higher-order methods
             "map" | "filter" | "reduce" | "find" | "findIndex" | "join" | "concat" | "flat"
             | "forEach" | "some" | "every" => match obj {
-                Value::Array(_) | Value::DynArray(_) => {
+                Value::Array(_) | Value::DynArray(_) | Value::RawArray(_, _) => {
                     self.call_array_method(obj, method_name, args)
                 }
                 Value::Str(_) if method_name == "join" => {
@@ -21456,7 +21532,7 @@ impl ExecLegacy {
 
             // Shared Array/Set methods
             "union" | "intersection" => match obj {
-                Value::Array(_) | Value::DynArray(_) => {
+                Value::Array(_) | Value::DynArray(_) | Value::RawArray(_, _) => {
                     self.call_array_method(obj, method_name, args)
                 }
                 Value::Set(_) | Value::Object(_) => self.call_set_method(obj, method_name, args),
@@ -21571,10 +21647,26 @@ impl ExecLegacy {
         method_name: &str,
         args: &[Value],
     ) -> Result<Value, String> {
-        let arr = match obj {
-            Value::Array(a) => a.as_slice(),
-            Value::DynArray(da) => &da.data,
-            _ => return Err(err("array method requires array".to_string())),
+        if !matches!(
+            obj,
+            Value::Array(_) | Value::DynArray(_) | Value::RawArray(_, _)
+        ) {
+            return Err(err("array method requires array".to_string()));
+        }
+
+        let wrap_result = |result: Vec<Value>| -> Value {
+            match obj {
+                Value::DynArray(da) => {
+                    Value::DynArray(Box::new(crate::parsing::ast::DynamicArray {
+                        data: result,
+                        element_type: da.element_type.clone(),
+                        concrete_type: da.concrete_type.clone(),
+                        tracked_capacity: da.tracked_capacity,
+                    }))
+                }
+                Value::RawArray(ty, _) => Value::RawArray(ty.clone(), result),
+                _ => Value::Array(result),
+            }
         };
 
         // Delegate simple methods to the extracted module
@@ -21583,7 +21675,7 @@ impl ExecLegacy {
             | "extend" | "set_index" | "count" | "index" | "sort" | "reverse" | "join"
             | "concat" | "slice" | "indexOf" | "includes" | "contains" | "flat" => {
                 return super::interpreter_impl::builtins::call_simple_array_method(
-                    arr,
+                    obj,
                     method_name,
                     args,
                 );
@@ -21598,6 +21690,7 @@ impl ExecLegacy {
         let arr = match obj {
             Value::Array(a) => a.clone(),
             Value::DynArray(da) => da.data.clone(),
+            Value::RawArray(_, raw) => raw.clone(),
             _ => return Err(err("array method requires array".to_string())),
         };
 
@@ -21622,7 +21715,7 @@ impl ExecLegacy {
                     }?;
                     out.push(res);
                 }
-                Ok(Value::Array(out))
+                Ok(wrap_result(out))
             }
             "filter" => {
                 if method_args.len() < 2 {
@@ -21646,7 +21739,7 @@ impl ExecLegacy {
                         out.push(v.clone());
                     }
                 }
-                Ok(Value::Array(out))
+                Ok(wrap_result(out))
             }
             "find" => {
                 if method_args.len() < 2 {
