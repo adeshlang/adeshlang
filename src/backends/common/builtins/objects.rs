@@ -761,37 +761,124 @@ pub(crate) fn runtime_call_method(args: &[RuntimeValue]) -> RuntimeValue {
 }
 
 /// Convert an array to a raw array with typed elements
-/// args[0] = array
+/// args[0] = array, optional args[1] = element type
 pub(crate) fn runtime_array_to_raw(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
         return RuntimeValue::Null;
     }
+    let opt_elem_type = if args.len() > 1 {
+        Some(args[1].as_string())
+    } else {
+        None
+    };
     match &args[0] {
         RuntimeValue::DynArray {
             data, element_type, ..
-        } => RuntimeValue::RawArray(element_type.clone(), data.clone()),
+        } => {
+            let ty = opt_elem_type.unwrap_or_else(|| element_type.clone());
+            let mut coerced = Vec::with_capacity(data.len());
+            for v in data {
+                coerced.push(coerce_elem_to_type(v, &ty).unwrap_or_else(|| v.clone()));
+            }
+            RuntimeValue::RawArray(ty, coerced)
+        }
         RuntimeValue::Array(arr) => {
-            let (element_type, _) = infer_array_type(arr);
-            RuntimeValue::RawArray(element_type, arr.clone())
+            let ty = opt_elem_type.unwrap_or_else(|| infer_array_type(arr).0);
+            let mut coerced = Vec::with_capacity(arr.len());
+            for v in arr {
+                coerced.push(coerce_elem_to_type(v, &ty).unwrap_or_else(|| v.clone()));
+            }
+            RuntimeValue::RawArray(ty, coerced)
+        }
+        RuntimeValue::RawArray(elem_type, data) => {
+            if let Some(ty) = opt_elem_type {
+                let mut coerced = Vec::with_capacity(data.len());
+                for v in data {
+                    coerced.push(coerce_elem_to_type(v, &ty).unwrap_or_else(|| v.clone()));
+                }
+                RuntimeValue::RawArray(ty, coerced)
+            } else {
+                args[0].clone()
+            }
         }
         _ => args[0].clone(), // Already raw or other type
     }
 }
 
 /// Convert an array to a dynamic array
-/// args[0] = array
+/// args[0] = array, optional args[1] = element type
 pub(crate) fn runtime_array_to_dynamic(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
         return RuntimeValue::Null;
     }
+    let opt_elem_type = if args.len() > 1 {
+        Some(args[1].as_string())
+    } else {
+        None
+    };
     match &args[0] {
         RuntimeValue::RawArray(elem_type, data) => {
-            let concrete_type = format!("[{}]", elem_type);
+            let target_elem_type = opt_elem_type.unwrap_or_else(|| elem_type.clone());
+            let concrete_type = format!("[{}]", target_elem_type);
+            let mut coerced = Vec::with_capacity(data.len());
+            for v in data {
+                coerced
+                    .push(coerce_elem_to_type(v, &target_elem_type).unwrap_or_else(|| v.clone()));
+            }
             RuntimeValue::DynArray {
-                data: data.clone(),
-                element_type: elem_type.clone(),
+                data: coerced,
+                element_type: target_elem_type,
                 concrete_type,
                 tracked_capacity: None,
+            }
+        }
+        RuntimeValue::Array(data) => {
+            if let Some(target_elem_type) = opt_elem_type {
+                let concrete_type = format!("[{}]", target_elem_type);
+                let mut coerced = Vec::with_capacity(data.len());
+                for v in data {
+                    coerced.push(
+                        coerce_elem_to_type(v, &target_elem_type).unwrap_or_else(|| v.clone()),
+                    );
+                }
+                RuntimeValue::DynArray {
+                    data: coerced,
+                    element_type: target_elem_type,
+                    concrete_type,
+                    tracked_capacity: None,
+                }
+            } else {
+                let (element_type, concrete_type) = infer_array_type(data);
+                RuntimeValue::DynArray {
+                    data: data.clone(),
+                    element_type,
+                    concrete_type,
+                    tracked_capacity: None,
+                }
+            }
+        }
+        RuntimeValue::DynArray {
+            data,
+            element_type,
+            tracked_capacity,
+            ..
+        } => {
+            if let Some(target_elem_type) = opt_elem_type {
+                let concrete_type = format!("[{}]", target_elem_type);
+                let mut coerced = Vec::with_capacity(data.len());
+                for v in data {
+                    coerced.push(
+                        coerce_elem_to_type(v, &target_elem_type).unwrap_or_else(|| v.clone()),
+                    );
+                }
+                RuntimeValue::DynArray {
+                    data: coerced,
+                    element_type: target_elem_type,
+                    concrete_type,
+                    tracked_capacity: *tracked_capacity,
+                }
+            } else {
+                args[0].clone()
             }
         }
         _ => args[0].clone(), // Already dynamic or other type

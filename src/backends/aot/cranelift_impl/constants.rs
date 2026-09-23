@@ -59,24 +59,28 @@ pub(crate) fn lower_constant_instruction(
             let v = builder.ins().iconst(types::I64, *val as i64);
             value_map.insert(*dst, v);
             value_types.insert(*dst, AotValueType::U8);
+            const_ints.insert(*dst, *val as i64);
             Ok(true)
         }
         LirInst::ConstU16(dst, val) => {
             let v = builder.ins().iconst(types::I64, *val as i64);
             value_map.insert(*dst, v);
             value_types.insert(*dst, AotValueType::U16);
+            const_ints.insert(*dst, *val as i64);
             Ok(true)
         }
         LirInst::ConstU32(dst, val) => {
             let v = builder.ins().iconst(types::I64, *val as i64);
             value_map.insert(*dst, v);
             value_types.insert(*dst, AotValueType::U32);
+            const_ints.insert(*dst, *val as i64);
             Ok(true)
         }
         LirInst::ConstU64(dst, val) => {
             let v = builder.ins().iconst(types::I64, *val as i64);
             value_map.insert(*dst, v);
             value_types.insert(*dst, AotValueType::U64);
+            const_ints.insert(*dst, *val as i64);
             Ok(true)
         }
         LirInst::ConstU128(dst, val) => {
@@ -84,6 +88,7 @@ pub(crate) fn lower_constant_instruction(
             let v = builder.ins().iconst(types::I64, *val as i64);
             value_map.insert(*dst, v);
             value_types.insert(*dst, AotValueType::U128);
+            const_ints.insert(*dst, *val as i64);
             Ok(true)
         }
 
@@ -92,18 +97,21 @@ pub(crate) fn lower_constant_instruction(
             let v = builder.ins().iconst(types::I64, *val as i64);
             value_map.insert(*dst, v);
             value_types.insert(*dst, AotValueType::I8);
+            const_ints.insert(*dst, *val as i64);
             Ok(true)
         }
         LirInst::ConstI16(dst, val) => {
             let v = builder.ins().iconst(types::I64, *val as i64);
             value_map.insert(*dst, v);
             value_types.insert(*dst, AotValueType::I16);
+            const_ints.insert(*dst, *val as i64);
             Ok(true)
         }
         LirInst::ConstI32(dst, val) => {
             let v = builder.ins().iconst(types::I64, *val as i64);
             value_map.insert(*dst, v);
             value_types.insert(*dst, AotValueType::I32);
+            const_ints.insert(*dst, *val as i64);
             Ok(true)
         }
         LirInst::ConstI128(dst, val) => {
@@ -111,6 +119,7 @@ pub(crate) fn lower_constant_instruction(
             let v = builder.ins().iconst(types::I64, *val as i64);
             value_map.insert(*dst, v);
             value_types.insert(*dst, AotValueType::I128);
+            const_ints.insert(*dst, *val as i64);
             Ok(true)
         }
 

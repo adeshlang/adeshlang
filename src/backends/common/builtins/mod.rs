@@ -7,7 +7,7 @@
 mod io;
 
 #[path = "../builtins_modules/conversion.rs"]
-mod conversion;
+pub(crate) mod conversion;
 
 #[path = "../builtins_modules/control.rs"]
 mod control;
@@ -412,14 +412,20 @@ impl RuntimeValue {
             RuntimeValue::Array(arr) => {
                 let items: Vec<String> = arr
                     .iter()
-                    .map(|v| v.as_string_with_depth(depth + 1))
+                    .map(|v| match v {
+                        RuntimeValue::String(st) => format!("\"{}\"", st),
+                        _ => v.as_string_with_depth(depth + 1),
+                    })
                     .collect();
                 format!("[{}]", items.join(", "))
             }
             RuntimeValue::Set(set_vals) => {
                 let items: Vec<String> = set_vals
                     .iter()
-                    .map(|v| v.as_string_with_depth(depth + 1))
+                    .map(|v| match v {
+                        RuntimeValue::String(st) => format!("\"{}\"", st),
+                        _ => v.as_string_with_depth(depth + 1),
+                    })
                     .collect();
                 format!("{{{}}}", items.join(", "))
             }
@@ -427,11 +433,18 @@ impl RuntimeValue {
                 if tup.is_empty() {
                     "()".to_string()
                 } else if tup.len() == 1 {
-                    format!("({},)", tup[0].as_string_with_depth(depth + 1))
+                    let s = match &tup[0] {
+                        RuntimeValue::String(st) => format!("\"{}\"", st),
+                        _ => tup[0].as_string_with_depth(depth + 1),
+                    };
+                    format!("({},)", s)
                 } else {
                     let items: Vec<String> = tup
                         .iter()
-                        .map(|v| v.as_string_with_depth(depth + 1))
+                        .map(|v| match v {
+                            RuntimeValue::String(st) => format!("\"{}\"", st),
+                            _ => v.as_string_with_depth(depth + 1),
+                        })
                         .collect();
                     format!("({})", items.join(", "))
                 }
@@ -439,8 +452,10 @@ impl RuntimeValue {
             RuntimeValue::Object(obj) => {
                 let mut entries: Vec<String> = Vec::new();
                 for (k, v) in obj.iter() {
-                    // For object formatting we intentionally don't quote strings: `b: x`
-                    let value_str = v.as_string_with_depth(depth + 1);
+                    let value_str = match v {
+                        RuntimeValue::String(st) => format!("\"{}\"", st),
+                        _ => v.as_string_with_depth(depth + 1),
+                    };
                     entries.push(format!("{}: {}", k, value_str));
                 }
                 format!("{{{}}}", entries.join(", "))
@@ -450,14 +465,20 @@ impl RuntimeValue {
             RuntimeValue::RawArray(_elem_type, values) => {
                 let items: Vec<String> = values
                     .iter()
-                    .map(|v| v.as_string_with_depth(depth + 1))
+                    .map(|v| match v {
+                        RuntimeValue::String(st) => format!("\"{}\"", st),
+                        _ => v.as_string_with_depth(depth + 1),
+                    })
                     .collect();
                 format!("[{}]", items.join(", "))
             }
             RuntimeValue::DynArray { data, .. } => {
                 let items: Vec<String> = data
                     .iter()
-                    .map(|v| v.as_string_with_depth(depth + 1))
+                    .map(|v| match v {
+                        RuntimeValue::String(st) => format!("\"{}\"", st),
+                        _ => v.as_string_with_depth(depth + 1),
+                    })
                     .collect();
                 format!("[{}]", items.join(", "))
             }

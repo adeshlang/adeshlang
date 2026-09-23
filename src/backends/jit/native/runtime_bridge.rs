@@ -61,6 +61,14 @@ fn remove_value(handle: u64) -> Option<RuntimeValue> {
     }
 }
 
+fn update_value(handle: u64, value: RuntimeValue) {
+    if handle >= HANDLE_TAG {
+        RUNTIME_VALUES.with(|values| {
+            values.borrow_mut().insert(handle, value);
+        });
+    }
+}
+
 /// Helper to get a string from either a handle (dynamic) or a pointer (const)
 fn get_string_val(handle_or_ptr: u64) -> Option<String> {
     if handle_or_ptr >= HANDLE_TAG {
@@ -157,118 +165,40 @@ pub extern "C" fn jit_wrap_null() -> u64 {
     store_value(RuntimeValue::Null)
 }
 
+thread_local! {
+    static INTERNED_STRINGS: RefCell<Vec<std::ffi::CString>> = RefCell::new(Vec::new());
+}
+
+fn intern_cstr(s: &str) -> *const c_char {
+    let cstring = std::ffi::CString::new(s).unwrap_or_else(|_| std::ffi::CString::new("").unwrap());
+    let ptr = cstring.as_ptr();
+    INTERNED_STRINGS.with(|strings| {
+        strings.borrow_mut().push(cstring);
+    });
+    ptr
+}
+
+/// Return type name for a runtime value handle or pointer
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_typeof(handle_or_ptr: u64) -> *const c_char {
+    if handle_or_ptr >= HANDLE_TAG {
+        if let Some(val) = get_value(handle_or_ptr) {
+            let ty_val = crate::backends::common::builtins::conversion::runtime_type(&[val]);
+            if let RuntimeValue::String(s) = ty_val {
+                return intern_cstr(&s);
+            }
+        }
+    }
+    intern_cstr("object")
+}
+
 /// Compute deep sizeof for a RuntimeValue
 fn runtime_bridge_sizeof_value(value: &RuntimeValue) -> usize {
-    match value {
-        RuntimeValue::Int(n) => {
-            if *n >= 0 {
-                if *n <= u8::MAX as i64 {
-                    1
-                } else if *n <= u16::MAX as i64 {
-                    2
-                } else if *n <= u32::MAX as i64 {
-                    4
-                } else {
-                    8
-                }
-            } else if *n >= i8::MIN as i64 && *n <= i8::MAX as i64 {
-                1
-            } else if *n >= i16::MIN as i64 && *n <= i16::MAX as i64 {
-                2
-            } else if *n >= i32::MIN as i64 && *n <= i32::MAX as i64 {
-                4
-            } else {
-                8
-            }
-        }
-        RuntimeValue::Float(n) => {
-            if n.fract().abs() < 1e-12 {
-                let i = *n as i128;
-                if i >= 0 {
-                    if i <= u8::MAX as i128 {
-                        1
-                    } else if i <= u16::MAX as i128 {
-                        2
-                    } else if i <= u32::MAX as i128 {
-                        4
-                    } else if i <= u64::MAX as i128 {
-                        8
-                    } else {
-                        16
-                    }
-                } else if i >= i8::MIN as i128 && i <= i8::MAX as i128 {
-                    1
-                } else if i >= i16::MIN as i128 && i <= i16::MAX as i128 {
-                    2
-                } else if i >= i32::MIN as i128 && i <= i32::MAX as i128 {
-                    4
-                } else if i >= i64::MIN as i128 && i <= i64::MAX as i128 {
-                    8
-                } else {
-                    16
-                }
-            } else {
-                8
-            }
-        }
-        RuntimeValue::Bool(_) => 1,
-        RuntimeValue::Char(_) => 4,
-        RuntimeValue::Null => 0,
-        RuntimeValue::String(s) => s.len(),
-        RuntimeValue::BigInt(bi) => {
-            use num_traits::Zero;
-            if bi.is_zero() {
-                8
-            } else {
-                8 + (bi.bits() as usize / 32 + 1) * 4
-            }
-        }
-        RuntimeValue::Array(arr) => {
-            let base = 24;
-            let elements: usize = arr.iter().map(runtime_bridge_sizeof_value).sum();
-            base + elements
-        }
-        RuntimeValue::Set(set_vals) => {
-            let base = 24;
-            let elements: usize = set_vals.iter().map(runtime_bridge_sizeof_value).sum();
-            base + elements
-        }
-        RuntimeValue::Tuple(tup) => {
-            let base = 24;
-            let elements: usize = tup.iter().map(runtime_bridge_sizeof_value).sum();
-            base + elements
-        }
-        RuntimeValue::RawArray(_, arr) => {
-            let elements: usize = arr.iter().map(runtime_bridge_sizeof_value).sum();
-            elements
-        }
-        RuntimeValue::DynArray { data, .. } => {
-            let base = 24;
-            let elements: usize = data.iter().map(runtime_bridge_sizeof_value).sum();
-            base + elements
-        }
-        RuntimeValue::Object(obj) => {
-            let base = 48;
-            let entries: usize = obj
-                .iter()
-                .map(|(k, v)| k.len() + runtime_bridge_sizeof_value(v))
-                .sum();
-            base + entries
-        }
-        RuntimeValue::Promise(_) => 8,
-        RuntimeValue::Function(_) => 16,
-        RuntimeValue::U8(_) => 1,
-        RuntimeValue::U16(_) => 2,
-        RuntimeValue::U32(_) => 4,
-        RuntimeValue::U64(_) => 8,
-        RuntimeValue::U128(_) => 16,
-        RuntimeValue::I8(_) => 1,
-        RuntimeValue::I16(_) => 2,
-        RuntimeValue::I32(_) => 4,
-        RuntimeValue::I64(_) => 8,
-        RuntimeValue::I128(_) => 16,
-        RuntimeValue::F32(_) => 4,
-        RuntimeValue::F64(_) => 8,
+    let res = crate::backends::common::builtins::conversion::runtime_sizeof(&[value.clone()]);
+    if let RuntimeValue::Int(n) = res {
+        n as usize
+    } else {
+        8
     }
 }
 
@@ -326,64 +256,126 @@ pub extern "C" fn jit_char_from_str(handle_or_ptr: i64) -> u64 {
 /// Create an empty array and return its handle
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_make_array() -> u64 {
-    store_value(RuntimeValue::Array(Vec::new()))
+    store_value(RuntimeValue::DynArray {
+        data: Vec::new(),
+        element_type: "any".to_string(),
+        concrete_type: String::new(),
+        tracked_capacity: None,
+    })
 }
 
 /// Create an array with a specific capacity
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_make_array_capacity(capacity: u64) -> u64 {
     let arr = Vec::with_capacity(capacity as usize);
-    store_value(RuntimeValue::Array(arr))
+    store_value(RuntimeValue::DynArray {
+        data: arr,
+        element_type: "any".to_string(),
+        concrete_type: String::new(),
+        tracked_capacity: Some(capacity as usize),
+    })
+}
+
+fn push_elem_to_array(arr_handle: u64, elem: RuntimeValue) -> u64 {
+    RUNTIME_VALUES.with(|values| {
+        let mut map = values.borrow_mut();
+        if let Some(val) = map.get_mut(&arr_handle) {
+            match val {
+                RuntimeValue::Array(arr) => {
+                    arr.push(elem);
+                    let (elem_ty, concrete_ty) =
+                        crate::backends::common::builtins::arrays::infer_array_type(arr);
+                    *val = RuntimeValue::DynArray {
+                        data: std::mem::take(arr),
+                        element_type: elem_ty,
+                        concrete_type: concrete_ty,
+                        tracked_capacity: None,
+                    };
+                }
+                RuntimeValue::DynArray {
+                    data,
+                    element_type,
+                    concrete_type,
+                    ..
+                } => {
+                    data.push(elem);
+                    let (e, c) = crate::backends::common::builtins::arrays::infer_array_type(data);
+                    *element_type = e;
+                    *concrete_type = c;
+                }
+                _ => {}
+            }
+            arr_handle
+        } else {
+            0
+        }
+    })
 }
 
 /// Push an integer value to an array
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_array_push_int(arr_handle: u64, value: i64) -> u64 {
-    if let Some(RuntimeValue::Array(mut arr)) = remove_value(arr_handle) {
-        arr.push(RuntimeValue::Int(value));
-        store_value(RuntimeValue::Array(arr))
-    } else if let Some(RuntimeValue::DynArray {
-        mut data,
-        element_type,
-        concrete_type,
-        tracked_capacity,
-    }) = remove_value(arr_handle)
-    {
-        data.push(RuntimeValue::Int(value));
-        store_value(RuntimeValue::DynArray {
-            data,
-            element_type,
-            concrete_type,
-            tracked_capacity,
-        })
-    } else {
-        0
-    }
+    push_elem_to_array(arr_handle, RuntimeValue::Int(value))
+}
+
+/// Push an i8 value to an array
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_array_push_i8(arr_handle: u64, value: i64) -> u64 {
+    push_elem_to_array(arr_handle, RuntimeValue::I8(value as i8))
+}
+
+/// Push an i16 value to an array
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_array_push_i16(arr_handle: u64, value: i64) -> u64 {
+    push_elem_to_array(arr_handle, RuntimeValue::I16(value as i16))
+}
+
+/// Push an i32 value to an array
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_array_push_i32(arr_handle: u64, value: i64) -> u64 {
+    push_elem_to_array(arr_handle, RuntimeValue::I32(value as i32))
+}
+
+/// Push an i64 value to an array
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_array_push_i64(arr_handle: u64, value: i64) -> u64 {
+    push_elem_to_array(arr_handle, RuntimeValue::I64(value))
+}
+
+/// Push a u8 value to an array
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_array_push_u8(arr_handle: u64, value: i64) -> u64 {
+    push_elem_to_array(arr_handle, RuntimeValue::U8(value as u8))
+}
+
+/// Push a u16 value to an array
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_array_push_u16(arr_handle: u64, value: i64) -> u64 {
+    push_elem_to_array(arr_handle, RuntimeValue::U16(value as u16))
+}
+
+/// Push a u32 value to an array
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_array_push_u32(arr_handle: u64, value: i64) -> u64 {
+    push_elem_to_array(arr_handle, RuntimeValue::U32(value as u32))
+}
+
+/// Push a u64 value to an array
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_array_push_u64(arr_handle: u64, value: i64) -> u64 {
+    push_elem_to_array(arr_handle, RuntimeValue::U64(value as u64))
 }
 
 /// Push a float value to an array
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_array_push_float(arr_handle: u64, value: f64) -> u64 {
-    if let Some(RuntimeValue::Array(mut arr)) = remove_value(arr_handle) {
-        arr.push(RuntimeValue::Float(value));
-        store_value(RuntimeValue::Array(arr))
-    } else if let Some(RuntimeValue::DynArray {
-        mut data,
-        element_type,
-        concrete_type,
-        tracked_capacity,
-    }) = remove_value(arr_handle)
-    {
-        data.push(RuntimeValue::Float(value));
-        store_value(RuntimeValue::DynArray {
-            data,
-            element_type,
-            concrete_type,
-            tracked_capacity,
-        })
-    } else {
-        0
-    }
+    push_elem_to_array(arr_handle, RuntimeValue::Float(value))
+}
+
+/// Push an f32 value to an array
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_array_push_f32(arr_handle: u64, value: f64) -> u64 {
+    push_elem_to_array(arr_handle, RuntimeValue::F32(value as f32))
 }
 
 /// Push a string value to an array (takes a C string pointer)
@@ -394,104 +386,33 @@ pub unsafe extern "C" fn jit_array_push_str(arr_handle: u64, value: *const c_cha
     } else {
         unsafe { CStr::from_ptr(value).to_string_lossy().into_owned() }
     };
-
-    if let Some(RuntimeValue::Array(mut arr)) = remove_value(arr_handle) {
-        arr.push(RuntimeValue::String(s));
-        store_value(RuntimeValue::Array(arr))
-    } else if let Some(RuntimeValue::DynArray {
-        mut data,
-        element_type,
-        concrete_type,
-        tracked_capacity,
-    }) = remove_value(arr_handle)
-    {
-        data.push(RuntimeValue::String(s));
-        store_value(RuntimeValue::DynArray {
-            data,
-            element_type,
-            concrete_type,
-            tracked_capacity,
-        })
-    } else {
-        0
-    }
+    push_elem_to_array(arr_handle, RuntimeValue::String(s))
 }
 
 /// Push a boolean value to an array
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_array_push_bool(arr_handle: u64, value: i64) -> u64 {
-    if let Some(RuntimeValue::Array(mut arr)) = remove_value(arr_handle) {
-        arr.push(RuntimeValue::Bool(value != 0));
-        store_value(RuntimeValue::Array(arr))
-    } else if let Some(RuntimeValue::DynArray {
-        mut data,
-        element_type,
-        concrete_type,
-        tracked_capacity,
-    }) = remove_value(arr_handle)
-    {
-        data.push(RuntimeValue::Bool(value != 0));
-        store_value(RuntimeValue::DynArray {
-            data,
-            element_type,
-            concrete_type,
-            tracked_capacity,
-        })
-    } else {
-        0
-    }
+    push_elem_to_array(arr_handle, RuntimeValue::Bool(value != 0))
+}
+
+/// Push a char value to an array
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_array_push_char(arr_handle: u64, value: i64) -> u64 {
+    let ch = char::from_u32(value as u32).unwrap_or('\0');
+    push_elem_to_array(arr_handle, RuntimeValue::Char(ch))
 }
 
 /// Push null to an array
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_array_push_null(arr_handle: u64) -> u64 {
-    if let Some(RuntimeValue::Array(mut arr)) = remove_value(arr_handle) {
-        arr.push(RuntimeValue::Null);
-        store_value(RuntimeValue::Array(arr))
-    } else if let Some(RuntimeValue::DynArray {
-        mut data,
-        element_type,
-        concrete_type,
-        tracked_capacity,
-    }) = remove_value(arr_handle)
-    {
-        data.push(RuntimeValue::Null);
-        store_value(RuntimeValue::DynArray {
-            data,
-            element_type,
-            concrete_type,
-            tracked_capacity,
-        })
-    } else {
-        0
-    }
+    push_elem_to_array(arr_handle, RuntimeValue::Null)
 }
 
 /// Push a nested value (another handle) to an array
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_array_push_handle(arr_handle: u64, value_handle: u64) -> u64 {
     let nested_value = get_value(value_handle).unwrap_or(RuntimeValue::Null);
-
-    if let Some(RuntimeValue::Array(mut arr)) = remove_value(arr_handle) {
-        arr.push(nested_value);
-        store_value(RuntimeValue::Array(arr))
-    } else if let Some(RuntimeValue::DynArray {
-        mut data,
-        element_type,
-        concrete_type,
-        tracked_capacity,
-    }) = remove_value(arr_handle)
-    {
-        data.push(nested_value);
-        store_value(RuntimeValue::DynArray {
-            data,
-            element_type,
-            concrete_type,
-            tracked_capacity,
-        })
-    } else {
-        0
-    }
+    push_elem_to_array(arr_handle, nested_value)
 }
 
 /// Convert an array handle to a set handle (deduplicated, preserves insertion order)
@@ -2050,6 +1971,9 @@ pub extern "C" fn jit_get_field(obj_handle: u64, field_handle: u64) -> u64 {
             store_value(value)
         }
         Some(RuntimeValue::Array(arr)) => {
+            if let Ok(idx) = field.parse::<usize>() {
+                return store_value(arr.get(idx).cloned().unwrap_or(RuntimeValue::Null));
+            }
             let value = match field.as_str() {
                 "len" | "length" => RuntimeValue::Int(arr.len() as i64),
                 "capacity" => RuntimeValue::Int(arr.capacity() as i64),
@@ -2061,22 +1985,40 @@ pub extern "C" fn jit_get_field(obj_handle: u64, field_handle: u64) -> u64 {
         Some(RuntimeValue::DynArray {
             data,
             element_type,
+            concrete_type,
             tracked_capacity,
-            ..
         }) => {
+            if let Ok(idx) = field.parse::<usize>() {
+                let elem = data.get(idx).cloned().unwrap_or(RuntimeValue::Null);
+                let ty_str = if !concrete_type.is_empty() {
+                    concrete_type.as_str()
+                } else {
+                    element_type.as_str()
+                };
+                let typed_elem =
+                    crate::backends::common::builtins::arrays::coerce_to_typed_val(elem, ty_str);
+                return store_value(typed_elem);
+            }
+            let ty_str = if !concrete_type.is_empty() {
+                concrete_type.as_str()
+            } else {
+                element_type.as_str()
+            };
             let value = match field.as_str() {
                 "len" | "length" => RuntimeValue::Int(data.len() as i64),
                 "capacity" => {
                     RuntimeValue::Int(tracked_capacity.unwrap_or_else(|| data.capacity()) as i64)
                 }
                 "metadata_size" => {
-                    let metadata = if element_type.starts_with("u8")
-                        || element_type.starts_with("i8")
-                        || element_type.starts_with("u16")
-                        || element_type.starts_with("i16")
-                        || element_type.starts_with("u32")
-                        || element_type.starts_with("i32")
-                        || element_type.starts_with("f32")
+                    let metadata = if ty_str.starts_with("u8")
+                        || ty_str.starts_with("i8")
+                        || ty_str.starts_with("u16")
+                        || ty_str.starts_with("i16")
+                        || ty_str.starts_with("u32")
+                        || ty_str.starts_with("i32")
+                        || ty_str.starts_with("f32")
+                        || ty_str.starts_with("bool")
+                        || ty_str.starts_with("char")
                     {
                         16
                     } else {
@@ -2088,7 +2030,15 @@ pub extern "C" fn jit_get_field(obj_handle: u64, field_handle: u64) -> u64 {
             };
             store_value(value)
         }
-        Some(RuntimeValue::RawArray(_, arr)) => {
+        Some(RuntimeValue::RawArray(elem_ty, arr)) => {
+            if let Ok(idx) = field.parse::<usize>() {
+                let elem = arr.get(idx).cloned().unwrap_or(RuntimeValue::Null);
+                let typed_elem = crate::backends::common::builtins::arrays::coerce_to_typed_val(
+                    elem,
+                    elem_ty.as_str(),
+                );
+                return store_value(typed_elem);
+            }
             let value = match field.as_str() {
                 "len" | "length" => RuntimeValue::Int(arr.len() as i64),
                 "capacity" => RuntimeValue::Int(arr.len() as i64),
@@ -2098,6 +2048,10 @@ pub extern "C" fn jit_get_field(obj_handle: u64, field_handle: u64) -> u64 {
             store_value(value)
         }
         Some(RuntimeValue::Tuple(tup)) => {
+            if let Ok(idx) = field.parse::<usize>() {
+                let elem = tup.get(idx).cloned().unwrap_or(RuntimeValue::Null);
+                return store_value(elem);
+            }
             let value = match field.as_str() {
                 "len" | "length" => RuntimeValue::Int(tup.len() as i64),
                 "capacity" => RuntimeValue::Int(tup.len() as i64),
@@ -3017,7 +2971,8 @@ pub extern "C" fn jit_array_to_dynamic(arr_handle: u64, type_handle_or_ptr: u64,
         RuntimeValue::String(type_str),
         RuntimeValue::Int(cap),
     ]);
-    store_value(res)
+    update_value(arr_handle, res);
+    arr_handle
 }
 
 #[unsafe(no_mangle)]
@@ -3029,7 +2984,8 @@ pub extern "C" fn jit_array_to_fixed(arr_handle: u64, type_handle_or_ptr: u64, c
         RuntimeValue::String(type_str),
         RuntimeValue::Int(cap),
     ]);
-    store_value(res)
+    update_value(arr_handle, res);
+    arr_handle
 }
 
 #[unsafe(no_mangle)]
@@ -3045,7 +3001,8 @@ pub extern "C" fn jit_array_to_fixed_raw(
         RuntimeValue::String(type_str),
         RuntimeValue::Int(cap),
     ]);
-    store_value(res)
+    update_value(arr_handle, res);
+    arr_handle
 }
 
 #[unsafe(no_mangle)]
@@ -3056,7 +3013,8 @@ pub extern "C" fn jit_array_to_raw(arr_handle: u64, type_handle_or_ptr: u64) -> 
         arr,
         RuntimeValue::String(type_str),
     ]);
-    store_value(res)
+    update_value(arr_handle, res);
+    arr_handle
 }
 
 #[unsafe(no_mangle)]
@@ -3068,6 +3026,7 @@ pub extern "C" fn jit_set_index(arr_handle: u64, idx: i64, val_handle: u64) -> u
         RuntimeValue::Int(idx),
         val,
     ]);
+    update_value(arr_handle, res.clone());
     store_value(res)
 }
 
@@ -3114,6 +3073,7 @@ pub extern "C" fn jit_push(arr_handle: u64, val_handle: u64) -> u64 {
     let arr = unpack_jit_arg(arr_handle);
     let val = unpack_jit_arg(val_handle);
     let res = crate::backends::common::builtins::arrays::runtime_push(&[arr, val]);
+    update_value(arr_handle, res.clone());
     store_value(res)
 }
 
@@ -3177,12 +3137,30 @@ pub extern "C" fn jit_call_method(
     let count = (argc as usize).min(4);
     let mut method_args = Vec::with_capacity(2 + count);
     method_args.push(obj);
-    method_args.push(RuntimeValue::String(method_name));
+    method_args.push(RuntimeValue::String(method_name.clone()));
     for i in 0..count {
         method_args.push(unpack_jit_arg(raw_args[i]));
     }
 
     let res = crate::backends::common::builtins::objects::runtime_call_method(&method_args);
+    if matches!(
+        method_name.as_str(),
+        "push"
+            | "append"
+            | "pop"
+            | "shift"
+            | "unshift"
+            | "insert"
+            | "remove"
+            | "clear"
+            | "set_index"
+            | "array_to_dynamic"
+            | "array_to_fixed"
+            | "array_to_fixed_raw"
+            | "array_to_raw"
+    ) {
+        update_value(obj_handle, res.clone());
+    }
     store_value(res)
 }
 
@@ -3241,6 +3219,24 @@ pub extern "C" fn jit_call_builtin(
             _ => RuntimeValue::Null,
         }
     };
+    if matches!(
+        name.as_str(),
+        "push"
+            | "append"
+            | "pop"
+            | "shift"
+            | "unshift"
+            | "insert"
+            | "remove"
+            | "clear"
+            | "set_index"
+            | "array_to_dynamic"
+            | "array_to_fixed"
+            | "array_to_fixed_raw"
+            | "array_to_raw"
+    ) {
+        update_value(a0, res.clone());
+    }
     store_value(res)
 }
 
@@ -3261,6 +3257,7 @@ pub fn get_runtime_symbols() -> Vec<(&'static str, *const u8)> {
             jit_runtime_call_input_builtin as *const u8,
         ),
         ("jit_clock", jit_clock as *const u8),
+        ("jit_typeof", jit_typeof as *const u8),
         ("jit_sizeof_handle", jit_sizeof_handle as *const u8),
         ("jit_wrap_i64", jit_wrap_i64 as *const u8),
         ("jit_wrap_i8", jit_wrap_i8 as *const u8),
@@ -3283,9 +3280,19 @@ pub fn get_runtime_symbols() -> Vec<(&'static str, *const u8)> {
             jit_make_array_capacity as *const u8,
         ),
         ("jit_array_push_int", jit_array_push_int as *const u8),
+        ("jit_array_push_i8", jit_array_push_i8 as *const u8),
+        ("jit_array_push_i16", jit_array_push_i16 as *const u8),
+        ("jit_array_push_i32", jit_array_push_i32 as *const u8),
+        ("jit_array_push_i64", jit_array_push_i64 as *const u8),
+        ("jit_array_push_u8", jit_array_push_u8 as *const u8),
+        ("jit_array_push_u16", jit_array_push_u16 as *const u8),
+        ("jit_array_push_u32", jit_array_push_u32 as *const u8),
+        ("jit_array_push_u64", jit_array_push_u64 as *const u8),
         ("jit_array_push_float", jit_array_push_float as *const u8),
+        ("jit_array_push_f32", jit_array_push_f32 as *const u8),
         ("jit_array_push_str", jit_array_push_str as *const u8),
         ("jit_array_push_bool", jit_array_push_bool as *const u8),
+        ("jit_array_push_char", jit_array_push_char as *const u8),
         ("jit_array_push_null", jit_array_push_null as *const u8),
         ("jit_array_push_handle", jit_array_push_handle as *const u8),
         (

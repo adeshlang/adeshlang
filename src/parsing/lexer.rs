@@ -307,7 +307,14 @@ impl<'a> Lexer<'a> {
                     Ok(Some(self.make(TokenKind::Slash)))
                 }
             }
-            '%' => Ok(Some(self.make(TokenKind::Percent))),
+            '%' => {
+                let kind = if self.matchc(b'=') {
+                    TokenKind::PercentEqual
+                } else {
+                    TokenKind::Percent
+                };
+                Ok(Some(self.make(kind)))
+            }
             '!' => {
                 let kind = if self.matchc(b'=') {
                     if self.matchc(b'=') {
@@ -967,6 +974,7 @@ impl<'a> Lexer<'a> {
             "private" => TokenKind::Private,
             "protected" => TokenKind::Protected,
             "public" => TokenKind::Public,
+            "pub" => TokenKind::Public,
             "super" => TokenKind::Super,
             "on" => TokenKind::On,
             "for" => TokenKind::For,

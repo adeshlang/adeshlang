@@ -440,21 +440,30 @@ impl DynamicArray {
         if signed_needed {
             let min_v = min_signed.unwrap_or(0);
             let max_v = max_signed.unwrap_or(min_v);
-            // Default to at least i64 to prevent overflow on append/arithmetic
-            if min_v >= i64::MIN as i128 && max_v <= i64::MAX as i128 {
+            if min_v >= i8::MIN as i128 && max_v <= i8::MAX as i128 {
+                return ("i8".to_string(), ArrayElementType::Byte);
+            } else if min_v >= i16::MIN as i128 && max_v <= i16::MAX as i128 {
+                return ("i16".to_string(), ArrayElementType::Short);
+            } else if min_v >= i32::MIN as i128 && max_v <= i32::MAX as i128 {
+                return ("i32".to_string(), ArrayElementType::Word);
+            } else if min_v >= i64::MIN as i128 && max_v <= i64::MAX as i128 {
                 return ("i64".to_string(), ArrayElementType::Long);
+            } else {
+                return ("i128".to_string(), ArrayElementType::Extended);
             }
-            return ("i128".to_string(), ArrayElementType::Extended);
         } else {
             let max_u = max_unsigned.unwrap_or(0);
-            // Default to at least i64/u64 to prevent overflow on append/arithmetic
-            if max_u <= i64::MAX as u128 {
-                return ("i64".to_string(), ArrayElementType::Long);
-            }
-            if max_u <= u64::MAX as u128 {
+            if max_u <= u8::MAX as u128 {
+                return ("u8".to_string(), ArrayElementType::Byte);
+            } else if max_u <= u16::MAX as u128 {
+                return ("u16".to_string(), ArrayElementType::Short);
+            } else if max_u <= u32::MAX as u128 {
+                return ("u32".to_string(), ArrayElementType::Word);
+            } else if max_u <= u64::MAX as u128 {
                 return ("u64".to_string(), ArrayElementType::Long);
+            } else {
+                return ("u128".to_string(), ArrayElementType::Extended);
             }
-            return ("u128".to_string(), ArrayElementType::Extended);
         }
     }
 

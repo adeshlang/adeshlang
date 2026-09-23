@@ -164,6 +164,9 @@ impl ParsedArgs {
                 "--aot" | "--aot-native" => {
                     config.backend = ExecutionBackend::Aot;
                 }
+                "--wasm" => {
+                    config.backend = ExecutionBackend::Wasm;
+                }
                 #[cfg(debug_assertions)]
                 "--gpu" => {
                     config.backend = ExecutionBackend::Gpu;
@@ -728,6 +731,8 @@ Built with strong type inference, memory safety, and zero-cost abstractions
     {green}format{reset} <file>         Format source code (use {blue}--write{reset} to modify in place)
     {green}fmt{reset} <file>            Alias for format command
     {green}compile{reset} <in> <out>    Compile to bytecode
+    {green}compile-wasm{reset} <in> <out> Compile to WebAssembly (.wasm + .js loader) {yellow}⭐ NEW!{reset}
+    {green}compile-native{reset} <in> <out> Compile to native object/executable
     {green}compile-aot{reset} <in> <out> [options]  Compile to native executable (power-user)
     {green}disassemble{reset} <file>    Disassemble a bytecode file (use {blue}--write{reset} to save to file)
     {green}docs{reset} <in> <out>       Generate documentation
@@ -771,14 +776,14 @@ Built with strong type inference, memory safety, and zero-cost abstractions
     
     {dim}Examples:{reset}
       {green}adesh run --test{reset} tests/math_test.adesh
-            {green}adesh run --test{reset} tests/math_test.adesh test_add
-            {green}adesh run --test --test-name{reset} test_add tests/math_test.adesh
+      {green}adesh run --test{reset} tests/math_test.adesh test_add
+      {green}adesh run --test --test-name{reset} test_add tests/math_test.adesh
       {green}adesh run --test --fail-fast{reset} all_tests.adesh
-    {green}adesh run --test --quiet{reset} all_tests.adesh
-    {green}adesh run --test --nocapture{reset} all_tests.adesh
+      {green}adesh run --test --quiet{reset} all_tests.adesh
+      {green}adesh run --test --nocapture{reset} all_tests.adesh
       {green}adesh run --test --backend-check{reset} integration_tests.adesh
       {green}adesh run --test --format json{reset} tests.adesh {blue}>{reset} results.json
-            {green}test{reset} math {{ {green}test fn add(){{}}{reset} {green}test fn sub(){{}}{reset} }}
+      {green}test{reset} math {{ {green}test fn add(){{}}{reset} {green}test fn sub(){{}}{reset} }}
 
 {bold}TYPE SYSTEM:{reset}
     AdeshLang features a strong, Rust-inspired type system with:
@@ -805,6 +810,7 @@ Built with strong type inference, memory safety, and zero-cost abstractions
     {blue}--bytecode{reset}, {blue}--vm{reset}       Run using bytecode VM
     {blue}--adaptive{reset}, {blue}--ajit{reset}     Adaptive JIT with speculative optimization
     {blue}--tiered{reset}, {blue}--tjit{reset}       Tiered JIT compilation (T0->T1->T2)
+    {blue}--wasm{reset}                 WebAssembly VM execution backend (Wasmtime runtime) {yellow}⭐ NEW!{reset}
     {gpu_backend_line}
     
     {dim}PERFORMANCE COMPARISON (on compute-heavy workloads):{reset}
@@ -1078,6 +1084,10 @@ Built with strong type inference, memory safety, and zero-cost abstractions
     {green}adesh disassemble{reset} out.adeshbc              {dim}# Print disassembly to stdout{reset}
     {green}adesh disassemble{reset} out.adeshbc {blue}--write{reset}      {dim}# Save as out.adeshbc.bc.adesh{reset}
     {green}adesh disassemble{reset} out.adeshbc {blue}--write{reset} dis.adesh  {dim}# Save as dis.adesh{reset}
+    
+    {dim}# WebAssembly compilation{reset}
+    {green}adesh compile-wasm{reset} program.adesh app.wasm   {dim}# Compile to WebAssembly (.wasm + .js loader){reset}
+    {green}adesh run{reset} {blue}--wasm{reset} program.adesh              {dim}# Execute program using WASM runtime{reset}
     
     {dim}# Modern AOT compilation (recommended){reset}
     {green}adesh build{reset} program.adesh                    {dim}# Build with default optimization (-O1){reset}

@@ -31,6 +31,8 @@ pub(super) enum AotValueType {
     F64,
     // Array with element type and length
     Array(Box<AotValueType>, usize), // (element_type, length)
+    // Raw array with element type and length (zero metadata overhead)
+    RawArray(Box<AotValueType>, usize),
     // Set with element type and length
     Set(Box<AotValueType>, usize),
     // Tuple with element types
@@ -45,7 +47,7 @@ impl AotValueType {
         match self {
             AotValueType::Set(..) => "set",
             AotValueType::Tuple(..) => "tuple",
-            AotValueType::Array(..) => "array",
+            AotValueType::Array(..) | AotValueType::RawArray(..) => "array",
             AotValueType::U8 => "u8",
             AotValueType::I8 => "i8",
             AotValueType::U16 => "u16",

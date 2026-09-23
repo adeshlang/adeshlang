@@ -333,7 +333,25 @@ pub extern "C" fn aot_get_field(obj_handle: u64, field_handle: u64) -> u64 {
             let value = match field_name.as_str() {
                 "len" | "length" => RuntimeValue::Int(arr.len() as i64),
                 "capacity" => RuntimeValue::Int(arr.capacity() as i64),
-                "metadata_size" => RuntimeValue::Int(24),
+                "metadata_size" => {
+                    let first_elem_size = arr
+                        .first()
+                        .map(|v| match v {
+                            RuntimeValue::U8(_) | RuntimeValue::I8(_) | RuntimeValue::Bool(_) => 1,
+                            RuntimeValue::U16(_) | RuntimeValue::I16(_) => 2,
+                            RuntimeValue::U32(_)
+                            | RuntimeValue::I32(_)
+                            | RuntimeValue::F32(_)
+                            | RuntimeValue::Char(_) => 4,
+                            _ => 8,
+                        })
+                        .unwrap_or(8);
+                    if first_elem_size <= 4 {
+                        RuntimeValue::Int(16)
+                    } else {
+                        RuntimeValue::Int(24)
+                    }
+                }
                 _ => RuntimeValue::Null,
             };
             aot_store_value(value)

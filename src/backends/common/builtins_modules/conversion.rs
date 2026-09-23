@@ -429,7 +429,7 @@ pub(super) fn runtime_bool(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_type(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_type(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
         return RuntimeValue::String("undefined".to_string());
     }
@@ -495,7 +495,15 @@ pub(super) fn runtime_type(args: &[RuntimeValue]) -> RuntimeValue {
             return RuntimeValue::String(format!("[{};raw]", elem_type));
         }
         RuntimeValue::DynArray { concrete_type, .. } => {
-            return RuntimeValue::String(format!("[{}]", concrete_type));
+            let inner = if concrete_type.is_empty() {
+                "any"
+            } else {
+                concrete_type.as_str()
+            };
+            if inner.starts_with('[') && inner.ends_with(']') {
+                return RuntimeValue::String(inner.to_string());
+            }
+            return RuntimeValue::String(format!("[{}]", inner));
         }
         RuntimeValue::Object(obj) => {
             // Check if this is a class instance with __class__
@@ -529,7 +537,7 @@ pub(super) fn runtime_type(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_sizeof(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_sizeof(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
         return RuntimeValue::Int(0);
     }
@@ -539,7 +547,7 @@ pub(super) fn runtime_sizeof(args: &[RuntimeValue]) -> RuntimeValue {
 /// Helper function to calculate size of a RuntimeValue
 #[allow(dead_code)]
 #[allow(dead_code)]
-fn sizeof_value(value: &RuntimeValue) -> usize {
+pub(crate) fn sizeof_value(value: &RuntimeValue) -> usize {
     match value {
         RuntimeValue::Int(n) => {
             if *n >= 0 {
@@ -629,11 +637,33 @@ fn sizeof_value(value: &RuntimeValue) -> usize {
             let elements: usize = arr.iter().map(sizeof_value).sum();
             elements
         }
-        RuntimeValue::DynArray { data, .. } => {
-            // Dynamic arrays: 24 bytes base + metadata + elements
-            let base = 24;
-            let elements: usize = data.iter().map(sizeof_value).sum();
-            base + elements
+        RuntimeValue::DynArray {
+            data,
+            concrete_type,
+            element_type,
+            ..
+        } => {
+            let ty_str = if !concrete_type.is_empty() {
+                concrete_type.as_str()
+            } else {
+                element_type.as_str()
+            };
+            let elem_size = match ty_str {
+                "u8" | "i8" | "bool" | "byte" => 1,
+                "u16" | "i16" | "short" => 2,
+                "u32" | "i32" | "f32" | "word" => 4,
+                "u64" | "i64" | "f64" | "long" => 8,
+                "u128" | "i128" | "extended" => 16,
+                _ => {
+                    if data.is_empty() {
+                        8
+                    } else {
+                        sizeof_value(&data[0])
+                    }
+                }
+            };
+            let metadata = if elem_size <= 4 { 16 } else { 24 };
+            (data.len() * elem_size) + metadata
         }
         RuntimeValue::Object(obj) => {
             // Object: HashMap overhead + key/value sizes

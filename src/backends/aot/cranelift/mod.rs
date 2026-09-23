@@ -45,6 +45,8 @@ pub enum AotValueType {
     F64,
     // Array with element type and length
     Array(Box<AotValueType>, usize), // (element_type, length)
+    // Raw array with element type and length (zero metadata overhead)
+    RawArray(Box<AotValueType>, usize),
     // Set with element type and length
     Set(Box<AotValueType>, usize),
     // Tuple with element types
@@ -59,7 +61,7 @@ impl AotValueType {
         match self {
             AotValueType::Set(..) => "set",
             AotValueType::Tuple(..) => "tuple",
-            AotValueType::Array(..) => "array",
+            AotValueType::Array(..) | AotValueType::RawArray(..) => "array",
             AotValueType::U8 => "u8",
             AotValueType::I8 => "i8",
             AotValueType::U16 => "u16",
@@ -1239,6 +1241,18 @@ impl CraneliftAotCompiler {
             "[any]",
             "[pointer]",
             "[unknown]",
+            "[u8;raw]",
+            "[i8;raw]",
+            "[u16;raw]",
+            "[i16;raw]",
+            "[u32;raw]",
+            "[i32;raw]",
+            "[u64;raw]",
+            "[i64;raw]",
+            "[f32;raw]",
+            "[f64;raw]",
+            "[bool;raw]",
+            "[string;raw]",
             "[\"one\", \"two\", \"three\"]",
             "test.exe",
             "one",

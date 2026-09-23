@@ -10,6 +10,8 @@ use crate::parsing::hir::{ArrayKind, HirType};
 /// Convert HirType to a string representation for array type metadata
 fn hir_type_to_string(hir_type: &HirType) -> String {
     match hir_type {
+        HirType::Int => "i64".to_string(),
+        HirType::Float => "f64".to_string(),
         HirType::U8 => "u8".to_string(),
         HirType::U16 => "u16".to_string(),
         HirType::U32 => "u32".to_string(),
@@ -25,6 +27,7 @@ fn hir_type_to_string(hir_type: &HirType) -> String {
         HirType::Simd(elem, lanes) => format!("Simd<{}, {}>", hir_type_to_string(elem), lanes),
         HirType::String => "string".to_string(),
         HirType::Bool => "bool".to_string(),
+        HirType::Char => "char".to_string(),
         _ => "any".to_string(),
     }
 }
@@ -272,10 +275,38 @@ pub(super) fn apply_type_conversion(
         HirType::Array(_elem_type, kind) => {
             match kind {
                 ArrayKind::Raw => {
+                    let type_str = hir_type_to_string(_elem_type.as_ref());
+                    let type_val = func.alloc_value();
+                    func.push_to_block(
+                        _ctx.current_block,
+                        LirInst::ConstString(type_val, type_str),
+                    );
                     let result = func.alloc_value();
                     func.push_to_block(
                         _ctx.current_block,
-                        LirInst::CallBuiltin(result, "array_to_raw".to_string(), vec![val]),
+                        LirInst::CallBuiltin(
+                            result,
+                            "array_to_raw".to_string(),
+                            vec![val, type_val],
+                        ),
+                    );
+                    Ok(result)
+                }
+                ArrayKind::Dynamic => {
+                    let type_str = hir_type_to_string(_elem_type.as_ref());
+                    let type_val = func.alloc_value();
+                    func.push_to_block(
+                        _ctx.current_block,
+                        LirInst::ConstString(type_val, type_str),
+                    );
+                    let result = func.alloc_value();
+                    func.push_to_block(
+                        _ctx.current_block,
+                        LirInst::CallBuiltin(
+                            result,
+                            "array_to_dynamic".to_string(),
+                            vec![val, type_val],
+                        ),
                     );
                     Ok(result)
                 }

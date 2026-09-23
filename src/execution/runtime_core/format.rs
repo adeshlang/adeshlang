@@ -13,7 +13,13 @@ fn fmt_with_depth_inner(v: &Value, max_depth: usize, depth: usize) -> String {
 
     match v {
         Value::Ref(inner, _) => fmt_with_depth_inner(inner, max_depth, depth),
-        Value::Str(s) => s.clone(),
+        Value::Str(s) => {
+            if depth > 0 {
+                format!("\"{}\"", s)
+            } else {
+                s.clone()
+            }
+        }
         Value::Char(c) => c.to_string(),
         Value::Error(le) => le.message.clone(),
         Value::Number(n) => format!("{}", n),
@@ -21,6 +27,33 @@ fn fmt_with_depth_inner(v: &Value, max_depth: usize, depth: usize) -> String {
         Value::Bool(b) => format!("{}", b),
         Value::Null => "null".to_string(),
         Value::Array(a) => {
+            if a.is_empty() {
+                "[]".to_string()
+            } else if depth + 1 >= max_depth {
+                "[<...>]".to_string()
+            } else {
+                let items: Vec<String> = a
+                    .iter()
+                    .map(|v| fmt_with_depth_inner(v, max_depth, depth + 1))
+                    .collect();
+                format!("[{}]", items.join(", "))
+            }
+        }
+        Value::DynArray(da) => {
+            if da.data.is_empty() {
+                "[]".to_string()
+            } else if depth + 1 >= max_depth {
+                "[<...>]".to_string()
+            } else {
+                let items: Vec<String> = da
+                    .data
+                    .iter()
+                    .map(|v| fmt_with_depth_inner(v, max_depth, depth + 1))
+                    .collect();
+                format!("[{}]", items.join(", "))
+            }
+        }
+        Value::RawArray(_, a) => {
             if a.is_empty() {
                 "[]".to_string()
             } else if depth + 1 >= max_depth {

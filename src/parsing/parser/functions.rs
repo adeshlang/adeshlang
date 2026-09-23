@@ -15,6 +15,7 @@ impl Parser {
         is_async: bool,
         is_unsafe: bool,
     ) -> Result<Stmt, LangError> {
+        let start_span = self.previous_span();
         let name = if self.matchk(&[TokenKind::New]) {
             "new".to_string()
         } else {
@@ -132,7 +133,7 @@ impl Parser {
         func.is_unsafe = final_is_unsafe;
         Ok(Stmt {
             kind: StmtKind::Function(func, exp),
-            span: self.previous_span(),
+            span: start_span,
         })
     }
     pub(super) fn decorator_decl(&mut self, exp: bool) -> Result<Stmt, LangError> {

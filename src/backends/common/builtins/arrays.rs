@@ -167,16 +167,45 @@ pub(crate) fn runtime_metadata_size(args: &[RuntimeValue]) -> RuntimeValue {
         return RuntimeValue::Int(0);
     }
     match &args[0] {
-        RuntimeValue::Array(_) => RuntimeValue::Int(24),
+        RuntimeValue::Array(arr) => {
+            let first_elem_size = arr
+                .first()
+                .map(|v| match v {
+                    RuntimeValue::U8(_) | RuntimeValue::I8(_) | RuntimeValue::Bool(_) => 1,
+                    RuntimeValue::U16(_) | RuntimeValue::I16(_) => 2,
+                    RuntimeValue::U32(_)
+                    | RuntimeValue::I32(_)
+                    | RuntimeValue::F32(_)
+                    | RuntimeValue::Char(_) => 4,
+                    _ => 8,
+                })
+                .unwrap_or(8);
+            if first_elem_size <= 4 {
+                RuntimeValue::Int(16)
+            } else {
+                RuntimeValue::Int(24)
+            }
+        }
         RuntimeValue::RawArray(_, _) => RuntimeValue::Int(0),
-        RuntimeValue::DynArray { element_type, .. } => {
-            let metadata = if element_type.starts_with("u8")
-                || element_type.starts_with("i8")
-                || element_type.starts_with("u16")
-                || element_type.starts_with("i16")
-                || element_type.starts_with("u32")
-                || element_type.starts_with("i32")
-                || element_type.starts_with("f32")
+        RuntimeValue::DynArray {
+            element_type,
+            concrete_type,
+            ..
+        } => {
+            let ty_str = if !concrete_type.is_empty() {
+                concrete_type.as_str()
+            } else {
+                element_type.as_str()
+            };
+            let metadata = if ty_str.starts_with("u8")
+                || ty_str.starts_with("i8")
+                || ty_str.starts_with("u16")
+                || ty_str.starts_with("i16")
+                || ty_str.starts_with("u32")
+                || ty_str.starts_with("i32")
+                || ty_str.starts_with("f32")
+                || ty_str.starts_with("bool")
+                || ty_str.starts_with("char")
             {
                 16
             } else {
@@ -498,6 +527,45 @@ pub(crate) fn runtime_clear(args: &[RuntimeValue]) -> RuntimeValue {
     }
 }
 
+#[inline]
+pub(crate) fn coerce_to_typed_val(val: RuntimeValue, ty_str: &str) -> RuntimeValue {
+    let clean_ty = ty_str
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .split(';')
+        .next()
+        .unwrap_or(ty_str)
+        .trim();
+    let int_opt = match val {
+        RuntimeValue::Int(n) => Some(n),
+        RuntimeValue::U8(n) => Some(n as i64),
+        RuntimeValue::U16(n) => Some(n as i64),
+        RuntimeValue::U32(n) => Some(n as i64),
+        RuntimeValue::U64(n) => Some(n as i64),
+        RuntimeValue::I8(n) => Some(n as i64),
+        RuntimeValue::I16(n) => Some(n as i64),
+        RuntimeValue::I32(n) => Some(n as i64),
+        RuntimeValue::I64(n) => Some(n),
+        _ => None,
+    };
+    if let Some(n) = int_opt {
+        match clean_ty {
+            "u8" => RuntimeValue::U8(n as u8),
+            "u16" => RuntimeValue::U16(n as u16),
+            "u32" => RuntimeValue::U32(n as u32),
+            "u64" => RuntimeValue::U64(n as u64),
+            "i8" => RuntimeValue::I8(n as i8),
+            "i16" => RuntimeValue::I16(n as i16),
+            "i32" => RuntimeValue::I32(n as i32),
+            "i64" => RuntimeValue::I64(n),
+            _ => RuntimeValue::Int(n),
+        }
+    } else {
+        val
+    }
+}
+
 // ============================================================================
 // Array Element Access
 // ============================================================================
@@ -509,8 +577,24 @@ pub(crate) fn runtime_first(args: &[RuntimeValue]) -> RuntimeValue {
     }
     match &args[0] {
         RuntimeValue::Array(arr) => arr.first().cloned().unwrap_or(RuntimeValue::Null),
-        RuntimeValue::RawArray(_, arr) => arr.first().cloned().unwrap_or(RuntimeValue::Null),
-        RuntimeValue::DynArray { data, .. } => data.first().cloned().unwrap_or(RuntimeValue::Null),
+        RuntimeValue::RawArray(elem_ty, arr) => {
+            let elem = arr.first().cloned().unwrap_or(RuntimeValue::Null);
+            coerce_to_typed_val(elem, elem_ty.as_str())
+        }
+        RuntimeValue::DynArray {
+            data,
+            concrete_type,
+            element_type,
+            ..
+        } => {
+            let elem = data.first().cloned().unwrap_or(RuntimeValue::Null);
+            let ty_str = if !concrete_type.is_empty() {
+                concrete_type.as_str()
+            } else {
+                element_type.as_str()
+            };
+            coerce_to_typed_val(elem, ty_str)
+        }
         RuntimeValue::Tuple(t) => t.first().cloned().unwrap_or(RuntimeValue::Null),
         RuntimeValue::String(s) => s
             .chars()
@@ -528,8 +612,24 @@ pub(crate) fn runtime_last(args: &[RuntimeValue]) -> RuntimeValue {
     }
     match &args[0] {
         RuntimeValue::Array(arr) => arr.last().cloned().unwrap_or(RuntimeValue::Null),
-        RuntimeValue::RawArray(_, arr) => arr.last().cloned().unwrap_or(RuntimeValue::Null),
-        RuntimeValue::DynArray { data, .. } => data.last().cloned().unwrap_or(RuntimeValue::Null),
+        RuntimeValue::RawArray(elem_ty, arr) => {
+            let elem = arr.last().cloned().unwrap_or(RuntimeValue::Null);
+            coerce_to_typed_val(elem, elem_ty.as_str())
+        }
+        RuntimeValue::DynArray {
+            data,
+            concrete_type,
+            element_type,
+            ..
+        } => {
+            let elem = data.last().cloned().unwrap_or(RuntimeValue::Null);
+            let ty_str = if !concrete_type.is_empty() {
+                concrete_type.as_str()
+            } else {
+                element_type.as_str()
+            };
+            coerce_to_typed_val(elem, ty_str)
+        }
         RuntimeValue::Tuple(t) => t.last().cloned().unwrap_or(RuntimeValue::Null),
         RuntimeValue::String(s) => s
             .chars()
@@ -551,14 +651,30 @@ pub(crate) fn runtime_get_index(args: &[RuntimeValue]) -> RuntimeValue {
             .and_then(|i| arr.get(i))
             .cloned()
             .unwrap_or(RuntimeValue::Null),
-        RuntimeValue::RawArray(_, arr) => resolve_idx(index_raw, arr.len())
-            .and_then(|i| arr.get(i))
-            .cloned()
-            .unwrap_or(RuntimeValue::Null),
-        RuntimeValue::DynArray { data, .. } => resolve_idx(index_raw, data.len())
-            .and_then(|i| data.get(i))
-            .cloned()
-            .unwrap_or(RuntimeValue::Null),
+        RuntimeValue::RawArray(elem_ty, arr) => {
+            let elem = resolve_idx(index_raw, arr.len())
+                .and_then(|i| arr.get(i))
+                .cloned()
+                .unwrap_or(RuntimeValue::Null);
+            coerce_to_typed_val(elem, elem_ty.as_str())
+        }
+        RuntimeValue::DynArray {
+            data,
+            concrete_type,
+            element_type,
+            ..
+        } => {
+            let elem = resolve_idx(index_raw, data.len())
+                .and_then(|i| data.get(i))
+                .cloned()
+                .unwrap_or(RuntimeValue::Null);
+            let ty_str = if !concrete_type.is_empty() {
+                concrete_type.as_str()
+            } else {
+                element_type.as_str()
+            };
+            coerce_to_typed_val(elem, ty_str)
+        }
         RuntimeValue::Tuple(tup) => resolve_idx(index_raw, tup.len())
             .and_then(|i| tup.get(i))
             .cloned()
@@ -1244,59 +1360,94 @@ pub(crate) fn runtime_spread(args: &[RuntimeValue]) -> RuntimeValue {
 // ============================================================================
 
 /// Infer the element type and concrete type for an array
-pub(super) fn infer_array_type(data: &[RuntimeValue]) -> (String, String) {
+pub(crate) fn infer_array_type(data: &[RuntimeValue]) -> (String, String) {
     if data.is_empty() {
         return ("any".to_string(), "any".to_string());
     }
 
-    let first_type = match &data[0] {
-        RuntimeValue::U8(_) => "u8",
-        RuntimeValue::U16(_) => "u16",
-        RuntimeValue::U32(_) => "u32",
-        RuntimeValue::U64(_) => "u64",
-        RuntimeValue::U128(_) => "u128",
-        RuntimeValue::I8(_) => "i8",
-        RuntimeValue::I16(_) => "i16",
-        RuntimeValue::I32(_) => "i32",
-        RuntimeValue::I64(_) => "i64",
-        RuntimeValue::I128(_) => "i128",
-        RuntimeValue::F32(_) => "f32",
-        RuntimeValue::F64(_) => "f64",
-        RuntimeValue::Int(_) => "number",
-        RuntimeValue::Float(_) => "number",
-        RuntimeValue::Bool(_) => "bool",
-        RuntimeValue::String(_) => "string",
-        _ => "any",
-    };
-
-    let all_same = data.iter().all(|v| {
-        let v_type = match v {
-            RuntimeValue::U8(_) => "u8",
-            RuntimeValue::U16(_) => "u16",
-            RuntimeValue::U32(_) => "u32",
-            RuntimeValue::U64(_) => "u64",
-            RuntimeValue::U128(_) => "u128",
-            RuntimeValue::I8(_) => "i8",
-            RuntimeValue::I16(_) => "i16",
-            RuntimeValue::I32(_) => "i32",
-            RuntimeValue::I64(_) => "i64",
-            RuntimeValue::I128(_) => "i128",
-            RuntimeValue::F32(_) => "f32",
-            RuntimeValue::F64(_) => "f64",
-            RuntimeValue::Int(_) => "number",
-            RuntimeValue::Float(_) => "number",
-            RuntimeValue::Bool(_) => "bool",
-            RuntimeValue::String(_) => "string",
-            _ => "any",
-        };
-        v_type == first_type
+    // Check if all elements are integers (either Int or typed integer variants)
+    let all_ints = data.iter().all(|v| match v {
+        RuntimeValue::Int(_)
+        | RuntimeValue::U8(_)
+        | RuntimeValue::U16(_)
+        | RuntimeValue::U32(_)
+        | RuntimeValue::U64(_)
+        | RuntimeValue::I8(_)
+        | RuntimeValue::I16(_)
+        | RuntimeValue::I32(_)
+        | RuntimeValue::I64(_) => true,
+        _ => false,
     });
 
-    if all_same {
-        (first_type.to_string(), first_type.to_string())
-    } else {
-        ("any".to_string(), "number".to_string())
+    if all_ints {
+        let int_vals: Vec<i64> = data
+            .iter()
+            .map(|v| match v {
+                RuntimeValue::Int(n) => *n,
+                RuntimeValue::U8(n) => *n as i64,
+                RuntimeValue::U16(n) => *n as i64,
+                RuntimeValue::U32(n) => *n as i64,
+                RuntimeValue::U64(n) => *n as i64,
+                RuntimeValue::I8(n) => *n as i64,
+                RuntimeValue::I16(n) => *n as i64,
+                RuntimeValue::I32(n) => *n as i64,
+                RuntimeValue::I64(n) => *n,
+                _ => 0,
+            })
+            .collect();
+
+        let min = *int_vals.iter().min().unwrap_or(&0);
+        let max = *int_vals.iter().max().unwrap_or(&0);
+
+        let concrete = if min >= 0 {
+            if max <= u8::MAX as i64 {
+                "u8"
+            } else if max <= u16::MAX as i64 {
+                "u16"
+            } else if max <= u32::MAX as i64 {
+                "u32"
+            } else {
+                "u64"
+            }
+        } else if min >= i8::MIN as i64 && max <= i8::MAX as i64 {
+            "i8"
+        } else if min >= i16::MIN as i64 && max <= i16::MAX as i64 {
+            "i16"
+        } else if min >= i32::MIN as i64 && max <= i32::MAX as i64 {
+            "i32"
+        } else {
+            "i64"
+        };
+
+        return (concrete.to_string(), concrete.to_string());
     }
+
+    // Check if all elements are floats
+    if data.iter().all(|v| {
+        matches!(
+            v,
+            RuntimeValue::Float(_) | RuntimeValue::F64(_) | RuntimeValue::F32(_)
+        )
+    }) {
+        return ("f64".to_string(), "f64".to_string());
+    }
+
+    // Check if all elements are booleans
+    if data.iter().all(|v| matches!(v, RuntimeValue::Bool(_))) {
+        return ("bool".to_string(), "bool".to_string());
+    }
+
+    // Check if all elements are strings
+    if data.iter().all(|v| matches!(v, RuntimeValue::String(_))) {
+        return ("string".to_string(), "string".to_string());
+    }
+
+    // Check if all elements are chars
+    if data.iter().all(|v| matches!(v, RuntimeValue::Char(_))) {
+        return ("char".to_string(), "char".to_string());
+    }
+
+    ("any".to_string(), "any".to_string())
 }
 
 /// Compare two runtime values for equality

@@ -94,6 +94,14 @@ pub(crate) struct CachedToolchain {
 static TOOLCHAIN_CACHE: std::sync::OnceLock<CachedToolchain> = std::sync::OnceLock::new();
 
 fn get_cached_toolchain_file() -> std::path::PathBuf {
+    if let Ok(home) = std::env::var("ADESH_HOME").or_else(|_| std::env::var("ADESHLANG_HOME")) {
+        return std::path::PathBuf::from(home).join(".toolchain_cache.json");
+    }
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        return std::path::PathBuf::from(local_app_data)
+            .join("AdeshLang")
+            .join("toolchain_cache.json");
+    }
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     cwd.join(".adesh_cache").join("toolchain.json")
 }
@@ -1100,18 +1108,26 @@ fn get_target_prefix(target_triple: &Triple) -> Result<String, String> {
     }
 }
 
-/// Dynamically find all active Windows system drive roots (e.g., C:\, D:\, E:\)
+/// Dynamically find active Windows system drive roots (e.g., C:\, current drive)
 fn get_system_drive_roots() -> Vec<std::path::PathBuf> {
     let mut roots = Vec::new();
     if let Ok(sys_drive) = std::env::var("SystemDrive") {
         let trimmed = sys_drive.trim_end_matches('\\');
         roots.push(std::path::PathBuf::from(format!("{}\\", trimmed)));
     }
-    for letter in b'A'..=b'Z' {
-        let drive = format!("{}:\\", letter as char);
-        let p = std::path::PathBuf::from(&drive);
-        if p.exists() && !roots.contains(&p) {
-            roots.push(p);
+    let c_drive = std::path::PathBuf::from("C:\\");
+    if !roots.contains(&c_drive) && c_drive.exists() {
+        roots.push(c_drive);
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(prefix) = cwd.components().next() {
+            let p = std::path::PathBuf::from(format!(
+                "{}\\",
+                prefix.as_os_str().to_string_lossy().trim_end_matches('\\')
+            ));
+            if !roots.contains(&p) && p.exists() {
+                roots.push(p);
+            }
         }
     }
     roots

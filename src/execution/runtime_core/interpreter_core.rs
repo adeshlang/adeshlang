@@ -3507,7 +3507,7 @@ impl Interpreter {
                 Value::RawArray(elem_type, _) => {
                     return Ok(Value::Str(format!("[{};raw]", elem_type)));
                 }
-                Value::DynArray(da) => return Ok(Value::Str(format!("[{:?}]", da.element_type))),
+                Value::DynArray(da) => return Ok(Value::Str(format!("[{}]", da.concrete_type))),
                 Value::Tuple(_) => "tuple",
                 Value::Set(_) => "set",
                 Value::Object(_) => "object",

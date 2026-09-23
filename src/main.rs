@@ -18,6 +18,9 @@ use adeshlang::execution::runtime::Interpreter;
  *  - adesh editor [file|dir]
  *  - adesh init <dir>
  *  - adesh compile <in.adesh> <out.bin>
+ *  - adesh compile-wasm <in.adesh> <out.wasm>
+ *  - adesh compile-native <in.adesh> <out.exe>
+ *  - adesh compile-aot <in.adesh> <out.exe>
  *  - adesh disassemble <out.bin> [--write [file]]
  *  - adesh docs <in.adesh> <out_dir>
  *  - adesh ai <subcommand>
@@ -29,6 +32,7 @@ use adeshlang::execution::runtime::Interpreter;
  *  - --jit-native / --native-jit / --njit: Native JIT (10-232x faster!) ⭐ NEW!
  *  - --adaptive-jit: Adaptive JIT shell
  *  - --tiered-jit: Tiered JIT shell
+ *  - --wasm: WebAssembly backend (Wasmtime runtime) ⭐ NEW!
  *  - --mixed: Hybrid (JIT with interpreter fallback)
  *  - --safe: Safe mode (no JIT)
  *
@@ -490,7 +494,13 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             }
             let in_path = PathBuf::from(parsed.input_file.unwrap());
             let out_path = PathBuf::from(parsed.output_file.unwrap());
-            let src = fs::read_to_string(&in_path).expect("failed to read file");
+            let src = match fs::read_to_string(&in_path) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Error reading {}: {}", in_path.display(), e);
+                    std::process::exit(1);
+                }
+            };
             let body = cli_impl::strip_compile_directive(&src);
             // Run type checker and abort on errors
             if let Err(e) = adeshlang::types::type_system::check_module_in(
@@ -524,7 +534,13 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             }
             let in_path = PathBuf::from(parsed.input_file.unwrap());
             let out_path = PathBuf::from(parsed.output_file.unwrap());
-            let src = fs::read_to_string(&in_path).expect("failed to read file");
+            let src = match fs::read_to_string(&in_path) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Error reading {}: {}", in_path.display(), e);
+                    std::process::exit(1);
+                }
+            };
             let body = cli_impl::strip_compile_directive(&src);
             if let Err(e) = adeshlang::types::type_system::check_module_in(
                 &body,
@@ -562,7 +578,13 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             }
             let in_path = PathBuf::from(parsed.input_file.unwrap());
             let out_path = PathBuf::from(parsed.output_file.unwrap());
-            let src = fs::read_to_string(&in_path).expect("failed to read file");
+            let src = match fs::read_to_string(&in_path) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Error reading {}: {}", in_path.display(), e);
+                    std::process::exit(1);
+                }
+            };
             if let Err(e) = adeshlang::types::type_system::check_module_in(
                 &src,
                 Some(&in_path.to_string_lossy()),
@@ -595,7 +617,13 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             }
             let in_path = PathBuf::from(parsed.input_file.unwrap());
             let out_path = PathBuf::from(parsed.output_file.unwrap());
-            let src = fs::read_to_string(&in_path).expect("failed to read file");
+            let src = match fs::read_to_string(&in_path) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Error reading {}: {}", in_path.display(), e);
+                    std::process::exit(1);
+                }
+            };
 
             if let Err(e) = adeshlang::types::type_system::check_module_in(
                 &src,
@@ -961,7 +989,9 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                 Ok(formatted) => {
                     if check_only {
                         // Check mode: exit 0 if already formatted, 1 otherwise
-                        if src == formatted {
+                        let src_norm = src.replace("\r\n", "\n");
+                        let fmt_norm = formatted.replace("\r\n", "\n");
+                        if src_norm == fmt_norm {
                             println!("✓ {} is already formatted", path.display());
                             std::process::exit(0);
                         } else {

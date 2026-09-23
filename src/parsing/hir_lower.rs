@@ -998,7 +998,13 @@ fn token_to_unaryop(tok: &TokenKind) -> Result<UnaryOp, String> {
 }
 
 fn type_from_annotation(ann: &str) -> HirType {
-    let ann = ann.trim();
+    let mut ann = ann.trim();
+    if let Some(stripped) = ann.strip_suffix("readonly") {
+        ann = stripped.trim();
+    }
+    if let Some(stripped) = ann.strip_prefix("readonly") {
+        ann = stripped.trim();
+    }
     let ann_lower = ann.to_ascii_lowercase();
 
     match ann_lower.as_str() {
