@@ -8,6 +8,7 @@ pub mod constant_propagation;
 pub mod cse;
 pub mod dead_code;
 pub mod inlining;
+pub mod loop_opt;
 
 use crate::ir::vir::VirModule;
 
@@ -80,6 +81,7 @@ impl OptimizationPipeline {
         // Register passes in order
         pipeline.add_pass(Box::new(constant_folding::ConstantFolding::new()));
         pipeline.add_pass(Box::new(constant_propagation::ConstantPropagation::new()));
+        pipeline.add_pass(Box::new(loop_opt::LoopOptimization::new()));
         pipeline.add_pass(Box::new(cse::CommonSubexpressionElimination::new()));
         pipeline.add_pass(Box::new(dead_code::DeadCodeElimination::new()));
 

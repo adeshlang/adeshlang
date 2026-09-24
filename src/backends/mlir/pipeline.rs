@@ -197,7 +197,9 @@ impl MlirPipeline {
         let mut cmd = Command::new(&self.toolchain.mlir_opt);
         cmd.arg(input)
             .arg("--gpu-kernel-outlining")
+            .arg("--loop-invariant-code-motion")
             .arg("--canonicalize")
+            .arg("--cse")
             .arg("-o")
             .arg(output)
             .stdout(Stdio::piped())
@@ -230,6 +232,10 @@ impl MlirPipeline {
     pub fn run_llvm_lowering(&self, input: &Path, output: &Path) -> BackendResult<PipelineResult> {
         let mut cmd = Command::new(&self.toolchain.mlir_opt);
         cmd.arg(input)
+            .arg("--loop-invariant-code-motion")
+            .arg("--canonicalize")
+            .arg("--cse")
+            .arg("--sccp")
             .arg("--convert-func-to-llvm")
             .arg("--reconcile-unrealized-casts")
             .arg("-o")
@@ -305,6 +311,10 @@ impl MlirPipeline {
     ) -> BackendResult<PipelineResult> {
         let mut cmd = Command::new(&self.toolchain.llc);
         cmd.arg(input)
+            .arg("-O3")
+            .arg("-march=native")
+            .arg("-tailcallopt")
+            .arg("-fp-contract=fast")
             .arg("-o")
             .arg(output)
             .arg("-filetype=asm")
@@ -338,6 +348,13 @@ impl MlirPipeline {
     pub fn link_executable(&self, input: &Path, output: &Path) -> BackendResult<PipelineResult> {
         let mut cmd = Command::new(&self.toolchain.clang);
         cmd.arg(input)
+            .arg("-O3")
+            .arg("-march=native")
+            .arg("-flto=thin")
+            .arg("-fvectorize")
+            .arg("-fslp-vectorize")
+            .arg("-ffast-math")
+            .arg("-funroll-loops")
             .arg("-o")
             .arg(output)
             .stdout(Stdio::piped())

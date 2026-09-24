@@ -1,0 +1,15 @@
+// High-scale loop iteration stress test
+print("Testing 100,000,000 iteration closed-form sum...");
+let total = 0.0;
+for (i in 1.0..100000001.0) {
+    total = total + i;
+}
+print("Total sum (1..100M):", total);
+
+print("Testing 50,000,000 accumulator addition...");
+let acc = 0.0;
+for (i in 1.0..50000001.0) {
+    acc = acc + 3.0;
+}
+print("Accumulator (50M * 3):", acc);
+print("All large loop benchmarks completed successfully!");

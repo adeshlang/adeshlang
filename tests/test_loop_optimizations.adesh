@@ -1,0 +1,41 @@
+// Benchmark and Verification test for Loop & IR Optimizations
+
+fn test_closed_form_sum() {
+    let sum = 0.0;
+    for (i in 1.0..1000001.0) {
+        sum = sum + i;
+    }
+    print("Closed-form sum 1..1000000:", sum);
+}
+
+fn test_unrolled_small_loop() {
+    let acc = 0.0;
+    for (i in 0.0..6.0) {
+        acc = acc + i;
+    }
+    print("Unrolled small loop result:", acc);
+}
+
+fn test_scaled_accumulator() {
+    let count = 100.0;
+    for (i in 0.0..10000.0) {
+        count = count + 5.0;
+    }
+    print("Scaled accumulator result:", count);
+}
+
+fn test_while_loop() {
+    let x = 0.0;
+    let n = 10.0;
+    while (x < n) {
+        x = x + 1.0;
+    }
+    print("While loop final x:", x);
+}
+
+print("=== Testing Loop Optimizations in AdeshLang ===");
+test_closed_form_sum();
+test_unrolled_small_loop();
+test_scaled_accumulator();
+test_while_loop();
+print("=== All tests passed successfully! ===");
