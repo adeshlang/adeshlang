@@ -163,7 +163,9 @@ pub(crate) fn runtime_get_field(args: &[RuntimeValue]) -> RuntimeValue {
         RuntimeValue::Array(arr) => match key.as_str() {
             "len" | "length" => RuntimeValue::Int(arr.len() as i64),
             "capacity" => RuntimeValue::Int(arr.capacity() as i64),
-            "metadata_size" => RuntimeValue::Int(24),
+            "metadata_size" => {
+                super::arrays::runtime_metadata_size(&[RuntimeValue::Array(arr.clone())])
+            }
             _ => RuntimeValue::Null,
         },
         RuntimeValue::DynArray {
@@ -177,13 +179,16 @@ pub(crate) fn runtime_get_field(args: &[RuntimeValue]) -> RuntimeValue {
                 RuntimeValue::Int(tracked_capacity.unwrap_or_else(|| data.capacity()) as i64)
             }
             "metadata_size" => {
-                let metadata = if element_type.starts_with("u8")
-                    || element_type.starts_with("i8")
-                    || element_type.starts_with("u16")
-                    || element_type.starts_with("i16")
-                    || element_type.starts_with("u32")
-                    || element_type.starts_with("i32")
-                    || element_type.starts_with("f32")
+                let elem_clean = element_type.trim_start_matches('[').trim_end_matches(']');
+                let metadata = if elem_clean.starts_with("u8")
+                    || elem_clean.starts_with("i8")
+                    || elem_clean.starts_with("u16")
+                    || elem_clean.starts_with("i16")
+                    || elem_clean.starts_with("u32")
+                    || elem_clean.starts_with("i32")
+                    || elem_clean.starts_with("f32")
+                    || elem_clean.starts_with("bool")
+                    || elem_clean.starts_with("char")
                 {
                     16
                 } else {

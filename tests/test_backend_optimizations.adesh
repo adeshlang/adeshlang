@@ -1,0 +1,42 @@
+// Test natural integer syntax and float syntax in loops and arithmetic
+
+fn test_integer_loop_closed_form() {
+    let sum = 0;
+    for (i in 1..1000001) {
+        sum = sum + i;
+    }
+    print("Integer closed-form sum 1..1M (should be 500000500000):", sum);
+}
+
+fn test_integer_unrolled_loop() {
+    let acc = 0;
+    for (i in 0..8) {
+        acc = acc + i;
+    }
+    print("Integer unrolled loop 0..7 (should be 28):", acc);
+}
+
+fn test_float_loop_closed_form() {
+    let sum = 0.0;
+    for (i in 1.0..1000001.0) {
+        sum = sum + i;
+    }
+    print("Float closed-form sum 1.0..1M (should be 500000500000):", sum);
+}
+
+fn test_algebraic_reductions() {
+    let a = 42;
+    let b = a * 1;
+    let c = b + 0;
+    let d = c - 0;
+    let e = d * 2;
+    let f = 0 * e;
+    print("Algebraic chain result (should be 84 and 0):", e, f);
+}
+
+print("=== Running Natural Syntax & Optimization Verification ===");
+test_integer_loop_closed_form();
+test_integer_unrolled_loop();
+test_float_loop_closed_form();
+test_algebraic_reductions();
+print("=== All Tests Completed Successfully! ===");

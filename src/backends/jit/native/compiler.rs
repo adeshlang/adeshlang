@@ -1523,13 +1523,103 @@ impl NativeJitCompiler {
                                         current_handle,
                                         val,
                                     )?,
-                                    AotValueType::F64 | AotValueType::F32 | AotValueType::Float => {
+                                    AotValueType::U8 => {
+                                        let extended = Self::to_i64_unsigned(builder, val);
+                                        Self::call_runtime_fn_2(
+                                            builder,
+                                            module,
+                                            "jit_tuple_push_u8",
+                                            current_handle,
+                                            extended,
+                                        )?
+                                    }
+                                    AotValueType::U16 => {
+                                        let extended = Self::to_i64_unsigned(builder, val);
+                                        Self::call_runtime_fn_2(
+                                            builder,
+                                            module,
+                                            "jit_tuple_push_u16",
+                                            current_handle,
+                                            extended,
+                                        )?
+                                    }
+                                    AotValueType::U32 => {
+                                        let extended = Self::to_i64_unsigned(builder, val);
+                                        Self::call_runtime_fn_2(
+                                            builder,
+                                            module,
+                                            "jit_tuple_push_u32",
+                                            current_handle,
+                                            extended,
+                                        )?
+                                    }
+                                    AotValueType::U64 => Self::call_runtime_fn_2(
+                                        builder,
+                                        module,
+                                        "jit_tuple_push_u64",
+                                        current_handle,
+                                        val,
+                                    )?,
+                                    AotValueType::I8 => {
+                                        let extended = Self::to_i64_signed(builder, val);
+                                        Self::call_runtime_fn_2(
+                                            builder,
+                                            module,
+                                            "jit_tuple_push_i8",
+                                            current_handle,
+                                            extended,
+                                        )?
+                                    }
+                                    AotValueType::I16 => {
+                                        let extended = Self::to_i64_signed(builder, val);
+                                        Self::call_runtime_fn_2(
+                                            builder,
+                                            module,
+                                            "jit_tuple_push_i16",
+                                            current_handle,
+                                            extended,
+                                        )?
+                                    }
+                                    AotValueType::I32 => {
+                                        let extended = Self::to_i64_signed(builder, val);
+                                        Self::call_runtime_fn_2(
+                                            builder,
+                                            module,
+                                            "jit_tuple_push_i32",
+                                            current_handle,
+                                            extended,
+                                        )?
+                                    }
+                                    AotValueType::I64 => Self::call_runtime_fn_2(
+                                        builder,
+                                        module,
+                                        "jit_tuple_push_i64",
+                                        current_handle,
+                                        val,
+                                    )?,
+                                    AotValueType::F32 => {
+                                        let f32_val =
+                                            if builder.func.dfg.value_type(val) == types::F64 {
+                                                builder.ins().fdemote(types::F32, val)
+                                            } else {
+                                                val
+                                            };
+                                        Self::call_runtime_fn_2_f32(
+                                            builder,
+                                            module,
+                                            "jit_tuple_push_f32",
+                                            current_handle,
+                                            f32_val,
+                                        )?
+                                    }
+                                    AotValueType::F64 | AotValueType::Float => {
+                                        let f64_val = Self::to_f64(builder, val);
                                         Self::call_runtime_fn_2_f64(
                                             builder,
                                             module,
                                             "jit_tuple_push_float",
                                             current_handle,
-                                            val,
+                                            f64_val,
                                         )?
                                     }
                                     AotValueType::Bool => {
@@ -2756,15 +2846,25 @@ impl NativeJitCompiler {
                         value_map.insert(*dst, handle);
                         value_types.insert(*dst, AotValueType::Handle);
                     }
+                    "len" | "length" => {
+                        let arr = args
+                            .get(0)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let res = Self::call_runtime_fn_1(builder, module, "jit_len", arr)?;
+                        value_map.insert(*dst, res);
+                        value_types.insert(*dst, AotValueType::Int);
+                    }
                     "capacity" => {
                         let arr = args
                             .get(0)
                             .and_then(|id| value_map.get(id))
                             .copied()
                             .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-                        let handle = Self::call_runtime_fn_1(builder, module, "jit_capacity", arr)?;
-                        value_map.insert(*dst, handle);
-                        value_types.insert(*dst, AotValueType::Handle);
+                        let res = Self::call_runtime_fn_1(builder, module, "jit_capacity", arr)?;
+                        value_map.insert(*dst, res);
+                        value_types.insert(*dst, AotValueType::Int);
                     }
                     "metadata_size" => {
                         let arr = args
@@ -2772,10 +2872,10 @@ impl NativeJitCompiler {
                             .and_then(|id| value_map.get(id))
                             .copied()
                             .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-                        let handle =
+                        let res =
                             Self::call_runtime_fn_1(builder, module, "jit_metadata_size", arr)?;
-                        value_map.insert(*dst, handle);
-                        value_types.insert(*dst, AotValueType::Handle);
+                        value_map.insert(*dst, res);
+                        value_types.insert(*dst, AotValueType::Int);
                     }
                     "push" | "append" => {
                         let arr = args
@@ -4201,6 +4301,31 @@ impl NativeJitCompiler {
         sig.call_conv = CallConv::triple_default(module.isa().triple());
         sig.params.push(AbiParam::new(types::I64));
         sig.params.push(AbiParam::new(types::F64));
+        sig.returns.push(AbiParam::new(types::I64));
+
+        let func_id = module
+            .declare_function(fn_name, Linkage::Import, &sig)
+            .map_err(|e| format!("Failed to declare {}: {}", fn_name, e))?;
+        let func_ref = module.declare_func_in_func(func_id, builder.func);
+
+        let arg0 = Self::to_i64_unsigned(builder, arg0);
+        let call_inst = builder.ins().call(func_ref, &[arg0, arg1]);
+        let results = builder.inst_results(call_inst);
+        Ok(results[0])
+    }
+
+    /// Call a runtime function with u64, f32 arguments, returns u64
+    fn call_runtime_fn_2_f32(
+        builder: &mut FunctionBuilder,
+        module: &mut JITModule,
+        fn_name: &str,
+        arg0: Value,
+        arg1: Value,
+    ) -> Result<Value, String> {
+        let mut sig = module.make_signature();
+        sig.call_conv = CallConv::triple_default(module.isa().triple());
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::F32));
         sig.returns.push(AbiParam::new(types::I64));
 
         let func_id = module

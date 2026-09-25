@@ -318,6 +318,9 @@ pub struct RuntimeConfig {
     pub run_tests: bool,
     /// Enable cross-backend conformance checks while testing
     pub backend_check: bool,
+    /// Explicit list of backends to run tests against (empty = use `backend` field only).
+    /// Populated by `--runtimes=jit,njit,vm,...`
+    pub test_backends: Vec<ExecutionBackend>,
     /// Stop test run on first FAIL/PANIC/TIMEOUT
     pub fail_fast: bool,
     /// Include only tests with one of these tags
@@ -377,6 +380,7 @@ impl Default for RuntimeConfig {
             check_moves: true,             // Enable move checking by default
             run_tests: false,              // Don't run tests by default
             backend_check: false,
+            test_backends: Vec::new(),
             fail_fast: false,
             include_tags: Vec::new(),
             test_name: None,
@@ -426,6 +430,7 @@ impl RuntimeConfig {
             embedded: false,
             run_tests: false,
             backend_check: false,
+            test_backends: Vec::new(),
             fail_fast: false,
             include_tags: Vec::new(),
             test_name: None,
@@ -472,6 +477,7 @@ impl RuntimeConfig {
             check_moves: true,
             run_tests: false,
             backend_check: false,
+            test_backends: Vec::new(),
             fail_fast: false,
             include_tags: Vec::new(),
             test_name: None,
@@ -514,6 +520,7 @@ impl RuntimeConfig {
             check_moves: true,
             run_tests: false,
             backend_check: false,
+            test_backends: Vec::new(),
             fail_fast: false,
             include_tags: Vec::new(),
             test_name: None,

@@ -355,29 +355,46 @@ pub(super) fn lower_stmt(
             // Pattern: for(i in start..end) or for(i in start...end)
             if let HirExpr::Range(start, end, inclusive) = iter {
                 // Check if bounds are compile-time constants
-                if let (Some(start_i), Some(end_i)) = (extract_hir_int(start), extract_hir_int(end)) {
-                    let count = if *inclusive { end_i - start_i + 1 } else { end_i - start_i };
+                if let (Some(start_i), Some(end_i)) = (extract_hir_int(start), extract_hir_int(end))
+                {
+                    let count = if *inclusive {
+                        end_i - start_i + 1
+                    } else {
+                        end_i - start_i
+                    };
                     if count <= 0 {
                         // Zero iterations, dead loop elimination
                         return Ok(());
                     }
                     if count > 0 && count <= 8 {
                         let start_val = lower_expr(lir, func, ctx, start)?;
-                        let is_float = matches!(ctx.value_types.get(&start_val), Some(LirType::F64 | LirType::F32));
+                        let is_float = matches!(
+                            ctx.value_types.get(&start_val),
+                            Some(LirType::F64 | LirType::F32)
+                        );
                         // Small fixed loop: fully unroll directly into current block
                         for idx in 0..count {
                             let curr_i = start_i + idx;
                             let val_inst = func.alloc_value();
                             if is_float {
-                                func.push_to_block(ctx.current_block, LirInst::ConstF64(val_inst, curr_i as f64));
+                                func.push_to_block(
+                                    ctx.current_block,
+                                    LirInst::ConstF64(val_inst, curr_i as f64),
+                                );
                                 ctx.value_types.insert(val_inst, LirType::F64);
                                 ctx.var_types.insert(var.clone(), LirType::F64);
                             } else {
-                                func.push_to_block(ctx.current_block, LirInst::ConstI64(val_inst, curr_i));
+                                func.push_to_block(
+                                    ctx.current_block,
+                                    LirInst::ConstI64(val_inst, curr_i),
+                                );
                                 ctx.value_types.insert(val_inst, LirType::I64);
                                 ctx.var_types.insert(var.clone(), LirType::I64);
                             }
-                            func.push_to_block(ctx.current_block, LirInst::StoreVar(var.clone(), val_inst));
+                            func.push_to_block(
+                                ctx.current_block,
+                                LirInst::StoreVar(var.clone(), val_inst),
+                            );
                             func.set_var(var.clone(), val_inst);
                             let unroll_loc = format!("{loc}.unroll_{idx}");
                             lower_stmt(lir, func, ctx, body, &unroll_loc, drop_plan)?;
@@ -412,19 +429,34 @@ pub(super) fn lower_stmt(
 
                                         if is_add || is_sub {
                                             // Case 1: Accumulator with constant: target = target +/- K
-                                            if let Some(lit_num) = extract_hir_int(rhs_bin.as_ref()) {
+                                            if let Some(lit_num) = extract_hir_int(rhs_bin.as_ref())
+                                            {
                                                 let raw_start = lower_expr(lir, func, ctx, start)?;
                                                 let raw_end = lower_expr(lir, func, ctx, end)?;
-                                                let start_val = ensure_i64_val(func, ctx, raw_start);
+                                                let start_val =
+                                                    ensure_i64_val(func, ctx, raw_start);
                                                 let end_val = ensure_i64_val(func, ctx, raw_end);
 
-                                                let is_float_target = matches!(ctx.var_types.get(target_name), Some(LirType::F64 | LirType::F32));
+                                                let is_float_target = matches!(
+                                                    ctx.var_types.get(target_name),
+                                                    Some(LirType::F64 | LirType::F32)
+                                                );
                                                 let target_val = func.alloc_value();
                                                 func.push_to_block(
                                                     ctx.current_block,
-                                                    LirInst::LoadVar(target_val, target_name.clone()),
+                                                    LirInst::LoadVar(
+                                                        target_val,
+                                                        target_name.clone(),
+                                                    ),
                                                 );
-                                                ctx.value_types.insert(target_val, if is_float_target { LirType::F64 } else { LirType::I64 });
+                                                ctx.value_types.insert(
+                                                    target_val,
+                                                    if is_float_target {
+                                                        LirType::F64
+                                                    } else {
+                                                        LirType::I64
+                                                    },
+                                                );
 
                                                 let diff_val = func.alloc_value();
                                                 func.push_to_block(
@@ -471,31 +503,56 @@ pub(super) fn lower_stmt(
                                                 let final_val = func.alloc_value();
                                                 if is_float_target {
                                                     let float_scale = func.alloc_value();
-                                                    func.push_to_block(ctx.current_block, LirInst::I64ToF64(float_scale, scale_val));
-                                                    ctx.value_types.insert(float_scale, LirType::F64);
+                                                    func.push_to_block(
+                                                        ctx.current_block,
+                                                        LirInst::I64ToF64(float_scale, scale_val),
+                                                    );
+                                                    ctx.value_types
+                                                        .insert(float_scale, LirType::F64);
                                                     if is_add {
-                                                        func.push_to_block(ctx.current_block, LirInst::AddF64(final_val, target_val, float_scale));
+                                                        func.push_to_block(
+                                                            ctx.current_block,
+                                                            LirInst::AddF64(
+                                                                final_val,
+                                                                target_val,
+                                                                float_scale,
+                                                            ),
+                                                        );
                                                     } else {
-                                                        func.push_to_block(ctx.current_block, LirInst::SubF64(final_val, target_val, float_scale));
+                                                        func.push_to_block(
+                                                            ctx.current_block,
+                                                            LirInst::SubF64(
+                                                                final_val,
+                                                                target_val,
+                                                                float_scale,
+                                                            ),
+                                                        );
                                                     }
                                                     ctx.value_types.insert(final_val, LirType::F64);
                                                 } else {
                                                     if is_add {
                                                         func.push_to_block(
                                                             ctx.current_block,
-                                                            LirInst::AddI64(final_val, target_val, scale_val),
+                                                            LirInst::AddI64(
+                                                                final_val, target_val, scale_val,
+                                                            ),
                                                         );
                                                     } else {
                                                         func.push_to_block(
                                                             ctx.current_block,
-                                                            LirInst::SubI64(final_val, target_val, scale_val),
+                                                            LirInst::SubI64(
+                                                                final_val, target_val, scale_val,
+                                                            ),
                                                         );
                                                     }
                                                     ctx.value_types.insert(final_val, LirType::I64);
                                                 }
                                                 func.push_to_block(
                                                     ctx.current_block,
-                                                    LirInst::StoreVar(target_name.clone(), final_val),
+                                                    LirInst::StoreVar(
+                                                        target_name.clone(),
+                                                        final_val,
+                                                    ),
                                                 );
                                                 func.set_var(target_name.clone(), final_val);
                                                 return Ok(());
@@ -503,12 +560,29 @@ pub(super) fn lower_stmt(
 
                                             // Case 2: Summation of induction variable: target = target +/- var (or var * scale)
                                             let (is_var_term, scale_k) = match rhs_bin.as_ref() {
-                                                HirExpr::LoadVar(vname) if vname == var => (true, 1i64),
+                                                HirExpr::LoadVar(vname) if vname == var => {
+                                                    (true, 1i64)
+                                                }
                                                 HirExpr::BinaryOp(v1, BinOp::Mul, v2) => {
-                                                    if let (HirExpr::LoadVar(vname), Some(k)) = (v1.as_ref(), extract_hir_int(v2.as_ref())) {
-                                                        if vname == var { (true, k) } else { (false, 1) }
-                                                    } else if let (Some(k), HirExpr::LoadVar(vname)) = (extract_hir_int(v1.as_ref()), v2.as_ref()) {
-                                                        if vname == var { (true, k) } else { (false, 1) }
+                                                    if let (HirExpr::LoadVar(vname), Some(k)) =
+                                                        (v1.as_ref(), extract_hir_int(v2.as_ref()))
+                                                    {
+                                                        if vname == var {
+                                                            (true, k)
+                                                        } else {
+                                                            (false, 1)
+                                                        }
+                                                    } else if let (
+                                                        Some(k),
+                                                        HirExpr::LoadVar(vname),
+                                                    ) =
+                                                        (extract_hir_int(v1.as_ref()), v2.as_ref())
+                                                    {
+                                                        if vname == var {
+                                                            (true, k)
+                                                        } else {
+                                                            (false, 1)
+                                                        }
                                                     } else {
                                                         (false, 1)
                                                     }
@@ -520,16 +594,30 @@ pub(super) fn lower_stmt(
                                                 // Formula for sum of range: N * (2*start + N - 1) / 2
                                                 let raw_start = lower_expr(lir, func, ctx, start)?;
                                                 let raw_end = lower_expr(lir, func, ctx, end)?;
-                                                let start_val = ensure_i64_val(func, ctx, raw_start);
+                                                let start_val =
+                                                    ensure_i64_val(func, ctx, raw_start);
                                                 let end_val = ensure_i64_val(func, ctx, raw_end);
 
-                                                let is_float_target = matches!(ctx.var_types.get(target_name), Some(LirType::F64 | LirType::F32));
+                                                let is_float_target = matches!(
+                                                    ctx.var_types.get(target_name),
+                                                    Some(LirType::F64 | LirType::F32)
+                                                );
                                                 let target_val = func.alloc_value();
                                                 func.push_to_block(
                                                     ctx.current_block,
-                                                    LirInst::LoadVar(target_val, target_name.clone()),
+                                                    LirInst::LoadVar(
+                                                        target_val,
+                                                        target_name.clone(),
+                                                    ),
                                                 );
-                                                ctx.value_types.insert(target_val, if is_float_target { LirType::F64 } else { LirType::I64 });
+                                                ctx.value_types.insert(
+                                                    target_val,
+                                                    if is_float_target {
+                                                        LirType::F64
+                                                    } else {
+                                                        LirType::I64
+                                                    },
+                                                );
 
                                                 let diff_val = func.alloc_value();
                                                 func.push_to_block(
@@ -557,33 +645,56 @@ pub(super) fn lower_stmt(
 
                                                 // 2 * start
                                                 let two_val = func.alloc_value();
-                                                func.push_to_block(ctx.current_block, LirInst::ConstI64(two_val, 2));
+                                                func.push_to_block(
+                                                    ctx.current_block,
+                                                    LirInst::ConstI64(two_val, 2),
+                                                );
                                                 ctx.value_types.insert(two_val, LirType::I64);
                                                 let two_start = func.alloc_value();
-                                                func.push_to_block(ctx.current_block, LirInst::MulI64(two_start, start_val, two_val));
+                                                func.push_to_block(
+                                                    ctx.current_block,
+                                                    LirInst::MulI64(two_start, start_val, two_val),
+                                                );
                                                 ctx.value_types.insert(two_start, LirType::I64);
 
                                                 // N - 1
                                                 let one_val = func.alloc_value();
-                                                func.push_to_block(ctx.current_block, LirInst::ConstI64(one_val, 1));
+                                                func.push_to_block(
+                                                    ctx.current_block,
+                                                    LirInst::ConstI64(one_val, 1),
+                                                );
                                                 ctx.value_types.insert(one_val, LirType::I64);
                                                 let n_minus_1 = func.alloc_value();
-                                                func.push_to_block(ctx.current_block, LirInst::SubI64(n_minus_1, n_val, one_val));
+                                                func.push_to_block(
+                                                    ctx.current_block,
+                                                    LirInst::SubI64(n_minus_1, n_val, one_val),
+                                                );
                                                 ctx.value_types.insert(n_minus_1, LirType::I64);
 
                                                 // (2 * start + N - 1)
                                                 let inner_term = func.alloc_value();
-                                                func.push_to_block(ctx.current_block, LirInst::AddI64(inner_term, two_start, n_minus_1));
+                                                func.push_to_block(
+                                                    ctx.current_block,
+                                                    LirInst::AddI64(
+                                                        inner_term, two_start, n_minus_1,
+                                                    ),
+                                                );
                                                 ctx.value_types.insert(inner_term, LirType::I64);
 
                                                 // N * inner_term
                                                 let num_val = func.alloc_value();
-                                                func.push_to_block(ctx.current_block, LirInst::MulI64(num_val, n_val, inner_term));
+                                                func.push_to_block(
+                                                    ctx.current_block,
+                                                    LirInst::MulI64(num_val, n_val, inner_term),
+                                                );
                                                 ctx.value_types.insert(num_val, LirType::I64);
 
                                                 // sum_of_i = (N * inner_term) / 2
                                                 let sum_i = func.alloc_value();
-                                                func.push_to_block(ctx.current_block, LirInst::DivI64(sum_i, num_val, two_val));
+                                                func.push_to_block(
+                                                    ctx.current_block,
+                                                    LirInst::DivI64(sum_i, num_val, two_val),
+                                                );
                                                 ctx.value_types.insert(sum_i, LirType::I64);
 
                                                 // Multiply by scale_k if scaled
@@ -591,10 +702,16 @@ pub(super) fn lower_stmt(
                                                     sum_i
                                                 } else {
                                                     let k_val = func.alloc_value();
-                                                    func.push_to_block(ctx.current_block, LirInst::ConstI64(k_val, scale_k));
+                                                    func.push_to_block(
+                                                        ctx.current_block,
+                                                        LirInst::ConstI64(k_val, scale_k),
+                                                    );
                                                     ctx.value_types.insert(k_val, LirType::I64);
                                                     let scaled = func.alloc_value();
-                                                    func.push_to_block(ctx.current_block, LirInst::MulI64(scaled, sum_i, k_val));
+                                                    func.push_to_block(
+                                                        ctx.current_block,
+                                                        LirInst::MulI64(scaled, sum_i, k_val),
+                                                    );
                                                     ctx.value_types.insert(scaled, LirType::I64);
                                                     scaled
                                                 };
@@ -602,23 +719,52 @@ pub(super) fn lower_stmt(
                                                 let final_val = func.alloc_value();
                                                 if is_float_target {
                                                     let float_sum = func.alloc_value();
-                                                    func.push_to_block(ctx.current_block, LirInst::I64ToF64(float_sum, scaled_sum));
+                                                    func.push_to_block(
+                                                        ctx.current_block,
+                                                        LirInst::I64ToF64(float_sum, scaled_sum),
+                                                    );
                                                     ctx.value_types.insert(float_sum, LirType::F64);
                                                     if is_add {
-                                                        func.push_to_block(ctx.current_block, LirInst::AddF64(final_val, target_val, float_sum));
+                                                        func.push_to_block(
+                                                            ctx.current_block,
+                                                            LirInst::AddF64(
+                                                                final_val, target_val, float_sum,
+                                                            ),
+                                                        );
                                                     } else {
-                                                        func.push_to_block(ctx.current_block, LirInst::SubF64(final_val, target_val, float_sum));
+                                                        func.push_to_block(
+                                                            ctx.current_block,
+                                                            LirInst::SubF64(
+                                                                final_val, target_val, float_sum,
+                                                            ),
+                                                        );
                                                     }
                                                     ctx.value_types.insert(final_val, LirType::F64);
                                                 } else {
                                                     if is_add {
-                                                        func.push_to_block(ctx.current_block, LirInst::AddI64(final_val, target_val, scaled_sum));
+                                                        func.push_to_block(
+                                                            ctx.current_block,
+                                                            LirInst::AddI64(
+                                                                final_val, target_val, scaled_sum,
+                                                            ),
+                                                        );
                                                     } else {
-                                                        func.push_to_block(ctx.current_block, LirInst::SubI64(final_val, target_val, scaled_sum));
+                                                        func.push_to_block(
+                                                            ctx.current_block,
+                                                            LirInst::SubI64(
+                                                                final_val, target_val, scaled_sum,
+                                                            ),
+                                                        );
                                                     }
                                                     ctx.value_types.insert(final_val, LirType::I64);
                                                 }
-                                                func.push_to_block(ctx.current_block, LirInst::StoreVar(target_name.clone(), final_val));
+                                                func.push_to_block(
+                                                    ctx.current_block,
+                                                    LirInst::StoreVar(
+                                                        target_name.clone(),
+                                                        final_val,
+                                                    ),
+                                                );
                                                 func.set_var(target_name.clone(), final_val);
                                                 return Ok(());
                                             }
@@ -1319,4 +1465,3 @@ fn ensure_i64_val(func: &mut LirFunction, ctx: &mut LowerCtx, val: ValueId) -> V
         }
     }
 }
-

@@ -1732,6 +1732,7 @@ pub fn compile_to_file(src: &str, out: &Path) -> Result<(), LangError> {
     }
     if !strings.iter().any(|(x, _)| x == "\x1b[0m") {
         strings.push(("\x1b[0m".into(), cur_off));
+        cur_off += 4;
     }
     let mut str_vars: FastMap<String, (u32, u32)> = FastMap::default();
     let mut complex_vars: FastMap<String, (u32, u32)> = FastMap::default();

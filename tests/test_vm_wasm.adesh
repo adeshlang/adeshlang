@@ -1,0 +1,5 @@
+// Test print formatting, arguments, and newlines in VM and WASM
+print("Line 1");
+print("Line 2");
+print("Multi-arg:", 10, 20, 30);
+print("Math result:", 40 + 2);

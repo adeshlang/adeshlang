@@ -1902,8 +1902,22 @@ pub(crate) fn infer_expr_type(
                 return Err(format!("Range end must be numeric, found {}", end_ty));
             }
 
-            // Range produces an array of numbers
-            Ok(Ty::Array(Box::new(Ty::Float)))
+            // Determine element type: float if either operand is floating point; integer otherwise.
+            let is_float = matches!(start_ty, Ty::Float | Ty::F32 | Ty::F64Ty)
+                || matches!(end_ty, Ty::Float | Ty::F32 | Ty::F64Ty);
+            let elem_ty = if is_float {
+                if matches!(start_ty, Ty::F32) && matches!(end_ty, Ty::F32) {
+                    Ty::F32
+                } else {
+                    Ty::F64Ty
+                }
+            } else if start_ty == end_ty {
+                start_ty
+            } else {
+                Ty::Int
+            };
+
+            Ok(Ty::Array(Box::new(elem_ty)))
         }
         ExprKind::Try(expr) => infer_expr_type(
             expr,

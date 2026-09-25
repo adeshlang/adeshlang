@@ -281,22 +281,22 @@ pub(super) fn execute_v2(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                 pc += 4;
                 match regs.get(r).cloned().unwrap_or(VMValue::Null) {
                     VMValue::Number(n) => {
-                        writeln!(out, "{}", n).map_err(|e| e.to_string())?;
+                        write!(out, "{}", n).map_err(|e| e.to_string())?;
                     }
                     VMValue::Bool(b) => {
-                        writeln!(out, "{}", b).map_err(|e| e.to_string())?;
+                        write!(out, "{}", b).map_err(|e| e.to_string())?;
                     }
                     VMValue::Str(s) => {
-                        writeln!(out, "{}", s).map_err(|e| e.to_string())?;
+                        write!(out, "{}", s).map_err(|e| e.to_string())?;
                     }
                     VMValue::Null => {
-                        writeln!(out, "null").map_err(|e| e.to_string())?;
+                        write!(out, "null").map_err(|e| e.to_string())?;
                     }
                     VMValue::BigInt(bi) => {
-                        writeln!(out, "{}", bi).map_err(|e| e.to_string())?;
+                        write!(out, "{}", bi).map_err(|e| e.to_string())?;
                     }
                     VMValue::U64(u) => {
-                        writeln!(out, "0x{:x}", u).map_err(|e| e.to_string())?;
+                        write!(out, "0x{:x}", u).map_err(|e| e.to_string())?;
                     }
                     VMValue::Array(arr) => {
                         let elements: Vec<String> = arr
@@ -309,7 +309,7 @@ pub(super) fn execute_v2(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                                 _ => "{...}".to_string(),
                             })
                             .collect();
-                        writeln!(out, "[{}]", elements.join(", ")).map_err(|e| e.to_string())?;
+                        write!(out, "[{}]", elements.join(", ")).map_err(|e| e.to_string())?;
                     }
                     VMValue::Tuple(tup) => {
                         let elements: Vec<String> = tup
@@ -322,7 +322,7 @@ pub(super) fn execute_v2(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                                 _ => "{...}".to_string(),
                             })
                             .collect();
-                        writeln!(out, "({})", elements.join(", ")).map_err(|e| e.to_string())?;
+                        write!(out, "({})", elements.join(", ")).map_err(|e| e.to_string())?;
                     }
                     VMValue::Object(o) => {
                         let mut pairs: Vec<String> = Vec::new();
@@ -341,10 +341,10 @@ pub(super) fn execute_v2(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                             };
                             pairs.push(format!("\"{}\": {}", k, vs));
                         }
-                        writeln!(out, "{{{}}}", pairs.join(", ")).map_err(|e| e.to_string())?;
+                        write!(out, "{{{}}}", pairs.join(", ")).map_err(|e| e.to_string())?;
                     }
                     VMValue::Closure { .. } => {
-                        writeln!(out, "<closure>").map_err(|e| e.to_string())?;
+                        write!(out, "<closure>").map_err(|e| e.to_string())?;
                     }
                 }
             }
@@ -819,6 +819,19 @@ pub(super) fn execute_v2(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                     Some(VMValue::Object(map)) => {
                         map.get(field_name).cloned().unwrap_or(VMValue::Null)
                     }
+                    Some(VMValue::Array(arr)) => match field_name {
+                        "length" | "len" => VMValue::Number(arr.len() as f64),
+                        "capacity" => VMValue::Number(arr.len() as f64),
+                        _ => VMValue::Null,
+                    },
+                    Some(VMValue::Tuple(tup)) => match field_name {
+                        "length" | "len" => VMValue::Number(tup.len() as f64),
+                        _ => VMValue::Null,
+                    },
+                    Some(VMValue::Str(s)) => match field_name {
+                        "length" | "len" => VMValue::Number(s.len() as f64),
+                        _ => VMValue::Null,
+                    },
                     _ => VMValue::Null,
                 };
                 regs[dst] = val;
@@ -883,6 +896,22 @@ pub(super) fn execute_v2(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                     (Some(VMValue::Array(arr)), "pop") => arr.pop().unwrap_or(VMValue::Null),
                     (Some(VMValue::Array(arr)), "len") | (Some(VMValue::Array(arr)), "length") => {
                         VMValue::Number(arr.len() as f64)
+                    }
+                    (Some(VMValue::Array(arr)), "metadata_size") => {
+                        let rval = vm_value_to_builtin_runtime_value(VMValue::Array(arr.clone()));
+                        let res =
+                            crate::backends::common::builtins::arrays::runtime_metadata_size(&[
+                                rval,
+                            ]);
+                        match res {
+                            crate::backends::builtins::RuntimeValue::Int(n) => {
+                                VMValue::Number(n as f64)
+                            }
+                            _ => VMValue::Number(0.0),
+                        }
+                    }
+                    (Some(VMValue::Array(arr)), "last") => {
+                        arr.last().cloned().unwrap_or(VMValue::Null)
                     }
                     (Some(VMValue::Object(map)), "hasKey") => {
                         if let Some(VMValue::Str(k)) = args.first() {
@@ -983,37 +1012,43 @@ pub(super) fn execute_v2(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                                 if let Some(v) = regs.get(r) {
                                     match v {
                                         VMValue::Number(n) => {
-                                            println!("{}", n);
+                                            print!("{}", n);
                                         }
                                         VMValue::Str(s) => {
-                                            println!("{}", s);
+                                            print!("{}", s);
                                         }
                                         VMValue::Null => {
-                                            println!("null");
+                                            print!("null");
                                         }
                                         VMValue::BigInt(bi) => {
-                                            println!("{}", bi);
+                                            print!("{}", bi);
                                         }
                                         VMValue::U64(u) => {
-                                            println!("0x{:x}", u);
+                                            print!("0x{:x}", u);
                                         }
                                         VMValue::Bool(b) => {
-                                            println!("{}", b);
+                                            print!("{}", b);
                                         }
                                         VMValue::Array(_) => {
-                                            println!("[...]");
+                                            print!("[...]");
                                         }
                                         VMValue::Tuple(_) => {
-                                            println!("(...)");
+                                            print!("(...)");
                                         }
                                         VMValue::Object(_) => {
-                                            println!("{{...}}");
+                                            print!("{{...}}");
                                         }
                                         VMValue::Closure { .. } => {
-                                            println!("<closure>");
+                                            print!("<closure>");
                                         }
                                     }
                                 }
+                            }
+                            Some(ROp::PrintNewline) => {
+                                println!();
+                            }
+                            Some(ROp::PrintSpace) => {
+                                print!(" ");
                             }
                             Some(ROp::LoadConst) => {
                                 let dst = u32::from_le_bytes(
@@ -1933,6 +1968,19 @@ pub(super) fn execute_v2_with_args(
                     Some(VMValue::Object(map)) => {
                         map.get(field_name).cloned().unwrap_or(VMValue::Null)
                     }
+                    Some(VMValue::Array(arr)) => match field_name {
+                        "length" | "len" => VMValue::Number(arr.len() as f64),
+                        "capacity" => VMValue::Number(arr.len() as f64),
+                        _ => VMValue::Null,
+                    },
+                    Some(VMValue::Tuple(tup)) => match field_name {
+                        "length" | "len" => VMValue::Number(tup.len() as f64),
+                        _ => VMValue::Null,
+                    },
+                    Some(VMValue::Str(s)) => match field_name {
+                        "length" | "len" => VMValue::Number(s.len() as f64),
+                        _ => VMValue::Null,
+                    },
                     _ => VMValue::Null,
                 };
                 if let VMValue::Number(n) = val {
@@ -2017,6 +2065,22 @@ pub(super) fn execute_v2_with_args(
                     (Some(VMValue::Array(arr)), "pop") => arr.pop().unwrap_or(VMValue::Null),
                     (Some(VMValue::Array(arr)), "len") | (Some(VMValue::Array(arr)), "length") => {
                         VMValue::Number(arr.len() as f64)
+                    }
+                    (Some(VMValue::Array(arr)), "metadata_size") => {
+                        let rval = vm_value_to_builtin_runtime_value(VMValue::Array(arr.clone()));
+                        let res =
+                            crate::backends::common::builtins::arrays::runtime_metadata_size(&[
+                                rval,
+                            ]);
+                        match res {
+                            crate::backends::builtins::RuntimeValue::Int(n) => {
+                                VMValue::Number(n as f64)
+                            }
+                            _ => VMValue::Number(0.0),
+                        }
+                    }
+                    (Some(VMValue::Array(arr)), "last") => {
+                        arr.last().cloned().unwrap_or(VMValue::Null)
                     }
                     (Some(VMValue::Object(map)), "hasKey") => {
                         if let Some(VMValue::Str(k)) = args.first() {
@@ -2131,37 +2195,43 @@ pub(super) fn execute_v2_with_args(
                                 if let Some(v) = regs.get(r) {
                                     match v {
                                         VMValue::Number(n) => {
-                                            let _ = writeln!(out, "{}", n);
+                                            let _ = write!(out, "{}", n);
                                         }
                                         VMValue::Str(s) => {
-                                            let _ = writeln!(out, "{}", s);
+                                            let _ = write!(out, "{}", s);
                                         }
                                         VMValue::Null => {
-                                            let _ = writeln!(out, "null");
+                                            let _ = write!(out, "null");
                                         }
                                         VMValue::BigInt(bi) => {
-                                            let _ = writeln!(out, "{}", bi);
+                                            let _ = write!(out, "{}", bi);
                                         }
                                         VMValue::U64(u) => {
-                                            let _ = writeln!(out, "0x{:x}", u);
+                                            let _ = write!(out, "0x{:x}", u);
                                         }
                                         VMValue::Bool(b) => {
-                                            let _ = writeln!(out, "{}", b);
+                                            let _ = write!(out, "{}", b);
                                         }
                                         VMValue::Array(_) => {
-                                            let _ = writeln!(out, "[...]");
+                                            let _ = write!(out, "[...]");
                                         }
                                         VMValue::Tuple(_) => {
-                                            let _ = writeln!(out, "(...)");
+                                            let _ = write!(out, "(...)");
                                         }
                                         VMValue::Object(_) => {
-                                            let _ = writeln!(out, "{{...}}");
+                                            let _ = write!(out, "{{...}}");
                                         }
                                         VMValue::Closure { .. } => {
-                                            let _ = writeln!(out, "<closure>");
+                                            let _ = write!(out, "<closure>");
                                         }
                                     }
                                 }
+                            }
+                            Some(ROp::PrintNewline) => {
+                                let _ = writeln!(out);
+                            }
+                            Some(ROp::PrintSpace) => {
+                                let _ = write!(out, " ");
                             }
                             Some(ROp::LoadConst) => {
                                 let dst = u32::from_le_bytes(

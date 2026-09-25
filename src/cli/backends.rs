@@ -152,16 +152,11 @@ pub fn run_with_tiered_jit(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Re
 
 /// Run program with Native JIT (true native code generation)
 pub fn run_with_native_jit(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Result<(), String> {
-    use crate::backends::jit::native::native_jit_run;
+    use crate::backends::jit::native::native_jit_run_with_stats;
 
     // Separate compilation from execution for Native JIT to wrap progress
     if !parsed.config.quiet {
         let progress = BuildProgress::new("Compiling with Native JIT...");
-
-        // We can't easily split compile/run for native_jit_run without duplicate logic,
-        // so we'll just show the spinner validation.
-        // A better approach would be to refactor native_jit_run to take a callback or split steps.
-        // For now, let's keep it consistent:
         progress.success("Native JIT backend ready");
     }
 
@@ -176,15 +171,19 @@ pub fn run_with_native_jit(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Re
 
     // Handle VIR/LIR backend selection
     if parsed.config.use_lir {
-        // Force LIR backend by setting environment variable
-        // SAFETY: We're setting this before calling native_jit_run, so it's safe
         unsafe {
             std::env::set_var("ADESH_USE_VIR", "0");
         }
     }
 
-    match native_jit_run(&body) {
-        Ok(_) => Ok(()),
+    match native_jit_run_with_stats(&body) {
+        Ok(stats) => {
+            if parsed.config.profile {
+                eprintln!("\n⚡ Native JIT Compilation: {:?}", stats.compile_time);
+                eprintln!("🚀 Direct Native CPU Execution: {:?}", stats.exec_time);
+            }
+            Ok(())
+        }
         Err(e) => Err(format!("Native JIT error: {}", e)),
     }
 }
@@ -244,7 +243,7 @@ pub fn run_with_interpreter(
     src: &str,
     parsed: &ParsedArgs,
 ) -> Result<Option<ProgramMemoryStats>, String> {
-    if !parsed.config.quiet {
+    if !parsed.config.quiet && !parsed.config.run_tests {
         let progress = BuildProgress::new("Analyzing source...");
         // Interpreter analysis is quick
         progress.success("Interpreter ready");
@@ -265,6 +264,7 @@ pub fn run_with_interpreter(
     let quiet_cfg = parsed.config.quiet;
     let nocapture_cfg = parsed.config.test_nocapture;
     let test_name_cfg = parsed.config.test_name.clone();
+    let test_backends_cfg = parsed.config.test_backends.clone();
     let stack_size_cfg = parsed.config.stack_size;
 
     // Set program args
@@ -288,8 +288,16 @@ pub fn run_with_interpreter(
                 use crate::parsing::lexer::Lexer;
                 use crate::parsing::parser::Parser;
                 use crate::testing::{
-                    TestRunOptions, executor::InterpreterTestExecutor, format_test_summary,
-                    render_backend_matrix_ascii, render_result_line, run_tests, to_json_report,
+                    TestRunOptions,
+                    build_per_backend_summaries,
+                    executor::InterpreterTestExecutor,
+                    format_test_summary,
+                    render_backend_matrix_ascii,
+                    render_multi_backend_header,
+                    render_multi_backend_report,
+                    render_result_line,
+                    run_tests,
+                    to_json_report,
                 };
                 use crate::toolchain::config::TestOutputFormat;
                 use std::collections::BTreeSet;
@@ -310,11 +318,35 @@ pub fn run_with_interpreter(
                 for tag in &include_tags_cfg {
                     include_tags.insert(tag.clone());
                 }
+
+                // Determine which backends to test against:
+                // Priority: test_backends (from --runtimes) > backend_check (all) > single backend
+                let backends_to_run: Vec<crate::toolchain::config::ExecutionBackend> =
+                    if !test_backends_cfg.is_empty() {
+                        // --runtimes=jit,njit,aot,...
+                        test_backends_cfg.clone()
+                    } else if backend_check_cfg {
+                        // --backend-check: all known backends
+                        crate::testing::all_execution_backends()
+                    } else {
+                        // Single backend (default or --jit / --vm / etc.)
+                        vec![selected_backend]
+                    };
+
+                let is_multi = backends_to_run.len() > 1;
+
+                // Print multi-backend header
+                if is_multi && !no_color_cfg {
+                    print!("{}", render_multi_backend_header(&backends_to_run, no_color_cfg));
+                }
+
+                // Build test options
                 let opts = TestRunOptions {
                     fail_fast: fail_fast_cfg,
                     include_tags,
                     test_name: test_name_cfg.clone(),
                     backend_check: backend_check_cfg,
+                    test_backends: backends_to_run.clone(),
                     json_format: matches!(test_output_format_cfg, TestOutputFormat::Json),
                     no_color: no_color_cfg,
                     quiet: quiet_cfg,
@@ -322,20 +354,60 @@ pub fn run_with_interpreter(
                     ..TestRunOptions::default()
                 };
 
-                // Use the real InterpreterTestExecutor
+                // Use the real InterpreterTestExecutor (which delegates to each backend)
                 let mut executor = InterpreterTestExecutor::new(
                     run_src.clone(),
                     run_path.to_string_lossy().to_string(),
                 );
-                let (results, summary, matrix) =
-                    run_tests(&ast, &mut executor, &opts, selected_backend);
 
+                // run_tests iterates `backends_to_run` when backend_check=true
+                // We pass the first backend as `selected_backend` for the single-run path
+                let primary_backend = backends_to_run[0];
+                let (results, summary, _legacy_matrix) =
+                    run_tests(&ast, &mut executor, &opts, primary_backend);
+
+                // ── Render output ─────────────────────────────────────────────
                 if matches!(test_output_format_cfg, TestOutputFormat::Json) {
-                    println!("{}", to_json_report(&results, &summary, matrix.as_ref()));
+                    // Build per-backend summaries for JSON output too
+                    let per_backend = build_per_backend_summaries(&results, &backends_to_run);
+                    // Encode per-backend summaries into JSON alongside existing report
+                    let json_base = to_json_report(&results, &summary, _legacy_matrix.as_ref());
+                    // Inject per-backend summaries
+                    let per_backend_json = per_backend
+                        .iter()
+                        .map(|s| {
+                            format!(
+                                r#"  {{"backend":"{}", "total":{}, "passed":{}, "failed":{}, "panics":{}, "timeout":{}, "ignored":{}}}"#,
+                                crate::testing::backend_short_name_pub(s.backend),
+                                s.total, s.passed, s.failed, s.panics, s.timeout, s.ignored
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(",\n");
+                    // Merge: insert before the last closing brace
+                    let merged = if json_base.ends_with("\n}") {
+                        format!(
+                            "{},\n  \"per_backend\": [\n{}\n  ]\n}}",
+                            &json_base[..json_base.len() - 2],
+                            per_backend_json
+                        )
+                    } else {
+                        json_base
+                    };
+                    println!("{}", merged);
+                } else if is_multi {
+                    // Rich multi-backend grid report
+                    let per_backend = build_per_backend_summaries(&results, &backends_to_run);
+                    print!("{}", render_multi_backend_report(
+                        &results,
+                        &backends_to_run,
+                        &per_backend,
+                        no_color_cfg,
+                    ));
                 } else {
-                    // Print individual test results with colors
+                    // Single-backend: classic per-test line output
                     for result in &results {
-                        let backend_result = result.backend_results.get(&selected_backend);
+                        let backend_result = result.backend_results.get(&primary_backend);
                         let msg = backend_result.and_then(|r| r.message.as_deref());
                         let duration = backend_result.map(|r| r.duration);
                         let output = backend_result.map(|r| r.output.clone()).unwrap_or_default();
@@ -369,7 +441,7 @@ pub fn run_with_interpreter(
                         }
                     }
 
-                    if let Some(m) = matrix.as_ref() {
+                    if let Some(m) = _legacy_matrix.as_ref() {
                         println!("{}", render_backend_matrix_ascii(m));
                     }
                     println!("{}", format_test_summary(&summary, no_color_cfg));

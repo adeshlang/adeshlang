@@ -89,7 +89,12 @@ impl Exec {
                         return Ok(Value::Str(format!("[{};raw]", elem_type)));
                     }
                     Value::DynArray(da) => {
-                        return Ok(Value::Str(format!("[{:?}]", da.element_type)));
+                        let inner = if !da.concrete_type.is_empty() {
+                            da.concrete_type.as_str()
+                        } else {
+                            "number"
+                        };
+                        return Ok(Value::Str(format!("[{}]", inner)));
                     }
                     Value::Tuple(_) => "tuple",
                     Value::Set(_) => "set",

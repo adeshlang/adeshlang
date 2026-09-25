@@ -28,14 +28,21 @@ pub use runtime::execute_native_jit;
 
 // Removed unused import: crate::backends::common::lir::LirModule
 
+#[derive(Debug, Clone, Copy)]
+pub struct NativeJitProfileStats {
+    pub compile_time: std::time::Duration,
+    pub exec_time: std::time::Duration,
+}
+
 /// Run a program using the Native JIT compiler
-///
-/// Supports two compilation paths:
-/// 1. **VIR path (new)**: AST → HIR → MIR → VIR → LIR → Native Code (unified backend)
-/// 2. **LIR path (legacy)**: AST → HIR → LIR → Native Code (for backward compatibility)
-///
-/// Environment variable `ADESH_USE_VIR=1` enables VIR path (on by default, `ADESH_USE_VIR=0` to use LIR)
 pub fn native_jit_run(source: &str) -> Result<(), String> {
+    native_jit_run_with_stats(source).map(|_| ())
+}
+
+/// Run a program using the Native JIT compiler and return profile statistics
+pub fn native_jit_run_with_stats(source: &str) -> Result<NativeJitProfileStats, String> {
+    let compile_start = std::time::Instant::now();
+
     // Parse source to HIR
     use crate::parsing::hir_lower::ast_to_hir;
     use crate::parsing::lexer::Lexer;
@@ -48,8 +55,6 @@ pub fn native_jit_run(source: &str) -> Result<(), String> {
     let hir = ast_to_hir(&ast, false)?;
 
     // Choose compilation path
-    // LIR path is the default — VIR path silently drops ARC, match, and other
-    // expressions via its catch-all `_ => 0` fallback in MIR lowering.
     let use_vir = std::env::var("ADESH_USE_VIR")
         .map(|v| v == "1" || v.to_lowercase() == "true")
         .unwrap_or(false);
@@ -65,14 +70,20 @@ pub fn native_jit_run(source: &str) -> Result<(), String> {
         let mut bridge = VirToLirBridge::new();
         bridge.convert_module(&vir)?
     } else {
-        // LIR path (legacy): HIR → LIR → Native Code
+        // LIR path: HIR → LIR → Native Code
         super::super::lir_lower::hir_to_lir(&hir)?
     };
 
     // Compile to native code
     let mut compiler = NativeJitCompiler::new()?;
     let context = compiler.compile_module(&lir_module)?;
+    let compile_time = compile_start.elapsed();
 
-    // Execute the main function
-    runtime::execute_native_jit(context)
+    // Execute the main function on CPU with high precision measurement
+    let exec_time = runtime::execute_native_jit_with_timing(context)?;
+
+    Ok(NativeJitProfileStats {
+        compile_time,
+        exec_time,
+    })
 }

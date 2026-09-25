@@ -425,9 +425,91 @@ pub(super) fn runtime_bool(args: &[RuntimeValue]) -> RuntimeValue {
 
 // ============================================================================
 // Type Introspection Functions
-// ============================================================================
+fn infer_array_type_bm(data: &[RuntimeValue]) -> (String, String) {
+    if data.is_empty() {
+        return ("number".to_string(), "number".to_string());
+    }
 
-#[allow(dead_code)]
+    let all_ints = data.iter().all(|v| match v {
+        RuntimeValue::Int(_)
+        | RuntimeValue::U8(_)
+        | RuntimeValue::U16(_)
+        | RuntimeValue::U32(_)
+        | RuntimeValue::U64(_)
+        | RuntimeValue::I8(_)
+        | RuntimeValue::I16(_)
+        | RuntimeValue::I32(_)
+        | RuntimeValue::I64(_) => true,
+        _ => false,
+    });
+
+    if all_ints {
+        let int_vals: Vec<i64> = data
+            .iter()
+            .map(|v| match v {
+                RuntimeValue::Int(n) => *n,
+                RuntimeValue::U8(n) => *n as i64,
+                RuntimeValue::U16(n) => *n as i64,
+                RuntimeValue::U32(n) => *n as i64,
+                RuntimeValue::U64(n) => *n as i64,
+                RuntimeValue::I8(n) => *n as i64,
+                RuntimeValue::I16(n) => *n as i64,
+                RuntimeValue::I32(n) => *n as i64,
+                RuntimeValue::I64(n) => *n,
+                _ => 0,
+            })
+            .collect();
+
+        let min = *int_vals.iter().min().unwrap_or(&0);
+        let max = *int_vals.iter().max().unwrap_or(&0);
+
+        let concrete = if min >= 0 {
+            if max <= u8::MAX as i64 {
+                "u8"
+            } else if max <= u16::MAX as i64 {
+                "u16"
+            } else if max <= u32::MAX as i64 {
+                "u32"
+            } else {
+                "u64"
+            }
+        } else if min >= i8::MIN as i64 && max <= i8::MAX as i64 {
+            "i8"
+        } else if min >= i16::MIN as i64 && max <= i16::MAX as i64 {
+            "i16"
+        } else if min >= i32::MIN as i64 && max <= i32::MAX as i64 {
+            "i32"
+        } else {
+            "i64"
+        };
+
+        return (concrete.to_string(), concrete.to_string());
+    }
+
+    if data.iter().all(|v| {
+        matches!(
+            v,
+            RuntimeValue::Float(_) | RuntimeValue::F64(_) | RuntimeValue::F32(_)
+        )
+    }) {
+        return ("f64".to_string(), "f64".to_string());
+    }
+
+    if data.iter().all(|v| matches!(v, RuntimeValue::Bool(_))) {
+        return ("bool".to_string(), "bool".to_string());
+    }
+
+    if data.iter().all(|v| matches!(v, RuntimeValue::String(_))) {
+        return ("string".to_string(), "string".to_string());
+    }
+
+    if data.iter().all(|v| matches!(v, RuntimeValue::Char(_))) {
+        return ("char".to_string(), "char".to_string());
+    }
+
+    ("number".to_string(), "number".to_string())
+}
+
 #[allow(dead_code)]
 pub(crate) fn runtime_type(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
@@ -488,15 +570,18 @@ pub(crate) fn runtime_type(args: &[RuntimeValue]) -> RuntimeValue {
         RuntimeValue::Bool(_) => "boolean",
         RuntimeValue::Char(_) => "char",
         RuntimeValue::String(_) => "string",
-        RuntimeValue::Array(_) => "array",
+        RuntimeValue::Array(arr) => {
+            let (_, concrete_type) = infer_array_type_bm(arr);
+            return RuntimeValue::String(format!("[{}]", concrete_type));
+        }
         RuntimeValue::Set(_) => "set",
         RuntimeValue::Tuple(_) => "tuple",
         RuntimeValue::RawArray(elem_type, _) => {
             return RuntimeValue::String(format!("[{};raw]", elem_type));
         }
         RuntimeValue::DynArray { concrete_type, .. } => {
-            let inner = if concrete_type.is_empty() {
-                "any"
+            let inner = if concrete_type.is_empty() || concrete_type == "any" {
+                "number"
             } else {
                 concrete_type.as_str()
             };

@@ -391,7 +391,7 @@ impl DynamicArray {
                     max_signed = Some(max_signed.map_or(i, |m| m.max(i)));
                 }
                 _ => {
-                    // Non-numeric -> fallback to Any
+                    // Non-numeric -> fallback to number
                     return ("number".to_string(), ArrayElementType::Any);
                 }
             }
@@ -409,7 +409,7 @@ impl DynamicArray {
                 match v {
                     &Value::Number(n) => {
                         let as_f32 = n as f32 as f64;
-                        if (as_f32 - n).abs() > 1e-6 {
+                        if as_f32 != n {
                             all_f32 = false;
                             break;
                         }
@@ -417,7 +417,7 @@ impl DynamicArray {
                     Value::F32(_) => {}
                     &Value::F64(n) => {
                         let as_f32 = n as f32 as f64;
-                        if (as_f32 - n).abs() > 1e-6 {
+                        if as_f32 != n {
                             all_f32 = false;
                             break;
                         }

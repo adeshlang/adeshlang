@@ -1190,7 +1190,7 @@ mod tests {
         obj.insert("b".to_string(), RuntimeValue::String("x".to_string()));
         let s = RuntimeValue::Object(obj).as_string();
         assert!(s.contains("a: 1"));
-        assert!(s.contains("b: x"));
+        assert!(s.contains("b: \"x\""));
         assert!(s.starts_with("{"));
         assert!(s.ends_with("}"));
     }

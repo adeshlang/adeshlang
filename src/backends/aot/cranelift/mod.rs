@@ -78,7 +78,7 @@ impl AotValueType {
             AotValueType::Bool => "bool",
             AotValueType::Char => "char",
             AotValueType::String => "string",
-            _ => "any",
+            _ => "number",
         }
     }
 
@@ -647,6 +647,10 @@ impl CraneliftAotCompiler {
         settings
             .set("opt_level", opt_level)
             .map_err(|e| format!("Failed to set opt_level: {}", e))?;
+
+        // Enable inline stack probing on Windows so stack frames > 4KB touch guard pages properly without external __chkstk
+        let _ = settings.set("enable_probestack", "true");
+        let _ = settings.set("probestack_strategy", "inline");
 
         // Enable additional Cranelift optimizations for release builds
         if !self.options.fast_compile {

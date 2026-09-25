@@ -538,17 +538,37 @@ pub unsafe extern "C" fn aot_get_index(container_handle: u64, index_handle: u64)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_capacity(arr_handle: u64) -> u64 {
-    let arr = unpack_aot_arg(arr_handle);
-    let res = crate::backends::common::builtins::arrays::runtime_capacity(&[arr]);
-    aot_store_value(res)
+pub extern "C" fn aot_len(handle: u64) -> i64 {
+    let val = unpack_aot_arg(handle);
+    match val {
+        RuntimeValue::Array(v) => v.len() as i64,
+        RuntimeValue::Tuple(v) => v.len() as i64,
+        RuntimeValue::Set(v) => v.len() as i64,
+        RuntimeValue::RawArray(_, v) => v.len() as i64,
+        RuntimeValue::DynArray { data, .. } => data.len() as i64,
+        RuntimeValue::String(s) => s.len() as i64,
+        _ => 0,
+    }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_metadata_size(arr_handle: u64) -> u64 {
+pub extern "C" fn aot_capacity(arr_handle: u64) -> i64 {
+    let arr = unpack_aot_arg(arr_handle);
+    let res = crate::backends::common::builtins::arrays::runtime_capacity(&[arr]);
+    match res {
+        RuntimeValue::Int(n) => n,
+        _ => 0,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_metadata_size(arr_handle: u64) -> i64 {
     let arr = unpack_aot_arg(arr_handle);
     let res = crate::backends::common::builtins::arrays::runtime_metadata_size(&[arr]);
-    aot_store_value(res)
+    match res {
+        RuntimeValue::Int(n) => n,
+        _ => 0,
+    }
 }
 
 #[unsafe(no_mangle)]

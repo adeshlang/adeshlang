@@ -168,22 +168,48 @@ pub(crate) fn runtime_metadata_size(args: &[RuntimeValue]) -> RuntimeValue {
     }
     match &args[0] {
         RuntimeValue::Array(arr) => {
-            let first_elem_size = arr
-                .first()
-                .map(|v| match v {
-                    RuntimeValue::U8(_) | RuntimeValue::I8(_) | RuntimeValue::Bool(_) => 1,
-                    RuntimeValue::U16(_) | RuntimeValue::I16(_) => 2,
-                    RuntimeValue::U32(_)
-                    | RuntimeValue::I32(_)
-                    | RuntimeValue::F32(_)
-                    | RuntimeValue::Char(_) => 4,
-                    _ => 8,
-                })
-                .unwrap_or(8);
-            if first_elem_size <= 4 {
-                RuntimeValue::Int(16)
-            } else {
+            if arr.is_empty() {
+                return RuntimeValue::Int(16);
+            }
+            let is_mixed = arr.iter().any(|v| match v {
+                RuntimeValue::String(_)
+                | RuntimeValue::Object(_)
+                | RuntimeValue::Array(_)
+                | RuntimeValue::DynArray { .. }
+                | RuntimeValue::Tuple(_)
+                | RuntimeValue::Null => true,
+                _ => false,
+            }) && arr.iter().any(|v| match v {
+                RuntimeValue::Int(_)
+                | RuntimeValue::Float(_)
+                | RuntimeValue::U8(_)
+                | RuntimeValue::I8(_)
+                | RuntimeValue::U16(_)
+                | RuntimeValue::I16(_)
+                | RuntimeValue::U32(_)
+                | RuntimeValue::I32(_)
+                | RuntimeValue::F32(_)
+                | RuntimeValue::Bool(_) => true,
+                _ => false,
+            });
+            if is_mixed {
+                return RuntimeValue::Int(24);
+            }
+            let has_large_elem = arr.iter().any(|v| match v {
+                RuntimeValue::Float(_)
+                | RuntimeValue::F64(_)
+                | RuntimeValue::I64(_)
+                | RuntimeValue::U64(_)
+                | RuntimeValue::I128(_)
+                | RuntimeValue::U128(_)
+                | RuntimeValue::BigInt(_) => true,
+                RuntimeValue::Int(n) => *n < i32::MIN as i64 || *n > i32::MAX as i64,
+                _ => false,
+            });
+            if has_large_elem {
                 RuntimeValue::Int(24)
+            } else {
+                RuntimeValue::Int(16)
             }
         }
         RuntimeValue::RawArray(_, _) => RuntimeValue::Int(0),
@@ -197,15 +223,16 @@ pub(crate) fn runtime_metadata_size(args: &[RuntimeValue]) -> RuntimeValue {
             } else {
                 element_type.as_str()
             };
-            let metadata = if ty_str.starts_with("u8")
-                || ty_str.starts_with("i8")
-                || ty_str.starts_with("u16")
-                || ty_str.starts_with("i16")
-                || ty_str.starts_with("u32")
-                || ty_str.starts_with("i32")
-                || ty_str.starts_with("f32")
-                || ty_str.starts_with("bool")
-                || ty_str.starts_with("char")
+            let clean = ty_str.trim_start_matches('[').trim_end_matches(']');
+            let metadata = if clean.starts_with("u8")
+                || clean.starts_with("i8")
+                || clean.starts_with("u16")
+                || clean.starts_with("i16")
+                || clean.starts_with("u32")
+                || clean.starts_with("i32")
+                || clean.starts_with("f32")
+                || clean.starts_with("bool")
+                || clean.starts_with("char")
             {
                 16
             } else {
@@ -215,6 +242,13 @@ pub(crate) fn runtime_metadata_size(args: &[RuntimeValue]) -> RuntimeValue {
         }
         RuntimeValue::String(_) => RuntimeValue::Int(24),
         RuntimeValue::Tuple(_) => RuntimeValue::Int(0),
+        RuntimeValue::U64(handle) => {
+            if let Some(rv) = super::objects::get_jit_arc_value(*handle) {
+                runtime_metadata_size(&[rv])
+            } else {
+                RuntimeValue::Int(0)
+            }
+        }
         _ => RuntimeValue::Int(0),
     }
 }
@@ -1362,7 +1396,7 @@ pub(crate) fn runtime_spread(args: &[RuntimeValue]) -> RuntimeValue {
 /// Infer the element type and concrete type for an array
 pub(crate) fn infer_array_type(data: &[RuntimeValue]) -> (String, String) {
     if data.is_empty() {
-        return ("any".to_string(), "any".to_string());
+        return ("number".to_string(), "number".to_string());
     }
 
     // Check if all elements are integers (either Int or typed integer variants)
@@ -1447,7 +1481,7 @@ pub(crate) fn infer_array_type(data: &[RuntimeValue]) -> (String, String) {
         return ("char".to_string(), "char".to_string());
     }
 
-    ("any".to_string(), "any".to_string())
+    ("number".to_string(), "number".to_string())
 }
 
 /// Compare two runtime values for equality

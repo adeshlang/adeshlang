@@ -1384,6 +1384,10 @@ pub fn compile_to_file_v2(src: &str, out: &Path) -> Result<(), LangError> {
     for s in &prog {
         if let StmtKind::Let(name, _init, _ann, _exp, _cst, _readonly) = &s.kind {
             ctx.add_global(name.clone());
+        } else if let StmtKind::LetTuple(names, _init, _types, _exp, _cst, _readonly) = &s.kind {
+            for name in names {
+                ctx.add_global(name.clone());
+            }
         } else if let StmtKind::ShareDeclaration(decl, _) = &s.kind {
             ctx.add_global(decl.name.clone());
         } else if let StmtKind::StrongDeclaration(decl, _) = &s.kind {
@@ -1421,6 +1425,41 @@ pub fn compile_to_file_v2(src: &str, out: &Path) -> Result<(), LangError> {
 
 fn emit_stmt_v2(s: &Stmt, ctx: &mut REmit) -> Result<(), LangError> {
     match &s.kind {
+        StmtKind::LetTuple(names, _ann, init, _exp, _cst, _readonly) => {
+            if let Some(init_expr) = init {
+                let r_init = emit_expr_v2(init_expr, ctx)?;
+                for (idx, name) in names.iter().enumerate() {
+                    let k_idx = ctx.add_const_num(idx as f64);
+                    let r_idx = ctx.reg();
+                    ctx.emit_u8(ROp::LoadConst as u8);
+                    ctx.emit_u32(r_idx);
+                    ctx.emit_u32(k_idx);
+
+                    let r_elem = ctx.reg();
+                    ctx.emit_u8(ROp::GetIndex as u8);
+                    ctx.emit_u32(r_elem);
+                    ctx.emit_u32(r_init);
+                    ctx.emit_u32(r_idx);
+
+                    if ctx.locals.is_some() {
+                        let rslot = ctx.reg();
+                        let mut lm = ctx.locals.take().unwrap();
+                        lm.insert(name.clone(), rslot);
+                        ctx.locals = Some(lm);
+
+                        ctx.emit_u8(ROp::Move as u8);
+                        ctx.emit_u32(rslot);
+                        ctx.emit_u32(r_elem);
+                    } else {
+                        let g = ctx.add_global(name.clone());
+                        ctx.emit_u8(ROp::StoreGlobal as u8);
+                        ctx.emit_u32(g);
+                        ctx.emit_u32(r_elem);
+                    }
+                }
+            }
+            Ok(())
+        }
         StmtKind::Let(name, init, _ann, _exp, _cst, _readonly) => {
             if ctx.locals.is_some() {
                 let rslot = ctx.reg();
@@ -2100,6 +2139,29 @@ fn emit_expr_v2(e: &Expr, ctx: &mut REmit) -> Result<u32, LangError> {
                     ctx.emit_u32(rr);
                     Ok(rd)
                 }
+                TokenKind::Bang | TokenKind::Not => {
+                    let zero = ctx.add_const_num(0.0);
+                    let rz = ctx.reg();
+                    ctx.emit_u8(ROp::LoadConst as u8);
+                    ctx.emit_u32(rz);
+                    ctx.emit_u32(zero);
+                    let rd = ctx.reg();
+                    ctx.emit_u8(ROp::CmpEQ as u8);
+                    ctx.emit_u32(rd);
+                    ctx.emit_u32(rr);
+                    ctx.emit_u32(rz);
+                    Ok(rd)
+                }
+                TokenKind::Typeof | TokenKind::Type => {
+                    let r_out = ctx.reg();
+                    let bidx = ctx.add_const_str("typeof".to_string());
+                    ctx.emit_u8(ROp::CallBuiltin as u8);
+                    ctx.emit_u32(r_out);
+                    ctx.emit_u32(bidx);
+                    ctx.emit_u32(1); // argc
+                    ctx.emit_u32(rr); // arg 0
+                    Ok(r_out)
+                }
                 _ => Err(LangError::new(
                     ErrorKind::Type,
                     "unsupported unary op".into(),
@@ -2176,7 +2238,36 @@ fn emit_expr_v2(e: &Expr, ctx: &mut REmit) -> Result<u32, LangError> {
             if let ExprKind::Variable(name) = &callee.kind {
                 if name == "print" || name == "println" {
                     let mut last_r = 0;
-                    if args.is_empty() {
+                    let print_args = if args.len() > 1 {
+                        if let ExprKind::Object(entries) = &args.last().unwrap().kind {
+                            let is_opts = entries.iter().any(|(k, _)| {
+                                matches!(
+                                    k.as_str(),
+                                    "color"
+                                        | "background"
+                                        | "flush"
+                                        | "sep"
+                                        | "end"
+                                        | "bold"
+                                        | "italic"
+                                        | "underline"
+                                        | "strikethrough"
+                                        | "pretty"
+                                )
+                            });
+                            if is_opts {
+                                &args[..args.len() - 1]
+                            } else {
+                                &args[..]
+                            }
+                        } else {
+                            &args[..]
+                        }
+                    } else {
+                        &args[..]
+                    };
+
+                    if print_args.is_empty() {
                         let k = ctx.add_const_str("".to_string());
                         let r = ctx.reg();
                         ctx.emit_u8(ROp::LoadConst as u8);
@@ -2186,13 +2277,17 @@ fn emit_expr_v2(e: &Expr, ctx: &mut REmit) -> Result<u32, LangError> {
                         ctx.emit_u32(r);
                         last_r = r;
                     } else {
-                        for a in args {
+                        for (i, a) in print_args.iter().enumerate() {
+                            if i > 0 {
+                                ctx.emit_u8(ROp::PrintSpace as u8);
+                            }
                             let ra = emit_expr_v2(a, ctx)?;
                             ctx.emit_u8(ROp::Print as u8);
                             ctx.emit_u32(ra);
                             last_r = ra;
                         }
                     }
+                    ctx.emit_u8(ROp::PrintNewline as u8);
                     return Ok(last_r);
                 }
                 if name == "clock" && args.is_empty() {
@@ -2285,6 +2380,16 @@ fn emit_expr_v2(e: &Expr, ctx: &mut REmit) -> Result<u32, LangError> {
                     "sizeof",
                     "hasKey",
                     "len",
+                    "capacity",
+                    "metadata_size",
+                    "first",
+                    "last",
+                    "push",
+                    "pop",
+                    "array_to_dynamic",
+                    "array_to_fixed",
+                    "array_to_fixed_raw",
+                    "array_to_raw",
                 ];
                 if builtin_names.contains(&name.as_str()) {
                     // Emit CallBuiltin instruction

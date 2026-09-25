@@ -286,71 +286,83 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             };
 
             // Execute based on backend selection - async/await now natively supported in JIT/bytecode
-            let (result, memory_stats): (Result<(), String>, MemoryStats) = match backend {
-                ExecutionBackend::Jit => match cli_impl::run_with_jit(&path, &src, &parsed) {
-                    Ok(Some(stats)) => (Ok(()), MemoryStats::Jit(stats)),
+            let (result, memory_stats): (Result<(), String>, MemoryStats) = if parsed
+                .config
+                .run_tests
+            {
+                // If running tests, dispatch directly through the test runner
+                match cli_impl::run_with_interpreter(&path, &src, &parsed) {
+                    Ok(Some(stats)) => (Ok(()), MemoryStats::Interpreter(stats)),
                     Ok(None) => (Ok(()), MemoryStats::None),
                     Err(e) => (Err(e), MemoryStats::None),
-                },
-                ExecutionBackend::NativeJit => (
-                    cli_impl::run_with_native_jit(&path, &src, &parsed),
-                    MemoryStats::None,
-                ),
-                ExecutionBackend::Bytecode => (
-                    cli_impl::run_with_bytecode(&path, &src, &parsed),
-                    MemoryStats::None,
-                ),
-                ExecutionBackend::Mixed => {
-                    // Mixed mode: try JIT first, fall back to interpreter
-                    if parsed.config.verbose {
-                        eprintln!("[mixed] Attempting JIT execution...");
-                    }
-                    match cli_impl::run_with_jit(&path, &src, &parsed) {
+                }
+            } else {
+                match backend {
+                    ExecutionBackend::Jit => match cli_impl::run_with_jit(&path, &src, &parsed) {
                         Ok(Some(stats)) => (Ok(()), MemoryStats::Jit(stats)),
                         Ok(None) => (Ok(()), MemoryStats::None),
-                        Err(e) => {
-                            if parsed.config.verbose {
-                                eprintln!(
-                                    "[mixed] JIT failed ({}), falling back to interpreter",
-                                    e
-                                );
-                            }
-                            match cli_impl::run_with_interpreter(&path, &src, &parsed) {
-                                Ok(Some(stats)) => (Ok(()), MemoryStats::Interpreter(stats)),
-                                Ok(None) => (Ok(()), MemoryStats::None),
-                                Err(e) => (Err(e), MemoryStats::None),
+                        Err(e) => (Err(e), MemoryStats::None),
+                    },
+                    ExecutionBackend::NativeJit => (
+                        cli_impl::run_with_native_jit(&path, &src, &parsed),
+                        MemoryStats::None,
+                    ),
+                    ExecutionBackend::Bytecode => (
+                        cli_impl::run_with_bytecode(&path, &src, &parsed),
+                        MemoryStats::None,
+                    ),
+                    ExecutionBackend::Mixed => {
+                        // Mixed mode: try JIT first, fall back to interpreter
+                        if parsed.config.verbose {
+                            eprintln!("[mixed] Attempting JIT execution...");
+                        }
+                        match cli_impl::run_with_jit(&path, &src, &parsed) {
+                            Ok(Some(stats)) => (Ok(()), MemoryStats::Jit(stats)),
+                            Ok(None) => (Ok(()), MemoryStats::None),
+                            Err(e) => {
+                                if parsed.config.verbose {
+                                    eprintln!(
+                                        "[mixed] JIT failed ({}), falling back to interpreter",
+                                        e
+                                    );
+                                }
+                                match cli_impl::run_with_interpreter(&path, &src, &parsed) {
+                                    Ok(Some(stats)) => (Ok(()), MemoryStats::Interpreter(stats)),
+                                    Ok(None) => (Ok(()), MemoryStats::None),
+                                    Err(e) => (Err(e), MemoryStats::None),
+                                }
                             }
                         }
                     }
-                }
-                ExecutionBackend::Safe | ExecutionBackend::Interpreter => {
-                    match cli_impl::run_with_interpreter(&path, &src, &parsed) {
-                        Ok(Some(stats)) => (Ok(()), MemoryStats::Interpreter(stats)),
-                        Ok(None) => (Ok(()), MemoryStats::None),
-                        Err(e) => (Err(e), MemoryStats::None),
+                    ExecutionBackend::Safe | ExecutionBackend::Interpreter => {
+                        match cli_impl::run_with_interpreter(&path, &src, &parsed) {
+                            Ok(Some(stats)) => (Ok(()), MemoryStats::Interpreter(stats)),
+                            Ok(None) => (Ok(()), MemoryStats::None),
+                            Err(e) => (Err(e), MemoryStats::None),
+                        }
                     }
+                    ExecutionBackend::AdaptiveJit => (
+                        cli_impl::run_with_adaptive_jit(&path, &src, &parsed),
+                        MemoryStats::None,
+                    ),
+                    ExecutionBackend::TieredJit => (
+                        cli_impl::run_with_tiered_jit(&path, &src, &parsed),
+                        MemoryStats::None,
+                    ),
+                    ExecutionBackend::Aot => (
+                        cli_impl::run_with_aot(&path, &src, &parsed),
+                        MemoryStats::None,
+                    ),
+                    ExecutionBackend::Wasm => (
+                        cli_impl::run_with_wasm(&path, &src, &parsed),
+                        MemoryStats::None,
+                    ),
+                    #[cfg(debug_assertions)]
+                    ExecutionBackend::Gpu => (
+                        cli_impl::run_with_mlir_gpu(&path, &src, &parsed),
+                        MemoryStats::None,
+                    ),
                 }
-                ExecutionBackend::AdaptiveJit => (
-                    cli_impl::run_with_adaptive_jit(&path, &src, &parsed),
-                    MemoryStats::None,
-                ),
-                ExecutionBackend::TieredJit => (
-                    cli_impl::run_with_tiered_jit(&path, &src, &parsed),
-                    MemoryStats::None,
-                ),
-                ExecutionBackend::Aot => (
-                    cli_impl::run_with_aot(&path, &src, &parsed),
-                    MemoryStats::None,
-                ),
-                ExecutionBackend::Wasm => (
-                    cli_impl::run_with_wasm(&path, &src, &parsed),
-                    MemoryStats::None,
-                ),
-                #[cfg(debug_assertions)]
-                ExecutionBackend::Gpu => (
-                    cli_impl::run_with_mlir_gpu(&path, &src, &parsed),
-                    MemoryStats::None,
-                ),
             };
 
             // Print timing if profiling enabled

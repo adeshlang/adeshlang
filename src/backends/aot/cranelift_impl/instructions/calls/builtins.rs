@@ -1660,7 +1660,7 @@ pub(crate) fn handle_call_builtin(
             let zero = builder.ins().iconst(types::I64, 0);
             ctx.value_map.insert(*dst, zero);
         }
-        "len" => {
+        "len" | "length" => {
             // len() builtin - for arrays and strings, return length
             if !args.is_empty() {
                 let arg_id = args[0];
@@ -1678,19 +1678,53 @@ pub(crate) fn handle_call_builtin(
                         ctx.value_map.insert(*dst, len_v);
                         ctx.value_types.insert(*dst, AotValueType::Int);
                     }
+                    (Some(AotValueType::RawArray(_, len)), _) => {
+                        let v = builder.ins().iconst(types::I64, len as i64);
+                        ctx.value_map.insert(*dst, v);
+                        ctx.value_types.insert(*dst, AotValueType::Int);
+                    }
                     (Some(AotValueType::Tuple(elem_types)), _) => {
                         let v = builder.ins().iconst(types::I64, elem_types.len() as i64);
                         ctx.value_map.insert(*dst, v);
                         ctx.value_types.insert(*dst, AotValueType::Int);
                     }
-                    (Some(AotValueType::String), _) => {
-                        let v = builder.ins().iconst(types::I64, 0);
-                        ctx.value_map.insert(*dst, v);
+                    (Some(AotValueType::String), Some(ptr)) => {
+                        let mut sig = module.make_signature();
+                        sig.params.push(AbiParam::new(types::I64));
+                        sig.returns.push(AbiParam::new(types::I64));
+                        let func_id = module
+                            .declare_function("strlen", Linkage::Import, &sig)
+                            .map_err(|e| format!("Failed to declare strlen: {}", e))?;
+                        let func_ref = module.declare_func_in_func(func_id, builder.func);
+                        let call = builder.ins().call(func_ref, &[ptr]);
+                        let res = builder.inst_results(call)[0];
+                        ctx.value_map.insert(*dst, res);
                         ctx.value_types.insert(*dst, AotValueType::Int);
                     }
                     _ => {
-                        let v = builder.ins().iconst(types::I64, 0);
-                        ctx.value_map.insert(*dst, v);
+                        let ctors = RuntimeValueConstructors::declare(module, builder)?;
+                        let ty = ctx
+                            .value_types
+                            .get(&arg_id)
+                            .cloned()
+                            .unwrap_or(AotValueType::Handle);
+                        let raw = ctx
+                            .value_map
+                            .get(&arg_id)
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let handle =
+                            convert_val_to_handle(ctx, builder, module, &arg_id, raw, &ty, &ctors)?;
+                        let mut sig = module.make_signature();
+                        sig.params.push(AbiParam::new(types::I64));
+                        sig.returns.push(AbiParam::new(types::I64));
+                        let func_id = module
+                            .declare_function("aot_len", Linkage::Import, &sig)
+                            .map_err(|e| format!("Failed to declare aot_len: {}", e))?;
+                        let func_ref = module.declare_func_in_func(func_id, builder.func);
+                        let call = builder.ins().call(func_ref, &[handle]);
+                        let res = builder.inst_results(call)[0];
+                        ctx.value_map.insert(*dst, res);
                         ctx.value_types.insert(*dst, AotValueType::Int);
                     }
                 }
@@ -1844,7 +1878,7 @@ pub(crate) fn handle_call_builtin(
                     Some(AotValueType::Tuple(_)) => "tuple".to_string(),
                     Some(AotValueType::Int) => "number".to_string(),
                     Some(AotValueType::Float) => "number".to_string(),
-                    Some(AotValueType::Bool) => "bool".to_string(),
+                    Some(AotValueType::Bool) => "boolean".to_string(),
                     Some(AotValueType::Char) => "char".to_string(),
                     Some(AotValueType::String) => "string".to_string(),
                     Some(AotValueType::Ptr) => "pointer".to_string(),
@@ -1866,13 +1900,37 @@ pub(crate) fn handle_call_builtin(
                 };
 
                 // Add the type string to data if not present
-                if let Some(&type_data_id) = ctx.string_data.get(&type_str) {
+                let type_data_id = if let Some(&id) = ctx.string_data.get(&type_str) {
+                    Some(id)
+                } else {
+                    use std::sync::atomic::{AtomicUsize, Ordering};
+                    static ANON_TYPE_STR_COUNTER: AtomicUsize = AtomicUsize::new(0);
+                    let count = ANON_TYPE_STR_COUNTER.fetch_add(1, Ordering::Relaxed);
+                    let safe_name = format!("__aot_typestr_{}", count);
+                    let mut data: Vec<u8> = type_str
+                        .as_bytes()
+                        .iter()
+                        .filter(|&&b| b != 0)
+                        .copied()
+                        .collect();
+                    data.push(0);
+                    if let Ok(data_id) =
+                        module.declare_data(&safe_name, Linkage::Local, false, false)
+                    {
+                        let mut desc = cranelift_module::DataDescription::new();
+                        desc.define(data.into_boxed_slice());
+                        let _ = module.define_data(data_id, &desc);
+                        ctx.string_data.insert(type_str.clone(), data_id);
+                        Some(data_id)
+                    } else {
+                        None
+                    }
+                };
+
+                if let Some(type_data_id) =
+                    type_data_id.or_else(|| ctx.string_data.get("unknown").copied())
+                {
                     let type_gv = module.declare_data_in_func(type_data_id, builder.func);
-                    let type_ptr = builder.ins().global_value(types::I64, type_gv);
-                    ctx.value_map.insert(*dst, type_ptr);
-                    ctx.value_types.insert(*dst, AotValueType::String);
-                } else if let Some(&unknown_data_id) = ctx.string_data.get("unknown") {
-                    let type_gv = module.declare_data_in_func(unknown_data_id, builder.func);
                     let type_ptr = builder.ins().global_value(types::I64, type_gv);
                     ctx.value_map.insert(*dst, type_ptr);
                     ctx.value_types.insert(*dst, AotValueType::String);
@@ -3611,7 +3669,9 @@ pub(crate) fn handle_call_builtin(
                     let v = builder.ins().iconst(types::I64, cap);
                     ctx.value_map.insert(*dst, v);
                     ctx.value_types.insert(*dst, AotValueType::Int);
-                } else if let Some(AotValueType::Array(_, len)) = ctx.value_types.get(&arg_id) {
+                } else if let Some(AotValueType::Array(_, len) | AotValueType::RawArray(_, len)) =
+                    ctx.value_types.get(&arg_id)
+                {
                     let v = builder.ins().iconst(types::I64, *len as i64);
                     ctx.value_map.insert(*dst, v);
                     ctx.value_types.insert(*dst, AotValueType::Int);
@@ -3639,8 +3699,7 @@ pub(crate) fn handle_call_builtin(
                     let call = builder.ins().call(func_ref, &[handle]);
                     let res = builder.inst_results(call)[0];
                     ctx.value_map.insert(*dst, res);
-                    ctx.value_types.insert(*dst, AotValueType::Handle);
-                    ctx.runtime_handle_values.insert(*dst);
+                    ctx.value_types.insert(*dst, AotValueType::Int);
                 }
             } else {
                 let v = builder.ins().iconst(types::I64, 0);
@@ -3652,18 +3711,19 @@ pub(crate) fn handle_call_builtin(
             // Return array metadata overhead based on element type
             if !args.is_empty() {
                 let arg_id = args[0];
-                if let Some(AotValueType::Array(elem_type, _)) = ctx.value_types.get(&arg_id) {
+                let val_ty = ctx.value_types.get(&arg_id).cloned();
+                if let Some(AotValueType::Array(elem_type, _)) = &val_ty {
                     let size = elem_type.metadata_size();
                     let v = builder.ins().iconst(types::I64, size);
                     ctx.value_map.insert(*dst, v);
                     ctx.value_types.insert(*dst, AotValueType::Int);
+                } else if let Some(AotValueType::RawArray(..)) = &val_ty {
+                    let v = builder.ins().iconst(types::I64, 0);
+                    ctx.value_map.insert(*dst, v);
+                    ctx.value_types.insert(*dst, AotValueType::Int);
                 } else {
                     let ctors = RuntimeValueConstructors::declare(module, builder)?;
-                    let ty = ctx
-                        .value_types
-                        .get(&arg_id)
-                        .cloned()
-                        .unwrap_or(AotValueType::Handle);
+                    let ty = val_ty.unwrap_or(AotValueType::Handle);
                     let raw = ctx
                         .value_map
                         .get(&arg_id)
@@ -3681,8 +3741,7 @@ pub(crate) fn handle_call_builtin(
                     let call = builder.ins().call(func_ref, &[handle]);
                     let res = builder.inst_results(call)[0];
                     ctx.value_map.insert(*dst, res);
-                    ctx.value_types.insert(*dst, AotValueType::Handle);
-                    ctx.runtime_handle_values.insert(*dst);
+                    ctx.value_types.insert(*dst, AotValueType::Int);
                 }
             } else {
                 let v = builder.ins().iconst(types::I64, 0);

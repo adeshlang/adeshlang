@@ -1,6 +1,6 @@
 // Basic Test Examples
 // Demonstrates fundamental testing features in Adesh
-
+// @allow(warnings)
 // Simple test with basic assertion
 test fn test_true() {
     assert(true);

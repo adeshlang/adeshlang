@@ -129,6 +129,10 @@ pub fn hir_to_lir(hir: &HirModule) -> Result<LirModule, String> {
     let entry_main = create_entry_main(&mut lir, has_user_main, has_content)?;
     lir.add_function(entry_main);
 
+    // Run global and local LIR optimization passes
+    let mut optimizer = super::super::optimizer::LirOptimizer::new();
+    optimizer.optimize_module(&mut lir);
+
     Ok(lir)
 }
 

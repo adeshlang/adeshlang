@@ -8,7 +8,9 @@
 //! 4. Redundant Local Store-Load Forwarding within loop bodies.
 
 use super::{OptLevel, OptResult, VirOptimization};
-use crate::ir::vir::{BlockId, ValueId, VirBlock, VirFunction, VirInstruction, VirModule, VirTerminator};
+use crate::ir::vir::{
+    BlockId, ValueId, VirBlock, VirFunction, VirInstruction, VirModule, VirTerminator,
+};
 use std::collections::{HashMap, HashSet};
 
 pub struct LoopOptimization;
@@ -165,22 +167,24 @@ impl LoopOptimization {
                         loop_blocks.insert(header);
                         loop_blocks.insert(block.id);
 
-                        // Discover all blocks in the loop
+                        // Discover all blocks in the loop (stopping at loop header)
                         let mut stack = vec![block.id];
                         while let Some(curr) = stack.pop() {
-                            if let Some(p_list) = preds.get(&curr) {
-                                for &p in p_list {
-                                    if loop_blocks.insert(p) {
-                                        stack.push(p);
+                            if curr != header {
+                                if let Some(p_list) = preds.get(&curr) {
+                                    for &p in p_list {
+                                        if loop_blocks.insert(p) {
+                                            stack.push(p);
+                                        }
                                     }
                                 }
                             }
                         }
 
                         // Find preheader: predecessor of header that is not in loop_blocks
-                        let preheader = preds
-                            .get(&header)
-                            .and_then(|p_list| p_list.iter().find(|&&p| !loop_blocks.contains(&p)).copied());
+                        let preheader = preds.get(&header).and_then(|p_list| {
+                            p_list.iter().find(|&&p| !loop_blocks.contains(&p)).copied()
+                        });
 
                         loops.push((header, loop_blocks, preheader));
                     }
@@ -236,7 +240,8 @@ impl LoopOptimization {
 
             // Insert hoisted instructions into preheader before terminator
             if !hoisted_instructions.is_empty() {
-                if let Some(preheader_block) = func.blocks.iter_mut().find(|b| b.id == preheader_id) {
+                if let Some(preheader_block) = func.blocks.iter_mut().find(|b| b.id == preheader_id)
+                {
                     preheader_block.instructions.extend(hoisted_instructions);
                 }
             }
@@ -292,9 +297,7 @@ fn is_hoistable_pure_instruction(
         VirInstruction::IntUnOp { operand, .. }
         | VirInstruction::FloatUnOp { operand, .. }
         | VirInstruction::Cast { value: operand, .. }
-        | VirInstruction::Bitcast { value: operand, .. } => {
-            !loop_defined_values.contains(operand)
-        }
+        | VirInstruction::Bitcast { value: operand, .. } => !loop_defined_values.contains(operand),
 
         VirInstruction::ExtractTuple { tuple, .. } => !loop_defined_values.contains(tuple),
 

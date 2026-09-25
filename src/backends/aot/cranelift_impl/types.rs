@@ -64,7 +64,7 @@ impl AotValueType {
             AotValueType::Bool => "bool",
             AotValueType::Char => "char",
             AotValueType::String => "string",
-            _ => "any",
+            _ => "number",
         }
     }
 

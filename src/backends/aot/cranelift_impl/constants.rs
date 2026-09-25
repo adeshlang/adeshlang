@@ -150,11 +150,27 @@ pub(crate) fn lower_constant_instruction(
                 value_map.insert(*dst, v);
                 value_types.insert(*dst, AotValueType::String);
             } else {
-                // Fallback: use string index
-                let idx = string_pool.iter().position(|x| x == s).unwrap_or(0);
-                let v = builder.ins().iconst(types::I64, idx as i64);
-                value_map.insert(*dst, v);
-                value_types.insert(*dst, AotValueType::Int);
+                use std::sync::atomic::{AtomicUsize, Ordering};
+                static ANON_STR_COUNTER: AtomicUsize = AtomicUsize::new(0);
+                let count = ANON_STR_COUNTER.fetch_add(1, Ordering::Relaxed);
+                let safe_name = format!("__aot_str_anon_{}", count);
+                let mut data: Vec<u8> = s.as_bytes().iter().filter(|&&b| b != 0).copied().collect();
+                data.push(0);
+                if let Ok(data_id) =
+                    module.declare_data(&safe_name, cranelift_module::Linkage::Local, false, false)
+                {
+                    let mut desc = cranelift_module::DataDescription::new();
+                    desc.define(data.into_boxed_slice());
+                    let _ = module.define_data(data_id, &desc);
+                    let gv = module.declare_data_in_func(data_id, builder.func);
+                    let v = builder.ins().global_value(types::I64, gv);
+                    value_map.insert(*dst, v);
+                    value_types.insert(*dst, AotValueType::String);
+                } else {
+                    let v = builder.ins().iconst(types::I64, 0);
+                    value_map.insert(*dst, v);
+                    value_types.insert(*dst, AotValueType::String);
+                }
             }
             // Track constant strings for print options
             const_strings.insert(*dst, s.clone());

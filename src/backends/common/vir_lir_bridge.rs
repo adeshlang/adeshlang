@@ -64,6 +64,9 @@ impl VirToLirBridge {
             lir_module.add_function(lir_func);
         }
 
+        let mut optimizer = crate::backends::common::lir::optimizer::LirOptimizer::new();
+        optimizer.optimize_module(&mut lir_module);
+
         Ok(lir_module)
     }
 

@@ -59,6 +59,7 @@ pub struct TestRunOptions {
     pub test_name: Option<String>,
     pub default_timeout: Duration,
     pub backend_check: bool,
+    pub test_backends: Vec<ExecutionBackend>,
     pub json_format: bool,
     pub no_color: bool,
     pub deterministic_seed: u64,
@@ -75,6 +76,7 @@ impl Default for TestRunOptions {
             test_name: None,
             default_timeout: Duration::from_secs(5),
             backend_check: false,
+            test_backends: Vec::new(),
             json_format: false,
             no_color: false,
             deterministic_seed: 0xD00DFEED,
@@ -214,6 +216,10 @@ pub fn all_execution_backends() -> Vec<ExecutionBackend> {
         ExecutionBackend::NativeJit,
         ExecutionBackend::Bytecode,
         ExecutionBackend::Mixed,
+        ExecutionBackend::AdaptiveJit,
+        ExecutionBackend::TieredJit,
+        ExecutionBackend::Aot,
+        ExecutionBackend::Wasm,
     ]
 }
 
@@ -233,7 +239,9 @@ pub fn run_tests<E: BackendTestExecutor>(
         let prefix = format!("{}__", normalized);
         tests.retain(|t| t.name == normalized || t.name.starts_with(&prefix));
     }
-    let backends = if options.backend_check {
+    let backends = if !options.test_backends.is_empty() {
+        options.test_backends.clone()
+    } else if options.backend_check {
         all_execution_backends()
     } else {
         vec![selected_backend]
@@ -298,7 +306,7 @@ pub fn run_tests<E: BackendTestExecutor>(
     }
 
     summary.duration = started.elapsed();
-    let matrix = if options.backend_check {
+    let matrix = if backends.len() > 1 {
         Some(build_backend_matrix(&all_results, &backends))
     } else {
         None
@@ -517,6 +525,388 @@ fn truncate(input: &str, max: usize) -> String {
     } else {
         format!("{}…", &input[..max.saturating_sub(1)])
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-backend summary helper
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Aggregated pass/fail numbers for a single backend across all test cases.
+#[derive(Debug, Clone, Default)]
+pub struct PerBackendSummary {
+    pub backend: ExecutionBackend,
+    pub total: usize,
+    pub passed: usize,
+    pub failed: usize,
+    pub panics: usize,
+    pub timeout: usize,
+    pub ignored: usize,
+}
+
+impl PerBackendSummary {
+    pub fn is_clean(&self) -> bool {
+        self.failed == 0 && self.panics == 0 && self.timeout == 0
+    }
+}
+
+/// Build per-backend summary stats from test results.
+pub fn build_per_backend_summaries(
+    results: &[TestCaseResult],
+    backends: &[ExecutionBackend],
+) -> Vec<PerBackendSummary> {
+    let mut summaries: Vec<PerBackendSummary> = backends
+        .iter()
+        .map(|b| PerBackendSummary {
+            backend: *b,
+            ..Default::default()
+        })
+        .collect();
+
+    for result in results {
+        for s in summaries.iter_mut() {
+            let status = result
+                .backend_results
+                .get(&s.backend)
+                .map(|r| r.status)
+                .unwrap_or(TestStatus::Ignored);
+            s.total += 1;
+            match status {
+                TestStatus::Pass => s.passed += 1,
+                TestStatus::Fail => s.failed += 1,
+                TestStatus::Panic => s.panics += 1,
+                TestStatus::Timeout => s.timeout += 1,
+                TestStatus::Ignored => s.ignored += 1,
+            }
+        }
+    }
+    summaries
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Rich multi-backend report renderer
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Short display name for a backend (used in column headers).
+fn backend_short_name(b: ExecutionBackend) -> &'static str {
+    match b {
+        ExecutionBackend::Interpreter => "interp",
+        ExecutionBackend::Jit => "jit",
+        ExecutionBackend::NativeJit => "njit",
+        ExecutionBackend::Mixed => "mixed",
+        ExecutionBackend::Safe => "safe",
+        ExecutionBackend::Bytecode => "vm",
+        ExecutionBackend::AdaptiveJit => "ajit",
+        ExecutionBackend::TieredJit => "tjit",
+        ExecutionBackend::Aot => "aot",
+        ExecutionBackend::Wasm => "wasm",
+        #[cfg(debug_assertions)]
+        ExecutionBackend::Gpu => "gpu",
+    }
+}
+
+/// Public alias for use in backends.rs / CLI layer.
+pub fn backend_short_name_pub(b: ExecutionBackend) -> &'static str {
+    backend_short_name(b)
+}
+
+/// Render a coloured status cell (8-char wide).
+fn status_cell(status: TestStatus, no_color: bool) -> String {
+    let (text, ansi) = match status {
+        TestStatus::Pass => ("  PASS  ", "\x1b[32m"),  // green
+        TestStatus::Fail => ("  FAIL  ", "\x1b[31m"),  // red
+        TestStatus::Panic => (" PANIC  ", "\x1b[35m"), // magenta
+        TestStatus::Timeout => (" TIMEOUT", "\x1b[33m"), // yellow
+        TestStatus::Ignored => (" IGNORE ", ""),
+    };
+    if no_color || ansi.is_empty() {
+        format!("{}", text)
+    } else {
+        format!("{}{}\x1b[0m", ansi, text)
+    }
+}
+
+/// Render the detailed multi-backend result grid.
+///
+/// Shows one row per test, one column per backend, with colour-coded cells.
+/// Below the grid: per-backend summary bars and an overall overview.
+pub fn render_multi_backend_report(
+    results: &[TestCaseResult],
+    backends: &[ExecutionBackend],
+    summaries: &[PerBackendSummary],
+    no_color: bool,
+) -> String {
+    use std::fmt::Write as _;
+
+    let bold = if no_color { "" } else { "\x1b[1m" };
+    let dim = if no_color { "" } else { "\x1b[2m" };
+    let reset = if no_color { "" } else { "\x1b[0m" };
+    let cyan = if no_color { "" } else { "\x1b[36m" };
+    let green = if no_color { "" } else { "\x1b[32m" };
+    let red = if no_color { "" } else { "\x1b[31m" };
+    let yellow = if no_color { "" } else { "\x1b[33m" };
+
+    let mut out = String::new();
+
+    // ── Header ───────────────────────────────────────────────────────────────
+    let _ = writeln!(
+        out,
+        "\n{bold}{cyan}╔══════════════════════════════════════════════════════════════╗{reset}"
+    );
+    let _ = writeln!(
+        out,
+        "{bold}{cyan}║          Multi-Backend Test Report                           ║{reset}"
+    );
+    let _ = writeln!(
+        out,
+        "{bold}{cyan}╚══════════════════════════════════════════════════════════════╝{reset}"
+    );
+    let _ = writeln!(
+        out,
+        "{dim}Backends tested: {}{reset}",
+        backends
+            .iter()
+            .map(|b| backend_short_name(*b))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let _ = writeln!(out);
+
+    // ── Per-test grid ────────────────────────────────────────────────────────
+    // Column widths
+    let name_w = results
+        .iter()
+        .map(|r| r.name.replace("__", "::").len())
+        .max()
+        .unwrap_or(20)
+        .max(20)
+        .min(50);
+    let cell_w: usize = 8; // fixed cell width
+
+    // Header row
+    let _ = write!(out, "  {bold}{:<name_w$}{reset}", "Test", name_w = name_w);
+    for b in backends {
+        let label = backend_short_name(*b);
+        let _ = write!(out, "  {:^cell_w$}", label, cell_w = cell_w);
+    }
+    let _ = writeln!(out);
+
+    // Separator
+    let _ = write!(out, "  {}", "─".repeat(name_w));
+    for _ in backends {
+        let _ = write!(out, "  {}", "─".repeat(cell_w));
+    }
+    let _ = writeln!(out);
+
+    // Test rows
+    for result in results {
+        let display_name = result.name.replace("__", "::");
+        let truncated = if display_name.len() > name_w {
+            format!("{}…", &display_name[..name_w.saturating_sub(1)])
+        } else {
+            display_name.clone()
+        };
+
+        // Color the test name based on effective status
+        let name_color = match result.effective_status {
+            TestStatus::Pass => green,
+            TestStatus::Fail | TestStatus::Panic | TestStatus::Timeout => red,
+            TestStatus::Ignored => dim,
+        };
+        let _ = write!(
+            out,
+            "  {name_color}{:<name_w$}{reset}",
+            truncated,
+            name_w = name_w
+        );
+
+        // Status cells per backend
+        for b in backends {
+            let status = result
+                .backend_results
+                .get(b)
+                .map(|r| r.status)
+                .unwrap_or(TestStatus::Ignored);
+            let cell = status_cell(status, no_color);
+            let _ = write!(out, "  {}", cell);
+        }
+
+        // Append timing from first available backend
+        let timing = result
+            .backend_results
+            .values()
+            .next()
+            .map(|r| {
+                let d = r.duration;
+                if d.as_secs() > 0 {
+                    format!(" {:.2}s", d.as_secs_f64())
+                } else if d.as_millis() > 0 {
+                    format!(" {:.1}ms", d.as_secs_f64() * 1000.0)
+                } else {
+                    format!(" {:.0}µs", d.as_secs_f64() * 1_000_000.0)
+                }
+            })
+            .unwrap_or_default();
+        let _ = writeln!(out, "  {dim}{}{reset}", timing);
+
+        // For failing tests: print per-backend failure messages
+        for b in backends {
+            if let Some(br) = result.backend_results.get(b) {
+                if matches!(
+                    br.status,
+                    TestStatus::Fail | TestStatus::Panic | TestStatus::Timeout
+                ) {
+                    if let Some(ref msg) = br.message {
+                        let _ = writeln!(
+                            out,
+                            "    {dim}[{}]{reset} {red}{}{reset}",
+                            backend_short_name(*b),
+                            msg.lines().next().unwrap_or(msg),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Per-backend summary table ─────────────────────────────────────────────
+    let _ = writeln!(out);
+    let _ = writeln!(out, "{bold}Per-Backend Summary{reset}");
+    let _ = write!(out, "  {:<10}", "Backend");
+    let _ = write!(out, "  {:>5}", "Total");
+    let _ = write!(out, "  {:>6}", "Passed");
+    let _ = write!(out, "  {:>6}", "Failed");
+    let _ = write!(out, "  {:>6}", "Panics");
+    let _ = write!(out, "  {:>7}", "Timeout");
+    let _ = write!(out, "  {:>7}", "Ignored");
+    let _ = writeln!(out, "  Result");
+    let _ = write!(out, "  {}", "─".repeat(10));
+    let _ = write!(out, "  {}", "─".repeat(5));
+    let _ = write!(out, "  {}", "─".repeat(6));
+    let _ = write!(out, "  {}", "─".repeat(6));
+    let _ = write!(out, "  {}", "─".repeat(6));
+    let _ = write!(out, "  {}", "─".repeat(7));
+    let _ = write!(out, "  {}", "─".repeat(7));
+    let _ = writeln!(out, "  {}", "─".repeat(8));
+
+    let mut all_clean = true;
+    for s in summaries {
+        let pass_color = if s.is_clean() { green } else { "" };
+        let fail_color = if s.failed > 0 { red } else { "" };
+        let panic_color = if s.panics > 0 { red } else { "" };
+        let timeout_color = if s.timeout > 0 { yellow } else { "" };
+        let result_str = if s.is_clean() {
+            format!("{green}✓ PASS{reset}")
+        } else {
+            all_clean = false;
+            format!("{red}✗ FAIL{reset}")
+        };
+
+        let _ = write!(out, "  {:<10}", backend_short_name(s.backend));
+        let _ = write!(out, "  {:>5}", s.total);
+        let _ = write!(out, "  {pass_color}{:>6}{reset}", s.passed);
+        let _ = write!(out, "  {fail_color}{:>6}{reset}", s.failed);
+        let _ = write!(out, "  {panic_color}{:>6}{reset}", s.panics);
+        let _ = write!(out, "  {timeout_color}{:>7}{reset}", s.timeout);
+        let _ = write!(out, "  {:>7}", s.ignored);
+        let _ = writeln!(out, "  {}", result_str);
+    }
+
+    // ── Inconsistency report ─────────────────────────────────────────────────
+    let inconsistent: Vec<&TestCaseResult> = results
+        .iter()
+        .filter(|r| {
+            let statuses: std::collections::BTreeSet<_> = backends
+                .iter()
+                .filter_map(|b| r.backend_results.get(b))
+                .map(|br| br.status)
+                .collect();
+            statuses.len() > 1
+        })
+        .collect();
+
+    if !inconsistent.is_empty() {
+        let _ = writeln!(out);
+        let _ = writeln!(
+            out,
+            "{bold}{yellow}⚠  Backend Inconsistencies ({} test{}):{reset}",
+            inconsistent.len(),
+            if inconsistent.len() == 1 { "" } else { "s" }
+        );
+        let _ = writeln!(
+            out,
+            "{dim}   These tests produce different outcomes across backends{reset}"
+        );
+        for r in &inconsistent {
+            let _ = write!(out, "   {yellow}▶{reset} {}", r.name.replace("__", "::"));
+            for b in backends {
+                let status = r
+                    .backend_results
+                    .get(b)
+                    .map(|br| br.status)
+                    .unwrap_or(TestStatus::Ignored);
+                let cell = match status {
+                    TestStatus::Pass => format!("{green}PASS{reset}"),
+                    TestStatus::Fail => format!("{red}FAIL{reset}"),
+                    TestStatus::Panic => {
+                        format!("{}PANIC{reset}", if no_color { "" } else { "\x1b[35m" })
+                    }
+                    TestStatus::Timeout => format!("{yellow}TIME{reset}"),
+                    TestStatus::Ignored => format!("{dim}SKIP{reset}"),
+                };
+                let _ = write!(out, "  {}:{}", backend_short_name(*b), cell);
+            }
+            let _ = writeln!(out);
+        }
+    }
+
+    // ── Overall result ────────────────────────────────────────────────────────
+    let _ = writeln!(out);
+    let _ = write!(out, "  {}", "═".repeat(60));
+    let _ = writeln!(out);
+    if all_clean && inconsistent.is_empty() {
+        let _ = writeln!(
+            out,
+            "  {bold}{green}✓ All backends passed — output is consistent across runtimes{reset}"
+        );
+    } else {
+        if !all_clean {
+            let failing: Vec<&str> = summaries
+                .iter()
+                .filter(|s| !s.is_clean())
+                .map(|s| backend_short_name(s.backend))
+                .collect();
+            let _ = writeln!(
+                out,
+                "  {bold}{red}✗ Failures on: {}{reset}",
+                failing.join(", ")
+            );
+        }
+        if !inconsistent.is_empty() {
+            let _ = writeln!(
+                out,
+                "  {bold}{yellow}⚠  {} test(s) behave differently across backends{reset}",
+                inconsistent.len()
+            );
+        }
+    }
+    let _ = writeln!(out);
+
+    out
+}
+
+/// Render a progress banner printed before multi-backend tests start.
+pub fn render_multi_backend_header(backends: &[ExecutionBackend], no_color: bool) -> String {
+    let bold = if no_color { "" } else { "\x1b[1m" };
+    let cyan = if no_color { "" } else { "\x1b[36m" };
+    let reset = if no_color { "" } else { "\x1b[0m" };
+    let dim = if no_color { "" } else { "\x1b[2m" };
+
+    let names: Vec<&str> = backends.iter().map(|b| backend_short_name(*b)).collect();
+    format!(
+        "{bold}{cyan}Running tests across {} backend(s):{reset} {dim}{}{reset}\n",
+        backends.len(),
+        names.join(", ")
+    )
 }
 
 pub fn to_json_report(

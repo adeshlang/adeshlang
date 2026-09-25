@@ -258,7 +258,7 @@ pub extern "C" fn jit_char_from_str(handle_or_ptr: i64) -> u64 {
 pub extern "C" fn jit_make_array() -> u64 {
     store_value(RuntimeValue::DynArray {
         data: Vec::new(),
-        element_type: "any".to_string(),
+        element_type: "number".to_string(),
         concrete_type: String::new(),
         tracked_capacity: None,
     })
@@ -270,7 +270,7 @@ pub extern "C" fn jit_make_array_capacity(capacity: u64) -> u64 {
     let arr = Vec::with_capacity(capacity as usize);
     store_value(RuntimeValue::DynArray {
         data: arr,
-        element_type: "any".to_string(),
+        element_type: "number".to_string(),
         concrete_type: String::new(),
         tracked_capacity: Some(capacity as usize),
     })
@@ -460,6 +460,96 @@ pub extern "C" fn jit_make_tuple() -> u64 {
 pub extern "C" fn jit_tuple_push_int(tuple_handle: u64, value: i64) -> u64 {
     if let Some(RuntimeValue::Tuple(mut tup)) = remove_value(tuple_handle) {
         tup.push(RuntimeValue::Int(value));
+        store_value(RuntimeValue::Tuple(tup))
+    } else {
+        0
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_tuple_push_u8(tuple_handle: u64, value: i64) -> u64 {
+    if let Some(RuntimeValue::Tuple(mut tup)) = remove_value(tuple_handle) {
+        tup.push(RuntimeValue::U8(value as u8));
+        store_value(RuntimeValue::Tuple(tup))
+    } else {
+        0
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_tuple_push_u16(tuple_handle: u64, value: i64) -> u64 {
+    if let Some(RuntimeValue::Tuple(mut tup)) = remove_value(tuple_handle) {
+        tup.push(RuntimeValue::U16(value as u16));
+        store_value(RuntimeValue::Tuple(tup))
+    } else {
+        0
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_tuple_push_u32(tuple_handle: u64, value: i64) -> u64 {
+    if let Some(RuntimeValue::Tuple(mut tup)) = remove_value(tuple_handle) {
+        tup.push(RuntimeValue::U32(value as u32));
+        store_value(RuntimeValue::Tuple(tup))
+    } else {
+        0
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_tuple_push_u64(tuple_handle: u64, value: i64) -> u64 {
+    if let Some(RuntimeValue::Tuple(mut tup)) = remove_value(tuple_handle) {
+        tup.push(RuntimeValue::U64(value as u64));
+        store_value(RuntimeValue::Tuple(tup))
+    } else {
+        0
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_tuple_push_i8(tuple_handle: u64, value: i64) -> u64 {
+    if let Some(RuntimeValue::Tuple(mut tup)) = remove_value(tuple_handle) {
+        tup.push(RuntimeValue::I8(value as i8));
+        store_value(RuntimeValue::Tuple(tup))
+    } else {
+        0
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_tuple_push_i16(tuple_handle: u64, value: i64) -> u64 {
+    if let Some(RuntimeValue::Tuple(mut tup)) = remove_value(tuple_handle) {
+        tup.push(RuntimeValue::I16(value as i16));
+        store_value(RuntimeValue::Tuple(tup))
+    } else {
+        0
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_tuple_push_i32(tuple_handle: u64, value: i64) -> u64 {
+    if let Some(RuntimeValue::Tuple(mut tup)) = remove_value(tuple_handle) {
+        tup.push(RuntimeValue::I32(value as i32));
+        store_value(RuntimeValue::Tuple(tup))
+    } else {
+        0
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_tuple_push_i64(tuple_handle: u64, value: i64) -> u64 {
+    if let Some(RuntimeValue::Tuple(mut tup)) = remove_value(tuple_handle) {
+        tup.push(RuntimeValue::I64(value));
+        store_value(RuntimeValue::Tuple(tup))
+    } else {
+        0
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_tuple_push_f32(tuple_handle: u64, value: f32) -> u64 {
+    if let Some(RuntimeValue::Tuple(mut tup)) = remove_value(tuple_handle) {
+        tup.push(RuntimeValue::F32(value));
         store_value(RuntimeValue::Tuple(tup))
     } else {
         0
@@ -1977,7 +2067,11 @@ pub extern "C" fn jit_get_field(obj_handle: u64, field_handle: u64) -> u64 {
             let value = match field.as_str() {
                 "len" | "length" => RuntimeValue::Int(arr.len() as i64),
                 "capacity" => RuntimeValue::Int(arr.capacity() as i64),
-                "metadata_size" => RuntimeValue::Int(24),
+                "metadata_size" => {
+                    crate::backends::common::builtins::arrays::runtime_metadata_size(&[
+                        RuntimeValue::Array(arr.clone()),
+                    ])
+                }
                 _ => RuntimeValue::Null,
             };
             store_value(value)
@@ -2010,15 +2104,16 @@ pub extern "C" fn jit_get_field(obj_handle: u64, field_handle: u64) -> u64 {
                     RuntimeValue::Int(tracked_capacity.unwrap_or_else(|| data.capacity()) as i64)
                 }
                 "metadata_size" => {
-                    let metadata = if ty_str.starts_with("u8")
-                        || ty_str.starts_with("i8")
-                        || ty_str.starts_with("u16")
-                        || ty_str.starts_with("i16")
-                        || ty_str.starts_with("u32")
-                        || ty_str.starts_with("i32")
-                        || ty_str.starts_with("f32")
-                        || ty_str.starts_with("bool")
-                        || ty_str.starts_with("char")
+                    let clean = ty_str.trim_start_matches('[').trim_end_matches(']');
+                    let metadata = if clean.starts_with("u8")
+                        || clean.starts_with("i8")
+                        || clean.starts_with("u16")
+                        || clean.starts_with("i16")
+                        || clean.starts_with("u32")
+                        || clean.starts_with("i32")
+                        || clean.starts_with("f32")
+                        || clean.starts_with("bool")
+                        || clean.starts_with("char")
                     {
                         16
                     } else {
@@ -3055,17 +3150,33 @@ pub extern "C" fn jit_last(arr_handle: u64) -> u64 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn jit_capacity(arr_handle: u64) -> u64 {
+pub extern "C" fn jit_len(arr_handle: u64) -> i64 {
     let arr = unpack_jit_arg(arr_handle);
-    let res = crate::backends::common::builtins::arrays::runtime_capacity(&[arr]);
-    store_value(res)
+    let res = crate::backends::common::builtins::arrays::runtime_len(&[arr]);
+    match res {
+        RuntimeValue::Int(n) => n,
+        _ => 0,
+    }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn jit_metadata_size(arr_handle: u64) -> u64 {
+pub extern "C" fn jit_capacity(arr_handle: u64) -> i64 {
+    let arr = unpack_jit_arg(arr_handle);
+    let res = crate::backends::common::builtins::arrays::runtime_capacity(&[arr]);
+    match res {
+        RuntimeValue::Int(n) => n,
+        _ => 0,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_metadata_size(arr_handle: u64) -> i64 {
     let arr = unpack_jit_arg(arr_handle);
     let res = crate::backends::common::builtins::arrays::runtime_metadata_size(&[arr]);
-    store_value(res)
+    match res {
+        RuntimeValue::Int(n) => n,
+        _ => 0,
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -3308,6 +3419,15 @@ pub fn get_runtime_symbols() -> Vec<(&'static str, *const u8)> {
         ("jit_object_has_key", jit_object_has_key as *const u8),
         ("jit_make_tuple", jit_make_tuple as *const u8),
         ("jit_tuple_push_int", jit_tuple_push_int as *const u8),
+        ("jit_tuple_push_u8", jit_tuple_push_u8 as *const u8),
+        ("jit_tuple_push_u16", jit_tuple_push_u16 as *const u8),
+        ("jit_tuple_push_u32", jit_tuple_push_u32 as *const u8),
+        ("jit_tuple_push_u64", jit_tuple_push_u64 as *const u8),
+        ("jit_tuple_push_i8", jit_tuple_push_i8 as *const u8),
+        ("jit_tuple_push_i16", jit_tuple_push_i16 as *const u8),
+        ("jit_tuple_push_i32", jit_tuple_push_i32 as *const u8),
+        ("jit_tuple_push_i64", jit_tuple_push_i64 as *const u8),
+        ("jit_tuple_push_f32", jit_tuple_push_f32 as *const u8),
         ("jit_tuple_push_float", jit_tuple_push_float as *const u8),
         ("jit_tuple_push_str", jit_tuple_push_str as *const u8),
         ("jit_tuple_push_bool", jit_tuple_push_bool as *const u8),
@@ -3388,6 +3508,7 @@ pub fn get_runtime_symbols() -> Vec<(&'static str, *const u8)> {
         ("jit_get_index", jit_get_index as *const u8),
         ("jit_first", jit_first as *const u8),
         ("jit_last", jit_last as *const u8),
+        ("jit_len", jit_len as *const u8),
         ("jit_capacity", jit_capacity as *const u8),
         ("jit_metadata_size", jit_metadata_size as *const u8),
         ("jit_push", jit_push as *const u8),

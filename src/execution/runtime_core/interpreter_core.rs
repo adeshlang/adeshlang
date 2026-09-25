@@ -1736,9 +1736,40 @@ impl Interpreter {
                     | "indexOf" | "includes" | "first" | "last" | "slice" => {
                         Ok(BoundNative(key.to_string(), Box::new(Value::Array(a))))
                     }
-                    "len" | "length" => Ok(Number(a.len() as f64)),
-                    "capacity" => Ok(Number(a.capacity() as f64)),
-                    "metadata_size" => Ok(Number(24.0)),
+                    "metadata_size" => {
+                        let size = if a.is_empty() {
+                            16.0
+                        } else {
+                            let is_mixed = a.iter().any(|v| {
+                                matches!(
+                                    v,
+                                    Value::Str(_)
+                                        | Value::Object(_)
+                                        | Value::Array(_)
+                                        | Value::DynArray(_)
+                                        | Value::Tuple(_)
+                                        | Value::Null
+                                )
+                            }) && a
+                                .iter()
+                                .any(|v| matches!(v, Value::Number(_) | Value::Bool(_)));
+                            if is_mixed {
+                                24.0
+                            } else {
+                                let has_large = a.iter().any(|v| match v {
+                                    Value::Number(n) => {
+                                        n.fract() != 0.0
+                                            || *n < i32::MIN as f64
+                                            || *n > i32::MAX as f64
+                                    }
+                                    Value::BigInt(_) => true,
+                                    _ => false,
+                                });
+                                if has_large { 24.0 } else { 16.0 }
+                            }
+                        };
+                        Ok(Number(size))
+                    }
                     _ => Ok(Null),
                 }
             }
@@ -15855,7 +15886,38 @@ impl Interpreter {
         }
         if method_name == "metadata_size" {
             match obj {
-                Value::Array(_) => return Ok(Value::Number(24.0)),
+                Value::Array(a) => {
+                    let size = if a.is_empty() {
+                        16.0
+                    } else {
+                        let is_mixed = a.iter().any(|v| {
+                            matches!(
+                                v,
+                                Value::Str(_)
+                                    | Value::Object(_)
+                                    | Value::Array(_)
+                                    | Value::DynArray(_)
+                                    | Value::Tuple(_)
+                                    | Value::Null
+                            )
+                        }) && a
+                            .iter()
+                            .any(|v| matches!(v, Value::Number(_) | Value::Bool(_)));
+                        if is_mixed {
+                            24.0
+                        } else {
+                            let has_large = a.iter().any(|v| match v {
+                                Value::Number(n) => {
+                                    n.fract() != 0.0 || *n < i32::MIN as f64 || *n > i32::MAX as f64
+                                }
+                                Value::BigInt(_) => true,
+                                _ => false,
+                            });
+                            if has_large { 24.0 } else { 16.0 }
+                        }
+                    };
+                    return Ok(Value::Number(size));
+                }
                 Value::RawArray(_, _) => return Ok(Value::Number(0.0)),
                 Value::Tuple(_) => return Ok(Value::Number(0.0)),
                 Value::DynArray(da) => {
@@ -21282,7 +21344,38 @@ impl ExecLegacy {
         }
         if method_name == "metadata_size" {
             match obj {
-                Value::Array(_) => return Ok(Value::Number(24.0)),
+                Value::Array(a) => {
+                    let size = if a.is_empty() {
+                        16.0
+                    } else {
+                        let is_mixed = a.iter().any(|v| {
+                            matches!(
+                                v,
+                                Value::Str(_)
+                                    | Value::Object(_)
+                                    | Value::Array(_)
+                                    | Value::DynArray(_)
+                                    | Value::Tuple(_)
+                                    | Value::Null
+                            )
+                        }) && a
+                            .iter()
+                            .any(|v| matches!(v, Value::Number(_) | Value::Bool(_)));
+                        if is_mixed {
+                            24.0
+                        } else {
+                            let has_large = a.iter().any(|v| match v {
+                                Value::Number(n) => {
+                                    n.fract() != 0.0 || *n < i32::MIN as f64 || *n > i32::MAX as f64
+                                }
+                                Value::BigInt(_) => true,
+                                _ => false,
+                            });
+                            if has_large { 24.0 } else { 16.0 }
+                        }
+                    };
+                    return Ok(Value::Number(size));
+                }
                 Value::RawArray(_, _) => return Ok(Value::Number(0.0)),
                 Value::Tuple(_) => return Ok(Value::Number(0.0)),
                 Value::DynArray(da) => {

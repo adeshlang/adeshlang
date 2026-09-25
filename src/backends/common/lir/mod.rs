@@ -435,5 +435,7 @@ mod tests {
 
 // Submodule for lowering HIR to LIR
 pub mod lower;
+pub mod optimizer;
 
 pub use lower::*;
+pub use optimizer::LirOptimizer;

@@ -8,6 +8,13 @@ use super::context::NativeJitContext;
 ///
 /// Finds and calls the main function, returning its result.
 pub fn execute_native_jit(context: NativeJitContext) -> Result<(), String> {
+    execute_native_jit_with_timing(context).map(|_| ())
+}
+
+/// Execute a JIT-compiled program and return precise CPU execution time
+pub fn execute_native_jit_with_timing(
+    context: NativeJitContext,
+) -> Result<std::time::Duration, String> {
     // Prefer synthesized entry, then fall back to wrapper/user-main for partial modules.
     let main_ptr = context
         .get_function("main")
@@ -23,7 +30,9 @@ pub fn execute_native_jit(context: NativeJitContext) -> Result<(), String> {
     type MainFn = extern "C" fn() -> ();
     let main_fn: MainFn = unsafe { std::mem::transmute(main_ptr) };
 
-    // Execute the main function
+    // Measure pure CPU execution time
+    let start = std::time::Instant::now();
     main_fn();
-    Ok(())
+    let exec_time = start.elapsed();
+    Ok(exec_time)
 }

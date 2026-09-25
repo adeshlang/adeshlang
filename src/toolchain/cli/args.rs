@@ -285,6 +285,53 @@ impl ParsedArgs {
                     config.backend_check = true;
                     config.run_tests = true;
                 }
+                _ if arg.starts_with("--runtimes=") => {
+                    // e.g. --runtimes=jit,njit,vm,aot,wasm,gpu
+                    let list = arg["--runtimes=".len()..].trim();
+                    for token in list.split(',').map(|t| t.trim()).filter(|t| !t.is_empty()) {
+                        match ExecutionBackend::from_str(token) {
+                            Some(b) => {
+                                if !config.test_backends.contains(&b) {
+                                    config.test_backends.push(b);
+                                }
+                            }
+                            None => {
+                                eprintln!(
+                                    "Warning: unknown runtime backend '{}' in --runtimes (ignored)",
+                                    token
+                                );
+                            }
+                        }
+                    }
+                    config.run_tests = true;
+                }
+                "--runtimes" => {
+                    // --runtimes jit,njit (space-separated value)
+                    if i + 1 < args.len() && !args[i + 1].starts_with('-') {
+                        let list = &args[i + 1];
+                        for token in list.split(',').map(|t| t.trim()).filter(|t| !t.is_empty()) {
+                            match ExecutionBackend::from_str(token) {
+                                Some(b) => {
+                                    if !config.test_backends.contains(&b) {
+                                        config.test_backends.push(b);
+                                    }
+                                }
+                                None => {
+                                    eprintln!(
+                                        "Warning: unknown runtime backend '{}' in --runtimes (ignored)",
+                                        token
+                                    );
+                                }
+                            }
+                        }
+                        config.run_tests = true;
+                        i += 1;
+                    } else {
+                        return Err(
+                            "--runtimes requires a comma-separated list of backends".to_string()
+                        );
+                    }
+                }
                 "--fail-fast" => {
                     config.fail_fast = true;
                 }
@@ -764,26 +811,75 @@ Built with strong type inference, memory safety, and zero-cost abstractions
       • {bold}In-Editor Help:{reset} Press {dim}F1{reset} or type {dim}:help{reset} anytime for complete shortcut cheatsheet
 
 {bold}TESTING:{reset} {yellow}⭐ NEW!{reset}
-    {green}run{reset} {blue}--test{reset} <file> [test_name]  Run tests in file (optionally one test)
-    {blue}--test-name{reset} <name>    Run a single test (or group prefix)
-    {blue}--fail-fast{reset}            Stop on first test failure
-    {blue}--quiet{reset} {blue}-q{reset}             Hide output from passing tests (still show failures)
-    {blue}--nocapture{reset}           Show test output for passing tests (Rust-style)
-    {blue}--backend-check{reset}        Test across multiple backends and show comparison matrix
-    {blue}--format json{reset}          Output test results in JSON format for CI integration
-    {blue}--tags{reset} <tag>           Filter tests by tag
-    {dim}Test groups use names like group__test (filter also accepts group::test){reset}
-    
-    {dim}Examples:{reset}
-      {green}adesh run --test{reset} tests/math_test.adesh
-      {green}adesh run --test{reset} tests/math_test.adesh test_add
-      {green}adesh run --test --test-name{reset} test_add tests/math_test.adesh
-      {green}adesh run --test --fail-fast{reset} all_tests.adesh
-      {green}adesh run --test --quiet{reset} all_tests.adesh
-      {green}adesh run --test --nocapture{reset} all_tests.adesh
-      {green}adesh run --test --backend-check{reset} integration_tests.adesh
-      {green}adesh run --test --format json{reset} tests.adesh {blue}>{reset} results.json
-      {green}test{reset} math {{ {green}test fn add(){{}}{reset} {green}test fn sub(){{}}{reset} }}
+    {green}adesh run --test{reset} <file> [name]       Run all tests in a file (or a single named test)
+    {green}adesh run --test --runtimes{reset}=<list> <file>  Run tests across multiple backends {yellow}⭐ NEW!{reset}
+    {green}adesh run --test --backend-check{reset} <file>  Test across ALL backends (full matrix)
+
+  {bold}Test flags:{reset}
+    {blue}--test{reset}, {blue}--tests{reset}            Run every {dim}test fn{reset} in the file
+    {blue}--test-name{reset} <name>        Run only the matching test (or group prefix)
+    {blue}--runtimes{reset}=<list>          Comma-separated backend list  {yellow}⭐ NEW!{reset}
+    {blue}--backend-check{reset}            Test on ALL known backends (full matrix report)
+    {blue}--fail-fast{reset}                Stop immediately on the first FAIL/PANIC/TIMEOUT
+    {blue}--quiet{reset}, {blue}-q{reset}              Suppress passing-test output (still shows failures)
+    {blue}--nocapture{reset}               Print stdout from every test, even passing ones
+    {blue}--tags{reset} <tag>               Filter tests by tag  {dim}(@tag("fast") etc.){reset}
+    {blue}--include-tags{reset}=<tag,...>   Include only tests with any of these tags
+    {blue}--format json{reset}              Machine-readable JSON report (useful for CI)
+
+  {bold}Available backend names for {blue}--runtimes{reset}:{reset}
+    {dim}interp{reset}      Standard interpreter (default, always available)
+    {dim}jit{reset}         JIT (LIR compiler, fast startup)
+    {dim}njit{reset}        Native JIT (Cranelift machine code, 10-232x faster)
+    {dim}vm{reset}          Bytecode VM ({blue}--vm{reset} / {blue}--bytecode{reset})
+    {dim}mixed{reset}       Hybrid interpreter + JIT for hot functions
+    {dim}adaptive{reset}    Adaptive JIT with speculative optimisation
+    {dim}tiered{reset}      Tiered JIT (T0 -> T1 -> T2)
+    {dim}aot{reset}         Ahead-of-Time Cranelift compilation (subprocess)
+    {dim}wasm{reset}        WebAssembly backend via Wasmtime (subprocess)
+    {dim}gpu{reset}         MLIR GPU backend (debug builds; set ADESH_TEST_GPU=1)
+
+  {bold}Multi-backend report (when >1 backend selected):{reset}
+    When {blue}--runtimes{reset} or {blue}--backend-check{reset} picks more than one backend, output
+    switches to a rich grid showing all tests x all backends at once:
+
+    {dim}  Test                      interp    jit      njit     vm
+      -----------------------   --------  ------   ------   ------
+      math::add                   PASS     PASS     PASS     PASS     0.3ms
+      math::div_by_zero           PASS     FAIL     FAIL     PASS     1.1ms  <- inconsistency
+
+      Per-Backend Summary
+        interp:  3/3 PASS   jit: 2/3 FAIL   njit: 2/3 FAIL   vm: 3/3 PASS
+
+      Inconsistency report   <- tests that differ across backends are highlighted
+      Overall verdict:  all consistent OR  which backends failed{reset}
+
+  {bold}Examples:{reset}
+    {dim}# Basic test run (interpreter){reset}
+    {green}adesh run --test{reset} tests/math_test.adesh
+    {green}adesh run --test{reset} tests/math_test.adesh test_add
+    {green}adesh run --test --test-name{reset} test_add tests/math_test.adesh
+    {green}adesh run --test --fail-fast{reset} all_tests.adesh
+    {green}adesh run --test --quiet{reset} all_tests.adesh
+    {green}adesh run --test --nocapture{reset} all_tests.adesh
+
+    {dim}# Multi-backend (rich grid report)  ⭐{reset}
+    {green}adesh run --test --runtimes{reset}=jit,njit,vm,aot tests/all.adesh
+    {green}adesh run --test --runtimes{reset}=interp,jit tests/math.adesh
+    {green}adesh run --test --runtimes{reset}=jit,aot {blue}--fail-fast{reset} tests/all.adesh
+    {green}adesh run --test --runtimes{reset}=jit,njit,vm,aot,wasm tests/suite.adesh
+    {green}adesh run --test --backend-check{reset} integration_tests.adesh
+
+    {dim}# Filtered by tag{reset}
+    {green}adesh run --test --tags{reset} fast tests/math_test.adesh
+    {green}adesh run --test --include-tags{reset}=fast,unit tests/all.adesh
+
+    {dim}# CI integration{reset}
+    {green}adesh run --test --runtimes{reset}=interp,jit,njit,vm,aot {blue}--format json{reset} tests.adesh {blue}>{reset} results.json
+    {green}adesh run --test --format json{reset} tests.adesh {blue}>{reset} results.json
+
+    {dim}# Inline test block (in source){reset}
+    {green}test{reset} math {{ {green}test fn add(){{}}{reset} {green}test fn sub(){{}}{reset} }}
 
 {bold}TYPE SYSTEM:{reset}
     AdeshLang features a strong, Rust-inspired type system with:
@@ -1046,9 +1142,15 @@ Built with strong type inference, memory safety, and zero-cost abstractions
     {green}adesh run{reset} {blue}--embedded{reset} program.adesh         {dim}# Embedded mode (stack + arena only){reset}
     
     {dim}# Testing{reset}
-    {green}adesh run{reset} {blue}--test{reset} test_suite.adesh         {dim}# Run all tests{reset}
-    {green}adesh run{reset} {blue}--test --fail-fast{reset} tests.adesh  {dim}# Stop on first failure{reset}
-    {green}adesh run{reset} {blue}--test --backend-check{reset} tests.adesh  {dim}# Test all backends{reset}
+    {green}adesh run{reset} {blue}--test{reset} test_suite.adesh              {dim}# Run all tests (interpreter){reset}
+    {green}adesh run{reset} {blue}--test --fail-fast{reset} tests.adesh        {dim}# Stop on first failure{reset}
+    {green}adesh run{reset} {blue}--test --quiet{reset} tests.adesh             {dim}# Silent except failures{reset}
+    {green}adesh run{reset} {blue}--test --backend-check{reset} tests.adesh     {dim}# All backends, full matrix{reset}
+    {green}adesh run{reset} {blue}--test --runtimes{reset}=jit,njit,vm tests.adesh   {dim}# Specific backends{reset}
+    {green}adesh run{reset} {blue}--test --runtimes{reset}=interp,jit,njit,vm,aot,wasm tests.adesh  {dim}# All major backends{reset}
+    {green}adesh run{reset} {blue}--test --runtimes{reset}=jit,aot {blue}--fail-fast{reset} tests.adesh {dim}# Fail-fast multi-backend{reset}
+    {green}adesh run{reset} {blue}--test --format json{reset} tests.adesh {blue}>{reset} out.json    {dim}# JSON for CI{reset}
+    {green}adesh run{reset} {blue}--test --runtimes{reset}=jit,njit {blue}--format json{reset} tests.adesh {blue}>{reset} out.json
     
     {dim}# Type checking{reset}
     {green}adesh check{reset} program.adesh                  {dim}# Type-check only{reset}

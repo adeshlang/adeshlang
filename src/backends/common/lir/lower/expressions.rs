@@ -29,9 +29,8 @@ fn builtin_return_type(name: &str) -> LirType {
         | "Math.trunc" | "Math.sign" | "div" => LirType::F64,
 
         // Functions that return integers
-        "len" | "int" | "argc" | "argsCount" | "int_div" | "Math.randomInt" | "sizeof" => {
-            LirType::I64
-        }
+        "len" | "length" | "int" | "argc" | "argsCount" | "int_div" | "Math.randomInt"
+        | "sizeof" | "capacity" | "metadata_size" | "first" | "last" => LirType::I64,
 
         // Functions that return booleans
         "bool" | "is_null" | "eq" | "ne" | "strict_eq" | "strict_ne" | "in" | "instanceof"
@@ -764,6 +763,68 @@ pub(super) fn lower_expr(
                     );
                     insert_exception_check(func, ctx);
                 }
+            } else if let HirExpr::MemberAccess(target, method) = callee.as_ref() {
+                let target_val = lower_expr(lir, func, ctx, target)?;
+                match method.as_str() {
+                    "metadata_size" => {
+                        func.push_to_block(
+                            ctx.current_block,
+                            LirInst::CallBuiltin(
+                                result,
+                                "metadata_size".to_string(),
+                                vec![target_val],
+                            ),
+                        );
+                        ctx.value_types.insert(result, LirType::I64);
+                    }
+                    "capacity" => {
+                        func.push_to_block(
+                            ctx.current_block,
+                            LirInst::CallBuiltin(result, "capacity".to_string(), vec![target_val]),
+                        );
+                        ctx.value_types.insert(result, LirType::I64);
+                    }
+                    "len" | "length" => {
+                        func.push_to_block(
+                            ctx.current_block,
+                            LirInst::CallBuiltin(result, "len".to_string(), vec![target_val]),
+                        );
+                        ctx.value_types.insert(result, LirType::I64);
+                    }
+                    "first" => {
+                        func.push_to_block(
+                            ctx.current_block,
+                            LirInst::CallBuiltin(result, "first".to_string(), vec![target_val]),
+                        );
+                    }
+                    "last" => {
+                        func.push_to_block(
+                            ctx.current_block,
+                            LirInst::CallBuiltin(result, "last".to_string(), vec![target_val]),
+                        );
+                    }
+                    _ => {
+                        let arg_vals: Result<Vec<_>, _> =
+                            args.iter().map(|a| lower_expr(lir, func, ctx, a)).collect();
+                        let arg_vals = arg_vals?;
+                        let method_val = func.alloc_value();
+                        func.push_to_block(
+                            ctx.current_block,
+                            LirInst::ConstString(method_val, method.clone()),
+                        );
+                        let mut call_method_args = vec![target_val, method_val];
+                        call_method_args.extend(arg_vals);
+                        func.push_to_block(
+                            ctx.current_block,
+                            LirInst::CallBuiltin(
+                                result,
+                                "__call_method".to_string(),
+                                call_method_args,
+                            ),
+                        );
+                        insert_exception_check(func, ctx);
+                    }
+                }
             } else {
                 // Indirect call - callee is an expression (e.g., m.modAdd, obj.method, fn_var)
                 // We need to include the callee value as the first argument to call_indirect
@@ -947,6 +1008,33 @@ pub(super) fn lower_expr(
             // Check if field is an ARC method called as property/member
             let target_val = lower_expr(lir, func, ctx, target)?;
             match field.as_str() {
+                "len" | "length" => {
+                    let result = func.alloc_value();
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CallBuiltin(result, "len".to_string(), vec![target_val]),
+                    );
+                    ctx.value_types.insert(result, LirType::I64);
+                    return Ok(result);
+                }
+                "capacity" => {
+                    let result = func.alloc_value();
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CallBuiltin(result, "capacity".to_string(), vec![target_val]),
+                    );
+                    ctx.value_types.insert(result, LirType::I64);
+                    return Ok(result);
+                }
+                "metadata_size" => {
+                    let result = func.alloc_value();
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CallBuiltin(result, "metadata_size".to_string(), vec![target_val]),
+                    );
+                    ctx.value_types.insert(result, LirType::I64);
+                    return Ok(result);
+                }
                 "strong_count" => {
                     let result = func.alloc_value();
                     func.push_to_block(
@@ -1155,8 +1243,51 @@ pub(super) fn lower_expr(
 
             // Regular object method call
             let obj_val = lower_expr(lir, func, ctx, obj)?;
-            // Check for ARC handle builtin methods
+            // Check for array and ARC handle builtin methods
             match method.as_str() {
+                "metadata_size" => {
+                    let result = func.alloc_value();
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CallBuiltin(result, "metadata_size".to_string(), vec![obj_val]),
+                    );
+                    ctx.value_types.insert(result, LirType::I64);
+                    return Ok(result);
+                }
+                "capacity" => {
+                    let result = func.alloc_value();
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CallBuiltin(result, "capacity".to_string(), vec![obj_val]),
+                    );
+                    ctx.value_types.insert(result, LirType::I64);
+                    return Ok(result);
+                }
+                "len" | "length" => {
+                    let result = func.alloc_value();
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CallBuiltin(result, "len".to_string(), vec![obj_val]),
+                    );
+                    ctx.value_types.insert(result, LirType::I64);
+                    return Ok(result);
+                }
+                "first" => {
+                    let result = func.alloc_value();
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CallBuiltin(result, "first".to_string(), vec![obj_val]),
+                    );
+                    return Ok(result);
+                }
+                "last" => {
+                    let result = func.alloc_value();
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CallBuiltin(result, "last".to_string(), vec![obj_val]),
+                    );
+                    return Ok(result);
+                }
                 "strong_count" => {
                     let result = func.alloc_value();
                     func.push_to_block(ctx.current_block, LirInst::ArcStrongCount(result, obj_val));

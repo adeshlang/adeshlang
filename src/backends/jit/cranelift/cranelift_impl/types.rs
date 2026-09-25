@@ -170,7 +170,14 @@ pub(crate) fn runtime_type_name(value: &RuntimeValue) -> String {
         RuntimeValue::F32(_) => "f32".to_string(),
         RuntimeValue::F64(_) => "f64".to_string(),
         RuntimeValue::RawArray(elem_type, _) => format!("[{};raw]", elem_type),
-        RuntimeValue::DynArray { concrete_type, .. } => format!("[{}]", concrete_type),
+        RuntimeValue::DynArray { concrete_type, .. } => {
+            let inner = if concrete_type.is_empty() || concrete_type == "any" {
+                "number"
+            } else {
+                concrete_type.as_str()
+            };
+            format!("[{}]", inner)
+        }
     }
 }
 
