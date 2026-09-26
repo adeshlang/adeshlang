@@ -20,6 +20,7 @@ Complete reference for the AdeshLang command-line interface.
 - [Basic Usage](#basic-usage)
 - [Commands](#commands)
   - [run](#run)
+  - [test](#test)
   - [repl](#repl)
   - [format / fmt](#format--fmt)
   - [compile](#compile)
@@ -138,6 +139,82 @@ adesh run --bytecode program.adesh
 
 **Backend Auto-Detection:**
 The `run` command can automatically detect the execution backend from `@compile` directives in the source file (see [Source Directives](#source-directives)).
+
+---
+
+### test
+
+Execute tests declared with `test fn` in AdeshLang files or projects using the Rust-grade test runner.
+
+**Syntax:**
+```bash
+adesh test [file.adesh] [filter] [options]
+adesh run --test <file.adesh> [filter] [options]
+```
+
+**Features & Capabilities:**
+- **Cargo-grade test runner**: Substring matching by default, `--exact` matching, `--skip` filtering, `--list` discovery, `--ignored`, and `--include-ignored`.
+- **Multi-backend test execution**: Run tests across multiple backends simultaneously via `--runtimes=interp,jit,njit,vm,aot,wasm` or `--backend-check` (all 11 backends).
+- **Parallel Multi-threading**: Lightning-fast concurrent test execution across CPU cores using Rayon (`--test-threads <N>`, `-j <N>`, `--parallel`).
+- **Sequential Execution**: Run tests step-by-step one-by-one with `--serial` / `--sequential` / `--one-by-one` / `--test-threads=1`.
+- **Module Test Discovery & Namespacing**: Discovers and namespaces tests imported via `import "./sub.test.adesh" as sub_mod;` (`sub_mod::test_case`).
+- **Cross-backend Conformance Matrix**: Rich ASCII table report with per-backend summary statistics and failure details section.
+- **Machine-readable JSON**: `--format json` output for CI/CD pipelines.
+
+**Test Flags:**
+| Flag | Description |
+|---|---|
+| `--test`, `--tests` | Enable test runner mode |
+| `--test-name <name>`, `<filter>` | Run tests matching substring or prefix |
+| `--exact` | Match test filter pattern exactly rather than substring |
+| `--skip <pattern>` | Skip tests matching filter pattern |
+| `--list` | List all discovered tests without running them |
+| `--ignored` | Run only tests marked with `@ignore` or `test_ignore` |
+| `--include-ignored` | Run both regular and ignored tests |
+| `--test-threads <N>`, `-j <N>` | Set number of worker threads for parallel test execution |
+| `--serial`, `--one-by-one` | Execute tests sequentially one-by-one |
+| `--parallel` | Run tests with full multi-threaded parallelism (default) |
+| `--runtimes=<list>` | Comma-separated list of backends (e.g. `--runtimes=interp,jit,njit`) |
+| `--backend-check` | Run tests across all 11 backends with full matrix report |
+| `--fail-fast` | Stop immediately on the first FAIL/PANIC/TIMEOUT |
+| `--quiet`, `-q` | Suppress passing-test output (still shows failures and summary) |
+| `--nocapture` | Print standard output from all tests (even passing ones) |
+| `--tags <tag>` | Filter tests by `@tag("name")` decorator |
+| `--include-tags=<tags>` | Include only tests matching specified comma-separated tags |
+| `--format json` | Output machine-readable JSON test report |
+
+**Examples:**
+```bash
+# Run all tests in a test file
+adesh test tests/main.adesh
+
+# Run tests matching a filter
+adesh test tests/main.adesh option
+
+# Run exact test name match
+adesh test tests/main.adesh test_origin_point --exact
+
+# Skip specific tests
+adesh test tests/main.adesh --skip struct
+
+# List all discovered tests
+adesh test tests/main.adesh --list
+
+# Run tests across Interpreter, JIT, and Native JIT with full multi-threading
+adesh test --runtimes=interp,jit,njit tests/main.adesh
+
+# Run tests across multiple backends sequentially one-by-one
+adesh test --runtimes=interp,jit,njit --serial tests/main.adesh
+
+# Run tests with 8 worker threads
+adesh test --runtimes=interp,jit,njit --test-threads=8 tests/main.adesh
+
+# Test on all backends with full matrix verification
+adesh test --backend-check tests/main.adesh
+
+# Generate JSON report for CI/CD
+adesh test --format json tests/main.adesh
+```
 
 ---
 
@@ -1610,7 +1687,7 @@ adesh run --interpreter program.adesh
 
 ## Getting Help
 
-**Online Documentation:** https://github.com/ajaytainwala-dev/mylang
+**Online Documentation:** https://github.com/adeshlang/adeshlang
 
 **Show CLI Help:**
 ```bash
@@ -1618,8 +1695,8 @@ adesh --help
 ```
 
 **Community:**
-- GitHub Issues: https://github.com/ajaytainwala-dev/mylang/issues
-- Discussions: https://github.com/ajaytainwala-dev/mylang/discussions
+- GitHub Issues: https://github.com/adeshlang/adeshlang/issues
+- Discussions: https://github.com/adeshlang/adeshlang/discussions
 
 ---
 

@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 // Main executor struct
 // ─────────────────────────────────────────────────────────────────────────────
 
+#[derive(Clone, Debug)]
 pub struct InterpreterTestExecutor {
     pub source_code: String,
     pub file_path: String,
@@ -52,7 +53,11 @@ impl InterpreterTestExecutor {
 
         interp.run_module(&self.source_code, &mut loader, Some(self.file_path.clone()))?;
 
-        let test_call = format!("{}();", test_name);
+        let test_call = if test_name.contains("::") {
+            format!("{}();", test_name.replace("::", "."))
+        } else {
+            format!("{}();", test_name)
+        };
         let mut lexer = Lexer::new(&test_call);
         let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
         let mut parser = Parser::new(tokens, Some(format!("<test:{}>", test_name)));
@@ -148,13 +153,16 @@ impl InterpreterTestExecutor {
 
     /// Execute test function with Bytecode VM in-process.
     fn run_test_bytecode(&self, test_name: &str) -> Result<Duration, String> {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let start = Instant::now();
         let driver_src = self.build_driver_source(test_name);
         let tmp_dir = std::env::temp_dir();
         let tmp_name = format!(
-            "adesh_bc_{}_{}.adeshbc",
+            "adesh_bc_{}_{}_{}.adeshbc",
             sanitize_name(test_name),
-            std::process::id()
+            std::process::id(),
+            count
         );
         let tmp_path = tmp_dir.join(&tmp_name);
 
@@ -181,14 +189,17 @@ impl InterpreterTestExecutor {
         use crate::backends::aot::cranelift::{AotOptions, aot_compile_with_options};
         use std::process::Command;
 
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let start = Instant::now();
         let driver_src = self.build_driver_source(test_name);
         let tmp_dir = std::env::temp_dir();
         let ext = if cfg!(windows) { "exe" } else { "out" };
         let exe_name = format!(
-            "adesh_aot_test_{}_{}.{}",
+            "adesh_aot_test_{}_{}_{}.{}",
             sanitize_name(test_name),
             std::process::id(),
+            count,
             ext
         );
         let exe_path = tmp_dir.join(&exe_name);
@@ -223,13 +234,16 @@ impl InterpreterTestExecutor {
     fn run_test_wasm(&self, test_name: &str) -> Result<Duration, String> {
         use std::process::Command;
 
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let start = Instant::now();
         let driver_src = self.build_driver_source(test_name);
         let tmp_dir = std::env::temp_dir();
         let wasm_name = format!(
-            "adesh_wasm_test_{}_{}.wasm",
+            "adesh_wasm_test_{}_{}_{}.wasm",
             sanitize_name(test_name),
-            std::process::id()
+            std::process::id(),
+            count
         );
         let wasm_path = tmp_dir.join(&wasm_name);
 
@@ -284,9 +298,14 @@ impl InterpreterTestExecutor {
     fn build_driver_source(&self, test_name: &str) -> String {
         let base = sanitize_source_for_test_driver(&self.source_code);
         let mut out = base;
+        let call_target = if test_name.contains("::") {
+            test_name.replace("::", ".")
+        } else {
+            test_name.to_string()
+        };
         out.push_str("\n");
         out.push_str(&format!("fn __adesh_test_driver__() {{\n"));
-        out.push_str(&format!("    {}();\n", test_name));
+        out.push_str(&format!("    {}();\n", call_target));
         out.push_str("}\n\n");
         out.push_str("fn main() {\n");
         out.push_str("    __adesh_test_driver__();\n");
@@ -307,6 +326,14 @@ impl BackendTestExecutor for InterpreterTestExecutor {
         _timeout: Duration,
         _options: &TestRunOptions,
     ) -> BackendExecutionResult {
+        // Set base directory and current file for module resolution across all backends
+        let path = Path::new(&self.file_path);
+        let parent = path.parent().unwrap_or(Path::new("."));
+        unsafe {
+            std::env::set_var("ADESH_BASE_DIR", parent);
+            std::env::set_var("ADESH_CURRENT_FILE", &self.file_path);
+        }
+
         // Start stdout capture for in-process backends
         let _capture_guard = crate::testing::stdout_capture::StdoutCapture::start().ok();
 

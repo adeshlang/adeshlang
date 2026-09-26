@@ -40,6 +40,7 @@ documentation hub of this repository:
 - 🧠 [**Type System Guide**](docs/type-system-guide.md)
 - 🔒 [**Memory Safety Guide**](docs/memory-safety-guide.md)
 - ⚡ [**Execution Backends**](docs/backends-guide.md)
+- 🧪 [**Test Framework Guide**](docs/testing-guide.md)
 - 🛠️ [**CLI Reference**](docs/cli-guide.md)
 - 📦 [**ADL Package Manager & Ecosystem**](docs/ECOSYSTEM_AND_ADL.md)
 - 🎨 [**Adesh Editor**](docs/EDITOR.md)

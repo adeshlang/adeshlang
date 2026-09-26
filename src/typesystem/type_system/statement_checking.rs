@@ -873,9 +873,20 @@ fn check_stmt_types_inner(
                 type_params,
             )
         }
-        StmtKind::Import { .. } => Ok(()),
-        StmtKind::ImportDefault { .. } => Ok(()),
-        StmtKind::ImportNames { .. } => Ok(()),
+        StmtKind::Import { alias, .. } | StmtKind::ImportDefault { alias, .. } => {
+            if let Some(scope) = env.last_mut() {
+                scope.insert(alias.clone(), Ty::Any);
+            }
+            Ok(())
+        }
+        StmtKind::ImportNames { names, .. } => {
+            if let Some(scope) = env.last_mut() {
+                for n in names {
+                    scope.insert(n.clone(), Ty::Any);
+                }
+            }
+            Ok(())
+        }
         StmtKind::ExportDefault(_name) => Ok(()),
         StmtKind::ExportDefaultFunction(_f) => Ok(()),
         StmtKind::ExportDefaultClass(_c) => Ok(()),

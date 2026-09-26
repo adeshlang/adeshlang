@@ -45,7 +45,7 @@ use adeshlang::execution::runtime::Interpreter;
  * NOTE: Compile-time memory safety validation is mandatory for all backends.
  *
  * @author: Ajay Tainwala
- * @github: https://github.com/ajaytainwala-dev
+ * @github: https://github.com/adeshlang/adeshlang
  * @version: 0.3.0
  */
 use colored::control;
@@ -186,17 +186,46 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             rollback_args.extend(parsed.program_args.clone());
             adeshlang::update::execute_rollback_command(&rollback_args);
         }
-        "run" => {
+        "run" | "test" => {
             let (path, src) = if let Some(ref eval_code) = parsed.eval_code {
                 (PathBuf::from("<eval>"), eval_code.clone())
             } else {
-                if parsed.input_file.is_none() {
+                let input_path = if let Some(ref ip) = parsed.input_file {
+                    ip.clone()
+                } else if parsed.config.run_tests {
+                    // Auto-detect test file in current project
+                    if PathBuf::from("tests/main.adesh").exists() {
+                        "tests/main.adesh".to_string()
+                    } else if PathBuf::from("tests.adesh").exists() {
+                        "tests.adesh".to_string()
+                    } else if PathBuf::from("main.test.adesh").exists() {
+                        "main.test.adesh".to_string()
+                    } else if let Ok(entries) = std::fs::read_dir("tests") {
+                        let mut found = None;
+                        for entry in entries.flatten() {
+                            let p = entry.path();
+                            if p.extension().map_or(false, |ext| ext == "adesh") {
+                                found = Some(p.to_string_lossy().to_string());
+                                break;
+                            }
+                        }
+                        if let Some(f) = found {
+                            f
+                        } else {
+                            eprintln!("Error: No test file specified and none found in tests/");
+                            std::process::exit(1);
+                        }
+                    } else {
+                        eprintln!("Error: No input file specified");
+                        cli_impl::usage();
+                        return;
+                    }
+                } else {
                     eprintln!("Error: No input file specified");
                     cli_impl::usage();
                     return;
-                }
+                };
 
-                let input_path = parsed.input_file.clone().unwrap();
                 let orig_path = PathBuf::from(&input_path);
                 match cli_impl::resolve_input_path(&orig_path) {
                     Ok(pair) => pair,

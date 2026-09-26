@@ -1,0 +1,116 @@
+// Struct Type Tests
+// Demonstrates struct construction, field access, methods, and invariants in AdeshLang
+
+struct Point {
+    x: i32;
+    y: i32;
+};
+
+struct Size {
+    width: i32;
+    height: i32;
+};
+
+struct Rect {
+    origin: Point;
+    size: Size;
+};
+
+export fn make_origin(): Point {
+    return Point {
+        x: 0,
+        y: 0,
+    };
+}
+
+export fn make_point(x: i32, y: i32): Point {
+    return Point {
+        x: x,
+        y: y,
+    };
+}
+
+export fn make_size(width: i32, height: i32): Size {
+    return Size {
+        width: width,
+        height: height,
+    };
+}
+
+export fn make_rect(x: i32, y: i32, width: i32, height: i32): Rect {
+    return Rect {
+        origin: make_point(x, y),
+        size: make_size(width, height),
+    };
+}
+
+export fn translate_point(p: Point, dx: i32, dy: i32): Point {
+    return Point {
+        x: p.x + dx,
+        y: p.y + dy,
+    };
+}
+
+export fn calculate_area(s: Size): i32 {
+    return s.width * s.height;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_origin_point() {
+    let origin = make_origin();
+    assert_eq(origin.x, 0);
+    assert_eq(origin.y, 0);
+}
+
+export test fn test_point_creation() {
+    let point = make_point(3, 4);
+    assert_eq(point.x, 3);
+    assert_eq(point.y, 4);
+}
+
+export test fn test_size_creation() {
+    let size = make_size(1920, 1080);
+    assert_eq(size.width, 1920);
+    assert_eq(size.height, 1080);
+}
+
+export test fn test_point_translation() {
+    let p1 = make_point(10, 20);
+    let p2 = translate_point(p1, 5, -10);
+    assert_eq(p2.x, 15);
+    assert_eq(p2.y, 10);
+}
+
+export test fn test_size_area() {
+    let size = make_size(10, 20);
+    let area = calculate_area(size);
+    assert_eq(area, 200);
+}
+
+export test fn test_nested_structs() {
+    let rect = make_rect(100, 200, 50, 80);
+    assert_eq(rect.origin.x, 100);
+    assert_eq(rect.origin.y, 200);
+    assert_eq(rect.size.width, 50);
+    assert_eq(rect.size.height, 80);
+}
+
+// Programmatic test suite runner for main.adesh integration
+export fn run_tests() {
+    test_origin_point();
+    test_point_creation();
+    test_size_creation();
+    test_point_translation();
+    test_size_area();
+    test_nested_structs();
+    return 6;
+}
+
+fn main() {
+    print("Running 03_struct_type tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 03_struct_type.test.adesh`);
+}

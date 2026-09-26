@@ -1,0 +1,103 @@
+// Enum Type Tests
+// Demonstrates algebraic data types, variants with payloads, and pattern matching in AdeshLang
+
+enum Status {
+    Ready(code),
+    Failed(message),
+    Pending
+}
+
+enum ConnectionState {
+    Disconnected,
+    Connecting(retries),
+    Connected(sessionId)
+}
+
+export fn status_code(status) {
+    return match status {
+        Ready(code) => code,
+        Failed(message) => -1,
+        Pending => 0
+    };
+}
+
+export fn status_message(status) {
+    return match status {
+        Ready(code) => "ready",
+        Failed(message) => message,
+        Pending => "pending"
+    };
+}
+
+export fn is_terminal(status): bool {
+    return match status {
+        Ready(code) => true,
+        Failed(message) => true,
+        Pending => false
+    };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_ready_variant() {
+    let status = new Status.Ready(200);
+    assert_eq(status.tag, "Ready");
+    assert_eq(status_code(status), 200);
+    assert_eq(status_message(status), "ready");
+    assert(is_terminal(status));
+}
+
+export test fn test_failed_variant() {
+    let status = new Status.Failed("missing file");
+    assert_eq(status.tag, "Failed");
+    assert_eq(status_code(status), -1);
+    assert_eq(status_message(status), "missing file");
+    assert(is_terminal(status));
+}
+
+export test fn test_pending_variant() {
+    let status = new Status.Pending();
+    assert_eq(status.tag, "Pending");
+    assert_eq(status_code(status), 0);
+    assert_eq(status_message(status), "pending");
+    assert_eq(is_terminal(status), false);
+}
+
+export test fn test_match_expression() {
+    let status = new Status.Ready(123);
+    let label = match status {
+        Ready(code) => "ok",
+        Failed(message) => "err",
+        Pending => "wait"
+    };
+    assert_eq(label, "ok");
+}
+
+export test fn test_connection_state_lifecycle() {
+    let state1 = new ConnectionState.Disconnected();
+    assert_eq(state1.tag, "Disconnected");
+
+    let state2 = new ConnectionState.Connecting(3);
+    assert_eq(state2.tag, "Connecting");
+
+    let state3 = new ConnectionState.Connected("sess_999");
+    assert_eq(state3.tag, "Connected");
+}
+
+// Programmatic test suite runner for main.adesh integration
+export fn run_tests() {
+    test_ready_variant();
+    test_failed_variant();
+    test_pending_variant();
+    test_match_expression();
+    test_connection_state_lifecycle();
+    return 5;
+}
+
+fn main() {
+    print("Running 04_enum_type tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 04_enum_type.test.adesh`);
+}

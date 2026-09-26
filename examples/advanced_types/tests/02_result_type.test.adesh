@@ -1,0 +1,253 @@
+// Result Type Tests
+// Demonstrates error handling, pattern matching, and validation testing in AdeshLang
+
+enum Result {
+    Ok(value),
+    Err(error)
+}
+
+export fn divide_safe(a: f64, b: f64) {
+    if b == 0.0 {
+        return new Result.Err("Division by zero");
+    }
+    return new Result.Ok(a / b);
+}
+
+export fn parse_age(value: i64) {
+    if value < 0 {
+        return new Result.Err("Age cannot be negative");
+    }
+    if value > 150 {
+        return new Result.Err("Age too large");
+    }
+    return new Result.Ok(value);
+}
+
+export fn validate_positive(n: i64) {
+    if n <= 0 {
+        return new Result.Err("Number must be positive");
+    }
+    return new Result.Ok(n);
+}
+
+export fn validate_range(n: i64, min: i64, max: i64) {
+    if n < min {
+        return new Result.Err("Number below minimum");
+    }
+    if n > max {
+        return new Result.Err("Number above maximum");
+    }
+    return new Result.Ok(n);
+}
+
+export fn square_if_positive(n: i64) {
+    return match validate_positive(n) {
+        Ok(value) => new Result.Ok(value * value),
+        Err(error) => new Result.Err(error)
+    };
+}
+
+export fn parse_byte(valid: bool) {
+    if valid {
+        return new Result.Ok(255);
+    }
+    return new Result.Err("Invalid byte");
+}
+
+export fn parse_flags(valid: bool) {
+    if valid {
+        return new Result.Ok(240);
+    }
+    return new Result.Err("Invalid flags");
+}
+
+export fn validate_username(name: string) {
+    let len = name.length;
+    if len < 3 {
+        return new Result.Err("Username too short (min 3 chars)");
+    }
+    if len > 20 {
+        return new Result.Err("Username too long (max 20 chars)");
+    }
+    return new Result.Ok(name);
+}
+
+export fn validate_score(score: i64) {
+    if score < 0 {
+        return new Result.Err("Score cannot be negative");
+    }
+    if score > 100 {
+        return new Result.Err("Score cannot exceed 100");
+    }
+    return new Result.Ok(score);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_basic_result_ok() {
+    let success = new Result.Ok(42);
+    assert_eq(success.tag, "Ok");
+    let unwrapped = match success {
+        Ok(v) => v,
+        Err(e) => 0
+    };
+    assert_eq(unwrapped, 42);
+}
+
+export test fn test_basic_result_err() {
+    let failure = new Result.Err("Something went wrong");
+    assert_eq(failure.tag, "Err");
+    let err_msg = match failure {
+        Ok(v) => "none",
+        Err(e) => e
+    };
+    assert_eq(err_msg, "Something went wrong");
+}
+
+export test fn test_divide_safe_success() {
+    let res = divide_safe(10.0, 2.0);
+    assert_eq(res.tag, "Ok");
+    let val = match res {
+        Ok(v) => v,
+        Err(e) => 0.0
+    };
+    assert_eq(val, 5.0);
+}
+
+export test fn test_divide_safe_by_zero() {
+    let res = divide_safe(10.0, 0.0);
+    assert_eq(res.tag, "Err");
+    let msg = match res {
+        Ok(v) => "none",
+        Err(e) => e
+    };
+    assert_eq(msg, "Division by zero");
+}
+
+export test fn test_parse_age_valid() {
+    let res = parse_age(25);
+    assert_eq(res.tag, "Ok");
+    let age = match res {
+        Ok(v) => v,
+        Err(e) => -1
+    };
+    assert_eq(age, 25);
+}
+
+export test fn test_parse_age_negative() {
+    let res = parse_age(-5);
+    assert_eq(res.tag, "Err");
+    let msg = match res {
+        Ok(v) => "",
+        Err(e) => e
+    };
+    assert_eq(msg, "Age cannot be negative");
+}
+
+export test fn test_parse_age_too_large() {
+    let res = parse_age(200);
+    assert_eq(res.tag, "Err");
+    let msg = match res {
+        Ok(v) => "",
+        Err(e) => e
+    };
+    assert_eq(msg, "Age too large");
+}
+
+export test fn test_validate_positive() {
+    let ok_res = validate_positive(42);
+    assert_eq(ok_res.tag, "Ok");
+
+    let err_res = validate_positive(-10);
+    assert_eq(err_res.tag, "Err");
+}
+
+export test fn test_validate_range() {
+    let in_range = validate_range(50, 0, 100);
+    assert_eq(in_range.tag, "Ok");
+
+    let below = validate_range(-5, 0, 100);
+    assert_eq(below.tag, "Err");
+
+    let above = validate_range(150, 0, 100);
+    assert_eq(above.tag, "Err");
+}
+
+export test fn test_chaining_results() {
+    let pos_square = square_if_positive(5);
+    assert_eq(pos_square.tag, "Ok");
+    let sq_val = match pos_square {
+        Ok(v) => v,
+        Err(e) => 0
+    };
+    assert_eq(sq_val, 25);
+
+    let neg_square = square_if_positive(-3);
+    assert_eq(neg_square.tag, "Err");
+}
+
+export test fn test_numeric_literals() {
+    let byte_res = parse_byte(true);
+    assert_eq(byte_res.tag, "Ok");
+    let b = match byte_res {
+        Ok(v) => v,
+        Err(e) => 0
+    };
+    assert_eq(b, 255);
+
+    let flag_res = parse_flags(true);
+    assert_eq(flag_res.tag, "Ok");
+    let f = match flag_res {
+        Ok(v) => v,
+        Err(e) => 0
+    };
+    assert_eq(f, 240);
+}
+
+export test fn test_username_validation() {
+    let valid = validate_username("alice");
+    assert_eq(valid.tag, "Ok");
+
+    let short_name = validate_username("ab");
+    assert_eq(short_name.tag, "Err");
+
+    let long_name = validate_username("this_username_is_way_too_long_for_system");
+    assert_eq(long_name.tag, "Err");
+}
+
+export test fn test_score_validation() {
+    let valid_score = validate_score(85);
+    assert_eq(valid_score.tag, "Ok");
+
+    let neg_score = validate_score(-1);
+    assert_eq(neg_score.tag, "Err");
+
+    let high_score = validate_score(105);
+    assert_eq(high_score.tag, "Err");
+}
+
+// Programmatic test suite runner for main.adesh integration
+export fn run_tests() {
+    test_basic_result_ok();
+    test_basic_result_err();
+    test_divide_safe_success();
+    test_divide_safe_by_zero();
+    test_parse_age_valid();
+    test_parse_age_negative();
+    test_parse_age_too_large();
+    test_validate_positive();
+    test_validate_range();
+    test_chaining_results();
+    test_numeric_literals();
+    test_username_validation();
+    test_score_validation();
+    return 13;
+}
+
+fn main() {
+    print("Running 02_result_type tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 02_result_type.test.adesh`);
+}

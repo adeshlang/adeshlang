@@ -1,0 +1,88 @@
+// Option & Struct Type Tests
+// Demonstrates unit testing of option and struct data types in AdeshLang
+
+struct Point {
+    x: i32;
+    y: i32;
+};
+
+struct Size {
+    width: i32;
+    height: i32;
+};
+
+export fn make_point(x: i32, y: i32): Point {
+    return Point {
+        x: x,
+        y: y,
+    };
+}
+
+export fn make_size(width: i32, height: i32): Size {
+    return Size {
+        width: width,
+        height: height,
+    };
+}
+
+export fn point_distance_squared(p1: Point, p2: Point): i32 {
+    let dx = p2.x - p1.x;
+    let dy = p2.y - p1.y;
+    return (dx * dx) + (dy * dy);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_origin_point() {
+    let origin = make_point(0, 0);
+    assert_eq(origin.x, 0);
+    assert_eq(origin.y, 0);
+    assert(origin.x == 0, "Origin x must be 0");
+    assert(origin.y == 0, "Origin y must be 0");
+}
+
+export test fn test_point_coordinates() {
+    let p = make_point(10, 25);
+    assert_eq(p.x, 10);
+    assert_eq(p.y, 25);
+    assert_ne(p.x, p.y);
+}
+
+export test fn test_size_dimensions() {
+    let s = make_size(800, 600);
+    assert_eq(s.width, 800);
+    assert_eq(s.height, 600);
+    assert(s.width > s.height, "Width should exceed height");
+}
+
+export test fn test_distance_calculation() {
+    let p1 = make_point(0, 0);
+    let p2 = make_point(3, 4);
+    let dist_sq = point_distance_squared(p1, p2);
+    assert_eq(dist_sq, 25);
+}
+
+export test fn test_point_inequality() {
+    let p1 = make_point(1, 2);
+    let p2 = make_point(2, 1);
+    assert_ne(p1.x, p2.x);
+    assert_ne(p1.y, p2.y);
+}
+
+// Programmatic test suite runner for main.adesh integration
+export fn run_tests() {
+    test_origin_point();
+    test_point_coordinates();
+    test_size_dimensions();
+    test_distance_calculation();
+    test_point_inequality();
+    return 5;
+}
+
+fn main() {
+    print("Running 01_option_type tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 01_option_type.test.adesh`);
+}

@@ -45,7 +45,6 @@ pub struct BackendExecutionResult {
 #[derive(Debug, Clone)]
 pub struct TestInfo {
     pub name: String,
-    pub function: Function,
     pub should_ignore: bool,
     pub expect_fail: bool,
     pub timeout: Option<Duration>,
@@ -64,8 +63,16 @@ pub struct TestRunOptions {
     pub no_color: bool,
     pub deterministic_seed: u64,
     pub frozen_unix_time_secs: i64,
-    pub quiet: bool,     // Suppress print output from tests
-    pub nocapture: bool, // Always show captured output (even for passing tests)
+    pub quiet: bool,                           // Suppress print output from tests
+    pub nocapture: bool,   // Always show captured output (even for passing tests)
+    pub exact_match: bool, // Exact test name match (--exact)
+    pub skip_filter: Option<String>, // Skip tests matching pattern (--skip)
+    pub list_only: bool,   // List tests without running (--list)
+    pub run_ignored_only: bool, // Run only ignored tests (--ignored)
+    pub include_ignored: bool, // Run both regular and ignored tests (--include-ignored)
+    pub test_threads: Option<usize>, // Worker threads for parallel execution (--test-threads)
+    pub serial: bool,      // Run tests sequentially one-by-one (--serial)
+    pub base_file: Option<std::path::PathBuf>, // Base file path for resolving module imports
 }
 
 impl Default for TestRunOptions {
@@ -83,6 +90,14 @@ impl Default for TestRunOptions {
             frozen_unix_time_secs: 1_735_689_600,
             quiet: false,
             nocapture: false,
+            exact_match: false,
+            skip_filter: None,
+            list_only: false,
+            run_ignored_only: false,
+            include_ignored: false,
+            test_threads: None,
+            serial: false,
+            base_file: None,
         }
     }
 }
@@ -148,7 +163,7 @@ pub struct BackendMatrix {
     pub inconsistencies: Vec<String>,
 }
 
-pub trait BackendTestExecutor {
+pub trait BackendTestExecutor: Clone + Send + Sync + 'static {
     fn execute_test(
         &mut self,
         backend: ExecutionBackend,
@@ -159,24 +174,120 @@ pub trait BackendTestExecutor {
 }
 
 pub fn collect_tests(ast: &[Stmt]) -> Vec<TestInfo> {
-    let mut tests = Vec::new();
+    collect_tests_with_base(ast, None)
+}
 
-    for stmt in ast {
-        if let StmtKind::Function(func, _) = &stmt.kind {
-            if func.is_test {
-                tests.push(TestInfo {
-                    name: func.name.clone(),
-                    function: func.clone(),
-                    should_ignore: func.test_ignore,
-                    expect_fail: func.test_expect_fail,
-                    timeout: func.test_timeout.map(Duration::from_secs),
-                    tags: extract_tags(&func.decorators),
-                });
-            }
+pub fn collect_tests_with_base(ast: &[Stmt], base_file: Option<&std::path::Path>) -> Vec<TestInfo> {
+    let mut tests = Vec::new();
+    let mut visited = std::collections::HashSet::new();
+    if let Some(p) = base_file {
+        if let Ok(c) = p.canonicalize() {
+            visited.insert(c);
         }
     }
-
+    collect_tests_internal(ast, base_file, "", &mut tests, &mut visited);
     tests
+}
+
+fn collect_tests_internal(
+    ast: &[Stmt],
+    base_file: Option<&std::path::Path>,
+    prefix: &str,
+    out: &mut Vec<TestInfo>,
+    visited: &mut std::collections::HashSet<std::path::PathBuf>,
+) {
+    for stmt in ast {
+        match &stmt.kind {
+            StmtKind::Function(func, _) => {
+                if func.is_test {
+                    let test_name = if prefix.is_empty() {
+                        func.name.clone()
+                    } else {
+                        format!("{}::{}", prefix, func.name)
+                    };
+                    out.push(TestInfo {
+                        name: test_name,
+                        should_ignore: func.test_ignore,
+                        expect_fail: func.test_expect_fail,
+                        timeout: func.test_timeout.map(Duration::from_secs),
+                        tags: extract_tags(&func.decorators),
+                    });
+                }
+            }
+            StmtKind::Import { path, alias } | StmtKind::ImportDefault { path, alias } => {
+                if let Some(bf) = base_file {
+                    let parent = bf.parent().unwrap_or_else(|| std::path::Path::new("."));
+                    let mut mod_path = parent.join(path);
+                    if !mod_path.exists() && !path.ends_with(".adesh") {
+                        mod_path = parent.join(format!("{}.adesh", path));
+                    }
+                    if mod_path.exists() {
+                        if let Ok(can) = mod_path.canonicalize() {
+                            if visited.insert(can) {
+                                if let Ok(src) = std::fs::read_to_string(&mod_path) {
+                                    let mut lex = crate::parsing::lexer::Lexer::new(&src);
+                                    if let Ok(toks) = lex.tokenize() {
+                                        let mut p = crate::parsing::parser::Parser::new(
+                                            toks,
+                                            Some(mod_path.to_string_lossy().to_string()),
+                                        );
+                                        if let Ok(sub_ast) = p.parse_program() {
+                                            let sub_prefix = if prefix.is_empty() {
+                                                alias.clone()
+                                            } else {
+                                                format!("{}::{}", prefix, alias)
+                                            };
+                                            collect_tests_internal(
+                                                &sub_ast,
+                                                Some(&mod_path),
+                                                &sub_prefix,
+                                                out,
+                                                visited,
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            StmtKind::ImportNames { path, names: _ } => {
+                if let Some(bf) = base_file {
+                    let parent = bf.parent().unwrap_or_else(|| std::path::Path::new("."));
+                    let mut mod_path = parent.join(path);
+                    if !mod_path.exists() && !path.ends_with(".adesh") {
+                        mod_path = parent.join(format!("{}.adesh", path));
+                    }
+                    if mod_path.exists() {
+                        if let Ok(can) = mod_path.canonicalize() {
+                            if visited.insert(can) {
+                                if let Ok(src) = std::fs::read_to_string(&mod_path) {
+                                    let mut lex = crate::parsing::lexer::Lexer::new(&src);
+                                    if let Ok(toks) = lex.tokenize() {
+                                        let mut p = crate::parsing::parser::Parser::new(
+                                            toks,
+                                            Some(mod_path.to_string_lossy().to_string()),
+                                        );
+                                        if let Ok(sub_ast) = p.parse_program() {
+                                            collect_tests_internal(
+                                                &sub_ast,
+                                                Some(&mod_path),
+                                                prefix,
+                                                out,
+                                                visited,
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 fn extract_tags(decorators: &[crate::parsing::ast::Expr]) -> BTreeSet<String> {
@@ -233,12 +344,49 @@ pub fn run_tests<E: BackendTestExecutor>(
     let started = Instant::now();
     let mut all_results = Vec::new();
 
-    let mut tests = collect_tests(ast);
+    let mut tests = collect_tests_with_base(ast, options.base_file.as_deref());
+
+    // --list support (list matching tests without running them)
+    if options.list_only {
+        for t in &tests {
+            println!("{}: test", t.name.replace("__", "::"));
+        }
+        println!("\n{} tests", tests.len());
+        return (Vec::new(), TestSummary::default(), None);
+    }
+
+    // --skip <pattern> filter
+    if let Some(skip) = &options.skip_filter {
+        tests.retain(|t| !t.name.contains(skip) && !t.name.replace("__", "::").contains(skip));
+    }
+
+    // test name filter (cargo test style: substring match by default, exact match with --exact)
     if let Some(name) = options.test_name.as_deref() {
         let normalized = name.replace("::", "__");
         let prefix = format!("{}__", normalized);
-        tests.retain(|t| t.name == normalized || t.name.starts_with(&prefix));
+        let colon_prefix = format!("{}::", name);
+        if options.exact_match {
+            tests.retain(|t| {
+                t.name == name || t.name == normalized || t.name.replace("__", "::") == name
+            });
+        } else {
+            tests.retain(|t| {
+                t.name == normalized
+                    || t.name.starts_with(&prefix)
+                    || t.name == name
+                    || t.name.starts_with(&colon_prefix)
+                    || t.name.contains(name)
+                    || t.name.contains(&normalized)
+                    || t.name.replace("__", "::").contains(name)
+            });
+        }
     }
+
+    // --ignored support
+    if options.run_ignored_only {
+        tests.retain(|t| t.should_ignore);
+    }
+
     let backends = if !options.test_backends.is_empty() {
         options.test_backends.clone()
     } else if options.backend_check {
@@ -247,61 +395,57 @@ pub fn run_tests<E: BackendTestExecutor>(
         vec![selected_backend]
     };
 
-    for test in tests {
-        let status = if test.should_ignore || !filter_by_tags(&test, &options.include_tags) {
-            let mut map = BTreeMap::new();
-            for backend in &backends {
-                map.insert(
-                    *backend,
-                    BackendExecutionResult {
-                        status: TestStatus::Ignored,
-                        message: Some("ignored by attribute/filter".to_string()),
-                        duration: Duration::from_millis(0),
-                        stack_trace: None,
-                        output: String::new(),
-                    },
-                );
+    let is_serial = options.serial || options.test_threads == Some(1);
+
+    if is_serial {
+        for test in tests {
+            let status =
+                execute_single_test_case(&test, &backends, options, executor.clone(), true);
+            summary.record(status.effective_status);
+            let stop = matches!(
+                status.effective_status,
+                TestStatus::Fail | TestStatus::Panic | TestStatus::Timeout
+            ) && options.fail_fast;
+            all_results.push(status);
+            if stop {
+                break;
             }
-            TestCaseResult {
-                name: test.name.clone(),
-                effective_status: TestStatus::Ignored,
-                expected_fail_applied: false,
-                backend_results: map,
-            }
+        }
+    } else {
+        use rayon::prelude::*;
+
+        let num_threads = options.test_threads.unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4)
+        });
+
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build();
+
+        all_results = if let Ok(tp) = pool {
+            tp.install(|| {
+                tests
+                    .par_iter()
+                    .map(|t| {
+                        let exec = executor.clone();
+                        execute_single_test_case(t, &backends, options, exec, false)
+                    })
+                    .collect()
+            })
         } else {
-            let timeout = test.timeout.unwrap_or(options.default_timeout);
-            let mut backend_results = BTreeMap::new();
-            let mut canonical = TestStatus::Pass;
-
-            for backend in &backends {
-                let r = executor.execute_test(*backend, &test, timeout, options);
-                canonical = first_non_pass(canonical, r.status);
-                backend_results.insert(*backend, r);
-            }
-
-            let mut effective_status = canonical;
-            let mut expected_fail_applied = false;
-            if test.expect_fail && canonical == TestStatus::Fail {
-                effective_status = TestStatus::Pass;
-                expected_fail_applied = true;
-            }
-
-            TestCaseResult {
-                name: test.name.clone(),
-                effective_status,
-                expected_fail_applied,
-                backend_results,
-            }
+            tests
+                .par_iter()
+                .map(|t| {
+                    let exec = executor.clone();
+                    execute_single_test_case(t, &backends, options, exec, false)
+                })
+                .collect()
         };
 
-        summary.record(status.effective_status);
-        let stop = matches!(
-            status.effective_status,
-            TestStatus::Fail | TestStatus::Panic | TestStatus::Timeout
-        ) && options.fail_fast;
-        all_results.push(status);
-        if stop {
-            break;
+        for res in &all_results {
+            summary.record(res.effective_status);
         }
     }
 
@@ -313,6 +457,78 @@ pub fn run_tests<E: BackendTestExecutor>(
     };
 
     (all_results, summary, matrix)
+}
+
+fn execute_single_test_case<E: BackendTestExecutor>(
+    test: &TestInfo,
+    backends: &[ExecutionBackend],
+    options: &TestRunOptions,
+    mut executor: E,
+    serial_mode: bool,
+) -> TestCaseResult {
+    let is_ignored = test.should_ignore && !options.run_ignored_only && !options.include_ignored;
+    if is_ignored || !filter_by_tags(test, &options.include_tags) {
+        let mut map = BTreeMap::new();
+        for backend in backends {
+            map.insert(
+                *backend,
+                BackendExecutionResult {
+                    status: TestStatus::Ignored,
+                    message: Some("ignored by attribute/filter".to_string()),
+                    duration: Duration::from_millis(0),
+                    stack_trace: None,
+                    output: String::new(),
+                },
+            );
+        }
+        TestCaseResult {
+            name: test.name.clone(),
+            effective_status: TestStatus::Ignored,
+            expected_fail_applied: false,
+            backend_results: map,
+        }
+    } else {
+        let timeout = test.timeout.unwrap_or(options.default_timeout);
+        let mut backend_results = BTreeMap::new();
+        let mut canonical = TestStatus::Pass;
+
+        if backends.len() > 1 && !serial_mode {
+            use rayon::prelude::*;
+            let results: Vec<(ExecutionBackend, BackendExecutionResult)> = backends
+                .par_iter()
+                .map(|backend| {
+                    let mut exec = executor.clone();
+                    let r = exec.execute_test(*backend, test, timeout, options);
+                    (*backend, r)
+                })
+                .collect();
+
+            for (backend, r) in results {
+                canonical = first_non_pass(canonical, r.status);
+                backend_results.insert(backend, r);
+            }
+        } else {
+            for backend in backends {
+                let r = executor.execute_test(*backend, test, timeout, options);
+                canonical = first_non_pass(canonical, r.status);
+                backend_results.insert(*backend, r);
+            }
+        }
+
+        let mut effective_status = canonical;
+        let mut expected_fail_applied = false;
+        if test.expect_fail && canonical == TestStatus::Fail {
+            effective_status = TestStatus::Pass;
+            expected_fail_applied = true;
+        }
+
+        TestCaseResult {
+            name: test.name.clone(),
+            effective_status,
+            expected_fail_applied,
+            backend_results,
+        }
+    }
 }
 
 fn first_non_pass(current: TestStatus, next: TestStatus) -> TestStatus {
@@ -747,25 +963,6 @@ pub fn render_multi_backend_report(
             })
             .unwrap_or_default();
         let _ = writeln!(out, "  {dim}{}{reset}", timing);
-
-        // For failing tests: print per-backend failure messages
-        for b in backends {
-            if let Some(br) = result.backend_results.get(b) {
-                if matches!(
-                    br.status,
-                    TestStatus::Fail | TestStatus::Panic | TestStatus::Timeout
-                ) {
-                    if let Some(ref msg) = br.message {
-                        let _ = writeln!(
-                            out,
-                            "    {dim}[{}]{reset} {red}{}{reset}",
-                            backend_short_name(*b),
-                            msg.lines().next().unwrap_or(msg),
-                        );
-                    }
-                }
-            }
-        }
     }
 
     // ── Per-backend summary table ─────────────────────────────────────────────
@@ -809,6 +1006,53 @@ pub fn render_multi_backend_report(
         let _ = write!(out, "  {timeout_color}{:>7}{reset}", s.timeout);
         let _ = write!(out, "  {:>7}", s.ignored);
         let _ = writeln!(out, "  {}", result_str);
+    }
+
+    // ── Failure details section ──────────────────────────────────────────────
+    let failing_items: Vec<(&TestCaseResult, Vec<(&str, &str)>)> = results
+        .iter()
+        .filter_map(|r| {
+            let mut errs = Vec::new();
+            for b in backends {
+                if let Some(br) = r.backend_results.get(b) {
+                    if matches!(
+                        br.status,
+                        TestStatus::Fail | TestStatus::Panic | TestStatus::Timeout
+                    ) {
+                        if let Some(ref msg) = br.message {
+                            errs.push((backend_short_name(*b), msg.as_str()));
+                        }
+                    }
+                }
+            }
+            if !errs.is_empty() {
+                Some((r, errs))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if !failing_items.is_empty() {
+        let _ = writeln!(out);
+        let _ = writeln!(
+            out,
+            "{bold}{red}Failure Details ({} failed test{}):{reset}",
+            failing_items.len(),
+            if failing_items.len() == 1 { "" } else { "s" }
+        );
+        for (r, errs) in failing_items {
+            let display_name = r.name.replace("__", "::");
+            let _ = writeln!(out, "  {red}✗{reset} {bold}{}{reset}", display_name);
+            for (backend_name, msg) in errs {
+                let first_line = msg.lines().next().unwrap_or(msg).trim();
+                let _ = writeln!(
+                    out,
+                    "    {dim}[{}]{reset} {red}{}{reset}",
+                    backend_name, first_line
+                );
+            }
+        }
     }
 
     // ── Inconsistency report ─────────────────────────────────────────────────
@@ -971,6 +1215,7 @@ pub fn to_json_report(
 }
 
 pub fn run_tests_with_interpreter(ast: &[Stmt]) -> TestSummary {
+    #[derive(Clone, Copy)]
     struct SmokeExecutor;
     impl BackendTestExecutor for SmokeExecutor {
         fn execute_test(

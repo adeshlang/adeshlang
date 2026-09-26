@@ -164,22 +164,48 @@ impl JitContext {
             if resolved_path.is_absolute() {
                 absolute_path = Some(resolved_path.to_path_buf());
             } else {
-                // Strategy 2: Try relative to current working directory
-                let cwd_path = std::env::current_dir()
-                    .map_err(|e| format!("Failed to get current directory: {}", e))?
-                    .join(resolved_path);
-                if cwd_path.exists() {
-                    absolute_path = Some(cwd_path);
-                } else {
-                    // Strategy 3: For paths starting with ../, try resolving from examples/async/
-                    // This handles the common case where we're running from project root
-                    if path.starts_with("../") {
-                        let from_examples = std::env::current_dir()
-                            .map_err(|e| format!("Failed to get current directory: {}", e))?
-                            .join("examples/async")
-                            .join(resolved_path);
-                        if from_examples.exists() {
-                            absolute_path = Some(from_examples);
+                // Strategy 2: Try relative to ADESH_BASE_DIR or ADESH_CURRENT_FILE
+                if let Ok(base_dir) = std::env::var("ADESH_BASE_DIR") {
+                    let base_path = std::path::Path::new(&base_dir).join(resolved_path);
+                    if base_path.exists() {
+                        absolute_path = Some(base_path);
+                    }
+                }
+                if absolute_path.is_none() {
+                    if let Ok(curr_file) = std::env::var("ADESH_CURRENT_FILE") {
+                        if let Some(parent) = std::path::Path::new(&curr_file).parent() {
+                            let p = parent.join(resolved_path);
+                            if p.exists() {
+                                absolute_path = Some(p);
+                            }
+                        }
+                    }
+                }
+                // Strategy 3: Try relative to current working directory
+                if absolute_path.is_none() {
+                    let cwd_path = std::env::current_dir()
+                        .map_err(|e| format!("Failed to get current directory: {}", e))?
+                        .join(resolved_path);
+                    if cwd_path.exists() {
+                        absolute_path = Some(cwd_path);
+                    } else {
+                        // Strategy 4: For paths starting with ../, try resolving from examples/async/
+                        if path.starts_with("../") {
+                            let from_examples = std::env::current_dir()
+                                .map_err(|e| format!("Failed to get current directory: {}", e))?
+                                .join("examples/async")
+                                .join(resolved_path);
+                            if from_examples.exists() {
+                                absolute_path = Some(from_examples);
+                            }
+                        }
+                        // Strategy 5: General resolve_path fallback
+                        if absolute_path.is_none() {
+                            let fallback = crate::execution::runtime_core::interpreter_impl::utilities::resolve_path(&path, ".");
+                            let fb_path = std::path::PathBuf::from(&fallback);
+                            if fb_path.exists() {
+                                absolute_path = Some(fb_path);
+                            }
                         }
                     }
                 }
@@ -187,7 +213,7 @@ impl JitContext {
 
             let absolute_path = absolute_path.ok_or_else(|| {
                 format!(
-                    "Module not found: '{}' (tried CWD and examples/async)",
+                    "Module not found: '{}' (tried base dir, CWD, and search paths)",
                     path
                 )
             })?;

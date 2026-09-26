@@ -624,11 +624,15 @@ impl NativeJitCompiler {
 
                 // Ensure block has a terminator - add default return if missing
                 if !seen_terminator {
-                    // Check if function expects a return value
-                    if !builder.func.signature.returns.is_empty() {
-                        // Function expects return but block has no terminator
-                        // Return 0 as default
-                        let zero = builder.ins().iconst(types::I64, 0);
+                    if let Some(ret_param) = builder.func.signature.returns.get(0) {
+                        let ty = ret_param.value_type;
+                        let zero = if ty == types::F64 {
+                            builder.ins().f64const(0.0)
+                        } else if ty == types::F32 {
+                            builder.ins().f32const(0.0)
+                        } else {
+                            builder.ins().iconst(ty, 0)
+                        };
                         builder.ins().return_(&[zero]);
                     } else {
                         // Void function - add empty return
@@ -859,10 +863,15 @@ impl NativeJitCompiler {
             }
             LirInst::Return(None) => {
                 // Check if function signature expects a return value
-                if !builder.func.signature.returns.is_empty() {
-                    // Function expects return but LIR has Return(None)
-                    // Return 0 as default
-                    let zero = builder.ins().iconst(types::I64, 0);
+                if let Some(ret_param) = builder.func.signature.returns.get(0) {
+                    let ty = ret_param.value_type;
+                    let zero = if ty == types::F64 {
+                        builder.ins().f64const(0.0)
+                    } else if ty == types::F32 {
+                        builder.ins().f32const(0.0)
+                    } else {
+                        builder.ins().iconst(ty, 0)
+                    };
                     builder.ins().return_(&[zero]);
                 } else {
                     builder.ins().return_(&[]);
@@ -3521,8 +3530,19 @@ impl NativeJitCompiler {
                     }
                 } else {
                     // Unknown function - return 0
-                    let zero = builder.ins().iconst(types::I64, 0);
-                    builder.ins().return_(&[zero]);
+                    if let Some(ret_param) = builder.func.signature.returns.get(0) {
+                        let ty = ret_param.value_type;
+                        let zero = if ty == types::F64 {
+                            builder.ins().f64const(0.0)
+                        } else if ty == types::F32 {
+                            builder.ins().f32const(0.0)
+                        } else {
+                            builder.ins().iconst(ty, 0)
+                        };
+                        builder.ins().return_(&[zero]);
+                    } else {
+                        builder.ins().return_(&[]);
+                    }
                 }
                 Ok(())
             }

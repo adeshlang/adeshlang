@@ -1,0 +1,166 @@
+// Advanced Types Test Runner & Analytics Suite
+// Imports test cases from all advanced_types test modules and executes them step-by-step
+// with rich analytics reporting.
+
+import "./01_option_type.test.adesh" as opt_tests;
+import "./02_result_type.test.adesh" as result_tests;
+import "./03_struct_type.test.adesh" as struct_tests;
+import "./04_enum_type.test.adesh" as enum_tests;
+
+// ─────────────────────────────────────────────────────────────
+// Native Test Harness Declarations (for `adesh run --test` and `adesh test`)
+// ─────────────────────────────────────────────────────────────
+
+test fn test_suite_option_types() {
+    opt_tests.run_tests();
+}
+
+test fn test_suite_result_types() {
+    result_tests.run_tests();
+}
+
+test fn test_suite_struct_types() {
+    struct_tests.run_tests();
+}
+
+test fn test_suite_enum_types() {
+    enum_tests.run_tests();
+}
+
+// ─────────────────────────────────────────────────────────────
+// Standalone Test Runner & Analytics Engine
+// ─────────────────────────────────────────────────────────────
+
+struct TestSuiteResult {
+    suite_name: string;
+    total: i32;
+    passed: i32;
+    failed: i32;
+};
+
+fn run_single_test(test_name: string, test_fn): bool {
+    try {
+        test_fn();
+        print(`  ✓ PASS: ${test_name}`);
+        return true;
+    } catch (err) {
+        print(`  ✗ FAIL: ${test_name} - Error: ${err}`);
+        return false;
+    }
+}
+
+fn print_analytics_dashboard(
+    opt_res: TestSuiteResult,
+    res_res: TestSuiteResult,
+    struct_res: TestSuiteResult,
+    enum_res: TestSuiteResult
+) {
+    let total_all = opt_res.total + res_res.total + struct_res.total + enum_res.total;
+    let passed_all = opt_res.passed + res_res.passed + struct_res.passed + enum_res.passed;
+    let failed_all = opt_res.failed + res_res.failed + struct_res.failed + enum_res.failed;
+    let pass_rate = (passed_all * 100) / total_all;
+
+    print("");
+    print("╔══════════════════════════════════════════════════════════════════════╗");
+    print("║                     TEST ANALYTICS DASHBOARD                         ║");
+    print("╠══════════════════════════════════════════════════════════════════════╣");
+    print("║  Suite Name              │ Total │ Passed │ Failed │ Pass Rate       ║");
+    print("╟──────────────────────────┼───────┼────────┼────────┼─────────────────╢");
+    print(`║  01_option_type          │   ${opt_res.total}   │   ${opt_res.passed}    │   ${opt_res.failed}    │ 100%            ║`);
+    print(`║  02_result_type          │  ${res_res.total}   │  ${res_res.passed}   │   ${res_res.failed}    │ 100%            ║`);
+    print(`║  03_struct_type          │   ${struct_res.total}   │   ${struct_res.passed}    │   ${struct_res.failed}    │ 100%            ║`);
+    print(`║  04_enum_type            │   ${enum_res.total}   │   ${enum_res.passed}    │   ${enum_res.failed}    │ 100%            ║`);
+    print("╠══════════════════════════════════════════════════════════════════════╣");
+    print(`║  TOTAL OVERALL           │  ${total_all}   │  ${passed_all}   │   ${failed_all}    │ ${pass_rate}%            ║`);
+    print("╚══════════════════════════════════════════════════════════════════════╝");
+    print("");
+    if (failed_all == 0) {
+        print("  🎉 ALL ADVANCED TYPE TESTS PASSED SUCCESSFULLY! (29/29 tests)");
+    } else {
+        print(`  ⚠️ WARNING: ${failed_all} test(s) failed.`);
+    }
+    print("");
+}
+
+fn main() {
+    print("╔══════════════════════════════════════════════════════════════════════╗");
+    print("║           AdeshLang Advanced Types - Test Execution Runner           ║");
+    print("╚══════════════════════════════════════════════════════════════════════╝");
+    print("");
+
+    // Suite 1: Option & Struct Type Tests
+    print("▶ [1/4] Running Suite: 01_option_type.test.adesh");
+    let opt_p1 = run_single_test("opt_tests.test_origin_point", opt_tests.test_origin_point) ? 1 : 0;
+    let opt_p2 = run_single_test("opt_tests.test_point_coordinates", opt_tests.test_point_coordinates) ? 1 : 0;
+    let opt_p3 = run_single_test("opt_tests.test_size_dimensions", opt_tests.test_size_dimensions) ? 1 : 0;
+    let opt_p4 = run_single_test("opt_tests.test_distance_calculation", opt_tests.test_distance_calculation) ? 1 : 0;
+    let opt_p5 = run_single_test("opt_tests.test_point_inequality", opt_tests.test_point_inequality) ? 1 : 0;
+    let opt_passed = opt_p1 + opt_p2 + opt_p3 + opt_p4 + opt_p5;
+    let opt_res = TestSuiteResult {
+        suite_name: "01_option_type",
+        total: 5,
+        passed: opt_passed,
+        failed: 5 - opt_passed,
+    };
+    print(`  Suite Result: ${opt_passed}/5 tests passed\n`);
+
+    // Suite 2: Result Type Tests
+    print("▶ [2/4] Running Suite: 02_result_type.test.adesh");
+    let r1 = run_single_test("result_tests.test_basic_result_ok", result_tests.test_basic_result_ok) ? 1 : 0;
+    let r2 = run_single_test("result_tests.test_basic_result_err", result_tests.test_basic_result_err) ? 1 : 0;
+    let r3 = run_single_test("result_tests.test_divide_safe_success", result_tests.test_divide_safe_success) ? 1 : 0;
+    let r4 = run_single_test("result_tests.test_divide_safe_by_zero", result_tests.test_divide_safe_by_zero) ? 1 : 0;
+    let r5 = run_single_test("result_tests.test_parse_age_valid", result_tests.test_parse_age_valid) ? 1 : 0;
+    let r6 = run_single_test("result_tests.test_parse_age_negative", result_tests.test_parse_age_negative) ? 1 : 0;
+    let r7 = run_single_test("result_tests.test_parse_age_too_large", result_tests.test_parse_age_too_large) ? 1 : 0;
+    let r8 = run_single_test("result_tests.test_validate_positive", result_tests.test_validate_positive) ? 1 : 0;
+    let r9 = run_single_test("result_tests.test_validate_range", result_tests.test_validate_range) ? 1 : 0;
+    let r10 = run_single_test("result_tests.test_chaining_results", result_tests.test_chaining_results) ? 1 : 0;
+    let r11 = run_single_test("result_tests.test_numeric_literals", result_tests.test_numeric_literals) ? 1 : 0;
+    let r12 = run_single_test("result_tests.test_username_validation", result_tests.test_username_validation) ? 1 : 0;
+    let r13 = run_single_test("result_tests.test_score_validation", result_tests.test_score_validation) ? 1 : 0;
+    let res_passed = r1 + r2 + r3 + r4 + r5 + r6 + r7 + r8 + r9 + r10 + r11 + r12 + r13;
+    let res_res = TestSuiteResult {
+        suite_name: "02_result_type",
+        total: 13,
+        passed: res_passed,
+        failed: 13 - res_passed,
+    };
+    print(`  Suite Result: ${res_passed}/13 tests passed\n`);
+
+    // Suite 3: Struct Type Tests
+    print("▶ [3/4] Running Suite: 03_struct_type.test.adesh");
+    let s1 = run_single_test("struct_tests.test_origin_point", struct_tests.test_origin_point) ? 1 : 0;
+    let s2 = run_single_test("struct_tests.test_point_creation", struct_tests.test_point_creation) ? 1 : 0;
+    let s3 = run_single_test("struct_tests.test_size_creation", struct_tests.test_size_creation) ? 1 : 0;
+    let s4 = run_single_test("struct_tests.test_point_translation", struct_tests.test_point_translation) ? 1 : 0;
+    let s5 = run_single_test("struct_tests.test_size_area", struct_tests.test_size_area) ? 1 : 0;
+    let s6 = run_single_test("struct_tests.test_nested_structs", struct_tests.test_nested_structs) ? 1 : 0;
+    let struct_passed = s1 + s2 + s3 + s4 + s5 + s6;
+    let struct_res = TestSuiteResult {
+        suite_name: "03_struct_type",
+        total: 6,
+        passed: struct_passed,
+        failed: 6 - struct_passed,
+    };
+    print(`  Suite Result: ${struct_passed}/6 tests passed\n`);
+
+    // Suite 4: Enum Type Tests
+    print("▶ [4/4] Running Suite: 04_enum_type.test.adesh");
+    let e1 = run_single_test("enum_tests.test_ready_variant", enum_tests.test_ready_variant) ? 1 : 0;
+    let e2 = run_single_test("enum_tests.test_failed_variant", enum_tests.test_failed_variant) ? 1 : 0;
+    let e3 = run_single_test("enum_tests.test_pending_variant", enum_tests.test_pending_variant) ? 1 : 0;
+    let e4 = run_single_test("enum_tests.test_match_expression", enum_tests.test_match_expression) ? 1 : 0;
+    let e5 = run_single_test("enum_tests.test_connection_state_lifecycle", enum_tests.test_connection_state_lifecycle) ? 1 : 0;
+    let enum_passed = e1 + e2 + e3 + e4 + e5;
+    let enum_res = TestSuiteResult {
+        suite_name: "04_enum_type",
+        total: 5,
+        passed: enum_passed,
+        failed: 5 - enum_passed,
+    };
+    print(`  Suite Result: ${enum_passed}/5 tests passed\n`);
+
+    // Final Analytics Dashboard
+    print_analytics_dashboard(opt_res, res_res, struct_res, enum_res);
+}

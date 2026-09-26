@@ -263,8 +263,15 @@ pub fn run_with_interpreter(
     let no_color_cfg = parsed.config.io.no_color;
     let quiet_cfg = parsed.config.quiet;
     let nocapture_cfg = parsed.config.test_nocapture;
+    let test_exact_cfg = parsed.config.test_exact;
+    let test_skip_cfg = parsed.config.test_skip.clone();
+    let test_list_cfg = parsed.config.test_list;
+    let test_ignored_cfg = parsed.config.test_ignored;
+    let test_include_ignored_cfg = parsed.config.test_include_ignored;
     let test_name_cfg = parsed.config.test_name.clone();
     let test_backends_cfg = parsed.config.test_backends.clone();
+    let test_threads_cfg = parsed.config.test_threads;
+    let test_serial_cfg = parsed.config.test_serial;
     let stack_size_cfg = parsed.config.stack_size;
 
     // Set program args
@@ -351,6 +358,14 @@ pub fn run_with_interpreter(
                     no_color: no_color_cfg,
                     quiet: quiet_cfg,
                     nocapture: nocapture_cfg,
+                    exact_match: test_exact_cfg,
+                    skip_filter: test_skip_cfg,
+                    list_only: test_list_cfg,
+                    run_ignored_only: test_ignored_cfg,
+                    include_ignored: test_include_ignored_cfg,
+                    test_threads: test_threads_cfg,
+                    serial: test_serial_cfg,
+                    base_file: Some(run_path.clone()),
                     ..TestRunOptions::default()
                 };
 

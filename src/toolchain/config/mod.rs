@@ -331,6 +331,20 @@ pub struct RuntimeConfig {
     pub test_output_format: TestOutputFormat,
     /// Show captured output for passing tests (Rust-style --nocapture)
     pub test_nocapture: bool,
+    /// Exactly match test name rather than substring match (cargo test --exact)
+    pub test_exact: bool,
+    /// Skip tests matching this pattern (cargo test --skip)
+    pub test_skip: Option<String>,
+    /// List all matching tests without running them (cargo test --list)
+    pub test_list: bool,
+    /// Run only ignored tests (cargo test --ignored)
+    pub test_ignored: bool,
+    /// Run both ignored and unignored tests (cargo test --include-ignored)
+    pub test_include_ignored: bool,
+    /// Number of worker threads for parallel test execution (--test-threads)
+    pub test_threads: Option<usize>,
+    /// Execute tests sequentially one-by-one (--serial / --sequential)
+    pub test_serial: bool,
     /// Use LIR backend path instead of VIR (default: false, use VIR)
     pub use_lir: bool,
     /// GPU target for the MLIR GPU backend
@@ -386,6 +400,13 @@ impl Default for RuntimeConfig {
             test_name: None,
             test_output_format: TestOutputFormat::Text,
             test_nocapture: false,
+            test_exact: false,
+            test_skip: None,
+            test_list: false,
+            test_ignored: false,
+            test_include_ignored: false,
+            test_threads: None,
+            test_serial: false,
             use_lir: false,
             gpu_target: GpuTarget::Auto,
             gpu_grid: (1, 1, 1),
@@ -436,6 +457,13 @@ impl RuntimeConfig {
             test_name: None,
             test_output_format: TestOutputFormat::Text,
             test_nocapture: false,
+            test_exact: false,
+            test_skip: None,
+            test_list: false,
+            test_ignored: false,
+            test_include_ignored: false,
+            test_threads: None,
+            test_serial: false,
             use_lir: false,
             gpu_target: GpuTarget::Auto,
             gpu_grid: (1, 1, 1),
@@ -483,6 +511,13 @@ impl RuntimeConfig {
             test_name: None,
             test_output_format: TestOutputFormat::Text,
             test_nocapture: false,
+            test_exact: false,
+            test_skip: None,
+            test_list: false,
+            test_ignored: false,
+            test_include_ignored: false,
+            test_threads: None,
+            test_serial: false,
             use_lir: false,
             gpu_target: GpuTarget::Auto,
             gpu_grid: (1, 1, 1),
@@ -526,6 +561,13 @@ impl RuntimeConfig {
             test_name: None,
             test_output_format: TestOutputFormat::Text,
             test_nocapture: false,
+            test_exact: false,
+            test_skip: None,
+            test_list: false,
+            test_ignored: false,
+            test_include_ignored: false,
+            test_threads: None,
+            test_serial: false,
             use_lir: false,
             gpu_target: GpuTarget::Auto,
             gpu_grid: (1, 1, 1),

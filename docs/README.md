@@ -39,6 +39,7 @@
 - ⚡ **SIMD & Parallel Execution**: Built-in SIMD vector operations, parallel for-loops, parallel reduce, and zero-cost inline assembly for hardware-level control.
 - 📦 **ADL Package Management Ecosystem**: Complete dependency resolution, manifest configuration (`adesh.adl`), version locking (`adesh.lock`) with SHA-256 integrity checks, and local `adl_modules/` loading.
 - 🖥️ **Embedded Mode & Cross-Compilation**: Minimal runtime mode for resource-constrained targets, cross-compilation target listing and inspection, and standalone binary generation for any platform.
+- 🧪 **Cargo-Grade Testing Framework (`adesh test`)**: Comprehensive unit and integration test runner with multi-module test discovery, substring/`--exact`/`--skip` filtering, multi-threaded Rayon parallelism (`--test-threads <N>`), sequential execution (`--serial`), and simultaneous multi-backend verification (`--runtimes=interp,jit,njit` / `--backend-check`).
 - 🛠️ **Full IDE & Tooling Support**: First-class Language Server Protocol (`als`) implementation with diagnostics, inlay hints, type narrowing, unused variable detection, hover, definition jump, code formatting (`adesh fmt`), and integrations for VS Code, Neovim, Helix, Emacs, and Sublime Text.
 
 ---

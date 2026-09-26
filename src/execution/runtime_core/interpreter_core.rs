@@ -9132,6 +9132,16 @@ impl Interpreter {
                     }
                 }
                 if self.envs[mod_env].exports.is_empty() {
+                    let vals: Vec<(String, Value)> = self.envs[mod_env]
+                        .values
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect();
+                    for (k, v) in vals {
+                        self.envs[mod_env].exports.insert(k, v);
+                    }
+                }
+                if self.envs[mod_env].exports.is_empty() {
                     return Err(RunErr::Msg(format!(
                         "imported module has no exports\n[at {}]",
                         full
@@ -9884,6 +9894,16 @@ impl Interpreter {
                         }
                     }
                     if self.envs[mod_env].exports.is_empty() {
+                        let vals: Vec<(String, Value)> = self.envs[mod_env]
+                            .values
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect();
+                        for (k, v) in vals {
+                            self.envs[mod_env].exports.insert(k, v);
+                        }
+                    }
+                    if self.envs[mod_env].exports.is_empty() {
                         return Err(RunErr::Msg(format!(
                             "imported module has no exports\n[at {}]",
                             full
@@ -10500,6 +10520,16 @@ impl Interpreter {
                                         }
                                     });
                                 }
+                            }
+                        }
+                        if self.envs[mod_env].exports.is_empty() {
+                            let vals: Vec<(String, Value)> = self.envs[mod_env]
+                                .values
+                                .iter()
+                                .map(|(k, v)| (k.clone(), v.clone()))
+                                .collect();
+                            for (k, v) in vals {
+                                self.envs[mod_env].exports.insert(k, v);
                             }
                         }
                         if self.envs[mod_env].exports.is_empty() {
@@ -19184,7 +19214,7 @@ impl ExecLegacy {
                 self.envs[self.current]
                     .type_ann
                     .insert(f.name.clone(), None);
-                if *is_export {
+                if *is_export || f.is_test {
                     self.envs[self.current].exports.insert(f.name.clone(), fun);
                 }
                 Ok(ExecFlow::Next)

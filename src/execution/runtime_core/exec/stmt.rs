@@ -396,7 +396,7 @@ impl Exec {
                 self.envs[self.current]
                     .type_ann
                     .insert(f.name.clone(), None);
-                if *is_export {
+                if *is_export || f.is_test {
                     self.envs[self.current].exports.insert(f.name.clone(), fun);
                 }
                 Ok(ExecFlow::Next)

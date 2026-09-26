@@ -281,6 +281,62 @@ impl ParsedArgs {
                 "--test" | "--tests" => {
                     config.run_tests = true;
                 }
+                _ if arg.trim_start_matches('-') == "exact" => {
+                    config.test_exact = true;
+                    config.run_tests = true;
+                }
+                _ if arg.trim_start_matches('-') == "skip"
+                    && i + 1 < args.len()
+                    && !args[i + 1].starts_with('-') =>
+                {
+                    config.test_skip = Some(args[i + 1].clone());
+                    config.run_tests = true;
+                    i += 1;
+                }
+                _ if arg.trim_start_matches('-').starts_with("skip=") => {
+                    let val = arg.trim_start_matches('-')["skip=".len()..].to_string();
+                    config.test_skip = Some(val);
+                    config.run_tests = true;
+                }
+                _ if arg.trim_start_matches('-') == "list" => {
+                    config.test_list = true;
+                    config.run_tests = true;
+                }
+                _ if arg.trim_start_matches('-') == "ignored" => {
+                    config.test_ignored = true;
+                    config.run_tests = true;
+                }
+                _ if arg.trim_start_matches('-') == "include-ignored" => {
+                    config.test_include_ignored = true;
+                    config.run_tests = true;
+                }
+                "--test-threads" | "-j" if i + 1 < args.len() && !args[i + 1].starts_with('-') => {
+                    if let Ok(n) = args[i + 1].parse::<usize>() {
+                        config.test_threads = Some(n);
+                    }
+                    config.run_tests = true;
+                    i += 1;
+                }
+                _ if arg.starts_with("--test-threads=") => {
+                    if let Ok(n) = arg["--test-threads=".len()..].parse::<usize>() {
+                        config.test_threads = Some(n);
+                    }
+                    config.run_tests = true;
+                }
+                _ if arg.starts_with("-j=") => {
+                    if let Ok(n) = arg["-j=".len()..].parse::<usize>() {
+                        config.test_threads = Some(n);
+                    }
+                    config.run_tests = true;
+                }
+                "--serial" | "--sequential" | "--one-by-one" => {
+                    config.test_serial = true;
+                    config.run_tests = true;
+                }
+                "--parallel" => {
+                    config.test_serial = false;
+                    config.run_tests = true;
+                }
                 "--backend-check" => {
                     config.backend_check = true;
                     config.run_tests = true;
@@ -656,32 +712,120 @@ impl ParsedArgs {
         if command.is_empty() && eval_code.is_some() {
             command = "run".to_string();
         }
-        if positional_args.len() >= 2 {
-            input_file = Some(positional_args[1].clone());
-        }
-        if positional_args.len() >= 3 {
-            // Commands that take output_file as second positional arg
-            if matches!(
-                command.as_str(),
-                "compile"
-                    | "compile-aot"
-                    | "compile-wasm"
-                    | "compile-native"
-                    | "compile-wasm-js"
-                    | "compile-native-rust"
-                    | "docs"
-            ) {
-                output_file = Some(positional_args[2].clone());
-                program_args.extend(positional_args[3..].iter().cloned());
-            } else {
-                // Commands that don't take output_file
-                if config.run_tests && command == "run" {
-                    config.test_name = Some(positional_args[2].clone());
-                    program_args.extend(positional_args[3..].iter().cloned());
+        if command == "test" {
+            config.run_tests = true;
+            if positional_args.len() >= 2 {
+                let first_arg = positional_args[1].clone();
+                if first_arg.ends_with(".adesh") || std::path::Path::new(&first_arg).exists() {
+                    input_file = Some(first_arg);
+                    if positional_args.len() >= 3
+                        && config.test_name.is_none()
+                        && !positional_args[2].starts_with('-')
+                    {
+                        config.test_name = Some(positional_args[2].clone());
+                        program_args.extend(positional_args[3..].iter().cloned());
+                    } else {
+                        program_args.extend(positional_args[2..].iter().cloned());
+                    }
                 } else {
+                    if config.test_name.is_none() && !first_arg.starts_with('-') {
+                        config.test_name = Some(first_arg);
+                    }
                     program_args.extend(positional_args[2..].iter().cloned());
                 }
             }
+        } else {
+            if positional_args.len() >= 2 {
+                input_file = Some(positional_args[1].clone());
+            }
+            if positional_args.len() >= 3 {
+                // Commands that take output_file as second positional arg
+                if matches!(
+                    command.as_str(),
+                    "compile"
+                        | "compile-aot"
+                        | "compile-wasm"
+                        | "compile-native"
+                        | "compile-wasm-js"
+                        | "compile-native-rust"
+                        | "docs"
+                ) {
+                    output_file = Some(positional_args[2].clone());
+                    program_args.extend(positional_args[3..].iter().cloned());
+                } else {
+                    // Commands that don't take output_file
+                    if config.run_tests && command == "run" {
+                        if config.test_name.is_none() && !positional_args[2].starts_with('-') {
+                            config.test_name = Some(positional_args[2].clone());
+                            program_args.extend(positional_args[3..].iter().cloned());
+                        } else {
+                            program_args.extend(positional_args[2..].iter().cloned());
+                        }
+                    } else {
+                        program_args.extend(positional_args[2..].iter().cloned());
+                    }
+                }
+            }
+        }
+
+        // Parse any test options from program_args (e.g. passed after -- in `adesh test -- --nocapture`)
+        if config.run_tests || command == "test" {
+            let mut remaining_prog_args = Vec::new();
+            let mut pi = 0;
+            while pi < program_args.len() {
+                let pa = &program_args[pi];
+                let trimmed = pa.trim_start_matches('-');
+                match trimmed {
+                    "nocapture" => config.test_nocapture = true,
+                    "exact" | "e" => config.test_exact = true,
+                    "list" => config.test_list = true,
+                    "ignored" => config.test_ignored = true,
+                    "include-ignored" => config.test_include_ignored = true,
+                    "fail-fast" => config.fail_fast = true,
+                    "quiet" | "q" => config.quiet = true,
+                    "skip"
+                        if pi + 1 < program_args.len()
+                            && !program_args[pi + 1].starts_with('-') =>
+                    {
+                        config.test_skip = Some(program_args[pi + 1].clone());
+                        pi += 1;
+                    }
+                    _ if trimmed.starts_with("skip=") => {
+                        config.test_skip = Some(trimmed["skip=".len()..].to_string());
+                    }
+                    "test-threads" | "j"
+                        if pi + 1 < program_args.len()
+                            && !program_args[pi + 1].starts_with('-') =>
+                    {
+                        if let Ok(n) = program_args[pi + 1].parse::<usize>() {
+                            config.test_threads = Some(n);
+                        }
+                        pi += 1;
+                    }
+                    _ if trimmed.starts_with("test-threads=") => {
+                        if let Ok(n) = trimmed["test-threads=".len()..].parse::<usize>() {
+                            config.test_threads = Some(n);
+                        }
+                    }
+                    _ if trimmed.starts_with("j=") => {
+                        if let Ok(n) = trimmed["j=".len()..].parse::<usize>() {
+                            config.test_threads = Some(n);
+                        }
+                    }
+                    "serial" | "sequential" | "one-by-one" => {
+                        config.test_serial = true;
+                    }
+                    "parallel" => {
+                        config.test_serial = false;
+                    }
+                    _ if !pa.starts_with('-') && config.test_name.is_none() => {
+                        config.test_name = Some(pa.clone());
+                    }
+                    _ => remaining_prog_args.push(pa.clone()),
+                }
+                pi += 1;
+            }
+            program_args = remaining_prog_args;
         }
 
         Ok(Self {
@@ -767,6 +911,7 @@ Built with strong type inference, memory safety, and zero-cost abstractions
 {bold}COMMANDS:{reset}
     {green}run{reset} <file>            Run a program (default: interpreter)
     {green}run{reset} {blue}-e{reset} "<code>"     Directly evaluate and run inline code string {yellow}⭐ NEW!{reset}
+    {green}test{reset} [file] [filter]   Run unit and integration tests (Cargo-like test runner) {yellow}⭐ NEW!{reset}
     {green}editor{reset} [file|dir]     Launch cross-platform TUI code editor (Adesh Editor) {yellow}⭐ NEW!{reset}
     {green}build{reset} <file>          Build native executable (modern AOT interface) {yellow}⭐ NEW!{reset}
     {green}doctor{reset}                 Inspect AdeshLang toolchain & system health {yellow}⭐ NEW!{reset}
@@ -810,14 +955,23 @@ Built with strong type inference, memory safety, and zero-cost abstractions
       • {bold}Themes & Aesthetics:{reset} Adesh Dark, Adesh Light, Gruvbox, Monokai, Dracula, One Dark ({dim}:theme <name>{reset})
       • {bold}In-Editor Help:{reset} Press {dim}F1{reset} or type {dim}:help{reset} anytime for complete shortcut cheatsheet
 
-{bold}TESTING:{reset} {yellow}⭐ NEW!{reset}
-    {green}adesh run --test{reset} <file> [name]       Run all tests in a file (or a single named test)
-    {green}adesh run --test --runtimes{reset}=<list> <file>  Run tests across multiple backends {yellow}⭐ NEW!{reset}
-    {green}adesh run --test --backend-check{reset} <file>  Test across ALL backends (full matrix)
+{bold}TESTING (CARGO-GRADE TEST RUNNER):{reset} {yellow}⭐ NEW!{reset}
+    {green}adesh test{reset} [file] [filter] [options]  Run tests matching filter in file/project
+    {green}adesh run --test{reset} <file> [filter]      Run all tests in a file (or matching filter)
+    {green}adesh test --runtimes{reset}=<list> [file]    Run tests across multiple backends {yellow}⭐ NEW!{reset}
+    {green}adesh test --backend-check{reset} [file]      Test across ALL backends (full matrix)
 
   {bold}Test flags:{reset}
-    {blue}--test{reset}, {blue}--tests{reset}            Run every {dim}test fn{reset} in the file
-    {blue}--test-name{reset} <name>        Run only the matching test (or group prefix)
+    {blue}--test{reset}, {blue}--tests{reset}            Run every {dim}test fn{reset} in the file/module
+    {blue}--test-name{reset} <name>        Filter tests by substring or prefix
+    {blue}--exact{reset}                   Exactly match filter pattern rather than substring {yellow}⭐ NEW!{reset}
+    {blue}--skip{reset} <pattern>          Skip tests matching filter pattern {yellow}⭐ NEW!{reset}
+    {blue}--list{reset}                    List all discovered tests without running them {yellow}⭐ NEW!{reset}
+    {blue}--ignored{reset}                 Run only ignored tests {yellow}⭐ NEW!{reset}
+    {blue}--include-ignored{reset}         Run ignored and non-ignored tests {yellow}⭐ NEW!{reset}
+    {blue}--test-threads{reset} <N>        Number of threads for concurrent test execution {yellow}⭐ NEW!{reset}
+    {blue}--serial{reset}, {blue}--one-by-one{reset}     Run tests sequentially one-by-one {yellow}⭐ NEW!{reset}
+    {blue}--parallel{reset}                Run tests with full multi-threaded parallelism {yellow}⭐ NEW!{reset}
     {blue}--runtimes{reset}=<list>          Comma-separated backend list  {yellow}⭐ NEW!{reset}
     {blue}--backend-check{reset}            Test on ALL known backends (full matrix report)
     {blue}--fail-fast{reset}                Stop immediately on the first FAIL/PANIC/TIMEOUT
@@ -826,6 +980,7 @@ Built with strong type inference, memory safety, and zero-cost abstractions
     {blue}--tags{reset} <tag>               Filter tests by tag  {dim}(@tag("fast") etc.){reset}
     {blue}--include-tags{reset}=<tag,...>   Include only tests with any of these tags
     {blue}--format json{reset}              Machine-readable JSON report (useful for CI)
+    {blue}--{reset} <args>...               Pass remaining arguments directly to test harness
 
   {bold}Available backend names for {blue}--runtimes{reset}:{reset}
     {dim}interp{reset}      Standard interpreter (default, always available)
@@ -1141,16 +1296,17 @@ Built with strong type inference, memory safety, and zero-cost abstractions
     {green}adesh run{reset} {blue}--safe{reset} program.adesh             {dim}# Run in safe mode{reset}
     {green}adesh run{reset} {blue}--embedded{reset} program.adesh         {dim}# Embedded mode (stack + arena only){reset}
     
-    {dim}# Testing{reset}
-    {green}adesh run{reset} {blue}--test{reset} test_suite.adesh              {dim}# Run all tests (interpreter){reset}
-    {green}adesh run{reset} {blue}--test --fail-fast{reset} tests.adesh        {dim}# Stop on first failure{reset}
-    {green}adesh run{reset} {blue}--test --quiet{reset} tests.adesh             {dim}# Silent except failures{reset}
-    {green}adesh run{reset} {blue}--test --backend-check{reset} tests.adesh     {dim}# All backends, full matrix{reset}
-    {green}adesh run{reset} {blue}--test --runtimes{reset}=jit,njit,vm tests.adesh   {dim}# Specific backends{reset}
-    {green}adesh run{reset} {blue}--test --runtimes{reset}=interp,jit,njit,vm,aot,wasm tests.adesh  {dim}# All major backends{reset}
-    {green}adesh run{reset} {blue}--test --runtimes{reset}=jit,aot {blue}--fail-fast{reset} tests.adesh {dim}# Fail-fast multi-backend{reset}
-    {green}adesh run{reset} {blue}--test --format json{reset} tests.adesh {blue}>{reset} out.json    {dim}# JSON for CI{reset}
-    {green}adesh run{reset} {blue}--test --runtimes{reset}=jit,njit {blue}--format json{reset} tests.adesh {blue}>{reset} out.json
+    {dim}# Testing (Cargo-style test runner){reset}
+    {green}adesh test{reset}                                  {dim}# Auto-discover and run all tests in current dir/tests{reset}
+    {green}adesh test{reset} tests/main.adesh                   {dim}# Run all tests in file and linked modules{reset}
+    {green}adesh test{reset} tests/main.adesh opt_tests         {dim}# Run tests matching substring filter{reset}
+    {green}adesh test{reset} tests/main.adesh {blue}--exact{reset} opt_tests::test_origin_point {dim}# Run exact test match{reset}
+    {green}adesh test{reset} tests/main.adesh {blue}--skip{reset} result_tests    {dim}# Skip matching tests{reset}
+    {green}adesh test{reset} tests/main.adesh {blue}--list{reset}               {dim}# List all tests without running{reset}
+    {green}adesh test{reset} {blue}--fail-fast --nocapture{reset} tests.adesh   {dim}# Fail immediately on error with full stdout{reset}
+    {green}adesh test{reset} {blue}--runtimes{reset}=interp,jit,njit tests.adesh {dim}# Multi-backend test matrix{reset}
+    {green}adesh test{reset} {blue}--backend-check{reset} tests.adesh             {dim}# All backends full matrix{reset}
+    {green}adesh test{reset} {blue}--format json{reset} tests.adesh {blue}>{reset} out.json    {dim}# Machine-readable JSON for CI{reset}
     
     {dim}# Type checking{reset}
     {green}adesh check{reset} program.adesh                  {dim}# Type-check only{reset}
@@ -1275,7 +1431,7 @@ Built with strong type inference, memory safety, and zero-cost abstractions
         gcc app.c math.o string.o -o app.exe
 
 
-{dim}For more information, visit: https://github.com/ajaytainwala-dev/mylang{reset}
+{dim}For more information, visit: https://github.com/adeshlang/adeshlang{reset}
 "#,
         cyan = cyan,
         green = green,
