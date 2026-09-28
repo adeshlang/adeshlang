@@ -141,7 +141,7 @@ pub fn stmt_contains_heap_alloc(stmt: &Stmt) -> bool {
         StmtKind::Region { body, .. } | StmtKind::UnsafeBlock(body) | StmtKind::Defer(body) => {
             stmt_contains_heap_alloc(body)
         }
-        StmtKind::Extend(_, _, methods, _) => methods.iter().any(function_contains_heap_alloc),
+        StmtKind::Extend(_, _, _, methods, _) => methods.iter().any(function_contains_heap_alloc),
         StmtKind::TypeAlias(_, _)
         | StmtKind::Struct(_, _)
         | StmtKind::Enum(_, _)

@@ -291,7 +291,7 @@ pub(crate) fn collect_sigs(
                 fns_ret_types.insert(key.clone(), m.ret_type.clone());
             }
         }
-        StmtKind::Extend(_name, target, methods, _export) => {
+        StmtKind::Extend(_name, target, _implements, methods, _export) => {
             for m in methods {
                 let key = format!("{}::{}", target, m.name);
                 let mut v: Vec<Option<String>> = Vec::new();

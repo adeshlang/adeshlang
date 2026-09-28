@@ -643,8 +643,14 @@ pub enum StmtKind {
     Break,
     Continue,
     Jump(Expr),
-    /// extend [name]? on Type { fn ... } -- add methods to an existing class at runtime
-    Extend(Option<String>, String, Vec<Function>, bool /*export*/),
+    /// extend [name]? on Type [: Interface]? { fn ... } -- add methods and interface implementations
+    Extend(
+        Option<String>,
+        String,
+        Vec<String>,
+        Vec<Function>,
+        bool, /*export*/
+    ),
     Struct(StructDecl, bool /*export*/),
     Enum(EnumDecl, bool /*export*/),
     #[allow(dead_code)]
@@ -920,6 +926,7 @@ pub struct InterfaceDecl {
     pub type_params: Vec<String>,
     pub super_interfaces: Vec<String>,
     pub methods: Vec<Function>,
+    pub decorators: Vec<Expr>,
 }
 
 #[derive(Clone, Debug)]
@@ -928,6 +935,8 @@ pub struct StructDecl {
     pub name: String,
     pub type_params: Vec<String>,
     pub fields: Vec<(String, String)>,
+    pub implements: Vec<String>,
+    pub decorators: Vec<Expr>,
 }
 
 #[derive(Clone, Debug)]
@@ -942,6 +951,8 @@ pub struct TypeAliasDecl {
 pub struct EnumDecl {
     pub name: String,
     pub variants: Vec<(String, Option<String>)>,
+    pub implements: Vec<String>,
+    pub decorators: Vec<Expr>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1533,6 +1544,34 @@ impl UserFn {
     }
 }
 
+pub fn has_no_extend_attr(decorators: &[Expr]) -> bool {
+    decorators.iter().any(|d| match &d.kind {
+        ExprKind::Variable(name) => name == "no_extend",
+        ExprKind::Call(callee, _, _) => {
+            if let ExprKind::Variable(name) = &callee.kind {
+                name == "no_extend"
+            } else {
+                false
+            }
+        }
+        _ => false,
+    })
+}
+
+pub fn is_compiler_attribute(d: &Expr) -> bool {
+    match &d.kind {
+        ExprKind::Variable(name) => name == "no_extend" || name == "test" || name == "inline",
+        ExprKind::Call(callee, _, _) => {
+            if let ExprKind::Variable(name) = &callee.kind {
+                name == "no_extend" || name == "test" || name == "inline"
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
 pub struct UserClass {
     pub name: String,
     pub methods: HashMap<String, Vec<UserFn>>, // Support method overloading
@@ -1551,6 +1590,7 @@ pub struct UserClass {
     pub implements: Vec<String>,
     pub is_abstract: bool,
     pub is_sealed: bool,
+    pub no_extend: bool,
     /// Field visibility metadata: field_name -> Visibility
     /// If not present, field is public (default)
     pub field_visibility: HashMap<String, Visibility>,
@@ -1587,6 +1627,7 @@ impl Clone for UserClass {
             implements: self.implements.clone(),
             is_abstract: self.is_abstract,
             is_sealed: self.is_sealed,
+            no_extend: self.no_extend,
             field_visibility: self.field_visibility.clone(),
             field_owner: self.field_owner.clone(),
             field_types: self.field_types.clone(),
@@ -1603,6 +1644,8 @@ pub struct UserStruct {
     pub fields: Vec<(String, String)>,
     pub methods: HashMap<String, Vec<UserFn>>,
     pub fields_map: HashMap<String, String>,
+    pub implements: Vec<String>,
+    pub no_extend: bool,
 }
 
 #[derive(Clone)]
@@ -1611,12 +1654,16 @@ pub struct UserEnum {
     pub variants: Vec<(String, Option<String>)>,
     pub methods: HashMap<String, Vec<UserFn>>,
     pub variants_map: HashMap<String, Option<String>>,
+    pub implements: Vec<String>,
+    pub no_extend: bool,
 }
 
 #[derive(Clone)]
 pub struct UserInterface {
     pub name: String,
     pub methods: Vec<Function>,
+    pub super_interfaces: Vec<String>,
+    pub no_extend: bool,
 }
 
 #[derive(Clone)]
@@ -2061,7 +2108,8 @@ pub enum TokenKind {
     Struct,
     Enum,
     Match,
-    CImport, // #cImport directive
+    CImport,     // #cImport directive
+    HashBracket, // #[ attribute start
     // New keywords for arrays, readonly, SIMD
     Readonly,
     Raw,

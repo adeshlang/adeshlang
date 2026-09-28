@@ -89,6 +89,7 @@ pub trait StatementVisitor {
         &mut self,
         name: Option<&str>,
         type_name: &str,
+        implements: &[String],
         methods: &[Function],
         export: bool,
     ) -> Self::Output;
@@ -214,8 +215,8 @@ pub trait StatementVisitor {
             StmtKind::Break => self.visit_break(),
             StmtKind::Continue => self.visit_continue(),
             StmtKind::Jump(target) => self.visit_jump(target),
-            StmtKind::Extend(name, type_name, methods, export) => {
-                self.visit_extend(name.as_deref(), type_name, methods, *export)
+            StmtKind::Extend(name, type_name, implements, methods, export) => {
+                self.visit_extend(name.as_deref(), type_name, implements, methods, *export)
             }
             StmtKind::Struct(decl, export) => self.visit_struct(decl, *export),
             StmtKind::Enum(decl, export) => self.visit_enum(decl, *export),

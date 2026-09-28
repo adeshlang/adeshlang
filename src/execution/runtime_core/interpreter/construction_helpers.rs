@@ -133,6 +133,7 @@ pub(in crate::execution::runtime_core) fn create_user_class(
         implements,
         is_abstract,
         is_sealed: false,
+        no_extend: false,
         field_visibility: HashMap::default(),
         field_owner: HashMap::default(),
         field_types: HashMap::default(),

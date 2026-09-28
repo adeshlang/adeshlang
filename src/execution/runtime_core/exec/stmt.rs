@@ -298,6 +298,8 @@ impl Exec {
                     fields: s.fields.clone(),
                     methods: HashMap::default(),
                     fields_map,
+                    implements: s.implements.clone(),
+                    no_extend: crate::parsing::ast::has_no_extend_attr(&s.decorators),
                 };
                 let v = Value::Struct(us);
                 self.envs[self.current]
@@ -321,6 +323,8 @@ impl Exec {
                     variants: e.variants.clone(),
                     methods: HashMap::default(),
                     variants_map,
+                    implements: e.implements.clone(),
+                    no_extend: crate::parsing::ast::has_no_extend_attr(&e.decorators),
                 };
                 let v = Value::Enum(ue);
                 self.envs[self.current]
@@ -655,6 +659,7 @@ impl Exec {
                     implements: c.implements.clone(),
                     is_abstract: c.is_abstract,
                     is_sealed: c.is_sealed,
+                    no_extend: crate::parsing::ast::has_no_extend_attr(&c.decorators),
                     field_visibility,
                     field_owner,
                     field_types,
@@ -776,6 +781,7 @@ impl Exec {
                     implements: c.implements.clone(),
                     is_abstract: c.is_abstract,
                     is_sealed: c.is_sealed,
+                    no_extend: crate::parsing::ast::has_no_extend_attr(&c.decorators),
                     field_visibility,
                     field_owner,
                     field_types,

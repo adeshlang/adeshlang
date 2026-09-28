@@ -696,7 +696,7 @@ impl Formatter {
                 self.output.push_str(&field_strs.join(", "));
                 self.output.push_str(" };\n");
             }
-            StmtKind::Extend(name, target, methods, export) => {
+            StmtKind::Extend(name, target, implements, methods, export) => {
                 let indent = self.indent();
                 self.output.push_str(&indent);
                 if *export {
@@ -709,6 +709,10 @@ impl Formatter {
                 }
                 self.output.push_str("on ");
                 self.output.push_str(target);
+                if !implements.is_empty() {
+                    self.output.push_str(": ");
+                    self.output.push_str(&implements.join(", "));
+                }
                 self.output.push_str(" {\n");
                 self.indent_level += 1;
                 for method in methods {

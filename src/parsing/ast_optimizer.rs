@@ -521,7 +521,9 @@ fn fold_stmt(s: &Stmt) -> Stmt {
         StmtKind::ExportDefaultFunction(f) => StmtKind::ExportDefaultFunction(f.clone()),
         StmtKind::ExportDefaultClass(c) => StmtKind::ExportDefaultClass(c.clone()),
         StmtKind::ExportDefault(name) => StmtKind::ExportDefault(name.clone()),
-        StmtKind::Extend(n, t, m, exp) => StmtKind::Extend(n.clone(), t.clone(), m.clone(), *exp),
+        StmtKind::Extend(n, t, i, m, exp) => {
+            StmtKind::Extend(n.clone(), t.clone(), i.clone(), m.clone(), *exp)
+        }
         StmtKind::TryCatch {
             try_block,
             err_name,

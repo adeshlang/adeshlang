@@ -1,0 +1,18 @@
+let n = 7;
+for(let i = 0;i<=n;i++){
+    for (let j = 0;j<=n-i;j++){
+        if(i==0 || j==i ||j==0 || i==n ){
+            print("#",{end:" ",color:"#FF0000"});
+        }else{
+            print(" ",{end:" "});
+        }
+    }
+    for(let j = 0;j<=i;j++){
+        if(j==0 || i==n || j==i ){
+            print("#",{end:" ",color:"#00FF00"});
+        }else{
+            print(" ",{end:" "});
+        }
+    }
+    print();
+}

@@ -1,0 +1,80 @@
+// 07_no_extend_rule.adesh
+// Demonstrates that types marked with #[no_extend] cannot be extended.
+
+// 1. Class with #[no_extend]
+#[no_extend]
+class SealedClass {
+    SealedClass(val) {
+        this.val = val;
+    }
+}
+
+// 2. Struct with #[no_extend]
+#[no_extend]
+struct SealedStruct {
+    id: number
+}
+
+// 3. Enum with #[no_extend]
+#[no_extend]
+enum SealedEnum {
+    On,
+    Off
+}
+
+// 4. Interface with #[no_extend]
+#[no_extend]
+interface SealedInterface {
+    fn action();
+}
+
+// Verification via try-catch blocks
+print("Testing #[no_extend] on Class...");
+try {
+    extend on SealedClass {
+        fn illegal() {
+            print("Should not be allowed");
+        }
+    }
+    print("FAIL: SealedClass extension should have failed!");
+} catch (e) {
+    print("SUCCESS: Caught error extending SealedClass -> " + e);
+}
+
+print("Testing #[no_extend] on Struct...");
+try {
+    extend on SealedStruct {
+        fn illegal() {
+            print("Should not be allowed");
+        }
+    }
+    print("FAIL: SealedStruct extension should have failed!");
+} catch (e) {
+    print("SUCCESS: Caught error extending SealedStruct -> " + e);
+}
+
+print("Testing #[no_extend] on Enum...");
+try {
+    extend on SealedEnum {
+        fn illegal() {
+            print("Should not be allowed");
+        }
+    }
+    print("FAIL: SealedEnum extension should have failed!");
+} catch (e) {
+    print("SUCCESS: Caught error extending SealedEnum -> " + e);
+}
+
+print("Testing #[no_extend] on Interface...");
+try {
+    extend on SealedInterface {
+        fn illegal() {
+            print("Should not be allowed");
+        }
+    }
+    print("FAIL: SealedInterface extension should have failed!");
+} catch (e) {
+    print("SUCCESS: Caught error extending SealedInterface -> " + e);
+}
+
+print("--- All #[no_extend] Protection Checks Passed! ---");

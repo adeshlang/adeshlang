@@ -17,24 +17,50 @@ use crate::parsing::error::LangError;
 impl Parser {
     pub(super) fn extend_decl(&mut self, exp: bool) -> Result<Stmt, LangError> {
         let start_span = self.previous_span();
-        // syntax: extend <name>? on TypeName { pub(super) fn ... }
-        // optionally accept an identifier before 'on' as the extension name
         let mut name: Option<String> = None;
-        if self.check(TokenKind::Identifier) {
-            // peek ahead: if next token is 'On' then this identifier is the name
-            let saved = self.current;
-            let ident = self.consume_ident("Expect identifier")?;
+        let mut target: String = String::new();
+        let mut implements: Vec<String> = Vec::new();
+
+        if self.matchk(&[TokenKind::On]) {
+            // extend on TypeName ...
+            target = self.consume_ident("Expect target type name after 'on'")?;
+        } else if self.check(TokenKind::Identifier) {
+            let ident = self.consume_ident("Expect identifier after 'extend'")?;
             if self.matchk(&[TokenKind::On]) {
+                // extend ExtName on TypeName ...
                 name = Some(ident);
+                target = self.consume_ident("Expect target type name after 'on'")?;
+            } else if self.matchk(&[TokenKind::For]) {
+                // extend InterfaceName for TargetType { ... }
+                implements.push(ident.clone());
+                name = Some(ident);
+                target = self.consume_ident("Expect target type name after 'for'")?;
+            } else if self.check(TokenKind::Colon) || self.check(TokenKind::Implements) {
+                // extend TargetType: InterfaceName or extend TargetType implements InterfaceName
+                target = ident;
             } else {
-                // not a name; rewind and expect 'on'
-                self.current = saved;
+                // extend TargetType { ... }
+                target = ident;
+            }
+        } else {
+            self.consume(TokenKind::On, "Expect 'on' or type name after 'extend'")?;
+        }
+
+        // Check for interface implementation clause:
+        // : Interface1, Interface2 OR implements Interface1, Interface2 OR for Interface1, Interface2
+        if self.matchk(&[TokenKind::Colon, TokenKind::Implements, TokenKind::For]) {
+            loop {
+                let iface_name =
+                    self.consume_ident("Expect interface name in implementation list")?;
+                if !implements.contains(&iface_name) {
+                    implements.push(iface_name);
+                }
+                if !self.matchk(&[TokenKind::Comma]) {
+                    break;
+                }
             }
         }
-        if name.is_none() {
-            self.consume(TokenKind::On, "Expect 'on' after extend")?;
-        }
-        let target = self.consume_ident("Expect target type name after 'on'")?;
+
         self.consume(TokenKind::LeftBrace, "Expect '{' before extension body")?;
         let mut methods = Vec::new();
         while !self.check(TokenKind::RightBrace) {
@@ -114,12 +140,16 @@ impl Parser {
         }
         self.consume(TokenKind::RightBrace, "Expect '}' after extension body")?;
         Ok(Stmt {
-            kind: StmtKind::Extend(name, target, methods, exp),
+            kind: StmtKind::Extend(name, target, implements, methods, exp),
             span: start_span,
         })
     }
 
-    pub(super) fn interface_decl(&mut self, exp: bool) -> Result<Stmt, LangError> {
+    pub(super) fn interface_decl(
+        &mut self,
+        exp: bool,
+        decorators: Vec<Expr>,
+    ) -> Result<Stmt, LangError> {
         let start_span = self.previous_span();
         let name = self.consume_ident("Expect interface name")?;
         // optional generics on interface
@@ -236,6 +266,7 @@ impl Parser {
                     type_params,
                     super_interfaces,
                     methods,
+                    decorators,
                 },
                 exp,
             ),
@@ -243,7 +274,11 @@ impl Parser {
         })
     }
 
-    pub(super) fn struct_decl(&mut self, exp: bool) -> Result<Stmt, LangError> {
+    pub(super) fn struct_decl(
+        &mut self,
+        exp: bool,
+        decorators: Vec<Expr>,
+    ) -> Result<Stmt, LangError> {
         let name = self.consume_ident("Expect struct name")?;
         // optional generics on struct: Struct<T>
         let mut type_params: Vec<String> = Vec::new();
@@ -256,6 +291,16 @@ impl Parser {
                 }
             }
             self.consume(TokenKind::Greater, "Expect '>' after type params")?;
+        }
+        let mut implements: Vec<String> = Vec::new();
+        if self.matchk(&[TokenKind::Implements, TokenKind::Colon]) {
+            loop {
+                let iname = self.consume_ident("Expect interface name after 'implements'")?;
+                implements.push(iname);
+                if !self.matchk(&[TokenKind::Comma]) {
+                    break;
+                }
+            }
         }
         self.consume(TokenKind::LeftBrace, "Expect '{' before struct body")?;
         let mut fields: Vec<(String, String)> = Vec::new();
@@ -278,6 +323,8 @@ impl Parser {
                     name,
                     type_params,
                     fields,
+                    implements,
+                    decorators,
                 },
                 exp,
             ),
@@ -285,8 +332,22 @@ impl Parser {
         })
     }
 
-    pub(super) fn enum_decl(&mut self, exp: bool) -> Result<Stmt, LangError> {
+    pub(super) fn enum_decl(
+        &mut self,
+        exp: bool,
+        decorators: Vec<Expr>,
+    ) -> Result<Stmt, LangError> {
         let name = self.consume_ident("Expect enum name")?;
+        let mut implements: Vec<String> = Vec::new();
+        if self.matchk(&[TokenKind::Implements, TokenKind::Colon]) {
+            loop {
+                let iname = self.consume_ident("Expect interface name after 'implements'")?;
+                implements.push(iname);
+                if !self.matchk(&[TokenKind::Comma]) {
+                    break;
+                }
+            }
+        }
         self.consume(TokenKind::LeftBrace, "Expect '{' before enum body")?;
         let mut variants: Vec<(String, Option<String>)> = Vec::new();
         while !self.check(TokenKind::RightBrace) {
@@ -305,7 +366,15 @@ impl Parser {
         }
         self.consume(TokenKind::RightBrace, "Expect '}' after enum body")?;
         Ok(Stmt {
-            kind: StmtKind::Enum(EnumDecl { name, variants }, exp),
+            kind: StmtKind::Enum(
+                EnumDecl {
+                    name,
+                    variants,
+                    implements,
+                    decorators,
+                },
+                exp,
+            ),
             span: self.previous_span(),
         })
     }

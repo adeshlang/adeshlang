@@ -49,6 +49,16 @@ pub fn register_all(registry: &mut BuiltinRegistry) {
         "Measure and report execution time",
         builtin_benchmark,
     );
+    registry.register(
+        "no_extend",
+        "decorators",
+        "Prevent extending the marked type with extend blocks",
+        builtin_no_extend,
+    );
+}
+
+fn builtin_no_extend(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, String> {
+    Ok(args.into_iter().next().unwrap_or(Value::Null))
 }
 
 /// @memoize decorator - caches function results

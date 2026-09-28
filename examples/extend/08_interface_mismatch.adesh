@@ -1,0 +1,38 @@
+// 08_interface_mismatch.adesh
+// Demonstrates error handling when extending a type without fulfilling interface requirements.
+
+interface Greeter {
+    fn greet(name: string);
+}
+
+class Bot {
+    Bot() {}
+}
+
+// 1. Missing required method from interface
+print("Testing missing method check...");
+try {
+    extend on Bot: Greeter {
+        fn otherMethod() {
+            print("wrong method");
+        }
+    }
+    print("FAIL: Missing method should have caused an error!");
+} catch (e) {
+    print("SUCCESS: Caught error for missing method -> " + e);
+}
+
+// 2. Arity mismatch (wrong number of parameters)
+print("Testing arity mismatch check...");
+try {
+    extend on Bot: Greeter {
+        fn greet() { // expected 1 parameter, got 0
+            print("Hello with no params");
+        }
+    }
+    print("FAIL: Arity mismatch should have caused an error!");
+} catch (e) {
+    print("SUCCESS: Caught error for arity mismatch -> " + e);
+}
+
+print("--- Interface Compliance Verification Passed! ---");

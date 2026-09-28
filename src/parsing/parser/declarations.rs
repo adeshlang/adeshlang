@@ -106,41 +106,84 @@ impl Parser {
             }]);
         }
 
-        // collect optional decorators preceding declarations
+        // collect optional decorators and #[...] attributes preceding declarations
         let mut pending_decorators: Vec<Expr> = Vec::new();
-        while self.matchk(&[TokenKind::At]) {
-            // parse decorator reference: name or name(args)
-            let name = self.consume_ident("Expect decorator name after '@'")?;
-            if self.matchk(&[TokenKind::LeftParen]) {
-                // parse argument expressions
-                let mut args: Vec<Expr> = Vec::new();
-                if !self.check(TokenKind::RightParen) {
-                    loop {
-                        let e = self.expression()?;
-                        args.push(e);
-                        if !self.matchk(&[TokenKind::Comma]) {
-                            break;
+        loop {
+            if self.matchk(&[TokenKind::At]) {
+                // parse decorator reference: name or name(args)
+                let name = self.consume_ident("Expect decorator name after '@'")?;
+                if self.matchk(&[TokenKind::LeftParen]) {
+                    // parse argument expressions
+                    let mut args: Vec<Expr> = Vec::new();
+                    if !self.check(TokenKind::RightParen) {
+                        loop {
+                            let e = self.expression()?;
+                            args.push(e);
+                            if !self.matchk(&[TokenKind::Comma]) {
+                                break;
+                            }
                         }
                     }
+                    self.consume(TokenKind::RightParen, "Expect ')' after decorator args")?;
+                    let call_span = self.previous_span();
+                    pending_decorators.push(Expr {
+                        kind: ExprKind::Call(
+                            Box::new(Expr {
+                                kind: ExprKind::Variable(name),
+                                span: call_span.clone(),
+                            }),
+                            args,
+                            Vec::new(),
+                        ),
+                        span: call_span,
+                    });
+                } else {
+                    pending_decorators.push(Expr {
+                        kind: ExprKind::Variable(name),
+                        span: self.previous_span(),
+                    });
                 }
-                self.consume(TokenKind::RightParen, "Expect ')' after decorator args")?;
-                let call_span = self.previous_span();
-                pending_decorators.push(Expr {
-                    kind: ExprKind::Call(
-                        Box::new(Expr {
+            } else if self.matchk(&[TokenKind::HashBracket]) {
+                // parse #[attr] or #[attr(args)] or #[attr1, attr2]
+                loop {
+                    let name = self.consume_ident("Expect attribute name inside '#['")?;
+                    if self.matchk(&[TokenKind::LeftParen]) {
+                        let mut args: Vec<Expr> = Vec::new();
+                        if !self.check(TokenKind::RightParen) {
+                            loop {
+                                let e = self.expression()?;
+                                args.push(e);
+                                if !self.matchk(&[TokenKind::Comma]) {
+                                    break;
+                                }
+                            }
+                        }
+                        self.consume(TokenKind::RightParen, "Expect ')' after attribute args")?;
+                        let call_span = self.previous_span();
+                        pending_decorators.push(Expr {
+                            kind: ExprKind::Call(
+                                Box::new(Expr {
+                                    kind: ExprKind::Variable(name),
+                                    span: call_span.clone(),
+                                }),
+                                args,
+                                Vec::new(),
+                            ),
+                            span: call_span,
+                        });
+                    } else {
+                        pending_decorators.push(Expr {
                             kind: ExprKind::Variable(name),
-                            span: call_span.clone(),
-                        }),
-                        args,
-                        Vec::new(),
-                    ),
-                    span: call_span,
-                });
+                            span: self.previous_span(),
+                        });
+                    }
+                    if !self.matchk(&[TokenKind::Comma]) {
+                        break;
+                    }
+                }
+                self.consume(TokenKind::RightBracket, "Expect ']' after attribute")?;
             } else {
-                pending_decorators.push(Expr {
-                    kind: ExprKind::Variable(name),
-                    span: self.previous_span(),
-                });
+                break;
             }
         }
         let mut is_export = false;
@@ -210,10 +253,10 @@ impl Parser {
             return Ok(vec![self.extend_decl(is_export)?]);
         }
         if self.matchk(&[TokenKind::Struct]) {
-            return Ok(vec![self.struct_decl(is_export)?]);
+            return Ok(vec![self.struct_decl(is_export, pending_decorators)?]);
         }
         if self.matchk(&[TokenKind::Enum]) {
-            return Ok(vec![self.enum_decl(is_export)?]);
+            return Ok(vec![self.enum_decl(is_export, pending_decorators)?]);
         }
         if self.matchk(&[TokenKind::Share]) {
             return Ok(vec![self.share_decl(is_export)?]);
@@ -324,7 +367,7 @@ impl Parser {
             return Ok(vec![s]);
         }
         if self.matchk(&[TokenKind::Interface]) {
-            return Ok(vec![self.interface_decl(is_export)?]);
+            return Ok(vec![self.interface_decl(is_export, pending_decorators)?]);
         }
         if self.matchk(&[TokenKind::Type]) {
             return Ok(vec![self.type_alias_decl(is_export)?]);

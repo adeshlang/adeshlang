@@ -406,6 +406,9 @@ impl<'a> Lexer<'a> {
                 }
             }
             '#' => {
+                if self.matchc(b'[') {
+                    return Ok(Some(self.make(TokenKind::HashBracket)));
+                }
                 // Comment - skip to end of line
                 while self.peek() != b'\n' && !self.is_end() {
                     self.adv();

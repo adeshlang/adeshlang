@@ -381,7 +381,7 @@ fn check_stmt_types_inner(
             }
             Ok(())
         }
-        StmtKind::Extend(_name, _target, methods, _export) => {
+        StmtKind::Extend(_name, _target, _implements, methods, _export) => {
             // treat extension methods like class methods for checking
             for m in methods {
                 let mut m_scope = FastMap::default();

@@ -2490,6 +2490,8 @@ impl Interpreter {
             variants: vec![("Some".to_string(), None), ("None".to_string(), None)],
             methods: HashMap::default(),
             variants_map: opt_map,
+            implements: Vec::new(),
+            no_extend: false,
         };
         let enum_val = Value::Enum(ue.clone());
         self.define_at_const(self.global, "Option".into(), enum_val, true, None);
@@ -2509,6 +2511,8 @@ impl Interpreter {
             variants: vec![("Ok".to_string(), None), ("Err".to_string(), None)],
             methods: HashMap::default(),
             variants_map: res_map,
+            implements: Vec::new(),
+            no_extend: false,
         };
         let res_enum_val = Value::Enum(ue_res.clone());
         self.define_at_const(self.global, "Result".into(), res_enum_val, true, None);
@@ -5595,6 +5599,7 @@ impl Interpreter {
                                                 implements: Vec::new(),
                                                 is_abstract: false,
                                                 is_sealed: false,
+                                                no_extend: false,
                                                 field_visibility: HashMap::default(),
                                                 field_owner: HashMap::default(),
                                                 field_types: HashMap::default(),
@@ -7697,6 +7702,9 @@ impl Interpreter {
                     // Pre-evaluate all decorators (this is the O(N) optimization)
                     let mut decorator_values = Vec::with_capacity(f.decorators.len());
                     for d in f.decorators.iter().rev() {
+                        if crate::parsing::ast::is_compiler_attribute(d) {
+                            continue;
+                        }
                         let dv = self.eval_expr(d, env, loader)?;
                         decorator_values.push(dv);
                     }
@@ -7824,6 +7832,9 @@ impl Interpreter {
                         let meta_obj = Value::Object(std::sync::Arc::new(meta));
                         let mut cur = Value::UserFunction(user_fn.clone());
                         for d in m.decorators.iter().rev() {
+                            if crate::parsing::ast::is_compiler_attribute(d) {
+                                continue;
+                            }
                             let dv = self.eval_expr(d, env, loader)?;
                             let new_target = match dv.clone() {
                                 Value::Function(NativeFn(fwrap)) => {
@@ -8119,6 +8130,7 @@ impl Interpreter {
                     implements: c.implements.clone(),
                     is_abstract: c.is_abstract,
                     is_sealed: c.is_sealed,
+                    no_extend: crate::parsing::ast::has_no_extend_attr(&c.decorators),
                     field_visibility,
                     field_owner,
                     field_types,
@@ -8130,6 +8142,9 @@ impl Interpreter {
                     meta.insert("type".into(), Value::Str("class".into()));
                     let meta_obj = Value::Object(std::sync::Arc::new(meta));
                     for d in c.decorators.iter().rev() {
+                        if crate::parsing::ast::is_compiler_attribute(d) {
+                            continue;
+                        }
                         let dv = self.eval_expr(d, env, loader)?;
                         let newc = match dv.clone() {
                             Value::Function(NativeFn(fwrap)) => {
@@ -8381,6 +8396,7 @@ impl Interpreter {
                     implements: c.implements.clone(),
                     is_abstract: c.is_abstract,
                     is_sealed: c.is_sealed,
+                    no_extend: crate::parsing::ast::has_no_extend_attr(&c.decorators),
                     field_visibility,
                     field_owner,
                     field_types,
@@ -8392,6 +8408,9 @@ impl Interpreter {
                     meta.insert("type".into(), Value::Str("class".into()));
                     let meta_obj = Value::Object(std::sync::Arc::new(meta));
                     for d in c.decorators.iter().rev() {
+                        if crate::parsing::ast::is_compiler_attribute(d) {
+                            continue;
+                        }
                         let dv = self.eval_expr(d, env, loader)?;
                         let newc = match dv.clone() {
                             Value::Function(NativeFn(fwrap)) => {
@@ -8774,7 +8793,7 @@ impl Interpreter {
                             | StmtKind::Interface(_, _)
                             | StmtKind::ExternFunction(_)
                             | StmtKind::ExternBlock { .. }
-                            | StmtKind::Extend(_, _, _, _) => {
+                            | StmtKind::Extend(..) => {
                                 execute = true;
                             }
                             StmtKind::Let(_, _, _, is_export, _is_const, _is_readonly) => {
@@ -8900,7 +8919,7 @@ impl Interpreter {
                             | StmtKind::Interface(_, _)
                             | StmtKind::ExternFunction(_)
                             | StmtKind::ExternBlock { .. }
-                            | StmtKind::Extend(_, _, _, _) => {
+                            | StmtKind::Extend(..) => {
                                 execute = true;
                             }
                             StmtKind::Let(_, _, _, is_export, _is_const, _is_readonly) => {
@@ -8977,7 +8996,7 @@ impl Interpreter {
                             | StmtKind::Interface(_, _)
                             | StmtKind::ExternFunction(_)
                             | StmtKind::ExternBlock { .. }
-                            | StmtKind::Extend(_, _, _, _) => {
+                            | StmtKind::Extend(..) => {
                                 execute = true;
                             }
                             StmtKind::Let(_, _, _, is_export, _is_const, _is_readonly) => {
@@ -9096,7 +9115,7 @@ impl Interpreter {
                         | StmtKind::Interface(_, _)
                         | StmtKind::ExternFunction(_)
                         | StmtKind::ExternBlock { .. }
-                        | StmtKind::Extend(_, _, _, _) => {
+                        | StmtKind::Extend(..) => {
                             execute = true;
                         }
                         StmtKind::Let(_, _, _, is_export, _is_const, _is_readonly) => {
@@ -9477,7 +9496,7 @@ impl Interpreter {
                             | StmtKind::Interface(_, _)
                             | StmtKind::ExternFunction(_)
                             | StmtKind::ExternBlock { .. }
-                            | StmtKind::Extend(_, _, _, _) => {
+                            | StmtKind::Extend(..) => {
                                 execute = true;
                             }
                             StmtKind::Let(_, _, _, is_export, _is_const, _is_readonly) => {
@@ -9603,7 +9622,7 @@ impl Interpreter {
                             | StmtKind::Interface(_, _)
                             | StmtKind::ExternFunction(_)
                             | StmtKind::ExternBlock { .. }
-                            | StmtKind::Extend(_, _, _, _) => {
+                            | StmtKind::Extend(..) => {
                                 execute = true;
                             }
                             StmtKind::Let(_, _, _, is_export, _is_const, _is_readonly) => {
@@ -9680,7 +9699,7 @@ impl Interpreter {
                             | StmtKind::Interface(_, _)
                             | StmtKind::ExternFunction(_)
                             | StmtKind::ExternBlock { .. }
-                            | StmtKind::Extend(_, _, _, _) => {
+                            | StmtKind::Extend(..) => {
                                 execute = true;
                             }
                             StmtKind::Let(_, _, _, is_export, _is_const, _is_readonly) => {
@@ -9856,7 +9875,7 @@ impl Interpreter {
                             | StmtKind::Struct(_, _)
                             | StmtKind::Enum(_, _)
                             | StmtKind::Interface(_, _)
-                            | StmtKind::Extend(_, _, _, _) => execute = true,
+                            | StmtKind::Extend(..) => execute = true,
                             StmtKind::Let(_, _, _, is_export, _is_const, _is_readonly) => {
                                 if *is_export {
                                     execute = true;
@@ -10402,7 +10421,7 @@ impl Interpreter {
                                 | StmtKind::Interface(_, _)
                                 | StmtKind::ExternFunction(_)
                                 | StmtKind::ExternBlock { .. }
-                                | StmtKind::Extend(_, _, _, _) => {
+                                | StmtKind::Extend(..) => {
                                     execute = true;
                                 }
                                 StmtKind::Let(_, _, _, is_export, _is_const, _is_readonly) => {
@@ -10482,7 +10501,7 @@ impl Interpreter {
                                 | StmtKind::Struct(_, _)
                                 | StmtKind::Enum(_, _)
                                 | StmtKind::Interface(_, _)
-                                | StmtKind::Extend(_, _, _, _) => execute = true,
+                                | StmtKind::Extend(..) => execute = true,
                                 StmtKind::Let(_, _, _, is_export, _is_const, _is_readonly) => {
                                     if *is_export {
                                         execute = true;
@@ -10570,13 +10589,127 @@ impl Interpreter {
                     name
                 ))))
             }
-            StmtKind::Extend(name_opt, target, methods, is_export) => {
+            StmtKind::Extend(name_opt, target, implements, methods, is_export) => {
                 self.mark_env_captured(env);
                 let captured_env = self.capture_env_values(env);
+
+                // Pre-resolve interfaces immutably before mutating target
+                let mut resolved_interfaces: Vec<(String, crate::parsing::ast::UserInterface)> =
+                    Vec::new();
+                for iface_name in implements {
+                    let iface_val = self.get(env, iface_name);
+                    match iface_val {
+                        Some(Value::Interface(ui)) => {
+                            resolved_interfaces.push((iface_name.clone(), ui));
+                        }
+                        Some(_) => {
+                            return Err(RunErr::Msg(err(format!(
+                                "'{}' is not an interface",
+                                iface_name
+                            ))));
+                        }
+                        None => {
+                            return Err(RunErr::Msg(err(format!(
+                                "Interface '{}' not found",
+                                iface_name
+                            ))));
+                        }
+                    }
+                }
+
                 let mut c = Some(env);
                 let mut maybe_export_val: Option<Value> = None;
+                let mut found_target = false;
                 while let Some(id) = c {
                     if let Some(val) = self.envs[id].values.get_mut(target) {
+                        found_target = true;
+                        // 1. Check #[no_extend]
+                        let is_no_extend = match val {
+                            Value::Class(uc) => uc.no_extend,
+                            Value::Struct(us) => us.no_extend,
+                            Value::Enum(ue) => ue.no_extend,
+                            Value::Interface(ui) => ui.no_extend,
+                            _ => false,
+                        };
+                        if is_no_extend {
+                            return Err(RunErr::Msg(err(format!(
+                                "Cannot extend '{}': type is marked with #[no_extend]",
+                                target
+                            ))));
+                        }
+
+                        // 2. Interface validation
+                        for (iface_name, ui) in &resolved_interfaces {
+                            for req_m in &ui.methods {
+                                let found_in_ext = methods.iter().find(|m| m.name == req_m.name);
+                                let found_in_existing = match val {
+                                    Value::Class(uc) => uc
+                                        .methods
+                                        .get(&req_m.name)
+                                        .and_then(|v| v.first().map(|f| f.params.len())),
+                                    Value::Struct(us) => us
+                                        .methods
+                                        .get(&req_m.name)
+                                        .and_then(|v| v.first().map(|f| f.params.len())),
+                                    Value::Enum(ue) => ue
+                                        .methods
+                                        .get(&req_m.name)
+                                        .and_then(|v| v.first().map(|f| f.params.len())),
+                                    _ => None,
+                                };
+
+                                if let Some(ext_m) = found_in_ext {
+                                    if ext_m.params.len() != req_m.params.len() {
+                                        return Err(RunErr::Msg(err(format!(
+                                            "Method '{}' on '{}' does not match signature of interface '{}' (expected {} parameters, got {})",
+                                            req_m.name,
+                                            target,
+                                            iface_name,
+                                            req_m.params.len(),
+                                            ext_m.params.len()
+                                        ))));
+                                    }
+                                } else if let Some(existing_len) = found_in_existing {
+                                    if existing_len != req_m.params.len() {
+                                        return Err(RunErr::Msg(err(format!(
+                                            "Method '{}' on '{}' does not match signature of interface '{}' (expected {} parameters, got {})",
+                                            req_m.name,
+                                            target,
+                                            iface_name,
+                                            req_m.params.len(),
+                                            existing_len
+                                        ))));
+                                    }
+                                } else {
+                                    return Err(RunErr::Msg(err(format!(
+                                        "Target '{}' does not implement required interface method '{}' from interface '{}'",
+                                        target, req_m.name, iface_name
+                                    ))));
+                                }
+                            }
+
+                            // Add interface to implements list
+                            match val {
+                                Value::Class(uc) => {
+                                    if !uc.implements.contains(iface_name) {
+                                        uc.implements.push(iface_name.clone());
+                                    }
+                                }
+                                Value::Struct(us) => {
+                                    if !us.implements.contains(iface_name) {
+                                        us.implements.push(iface_name.clone());
+                                    }
+                                }
+                                Value::Enum(ue) => {
+                                    if !ue.implements.contains(iface_name) {
+                                        ue.implements.push(iface_name.clone());
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        // 3. Register methods
                         match val {
                             Value::Class(uc) => {
                                 for m in methods {
@@ -10727,16 +10860,7 @@ impl Interpreter {
                     self.envs[env].exports.insert(target.clone(), val);
                     return Ok(Flow::Next);
                 }
-                let mut found = false;
-                let mut c_check = Some(env);
-                while let Some(id) = c_check {
-                    if self.envs[id].values.contains_key(target) {
-                        found = true;
-                        break;
-                    }
-                    c_check = self.envs[id].enclosing;
-                }
-                if !found {
+                if !found_target {
                     return Err(RunErr::Msg(err(format!(
                         "Unknown type '{}' to extend",
                         target
@@ -10788,6 +10912,8 @@ impl Interpreter {
                     fields: s.fields.clone(),
                     methods: HashMap::default(),
                     fields_map,
+                    implements: s.implements.clone(),
+                    no_extend: crate::parsing::ast::has_no_extend_attr(&s.decorators),
                 };
                 let v = Value::Struct(us);
                 self.define_at(env, s.name.clone(), v.clone(), None);
@@ -10800,6 +10926,8 @@ impl Interpreter {
                 let ui = UserInterface {
                     name: i.name.clone(),
                     methods: i.methods.clone(),
+                    super_interfaces: i.super_interfaces.clone(),
+                    no_extend: crate::parsing::ast::has_no_extend_attr(&i.decorators),
                 };
                 let v = Value::Interface(ui);
                 self.define_at(env, i.name.clone(), v.clone(), None);
@@ -10818,6 +10946,8 @@ impl Interpreter {
                     variants: e.variants.clone(),
                     methods: HashMap::default(),
                     variants_map,
+                    implements: e.implements.clone(),
+                    no_extend: crate::parsing::ast::has_no_extend_attr(&e.decorators),
                 };
                 let v = Value::Enum(ue);
                 self.define_at(env, e.name.clone(), v.clone(), None);
@@ -11690,60 +11820,113 @@ impl Interpreter {
                     TokenKind::BangEqual => Ok(Value::Bool(!equals(&lv, &rv))),
                     TokenKind::StrictEqual => Ok(Value::Bool(strict_equals(&lv, &rv))),
                     TokenKind::StrictNotEqual => Ok(Value::Bool(!strict_equals(&lv, &rv))),
-                    TokenKind::Instanceof => match (&lv, &rv) {
-                        (Value::Instance(i), Value::Class(c)) => {
-                            Ok(Value::Bool(i.class.name == c.name))
-                        }
-                        (Value::Instance(i), Value::Str(s)) => Ok(Value::Bool(&i.class.name == s)),
-                        (Value::Object(m), Value::Class(c)) => {
-                            let is_ws_err = m
-                                .get("__wsError")
-                                .and_then(|v| match v {
-                                    Value::Bool(b) => Some(*b),
-                                    _ => None,
-                                })
-                                .unwrap_or(false);
-                            let obj_type =
-                                m.get("__type")
-                                    .or_else(|| m.get("type"))
-                                    .and_then(|v| match v {
+                    TokenKind::Instanceof => {
+                        let target_name = match &rv {
+                            Value::Class(c) => Some(c.name.as_str()),
+                            Value::Interface(i) => Some(i.name.as_str()),
+                            Value::Struct(s) => Some(s.name.as_str()),
+                            Value::Enum(e) => Some(e.name.as_str()),
+                            Value::Str(s) => Some(s.as_str()),
+                            _ => None,
+                        };
+
+                        if let Some(target) = target_name {
+                            match &lv {
+                                Value::Instance(i) => {
+                                    let mut curr = Some(i.class.as_ref());
+                                    let mut matched = false;
+                                    while let Some(c) = curr {
+                                        if c.name == target
+                                            || c.implements.iter().any(|iface| iface == target)
+                                        {
+                                            matched = true;
+                                            break;
+                                        }
+                                        curr = c.parent.as_deref();
+                                    }
+                                    Ok(Value::Bool(matched))
+                                }
+                                Value::Struct(us) => Ok(Value::Bool(
+                                    us.name == target
+                                        || us.implements.iter().any(|iface| iface == target),
+                                )),
+                                Value::Enum(ue) => Ok(Value::Bool(
+                                    ue.name == target
+                                        || ue.implements.iter().any(|iface| iface == target),
+                                )),
+                                Value::EnumCtor(ue, _) => Ok(Value::Bool(
+                                    ue.name == target
+                                        || ue.implements.iter().any(|iface| iface == target),
+                                )),
+                                Value::Object(m) => {
+                                    let is_ws_err = m
+                                        .get("__wsError")
+                                        .and_then(|v| match v {
+                                            Value::Bool(b) => Some(*b),
+                                            _ => None,
+                                        })
+                                        .unwrap_or(false);
+                                    let obj_type = m
+                                        .get("__type")
+                                        .or_else(|| m.get("type"))
+                                        .and_then(|v| match v {
+                                            Value::Str(s) => Some(s.as_str()),
+                                            _ => None,
+                                        });
+                                    let struct_name = m.get("__struct").and_then(|v| match v {
                                         Value::Str(s) => Some(s.as_str()),
                                         _ => None,
                                     });
-                            let matched =
-                                is_ws_err && (c.name == "WebSocketError" || c.name == "Error");
-                            let matched_type = obj_type.map(|t| t == c.name).unwrap_or(false);
-                            Ok(Value::Bool(matched || matched_type))
-                        }
-                        (Value::Object(m), Value::Str(s)) => {
-                            let is_ws_err = m
-                                .get("__wsError")
-                                .and_then(|v| match v {
-                                    Value::Bool(b) => Some(*b),
-                                    _ => None,
-                                })
-                                .unwrap_or(false);
-                            let obj_type =
-                                m.get("__type")
-                                    .or_else(|| m.get("type"))
-                                    .and_then(|v| match v {
+                                    let enum_name = m.get("__enum").and_then(|v| match v {
                                         Value::Str(s) => Some(s.as_str()),
                                         _ => None,
                                     });
-                            let matched = is_ws_err && (s == "WebSocketError" || s == "Error");
-                            let matched_type = obj_type.map(|t| t == s).unwrap_or(false);
-                            Ok(Value::Bool(matched || matched_type))
+
+                                    let matched_err = is_ws_err
+                                        && (target == "WebSocketError" || target == "Error");
+                                    let matched_type =
+                                        obj_type.map(|t| t == target).unwrap_or(false);
+                                    let matched_struct = if let Some(sname) = struct_name {
+                                        if sname == target {
+                                            true
+                                        } else if let Some(Value::Struct(us)) = self.get(env, sname)
+                                        {
+                                            us.implements.iter().any(|iface| iface == target)
+                                        } else {
+                                            false
+                                        }
+                                    } else {
+                                        false
+                                    };
+                                    let matched_enum = if let Some(ename) = enum_name {
+                                        if ename == target {
+                                            true
+                                        } else if let Some(Value::Enum(ue)) = self.get(env, ename) {
+                                            ue.implements.iter().any(|iface| iface == target)
+                                        } else {
+                                            false
+                                        }
+                                    } else {
+                                        false
+                                    };
+
+                                    Ok(Value::Bool(
+                                        matched_err
+                                            || matched_type
+                                            || matched_struct
+                                            || matched_enum,
+                                    ))
+                                }
+                                Value::Error(le) => {
+                                    let ks = le.kind.label();
+                                    Ok(Value::Bool(target == ks || target == "Error"))
+                                }
+                                _ => Ok(Value::Bool(false)),
+                            }
+                        } else {
+                            Ok(Value::Bool(false))
                         }
-                        (Value::Error(le), Value::Class(c)) => {
-                            let ks = le.kind.label();
-                            Ok(Value::Bool(c.name == ks || c.name == "Error"))
-                        }
-                        (Value::Error(le), Value::Str(s)) => {
-                            let ks = le.kind.label();
-                            Ok(Value::Bool(s == ks || s == "Error"))
-                        }
-                        _ => Ok(Value::Bool(false)),
-                    },
+                    }
                     TokenKind::In => match (lv, rv) {
                         (v, Value::Array(a)) => Ok(Value::Bool(a.iter().any(|x| equals(x, &v)))),
                         (v, Value::Tuple(t)) => Ok(Value::Bool(t.iter().any(|x| equals(x, &v)))),
@@ -17152,6 +17335,7 @@ impl Interpreter {
                         implements: Vec::new(),
                         is_abstract: false,
                         is_sealed: false,
+                        no_extend: false,
                         field_visibility: HashMap::default(),
                         field_owner: HashMap::default(),
                         field_types: HashMap::default(),
@@ -17978,6 +18162,7 @@ impl Interpreter {
                 implements: Vec::new(),
                 is_abstract: false,
                 is_sealed: false,
+                no_extend: false,
                 field_visibility: HashMap::default(),
                 field_owner: HashMap::default(),
                 field_types: HashMap::default(),
@@ -18448,6 +18633,7 @@ pub(crate) fn call_user(
             implements: Vec::new(),
             is_abstract: false,
             is_sealed: false,
+            no_extend: false,
             field_visibility: HashMap::default(),
             field_owner: HashMap::default(),
             field_types: HashMap::default(),
@@ -19143,6 +19329,8 @@ impl ExecLegacy {
                     variants: e.variants.clone(),
                     methods: HashMap::default(),
                     variants_map,
+                    implements: e.implements.clone(),
+                    no_extend: crate::parsing::ast::has_no_extend_attr(&e.decorators),
                 };
                 let v = Value::Enum(ue);
                 self.envs[self.current]
@@ -19467,6 +19655,7 @@ impl ExecLegacy {
                     implements: c.implements.clone(),
                     is_abstract: c.is_abstract,
                     is_sealed: false,
+                    no_extend: crate::parsing::ast::has_no_extend_attr(&c.decorators),
                     field_visibility,
                     field_owner,
                     field_types,
@@ -19566,6 +19755,7 @@ impl ExecLegacy {
                     implements: c.implements.clone(),
                     is_abstract: c.is_abstract,
                     is_sealed: false,
+                    no_extend: crate::parsing::ast::has_no_extend_attr(&c.decorators),
                     field_visibility,
                     field_owner,
                     field_types,

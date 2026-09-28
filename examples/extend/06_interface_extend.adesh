@@ -1,0 +1,81 @@
+// 06_interface_extend.adesh
+// Demonstrating extending Classes, Structs, and Enums to implement Interfaces (like Rust traits)
+
+interface Printable {
+    fn print_info();
+}
+
+interface Summary {
+    fn summarize();
+}
+
+
+class Vector2 {
+    Vector2(x, y) {
+        this.x = x;
+        this.y = y;
+    }
+
+    fn magnitude() {
+        return Math.sqrt(this.x * this.x + this.y * this.y);
+    }
+
+    fn dot(other) {
+        return this.x * other.x + this.y * other.y;
+    }
+}
+// 1. Extending a Class to implement an Interface
+class User {
+    User(name, age) {
+        this.name = name;
+        this.age = age;
+    }
+}
+
+// Extend User with Printable interface
+extend on User: Printable {
+    fn print_info() {
+        print("User: " + this.name + " (Age: " + this.age + ")");
+    }
+}
+
+let u = new User("Alice", 30);
+u.print_info();
+print("u instanceof Printable: " + (u instanceof Printable));
+print("u instanceof User: " + (u instanceof User));
+
+// 2. Extending a Struct to implement an Interface (Rust-style syntax: extend Interface for Struct)
+struct Point {
+    x: number,
+    y: number
+}
+
+extend Summary for Point {
+    fn summarize() {
+        print("Point at (" + this.x + ", " + this.y + ")");
+    }
+}
+
+let p = Point { x: 10, y: 20 };
+p.summarize();
+print("p instanceof Summary: " + (p instanceof Summary));
+print("p instanceof Point: " + (p instanceof Point));
+
+// 3. Extending an Enum to implement an Interface
+enum Status {
+    Active,
+    Inactive
+}
+
+extend on Status: Printable {
+    fn print_info() {
+        print("Status is: " + this.tag);
+    }
+}
+
+let s = Status.Active();
+s.print_info();
+print("s instanceof Printable: " + (s instanceof Printable));
+print("s instanceof Status: " + (s instanceof Status));
+
+print("--- Interface Extension Verification Passed! ---");

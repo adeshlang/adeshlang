@@ -343,7 +343,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
         })),
 
         // Handle extend statement
-        StmtKind::Extend(_name, target, methods, _export) => {
+        StmtKind::Extend(_name, target, _implements, methods, _export) => {
             let hir_methods: Result<Vec<HirFunction>, String> =
                 methods.iter().map(|m| lower_function(m)).collect();
             Ok(LoweredStmt::Stmt(HirStmt::Extend {
