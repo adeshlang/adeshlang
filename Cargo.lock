@@ -31,6 +31,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "adesh-linker"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+]
+
+[[package]]
 name = "adesh-mobile-bridge"
 version = "0.3.0"
 dependencies = [
@@ -39,6 +46,14 @@ dependencies = [
  "once_cell",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "adesh-runtime"
+version = "0.3.0"
+dependencies = [
+ "colored",
+ "libc",
 ]
 
 [[package]]
@@ -56,6 +71,7 @@ dependencies = [
 name = "adeshlang"
 version = "0.3.0"
 dependencies = [
+ "adesh-linker",
  "adler2",
  "aes-gcm",
  "argon2",

@@ -5,6 +5,8 @@ members = [
     "editor",
     "mobile/bridge",
     "crates/adesh-wasm",
+    "crates/adesh-runtime",
+    "linker",
 ]
 resolver = "2"
 
@@ -33,7 +35,7 @@ workspace = true
 
 [lib]
 name = "adeshlang"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["rlib", "cdylib"]
 path = "src/lib.rs"
 
 [features]
@@ -44,6 +46,7 @@ allow_internal_network = []
 print-bench = []
 
 [dependencies]
+adesh-linker = { path = "linker" }
 colored = "2.0"
 regex = "1.9"
 num-bigint = "0.4"

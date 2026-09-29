@@ -1,0 +1,26 @@
+[package]
+name = "adesh-linker"
+version = "0.1.0"
+edition = "2024"
+authors = ["AdeshLang Contributors"]
+description = "Self-contained, multi-format, multi-architecture native linker for the Adesh ecosystem"
+license = "Apache-2.0"
+readme = "README.md"
+autobins = false
+
+[lib]
+name = "adesh_linker"
+path = "src/lib.rs"
+
+[[bin]]
+name = "adeshlink"
+path = "src/main.rs"
+
+[[bin]]
+name = "gen_windows_exe"
+path = "src/bin/gen_windows_exe.rs"
+
+[dependencies]
+
+[dev-dependencies]
+tempfile = "3"

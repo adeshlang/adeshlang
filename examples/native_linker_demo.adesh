@@ -1,0 +1,7 @@
+print("=== AdeshLang Native Toolchain Demo ===");
+print("Executing with zero external toolchain dependencies!");
+let x = 10;
+let y = 25;
+print("x =", x);
+print("y =", y);
+print("x + y =", x + y);

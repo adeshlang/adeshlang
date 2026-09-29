@@ -1,0 +1,18 @@
+[package]
+name = "adesh-runtime"
+version = "0.3.0"
+edition = "2024"
+authors = ["Ajay Tainwala"]
+description = "Standalone native runtime library for Adesh programming language"
+
+[lints]
+workspace = true
+
+[lib]
+name = "adesh_runtime"
+crate-type = ["staticlib", "rlib"]
+path = "src/lib.rs"
+
+[dependencies]
+colored = "2.0"
+libc = "0.2"
