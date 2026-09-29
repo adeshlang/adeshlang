@@ -6,6 +6,21 @@ use crate::object::ObjectFile;
 use crate::symbol::{Symbol, SymbolBinding};
 use std::collections::{HashMap, HashSet};
 
+/// Policy governing unresolved symbol resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UndefinedSymbolPolicy {
+    /// Emit an explicit link error for any unresolved symbol.
+    Error,
+    /// Treat unresolved symbol as dynamic import.
+    Import,
+    /// Treat unresolved symbol as weak undefined (NULL).
+    WeakUndefined,
+    /// Resolve via native intrinsic generator.
+    Intrinsic,
+    /// Resolve via declared Adesh runtime symbol.
+    RuntimeProvided,
+}
+
 /// Global symbol table entry tracking resolution origin.
 #[derive(Debug, Clone)]
 pub struct ResolvedSymbol {
@@ -19,6 +34,7 @@ pub struct ResolvedSymbol {
 pub struct SymbolResolver {
     pub table: HashMap<String, ResolvedSymbol>,
     pub undefined: HashSet<String>,
+    pub policy: UndefinedSymbolPolicy,
 }
 
 impl SymbolResolver {
@@ -26,6 +42,15 @@ impl SymbolResolver {
         Self {
             table: HashMap::new(),
             undefined: HashSet::new(),
+            policy: UndefinedSymbolPolicy::Error,
+        }
+    }
+
+    pub fn with_policy(policy: UndefinedSymbolPolicy) -> Self {
+        Self {
+            table: HashMap::new(),
+            undefined: HashSet::new(),
+            policy,
         }
     }
 
@@ -49,7 +74,9 @@ impl SymbolResolver {
                 let current_undef: Vec<String> = self.undefined.iter().cloned().collect();
                 for undef_sym in current_undef {
                     if let Some(&m_idx) = ar.symbol_index.get(&undef_sym) {
-                        if m_idx < ar.members.len() && extracted_members.insert((ar.path.clone(), m_idx)) {
+                        if m_idx < ar.members.len()
+                            && extracted_members.insert((ar.path.clone(), m_idx))
+                        {
                             let member = &ar.members[m_idx];
                             let mut member_obj = if let Some(ref o) = member.obj {
                                 let mut cloned = o.clone();
@@ -76,23 +103,125 @@ impl SymbolResolver {
 
         // 3. Resolve well-known system, CRT, and Adesh runtime bridge symbols as dynamic imports or stubs
         let system_crt_symbols = [
-            "printf", "puts", "putchar", "malloc", "free", "calloc", "realloc", "exit", "abort",
-            "memcpy", "memset", "memmove", "memcmp", "strlen", "strcmp", "strncmp", "strcpy", "strncpy",
-            "snprintf", "sprintf", "vsnprintf", "getchar", "fprintf", "fflush", "fopen", "fclose",
-            "fread", "fwrite", "fseek", "ftell", "time", "clock", "getenv", "system",
-            "trunc", "truncf", "floor", "floorf", "ceil", "ceilf", "round", "roundf",
-            "sin", "sinf", "cos", "cosf", "tan", "tanf", "asin", "asinf", "acos", "acosf",
-            "atan", "atanf", "atan2", "atan2f", "sinh", "sinhf", "cosh", "coshf", "tanh", "tanhf",
-            "exp", "expf", "log", "logf", "log10", "log10f", "log2", "log2f", "pow", "powf",
-            "sqrt", "sqrtf", "fmod", "fmodf", "fabs", "fabsf", "fmin", "fminf", "fmax", "fmaxf",
-            "copysign", "copysignf", "hypot", "hypotf", "ldexp", "frexp", "modf",
-            "ExitProcess", "GetStdHandle", "WriteFile", "ReadFile", "CreateFileA", "CreateFileW",
-            "CloseHandle", "GetLastError", "SetLastError", "VirtualAlloc", "VirtualFree",
-            "GetProcessHeap", "HeapAlloc", "HeapFree", "Sleep", "QueryPerformanceCounter",
-            "QueryPerformanceFrequency", "GetSystemTimeAsFileTime", "GetCurrentProcessId",
-            "GetCurrentThreadId", "RtlCaptureContext", "RtlLookupFunctionEntry", "RtlVirtualUnwind",
-            "__acrt_iob_func", "__stdio_common_vfprintf", "__stdio_common_vsprintf",
-            "__CxxFrameHandler3", "__CxxFrameHandler4", "_CxxThrowException", "__chkstk",
+            "printf",
+            "puts",
+            "putchar",
+            "malloc",
+            "free",
+            "calloc",
+            "realloc",
+            "exit",
+            "abort",
+            "memcpy",
+            "memset",
+            "memmove",
+            "memcmp",
+            "strlen",
+            "strcmp",
+            "strncmp",
+            "strcpy",
+            "strncpy",
+            "snprintf",
+            "sprintf",
+            "vsnprintf",
+            "getchar",
+            "fprintf",
+            "fflush",
+            "fopen",
+            "fclose",
+            "fread",
+            "fwrite",
+            "fseek",
+            "ftell",
+            "time",
+            "clock",
+            "getenv",
+            "system",
+            "trunc",
+            "truncf",
+            "floor",
+            "floorf",
+            "ceil",
+            "ceilf",
+            "round",
+            "roundf",
+            "sin",
+            "sinf",
+            "cos",
+            "cosf",
+            "tan",
+            "tanf",
+            "asin",
+            "asinf",
+            "acos",
+            "acosf",
+            "atan",
+            "atanf",
+            "atan2",
+            "atan2f",
+            "sinh",
+            "sinhf",
+            "cosh",
+            "coshf",
+            "tanh",
+            "tanhf",
+            "exp",
+            "expf",
+            "log",
+            "logf",
+            "log10",
+            "log10f",
+            "log2",
+            "log2f",
+            "pow",
+            "powf",
+            "sqrt",
+            "sqrtf",
+            "fmod",
+            "fmodf",
+            "fabs",
+            "fabsf",
+            "fmin",
+            "fminf",
+            "fmax",
+            "fmaxf",
+            "copysign",
+            "copysignf",
+            "hypot",
+            "hypotf",
+            "ldexp",
+            "frexp",
+            "modf",
+            "ExitProcess",
+            "GetStdHandle",
+            "WriteFile",
+            "ReadFile",
+            "CreateFileA",
+            "CreateFileW",
+            "CloseHandle",
+            "GetLastError",
+            "SetLastError",
+            "VirtualAlloc",
+            "VirtualFree",
+            "GetProcessHeap",
+            "HeapAlloc",
+            "HeapFree",
+            "Sleep",
+            "QueryPerformanceCounter",
+            "QueryPerformanceFrequency",
+            "GetSystemTimeAsFileTime",
+            "GetCurrentProcessId",
+            "GetCurrentThreadId",
+            "RtlCaptureContext",
+            "RtlLookupFunctionEntry",
+            "RtlVirtualUnwind",
+            "__acrt_iob_func",
+            "__stdio_common_vfprintf",
+            "__stdio_common_vsprintf",
+            "__CxxFrameHandler3",
+            "__CxxFrameHandler4",
+            "_CxxThrowException",
+            "__chkstk",
         ];
 
         let remaining_undef: Vec<String> = self.undefined.iter().cloned().collect();
@@ -105,7 +234,9 @@ impl SymbolResolver {
                 || undef.starts_with("?")
                 || undef.starts_with("??")
                 || undef.starts_with('$')
-                || system_crt_symbols.iter().any(|&s| s == undef || undef.ends_with(s) || undef.trim_start_matches('_') == s);
+                || system_crt_symbols.iter().any(|&s| {
+                    s == undef || undef.ends_with(s) || undef.trim_start_matches('_') == s
+                });
             if is_system {
                 // Synthesize defined entry for system CRT / runtime import
                 self.undefined.remove(&undef);
@@ -174,7 +305,9 @@ impl SymbolResolver {
             if sym.is_defined {
                 if let Some(existing) = self.table.get_mut(&sym.name) {
                     if existing.symbol.is_defined {
-                        if existing.symbol.binding == SymbolBinding::Global && sym.binding == SymbolBinding::Global {
+                        if existing.symbol.binding == SymbolBinding::Global
+                            && sym.binding == SymbolBinding::Global
+                        {
                             // Check COMDAT / compiler-generated constant deduplication
                             let is_dedup_constant = sym.name.starts_with("__xmm@")
                                 || sym.name.starts_with("__real@")
@@ -183,7 +316,8 @@ impl SymbolResolver {
                                 || sym.name.starts_with("__zmm@")
                                 || sym.name.starts_with(".refptr.")
                                 || obj.is_archive_member
-                                || (sym.comdat_group.is_some() && sym.comdat_group == existing.symbol.comdat_group);
+                                || (sym.comdat_group.is_some()
+                                    && sym.comdat_group == existing.symbol.comdat_group);
 
                             if is_dedup_constant {
                                 continue;
@@ -194,7 +328,9 @@ impl SymbolResolver {
                                 first_file,
                                 obj.display_name(),
                             ));
-                        } else if existing.symbol.binding == SymbolBinding::Weak && sym.binding == SymbolBinding::Global {
+                        } else if existing.symbol.binding == SymbolBinding::Weak
+                            && sym.binding == SymbolBinding::Global
+                        {
                             // Strong symbol overrides existing weak
                             existing.symbol = sym.clone();
                             existing.defined_in_file_index = obj.file_index;
@@ -228,10 +364,17 @@ impl SymbolResolver {
         }
 
         // Check relocations for symbol references
-        let local_sym_names: HashSet<&str> = obj.symbols.iter().filter(|s| s.is_defined).map(|s| s.name.as_str()).collect();
+        let local_sym_names: HashSet<&str> = obj
+            .symbols
+            .iter()
+            .filter(|s| s.is_defined)
+            .map(|s| s.name.as_str())
+            .collect();
         for sec in &obj.sections {
             for r in &sec.relocations {
-                if !self.table.contains_key(&r.symbol_name) && !local_sym_names.contains(r.symbol_name.as_str()) {
+                if !self.table.contains_key(&r.symbol_name)
+                    && !local_sym_names.contains(r.symbol_name.as_str())
+                {
                     self.undefined.insert(r.symbol_name.clone());
                 }
             }

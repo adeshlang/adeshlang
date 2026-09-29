@@ -9,7 +9,7 @@ pub const _XCOFF64: u16 = 2;
 // Section flags
 pub const STYP_TEXT: u32 = 0x0020;
 pub const STYP_DATA: u32 = 0x0040;
-pub const STYP_BSS: u32  = 0x0080;
+pub const STYP_BSS: u32 = 0x0080;
 pub const STYP_LOADER: u32 = 0x1000;
 
 /// XCOFF File Header.

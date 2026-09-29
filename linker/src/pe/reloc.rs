@@ -16,7 +16,11 @@ pub fn build_base_reloc_table(reloc_rvas: &[u32], is_64bit: bool) -> Vec<u8> {
     use std::collections::BTreeMap;
     let mut pages: BTreeMap<u32, Vec<u16>> = BTreeMap::new();
 
-    let reloc_type = if is_64bit { IMAGE_REL_BASED_DIR64 } else { IMAGE_REL_BASED_HIGHLOW };
+    let reloc_type = if is_64bit {
+        IMAGE_REL_BASED_DIR64
+    } else {
+        IMAGE_REL_BASED_HIGHLOW
+    };
 
     for &rva in reloc_rvas {
         let page_rva = rva & !0xFFF;

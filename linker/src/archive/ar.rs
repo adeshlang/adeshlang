@@ -28,7 +28,10 @@ impl Archive {
         if bytes.len() < 8 || &bytes[0..8] != &AR_MAGIC {
             return Err(LinkError::new(
                 ErrorCode::InvalidArchive,
-                format!("file `{}` is not a valid static archive (missing AR magic)", path.display()),
+                format!(
+                    "file `{}` is not a valid static archive (missing AR magic)",
+                    path.display()
+                ),
             ));
         }
 
@@ -47,7 +50,11 @@ impl Archive {
             if offset + size > bytes.len() {
                 return Err(LinkError::new(
                     ErrorCode::InvalidArchive,
-                    format!("archive member `{}` in `{}` is truncated", name_raw, path.display()),
+                    format!(
+                        "archive member `{}` in `{}` is truncated",
+                        name_raw,
+                        path.display()
+                    ),
                 ));
             }
 
@@ -60,7 +67,11 @@ impl Archive {
             if name_raw == "//" {
                 // GNU string table
                 string_table = member_data.to_vec();
-            } else if name_raw == "/" || name_raw == "__.SYMDEF" || name_raw == "__.SYMDEF SORTED" || name_raw.starts_with("/ ") {
+            } else if name_raw == "/"
+                || name_raw == "__.SYMDEF"
+                || name_raw == "__.SYMDEF SORTED"
+                || name_raw.starts_with("/ ")
+            {
                 // Symbol directory member (skipped in raw extraction; indexed below)
             } else {
                 let name = if name_raw.starts_with('/') && !string_table.is_empty() {
@@ -83,7 +94,9 @@ impl Archive {
                     // BSD extended filename: #1/len
                     if let Ok(len) = name_raw[3..].parse::<usize>() {
                         if len <= member_data.len() {
-                            String::from_utf8_lossy(&member_data[0..len]).trim_matches('\0').to_string()
+                            String::from_utf8_lossy(&member_data[0..len])
+                                .trim_matches('\0')
+                                .to_string()
                         } else {
                             name_raw.to_string()
                         }
@@ -140,7 +153,12 @@ impl Archive {
     pub fn add_file(&mut self, name: impl Into<String>, data: Vec<u8>) {
         let name = name.into();
         let size = data.len();
-        self.members.push(ArchiveMember { name, size, data, obj: None });
+        self.members.push(ArchiveMember {
+            name,
+            size,
+            data,
+            obj: None,
+        });
     }
 
     /// Encode the archive into standard GNU AR format bytes.

@@ -4,7 +4,7 @@ use crate::arch::get_handler;
 use crate::error::{ErrorCode, LinkError, LinkResult};
 use crate::object::ObjectFile;
 use crate::resolver::SymbolResolver;
-use crate::section::{align_to, flags, MergedSection, SectionKind};
+use crate::section::{MergedSection, SectionKind, align_to, flags};
 use crate::symbol::Symbol;
 use crate::target::Target;
 use std::collections::HashMap;
@@ -34,14 +34,45 @@ impl LayoutEngine {
         entry_name: &str,
     ) -> LinkResult<()> {
         // 1. Group input sections by category
-        let mut text_merged = MergedSection::new(".text", SectionKind::Text, flags::READ | flags::EXEC | flags::ALLOC, 16);
-        let mut rodata_merged = MergedSection::new(".rodata", SectionKind::Rodata, flags::READ | flags::ALLOC, 8);
-        let mut data_merged = MergedSection::new(".data", SectionKind::Data, flags::READ | flags::WRITE | flags::ALLOC, 8);
-        let mut bss_merged = MergedSection::new(".bss", SectionKind::Bss, flags::READ | flags::WRITE | flags::ALLOC, 8);
-        let mut meta_merged = MergedSection::new(".adesh.meta", SectionKind::AdeshMeta, flags::READ | flags::ALLOC, 4);
+        let mut text_merged = MergedSection::new(
+            ".text",
+            SectionKind::Text,
+            flags::READ | flags::EXEC | flags::ALLOC,
+            16,
+        );
+        let mut rodata_merged = MergedSection::new(
+            ".rodata",
+            SectionKind::Rodata,
+            flags::READ | flags::ALLOC,
+            8,
+        );
+        let mut data_merged = MergedSection::new(
+            ".data",
+            SectionKind::Data,
+            flags::READ | flags::WRITE | flags::ALLOC,
+            8,
+        );
+        let mut bss_merged = MergedSection::new(
+            ".bss",
+            SectionKind::Bss,
+            flags::READ | flags::WRITE | flags::ALLOC,
+            8,
+        );
+        let mut meta_merged = MergedSection::new(
+            ".adesh.meta",
+            SectionKind::AdeshMeta,
+            flags::READ | flags::ALLOC,
+            4,
+        );
 
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-        enum SectionCat { Text, Rodata, Data, Bss, Meta }
+        enum SectionCat {
+            Text,
+            Rodata,
+            Data,
+            Bss,
+            Meta,
+        }
 
         // Map: (file_index, section_index) -> (SectionCat, offset_in_merged)
         let mut sec_placement: HashMap<(usize, usize), (SectionCat, u64)> = HashMap::new();
@@ -108,7 +139,10 @@ impl LayoutEngine {
             if merged.is_writable() && merged.is_executable() {
                 return Err(LinkError::new(
                     ErrorCode::SecurityViolation,
-                    format!("W^X violation: section `{}` is both writable and executable", merged.name),
+                    format!(
+                        "W^X violation: section `{}` is both writable and executable",
+                        merged.name
+                    ),
                 ));
             }
         }
@@ -170,7 +204,8 @@ impl LayoutEngine {
 
             for reloc in &merged.relocations {
                 let sym_va = if let Some(f_idx) = reloc.symbol_index {
-                    file_local_va_map.get(&(f_idx, reloc.symbol_name.clone()))
+                    file_local_va_map
+                        .get(&(f_idx, reloc.symbol_name.clone()))
                         .copied()
                         .or_else(|| symbol_va_map.get(&reloc.symbol_name).copied())
                         .unwrap_or(0)

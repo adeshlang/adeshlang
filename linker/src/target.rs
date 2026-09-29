@@ -45,19 +45,40 @@ pub enum Arch {
 impl Arch {
     pub fn pointer_width(&self) -> PointerWidth {
         match self {
-            Arch::X86_64 | Arch::AArch64 | Arch::Ppc64 | Arch::Ppc64le | Arch::Riscv64
-            | Arch::S390x | Arch::Mips64 | Arch::Mips64le | Arch::Loong64 | Arch::Sparc64
-            | Arch::Wasm64 | Arch::NvidiaPtx | Arch::AmdGpuHsa | Arch::GoogleTpu
+            Arch::X86_64
+            | Arch::AArch64
+            | Arch::Ppc64
+            | Arch::Ppc64le
+            | Arch::Riscv64
+            | Arch::S390x
+            | Arch::Mips64
+            | Arch::Mips64le
+            | Arch::Loong64
+            | Arch::Sparc64
+            | Arch::Wasm64
+            | Arch::NvidiaPtx
+            | Arch::AmdGpuHsa
+            | Arch::GoogleTpu
             | Arch::QuantumQpu => PointerWidth::U64,
 
-            Arch::X86 | Arch::Arm | Arch::Riscv32 | Arch::Mips | Arch::Mipsle
-            | Arch::Wasm32 | Arch::SpirV | Arch::HexagonDsp | Arch::AppleAne | Arch::ArmEthos => PointerWidth::U32,
+            Arch::X86
+            | Arch::Arm
+            | Arch::Riscv32
+            | Arch::Mips
+            | Arch::Mipsle
+            | Arch::Wasm32
+            | Arch::SpirV
+            | Arch::HexagonDsp
+            | Arch::AppleAne
+            | Arch::ArmEthos => PointerWidth::U32,
         }
     }
 
     pub fn default_endianness(&self) -> Endianness {
         match self {
-            Arch::Ppc64 | Arch::S390x | Arch::Mips | Arch::Mips64 | Arch::Sparc64 => Endianness::Big,
+            Arch::Ppc64 | Arch::S390x | Arch::Mips | Arch::Mips64 | Arch::Sparc64 => {
+                Endianness::Big
+            }
             _ => Endianness::Little,
         }
     }
@@ -65,7 +86,13 @@ impl Arch {
     pub fn is_accelerator(&self) -> bool {
         matches!(
             self,
-            Arch::NvidiaPtx | Arch::AmdGpuHsa | Arch::SpirV | Arch::HexagonDsp | Arch::AppleAne | Arch::ArmEthos | Arch::GoogleTpu
+            Arch::NvidiaPtx
+                | Arch::AmdGpuHsa
+                | Arch::SpirV
+                | Arch::HexagonDsp
+                | Arch::AppleAne
+                | Arch::ArmEthos
+                | Arch::GoogleTpu
         )
     }
 
@@ -129,7 +156,13 @@ pub enum Os {
 impl Os {
     pub fn default_object_format(&self) -> ObjectFormat {
         match self {
-            Os::Linux | Os::FreeBSD | Os::OpenBSD | Os::NetBSD | Os::DragonFly | Os::Solaris | Os::Android => ObjectFormat::Elf,
+            Os::Linux
+            | Os::FreeBSD
+            | Os::OpenBSD
+            | Os::NetBSD
+            | Os::DragonFly
+            | Os::Solaris
+            | Os::Android => ObjectFormat::Elf,
             Os::Windows => ObjectFormat::Pe,
             Os::MacOS | Os::Ios => ObjectFormat::MachO,
             Os::Aix => ObjectFormat::Xcoff,
@@ -324,7 +357,11 @@ impl Target {
 
         let (os, format, abi) = if lower.contains("linux") {
             (Os::Linux, ObjectFormat::Elf, Abi::SystemV)
-        } else if lower.contains("windows") || lower.contains("win32") || lower.contains("msvc") || lower.contains("mingw") {
+        } else if lower.contains("windows")
+            || lower.contains("win32")
+            || lower.contains("msvc")
+            || lower.contains("mingw")
+        {
             (Os::Windows, ObjectFormat::Pe, Abi::WindowsMsvc)
         } else if lower.contains("darwin") || lower.contains("macos") || lower.contains("apple") {
             (Os::MacOS, ObjectFormat::MachO, Abi::Darwin)
@@ -355,17 +392,31 @@ impl Target {
         } else if lower.contains("quantum") || arch == Arch::QuantumQpu {
             (Os::QuantumRuntime, ObjectFormat::QirQuantum, Abi::QirAbi)
         } else if lower.contains("none") || lower.contains("baremetal") {
-            (Os::None, if arch == Arch::Wasm32 || arch == Arch::Wasm64 { ObjectFormat::Wasm } else { ObjectFormat::Elf }, Abi::BareMetal)
+            (
+                Os::None,
+                if arch == Arch::Wasm32 || arch == Arch::Wasm64 {
+                    ObjectFormat::Wasm
+                } else {
+                    ObjectFormat::Elf
+                },
+                Abi::BareMetal,
+            )
         } else if arch == Arch::Wasm32 || arch == Arch::Wasm64 {
             (Os::Wasi, ObjectFormat::Wasm, Abi::Wasi)
         } else {
             // Default fallback based on host OS
             #[cfg(target_os = "windows")]
-            { (Os::Windows, ObjectFormat::Pe, Abi::WindowsMsvc) }
+            {
+                (Os::Windows, ObjectFormat::Pe, Abi::WindowsMsvc)
+            }
             #[cfg(target_os = "macos")]
-            { (Os::MacOS, ObjectFormat::MachO, Abi::Darwin) }
+            {
+                (Os::MacOS, ObjectFormat::MachO, Abi::Darwin)
+            }
             #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-            { (Os::Linux, ObjectFormat::Elf, Abi::SystemV) }
+            {
+                (Os::Linux, ObjectFormat::Elf, Abi::SystemV)
+            }
         };
 
         let pointer_width = arch.pointer_width();
@@ -421,19 +472,29 @@ impl Target {
     /// Construct default target for the host compiling platform.
     pub fn host() -> Self {
         #[cfg(all(target_arch = "x86_64", target_os = "windows"))]
-        { Self::from_triple("x86_64-windows").unwrap() }
+        {
+            Self::from_triple("x86_64-windows").unwrap()
+        }
 
         #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-        { Self::from_triple("x86_64-linux").unwrap() }
+        {
+            Self::from_triple("x86_64-linux").unwrap()
+        }
 
         #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
-        { Self::from_triple("aarch64-linux").unwrap() }
+        {
+            Self::from_triple("aarch64-linux").unwrap()
+        }
 
         #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-        { Self::from_triple("aarch64-macos").unwrap() }
+        {
+            Self::from_triple("aarch64-macos").unwrap()
+        }
 
         #[cfg(all(target_arch = "x86_64", target_os = "macos"))]
-        { Self::from_triple("x86_64-macos").unwrap() }
+        {
+            Self::from_triple("x86_64-macos").unwrap()
+        }
 
         #[cfg(not(any(
             all(target_arch = "x86_64", target_os = "windows"),
@@ -442,7 +503,9 @@ impl Target {
             all(target_arch = "aarch64", target_os = "macos"),
             all(target_arch = "x86_64", target_os = "macos")
         )))]
-        { Self::from_triple("x86_64-linux").unwrap() }
+        {
+            Self::from_triple("x86_64-linux").unwrap()
+        }
     }
 
     /// x86_64 Linux target.
@@ -467,8 +530,12 @@ impl Target {
 
     pub fn tier(&self) -> TargetTier {
         match (self.arch, self.os) {
-            (Arch::X86_64, Os::Linux | Os::Windows | Os::MacOS | Os::FreeBSD) => TargetTier::Tier1Supported,
-            (Arch::AArch64, Os::Linux | Os::MacOS | Os::Windows | Os::Android | Os::Ios) => TargetTier::Tier1Supported,
+            (Arch::X86_64, Os::Linux | Os::Windows | Os::MacOS | Os::FreeBSD) => {
+                TargetTier::Tier1Supported
+            }
+            (Arch::AArch64, Os::Linux | Os::MacOS | Os::Windows | Os::Android | Os::Ios) => {
+                TargetTier::Tier1Supported
+            }
             (Arch::X86, Os::Linux | Os::Windows) => TargetTier::Tier1Supported,
             (Arch::Wasm32, Os::Wasi | Os::None) => TargetTier::Tier1Supported,
 

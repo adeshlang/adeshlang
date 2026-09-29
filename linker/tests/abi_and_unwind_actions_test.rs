@@ -4,14 +4,22 @@ use adesh_linker::target::{Target, TargetTier};
 
 #[test]
 fn test_symbol_mangling_and_demangling_roundtrip() {
-    let mangled = mangle_symbol("std", &["collections", "hash_map"], "insert", Some(0x12345678));
+    let mangled = mangle_symbol(
+        "std",
+        &["collections", "hash_map"],
+        "insert",
+        Some(0x12345678),
+    );
     assert!(mangled.starts_with("_A3std"));
     assert!(mangled.contains("11collections"));
     assert!(mangled.contains("8hash_map"));
     assert!(mangled.contains("6insert"));
 
     let demangled = demangle_symbol(&mangled);
-    assert_eq!(demangled, Some("std::collections::hash_map::insert".to_string()));
+    assert_eq!(
+        demangled,
+        Some("std::collections::hash_map::insert".to_string())
+    );
 }
 
 #[test]

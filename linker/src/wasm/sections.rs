@@ -2,7 +2,7 @@
 
 use crate::error::{ErrorCode, LinkError, LinkResult};
 use crate::object::ObjectFile;
-use crate::section::{flags, Section, SectionKind};
+use crate::section::{Section, SectionKind, flags};
 use crate::symbol::{Symbol, SymbolBinding, SymbolType, SymbolVisibility};
 use crate::target::{Arch, Endianness, ObjectFormat, Os, PointerWidth, Target};
 use std::path::Path;
@@ -46,7 +46,10 @@ pub fn decode_u32_leb128(bytes: &[u8], offset: &mut usize) -> LinkResult<u32> {
 
     loop {
         if *offset >= bytes.len() {
-            return Err(LinkError::new(ErrorCode::InvalidObject, "unexpected end of LEB128 stream"));
+            return Err(LinkError::new(
+                ErrorCode::InvalidObject,
+                "unexpected end of LEB128 stream",
+            ));
         }
         let byte = bytes[*offset];
         *offset += 1;
@@ -57,7 +60,10 @@ pub fn decode_u32_leb128(bytes: &[u8], offset: &mut usize) -> LinkResult<u32> {
         }
         shift += 7;
         if shift >= 35 {
-            return Err(LinkError::new(ErrorCode::InvalidObject, "LEB128 integer overflow"));
+            return Err(LinkError::new(
+                ErrorCode::InvalidObject,
+                "LEB128 integer overflow",
+            ));
         }
     }
 
@@ -70,11 +76,17 @@ pub struct WasmReader;
 impl WasmReader {
     pub fn read(bytes: &[u8], path: &Path, file_index: usize) -> LinkResult<ObjectFile> {
         if bytes.len() < 8 {
-            return Err(LinkError::new(ErrorCode::InvalidObject, "WASM file too small"));
+            return Err(LinkError::new(
+                ErrorCode::InvalidObject,
+                "WASM file too small",
+            ));
         }
 
         if &bytes[0..4] != &WASM_MAGIC {
-            return Err(LinkError::new(ErrorCode::InvalidObject, "invalid WASM magic"));
+            return Err(LinkError::new(
+                ErrorCode::InvalidObject,
+                "invalid WASM magic",
+            ));
         }
 
         let target = Target {
@@ -99,7 +111,10 @@ impl WasmReader {
             let sec_len = decode_u32_leb128(bytes, &mut offset)? as usize;
 
             if offset + sec_len > bytes.len() {
-                return Err(LinkError::new(ErrorCode::InvalidObject, "truncated WASM section"));
+                return Err(LinkError::new(
+                    ErrorCode::InvalidObject,
+                    "truncated WASM section",
+                ));
             }
 
             let sec_data = &bytes[offset..offset + sec_len];
@@ -120,7 +135,13 @@ impl WasmReader {
             let sec = Section {
                 name: format!(".wasm.{}", sec_name),
                 kind: sec_kind,
-                flags: flags::READ | flags::ALLOC | if sec_kind == SectionKind::Text { flags::EXEC } else { 0 },
+                flags: flags::READ
+                    | flags::ALLOC
+                    | if sec_kind == SectionKind::Text {
+                        flags::EXEC
+                    } else {
+                        0
+                    },
                 alignment: 1,
                 virtual_address: 0,
                 file_offset: offset as u64,

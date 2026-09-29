@@ -86,9 +86,9 @@ impl EthosNpuWriter {
 /// Google TPU Matrix Multiply Unit (MXU) Systolic Array Configuration
 #[derive(Debug, Clone)]
 pub struct TpuMxuConfig {
-    pub version: u32, // TPU v3, v4, v5e, v5p, Trillium
-    pub mxu_tile_dim: u32, // 128 (for 128x128 systolic matrix array)
-    pub hbm_size_gb: u32,  // 32GB, 64GB, 128GB
+    pub version: u32,          // TPU v3, v4, v5e, v5p, Trillium
+    pub mxu_tile_dim: u32,     // 128 (for 128x128 systolic matrix array)
+    pub hbm_size_gb: u32,      // 32GB, 64GB, 128GB
     pub vpu_vector_lanes: u32, // 128 or 256 lanes
 }
 

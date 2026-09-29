@@ -10,7 +10,7 @@ pub struct FlashBinaryWriter;
 impl FlashBinaryWriter {
     pub fn write_bin(path: &Path, base_address: u64, sections: &[(u64, &[u8])]) -> LinkResult<()> {
         if sections.is_empty() {
-            fs::write(path, &[])?;
+            fs::write(path, [])?;
             return Ok(());
         }
 
@@ -86,10 +86,8 @@ impl IntelHexWriter {
 
 /// Helper function to format an Intel HEX record with two's complement checksum.
 fn format_record(addr: u16, record_type: u8, data: &[u8]) -> String {
-    let mut checksum_sum: u32 = (data.len() as u32)
-        + ((addr >> 8) as u32)
-        + ((addr & 0xFF) as u32)
-        + (record_type as u32);
+    let mut checksum_sum: u32 =
+        (data.len() as u32) + ((addr >> 8) as u32) + ((addr & 0xFF) as u32) + (record_type as u32);
 
     for &b in data {
         checksum_sum = checksum_sum.wrapping_add(b as u32);

@@ -33,9 +33,21 @@ impl LinkMapGenerator {
 
     pub fn generate_text_map(objects: &[ObjectFile], layout: &LayoutEngine) -> String {
         let mut out = String::new();
-        writeln!(out, "================================================================================").unwrap();
-        writeln!(out, "                             ADESH LINK MAP                                     ").unwrap();
-        writeln!(out, "================================================================================\n").unwrap();
+        writeln!(
+            out,
+            "================================================================================"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "                             ADESH LINK MAP                                     "
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "================================================================================\n"
+        )
+        .unwrap();
 
         writeln!(out, "Input Objects ({}):", objects.len()).unwrap();
         for obj in objects {
@@ -44,20 +56,39 @@ impl LinkMapGenerator {
         writeln!(out).unwrap();
 
         writeln!(out, "Output Sections:").unwrap();
-        writeln!(out, "  {:<18} {:<18} {:<12} {:<8}", "Section", "Virtual Address", "Size (bytes)", "Align").unwrap();
-        writeln!(out, "  ------------------------------------------------------------").unwrap();
+        writeln!(
+            out,
+            "  {:<18} {:<18} {:<12} {:<8}",
+            "Section", "Virtual Address", "Size (bytes)", "Align"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "  ------------------------------------------------------------"
+        )
+        .unwrap();
         for sec in &layout.merged_sections {
             writeln!(
                 out,
                 "  {:<18} 0x{:016x} {:<12} {:<8}",
                 sec.name, sec.virtual_address, sec.size, sec.alignment
-            ).unwrap();
+            )
+            .unwrap();
         }
         writeln!(out).unwrap();
 
         writeln!(out, "Symbols:").unwrap();
-        writeln!(out, "  {:<18} {:<8} {:<8} {:<32}", "Address", "Size", "Bind", "Name").unwrap();
-        writeln!(out, "  ------------------------------------------------------------").unwrap();
+        writeln!(
+            out,
+            "  {:<18} {:<8} {:<8} {:<32}",
+            "Address", "Size", "Bind", "Name"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "  ------------------------------------------------------------"
+        )
+        .unwrap();
         for sym in &layout.resolved_symbols {
             if sym.is_defined {
                 let bind_str = match sym.binding {
@@ -69,7 +100,8 @@ impl LinkMapGenerator {
                     out,
                     "  0x{:016x} {:<8} {:<8} {:<32}",
                     sym.value, sym.size, bind_str, sym.name
-                ).unwrap();
+                )
+                .unwrap();
             }
         }
 
@@ -82,13 +114,21 @@ impl LinkMapGenerator {
         out.push_str("  \"inputs\": [\n");
         for (i, obj) in objects.iter().enumerate() {
             let comma = if i + 1 < objects.len() { "," } else { "" };
-            out.push_str(&format!("    \"{}\"{}\n", obj.display_name().replace('\\', "/"), comma));
+            out.push_str(&format!(
+                "    \"{}\"{}\n",
+                obj.display_name().replace('\\', "/"),
+                comma
+            ));
         }
         out.push_str("  ],\n");
 
         out.push_str("  \"sections\": [\n");
         for (i, sec) in layout.merged_sections.iter().enumerate() {
-            let comma = if i + 1 < layout.merged_sections.len() { "," } else { "" };
+            let comma = if i + 1 < layout.merged_sections.len() {
+                ","
+            } else {
+                ""
+            };
             out.push_str(&format!(
                 "    {{\"name\": \"{}\", \"address\": \"0x{:x}\", \"size\": {}}}{}\n",
                 sec.name, sec.virtual_address, sec.size, comma
@@ -98,7 +138,11 @@ impl LinkMapGenerator {
 
         out.push_str("  \"symbols\": [\n");
         for (i, sym) in layout.resolved_symbols.iter().enumerate() {
-            let comma = if i + 1 < layout.resolved_symbols.len() { "," } else { "" };
+            let comma = if i + 1 < layout.resolved_symbols.len() {
+                ","
+            } else {
+                ""
+            };
             out.push_str(&format!(
                 "    {{\"name\": \"{}\", \"address\": \"0x{:x}\", \"size\": {}}}{}\n",
                 sym.name, sym.value, sym.size, comma
@@ -156,7 +200,11 @@ impl LinkMapGenerator {
             println!("  {}", obj.display_name());
             for sec in &obj.sections {
                 for r in &sec.relocations {
-                    println!("    └── references `{}` via {}", r.symbol_name, r.kind.name());
+                    println!(
+                        "    └── references `{}` via {}",
+                        r.symbol_name,
+                        r.kind.name()
+                    );
                 }
             }
         }

@@ -62,13 +62,25 @@ impl RelocationKind {
     pub fn size_in_bytes(&self) -> usize {
         match self {
             RelocationKind::Absolute64 | RelocationKind::PcRelative64 | RelocationKind::Got64 => 8,
-            RelocationKind::Absolute32 | RelocationKind::PcRelative32 | RelocationKind::PltRelative32
-            | RelocationKind::GotRelative32 | RelocationKind::SectionRelative32
-            | RelocationKind::AArch64Call26 | RelocationKind::AArch64Adrp | RelocationKind::AArch64AddLo12
-            | RelocationKind::RiscvCall | RelocationKind::RiscvBranch | RelocationKind::RiscvHi20
-            | RelocationKind::RiscvLo12I | RelocationKind::WasmFunctionIndex | RelocationKind::WasmTypeIndex
-            | RelocationKind::WasmGlobalIndex | RelocationKind::WasmMemoryOffset32
-            | RelocationKind::TlsGeneralDynamic | RelocationKind::TlsInitialExec | RelocationKind::TlsLocalExec => 4,
+            RelocationKind::Absolute32
+            | RelocationKind::PcRelative32
+            | RelocationKind::PltRelative32
+            | RelocationKind::GotRelative32
+            | RelocationKind::SectionRelative32
+            | RelocationKind::AArch64Call26
+            | RelocationKind::AArch64Adrp
+            | RelocationKind::AArch64AddLo12
+            | RelocationKind::RiscvCall
+            | RelocationKind::RiscvBranch
+            | RelocationKind::RiscvHi20
+            | RelocationKind::RiscvLo12I
+            | RelocationKind::WasmFunctionIndex
+            | RelocationKind::WasmTypeIndex
+            | RelocationKind::WasmGlobalIndex
+            | RelocationKind::WasmMemoryOffset32
+            | RelocationKind::TlsGeneralDynamic
+            | RelocationKind::TlsInitialExec
+            | RelocationKind::TlsLocalExec => 4,
             RelocationKind::Absolute16 => 2,
             RelocationKind::Absolute8 => 1,
         }
@@ -176,7 +188,9 @@ impl RelocationHandler for DefaultRelocationHandler {
                 ErrorCode::RelocationOverflow,
                 format!(
                     "relocation offset 0x{:x} + size {} exceeds section data buffer size 0x{:x}",
-                    offset, size, image.len()
+                    offset,
+                    size,
+                    image.len()
                 ),
             ));
         }
@@ -200,7 +214,9 @@ impl RelocationHandler for DefaultRelocationHandler {
                 let val = ((symbol_va as i64).wrapping_add(addend)) as u8;
                 target_slice[0] = val;
             }
-            RelocationKind::PcRelative32 | RelocationKind::PltRelative32 | RelocationKind::GotRelative32 => {
+            RelocationKind::PcRelative32
+            | RelocationKind::PltRelative32
+            | RelocationKind::GotRelative32 => {
                 let val = (symbol_va as i64)
                     .wrapping_add(addend)
                     .wrapping_sub(place_va as i64);
@@ -235,7 +251,10 @@ impl RelocationHandler for DefaultRelocationHandler {
                 if (val & 0x3) != 0 {
                     return Err(LinkError::new(
                         ErrorCode::RelocationOverflow,
-                        format!("AArch64 CALL26 target 0x{:x} is not 4-byte aligned", symbol_va),
+                        format!(
+                            "AArch64 CALL26 target 0x{:x} is not 4-byte aligned",
+                            symbol_va
+                        ),
                     ));
                 }
                 let imm26 = (val >> 2) & 0x03FF_FFFF;

@@ -14,11 +14,21 @@ pub(crate) fn link_with_linker_driver(
     output: &Path,
     target_triple: &Triple,
 ) -> Result<(), String> {
-    // Check if user explicitly requested external LLVM linker
-    let force_llvm = options.flags.get("use_llvm_linker").map_or(false, |v| v == "true" || v == "1")
-        || options.extra_linker_args.iter().any(|a| a == "--use-llvm" || a == "-fuse-ld=lld");
+    // Check if user explicitly requested external toolchain mode
+    let force_external = options
+        .flags
+        .get("use_external_toolchain")
+        .map_or(false, |v| v == "true" || v == "1")
+        || options
+            .flags
+            .get("use_llvm_linker")
+            .map_or(false, |v| v == "true" || v == "1")
+        || options
+            .extra_linker_args
+            .iter()
+            .any(|a| a == "--external-toolchain" || a == "--use-llvm" || a == "-fuse-ld=lld");
 
-    if force_llvm {
+    if force_external {
         return link_with_llvm_toolchain(
             options,
             obj_path,
@@ -29,29 +39,18 @@ pub(crate) fn link_with_linker_driver(
         );
     }
 
-    // Default: Use self-contained native Adesh Linker (zero external dependencies)
+    // Default: Use self-contained native Adesh Linker (zero external dependencies).
+    // NEVER silently fall back to LLVM/GCC/Clang on failure.
     match link_with_adesh_linker(options, obj_path, Some(runtime_obj), output, target_triple) {
         Ok(()) => {
             eprintln!("   ✓ Linked with Adesh Native Linker (zero LLVM/GCC dependencies)");
             Ok(())
         }
-        Err(linker_err) => {
-            eprintln!("   [adeshlink diag] native link attempt: {}", linker_err);
-            // Automatic fallback to LLVM if available
-            match link_with_llvm_toolchain(
-                options,
-                obj_path,
-                runtime_obj,
-                output,
-                target_triple,
-                &options.output_format,
-            ) {
-                Ok(()) => Ok(()),
-                Err(llvm_err) => Err(format!(
-                    "Linking failed with native Adesh Linker ({linker_err}) and fallback LLVM ({llvm_err})"
-                )),
-            }
-        }
+        Err(linker_err) => Err(format!(
+            "ERROR:\nNative Adesh linker failed: {}\n\n\
+                Use `--external-toolchain` if you explicitly wish to invoke an external compiler/linker.",
+            linker_err
+        )),
     }
 }
 
@@ -62,57 +61,79 @@ pub(crate) fn link_library_only(
     output: &Path,
     target_triple: &Triple,
 ) -> Result<(), String> {
-    // Try self-contained Adesh Linker first for zero-dependency library linking
-    if let Ok(()) = link_with_adesh_linker(options, obj_path, None, output, target_triple) {
-        return Ok(());
-    }
-    match options.output_format {
-        OutputFormat::StaticLib => {
-            let clang_path = find_clang()?;
-            let llvm_bin = clang_path.parent().ok_or("Invalid clang path")?;
-            let ar_name = if cfg!(windows) {
-                "llvm-ar.exe"
-            } else {
-                "llvm-ar"
-            };
-            let ar_path = llvm_bin.join(ar_name);
-            let mut cmd = Command::new(if ar_path.exists() {
-                ar_path
-            } else {
-                std::path::PathBuf::from("ar")
-            });
-            cmd.arg("rcs").arg(output).arg(obj_path);
-            let result = cmd
-                .output()
-                .map_err(|e| format!("Failed to run ar: {}", e))?;
-            if result.status.success() {
-                Ok(())
+    let force_external = options
+        .flags
+        .get("use_external_toolchain")
+        .map_or(false, |v| v == "true" || v == "1")
+        || options
+            .flags
+            .get("use_llvm_linker")
+            .map_or(false, |v| v == "true" || v == "1")
+        || options
+            .extra_linker_args
+            .iter()
+            .any(|a| a == "--external-toolchain" || a == "--use-llvm");
+
+    match link_with_adesh_linker(options, obj_path, None, output, target_triple) {
+        Ok(()) => Ok(()),
+        Err(linker_err) => {
+            if force_external {
+                match options.output_format {
+                    OutputFormat::StaticLib => {
+                        let clang_path = find_clang()?;
+                        let llvm_bin = clang_path.parent().ok_or("Invalid clang path")?;
+                        let ar_name = if cfg!(windows) {
+                            "llvm-ar.exe"
+                        } else {
+                            "llvm-ar"
+                        };
+                        let ar_path = llvm_bin.join(ar_name);
+                        let mut cmd = Command::new(if ar_path.exists() {
+                            ar_path
+                        } else {
+                            std::path::PathBuf::from("ar")
+                        });
+                        cmd.arg("rcs").arg(output).arg(obj_path);
+                        let result = cmd
+                            .output()
+                            .map_err(|e| format!("Failed to run ar: {}", e))?;
+                        if result.status.success() {
+                            Ok(())
+                        } else {
+                            Err(format!(
+                                "Static library archiving failed: {}",
+                                String::from_utf8_lossy(&result.stderr)
+                            ))
+                        }
+                    }
+                    OutputFormat::SharedLib => {
+                        let clang_path = find_clang()?;
+                        let mut cmd = Command::new(&clang_path);
+                        cmd.arg("-shared").arg("-fuse-ld=lld");
+                        cmd.arg(format!("--target={}", target_triple));
+                        cmd.arg("-o").arg(output).arg(obj_path);
+                        let result = cmd
+                            .output()
+                            .map_err(|e| format!("Failed to run clang: {}", e))?;
+                        if result.status.success() {
+                            Ok(())
+                        } else {
+                            Err(format!(
+                                "Shared library linking failed: {}",
+                                String::from_utf8_lossy(&result.stderr)
+                            ))
+                        }
+                    }
+                    _ => Err("link_library_only called for non-library format".to_string()),
+                }
             } else {
                 Err(format!(
-                    "Static library archiving failed: {}",
-                    String::from_utf8_lossy(&result.stderr)
+                    "ERROR:\nNative Adesh linker failed: {}\n\n\
+                    Use `--external-toolchain` if you explicitly wish to invoke an external compiler/linker.",
+                    linker_err
                 ))
             }
         }
-        OutputFormat::SharedLib => {
-            let clang_path = find_clang()?;
-            let mut cmd = Command::new(&clang_path);
-            cmd.arg("-shared").arg("-fuse-ld=lld");
-            cmd.arg(format!("--target={}", target_triple));
-            cmd.arg("-o").arg(output).arg(obj_path);
-            let result = cmd
-                .output()
-                .map_err(|e| format!("Failed to run clang: {}", e))?;
-            if result.status.success() {
-                Ok(())
-            } else {
-                Err(format!(
-                    "Shared library linking failed: {}",
-                    String::from_utf8_lossy(&result.stderr)
-                ))
-            }
-        }
-        _ => Err("link_library_only called for non-library format".to_string()),
     }
 }
 
@@ -838,7 +859,8 @@ fn get_linux_dynamic_linker(target_triple: &Triple) -> Result<String, String> {
     }
 }
 
-static RUNTIME_LIB_CACHE: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+static RUNTIME_LIB_CACHE: std::sync::OnceLock<Option<std::path::PathBuf>> =
+    std::sync::OnceLock::new();
 
 /// Compile the runtime C library to an object file
 pub(crate) fn get_static_runtime_lib(target_triple: &Triple) -> Result<std::path::PathBuf, String> {
@@ -850,9 +872,20 @@ pub(crate) fn get_static_runtime_lib(target_triple: &Triple) -> Result<std::path
 
     // Determine library name based on the target OS
     let target_triple_str = target_triple.to_string();
-    let is_win = matches!(target_triple.operating_system, target_lexicon::OperatingSystem::Windows);
-    let primary_lib_name = if is_win { "adesh_runtime.lib" } else { "libadesh_runtime.a" };
-    let fallback_lib_name = if is_win { "adeshlang.lib" } else { "libadeshlang.a" };
+    let is_win = matches!(
+        target_triple.operating_system,
+        target_lexicon::OperatingSystem::Windows
+    );
+    let primary_lib_name = if is_win {
+        "adesh_runtime.lib"
+    } else {
+        "libadesh_runtime.a"
+    };
+    let fallback_lib_name = if is_win {
+        "adeshlang.lib"
+    } else {
+        "libadeshlang.a"
+    };
 
     let mut searched_paths = Vec::new();
 
@@ -1215,106 +1248,109 @@ fn get_program_files_roots() -> Vec<std::path::PathBuf> {
     roots
 }
 
-static WIN_SDK_CACHE: std::sync::OnceLock<Option<(std::path::PathBuf, std::path::PathBuf)>> = std::sync::OnceLock::new();
+static WIN_SDK_CACHE: std::sync::OnceLock<Option<(std::path::PathBuf, std::path::PathBuf)>> =
+    std::sync::OnceLock::new();
 static MSVC_LIB_CACHE: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
 
 /// Find Windows SDK library paths (returns (um path, ucrt path) if found)
 pub fn find_windows_sdk_paths() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
-    WIN_SDK_CACHE.get_or_init(|| {
-        if let Some(cached) = TOOLCHAIN_CACHE.get() {
-            if let Some((ref um, ref ucrt)) = cached.windows_sdk {
-                if um.exists() && ucrt.exists() {
-                    return Some((um.clone(), ucrt.clone()));
-                }
-            }
-        }
-
-        use std::fs;
-
-        // 1. Check environment variables (WindowsSdkDir, UniversalCRTSdkDir)
-        for env_var in [
-            "WindowsSdkDir",
-            "UniversalCRTSdkDir",
-            "WindowsSDKLibVersion",
-        ] {
-            if let Ok(sdk_dir) = std::env::var(env_var) {
-                let sdk_version = std::env::var("WindowsSDKVersion").unwrap_or_default();
-                let version_trimmed = sdk_version.trim_end_matches('\\');
-                let sdk_base = std::path::PathBuf::from(&sdk_dir);
-                let lib_dir = if sdk_base.join("Lib").exists() {
-                    sdk_base.join("Lib")
-                } else {
-                    sdk_base.clone()
-                };
-
-                if !version_trimmed.is_empty() {
-                    let um_path = lib_dir.join(version_trimmed).join("um").join("x64");
-                    let ucrt_path = lib_dir.join(version_trimmed).join("ucrt").join("x64");
-                    if um_path.exists() && ucrt_path.exists() {
-                        return Some((um_path, ucrt_path));
+    WIN_SDK_CACHE
+        .get_or_init(|| {
+            if let Some(cached) = TOOLCHAIN_CACHE.get() {
+                if let Some((ref um, ref ucrt)) = cached.windows_sdk {
+                    if um.exists() && ucrt.exists() {
+                        return Some((um.clone(), ucrt.clone()));
                     }
                 }
+            }
 
-                // Search any subdirectories under lib_dir
-                if let Ok(rd) = fs::read_dir(&lib_dir) {
-                    let mut versions: Vec<_> = rd
-                        .filter_map(|entry| entry.ok())
-                        .filter(|entry| entry.path().is_dir())
-                        .filter_map(|entry| entry.file_name().to_str().map(|s| s.to_string()))
-                        .collect();
-                    versions.sort();
-                    versions.reverse();
-                    for version in versions {
-                        let um_path = lib_dir.join(&version).join("um").join("x64");
-                        let ucrt_path = lib_dir.join(&version).join("ucrt").join("x64");
+            use std::fs;
+
+            // 1. Check environment variables (WindowsSdkDir, UniversalCRTSdkDir)
+            for env_var in [
+                "WindowsSdkDir",
+                "UniversalCRTSdkDir",
+                "WindowsSDKLibVersion",
+            ] {
+                if let Ok(sdk_dir) = std::env::var(env_var) {
+                    let sdk_version = std::env::var("WindowsSDKVersion").unwrap_or_default();
+                    let version_trimmed = sdk_version.trim_end_matches('\\');
+                    let sdk_base = std::path::PathBuf::from(&sdk_dir);
+                    let lib_dir = if sdk_base.join("Lib").exists() {
+                        sdk_base.join("Lib")
+                    } else {
+                        sdk_base.clone()
+                    };
+
+                    if !version_trimmed.is_empty() {
+                        let um_path = lib_dir.join(version_trimmed).join("um").join("x64");
+                        let ucrt_path = lib_dir.join(version_trimmed).join("ucrt").join("x64");
                         if um_path.exists() && ucrt_path.exists() {
                             return Some((um_path, ucrt_path));
                         }
                     }
+
+                    // Search any subdirectories under lib_dir
+                    if let Ok(rd) = fs::read_dir(&lib_dir) {
+                        let mut versions: Vec<_> = rd
+                            .filter_map(|entry| entry.ok())
+                            .filter(|entry| entry.path().is_dir())
+                            .filter_map(|entry| entry.file_name().to_str().map(|s| s.to_string()))
+                            .collect();
+                        versions.sort();
+                        versions.reverse();
+                        for version in versions {
+                            let um_path = lib_dir.join(&version).join("um").join("x64");
+                            let ucrt_path = lib_dir.join(&version).join("ucrt").join("x64");
+                            if um_path.exists() && ucrt_path.exists() {
+                                return Some((um_path, ucrt_path));
+                            }
+                        }
+                    }
                 }
             }
-        }
 
-        // 2. Search dynamically discovered Program Files & Drive roots
-        let mut sdk_bases = Vec::new();
-        for pf in get_program_files_roots() {
-            let cand = pf.join("Windows Kits").join("10").join("Lib");
-            if cand.exists() && !sdk_bases.contains(&cand) {
-                sdk_bases.push(cand);
-            }
-        }
-        for drive in get_system_drive_roots() {
-            let cand = drive.join("Windows Kits").join("10").join("Lib");
-            if cand.exists() && !sdk_bases.contains(&cand) {
-                sdk_bases.push(cand);
-            }
-        }
-
-        for sdk_base in &sdk_bases {
-            let mut versions: Vec<_> = match fs::read_dir(sdk_base) {
-                Ok(rd) => rd
-                    .filter_map(|entry| entry.ok())
-                    .filter(|entry| entry.path().is_dir())
-                    .filter_map(|entry| entry.file_name().to_str().map(|s| s.to_string()))
-                    .collect(),
-                Err(_) => continue,
-            };
-
-            versions.sort();
-            versions.reverse();
-
-            for version in versions {
-                let um_path = sdk_base.join(&version).join("um").join("x64");
-                let ucrt_path = sdk_base.join(&version).join("ucrt").join("x64");
-
-                if um_path.exists() && ucrt_path.exists() {
-                    return Some((um_path, ucrt_path));
+            // 2. Search dynamically discovered Program Files & Drive roots
+            let mut sdk_bases = Vec::new();
+            for pf in get_program_files_roots() {
+                let cand = pf.join("Windows Kits").join("10").join("Lib");
+                if cand.exists() && !sdk_bases.contains(&cand) {
+                    sdk_bases.push(cand);
                 }
             }
-        }
+            for drive in get_system_drive_roots() {
+                let cand = drive.join("Windows Kits").join("10").join("Lib");
+                if cand.exists() && !sdk_bases.contains(&cand) {
+                    sdk_bases.push(cand);
+                }
+            }
 
-        None
-    }).clone()
+            for sdk_base in &sdk_bases {
+                let mut versions: Vec<_> = match fs::read_dir(sdk_base) {
+                    Ok(rd) => rd
+                        .filter_map(|entry| entry.ok())
+                        .filter(|entry| entry.path().is_dir())
+                        .filter_map(|entry| entry.file_name().to_str().map(|s| s.to_string()))
+                        .collect(),
+                    Err(_) => continue,
+                };
+
+                versions.sort();
+                versions.reverse();
+
+                for version in versions {
+                    let um_path = sdk_base.join(&version).join("um").join("x64");
+                    let ucrt_path = sdk_base.join(&version).join("ucrt").join("x64");
+
+                    if um_path.exists() && ucrt_path.exists() {
+                        return Some((um_path, ucrt_path));
+                    }
+                }
+            }
+
+            None
+        })
+        .clone()
 }
 
 /// Helper to extract the latest MSVC lib\x64 path from a VC\Tools\MSVC directory
@@ -1345,120 +1381,122 @@ fn find_latest_msvc_in_tools_dir(vc_tools_base: &std::path::Path) -> Option<std:
 
 /// Find MSVC library paths
 pub fn find_msvc_lib_paths() -> Option<std::path::PathBuf> {
-    MSVC_LIB_CACHE.get_or_init(|| {
-        if let Some(cached) = TOOLCHAIN_CACHE.get() {
-            if let Some(ref msvc) = cached.msvc_lib {
-                if msvc.exists() {
-                    return Some(msvc.clone());
+    MSVC_LIB_CACHE
+        .get_or_init(|| {
+            if let Some(cached) = TOOLCHAIN_CACHE.get() {
+                if let Some(ref msvc) = cached.msvc_lib {
+                    if msvc.exists() {
+                        return Some(msvc.clone());
+                    }
                 }
             }
-        }
 
-        // 1. Check VCToolsInstallDir environment variable
-        if let Ok(vctools) = std::env::var("VCToolsInstallDir") {
-            let base = std::path::PathBuf::from(vctools.trim_end_matches('\\'));
-            let lib_path = base.join("lib").join("x64");
-            if lib_path.exists() {
-                return Some(lib_path);
+            // 1. Check VCToolsInstallDir environment variable
+            if let Ok(vctools) = std::env::var("VCToolsInstallDir") {
+                let base = std::path::PathBuf::from(vctools.trim_end_matches('\\'));
+                let lib_path = base.join("lib").join("x64");
+                if lib_path.exists() {
+                    return Some(lib_path);
+                }
+                if base.ends_with("x64") && base.exists() {
+                    return Some(base);
+                }
             }
-            if base.ends_with("x64") && base.exists() {
-                return Some(base);
+
+            // 2. Check VSINSTALLDIR environment variable
+            if let Ok(vsdir) = std::env::var("VSINSTALLDIR") {
+                let vc_tools_base = std::path::PathBuf::from(vsdir.trim_end_matches('\\'))
+                    .join("VC")
+                    .join("Tools")
+                    .join("MSVC");
+                if let Some(lib_path) = find_latest_msvc_in_tools_dir(&vc_tools_base) {
+                    return Some(lib_path);
+                }
             }
-        }
 
-        // 2. Check VSINSTALLDIR environment variable
-        if let Ok(vsdir) = std::env::var("VSINSTALLDIR") {
-            let vc_tools_base = std::path::PathBuf::from(vsdir.trim_end_matches('\\'))
-                .join("VC")
-                .join("Tools")
-                .join("MSVC");
-            if let Some(lib_path) = find_latest_msvc_in_tools_dir(&vc_tools_base) {
-                return Some(lib_path);
+            // 3. Query Microsoft's vswhere.exe if available
+            let mut vswhere_candidates = Vec::new();
+            for pf in get_program_files_roots() {
+                vswhere_candidates.push(
+                    pf.join("Microsoft Visual Studio")
+                        .join("Installer")
+                        .join("vswhere.exe"),
+                );
             }
-        }
+            vswhere_candidates.push(std::path::PathBuf::from("vswhere.exe"));
 
-        // 3. Query Microsoft's vswhere.exe if available
-        let mut vswhere_candidates = Vec::new();
-        for pf in get_program_files_roots() {
-            vswhere_candidates.push(
-                pf.join("Microsoft Visual Studio")
-                    .join("Installer")
-                    .join("vswhere.exe"),
-            );
-        }
-        vswhere_candidates.push(std::path::PathBuf::from("vswhere.exe"));
+            for vswhere in &vswhere_candidates {
+                let res = Command::new(vswhere)
+                    .args([
+                        "-latest",
+                        "-products",
+                        "*",
+                        "-requires",
+                        "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                        "-property",
+                        "installationPath",
+                    ])
+                    .output();
+                if let Ok(out) = res {
+                    if out.status.success() {
+                        let install_path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                        if !install_path.is_empty() {
+                            let vc_tools_base = std::path::PathBuf::from(install_path)
+                                .join("VC")
+                                .join("Tools")
+                                .join("MSVC");
+                            if let Some(lib_path) = find_latest_msvc_in_tools_dir(&vc_tools_base) {
+                                return Some(lib_path);
+                            }
+                        }
+                    }
+                }
+            }
 
-        for vswhere in &vswhere_candidates {
-            let res = Command::new(vswhere)
-                .args([
-                    "-latest",
-                    "-products",
-                    "*",
-                    "-requires",
-                    "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-                    "-property",
-                    "installationPath",
-                ])
-                .output();
-            if let Ok(out) = res {
-                if out.status.success() {
-                    let install_path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                    if !install_path.is_empty() {
-                        let vc_tools_base = std::path::PathBuf::from(install_path)
+            // 4. Check filesystem roots
+            let vs_years = ["2022", "2019", "2017", "2026", "2025"];
+            let editions = [
+                "BuildTools",
+                "Community",
+                "Professional",
+                "Enterprise",
+                "Preview",
+            ];
+
+            let mut vs_parent_dirs = Vec::new();
+            for pf in get_program_files_roots() {
+                let cand = pf.join("Microsoft Visual Studio");
+                if cand.exists() && !vs_parent_dirs.contains(&cand) {
+                    vs_parent_dirs.push(cand);
+                }
+            }
+            for drive in get_system_drive_roots() {
+                let cand = drive.join("Microsoft Visual Studio");
+                if cand.exists() && !vs_parent_dirs.contains(&cand) {
+                    vs_parent_dirs.push(cand);
+                }
+            }
+
+            for vs_parent in vs_parent_dirs {
+                for year in &vs_years {
+                    for edition in &editions {
+                        let vc_tools_base = vs_parent
+                            .join(year)
+                            .join(edition)
                             .join("VC")
                             .join("Tools")
                             .join("MSVC");
+
                         if let Some(lib_path) = find_latest_msvc_in_tools_dir(&vc_tools_base) {
                             return Some(lib_path);
                         }
                     }
                 }
             }
-        }
 
-        // 4. Check filesystem roots
-        let vs_years = ["2022", "2019", "2017", "2026", "2025"];
-        let editions = [
-            "BuildTools",
-            "Community",
-            "Professional",
-            "Enterprise",
-            "Preview",
-        ];
-
-        let mut vs_parent_dirs = Vec::new();
-        for pf in get_program_files_roots() {
-            let cand = pf.join("Microsoft Visual Studio");
-            if cand.exists() && !vs_parent_dirs.contains(&cand) {
-                vs_parent_dirs.push(cand);
-            }
-        }
-        for drive in get_system_drive_roots() {
-            let cand = drive.join("Microsoft Visual Studio");
-            if cand.exists() && !vs_parent_dirs.contains(&cand) {
-                vs_parent_dirs.push(cand);
-            }
-        }
-
-        for vs_parent in vs_parent_dirs {
-            for year in &vs_years {
-                for edition in &editions {
-                    let vc_tools_base = vs_parent
-                        .join(year)
-                        .join(edition)
-                        .join("VC")
-                        .join("Tools")
-                        .join("MSVC");
-
-                    if let Some(lib_path) = find_latest_msvc_in_tools_dir(&vc_tools_base) {
-                        return Some(lib_path);
-                    }
-                }
-            }
-        }
-
-        None
-    }).clone()
+            None
+        })
+        .clone()
 }
 
 /// Link object files using self-contained native Adesh Linker (zero external dependencies).
@@ -1483,9 +1521,13 @@ pub fn link_with_adesh_linker(
         archive.add_file(filename, data);
         if let Some(rt) = runtime_obj {
             if rt.exists() {
-                let rt_data = std::fs::read(rt)
-                    .map_err(|e| format!("Failed to read runtime object `{}`: {e}", rt.display()))?;
-                let rt_name = rt.file_name().and_then(|n| n.to_str()).unwrap_or("runtime.o");
+                let rt_data = std::fs::read(rt).map_err(|e| {
+                    format!("Failed to read runtime object `{}`: {e}", rt.display())
+                })?;
+                let rt_name = rt
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("runtime.o");
                 archive.add_file(rt_name, rt_data);
             }
         }
@@ -1505,7 +1547,9 @@ pub fn link_with_adesh_linker(
         config.cache_dir = Some(cache.clone());
     }
     for dir in &options.lib_dirs {
-        config.library_search_paths.push(std::path::PathBuf::from(dir));
+        config
+            .library_search_paths
+            .push(std::path::PathBuf::from(dir));
     }
     for lib in &options.link_libs {
         config.libraries.push(lib.clone());
@@ -1524,4 +1568,3 @@ pub fn link_with_adesh_linker(
 
     adesh_linker::link_with_config(&inputs, config).map_err(|e| e.to_string())
 }
-

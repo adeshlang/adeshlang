@@ -2,7 +2,7 @@
 
 use crate::error::LinkResult;
 use crate::macho::header::*;
-use crate::section::{align_to, MergedSection, SectionKind};
+use crate::section::{MergedSection, SectionKind, align_to};
 use crate::symbol::Symbol;
 use crate::target::{Arch, Target};
 use std::fs;
@@ -74,7 +74,13 @@ impl MachOWriter {
         let dylinker_str = b"/usr/lib/dyld\0\0\0"; // padded to 16 bytes
         let cmd_dylinker_sz = 12 + dylinker_str.len();
 
-        let sizeofcmds = (cmd_pagezero_sz + cmd_text_sz + cmd_data_sz + cmd_linkedit_sz + cmd_main_sz + cmd_symtab_sz + cmd_dylinker_sz) as u32;
+        let sizeofcmds = (cmd_pagezero_sz
+            + cmd_text_sz
+            + cmd_data_sz
+            + cmd_linkedit_sz
+            + cmd_main_sz
+            + cmd_symtab_sz
+            + cmd_dylinker_sz) as u32;
         let headers_size = 32 + (sizeofcmds as usize);
         let text_file_offset_start = 0u64; // __TEXT starts at file offset 0 including headers
 
@@ -95,7 +101,13 @@ impl MachOWriter {
                 current_vmaddr = aligned_va;
             }
 
-            text_sec_records.push((sec.name.clone(), aligned_va, sec.data.len() as u64, aligned_off as u32, sec.alignment));
+            text_sec_records.push((
+                sec.name.clone(),
+                aligned_va,
+                sec.data.len() as u64,
+                aligned_off as u32,
+                sec.alignment,
+            ));
             output.extend_from_slice(&sec.data);
             current_file_offset += sec.data.len() as u64;
             current_vmaddr += sec.data.len() as u64;
@@ -126,7 +138,17 @@ impl MachOWriter {
                 current_vmaddr = aligned_va;
             }
 
-            data_sec_records.push((sec.name.clone(), aligned_va, sec.size, if sec.kind == SectionKind::Bss { 0 } else { aligned_off as u32 }, sec.alignment));
+            data_sec_records.push((
+                sec.name.clone(),
+                aligned_va,
+                sec.size,
+                if sec.kind == SectionKind::Bss {
+                    0
+                } else {
+                    aligned_off as u32
+                },
+                sec.alignment,
+            ));
             if sec.kind != SectionKind::Bss {
                 output.extend_from_slice(&sec.data);
                 current_file_offset += sec.data.len() as u64;
@@ -243,7 +265,8 @@ impl MachOWriter {
         for (name, va, sz, off, align) in &text_sec_records {
             let mut sname = [0u8; 16];
             let name_bytes = name.as_bytes();
-            sname[0..name_bytes.len().min(16)].copy_from_slice(&name_bytes[0..name_bytes.len().min(16)]);
+            sname[0..name_bytes.len().min(16)]
+                .copy_from_slice(&name_bytes[0..name_bytes.len().min(16)]);
             cmd_buf.extend_from_slice(&sname);
             cmd_buf.extend_from_slice(&text_name);
             cmd_buf.extend_from_slice(&va.to_le_bytes());
@@ -276,7 +299,8 @@ impl MachOWriter {
         for (name, va, sz, off, align) in &data_sec_records {
             let mut sname = [0u8; 16];
             let name_bytes = name.as_bytes();
-            sname[0..name_bytes.len().min(16)].copy_from_slice(&name_bytes[0..name_bytes.len().min(16)]);
+            sname[0..name_bytes.len().min(16)]
+                .copy_from_slice(&name_bytes[0..name_bytes.len().min(16)]);
             cmd_buf.extend_from_slice(&sname);
             cmd_buf.extend_from_slice(&data_name);
             cmd_buf.extend_from_slice(&va.to_le_bytes());

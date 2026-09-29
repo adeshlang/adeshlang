@@ -8,11 +8,7 @@ use std::collections::HashMap;
 pub struct IcfEngine;
 
 impl IcfEngine {
-    pub fn fold_sections(
-        objects: &mut [ObjectFile],
-        mode: IcfMode,
-        print_icf: bool,
-    ) -> usize {
+    pub fn fold_sections(objects: &mut [ObjectFile], mode: IcfMode, print_icf: bool) -> usize {
         if mode == IcfMode::None {
             return 0;
         }
@@ -26,7 +22,12 @@ impl IcfEngine {
             for s_idx in 0..num_secs {
                 let (sec_data, sec_name, num_relocs, is_eligible) = {
                     let sec = &objects[f_idx].sections[s_idx];
-                    (sec.data.clone(), sec.name.clone(), sec.relocations.len(), sec.is_live && sec.is_executable() && !sec.data.is_empty())
+                    (
+                        sec.data.clone(),
+                        sec.name.clone(),
+                        sec.relocations.len(),
+                        sec.is_live && sec.is_executable() && !sec.data.is_empty(),
+                    )
                 };
 
                 if !is_eligible {
@@ -48,7 +49,8 @@ impl IcfEngine {
                     if target_f != f_idx || target_s != s_idx {
                         let matches = {
                             let target_sec = &objects[target_f].sections[target_s];
-                            target_sec.data == sec_data && target_sec.relocations.len() == num_relocs
+                            target_sec.data == sec_data
+                                && target_sec.relocations.len() == num_relocs
                         };
 
                         if matches {

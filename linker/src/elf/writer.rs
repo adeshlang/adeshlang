@@ -3,7 +3,7 @@
 use crate::elf::header::*;
 use crate::elf::notes::create_gnu_build_id_note;
 use crate::error::LinkResult;
-use crate::section::{align_to, MergedSection, SectionKind};
+use crate::section::{MergedSection, SectionKind, align_to};
 use crate::symbol::Symbol;
 use crate::target::{Arch, Target};
 use std::fs;
@@ -294,9 +294,15 @@ impl ElfWriter {
             };
 
             let mut sh_flags = 0u64;
-            if sec.is_alloc() { sh_flags |= SHF_ALLOC; }
-            if sec.is_writable() { sh_flags |= SHF_WRITE; }
-            if sec.is_executable() { sh_flags |= SHF_EXECINSTR; }
+            if sec.is_alloc() {
+                sh_flags |= SHF_ALLOC;
+            }
+            if sec.is_writable() {
+                sh_flags |= SHF_WRITE;
+            }
+            if sec.is_executable() {
+                sh_flags |= SHF_EXECINSTR;
+            }
 
             section_headers.push(Elf64_Shdr {
                 sh_name: shdr_names[i + 1],

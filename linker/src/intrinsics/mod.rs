@@ -103,36 +103,36 @@ impl IntrinsicsEngine {
                 // memcpy(rdi = dst, rsi = src, rdx = len) -> rax = dst
                 // mov rax, rdi; mov rcx, rdx; rep movsb; ret
                 vec![
-                    0x48, 0x89, 0xf8,       // mov rax, rdi
-                    0x48, 0x89, 0xd1,       // mov rcx, rdx
-                    0xf3, 0xa4,             // rep movsb
-                    0xc3,                   // ret
+                    0x48, 0x89, 0xf8, // mov rax, rdi
+                    0x48, 0x89, 0xd1, // mov rcx, rdx
+                    0xf3, 0xa4, // rep movsb
+                    0xc3, // ret
                 ]
             }
             "memset" => {
                 // memset(rdi = dst, rsi = val, rdx = len) -> rax = dst
                 // mov r8, rdi; mov rax, rsi; mov rcx, rdx; rep stosb; mov rax, r8; ret
                 vec![
-                    0x49, 0x89, 0xf8,       // mov r8, rdi
-                    0x48, 0x89, 0xf0,       // mov rax, rsi
-                    0x48, 0x89, 0xd1,       // mov rcx, rdx
-                    0xf3, 0xaa,             // rep stosb
-                    0x4c, 0x89, 0xc0,       // mov rax, r8
-                    0xc3,                   // ret
+                    0x49, 0x89, 0xf8, // mov r8, rdi
+                    0x48, 0x89, 0xf0, // mov rax, rsi
+                    0x48, 0x89, 0xd1, // mov rcx, rdx
+                    0xf3, 0xaa, // rep stosb
+                    0x4c, 0x89, 0xc0, // mov rax, r8
+                    0xc3, // ret
                 ]
             }
             "memcmp" => {
                 // memcmp(rdi = s1, rsi = s2, rdx = n) -> eax = diff
                 // xor eax, eax; mov rcx, rdx; repe cmpsb; jz done; movzx eax, byte [rdi-1]; movzx edx, byte [rsi-1]; sub eax, edx; done: ret
                 vec![
-                    0x31, 0xc0,             // xor eax, eax
-                    0x48, 0x89, 0xd1,       // mov rcx, rdx
-                    0xf3, 0xa6,             // repe cmpsb
-                    0x74, 0x0a,             // jz +10 (done)
+                    0x31, 0xc0, // xor eax, eax
+                    0x48, 0x89, 0xd1, // mov rcx, rdx
+                    0xf3, 0xa6, // repe cmpsb
+                    0x74, 0x0a, // jz +10 (done)
                     0x0f, 0xb6, 0x47, 0xff, // movzx eax, byte [rdi-1]
                     0x0f, 0xb6, 0x56, 0xff, // movzx edx, byte [rsi-1]
-                    0x29, 0xd0,             // sub eax, edx
-                    0xc3,                   // ret
+                    0x29, 0xd0, // sub eax, edx
+                    0xc3, // ret
                 ]
             }
             "__chkstk" | "___chkstk_ms" => {
@@ -140,16 +140,16 @@ impl IntrinsicsEngine {
                 // rax = bytes to allocate. Probes 4096-byte pages downwards from rsp.
                 vec![
                     0x48, 0x83, 0xf8, 0x00, // cmp rax, 0
-                    0x74, 0x16,             // jz done
-                    0x51,                   // push rcx
-                    0x48, 0x89, 0xe1,       // mov rcx, rsp
+                    0x74, 0x16, // jz done
+                    0x51, // push rcx
+                    0x48, 0x89, 0xe1, // mov rcx, rsp
                     0x48, 0x2d, 0x00, 0x10, 0x00, 0x00, // loop: sub rax, 4096
                     0x48, 0x81, 0xe9, 0x00, 0x10, 0x00, 0x00, // sub rcx, 4096
-                    0x85, 0x01,             // test [rcx], eax (probe page)
+                    0x85, 0x01, // test [rcx], eax (probe page)
                     0x48, 0x83, 0xf8, 0x00, // cmp rax, 0
-                    0x7f, 0xee,             // jg loop
-                    0x59,                   // pop rcx
-                    0xc3,                   // ret
+                    0x7f, 0xee, // jg loop
+                    0x59, // pop rcx
+                    0xc3, // ret
                 ]
             }
             "__stack_chk_guard" => {
@@ -164,16 +164,16 @@ impl IntrinsicsEngine {
                 // 128-bit multiply: (rdi:rsi) * (rdx:rcx) -> rdx:rax
                 // Optimized 64x64->128 multiply using mul instruction
                 vec![
-                    0x48, 0x89, 0xd0,       // mov rax, rdx
-                    0x48, 0xf7, 0xe6,       // mul rsi
-                    0x49, 0x89, 0xc0,       // mov r8, rax
-                    0x49, 0x89, 0xd1,       // mov r9, rdx
-                    0x48, 0x89, 0xf8,       // mov rax, rdi
-                    0x48, 0xf7, 0xe2,       // mul rdx
-                    0x49, 0x01, 0xc1,       // add r9, rax
-                    0x4c, 0x89, 0xc0,       // mov rax, r8
-                    0x4c, 0x89, 0xca,       // mov rdx, r9
-                    0xc3,                   // ret
+                    0x48, 0x89, 0xd0, // mov rax, rdx
+                    0x48, 0xf7, 0xe6, // mul rsi
+                    0x49, 0x89, 0xc0, // mov r8, rax
+                    0x49, 0x89, 0xd1, // mov r9, rdx
+                    0x48, 0x89, 0xf8, // mov rax, rdi
+                    0x48, 0xf7, 0xe2, // mul rdx
+                    0x49, 0x01, 0xc1, // add r9, rax
+                    0x4c, 0x89, 0xc0, // mov rax, r8
+                    0x4c, 0x89, 0xca, // mov rdx, r9
+                    0xc3, // ret
                 ]
             }
             "__adesh_panic" => {
@@ -184,7 +184,7 @@ impl IntrinsicsEngine {
                 // Personality function returning _URC_CONTINUE_UNWIND (8)
                 vec![
                     0xb8, 0x08, 0x00, 0x00, 0x00, // mov eax, 8
-                    0xc3,                         // ret
+                    0xc3, // ret
                 ]
             }
             "__adesh_drop_in_place" => {

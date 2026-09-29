@@ -3,5 +3,5 @@
 pub mod ar;
 pub mod index;
 
-pub use ar::{Archive, ArchiveMember, AR_MAGIC};
+pub use ar::{AR_MAGIC, Archive, ArchiveMember};
 pub use index::ArchiveIndex;

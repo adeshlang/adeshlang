@@ -4,7 +4,7 @@ use crate::elf::header::*;
 use crate::error::{ErrorCode, LinkError, LinkResult};
 use crate::object::ObjectFile;
 use crate::relocation::{Relocation, RelocationKind};
-use crate::section::{flags, Section, SectionKind};
+use crate::section::{Section, SectionKind, flags};
 use crate::symbol::{Symbol, SymbolBinding, SymbolType, SymbolVisibility};
 use crate::target::{Arch, Endianness, ObjectFormat, Os, PointerWidth, Target};
 use std::path::Path;
@@ -16,11 +16,15 @@ impl ElfReader {
         if bytes.len() < 64 {
             return Err(LinkError::new(
                 ErrorCode::InvalidObject,
-                format!("ELF file `{}` is too small for ELF header ({} bytes)", path.display(), bytes.len()),
+                format!(
+                    "ELF file `{}` is too small for ELF header ({} bytes)",
+                    path.display(),
+                    bytes.len()
+                ),
             ));
         }
 
-        if &bytes[0..4] != &ELF_MAGIC {
+        if bytes[0..4] != ELF_MAGIC {
             return Err(LinkError::new(
                 ErrorCode::InvalidObject,
                 format!("ELF file `{}` has invalid magic", path.display()),
@@ -41,7 +45,13 @@ impl ElfReader {
             EM_X86_64 => Arch::X86_64,
             EM_AARCH64 => Arch::AArch64,
             EM_ARM => Arch::Arm,
-            EM_RISCV => if is_64 { Arch::Riscv64 } else { Arch::Riscv32 },
+            EM_RISCV => {
+                if is_64 {
+                    Arch::Riscv64
+                } else {
+                    Arch::Riscv32
+                }
+            }
             EM_386 => Arch::X86,
             other => {
                 return Err(LinkError::new(
@@ -56,7 +66,11 @@ impl ElfReader {
             os: Os::Linux,
             format: ObjectFormat::Elf,
             abi: crate::target::Abi::SystemV,
-            pointer_width: if is_64 { PointerWidth::U64 } else { PointerWidth::U32 },
+            pointer_width: if is_64 {
+                PointerWidth::U64
+            } else {
+                PointerWidth::U32
+            },
             endianness: Endianness::Little,
             relocation_model: crate::target::RelocationModel::Static,
             page_size: if arch == Arch::AArch64 { 65536 } else { 4096 },
@@ -74,7 +88,10 @@ impl ElfReader {
         if shoff + shnum * shentsize > bytes.len() {
             return Err(LinkError::new(
                 ErrorCode::InvalidObject,
-                format!("ELF section header table in `{}` exceeds file bounds", path.display()),
+                format!(
+                    "ELF section header table in `{}` exceeds file bounds",
+                    path.display()
+                ),
             ));
         }
 
@@ -112,7 +129,11 @@ impl ElfReader {
             let shstr_hdr = &raw_shdrs[shstrndx];
             let start = shstr_hdr.sh_offset as usize;
             let end = start + shstr_hdr.sh_size as usize;
-            if end <= bytes.len() { &bytes[start..end] } else { &[] }
+            if end <= bytes.len() {
+                &bytes[start..end]
+            } else {
+                &[]
+            }
         } else {
             &[]
         };
@@ -122,7 +143,11 @@ impl ElfReader {
             if off >= strtab.len() {
                 return String::new();
             }
-            let end = strtab[off..].iter().position(|&b| b == 0).map(|p| off + p).unwrap_or(strtab.len());
+            let end = strtab[off..]
+                .iter()
+                .position(|&b| b == 0)
+                .map(|p| off + p)
+                .unwrap_or(strtab.len());
             String::from_utf8_lossy(&strtab[off..end]).to_string()
         };
 
@@ -155,9 +180,14 @@ impl ElfReader {
 
             let kind = if name.starts_with(".text") || (shdr.sh_flags & SHF_EXECINSTR) != 0 {
                 SectionKind::Text
-            } else if name.starts_with(".rodata") || (shdr.sh_flags & (SHF_WRITE | SHF_ALLOC)) == SHF_ALLOC {
+            } else if name.starts_with(".rodata")
+                || (shdr.sh_flags & (SHF_WRITE | SHF_ALLOC)) == SHF_ALLOC
+            {
                 SectionKind::Rodata
-            } else if name.starts_with(".data") || (shdr.sh_flags & (SHF_WRITE | SHF_ALLOC)) == (SHF_WRITE | SHF_ALLOC) && shdr.sh_type == SHT_PROGBITS {
+            } else if name.starts_with(".data")
+                || (shdr.sh_flags & (SHF_WRITE | SHF_ALLOC)) == (SHF_WRITE | SHF_ALLOC)
+                    && shdr.sh_type == SHT_PROGBITS
+            {
                 SectionKind::Data
             } else if name.starts_with(".bss") || shdr.sh_type == SHT_NOBITS {
                 SectionKind::Bss
@@ -172,10 +202,18 @@ impl ElfReader {
             };
 
             let mut sec_flags = 0;
-            if (shdr.sh_flags & SHF_ALLOC) != 0 { sec_flags |= flags::ALLOC; }
-            if (shdr.sh_flags & SHF_WRITE) != 0 { sec_flags |= flags::WRITE; }
-            if (shdr.sh_flags & SHF_EXECINSTR) != 0 { sec_flags |= flags::EXEC; }
-            if (shdr.sh_flags & SHF_TLS) != 0 { sec_flags |= flags::TLS; }
+            if (shdr.sh_flags & SHF_ALLOC) != 0 {
+                sec_flags |= flags::ALLOC;
+            }
+            if (shdr.sh_flags & SHF_WRITE) != 0 {
+                sec_flags |= flags::WRITE;
+            }
+            if (shdr.sh_flags & SHF_EXECINSTR) != 0 {
+                sec_flags |= flags::EXEC;
+            }
+            if (shdr.sh_flags & SHF_TLS) != 0 {
+                sec_flags |= flags::TLS;
+            }
             sec_flags |= flags::READ;
 
             let data = if shdr.sh_type != SHT_NOBITS {
@@ -219,7 +257,11 @@ impl ElfReader {
 
             let str_start = str_hdr.sh_offset as usize;
             let str_end = str_start + str_hdr.sh_size as usize;
-            let sym_strtab = if str_end <= bytes.len() { &bytes[str_start..str_end] } else { &[] };
+            let sym_strtab = if str_end <= bytes.len() {
+                &bytes[str_start..str_end]
+            } else {
+                &[]
+            };
 
             let sym_start = sym_hdr.sh_offset as usize;
             let num_syms = (sym_hdr.sh_size / 24) as usize;
@@ -257,7 +299,8 @@ impl ElfReader {
                 };
 
                 let is_defined = st_shndx != 0 && st_shndx < 0xff00;
-                let mapped_sec_idx = if is_defined && (st_shndx as usize) < elf_to_obj_sec_map.len() {
+                let mapped_sec_idx = if is_defined && (st_shndx as usize) < elf_to_obj_sec_map.len()
+                {
                     elf_to_obj_sec_map[st_shndx as usize]
                 } else {
                     None
@@ -303,7 +346,8 @@ impl ElfReader {
                     }
                     let r_offset = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
                     let r_info = u64::from_le_bytes(bytes[off + 8..off + 16].try_into().unwrap());
-                    let r_addend = i64::from_le_bytes(bytes[off + 16..off + 24].try_into().unwrap());
+                    let r_addend =
+                        i64::from_le_bytes(bytes[off + 16..off + 24].try_into().unwrap());
 
                     let sym_idx = (r_info >> 32) as usize;
                     let reloc_type = (r_info & 0xFFFFFFFF) as u32;
@@ -325,40 +369,52 @@ impl ElfReader {
 
                     let kind = match (arch, reloc_type) {
                         (Arch::X86_64, R_X86_64_64) => RelocationKind::Absolute64,
-                        (Arch::X86_64, R_X86_64_32) | (Arch::X86_64, R_X86_64_32S) => RelocationKind::Absolute32,
+                        (Arch::X86_64, R_X86_64_32) | (Arch::X86_64, R_X86_64_32S) => {
+                            RelocationKind::Absolute32
+                        }
                         (Arch::X86_64, R_X86_64_PC32) => RelocationKind::PcRelative32,
                         (Arch::X86_64, R_X86_64_PLT32) => RelocationKind::PltRelative32,
-                        (Arch::X86_64, R_X86_64_GOT32) | (Arch::X86_64, R_X86_64_GOTPCREL) => RelocationKind::GotRelative32,
+                        (Arch::X86_64, R_X86_64_GOT32) | (Arch::X86_64, R_X86_64_GOTPCREL) => {
+                            RelocationKind::GotRelative32
+                        }
                         (Arch::X86_64, R_X86_64_PC64) => RelocationKind::PcRelative64,
                         (Arch::AArch64, R_AARCH64_ABS64) => RelocationKind::Absolute64,
                         (Arch::AArch64, R_AARCH64_ABS32) => RelocationKind::Absolute32,
-                        (Arch::AArch64, R_AARCH64_CALL26) | (Arch::AArch64, R_AARCH64_JUMP26) => RelocationKind::AArch64Call26,
+                        (Arch::AArch64, R_AARCH64_CALL26) | (Arch::AArch64, R_AARCH64_JUMP26) => {
+                            RelocationKind::AArch64Call26
+                        }
                         (Arch::AArch64, R_AARCH64_ADR_PREL_PG_HI21) => RelocationKind::AArch64Adrp,
-                        (Arch::AArch64, R_AARCH64_ADD_ABS_LO12_NC) => RelocationKind::AArch64AddLo12,
+                        (Arch::AArch64, R_AARCH64_ADD_ABS_LO12_NC) => {
+                            RelocationKind::AArch64AddLo12
+                        }
                         (Arch::Riscv64 | Arch::Riscv32, R_RISCV_64) => RelocationKind::Absolute64,
                         (Arch::Riscv64 | Arch::Riscv32, R_RISCV_32) => RelocationKind::Absolute32,
-                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_CALL) | (Arch::Riscv64 | Arch::Riscv32, R_RISCV_CALL_PLT) => RelocationKind::RiscvCall,
-                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_BRANCH) => RelocationKind::RiscvBranch,
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_CALL)
+                        | (Arch::Riscv64 | Arch::Riscv32, R_RISCV_CALL_PLT) => {
+                            RelocationKind::RiscvCall
+                        }
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_BRANCH) => {
+                            RelocationKind::RiscvBranch
+                        }
                         (Arch::Riscv64 | Arch::Riscv32, R_RISCV_HI20) => RelocationKind::RiscvHi20,
-                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_LO12_I) => RelocationKind::RiscvLo12I,
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_LO12_I) => {
+                            RelocationKind::RiscvLo12I
+                        }
                         _ => RelocationKind::Absolute64,
                     };
 
-                    obj.sections[target_obj_sec].relocations.push(Relocation::new(
-                        r_offset,
-                        sym_name,
-                        kind,
-                        r_addend,
-                    ));
+                    obj.sections[target_obj_sec]
+                        .relocations
+                        .push(Relocation::new(r_offset, sym_name, kind, r_addend));
                 }
             }
         }
 
         // Check for Adesh metadata section
-        if let Some(meta_sec) = obj.find_section(".adesh.meta") {
-            if let Ok(meta) = crate::metadata::AdeshMetadata::decode(&meta_sec.data) {
-                obj.metadata = Some(meta);
-            }
+        if let Some(meta_sec) = obj.find_section(".adesh.meta")
+            && let Ok(meta) = crate::metadata::AdeshMetadata::decode(&meta_sec.data)
+        {
+            obj.metadata = Some(meta);
         }
 
         obj.validate()?;

@@ -82,25 +82,33 @@ impl Aarch64Encoder {
 
     /// ADD Xd, Xn, Xm (64-bit)
     pub fn add_reg(&mut self, rd: AReg, rn: AReg, rm: AReg) {
-        let insn = 0x8B00_0000 | (Self::reg_num(rm) << 16) | (Self::reg_num(rn) << 5) | Self::reg_num(rd);
+        let insn =
+            0x8B00_0000 | (Self::reg_num(rm) << 16) | (Self::reg_num(rn) << 5) | Self::reg_num(rd);
         self.emit_insn(insn);
     }
 
     /// ADD Xd, Xn, #imm12 (64-bit)
     pub fn add_imm(&mut self, rd: AReg, rn: AReg, imm12: u16) {
-        let insn = 0x9100_0000 | (((imm12 & 0x0FFF) as u32) << 10) | (Self::reg_num(rn) << 5) | Self::reg_num(rd);
+        let insn = 0x9100_0000
+            | (((imm12 & 0x0FFF) as u32) << 10)
+            | (Self::reg_num(rn) << 5)
+            | Self::reg_num(rd);
         self.emit_insn(insn);
     }
 
     /// SUB Xd, Xn, Xm (64-bit)
     pub fn sub_reg(&mut self, rd: AReg, rn: AReg, rm: AReg) {
-        let insn = 0xCB00_0000 | (Self::reg_num(rm) << 16) | (Self::reg_num(rn) << 5) | Self::reg_num(rd);
+        let insn =
+            0xCB00_0000 | (Self::reg_num(rm) << 16) | (Self::reg_num(rn) << 5) | Self::reg_num(rd);
         self.emit_insn(insn);
     }
 
     /// SUB Xd, Xn, #imm12 (64-bit)
     pub fn sub_imm(&mut self, rd: AReg, rn: AReg, imm12: u16) {
-        let insn = 0xD100_0000 | (((imm12 & 0x0FFF) as u32) << 10) | (Self::reg_num(rn) << 5) | Self::reg_num(rd);
+        let insn = 0xD100_0000
+            | (((imm12 & 0x0FFF) as u32) << 10)
+            | (Self::reg_num(rn) << 5)
+            | Self::reg_num(rd);
         self.emit_insn(insn);
     }
 
@@ -129,14 +137,16 @@ impl Aarch64Encoder {
     /// LDR Xt, [Xn, #offset] (64-bit unsigned offset, 8-byte aligned)
     pub fn ldr_imm(&mut self, rt: AReg, rn: AReg, offset: u32) {
         let scale = offset / 8;
-        let insn = 0xF940_0000 | ((scale & 0x0FFF) << 10) | (Self::reg_num(rn) << 5) | Self::reg_num(rt);
+        let insn =
+            0xF940_0000 | ((scale & 0x0FFF) << 10) | (Self::reg_num(rn) << 5) | Self::reg_num(rt);
         self.emit_insn(insn);
     }
 
     /// STR Xt, [Xn, #offset] (64-bit unsigned offset, 8-byte aligned)
     pub fn str_imm(&mut self, rt: AReg, rn: AReg, offset: u32) {
         let scale = offset / 8;
-        let insn = 0xF900_0000 | ((scale & 0x0FFF) << 10) | (Self::reg_num(rn) << 5) | Self::reg_num(rt);
+        let insn =
+            0xF900_0000 | ((scale & 0x0FFF) << 10) | (Self::reg_num(rn) << 5) | Self::reg_num(rt);
         self.emit_insn(insn);
     }
 

@@ -1,6 +1,6 @@
-use adesh_linker::symbol::{Symbol, SymbolBinding, SymbolType, SymbolVisibility};
-use adesh_linker::resolver::SymbolResolver;
 use adesh_linker::object::ObjectFile;
+use adesh_linker::resolver::SymbolResolver;
+use adesh_linker::symbol::{Symbol, SymbolBinding, SymbolType, SymbolVisibility};
 use adesh_linker::target::Target;
 use std::path::PathBuf;
 
@@ -59,10 +59,26 @@ fn test_duplicate_symbol_error() {
     let target = Target::host();
 
     let mut obj1 = ObjectFile::new(PathBuf::from("a.o"), target.clone(), 0);
-    obj1.add_symbol(Symbol::new_defined("duplicate_sym", SymbolBinding::Global, SymbolType::Function, 0, 0, 10, 0));
+    obj1.add_symbol(Symbol::new_defined(
+        "duplicate_sym",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        10,
+        0,
+    ));
 
     let mut obj2 = ObjectFile::new(PathBuf::from("b.o"), target.clone(), 1);
-    obj2.add_symbol(Symbol::new_defined("duplicate_sym", SymbolBinding::Global, SymbolType::Function, 0, 0, 10, 1));
+    obj2.add_symbol(Symbol::new_defined(
+        "duplicate_sym",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        10,
+        1,
+    ));
 
     let mut objects = vec![obj1, obj2];
     let res = resolver.resolve(&mut objects, &[]);

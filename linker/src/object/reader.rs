@@ -14,7 +14,11 @@ pub struct ObjectReader;
 
 impl ObjectReader {
     /// Read an object file from disk, auto-detecting the underlying format.
-    pub fn read_from_file(path: &Path, default_target: &Target, file_index: usize) -> LinkResult<ObjectFile> {
+    pub fn read_from_file(
+        path: &Path,
+        default_target: &Target,
+        file_index: usize,
+    ) -> LinkResult<ObjectFile> {
         let bytes = fs::read(path).map_err(|e| {
             LinkError::new(
                 ErrorCode::IoError,
@@ -35,7 +39,11 @@ impl ObjectReader {
         if bytes.len() < 4 {
             return Err(LinkError::new(
                 ErrorCode::InvalidObject,
-                format!("object file `{}` is truncated ({} bytes)", path.display(), bytes.len()),
+                format!(
+                    "object file `{}` is truncated ({} bytes)",
+                    path.display(),
+                    bytes.len()
+                ),
             ));
         }
 
@@ -65,8 +73,13 @@ impl ObjectReader {
             return PeReader::read(bytes, path, file_index);
         }
 
-        // 5. Adesh Native Object format: ADOB
+        // 5. Adesh Native Object format: ADOB (v2 vs v1)
         if magic == b"ADOB" {
+            if bytes.len() >= 6
+                && u16::from_le_bytes([bytes[4], bytes[5]]) == crate::object::ADOB_VERSION_2
+            {
+                return crate::object::AdobV2::decode(bytes, path, default_target, file_index);
+            }
             return Self::read_adesh_native(bytes, path, default_target, file_index);
         }
 
@@ -74,9 +87,13 @@ impl ObjectReader {
             ErrorCode::InvalidObject,
             format!(
                 "unrecognized object file format for `{}` (magic: {:02x?})",
-                path.display(), magic
+                path.display(),
+                magic
             ),
-        ).with_suggestion("Ensure the file is a valid ELF, PE/COFF, Mach-O, WASM, or Adesh object file."))
+        )
+        .with_suggestion(
+            "Ensure the file is a valid ELF, PE/COFF, Mach-O, WASM, or Adesh object file.",
+        ))
     }
 
     /// Read Adesh native portable object file format.
@@ -86,35 +103,31 @@ impl ObjectReader {
         default_target: &Target,
         file_index: usize,
     ) -> LinkResult<ObjectFile> {
-        let mut obj = ObjectFile::new(path.to_path_buf(), default_target.clone(), file_index);
-        let mut offset = 4;
-
-        if bytes.len() < 16 {
-            return Err(LinkError::new(ErrorCode::InvalidObject, "truncated Adesh object header"));
+        let mut reader = crate::object::BinaryReader::new(bytes);
+        let magic = reader.read_bytes(4)?;
+        if magic != b"ADOB" {
+            return Err(LinkError::new(
+                ErrorCode::InvalidObject,
+                "invalid ADOB magic",
+            ));
         }
 
-        let sec_count = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
-        let sym_count = u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
-        offset += 8;
+        let mut obj = ObjectFile::new(path.to_path_buf(), default_target.clone(), file_index);
+
+        let sec_count = reader.read_u32_le()? as usize;
+        let sym_count = reader.read_u32_le()? as usize;
 
         for _ in 0..sec_count {
-            if offset + 32 > bytes.len() {
-                return Err(LinkError::new(ErrorCode::InvalidObject, "truncated section header"));
-            }
-            let name_len = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
-            offset += 4;
-            let name = String::from_utf8_lossy(&bytes[offset..offset + name_len]).to_string();
-            offset += name_len;
+            let name_len = reader.read_u32_le()? as usize;
+            let name = reader.read_string(name_len)?;
 
-            let kind_id = bytes[offset];
-            let flags = u32::from_le_bytes(bytes[offset + 1..offset + 5].try_into().unwrap());
-            let align = u64::from_le_bytes(bytes[offset + 5..offset + 13].try_into().unwrap());
-            let data_len = u64::from_le_bytes(bytes[offset + 13..offset + 21].try_into().unwrap()) as usize;
-            let reloc_count = u32::from_le_bytes(bytes[offset + 21..offset + 25].try_into().unwrap()) as usize;
-            offset += 25;
+            let kind_id = reader.read_u8()?;
+            let flags = reader.read_u32_le()?;
+            let align = reader.read_u64_le()?;
+            let data_len = reader.read_u64_le()? as usize;
+            let reloc_count = reader.read_u32_le()? as usize;
 
-            let data = bytes[offset..offset + data_len].to_vec();
-            offset += data_len;
+            let data = reader.read_bytes(data_len)?.to_vec();
 
             let kind = match kind_id {
                 0 => crate::section::SectionKind::Text,
@@ -143,13 +156,11 @@ impl ObjectReader {
             };
 
             for _ in 0..reloc_count {
-                let r_off = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
-                let r_kind_id = bytes[offset + 8];
-                let r_addend = i64::from_le_bytes(bytes[offset + 9..offset + 17].try_into().unwrap());
-                let sym_len = u32::from_le_bytes(bytes[offset + 17..offset + 21].try_into().unwrap()) as usize;
-                offset += 21;
-                let sym_name = String::from_utf8_lossy(&bytes[offset..offset + sym_len]).to_string();
-                offset += sym_len;
+                let r_off = reader.read_u64_le()?;
+                let r_kind_id = reader.read_u8()?;
+                let r_addend = reader.read_i64_le()?;
+                let sym_len = reader.read_u32_le()? as usize;
+                let sym_name = reader.read_string(sym_len)?;
 
                 let r_kind = match r_kind_id {
                     0 => crate::relocation::RelocationKind::Absolute64,
@@ -162,10 +173,7 @@ impl ObjectReader {
                 };
 
                 sec.relocations.push(crate::relocation::Relocation::new(
-                    r_off,
-                    sym_name,
-                    r_kind,
-                    r_addend,
+                    r_off, sym_name, r_kind, r_addend,
                 ));
             }
 
@@ -173,18 +181,15 @@ impl ObjectReader {
         }
 
         for _ in 0..sym_count {
-            let name_len = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
-            offset += 4;
-            let name = String::from_utf8_lossy(&bytes[offset..offset + name_len]).to_string();
-            offset += name_len;
+            let name_len = reader.read_u32_le()? as usize;
+            let name = reader.read_string(name_len)?;
 
-            let binding_id = bytes[offset];
-            let type_id = bytes[offset + 1];
-            let is_def = bytes[offset + 2] != 0;
-            let sec_idx = u32::from_le_bytes(bytes[offset + 3..offset + 7].try_into().unwrap());
-            let val = u64::from_le_bytes(bytes[offset + 7..offset + 15].try_into().unwrap());
-            let sz = u64::from_le_bytes(bytes[offset + 15..offset + 23].try_into().unwrap());
-            offset += 23;
+            let binding_id = reader.read_u8()?;
+            let type_id = reader.read_u8()?;
+            let is_def = reader.read_u8()? != 0;
+            let sec_idx = reader.read_u32_le()?;
+            let val = reader.read_u64_le()?;
+            let sz = reader.read_u64_le()?;
 
             let binding = match binding_id {
                 0 => crate::symbol::SymbolBinding::Local,

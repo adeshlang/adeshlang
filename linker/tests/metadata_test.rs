@@ -1,4 +1,4 @@
-use adesh_linker::metadata::{flags, AdeshMetadata};
+use adesh_linker::metadata::{AdeshMetadata, flags};
 
 #[test]
 fn test_metadata_encode_decode_roundtrip() {

@@ -34,8 +34,12 @@ fn test_incremental_link_cache_store() {
     let key = "libmath_obj_hash";
     let data = b"COMPILED_CODE_BLOCK";
 
-    cache.put_cached_file(key, data).expect("Failed to store cache");
-    let fetched = cache.get_cached_file(key).expect("Failed to get cached file");
+    cache
+        .put_cached_file(key, data)
+        .expect("Failed to store cache");
+    let fetched = cache
+        .get_cached_file(key)
+        .expect("Failed to get cached file");
     assert_eq!(fetched, data);
 }
 

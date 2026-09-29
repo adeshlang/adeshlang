@@ -1,7 +1,7 @@
 //! Quantum Intermediate Representation (QIR), OpenQASM 3.0, and QPU circuit binary packaging.
 
-use super::circuit::QuantumCircuit;
 use super::calibration::QpuCalibration;
+use super::circuit::QuantumCircuit;
 use crate::error::LinkResult;
 use crate::section::MergedSection;
 use crate::symbol::Symbol;

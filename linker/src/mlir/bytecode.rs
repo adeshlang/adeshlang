@@ -193,7 +193,8 @@ impl MlirBytecodeReader {
             for _ in 0..operand_count {
                 let opnd_len = read_u32(bytes, &mut offset)? as usize;
                 let opnd_bytes = read_slice(bytes, &mut offset, opnd_len)?;
-                op.operands.push(String::from_utf8_lossy(opnd_bytes).to_string());
+                op.operands
+                    .push(String::from_utf8_lossy(opnd_bytes).to_string());
             }
 
             // Results
@@ -201,7 +202,8 @@ impl MlirBytecodeReader {
             for _ in 0..result_count {
                 let res_len = read_u32(bytes, &mut offset)? as usize;
                 let res_bytes = read_slice(bytes, &mut offset, res_len)?;
-                op.results.push(String::from_utf8_lossy(res_bytes).to_string());
+                op.results
+                    .push(String::from_utf8_lossy(res_bytes).to_string());
             }
 
             // Attributes
@@ -284,7 +286,9 @@ impl MlirBytecodeReader {
 
                 let data_len = read_u64(bytes, &mut offset)? as usize;
                 let data_slice = read_slice(bytes, &mut offset, data_len)?;
-                module.tensor_constants.insert(const_name, data_slice.to_vec());
+                module
+                    .tensor_constants
+                    .insert(const_name, data_slice.to_vec());
             }
         }
 
@@ -294,7 +298,10 @@ impl MlirBytecodeReader {
 
 fn read_u32(bytes: &[u8], offset: &mut usize) -> LinkResult<u32> {
     if *offset + 4 > bytes.len() {
-        return Err(LinkError::new(ErrorCode::InvalidObject, "Unexpected EOF reading u32"));
+        return Err(LinkError::new(
+            ErrorCode::InvalidObject,
+            "Unexpected EOF reading u32",
+        ));
     }
     let val = u32::from_le_bytes(bytes[*offset..*offset + 4].try_into().unwrap());
     *offset += 4;
@@ -303,7 +310,10 @@ fn read_u32(bytes: &[u8], offset: &mut usize) -> LinkResult<u32> {
 
 fn read_u64(bytes: &[u8], offset: &mut usize) -> LinkResult<u64> {
     if *offset + 8 > bytes.len() {
-        return Err(LinkError::new(ErrorCode::InvalidObject, "Unexpected EOF reading u64"));
+        return Err(LinkError::new(
+            ErrorCode::InvalidObject,
+            "Unexpected EOF reading u64",
+        ));
     }
     let val = u64::from_le_bytes(bytes[*offset..*offset + 8].try_into().unwrap());
     *offset += 8;
@@ -312,7 +322,10 @@ fn read_u64(bytes: &[u8], offset: &mut usize) -> LinkResult<u64> {
 
 fn read_i64(bytes: &[u8], offset: &mut usize) -> LinkResult<i64> {
     if *offset + 8 > bytes.len() {
-        return Err(LinkError::new(ErrorCode::InvalidObject, "Unexpected EOF reading i64"));
+        return Err(LinkError::new(
+            ErrorCode::InvalidObject,
+            "Unexpected EOF reading i64",
+        ));
     }
     let val = i64::from_le_bytes(bytes[*offset..*offset + 8].try_into().unwrap());
     *offset += 8;
@@ -321,7 +334,10 @@ fn read_i64(bytes: &[u8], offset: &mut usize) -> LinkResult<i64> {
 
 fn read_slice<'a>(bytes: &'a [u8], offset: &mut usize, len: usize) -> LinkResult<&'a [u8]> {
     if *offset + len > bytes.len() {
-        return Err(LinkError::new(ErrorCode::InvalidObject, "Unexpected EOF reading slice"));
+        return Err(LinkError::new(
+            ErrorCode::InvalidObject,
+            "Unexpected EOF reading slice",
+        ));
     }
     let s = &bytes[*offset..*offset + len];
     *offset += len;

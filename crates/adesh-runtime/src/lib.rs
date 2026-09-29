@@ -335,7 +335,11 @@ fn pretty_print_inner(
 
     match value {
         RuntimeValue::Null => {
-            let _ = write!(output, "{}null{}", options.colors.null, options.colors.reset);
+            let _ = write!(
+                output,
+                "{}null{}",
+                options.colors.null, options.colors.reset
+            );
         }
         RuntimeValue::Bool(b) => {
             let _ = write!(
@@ -700,8 +704,7 @@ pub unsafe extern "C" fn aot_make_object(args_ptr: *const u64, arg_count: usize)
                 continue;
             };
 
-            let val = aot_get_value(val_handle)
-                .unwrap_or_else(|| unpack_aot_arg(val_handle));
+            let val = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
             obj.insert(key_str, val);
         }
     }
@@ -1233,7 +1236,8 @@ pub extern "C" fn aot_last(handle: u64) -> u64 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_get_index(container_handle: u64, index_handle: u64) -> u64 {
-    let container = aot_get_value(container_handle).unwrap_or_else(|| unpack_aot_arg(container_handle));
+    let container =
+        aot_get_value(container_handle).unwrap_or_else(|| unpack_aot_arg(container_handle));
     let index = match aot_get_value(index_handle).unwrap_or_else(|| unpack_aot_arg(index_handle)) {
         RuntimeValue::Int(i) => i as usize,
         RuntimeValue::U64(u) => u as usize,
@@ -1683,4 +1687,3 @@ pub extern "C" fn aot_throw_exception(val_handle: u64) -> i64 {
     });
     0
 }
-

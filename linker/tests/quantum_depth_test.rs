@@ -31,8 +31,8 @@ fn test_state_vector_bell_state_entanglement() {
     let probs = sim.probabilities();
     assert_eq!(probs.len(), 4);
     assert!((probs[0] - 0.5).abs() < 1e-6); // |00>
-    assert!(probs[1].abs() < 1e-6);        // |01>
-    assert!(probs[2].abs() < 1e-6);        // |10>
+    assert!(probs[1].abs() < 1e-6); // |01>
+    assert!(probs[2].abs() < 1e-6); // |10>
     assert!((probs[3] - 0.5).abs() < 1e-6); // |11>
 }
 

@@ -115,7 +115,10 @@ impl WasmWriter {
         // 8. Data Section (ID 11): static data if any
         let mut total_data = Vec::new();
         for sec in merged_sections {
-            if !sec.is_executable() && !sec.data.is_empty() && sec.kind != crate::section::SectionKind::Bss {
+            if !sec.is_executable()
+                && !sec.data.is_empty()
+                && sec.kind != crate::section::SectionKind::Bss
+            {
                 total_data.extend_from_slice(&sec.data);
             }
         }

@@ -1,6 +1,6 @@
 use adesh_linker::pe::import::ImportSymbol;
 use adesh_linker::pe::writer::PeWriter;
-use adesh_linker::section::{flags, MergedSection, SectionKind};
+use adesh_linker::section::{MergedSection, SectionKind, flags};
 use adesh_linker::symbol::{Symbol, SymbolBinding, SymbolType};
 use adesh_linker::target::Target;
 use std::path::Path;
@@ -17,9 +17,9 @@ fn main() {
     // ret              ; return to BaseThreadInitThunk which calls ExitThread(0) (0xc3)
     let code_bytes = vec![
         0x48, 0x83, 0xec, 0x28, // sub rsp, 40
-        0x31, 0xc0,             // xor eax, eax (exit code 0)
+        0x31, 0xc0, // xor eax, eax (exit code 0)
         0x48, 0x83, 0xc4, 0x28, // add rsp, 40
-        0xc3,                   // ret
+        0xc3, // ret
     ];
 
     let mut merged_sec = MergedSection::new(
@@ -42,13 +42,11 @@ fn main() {
         0,
     );
 
-    let imports = vec![
-        ImportSymbol {
-            dll_name: "kernel32.dll".to_string(),
-            symbol_name: "ExitProcess".to_string(),
-            ordinal: None,
-        }
-    ];
+    let imports = vec![ImportSymbol {
+        dll_name: "kernel32.dll".to_string(),
+        symbol_name: "ExitProcess".to_string(),
+        ordinal: None,
+    }];
 
     std::fs::create_dir_all("target").unwrap();
     PeWriter::write_executable(
@@ -58,7 +56,11 @@ fn main() {
         &[merged_sec],
         &[sym],
         &imports,
-    ).expect("Failed to write Windows PE executable");
+    )
+    .expect("Failed to write Windows PE executable");
 
-    println!("  ✓ Successfully generated native Windows executable: {}", exe_path.display());
+    println!(
+        "  ✓ Successfully generated native Windows executable: {}",
+        exe_path.display()
+    );
 }

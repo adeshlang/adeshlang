@@ -22,12 +22,12 @@ pub const METALLIB_MAGIC: [u8; 4] = *b"MTLB";
 /// CUDA Compute Architecture Capability
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CudaComputeArch {
-    Sm70, // Volta
-    Sm75, // Turing
-    Sm80, // Ampere
-    Sm86, // Ampere (Consumer)
-    Sm89, // Ada Lovelace
-    Sm90, // Hopper
+    Sm70,  // Volta
+    Sm75,  // Turing
+    Sm80,  // Ampere
+    Sm86,  // Ampere (Consumer)
+    Sm89,  // Ada Lovelace
+    Sm90,  // Hopper
     Sm100, // Blackwell
 }
 
@@ -194,19 +194,18 @@ impl SpirvBinaryWriter {
         _descriptor_set: u32,
         _binding: u32,
     ) -> Vec<u8> {
-        let mut words: Vec<u32> = Vec::new();
-
-        // 1. SPIR-V Header (5 words)
-        words.push(SPIRV_MAGIC); // Magic
-        words.push(0x00010600);   // Version 1.6
-        words.push(0x000AD001);   // Generator ID (Adesh native toolchain)
-        words.push(100);          // Bound ID
-        words.push(0);            // Reserved
+        let mut words: Vec<u32> = vec![
+            SPIRV_MAGIC,
+            0x00010600, // Version 1.6
+            0x000AD001, // Generator ID (Adesh native toolchain)
+            100,        // Bound ID
+            0,          // Reserved
+        ];
 
         // Helper macro/closure to emit instruction: (OpCode, [operands...])
         let mut emit = |opcode: u16, operands: &[u32]| {
             let word_count = (operands.len() + 1) as u32;
-            let header = ((word_count << 16) | (opcode as u32)) as u32;
+            let header = (word_count << 16) | (opcode as u32);
             words.push(header);
             for &op in operands {
                 words.push(op);

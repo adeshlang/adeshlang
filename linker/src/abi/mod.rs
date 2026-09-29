@@ -9,7 +9,13 @@
 //! 4. Calling Conventions & Register Allocations
 //! 5. Static Initialization & Destructor Arrays (.init_array / .fini_array)
 
+pub mod ffi;
 pub mod mangle;
+
+pub use ffi::{
+    ADESH_RUNTIME_ABI_VERSION, ADESH_RUNTIME_CONTRACTS, CFieldLayout, CStructLayout,
+    CallingConvention, FfiPanicPolicy,
+};
 
 use std::collections::BTreeMap;
 
@@ -39,7 +45,7 @@ impl Default for AdeshAbiHeader {
             target_arch: 1, // x86_64 default
             target_os: 1,   // Linux default
             pointer_width: 64,
-            endianness: 1, // Little-endian
+            endianness: 1,              // Little-endian
             memory_model_flags: 0x0001, // Ownership & Borrowing RAII (GC-Free)
             feature_flags: 0,
         }

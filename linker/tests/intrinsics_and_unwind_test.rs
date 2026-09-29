@@ -1,6 +1,8 @@
 use adesh_linker::intrinsics::IntrinsicsEngine;
 use adesh_linker::target::Target;
-use adesh_linker::unwind::{DropTableEntry, EhFrameHdrGenerator, PdataEntry, RaiiDropTable, WindowsPdataGenerator};
+use adesh_linker::unwind::{
+    DropTableEntry, EhFrameHdrGenerator, PdataEntry, RaiiDropTable, WindowsPdataGenerator,
+};
 
 #[test]
 fn test_runtime_intrinsics_synthesis_x86_64() {

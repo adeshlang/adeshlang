@@ -54,7 +54,9 @@ pub use object::ObjectFile;
 pub use relocation::{Relocation, RelocationHandler, RelocationKind};
 pub use section::{Section, SectionKind};
 pub use symbol::{Symbol, SymbolBinding, SymbolType, SymbolVisibility};
-pub use target::{Arch, Endianness, ObjectFormat, Os, PointerWidth, RelocationModel, Target, TargetTier};
+pub use target::{
+    Arch, Endianness, ObjectFormat, Os, PointerWidth, RelocationModel, Target, TargetTier,
+};
 pub use unwind::{EhFrameHdrGenerator, RaiiDropTable, WindowsPdataGenerator};
 
 use std::path::{Path, PathBuf};
@@ -65,7 +67,11 @@ pub fn link_with_config(inputs: &[PathBuf], config: LinkConfig) -> LinkResult<()
 }
 
 /// High-level API to link object files into an executable at `output_path` using default settings.
-pub fn link(inputs: &[impl AsRef<Path>], output_path: impl AsRef<Path>, target_triple: Option<&str>) -> LinkResult<()> {
+pub fn link(
+    inputs: &[impl AsRef<Path>],
+    output_path: impl AsRef<Path>,
+    target_triple: Option<&str>,
+) -> LinkResult<()> {
     let target = if let Some(triple) = target_triple {
         Target::from_triple(triple)?
     } else {

@@ -4,17 +4,17 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RReg {
     Zero = 0,
-    Ra = 1,   // Return Address
-    Sp = 2,   // Stack Pointer
-    Gp = 3,   // Global Pointer
-    Tp = 4,   // Thread Pointer
+    Ra = 1, // Return Address
+    Sp = 2, // Stack Pointer
+    Gp = 3, // Global Pointer
+    Tp = 4, // Thread Pointer
     T0 = 5,
     T1 = 6,
     T2 = 7,
-    S0 = 8,   // Saved / Frame Pointer (Fp)
+    S0 = 8, // Saved / Frame Pointer (Fp)
     S1 = 9,
-    A0 = 10,  // Function Arg / Return Value 0
-    A1 = 11,  // Function Arg / Return Value 1
+    A0 = 10, // Function Arg / Return Value 0
+    A1 = 11, // Function Arg / Return Value 1
     A2 = 12,
     A3 = 13,
     A4 = 14,
@@ -55,7 +55,15 @@ impl RiscvEncoder {
     // --- Formats ---
 
     /// Emit R-type: `[funct7:7][rs2:5][rs1:5][funct3:3][rd:5][opcode:7]`
-    pub fn r_type(&mut self, opcode: u32, funct3: u32, funct7: u32, rd: RReg, rs1: RReg, rs2: RReg) {
+    pub fn r_type(
+        &mut self,
+        opcode: u32,
+        funct3: u32,
+        funct7: u32,
+        rd: RReg,
+        rs1: RReg,
+        rs2: RReg,
+    ) {
         let insn = (funct7 << 25)
             | ((rs2 as u32) << 20)
             | ((rs1 as u32) << 15)
