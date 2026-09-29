@@ -24,7 +24,7 @@ impl ElfReader {
             ));
         }
 
-        if &bytes[0..4] != &ELF_MAGIC {
+        if bytes[0..4] != ELF_MAGIC {
             return Err(LinkError::new(
                 ErrorCode::InvalidObject,
                 format!("ELF file `{}` has invalid magic", path.display()),
@@ -411,10 +411,10 @@ impl ElfReader {
         }
 
         // Check for Adesh metadata section
-        if let Some(meta_sec) = obj.find_section(".adesh.meta") {
-            if let Ok(meta) = crate::metadata::AdeshMetadata::decode(&meta_sec.data) {
-                obj.metadata = Some(meta);
-            }
+        if let Some(meta_sec) = obj.find_section(".adesh.meta")
+            && let Ok(meta) = crate::metadata::AdeshMetadata::decode(&meta_sec.data)
+        {
+            obj.metadata = Some(meta);
         }
 
         obj.validate()?;

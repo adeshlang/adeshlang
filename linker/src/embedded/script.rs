@@ -194,14 +194,14 @@ impl LinkerScript {
 
                     for part in tail.split(',') {
                         let part = part.trim();
-                        if part.starts_with("ORIGIN") {
-                            if let Some(eq) = part.find('=') {
-                                origin = parse_size_or_hex(part[eq + 1..].trim());
-                            }
-                        } else if part.starts_with("LENGTH") {
-                            if let Some(eq) = part.find('=') {
-                                length = parse_size_or_hex(part[eq + 1..].trim());
-                            }
+                        if part.starts_with("ORIGIN")
+                            && let Some(eq) = part.find('=')
+                        {
+                            origin = parse_size_or_hex(part[eq + 1..].trim());
+                        } else if part.starts_with("LENGTH")
+                            && let Some(eq) = part.find('=')
+                        {
+                            length = parse_size_or_hex(part[eq + 1..].trim());
                         }
                     }
 

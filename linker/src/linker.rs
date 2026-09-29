@@ -275,30 +275,29 @@ impl Linker {
                         && !sym.name.starts_with("??")
                         && !sym.name.starts_with('.')
                         && !sym.name.is_empty()
+                        && seen_imports.insert(sym.name.clone())
                     {
-                        if seen_imports.insert(sym.name.clone()) {
-                            let dll_name = if sym.name == "ExitProcess"
-                                || sym.name.starts_with("Get")
-                                || sym.name.starts_with("Write")
-                                || sym.name.starts_with("Read")
-                                || sym.name.starts_with("Virtual")
-                                || sym.name.starts_with("Close")
-                                || sym.name.starts_with("Sleep")
-                                || sym.name.starts_with("Query")
-                                || sym.name.starts_with("Rtl")
-                                || sym.name.starts_with("Create")
-                                || sym.name.starts_with("Set")
-                            {
-                                "KERNEL32.dll".to_string()
-                            } else {
-                                "msvcrt.dll".to_string()
-                            };
-                            imports.push(crate::pe::import::ImportSymbol {
-                                dll_name,
-                                symbol_name: sym.name.clone(),
-                                ordinal: None,
-                            });
-                        }
+                        let dll_name = if sym.name == "ExitProcess"
+                            || sym.name.starts_with("Get")
+                            || sym.name.starts_with("Write")
+                            || sym.name.starts_with("Read")
+                            || sym.name.starts_with("Virtual")
+                            || sym.name.starts_with("Close")
+                            || sym.name.starts_with("Sleep")
+                            || sym.name.starts_with("Query")
+                            || sym.name.starts_with("Rtl")
+                            || sym.name.starts_with("Create")
+                            || sym.name.starts_with("Set")
+                        {
+                            "KERNEL32.dll".to_string()
+                        } else {
+                            "msvcrt.dll".to_string()
+                        };
+                        imports.push(crate::pe::import::ImportSymbol {
+                            dll_name,
+                            symbol_name: sym.name.clone(),
+                            ordinal: None,
+                        });
                     }
                 }
                 PeWriter::write_executable(

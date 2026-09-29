@@ -10,7 +10,7 @@ pub struct FlashBinaryWriter;
 impl FlashBinaryWriter {
     pub fn write_bin(path: &Path, base_address: u64, sections: &[(u64, &[u8])]) -> LinkResult<()> {
         if sections.is_empty() {
-            fs::write(path, &[])?;
+            fs::write(path, [])?;
             return Ok(());
         }
 

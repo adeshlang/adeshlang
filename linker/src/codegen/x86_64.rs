@@ -158,7 +158,7 @@ impl X86_64Encoder {
         self.emit_u8(0x8B);
         if disp == 0 && (b & 7) != 5 && (b & 7) != 4 {
             self.emit_modrm(0, d, b);
-        } else if disp >= -128 && disp <= 127 {
+        } else if (-128..=127).contains(&disp) {
             self.emit_modrm(1, d, b);
             if (b & 7) == 4 {
                 self.emit_u8(0x24);
@@ -181,7 +181,7 @@ impl X86_64Encoder {
         self.emit_u8(0x89);
         if disp == 0 && (b & 7) != 5 && (b & 7) != 4 {
             self.emit_modrm(0, s, b);
-        } else if disp >= -128 && disp <= 127 {
+        } else if (-128..=127).contains(&disp) {
             self.emit_modrm(1, s, b);
             if (b & 7) == 4 {
                 self.emit_u8(0x24);
