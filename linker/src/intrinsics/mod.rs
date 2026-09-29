@@ -39,6 +39,38 @@ impl IntrinsicsEngine {
     /// Check if a symbol is a synthesizable intrinsic.
     pub fn is_intrinsic(name: &str) -> bool {
         Self::standard_symbols().contains(&name)
+            || matches!(
+                name,
+                "trunc"
+                    | "truncf"
+                    | "floor"
+                    | "floorf"
+                    | "ceil"
+                    | "ceilf"
+                    | "round"
+                    | "roundf"
+                    | "fabs"
+                    | "fabsf"
+            )
+            || name.starts_with("__extend")
+            || name.starts_with("__trunc")
+            || name.starts_with("__float")
+            || name.starts_with("__fix")
+            || name.starts_with("__ashl")
+            || name.starts_with("__ashr")
+            || name.starts_with("__lshr")
+            || name.starts_with("__div")
+            || name.starts_with("__udiv")
+            || name.starts_with("__mod")
+            || name.starts_with("__umod")
+            || name.starts_with("__mul")
+            || name.starts_with("__clz")
+            || name.starts_with("__ctz")
+            || name.starts_with("__popcount")
+            || name.starts_with("__parity")
+            || name.starts_with("__bswap")
+            || name.starts_with("__rust")
+            || name.starts_with("rust_")
     }
 
     /// Synthesize machine code section and symbols for missing runtime intrinsics.
@@ -175,6 +207,47 @@ impl IntrinsicsEngine {
                     0x4c, 0x89, 0xca, // mov rdx, r9
                     0xc3, // ret
                 ]
+            }
+            "trunc" => {
+                // roundsd xmm0, xmm0, 3 (truncate); ret
+                vec![0x66, 0x0f, 0x3a, 0x0b, 0xc0, 0x03, 0xc3]
+            }
+            "truncf" => {
+                // roundss xmm0, xmm0, 3 (truncate); ret
+                vec![0x66, 0x0f, 0x3a, 0x0a, 0xc0, 0x03, 0xc3]
+            }
+            "floor" => {
+                // roundsd xmm0, xmm0, 1 (floor); ret
+                vec![0x66, 0x0f, 0x3a, 0x0b, 0xc0, 0x01, 0xc3]
+            }
+            "floorf" => {
+                // roundss xmm0, xmm0, 1 (floor); ret
+                vec![0x66, 0x0f, 0x3a, 0x0a, 0xc0, 0x01, 0xc3]
+            }
+            "ceil" => {
+                // roundsd xmm0, xmm0, 2 (ceil); ret
+                vec![0x66, 0x0f, 0x3a, 0x0b, 0xc0, 0x02, 0xc3]
+            }
+            "ceilf" => {
+                // roundss xmm0, xmm0, 2 (ceil); ret
+                vec![0x66, 0x0f, 0x3a, 0x0a, 0xc0, 0x02, 0xc3]
+            }
+            "round" => {
+                // roundsd xmm0, xmm0, 0 (round); ret
+                vec![0x66, 0x0f, 0x3a, 0x0b, 0xc0, 0x00, 0xc3]
+            }
+            "roundf" => {
+                // roundss xmm0, xmm0, 0 (round); ret
+                vec![0x66, 0x0f, 0x3a, 0x0a, 0xc0, 0x00, 0xc3]
+            }
+            "fabs" => {
+                // andpd xmm0, [mask without sign bit]; ret
+                // or inline: psllq xmm0, 1; psrlq xmm0, 1; ret
+                vec![0x66, 0x0f, 0x73, 0xf0, 0x01, 0x66, 0x0f, 0x73, 0xd0, 0x01, 0xc3]
+            }
+            "fabsf" => {
+                // psrld xmm0, 1; pslld xmm0, 1; ret
+                vec![0x66, 0x0f, 0x72, 0xf0, 0x01, 0x66, 0x0f, 0x72, 0xd0, 0x01, 0xc3]
             }
             "__adesh_panic" => {
                 // Panic trap

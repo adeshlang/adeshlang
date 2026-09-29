@@ -4,7 +4,7 @@
 
 use std::io::{self, IsTerminal, Write};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
 /// ANSI color codes for terminal output
@@ -29,11 +29,12 @@ pub mod colors {
     pub const BRIGHT_MAGENTA: &str = "\x1b[95m";
 }
 
-/// Build progress spinner with colorful animation
+/// Build progress spinner with colorful animation, percentage, and timer
 pub struct BuildProgress {
     message: String,
     start_time: Instant,
     running: Arc<AtomicBool>,
+    percentage: Arc<AtomicU8>,
     handle: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -41,24 +42,23 @@ impl BuildProgress {
     /// Create and start a new progress spinner
     pub fn new(message: &str) -> Self {
         let running = Arc::new(AtomicBool::new(true));
+        let percentage = Arc::new(AtomicU8::new(0));
 
-        // In non-interactive environments (CI, redirected output, tool capture),
-        // avoid background spinner threads entirely. This prevents shutdown hangs
-        // from stdout synchronization behavior on certain terminals.
         if !io::stdout().is_terminal() {
             return Self {
                 message: message.to_string(),
                 start_time: Instant::now(),
                 running,
+                percentage,
                 handle: None,
             };
         }
 
         let running_clone = running.clone();
+        let percentage_clone = percentage.clone();
         let message_clone = message.to_string();
 
         let handle = std::thread::spawn(move || {
-            // Colorful spinner frames with gradient effect
             let frames = [
                 ("⠋", colors::CYAN),
                 ("⠙", colors::BRIGHT_CYAN),
@@ -78,8 +78,8 @@ impl BuildProgress {
             while running_clone.load(Ordering::Acquire) {
                 let elapsed = start.elapsed();
                 let (frame, color) = frames[frame_idx % frames.len()];
+                let pct = percentage_clone.load(Ordering::Relaxed);
 
-                // Format elapsed time
                 let secs = elapsed.as_secs_f64();
                 let time_str = if secs < 60.0 {
                     format!("{:.1}s", secs)
@@ -87,9 +87,14 @@ impl BuildProgress {
                     format!("{}m {:.1}s", (secs / 60.0) as u32, secs % 60.0)
                 };
 
-                // Print spinner with colors
+                let pct_str = if pct > 0 {
+                    format!(" {}{}%{}", colors::BRIGHT_CYAN, pct, colors::RESET)
+                } else {
+                    String::new()
+                };
+
                 print!(
-                    "\r{}{}{} {}{}{} {}[{}]{}  ",
+                    "\r{}{}{} {}{}{} {}[{}]{}{}   \r",
                     color,
                     frame,
                     colors::RESET,
@@ -98,7 +103,8 @@ impl BuildProgress {
                     colors::RESET,
                     colors::DIM,
                     time_str,
-                    colors::RESET
+                    colors::RESET,
+                    pct_str,
                 );
                 let _ = io::stdout().flush();
 
@@ -111,8 +117,14 @@ impl BuildProgress {
             message: message.to_string(),
             start_time: Instant::now(),
             running,
+            percentage,
             handle: Some(handle),
         }
+    }
+
+    /// Set compilation percentage (0-100)
+    pub fn set_percentage(&self, pct: u8) {
+        self.percentage.store(pct.min(100), Ordering::Relaxed);
     }
 
     /// Get the current message

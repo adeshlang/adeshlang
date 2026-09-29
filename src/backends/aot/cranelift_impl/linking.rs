@@ -1558,11 +1558,7 @@ pub fn link_with_adesh_linker(
     let mut inputs = vec![obj_path.to_path_buf()];
     if let Some(rt) = runtime_obj {
         if rt.exists() {
-            let size = rt.metadata().map(|m| m.len()).unwrap_or(0);
-            // Only ingest runtime archive if it's a dedicated runtime object (< 50MB)
-            if size > 0 && size < 50_000_000 {
-                inputs.push(rt.to_path_buf());
-            }
+            inputs.push(rt.to_path_buf());
         }
     }
 

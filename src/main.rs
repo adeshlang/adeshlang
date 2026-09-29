@@ -1228,15 +1228,8 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                     }
                 }
 
-                // Run mandatory compile-time safety checks (skip for dry-run)
+                // Run mandatory compile-time safety and ownership checks
                 if !target_config.dry_run {
-                    if target_config.verbose {
-                        eprintln!(
-                            "\x1b[36m🔒 Performing compile-time memory safety validation for {}...\x1b[0m",
-                            target_config.input.display()
-                        );
-                    }
-
                     if let Err(e) = cli_impl::check_ownership_and_parse_in(
                         &src,
                         &parsed.config,
@@ -1244,13 +1237,6 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                     ) {
                         eprintln!("error in {}: {}", target_config.input.display(), e);
                         std::process::exit(1);
-                    }
-
-                    if target_config.verbose {
-                        eprintln!(
-                            "compile-time memory safety checks passed for {}",
-                            target_config.input.display()
-                        );
                     }
                 }
 

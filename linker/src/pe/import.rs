@@ -1,4 +1,4 @@
-//! PE Import Directory (.idata) generator.
+use std::collections::HashMap;
 
 /// An imported symbol from a specific DLL.
 #[derive(Debug, Clone)]
@@ -15,6 +15,158 @@ pub struct ImportTableResult {
     pub import_descriptor_size: u32,
     pub iat_rva: u32,
     pub iat_size: u32,
+    pub symbol_iat_rvas: HashMap<String, u32>,
+}
+
+/// Returns `true` if a symbol name looks like a genuine Windows API / CRT export.
+/// Rust mangled names (`ZN...`), adesh-internal names, and similar must be excluded.
+pub fn is_valid_windows_api_symbol(sym: &str) -> bool {
+    // Must not be empty
+    if sym.is_empty() {
+        return false;
+    }
+    // Rust-mangled symbols (ZN4core..., ZN3std..., etc.)
+    if sym.starts_with("ZN") {
+        return false;
+    }
+    // Adesh / Rust internals
+    if sym.starts_with("__rust")
+        || sym.starts_with("rust_")
+        || sym.starts_with("anon.")
+        || sym.starts_with("_ZN")
+        || sym.starts_with("adesh_")
+        || sym.starts_with("aot_")
+        || sym.contains("$u7b$")   // Rust closure/const name-mangling
+        || sym.contains("$LT$")
+        || sym.contains("$GT$")
+        || sym.contains("..")
+        || sym.starts_with("??")
+        || sym.starts_with('$')
+        || sym.starts_with('.')
+    {
+        return false;
+    }
+    true
+}
+
+/// Classify a symbol to its corresponding Windows system/CRT DLL.
+pub fn classify_windows_dll(sym_name: &str) -> &'static str {
+    let clean = sym_name
+        .strip_prefix("__imp_")
+        .or_else(|| sym_name.strip_prefix("_imp_"))
+        .unwrap_or(sym_name)
+        .trim_start_matches('_');
+
+    // Winsock2 symbols
+    if clean.starts_with("WSA")
+        || matches!(
+            clean,
+            "socket"
+                | "connect"
+                | "bind"
+                | "listen"
+                | "accept"
+                | "send"
+                | "recv"
+                | "sendto"
+                | "recvfrom"
+                | "closesocket"
+                | "shutdown"
+                | "getaddrinfo"
+                | "freeaddrinfo"
+                | "getnameinfo"
+                | "getpeername"
+                | "getsockname"
+                | "select"
+                | "ioctlsocket"
+                | "setsockopt"
+                | "getsockopt"
+                | "htons"
+                | "ntohs"
+                | "htonl"
+                | "ntohl"
+                | "inet_ntop"
+                | "inet_pton"
+        )
+    {
+        "ws2_32.dll"
+    } else if clean.starts_with("Reg")
+        || clean.starts_with("SystemFunction")
+        || clean.starts_with("Crypt")
+        || clean.starts_with("OpenProcessToken")
+        || clean.starts_with("GetTokenInformation")
+        || clean == "ReleaseMutex"
+        || clean == "UnlockFile"
+        || clean == "LockFileEx"
+        || clean == "ProcessPrng"
+    {
+        "advapi32.dll"
+    } else if clean.starts_with("MessageBox")
+        || clean.starts_with("GetDesktopWindow")
+        || clean.starts_with("ShowWindow")
+        || clean.starts_with("PeekMessage")
+        || clean.starts_with("DispatchMessage")
+        || clean == "lstrlenW"
+    {
+        "user32.dll"
+    } else if clean.starts_with("BCrypt") {
+        "bcrypt.dll"
+    } else if clean.starts_with("Nt") || clean.starts_with("Zw") || clean.starts_with("RtlNtStatus")
+    {
+        "ntdll.dll"
+    } else if clean == "WaitOnAddress"
+        || clean == "WakeByAddressAll"
+        || clean == "WakeByAddressSingle"
+    {
+        // WaitOnAddress lives in KERNEL32.dll on Windows 8+ (not synchronization.dll)
+        "KERNEL32.dll"
+    } else if clean == "CompareStringOrdinal"
+        || clean == "UpdateProcThreadAttribute"
+        || clean == "CopyFileExW"
+    {
+        "KERNEL32.dll"
+    } else if clean == "ExitProcess"
+        || clean.starts_with("Get")
+        || clean.starts_with("Set")
+        || clean.starts_with("Create")
+        || clean.starts_with("Close")
+        || clean.starts_with("Read")
+        || clean.starts_with("Write")
+        || clean.starts_with("Delete")
+        || clean.starts_with("Move")
+        || clean.starts_with("Find")
+        || clean.starts_with("Virtual")
+        || clean.starts_with("Heap")
+        || clean.starts_with("Local")
+        || clean.starts_with("Global")
+        || clean.starts_with("Load")
+        || clean.starts_with("Free")
+        || clean.starts_with("Sleep")
+        || clean.starts_with("Switch")
+        || clean.starts_with("Query")
+        || clean.starts_with("Rtl")
+        || clean.starts_with("Tls")
+        || clean.starts_with("Add")
+        || clean.starts_with("Remove")
+        || clean.starts_with("Duplicate")
+        || clean.starts_with("Flush")
+        || clean.starts_with("WaitFor")
+        || clean.starts_with("Terminate")
+        || clean.starts_with("FormatMessage")
+        || clean.starts_with("WideChar")
+        || clean.starts_with("MultiByte")
+        || clean.starts_with("SystemTime")
+        || clean.starts_with("FileTime")
+        || clean.starts_with("DeviceIoControl")
+        || clean.starts_with("CancelIo")
+        || clean.starts_with("Initialize")
+        || clean.starts_with("Enter")
+        || clean.starts_with("Leave")
+    {
+        "KERNEL32.dll"
+    } else {
+        "msvcrt.dll"
+    }
 }
 
 /// Helper to generate `.idata` section data for PE binaries.
@@ -31,10 +183,10 @@ pub fn build_import_table(
     use std::collections::BTreeMap;
     let mut by_dll: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for imp in imports {
-        by_dll
-            .entry(imp.dll_name.clone())
-            .or_default()
-            .push(imp.symbol_name.clone());
+        let sym_list = by_dll.entry(imp.dll_name.clone()).or_default();
+        if !sym_list.contains(&imp.symbol_name) {
+            sym_list.push(imp.symbol_name.clone());
+        }
     }
 
     let mut idata = Vec::new();
@@ -48,6 +200,8 @@ pub fn build_import_table(
     let mut desc_idx = 0;
     let mut first_iat_rva = 0u32;
     let mut total_iat_size = 0u32;
+
+    let mut symbol_iat_rvas = HashMap::new();
 
     for (dll_name, symbols) in &by_dll {
         // DLL name offset
@@ -85,7 +239,9 @@ pub fn build_import_table(
             first_iat_rva = iat_rva;
         }
         let iat_start_off = idata.len();
-        for &hrva in &hint_rvas {
+        for (i, &hrva) in hint_rvas.iter().enumerate() {
+            let sym_iat_rva = iat_rva + (i as u32) * 8;
+            symbol_iat_rvas.insert(symbols[i].clone(), sym_iat_rva);
             idata.extend_from_slice(&(hrva as u64).to_le_bytes());
         }
         idata.extend_from_slice(&0u64.to_le_bytes()); // Null terminator
@@ -108,5 +264,6 @@ pub fn build_import_table(
         import_descriptor_size: desc_table_size as u32,
         iat_rva: first_iat_rva,
         iat_size: total_iat_size,
+        symbol_iat_rvas,
     }
 }

@@ -73,7 +73,15 @@ impl SymbolResolver {
             for ar in archives {
                 let current_undef: Vec<String> = self.undefined.iter().cloned().collect();
                 for undef_sym in current_undef {
-                    if let Some(&m_idx) = ar.symbol_index.get(&undef_sym) {
+                    let m_idx_opt = ar
+                        .symbol_index
+                        .get(&undef_sym)
+                        .or_else(|| {
+                            ar.symbol_index
+                                .get(undef_sym.strip_prefix('_').unwrap_or(&undef_sym))
+                        })
+                        .or_else(|| ar.symbol_index.get(&format!("_{}", undef_sym)));
+                    if let Some(&m_idx) = m_idx_opt {
                         if m_idx < ar.members.len()
                             && extracted_members.insert((ar.path.clone(), m_idx))
                         {
@@ -101,169 +109,142 @@ impl SymbolResolver {
             }
         }
 
-        // 3. Resolve well-known system, CRT, and Adesh runtime bridge symbols as dynamic imports or stubs
-        let system_crt_symbols = [
-            "printf",
-            "puts",
-            "putchar",
-            "malloc",
-            "free",
-            "calloc",
-            "realloc",
-            "exit",
-            "abort",
-            "memcpy",
-            "memset",
-            "memmove",
-            "memcmp",
-            "strlen",
-            "strcmp",
-            "strncmp",
-            "strcpy",
-            "strncpy",
-            "snprintf",
-            "sprintf",
-            "vsnprintf",
-            "getchar",
-            "fprintf",
-            "fflush",
-            "fopen",
-            "fclose",
-            "fread",
-            "fwrite",
-            "fseek",
-            "ftell",
-            "time",
-            "clock",
-            "getenv",
-            "system",
-            "trunc",
-            "truncf",
-            "floor",
-            "floorf",
-            "ceil",
-            "ceilf",
-            "round",
-            "roundf",
-            "sin",
-            "sinf",
-            "cos",
-            "cosf",
-            "tan",
-            "tanf",
-            "asin",
-            "asinf",
-            "acos",
-            "acosf",
-            "atan",
-            "atanf",
-            "atan2",
-            "atan2f",
-            "sinh",
-            "sinhf",
-            "cosh",
-            "coshf",
-            "tanh",
-            "tanhf",
-            "exp",
-            "expf",
-            "log",
-            "logf",
-            "log10",
-            "log10f",
-            "log2",
-            "log2f",
-            "pow",
-            "powf",
-            "sqrt",
-            "sqrtf",
-            "fmod",
-            "fmodf",
-            "fabs",
-            "fabsf",
-            "fmin",
-            "fminf",
-            "fmax",
-            "fmaxf",
-            "copysign",
-            "copysignf",
-            "hypot",
-            "hypotf",
-            "ldexp",
-            "frexp",
-            "modf",
-            "ExitProcess",
-            "GetStdHandle",
-            "WriteFile",
-            "ReadFile",
-            "CreateFileA",
-            "CreateFileW",
-            "CloseHandle",
-            "GetLastError",
-            "SetLastError",
-            "VirtualAlloc",
-            "VirtualFree",
-            "GetProcessHeap",
-            "HeapAlloc",
-            "HeapFree",
-            "Sleep",
-            "QueryPerformanceCounter",
-            "QueryPerformanceFrequency",
-            "GetSystemTimeAsFileTime",
-            "GetCurrentProcessId",
-            "GetCurrentThreadId",
-            "RtlCaptureContext",
-            "RtlLookupFunctionEntry",
-            "RtlVirtualUnwind",
-            "__acrt_iob_func",
-            "__stdio_common_vfprintf",
-            "__stdio_common_vsprintf",
-            "__CxxFrameHandler3",
-            "__CxxFrameHandler4",
-            "_CxxThrowException",
-            "__chkstk",
-        ];
-
+        // 3. Classify remaining undefined symbols using the OS API Router.
+        //    The router checks the actual target platform and routes each symbol to the
+        //    correct system DLL, intrinsic generator, or marks it as a hard undefined error.
         let remaining_undef: Vec<String> = self.undefined.iter().cloned().collect();
         for undef in remaining_undef {
-            let is_system = undef.starts_with("aot_")
-                || undef.starts_with("adesh_")
-                || undef.starts_with("__rust")
-                || undef.starts_with("rust_")
-                || undef.starts_with("_")
-                || undef.starts_with("?")
-                || undef.starts_with("??")
-                || undef.starts_with('$')
-                || system_crt_symbols.iter().any(|&s| {
-                    s == undef || undef.ends_with(s) || undef.trim_start_matches('_') == s
-                });
-            if is_system {
-                // Synthesize defined entry for system CRT / runtime import
-                self.undefined.remove(&undef);
-                self.table.insert(
-                    undef.clone(),
-                    ResolvedSymbol {
-                        symbol: Symbol {
-                            name: undef,
-                            binding: SymbolBinding::Global,
-                            visibility: crate::symbol::SymbolVisibility::Default,
-                            sym_type: crate::symbol::SymbolType::Function,
-                            section_index: None,
-                            value: 0,
-                            size: 0,
-                            is_defined: true,
-                            is_imported: true,
-                            is_exported: false,
-                            file_index: Some(0),
-                            alias_of: None,
-                            comdat_group: None,
-                            version: None,
+            use crate::os_router::{OsApiRouter, SymbolRoute};
+
+            // Build a dummy target for routing when we don't have a real one here.
+            // The target is not stored in the resolver; we use the host default.
+            // The actual target-aware routing happens in linker.rs Step 4.1.
+            // Here we just need to determine if a symbol is "safe to skip" (internal/intrinsic).
+            let route = OsApiRouter::classify(&undef, &crate::target::Target::host());
+
+            match route {
+                SymbolRoute::InternalRuntime => {
+                    // Dead Rust/Adesh internal — remove from undefined, don't synthesize
+                    self.undefined.remove(&undef);
+                }
+                SymbolRoute::Intrinsic => {
+                    // Will be code-generated in Step 4.1 of linker.rs
+                    self.undefined.remove(&undef);
+                    self.table.insert(
+                        undef.clone(),
+                        ResolvedSymbol {
+                            symbol: Symbol {
+                                name: undef,
+                                binding: SymbolBinding::Global,
+                                visibility: crate::symbol::SymbolVisibility::Default,
+                                sym_type: crate::symbol::SymbolType::Function,
+                                section_index: None,
+                                value: 0,
+                                size: 0,
+                                is_defined: true,
+                                is_imported: false,
+                                is_exported: false,
+                                file_index: Some(0),
+                                alias_of: None,
+                                comdat_group: None,
+                                version: None,
+                            },
+                            defined_in_file_index: 0,
+                            defined_in_sec_index: None,
+                            references: Vec::new(),
                         },
-                        defined_in_file_index: 0,
-                        defined_in_sec_index: None,
-                        references: Vec::new(),
-                    },
-                );
+                    );
+                }
+                SymbolRoute::LinkerSynthesized | SymbolRoute::CrtStartup => {
+                    // Will be synthesized in Step 4.1 of linker.rs
+                    self.undefined.remove(&undef);
+                    self.table.insert(
+                        undef.clone(),
+                        ResolvedSymbol {
+                            symbol: Symbol {
+                                name: undef,
+                                binding: SymbolBinding::Global,
+                                visibility: crate::symbol::SymbolVisibility::Default,
+                                sym_type: crate::symbol::SymbolType::Function,
+                                section_index: None,
+                                value: 0,
+                                size: 0,
+                                is_defined: true,
+                                is_imported: false,
+                                is_exported: false,
+                                file_index: Some(0),
+                                alias_of: None,
+                                comdat_group: None,
+                                version: None,
+                            },
+                            defined_in_file_index: 0,
+                            defined_in_sec_index: None,
+                            references: Vec::new(),
+                        },
+                    );
+                }
+                SymbolRoute::DllImport { dll, ref name } => {
+                    // System DLL import — mark as imported so Step 9 puts it in the import table
+                    self.undefined.remove(&undef);
+                    let sym_name = name.clone();
+                    self.table.insert(
+                        undef.clone(),
+                        ResolvedSymbol {
+                            symbol: Symbol {
+                                name: undef.clone(),
+                                binding: SymbolBinding::Global,
+                                visibility: crate::symbol::SymbolVisibility::Default,
+                                sym_type: crate::symbol::SymbolType::Function,
+                                section_index: None,
+                                value: 0,
+                                size: 0,
+                                is_defined: true,
+                                is_imported: true,
+                                is_exported: false,
+                                file_index: Some(0),
+                                alias_of: None,
+                                comdat_group: None,
+                                version: None,
+                            },
+                            defined_in_file_index: 0,
+                            defined_in_sec_index: None,
+                            references: Vec::new(),
+                        },
+                    );
+                    // Also store the clean name variant with the DLL tag in the table
+                    // so Step 9 can look it up directly
+                    let imp_name = format!("__imp_{}", sym_name);
+                    if !self.table.contains_key(&imp_name) {
+                        self.table.insert(
+                            imp_name.clone(),
+                            ResolvedSymbol {
+                                symbol: Symbol {
+                                    name: imp_name,
+                                    binding: SymbolBinding::Global,
+                                    visibility: crate::symbol::SymbolVisibility::Default,
+                                    sym_type: crate::symbol::SymbolType::Object,
+                                    section_index: None,
+                                    value: 0,
+                                    size: 8,
+                                    is_defined: true,
+                                    is_imported: true,
+                                    is_exported: false,
+                                    file_index: Some(0),
+                                    alias_of: None,
+                                    comdat_group: None,
+                                    version: None,
+                                },
+                                defined_in_file_index: 0,
+                                defined_in_sec_index: None,
+                                references: Vec::new(),
+                            },
+                        );
+                    }
+                    let _ = dll; // dll routing is done in Step 9 via OsApiRouter::windows_dll_for
+                }
+                SymbolRoute::Undefined => {
+                    // Remains in self.undefined — will be caught in Step 4 below
+                }
             }
         }
 

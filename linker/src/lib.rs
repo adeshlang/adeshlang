@@ -33,6 +33,7 @@ pub mod metadata;
 pub mod mlir;
 pub mod object;
 pub mod os;
+pub mod os_router;
 pub mod pe;
 pub mod quantum;
 pub mod relocation;

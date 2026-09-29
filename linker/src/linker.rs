@@ -121,10 +121,14 @@ impl Linker {
         // 4. Symbol Resolution and Archive Extraction
         ctx.resolver.resolve(&mut ctx.objects, &ctx.archives)?;
 
-        // 4.1 Synthesize Compiler Intrinsics and Stubs for Unimplemented Symbols
+        // 4.1 Synthesize Compiler Intrinsics, Entry Thunks, and Import Thunks for Unimplemented Symbols
+        let is_pe = ctx.config.target.format == ObjectFormat::Pe;
         let mut missing_symbols: Vec<String> = Vec::new();
+        if is_pe && !ctx.resolver.table.contains_key("mainCRTStartup") {
+            missing_symbols.push("mainCRTStartup".to_string());
+        }
         for (name, resolved) in &ctx.resolver.table {
-            if resolved.symbol.section_index.is_none() {
+            if resolved.symbol.section_index.is_none() && !missing_symbols.contains(name) {
                 missing_symbols.push(name.clone());
             }
         }
@@ -139,34 +143,103 @@ impl Linker {
 
             let mut code_bytes = Vec::new();
             let mut synth_symbols = Vec::new();
+            let mut synth_relocs = Vec::new();
 
             for name in &missing_symbols {
+                // If symbol is an __imp_ pointer or _fltused, handle appropriately
+                if name.starts_with("__imp_") || name.starts_with("_imp_") {
+                    continue;
+                }
+
+                if name == "_fltused" {
+                    continue;
+                }
+
                 let start_off = code_bytes.len() as u64;
-                let bytes = if crate::intrinsics::IntrinsicsEngine::is_intrinsic(name) {
-                    crate::intrinsics::IntrinsicsEngine::emit_intrinsic_code(
-                        name,
-                        &ctx.config.target,
+                let (bytes, relocs) = if crate::intrinsics::IntrinsicsEngine::is_intrinsic(name) {
+                    (
+                        crate::intrinsics::IntrinsicsEngine::emit_intrinsic_code(
+                            name,
+                            &ctx.config.target,
+                        ),
+                        Vec::new(),
                     )
+                } else if is_pe && name == "mainCRTStartup" {
+                    // Windows entry point startup stub (x86_64 Microsoft ABI):
+                    // sub rsp, 40                          ; 48 83 ec 28
+                    // xor ecx, ecx                         ; 31 c9
+                    // xor edx, edx                         ; 31 d2
+                    // call main                            ; e8 [rel32 main]
+                    // mov ecx, eax                         ; 89 c1
+                    // call qword ptr [__imp_ExitProcess]   ; ff 15 [disp32 __imp_ExitProcess]
+                    // add rsp, 40                          ; 48 83 c4 28
+                    // ret                                  ; c3
+                    let b = vec![
+                        0x48, 0x83, 0xec, 0x28, // 0..3: sub rsp, 40
+                        0x31, 0xc9,             // 4..5: xor ecx, ecx
+                        0x31, 0xd2,             // 6..7: xor edx, edx
+                        0xe8, 0x00, 0x00, 0x00, 0x00, // 8..12: call main (disp32 @ 9)
+                        0x89, 0xc1,             // 13..14: mov ecx, eax
+                        0xff, 0x15, 0x00, 0x00, 0x00, 0x00, // 15..20: call [__imp_ExitProcess] (disp32 @ 17)
+                        0x48, 0x83, 0xc4, 0x28, // 21..24: add rsp, 40
+                        0xc3,                   // 25: ret
+                    ];
+                    let r = vec![
+                        crate::relocation::Relocation {
+                            offset: start_off + 9,
+                            symbol_name: "main".to_string(),
+                            symbol_index: None,
+                            kind: crate::relocation::RelocationKind::PcRelative32,
+                            addend: -4,
+                        },
+                        crate::relocation::Relocation {
+                            offset: start_off + 17,
+                            symbol_name: "__imp_ExitProcess".to_string(),
+                            symbol_index: None,
+                            kind: crate::relocation::RelocationKind::PcRelative32,
+                            addend: -4,
+                        },
+                    ];
+                    (b, r)
+                } else if is_pe && ctx.config.target.arch == crate::target::Arch::X86_64 {
+                    // PE x86_64 Import Thunk:
+                    // jmp qword ptr [__imp_<name>]
+                    // \xff\x25 <disp32> \x90 \x90
+                    let raw = name
+                        .strip_prefix("__imp_")
+                        .or_else(|| name.strip_prefix("_imp_"))
+                        .unwrap_or(name);
+                    let b = vec![0xff, 0x25, 0x00, 0x00, 0x00, 0x00, 0x90, 0x90];
+                    let r = vec![crate::relocation::Relocation {
+                        offset: start_off + 2,
+                        symbol_name: format!("__imp_{}", raw),
+                        symbol_index: None,
+                        kind: crate::relocation::RelocationKind::PcRelative32,
+                        addend: -4,
+                    }];
+                    (b, r)
                 } else {
                     // Default return 0 stub for CRT / external functions: xor eax, eax; ret
-                    match ctx.config.target.arch {
+                    let b = match ctx.config.target.arch {
                         crate::target::Arch::X86_64 | crate::target::Arch::X86 => {
                             vec![0x31, 0xc0, 0xc3, 0x90]
                         }
                         crate::target::Arch::AArch64 => {
                             vec![0x00, 0x00, 0x80, 0x52, 0xc0, 0x03, 0x5f, 0xd6]
-                        } // mov w0, #0; ret
+                        }
                         crate::target::Arch::Riscv64 | crate::target::Arch::Riscv32 => {
                             vec![0x13, 0x05, 0x00, 0x00, 0x67, 0x80, 0x00, 0x00]
-                        } // li a0, 0; ret
+                        }
                         _ => vec![0xc3],
-                    }
+                    };
+                    (b, Vec::new())
                 };
 
                 let sz = bytes.len() as u64;
                 code_bytes.extend_from_slice(&bytes);
-                // 4-byte align each stub
-                while (code_bytes.len() & 3) != 0 {
+                synth_relocs.extend(relocs);
+                // 16-byte align each stub/thunk for performance and clean layout
+                while (code_bytes.len() & 15) != 0 {
                     code_bytes.push(0x90);
                 }
 
@@ -189,13 +262,44 @@ impl Linker {
                 synth_symbols.push(sym);
             }
 
-            let sec = crate::section::Section::new_code(".text.synth", code_bytes, 16);
+            let mut sec = crate::section::Section::new_code(".text.synth", code_bytes, 16);
+            sec.relocations = synth_relocs;
             synth_obj.add_section(sec);
+
+            // Add _fltused in .rdata if requested or on PE
+            if is_pe || missing_symbols.iter().any(|s| s == "_fltused") {
+                let flt_sec_idx = synth_obj.sections.len();
+                let flt_sec = crate::section::Section::new_data(
+                    ".rdata",
+                    vec![0x01, 0x00, 0x00, 0x00],
+                    false,
+                    4,
+                );
+                synth_obj.add_section(flt_sec);
+                let flt_sym = crate::symbol::Symbol {
+                    name: "_fltused".to_string(),
+                    binding: crate::symbol::SymbolBinding::Global,
+                    visibility: crate::symbol::SymbolVisibility::Default,
+                    sym_type: crate::symbol::SymbolType::Object,
+                    section_index: Some(flt_sec_idx),
+                    value: 0,
+                    size: 4,
+                    is_defined: true,
+                    is_imported: false,
+                    is_exported: false,
+                    file_index: Some(file_idx),
+                    alias_of: None,
+                    comdat_group: None,
+                    version: None,
+                };
+                synth_symbols.push(flt_sym);
+            }
+
             for sym in synth_symbols {
                 if let Some(resolved) = ctx.resolver.table.get_mut(&sym.name) {
                     resolved.symbol = sym.clone();
                     resolved.defined_in_file_index = file_idx;
-                    resolved.defined_in_sec_index = Some(0);
+                    resolved.defined_in_sec_index = sym.section_index;
                 }
                 synth_obj.add_symbol(sym);
             }
@@ -266,39 +370,45 @@ impl Linker {
                 let mut imports = Vec::new();
                 let mut seen_imports = std::collections::HashSet::new();
                 for sym in &ctx.layout.resolved_symbols {
-                    if (sym.is_imported || !sym.is_defined)
-                        && !sym.name.starts_with('$')
-                        && !sym.name.starts_with("anon.")
-                        && !sym.name.starts_with("_ZN")
-                        && !sym.name.starts_with("__rust")
-                        && !sym.name.starts_with("rust_")
-                        && !sym.name.starts_with("??")
-                        && !sym.name.starts_with('.')
-                        && !sym.name.is_empty()
-                        && seen_imports.insert(sym.name.clone())
-                    {
-                        let dll_name = if sym.name == "ExitProcess"
-                            || sym.name.starts_with("Get")
-                            || sym.name.starts_with("Write")
-                            || sym.name.starts_with("Read")
-                            || sym.name.starts_with("Virtual")
-                            || sym.name.starts_with("Close")
-                            || sym.name.starts_with("Sleep")
-                            || sym.name.starts_with("Query")
-                            || sym.name.starts_with("Rtl")
-                            || sym.name.starts_with("Create")
-                            || sym.name.starts_with("Set")
-                        {
-                            "KERNEL32.dll".to_string()
-                        } else {
-                            "msvcrt.dll".to_string()
-                        };
-                        imports.push(crate::pe::import::ImportSymbol {
-                            dll_name,
-                            symbol_name: sym.name.clone(),
-                            ordinal: None,
-                        });
+                    // Only process symbols that are marked as imported (DLL imports)
+                    if !sym.is_imported {
+                        continue;
                     }
+                    // Strip any import-prefix decoration to get the raw symbol name
+                    let raw = sym
+                        .name
+                        .strip_prefix("__imp_")
+                        .or_else(|| sym.name.strip_prefix("_imp_"))
+                        .unwrap_or(&sym.name);
+                    let clean = raw.trim_start_matches('_');
+
+                    // Skip empty, _fltused, or any internal/mangled names
+                    if clean.is_empty() || clean == "fltused" {
+                        continue;
+                    }
+
+                    // Route via the OS API Router — it knows which DLL owns this symbol.
+                    // Prefer `raw` to preserve CRT underscores like `_CxxThrowException`,
+                    // falling back to `clean`.
+                    if let Some(dll) = crate::os_router::OsApiRouter::windows_dll_for(raw) {
+                        if seen_imports.insert(raw.to_string()) {
+                            imports.push(crate::pe::import::ImportSymbol {
+                                dll_name: dll.to_string(),
+                                symbol_name: raw.to_string(),
+                                ordinal: None,
+                            });
+                        }
+                    } else if let Some(dll) = crate::os_router::OsApiRouter::windows_dll_for(clean) {
+                        if seen_imports.insert(clean.to_string()) {
+                            imports.push(crate::pe::import::ImportSymbol {
+                                dll_name: dll.to_string(),
+                                symbol_name: clean.to_string(),
+                                ordinal: None,
+                            });
+                        }
+                    }
+                    // If windows_dll_for returns None, the symbol is an internal runtime symbol
+                    // that got mis-tagged as imported — silently skip it.
                 }
                 PeWriter::write_executable(
                     &ctx.config.output_path,

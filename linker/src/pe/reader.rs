@@ -328,37 +328,38 @@ impl PeReader {
                         }
                         (Arch::X86_64, 0x0004) => {
                             // IMAGE_REL_AMD64_REL32 (PC-relative call/jmp/mov)
-                            let add = if v_usize + 4 <= sec.data.len() {
+                            // In COFF x86_64, displacement is relative to (place_va + 4).
+                            let embedded = if v_usize + 4 <= sec.data.len() {
                                 i32::from_le_bytes(
                                     sec.data[v_usize..v_usize + 4].try_into().unwrap(),
                                 ) as i64
                             } else {
-                                -4
+                                0
                             };
-                            (crate::relocation::RelocationKind::PcRelative32, add)
+                            (crate::relocation::RelocationKind::PcRelative32, embedded - 4)
                         }
                         (Arch::X86_64, 0x0005..=0x0009) => {
-                            // IMAGE_REL_AMD64_REL32_1.._5
+                            // IMAGE_REL_AMD64_REL32_1.._5 (displacement is relative to place_va + 4 + distance)
                             let sub = (reloc_type - 4) as i64;
-                            let add = if v_usize + 4 <= sec.data.len() {
+                            let embedded = if v_usize + 4 <= sec.data.len() {
                                 i32::from_le_bytes(
                                     sec.data[v_usize..v_usize + 4].try_into().unwrap(),
                                 ) as i64
                             } else {
-                                -4 - sub
+                                0
                             };
-                            (crate::relocation::RelocationKind::PcRelative32, add)
+                            (crate::relocation::RelocationKind::PcRelative32, embedded - 4 - sub)
                         }
                         (Arch::X86_64, 0x000E) => {
                             // IMAGE_REL_AMD64_PCR32
-                            let add = if v_usize + 4 <= sec.data.len() {
+                            let embedded = if v_usize + 4 <= sec.data.len() {
                                 i32::from_le_bytes(
                                     sec.data[v_usize..v_usize + 4].try_into().unwrap(),
                                 ) as i64
                             } else {
-                                -4
+                                0
                             };
-                            (crate::relocation::RelocationKind::PcRelative32, add)
+                            (crate::relocation::RelocationKind::PcRelative32, embedded - 4)
                         }
                         (Arch::AArch64, 0x0001)
                         | (Arch::AArch64, 0x0002)
