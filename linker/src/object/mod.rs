@@ -1,9 +1,13 @@
 //! Object File abstraction representing an input or intermediate relocatable artifact.
 
+pub mod adob;
+pub mod binary_reader;
 pub mod reader;
 pub mod writer;
 pub mod symbols;
 
+pub use adob::{AdobV2, ADOB_MAGIC, ADOB_VERSION_2};
+pub use binary_reader::BinaryReader;
 pub use reader::ObjectReader;
 pub use writer::ObjectWriter;
 pub use symbols::ObjectSymbolIndex;

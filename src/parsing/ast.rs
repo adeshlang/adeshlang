@@ -1924,6 +1924,7 @@ mod instance_packing_tests {
                 parent: None,
                 implements: vec![],
                 is_abstract: false,
+                no_extend: false,
                 field_visibility: HashMap::default(),
                 field_owner: HashMap::default(),
                 field_types: HashMap::default(),

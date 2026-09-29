@@ -6,6 +6,21 @@ use crate::object::ObjectFile;
 use crate::symbol::{Symbol, SymbolBinding};
 use std::collections::{HashMap, HashSet};
 
+/// Policy governing unresolved symbol resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UndefinedSymbolPolicy {
+    /// Emit an explicit link error for any unresolved symbol.
+    Error,
+    /// Treat unresolved symbol as dynamic import.
+    Import,
+    /// Treat unresolved symbol as weak undefined (NULL).
+    WeakUndefined,
+    /// Resolve via native intrinsic generator.
+    Intrinsic,
+    /// Resolve via declared Adesh runtime symbol.
+    RuntimeProvided,
+}
+
 /// Global symbol table entry tracking resolution origin.
 #[derive(Debug, Clone)]
 pub struct ResolvedSymbol {
@@ -19,6 +34,7 @@ pub struct ResolvedSymbol {
 pub struct SymbolResolver {
     pub table: HashMap<String, ResolvedSymbol>,
     pub undefined: HashSet<String>,
+    pub policy: UndefinedSymbolPolicy,
 }
 
 impl SymbolResolver {
@@ -26,6 +42,15 @@ impl SymbolResolver {
         Self {
             table: HashMap::new(),
             undefined: HashSet::new(),
+            policy: UndefinedSymbolPolicy::Error,
+        }
+    }
+
+    pub fn with_policy(policy: UndefinedSymbolPolicy) -> Self {
+        Self {
+            table: HashMap::new(),
+            undefined: HashSet::new(),
+            policy,
         }
     }
 

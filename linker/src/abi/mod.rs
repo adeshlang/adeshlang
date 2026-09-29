@@ -9,7 +9,13 @@
 //! 4. Calling Conventions & Register Allocations
 //! 5. Static Initialization & Destructor Arrays (.init_array / .fini_array)
 
+pub mod ffi;
 pub mod mangle;
+
+pub use ffi::{
+    CFieldLayout, CStructLayout, CallingConvention, FfiPanicPolicy,
+    ADESH_RUNTIME_ABI_VERSION, ADESH_RUNTIME_CONTRACTS,
+};
 
 use std::collections::BTreeMap;
 

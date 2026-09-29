@@ -125,7 +125,7 @@ extend HelloExt on Person {
         let prog = p.parse_program().expect("parse failed");
         assert!(
             prog.iter()
-                .any(|s| matches!(s.kind, StmtKind::Extend(_, _, _, _)))
+                .any(|s| matches!(s.kind, StmtKind::Extend(..)))
         );
     }
 
