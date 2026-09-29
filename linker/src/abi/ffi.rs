@@ -109,7 +109,10 @@ impl CStructLayout {
     }
 
     pub fn offset_of(&self, field_name: &str) -> Option<usize> {
-        self.fields.iter().find(|f| f.name == field_name).map(|f| f.offset)
+        self.fields
+            .iter()
+            .find(|f| f.name == field_name)
+            .map(|f| f.offset)
     }
 }
 
@@ -149,7 +152,11 @@ pub const ADESH_RUNTIME_CONTRACTS: &[RuntimeSymbolContract] = &[
 
 impl fmt::Display for CStructLayout {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "struct {} (size: {}, align: {}):", self.name, self.total_size, self.align)?;
+        writeln!(
+            f,
+            "struct {} (size: {}, align: {}):",
+            self.name, self.total_size, self.align
+        )?;
         for field in &self.fields {
             writeln!(
                 f,
@@ -171,11 +178,7 @@ mod tests {
         // expected: a @ 0, padding 7 bytes, b @ 8, c @ 16, total size padded to 24 (align 8)
         let layout = CStructLayout::compute(
             "TestStruct",
-            &[
-                ("a", "u8", 1, 1),
-                ("b", "u64", 8, 8),
-                ("c", "u32", 4, 4),
-            ],
+            &[("a", "u8", 1, 1), ("b", "u64", 8, 8), ("c", "u32", 4, 4)],
         );
 
         assert_eq!(layout.offset_of("a"), Some(0));

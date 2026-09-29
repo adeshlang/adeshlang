@@ -225,9 +225,17 @@ fn main() {
     }
 
     // Inspection subcommands
-    if first_arg == "inspect" || first_arg == "symbols" || first_arg == "sections" || first_arg == "relocations" || first_arg == "deps" {
+    if first_arg == "inspect"
+        || first_arg == "symbols"
+        || first_arg == "sections"
+        || first_arg == "relocations"
+        || first_arg == "deps"
+    {
         if args.len() < 3 {
-            eprintln!("error: subcommand `{}` requires a target file argument", first_arg);
+            eprintln!(
+                "error: subcommand `{}` requires a target file argument",
+                first_arg
+            );
             process::exit(1);
         }
         let file_path = Path::new(&args[2]);
@@ -418,15 +426,13 @@ fn main() {
             arg if arg.starts_with("-l") && arg.len() > 2 => {
                 config.libraries.push(arg[2..].to_string());
             }
-            arg if arg.starts_with("--target=") => {
-                match Target::from_triple(&arg[9..]) {
-                    Ok(t) => config.target = t,
-                    Err(e) => {
-                        eprintln!("{}", e);
-                        process::exit(1);
-                    }
+            arg if arg.starts_with("--target=") => match Target::from_triple(&arg[9..]) {
+                Ok(t) => config.target = t,
+                Err(e) => {
+                    eprintln!("{}", e);
+                    process::exit(1);
                 }
-            }
+            },
             arg if !arg.starts_with('-') => {
                 input_paths.push(PathBuf::from(arg));
             }
@@ -461,35 +467,58 @@ fn handle_ar(args: &[String]) -> Result<(), LinkError> {
         for file_arg in &args[2..] {
             let p = Path::new(file_arg);
             let bytes = fs::read(p).map_err(|e| {
-                LinkError::new(ErrorCode::IoError, format!("cannot read `{}`: {e}", p.display()))
+                LinkError::new(
+                    ErrorCode::IoError,
+                    format!("cannot read `{}`: {e}", p.display()),
+                )
             })?;
             let name = p.file_name().and_then(|n| n.to_str()).unwrap_or(file_arg);
             archive.add_file(name, bytes);
         }
         let encoded = archive.encode_gnu();
         fs::write(ar_path, encoded).map_err(|e| {
-            LinkError::new(ErrorCode::IoError, format!("cannot write `{}`: {e}", ar_path.display()))
+            LinkError::new(
+                ErrorCode::IoError,
+                format!("cannot write `{}`: {e}", ar_path.display()),
+            )
         })?;
-        println!("  ✓ Created static archive `{}` ({} members)", ar_path.display(), archive.members.len());
+        println!(
+            "  ✓ Created static archive `{}` ({} members)",
+            ar_path.display(),
+            archive.members.len()
+        );
     } else if op.contains('t') {
         // List archive members
         let bytes = fs::read(ar_path).map_err(|e| {
-            LinkError::new(ErrorCode::IoError, format!("cannot read `{}`: {e}", ar_path.display()))
+            LinkError::new(
+                ErrorCode::IoError,
+                format!("cannot read `{}`: {e}", ar_path.display()),
+            )
         })?;
         let archive = Archive::parse(&bytes, ar_path)?;
-        println!("Archive `{}` members ({}):", ar_path.display(), archive.members.len());
+        println!(
+            "Archive `{}` members ({}):",
+            ar_path.display(),
+            archive.members.len()
+        );
         for m in &archive.members {
             println!("  {:<40} {:>10} bytes", m.name, m.size);
         }
     } else if op.contains('x') {
         // Extract archive members
         let bytes = fs::read(ar_path).map_err(|e| {
-            LinkError::new(ErrorCode::IoError, format!("cannot read `{}`: {e}", ar_path.display()))
+            LinkError::new(
+                ErrorCode::IoError,
+                format!("cannot read `{}`: {e}", ar_path.display()),
+            )
         })?;
         let archive = Archive::parse(&bytes, ar_path)?;
         for m in &archive.members {
             fs::write(&m.name, &m.data).map_err(|e| {
-                LinkError::new(ErrorCode::IoError, format!("cannot extract `{}`: {e}", m.name))
+                LinkError::new(
+                    ErrorCode::IoError,
+                    format!("cannot extract `{}`: {e}", m.name),
+                )
             })?;
             println!("  ✓ Extracted `{}` ({} bytes)", m.name, m.size);
         }
@@ -542,11 +571,18 @@ fn handle_objdump(args: &[String]) -> Result<(), LinkError> {
     }
 
     let path = path_opt.ok_or_else(|| {
-        LinkError::new(ErrorCode::InvalidObject, "adeshlink objdump requires a target file argument")
+        LinkError::new(
+            ErrorCode::InvalidObject,
+            "adeshlink objdump requires a target file argument",
+        )
     })?;
 
     let obj = ObjectReader::read_from_file(path, &Target::host(), 0)?;
-    println!("\n{}:\tfile format {}\n", path.display(), obj.target.format.as_str());
+    println!(
+        "\n{}:\tfile format {}\n",
+        path.display(),
+        obj.target.format.as_str()
+    );
 
     if dump_headers {
         println!("Sections:");
@@ -622,7 +658,9 @@ fn handle_size(path: &Path) -> Result<(), LinkError> {
     for sec in &obj.sections {
         match sec.kind {
             SectionKind::Text => text_size += sec.size,
-            SectionKind::Data | SectionKind::Rodata | SectionKind::AdeshMeta => data_size += sec.size,
+            SectionKind::Data | SectionKind::Rodata | SectionKind::AdeshMeta => {
+                data_size += sec.size
+            }
             SectionKind::Bss | SectionKind::TBss => bss_size += sec.size,
             _ => {}
         }
@@ -663,7 +701,10 @@ fn handle_strip(args: &[String]) -> Result<(), LinkError> {
     }
 
     let inp = input_path.ok_or_else(|| {
-        LinkError::new(ErrorCode::InvalidObject, "adeshlink strip requires a target file")
+        LinkError::new(
+            ErrorCode::InvalidObject,
+            "adeshlink strip requires a target file",
+        )
     })?;
     let out = output_path.unwrap_or_else(|| inp.clone());
 
@@ -678,13 +719,19 @@ fn handle_strip(args: &[String]) -> Result<(), LinkError> {
 
     // Strip symbols (remove locals, keep globals, or remove all if strip_all)
     if strip_all {
-        obj.symbols.retain(|sym| sym.name == "_start" || sym.name == "main");
+        obj.symbols
+            .retain(|sym| sym.name == "_start" || sym.name == "main");
     } else {
-        obj.symbols.retain(|sym| sym.binding != SymbolBinding::Local);
+        obj.symbols
+            .retain(|sym| sym.binding != SymbolBinding::Local);
     }
 
     adesh_linker::object::ObjectWriter::write_to_file(&obj, &out)?;
-    println!("  ✓ Stripped debug info & local symbols from `{}` -> `{}`", inp.display(), out.display());
+    println!(
+        "  ✓ Stripped debug info & local symbols from `{}` -> `{}`",
+        inp.display(),
+        out.display()
+    );
     Ok(())
 }
 

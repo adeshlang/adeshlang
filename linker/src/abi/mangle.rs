@@ -3,7 +3,12 @@
 //! Format: `_A<crate_len><crate><module_len><module><item_len><item>E<hash>`
 
 /// Mangle an Adesh symbol path (e.g. `["std", "io", "println"]`).
-pub fn mangle_symbol(package: &str, module_path: &[&str], item_name: &str, sig_hash: Option<u32>) -> String {
+pub fn mangle_symbol(
+    package: &str,
+    module_path: &[&str],
+    item_name: &str,
+    sig_hash: Option<u32>,
+) -> String {
     let mut s = String::from("_A");
     s.push_str(&format!("{}{}", package.len(), package));
     for mod_part in module_path {

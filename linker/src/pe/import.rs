@@ -18,7 +18,11 @@ pub struct ImportTableResult {
 }
 
 /// Helper to generate `.idata` section data for PE binaries.
-pub fn build_import_table(imports: &[ImportSymbol], _image_base: u64, idata_rva: u32) -> ImportTableResult {
+pub fn build_import_table(
+    imports: &[ImportSymbol],
+    _image_base: u64,
+    idata_rva: u32,
+) -> ImportTableResult {
     if imports.is_empty() {
         return ImportTableResult::default();
     }
@@ -27,7 +31,10 @@ pub fn build_import_table(imports: &[ImportSymbol], _image_base: u64, idata_rva:
     use std::collections::BTreeMap;
     let mut by_dll: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for imp in imports {
-        by_dll.entry(imp.dll_name.clone()).or_default().push(imp.symbol_name.clone());
+        by_dll
+            .entry(imp.dll_name.clone())
+            .or_default()
+            .push(imp.symbol_name.clone());
     }
 
     let mut idata = Vec::new();

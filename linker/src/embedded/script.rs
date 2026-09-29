@@ -14,7 +14,12 @@ pub struct MemoryRegion {
 }
 
 impl MemoryRegion {
-    pub fn new(name: impl Into<String>, attributes: impl Into<String>, origin: u64, length: u64) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        attributes: impl Into<String>,
+        origin: u64,
+        length: u64,
+    ) -> Self {
         Self {
             name: name.into(),
             attributes: attributes.into(),
@@ -53,8 +58,8 @@ impl MemoryRegion {
 #[derive(Debug, Clone)]
 pub struct SectionAssignment {
     pub section_name: String,
-    pub target_region: String,        // VMA (e.g. RAM or FLASH)
-    pub lma_region: Option<String>,    // LMA (e.g. AT > FLASH for .data)
+    pub target_region: String,      // VMA (e.g. RAM or FLASH)
+    pub lma_region: Option<String>, // LMA (e.g. AT > FLASH for .data)
     pub alignment: u64,
     pub keep: bool,
 }
@@ -73,7 +78,12 @@ impl LinkerScript {
     }
 
     /// Standard ARM Cortex-M micro-controller template (e.g., STM32 / nRF52 / SAMD).
-    pub fn standard_cortex_m(flash_origin: u64, flash_size: u64, ram_origin: u64, ram_size: u64) -> Self {
+    pub fn standard_cortex_m(
+        flash_origin: u64,
+        flash_size: u64,
+        ram_origin: u64,
+        ram_size: u64,
+    ) -> Self {
         let mut script = Self::new();
         script.memory_regions.insert(
             "FLASH".to_string(),
@@ -122,14 +132,23 @@ impl LinkerScript {
         });
 
         // Top of stack symbol
-        script.symbols.insert("_estack".to_string(), ram_origin + ram_size);
+        script
+            .symbols
+            .insert("_estack".to_string(), ram_origin + ram_size);
         script
     }
 
     /// Standard RISC-V 32/64 bare-metal embedded template.
-    pub fn standard_riscv(flash_origin: u64, flash_size: u64, ram_origin: u64, ram_size: u64) -> Self {
+    pub fn standard_riscv(
+        flash_origin: u64,
+        flash_size: u64,
+        ram_origin: u64,
+        ram_size: u64,
+    ) -> Self {
         let mut script = Self::standard_cortex_m(flash_origin, flash_size, ram_origin, ram_size);
-        script.symbols.insert("__global_pointer$".to_string(), ram_origin + 0x800);
+        script
+            .symbols
+            .insert("__global_pointer$".to_string(), ram_origin + 0x800);
         script
     }
 
@@ -186,10 +205,9 @@ impl LinkerScript {
                         }
                     }
 
-                    script.memory_regions.insert(
-                        name.clone(),
-                        MemoryRegion::new(name, attrs, origin, length),
-                    );
+                    script
+                        .memory_regions
+                        .insert(name.clone(), MemoryRegion::new(name, attrs, origin, length));
                 }
             }
         }

@@ -2,9 +2,9 @@
 
 use crate::error::LinkResult;
 use crate::pe::header::*;
-use crate::pe::import::{build_import_table, ImportSymbol};
+use crate::pe::import::{ImportSymbol, build_import_table};
 use crate::pe::reloc::build_base_reloc_table;
-use crate::section::{align_to, MergedSection, SectionKind};
+use crate::section::{MergedSection, SectionKind, align_to};
 use crate::symbol::Symbol;
 use crate::target::{Arch, Target};
 use std::fs;
@@ -21,7 +21,8 @@ impl PeWriter {
         symbols: &[Symbol],
         imports: &[ImportSymbol],
     ) -> LinkResult<()> {
-        let bytes = Self::encode_executable(target, entry_va, merged_sections, symbols, imports, false)?;
+        let bytes =
+            Self::encode_executable(target, entry_va, merged_sections, symbols, imports, false)?;
         fs::write(path, bytes)?;
         Ok(())
     }
@@ -49,21 +50,29 @@ impl PeWriter {
         // 1. DOS Header & DOS Stub (128 bytes standard MSVC/LLVM layout)
         let lfanew = 0x80u32;
         let dos_hdr: [u8; 128] = [
-            0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00,
-            0xb8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00,
-            0x0e, 0x1f, 0xba, 0x0e, 0x00, 0xb4, 0x09, 0xcd, 0x21, 0xb8, 0x01, 0x4c, 0xcd, 0x21, 0x54, 0x68,
-            0x69, 0x73, 0x20, 0x70, 0x72, 0x6f, 0x67, 0x72, 0x61, 0x6d, 0x20, 0x63, 0x61, 0x6e, 0x6e, 0x6f,
-            0x74, 0x20, 0x62, 0x65, 0x20, 0x72, 0x75, 0x6e, 0x20, 0x69, 0x6e, 0x20, 0x44, 0x4f, 0x53, 0x20,
-            0x6d, 0x6f, 0x64, 0x65, 0x2e, 0x0d, 0x0d, 0x0a, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0xff, 0xff,
+            0x00, 0x00, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x0e, 0x1f, 0xba, 0x0e, 0x00, 0xb4,
+            0x09, 0xcd, 0x21, 0xb8, 0x01, 0x4c, 0xcd, 0x21, 0x54, 0x68, 0x69, 0x73, 0x20, 0x70,
+            0x72, 0x6f, 0x67, 0x72, 0x61, 0x6d, 0x20, 0x63, 0x61, 0x6e, 0x6e, 0x6f, 0x74, 0x20,
+            0x62, 0x65, 0x20, 0x72, 0x75, 0x6e, 0x20, 0x69, 0x6e, 0x20, 0x44, 0x4f, 0x53, 0x20,
+            0x6d, 0x6f, 0x64, 0x65, 0x2e, 0x0d, 0x0d, 0x0a, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
         ];
         output.extend_from_slice(&dos_hdr);
 
         // 2. Prepare Sections
         let mut pe_sections = Vec::new();
         for sec in merged_sections {
-            pe_sections.push((sec.name.clone(), sec.kind, sec.flags, sec.data.clone(), sec.size));
+            pe_sections.push((
+                sec.name.clone(),
+                sec.kind,
+                sec.flags,
+                sec.data.clone(),
+                sec.size,
+            ));
         }
 
         // Add .idata section if imports exist
@@ -75,7 +84,9 @@ impl PeWriter {
             pe_sections.push((
                 ".idata".to_string(),
                 SectionKind::Data,
-                crate::section::flags::READ | crate::section::flags::WRITE | crate::section::flags::ALLOC,
+                crate::section::flags::READ
+                    | crate::section::flags::WRITE
+                    | crate::section::flags::ALLOC,
                 res.data,
                 data_len,
             ));
@@ -87,7 +98,9 @@ impl PeWriter {
         pe_sections.push((
             ".reloc".to_string(),
             SectionKind::Rodata,
-            crate::section::flags::READ | crate::section::flags::ALLOC | crate::section::flags::DISCARD,
+            crate::section::flags::READ
+                | crate::section::flags::ALLOC
+                | crate::section::flags::DISCARD,
             reloc_data.clone(),
             reloc_data.len() as u64,
         ));
@@ -95,7 +108,8 @@ impl PeWriter {
         let num_sections = pe_sections.len() as u16;
         let opt_hdr_size = 240u16; // PE32+ Optional Header size
         let section_table_size = (num_sections as usize) * 40;
-        let headers_unaligned = (lfanew as usize) + 4 + 20 + (opt_hdr_size as usize) + section_table_size;
+        let headers_unaligned =
+            (lfanew as usize) + 4 + 20 + (opt_hdr_size as usize) + section_table_size;
         let headers_size = align_to(headers_unaligned as u64, file_alignment as u64) as u32;
 
         output.resize(headers_size as usize, 0);
@@ -124,8 +138,12 @@ impl PeWriter {
                 IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE
             } else {
                 let mut c = 0u32;
-                if (*flags & crate::section::flags::READ) != 0 { c |= IMAGE_SCN_MEM_READ; }
-                if (*flags & crate::section::flags::WRITE) != 0 { c |= IMAGE_SCN_MEM_WRITE; }
+                if (*flags & crate::section::flags::READ) != 0 {
+                    c |= IMAGE_SCN_MEM_READ;
+                }
+                if (*flags & crate::section::flags::WRITE) != 0 {
+                    c |= IMAGE_SCN_MEM_WRITE;
+                }
                 if (*flags & crate::section::flags::EXEC) != 0 {
                     c |= IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE;
                     if base_of_code == 0 {
@@ -165,7 +183,8 @@ impl PeWriter {
                 current_file_offset += raw_size;
             }
 
-            current_rva = align_to((current_rva + virt_size) as u64, section_alignment as u64) as u32;
+            current_rva =
+                align_to((current_rva + virt_size) as u64, section_alignment as u64) as u32;
         }
 
         let size_of_image = current_rva;
@@ -215,7 +234,7 @@ impl PeWriter {
         let mut opt_buf = vec![0u8; 240];
         opt_buf[0..2].copy_from_slice(&PE32PLUS_MAGIC.to_le_bytes()); // Magic: 0x020B
         opt_buf[2] = 14; // MajorLinkerVersion
-        opt_buf[3] = 0;  // MinorLinkerVersion
+        opt_buf[3] = 0; // MinorLinkerVersion
         opt_buf[4..8].copy_from_slice(&size_of_code.to_le_bytes());
         opt_buf[8..12].copy_from_slice(&size_of_init_data.to_le_bytes());
         opt_buf[12..16].copy_from_slice(&0u32.to_le_bytes()); // SizeOfUninitializedData
@@ -223,7 +242,10 @@ impl PeWriter {
         let entry_rva = if entry_va >= image_base {
             (entry_va - image_base) as u32
         } else {
-            section_headers.first().map(|s| s.virtual_address).unwrap_or(0x1000)
+            section_headers
+                .first()
+                .map(|s| s.virtual_address)
+                .unwrap_or(0x1000)
         };
         opt_buf[16..20].copy_from_slice(&entry_rva.to_le_bytes());
         opt_buf[20..24].copy_from_slice(&base_of_code.to_le_bytes());
@@ -247,11 +269,11 @@ impl PeWriter {
             | IMAGE_DLLCHARACTERISTICS_TERMINAL_SERVER_AWARE;
         opt_buf[70..72].copy_from_slice(&dll_chars.to_le_bytes());
         opt_buf[72..80].copy_from_slice(&0x100000u64.to_le_bytes()); // SizeOfStackReserve (1MB)
-        opt_buf[80..88].copy_from_slice(&0x1000u64.to_le_bytes());   // SizeOfStackCommit (4KB)
+        opt_buf[80..88].copy_from_slice(&0x1000u64.to_le_bytes()); // SizeOfStackCommit (4KB)
         opt_buf[88..96].copy_from_slice(&0x100000u64.to_le_bytes()); // SizeOfHeapReserve (1MB)
-        opt_buf[96..104].copy_from_slice(&0x1000u64.to_le_bytes());  // SizeOfHeapCommit (4KB)
-        opt_buf[104..108].copy_from_slice(&0u32.to_le_bytes());      // LoaderFlags
-        opt_buf[108..112].copy_from_slice(&16u32.to_le_bytes());     // NumberOfRvaAndSizes
+        opt_buf[96..104].copy_from_slice(&0x1000u64.to_le_bytes()); // SizeOfHeapCommit (4KB)
+        opt_buf[104..108].copy_from_slice(&0u32.to_le_bytes()); // LoaderFlags
+        opt_buf[108..112].copy_from_slice(&16u32.to_le_bytes()); // NumberOfRvaAndSizes
 
         // Data Directories (112..240)
         if let Some(ref imp_res) = final_imp_res {
@@ -259,12 +281,15 @@ impl PeWriter {
             let idata_rva = section_headers[id_idx].virtual_address;
             let imp_dir_off = 112 + IMAGE_DIRECTORY_ENTRY_IMPORT * 8;
             opt_buf[imp_dir_off..imp_dir_off + 4].copy_from_slice(&idata_rva.to_le_bytes());
-            opt_buf[imp_dir_off + 4..imp_dir_off + 8].copy_from_slice(&imp_res.import_descriptor_size.to_le_bytes());
+            opt_buf[imp_dir_off + 4..imp_dir_off + 8]
+                .copy_from_slice(&imp_res.import_descriptor_size.to_le_bytes());
 
             if imp_res.iat_rva > 0 {
                 let iat_dir_off = 112 + IMAGE_DIRECTORY_ENTRY_IAT * 8;
-                opt_buf[iat_dir_off..iat_dir_off + 4].copy_from_slice(&imp_res.iat_rva.to_le_bytes());
-                opt_buf[iat_dir_off + 4..iat_dir_off + 8].copy_from_slice(&imp_res.iat_size.to_le_bytes());
+                opt_buf[iat_dir_off..iat_dir_off + 4]
+                    .copy_from_slice(&imp_res.iat_rva.to_le_bytes());
+                opt_buf[iat_dir_off + 4..iat_dir_off + 8]
+                    .copy_from_slice(&imp_res.iat_size.to_le_bytes());
             }
         }
 
@@ -281,15 +306,24 @@ impl PeWriter {
         let mut sec_table_off = opt_off + 240;
         for sh in &section_headers {
             output[sec_table_off..sec_table_off + 8].copy_from_slice(&sh.name);
-            output[sec_table_off + 8..sec_table_off + 12].copy_from_slice(&sh.virtual_size.to_le_bytes());
-            output[sec_table_off + 12..sec_table_off + 16].copy_from_slice(&sh.virtual_address.to_le_bytes());
-            output[sec_table_off + 16..sec_table_off + 20].copy_from_slice(&sh.size_of_raw_data.to_le_bytes());
-            output[sec_table_off + 20..sec_table_off + 24].copy_from_slice(&sh.pointer_to_raw_data.to_le_bytes());
-            output[sec_table_off + 24..sec_table_off + 28].copy_from_slice(&sh.pointer_to_relocations.to_le_bytes());
-            output[sec_table_off + 28..sec_table_off + 32].copy_from_slice(&sh.pointer_to_linenumbers.to_le_bytes());
-            output[sec_table_off + 32..sec_table_off + 34].copy_from_slice(&sh.number_of_relocations.to_le_bytes());
-            output[sec_table_off + 34..sec_table_off + 36].copy_from_slice(&sh.number_of_linenumbers.to_le_bytes());
-            output[sec_table_off + 36..sec_table_off + 40].copy_from_slice(&sh.characteristics.to_le_bytes());
+            output[sec_table_off + 8..sec_table_off + 12]
+                .copy_from_slice(&sh.virtual_size.to_le_bytes());
+            output[sec_table_off + 12..sec_table_off + 16]
+                .copy_from_slice(&sh.virtual_address.to_le_bytes());
+            output[sec_table_off + 16..sec_table_off + 20]
+                .copy_from_slice(&sh.size_of_raw_data.to_le_bytes());
+            output[sec_table_off + 20..sec_table_off + 24]
+                .copy_from_slice(&sh.pointer_to_raw_data.to_le_bytes());
+            output[sec_table_off + 24..sec_table_off + 28]
+                .copy_from_slice(&sh.pointer_to_relocations.to_le_bytes());
+            output[sec_table_off + 28..sec_table_off + 32]
+                .copy_from_slice(&sh.pointer_to_linenumbers.to_le_bytes());
+            output[sec_table_off + 32..sec_table_off + 34]
+                .copy_from_slice(&sh.number_of_relocations.to_le_bytes());
+            output[sec_table_off + 34..sec_table_off + 36]
+                .copy_from_slice(&sh.number_of_linenumbers.to_le_bytes());
+            output[sec_table_off + 36..sec_table_off + 40]
+                .copy_from_slice(&sh.characteristics.to_le_bytes());
             sec_table_off += 40;
         }
 

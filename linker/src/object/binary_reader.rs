@@ -44,7 +44,11 @@ impl<'a> BinaryReader<'a> {
         if offset > self.data.len() {
             return Err(LinkError::new(
                 ErrorCode::InvalidObject,
-                format!("seek offset {} exceeds buffer length {}", offset, self.data.len()),
+                format!(
+                    "seek offset {} exceeds buffer length {}",
+                    offset,
+                    self.data.len()
+                ),
             ));
         }
         self.offset = offset;
@@ -98,17 +102,17 @@ impl<'a> BinaryReader<'a> {
 
     pub fn read_u64_le(&mut self) -> LinkResult<u64> {
         let bytes = self.read_bytes(8)?;
-        let arr: [u8; 8] = bytes.try_into().map_err(|_| {
-            LinkError::new(ErrorCode::InvalidObject, "failed to parse u64")
-        })?;
+        let arr: [u8; 8] = bytes
+            .try_into()
+            .map_err(|_| LinkError::new(ErrorCode::InvalidObject, "failed to parse u64"))?;
         Ok(u64::from_le_bytes(arr))
     }
 
     pub fn read_u64_be(&mut self) -> LinkResult<u64> {
         let bytes = self.read_bytes(8)?;
-        let arr: [u8; 8] = bytes.try_into().map_err(|_| {
-            LinkError::new(ErrorCode::InvalidObject, "failed to parse u64")
-        })?;
+        let arr: [u8; 8] = bytes
+            .try_into()
+            .map_err(|_| LinkError::new(ErrorCode::InvalidObject, "failed to parse u64"))?;
         Ok(u64::from_be_bytes(arr))
     }
 
@@ -125,7 +129,12 @@ impl<'a> BinaryReader<'a> {
         if end > self.data.len() {
             return Err(LinkError::new(
                 ErrorCode::InvalidObject,
-                format!("read range {}..{} out of bounds (len {})", self.offset, end, self.data.len()),
+                format!(
+                    "read range {}..{} out of bounds (len {})",
+                    self.offset,
+                    end,
+                    self.data.len()
+                ),
             ));
         }
         let slice = &self.data[self.offset..end];
@@ -160,7 +169,12 @@ impl<'a> BinaryReader<'a> {
         if end > self.data.len() {
             return Err(LinkError::new(
                 ErrorCode::InvalidObject,
-                format!("range {}..{} out of bounds (buffer len {})", start, end, self.data.len()),
+                format!(
+                    "range {}..{} out of bounds (buffer len {})",
+                    start,
+                    end,
+                    self.data.len()
+                ),
             ));
         }
         Ok(&self.data[start..end])

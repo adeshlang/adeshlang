@@ -3,7 +3,7 @@
 use crate::error::{ErrorCode, LinkError, LinkResult};
 use crate::macho::header::*;
 use crate::object::ObjectFile;
-use crate::section::{flags, Section, SectionKind};
+use crate::section::{Section, SectionKind, flags};
 use crate::symbol::{Symbol, SymbolBinding, SymbolType, SymbolVisibility};
 use crate::target::{Arch, Endianness, ObjectFormat, Os, PointerWidth, Target};
 use std::path::Path;
@@ -62,10 +62,12 @@ impl MachOReader {
                 break;
             }
             let cmd = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
-            let cmdsize = u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
+            let cmdsize =
+                u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
 
             if cmd == LC_SEGMENT_64 && offset + 72 <= bytes.len() {
-                let nsects = u32::from_le_bytes(bytes[offset + 64..offset + 68].try_into().unwrap()) as usize;
+                let nsects = u32::from_le_bytes(bytes[offset + 64..offset + 68].try_into().unwrap())
+                    as usize;
                 let mut sect_off = offset + 72;
 
                 for _ in 0..nsects {
@@ -77,9 +79,13 @@ impl MachOReader {
                     let end = sectname.iter().position(|&b| b == 0).unwrap_or(16);
                     let name = String::from_utf8_lossy(&sectname[0..end]).to_string();
 
-                    let addr = u64::from_le_bytes(bytes[sect_off + 32..sect_off + 40].try_into().unwrap());
-                    let size = u64::from_le_bytes(bytes[sect_off + 40..sect_off + 48].try_into().unwrap());
-                    let file_off = u32::from_le_bytes(bytes[sect_off + 48..sect_off + 52].try_into().unwrap()) as usize;
+                    let addr =
+                        u64::from_le_bytes(bytes[sect_off + 32..sect_off + 40].try_into().unwrap());
+                    let size =
+                        u64::from_le_bytes(bytes[sect_off + 40..sect_off + 48].try_into().unwrap());
+                    let file_off =
+                        u32::from_le_bytes(bytes[sect_off + 48..sect_off + 52].try_into().unwrap())
+                            as usize;
                     let align = 1u64 << bytes[sect_off + 52];
 
                     let kind = if name.contains("text") {
@@ -94,16 +100,28 @@ impl MachOReader {
                         SectionKind::Rodata
                     };
 
-                    let data = if kind != SectionKind::Bss && file_off + (size as usize) <= bytes.len() {
-                        bytes[file_off..file_off + (size as usize)].to_vec()
-                    } else {
-                        Vec::new()
-                    };
+                    let data =
+                        if kind != SectionKind::Bss && file_off + (size as usize) <= bytes.len() {
+                            bytes[file_off..file_off + (size as usize)].to_vec()
+                        } else {
+                            Vec::new()
+                        };
 
                     let sec = Section {
                         name,
                         kind,
-                        flags: flags::READ | flags::ALLOC | if kind == SectionKind::Text { flags::EXEC } else { 0 } | if kind == SectionKind::Data || kind == SectionKind::Bss { flags::WRITE } else { 0 },
+                        flags: flags::READ
+                            | flags::ALLOC
+                            | if kind == SectionKind::Text {
+                                flags::EXEC
+                            } else {
+                                0
+                            }
+                            | if kind == SectionKind::Data || kind == SectionKind::Bss {
+                                flags::WRITE
+                            } else {
+                                0
+                            },
                         alignment: align,
                         virtual_address: addr,
                         file_offset: file_off as u64,
@@ -121,27 +139,40 @@ impl MachOReader {
                     sect_off += 80;
                 }
             } else if cmd == LC_SYMTAB && offset + 24 <= bytes.len() {
-                symoff = u32::from_le_bytes(bytes[offset + 8..offset + 12].try_into().unwrap()) as usize;
-                nsyms = u32::from_le_bytes(bytes[offset + 12..offset + 16].try_into().unwrap()) as usize;
-                stroff = u32::from_le_bytes(bytes[offset + 16..offset + 20].try_into().unwrap()) as usize;
-                strsize = u32::from_le_bytes(bytes[offset + 20..offset + 24].try_into().unwrap()) as usize;
+                symoff =
+                    u32::from_le_bytes(bytes[offset + 8..offset + 12].try_into().unwrap()) as usize;
+                nsyms = u32::from_le_bytes(bytes[offset + 12..offset + 16].try_into().unwrap())
+                    as usize;
+                stroff = u32::from_le_bytes(bytes[offset + 16..offset + 20].try_into().unwrap())
+                    as usize;
+                strsize = u32::from_le_bytes(bytes[offset + 20..offset + 24].try_into().unwrap())
+                    as usize;
             }
 
             offset += cmdsize;
         }
 
         // Parse Symbols
-        if symoff > 0 && stroff > 0 && symoff + nsyms * 16 <= bytes.len() && stroff + strsize <= bytes.len() {
+        if symoff > 0
+            && stroff > 0
+            && symoff + nsyms * 16 <= bytes.len()
+            && stroff + strsize <= bytes.len()
+        {
             let strtab = &bytes[stroff..stroff + strsize];
             for i in 0..nsyms {
                 let s_off = symoff + i * 16;
-                let n_strx = u32::from_le_bytes(bytes[s_off..s_off + 4].try_into().unwrap()) as usize;
+                let n_strx =
+                    u32::from_le_bytes(bytes[s_off..s_off + 4].try_into().unwrap()) as usize;
                 let n_type = bytes[s_off + 4];
                 let n_sect = bytes[s_off + 5];
                 let n_value = u64::from_le_bytes(bytes[s_off + 8..s_off + 16].try_into().unwrap());
 
                 let sym_name = if n_strx < strtab.len() {
-                    let end = strtab[n_strx..].iter().position(|&b| b == 0).map(|p| n_strx + p).unwrap_or(strtab.len());
+                    let end = strtab[n_strx..]
+                        .iter()
+                        .position(|&b| b == 0)
+                        .map(|p| n_strx + p)
+                        .unwrap_or(strtab.len());
                     String::from_utf8_lossy(&strtab[n_strx..end]).to_string()
                 } else {
                     String::new()
@@ -154,7 +185,11 @@ impl MachOReader {
                     None
                 };
 
-                let binding = if (n_type & 0x01) != 0 { SymbolBinding::Global } else { SymbolBinding::Local };
+                let binding = if (n_type & 0x01) != 0 {
+                    SymbolBinding::Global
+                } else {
+                    SymbolBinding::Local
+                };
 
                 let sym = Symbol {
                     name: sym_name,

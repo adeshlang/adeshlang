@@ -123,10 +123,7 @@ extend HelloExt on Person {
         let toks = lx.tokenize().expect("lex failed");
         let mut p = Parser::new(toks, None);
         let prog = p.parse_program().expect("parse failed");
-        assert!(
-            prog.iter()
-                .any(|s| matches!(s.kind, StmtKind::Extend(..)))
-        );
+        assert!(prog.iter().any(|s| matches!(s.kind, StmtKind::Extend(..))));
     }
 
     #[test]

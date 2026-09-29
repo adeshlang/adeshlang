@@ -1,7 +1,7 @@
 use adesh_linker::config::LinkConfig;
 use adesh_linker::linker::Linker;
-use adesh_linker::object::writer::ObjectWriter;
 use adesh_linker::object::ObjectFile;
+use adesh_linker::object::writer::ObjectWriter;
 use adesh_linker::relocation::{Relocation, RelocationKind};
 use adesh_linker::section::Section;
 use adesh_linker::symbol::{Symbol, SymbolBinding, SymbolType};
@@ -15,10 +15,27 @@ fn test_link_elf_x86_64_executable() {
 
     // 1. Create main.o
     let mut main_obj = ObjectFile::new(dir.path().join("main.o"), target.clone(), 0);
-    let mut main_sec = Section::new_code(".text", vec![0x48, 0xC7, 0xC0, 0x3C, 0x00, 0x00, 0x00, 0x0F, 0x05], 16); // mov rax, 60; syscall
-    main_sec.relocations.push(Relocation::new(0, "helper_func", RelocationKind::PcRelative32, 0));
+    let mut main_sec = Section::new_code(
+        ".text",
+        vec![0x48, 0xC7, 0xC0, 0x3C, 0x00, 0x00, 0x00, 0x0F, 0x05],
+        16,
+    ); // mov rax, 60; syscall
+    main_sec.relocations.push(Relocation::new(
+        0,
+        "helper_func",
+        RelocationKind::PcRelative32,
+        0,
+    ));
     main_obj.add_section(main_sec);
-    main_obj.add_symbol(Symbol::new_defined("_start", SymbolBinding::Global, SymbolType::Function, 0, 0, 9, 0));
+    main_obj.add_symbol(Symbol::new_defined(
+        "_start",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        9,
+        0,
+    ));
     main_obj.add_symbol(Symbol::new_undefined("helper_func", 0));
     let main_path = dir.path().join("main.o");
     ObjectWriter::write_to_file(&main_obj, &main_path).unwrap();
@@ -27,7 +44,15 @@ fn test_link_elf_x86_64_executable() {
     let mut helper_obj = ObjectFile::new(dir.path().join("helper.o"), target.clone(), 1);
     let helper_sec = Section::new_code(".text", vec![0xC3], 16); // ret
     helper_obj.add_section(helper_sec);
-    helper_obj.add_symbol(Symbol::new_defined("helper_func", SymbolBinding::Global, SymbolType::Function, 0, 0, 1, 1));
+    helper_obj.add_symbol(Symbol::new_defined(
+        "helper_func",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        1,
+        1,
+    ));
     let helper_path = dir.path().join("helper.o");
     ObjectWriter::write_to_file(&helper_obj, &helper_path).unwrap();
 
@@ -54,7 +79,15 @@ fn test_link_pe_windows_executable() {
     let mut obj = ObjectFile::new(dir.path().join("main.obj"), target.clone(), 0);
     let sec = Section::new_code(".text", vec![0x48, 0x31, 0xC0, 0xC3], 16); // xor rax, rax; ret
     obj.add_section(sec);
-    obj.add_symbol(Symbol::new_defined("mainCRTStartup", SymbolBinding::Global, SymbolType::Function, 0, 0, 4, 0));
+    obj.add_symbol(Symbol::new_defined(
+        "mainCRTStartup",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        4,
+        0,
+    ));
     let obj_path = dir.path().join("main.obj");
     ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
 
@@ -76,7 +109,15 @@ fn test_link_macho_darwin_executable() {
     let mut obj = ObjectFile::new(dir.path().join("main.o"), target.clone(), 0);
     let sec = Section::new_code("__text", vec![0xC0, 0x03, 0x5F, 0xD6], 16); // ret
     obj.add_section(sec);
-    obj.add_symbol(Symbol::new_defined("_main", SymbolBinding::Global, SymbolType::Function, 0, 0, 4, 0));
+    obj.add_symbol(Symbol::new_defined(
+        "_main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        4,
+        0,
+    ));
     let obj_path = dir.path().join("main.o");
     ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
 
@@ -87,7 +128,10 @@ fn test_link_macho_darwin_executable() {
     assert!(out_path.exists());
 
     let bytes = std::fs::read(&out_path).unwrap();
-    assert_eq!(u32::from_le_bytes(bytes[0..4].try_into().unwrap()), 0xFEEDFACF);
+    assert_eq!(
+        u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
+        0xFEEDFACF
+    );
 }
 
 #[test]
@@ -98,7 +142,15 @@ fn test_link_wasm_module() {
     let mut obj = ObjectFile::new(dir.path().join("main.o"), target.clone(), 0);
     let sec = Section::new_code(".text", vec![0x0B], 1); // end
     obj.add_section(sec);
-    obj.add_symbol(Symbol::new_defined("_start", SymbolBinding::Global, SymbolType::Function, 0, 0, 1, 0));
+    obj.add_symbol(Symbol::new_defined(
+        "_start",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        1,
+        0,
+    ));
     let obj_path = dir.path().join("main.o");
     ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
 
@@ -120,7 +172,15 @@ fn test_link_gpu_fatbin_and_quantum_qir() {
     let gpu_target = Target::from_triple("nvptx64-cuda").unwrap();
     let mut gpu_obj = ObjectFile::new(dir.path().join("kernel.o"), gpu_target.clone(), 0);
     gpu_obj.add_section(Section::new_code(".nv.text", vec![0x90, 0x90], 8));
-    gpu_obj.add_symbol(Symbol::new_defined("__adesh_gpu_kernel_entry", SymbolBinding::Global, SymbolType::Function, 0, 0, 2, 0));
+    gpu_obj.add_symbol(Symbol::new_defined(
+        "__adesh_gpu_kernel_entry",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        2,
+        0,
+    ));
     let gpu_obj_path = dir.path().join("kernel.o");
     ObjectWriter::write_to_file(&gpu_obj, &gpu_obj_path).unwrap();
 
@@ -132,8 +192,20 @@ fn test_link_gpu_fatbin_and_quantum_qir() {
     // Quantum Target
     let q_target = Target::from_triple("qpu-quantum").unwrap();
     let mut q_obj = ObjectFile::new(dir.path().join("circuit.o"), q_target.clone(), 0);
-    q_obj.add_section(Section::new_code(".qir", b"; ModuleID = 'circuit.ll'\n".to_vec(), 4));
-    q_obj.add_symbol(Symbol::new_defined("__adesh_quantum_main", SymbolBinding::Global, SymbolType::Function, 0, 0, 10, 0));
+    q_obj.add_section(Section::new_code(
+        ".qir",
+        b"; ModuleID = 'circuit.ll'\n".to_vec(),
+        4,
+    ));
+    q_obj.add_symbol(Symbol::new_defined(
+        "__adesh_quantum_main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        10,
+        0,
+    ));
     let q_obj_path = dir.path().join("circuit.o");
     ObjectWriter::write_to_file(&q_obj, &q_obj_path).unwrap();
 

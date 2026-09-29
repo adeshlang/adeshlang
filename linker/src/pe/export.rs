@@ -9,11 +9,7 @@ pub struct ExportSymbol {
 }
 
 /// Helper to build `.edata` section payload.
-pub fn build_export_table(
-    module_name: &str,
-    exports: &[ExportSymbol],
-    edata_rva: u32,
-) -> Vec<u8> {
+pub fn build_export_table(module_name: &str, exports: &[ExportSymbol], edata_rva: u32) -> Vec<u8> {
     if exports.is_empty() {
         return Vec::new();
     }

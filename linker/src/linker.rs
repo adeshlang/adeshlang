@@ -29,7 +29,8 @@ impl Linker {
             return Err(LinkError::new(
                 ErrorCode::InvalidObject,
                 "no input object files or archives specified for linking",
-            ).with_suggestion("Pass at least one object file (e.g. `adeshlink main.o -o app`)"));
+            )
+            .with_suggestion("Pass at least one object file (e.g. `adeshlink main.o -o app`)"));
         }
 
         let mut ctx = LinkContext::new(config);
@@ -48,7 +49,8 @@ impl Linker {
                 let archive = Archive::parse(&bytes, path)?;
                 ctx.archives.push(archive);
             } else {
-                let obj = ObjectReader::read_from_memory(&bytes, path, &ctx.config.target, file_index)?;
+                let obj =
+                    ObjectReader::read_from_memory(&bytes, path, &ctx.config.target, file_index)?;
                 ctx.objects.push(obj);
                 file_index += 1;
             }
@@ -79,7 +81,10 @@ impl Linker {
                 }
             }
             if !found {
-                ctx.diagnostics.emit_warning(format!("library `-l{}` was not found in specified search paths", lib_name));
+                ctx.diagnostics.emit_warning(format!(
+                    "library `-l{}` was not found in specified search paths",
+                    lib_name
+                ));
             }
         }
 
@@ -107,7 +112,11 @@ impl Linker {
         }
 
         // 3. Debug Information Processing
-        DebugProcessor::strip_debug_sections(&mut ctx.objects, ctx.config.strip, ctx.config.strip_debug);
+        DebugProcessor::strip_debug_sections(
+            &mut ctx.objects,
+            ctx.config.strip,
+            ctx.config.strip_debug,
+        );
 
         // 4. Symbol Resolution and Archive Extraction
         ctx.resolver.resolve(&mut ctx.objects, &ctx.archives)?;
@@ -134,13 +143,22 @@ impl Linker {
             for name in &missing_symbols {
                 let start_off = code_bytes.len() as u64;
                 let bytes = if crate::intrinsics::IntrinsicsEngine::is_intrinsic(name) {
-                    crate::intrinsics::IntrinsicsEngine::emit_intrinsic_code(name, &ctx.config.target)
+                    crate::intrinsics::IntrinsicsEngine::emit_intrinsic_code(
+                        name,
+                        &ctx.config.target,
+                    )
                 } else {
                     // Default return 0 stub for CRT / external functions: xor eax, eax; ret
                     match ctx.config.target.arch {
-                        crate::target::Arch::X86_64 | crate::target::Arch::X86 => vec![0x31, 0xc0, 0xc3, 0x90],
-                        crate::target::Arch::AArch64 => vec![0x00, 0x00, 0x80, 0x52, 0xc0, 0x03, 0x5f, 0xd6], // mov w0, #0; ret
-                        crate::target::Arch::Riscv64 | crate::target::Arch::Riscv32 => vec![0x13, 0x05, 0x00, 0x00, 0x67, 0x80, 0x00, 0x00], // li a0, 0; ret
+                        crate::target::Arch::X86_64 | crate::target::Arch::X86 => {
+                            vec![0x31, 0xc0, 0xc3, 0x90]
+                        }
+                        crate::target::Arch::AArch64 => {
+                            vec![0x00, 0x00, 0x80, 0x52, 0xc0, 0x03, 0x5f, 0xd6]
+                        } // mov w0, #0; ret
+                        crate::target::Arch::Riscv64 | crate::target::Arch::Riscv32 => {
+                            vec![0x13, 0x05, 0x00, 0x00, 0x67, 0x80, 0x00, 0x00]
+                        } // li a0, 0; ret
                         _ => vec![0xc3],
                     }
                 };
@@ -195,13 +213,18 @@ impl Linker {
         roots.extend(ctx.config.exports.iter().cloned());
 
         let removed_sections = if ctx.config.gc_sections {
-            GarbageCollector::collect_dead_sections(&mut ctx.objects, &roots, ctx.config.print_gc_sections)
+            GarbageCollector::collect_dead_sections(
+                &mut ctx.objects,
+                &roots,
+                ctx.config.print_gc_sections,
+            )
         } else {
             0
         };
 
         // 6. Optimization: Identical Code Folding (--icf)
-        let folded_sections = IcfEngine::fold_sections(&mut ctx.objects, ctx.config.icf, ctx.config.print_icf);
+        let folded_sections =
+            IcfEngine::fold_sections(&mut ctx.objects, ctx.config.icf, ctx.config.print_icf);
 
         // 7. Memory Layout, Virtual Address Assignment & Relocations
         ctx.layout.layout_and_relocate(
@@ -352,7 +375,10 @@ impl Linker {
                         folded_into: None,
                     });
                 }
-                crate::object::writer::ObjectWriter::write_to_file(&dummy_obj, &ctx.config.output_path)?;
+                crate::object::writer::ObjectWriter::write_to_file(
+                    &dummy_obj,
+                    &ctx.config.output_path,
+                )?;
             }
         }
 
@@ -360,12 +386,23 @@ impl Linker {
 
         // 10. Write Link Map if requested
         if let Some(ref map_p) = ctx.config.map_file {
-            LinkMapGenerator::write_map_to_file(&ctx.objects, &ctx.layout, ctx.config.map_format, map_p)?;
+            LinkMapGenerator::write_map_to_file(
+                &ctx.objects,
+                &ctx.layout,
+                ctx.config.map_format,
+                map_p,
+            )?;
         }
 
         // 11. Print Link Report and Dependency Graph if requested
         if ctx.config.report {
-            LinkMapGenerator::print_report(&ctx.objects, &ctx.layout, removed_sections, folded_sections, elapsed);
+            LinkMapGenerator::print_report(
+                &ctx.objects,
+                &ctx.layout,
+                removed_sections,
+                folded_sections,
+                elapsed,
+            );
         }
         if ctx.config.dependency_graph {
             LinkMapGenerator::print_dependency_graph(&ctx.objects);

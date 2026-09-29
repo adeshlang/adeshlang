@@ -19,7 +19,11 @@ impl GarbageCollector {
         for (f_idx, obj) in objects.iter().enumerate() {
             for (s_idx, sec) in obj.sections.iter().enumerate() {
                 // Keep metadata, notes, and init sections unconditionally
-                if sec.name == ".adesh.meta" || sec.name.starts_with(".init") || sec.name.starts_with(".fini") || sec.name.starts_with(".note") {
+                if sec.name == ".adesh.meta"
+                    || sec.name.starts_with(".init")
+                    || sec.name.starts_with(".fini")
+                    || sec.name.starts_with(".note")
+                {
                     live_sections.insert((f_idx, s_idx));
                     worklist.push_back((f_idx, s_idx));
                 }
@@ -66,7 +70,10 @@ impl GarbageCollector {
                     sec.is_live = false;
                     removed_count += 1;
                     if print_gc {
-                        println!("--gc-sections: removed dead section `{}` from `{}`", sec.name, obj_name);
+                        println!(
+                            "--gc-sections: removed dead section `{}` from `{}`",
+                            sec.name, obj_name
+                        );
                     }
                 }
             }

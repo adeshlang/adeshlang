@@ -8,11 +8,11 @@ pub const ADESH_CURRENT_ABI_VERSION: u32 = 1;
 
 /// Flags describing Adesh runtime capabilities and compilation features.
 pub mod flags {
-    pub const FEATURE_GC: u32          = 1 << 0;
-    pub const FEATURE_ASYNC: u32       = 1 << 1;
-    pub const FEATURE_SIMD: u32        = 1 << 2;
-    pub const FEATURE_HARDENED: u32    = 1 << 3;
-    pub const FEATURE_THREADING: u32   = 1 << 4;
+    pub const FEATURE_GC: u32 = 1 << 0;
+    pub const FEATURE_ASYNC: u32 = 1 << 1;
+    pub const FEATURE_SIMD: u32 = 1 << 2;
+    pub const FEATURE_HARDENED: u32 = 1 << 3;
+    pub const FEATURE_THREADING: u32 = 1 << 4;
 }
 
 /// Binary metadata stored in `.adesh.meta` sections of Adesh object files.
@@ -51,7 +51,7 @@ impl AdeshMetadata {
         buf.extend_from_slice(&self.runtime_abi_version.to_le_bytes());
         buf.extend_from_slice(&self.feature_flags.to_le_bytes());
         buf.extend_from_slice(&self.source_hash);
-        
+
         let triple_bytes = self.target_triple.as_bytes();
         let triple_len = triple_bytes.len() as u32;
         buf.extend_from_slice(&triple_len.to_le_bytes());
@@ -81,7 +81,7 @@ impl AdeshMetadata {
         let comp_patch = u16::from_le_bytes(bytes[12..14].try_into().unwrap());
         let runtime_abi_version = u32::from_le_bytes(bytes[14..18].try_into().unwrap());
         let feature_flags = u32::from_le_bytes(bytes[18..22].try_into().unwrap());
-        
+
         let mut source_hash = [0u8; 32];
         source_hash.copy_from_slice(&bytes[22..54]);
 
@@ -106,7 +106,12 @@ impl AdeshMetadata {
     }
 
     /// Validate metadata compatibility across linked object files.
-    pub fn validate_compatibility(&self, other: &AdeshMetadata, this_file: &str, other_file: &str) -> LinkResult<()> {
+    pub fn validate_compatibility(
+        &self,
+        other: &AdeshMetadata,
+        this_file: &str,
+        other_file: &str,
+    ) -> LinkResult<()> {
         if self.abi_version != other.abi_version {
             return Err(LinkError::new(
                 ErrorCode::MetadataMismatch,
@@ -114,7 +119,10 @@ impl AdeshMetadata {
                     "Adesh ABI version mismatch between `{}` (ABI v{}) and `{}` (ABI v{})",
                     this_file, self.abi_version, other_file, other.abi_version
                 ),
-            ).with_suggestion("Recompile both source files with the same version of the Adesh compiler."));
+            )
+            .with_suggestion(
+                "Recompile both source files with the same version of the Adesh compiler.",
+            ));
         }
 
         if self.runtime_abi_version != other.runtime_abi_version {

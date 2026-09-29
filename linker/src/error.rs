@@ -137,8 +137,12 @@ impl LinkError {
             ref_desc.push_str(&format!(" at offset 0x{:x}", off));
         }
         err.notes.push(ref_desc);
-        err.suggestions.push(format!("Check if the object or static archive containing `{}` was passed to the linker.", sym_name));
-        err.suggestions.push("Ensure symbol visibility is global and not static/internal.".to_string());
+        err.suggestions.push(format!(
+            "Check if the object or static archive containing `{}` was passed to the linker.",
+            sym_name
+        ));
+        err.suggestions
+            .push("Ensure symbol visibility is global and not static/internal.".to_string());
         err
     }
 
@@ -157,7 +161,10 @@ impl LinkError {
         err.symbol = Some(sym_name);
         err.notes.push(format!("first defined in: {}", first));
         err.notes.push(format!("redefined in: {}", second));
-        err.suggestions.push("Ensure only one definition of the strong symbol exists or mark one as weak.".to_string());
+        err.suggestions.push(
+            "Ensure only one definition of the strong symbol exists or mark one as weak."
+                .to_string(),
+        );
         err
     }
 
@@ -171,12 +178,16 @@ impl LinkError {
         let ta = target_arch.into();
         let mut err = Self::new(
             ErrorCode::ArchitectureMismatch,
-            format!("cannot link object `{}`: architecture `{}` does not match target `{}`", f, fa, ta),
+            format!(
+                "cannot link object `{}`: architecture `{}` does not match target `{}`",
+                f, fa, ta
+            ),
         );
         err.file = Some(f);
         err.notes.push(format!("object architecture: {}", fa));
         err.notes.push(format!("target architecture: {}", ta));
-        err.suggestions.push("Recompile the input object for the target architecture.".to_string());
+        err.suggestions
+            .push("Recompile the input object for the target architecture.".to_string());
         err
     }
 
@@ -191,25 +202,41 @@ impl LinkError {
     ) -> Self {
         let mut err = Self::new(
             ErrorCode::RelocationOverflow,
-            format!("relocation `{}` for symbol `{}` overflowed (value: 0x{:x}, valid range: [0x{:x}, 0x{:x}])", reloc_name, symbol, value, min, max),
+            format!(
+                "relocation `{}` for symbol `{}` overflowed (value: 0x{:x}, valid range: [0x{:x}, 0x{:x}])",
+                reloc_name, symbol, value, min, max
+            ),
         );
         err.symbol = Some(symbol.to_string());
         if let Some(f) = file {
             err.file = Some(f.to_string());
         }
         err.offset = offset;
-        err.suggestions.push("Consider using a larger code model (e.g. medium/large) or PIC relocation model.".to_string());
+        err.suggestions.push(
+            "Consider using a larger code model (e.g. medium/large) or PIC relocation model."
+                .to_string(),
+        );
         err
     }
 
     pub fn entry_point_not_found(entry_name: &str, searched_files: &[String]) -> Self {
         let mut err = Self::new(
             ErrorCode::EntryPointNotFound,
-            format!("entry point `{}` was not found in any linked object", entry_name),
+            format!(
+                "entry point `{}` was not found in any linked object",
+                entry_name
+            ),
         );
         err.symbol = Some(entry_name.to_string());
-        err.notes.push(format!("searched in {} input file(s): {}", searched_files.len(), searched_files.join(", ")));
-        err.suggestions.push(format!("Define an entry function named `{}` or specify `--entry <symbol>`.", entry_name));
+        err.notes.push(format!(
+            "searched in {} input file(s): {}",
+            searched_files.len(),
+            searched_files.join(", ")
+        ));
+        err.suggestions.push(format!(
+            "Define an entry function named `{}` or specify `--entry <symbol>`.",
+            entry_name
+        ));
         err
     }
 

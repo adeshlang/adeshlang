@@ -25,15 +25,15 @@ pub enum SectionKind {
 
 /// Bitflags for section permissions and attributes.
 pub mod flags {
-    pub const READ: u32       = 1 << 0;
-    pub const WRITE: u32      = 1 << 1;
-    pub const EXEC: u32       = 1 << 2;
-    pub const ALLOC: u32      = 1 << 3;
-    pub const TLS: u32        = 1 << 4;
-    pub const MERGE: u32      = 1 << 5;
-    pub const STRINGS: u32    = 1 << 6;
-    pub const COMDAT: u32     = 1 << 7;
-    pub const DISCARD: u32    = 1 << 8;
+    pub const READ: u32 = 1 << 0;
+    pub const WRITE: u32 = 1 << 1;
+    pub const EXEC: u32 = 1 << 2;
+    pub const ALLOC: u32 = 1 << 3;
+    pub const TLS: u32 = 1 << 4;
+    pub const MERGE: u32 = 1 << 5;
+    pub const STRINGS: u32 = 1 << 6;
+    pub const COMDAT: u32 = 1 << 7;
+    pub const DISCARD: u32 = 1 << 8;
 }
 
 /// Unified representation of an input or intermediate object section.
@@ -76,9 +76,18 @@ impl Section {
         }
     }
 
-    pub fn new_data(name: impl Into<String>, data: Vec<u8>, is_writable: bool, alignment: u64) -> Self {
+    pub fn new_data(
+        name: impl Into<String>,
+        data: Vec<u8>,
+        is_writable: bool,
+        alignment: u64,
+    ) -> Self {
         let size = data.len() as u64;
-        let kind = if is_writable { SectionKind::Data } else { SectionKind::Rodata };
+        let kind = if is_writable {
+            SectionKind::Data
+        } else {
+            SectionKind::Rodata
+        };
         let mut f = flags::READ | flags::ALLOC;
         if is_writable {
             f |= flags::WRITE;
@@ -135,9 +144,21 @@ impl Section {
 
 impl fmt::Display for Section {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let r = if (self.flags & flags::READ) != 0 { "R" } else { "-" };
-        let w = if (self.flags & flags::WRITE) != 0 { "W" } else { "-" };
-        let x = if (self.flags & flags::EXEC) != 0 { "X" } else { "-" };
+        let r = if (self.flags & flags::READ) != 0 {
+            "R"
+        } else {
+            "-"
+        };
+        let w = if (self.flags & flags::WRITE) != 0 {
+            "W"
+        } else {
+            "-"
+        };
+        let x = if (self.flags & flags::EXEC) != 0 {
+            "X"
+        } else {
+            "-"
+        };
         write!(
             f,
             "{:18} 0x{:08x} size=0x{:06x} align={:4} [{}{}{}] relocs={}",
@@ -188,14 +209,15 @@ impl MergedSection {
     pub fn append_section(&mut self, sec: &Section, file_idx: usize, sec_idx: usize) -> u64 {
         self.alignment = self.alignment.max(sec.alignment);
         let offset = align_to(self.data.len() as u64, sec.alignment);
-        
+
         if offset > self.data.len() as u64 {
             let pad_len = (offset - self.data.len() as u64) as usize;
             self.data.resize(self.data.len() + pad_len, 0);
         }
 
         let section_offset_in_merged = self.data.len() as u64;
-        self.input_sections.push((file_idx, sec_idx, section_offset_in_merged));
+        self.input_sections
+            .push((file_idx, sec_idx, section_offset_in_merged));
 
         if sec.kind != SectionKind::Bss {
             self.data.extend_from_slice(&sec.data);

@@ -3,7 +3,7 @@ use adesh_linker::hash::{compute_build_id, sha256};
 use adesh_linker::layout::LayoutEngine;
 use adesh_linker::map::LinkMapGenerator;
 use adesh_linker::object::ObjectFile;
-use adesh_linker::section::{flags, MergedSection, SectionKind};
+use adesh_linker::section::{MergedSection, SectionKind, flags};
 use adesh_linker::symbol::{Symbol, SymbolBinding, SymbolType};
 use adesh_linker::target::Target;
 use std::path::PathBuf;
@@ -30,20 +30,39 @@ fn test_sha256_hashing_consistency() {
     let text = b"hello world";
     let hash = sha256(text);
     // sha256("hello world") = b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9
-    let hex = hash.iter().map(|b| format!("{:02x}", b)).collect::<String>();
-    assert_eq!(hex, "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9");
+    let hex = hash
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>();
+    assert_eq!(
+        hex,
+        "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+    );
 }
 
 #[test]
 fn test_link_map_text_and_json_generation() {
     let mut layout = LayoutEngine::new();
 
-    let mut text_merged = MergedSection::new(".text", SectionKind::Text, flags::READ | flags::EXEC | flags::ALLOC, 16);
+    let mut text_merged = MergedSection::new(
+        ".text",
+        SectionKind::Text,
+        flags::READ | flags::EXEC | flags::ALLOC,
+        16,
+    );
     text_merged.virtual_address = 0x401000;
     text_merged.size = 64;
     layout.merged_sections.push(text_merged);
 
-    let sym = Symbol::new_defined("main", SymbolBinding::Global, SymbolType::Function, 0, 0x401000, 64, 0);
+    let sym = Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0x401000,
+        64,
+        0,
+    );
     layout.resolved_symbols.push(sym);
 
     let target = Target::x86_64_linux();

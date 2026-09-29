@@ -22,12 +22,12 @@ pub const METALLIB_MAGIC: [u8; 4] = *b"MTLB";
 /// CUDA Compute Architecture Capability
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CudaComputeArch {
-    Sm70, // Volta
-    Sm75, // Turing
-    Sm80, // Ampere
-    Sm86, // Ampere (Consumer)
-    Sm89, // Ada Lovelace
-    Sm90, // Hopper
+    Sm70,  // Volta
+    Sm75,  // Turing
+    Sm80,  // Ampere
+    Sm86,  // Ampere (Consumer)
+    Sm89,  // Ada Lovelace
+    Sm90,  // Hopper
     Sm100, // Blackwell
 }
 
@@ -198,10 +198,10 @@ impl SpirvBinaryWriter {
 
         // 1. SPIR-V Header (5 words)
         words.push(SPIRV_MAGIC); // Magic
-        words.push(0x00010600);   // Version 1.6
-        words.push(0x000AD001);   // Generator ID (Adesh native toolchain)
-        words.push(100);          // Bound ID
-        words.push(0);            // Reserved
+        words.push(0x00010600); // Version 1.6
+        words.push(0x000AD001); // Generator ID (Adesh native toolchain)
+        words.push(100); // Bound ID
+        words.push(0); // Reserved
 
         // Helper macro/closure to emit instruction: (OpCode, [operands...])
         let mut emit = |opcode: u16, operands: &[u32]| {

@@ -1,7 +1,8 @@
 //! Comprehensive test suite for MLIR, GPU, NPU/TPU, Quantum, and Embedded Baremetal toolchain systems.
 
 use adesh_linker::accelerators::gpu::{
-    CudaComputeArch, CudaFatbinWriter, CudaKernelPayload, SpirvBinaryWriter, AmdGpuCodeObjectWriter, MetalLibWriter,
+    AmdGpuCodeObjectWriter, CudaComputeArch, CudaFatbinWriter, CudaKernelPayload, MetalLibWriter,
+    SpirvBinaryWriter,
 };
 use adesh_linker::accelerators::npu::{
     EthosCommandPacket, EthosNpuWriter, EthosOpcode, TpuBundleWriter, TpuMxuConfig,
@@ -24,7 +25,10 @@ fn test_mlir_bytecode_roundtrip() {
     let mut matmul_op = DialectOp::new(DialectKind::Linalg, "matmul");
     matmul_op.operands = vec!["%A".to_string(), "%B".to_string()];
     matmul_op.results = vec!["%C".to_string()];
-    matmul_op.attributes.insert("indexing_maps".to_string(), "affine_map<(d0, d1, d2) -> (d0, d2)>".to_string());
+    matmul_op.attributes.insert(
+        "indexing_maps".to_string(),
+        "affine_map<(d0, d1, d2) -> (d0, d2)>".to_string(),
+    );
     matmul_op.tensor_shape = Some(TensorShape::new(vec![128, 128], "f32"));
     module.operations.push(matmul_op);
 
@@ -33,7 +37,9 @@ fn test_mlir_bytecode_roundtrip() {
         vec![(0, 128), (0, 128), (0, 128)],
     );
     schedule.tile_sizes = vec![32, 32, 16];
-    module.schedules.insert("matmul_kernel".to_string(), schedule);
+    module
+        .schedules
+        .insert("matmul_kernel".to_string(), schedule);
 
     // Encode to bytecode
     let encoded = MlirBytecodeWriter::encode(&module).expect("Failed to encode MLIR bytecode");
@@ -45,9 +51,15 @@ fn test_mlir_bytecode_roundtrip() {
     assert_eq!(decoded.operations.len(), 1);
     assert_eq!(decoded.operations[0].dialect, DialectKind::Linalg);
     assert_eq!(decoded.operations[0].op_name, "matmul");
-    assert_eq!(decoded.operations[0].tensor_shape.as_ref().unwrap().dims, vec![128, 128]);
+    assert_eq!(
+        decoded.operations[0].tensor_shape.as_ref().unwrap().dims,
+        vec![128, 128]
+    );
     assert_eq!(decoded.schedules.len(), 1);
-    assert_eq!(decoded.schedules["matmul_kernel"].tile_sizes, vec![32, 32, 16]);
+    assert_eq!(
+        decoded.schedules["matmul_kernel"].tile_sizes,
+        vec![32, 32, 16]
+    );
 }
 
 #[test]
@@ -80,13 +92,24 @@ fn test_gpu_cuda_fatbin_and_spirv_emission() {
     assert_eq!(&spv_bytes[4..8], &0x00010600u32.to_le_bytes()); // SPIR-V 1.6
 
     // 3. AMD ROCm HSACO
-    AmdGpuCodeObjectWriter::write_hsaco(&hsaco_path, "amdgpu_kernel", 64, 32, 64, &[0xbf, 0x81, 0x00, 0x00])
-        .expect("Write HSACO");
+    AmdGpuCodeObjectWriter::write_hsaco(
+        &hsaco_path,
+        "amdgpu_kernel",
+        64,
+        32,
+        64,
+        &[0xbf, 0x81, 0x00, 0x00],
+    )
+    .expect("Write HSACO");
     assert!(hsaco_path.exists());
 
     // 4. Apple MetalLib
-    MetalLibWriter::write_metallib(&metallib_path, &["compute_kernel".to_string()], b"AIR_BITCODE_PAYLOAD")
-        .expect("Write MetalLib");
+    MetalLibWriter::write_metallib(
+        &metallib_path,
+        &["compute_kernel".to_string()],
+        b"AIR_BITCODE_PAYLOAD",
+    )
+    .expect("Write MetalLib");
     assert!(metallib_path.exists());
 }
 
@@ -106,13 +129,15 @@ fn test_npu_ethos_and_tpu_bundle_emission() {
         ifm_shape: [1, 28, 28, 1],
         ofm_shape: [1, 28, 28, 32],
     };
-    EthosNpuWriter::write_ethos_stream(&ethos_path, &[cmd], &[0xAA; 1024]).expect("Write Ethos stream");
+    EthosNpuWriter::write_ethos_stream(&ethos_path, &[cmd], &[0xAA; 1024])
+        .expect("Write Ethos stream");
     assert!(ethos_path.exists());
     let ethos_bytes = std::fs::read(&ethos_path).unwrap();
     assert_eq!(&ethos_bytes[0..4], b"ETHU");
 
     // 2. Google TPU V5 Bundle
-    let mut weight_sec = MergedSection::new(".weights", adesh_linker::section::SectionKind::Data, 0, 128);
+    let mut weight_sec =
+        MergedSection::new(".weights", adesh_linker::section::SectionKind::Data, 0, 128);
     weight_sec.data = vec![0xBB; 256];
     let config = TpuMxuConfig {
         version: 5,
@@ -172,7 +197,8 @@ fn test_embedded_baremetal_linker_script_and_firmware_formats() {
     let srec_path = dir.path().join("firmware.srec");
 
     // 1. Linker script memory allocation
-    let mut script = LinkerScript::standard_cortex_m(0x0800_0000, 512 * 1024, 0x2000_0000, 128 * 1024);
+    let mut script =
+        LinkerScript::standard_cortex_m(0x0800_0000, 512 * 1024, 0x2000_0000, 128 * 1024);
     let flash = script.memory_regions.get_mut("FLASH").unwrap();
     let text_vma = flash.allocate(1024, 4).expect("Allocate flash");
     assert_eq!(text_vma, 0x0800_0000);

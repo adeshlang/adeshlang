@@ -12,7 +12,7 @@ pub use linux::LinuxOs;
 pub use macos::MacOs;
 pub use none::NoneOs;
 pub use openbsd::{
-    AixOs, AndroidOs, DragonFlyOs, IosOs, NetBsdOs, OpenBsdOs, Plan9Os, QuantumRuntimeOs, SolarisOs,
-    WasiOs,
+    AixOs, AndroidOs, DragonFlyOs, IosOs, NetBsdOs, OpenBsdOs, Plan9Os, QuantumRuntimeOs,
+    SolarisOs, WasiOs,
 };
 pub use windows::WindowsOs;

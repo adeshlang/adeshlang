@@ -162,7 +162,10 @@ impl AdobV2 {
         let mut reader = BinaryReader::new(bytes);
         let magic = reader.read_bytes(4)?;
         if magic != ADOB_MAGIC {
-            return Err(LinkError::new(ErrorCode::InvalidObject, "invalid ADOB magic"));
+            return Err(LinkError::new(
+                ErrorCode::InvalidObject,
+                "invalid ADOB magic",
+            ));
         }
 
         let version = reader.read_u16_le()?;
@@ -323,10 +326,19 @@ mod tests {
         let mut obj = ObjectFile::new("test.adob".into(), target.clone(), 0);
 
         let mut sec = Section::new_code(".text", vec![0x90, 0x90, 0x90, 0xc3], 1);
-        sec.relocations.push(Relocation::new(0, "foo", RelocationKind::PcRelative32, -4));
+        sec.relocations
+            .push(Relocation::new(0, "foo", RelocationKind::PcRelative32, -4));
         obj.add_section(sec);
 
-        let sym = Symbol::new_defined("main", SymbolBinding::Global, SymbolType::Function, 0, 2, 0, 0);
+        let sym = Symbol::new_defined(
+            "main",
+            SymbolBinding::Global,
+            SymbolType::Function,
+            0,
+            2,
+            0,
+            0,
+        );
         obj.add_symbol(sym);
 
         let encoded = AdobV2::encode(&obj).unwrap();

@@ -18,11 +18,28 @@ fn test_gc_sections_purges_unreferenced() {
     obj.add_section(sec_live);
     obj.add_section(sec_dead);
 
-    obj.add_symbol(Symbol::new_defined("main", SymbolBinding::Global, SymbolType::Function, 0, 0, 2, 0));
-    obj.add_symbol(Symbol::new_defined("unused_func", SymbolBinding::Global, SymbolType::Function, 1, 0, 2, 0));
+    obj.add_symbol(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        2,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_defined(
+        "unused_func",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        1,
+        0,
+        2,
+        0,
+    ));
 
     let mut objects = vec![obj];
-    let removed = GarbageCollector::collect_dead_sections(&mut objects, &["main".to_string()], false);
+    let removed =
+        GarbageCollector::collect_dead_sections(&mut objects, &["main".to_string()], false);
 
     assert_eq!(removed, 1);
     assert!(objects[0].sections[0].is_live);
@@ -41,8 +58,24 @@ fn test_icf_folds_identical_code() {
     obj.add_section(sec1);
     obj.add_section(sec2);
 
-    obj.add_symbol(Symbol::new_defined("func_a", SymbolBinding::Global, SymbolType::Function, 0, 0, 4, 0));
-    obj.add_symbol(Symbol::new_defined("func_b", SymbolBinding::Global, SymbolType::Function, 1, 0, 4, 0));
+    obj.add_symbol(Symbol::new_defined(
+        "func_a",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        4,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_defined(
+        "func_b",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        1,
+        0,
+        4,
+        0,
+    ));
 
     let mut objects = vec![obj];
     let folded = IcfEngine::fold_sections(&mut objects, IcfMode::Safe, false);

@@ -3,7 +3,6 @@
 //! Provides zero-cost exception and panic unwinding table synthesis for Linux/macOS (.eh_frame, .eh_frame_hdr)
 //! and Windows x64 SEH (.pdata, .xdata), as well as GC-free RAII drop tables for the Adesh ownership model.
 
-
 /// Unwind metadata representation.
 #[derive(Debug, Clone, Default)]
 pub struct UnwindInfo {
@@ -28,11 +27,7 @@ impl EhFrameHdrGenerator {
     /// - `hdr_va`: Virtual address of the `.eh_frame_hdr` section
     /// - `eh_frame_va`: Virtual address of the `.eh_frame` section
     /// - `fde_entries`: Slice of `(func_initial_va, fde_va)` sorted by `func_initial_va`
-    pub fn build(
-        hdr_va: u64,
-        eh_frame_va: u64,
-        mut fde_entries: Vec<(u64, u64)>,
-    ) -> Vec<u8> {
+    pub fn build(hdr_va: u64, eh_frame_va: u64, mut fde_entries: Vec<(u64, u64)>) -> Vec<u8> {
         let mut out = Vec::new();
 
         // 1. Version (1)

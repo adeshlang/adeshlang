@@ -54,7 +54,9 @@ fn test_e2e_hello_world_executable_pipeline() {
     let target = Target::x86_64_linux();
 
     // 1. main.o (calls println)
-    let main_code = vec![0x48, 0x83, 0xec, 0x08, 0xe8, 0x00, 0x00, 0x00, 0x00, 0x48, 0x83, 0xc4, 0x08, 0xc3];
+    let main_code = vec![
+        0x48, 0x83, 0xec, 0x08, 0xe8, 0x00, 0x00, 0x00, 0x00, 0x48, 0x83, 0xc4, 0x08, 0xc3,
+    ];
     let main_obj_file = dir.path().join("main.o");
     let main_obj = create_code_object(
         main_obj_file.clone(),
@@ -147,17 +149,41 @@ fn test_e2e_dead_code_elimination_size_reduction() {
         addend: -4,
     });
     obj.sections.push(main_sec);
-    obj.symbols.push(Symbol::new_defined("main", SymbolBinding::Global, SymbolType::Function, 0, 0, 32, 0));
+    obj.symbols.push(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        32,
+        0,
+    ));
 
     // Live helper section
     let helper_sec = Section::new_code(".text.used_helper", vec![0x90; 32], 16);
     obj.sections.push(helper_sec);
-    obj.symbols.push(Symbol::new_defined("used_helper", SymbolBinding::Global, SymbolType::Function, 1, 0, 32, 0));
+    obj.symbols.push(Symbol::new_defined(
+        "used_helper",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        1,
+        0,
+        32,
+        0,
+    ));
 
     // Dead section (unreferenced)
     let dead_sec = Section::new_code(".text.dead_function", vec![0xcc; 1024], 16);
     obj.sections.push(dead_sec);
-    obj.symbols.push(Symbol::new_defined("dead_function", SymbolBinding::Global, SymbolType::Function, 2, 0, 1024, 0));
+    obj.symbols.push(Symbol::new_defined(
+        "dead_function",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        2,
+        0,
+        1024,
+        0,
+    ));
 
     let mut objs = vec![obj];
     let roots = vec!["main".to_string()];
@@ -177,12 +203,28 @@ fn test_e2e_safe_identical_code_folding() {
     // Function A: ret 0
     let sec_a = Section::new_code(".text.func_a", vec![0x31, 0xc0, 0xc3], 16);
     obj.sections.push(sec_a);
-    obj.symbols.push(Symbol::new_defined("func_a", SymbolBinding::Global, SymbolType::Function, 0, 0, 3, 0));
+    obj.symbols.push(Symbol::new_defined(
+        "func_a",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        3,
+        0,
+    ));
 
     // Function B: ret 0 (identical code bytes)
     let sec_b = Section::new_code(".text.func_b", vec![0x31, 0xc0, 0xc3], 16);
     obj.sections.push(sec_b);
-    obj.symbols.push(Symbol::new_defined("func_b", SymbolBinding::Global, SymbolType::Function, 1, 0, 3, 0));
+    obj.symbols.push(Symbol::new_defined(
+        "func_b",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        1,
+        0,
+        3,
+        0,
+    ));
 
     let mut objs = vec![obj];
     let folded_count = IcfEngine::fold_sections(&mut objs, IcfMode::Safe, false);
@@ -220,7 +262,11 @@ fn test_e2e_scope_aware_raii_unwind_exact_lifo_drop_execution() {
                 start_offset: 50,
                 end_offset: 80,
                 cleanup_state_id: 3,
-                drop_targets: vec!["drop_tx".to_string(), "drop_mutex_lock".to_string(), "drop_db_conn".to_string()],
+                drop_targets: vec![
+                    "drop_tx".to_string(),
+                    "drop_mutex_lock".to_string(),
+                    "drop_db_conn".to_string(),
+                ],
             },
         ],
     };
@@ -228,13 +274,24 @@ fn test_e2e_scope_aware_raii_unwind_exact_lifo_drop_execution() {
     unwind_table.add_function(desc);
 
     // If panic happens at instruction offset 35 (inside lock scope):
-    let drops_at_35 = unwind_table.find_actions_for_pc("process_transaction", 35).unwrap();
-    assert_eq!(drops_at_35, &["drop_mutex_lock".to_string(), "drop_db_conn".to_string()]);
+    let drops_at_35 = unwind_table
+        .find_actions_for_pc("process_transaction", 35)
+        .unwrap();
+    assert_eq!(
+        drops_at_35,
+        &["drop_mutex_lock".to_string(), "drop_db_conn".to_string()]
+    );
 
     // If panic happens at instruction offset 65 (inside tx scope):
-    let drops_at_65 = unwind_table.find_actions_for_pc("process_transaction", 65).unwrap();
+    let drops_at_65 = unwind_table
+        .find_actions_for_pc("process_transaction", 65)
+        .unwrap();
     assert_eq!(
         drops_at_65,
-        &["drop_tx".to_string(), "drop_mutex_lock".to_string(), "drop_db_conn".to_string()]
+        &[
+            "drop_tx".to_string(),
+            "drop_mutex_lock".to_string(),
+            "drop_db_conn".to_string()
+        ]
     );
 }

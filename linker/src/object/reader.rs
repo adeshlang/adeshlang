@@ -14,7 +14,11 @@ pub struct ObjectReader;
 
 impl ObjectReader {
     /// Read an object file from disk, auto-detecting the underlying format.
-    pub fn read_from_file(path: &Path, default_target: &Target, file_index: usize) -> LinkResult<ObjectFile> {
+    pub fn read_from_file(
+        path: &Path,
+        default_target: &Target,
+        file_index: usize,
+    ) -> LinkResult<ObjectFile> {
         let bytes = fs::read(path).map_err(|e| {
             LinkError::new(
                 ErrorCode::IoError,
@@ -35,7 +39,11 @@ impl ObjectReader {
         if bytes.len() < 4 {
             return Err(LinkError::new(
                 ErrorCode::InvalidObject,
-                format!("object file `{}` is truncated ({} bytes)", path.display(), bytes.len()),
+                format!(
+                    "object file `{}` is truncated ({} bytes)",
+                    path.display(),
+                    bytes.len()
+                ),
             ));
         }
 
@@ -67,7 +75,9 @@ impl ObjectReader {
 
         // 5. Adesh Native Object format: ADOB (v2 vs v1)
         if magic == b"ADOB" {
-            if bytes.len() >= 6 && u16::from_le_bytes([bytes[4], bytes[5]]) == crate::object::ADOB_VERSION_2 {
+            if bytes.len() >= 6
+                && u16::from_le_bytes([bytes[4], bytes[5]]) == crate::object::ADOB_VERSION_2
+            {
                 return crate::object::AdobV2::decode(bytes, path, default_target, file_index);
             }
             return Self::read_adesh_native(bytes, path, default_target, file_index);
@@ -77,9 +87,13 @@ impl ObjectReader {
             ErrorCode::InvalidObject,
             format!(
                 "unrecognized object file format for `{}` (magic: {:02x?})",
-                path.display(), magic
+                path.display(),
+                magic
             ),
-        ).with_suggestion("Ensure the file is a valid ELF, PE/COFF, Mach-O, WASM, or Adesh object file."))
+        )
+        .with_suggestion(
+            "Ensure the file is a valid ELF, PE/COFF, Mach-O, WASM, or Adesh object file.",
+        ))
     }
 
     /// Read Adesh native portable object file format.
@@ -92,7 +106,10 @@ impl ObjectReader {
         let mut reader = crate::object::BinaryReader::new(bytes);
         let magic = reader.read_bytes(4)?;
         if magic != b"ADOB" {
-            return Err(LinkError::new(ErrorCode::InvalidObject, "invalid ADOB magic"));
+            return Err(LinkError::new(
+                ErrorCode::InvalidObject,
+                "invalid ADOB magic",
+            ));
         }
 
         let mut obj = ObjectFile::new(path.to_path_buf(), default_target.clone(), file_index);
@@ -156,10 +173,7 @@ impl ObjectReader {
                 };
 
                 sec.relocations.push(crate::relocation::Relocation::new(
-                    r_off,
-                    sym_name,
-                    r_kind,
-                    r_addend,
+                    r_off, sym_name, r_kind, r_addend,
                 ));
             }
 

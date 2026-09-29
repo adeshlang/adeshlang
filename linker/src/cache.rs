@@ -1,4 +1,4 @@
-use crate::hash::{to_hex, Sha256};
+use crate::hash::{Sha256, to_hex};
 use std::fs;
 use std::path::PathBuf;
 

@@ -70,10 +70,18 @@ impl X86_64Encoder {
     /// Emit REX prefix: `0100 W R X B`
     fn emit_rex(&mut self, w: bool, r: u8, x: u8, b: u8) {
         let mut rex = 0x40;
-        if w { rex |= 0x08; }
-        if (r & 8) != 0 { rex |= 0x04; }
-        if (x & 8) != 0 { rex |= 0x02; }
-        if (b & 8) != 0 { rex |= 0x01; }
+        if w {
+            rex |= 0x08;
+        }
+        if (r & 8) != 0 {
+            rex |= 0x04;
+        }
+        if (x & 8) != 0 {
+            rex |= 0x02;
+        }
+        if (b & 8) != 0 {
+            rex |= 0x01;
+        }
         if rex != 0x40 || w {
             self.emit_u8(rex);
         }
@@ -152,11 +160,15 @@ impl X86_64Encoder {
             self.emit_modrm(0, d, b);
         } else if disp >= -128 && disp <= 127 {
             self.emit_modrm(1, d, b);
-            if (b & 7) == 4 { self.emit_u8(0x24); } // SIB for RSP
+            if (b & 7) == 4 {
+                self.emit_u8(0x24);
+            } // SIB for RSP
             self.emit_u8(disp as u8);
         } else {
             self.emit_modrm(2, d, b);
-            if (b & 7) == 4 { self.emit_u8(0x24); }
+            if (b & 7) == 4 {
+                self.emit_u8(0x24);
+            }
             self.emit_u32(disp as u32);
         }
     }
@@ -171,11 +183,15 @@ impl X86_64Encoder {
             self.emit_modrm(0, s, b);
         } else if disp >= -128 && disp <= 127 {
             self.emit_modrm(1, s, b);
-            if (b & 7) == 4 { self.emit_u8(0x24); }
+            if (b & 7) == 4 {
+                self.emit_u8(0x24);
+            }
             self.emit_u8(disp as u8);
         } else {
             self.emit_modrm(2, s, b);
-            if (b & 7) == 4 { self.emit_u8(0x24); }
+            if (b & 7) == 4 {
+                self.emit_u8(0x24);
+            }
             self.emit_u32(disp as u32);
         }
     }

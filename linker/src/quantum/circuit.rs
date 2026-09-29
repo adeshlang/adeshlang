@@ -5,20 +5,20 @@ use std::collections::HashMap;
 /// Standard quantum gate types supported in the Adesh quantum compiler.
 #[derive(Debug, Clone, PartialEq)]
 pub enum QuantumGate {
-    H(usize),                         // Hadamard on qubit
-    X(usize),                         // Pauli-X (NOT)
-    Y(usize),                         // Pauli-Y
-    Z(usize),                         // Pauli-Z
-    S(usize),                         // Phase (Z^(1/2))
-    T(usize),                         // π/8 (Z^(1/4))
-    Rx(usize, f64),                   // Rotation-X by angle theta
-    Ry(usize, f64),                   // Rotation-Y by angle theta
-    Rz(usize, f64),                   // Rotation-Z by angle theta
-    CNot(usize, usize),               // Controlled-NOT (control, target)
-    CZ(usize, usize),                 // Controlled-Z (control, target)
-    Swap(usize, usize),               // SWAP gate
-    Measure(usize, usize),            // Measure qubit into classical bit register
-    Barrier(Vec<usize>),              // Execution synchronization barrier
+    H(usize),              // Hadamard on qubit
+    X(usize),              // Pauli-X (NOT)
+    Y(usize),              // Pauli-Y
+    Z(usize),              // Pauli-Z
+    S(usize),              // Phase (Z^(1/2))
+    T(usize),              // π/8 (Z^(1/4))
+    Rx(usize, f64),        // Rotation-X by angle theta
+    Ry(usize, f64),        // Rotation-Y by angle theta
+    Rz(usize, f64),        // Rotation-Z by angle theta
+    CNot(usize, usize),    // Controlled-NOT (control, target)
+    CZ(usize, usize),      // Controlled-Z (control, target)
+    Swap(usize, usize),    // SWAP gate
+    Measure(usize, usize), // Measure qubit into classical bit register
+    Barrier(Vec<usize>),   // Execution synchronization barrier
 }
 
 /// Quantum topology architecture graph for physical qubit routing.
@@ -92,9 +92,15 @@ impl QuantumCircuit {
                 QuantumGate::CNot(c, t) => qasm.push_str(&format!("cx q[{}], q[{}];\n", c, t)),
                 QuantumGate::CZ(c, t) => qasm.push_str(&format!("cz q[{}], q[{}];\n", c, t)),
                 QuantumGate::Swap(a, b) => qasm.push_str(&format!("swap q[{}], q[{}];\n", a, b)),
-                QuantumGate::Measure(q, c) => qasm.push_str(&format!("c[{}] = measure q[{}];\n", c, q)),
+                QuantumGate::Measure(q, c) => {
+                    qasm.push_str(&format!("c[{}] = measure q[{}];\n", c, q))
+                }
                 QuantumGate::Barrier(qubits) => {
-                    let q_str = qubits.iter().map(|q| format!("q[{}]", q)).collect::<Vec<_>>().join(", ");
+                    let q_str = qubits
+                        .iter()
+                        .map(|q| format!("q[{}]", q))
+                        .collect::<Vec<_>>()
+                        .join(", ");
                     qasm.push_str(&format!("barrier {};\n", q_str));
                 }
             }

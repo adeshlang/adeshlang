@@ -3,14 +3,14 @@
 pub mod adob;
 pub mod binary_reader;
 pub mod reader;
-pub mod writer;
 pub mod symbols;
+pub mod writer;
 
-pub use adob::{AdobV2, ADOB_MAGIC, ADOB_VERSION_2};
+pub use adob::{ADOB_MAGIC, ADOB_VERSION_2, AdobV2};
 pub use binary_reader::BinaryReader;
 pub use reader::ObjectReader;
-pub use writer::ObjectWriter;
 pub use symbols::ObjectSymbolIndex;
+pub use writer::ObjectWriter;
 
 use crate::error::{ErrorCode, LinkError, LinkResult};
 use crate::metadata::AdeshMetadata;
@@ -78,12 +78,17 @@ impl ObjectFile {
         for sec in &self.sections {
             for reloc in &sec.relocations {
                 let size = reloc.kind.size_in_bytes();
-                if sec.kind != crate::section::SectionKind::Bss && reloc.offset + (size as u64) > sec.data.len() as u64 {
+                if sec.kind != crate::section::SectionKind::Bss
+                    && reloc.offset + (size as u64) > sec.data.len() as u64
+                {
                     return Err(LinkError::new(
                         ErrorCode::InvalidObject,
                         format!(
                             "object `{}` section `{}` relocation at 0x{:x} exceeds section size 0x{:x}",
-                            self.display_name(), sec.name, reloc.offset, sec.data.len()
+                            self.display_name(),
+                            sec.name,
+                            reloc.offset,
+                            sec.data.len()
                         ),
                     ));
                 }
@@ -94,7 +99,9 @@ impl ObjectFile {
                     ErrorCode::InvalidSection,
                     format!(
                         "object `{}` section `{}` has non-power-of-2 alignment: {}",
-                        self.display_name(), sec.name, sec.alignment
+                        self.display_name(),
+                        sec.name,
+                        sec.alignment
                     ),
                 ));
             }
@@ -107,7 +114,9 @@ impl ObjectFile {
                         ErrorCode::InvalidObject,
                         format!(
                             "object `{}` symbol `{}` references invalid section index {}",
-                            self.display_name(), sym.name, sec_idx
+                            self.display_name(),
+                            sym.name,
+                            sec_idx
                         ),
                     ));
                 }

@@ -100,21 +100,14 @@ pub fn execute_doctor_command() {
         "  {}✓{} LLVM              : NOT REQUIRED (Optional compatibility mode)",
         green, reset
     );
-    println!(
-        "  {}✓{} GCC               : NOT REQUIRED",
-        green, reset
-    );
-    println!(
-        "  {}✓{} Clang             : NOT REQUIRED",
-        green, reset
-    );
-    println!(
-        "  {}✓{} LLD               : NOT REQUIRED",
-        green, reset
-    );
+    println!("  {}✓{} GCC               : NOT REQUIRED", green, reset);
+    println!("  {}✓{} Clang             : NOT REQUIRED", green, reset);
+    println!("  {}✓{} LLD               : NOT REQUIRED", green, reset);
     println!(
         "  {}✓{} Runtime ABI       : {}",
-        green, reset, adesh_linker::abi::ADESH_RUNTIME_ABI_VERSION
+        green,
+        reset,
+        adesh_linker::abi::ADESH_RUNTIME_ABI_VERSION
     );
     println!(
         "  {}✓{} Object Formats    : ELF32/64, PE32/PE32+, Mach-O 64, WASM, ADOB v2",

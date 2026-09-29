@@ -112,70 +112,97 @@ impl StateVectorSimulator {
     /// Apply a single quantum gate to the state vector.
     pub fn apply_gate(&mut self, gate: &QuantumGate) {
         match gate {
-            QuantumGate::H(q) => self.apply_1q_matrix(*q, [
-                Complex64::new(FRAC_1_SQRT_2, 0.0),
-                Complex64::new(FRAC_1_SQRT_2, 0.0),
-                Complex64::new(FRAC_1_SQRT_2, 0.0),
-                Complex64::new(-FRAC_1_SQRT_2, 0.0),
-            ]),
-            QuantumGate::X(q) => self.apply_1q_matrix(*q, [
-                Complex64::ZERO,
-                Complex64::ONE,
-                Complex64::ONE,
-                Complex64::ZERO,
-            ]),
-            QuantumGate::Y(q) => self.apply_1q_matrix(*q, [
-                Complex64::ZERO,
-                Complex64::new(0.0, -1.0),
-                Complex64::new(0.0, 1.0),
-                Complex64::ZERO,
-            ]),
-            QuantumGate::Z(q) => self.apply_1q_matrix(*q, [
-                Complex64::ONE,
-                Complex64::ZERO,
-                Complex64::ZERO,
-                Complex64::new(-1.0, 0.0),
-            ]),
-            QuantumGate::S(q) => self.apply_1q_matrix(*q, [
-                Complex64::ONE,
-                Complex64::ZERO,
-                Complex64::ZERO,
-                Complex64::I,
-            ]),
-            QuantumGate::T(q) => self.apply_1q_matrix(*q, [
-                Complex64::ONE,
-                Complex64::ZERO,
-                Complex64::ZERO,
-                Complex64::from_polar(1.0, std::f64::consts::PI / 4.0),
-            ]),
+            QuantumGate::H(q) => self.apply_1q_matrix(
+                *q,
+                [
+                    Complex64::new(FRAC_1_SQRT_2, 0.0),
+                    Complex64::new(FRAC_1_SQRT_2, 0.0),
+                    Complex64::new(FRAC_1_SQRT_2, 0.0),
+                    Complex64::new(-FRAC_1_SQRT_2, 0.0),
+                ],
+            ),
+            QuantumGate::X(q) => self.apply_1q_matrix(
+                *q,
+                [
+                    Complex64::ZERO,
+                    Complex64::ONE,
+                    Complex64::ONE,
+                    Complex64::ZERO,
+                ],
+            ),
+            QuantumGate::Y(q) => self.apply_1q_matrix(
+                *q,
+                [
+                    Complex64::ZERO,
+                    Complex64::new(0.0, -1.0),
+                    Complex64::new(0.0, 1.0),
+                    Complex64::ZERO,
+                ],
+            ),
+            QuantumGate::Z(q) => self.apply_1q_matrix(
+                *q,
+                [
+                    Complex64::ONE,
+                    Complex64::ZERO,
+                    Complex64::ZERO,
+                    Complex64::new(-1.0, 0.0),
+                ],
+            ),
+            QuantumGate::S(q) => self.apply_1q_matrix(
+                *q,
+                [
+                    Complex64::ONE,
+                    Complex64::ZERO,
+                    Complex64::ZERO,
+                    Complex64::I,
+                ],
+            ),
+            QuantumGate::T(q) => self.apply_1q_matrix(
+                *q,
+                [
+                    Complex64::ONE,
+                    Complex64::ZERO,
+                    Complex64::ZERO,
+                    Complex64::from_polar(1.0, std::f64::consts::PI / 4.0),
+                ],
+            ),
             QuantumGate::Rx(q, theta) => {
                 let cos = (theta / 2.0).cos();
                 let sin = (theta / 2.0).sin();
-                self.apply_1q_matrix(*q, [
-                    Complex64::new(cos, 0.0),
-                    Complex64::new(0.0, -sin),
-                    Complex64::new(0.0, -sin),
-                    Complex64::new(cos, 0.0),
-                ]);
+                self.apply_1q_matrix(
+                    *q,
+                    [
+                        Complex64::new(cos, 0.0),
+                        Complex64::new(0.0, -sin),
+                        Complex64::new(0.0, -sin),
+                        Complex64::new(cos, 0.0),
+                    ],
+                );
             }
             QuantumGate::Ry(q, theta) => {
                 let cos = (theta / 2.0).cos();
                 let sin = (theta / 2.0).sin();
-                self.apply_1q_matrix(*q, [
-                    Complex64::new(cos, 0.0),
-                    Complex64::new(-sin, 0.0),
-                    Complex64::new(sin, 0.0),
-                    Complex64::new(cos, 0.0),
-                ]);
+                self.apply_1q_matrix(
+                    *q,
+                    [
+                        Complex64::new(cos, 0.0),
+                        Complex64::new(-sin, 0.0),
+                        Complex64::new(sin, 0.0),
+                        Complex64::new(cos, 0.0),
+                    ],
+                );
             }
             QuantumGate::Rz(q, theta) => {
                 let p = theta / 2.0;
-                self.apply_1q_matrix(*q, [
-                    Complex64::from_polar(1.0, -p),
-                    Complex64::ZERO,
-                    Complex64::ZERO,
-                    Complex64::from_polar(1.0, p),
-                ]);
+                self.apply_1q_matrix(
+                    *q,
+                    [
+                        Complex64::from_polar(1.0, -p),
+                        Complex64::ZERO,
+                        Complex64::ZERO,
+                        Complex64::from_polar(1.0, p),
+                    ],
+                );
             }
             QuantumGate::CNot(c, t) => self.apply_cnot(*c, *t),
             QuantumGate::CZ(c, t) => self.apply_cz(*c, *t),
@@ -276,7 +303,11 @@ impl StateVectorSimulator {
         };
 
         // Collapse state vector
-        let norm = if outcome == 0 { prob0.sqrt() } else { (1.0 - prob0).sqrt() };
+        let norm = if outcome == 0 {
+            prob0.sqrt()
+        } else {
+            (1.0 - prob0).sqrt()
+        };
         if norm > 1e-9 {
             for i in 0..dim {
                 let bit = ((i & mask) != 0) as u8;

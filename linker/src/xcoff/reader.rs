@@ -2,7 +2,7 @@
 
 use crate::error::{ErrorCode, LinkError, LinkResult};
 use crate::object::ObjectFile;
-use crate::section::{flags, Section, SectionKind};
+use crate::section::{Section, SectionKind, flags};
 use crate::symbol::{Symbol, SymbolBinding, SymbolType, SymbolVisibility};
 use crate::target::{Arch, Endianness, ObjectFormat, Os, PointerWidth, Target};
 use crate::xcoff::header::*;
@@ -13,7 +13,10 @@ pub struct XcoffReader;
 impl XcoffReader {
     pub fn read(bytes: &[u8], path: &Path, file_index: usize) -> LinkResult<ObjectFile> {
         if bytes.len() < 20 {
-            return Err(LinkError::new(ErrorCode::InvalidObject, "truncated XCOFF header"));
+            return Err(LinkError::new(
+                ErrorCode::InvalidObject,
+                "truncated XCOFF header",
+            ));
         }
 
         let magic = u16::from_be_bytes(bytes[0..2].try_into().unwrap());
@@ -24,7 +27,11 @@ impl XcoffReader {
             os: Os::Aix,
             format: ObjectFormat::Xcoff,
             abi: crate::target::Abi::Aix,
-            pointer_width: if is_64 { PointerWidth::U64 } else { PointerWidth::U32 },
+            pointer_width: if is_64 {
+                PointerWidth::U64
+            } else {
+                PointerWidth::U32
+            },
             endianness: Endianness::Big,
             relocation_model: crate::target::RelocationModel::Static,
             page_size: 4096,
@@ -46,7 +53,9 @@ impl XcoffReader {
             }
             let mut sname = [0u8; 8];
             sname.copy_from_slice(&bytes[off..off + 8]);
-            let name = String::from_utf8_lossy(&sname).trim_matches('\0').to_string();
+            let name = String::from_utf8_lossy(&sname)
+                .trim_matches('\0')
+                .to_string();
 
             let kind = if name.contains("text") {
                 SectionKind::Text
@@ -61,7 +70,18 @@ impl XcoffReader {
             let sec = Section {
                 name,
                 kind,
-                flags: flags::READ | flags::ALLOC | if kind == SectionKind::Text { flags::EXEC } else { 0 } | if kind == SectionKind::Data || kind == SectionKind::Bss { flags::WRITE } else { 0 },
+                flags: flags::READ
+                    | flags::ALLOC
+                    | if kind == SectionKind::Text {
+                        flags::EXEC
+                    } else {
+                        0
+                    }
+                    | if kind == SectionKind::Data || kind == SectionKind::Bss {
+                        flags::WRITE
+                    } else {
+                        0
+                    },
                 alignment: 8,
                 virtual_address: 0,
                 file_offset: off as u64,
@@ -114,10 +134,10 @@ impl XcoffWriter {
         output.extend_from_slice(&U64_TOCMAGIC.to_be_bytes());
         output.extend_from_slice(&(merged_sections.len() as u16).to_be_bytes());
         output.extend_from_slice(&0x60000000u32.to_be_bytes()); // timestamp
-        output.extend_from_slice(&0u64.to_be_bytes());          // symptr
-        output.extend_from_slice(&0u32.to_be_bytes());          // nsyms
-        output.extend_from_slice(&0u16.to_be_bytes());          // opthdr
-        output.extend_from_slice(&0x0002u16.to_be_bytes());      // F_EXEC
+        output.extend_from_slice(&0u64.to_be_bytes()); // symptr
+        output.extend_from_slice(&0u32.to_be_bytes()); // nsyms
+        output.extend_from_slice(&0u16.to_be_bytes()); // opthdr
+        output.extend_from_slice(&0x0002u16.to_be_bytes()); // F_EXEC
 
         for sec in merged_sections {
             output.extend_from_slice(&sec.data);
