@@ -39,6 +39,7 @@ pub fn synthesize_windows_x86_64_entry(
         offset: main_crt_start_off + 5,
         symbol_name: "__adesh_windows_start".to_string(),
         symbol_index: None,
+        file_index: None,
         kind: RelocationKind::PcRelative32,
         addend: -4,
     });
@@ -100,6 +101,7 @@ pub fn synthesize_windows_x86_64_entry(
         offset: start_off + 13,
         symbol_name: program_entry_symbol.to_string(),
         symbol_index: None,
+        file_index: None,
         kind: RelocationKind::PcRelative32,
         addend: -4,
     });
@@ -108,6 +110,7 @@ pub fn synthesize_windows_x86_64_entry(
         offset: start_off + 21,
         symbol_name: "__imp_ExitProcess".to_string(),
         symbol_index: None,
+        file_index: None,
         kind: RelocationKind::PcRelative32,
         addend: -4,
     });

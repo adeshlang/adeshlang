@@ -11,6 +11,27 @@ pub enum IcfMode {
     All,
 }
 
+/// Requested IR link-time optimization mode. Native object inputs cannot be
+/// optimized across modules yet; the linker rejects these modes explicitly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LtoMode {
+    Off,
+    Thin,
+    Full,
+}
+
+/// Linker optimization level. These govern format-neutral link-time passes,
+/// independently of code generator optimization settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OptLevel {
+    O0,
+    O1,
+    O2,
+    O3,
+    Os,
+    Oz,
+}
+
 /// Build ID generation style.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuildIdStyle {
@@ -36,6 +57,8 @@ pub struct LinkConfig {
     pub library_search_paths: Vec<PathBuf>,
     pub libraries: Vec<String>,
     pub gc_sections: bool,
+    pub opt_level: OptLevel,
+    pub lto: LtoMode,
     pub print_gc_sections: bool,
     pub icf: IcfMode,
     pub print_icf: bool,
@@ -68,6 +91,8 @@ impl Default for LinkConfig {
             library_search_paths: Vec::new(),
             libraries: Vec::new(),
             gc_sections: true,
+            opt_level: OptLevel::O2,
+            lto: LtoMode::Off,
             print_gc_sections: false,
             icf: IcfMode::None,
             print_icf: false,
@@ -107,6 +132,41 @@ impl LinkConfig {
             entry.as_str()
         } else {
             &self.target.default_entry
+        }
+    }
+
+    /// Apply the portable optimization policy for a requested level. Explicit
+    /// CLI/API settings applied afterwards can still override these defaults.
+    pub fn apply_optimization_level(&mut self, level: OptLevel) {
+        self.opt_level = level;
+        match level {
+            OptLevel::O0 => {
+                self.gc_sections = false;
+                self.icf = IcfMode::None;
+            }
+            OptLevel::O1 => {
+                self.gc_sections = true;
+                self.icf = IcfMode::None;
+            }
+            OptLevel::O2 => {
+                self.gc_sections = true;
+                self.icf = IcfMode::Safe;
+            }
+            OptLevel::O3 => {
+                self.gc_sections = true;
+                self.icf = IcfMode::All;
+            }
+            OptLevel::Os => {
+                self.gc_sections = true;
+                self.icf = IcfMode::Safe;
+                self.strip_debug = true;
+            }
+            OptLevel::Oz => {
+                self.gc_sections = true;
+                self.icf = IcfMode::All;
+                self.strip_debug = true;
+                self.strip = true;
+            }
         }
     }
 }

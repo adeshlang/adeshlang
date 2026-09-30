@@ -208,29 +208,36 @@ impl MergedSection {
     /// Append an input section into this merged section, aligning according to requirements.
     pub fn append_section(&mut self, sec: &Section, file_idx: usize, sec_idx: usize) -> u64 {
         self.alignment = self.alignment.max(sec.alignment);
-        let offset = align_to(self.data.len() as u64, sec.alignment);
+        let offset = align_to(self.size.max(self.data.len() as u64), sec.alignment);
 
-        if offset > self.data.len() as u64 {
-            let pad_len = (offset - self.data.len() as u64) as usize;
-            self.data.resize(self.data.len() + pad_len, 0);
+        if !matches!(sec.kind, SectionKind::Bss | SectionKind::TBss)
+            && offset > self.data.len() as u64
+        {
+            self.data.resize(offset as usize, 0);
         }
 
-        let section_offset_in_merged = self.data.len() as u64;
+        let section_offset_in_merged = offset;
         self.input_sections
             .push((file_idx, sec_idx, section_offset_in_merged));
 
-        if sec.kind != SectionKind::Bss {
+        if !matches!(sec.kind, SectionKind::Bss | SectionKind::TBss) {
             self.data.extend_from_slice(&sec.data);
-            self.size = self.data.len() as u64;
+            self.size = offset + sec.size.max(sec.data.len() as u64);
         } else {
-            self.size += sec.size;
+            self.size = offset + sec.size;
         }
 
         // Copy and adjust relocations
         for r in &sec.relocations {
             let mut adjusted = r.clone();
             adjusted.offset += section_offset_in_merged;
-            adjusted.symbol_index = Some(file_idx);
+            // Record which object file supplied this relocation, and keep the
+            // object-local symbol index intact. Resolving relocations by
+            // (file, symbol index) is exact even when the source object has
+            // many same-named sections (`.text`, `.rdata`, ...), which LLVM
+            // COFF objects always do; name-based resolution picks an
+            // arbitrary one of those sections.
+            adjusted.file_index = Some(file_idx);
             self.relocations.push(adjusted);
         }
 

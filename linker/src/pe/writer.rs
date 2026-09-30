@@ -1,10 +1,11 @@
 //! PE32+ (64-bit Windows) Executable and DLL Writer.
 
 use crate::error::{ErrorCode, LinkError, LinkResult};
+use crate::layout::PeTlsInfo;
 use crate::pe::header::*;
-use crate::pe::import::{ImportSymbol, ImportTableResult, build_import_table};
+use crate::pe::import::{build_import_table, ImportSymbol, ImportTableResult};
 use crate::pe::reloc::build_base_reloc_table;
-use crate::section::{MergedSection, align_to};
+use crate::section::{align_to, MergedSection};
 use crate::symbol::Symbol;
 use crate::target::{Arch, Target};
 use std::fs;
@@ -29,6 +30,7 @@ impl PeWriter {
             symbols,
             imports,
             None,
+            None,
             &[],
         )
     }
@@ -51,6 +53,7 @@ impl PeWriter {
         symbols: &[Symbol],
         imports: &[ImportSymbol],
         import_info: Option<&ImportTableResult>,
+        tls_info: Option<&PeTlsInfo>,
         base_relocs: &[u32],
     ) -> LinkResult<()> {
         let bytes = Self::encode_executable(
@@ -60,6 +63,7 @@ impl PeWriter {
             symbols,
             imports,
             import_info,
+            tls_info,
             base_relocs,
             false,
         )?;
@@ -75,6 +79,7 @@ impl PeWriter {
         _symbols: &[Symbol],
         imports: &[ImportSymbol],
         import_info: Option<&ImportTableResult>,
+        tls_info: Option<&PeTlsInfo>,
         base_relocs: &[u32],
         is_dll: bool,
     ) -> LinkResult<Vec<u8>> {
@@ -191,6 +196,27 @@ impl PeWriter {
             idata_idx = Some(pe_sections.len() - 1);
             generated_imp = Some(res);
         }
+        // Standalone callers may supply a prebuilt .idata section without an
+        // ImportTableResult. Reconstruct metadata at its fixed RVA, but never
+        // silently publish import-directory offsets for different bytes.
+        if import_info.is_none() && generated_imp.is_none() {
+            if let (Some(id_idx), false) = (idata_idx, imports.is_empty()) {
+                let idata_rva = pe_sections[id_idx].layout_rva.ok_or_else(|| {
+                    LinkError::new(
+                        ErrorCode::InvalidSection,
+                        "prebuilt .idata requires a fixed virtual address",
+                    )
+                })?;
+                let result = build_import_table(imports, image_base, idata_rva);
+                if result.data != pe_sections[id_idx].data {
+                    return Err(LinkError::new(
+                        ErrorCode::InvalidSection,
+                        "prebuilt .idata does not match the import table at its assigned RVA",
+                    ));
+                }
+                generated_imp = Some(result);
+            }
+        }
 
         let imp_res: Option<&ImportTableResult> = import_info.or(generated_imp.as_ref());
 
@@ -254,12 +280,7 @@ impl PeWriter {
 
             let rva = match sec.layout_rva {
                 Some(r) => r,
-                None => {
-                    let r = current_seq_rva;
-                    current_seq_rva =
-                        align_to((r + virt_size) as u64, section_alignment as u64) as u32;
-                    r
-                }
+                None => current_seq_rva,
             };
 
             if rva < headers_size
@@ -333,8 +354,7 @@ impl PeWriter {
             }
 
             prev_rva = rva;
-            current_seq_rva =
-                align_to((rva + virt_size) as u64, section_alignment as u64) as u32;
+            current_seq_rva = align_to((rva + virt_size) as u64, section_alignment as u64) as u32;
         }
 
         let size_of_image = current_seq_rva;
@@ -425,11 +445,18 @@ impl PeWriter {
 
             if info.iat_rva > 0 {
                 let iat_dir_off = 112 + IMAGE_DIRECTORY_ENTRY_IAT * 8;
-                opt_buf[iat_dir_off..iat_dir_off + 4]
-                    .copy_from_slice(&info.iat_rva.to_le_bytes());
+                opt_buf[iat_dir_off..iat_dir_off + 4].copy_from_slice(&info.iat_rva.to_le_bytes());
                 opt_buf[iat_dir_off + 4..iat_dir_off + 8]
                     .copy_from_slice(&info.iat_size.to_le_bytes());
             }
+        }
+
+        if let Some(info) = tls_info {
+            let tls_dir_off = 112 + IMAGE_DIRECTORY_ENTRY_TLS * 8;
+            opt_buf[tls_dir_off..tls_dir_off + 4]
+                .copy_from_slice(&info.directory_rva.to_le_bytes());
+            opt_buf[tls_dir_off + 4..tls_dir_off + 8]
+                .copy_from_slice(&info.directory_size.to_le_bytes());
         }
 
         // Base Relocation directory

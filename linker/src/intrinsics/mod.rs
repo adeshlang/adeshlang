@@ -142,7 +142,8 @@ impl IntrinsicsEngine {
     /// Arguments arrive in rcx/rdx/r8; result in rax.
     fn emit_x86_64_msabi(name: &str) -> Vec<u8> {
         match name {
-            "memcpy" | "memmove" | "memset" | "memcmp" => {},
+            "__chkstk" | "___chkstk_ms" => return Self::emit_chkstk_x86_64(),
+            "memcpy" | "memmove" | "memset" | "memcmp" => {}
             _ => return Self::emit_x86_64(name),
         }
         // Bytes below were assembled with GNU as from reviewed source and
@@ -217,6 +218,20 @@ impl IntrinsicsEngine {
         }
     }
 
+    /// x64 stack probe. RAX is the allocation size and must still contain
+    /// that size when the caller subtracts it from RSP. Probe every page
+    /// while preserving both RAX and RCX. Assembled for x86_64-pc-windows-msvc
+    /// and verified with llvm-objdump; the backward branch targets an
+    /// instruction boundary rather than the middle of `sub rax`.
+    fn emit_chkstk_x86_64() -> Vec<u8> {
+        vec![
+            0x51, 0x50, 0x48, 0x8d, 0x4c, 0x24, 0x18, 0x48, 0x3d, 0x00, 0x10, 0x00, 0x00, 0x72,
+            0x18, 0x48, 0x81, 0xe9, 0x00, 0x10, 0x00, 0x00, 0xf6, 0x01, 0x00, 0x48, 0x2d, 0x00,
+            0x10, 0x00, 0x00, 0x48, 0x3d, 0x00, 0x10, 0x00, 0x00, 0x73, 0xe8, 0x48, 0x29, 0xc1,
+            0xf6, 0x01, 0x00, 0x58, 0x59, 0xc3,
+        ]
+    }
+
     /// x86_64 native machine code sequences for compiler runtime builtins.
     fn emit_x86_64(name: &str) -> Vec<u8> {
         match name {
@@ -256,23 +271,7 @@ impl IntrinsicsEngine {
                     0xc3, // ret
                 ]
             }
-            "__chkstk" | "___chkstk_ms" => {
-                // Windows x64 stack probe
-                // rax = bytes to allocate. Probes 4096-byte pages downwards from rsp.
-                vec![
-                    0x48, 0x83, 0xf8, 0x00, // cmp rax, 0
-                    0x74, 0x16, // jz done
-                    0x51, // push rcx
-                    0x48, 0x89, 0xe1, // mov rcx, rsp
-                    0x48, 0x2d, 0x00, 0x10, 0x00, 0x00, // loop: sub rax, 4096
-                    0x48, 0x81, 0xe9, 0x00, 0x10, 0x00, 0x00, // sub rcx, 4096
-                    0x85, 0x01, // test [rcx], eax (probe page)
-                    0x48, 0x83, 0xf8, 0x00, // cmp rax, 0
-                    0x7f, 0xee, // jg loop
-                    0x59, // pop rcx
-                    0xc3, // ret
-                ]
-            }
+            "__chkstk" | "___chkstk_ms" => Self::emit_chkstk_x86_64(),
             "__stack_chk_guard" => {
                 // Default canary value (8 bytes)
                 vec![0x00, 0x0a, 0xff, 0x00, 0x5a, 0x3c, 0x7e, 0x1b]
@@ -332,11 +331,15 @@ impl IntrinsicsEngine {
             "fabs" => {
                 // andpd xmm0, [mask without sign bit]; ret
                 // or inline: psllq xmm0, 1; psrlq xmm0, 1; ret
-                vec![0x66, 0x0f, 0x73, 0xf0, 0x01, 0x66, 0x0f, 0x73, 0xd0, 0x01, 0xc3]
+                vec![
+                    0x66, 0x0f, 0x73, 0xf0, 0x01, 0x66, 0x0f, 0x73, 0xd0, 0x01, 0xc3,
+                ]
             }
             "fabsf" => {
                 // psrld xmm0, 1; pslld xmm0, 1; ret
-                vec![0x66, 0x0f, 0x72, 0xf0, 0x01, 0x66, 0x0f, 0x72, 0xd0, 0x01, 0xc3]
+                vec![
+                    0x66, 0x0f, 0x72, 0xf0, 0x01, 0x66, 0x0f, 0x72, 0xd0, 0x01, 0xc3,
+                ]
             }
             "__adesh_panic" => {
                 // Panic trap

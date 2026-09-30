@@ -1538,8 +1538,19 @@ pub fn link_with_adesh_linker(
     }
 
     let mut config = adesh_linker::config::LinkConfig::new(output.to_path_buf(), target);
-    config.gc_sections = options.enable_dead_code_elimination;
-    config.icf = adesh_linker::config::IcfMode::Safe;
+    let opt_level = match options.opt_level {
+        0 => adesh_linker::config::OptLevel::O0,
+        1 => adesh_linker::config::OptLevel::O1,
+        2 => adesh_linker::config::OptLevel::O2,
+        _ => adesh_linker::config::OptLevel::O3,
+    };
+    config.apply_optimization_level(opt_level);
+    config.gc_sections &= options.enable_dead_code_elimination;
+    config.lto = if options.enable_lto {
+        adesh_linker::config::LtoMode::Thin
+    } else {
+        adesh_linker::config::LtoMode::Off
+    };
     config.strip_debug = !options.debug_info;
     config.shared = options.output_format == OutputFormat::SharedLib;
     config.incremental = options.incremental;

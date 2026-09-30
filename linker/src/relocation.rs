@@ -29,6 +29,8 @@ pub enum RelocationKind {
 
     /// 32-bit offset relative to section base: `S + A - SectionBase`
     SectionRelative32,
+    /// 32-bit image-base-relative address (RVA): `S + A - ImageBase`
+    ImageRelative32,
 
     /// TLS General Dynamic / Initial Exec / Local Exec
     TlsGeneralDynamic,
@@ -67,6 +69,7 @@ impl RelocationKind {
             | RelocationKind::PltRelative32
             | RelocationKind::GotRelative32
             | RelocationKind::SectionRelative32
+            | RelocationKind::ImageRelative32
             | RelocationKind::AArch64Call26
             | RelocationKind::AArch64Adrp
             | RelocationKind::AArch64AddLo12
@@ -98,6 +101,7 @@ impl RelocationKind {
             RelocationKind::GotRelative32 => "GOTPC32",
             RelocationKind::Got64 => "GOT64",
             RelocationKind::SectionRelative32 => "SECREL32",
+            RelocationKind::ImageRelative32 => "IMAGEREL32",
             RelocationKind::TlsGeneralDynamic => "TLS_GD",
             RelocationKind::TlsInitialExec => "TLS_IE",
             RelocationKind::TlsLocalExec => "TLS_LE",
@@ -121,7 +125,15 @@ impl RelocationKind {
 pub struct Relocation {
     pub offset: u64,
     pub symbol_name: String,
+    /// Object-local symbol index as recorded by the object reader (e.g. the
+    /// raw COFF symbol-table index). Required for precise resolution: LLVM
+    /// COFF objects contain many same-named sections (`.text`, `.rdata`),
+    /// whose symbols are distinguishable only by index, never by name.
     pub symbol_index: Option<usize>,
+    /// Index of the object file supplying this relocation. Set when the
+    /// section is merged into a `MergedSection`; used together with
+    /// `symbol_index` to resolve the exact referenced symbol.
+    pub file_index: Option<usize>,
     pub kind: RelocationKind,
     pub addend: i64,
 }
@@ -137,6 +149,7 @@ impl Relocation {
             offset,
             symbol_name: symbol_name.into(),
             symbol_index: None,
+            file_index: None,
             kind,
             addend,
         }
@@ -241,8 +254,30 @@ impl RelocationHandler for DefaultRelocationHandler {
                 target_slice.copy_from_slice(&(val as u64).to_le_bytes());
             }
             RelocationKind::SectionRelative32 => {
-                let val = ((symbol_va as i64).wrapping_add(addend)) as u32;
-                target_slice.copy_from_slice(&val.to_le_bytes());
+                // The value is `S + A - SectionBase(S)`: the offset of the
+                // target within its own input section. The section base is
+                // only known at layout time; PE layout applies this
+                // relocation itself. Reaching this arm means a relocation
+                // producer bypassed the layout path.
+                return Err(LinkError::new(
+                    ErrorCode::UnsupportedRelocation,
+                    format!(
+                        "section-relative relocation against `{}` must be applied by the layout engine (section base required)",
+                        reloc.symbol_name
+                    ),
+                ));
+            }
+            RelocationKind::ImageRelative32 => {
+                // The value is `S + A - ImageBase` (an RVA). The image base
+                // is only known at layout time; PE layout applies this
+                // relocation itself.
+                return Err(LinkError::new(
+                    ErrorCode::UnsupportedRelocation,
+                    format!(
+                        "image-relative relocation against `{}` must be applied by the layout engine (image base required)",
+                        reloc.symbol_name
+                    ),
+                ));
             }
             RelocationKind::AArch64Call26 => {
                 let val = (symbol_va as i64)

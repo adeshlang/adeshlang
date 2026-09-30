@@ -24,13 +24,12 @@ fn create_code_object(
 
     let mut text_sec = Section::new_code(".text", code_bytes, 16);
     for (callee, off) in calls {
-        text_sec.relocations.push(Relocation {
-            offset: off,
-            symbol_index: Some(0),
-            symbol_name: callee.to_string(),
-            kind: RelocationKind::PcRelative32,
-            addend: -4,
-        });
+        text_sec.relocations.push(Relocation::new(
+            off,
+            callee,
+            RelocationKind::PcRelative32,
+            -4,
+        ));
     }
 
     let sym = Symbol::new_defined(
@@ -141,13 +140,12 @@ fn test_e2e_dead_code_elimination_size_reduction() {
 
     // Live main section
     let mut main_sec = Section::new_code(".text.main", vec![0x90; 32], 16);
-    main_sec.relocations.push(Relocation {
-        offset: 0,
-        symbol_index: Some(0),
-        symbol_name: "used_helper".to_string(),
-        kind: RelocationKind::PcRelative32,
-        addend: -4,
-    });
+    main_sec.relocations.push(Relocation::new(
+        0,
+        "used_helper",
+        RelocationKind::PcRelative32,
+        -4,
+    ));
     obj.sections.push(main_sec);
     obj.symbols.push(Symbol::new_defined(
         "main",

@@ -45,6 +45,23 @@ fn test_runtime_intrinsics_synthesis_aarch64() {
 }
 
 #[test]
+fn test_x64_stack_probe_preserves_size_and_branches_to_page_boundary() {
+    let target = Target::x86_64_windows();
+    let probe = IntrinsicsEngine::emit_intrinsic_code("__chkstk", &target);
+    assert_eq!(probe.len(), 0x30);
+    assert_eq!(&probe[..7], &[0x51, 0x50, 0x48, 0x8d, 0x4c, 0x24, 0x18]);
+    // `jae` at 0x25 branches to the page probe at 0x0f. The old
+    // sequence branched into an immediate operand at 0x0d and crashed.
+    assert_eq!(&probe[0x25..0x27], &[0x73, 0xe8]);
+    assert_eq!(0x27i32 + (probe[0x26] as i8 as i32), 0x0f);
+    assert_eq!(&probe[0x2d..], &[0x58, 0x59, 0xc3]);
+    assert_eq!(
+        probe,
+        IntrinsicsEngine::emit_intrinsic_code("___chkstk_ms", &target)
+    );
+}
+
+#[test]
 fn test_eh_frame_hdr_table_generation() {
     let hdr_va = 0x400000;
     let eh_frame_va = 0x401000;

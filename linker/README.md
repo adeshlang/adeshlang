@@ -68,6 +68,13 @@ adeshlink --target wasm32-wasi main.o -o app.wasm
 # Dead code elimination & ICF
 adeshlink --gc-sections --icf=safe main.o libfoo.a -o app
 
+# Select portable link-time passes, or prioritize final binary size
+adeshlink -O2 main.o libfoo.a -o app
+adeshlink -Oz main.o libfoo.a -o app
+
+# Explicit ThinLTO requests fail until IR-bearing input support is integrated
+adeshlink -O3 --lto=thin main.o libfoo.a -o app
+
 # Generate detailed link map and report
 adeshlink --map=app.map --report main.o -o app
 
@@ -77,6 +84,22 @@ adeshlink symbols app
 adeshlink sections app
 adeshlink relocations app
 ```
+
+`-O0` through `-O3`, `-Os`, and `-Oz` select linker GC, ICF and stripping
+policies. Compiler code generation has its own optimization level. Native
+objects do not carry cross-module IR here: `--lto=thin|full` returns an error
+without producing an executable, rather than silently skipping IR-level LTO.
+CLI aliases `-s`, `--strip-all`, `--output`, `--entry=`, `-Map`, and
+`--icf=none` are available. Unknown `lld` flags fail with an explicit error
+instead of being silently ignored. These are not full LLVM `lld`/LTO parity.
+
+The format tests check ELF, Mach-O, WASM, embedded firmware images,
+GPU/NPU/TPU bundles, and quantum packages. Generating an artifact is not
+proof it runs on a device or another OS. In particular, non-PE TLS objects
+currently fail with an explicit error until the ELF/Mach-O TLS loader metadata
+is implemented. The Windows Rust-backed hello-world and pretty-print samples
+print, exit 0, and produce no stderr on this host. Other execution paths
+still require testing on representative runtimes and hardware.
 
 ---
 

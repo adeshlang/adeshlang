@@ -42,6 +42,8 @@ impl GarbageCollector {
                     || sec.name.starts_with(".init")
                     || sec.name.starts_with(".fini")
                     || sec.name.starts_with(".note")
+                    || (sec.flags & crate::section::flags::TLS) != 0
+                    || sec.name.starts_with(".CRT$")
                 {
                     live_sections.insert((f_idx, s_idx));
                     worklist.push_back((f_idx, s_idx));
@@ -65,10 +67,37 @@ impl GarbageCollector {
         while let Some((f_idx, s_idx)) = worklist.pop_front() {
             let sec = &objects[f_idx].sections[s_idx];
             for reloc in &sec.relocations {
-                if let Some(defs) = sym_defs.get(reloc.symbol_name.as_str()) {
-                    for &(target_f_idx, target_s_idx) in defs {
-                        if live_sections.insert((target_f_idx, target_s_idx)) {
-                            worklist.push_back((target_f_idx, target_s_idx));
+                // Precise path: a relocation carrying its object-local symbol
+                // index resolves local symbols (e.g. the `.text`/`.rdata`
+                // section symbols referenced by jump tables) to exactly one
+                // section. Name-based marking would keep every same-named
+                // section of the file alive (LLVM COFF objects have dozens).
+                let mut resolved_precisely = false;
+                if let Some(si) = reloc.symbol_index {
+                    if let Some(obj) = objects.get(f_idx) {
+                        if let Some(sym) = obj.symbols.get(si) {
+                            if sym.is_defined && sym.is_local() {
+                                if let Some(target_s_idx) = sym.section_index {
+                                    if target_s_idx < obj.sections.len()
+                                        && live_sections.insert((f_idx, target_s_idx))
+                                    {
+                                        worklist.push_back((f_idx, target_s_idx));
+                                    }
+                                    resolved_precisely = true;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !resolved_precisely {
+                    // Fallback: mark every section defining this symbol name
+                    // (globals/weak/imports: all candidates stay live).
+                    if let Some(defs) = sym_defs.get(reloc.symbol_name.as_str()) {
+                        for &(target_f_idx, target_s_idx) in defs {
+                            if live_sections.insert((target_f_idx, target_s_idx)) {
+                                worklist.push_back((target_f_idx, target_s_idx));
+                            }
                         }
                     }
                 }

@@ -7,7 +7,7 @@
 //! and `adeshlink strip` (llvm-strip replacement).
 
 use adesh_linker::archive::Archive;
-use adesh_linker::config::{BuildIdStyle, IcfMode, LinkConfig, MapFormat};
+use adesh_linker::config::{BuildIdStyle, IcfMode, LinkConfig, LtoMode, MapFormat, OptLevel};
 use adesh_linker::error::{ErrorCode, LinkError};
 use adesh_linker::linker::Linker;
 use adesh_linker::object::ObjectReader;
@@ -48,6 +48,7 @@ INSPECTION & ANALYSIS COMMANDS:
 
 CORE LINKING OPTIONS:
     -o <file>             Set output binary path [default: a.out]
+    --output=<file>       lld-compatible output spelling
     -e, --entry <symbol>  Set program entry point [default: target default]
     -L <dir>              Add library search directory
     -l <lib>              Link static archive or library (e.g. -lm -> libm.a / m.lib)
@@ -59,12 +60,17 @@ CORE LINKING OPTIONS:
     --static              Produce a standalone static executable [default: enabled]
 
 OPTIMIZATIONS & STRIPPING:
+    -O0|-O1|-O2|-O3     Select link-time optimization policy (default: -O2)
+    -Os|-Oz             Optimize for size; -Oz also strips symbols
+    --lto[=thin|full]   Request IR LTO (errors until an IR optimizer is integrated)
+    --no-lto            Disable link-time optimization policy
     --gc-sections         Remove unreferenced dead sections [default: enabled]
     --no-gc-sections      Disable dead section garbage collection
     --print-gc-sections   Print sections removed during garbage collection
     --icf[=safe|all]      Enable Identical Code Folding
     --print-icf           Print functions merged during ICF
-    --strip               Strip all symbols and debug sections from output
+    -s, --strip-all        Strip all symbols and debug sections from output
+    --strip               Alias for --strip-all
     --strip-debug         Strip debug sections only
     --debug               Preserve debug metadata and line tables
 
@@ -264,17 +270,21 @@ fn main() {
             "-v" | "--verbose" => {
                 config.verbose = true;
             }
-            "-o" => {
+            "-o" | "--output" => {
                 i += 1;
-                if i < args.len() {
-                    config.output_path = PathBuf::from(&args[i]);
+                if i >= args.len() {
+                    eprintln!("error: -o requires an output path");
+                    process::exit(1);
                 }
+                config.output_path = PathBuf::from(&args[i]);
             }
             "-e" | "--entry" => {
                 i += 1;
-                if i < args.len() {
-                    config.entry_point = Some(args[i].clone());
+                if i >= args.len() {
+                    eprintln!("error: -e/--entry requires a symbol");
+                    process::exit(1);
                 }
+                config.entry_point = Some(args[i].clone());
             }
             "-L" => {
                 i += 1;
@@ -325,6 +335,21 @@ fn main() {
             "--static" => {
                 config.static_link = true;
             }
+            "-O0" | "--opt=0" => config.apply_optimization_level(OptLevel::O0),
+            "-O1" | "--opt=1" => config.apply_optimization_level(OptLevel::O1),
+            "-O2" | "--opt=2" => config.apply_optimization_level(OptLevel::O2),
+            "-O3" | "--opt=3" => config.apply_optimization_level(OptLevel::O3),
+            "-Os" | "--opt=s" => config.apply_optimization_level(OptLevel::Os),
+            "-Oz" | "--opt=z" => config.apply_optimization_level(OptLevel::Oz),
+            "--lto" | "--lto=thin" | "-flto=thin" => {
+                config.lto = LtoMode::Thin;
+            }
+            "--lto=full" | "-flto" | "-flto=full" => {
+                config.lto = LtoMode::Full;
+            }
+            "--no-lto" | "-fno-lto" => {
+                config.lto = LtoMode::Off;
+            }
             "--gc-sections" => {
                 config.gc_sections = true;
             }
@@ -337,13 +362,16 @@ fn main() {
             "--icf" | "--icf=all" => {
                 config.icf = IcfMode::All;
             }
+            "--icf=none" => {
+                config.icf = IcfMode::None;
+            }
             "--icf=safe" => {
                 config.icf = IcfMode::Safe;
             }
             "--print-icf" => {
                 config.print_icf = true;
             }
-            "--strip" => {
+            "-s" | "--strip-all" | "--strip" => {
                 config.strip = true;
             }
             "--strip-debug" => {
@@ -374,8 +402,19 @@ fn main() {
             "--map" => {
                 config.map_file = Some(PathBuf::from("a.map"));
             }
+            "-Map" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("error: -Map requires an output path");
+                    process::exit(1);
+                }
+                config.map_file = Some(PathBuf::from(&args[i]));
+            }
             arg if arg.starts_with("--map=") => {
                 config.map_file = Some(PathBuf::from(&arg[6..]));
+            }
+            arg if arg.starts_with("-Map=") => {
+                config.map_file = Some(PathBuf::from(&arg[5..]));
             }
             "--map-format" => {
                 i += 1;
@@ -433,11 +472,21 @@ fn main() {
                     process::exit(1);
                 }
             },
+            arg if arg.starts_with("--output=") && arg.len() > 9 => {
+                config.output_path = PathBuf::from(&arg[9..]);
+            }
+            arg if arg.starts_with("--entry=") && arg.len() > 8 => {
+                config.entry_point = Some(arg[8..].to_string());
+            }
             arg if !arg.starts_with('-') => {
                 input_paths.push(PathBuf::from(arg));
             }
             other => {
-                eprintln!("warning: unrecognized linker option: `{}`", other);
+                eprintln!(
+                    "error: unsupported linker option `{}` (the option was not ignored)",
+                    other
+                );
+                process::exit(1);
             }
         }
         i += 1;

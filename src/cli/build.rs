@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use crate::cli::ui::{BuildProgress, colors};
+use crate::cli::ui::{colors, BuildProgress};
 
 /// Output type for build command
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -263,7 +263,9 @@ impl AotBuildConfig {
             extra_linker_args: self.linker_args.clone(),
             fast_compile: self.fast_compile,
             enable_dead_code_elimination: true,
-            enable_lto: self.opt_level >= 3 && !self.fast_compile,
+            // Cranelift emits native object code, not cross-module IR. O3
+            // must not implicitly claim that ThinLTO was performed.
+            enable_lto: false,
             incremental: self.incremental,
             cache_dir: None,
             force_rebuild: self.force_rebuild,
@@ -930,8 +932,8 @@ pub fn run_executable(executable: &PathBuf, args: &[String]) -> Result<i32, Stri
 fn enable_windows_vt_mode() -> Result<(), String> {
     use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
     use windows_sys::Win32::System::Console::{
-        ENABLE_VIRTUAL_TERMINAL_PROCESSING, GetConsoleMode, GetStdHandle, STD_OUTPUT_HANDLE,
-        SetConsoleMode,
+        GetConsoleMode, GetStdHandle, SetConsoleMode, ENABLE_VIRTUAL_TERMINAL_PROCESSING,
+        STD_OUTPUT_HANDLE,
     };
 
     unsafe {

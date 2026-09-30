@@ -1,12 +1,27 @@
-use adesh_linker::config::BuildIdStyle;
+use adesh_linker::config::{BuildIdStyle, LinkConfig, LtoMode};
 use adesh_linker::hash::{compute_build_id, sha256};
 use adesh_linker::layout::LayoutEngine;
+use adesh_linker::linker::Linker;
 use adesh_linker::map::LinkMapGenerator;
 use adesh_linker::object::ObjectFile;
-use adesh_linker::section::{MergedSection, SectionKind, flags};
+use adesh_linker::section::{flags, MergedSection, SectionKind};
 use adesh_linker::symbol::{Symbol, SymbolBinding, SymbolType};
 use adesh_linker::target::Target;
 use std::path::PathBuf;
+use tempfile::tempdir;
+
+#[test]
+fn test_ir_lto_request_fails_without_emitting_an_unoptimized_binary() {
+    let dir = tempdir().unwrap();
+    let output = dir.path().join("not_lto.exe");
+    let mut config = LinkConfig::new(output.clone(), Target::x86_64_windows());
+    for mode in [LtoMode::Thin, LtoMode::Full] {
+        config.lto = mode;
+        let error = Linker::link(&[dir.path().join("native.obj")], config.clone()).unwrap_err();
+        assert!(error.to_string().contains("IR-level LTO"));
+        assert!(!output.exists());
+    }
+}
 
 #[test]
 fn test_build_id_generation_modes() {

@@ -87,9 +87,13 @@ impl SymbolResolver {
         while progress && !self.undefined.is_empty() {
             progress = false;
             for ar in archives {
-                let current_undef: Vec<String> = self.undefined.iter().cloned().collect();
+                let mut current_undef: Vec<String> = self.undefined.iter().cloned().collect();
+                current_undef.sort();
                 for undef_sym in current_undef {
-                    let m_idx_opt = ar
+                    if !self.undefined.contains(&undef_sym) {
+                        continue;
+                    }
+                    let candidates = ar
                         .symbol_index
                         .get(&undef_sym)
                         .or_else(|| {
@@ -97,10 +101,16 @@ impl SymbolResolver {
                                 .get(undef_sym.strip_prefix('_').unwrap_or(&undef_sym))
                         })
                         .or_else(|| ar.symbol_index.get(&format!("_{}", undef_sym)));
-                    if let Some(&m_idx) = m_idx_opt {
-                        if m_idx < ar.members.len()
-                            && extracted_members.insert((ar.path.clone(), m_idx))
-                        {
+                    if let Some(candidates) = candidates {
+                        // A COFF archive can contain several COMDAT
+                        // definitions with the same name. If one candidate
+                        // was extracted for another symbol, try another
+                        // defining member instead of abandoning this symbol.
+                        if let Some(&m_idx) = candidates.iter().find(|&&idx| {
+                            idx < ar.members.len()
+                                && !extracted_members.contains(&(ar.path.clone(), idx))
+                        }) {
+                            extracted_members.insert((ar.path.clone(), m_idx));
                             let member = &ar.members[m_idx];
                             let mut member_obj = if let Some(ref o) = member.obj {
                                 let mut cloned = o.clone();

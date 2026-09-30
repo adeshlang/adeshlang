@@ -20,7 +20,7 @@ pub struct ArchiveMember {
 pub struct Archive {
     pub path: PathBuf,
     pub members: Vec<ArchiveMember>,
-    pub symbol_index: HashMap<String, usize>, // symbol_name -> member_index
+    pub symbol_index: HashMap<String, Vec<usize>>, // symbol_name -> defining member indices
 }
 
 impl Archive {
@@ -126,7 +126,11 @@ impl Archive {
             ) {
                 for sym in &obj.symbols {
                     if sym.is_defined && !sym.is_local() {
-                        symbol_index.insert(sym.name.clone(), m_idx);
+                        let candidates: &mut Vec<usize> =
+                            symbol_index.entry(sym.name.clone()).or_default();
+                        if candidates.last() != Some(&m_idx) {
+                            candidates.push(m_idx);
+                        }
                     }
                 }
                 m.obj = Some(obj);

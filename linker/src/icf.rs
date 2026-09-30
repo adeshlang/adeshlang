@@ -3,7 +3,8 @@
 use crate::config::IcfMode;
 use crate::hash::fnv1a_64;
 use crate::object::ObjectFile;
-use std::collections::HashMap;
+use crate::symbol::SymbolBinding;
+use std::collections::{HashMap, HashSet};
 
 pub struct IcfEngine;
 
@@ -16,6 +17,23 @@ impl IcfEngine {
         // Map: hash -> (file_index, section_index, canonical_symbol_name)
         let mut hashes: HashMap<u64, (usize, usize, String)> = HashMap::new();
         let mut folded_count = 0;
+        let indexed_targets: HashSet<(usize, usize)> = objects
+            .iter()
+            .enumerate()
+            .flat_map(|(f_idx, obj)| {
+                obj.sections
+                    .iter()
+                    .filter(|sec| sec.is_live)
+                    .flat_map(move |sec| {
+                        sec.relocations.iter().filter_map(move |r| {
+                            r.symbol_index
+                                .and_then(|idx| obj.symbols.get(idx))
+                                .and_then(|sym| sym.section_index)
+                                .map(|s_idx| (f_idx, s_idx))
+                        })
+                    })
+            })
+            .collect();
 
         for f_idx in 0..objects.len() {
             let num_secs = objects[f_idx].sections.len();
@@ -24,7 +42,15 @@ impl IcfEngine {
                     let sec = &objects[f_idx].sections[s_idx];
                     (
                         sec.relocations.len(),
-                        sec.is_live && sec.is_executable() && !sec.data.is_empty(),
+                        sec.is_live
+                            && sec.is_executable()
+                            && !sec.data.is_empty()
+                            && !indexed_targets.contains(&(f_idx, s_idx))
+                            // Identical raw symbol indices from different
+                            // objects can designate different local targets.
+                            // Folding these sections is unsafe without a
+                            // relocation graph equivalence check.
+                            && sec.relocations.iter().all(|r| r.symbol_index.is_none()),
                     )
                 };
 
@@ -52,8 +78,7 @@ impl IcfEngine {
                         let matches = {
                             let target_sec = &objects[target_f].sections[target_s];
                             let sec = &objects[f_idx].sections[s_idx];
-                            target_sec.data == sec.data
-                                && target_sec.relocations == sec.relocations
+                            target_sec.data == sec.data && target_sec.relocations == sec.relocations
                         };
 
                         if matches {
@@ -73,13 +98,21 @@ impl IcfEngine {
                     }
                 }
 
-                // First instance becomes canonical
-                let sym_name = objects[f_idx]
+                // A COFF section's first symbol is usually the same-named
+                // local `.text` section symbol, not the function. Using it as
+                // an alias key collides with hundreds of other sections.
+                let Some(sym_name) = objects[f_idx]
                     .symbols
                     .iter()
-                    .find(|s| s.section_index == Some(s_idx))
+                    .find(|s| {
+                        s.section_index == Some(s_idx)
+                            && s.binding == SymbolBinding::Global
+                            && !s.name.is_empty()
+                    })
                     .map(|s| s.name.clone())
-                    .unwrap_or_else(|| objects[f_idx].sections[s_idx].name.clone());
+                else {
+                    continue;
+                };
 
                 hashes.insert(hash, (f_idx, s_idx, sym_name));
             }

@@ -5,10 +5,17 @@ use crate::error::{ErrorCode, LinkError, LinkResult};
 use crate::object::ObjectFile;
 use crate::relocation::RelocationKind;
 use crate::resolver::SymbolResolver;
-use crate::section::{MergedSection, SectionKind, align_to, flags};
+use crate::section::{align_to, flags, MergedSection, SectionKind};
 use crate::symbol::Symbol;
 use crate::target::Target;
 use std::collections::HashMap;
+
+/// PE TLS directory information consumed by the PE writer.
+#[derive(Debug, Clone, Copy)]
+pub struct PeTlsInfo {
+    pub directory_rva: u32,
+    pub directory_size: u32,
+}
 
 /// Section layout and memory placement engine.
 pub struct LayoutEngine {
@@ -20,6 +27,8 @@ pub struct LayoutEngine {
     /// The PE writer must emit these bytes verbatim; rebuilding the table with
     /// a differently-ordered import list invalidates all patched thunks.
     pub pe_import_info: Option<crate::pe::import::ImportTableResult>,
+    /// PE TLS directory information, when input objects contain TLS data.
+    pub pe_tls_info: Option<PeTlsInfo>,
     /// RVAs of all 64-bit absolute relocations applied (for the PE `.reloc`
     /// base relocation table, enabling working ASLR).
     pub base_relocs: Vec<u32>,
@@ -35,6 +44,7 @@ impl LayoutEngine {
             resolved_symbols: Vec::new(),
             entry_va: 0,
             pe_import_info: None,
+            pe_tls_info: None,
             base_relocs: Vec::new(),
             warnings: Vec::new(),
         }
@@ -73,6 +83,12 @@ impl LayoutEngine {
             flags::READ | flags::WRITE | flags::ALLOC,
             8,
         );
+        let mut tls_merged = MergedSection::new(
+            ".tls",
+            SectionKind::TData,
+            flags::READ | flags::WRITE | flags::ALLOC | flags::TLS,
+            16,
+        );
         let mut meta_merged = MergedSection::new(
             ".adesh.meta",
             SectionKind::AdeshMeta,
@@ -86,11 +102,14 @@ impl LayoutEngine {
             Rodata,
             Data,
             Bss,
+            Tls,
             Meta,
         }
 
         // Map: (file_index, section_index) -> (SectionCat, offset_in_merged)
         let mut sec_placement: HashMap<(usize, usize), (SectionCat, u64)> = HashMap::new();
+        let mut tls_sections: Vec<(usize, usize)> = Vec::new();
+        let mut tls_callback_sections: Vec<(usize, usize)> = Vec::new();
 
         // Map: symbol name -> (file_index, section_index) of its definition.
         // Used to alias ICF-folded sections to their canonical twin's placement.
@@ -99,7 +118,9 @@ impl LayoutEngine {
             for sym in &obj.symbols {
                 if sym.is_defined {
                     if let Some(s_idx) = sym.section_index {
-                        sym_def_loc.entry(sym.name.as_str()).or_insert((f_idx, s_idx));
+                        sym_def_loc
+                            .entry(sym.name.as_str())
+                            .or_insert((f_idx, s_idx));
                     }
                 }
             }
@@ -125,7 +146,20 @@ impl LayoutEngine {
                     continue;
                 }
 
-                if sec.name == ".adesh.meta" || sec.kind == SectionKind::AdeshMeta {
+                if matches!(sec.kind, SectionKind::TData | SectionKind::TBss) {
+                    // COFF TLS contribution order is lexical by full section
+                    // name (`.tls$AAA` ... `.tls$ZZZ`), not archive order.
+                    // Preserve each contribution so the loader sees one
+                    // contiguous, correctly ordered TLS template.
+                    tls_sections.push((f_idx, s_idx));
+                } else if target.format == crate::target::ObjectFormat::Pe
+                    && sec.name.starts_with(".CRT$XL")
+                {
+                    // PE TLS callbacks are an ordered null-terminated pointer
+                    // array. Keep them out of ordinary rodata so lexical COFF
+                    // subsection ordering is preserved.
+                    tls_callback_sections.push((f_idx, s_idx));
+                } else if sec.name == ".adesh.meta" || sec.kind == SectionKind::AdeshMeta {
                     let off = meta_merged.append_section(sec, f_idx, s_idx);
                     sec_placement.insert((f_idx, s_idx), (SectionCat::Meta, off));
                 } else if sec.is_executable() {
@@ -144,6 +178,51 @@ impl LayoutEngine {
             }
         }
 
+        tls_sections.sort_by(|(left_file, left_sec), (right_file, right_sec)| {
+            objects[*left_file].sections[*left_sec]
+                .name
+                .cmp(&objects[*right_file].sections[*right_sec].name)
+        });
+        for (f_idx, s_idx) in tls_sections {
+            let sec = &objects[f_idx].sections[s_idx];
+            let off = tls_merged.append_section(sec, f_idx, s_idx);
+            sec_placement.insert((f_idx, s_idx), (SectionCat::Tls, off));
+        }
+        if target.format != crate::target::ObjectFormat::Pe && tls_merged.size > 0 {
+            // Other output writers do not yet emit their runtime TLS
+            // descriptors (e.g. ELF PT_TLS, Mach-O TLV). Refuse a binary
+            // with thread-local data in an ordinary loadable section rather
+            // than pretending it has per-thread storage.
+            return Err(LinkError::new(
+                ErrorCode::UnsupportedRelocation,
+                format!(
+                    "TLS input sections are not supported by the {:?} output writer",
+                    target.format
+                ),
+            ));
+        }
+
+        tls_callback_sections.sort_by(|(left_file, left_sec), (right_file, right_sec)| {
+            objects[*left_file].sections[*left_sec]
+                .name
+                .cmp(&objects[*right_file].sections[*right_sec].name)
+        });
+        let tls_callbacks_off = if tls_callback_sections.is_empty() {
+            None
+        } else {
+            let mut first_callback_off = None;
+            for (f_idx, s_idx) in tls_callback_sections {
+                let sec = &objects[f_idx].sections[s_idx];
+                let section_off = rodata_merged.append_section(sec, f_idx, s_idx);
+                first_callback_off.get_or_insert(section_off);
+                sec_placement.insert((f_idx, s_idx), (SectionCat::Rodata, section_off));
+            }
+            // Required terminator for IMAGE_TLS_DIRECTORY::AddressOfCallbacks.
+            rodata_merged.data.extend_from_slice(&0u64.to_le_bytes());
+            rodata_merged.size = rodata_merged.data.len() as u64;
+            first_callback_off
+        };
+
         let mut pe_imports = Vec::new();
         let mut seen_imports = std::collections::HashSet::new();
 
@@ -159,11 +238,12 @@ impl LayoutEngine {
                     .or_else(|| crate::os_router::OsApiRouter::windows_dll_for(clean_unprefixed));
 
                 if let Some(dll) = dll_opt {
-                    let export_name = if crate::os_router::OsApiRouter::windows_dll_for(clean).is_some() {
-                        clean
-                    } else {
-                        clean_unprefixed
-                    };
+                    let export_name =
+                        if crate::os_router::OsApiRouter::windows_dll_for(clean).is_some() {
+                            clean
+                        } else {
+                            clean_unprefixed
+                        };
                     if !export_name.is_empty()
                         && export_name != "fltused"
                         && seen_imports.insert(export_name.to_string())
@@ -230,28 +310,35 @@ impl LayoutEngine {
                     }
                 }
             }
+            // Resolver symbols live in a HashMap. Sort once before creating
+            // both import thunks and .idata so identical inputs yield the
+            // same executable bytes, independent of hash iteration order.
+            pe_imports
+                .sort_by(|a, b| (&a.dll_name, &a.symbol_name).cmp(&(&b.dll_name, &b.symbol_name)));
         }
 
         let has_explicit_pe_entry = objects.iter().any(|o| {
-            o.symbols
-                .iter()
-                .any(|s| s.is_defined && (s.name == "mainCRTStartup" || s.name == "__adesh_windows_start"))
+            o.symbols.iter().any(|s| {
+                s.is_defined && (s.name == "mainCRTStartup" || s.name == "__adesh_windows_start")
+            })
         }) || resolver.table.contains_key("mainCRTStartup")
             || resolver.table.contains_key("__adesh_windows_start");
 
-        let has_main = objects.iter().any(|o| {
-            o.symbols.iter().any(|s| s.is_defined && s.name == "main")
-        }) || resolver.table.contains_key("main");
+        let has_main = objects
+            .iter()
+            .any(|o| o.symbols.iter().any(|s| s.is_defined && s.name == "main"))
+            || resolver.table.contains_key("main");
 
-        let pe_thunks_start_off = if target.format == crate::target::ObjectFormat::Pe && !pe_imports.is_empty() {
-            let off = text_merged.data.len() as u64;
-            let sz = (pe_imports.len() * 8) as u64;
-            text_merged.data.resize((off + sz) as usize, 0x90);
-            text_merged.size = text_merged.data.len() as u64;
-            Some(off)
-        } else {
-            None
-        };
+        let pe_thunks_start_off =
+            if target.format == crate::target::ObjectFormat::Pe && !pe_imports.is_empty() {
+                let off = text_merged.data.len() as u64;
+                let sz = (pe_imports.len() * 8) as u64;
+                text_merged.data.resize((off + sz) as usize, 0x90);
+                text_merged.size = text_merged.data.len() as u64;
+                Some(off)
+            } else {
+                None
+            };
 
         let pe_entry_stub_off = if target.format == crate::target::ObjectFormat::Pe
             && has_main
@@ -284,6 +371,49 @@ impl LayoutEngine {
             None
         };
 
+        // PE's loader writes the TLS module index into this process-global
+        // slot. MSVC/Rust COFF objects commonly leave `_tls_index` undefined,
+        // expecting the linker to provide it.
+        let has_input_tls_index = objects.iter().any(|obj| {
+            obj.symbols.iter().any(|sym| {
+                sym.is_defined && sym.name == "_tls_index" && sym.section_index.is_some()
+            })
+        });
+        let has_input_tls_used = objects.iter().any(|obj| {
+            obj.symbols.iter().any(|sym| {
+                sym.is_defined
+                    && (sym.name == "_tls_used" || sym.name == "__tls_used")
+                    && sym.section_index.is_some()
+            })
+        });
+        let needs_pe_tls = target.format == crate::target::ObjectFormat::Pe
+            && (tls_merged.size > 0 || tls_callbacks_off.is_some());
+        let synthesized_tls_index_off = if needs_pe_tls && !has_input_tls_index {
+            let off = align_to(data_merged.data.len() as u64, 4);
+            if off > data_merged.data.len() as u64 {
+                data_merged.data.resize(off as usize, 0);
+            }
+            data_merged.data.extend_from_slice(&0u32.to_le_bytes());
+            data_merged.size = data_merged.data.len() as u64;
+            Some(off)
+        } else {
+            None
+        };
+
+        // IMAGE_TLS_DIRECTORY64. Its four VA fields are patched after virtual
+        // addresses are assigned and recorded for ASLR rebasing.
+        let synthesized_tls_directory_off = if needs_pe_tls && !has_input_tls_used {
+            let off = align_to(rodata_merged.data.len() as u64, 8);
+            if off > rodata_merged.data.len() as u64 {
+                rodata_merged.data.resize(off as usize, 0);
+            }
+            rodata_merged.data.resize((off + 40) as usize, 0);
+            rodata_merged.size = rodata_merged.data.len() as u64;
+            Some(off)
+        } else {
+            None
+        };
+
         let mut merged_list = Vec::new();
         let mut cat_to_idx: HashMap<SectionCat, usize> = HashMap::new();
 
@@ -303,6 +433,12 @@ impl LayoutEngine {
             cat_to_idx.insert(SectionCat::Bss, merged_list.len());
             merged_list.push(bss_merged);
         }
+        // Keep the shared TLS layout for every output format. Only the PE
+        // loader metadata is format-specific.
+        if tls_merged.size > 0 || !tls_merged.data.is_empty() {
+            cat_to_idx.insert(SectionCat::Tls, merged_list.len());
+            merged_list.push(tls_merged);
+        }
         if meta_merged.size > 0 || !meta_merged.data.is_empty() {
             cat_to_idx.insert(SectionCat::Meta, merged_list.len());
             merged_list.push(meta_merged);
@@ -320,11 +456,8 @@ impl LayoutEngine {
         if target.format == crate::target::ObjectFormat::Pe && !pe_imports.is_empty() {
             let idata_va = align_to(current_va, target.page_size.max(0x1000));
             let idata_rva = (idata_va - target.image_base) as u32;
-            let imp_res = crate::pe::import::build_import_table(
-                &pe_imports,
-                target.image_base,
-                idata_rva,
-            );
+            let imp_res =
+                crate::pe::import::build_import_table(&pe_imports, target.image_base, idata_rva);
             let mut idata_sec = MergedSection::new(
                 ".idata",
                 SectionKind::Data,
@@ -335,8 +468,36 @@ impl LayoutEngine {
             idata_sec.data = imp_res.data.clone();
             idata_sec.size = imp_res.data.len() as u64;
             merged_list.push(idata_sec);
-            current_va = idata_va + imp_res.data.len() as u64;
             pe_imp_result = Some(imp_res);
+        }
+
+        // Final base VA of every input section, keyed (file, section).
+        // ICF-folded sections alias their canonical twin's placement. Used
+        // by the precise (file, symbol-index) relocation resolution below.
+        let mut sec_va_map: HashMap<(usize, usize), u64> = HashMap::new();
+        // COFF SECREL32 offsets are relative to the *output* section, not
+        // the source object's contribution. TLS variables from different
+        // `.tls$` contributions must have distinct offsets in the one merged
+        // per-thread template.
+        let mut output_sec_base: HashMap<(usize, usize), u64> = HashMap::new();
+        for ((f_idx, s_idx), (cat, off)) in &sec_placement {
+            if let Some(&m_idx) = cat_to_idx.get(cat) {
+                let base = merged_list[m_idx].virtual_address;
+                sec_va_map.insert((*f_idx, *s_idx), base + off);
+                output_sec_base.insert((*f_idx, *s_idx), base);
+            }
+        }
+        let mut symbol_output_base: HashMap<&str, u64> = HashMap::new();
+        for (f_idx, obj) in objects.iter().enumerate() {
+            for sym in &obj.symbols {
+                if sym.is_defined {
+                    if let Some(s_idx) = sym.section_index {
+                        if let Some(&base) = output_sec_base.get(&(f_idx, s_idx)) {
+                            symbol_output_base.entry(sym.name.as_str()).or_insert(base);
+                        }
+                    }
+                }
+            }
         }
 
         // 3. Security Validation: W^X Check
@@ -365,6 +526,111 @@ impl LayoutEngine {
         } else if target.format == crate::target::ObjectFormat::Elf {
             symbol_va_map.insert("__ehdr_start".to_string(), target.image_base);
             symbol_va_map.insert("__dso_handle".to_string(), target.image_base);
+        }
+
+        let input_symbol_va = |names: &[&str]| -> Option<u64> {
+            objects.iter().enumerate().find_map(|(f_idx, obj)| {
+                obj.symbols.iter().find_map(|sym| {
+                    if sym.is_defined && names.contains(&sym.name.as_str()) {
+                        sym.section_index.and_then(|s_idx| {
+                            sec_va_map.get(&(f_idx, s_idx)).map(|base| base + sym.value)
+                        })
+                    } else {
+                        None
+                    }
+                })
+            })
+        };
+
+        let mut pe_tls_info = None;
+        let mut tls_directory_base_relocs = Vec::new();
+        if needs_pe_tls {
+            let tls_va = cat_to_idx
+                .get(&SectionCat::Tls)
+                .map(|idx| merged_list[*idx].virtual_address)
+                .ok_or_else(|| {
+                    LinkError::new(
+                        ErrorCode::InvalidSection,
+                        "PE TLS layout missing .tls section",
+                    )
+                })?;
+            let tls_size = cat_to_idx
+                .get(&SectionCat::Tls)
+                .map(|idx| merged_list[*idx].size)
+                .expect("PE TLS layout missing .tls section");
+            let tls_initialized_size = cat_to_idx
+                .get(&SectionCat::Tls)
+                .map(|idx| merged_list[*idx].data.len() as u64)
+                .expect("PE TLS layout missing .tls section");
+            let tls_zero_fill = u32::try_from(tls_size - tls_initialized_size).map_err(|_| {
+                LinkError::new(
+                    ErrorCode::InvalidSection,
+                    "PE TLS zero-fill exceeds 32 bits",
+                )
+            })?;
+            let tls_index_va = synthesized_tls_index_off
+                .and_then(|off| {
+                    cat_to_idx
+                        .get(&SectionCat::Data)
+                        .map(|idx| merged_list[*idx].virtual_address + off)
+                })
+                .or_else(|| input_symbol_va(&["_tls_index"]))
+                .ok_or_else(|| {
+                    LinkError::new(
+                        ErrorCode::InvalidSection,
+                        "PE TLS layout missing _tls_index",
+                    )
+                })?;
+            let tls_directory_va = synthesized_tls_directory_off
+                .and_then(|off| {
+                    cat_to_idx
+                        .get(&SectionCat::Rodata)
+                        .map(|idx| merged_list[*idx].virtual_address + off)
+                })
+                .or_else(|| input_symbol_va(&["_tls_used", "__tls_used"]))
+                .ok_or_else(|| {
+                    LinkError::new(ErrorCode::InvalidSection, "PE TLS layout missing _tls_used")
+                })?;
+
+            symbol_va_map.insert("_tls_index".to_string(), tls_index_va);
+            symbol_va_map.insert("_tls_used".to_string(), tls_directory_va);
+            symbol_va_map.insert("__tls_used".to_string(), tls_directory_va);
+
+            if let Some(dir_off) = synthesized_tls_directory_off {
+                let rodata_idx = *cat_to_idx
+                    .get(&SectionCat::Rodata)
+                    .expect("TLS directory requires a rodata section");
+                let callbacks_va = tls_callbacks_off
+                    .map(|off| merged_list[rodata_idx].virtual_address + off)
+                    .unwrap_or(0);
+                let tls_end_va = tls_va + tls_initialized_size;
+                let dir =
+                    &mut merged_list[rodata_idx].data[dir_off as usize..dir_off as usize + 40];
+                dir[0..8].copy_from_slice(&tls_va.to_le_bytes());
+                dir[8..16].copy_from_slice(&tls_end_va.to_le_bytes());
+                dir[16..24].copy_from_slice(&tls_index_va.to_le_bytes());
+                dir[24..32].copy_from_slice(&callbacks_va.to_le_bytes());
+                dir[32..36].copy_from_slice(&tls_zero_fill.to_le_bytes());
+                dir[36..40].copy_from_slice(&0u32.to_le_bytes());
+
+                let dir_rva =
+                    (merged_list[rodata_idx].virtual_address - target.image_base + dir_off) as u32;
+                for field_off in [0u32, 8, 16] {
+                    tls_directory_base_relocs.push(dir_rva + field_off);
+                }
+                if callbacks_va != 0 {
+                    tls_directory_base_relocs.push(dir_rva + 24);
+                }
+                pe_tls_info = Some(PeTlsInfo {
+                    directory_rva: dir_rva,
+                    directory_size: 40,
+                });
+            } else {
+                pe_tls_info = Some(PeTlsInfo {
+                    directory_rva: (tls_directory_va - target.image_base) as u32,
+                    directory_size: 40,
+                });
+            }
         }
 
         // Deterministic first-definition-wins name index for the relocation
@@ -506,34 +772,66 @@ impl LayoutEngine {
             self.entry_va = target.image_base + 0x1000;
         }
 
-        // Helper to resolve symbol VA with fallbacks (exact local -> global -> unmangled / prefixed)
-        let resolve_sym_va = |f_idx_opt: Option<usize>, name: &str| -> Option<u64> {
-            if let Some(f_idx) = f_idx_opt {
+        // Resolve a relocation target to a VA. Returns the symbol's VA plus,
+        // when resolved via the precise path, the VA of the section that
+        // contains it (needed by SECREL32-style relocations).
+        //
+        // Precise path first: resolve local symbols by their exact
+        // object-local symbol index. This is required for correctness on
+        // LLVM COFF objects, which contain many same-named sections
+        // (`.text`, `.rdata`, ...): jump-table entries reference the `.text`
+        // section symbol and code references the `.rdata` section symbol, and
+        // name-based resolution would pick an arbitrary one of the dozens of
+        // same-named sections, producing code that jumps into data.
+        let resolve_sym_va = |file_idx_opt: Option<usize>,
+                              sym_idx_opt: Option<usize>,
+                              name: &str|
+         -> (Option<u64>, Option<u64>) {
+            if let (Some(f_idx), Some(si)) = (file_idx_opt, sym_idx_opt) {
+                if let Some(obj) = objects.get(f_idx) {
+                    if let Some(sym) = obj.symbols.get(si) {
+                        if sym.is_defined {
+                            if let Some(s_idx) = sym.section_index {
+                                if let Some(&base) = sec_va_map.get(&(f_idx, s_idx)) {
+                                    return (
+                                        Some(base + sym.value),
+                                        output_sec_base.get(&(f_idx, s_idx)).copied(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Name-based fallback for global/weak/imported symbols and for
+            // formats whose readers do not record symbol indices.
+            if let Some(f_idx) = file_idx_opt {
                 if let Some(&va) = file_local_va_map.get(&(f_idx, name.to_string())) {
-                    return Some(va);
+                    return (Some(va), symbol_output_base.get(name).copied());
                 }
             }
             if let Some(&va) = symbol_va_map.get(name) {
-                return Some(va);
+                return (Some(va), symbol_output_base.get(name).copied());
             }
             if let Some(stripped) = name.strip_prefix("__imp_") {
                 if let Some(&va) = symbol_va_map.get(stripped) {
-                    return Some(va);
+                    return (Some(va), None);
                 }
             }
             if let Some(stripped) = name.strip_prefix('_') {
                 if let Some(&va) = symbol_va_map.get(stripped) {
-                    return Some(va);
+                    return (Some(va), None);
                 }
             } else if let Some(&va) = symbol_va_map.get(&format!("_{}", name)) {
-                return Some(va);
+                return (Some(va), None);
             }
             // Fall back to the first definition of any file-local symbol
             // with this name (deterministic: lowest file index wins).
             if let Some(&va) = local_name_to_va.get(name) {
-                return Some(va);
+                return (Some(va), None);
             }
-            None
+            (None, None)
         };
 
         // VA of the synthesized UD2 trap stub used for unresolvable
@@ -547,7 +845,7 @@ impl LayoutEngine {
 
         let mut reloc_warnings: Vec<String> = Vec::new();
         let mut warned_syms: HashMap<String, ()> = HashMap::new();
-        let mut base_relocs: Vec<u32> = Vec::new();
+        let mut base_relocs: Vec<u32> = tls_directory_base_relocs;
 
         // 5. Apply Relocations to Merged Sections
         let handler = get_handler(target.arch);
@@ -558,7 +856,8 @@ impl LayoutEngine {
             }
 
             for reloc in &merged.relocations {
-                let sym_va_opt = resolve_sym_va(reloc.symbol_index, &reloc.symbol_name);
+                let (sym_va_opt, sym_sec_base) =
+                    resolve_sym_va(reloc.file_index, reloc.symbol_index, &reloc.symbol_name);
                 let is_weak_or_internal = reloc.symbol_name.starts_with("__weak_")
                     || reloc.symbol_name.starts_with("_ZN")
                     || reloc.symbol_name.starts_with("ZN")
@@ -602,8 +901,7 @@ impl LayoutEngine {
                                 );
                             match (is_code_ref, trap_va) {
                                 (true, Some(tva)) => {
-                                    if warned_syms.insert(reloc.symbol_name.clone(), ()).is_none()
-                                    {
+                                    if warned_syms.insert(reloc.symbol_name.clone(), ()).is_none() {
                                         reloc_warnings.push(format!(
                                             "unresolved weak/internal symbol `{}` (referenced from {}+0x{:x}) routed to trap stub; \
                                              if this symbol is expected to be called at runtime, the runtime library is missing a definition",
@@ -613,8 +911,7 @@ impl LayoutEngine {
                                     (tva, true)
                                 }
                                 _ => {
-                                    if warned_syms.insert(reloc.symbol_name.clone(), ()).is_none()
-                                    {
+                                    if warned_syms.insert(reloc.symbol_name.clone(), ()).is_none() {
                                         reloc_warnings.push(format!(
                                             "unresolved weak/internal symbol `{}` (referenced from {}+0x{:x}) resolved to NULL",
                                             reloc.symbol_name, merged.name, reloc.offset
@@ -633,6 +930,63 @@ impl LayoutEngine {
                         }
                     }
                 };
+
+                // PE image-relative (ADDR32NB -> RVA) and section-relative
+                // (SECREL32) relocations need bases the generic handler does
+                // not know (image base / target section base). Apply them
+                // here directly.
+                if target.format == crate::target::ObjectFormat::Pe {
+                    match reloc.kind {
+                        RelocationKind::ImageRelative32 => {
+                            let val = (sym_va as i64)
+                                .wrapping_add(reloc.addend)
+                                .wrapping_sub(target.image_base as i64)
+                                as u32;
+                            let off = reloc.offset as usize;
+                            if off + 4 <= merged.data.len() {
+                                merged.data[off..off + 4].copy_from_slice(&val.to_le_bytes());
+                                continue;
+                            }
+                            return Err(LinkError::new(
+                                crate::error::ErrorCode::RelocationOverflow,
+                                format!(
+                                    "image-relative relocation at {}+0x{:x} exceeds section size",
+                                    merged.name, reloc.offset
+                                ),
+                            ));
+                        }
+                        RelocationKind::SectionRelative32 => {
+                            // Offset within the merged output section. An
+                            // unknown base cannot safely become an RVA.
+                            let sec_base = sym_sec_base.ok_or_else(|| {
+                                LinkError::new(
+                                    ErrorCode::InvalidSection,
+                                    format!(
+                                        "section-relative relocation against `{}` has no output section",
+                                        reloc.symbol_name
+                                    ),
+                                )
+                            })?;
+                            let val = (sym_va as i64)
+                                .wrapping_sub(sec_base as i64)
+                                .wrapping_add(reloc.addend)
+                                as u32;
+                            let off = reloc.offset as usize;
+                            if off + 4 <= merged.data.len() {
+                                merged.data[off..off + 4].copy_from_slice(&val.to_le_bytes());
+                                continue;
+                            }
+                            return Err(LinkError::new(
+                                crate::error::ErrorCode::RelocationOverflow,
+                                format!(
+                                    "section-relative relocation at {}+0x{:x} exceeds section size",
+                                    merged.name, reloc.offset
+                                ),
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
 
                 match handler.apply(reloc, place_va, sym_va, reloc.addend, &mut merged.data) {
                     Ok(()) => {
@@ -672,6 +1026,7 @@ impl LayoutEngine {
         self.merged_sections = merged_list;
         self.resolved_symbols = final_symbols;
         self.pe_import_info = pe_imp_result;
+        self.pe_tls_info = pe_tls_info;
         self.base_relocs = base_relocs;
         self.warnings = reloc_warnings;
 

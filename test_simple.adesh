@@ -1,3 +1,1 @@
-fn main() {
-    println("Hello world from native Adesh!");
-}
+print(`Sum : ${1 + 2 + 3}`);

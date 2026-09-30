@@ -3,7 +3,7 @@
 use crate::error::{ErrorCode, LinkError, LinkResult};
 use crate::object::ObjectFile;
 use crate::pe::header::*;
-use crate::section::{Section, SectionKind, flags};
+use crate::section::{flags, Section, SectionKind};
 use crate::symbol::{Symbol, SymbolBinding, SymbolType, SymbolVisibility};
 use crate::target::{Arch, Endianness, ObjectFormat, Os, PointerWidth, Target};
 use std::path::Path;
@@ -143,7 +143,13 @@ impl PeReader {
             let characteristics =
                 u32::from_le_bytes(bytes[s_off + 36..s_off + 40].try_into().unwrap());
 
-            let kind = if (characteristics & IMAGE_SCN_CNT_CODE) != 0 || name.starts_with(".text") {
+            let kind = if name.starts_with(".tls") {
+                if (characteristics & IMAGE_SCN_CNT_UNINITIALIZED_DATA) != 0 {
+                    SectionKind::TBss
+                } else {
+                    SectionKind::TData
+                }
+            } else if (characteristics & IMAGE_SCN_CNT_CODE) != 0 || name.starts_with(".text") {
                 SectionKind::Text
             } else if (characteristics & IMAGE_SCN_CNT_UNINITIALIZED_DATA) != 0
                 || name.starts_with(".bss")
@@ -164,8 +170,13 @@ impl PeReader {
             if (characteristics & IMAGE_SCN_MEM_EXECUTE) != 0 {
                 sec_flags |= flags::EXEC;
             }
+            if matches!(kind, SectionKind::TData | SectionKind::TBss) {
+                sec_flags |= flags::TLS | flags::WRITE;
+            }
 
-            let data = if kind != SectionKind::Bss && raw_data_ptr + raw_data_size <= bytes.len() {
+            let data = if !matches!(kind, SectionKind::Bss | SectionKind::TBss)
+                && raw_data_ptr + raw_data_size <= bytes.len()
+            {
                 bytes[raw_data_ptr..raw_data_ptr + raw_data_size].to_vec()
             } else {
                 Vec::new()
@@ -195,7 +206,14 @@ impl PeReader {
             obj.add_section(sec);
         }
 
-        // Parse COFF symbol table
+        // Parse COFF symbol table.
+        //
+        // `obj.symbols` MUST stay index-aligned with the raw COFF symbol
+        // table: relocations reference symbols by raw symbol-table index, and
+        // LLVM COFF objects contain many same-named sections (`.text`,
+        // `.rdata`, ...) whose symbols are only distinguishable by index.
+        // Aux records get placeholder entries so that
+        // `obj.symbols[raw_index]` is always the referenced symbol.
         let mut raw_symbol_names = vec![String::new(); num_symbols];
         if sym_ptr > 0 && sym_ptr + num_symbols * 18 <= bytes.len() {
             let mut s_idx = 0;
@@ -259,14 +277,31 @@ impl PeReader {
                     version: None,
                 };
 
-                if !sym.name.is_empty() {
-                    obj.add_symbol(sym);
-                }
+                obj.add_symbol(sym);
 
                 raw_symbol_names[s_idx] = sym_name.clone();
+
+                // Placeholder slots for auxiliary records so that raw symbol
+                // indices stay aligned with `obj.symbols`.
                 for aux_i in 1..=num_aux {
                     if s_idx + aux_i < num_symbols {
                         raw_symbol_names[s_idx + aux_i] = sym_name.clone();
+                        obj.add_symbol(Symbol {
+                            name: String::new(),
+                            binding: SymbolBinding::Local,
+                            visibility: SymbolVisibility::Default,
+                            sym_type: SymbolType::Function,
+                            section_index: None,
+                            value: 0,
+                            size: 0,
+                            is_defined: false,
+                            is_imported: false,
+                            is_exported: false,
+                            file_index: Some(file_index),
+                            alias_of: None,
+                            comdat_group: None,
+                            version: None,
+                        });
                     }
                 }
 
@@ -313,10 +348,8 @@ impl PeReader {
                             };
                             (crate::relocation::RelocationKind::Absolute64, add)
                         }
-                        (Arch::X86_64, 0x0002)
-                        | (Arch::X86_64, 0x0003)
-                        | (Arch::X86_64, 0x000B) => {
-                            // ADDR32 / ADDR32NB / SECREL
+                        (Arch::X86_64, 0x0002) => {
+                            // IMAGE_REL_AMD64_ADDR32: full 32-bit absolute
                             let add = if v_usize + 4 <= sec.data.len() {
                                 i32::from_le_bytes(
                                     sec.data[v_usize..v_usize + 4].try_into().unwrap(),
@@ -325,6 +358,29 @@ impl PeReader {
                                 0
                             };
                             (crate::relocation::RelocationKind::Absolute32, add)
+                        }
+                        (Arch::X86_64, 0x0003) => {
+                            // IMAGE_REL_AMD64_ADDR32NB: image-base-relative (RVA)
+                            let add = if v_usize + 4 <= sec.data.len() {
+                                i32::from_le_bytes(
+                                    sec.data[v_usize..v_usize + 4].try_into().unwrap(),
+                                ) as i64
+                            } else {
+                                0
+                            };
+                            (crate::relocation::RelocationKind::ImageRelative32, add)
+                        }
+                        (Arch::X86_64, 0x000B) => {
+                            // IMAGE_REL_AMD64_SECREL32: offset of the target
+                            // within its own section
+                            let add = if v_usize + 4 <= sec.data.len() {
+                                i32::from_le_bytes(
+                                    sec.data[v_usize..v_usize + 4].try_into().unwrap(),
+                                ) as i64
+                            } else {
+                                0
+                            };
+                            (crate::relocation::RelocationKind::SectionRelative32, add)
                         }
                         (Arch::X86_64, 0x0004) => {
                             // IMAGE_REL_AMD64_REL32 (PC-relative call/jmp/mov)
@@ -336,7 +392,10 @@ impl PeReader {
                             } else {
                                 0
                             };
-                            (crate::relocation::RelocationKind::PcRelative32, embedded - 4)
+                            (
+                                crate::relocation::RelocationKind::PcRelative32,
+                                embedded - 4,
+                            )
                         }
                         (Arch::X86_64, 0x0005..=0x0009) => {
                             // IMAGE_REL_AMD64_REL32_1.._5 (displacement is relative to place_va + 4 + distance)
@@ -348,7 +407,10 @@ impl PeReader {
                             } else {
                                 0
                             };
-                            (crate::relocation::RelocationKind::PcRelative32, embedded - 4 - sub)
+                            (
+                                crate::relocation::RelocationKind::PcRelative32,
+                                embedded - 4 - sub,
+                            )
                         }
                         (Arch::X86_64, 0x000E) => {
                             // IMAGE_REL_AMD64_PCR32
@@ -359,7 +421,10 @@ impl PeReader {
                             } else {
                                 0
                             };
-                            (crate::relocation::RelocationKind::PcRelative32, embedded - 4)
+                            (
+                                crate::relocation::RelocationKind::PcRelative32,
+                                embedded - 4,
+                            )
                         }
                         (Arch::AArch64, 0x0001)
                         | (Arch::AArch64, 0x0002)
@@ -401,11 +466,16 @@ impl PeReader {
                         _ => (crate::relocation::RelocationKind::Absolute64, 0),
                     };
 
-                    if !sym_name.is_empty() {
-                        sec.relocations.push(crate::relocation::Relocation::new(
-                            vaddr, sym_name, kind, addend,
-                        ));
-                    }
+                    // Record the raw COFF symbol-table index so the layout
+                    // engine can resolve the exact referenced symbol: LLVM
+                    // COFF objects contain many same-named sections whose
+                    // symbols (e.g. the `.text`/`.rdata` section symbols
+                    // referenced by jump tables) collide under name-based
+                    // resolution.
+                    let mut reloc_rec =
+                        crate::relocation::Relocation::new(vaddr, sym_name, kind, addend);
+                    reloc_rec.symbol_index = Some(sym_idx);
+                    sec.relocations.push(reloc_rec);
                 }
             }
         }

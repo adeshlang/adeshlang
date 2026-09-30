@@ -1,4 +1,8 @@
 use adesh_linker::archive::Archive;
+use adesh_linker::object::{ObjectFile, ObjectWriter};
+use adesh_linker::section::Section;
+use adesh_linker::symbol::{Symbol, SymbolBinding, SymbolType};
+use adesh_linker::target::Target;
 use std::path::Path;
 
 #[test]
@@ -40,4 +44,26 @@ fn test_archive_odd_size_alignment_padding() {
     let parsed = Archive::parse(&encoded, Path::new("odd.a")).expect("Failed to parse odd archive");
     assert_eq!(parsed.members.len(), 1);
     assert_eq!(parsed.members[0].data, vec![1, 2, 3]);
+}
+
+#[test]
+fn test_archive_index_retains_all_duplicate_definitions() {
+    let target = Target::x86_64_linux();
+    let mut archive = Archive::new();
+    for i in 0..2 {
+        let mut obj = ObjectFile::new(format!("member{i}.o").into(), target.clone(), i);
+        obj.add_section(Section::new_code(".text", vec![0xC3], 1));
+        obj.add_symbol(Symbol::new_defined(
+            "duplicate",
+            SymbolBinding::Global,
+            SymbolType::Function,
+            0,
+            0,
+            1,
+            i,
+        ));
+        archive.add_file(format!("member{i}.o"), ObjectWriter::encode(&obj).unwrap());
+    }
+    let parsed = Archive::parse(&archive.encode_gnu(), Path::new("duplicates.a")).unwrap();
+    assert_eq!(parsed.symbol_index.get("duplicate"), Some(&vec![0, 1]));
 }

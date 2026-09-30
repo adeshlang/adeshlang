@@ -1,7 +1,7 @@
 //! Central Linker pipeline driver and orchestrator.
 
 use crate::archive::Archive;
-use crate::config::{BuildIdStyle, LinkConfig};
+use crate::config::{BuildIdStyle, LinkConfig, LtoMode};
 use crate::context::LinkContext;
 use crate::debug::DebugProcessor;
 use crate::elf::ElfWriter;
@@ -31,6 +31,19 @@ impl Linker {
                 "no input object files or archives specified for linking",
             )
             .with_suggestion("Pass at least one object file (e.g. `adeshlink main.o -o app`)"));
+        }
+
+        if config.lto != LtoMode::Off {
+            return Err(LinkError::new(
+                ErrorCode::InvalidTarget,
+                format!(
+                    "{:?} IR-level LTO is not supported for native object inputs",
+                    config.lto
+                ),
+            )
+            .with_suggestion(
+                "Use -O3 for supported section GC/ICF. True LTO requires an IR-bearing input format and optimizer; no output was written.",
+            ));
         }
 
         let mut ctx = LinkContext::new(config);
@@ -183,7 +196,16 @@ impl Linker {
                 }
 
                 // If symbol is an __imp_ pointer or _fltused, handle appropriately
-                if name.starts_with("__imp_") || name.starts_with("_imp_") || name == "_fltused" {
+                if name.starts_with("__imp_")
+                    || name.starts_with("_imp_")
+                    || name == "_fltused"
+                    // PE TLS data symbols are linker-owned. They are not
+                    // functions and must never become import thunks.
+                    || name == "_tls_index"
+                    || name == "_tls_used"
+                    || name == "__tls_used"
+                    || name == "_load_config_used"
+                {
                     continue;
                 }
 
@@ -209,6 +231,7 @@ impl Linker {
                         offset: start_off + 2,
                         symbol_name: format!("__imp_{}", raw),
                         symbol_index: None,
+                        file_index: None,
                         kind: crate::relocation::RelocationKind::PcRelative32,
                         addend: -4,
                     }];
@@ -385,6 +408,7 @@ impl Linker {
                     &ctx.layout.resolved_symbols,
                     &[],
                     ctx.layout.pe_import_info.as_ref(),
+                    ctx.layout.pe_tls_info.as_ref(),
                     &ctx.layout.base_relocs,
                 )?;
             }
