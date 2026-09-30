@@ -49,17 +49,28 @@ impl OsApiRouter {
     /// Returns true if this symbol is an internal Rust/Adesh runtime detail
     /// that should never appear in a DLL import table.
     pub fn is_internal(name: &str) -> bool {
-        // Rust mangled symbols (_ZN... / ZN...)
-        if name.starts_with("_ZN") || name.starts_with("ZN") {
+        // Rust mangled symbols: legacy (_ZN... / ZN...) and v0 RFC 2603 (_R... / R_...)
+        if name.starts_with("_ZN")
+            || name.starts_with("ZN")
+            || name.starts_with("_R")
+            || name.starts_with("R_")
+        {
             return true;
         }
         // MSVC mangled (starts with ??)
         if name.starts_with("??") {
             return true;
         }
-        // Rust/adesh internal prefixes
+        // Rust/adesh internal prefixes and compiler alloc shims
         if name.starts_with("__rust")
+            || name.starts_with("___rust")
             || name.starts_with("rust_")
+            || name.starts_with("_rust_")
+            || name.contains("__rust_")
+            || name.contains("___rust")
+            || name.contains("rust_eh_")
+            || name.contains("rust_begin_unwind")
+            || name.contains("rust_panic")
             || name.starts_with("anon.")
             || name.starts_with("adesh_")
             || name.starts_with("aot_")

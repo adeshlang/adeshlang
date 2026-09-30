@@ -136,8 +136,32 @@ impl SymbolResolver {
 
             match route {
                 SymbolRoute::InternalRuntime => {
-                    // Dead Rust/Adesh internal — remove from undefined, don't synthesize
+                    // Dead Rust/Adesh internal — remove from undefined, register weak zero stub
                     self.undefined.remove(&undef);
+                    self.table.insert(
+                        undef.clone(),
+                        ResolvedSymbol {
+                            symbol: Symbol {
+                                name: undef,
+                                binding: SymbolBinding::Weak,
+                                visibility: crate::symbol::SymbolVisibility::Hidden,
+                                sym_type: crate::symbol::SymbolType::Function,
+                                section_index: None,
+                                value: 0,
+                                size: 0,
+                                is_defined: true,
+                                is_imported: false,
+                                is_exported: false,
+                                file_index: Some(0),
+                                alias_of: None,
+                                comdat_group: None,
+                                version: None,
+                            },
+                            defined_in_file_index: 0,
+                            defined_in_sec_index: None,
+                            references: Vec::new(),
+                        },
+                    );
                 }
                 SymbolRoute::Intrinsic => {
                     // Will be code-generated in Step 4.1 of linker.rs

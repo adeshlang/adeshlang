@@ -1,1 +1,3 @@
-println("Hello from native Adesh!");
+fn main() {
+    print("Hello from native Adesh!");
+}

@@ -336,6 +336,13 @@ impl Linker {
             ctx.config.effective_entry(),
         )?;
 
+        // Surface non-fatal relocation issues (weak/internal symbols that could
+        // not be resolved and were routed to trap stubs or NULL).
+        for warning in &ctx.layout.warnings {
+            ctx.diagnostics.emit_warning(warning.clone());
+            eprintln!("adeshlink: warning: {}", warning);
+        }
+
         // 8. Generate Build ID if requested
         let build_id_bytes = match ctx.config.build_id {
             BuildIdStyle::None => None,
@@ -365,56 +372,20 @@ impl Linker {
                 )?;
             }
             ObjectFormat::Pe => {
-                let mut imports = Vec::new();
-                let mut seen_imports = std::collections::HashSet::new();
-                for sym in &ctx.layout.resolved_symbols {
-                    // Only process symbols that are marked as imported (DLL imports)
-                    if !sym.is_imported {
-                        continue;
-                    }
-                    // Strip any import-prefix decoration to get the raw symbol name
-                    let raw = sym
-                        .name
-                        .strip_prefix("__imp_")
-                        .or_else(|| sym.name.strip_prefix("_imp_"))
-                        .unwrap_or(&sym.name);
-                    let clean = raw.trim_start_matches('_');
-
-                    // Skip empty, _fltused, or any internal/mangled names
-                    if clean.is_empty() || clean == "fltused" {
-                        continue;
-                    }
-
-                    // Route via the OS API Router — it knows which DLL owns this symbol.
-                    // Prefer `raw` to preserve CRT underscores like `_CxxThrowException`,
-                    // falling back to `clean`.
-                    if let Some(dll) = crate::os_router::OsApiRouter::windows_dll_for(raw) {
-                        if seen_imports.insert(raw.to_string()) {
-                            imports.push(crate::pe::import::ImportSymbol {
-                                dll_name: dll.to_string(),
-                                symbol_name: raw.to_string(),
-                                ordinal: None,
-                            });
-                        }
-                    } else if let Some(dll) = crate::os_router::OsApiRouter::windows_dll_for(clean) {
-                        if seen_imports.insert(clean.to_string()) {
-                            imports.push(crate::pe::import::ImportSymbol {
-                                dll_name: dll.to_string(),
-                                symbol_name: clean.to_string(),
-                                ordinal: None,
-                            });
-                        }
-                    }
-                    // If windows_dll_for returns None, the symbol is an internal runtime symbol
-                    // that got mis-tagged as imported — silently skip it.
-                }
-                PeWriter::write_executable(
+                // The import table and base relocations were built once during
+                // layout (the same table whose IAT addresses were patched into
+                // import thunks). Rebuilding them here from a differently
+                // ordered symbol set would desynchronize the .idata bytes from
+                // the patched code, so the layout result is authoritative.
+                PeWriter::write_executable_with_layout(
                     &ctx.config.output_path,
                     &ctx.config.target,
                     ctx.layout.entry_va,
                     &ctx.layout.merged_sections,
                     &ctx.layout.resolved_symbols,
-                    &imports,
+                    &[],
+                    ctx.layout.pe_import_info.as_ref(),
+                    &ctx.layout.base_relocs,
                 )?;
             }
             ObjectFormat::MachO => {

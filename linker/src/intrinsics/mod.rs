@@ -70,7 +70,10 @@ impl IntrinsicsEngine {
             || name.starts_with("__parity")
             || name.starts_with("__bswap")
             || name.starts_with("__rust")
+            || name.starts_with("___rust")
             || name.starts_with("rust_")
+            || name.starts_with("_rust_")
+            || name.contains("___rust")
     }
 
     /// Synthesize machine code section and symbols for missing runtime intrinsics.
@@ -118,6 +121,13 @@ impl IntrinsicsEngine {
     /// Emits architecture-specific machine code bytes for an intrinsic function.
     pub fn emit_intrinsic_code(name: &str, target: &Target) -> Vec<u8> {
         match target.arch {
+            // Windows x64 uses the Microsoft ABI (args in rcx, rdx, r8, r9),
+            // not the System V ABI (rdi, rsi, rdx). Emitting SysV memory
+            // primitives for a PE target silently reads garbage registers and
+            // corrupts memory at runtime.
+            Arch::X86_64 if target.format == crate::target::ObjectFormat::Pe => {
+                Self::emit_x86_64_msabi(name)
+            }
             Arch::X86_64 => Self::emit_x86_64(name),
             Arch::AArch64 => Self::emit_aarch64(name),
             Arch::Riscv64 => Self::emit_riscv64(name),
@@ -125,6 +135,85 @@ impl IntrinsicsEngine {
                 // Generic portable stub (ret / trap)
                 vec![0xc3] // x86 ret
             }
+        }
+    }
+
+    /// x86_64 Microsoft Windows ABI variants of the memory primitives.
+    /// Arguments arrive in rcx/rdx/r8; result in rax.
+    fn emit_x86_64_msabi(name: &str) -> Vec<u8> {
+        match name {
+            "memcpy" | "memmove" | "memset" | "memcmp" => {},
+            _ => return Self::emit_x86_64(name),
+        }
+        // Bytes below were assembled with GNU as from reviewed source and
+        // verified with llvm-objdump (see .adesh_cache/msabi_intrinsics.s).
+        match name {
+            // rcx = dst, rdx = src, r8 = len -> rax = dst
+            "memcpy" => vec![
+                0x48, 0x89, 0xc8, // mov rax, rcx
+                0x45, 0x31, 0xc9, // xor r9d, r9d
+                0x4d, 0x85, 0xc0, // test r8, r8
+                0x74, 0x11, // jz done
+                0x46, 0x0f, 0xb6, 0x14, 0x0a, // loop: movzbl (rdx,r9), r10d
+                0x46, 0x88, 0x14, 0x09, // mov (rcx,r9), r10b
+                0x49, 0xff, 0xc1, // inc r9
+                0x4d, 0x39, 0xc1, // cmp r9, r8
+                0x72, 0xef, // jb loop
+                0xc3, // done: ret
+            ],
+            // rcx = dst, rdx = src, r8 = len -> rax = dst (overlap-safe)
+            "memmove" => vec![
+                0x48, 0x89, 0xc8, // mov rax, rcx
+                0x4d, 0x85, 0xc0, // test r8, r8
+                0x74, 0x33, // jz done
+                0x48, 0x39, 0xd1, // cmp rcx, rdx
+                0x74, 0x2e, // je done
+                0x72, 0x16, // jb forward
+                0x4d, 0x89, 0xc1, // mov r9, r8        ; backward copy
+                0x4d, 0x85, 0xc9, // btest: test r9, r9
+                0x74, 0x24, // jz done
+                0x49, 0xff, 0xc9, // dec r9
+                0x46, 0x0f, 0xb6, 0x14, 0x0a, // movzbl (rdx,r9), r10d
+                0x46, 0x88, 0x14, 0x09, // mov (rcx,r9), r10b
+                0xeb, 0xed, // jmp btest
+                0x45, 0x31, 0xc9, // forward: xor r9d, r9d
+                0x4d, 0x39, 0xc1, // ftest: cmp r9, r8
+                0x73, 0x0e, // jae done
+                0x46, 0x0f, 0xb6, 0x14, 0x0a, // movzbl (rdx,r9), r10d
+                0x46, 0x88, 0x14, 0x09, // mov (rcx,r9), r10b
+                0x49, 0xff, 0xc1, // inc r9
+                0xeb, 0xed, // jmp ftest
+                0xc3, // done: ret
+            ],
+            // rcx = dst, dl = val, r8 = len -> rax = dst
+            "memset" => vec![
+                0x48, 0x89, 0xc8, // mov rax, rcx
+                0x45, 0x31, 0xc9, // xor r9d, r9d
+                0x4d, 0x85, 0xc0, // test r8, r8
+                0x74, 0x0c, // jz done
+                0x42, 0x88, 0x14, 0x09, // loop: mov (rcx,r9), dl
+                0x49, 0xff, 0xc1, // inc r9
+                0x4d, 0x39, 0xc1, // cmp r9, r8
+                0x72, 0xf4, // jb loop
+                0xc3, // done: ret
+            ],
+            // rcx = s1, rdx = s2, r8 = n -> eax = diff
+            "memcmp" => vec![
+                0x31, 0xc0, // xor eax, eax
+                0x4d, 0x85, 0xc0, // test r8, r8
+                0x74, 0x1c, // jz done
+                0x45, 0x31, 0xc9, // xor r9d, r9d
+                0x42, 0x0f, 0xb6, 0x04, 0x09, // loop: movzbl (rcx,r9), eax
+                0x46, 0x0f, 0xb6, 0x14, 0x0a, // movzbl (rdx,r9), r10d
+                0x44, 0x29, 0xd0, // sub eax, r10d
+                0x75, 0x0a, // jne done
+                0x49, 0xff, 0xc1, // inc r9
+                0x4d, 0x39, 0xc1, // cmp r9, r8
+                0x72, 0xe9, // jb loop
+                0x31, 0xc0, // xor eax, eax
+                0xc3, // done: ret
+            ],
+            _ => unreachable!(),
         }
     }
 

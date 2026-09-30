@@ -16,6 +16,10 @@ pub struct ImportTableResult {
     pub iat_rva: u32,
     pub iat_size: u32,
     pub symbol_iat_rvas: HashMap<String, u32>,
+    /// The `.idata` section RVA this table was built for. All internal RVAs
+    /// (names, ILT, IAT, descriptor pointers) are relative to the image base
+    /// assuming the section lands exactly at this RVA.
+    pub idata_rva: u32,
 }
 
 /// Returns `true` if a symbol name looks like a genuine Windows API / CRT export.
@@ -195,24 +199,33 @@ pub fn build_import_table(
 
     idata.resize(desc_table_size, 0);
 
-    // Layout names and ILT/IAT arrays
-    let mut current_offset = desc_table_size;
-    let mut desc_idx = 0;
-    let mut first_iat_rva = 0u32;
-    let mut total_iat_size = 0u32;
+    // Two-pass layout:
+    //   Pass 1 (per DLL): DLL name strings, hint/name entries, and the ILT.
+    //   Pass 2: all IAT arrays emitted contiguously at the end of the section.
+    //
+    // Keeping every IAT contiguous is what the PE loader expects from the
+    // IMAGE_DIRECTORY_ENTRY_IAT data directory (a single [start, end) range),
+    // and it matches the layout produced by MSVC link.exe.
 
+    struct DllLayout {
+        dll_name_rva: u32,
+        ilt_rva: u32,
+        hint_rvas: Vec<u32>,
+        iat_rva: u32,
+    }
+
+    let mut layouts: Vec<DllLayout> = Vec::new();
     let mut symbol_iat_rvas = HashMap::new();
 
+    // Pass 1: names, hints, ILTs.
     for (dll_name, symbols) in &by_dll {
-        // DLL name offset
-        let dll_name_rva = idata_rva + (current_offset as u32);
+        let dll_name_rva = idata_rva + (idata.len() as u32);
         idata.extend_from_slice(dll_name.as_bytes());
         idata.push(0);
         if (idata.len() & 1) != 0 {
             idata.push(0);
         }
 
-        // Hint/Name table offsets for each symbol
         let mut hint_rvas = Vec::new();
         for sym in symbols {
             let hint_rva = idata_rva + (idata.len() as u32);
@@ -224,39 +237,50 @@ pub fn build_import_table(
                 idata.push(0);
             }
         }
-        current_offset = idata.len();
 
         // ILT (Import Lookup Table) - 8 bytes per entry + null
-        let ilt_rva = idata_rva + (current_offset as u32);
+        let ilt_rva = idata_rva + (idata.len() as u32);
         for &hrva in &hint_rvas {
             idata.extend_from_slice(&(hrva as u64).to_le_bytes());
         }
         idata.extend_from_slice(&0u64.to_le_bytes()); // Null terminator
 
-        // IAT (Import Address Table) - 8 bytes per entry + null
+        layouts.push(DllLayout {
+            dll_name_rva,
+            ilt_rva,
+            hint_rvas,
+            iat_rva: 0,
+        });
+    }
+
+    // Pass 2: contiguous IAT block for all DLLs.
+    // Align the IAT block to 8 bytes for cleanliness.
+    while (idata.len() & 7) != 0 {
+        idata.push(0);
+    }
+    let first_iat_rva = idata_rva + (idata.len() as u32);
+    let iat_block_start = idata.len();
+
+    for (dll_idx, symbols) in by_dll.values().enumerate() {
         let iat_rva = idata_rva + (idata.len() as u32);
-        if first_iat_rva == 0 {
-            first_iat_rva = iat_rva;
-        }
-        let iat_start_off = idata.len();
-        for (i, &hrva) in hint_rvas.iter().enumerate() {
+        layouts[dll_idx].iat_rva = iat_rva;
+        for (i, &hrva) in layouts[dll_idx].hint_rvas.iter().enumerate() {
             let sym_iat_rva = iat_rva + (i as u32) * 8;
             symbol_iat_rvas.insert(symbols[i].clone(), sym_iat_rva);
             idata.extend_from_slice(&(hrva as u64).to_le_bytes());
         }
         idata.extend_from_slice(&0u64.to_le_bytes()); // Null terminator
-        total_iat_size += (idata.len() - iat_start_off) as u32;
-        current_offset = idata.len();
+    }
+    let total_iat_size = (idata.len() - iat_block_start) as u32;
 
-        // Write IMAGE_IMPORT_DESCRIPTOR
+    // Write IMAGE_IMPORT_DESCRIPTORs.
+    for (desc_idx, layout) in layouts.iter().enumerate() {
         let desc_off = desc_idx * 20;
-        idata[desc_off..desc_off + 4].copy_from_slice(&ilt_rva.to_le_bytes()); // OriginalFirstThunk (ILT)
+        idata[desc_off..desc_off + 4].copy_from_slice(&layout.ilt_rva.to_le_bytes()); // OriginalFirstThunk (ILT)
         idata[desc_off + 4..desc_off + 8].copy_from_slice(&0u32.to_le_bytes()); // TimeDateStamp
         idata[desc_off + 8..desc_off + 12].copy_from_slice(&0u32.to_le_bytes()); // ForwarderChain
-        idata[desc_off + 12..desc_off + 16].copy_from_slice(&dll_name_rva.to_le_bytes()); // Name RVA
-        idata[desc_off + 16..desc_off + 20].copy_from_slice(&iat_rva.to_le_bytes()); // FirstThunk (IAT)
-
-        desc_idx += 1;
+        idata[desc_off + 12..desc_off + 16].copy_from_slice(&layout.dll_name_rva.to_le_bytes()); // Name RVA
+        idata[desc_off + 16..desc_off + 20].copy_from_slice(&layout.iat_rva.to_le_bytes()); // FirstThunk (IAT)
     }
 
     ImportTableResult {
@@ -265,5 +289,6 @@ pub fn build_import_table(
         iat_rva: first_iat_rva,
         iat_size: total_iat_size,
         symbol_iat_rvas,
+        idata_rva,
     }
 }
