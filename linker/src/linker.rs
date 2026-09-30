@@ -118,11 +118,26 @@ impl Linker {
             ctx.config.strip_debug,
         );
 
-        // 4. Symbol Resolution and Archive Extraction
-        ctx.resolver.resolve(&mut ctx.objects, &ctx.archives)?;
+        // 4. Symbol Resolution and Archive Extraction (Target-Aware)
+        ctx.resolver
+            .resolve_with_target(&mut ctx.objects, &ctx.archives, &ctx.config.target)?;
 
         // 4.1 Synthesize Compiler Intrinsics, Entry Thunks, and Import Thunks for Unimplemented Symbols
         let is_pe = ctx.config.target.format == ObjectFormat::Pe;
+
+        // Determine actual Adesh program entry symbol
+        let program_entry_symbol = if ctx.resolver.table.contains_key("main") {
+            "main".to_string()
+        } else if ctx.resolver.table.contains_key("__user_main") {
+            "__user_main".to_string()
+        } else if ctx.resolver.table.contains_key("__top_level_wrapper") {
+            "__top_level_wrapper".to_string()
+        } else if ctx.resolver.table.contains_key("adesh_main") {
+            "adesh_main".to_string()
+        } else {
+            "main".to_string()
+        };
+
         let mut missing_symbols: Vec<String> = Vec::new();
         if is_pe && !ctx.resolver.table.contains_key("mainCRTStartup") {
             missing_symbols.push("mainCRTStartup".to_string());
@@ -145,13 +160,30 @@ impl Linker {
             let mut synth_symbols = Vec::new();
             let mut synth_relocs = Vec::new();
 
+            if is_pe && missing_symbols.contains(&"mainCRTStartup".to_string()) {
+                let (bytes, relocs, syms) = crate::pe::x86_64::synthesize_windows_x86_64_entry(
+                    &program_entry_symbol,
+                    file_idx,
+                );
+                let start_off = code_bytes.len() as u64;
+                code_bytes.extend_from_slice(&bytes);
+                for mut r in relocs {
+                    r.offset += start_off;
+                    synth_relocs.push(r);
+                }
+                for mut s in syms {
+                    s.value += start_off;
+                    synth_symbols.push(s);
+                }
+            }
+
             for name in &missing_symbols {
-                // If symbol is an __imp_ pointer or _fltused, handle appropriately
-                if name.starts_with("__imp_") || name.starts_with("_imp_") {
+                if name == "mainCRTStartup" || name == "__adesh_windows_start" {
                     continue;
                 }
 
-                if name == "_fltused" {
+                // If symbol is an __imp_ pointer or _fltused, handle appropriately
+                if name.starts_with("__imp_") || name.starts_with("_imp_") || name == "_fltused" {
                     continue;
                 }
 
@@ -164,43 +196,6 @@ impl Linker {
                         ),
                         Vec::new(),
                     )
-                } else if is_pe && name == "mainCRTStartup" {
-                    // Windows entry point startup stub (x86_64 Microsoft ABI):
-                    // sub rsp, 40                          ; 48 83 ec 28
-                    // xor ecx, ecx                         ; 31 c9
-                    // xor edx, edx                         ; 31 d2
-                    // call main                            ; e8 [rel32 main]
-                    // mov ecx, eax                         ; 89 c1
-                    // call qword ptr [__imp_ExitProcess]   ; ff 15 [disp32 __imp_ExitProcess]
-                    // add rsp, 40                          ; 48 83 c4 28
-                    // ret                                  ; c3
-                    let b = vec![
-                        0x48, 0x83, 0xec, 0x28, // 0..3: sub rsp, 40
-                        0x31, 0xc9,             // 4..5: xor ecx, ecx
-                        0x31, 0xd2,             // 6..7: xor edx, edx
-                        0xe8, 0x00, 0x00, 0x00, 0x00, // 8..12: call main (disp32 @ 9)
-                        0x89, 0xc1,             // 13..14: mov ecx, eax
-                        0xff, 0x15, 0x00, 0x00, 0x00, 0x00, // 15..20: call [__imp_ExitProcess] (disp32 @ 17)
-                        0x48, 0x83, 0xc4, 0x28, // 21..24: add rsp, 40
-                        0xc3,                   // 25: ret
-                    ];
-                    let r = vec![
-                        crate::relocation::Relocation {
-                            offset: start_off + 9,
-                            symbol_name: "main".to_string(),
-                            symbol_index: None,
-                            kind: crate::relocation::RelocationKind::PcRelative32,
-                            addend: -4,
-                        },
-                        crate::relocation::Relocation {
-                            offset: start_off + 17,
-                            symbol_name: "__imp_ExitProcess".to_string(),
-                            symbol_index: None,
-                            kind: crate::relocation::RelocationKind::PcRelative32,
-                            addend: -4,
-                        },
-                    ];
-                    (b, r)
                 } else if is_pe && ctx.config.target.arch == crate::target::Arch::X86_64 {
                     // PE x86_64 Import Thunk:
                     // jmp qword ptr [__imp_<name>]
@@ -219,20 +214,13 @@ impl Linker {
                     }];
                     (b, r)
                 } else {
-                    // Default return 0 stub for CRT / external functions: xor eax, eax; ret
-                    let b = match ctx.config.target.arch {
-                        crate::target::Arch::X86_64 | crate::target::Arch::X86 => {
-                            vec![0x31, 0xc0, 0xc3, 0x90]
-                        }
-                        crate::target::Arch::AArch64 => {
-                            vec![0x00, 0x00, 0x80, 0x52, 0xc0, 0x03, 0x5f, 0xd6]
-                        }
-                        crate::target::Arch::Riscv64 | crate::target::Arch::Riscv32 => {
-                            vec![0x13, 0x05, 0x00, 0x00, 0x67, 0x80, 0x00, 0x00]
-                        }
-                        _ => vec![0xc3],
-                    };
-                    (b, Vec::new())
+                    // If an unresolved symbol cannot be routed or synthesized, fail cleanly
+                    return Err(LinkError::undefined_symbol(
+                        name,
+                        "unresolved required application symbol",
+                        None,
+                        None,
+                    ));
                 };
 
                 let sz = bytes.len() as u64;
@@ -300,6 +288,16 @@ impl Linker {
                     resolved.symbol = sym.clone();
                     resolved.defined_in_file_index = file_idx;
                     resolved.defined_in_sec_index = sym.section_index;
+                } else {
+                    ctx.resolver.table.insert(
+                        sym.name.clone(),
+                        crate::resolver::ResolvedSymbol {
+                            symbol: sym.clone(),
+                            defined_in_file_index: file_idx,
+                            defined_in_sec_index: sym.section_index,
+                            references: Vec::new(),
+                        },
+                    );
                 }
                 synth_obj.add_symbol(sym);
             }

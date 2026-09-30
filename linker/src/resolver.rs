@@ -37,6 +37,12 @@ pub struct SymbolResolver {
     pub policy: UndefinedSymbolPolicy,
 }
 
+impl Default for SymbolResolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SymbolResolver {
     pub fn new() -> Self {
         Self {
@@ -54,11 +60,21 @@ impl SymbolResolver {
         }
     }
 
-    /// Ingest symbols from object files and resolve them.
+    /// Ingest symbols from object files and resolve them using the default target.
     pub fn resolve(
         &mut self,
         objects: &mut Vec<ObjectFile>,
         archives: &[Archive],
+    ) -> LinkResult<()> {
+        self.resolve_with_target(objects, archives, &crate::target::Target::host())
+    }
+
+    /// Ingest symbols from object files and resolve them for a specified target.
+    pub fn resolve_with_target(
+        &mut self,
+        objects: &mut Vec<ObjectFile>,
+        archives: &[Archive],
+        target: &crate::target::Target,
     ) -> LinkResult<()> {
         // 1. Initial pass: Ingest all explicitly provided object files
         for obj in objects.iter() {
@@ -116,11 +132,7 @@ impl SymbolResolver {
         for undef in remaining_undef {
             use crate::os_router::{OsApiRouter, SymbolRoute};
 
-            // Build a dummy target for routing when we don't have a real one here.
-            // The target is not stored in the resolver; we use the host default.
-            // The actual target-aware routing happens in linker.rs Step 4.1.
-            // Here we just need to determine if a symbol is "safe to skip" (internal/intrinsic).
-            let route = OsApiRouter::classify(&undef, &crate::target::Target::host());
+            let route = OsApiRouter::classify(&undef, target);
 
             match route {
                 SymbolRoute::InternalRuntime => {

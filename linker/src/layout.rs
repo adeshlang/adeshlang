@@ -307,61 +307,47 @@ impl LayoutEngine {
 
             for reloc in &merged.relocations {
                 let sym_va_opt = resolve_sym_va(reloc.symbol_index, &reloc.symbol_name);
+                let is_weak_or_internal = reloc.symbol_name.starts_with("__weak_")
+                    || reloc.symbol_name.starts_with("_ZN")
+                    || reloc.symbol_name.starts_with("__rust")
+                    || reloc.symbol_name.starts_with("rust_")
+                    || reloc.symbol_name.starts_with("anon.")
+                    || reloc.symbol_name.starts_with("??")
+                    || reloc.symbol_name.contains("..")
+                    || reloc.symbol_name.starts_with("__extend")
+                    || reloc.symbol_name.starts_with("__trunc")
+                    || reloc.symbol_name.starts_with("__float")
+                    || reloc.symbol_name.starts_with("__fix")
+                    || reloc.symbol_name.starts_with("__gnu_")
+                    || reloc.symbol_name.starts_with("__aeabi_");
+
                 let sym_va = match sym_va_opt {
                     Some(va) => va,
                     None => {
-                        // Symbol is truly unresolved (0 would cause overflow); skip with zero
-                        0
+                        if is_weak_or_internal {
+                            0
+                        } else {
+                            return Err(LinkError::undefined_symbol(
+                                &reloc.symbol_name,
+                                &merged.name,
+                                None,
+                                Some(reloc.offset),
+                            ));
+                        }
                     }
                 };
                 let place_va = merged.virtual_address + reloc.offset;
 
-                // For PE/Windows targets, if sym_va is 0 (unresolved) and it's an internal
-                // Rust/intrinsic symbol reference, write 0 instead of hard-erroring.
-                // These arise from dead code in Rust stdlib objects that GC didn't remove.
-                let is_internal_sym = sym_va == 0
-                    && (reloc.symbol_name.starts_with("_ZN")
-                        || reloc.symbol_name.starts_with("__rust")
-                        || reloc.symbol_name.starts_with("rust_")
-                        || reloc.symbol_name.starts_with("anon.")
-                        || reloc.symbol_name.starts_with("??")
-                        || reloc.symbol_name.contains("..")
-                        || reloc.symbol_name.starts_with("__extend")
-                        || reloc.symbol_name.starts_with("__trunc")
-                        || reloc.symbol_name.starts_with("__float")
-                        || reloc.symbol_name.starts_with("__fix")
-                        || reloc.symbol_name.starts_with("__gnu_")
-                        || reloc.symbol_name.starts_with("__aeabi_"));
-
                 match handler.apply(reloc, place_va, sym_va, reloc.addend, &mut merged.data) {
                     Ok(()) => {}
                     Err(e) => {
-                        // For overflow errors on dead/internal symbols: write truncated value
-                        // and continue. For real errors on live application symbols: fail.
                         let is_overflow =
                             matches!(e.code, crate::error::ErrorCode::RelocationOverflow);
-                        if is_overflow && is_internal_sym {
-                            // Write zero into the relocation slot to keep binary valid
+                        if is_overflow && is_weak_or_internal {
                             let off = reloc.offset as usize;
                             let sz = reloc.kind.size_in_bytes();
                             if off + sz <= merged.data.len() {
                                 merged.data[off..off + sz].fill(0);
-                            }
-                        } else if is_overflow {
-                            // For PC32 overflows on known-live symbols: write truncated value
-                            // (wrapping) rather than hard-failing — the runtime thunk will
-                            // redirect via the IAT anyway
-                            let off = reloc.offset as usize;
-                            let sz = reloc.kind.size_in_bytes();
-                            if sz == 4 && off + 4 <= merged.data.len() {
-                                let val = (sym_va as i64)
-                                    .wrapping_add(reloc.addend)
-                                    .wrapping_sub(place_va as i64)
-                                    as i32;
-                                merged.data[off..off + 4]
-                                    .copy_from_slice(&(val as u32).to_le_bytes());
-                            } else {
-                                return Err(e);
                             }
                         } else {
                             return Err(e);
