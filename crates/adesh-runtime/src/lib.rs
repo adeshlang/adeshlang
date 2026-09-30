@@ -1651,47 +1651,41 @@ pub extern "C" fn aot_fs_path_extname(path_val: u64) -> u64 {
 // Exception Handling Bridge
 // ============================================================================
 
-static CURRENT_EXCEPTION: Mutex<Option<RuntimeValue>> = Mutex::new(None);
+use std::cell::RefCell;
+
+thread_local! {
+    static CURRENT_EXCEPTION: RefCell<Option<RuntimeValue>> = const { RefCell::new(None) };
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_has_exception() -> i64 {
-    if let Ok(guard) = CURRENT_EXCEPTION.lock() {
-        if guard.is_some() {
-            1
-        } else {
-            0
-        }
-    } else {
-        0
-    }
+    CURRENT_EXCEPTION.with(|exc| if exc.borrow().is_some() { 1 } else { 0 })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_get_exception() -> u64 {
-    if let Ok(mut guard) = CURRENT_EXCEPTION.lock() {
-        if let Some(val) = guard.take() {
+    CURRENT_EXCEPTION.with(|exc| {
+        if let Some(val) = exc.borrow_mut().take() {
             aot_store_value(val)
         } else {
             aot_store_value(RuntimeValue::Null)
         }
-    } else {
-        aot_store_value(RuntimeValue::Null)
-    }
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_clear_exception() -> i64 {
-    if let Ok(mut guard) = CURRENT_EXCEPTION.lock() {
-        *guard = None;
-    }
+    CURRENT_EXCEPTION.with(|exc| {
+        *exc.borrow_mut() = None;
+    });
     0
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_throw_exception(val_handle: u64) -> i64 {
     let val = unpack_aot_arg(val_handle);
-    if let Ok(mut guard) = CURRENT_EXCEPTION.lock() {
-        *guard = Some(val);
-    }
+    CURRENT_EXCEPTION.with(|exc| {
+        *exc.borrow_mut() = Some(val);
+    });
     0
 }
