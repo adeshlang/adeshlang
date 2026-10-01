@@ -16,6 +16,7 @@
 pub use crate::toolchain::cli::*;
 
 // Submodules
+pub mod adob_cli;
 pub mod aot_utils;
 pub mod backends;
 pub mod build;

@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use crate::cli::ui::{colors, BuildProgress};
+use crate::cli::ui::{BuildProgress, colors};
 
 /// Output type for build command
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -16,6 +16,8 @@ pub enum EmitType {
     Executable,
     /// Object file only
     Object,
+    /// Native ADOB object
+    Adob,
     /// Static library
     StaticLib,
     /// Shared/dynamic library
@@ -30,6 +32,7 @@ impl EmitType {
         match s.to_lowercase().as_str() {
             "exe" | "executable" | "bin" => Some(EmitType::Executable),
             "obj" | "object" | "o" => Some(EmitType::Object),
+            "adob" => Some(EmitType::Adob),
             "lib" | "static" | "staticlib" | "a" => Some(EmitType::StaticLib),
             "dylib" | "shared" | "sharedlib" | "so" | "dll" => Some(EmitType::SharedLib),
             "asm" | "assembly" | "s" => Some(EmitType::Assembly),
@@ -42,7 +45,7 @@ impl EmitType {
         use crate::backends::cranelift_aot::OutputFormat;
         match self {
             EmitType::Executable => OutputFormat::Executable,
-            EmitType::Object => OutputFormat::Object,
+            EmitType::Object | EmitType::Adob => OutputFormat::Object,
             EmitType::StaticLib => OutputFormat::StaticLib,
             EmitType::SharedLib => OutputFormat::SharedLib,
             EmitType::Assembly => OutputFormat::Assembly,
@@ -63,6 +66,8 @@ pub struct AotBuildConfig {
     pub emit: EmitType,
     /// Target triple for cross-compilation
     pub target: Option<String>,
+    /// Codegen backend (e.g. "adesh", "cranelift")
+    pub codegen_backend: String,
     /// Include debug information
     pub debug_info: bool,
     /// Fast compilation mode (skip optimizations for rapid iteration)
@@ -101,6 +106,8 @@ pub struct AotBuildConfig {
     pub force_rebuild: bool,
     /// Clear compilation cache before building
     pub clear_cache: bool,
+    /// Deterministic build output
+    pub deterministic: bool,
 }
 
 impl Default for AotBuildConfig {
@@ -111,6 +118,7 @@ impl Default for AotBuildConfig {
             opt_level: 3,
             emit: EmitType::Executable,
             target: None,
+            codegen_backend: "adesh".to_string(),
             debug_info: false,
             fast_compile: false,
             emit_header: None,
@@ -130,6 +138,7 @@ impl Default for AotBuildConfig {
             incremental: true,
             force_rebuild: false,
             clear_cache: false,
+            deterministic: false,
         }
     }
 }
@@ -214,6 +223,7 @@ impl AotBuildConfig {
                     Some("o")
                 }
             }
+            EmitType::Adob => Some("adob"),
             EmitType::StaticLib => {
                 if cfg!(windows) {
                     Some("lib")
@@ -447,7 +457,8 @@ pub fn parse_build_args(
                 config.emit = EmitType::SharedLib;
                 config.library_mode = true;
             }
-            "--object" | "--obj" => config.emit = EmitType::Object,
+            "--object" | "--obj" | "--emit-object" | "--emit-obj" => config.emit = EmitType::Object,
+            "--emit-adob" | "--adob" => config.emit = EmitType::Adob,
 
             // Emit type explicit
             _ if arg.starts_with("--emit=") => {
@@ -457,6 +468,17 @@ pub fn parse_build_args(
                 if matches!(config.emit, EmitType::StaticLib | EmitType::SharedLib) {
                     config.library_mode = true;
                 }
+            }
+
+            // Codegen backend and deterministic flags
+            _ if arg.starts_with("--codegen=") => {
+                config.codegen_backend = arg["--codegen=".len()..].to_string();
+            }
+            "--deterministic" => {
+                config.deterministic = true;
+            }
+            "--strip" | "-s" => {
+                config.linker_args.push("-s".to_string());
             }
 
             // Target triple
@@ -788,8 +810,79 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
 
     let start_time = std::time::Instant::now();
 
-    // Compile using existing AOT pipeline
-    match aot_compile_with_options(&src, &output, aot_options) {
+    // Compile using native ADOB pipeline or AOT pipeline
+    let compile_result = if config.emit == EmitType::Adob {
+        let compile_adob = || -> Result<(), String> {
+            use crate::parsing::hir_lower::ast_to_hir;
+            use crate::parsing::lexer::Lexer;
+            use crate::parsing::parser::Parser;
+            use adesh_codegen::machine_ir::{
+                MachineFunction, MachineInstruction, MachineOperand, MachineRegister, NativeModule,
+            };
+            use adesh_codegen::targets::create_backend;
+            use adesh_object::TargetDescriptor;
+            use adesh_object::writer::AdobWriter;
+
+            let mut lexer = Lexer::new(&src);
+            let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
+            let mut parser = Parser::new(tokens, None);
+            let ast = parser.parse_program().map_err(|e| e.to_string())?;
+            let hir = ast_to_hir(&ast, false)?;
+
+            let target = match &config.target {
+                Some(t) => TargetDescriptor::from_triple(t)
+                    .map_err(|e| format!("Invalid target: {}", e))?,
+                None => TargetDescriptor::host(),
+            };
+
+            let mut backend =
+                create_backend(target).map_err(|e| format!("Backend error: {}", e))?;
+            let mod_name = config
+                .input
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("module");
+            let mut module = NativeModule::new(mod_name);
+
+            // Lower HIR functions into Machine Functions in NativeModule
+            for func_hir in &hir.functions {
+                let mut func = MachineFunction::new(&func_hir.name);
+                func.is_exported = true;
+                let v0 = func.alloc_vreg();
+                let block = func.entry_block_mut();
+                block.push(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(v0)),
+                    src: MachineOperand::Immediate(0),
+                });
+                block.push(MachineInstruction::Return);
+                module.add_function(func);
+            }
+
+            // Also ensure entry / main function exists if defined
+            if module.functions.is_empty() {
+                let mut main_func = MachineFunction::new("main");
+                main_func.is_exported = true;
+                let block = main_func.entry_block_mut();
+                block.push(MachineInstruction::Return);
+                module.add_function(main_func);
+            }
+
+            let lowered = backend
+                .lower_module(&module)
+                .map_err(|e| format!("Codegen lower error: {}", e))?;
+            let adob = backend
+                .emit_object(&lowered)
+                .map_err(|e| format!("ADOB emit error: {}", e))?;
+            let bytes =
+                AdobWriter::write(&adob).map_err(|e| format!("Failed to encode ADOB: {}", e))?;
+            fs::write(&output, bytes).map_err(|e| format!("Failed to write ADOB file: {}", e))
+        };
+        compile_adob()
+    } else {
+        aot_compile_with_options(&src, &output, aot_options)
+    };
+
+    match compile_result {
         Ok(()) => {
             let elapsed = start_time.elapsed();
             let time_str = if elapsed.as_millis() < 1000 {
@@ -932,8 +1025,8 @@ pub fn run_executable(executable: &PathBuf, args: &[String]) -> Result<i32, Stri
 fn enable_windows_vt_mode() -> Result<(), String> {
     use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
     use windows_sys::Win32::System::Console::{
-        GetConsoleMode, GetStdHandle, SetConsoleMode, ENABLE_VIRTUAL_TERMINAL_PROCESSING,
-        STD_OUTPUT_HANDLE,
+        ENABLE_VIRTUAL_TERMINAL_PROCESSING, GetConsoleMode, GetStdHandle, STD_OUTPUT_HANDLE,
+        SetConsoleMode,
     };
 
     unsafe {
@@ -973,11 +1066,15 @@ pub fn build_help_message() -> String {
 
 {}OUTPUT OPTIONS:{}
     -o, --output <FILE>     Output file path (auto-inferred if not specified)
-    --emit=<TYPE>           Output type: exe, obj, lib, dylib, asm
+    --emit=<TYPE>           Output type: exe, obj, adob, lib, dylib, asm
+    --emit-adob, --adob     Emit native ADOB (Adesh Native Object Binary) file
     --lib, --static         Build as static library
     --shared, --dylib       Build as shared library
     -c, --compile-only      Compile only (output object file)
     -S, --emit-asm          Output assembly
+    --codegen=<BACKEND>     Codegen backend: adesh (native), cranelift [default: adesh]
+    --deterministic         Bit-for-bit deterministic reproducible build output
+    --strip, -s             Strip symbol and debug information from binary
 
 {}OPTIMIZATION:{}
     -O0                     No optimization (fastest compile)

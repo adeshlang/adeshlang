@@ -52,7 +52,36 @@ pub fn execute_toolchain_command_with_preference(
                  • Re-download curated LLVM toolchain: Run 'adesh toolchain install --force'"
             );
         }
-        "install" => super::install::execute_install_command(&args[1..]),
+        "install" => {
+            if args.iter().any(|a| a == "--external" || a == "-e") {
+                let filtered: Vec<String> = args[1..]
+                    .iter()
+                    .filter(|a| *a != "--external" && *a != "-e")
+                    .cloned()
+                    .collect();
+                super::install::execute_external_install_command(&filtered);
+            } else {
+                super::install::execute_install_command(&args[1..]);
+            }
+        }
+        "--external" | "-e" => {
+            let next_cmd = args.get(1).map(String::as_str).unwrap_or("install");
+            if next_cmd == "install" {
+                let remaining = if args.len() > 2 { &args[2..] } else { &[] };
+                super::install::execute_external_install_command(remaining);
+            } else {
+                println!("Usage: adesh toolchain --external install [toolchain_name]");
+            }
+        }
+        "external" => {
+            let next_cmd = args.get(1).map(String::as_str).unwrap_or("install");
+            if next_cmd == "install" {
+                let remaining = if args.len() > 2 { &args[2..] } else { &[] };
+                super::install::execute_external_install_command(remaining);
+            } else {
+                println!("Usage: adesh toolchain external install [toolchain_name]");
+            }
+        }
         "expose" => super::install::execute_expose_command(&args[1..]),
         "current" | _ => match resolve(preference) {
             Ok(tc) => println!(

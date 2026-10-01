@@ -144,6 +144,14 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             editor_args.extend(parsed.program_args.clone());
             cli_impl::execute_editor_command(&editor_args);
         }
+        "adob" => {
+            let mut adob_args = Vec::new();
+            if let Some(ref input) = parsed.input_file {
+                adob_args.push(input.clone());
+            }
+            adob_args.extend(parsed.program_args.clone());
+            adeshlang::cli::adob_cli::execute_adob_cli(&adob_args);
+        }
         "crypto" => {
             adeshlang::cli::crypto::execute_crypto_cli(&parsed.program_args);
         }

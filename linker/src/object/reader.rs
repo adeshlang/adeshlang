@@ -73,8 +73,13 @@ impl ObjectReader {
             return PeReader::read(bytes, path, file_index);
         }
 
-        // 5. Adesh Native Object format: ADOB (v2 vs v1)
+        // 5. Adesh Native Object format: ADOB (Universal vs v2 vs v1)
         if magic == b"ADOB" {
+            if let Ok(obj) =
+                crate::object::AdobV2::decode_universal(bytes, path, default_target, file_index)
+            {
+                return Ok(obj);
+            }
             if bytes.len() >= 6
                 && u16::from_le_bytes([bytes[4], bytes[5]]) == crate::object::ADOB_VERSION_2
             {

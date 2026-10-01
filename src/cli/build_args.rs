@@ -93,14 +93,38 @@ impl BuildArgParser {
                     config.debug_info = true;
                 }
 
+                // Codegen backend
+                "--codegen" | "--backend" => {
+                    config.codegen_backend = parser.next_arg()?;
+                }
+                arg if arg.starts_with("--codegen=") => {
+                    config.codegen_backend = arg["--codegen=".len()..].to_string();
+                }
+
+                // Deterministic build
+                "--deterministic" => {
+                    config.deterministic = true;
+                }
+
                 // Emit type
                 "--emit" => {
                     let emit_str = parser.next_arg()?;
                     config.emit = EmitType::from_str(&emit_str)
                         .ok_or_else(|| format!("Invalid emit type: {}", emit_str))?;
                 }
+                arg if arg.starts_with("--emit=") => {
+                    let emit_str = &arg["--emit=".len()..];
+                    config.emit = EmitType::from_str(emit_str)
+                        .ok_or_else(|| format!("Invalid emit type: {}", emit_str))?;
+                }
 
                 // Convenience emit types
+                "--emit-adob" | "--adob" => {
+                    config.emit = EmitType::Adob;
+                }
+                "--emit-object" | "--emit-obj" => {
+                    config.emit = EmitType::Object;
+                }
                 "--library" | "--lib" => {
                     config.emit = EmitType::StaticLib;
                 }
@@ -111,6 +135,9 @@ impl BuildArgParser {
                 // Target triple
                 "--target" => {
                     config.target = Some(parser.next_arg()?);
+                }
+                arg if arg.starts_with("--target=") => {
+                    config.target = Some(arg["--target=".len()..].to_string());
                 }
 
                 // Include directories

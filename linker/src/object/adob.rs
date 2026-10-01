@@ -313,6 +313,115 @@ impl AdobV2 {
         obj.validate()?;
         Ok(obj)
     }
+
+    /// Decode ADOB object using the shared universal `adesh_object` format reader.
+    pub fn decode_universal(
+        bytes: &[u8],
+        path: &Path,
+        default_target: &Target,
+        file_index: usize,
+    ) -> LinkResult<ObjectFile> {
+        let native_adob = adesh_object::AdobReader::read_object(bytes).map_err(|e| {
+            LinkError::new(
+                ErrorCode::InvalidObject,
+                format!("failed to parse ADOB: {}", e),
+            )
+        })?;
+
+        let mut obj = ObjectFile::new(path.to_path_buf(), default_target.clone(), file_index);
+
+        for sec in &native_adob.sections {
+            let kind = match sec.kind {
+                adesh_object::SectionKind::Text => SectionKind::Text,
+                adesh_object::SectionKind::Rodata => SectionKind::Rodata,
+                adesh_object::SectionKind::Data => SectionKind::Data,
+                adesh_object::SectionKind::Bss => SectionKind::Bss,
+                adesh_object::SectionKind::AdeshMeta => SectionKind::AdeshMeta,
+                _ => SectionKind::Custom,
+            };
+
+            let mut relocations = Vec::new();
+            for r in &sec.relocations {
+                let r_kind = match r.kind {
+                    adesh_object::RelocationKind::Absolute64 => RelocationKind::Absolute64,
+                    adesh_object::RelocationKind::Absolute32 => RelocationKind::Absolute32,
+                    adesh_object::RelocationKind::PcRelative32 => RelocationKind::PcRelative32,
+                    adesh_object::RelocationKind::PcRelative64 => RelocationKind::PcRelative64,
+                    adesh_object::RelocationKind::PltRelative32 => RelocationKind::PltRelative32,
+                    adesh_object::RelocationKind::GotRelative32 => RelocationKind::GotRelative32,
+                    _ => RelocationKind::Absolute64,
+                };
+                relocations.push(Relocation::new(
+                    r.offset,
+                    r.symbol_name.clone(),
+                    r_kind,
+                    r.addend,
+                ));
+            }
+
+            let section = Section {
+                name: sec.name.clone(),
+                kind,
+                flags: sec.flags,
+                alignment: sec.alignment,
+                virtual_address: 0,
+                file_offset: 0,
+                size: sec.data.len() as u64,
+                data: sec.data.clone(),
+                relocations,
+                comdat_group: sec.comdat_group.clone(),
+                file_index: Some(file_index),
+                is_live: true,
+                is_folded: false,
+                folded_into: None,
+            };
+            obj.add_section(section);
+        }
+
+        for sym in &native_adob.symbols {
+            let binding = match sym.binding {
+                adesh_object::SymbolBinding::Local => SymbolBinding::Local,
+                adesh_object::SymbolBinding::Global => SymbolBinding::Global,
+                _ => SymbolBinding::Weak,
+            };
+
+            let visibility = match sym.visibility {
+                adesh_object::SymbolVisibility::Default => SymbolVisibility::Default,
+                adesh_object::SymbolVisibility::Hidden => SymbolVisibility::Hidden,
+                adesh_object::SymbolVisibility::Protected => SymbolVisibility::Protected,
+                _ => SymbolVisibility::Internal,
+            };
+
+            let sym_type = match sym.kind {
+                adesh_object::SymbolKind::Function => SymbolType::Function,
+                adesh_object::SymbolKind::Object => SymbolType::Object,
+                adesh_object::SymbolKind::TLS => SymbolType::Tls,
+                _ => SymbolType::Unknown,
+            };
+
+            let symbol = Symbol {
+                name: sym.name.clone(),
+                binding,
+                visibility,
+                sym_type,
+                section_index: sym.section_index.map(|i| i as usize),
+                value: sym.value,
+                size: sym.size,
+                is_defined: sym.is_defined,
+                is_imported: sym.kind == adesh_object::SymbolKind::Import,
+                is_exported: sym.kind == adesh_object::SymbolKind::Export
+                    || native_adob.exports.contains(&sym.name),
+                file_index: Some(file_index),
+                alias_of: sym.alias_target.clone(),
+                comdat_group: None,
+                version: sym.version.clone(),
+            };
+            obj.add_symbol(symbol);
+        }
+
+        obj.validate()?;
+        Ok(obj)
+    }
 }
 
 #[cfg(test)]

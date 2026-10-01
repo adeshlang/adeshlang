@@ -1,0 +1,27 @@
+[package]
+name = "adesh-codegen"
+version = "0.1.0"
+edition = "2024"
+authors = ["AdeshLang Contributors"]
+description = "Universal target backend code generation framework and native CPU/GPU/Accelerator codegen for Adesh"
+license = "Apache-2.0"
+
+[dependencies]
+adesh-object = { path = "../adesh-object" }
+num-bigint = "0.4"
+num-traits = "0.2"
+rustc-hash = "1.1"
+target-lexicon = "0.12"
+cranelift-codegen = { version = "0.110", optional = true }
+cranelift-frontend = { version = "0.110", optional = true }
+cranelift-module = { version = "0.110", optional = true }
+cranelift-object = { version = "0.110", optional = true }
+
+[features]
+default = []
+cranelift-backend = [
+    "dep:cranelift-codegen",
+    "dep:cranelift-frontend",
+    "dep:cranelift-module",
+    "dep:cranelift-object",
+]

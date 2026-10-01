@@ -12,6 +12,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "adesh-codegen"
+version = "0.1.0"
+dependencies = [
+ "adesh-object",
+ "cranelift-codegen 0.110.3",
+ "cranelift-frontend 0.110.3",
+ "cranelift-module",
+ "cranelift-object",
+ "num-bigint",
+ "num-traits",
+ "rustc-hash 1.1.0",
+ "target-lexicon 0.12.16",
+]
+
+[[package]]
 name = "adesh-editor"
 version = "0.1.0"
 dependencies = [
@@ -34,6 +49,7 @@ dependencies = [
 name = "adesh-linker"
 version = "0.1.0"
 dependencies = [
+ "adesh-object",
  "tempfile",
 ]
 
@@ -46,6 +62,13 @@ dependencies = [
  "once_cell",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "adesh-object"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -71,7 +94,9 @@ dependencies = [
 name = "adeshlang"
 version = "0.3.0"
 dependencies = [
+ "adesh-codegen",
  "adesh-linker",
+ "adesh-object",
  "adler2",
  "aes-gcm",
  "argon2",

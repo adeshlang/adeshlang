@@ -5,7 +5,7 @@ use adesh_linker::layout::LayoutEngine;
 use adesh_linker::object::ObjectFile;
 use adesh_linker::relocation::{Relocation, RelocationKind};
 use adesh_linker::resolver::SymbolResolver;
-use adesh_linker::section::{flags, MergedSection, Section, SectionKind};
+use adesh_linker::section::{MergedSection, Section, SectionKind, flags};
 use adesh_linker::symbol::{Symbol, SymbolBinding, SymbolType};
 use adesh_linker::target::Target;
 use std::path::PathBuf;

@@ -21,6 +21,7 @@ name = "gen_windows_exe"
 path = "src/bin/gen_windows_exe.rs"
 
 [dependencies]
+adesh-object = { path = "../crates/adesh-object" }
 
 [dev-dependencies]
 tempfile = "3"

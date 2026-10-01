@@ -190,6 +190,16 @@ impl Linker {
                 }
             }
 
+            // Undefined symbols that are neither importable nor synthesizable.
+            // Collected so one link reports every missing symbol at once.
+            let mut undefined_app_symbols: Vec<String> = Vec::new();
+            // Address-only stubs for mangled Rust/MSVC internals (RTTI and EH
+            // tables). These are emitted as read-only data, never as code: a
+            // code thunk for a symbol with no import slot can only jump to
+            // itself, which turns a missing definition into a runtime fault.
+            let mut data_stub_bytes: Vec<u8> = Vec::new();
+            let mut data_stub_syms: Vec<(String, u64)> = Vec::new();
+
             for name in &missing_symbols {
                 if name == "mainCRTStartup" || name == "__adesh_windows_start" {
                     continue;
@@ -205,7 +215,25 @@ impl Linker {
                     || name == "_tls_used"
                     || name == "__tls_used"
                     || name == "_load_config_used"
+                    // Image base is defined by the layout engine at its real
+                    // virtual address.
+                    || name == "__ImageBase"
                 {
+                    continue;
+                }
+
+                let importable = is_pe
+                    && ctx.config.target.arch == crate::target::Arch::X86_64
+                    && crate::os_router::OsApiRouter::windows_dll_for(name).is_some();
+
+                if !importable && !crate::intrinsics::IntrinsicsEngine::is_intrinsic(name) {
+                    if is_pe && crate::os_router::OsApiRouter::is_stubbable_internal(name) {
+                        let off = data_stub_bytes.len() as u64;
+                        data_stub_bytes.extend_from_slice(&[0u8; 8]);
+                        data_stub_syms.push((name.clone(), off));
+                    } else {
+                        undefined_app_symbols.push(name.clone());
+                    }
                     continue;
                 }
 
@@ -218,7 +246,7 @@ impl Linker {
                         ),
                         Vec::new(),
                     )
-                } else if is_pe && ctx.config.target.arch == crate::target::Arch::X86_64 {
+                } else if importable {
                     // PE x86_64 Import Thunk:
                     // jmp qword ptr [__imp_<name>]
                     // \xff\x25 <disp32> \x90 \x90
@@ -273,9 +301,71 @@ impl Linker {
                 synth_symbols.push(sym);
             }
 
+            if !undefined_app_symbols.is_empty() {
+                undefined_app_symbols.sort();
+                let shown: Vec<&str> = undefined_app_symbols
+                    .iter()
+                    .take(10)
+                    .map(|s| s.as_str())
+                    .collect();
+                let more = undefined_app_symbols.len().saturating_sub(shown.len());
+                let mut detail = shown.join(", ");
+                if more > 0 {
+                    detail.push_str(&format!(" (and {} more)", more));
+                }
+                let runtime_missing: Vec<&String> = undefined_app_symbols
+                    .iter()
+                    .filter(|s| crate::os_router::OsApiRouter::is_adesh_runtime_symbol(s))
+                    .collect();
+                let suggestion = if runtime_missing.is_empty() {
+                    "Pass the object or archive that defines these symbols to the linker."
+                        .to_string()
+                } else {
+                    format!(
+                        "{} of these are Adesh runtime entry points; the linked runtime library does not define them. \
+                         Link a runtime build that provides them.",
+                        runtime_missing.len()
+                    )
+                };
+                return Err(LinkError::new(
+                    ErrorCode::UndefinedSymbol,
+                    format!(
+                        "{} undefined symbol(s): {}",
+                        undefined_app_symbols.len(),
+                        detail
+                    ),
+                )
+                .with_suggestion(suggestion));
+            }
+
             let mut sec = crate::section::Section::new_code(".text.synth", code_bytes, 16);
             sec.relocations = synth_relocs;
             synth_obj.add_section(sec);
+
+            if !data_stub_bytes.is_empty() {
+                let stub_sec_idx = synth_obj.sections.len();
+                let stub_sec =
+                    crate::section::Section::new_data(".rdata", data_stub_bytes, false, 8);
+                synth_obj.add_section(stub_sec);
+                for (name, off) in data_stub_syms {
+                    synth_symbols.push(crate::symbol::Symbol {
+                        name,
+                        binding: crate::symbol::SymbolBinding::Global,
+                        visibility: crate::symbol::SymbolVisibility::Default,
+                        sym_type: crate::symbol::SymbolType::Object,
+                        section_index: Some(stub_sec_idx),
+                        value: off,
+                        size: 8,
+                        is_defined: true,
+                        is_imported: false,
+                        is_exported: false,
+                        file_index: Some(file_idx),
+                        alias_of: None,
+                        comdat_group: None,
+                        version: None,
+                    });
+                }
+            }
 
             // Add _fltused in .rdata if requested or on PE
             if is_pe || missing_symbols.iter().any(|s| s == "_fltused") {

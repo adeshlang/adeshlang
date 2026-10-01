@@ -3,7 +3,7 @@
 use crate::error::{ErrorCode, LinkError, LinkResult};
 use crate::object::ObjectFile;
 use crate::pe::header::*;
-use crate::section::{flags, Section, SectionKind};
+use crate::section::{Section, SectionKind, flags};
 use crate::symbol::{Symbol, SymbolBinding, SymbolType, SymbolVisibility};
 use crate::target::{Arch, Endianness, ObjectFormat, Os, PointerWidth, Target};
 use std::path::Path;

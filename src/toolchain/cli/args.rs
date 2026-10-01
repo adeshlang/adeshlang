@@ -911,9 +911,11 @@ Built with strong type inference, memory safety, and zero-cost abstractions
 {bold}COMMANDS:{reset}
     {green}run{reset} <file>            Run a program (default: interpreter)
     {green}run{reset} {blue}-e{reset} "<code>"     Directly evaluate and run inline code string {yellow}⭐ NEW!{reset}
+    {green}build{reset} <file>          Build native executable or ADOB object {yellow}⭐ NEW!{reset}
+    {green}adob{reset} <subcommand>      Inspect, validate, and dump ADOB object binaries {yellow}⭐ NEW!{reset}
+    {green}toolchain{reset} <subcommand> Manage toolchains and external toolchain components {yellow}⭐ NEW!{reset}
     {green}test{reset} [file] [filter]   Run unit and integration tests (Cargo-like test runner) {yellow}⭐ NEW!{reset}
     {green}editor{reset} [file|dir]     Launch cross-platform TUI code editor (Adesh Editor) {yellow}⭐ NEW!{reset}
-    {green}build{reset} <file>          Build native executable (modern AOT interface) {yellow}⭐ NEW!{reset}
     {green}doctor{reset}                 Inspect AdeshLang toolchain & system health {yellow}⭐ NEW!{reset}
     {green}env{reset}                    Display AdeshLang environment paths & toolchain details {yellow}⭐ NEW!{reset}
     {green}repair{reset}                 Repair AdeshLang toolchain & environment settings {yellow}⭐ NEW!{reset}

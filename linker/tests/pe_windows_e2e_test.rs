@@ -91,12 +91,13 @@ fn test_windows_pe_puts_execution() {
     // add rsp, 40
     // ret
     let mut code = vec![
-        0x48, 0x8D, 0x0D, 0x00, 0x00, 0x00, 0x00, // lea rcx, [rip + disp32] (offset 0..7, disp at 3..7)
-        0x48, 0x83, 0xEC, 0x28,                   // sub rsp, 40
-        0xE8, 0x00, 0x00, 0x00, 0x00,             // call puts (offset 11..16, disp at 12..16)
-        0x31, 0xC0,                               // xor eax, eax
-        0x48, 0x83, 0xC4, 0x28,                   // add rsp, 40
-        0xC3,                                     // ret
+        0x48, 0x8D, 0x0D, 0x00, 0x00, 0x00,
+        0x00, // lea rcx, [rip + disp32] (offset 0..7, disp at 3..7)
+        0x48, 0x83, 0xEC, 0x28, // sub rsp, 40
+        0xE8, 0x00, 0x00, 0x00, 0x00, // call puts (offset 11..16, disp at 12..16)
+        0x31, 0xC0, // xor eax, eax
+        0x48, 0x83, 0xC4, 0x28, // add rsp, 40
+        0xC3, // ret
     ];
 
     let mut text_sec = MergedSection::new(
@@ -137,7 +138,8 @@ fn test_windows_pe_puts_execution() {
     ];
 
     let idata_rva = 0x3000u32;
-    let imp_res = adesh_linker::pe::import::build_import_table(&imports, target.image_base, idata_rva);
+    let imp_res =
+        adesh_linker::pe::import::build_import_table(&imports, target.image_base, idata_rva);
     let puts_iat_rva = imp_res.symbol_iat_rvas.get("puts").copied().unwrap();
     let puts_iat_va = target.image_base + (puts_iat_rva as u64);
 
@@ -147,12 +149,14 @@ fn test_windows_pe_puts_execution() {
     let thunk_va = text_sec.virtual_address + thunk_off;
     let thunk_disp = (puts_iat_va as i64 - (thunk_va as i64 + 6)) as i32;
     code.extend_from_slice(&[
-        0xFF, 0x25,
+        0xFF,
+        0x25,
         (thunk_disp & 0xFF) as u8,
         ((thunk_disp >> 8) & 0xFF) as u8,
         ((thunk_disp >> 16) & 0xFF) as u8,
         ((thunk_disp >> 24) & 0xFF) as u8,
-        0x90, 0x90,
+        0x90,
+        0x90,
     ]);
 
     // Fixup call puts displacement:

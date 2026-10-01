@@ -74,6 +74,8 @@ impl IntrinsicsEngine {
             || name.starts_with("rust_")
             || name.starts_with("_rust_")
             || name.contains("___rust")
+            || name.starts_with("adesh_")
+            || name.starts_with("__adesh_")
     }
 
     /// Synthesize machine code section and symbols for missing runtime intrinsics.

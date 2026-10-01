@@ -4,7 +4,7 @@ use adesh_linker::layout::LayoutEngine;
 use adesh_linker::linker::Linker;
 use adesh_linker::map::LinkMapGenerator;
 use adesh_linker::object::ObjectFile;
-use adesh_linker::section::{flags, MergedSection, SectionKind};
+use adesh_linker::section::{MergedSection, SectionKind, flags};
 use adesh_linker::symbol::{Symbol, SymbolBinding, SymbolType};
 use adesh_linker::target::Target;
 use std::path::PathBuf;

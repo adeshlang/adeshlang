@@ -92,6 +92,31 @@ impl OsApiRouter {
         false
     }
 
+    /// Returns true if an *undefined* symbol is a toolchain-internal detail that
+    /// may be stubbed without changing program behaviour (mangled Rust/MSVC
+    /// names, RTTI/EH tables and object-private symbols that are only ever
+    /// address-taken from dead code).
+    ///
+    /// Adesh runtime entry points (`aot_*`, `adesh_*`) are deliberately excluded.
+    /// They are required application symbols: when the runtime library does not
+    /// define one, the link must fail instead of silently producing a binary
+    /// that faults on the first call.
+    pub fn is_stubbable_internal(name: &str) -> bool {
+        if Self::is_adesh_runtime_symbol(name) {
+            return false;
+        }
+        Self::is_internal(name)
+    }
+
+    /// Returns true for Adesh compiler/runtime ABI entry points.
+    pub fn is_adesh_runtime_symbol(name: &str) -> bool {
+        let clean = name
+            .strip_prefix("__imp_")
+            .or_else(|| name.strip_prefix("_imp_"))
+            .unwrap_or(name);
+        clean.starts_with("aot_") || clean.starts_with("adesh_")
+    }
+
     // ─── Windows / PE ──────────────────────────────────────────────────────────
 
     fn classify_windows(raw: &str) -> SymbolRoute {

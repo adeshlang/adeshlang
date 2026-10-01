@@ -3,9 +3,9 @@
 use crate::error::{ErrorCode, LinkError, LinkResult};
 use crate::layout::PeTlsInfo;
 use crate::pe::header::*;
-use crate::pe::import::{build_import_table, ImportSymbol, ImportTableResult};
+use crate::pe::import::{ImportSymbol, ImportTableResult, build_import_table};
 use crate::pe::reloc::build_base_reloc_table;
-use crate::section::{align_to, MergedSection};
+use crate::section::{MergedSection, align_to};
 use crate::symbol::Symbol;
 use crate::target::{Arch, Target};
 use std::fs;

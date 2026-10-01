@@ -5,7 +5,7 @@ use crate::error::{ErrorCode, LinkError, LinkResult};
 use crate::object::ObjectFile;
 use crate::relocation::RelocationKind;
 use crate::resolver::SymbolResolver;
-use crate::section::{align_to, flags, MergedSection, SectionKind};
+use crate::section::{MergedSection, SectionKind, align_to, flags};
 use crate::symbol::Symbol;
 use crate::target::Target;
 use std::collections::HashMap;
@@ -757,6 +757,12 @@ impl LayoutEngine {
             }
         }
 
+        // `__ImageBase` is linker-defined: its *address* is the image base.
+        if target.format == crate::target::ObjectFormat::Pe {
+            symbol_va_map.insert("__ImageBase".to_string(), target.image_base);
+            symbol_va_map.insert("___ImageBase".to_string(), target.image_base);
+        }
+
         // Find Entry Point Virtual Address
         if let Some(&entry_va) = symbol_va_map.get(entry_name) {
             self.entry_va = entry_va;
@@ -814,11 +820,10 @@ impl LayoutEngine {
             if let Some(&va) = symbol_va_map.get(name) {
                 return (Some(va), symbol_output_base.get(name).copied());
             }
-            if let Some(stripped) = name.strip_prefix("__imp_") {
-                if let Some(&va) = symbol_va_map.get(stripped) {
-                    return (Some(va), None);
-                }
-            }
+            // `__imp_X` is the address of an import *slot*, not the address of
+            // `X`. Falling back to `X` makes a synthesized `jmp [__imp_X]`
+            // thunk read its own bytes as a function pointer, so the thunk
+            // jumps to itself. Import slots are registered explicitly above.
             if let Some(stripped) = name.strip_prefix('_') {
                 if let Some(&va) = symbol_va_map.get(stripped) {
                     return (Some(va), None);
@@ -878,7 +883,7 @@ impl LayoutEngine {
                     || reloc.symbol_name.starts_with("__fix")
                     || reloc.symbol_name.starts_with("__gnu_")
                     || reloc.symbol_name.starts_with("__aeabi_")
-                    || crate::os_router::OsApiRouter::is_internal(&reloc.symbol_name);
+                    || crate::os_router::OsApiRouter::is_stubbable_internal(&reloc.symbol_name);
 
                 let place_va = merged.virtual_address + reloc.offset;
 

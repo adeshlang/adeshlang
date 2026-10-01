@@ -218,6 +218,107 @@ adesh test --format json tests/main.adesh
 
 ---
 
+### build
+
+Compile AdeshLang programs into native standalone executables, ADOB objects, static archives, or dynamic libraries.
+
+**Syntax:**
+```bash
+adesh build [OPTIONS] <file.adesh>
+adesh build run [OPTIONS] <file.adesh> [-- <ARGS>...]
+```
+
+**Options:**
+
+| Option | Description |
+|---|---|
+| `-o, --output <path>` | Set output artifact path |
+| `--emit=<exe\|obj\|adob\|lib\|dylib>` | Output binary type |
+| `--emit-adob`, `--adob` | Emit native ADOB (Adesh Native Object Binary) file |
+| `--lib`, `--static` | Emit static library (`.lib` / `.a`) |
+| `--shared`, `--dylib` | Emit shared dynamic library (`.dll` / `.so`) |
+| `-c, --compile-only` | Compile only to object file |
+| `--codegen=<adesh\|cranelift>` | Code generation backend (default: `adesh`) |
+| `--deterministic` | Ensure reproducible, bit-for-bit identical binary output |
+| `--strip`, `-s` | Strip symbol table and debug sections |
+| `-O0` .. `-O3`, `--release` | Optimization level (default: `-O3`) |
+| `--fast` | Fast compilation mode (skip optimization passes for ~0.3s builds) |
+
+**Examples:**
+```bash
+# Build native standalone executable with Adesh Native Linker
+adesh build src/main.adesh -o bin/app.exe
+
+# Emit native ADOB object binary
+adesh build src/main.adesh --emit-adob -o target/main.adob
+
+# Build and immediately run the executable with arguments
+adesh build run src/main.adesh -- arg1 arg2
+
+# Build static library
+adesh build src/math.adesh --lib -o libmath.lib
+```
+
+---
+
+### adob
+
+Inspect, validate, and dump details from Adesh Native Object Binary (`.adob`) files.
+
+**Syntax:**
+```bash
+adesh adob <subcommand> <file.adob>
+```
+
+**Subcommands:**
+
+| Subcommand | Description |
+|---|---|
+| `inspect <file.adob>` | Inspect header magic, version, target triple, and metadata |
+| `validate <file.adob>` | Run strict integrity, bounds, and alignment validation checks |
+| `dump-symbols <file.adob>` | Dump full symbol table (names, bindings, kinds, sizes) |
+| `dump-sections <file.adob>` | Dump section table (names, kinds, permissions, sizes) |
+| `dump-relocations <file.adob>`| Dump relocation records and addends |
+
+**Examples:**
+```bash
+adesh adob inspect target/main.adob
+adesh adob validate target/main.adob
+adesh adob dump-symbols target/main.adob
+```
+
+---
+
+### toolchain
+
+Manage installed toolchains and register external compilers/linkers.
+
+**Syntax:**
+```bash
+adesh toolchain <subcommand>
+```
+
+**Subcommands:**
+
+| Subcommand | Description |
+|---|---|
+| `list` | List installed toolchain targets |
+| `install <target>` | Install a target cross-compilation toolchain |
+| `--external install [name]` | Probe and register host external compilers/linkers into Adesh |
+| `uninstall <target>` | Remove an installed toolchain |
+| `update [target]` | Update toolchains to latest release |
+
+**Examples:**
+```bash
+# Discover and register system GCC/Clang/LLD/binutils into Adesh
+adesh toolchain --external install
+
+# Install target toolchain
+adesh toolchain install aarch64-unknown-linux-gnu
+```
+
+---
+
 ### repl
 
 Start an interactive Read-Eval-Print Loop for experimenting with AdeshLang code.
