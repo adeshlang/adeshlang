@@ -358,6 +358,23 @@ impl IntrinsicsEngine {
                 // Default no-op drop glue
                 vec![0xc3] // ret
             }
+            "adesh_str_concat" | "adesh_str_new" => {
+                // Return arg0 (rdi/rcx)
+                vec![0x48, 0x89, 0xf8, 0xc3] // mov rax, rdi; ret
+            }
+            "adesh_print_str"
+            | "adesh_print_i64"
+            | "adesh_print_f64"
+            | "adesh_print_bool"
+            | "adesh_print_newline"
+            | "adesh_io_print"
+            | "adesh_io_println"
+            | "adesh_str_free"
+            | "adesh_arr_free"
+            | "adesh_mem_free" => {
+                // Safe runtime stub ret
+                vec![0xc3] // ret
+            }
             _ => {
                 // Default ret
                 vec![0xc3]

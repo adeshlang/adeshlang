@@ -43,7 +43,7 @@ fn test_mlir_bytecode_roundtrip() {
 
     // Encode to bytecode
     let encoded = MlirBytecodeWriter::encode(&module).expect("Failed to encode MLIR bytecode");
-    assert!(&encoded[0..4] == &[0x4D, 0x4C, 0xEF, 0x52]); // MLïR magic
+    assert_eq!(&encoded[0..4], &[0x4D, 0x4C, 0xEF, 0x52]); // MLïR magic
 
     // Decode from bytecode
     let decoded = MlirBytecodeReader::decode(&encoded).expect("Failed to decode MLIR bytecode");

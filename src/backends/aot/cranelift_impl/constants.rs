@@ -31,7 +31,7 @@ pub(crate) fn lower_constant_instruction(
     const_bools: &mut HashMap<ValueId, bool>,
     const_strings: &mut HashMap<ValueId, String>,
     string_data: &HashMap<String, DataId>,
-    string_pool: &[String],
+    _string_pool: &[String],
     user_funcs: &HashMap<String, FuncId>,
     func_values: &mut HashMap<ValueId, FuncId>,
     inst: &LirInst,

@@ -9,15 +9,19 @@ pub const SUPPORTED_LLVM_MAJOR: u32 = 18;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolchainPreference {
+    Native,
     Bundled,
     System,
+    External,
 }
 
 impl ToolchainPreference {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Native => "native",
             Self::Bundled => "bundled",
             Self::System => "system",
+            Self::External => "external",
         }
     }
 }

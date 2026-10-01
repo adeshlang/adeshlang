@@ -4,6 +4,14 @@
 //! Includes rich pretty printing, composite structures (objects, arrays, tuples, sets),
 //! ARC reference counting, tracked allocations, and standard builtins.
 
+pub mod abi;
+pub mod allocator;
+pub mod threading;
+
+pub use abi::*;
+pub use allocator::*;
+pub use threading::*;
+
 use std::collections::BTreeMap;
 use std::ffi::{CStr, CString};
 use std::fmt::Write as FmtWrite;

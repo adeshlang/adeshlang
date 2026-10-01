@@ -24,6 +24,8 @@ pub enum EmitType {
     SharedLib,
     /// Assembly output
     Assembly,
+    /// WebAssembly module
+    Wasm,
 }
 
 impl EmitType {
@@ -36,6 +38,7 @@ impl EmitType {
             "lib" | "static" | "staticlib" | "a" => Some(EmitType::StaticLib),
             "dylib" | "shared" | "sharedlib" | "so" | "dll" => Some(EmitType::SharedLib),
             "asm" | "assembly" | "s" => Some(EmitType::Assembly),
+            "wasm" | "wat" => Some(EmitType::Wasm),
             _ => None,
         }
     }
@@ -45,7 +48,7 @@ impl EmitType {
         use crate::backends::cranelift_aot::OutputFormat;
         match self {
             EmitType::Executable => OutputFormat::Executable,
-            EmitType::Object | EmitType::Adob => OutputFormat::Object,
+            EmitType::Object | EmitType::Adob | EmitType::Wasm => OutputFormat::Object,
             EmitType::StaticLib => OutputFormat::StaticLib,
             EmitType::SharedLib => OutputFormat::SharedLib,
             EmitType::Assembly => OutputFormat::Assembly,
@@ -247,6 +250,7 @@ impl AotBuildConfig {
                     Some("s")
                 }
             }
+            EmitType::Wasm => Some("wasm"),
         }
     }
 
@@ -459,6 +463,7 @@ pub fn parse_build_args(
             }
             "--object" | "--obj" | "--emit-object" | "--emit-obj" => config.emit = EmitType::Object,
             "--emit-adob" | "--adob" => config.emit = EmitType::Adob,
+            "--wasm" | "--emit-wasm" => config.emit = EmitType::Wasm,
 
             // Emit type explicit
             _ if arg.starts_with("--emit=") => {
@@ -810,15 +815,23 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
 
     let start_time = std::time::Instant::now();
 
-    // Compile using native ADOB pipeline or AOT pipeline
-    let compile_result = if config.emit == EmitType::Adob {
-        let compile_adob = || -> Result<(), String> {
+    // Compile using native ADOB/Assembly/WASM pipeline or AOT pipeline
+    let is_wasm = config.emit == EmitType::Wasm
+        || output.extension().and_then(|s| s.to_str()) == Some("wasm")
+        || config
+            .target
+            .as_ref()
+            .map(|t| t.contains("wasm"))
+            .unwrap_or(false);
+
+    let compile_result = if config.emit == EmitType::Adob
+        || config.emit == EmitType::Assembly
+        || is_wasm
+    {
+        let compile_native = || -> Result<(), String> {
             use crate::parsing::hir_lower::ast_to_hir;
             use crate::parsing::lexer::Lexer;
             use crate::parsing::parser::Parser;
-            use adesh_codegen::machine_ir::{
-                MachineFunction, MachineInstruction, MachineOperand, MachineRegister, NativeModule,
-            };
             use adesh_codegen::targets::create_backend;
             use adesh_object::TargetDescriptor;
             use adesh_object::writer::AdobWriter;
@@ -832,52 +845,104 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
             let target = match &config.target {
                 Some(t) => TargetDescriptor::from_triple(t)
                     .map_err(|e| format!("Invalid target: {}", e))?,
-                None => TargetDescriptor::host(),
+                None => {
+                    if is_wasm {
+                        TargetDescriptor::from_triple("wasm32-unknown-unknown")
+                            .map_err(|e| format!("Invalid target: {}", e))?
+                    } else {
+                        TargetDescriptor::host()
+                    }
+                }
             };
 
             let mut backend =
-                create_backend(target).map_err(|e| format!("Backend error: {}", e))?;
+                create_backend(target.clone()).map_err(|e| format!("Backend error: {}", e))?;
             let mod_name = config
                 .input
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("module");
-            let mut module = NativeModule::new(mod_name);
+            let mut module = crate::backends::native::lower_hir_module(&hir, &target);
+            module.name = mod_name.to_string();
 
-            // Lower HIR functions into Machine Functions in NativeModule
-            for func_hir in &hir.functions {
-                let mut func = MachineFunction::new(&func_hir.name);
-                func.is_exported = true;
-                let v0 = func.alloc_vreg();
-                let block = func.entry_block_mut();
-                block.push(MachineInstruction::Move {
-                    dst: MachineOperand::Register(MachineRegister::Virtual(v0)),
-                    src: MachineOperand::Immediate(0),
-                });
-                block.push(MachineInstruction::Return);
-                module.add_function(func);
+            if config.emit == EmitType::Assembly {
+                let asm = backend
+                    .generate_assembly(&module)
+                    .map_err(|e| format!("Assembly generation error: {}", e))?;
+                fs::write(&output, asm).map_err(|e| format!("Failed to write Assembly file: {}", e))
+            } else if is_wasm && config.emit != EmitType::Adob {
+                let lowered = backend
+                    .lower_module(&module)
+                    .map_err(|e| format!("Codegen lower error: {}", e))?;
+                let adob = backend
+                    .emit_object(&lowered)
+                    .map_err(|e| format!("ADOB emit error: {}", e))?;
+
+                use adesh_linker::section::{MergedSection, Section, SectionKind};
+                use adesh_linker::symbol::{Symbol, SymbolBinding, SymbolType};
+
+                let mut merged_secs = Vec::new();
+                for (idx, sec) in adob.sections.iter().enumerate() {
+                    let mut merged = MergedSection::new(
+                        sec.name.clone(),
+                        if sec.kind == adesh_object::SectionKind::Text {
+                            SectionKind::Text
+                        } else {
+                            SectionKind::Data
+                        },
+                        sec.flags,
+                        sec.alignment,
+                    );
+                    let local_sec =
+                        Section::new_data(sec.name.clone(), sec.data.clone(), false, sec.alignment);
+                    merged.append_section(&local_sec, 0, idx);
+                    merged_secs.push(merged);
+                }
+
+                let symbols: Vec<Symbol> = adob
+                    .symbols
+                    .iter()
+                    .map(|s| Symbol {
+                        name: s.name.clone(),
+                        binding: match s.binding {
+                            adesh_object::SymbolBinding::Global => SymbolBinding::Global,
+                            adesh_object::SymbolBinding::Local => SymbolBinding::Local,
+                            adesh_object::SymbolBinding::Weak => SymbolBinding::Weak,
+                            _ => SymbolBinding::Global,
+                        },
+                        visibility: adesh_linker::symbol::SymbolVisibility::Default,
+                        sym_type: SymbolType::Function,
+                        section_index: s.section_index.map(|idx| idx as usize),
+                        value: s.value,
+                        size: s.size,
+                        is_defined: s.is_defined,
+                        is_imported: !s.is_defined || s.kind == adesh_object::SymbolKind::Import,
+                        is_exported: adob.exports.contains(&s.name) || s.is_defined,
+                        file_index: Some(0),
+                        alias_of: None,
+                        comdat_group: None,
+                        version: None,
+                    })
+                    .collect();
+
+                let wasm_bytes =
+                    adesh_linker::wasm::WasmWriter::encode_binary(&merged_secs, &symbols)
+                        .map_err(|e| format!("Failed to link WebAssembly binary: {}", e))?;
+                fs::write(&output, wasm_bytes)
+                    .map_err(|e| format!("Failed to write WASM file: {}", e))
+            } else {
+                let lowered = backend
+                    .lower_module(&module)
+                    .map_err(|e| format!("Codegen lower error: {}", e))?;
+                let adob = backend
+                    .emit_object(&lowered)
+                    .map_err(|e| format!("ADOB emit error: {}", e))?;
+                let bytes = AdobWriter::write(&adob)
+                    .map_err(|e| format!("Failed to encode ADOB: {}", e))?;
+                fs::write(&output, bytes).map_err(|e| format!("Failed to write ADOB file: {}", e))
             }
-
-            // Also ensure entry / main function exists if defined
-            if module.functions.is_empty() {
-                let mut main_func = MachineFunction::new("main");
-                main_func.is_exported = true;
-                let block = main_func.entry_block_mut();
-                block.push(MachineInstruction::Return);
-                module.add_function(main_func);
-            }
-
-            let lowered = backend
-                .lower_module(&module)
-                .map_err(|e| format!("Codegen lower error: {}", e))?;
-            let adob = backend
-                .emit_object(&lowered)
-                .map_err(|e| format!("ADOB emit error: {}", e))?;
-            let bytes =
-                AdobWriter::write(&adob).map_err(|e| format!("Failed to encode ADOB: {}", e))?;
-            fs::write(&output, bytes).map_err(|e| format!("Failed to write ADOB file: {}", e))
         };
-        compile_adob()
+        compile_native()
     } else {
         aot_compile_with_options(&src, &output, aot_options)
     };

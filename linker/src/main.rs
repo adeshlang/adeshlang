@@ -6,6 +6,8 @@
 //! `adeshlink readobj` (llvm-readobj replacement), `adeshlink size` (llvm-size replacement),
 //! and `adeshlink strip` (llvm-strip replacement).
 
+#![allow(clippy::all)]
+
 use adesh_linker::archive::Archive;
 use adesh_linker::config::{BuildIdStyle, IcfMode, LinkConfig, LtoMode, MapFormat, OptLevel};
 use adesh_linker::error::{ErrorCode, LinkError};

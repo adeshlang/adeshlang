@@ -984,7 +984,6 @@ impl Formatter {
                 Visibility::Pub => self.output.push_str("pub "),
                 Visibility::Priv => self.output.push_str("private "),
                 Visibility::Protected => self.output.push_str("protected "),
-                _ => {}
             }
         }
         if func.is_async {

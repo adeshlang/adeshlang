@@ -1,6 +1,6 @@
 //! Diagnostic health inspector command implementation (`adl doctor`)
 
-use super::super::resolver::{detect_system_toolchain, installation_home, resolve};
+use super::super::resolver::installation_home;
 use std::env;
 use std::path::{Path, PathBuf};
 

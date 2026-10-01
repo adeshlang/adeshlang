@@ -459,6 +459,30 @@ impl PeWriter {
                 .copy_from_slice(&info.directory_size.to_le_bytes());
         }
 
+        // Export Directory (.edata)
+        if let Some(edata_sh) = section_headers
+            .iter()
+            .find(|sh| &sh.name[0..6] == b".edata")
+        {
+            let exp_dir_off = 112 + IMAGE_DIRECTORY_ENTRY_EXPORT * 8;
+            opt_buf[exp_dir_off..exp_dir_off + 4]
+                .copy_from_slice(&edata_sh.virtual_address.to_le_bytes());
+            opt_buf[exp_dir_off + 4..exp_dir_off + 8]
+                .copy_from_slice(&edata_sh.virtual_size.to_le_bytes());
+        }
+
+        // Exception Directory (.pdata)
+        if let Some(pdata_sh) = section_headers
+            .iter()
+            .find(|sh| &sh.name[0..6] == b".pdata")
+        {
+            let exc_dir_off = 112 + IMAGE_DIRECTORY_ENTRY_EXCEPTION * 8;
+            opt_buf[exc_dir_off..exc_dir_off + 4]
+                .copy_from_slice(&pdata_sh.virtual_address.to_le_bytes());
+            opt_buf[exc_dir_off + 4..exc_dir_off + 8]
+                .copy_from_slice(&pdata_sh.virtual_size.to_le_bytes());
+        }
+
         // Base Relocation directory
         let reloc_rva = section_headers[reloc_idx].virtual_address;
         let reloc_size = section_headers[reloc_idx].virtual_size;

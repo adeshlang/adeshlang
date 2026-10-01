@@ -5,6 +5,7 @@
 
 #![allow(clippy::result_large_err)]
 
+pub mod abi;
 pub mod bundle;
 pub mod capabilities;
 pub mod error;
@@ -20,6 +21,7 @@ pub mod validator;
 pub mod writer;
 
 // Top-level re-exports
+pub use abi::*;
 pub use bundle::{AdobBundle, BUNDLE_MAGIC, BUNDLE_VERSION, BundleEntry};
 pub use capabilities::TargetCapabilities;
 pub use error::{AdobError, AdobErrorCode, AdobResult};

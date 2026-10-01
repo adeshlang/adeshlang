@@ -2,9 +2,7 @@ use adesh_codegen::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
     NativeModule,
 };
-use adesh_codegen::opt::{
-    ArrayOptimizer, DeadCodeElimination, OptimizationPipeline, PeepholeOptimizer,
-};
+use adesh_codegen::opt::{ArrayOptimizer, OptimizationPipeline};
 use adesh_codegen::safety::StackCanaryPass;
 use adesh_codegen::targets::create_backend;
 use adesh_object::TargetDescriptor;
@@ -94,7 +92,7 @@ fn test_riscv_backend_codegen() {
 fn test_binary_optimization_and_size_reduction() {
     let mut func = MachineFunction::new("optimized_calc");
     let r0 = func.alloc_vreg();
-    let r1 = func.alloc_vreg();
+    let _r1 = func.alloc_vreg();
     let dead_r = func.alloc_vreg();
 
     let block = func.entry_block_mut();

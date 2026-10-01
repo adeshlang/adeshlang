@@ -16,9 +16,11 @@ pub struct GpuBackend {
 
 impl GpuBackend {
     pub fn new(arch: GpuArchitecture) -> Self {
-        let mut target = TargetDescriptor::default();
-        target.device = ComputeDevice::Gpu;
-        target.architecture = adesh_object::Architecture::Gpu(arch);
+        let target = TargetDescriptor {
+            device: ComputeDevice::Gpu,
+            architecture: adesh_object::Architecture::Gpu(arch),
+            ..Default::default()
+        };
         Self { target }
     }
 }

@@ -14,6 +14,7 @@ pub mod machine_ir;
 pub mod opt;
 pub mod register_alloc;
 pub mod safety;
+pub mod stdlib_builder;
 pub mod targets;
 
 pub use accelerators::{GpuBackend, TensorAcceleratorBackend};
@@ -29,9 +30,13 @@ pub use machine_ir::{
     ConditionCode, MachineBlock, MachineFunction, MachineInstruction, MachineOperand,
     MachineRegister, NativeModule, PhysicalRegister, VirtualRegister,
 };
-pub use opt::{ArrayOptimizer, DeadCodeElimination, OptimizationPipeline, PeepholeOptimizer};
+pub use opt::{
+    ArrayOptimizer, DeadCodeElimination, OptimizationPipeline, PeepholeOptimizer, SwitchCase,
+    SwitchLowering, SwitchStrategy,
+};
 pub use register_alloc::{LinearScanAllocator, RegisterFile};
 pub use safety::{ControlFlowIntegrityPass, StackCanaryPass};
+pub use stdlib_builder::StdlibAdobBuilder;
 pub use targets::{create_backend, x86_64::X86_64Backend};
 
 #[cfg(test)]

@@ -20,6 +20,12 @@ pub trait CodegenBackend: Send + Sync {
 
     /// Emit a completed, validated ADOB object from the native module.
     fn emit_object(&mut self, module: &NativeModule) -> Result<AdobObject, CodegenError>;
+
+    /// Generate direct native target assembly code for the module.
+    fn generate_assembly(&mut self, module: &NativeModule) -> Result<String, CodegenError> {
+        let lowered = self.lower_module(module)?;
+        Ok(format!("# Assembly output for {}\n", lowered.name))
+    }
 }
 
 /// Universal Accelerator Backend contract (GPU, NPU, TPU, DSP).

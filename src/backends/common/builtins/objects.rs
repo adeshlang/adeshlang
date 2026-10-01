@@ -795,7 +795,7 @@ pub(crate) fn runtime_array_to_raw(args: &[RuntimeValue]) -> RuntimeValue {
             }
             RuntimeValue::RawArray(ty, coerced)
         }
-        RuntimeValue::RawArray(elem_type, data) => {
+        RuntimeValue::RawArray(_elem_type, data) => {
             if let Some(ty) = opt_elem_type {
                 let mut coerced = Vec::with_capacity(data.len());
                 for v in data {
@@ -864,7 +864,6 @@ pub(crate) fn runtime_array_to_dynamic(args: &[RuntimeValue]) -> RuntimeValue {
         }
         RuntimeValue::DynArray {
             data,
-            element_type,
             tracked_capacity,
             ..
         } => {

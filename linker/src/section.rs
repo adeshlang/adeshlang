@@ -129,6 +129,26 @@ impl Section {
         }
     }
 
+    pub fn new_debug(name: impl Into<String>, data: Vec<u8>, alignment: u64) -> Self {
+        let size = data.len() as u64;
+        Self {
+            name: name.into(),
+            kind: SectionKind::Debug,
+            flags: flags::READ,
+            alignment: alignment.max(1),
+            virtual_address: 0,
+            file_offset: 0,
+            size,
+            data,
+            relocations: Vec::new(),
+            comdat_group: None,
+            file_index: None,
+            is_live: true,
+            is_folded: false,
+            folded_into: None,
+        }
+    }
+
     pub fn is_executable(&self) -> bool {
         (self.flags & flags::EXEC) != 0
     }

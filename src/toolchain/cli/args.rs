@@ -164,9 +164,6 @@ impl ParsedArgs {
                 "--aot" | "--aot-native" => {
                     config.backend = ExecutionBackend::Aot;
                 }
-                "--wasm" => {
-                    config.backend = ExecutionBackend::Wasm;
-                }
                 #[cfg(debug_assertions)]
                 "--gpu" => {
                     config.backend = ExecutionBackend::Gpu;
@@ -281,11 +278,12 @@ impl ParsedArgs {
                 "--test" | "--tests" => {
                     config.run_tests = true;
                 }
-                _ if arg.trim_start_matches('-') == "exact" => {
+                _ if arg.starts_with('-') && arg.trim_start_matches('-') == "exact" => {
                     config.test_exact = true;
                     config.run_tests = true;
                 }
-                _ if arg.trim_start_matches('-') == "skip"
+                _ if arg.starts_with('-')
+                    && arg.trim_start_matches('-') == "skip"
                     && i + 1 < args.len()
                     && !args[i + 1].starts_with('-') =>
                 {
@@ -293,20 +291,20 @@ impl ParsedArgs {
                     config.run_tests = true;
                     i += 1;
                 }
-                _ if arg.trim_start_matches('-').starts_with("skip=") => {
+                _ if arg.starts_with('-') && arg.trim_start_matches('-').starts_with("skip=") => {
                     let val = arg.trim_start_matches('-')["skip=".len()..].to_string();
                     config.test_skip = Some(val);
                     config.run_tests = true;
                 }
-                _ if arg.trim_start_matches('-') == "list" => {
+                _ if arg.starts_with('-') && arg.trim_start_matches('-') == "list" => {
                     config.test_list = true;
                     config.run_tests = true;
                 }
-                _ if arg.trim_start_matches('-') == "ignored" => {
+                _ if arg.starts_with('-') && arg.trim_start_matches('-') == "ignored" => {
                     config.test_ignored = true;
                     config.run_tests = true;
                 }
-                _ if arg.trim_start_matches('-') == "include-ignored" => {
+                _ if arg.starts_with('-') && arg.trim_start_matches('-') == "include-ignored" => {
                     config.test_include_ignored = true;
                     config.run_tests = true;
                 }

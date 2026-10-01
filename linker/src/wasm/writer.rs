@@ -32,12 +32,13 @@ impl WasmWriter {
         output.extend_from_slice(&WASM_MAGIC);
         output.extend_from_slice(&WASM_VERSION);
 
-        // 2. Type Section (ID 1): Type 0 = () -> ()
+        // 2. Type Section (ID 1): Type 0 = () -> (i64)
         let mut type_payload = Vec::new();
         encode_u32_leb128(1, &mut type_payload); // 1 type entry
         type_payload.push(0x60); // func type
         type_payload.push(0x00); // 0 params
-        type_payload.push(0x00); // 0 results
+        type_payload.push(0x01); // 1 result
+        type_payload.push(0x7E); // i64 result
         emit_section(WASM_SEC_TYPE, &type_payload, &mut output);
 
         // 3. Function Section (ID 3): 1 function with type index 0
@@ -86,12 +87,11 @@ impl WasmWriter {
         }
         emit_section(WASM_SEC_EXPORT, &exp_payload, &mut output);
 
-        // 7. Code Section (ID 10): 1 function body (locals: 0, body: opcodes or minimal return)
+        // 7. Code Section (ID 10): 1 function body (contains its own locals header & opcodes)
         let mut code_payload = Vec::new();
         encode_u32_leb128(1, &mut code_payload); // 1 function body
 
         let mut func_body = Vec::new();
-        encode_u32_leb128(0, &mut func_body); // 0 local declarations
 
         // Find code payload from merged sections if any
         let mut has_code = false;
@@ -103,6 +103,9 @@ impl WasmWriter {
             }
         }
         if !has_code {
+            func_body.push(0x00); // 0 locals
+            func_body.push(0x42); // i64.const 0
+            func_body.push(0x00);
             func_body.push(0x0B); // end opcode
         } else if func_body.last() != Some(&0x0B) {
             func_body.push(0x0B);
@@ -123,7 +126,7 @@ impl WasmWriter {
             }
         }
 
-        if !total_data.len() == 0 {
+        if !total_data.is_empty() {
             let mut data_payload = Vec::new();
             encode_u32_leb128(1, &mut data_payload); // 1 data segment
             data_payload.push(0x00); // active segment, memory index 0

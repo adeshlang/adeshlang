@@ -2,10 +2,14 @@
 
 pub mod array_opt;
 pub mod dce;
+pub mod jump_table;
+pub mod lto;
 pub mod peephole;
 
 pub use array_opt::ArrayOptimizer;
 pub use dce::DeadCodeElimination;
+pub use jump_table::{SwitchCase, SwitchLowering, SwitchStrategy};
+pub use lto::{LtoConfig, LtoEngine, LtoMode};
 pub use peephole::PeepholeOptimizer;
 
 use crate::machine_ir::{MachineFunction, NativeModule};

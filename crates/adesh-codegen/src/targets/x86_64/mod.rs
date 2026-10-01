@@ -1,5 +1,6 @@
 //! Complete x86-64 Native Backend implementing `CodegenBackend`.
 
+pub mod asm_printer;
 pub mod encoder;
 
 use crate::backend::CodegenBackend;
@@ -424,5 +425,10 @@ impl CodegenBackend for X86_64Backend {
         }
 
         Ok(obj)
+    }
+
+    fn generate_assembly(&mut self, module: &NativeModule) -> Result<String, CodegenError> {
+        let lowered = self.lower_module(module)?;
+        Ok(asm_printer::X86_64AsmPrinter::print_module(&lowered))
     }
 }

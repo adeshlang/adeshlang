@@ -50,8 +50,8 @@ fn test_state_vector_ghz_state_3qubits() {
     assert_eq!(probs.len(), 8);
     assert!((probs[0] - 0.5).abs() < 1e-6); // |000>
     assert!((probs[7] - 0.5).abs() < 1e-6); // |111>
-    for i in 1..7 {
-        assert!(probs[i].abs() < 1e-6);
+    for p in &probs[1..7] {
+        assert!(p.abs() < 1e-6);
     }
 }
 

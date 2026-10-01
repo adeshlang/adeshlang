@@ -7,6 +7,8 @@
 //! GPU fatbins, AI accelerator payloads, and Quantum QIR packages without requiring external
 //! toolchains or system linkers (LLVM/lld, GNU ld, MSVC link.exe).
 
+#![allow(clippy::all)]
+
 pub mod abi;
 pub mod accelerators;
 pub mod arch;

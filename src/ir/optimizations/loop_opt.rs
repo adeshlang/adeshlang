@@ -8,9 +8,7 @@
 //! 4. Redundant Local Store-Load Forwarding within loop bodies.
 
 use super::{OptLevel, OptResult, VirOptimization};
-use crate::ir::vir::{
-    BlockId, ValueId, VirBlock, VirFunction, VirInstruction, VirModule, VirTerminator,
-};
+use crate::ir::vir::{BlockId, ValueId, VirFunction, VirInstruction, VirModule, VirTerminator};
 use std::collections::{HashMap, HashSet};
 
 pub struct LoopOptimization;

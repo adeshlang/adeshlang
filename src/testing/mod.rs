@@ -6,7 +6,7 @@
 //! - backend matrix comparison (`--backend-check`)
 //! - JSON reporting for CI
 
-use crate::parsing::ast::{Function, Stmt, StmtKind};
+use crate::parsing::ast::{Stmt, StmtKind};
 use crate::toolchain::config::ExecutionBackend;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
