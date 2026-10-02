@@ -3,11 +3,12 @@
   WiX v4/v5 MSI for enterprise deployment.
 
   The MSI installs AdeshLang itself and registers its machine environment.
-  It does not download LLVM. The commit custom action invokes the installed
-  CLI after InstallFinalize so the administrator can use the same pinned
-  manifest and toolchain contract as the classic installer. Organizations
-  that prohibit installer-launched downloads can remove that action and run
-  `adesh toolchain install` in system mode after deployment instead.
+  The Adesh native toolchain (native codegen, ADOB object format, adeshlink
+  native linker, adeshlang runtime library) is bundled inside the product: no
+  external LLVM, Clang, GCC, or MSVC download or installation happens during
+  setup. External LLVM remains an opt-in bridge for administrators
+  (`adesh toolchain --external install`, `adesh build --external-linker`)
+  and can be deployed separately after installation if desired.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <?define ProductVersion = "0.3.0" ?>
@@ -42,27 +43,11 @@
       <ComponentGroupRef Id="ProductFiles" />
       <ComponentRef Id="MachineEnvironment" />
     </Feature>
-
-    <!-- The MSI runs this only after all files are committed. It is not a
-         bundled LLVM installer; adesh performs the pinned download and
-         verification using config\toolchain-manifest.json. -->
-    <CustomAction Id="InstallToolchain"
-                  FileRef="AdeshExecutable"
-                  ExeCommand="toolchain install --system --manifest &quot;[INSTALLDIR]config\toolchain-manifest.json&quot;"
-                  Execute="commit"
-                  Impersonate="no"
-                  Return="check" />
-    <InstallExecuteSequence>
-      <!-- ADESH_MSI_SKIP_TOOLCHAIN is set by the Burn bundle, which drives
-           the toolchain install itself; standalone MSI installs keep it. -->
-      <Custom Action="InstallToolchain" After="InstallFinalize" Condition="NOT Installed AND NOT ADESH_MSI_SKIP_TOOLCHAIN" />
-    </InstallExecuteSequence>
   </Package>
 
   <Fragment>
     <ComponentGroup Id="ProductFiles" Directory="INSTALLDIR">
       <Files Include="$(var.SourceDir)\bin\**" Directory="BINDIR">
-        <Exclude Files="$(var.SourceDir)\bin\adesh.exe" />
         <Exclude Files="$(var.SourceDir)\bin\**\*.pdb" />
       </Files>
       <Files Include="$(var.SourceDir)\lib\**" Directory="LIBDIR" />
@@ -70,12 +55,6 @@
       <Files Include="$(var.SourceDir)\config\**" Directory="CONFIGDIR" />
       <Files Include="$(var.SourceDir)\licenses\**" Directory="LICENSEDIR" />
       <Files Include="$(var.SourceDir)\ai\**" Directory="AIDIR" />
-
-      <!-- Explicitly author the executable used by the deferred custom
-           action. The build script excludes it from the harvested bin set. -->
-      <Component Directory="BINDIR" Id="AdeshExecutableComponent" Guid="*">
-        <File Id="AdeshExecutable" Source="$(var.SourceDir)\bin\adesh.exe" KeyPath="yes" />
-      </Component>
     </ComponentGroup>
 
     <!-- Explicit GUID: this component's keypath is the directory (no file),
@@ -88,40 +67,12 @@
                    Part="all"
                    Action="set"
                    System="yes" />
-      <!-- The toolchain lives INSIDE the AdeshLang installation
-           ([INSTALLDIR]toolchain\llvm), so uninstalling AdeshLang removes it
-           entirely; a pre-existing system LLVM is reused without downloads
-           when `adesh toolchain install` finds it. -->
-      <Environment Id="AdeshToolchainEnvironment"
-                   Name="ADESH_TOOLCHAIN"
-                   Value="[INSTALLDIR]toolchain\llvm"
-                   Part="all"
-                   Action="set"
-                   System="yes" />
-      <Environment Id="AdeshClangEnvironment"
-                   Name="ADESH_CLANG"
-                   Value="[INSTALLDIR]toolchain\llvm\bin\clang.exe"
-                   Part="all"
-                   Action="set"
-                   System="yes" />
-      <Environment Id="AdeshLlcEnvironment"
-                   Name="ADESH_LLC"
-                   Value="[INSTALLDIR]toolchain\llvm\bin\llc.exe"
-                   Part="all"
-                   Action="set"
-                   System="yes" />
-      <Environment Id="AdeshMlirOptEnvironment"
-                   Name="ADESH_MLIR_OPT"
-                   Value="[INSTALLDIR]toolchain\llvm\bin\mlir-opt.exe"
-                   Part="all"
-                   Action="set"
-                   System="yes" />
-      <Environment Id="AdeshMlirTranslateEnvironment"
-                   Name="ADESH_MLIR_TRANSLATE"
-                   Value="[INSTALLDIR]toolchain\llvm\bin\mlir-translate.exe"
-                   Part="all"
-                   Action="set"
-                   System="yes" />
+      <!-- Only ADESH_HOME and PATH are set: the native toolchain is bundled
+           and self-contained, so there is no toolchain directory to point
+           ADESH_TOOLCHAIN/ADESH_CLANG/ADESH_LLC/ADESH_MLIR_* at. Users who
+           opt into the external LLVM bridge configure those variables (or
+           register a toolchain with `adesh toolchain --external install`)
+           themselves. -->
       <Environment Id="AdeshBinPathEnvironment"
                    Name="PATH"
                    Value="[INSTALLDIR]bin"

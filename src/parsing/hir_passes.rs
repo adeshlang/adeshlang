@@ -1097,7 +1097,7 @@ fn validate_stmt_lifetimes(
             tracker.exit_scope();
         }
 
-        HirStmt::Break | HirStmt::Continue => {}
+        HirStmt::Break | HirStmt::Continue | HirStmt::Jump(_) => {}
     }
 }
 

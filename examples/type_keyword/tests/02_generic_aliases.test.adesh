@@ -1,0 +1,103 @@
+// Generic Type Alias Tests
+// Covers `type Box<T>` / `type Pair<A, B>` generic aliases, optional fields
+// inside generic aliases, and nested generic alias resolution as demonstrated
+// by examples/type_keyword and the generics examples.
+// NOTE: alias FIELD default fill is entry-file-only, so tests assert behavior
+// that is identical standalone and when imported by tests/main.adesh.
+
+// ─────────────────────────────────────────────────────────────
+// Helpers (self-contained, pure)
+// ─────────────────────────────────────────────────────────────
+
+type Box<T> = {
+    value: T,
+    tag?: String = "generic-box",
+};
+
+type Pair<A, B> = { first: A; second: B };
+
+type InnerBox<T> = { val: T };
+type OuterBox<T> = { inner: InnerBox<T> };
+
+export fn make_int_box(v: i32): Box<i32> {
+    return { value: v };
+}
+
+export fn make_tagged_box(v: string, tag: String): Box<string> {
+    return { value: v, tag: tag };
+}
+
+export fn make_pair<A, B>(first: A, second: B): Pair<A, B> {
+    return { first: first, second: second };
+}
+
+export fn box_value<T>(b: Box<T>): T {
+    return b.value;
+}
+
+export fn pair_sum(p: Pair<int, int>): i32 {
+    return p.first + p.second;
+}
+
+export fn nested_val(o: OuterBox<int>): i32 {
+    return o.inner.val;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_box_optional_tag_missing() {
+    let int_box: Box<Int> = { value: 42, tag: "explicit-box" };
+    assert_eq(int_box.value, 42);
+    assert_eq(int_box.tag, "explicit-box");
+    let plain = make_int_box(7);
+    assert_eq(plain.tag, null);
+    assert_eq(plain.value, 7);
+}
+
+export test fn test_box_alias_tag_override() {
+    let tagged = make_tagged_box("payload", "custom-box");
+    assert_eq(tagged.value, "payload");
+    assert_eq(tagged.tag, "custom-box");
+    assert_ne(tagged.tag, "generic-box");
+}
+
+export test fn test_box_value_accessor() {
+    let b = make_int_box(7);
+    assert_eq(box_value(b), 7);
+    let s = make_tagged_box("hello", "t");
+    assert_eq(box_value(s), "hello");
+}
+
+export test fn test_pair_alias_roundtrip() {
+    let p: Pair<int, string> = make_pair<int, string>(1, "First Element");
+    assert_eq(p.first, 1);
+    assert_eq(p.second, "First Element");
+    assert_eq(pair_sum(make_pair<int, int>(3, 4)), 7);
+}
+
+export test fn test_nested_generic_alias() {
+    let nested: OuterBox<int> = { inner: { val: 999 } };
+    assert_eq(nested.inner.val, 999);
+    assert_eq(nested_val(nested), 999);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_box_optional_tag_missing();
+    test_box_alias_tag_override();
+    test_box_value_accessor();
+    test_pair_alias_roundtrip();
+    test_nested_generic_alias();
+    return 5;
+}
+
+fn main() {
+    print("Running 02_generic_aliases tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 02_generic_aliases.test.adesh`);
+}

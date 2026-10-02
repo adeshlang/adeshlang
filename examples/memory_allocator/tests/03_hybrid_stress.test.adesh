@@ -1,0 +1,198 @@
+// Hybrid Strategy & Stress Test
+// Covers examples/memory_allocator/hybrid_strategy.adesh and stress_test.adesh:
+//   - the two-stage batch pipeline (double, filter > 10, sum)
+//   - hybrid arena+heap bookkeeping: arena resets per batch, results persist
+//   - stress allocation totals, peak live objects and accumulated sums
+//   - mixed allocation sizes (small object / 100-element array / 50-char string)
+// Loop counts are kept small so the suite stays fast.
+
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+
+// Mirrors processData() from hybrid_strategy.adesh:
+// double every value, keep values > 10, sum what remains.
+export fn process_batch(input: [int]): i32 {
+    let kept: [i32] = [];
+    for (v in input) {
+        let doubled = v * 2;
+        if (doubled > 10) {
+            kept.push(doubled);
+        }
+    }
+    let total = 0;
+    for (v in kept) {
+        total = total + v;
+    }
+    return total;
+}
+
+// Process `batches` batches of `items` values where batch b holds
+// b*10 + i for i in [0, items). Returns the grand total.
+export fn hybrid_total(batches: i32, items: i32): i32 {
+    let grand = 0;
+    let b = 0;
+    while (b < batches) {
+        let data: [i32] = [];
+        let i = 0;
+        while (i < items) {
+            data.push(b * 10 + i);
+            i = i + 1;
+        }
+        grand = grand + process_batch(data);
+        b = b + 1;
+    }
+    return grand;
+}
+
+// Hybrid bookkeeping: temporaries are arena-allocated (reset each batch),
+// each processed result is retained on the heap.
+// Returns [arena_peak_items, heap_persistent, arena_resets].
+export fn hybrid_report(batches: i32, items: i32): [i32] {
+    let arena_peak = 0;
+    let heap_persistent = 0;
+    let resets = 0;
+    let b = 0;
+    while (b < batches) {
+        let live = 0;
+        let i = 0;
+        while (i < items) {
+            live = live + 1;
+            i = i + 1;
+        }
+        if (live > arena_peak) {
+            arena_peak = live;
+        }
+        heap_persistent = heap_persistent + 1;
+        resets = resets + 1;
+        b = b + 1;
+    }
+    return [arena_peak, heap_persistent, resets];
+}
+
+// Stress test statistics (scaled-down version of stress_test.adesh).
+// Returns [total_allocations, max_live_objects, accumulated_sum].
+export fn stress_report(iterations: i32, objs: i32, arr_size: i32): [i32] {
+    let total_allocs = 0;
+    let max_live = 0;
+    let grand_sum = 0;
+    let it = 0;
+    while (it < iterations) {
+        let live = 0;
+        let iter_sum = 0;
+        let o = 0;
+        while (o < objs) {
+            let s = 0;
+            let j = 0;
+            while (j < arr_size) {
+                s = s + j * j;
+                j = j + 1;
+            }
+            iter_sum = iter_sum + s;
+            live = live + 1;
+            total_allocs = total_allocs + 1;
+            o = o + 1;
+        }
+        if (live > max_live) {
+            max_live = live;
+        }
+        grand_sum = grand_sum + iter_sum;
+        it = it + 1;
+    }
+    return [total_allocs, max_live, grand_sum];
+}
+
+// Mixed allocation sizes from stress_test.adesh.
+// Returns [count, medium_length, large_length].
+export fn mixed_sizes(count: i32): [i32] {
+    let medium: [i32] = [];
+    let j = 0;
+    while (j < 100) {
+        medium.push(j);
+        j = j + 1;
+    }
+    let large = "x".repeat(50);
+    let small_fields = 1;
+    let i = 0;
+    let produced = 0;
+    while (i < count) {
+        produced = produced + small_fields;
+        i = i + 1;
+    }
+    return [produced, medium.len(), large.len()];
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_process_batch_pipeline() {
+    // doubles: 2,4,6,8,10,12 -> only 12 is > 10
+    assert_eq(process_batch([1, 2, 3, 4, 5, 6]), 12);
+    // doubles: 6,8,10 -> none > 10
+    assert_eq(process_batch([3, 4, 5]), 0);
+    assert_eq(process_batch([6]), 12);
+    assert_eq(process_batch([]), 0);
+    assert_eq(process_batch([0, 1, 2]), 0);
+}
+
+export test fn test_hybrid_batch_totals() {
+    // 5 batches of 20 values, mirroring hybrid_strategy.adesh.
+    assert_eq(hybrid_total(5, 20), 5870);
+    assert_eq(hybrid_total(1, 1), 0);
+}
+
+export test fn test_arena_heap_split() {
+    let report = hybrid_report(5, 20);
+    assert_eq(report[0], 20);
+    assert_eq(report[1], 5);
+    assert_eq(report[2], 5);
+
+    let single = hybrid_report(1, 7);
+    assert_eq(single[0], 7);
+    assert_eq(single[1], 1);
+    assert_eq(single[2], 1);
+}
+
+export test fn test_stress_allocation_totals() {
+    // 5 iterations x 4 objects = 20 allocations,
+    // peak live = 4 objects, sum per iteration = 4 * (0+1+4) = 20.
+    let report = stress_report(5, 4, 3);
+    assert_eq(report[0], 20);
+    assert_eq(report[1], 4);
+    assert_eq(report[2], 100);
+
+    let empty = stress_report(3, 0, 5);
+    assert_eq(empty[0], 0);
+    assert_eq(empty[1], 0);
+    assert_eq(empty[2], 0);
+}
+
+export test fn test_mixed_allocation_sizes() {
+    let report = mixed_sizes(10);
+    assert_eq(report[0], 10);
+    assert_eq(report[1], 100);
+    assert_eq(report[2], 50);
+
+    let single = mixed_sizes(1);
+    assert_eq(single[0], 1);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_process_batch_pipeline();
+    test_hybrid_batch_totals();
+    test_arena_heap_split();
+    test_stress_allocation_totals();
+    test_mixed_allocation_sizes();
+    return 5;
+}
+
+fn main() {
+    print("Running 03_hybrid_stress tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 03_hybrid_stress.test.adesh`);
+}

@@ -1,5 +1,3 @@
-%{!?with_toolchain:%global with_toolchain 0}
-
 Name:           adeshlang
 Version:        0.3.0
 Release:        1%{?dist}
@@ -10,6 +8,9 @@ Requires:       glibc >= 2.28, ca-certificates, tar, xz
 
 %description
 AdeshLang is a programming language toolchain with AOT compilation support.
+The Adesh native toolchain (native codegen, ADOB object format, adeshlink
+linker, and adeshlang runtime) is bundled inside this package; no external
+LLVM, Clang, GCC, or MSVC installation is required.
 
 %prep
 
@@ -23,20 +24,22 @@ find %{buildroot}%{_prefix}/lib/adeshlang -type d -exec chmod 0755 {} +
 find %{buildroot}%{_prefix}/lib/adeshlang -type f -exec chmod 0644 {} +
 find %{buildroot}%{_prefix}/lib/adeshlang/bin -type f -exec chmod 0755 {} +
 mkdir -p %{buildroot}%{_sysconfdir}/profile.d
+# The native toolchain ships inside the package, so no toolchain variables
+# are exported. Users who opt into the external LLVM bridge register it
+# separately with `adesh toolchain --external install`.
 cat > %{buildroot}%{_sysconfdir}/profile.d/adeshlang.sh <<'PROFILE'
 # AdeshLang environment (managed by the adeshlang package)
 export ADESH_HOME="/usr/lib/adeshlang"
-export ADESH_TOOLCHAIN="/usr/lib/adeshlang/toolchain/llvm"
-export ADESH_CLANG="/usr/lib/adeshlang/toolchain/llvm/bin/clang"
-export ADESH_LLC="/usr/lib/adeshlang/toolchain/llvm/bin/llc"
-export ADESH_MLIR_OPT="/usr/lib/adeshlang/toolchain/llvm/bin/mlir-opt"
-export ADESH_MLIR_TRANSLATE="/usr/lib/adeshlang/toolchain/llvm/bin/mlir-translate"
-export PATH="/usr/lib/adeshlang/bin:/usr/lib/adeshlang/toolchain/llvm/bin:$PATH"
+export ADESH_STD="/usr/lib/adeshlang/std"
+case ":$PATH:" in
+  *":/usr/lib/adeshlang/bin:"*) ;;
+  *) export PATH="/usr/lib/adeshlang/bin:$PATH" ;;
+esac
 PROFILE
 
 %post
 if [ "$1" -ge 1 ]; then
-    for binary in adesh adl als adesh-editor; do
+    for binary in adesh adl als adesh-editor adeshlink; do
         if [ -x "/usr/lib/adeshlang/bin/$binary" ]; then
             ln -sfn "/usr/lib/adeshlang/bin/$binary" "/usr/bin/$binary"
         fi
@@ -45,28 +48,15 @@ if [ "$1" -ge 1 ]; then
         echo "Note: AI neural models are not bundled in this package."
         echo "To download and set up the default local AI coder model (~275 MB), run: adesh ai setup"
     fi
-fi
-%if 0%{?with_toolchain}
-if [ "$1" -ge 1 ]; then
-    if [ "${ADESH_RPM_USE_SYSTEM_PACKAGES:-${ADESH_USE_SYSTEM_PACKAGES:-0}}" = "1" ]; then
-        ADESH_HOME="/usr/lib/adeshlang" /usr/lib/adeshlang/bin/adesh \
-            toolchain install --system --use-system-packages
-    else
-        ADESH_HOME="/usr/lib/adeshlang" /usr/lib/adeshlang/bin/adesh \
-            toolchain install --system
+    # Self-verify the bundled native toolchain (fast; no downloads).
+    if [ -x /usr/lib/adeshlang/bin/adesh ]; then
+        ADESH_HOME="/usr/lib/adeshlang" /usr/lib/adeshlang/bin/adesh toolchain check || true
     fi
 fi
-%else
-if [ "$1" -ge 1 ]; then
-    echo "AdeshLang toolchain not installed by default."
-    echo "To install it, run: sudo ADESH_HOME=/usr/lib/adeshlang /usr/lib/adeshlang/bin/adesh toolchain install --system"
-    echo "Build this RPM with --with toolchain to install it during package configuration."
-fi
-%endif
 
 %postun
 if [ "$1" -eq 0 ]; then
-    for binary in adesh adl als adesh-editor; do
+    for binary in adesh adl als adesh-editor adeshlink; do
         link="/usr/bin/$binary"
         target="/usr/lib/adeshlang/bin/$binary"
         if [ -L "$link" ] && [ "$(readlink "$link")" = "$target" ]; then
@@ -74,8 +64,8 @@ if [ "$1" -eq 0 ]; then
         fi
     done
     rm -f "%{_sysconfdir}/profile.d/adeshlang.sh"
-    # The downloaded LLVM toolchain is generated data; retain it on upgrades,
-    # but remove it when the final package is erased.
+    # /usr/lib/adeshlang/toolchain only exists when the user registered an
+    # external LLVM bridge there; the native toolchain ships in the package.
     rm -rf /usr/lib/adeshlang/toolchain
 fi
 
@@ -86,3 +76,5 @@ fi
 %changelog
 * Thu Jan 01 2026 AdeshLang Team <team@adeshlang.org> - 0.3.0-1
 - Initial AdeshLang Linux package
+- Bundle the self-contained native toolchain (codegen, adeshlink, ADOB,
+  runtime); external LLVM is an opt-in bridge, not an install requirement

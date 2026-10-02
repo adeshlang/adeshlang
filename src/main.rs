@@ -1397,10 +1397,22 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
 fn run_gpu_check(args: &[String]) {
     let verbose = args.iter().any(|a| a == "-v" || a == "--verbose");
     let json = args.iter().any(|a| a == "--json");
+    // `--external-linker` (and its legacy aliases) switch the report into the
+    // mode used by the external LLVM bridge: external clang/llc/lld become
+    // hard requirements instead of optional accelerators.
+    let external_linker = args
+        .iter()
+        .any(|a| a == "--external-linker" || a == "--external-toolchain" || a == "--use-llvm");
 
-    use adeshlang::backends::mlir::gpu::{CheckStatus, check_device_compatibility};
+    use adeshlang::backends::mlir::gpu::{
+        CheckStatus, CompatibilityCheckOptions, check_device_compatibility_with_options,
+    };
 
-    let report = check_device_compatibility();
+    let report = check_device_compatibility_with_options(if external_linker {
+        CompatibilityCheckOptions::external_linker()
+    } else {
+        CompatibilityCheckOptions::default()
+    });
 
     if json {
         // Emit machine-readable JSON (no header)
@@ -1408,6 +1420,8 @@ fn run_gpu_check(args: &[String]) {
         println!("  \"compatible\": {},", report.compatible());
         println!("  \"ok_count\": {},", report.ok_count());
         println!("  \"error_count\": {},", report.error_count());
+        println!("  \"external_linker\": {},", external_linker);
+        println!("  \"native_toolchain\": \"ready\",");
         println!("  \"entries\": [");
         for (i, entry) in report.entries.iter().enumerate() {
             let comma = if i + 1 < report.entries.len() {
@@ -1433,6 +1447,10 @@ fn run_gpu_check(args: &[String]) {
     println!("AdeshLang GPU Device Compatibility Check");
     println!("========================================");
     println!();
+    if external_linker {
+        println!("  mode: --external-linker (external LLVM required for final linking)");
+        println!();
+    }
     let mut current_cat = "";
     for entry in &report.entries {
         // Skip Missing entries unless verbose
@@ -1498,17 +1516,35 @@ fn run_gpu_check(args: &[String]) {
         }
     };
 
-    let toolchain = adeshlang::backends::mlir::gpu::detect_toolchain(runtime_target);
-    let tc_ok = if toolchain.is_available() {
-        "ready ✓"
+    // Native toolchain: compiled into the adesh binary (codegen, adeshlink,
+    // ADOB, runtime). It is the default pipeline and must always be ready.
+    let native_errors = report
+        .entries
+        .iter()
+        .filter(|e| e.category == "Native Toolchain" && e.status == CheckStatus::Error)
+        .count();
+    let native_ok = if native_errors == 0 {
+        "ready ✓ (native codegen + adeshlink + ADOB + runtime)"
     } else {
-        "incomplete — some tools missing ✗"
+        "incomplete ✗"
+    };
+
+    // External LLVM/MLIR: optional by default; required in --external-linker
+    // mode (clang + llc + lld).
+    let toolchain = adeshlang::backends::mlir::gpu::detect_toolchain(runtime_target);
+    let external_status = if toolchain.is_llvm_core_available() {
+        "ready ✓".to_string()
+    } else if external_linker {
+        "missing ✗ (required for --external-linker)".to_string()
+    } else {
+        "not detected (optional — used only with --external-linker)".to_string()
     };
 
     println!();
     println!("  Detected hardware    : {}", detected_backend);
     println!("  Runtime auto-select  : {}", runtime_backend);
-    println!("  MLIR toolchain       : {}", tc_ok);
+    println!("  Native toolchain     : {}", native_ok);
+    println!("  External LLVM/MLIR   : {}", external_status);
     if report.error_count() == 0 {
         println!("  Overall              : COMPATIBLE ✓");
     } else {

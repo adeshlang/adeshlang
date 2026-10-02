@@ -1,0 +1,173 @@
+// Nested Struct & Struct Collection Tests
+// Covers structs containing structs, arrays of structs, and aggregate
+// computations over struct collections as demonstrated by examples/structures.
+
+// ─────────────────────────────────────────────────────────────
+// Helpers (self-contained, pure)
+// ─────────────────────────────────────────────────────────────
+
+struct Address {
+    street: String;
+    city: String;
+    zipcode: String;
+};
+
+struct Employee {
+    name: String;
+    employeeId: i32;
+    address: Address;
+};
+
+struct Course {
+    code: String;
+    credits: i32;
+};
+
+struct Item {
+    name: String;
+    quantity: i32;
+};
+
+export fn make_employee(name: String, id: i32, street: String, city: String, zip: String): Employee {
+    let addr = Address {
+        street: street,
+        city: city,
+        zipcode: zip,
+    };
+    return Employee {
+        name: name,
+        employeeId: id,
+        address: addr,
+    };
+}
+
+export fn mailing_label(e: Employee): string {
+    return e.name + " @ " + e.address.city;
+}
+
+export fn relocate(e: Employee, city: String): Employee {
+    let addr = Address {
+        street: e.address.street,
+        city: city,
+        zipcode: e.address.zipcode,
+    };
+    return Employee {
+        name: e.name,
+        employeeId: e.employeeId,
+        address: addr,
+    };
+}
+
+export fn total_credits(courses: [Course]): i32 {
+    let total = 0;
+    for (c in courses) {
+        total = total + c.credits;
+    }
+    return total;
+}
+
+export fn find_course(courses: [Course], code: string): i32 {
+    let found = -1;
+    let i = 0;
+    while (i < courses.len()) {
+        if (courses[i].code == code) {
+            found = i + 0;
+            break;
+        }
+        i = i + 1;
+    }
+    return found;
+}
+
+export fn total_quantity(items: [Item]): i32 {
+    let total = 0;
+    for (it in items) {
+        total = total + it.quantity;
+    }
+    return total;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_nested_field_access() {
+    let emp = make_employee("John Doe", 501, "123 Main St", "New York", "10001");
+    assert_eq(emp.name, "John Doe");
+    assert_eq(emp.employeeId, 501);
+    assert_eq(emp.address.street, "123 Main St");
+    assert_eq(emp.address.city, "New York");
+    assert_eq(emp.address.zipcode, "10001");
+}
+
+export test fn test_nested_instances_are_independent() {
+    let a = make_employee("Jane", 502, "456 Oak Ave", "Los Angeles", "90001");
+    let b = make_employee("Bob", 503, "789 Pine Rd", "Chicago", "60601");
+    assert_ne(a.address.city, b.address.city);
+    assert_ne(a.employeeId, b.employeeId);
+    assert_eq(mailing_label(a), "Jane @ Los Angeles");
+}
+
+export test fn test_nested_struct_relocation() {
+    let emp = make_employee("John", 501, "123 Main St", "New York", "10001");
+    let moved = relocate(emp, "Boston");
+    assert_eq(moved.address.city, "Boston");
+    assert_eq(moved.address.street, "123 Main St");
+    assert_eq(moved.name, "John");
+    assert_eq(emp.address.city, "New York");
+}
+
+export test fn test_array_of_structs_aggregate() {
+    let courses = [
+        Course { code: "CS101", credits: 3 },
+        Course { code: "MATH201", credits: 4 },
+        Course { code: "PHYS301", credits: 3 },
+    ];
+    assert_eq(courses.len(), 3);
+    assert_eq(total_credits(courses), 10);
+    assert_eq(courses[1].code, "MATH201");
+    assert_eq(courses[2].credits, 3);
+}
+
+export test fn test_array_of_structs_search() {
+    let courses = [
+        Course { code: "CS101", credits: 3 },
+        Course { code: "PHYS301", credits: 3 },
+    ];
+    assert_eq(find_course(courses, "PHYS301"), 1);
+    assert_eq(find_course(courses, "HIST101"), -1);
+    let none: [Course] = [];
+    assert_eq(find_course(none, "CS101"), -1);
+    assert_eq(total_credits(none), 0);
+}
+
+export test fn test_struct_inventory_totals() {
+    let items = [
+        Item { name: "Apple", quantity: 5 },
+        Item { name: "Banana", quantity: 3 },
+        Item { name: "Orange", quantity: 8 },
+    ];
+    assert_eq(total_quantity(items), 16);
+    assert_eq(items[0].name, "Apple");
+    assert_ne(total_quantity(items), 0);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_nested_field_access();
+    test_nested_instances_are_independent();
+    test_nested_struct_relocation();
+    test_array_of_structs_aggregate();
+    test_array_of_structs_search();
+    test_struct_inventory_totals();
+    return 6;
+}
+
+fn main() {
+    print("Running 03_struct_nested_collections tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 03_struct_nested_collections.test.adesh`);
+}

@@ -1,75 +1,167 @@
-# Adesh Native Production Toolchain — Current State Audit
+# Adesh Native Production Toolchain — Current State
 
-**Generated:** 2026-10-01  
-**Toolchain Version:** 0.3.0  
-**Target:** Production-Grade Self-Contained Native Toolchain  
+**Generated:** 2026-10-02 (revised after a full code-level audit and native codegen correctness fixes)
+**Toolchain Version:** 0.3.0
+**Target:** Production-Grade Self-Contained Native Toolchain
 
 ---
+
+## 0. Honest Status Summary
+
+| Area | Verified Status |
+| :--- | :--- |
+| ADOB object format (v1.0) | **Implemented** — real binary spec, symmetric writer/reader, strict validator (now enforced on write), round-trip tests. |
+| Native linker engine | **Implemented, actively maturing** — real parse → GC → ICF → resolve → layout → relocate pipeline; no silent stubs. |
+| Windows PE generation | **Significantly implemented** — real PE32+ with imports/IAT/TLS/base-reloc/ASLR; tests execute produced binaries, including a real `msvcrt!puts` import. |
+| x86-64 native codegen | **Substantial and now correct for its subset** — integer GPR ops, intra-function branches (fixup pass), cross-function calls (PC32 relocations), stack arguments + Win64 shadow space, callee-saved save/restore. No floats-in-XMM, SIMD, or atomics yet. |
+| Native HIR lowering coverage | **Partial** — Let/Assign/If/While/Block, integer literals/ops/comparisons, calls to user functions, print/println. Other statements hit fallbacks. Default `adesh build` (executables) runs the native pipeline; the Cranelift AOT backend is opt-in via `--codegen=cranelift`. |
+| AArch64 / RISC-V codegen | **Proof-of-concept** — 4 instruction forms each (Nop/Return/Add/Sub reg-reg). No Move, load/store, branch, or call. |
+| ELF generation | **Static executables only** — real ET_EXEC with phdrs/symtab/build-id. No dynamic section, PT_DYNAMIC, .dynsym, GOT/PLT, .gnu.hash, or RELRO; never run-tested. |
+| Mach-O generation | **Skeletal** — headers + segments + LC_MAIN, but no LC_LOAD_DYLIB (cannot link libSystem), no dyld info/chained fixups, decorative symtab. Not yet functional. |
+| WASM | **Compiler backend real** (87KB codegen, data segments, host imports, runs via wasmtime/node); the linker's WASM writer is a single-function stub. |
+| Static libraries | **Implemented** — GNU ar read (string tables, long names, index rebuild) and write (`adeshlink ar`). Written archives lack a symbol-index member. |
+| Shared libraries | **Not supported — fails loudly** (`--shared` is a hard error; previously it silently produced a static executable). Only external-linker delegation (`--external-linker`) can produce shared libraries. |
+| TLS generation | **Incomplete** — PE TLS directory/`_tls_index` synthesis is real. TLS relocation kinds are inert, codegen emits no thread-pointer sequences, and ELF/Mach-O TLS inputs are a hard error. |
+| Full ABI aggregates/variadic | **Incomplete** — register lists, stack-passed arguments, and Win64 shadow space are implemented; no struct-by-value classification, sret, FP/vector argument registers, or variadic support. |
+| DWARF / CodeView | **Incomplete** — link path only strips debug sections. `Dwarf5Generator`/`CodeViewGenerator` emit a single DIE / two records and are never invoked. No `.debug_line` state machine. |
+| True LTO / ThinLTO | **Not implemented** — `--lto` is a hard error. `LtoEngine` exists but is dead code with unsound inlining. GC + ICF are not LTO. |
+| Zero-dependency async runtime | **Not implemented** — the runtime crate has no async machinery; the thread pool worker bodies are empty; the HTTP stdlib uses Tokio. |
+| GPU / NPU / TPU codegen | **Scaffolding** — kernel "compilation" re-embeds source text; container writers require externally produced ISA; the MLIR GPU path shells out to external `mlir-opt`/`llc`; no kernel-launch runtime. |
+| Quantum pipeline | **Not end-to-end** — real circuit IR, QASM 3.0 export, decomposer, and state-vector simulator, but no language-level `qubit` construct, mock measurement, and no hardware backend. |
+
+## 0.1 Changes in This Revision (2026-10-02)
+
+Native x86-64 codegen correctness fixes (previously silent miscompiles, now correct or loud):
+
+- **Forward branches no longer miscompile.** Branches used to resolve forward
+  targets with `unwrap_or(0)` in a single pass; they now emit placeholder
+  displacements patched by a fixup pass, with unknown targets turned into
+  PC-relative relocations (e.g. `__stack_chk_fail`).
+- **Calls are now linked.** `call rel32` used to emit a `0` placeholder with a
+  never-populated relocation vector. Calls to symbols now emit real
+  `RelocationKind::PcRelative32` relocations (addend `-4`) that the linker
+  resolves against definitions or import thunks; `mov reg, imm64` symbol
+  materialization emits `Absolute64` relocations (string literals).
+- **Arguments beyond the register file are passed on the stack**, with the
+  Win64 32-byte shadow space and 16-byte alignment; the callee loads incoming
+  stack parameters from `[rbp + 16 + shadow + 8k]`. Previously they were
+  silently dropped.
+- **Callee-saved registers (RBX, R12–R15, RSI, RDI per convention) are now
+  saved/restored** in a dedicated frame area below locals and spills.
+- **Register allocator spill slots no longer collide with locals** (they used
+  to start at `[rbp-8]`, overlapping lowered locals at `[rbp-16]`). Allocation
+  now prefers callee-saved registers so values that live across calls survive.
+- **Instruction coverage extended**: Load/Store (incl. memory forms with SIB),
+  Shl/Shr/Sar, Test, Push/Pop (register, stack-slot, and immediate), Neg/Not
+  on stack slots, Compare/Test with stack-slot operands, Mul/Div/Mod with
+  immediate and stack operands, FloatImmediate bit materialization.
+- **Unsupported instructions now fail loudly** with structured
+  `CodegenError`s instead of silently emitting nothing (Vector, Atomic,
+  Custom, and unknown operand combinations).
+- **Encoder fixes**: `SETcc` to byte registers 4–7 (SPL/BPL/SIL/DIL) required a
+  bare `REX 0x40` that was dropped, and `SETcc` results are now zero-extended
+  with `MOVZX` so the full register holds 0/1.
+- **Scratch registers reserved**: RAX (div/return), R10, R11 are no longer
+  allocatable, eliminating clobber hazards in spill and shift sequences.
+- **`--shared` now fails loudly** in `adeshlink` instead of silently emitting
+  a static executable (matching the existing `--lto` behavior).
+- **`AdobWriter::write` now validates** the object before encoding
+  (alignments, duplicates, symbol bounds, dangling relocations).
+- **New end-to-end test** (`tests/native_x86_64_e2e_test.rs`): Machine IR →
+  native codegen → validated ADOB → native PE link → execute, asserting the
+  computed exit value. It exercises cross-function call relocations, forward
+  branch fixups, `[rsp+disp]` stack-argument stores, and shadow-space-aware
+  callee loads.
+
+Known remaining limitation: argument values are moved into parameter registers
+sequentially, so a value the allocator placed in a parameter register can be
+clobbered by an earlier move. Wide signatures need a parallel-move resolver.
 
 ## 1. Executive Summary
 
-Adesh is transitioning from an external dependency toolchain (Cranelift/LLVM/system `lld`/`link.exe`) to a **100% self-contained, native, production-grade toolchain**. 
+Adesh is transitioning from an external dependency toolchain
+(Cranelift/LLVM/system `lld`/`link.exe`) to a self-contained native toolchain.
+The **default executable path is now the self-contained native pipeline**
+(native adesh codegen → ADOB → `adeshlink`), verified end-to-end on Windows
+x64 by executing produced binaries. Cranelift remains in the tree as an
+opt-in alternative backend (`--codegen=cranelift`; the root crate depends on
+`cranelift` 0.110 and `wasmtime`), and its final link step can be delegated
+to an external LLVM toolchain (clang + lld) with `--external-linker`.
+Installers bundle the native components and no longer require or download
+LLVM/MSVC; `adesh gpu-check` reports the native toolchain first and only
+requires external LLVM in `--external-linker` mode.
 
-Key pillars established:
-1. **ADOB (Adesh Native Object Binary) Format (`crates/adesh-object`)**: Complete v1.0 binary format, writer, reader, validator, bundle packager, and metadata schema.
-2. **Native Code Generation (`crates/adesh-codegen`)**: Machine IR, register allocation (linear scan), peephole optimizer, stack protection, and target encoders for x86_64, AArch64, RISC-V, WASM, and Embedded ARM.
-3. **Native Linker (`linker`)**: Standalone linker supporting PE/COFF (Windows x64), ELF (Linux x86_64/AArch64), Mach-O (macOS x86_64/arm64), WASM, archive ingestion (`.a`/`.lib`), OS API routing, Section GC, ICF, Link Map generation, and SHA256 build IDs.
-4. **Standalone Native Runtime (`crates/adesh-runtime`)**: C ABI runtime with memory management, ARC tracking, value serialization, composite data structures, and terminal rendering.
-5. **Quantum Subsystem (`linker/src/quantum`)**: Quantum circuit IR, OpenQASM 3.0 generation, gate decomposition, topological coupling routing, and complex state-vector simulation.
+Real, working subsystems:
+
+1. **ADOB format (`crates/adesh-object`)**: complete v1.0 binary format,
+   writer (now validating), reader, strict validator, bundle packager.
+2. **x86-64 native codegen (`crates/adesh-codegen`)**: Machine IR, linear-scan
+   register allocation, real x86-64 encoding, correct control flow and calls.
+3. **Native linker (`linker`)**: PE/COFF (Windows x64, execution-tested), ELF
+   (static executables), Mach-O (skeletal), WASM (stub writer), archive
+   ingestion/production, section GC, ICF, OS API routing, link maps.
+4. **Native runtime (`crates/adesh-runtime`)**: C ABI memory management, ARC
+   tracking, composite data structures, pretty printing. No async machinery.
+5. **Quantum simulator (`linker/src/quantum`)**: circuit IR, QASM 3.0 export,
+   gate decomposition, topological routing, state-vector simulation.
 
 ---
 
-## 2. Detailed Subsystem Audit
+## 2. Detailed Subsystem Status
 
 ### 2.1 Compiler Frontend & Middle End
-| Subsystem | Status | Implementation Details | Gaps / Next Steps |
-| :--- | :--- | :--- | :--- |
-| **Lexer & Parser** | **Production Ready** | Tokenizer with full Adesh grammar, decorators, async, defer, quantum syntax, error recovery. | Add strict quantum circuit validation pass. |
-| **Type System** | **Production Ready** | Inference, static typing, interfaces, generics, type layouts, field offsets, vtables. | Type-level device memory qualifiers (`device<T>`, `shared<T>`). |
-| **Borrow / Ownership** | **Production Ready** | Compile-time ownership, non-lexical lifetimes, borrow tracking, escape analysis, drop insertion. | Linear quantum qubit ownership tracking rules. |
-| **HIR / MIR** | **Production Ready** | Clean high-level IR (HIR) and mid-level SSA control-flow IR (MIR) with constant folding, DCE, and CSE. | Implement native lowering pass from HIR/MIR directly to `NativeModule` (Machine IR). |
+| Subsystem | Status | Notes |
+| :--- | :--- | :--- |
+| **Lexer & Parser** | Production ready | Full grammar, error recovery. |
+| **Type System** | Production ready | Inference, interfaces, generics, layouts, vtables. |
+| **Borrow / Ownership** | Production ready | Ownership, lifetimes, borrow tracking, escape analysis. |
+| **HIR / MIR** | Production ready | SSA control-flow IR with constant folding, DCE, CSE. |
+| **Native lowering (HIR → Machine IR)** | **Partial** | `src/backends/native/lower.rs` covers integers, arithmetic, comparisons, If/While/Block, and calls. Other constructs fall back or error loudly. |
 
 ### 2.2 Native Object Format (ADOB v1.0)
-| Component | Status | Implementation Details |
-| :--- | :--- | :--- |
-| **Specification** | **Complete** | Magic `ADOB`, Version 1.0.0, target descriptor, endianness, pointer widths, capabilities. |
-| **Sections** | **Complete** | `.text`, `.rodata`, `.data`, `.bss`, `.tdata`, `.tbss`, `.eh_frame`, `.debug_line`, custom metadata sections. |
-| **Symbols & Relocations** | **Complete** | Local, Global, Weak, Hidden visibility; PC-relative, Absolute, GOT, PLT, and TLS relocations. |
-| **Validation** | **Complete** | Strict byte alignment, section overlap bounds, relocation target resolution, and permission verification. |
-| **Inspection CLI** | **Complete** | `adesh adob inspect`, `dump-symbols`, `dump-relocations`, `dump-sections`, `validate`. |
+| Component | Status |
+| :--- | :--- |
+| Specification | **Complete** (magic `ADOB`, version 1.0.0, target descriptor, capabilities) |
+| Sections | **Complete** (11 kinds incl. TLS/unwind/debug/custom; `.text`, `.rodata`, `.data`, `.bss`, `.tdata`, `.tbss`) |
+| Symbols & Relocations | **Complete** (~28 relocation kinds; symbol binding/visibility; imports/exports) |
+| Validation | **Complete and enforced on write** |
+| Inspection CLI | **Complete** (`adesh adob inspect/dump-*/validate`) |
 
 ### 2.3 Native Linker (`linker`)
-| Feature | Status | Implementation Details | Gaps |
-| :--- | :--- | :--- | :--- |
-| **PE/COFF (Windows)** | **Production Ready** | Complete PE32+ generator, DOS stub, NT headers, Section headers, Import Directory Table (IDT/ILT/IAT), relocation directory (.reloc), entrypoint thunk. | Delay imports, Authenticode signature slot. |
-| **ELF (Linux)** | **Production Ready** | ELF64 / ELF32 generator, Program Headers (PT_LOAD, PT_DYNAMIC, PT_TLS), Dynamic section, GOT/PLT, symtab/strtab. | GNU hash table (.gnu.hash), version definitions. |
-| **Mach-O (macOS)** | **Functional** | LC_SEGMENT_64, LC_MAIN, LC_LOAD_DYLIB, LC_SYMTAB, LC_DYSYMTAB, chained fixups scaffolding. | Code signature block (`codesign` integration). |
-| **WASM** | **Functional** | Type, Function, Table, Memory, Global, Export, Code, and Data sections. | Multi-memory, SIMD128 relaxation. |
-| **Section GC & ICF** | **Complete** | Reachability graph traversal from entry point (`--gc-sections`), SHA256 identical code folding (`--icf`). | Cross-section folding heuristics. |
-| **OS API Router** | **Complete** | Authoritative classification for Windows DLLs (`kernel32`, `ntdll`, `ucrt`, `msvcrt`, `ws2_32`) and libc symbols. | Dynamic musl vs glibc symbol selection. |
+| Feature | Status | Notes |
+| :--- | :--- | :--- |
+| **PE/COFF (Windows)** | **Significantly implemented** | PE32+ generator, import tables (IDT/ILT/IAT), base relocations, TLS directory, ASLR/NX flags, entry synthesis. Missing: delay imports, Authenticode, resources, exports (`build_export_table` is dead code). Execution-tested. |
+| **ELF (Linux)** | **Static executables only** | ET_EXEC, program headers, symtab, build-id. No dynamic linking support (PT_DYNAMIC/.dynsym/GOT/PLT/.gnu.hash/RELRO); no execution tests. |
+| **Mach-O (macOS)** | **Skeletal** | LC_SEGMENT_64/LC_MAIN/LC_SYMTAB only; no LC_LOAD_DYLIB, dyld info, chained fixups, or exports trie. |
+| **WASM** | **Stub writer** | Single-function emission; no import section (WASI), relocations never applied. Real WASM output comes from the compiler backend (`src/backends/wasm`). |
+| **Section GC & ICF** | **Complete** | Reachability GC (`--gc-sections`), SHA256 ICF (`--icf`). |
+| **Static archives** | **Implemented** | GNU ar read/write (`adeshlink ar`); written archives lack a symbol index member. |
+| **Shared libraries** | **Unsupported (loud error)** | PE export tables / ELF dynamic / Mach-O dylib synthesis not implemented; `--shared` errors. |
+| **LTO** | **Unsupported (loud error)** | `--lto` errors; GC/ICF are the available link-time optimizations. |
+| **OS API Router** | **Complete for Windows** | Real DLL routing database; ELF/Mach-O paths classify to `Undefined`. |
 
 ### 2.4 Code Generation & ABI (`crates/adesh-codegen`)
-| Architecture | Register Allocator | Instruction Encoding | Calling Convention | Status |
-| :--- | :--- | :--- | :--- | :--- |
-| **x86_64** | Linear Scan | Integer ALU, Memory, Call/Ret, BranchCc, JMP, TLS | System V AMD64 & Windows x64 | **Production Ready** |
-| **AArch64** | Linear Scan | 32/64-bit ALU, Load/Store, B/BL/RET, B.cond, ADRP | AAPCS64 | **Production Ready** |
-| **RISC-V (RV64/RV32)** | Linear Scan | Base Integer (I), M extension, JAL/JALR, Branches | Standard RISC-V ABI | **Production Ready** |
-| **WASM** | Stack-based | Opcode stream, locals, control structures | WASM ABI | **Production Ready** |
-| **Embedded ARM** | Linear Scan | Thumb-2 core ALU, Load/Store, Branch | Embedded AAPCS | **Production Ready** |
+| Architecture | Status | Notes |
+| :--- | :--- | :--- |
+| **x86_64** | **Substantial, correct for its subset** | Real REX/ModR/M/SIB encoding; branches via fixups; calls via relocations; stack args + shadow space; callee-saved save/restore. No SSE/SIMD/atomics. |
+| **AArch64** | **Proof-of-concept** | Nop/Return/Add/Sub (reg-reg) only. |
+| **RISC-V** | **Proof-of-concept** | Nop/Return/Add/Sub only; prologue hardcodes RV64 even for RV32. |
+| **WASM** | **Real** | Stack-based opcode stream with SLEB128, locals, control structures. |
+| **Embedded ARM** | **Proof-of-concept** | Minimal Thumb-2 ALU. |
+| **Register allocator** | **Working linear scan** | Callee-saved-first allocation, spill slots below locals; no CFG awareness, no live-range splitting around calls. |
+| **Calling conventions** | **Register lists + stack args** | SysV AMD64, Win64, AAPCS64/32, RISC-V, WASM tables; arg registers, stack arguments, shadow space. Missing: aggregate classification, sret, FP/vector registers, variadic. |
 
 ### 2.5 Runtime Subsystem (`crates/adesh-runtime`)
-| Subsystem | Status | Implementation Details |
+| Subsystem | Status | Notes |
 | :--- | :--- | :--- |
-| **Memory & Allocator** | **Active** | System allocator with handle table, ARC tracking, zero-cost reference counting, leak diagnostics. |
-| **Composite Structures** | **Active** | Arrays, Tuples, Sets, Objects/HashMaps, Strings, boxed values with runtime reflection. |
-| **I/O & Pretty Printer** | **Active** | ANSI color-formatted structured pretty printer for all primitives and nested composite collections. |
-| **Threading & Sync** | **Active** | OS thread wrappers, atomic primitives, mutex synchronization. |
-| **Async Runtime** | **In Progress** | Tokio/future bridge; Native zero-alloc state-machine lowering planned. |
+| **Memory & Allocator** | Active | System allocator, handle table, ARC tracking, leak diagnostics. |
+| **Composite Structures** | Active | Arrays, tuples, sets, objects, strings, boxed values. |
+| **I/O & Pretty Printer** | Active | ANSI color structured printer. |
+| **Threading & Sync** | Active | OS thread wrappers, atomics, mutexes. **Thread pool worker bodies are empty stubs.** |
+| **Async Runtime** | **Absent** | No executor/waker/reactor anywhere; HTTP stdlib uses Tokio; interpreter has JS-style Promise/timers only. |
 
 ### 2.6 Quantum & Accelerator Subsystems
-| Subsystem | Status | Implementation Details |
+| Subsystem | Status | Notes |
 | :--- | :--- | :--- |
-| **Quantum IR & Circuit** | **Complete** | Full 1-qubit and 2-qubit gate set, measurement, barriers, and OpenQASM 3.0 export. |
-| **Quantum Simulator** | **Complete** | StateVector simulator with tensor-product state space, matrix gates, probabilistic measurement. |
-| **Quantum Decomposer & Router**| **Complete**| Basis set decomposition (IBM, Rigetti, IonQ) and shortest-path graph topological routing. |
-| **GPU / NPU / TPU** | **Scaffolding** | ADOB accelerator metadata emission, kernel artifact container, device memory annotations. |
+| **Quantum IR & Simulator** | Implemented (library-level) | 15-gate circuit IR, QASM 3.0 export, state-vector simulator (deterministic mock measurement), decomposer, topological routing. No language-level `qubit` construct; no hardware backend. |
+| **GPU / NPU / TPU** | Scaffolding | Metadata + container packaging only; no device ISA generation; MLIR path requires external tools; no kernel-launch runtime. |

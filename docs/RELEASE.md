@@ -124,12 +124,13 @@ powershell -ExecutionPolicy Bypass -File installer\windows\msi\build-msi.ps1
 # -> dist\windows-x86_64\AdeshLang-0.3.0-x86_64-windows.msi
 ```
 
-The MSI registers machine-wide `ADESH_HOME`, `ADESH_TOOLCHAIN`,
-`ADESH_CLANG`, `ADESH_LLC`, `ADESH_MLIR_OPT`, `ADESH_MLIR_TRANSLATE`, and
-`PATH`, and runs `adesh toolchain install --system` after InstallFinalize
-(suppressed automatically when the bundle drives the install).
+The MSI registers machine-wide `ADESH_HOME` and `PATH` only. The native
+toolchain (native codegen, ADOB, `adeshlink`, runtime) ships inside the
+payload, so the MSI downloads nothing and runs no post-install toolchain
+action. The optional external LLVM bridge is registered separately by
+administrators (`adesh toolchain --external install`).
 
-### 3.3 Burn bootstrapper bundle (MSI + toolchain chain)
+### 3.3 Burn bootstrapper bundle (MSI-only chain)
 
 Requires the MSI from step 3.2:
 
@@ -139,15 +140,10 @@ powershell -ExecutionPolicy Bypass -File installer\windows\bundle\build-bundle.p
 # -> dist\windows-x86_64\AdeshLang-0.3.0-x86_64-windows-bootstrapper.exe
 ```
 
-The script downloads the small `vs_buildtools.exe` stub (~2 MB, official
-Microsoft endpoint) at build time and embeds it. At install time the chain is:
-
-1. `AdeshLangMsi` — core files + environment (toolchain action suppressed)
-2. `AdeshToolchain` — runs `adesh toolchain install --system` (skipped when
-   `ADESH_TOOLCHAIN` and the in-directory `toolchain\llvm\bin\clang.exe` are
-   already present; reuses any pre-existing LLVM without downloading)
-3. `VSBuildTools` — optional, off by default; enable with
-   `bootstrapper.exe /v VSBuildToolsInstall=1`
+The bundle chains only the MSI: it downloads nothing at install time (no
+LLVM, no VS Build Tools, no `vs_buildtools.exe` stub at build time either).
+Users who want the optional external LLVM bridge register it themselves with
+`adesh toolchain --external install llvm`.
 
 ---
 
@@ -222,14 +218,14 @@ bash install.sh AdeshLang-0.3.0-x86_64-linux-gnu.tar.xz
 chmod +x installer/macos/build-pkg.sh
 ./installer/macos/build-pkg.sh arm64
 # -> dist/AdeshLang-0.3.0-arm64-macos.pkg
-# always-on toolchain variant:
-./installer/macos/build-pkg.sh arm64 --with-toolchain
+# (--with-toolchain is a deprecated no-op: the native toolchain is bundled)
 ```
 
 Installs to `/Library/Application Support/AdeshLang`, links the four binaries
 into `/usr/local/bin`, and writes `/etc/profile.d/adeshlang.sh` (ADESH_HOME +
-PATH). The Distribution presents the toolchain choice; users can also run
-`adesh toolchain install --system` afterwards.
+PATH). The Distribution offers a single self-contained choice; the optional
+external LLVM bridge is registered separately with
+`adesh toolchain --external install`.
 
 ### 5.3 .dmg drag-install image
 
@@ -365,8 +361,9 @@ sudo installer -pkg AdeshLang-0.4.0-arm64-macos.pkg -target / && adesh doctor
 ```
 
 Each check should show the core binaries on PATH, the bundled AI model as
-`Tier 1 (Native GGUF): ACTIVE`, and the toolchain either installed or one
-`adesh toolchain install --system` away.
+`Tier 1 (Native GGUF): ACTIVE`, and the native toolchain ready with zero
+external dependencies (LLVM is not required; register it separately only for
+the opt-in `--external-linker` mode).
 
 ---
 

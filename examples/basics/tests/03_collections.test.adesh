@@ -1,0 +1,117 @@
+// Collections Tests
+// Covers examples/basics/collections_demo.adesh: VecDeque, HashSet,
+// BTreeMap, BinaryHeap, PriorityQueue, BitSet and RingBuffer from the
+// stdlib Collections module.
+// Note: `import Collections;` lives inside each function because top-level
+// statements of an imported module do not execute on import.
+
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+
+export fn deque_roundtrip(): string {
+    import Collections;
+    let deque = Collections.VecDeque();
+    deque.pushBack("World");
+    deque.pushFront("Hello");
+    let front = deque.popFront();
+    let back = deque.popBack();
+    return front + "-" + back;
+}
+
+export fn set_roundtrip(): bool {
+    import Collections;
+    let set = Collections.HashSet();
+    set.insert("Adesh");
+    set.insert("Lang");
+    return set.contains("Adesh") && set.contains("Lang");
+}
+
+export fn map_roundtrip(): string {
+    import Collections;
+    let map = Collections.BTreeMap();
+    map.insert("key", "value");
+    return map.get("key");
+}
+
+export fn heap_max(): i32 {
+    import Collections;
+    let heap = Collections.BinaryHeap();
+    heap.push(10);
+    heap.push(5);
+    heap.push(42);
+    return heap.pop();
+}
+
+export fn priority_top(): string {
+    import Collections;
+    let pq = Collections.PriorityQueue();
+    pq.push("low", 1);
+    pq.push("high", 100);
+    return pq.pop();
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_vec_deque() {
+    assert_eq(deque_roundtrip(), "Hello-World");
+}
+
+export test fn test_hash_set() {
+    import Collections;
+    assert(set_roundtrip(), "set contains both inserted values");
+    let set = Collections.HashSet();
+    set.insert("only");
+    assert(set.contains("only"), "contains only");
+    assert(!set.contains("missing"), "does not contain missing");
+}
+
+export test fn test_btree_map() {
+    import Collections;
+    assert_eq(map_roundtrip(), "value");
+    let map = Collections.BTreeMap();
+    map.insert("alpha", "first");
+    map.insert("beta", "second");
+    assert_eq(map.get("alpha"), "first");
+    assert_eq(map.get("beta"), "second");
+}
+
+export test fn test_binary_heap_and_priority_queue() {
+    assert_eq(heap_max(), 42);
+    assert_eq(priority_top(), "high");
+}
+
+export test fn test_bitset_and_ring_buffer() {
+    import Collections;
+    let bs = Collections.BitSet();
+    bs.set(10);
+    assert(bs.test(10), "bit 10 set");
+    assert(!bs.test(11), "bit 11 not set");
+    let ring = Collections.RingBuffer(3);
+    ring.push(1);
+    ring.push(2);
+    ring.push(3);
+    assert_eq(ring.pop(), 1);
+    assert_eq(ring.pop(), 2);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_vec_deque();
+    test_hash_set();
+    test_btree_map();
+    test_binary_heap_and_priority_queue();
+    test_bitset_and_ring_buffer();
+    return 5;
+}
+
+fn main() {
+    print("Running 03_collections tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 03_collections.test.adesh`);
+}

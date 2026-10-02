@@ -1,0 +1,142 @@
+// Array & List Data Structure Tests
+// Covers multi-dimensional arrays, list-style operations (append, extend,
+// insert, remove, set_index, pop, count, index, clear) and sort/reverse
+// as demonstrated by examples/data_structures.
+
+// ─────────────────────────────────────────────────────────────
+// Helpers (self-contained, pure)
+// ─────────────────────────────────────────────────────────────
+
+export fn matrix_get(matrix, row: i32, col: i32): i32 {
+    return matrix[row][col];
+}
+
+export fn row_sum(row): i32 {
+    let total = 0;
+    for (v in row) {
+        total = total + v;
+    }
+    return total;
+}
+
+export fn build_range(n: i32): [i32] {
+    let values: [i32] = [];
+    let i = 1;
+    while (i <= n) {
+        values.push(i);
+        i = i + 1;
+    }
+    return values;
+}
+
+export fn appended(values: [int], v: i32) {
+    values.push(v);
+    return values;
+}
+
+export fn joined(values: [int], sep: string): string {
+    return values.join(sep);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_multidim_matrix() {
+    let matrix = [
+        [1, 2, 3],
+        [4, 5, 6],
+        [7, 8, 9],
+    ];
+    assert_eq(matrix.len(), 3);
+    assert_eq(matrix[0][1], 2);
+    assert_eq(matrix[2][2], 9);
+    assert_eq(matrix_get(matrix, 1, 0), 4);
+    assert_eq(row_sum(matrix[0]), 6);
+    assert_eq(row_sum(matrix[2]), 24);
+}
+
+export test fn test_append_extend_insert() {
+    let a = [1, 2, 3];
+    let after_append = a.append(4);
+    assert_eq(after_append, [1, 2, 3, 4]);
+    assert_eq(a, [1, 2, 3, 4]);
+    let after_extend = a.extend([5, 6]);
+    assert_eq(after_extend.len(), 6);
+    assert_eq(a[5], 6);
+    let after_insert = a.insert(0, 0);
+    assert_eq(after_insert[0], 0);
+    assert_eq(a[0], 0);
+    assert_eq(a.len(), 7);
+}
+
+export test fn test_remove_and_set_index() {
+    let a = [0, 1, 2, 3];
+    let removed = a.remove(2);
+    assert_eq(removed, [0, 1, 3]);
+    assert_eq(a.len(), 3);
+    let retarget = a.set_index(1, 42);
+    assert_eq(retarget[1], 42);
+    assert_eq(a[1], 1, "set_index returns a copy");
+    assert_eq(a.len(), 3);
+}
+
+export test fn test_pop_count_index_clear() {
+    let a = [1, 2, 3, 4];
+    let after_pop = a.pop();
+    assert_eq(after_pop, [1, 2, 3]);
+    assert_eq(a.len(), 3);
+    let head = a.pop(0);
+    assert_eq(head, [2, 3]);
+    let b = [1, 2, 1, 3, 1];
+    assert_eq(b.count(1), 3);
+    assert_eq(b.index(3), 3);
+    assert_eq(b.index(99), -1);
+    let cleared = b.clear();
+    assert_eq(cleared.len(), 0);
+    assert_eq(b.len(), 0);
+}
+
+export test fn test_sort_reverse_join() {
+    let c = ["banana", "apple", "cherry"];
+    let sorted = c.sort();
+    assert_eq(sorted[0], "apple");
+    assert_eq(sorted[2], "cherry");
+    let reversed = c.reverse();
+    assert_eq(reversed[0], "cherry");
+    assert_eq(joined(sorted, ","), "apple,banana,cherry");
+    let nums = [3, 1, 2];
+    assert_eq(nums.sort()[0], 1);
+    assert_eq(nums.sort().join("-"), "1-2-3");
+}
+
+export test fn test_push_and_range_builder() {
+    let values = build_range(5);
+    assert_eq(values.len(), 5);
+    assert_eq(values[0], 1);
+    assert_eq(values[4], 5);
+    assert_eq(appended(values, 6).len(), 6);
+    let empty: [i32] = [];
+    assert_eq(empty.len(), 0);
+    assert_eq(build_range(0).len(), 0);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_multidim_matrix();
+    test_append_extend_insert();
+    test_remove_and_set_index();
+    test_pop_count_index_clear();
+    test_sort_reverse_join();
+    test_push_and_range_builder();
+    return 6;
+}
+
+fn main() {
+    print("Running 01_arrays_lists tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 01_arrays_lists.test.adesh`);
+}

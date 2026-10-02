@@ -1,0 +1,195 @@
+// Reference Counting & Cycle Tests
+// Covers the smart-pointer / cycle themes of examples/memory/shared_unique_weak.adesh,
+// reference_cycles.adesh, safe_shared.adesh and memory_safety_demo.adesh:
+//   - reference-count create / clone / drop accounting
+//   - weak references that do not keep the value alive
+//   - upgrade succeeding only while the value is alive
+//   - strong-only reference cycles leak; weak back-edges break the cycle
+//   - observer (weak) attachments are side-effect free
+// The ARC machine is modelled with a plain Rc struct so the tests stay
+// pure and deterministic in the default interpreter.
+
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+
+struct Rc {
+    strong_count: i32;
+    weak_count: i32;
+    alive: bool;
+};
+
+export fn rc_make() {
+    return Rc { strong_count: 1, weak_count: 0, alive: true };
+}
+
+export fn rc_clone(r: Rc) {
+    return Rc { strong_count: r.strong_count + 1, weak_count: r.weak_count, alive: r.alive };
+}
+
+export fn rc_add_weak(r: Rc) {
+    return Rc { strong_count: r.strong_count, weak_count: r.weak_count + 1, alive: r.alive };
+}
+
+export fn rc_drop_strong(r: Rc) {
+    let s = r.strong_count - 1;
+    let alive = r.alive;
+    if (s <= 0) {
+        s = 0;
+        alive = false;
+    }
+    return Rc { strong_count: s, weak_count: r.weak_count, alive: alive };
+}
+
+export fn rc_can_upgrade(r: Rc): bool {
+    return r.alive;
+}
+
+// A strongly owns B, B strongly owns A, external refs dropped.
+// Returns [strong_a, strong_b, alive_count] -> a leak means [1, 1, 2].
+export fn strong_cycle_report(): [i32] {
+    let a = rc_make();
+    let b = rc_make();
+    b = rc_clone(b);
+    a = rc_clone(a);
+    b = rc_drop_strong(b);
+    a = rc_drop_strong(a);
+    let alive = 0;
+    if (a.alive == true) {
+        alive = alive + 1;
+    }
+    if (b.alive == true) {
+        alive = alive + 1;
+    }
+    return [a.strong_count, b.strong_count, alive];
+}
+
+// A strongly owns B, B only weakly observes A, external refs dropped.
+// The weak edge lets A die, which releases A's strong edge to B.
+// Returns [strong_a, strong_b, alive_count] -> [0, 0, 0].
+export fn weak_cycle_report(): [i32] {
+    let a = rc_make();
+    let b = rc_make();
+    b = rc_clone(b);
+    a = rc_add_weak(a);
+    b = rc_drop_strong(b);
+    a = rc_drop_strong(a);
+    if (a.alive == false) {
+        b = rc_drop_strong(b);
+    }
+    let alive = 0;
+    if (a.alive == true) {
+        alive = alive + 1;
+    }
+    if (b.alive == true) {
+        alive = alive + 1;
+    }
+    return [a.strong_count, b.strong_count, alive];
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_create_clone_drop_counts() {
+    let r = rc_make();
+    assert_eq(r.strong_count, 1);
+    assert_eq(r.weak_count, 0);
+    assert(r.alive);
+
+    let r2 = rc_clone(r);
+    assert_eq(r2.strong_count, 2);
+    assert_eq(r2.weak_count, 0);
+
+    let r3 = rc_drop_strong(r2);
+    assert_eq(r3.strong_count, 1);
+    assert(r3.alive);
+
+    let r4 = rc_drop_strong(r3);
+    assert_eq(r4.strong_count, 0);
+    assert_eq(r4.alive, false);
+}
+
+export test fn test_weak_refs_do_not_hold_value() {
+    let r = rc_make();
+    r = rc_add_weak(r);
+    r = rc_add_weak(r);
+    assert_eq(r.strong_count, 1);
+    assert_eq(r.weak_count, 2);
+    assert(r.alive);
+
+    // Dropping the last strong reference frees the value even
+    // though weak observers remain.
+    let dead = rc_drop_strong(r);
+    assert_eq(dead.alive, false);
+    assert_eq(dead.strong_count, 0);
+    assert_eq(dead.weak_count, 2);
+}
+
+export test fn test_upgrade_only_while_alive() {
+    let r = rc_make();
+    assert(rc_can_upgrade(r));
+    let cloned = rc_clone(r);
+    assert(rc_can_upgrade(cloned));
+
+    let dead = rc_drop_strong(rc_drop_strong(cloned));
+    assert_eq(dead.alive, false);
+    assert_eq(rc_can_upgrade(dead), false);
+}
+
+export test fn test_strong_cycle_leaks() {
+    let report = strong_cycle_report();
+    assert_eq(report.len(), 3);
+    assert_eq(report[0], 1);
+    assert_eq(report[1], 1);
+    // both nodes remain alive: the cycle leaks
+    assert_eq(report[2], 2);
+}
+
+export test fn test_weak_edge_breaks_cycle() {
+    let report = weak_cycle_report();
+    assert_eq(report.len(), 3);
+    assert_eq(report[0], 0);
+    assert_eq(report[1], 0);
+    assert_eq(report[2], 0);
+}
+
+export test fn test_observer_pattern_counts() {
+    let subject = rc_make();
+    let observers: [i32] = [];
+    let i = 0;
+    while (i < 3) {
+        subject = rc_add_weak(subject);
+        observers.push(i);
+        i = i + 1;
+    }
+    assert_eq(subject.weak_count, 3);
+    assert_eq(subject.strong_count, 1);
+    assert(subject.alive);
+
+    // Dropping the subject does not affect observer bookkeeping.
+    let dead = rc_drop_strong(subject);
+    assert_eq(dead.alive, false);
+    assert_eq(dead.weak_count, 3);
+    assert_eq(observers.len(), 3);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_create_clone_drop_counts();
+    test_weak_refs_do_not_hold_value();
+    test_upgrade_only_while_alive();
+    test_strong_cycle_leaks();
+    test_weak_edge_breaks_cycle();
+    test_observer_pattern_counts();
+    return 6;
+}
+
+fn main() {
+    print("Running 04_refcount_cycles tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 04_refcount_cycles.test.adesh`);
+}

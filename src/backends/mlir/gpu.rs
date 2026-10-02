@@ -111,20 +111,41 @@ impl GpuOptimizationContext {
 }
 
 /// GPU toolchain discovery
+///
+/// The external (LLVM/MLIR) tool components are optional: the Adesh native
+/// pipeline (native codegen + adeshlink + ADOB) is self-contained. These
+/// tools are only required for the external MLIR GPU pipeline and the
+/// `--external-linker` bridge.
 #[derive(Debug, Clone)]
 pub struct GpuToolchain {
     pub mlir_opt: Option<PathBuf>,
     pub mlir_translate: Option<PathBuf>,
     pub llc: Option<PathBuf>,
     pub clang: Option<PathBuf>,
+    /// External LLVM linker (lld / lld-link / ld.lld) for the
+    /// `--external-linker` bridge.
+    pub lld: Option<PathBuf>,
 }
 
 impl GpuToolchain {
+    /// True when the external MLIR GPU pipeline (mlir-opt → mlir-translate →
+    /// llc → clang) can run end to end.
     pub fn is_available(&self) -> bool {
         self.mlir_opt.is_some()
             && self.mlir_translate.is_some()
             && self.llc.is_some()
             && self.clang.is_some()
+    }
+
+    /// True when the `--external-linker` bridge (clang + lld) can run.
+    pub fn is_external_linker_available(&self) -> bool {
+        self.clang.is_some() && self.lld.is_some()
+    }
+
+    /// True when the external LLVM core tools (clang + llc + lld) are present.
+    /// `mlir-opt`/`mlir-translate` are only needed by the GPU MLIR pipeline.
+    pub fn is_llvm_core_available(&self) -> bool {
+        self.clang.is_some() && self.llc.is_some() && self.lld.is_some()
     }
 }
 
@@ -1702,12 +1723,43 @@ impl CompatibilityReport {
     }
 }
 
+/// Options controlling the device/toolchain compatibility report.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CompatibilityCheckOptions {
+    /// Treat the external LLVM tools (clang, llc, lld) as hard requirements
+    /// instead of optional accelerators. Set when the caller uses the
+    /// `--external-linker` bridge, which delegates final linking to LLVM.
+    pub require_external_linker: bool,
+}
+
+impl CompatibilityCheckOptions {
+    /// Options for the `--external-linker` mode (external LLVM required).
+    pub fn external_linker() -> Self {
+        Self {
+            require_external_linker: true,
+        }
+    }
+}
+
 /// Run all device compatibility checks and return a report.
 pub fn check_device_compatibility() -> CompatibilityReport {
+    check_device_compatibility_with_options(CompatibilityCheckOptions::default())
+}
+
+/// Run all device compatibility checks with explicit options.
+///
+/// The native Adesh toolchain (native codegen, adeshlink, ADOB, runtime) is
+/// always reported first: it is compiled into the adesh binary and is the
+/// default pipeline. External LLVM/MLIR tools are optional unless
+/// `require_external_linker` is set.
+pub fn check_device_compatibility_with_options(
+    opts: CompatibilityCheckOptions,
+) -> CompatibilityReport {
     let mut report = CompatibilityReport::new();
 
+    check_native_toolchain(&mut report);
     check_env_vars(&mut report);
-    check_toolchain_tools(&mut report);
+    check_toolchain_tools(&mut report, opts);
     check_nvidia(&mut report);
     check_rocm(&mut report);
     check_vulkan(&mut report);
@@ -1716,6 +1768,95 @@ pub fn check_device_compatibility() -> CompatibilityReport {
     check_driver_permissions(&mut report);
 
     report
+}
+
+// ── Native Adesh toolchain ───────────────────────────────────────────────────
+
+/// Report the state of the self-contained native toolchain that ships inside
+/// the adesh binary (and, when installed, the standalone `adeshlink` CLI).
+///
+/// These components are compiled in and therefore always available; the only
+/// disk-probed entry is the optional standalone `adeshlink` executable.
+fn check_native_toolchain(r: &mut CompatibilityReport) {
+    let cat = "Native Toolchain";
+
+    // Native codegen backends are linked into the adesh binary.
+    r.push(
+        cat,
+        "Native codegen (adesh-codegen)",
+        CheckStatus::Ok,
+        "x86_64, aarch64, riscv64, wasm32 backends compiled in",
+    );
+
+    // In-process native linker: the same engine that powers `adeshlink`
+    // (PE/COFF, ELF, Mach-O, WASM writers) is linked into the adesh binary.
+    r.push(
+        cat,
+        "Native linker (adeshlink engine)",
+        CheckStatus::Ok,
+        "PE/COFF, ELF, Mach-O, WASM linkers compiled in (zero external tools)",
+    );
+
+    // ADOB object format: writer, reader and strict validator are built in.
+    r.push(
+        cat,
+        "Object format (ADOB v1.0)",
+        CheckStatus::Ok,
+        "writer, reader and validator compiled in",
+    );
+
+    // Native runtime ABI.
+    r.push(
+        cat,
+        "Native runtime ABI",
+        CheckStatus::Ok,
+        adesh_linker::abi::ADESH_RUNTIME_ABI_VERSION.to_string(),
+    );
+
+    // Optional standalone adeshlink CLI (bundled by the installers next to
+    // adesh). When absent, builds still link through the in-process engine.
+    match find_adeshlink_binary() {
+        Some(p) => {
+            let version = probe_version(p.to_str().unwrap_or("adeshlink"));
+            r.push(
+                cat,
+                "adeshlink CLI",
+                CheckStatus::Ok,
+                format!("{} [{}]", p.display(), version),
+            );
+        }
+        None => {
+            r.push(
+                cat,
+                "adeshlink CLI",
+                CheckStatus::Missing,
+                "not on PATH (builds use the in-process linker; installers bundle it in <home>/bin)",
+            );
+        }
+    }
+}
+
+/// Locate the standalone `adeshlink` executable: next to the running adesh
+/// binary, in the installation `bin/` directory, or on PATH.
+fn find_adeshlink_binary() -> Option<PathBuf> {
+    let exe_name = if cfg!(windows) {
+        "adeshlink.exe"
+    } else {
+        "adeshlink"
+    };
+
+    // 1. Same directory as the running executable (installer layout).
+    if let Ok(exe) = env::current_exe() {
+        if let Some(bin_dir) = exe.parent() {
+            let p = bin_dir.join(exe_name);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+
+    // 2. PATH.
+    find_in_path(exe_name)
 }
 
 // ── Environment variables ────────────────────────────────────────────────────
@@ -1731,6 +1872,7 @@ fn check_env_vars(r: &mut CompatibilityReport) {
         ("ADESH_MLIR_TRANSLATE", "MLIR translator override"),
         ("ADESH_LLC", "LLVM LLC override"),
         ("ADESH_CLANG", "Clang override"),
+        ("ADESH_LLD", "LLVM LLD override"),
         ("GPU_DEVICE_ORDINAL", "Generic GPU ordinal"),
         ("CUDA_HOME", "CUDA installation root"),
         ("ROCM_HOME", "ROCm installation root"),
@@ -1764,54 +1906,135 @@ fn check_env_vars(r: &mut CompatibilityReport) {
     }
 }
 
-// ── Toolchain tools ──────────────────────────────────────────────────────────
+// ── External LLVM/MLIR tools ─────────────────────────────────────────────────
 
-fn check_toolchain_tools(r: &mut CompatibilityReport) {
-    let tools: &[(&str, &str, &str, bool)] = &[
-        ("ADESH_MLIR_OPT", "mlir-opt", "MLIR optimizer", true),
+/// Which external tool family a tool belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExternalToolKind {
+    /// Part of the LLVM core (clang, llc, lld) required by the
+    /// `--external-linker` bridge.
+    LlvmCore,
+    /// MLIR GPU pipeline tools (mlir-opt, mlir-translate); only required when
+    /// the external MLIR GPU pipeline is used.
+    MlirPipeline,
+    /// Purely informational GPU utilities (nvidia-smi, vulkaninfo, ...).
+    GpuUtility,
+}
+
+fn check_toolchain_tools(r: &mut CompatibilityReport, opts: CompatibilityCheckOptions) {
+    // (env override, command, label, kind)
+    let tools: &[(&str, &str, &str, ExternalToolKind)] = &[
+        (
+            "ADESH_CLANG",
+            "clang",
+            "Clang compiler driver (LLVM)",
+            ExternalToolKind::LlvmCore,
+        ),
+        (
+            "ADESH_LLC",
+            "llc",
+            "LLVM code generator (LLVM)",
+            ExternalToolKind::LlvmCore,
+        ),
+        (
+            "ADESH_LLD",
+            "lld",
+            "LLVM linker lld/lld-link (LLVM)",
+            ExternalToolKind::LlvmCore,
+        ),
+        (
+            "ADESH_MLIR_OPT",
+            "mlir-opt",
+            "MLIR optimizer",
+            ExternalToolKind::MlirPipeline,
+        ),
         (
             "ADESH_MLIR_TRANSLATE",
             "mlir-translate",
             "MLIR→LLVM translator",
-            true,
+            ExternalToolKind::MlirPipeline,
         ),
-        ("ADESH_LLC", "llc", "LLVM code generator", true),
-        ("ADESH_CLANG", "clang", "C/LLVM compiler driver", true),
-        ("", "nvidia-smi", "NVIDIA SMI utility", false),
-        ("", "rocm-smi", "ROCm SMI utility", false),
-        ("", "vulkaninfo", "Vulkan info tool", false),
-        ("", "clinfo", "OpenCL info tool", false),
-        ("", "metal", "Metal compiler (macOS)", false),
+        (
+            "",
+            "nvidia-smi",
+            "NVIDIA SMI utility",
+            ExternalToolKind::GpuUtility,
+        ),
+        (
+            "",
+            "rocm-smi",
+            "ROCm SMI utility",
+            ExternalToolKind::GpuUtility,
+        ),
+        (
+            "",
+            "vulkaninfo",
+            "Vulkan info tool",
+            ExternalToolKind::GpuUtility,
+        ),
+        (
+            "",
+            "clinfo",
+            "OpenCL info tool",
+            ExternalToolKind::GpuUtility,
+        ),
+        (
+            "",
+            "metal",
+            "Metal compiler (macOS)",
+            ExternalToolKind::GpuUtility,
+        ),
     ];
 
-    for (env_var, cmd, label, required) in tools {
-        let found = if !env_var.is_empty() {
-            env_override_or_path(env_var, cmd)
-        } else {
+    for (env_var, cmd, label, kind) in tools {
+        let found = if *cmd == "lld" {
+            find_external_lld()
+        } else if env_var.is_empty() {
             find_in_path(cmd)
+        } else {
+            env_override_or_path(env_var, cmd)
         };
 
         match found {
             Some(p) => {
                 let version = probe_version(p.to_str().unwrap_or(cmd));
                 r.push(
-                    "Toolchain",
+                    "External LLVM/MLIR",
                     format!("{}", label),
                     CheckStatus::Ok,
                     format!("{} [{}]", p.display(), version),
                 );
             }
             None => {
-                let status = if *required {
-                    CheckStatus::Error
-                } else {
-                    CheckStatus::Missing
+                // Default pipeline is the self-contained native toolchain, so
+                // external LLVM/MLIR tools are optional accelerators. Only the
+                // LLVM core becomes a hard requirement in --external-linker
+                // mode; the MLIR pipeline tools stay optional there too (they
+                // are only needed by the GPU MLIR lowering pipeline).
+                let status = match kind {
+                    ExternalToolKind::LlvmCore if opts.require_external_linker => {
+                        CheckStatus::Error
+                    }
+                    _ => CheckStatus::Missing,
+                };
+                let hint = match kind {
+                    ExternalToolKind::LlvmCore => {
+                        if opts.require_external_linker {
+                            "not found — required by --external-linker"
+                        } else {
+                            "not found (optional; used only by --external-linker)"
+                        }
+                    }
+                    ExternalToolKind::MlirPipeline => {
+                        "not found (optional; used only by the external MLIR GPU pipeline)"
+                    }
+                    ExternalToolKind::GpuUtility => "not found in PATH",
                 };
                 r.push(
-                    "Toolchain",
+                    "External LLVM/MLIR",
                     format!("{}", label),
                     status,
-                    format!("{} not found in PATH", cmd),
+                    hint.to_string(),
                 );
             }
         }
@@ -1819,23 +2042,34 @@ fn check_toolchain_tools(r: &mut CompatibilityReport) {
 }
 
 /// Run `<tool> --version` (or `-v`) and return the first line, or "unknown".
+///
+/// Tools that do not implement `--version` (e.g. nvidia-smi on Windows)
+/// previously leaked their error text into the report; a failing probe now
+/// reports "version unknown" instead.
 fn probe_version(tool: &str) -> String {
     // Try --version first
     if let Ok(out) = Command::new(tool).arg("--version").output() {
-        if let Ok(text) = std::str::from_utf8(&out.stdout) {
-            if let Some(line) = text.lines().next() {
-                let trimmed = line.trim().to_string();
-                if !trimmed.is_empty() {
-                    return trimmed;
+        if out.status.success() {
+            if let Ok(text) = std::str::from_utf8(&out.stdout) {
+                if let Some(line) = text.lines().next() {
+                    let trimmed = line.trim().to_string();
+                    if !trimmed.is_empty() {
+                        return trimmed;
+                    }
                 }
             }
         }
-        // Some tools print version to stderr
-        if let Ok(text) = std::str::from_utf8(&out.stderr) {
-            if let Some(line) = text.lines().next() {
-                let trimmed = line.trim().to_string();
-                if !trimmed.is_empty() {
-                    return trimmed;
+    }
+    // Some tools (vulkaninfo) spell it -v / --summary; only trust successful
+    // probes — never surface a tool's error text as its "version".
+    if let Ok(out) = Command::new(tool).arg("-v").output() {
+        if out.status.success() {
+            if let Ok(text) = std::str::from_utf8(&out.stdout) {
+                if let Some(line) = text.lines().next() {
+                    let trimmed = line.trim().to_string();
+                    if !trimmed.is_empty() {
+                        return trimmed;
+                    }
                 }
             }
         }
@@ -2315,6 +2549,7 @@ pub fn detect_toolchain(target: GpuTarget) -> GpuToolchain {
     let mlir_translate = env_override_or_path("ADESH_MLIR_TRANSLATE", "mlir-translate");
     let llc = env_override_or_path("ADESH_LLC", "llc");
     let clang = env_override_or_path("ADESH_CLANG", "clang");
+    let lld = find_external_lld();
 
     let _ = target; // Reserved for target-specific toolchain checks
 
@@ -2323,7 +2558,34 @@ pub fn detect_toolchain(target: GpuTarget) -> GpuToolchain {
         mlir_translate,
         llc,
         clang,
+        lld,
     }
+}
+
+/// Locate an external LLVM linker (lld) using the same resolution order as
+/// the other external tools. Windows prefers lld-link, Unix prefers ld.lld.
+pub fn find_external_lld() -> Option<PathBuf> {
+    if let Some(p) = env_override_or_path("ADESH_LLD", "lld") {
+        return Some(p);
+    }
+
+    let candidates: &[(&str, &str)] = if cfg!(windows) {
+        &[("", "lld-link"), ("", "ld"), ("", "ld.lld")]
+    } else {
+        &[("", "ld.lld"), ("", "lld"), ("", "ld64.lld")]
+    };
+
+    for (env_var, cmd) in candidates {
+        let found = if env_var.is_empty() {
+            find_in_path(cmd)
+        } else {
+            env_override_or_path(env_var, cmd)
+        };
+        if let Some(p) = found {
+            return Some(p);
+        }
+    }
+    None
 }
 
 /// Resolve an automatic GPU target based on environment hints
@@ -2397,7 +2659,19 @@ fn env_override_or_path(env_var: &str, default_cmd: &str) -> Option<PathBuf> {
         }
     }
 
-    // 3. Check executable-relative toolchain
+    // 3. Check an explicit ADESH_LLVM installation root
+    if let Ok(llvm_root) = env::var("ADESH_LLVM") {
+        let p1 = PathBuf::from(&llvm_root).join("bin").join(&full_name);
+        if p1.is_file() {
+            return Some(p1);
+        }
+        let p2 = PathBuf::from(&llvm_root).join(&full_name);
+        if p2.is_file() {
+            return Some(p2);
+        }
+    }
+
+    // 4. Check executable-relative toolchain
     if let Ok(exe) = env::current_exe() {
         if let Some(bin_dir) = exe.parent() {
             let p1 = bin_dir
@@ -2421,7 +2695,7 @@ fn env_override_or_path(env_var: &str, default_cmd: &str) -> Option<PathBuf> {
         }
     }
 
-    // 4. Check well-known system LLVM roots
+    // 5. Check well-known system LLVM roots
     #[cfg(windows)]
     {
         for root in [
@@ -2518,5 +2792,63 @@ mod tests {
     fn test_is_gpu_safe() {
         assert!(is_gpu_safe("add"));
         assert!(is_gpu_safe("mul"));
+    }
+
+    #[test]
+    fn test_native_toolchain_is_always_reported_ready() {
+        // The native toolchain is compiled in: its components must never
+        // surface as errors, regardless of the external-linker mode.
+        for opts in [
+            CompatibilityCheckOptions::default(),
+            CompatibilityCheckOptions::external_linker(),
+        ] {
+            let report = check_device_compatibility_with_options(opts);
+            let native_errors = report
+                .entries
+                .iter()
+                .filter(|e| e.category == "Native Toolchain" && e.status == CheckStatus::Error)
+                .count();
+            assert_eq!(native_errors, 0, "native toolchain must never error");
+            let native_ok = report
+                .entries
+                .iter()
+                .filter(|e| e.category == "Native Toolchain" && e.status == CheckStatus::Ok)
+                .count();
+            assert!(
+                native_ok >= 4,
+                "expected the core native components to report Ok"
+            );
+        }
+    }
+
+    #[test]
+    fn test_external_tools_are_optional_by_default() {
+        // In default (native) mode, missing external LLVM/MLIR tools must be
+        // Missing, not Error — the native pipeline does not need them.
+        let report = check_device_compatibility_with_options(CompatibilityCheckOptions::default());
+        for e in &report.entries {
+            if e.category == "External LLVM/MLIR" {
+                assert_ne!(
+                    e.status,
+                    CheckStatus::Error,
+                    "external tools must be optional without --external-linker: {}",
+                    e.label
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_gpu_toolchain_lld_field_defaults() {
+        let tc = detect_toolchain(GpuTarget::Auto);
+        // Availability helpers must agree with the discovered paths.
+        assert_eq!(
+            tc.is_external_linker_available(),
+            tc.clang.is_some() && tc.lld.is_some()
+        );
+        assert_eq!(
+            tc.is_llvm_core_available(),
+            tc.clang.is_some() && tc.llc.is_some() && tc.lld.is_some()
+        );
     }
 }

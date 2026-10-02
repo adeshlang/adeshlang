@@ -1,0 +1,160 @@
+// Memory Test Runner & Analytics Suite
+// Imports test cases from all memory test modules and executes them step-by-step
+// with rich analytics reporting.
+
+import "./01_ownership_basics.test.adesh" as own_tests;
+import "./02_sso_sao_layout.test.adesh" as layout_tests;
+import "./03_allocators.test.adesh" as alloc_tests;
+import "./04_refcount_cycles.test.adesh" as rc_tests;
+
+// ─────────────────────────────────────────────────────────────
+// Native Test Harness Declarations (for `adesh run --test`)
+// ─────────────────────────────────────────────────────────────
+
+test fn test_suite_ownership_basics() {
+    own_tests.run_tests();
+}
+
+test fn test_suite_sso_sao_layout() {
+    layout_tests.run_tests();
+}
+
+test fn test_suite_allocators() {
+    alloc_tests.run_tests();
+}
+
+test fn test_suite_refcount_cycles() {
+    rc_tests.run_tests();
+}
+
+// ─────────────────────────────────────────────────────────────
+// Standalone Test Runner & Analytics Engine
+// ─────────────────────────────────────────────────────────────
+
+struct TestSuiteResult {
+    suite_name: string;
+    total: i32;
+    passed: i32;
+    failed: i32;
+};
+
+fn run_single_test(test_name: string, test_fn): bool {
+    try {
+        test_fn();
+        print(`  ✓ PASS: ${test_name}`);
+        return true;
+    } catch (err) {
+        print(`  ✗ FAIL: ${test_name} - Error: ${err}`);
+        return false;
+    }
+}
+
+fn print_analytics_dashboard(
+    own_res: TestSuiteResult,
+    layout_res: TestSuiteResult,
+    alloc_res: TestSuiteResult,
+    rc_res: TestSuiteResult
+) {
+    let total_all = own_res.total + layout_res.total + alloc_res.total + rc_res.total;
+    let passed_all = own_res.passed + layout_res.passed + alloc_res.passed + rc_res.passed;
+    let failed_all = own_res.failed + layout_res.failed + alloc_res.failed + rc_res.failed;
+    let pass_rate = (passed_all * 100) / total_all;
+
+    print("");
+    print("╔══════════════════════════════════════════════════════════════════════╗");
+    print("║                     TEST ANALYTICS DASHBOARD                         ║");
+    print("╠══════════════════════════════════════════════════════════════════════╣");
+    print("║  Suite Name              │ Total │ Passed │ Failed │ Pass Rate       ║");
+    print("╟──────────────────────────┼───────┼────────┼────────┼─────────────────╢");
+    print(`║  01_ownership_basics      │   ${own_res.total}   │   ${own_res.passed}    │   ${own_res.failed}    │ ${pass_rate}%            ║`);
+    print(`║  02_sso_sao_layout        │   ${layout_res.total}   │   ${layout_res.passed}    │   ${layout_res.failed}    │ ${pass_rate}%            ║`);
+    print(`║  03_allocators            │   ${alloc_res.total}   │   ${alloc_res.passed}    │   ${alloc_res.failed}    │ ${pass_rate}%            ║`);
+    print(`║  04_refcount_cycles       │   ${rc_res.total}   │   ${rc_res.passed}    │   ${rc_res.failed}    │ ${pass_rate}%            ║`);
+    print("╠══════════════════════════════════════════════════════════════════════╣");
+    print(`║  TOTAL OVERALL           │  ${total_all}   │  ${passed_all}   │   ${failed_all}    │ ${pass_rate}%            ║`);
+    print("╚══════════════════════════════════════════════════════════════════════╝");
+    print("");
+    if (failed_all == 0) {
+        print(`  🎉 ALL MEMORY TESTS PASSED SUCCESSFULLY! (${passed_all}/${total_all} tests)`);
+    } else {
+        print(`  ⚠️ WARNING: ${failed_all} test(s) failed.`);
+    }
+    print("");
+}
+
+fn main() {
+    print("╔══════════════════════════════════════════════════════════════════════╗");
+    print("║              AdeshLang Memory - Test Execution Runner                ║");
+    print("╚══════════════════════════════════════════════════════════════════════╝");
+    print("");
+
+    // Suite 1: Ownership Basics Tests
+    print("▶ [1/4] Running Suite: 01_ownership_basics.test.adesh");
+    let o1 = 0;
+    o1 = o1 + (run_single_test("own_tests.test_ownership_transfer_chain", own_tests.test_ownership_transfer_chain) ? 1 : 0);
+    o1 = o1 + (run_single_test("own_tests.test_copy_semantics_for_primitives", own_tests.test_copy_semantics_for_primitives) ? 1 : 0);
+    o1 = o1 + (run_single_test("own_tests.test_borrow_rule_logic", own_tests.test_borrow_rule_logic) ? 1 : 0);
+    o1 = o1 + (run_single_test("own_tests.test_use_after_move_detected", own_tests.test_use_after_move_detected) ? 1 : 0);
+    o1 = o1 + (run_single_test("own_tests.test_raii_cleanup_is_lifo", own_tests.test_raii_cleanup_is_lifo) ? 1 : 0);
+    let own_res = TestSuiteResult {
+        suite_name: "01_ownership_basics",
+        total: 5,
+        passed: o1,
+        failed: 5 - o1,
+    };
+    print(`  Suite Result: ${o1}/5 tests passed\n`);
+
+    // Suite 2: SSO/SAO & Layout Tests
+    print("▶ [2/4] Running Suite: 02_sso_sao_layout.test.adesh");
+    let l1 = 0;
+    l1 = l1 + (run_single_test("layout_tests.test_sso_string_threshold", layout_tests.test_sso_string_threshold) ? 1 : 0);
+    l1 = l1 + (run_single_test("layout_tests.test_sao_array_threshold", layout_tests.test_sao_array_threshold) ? 1 : 0);
+    l1 = l1 + (run_single_test("layout_tests.test_align_up_arithmetic", layout_tests.test_align_up_arithmetic) ? 1 : 0);
+    l1 = l1 + (run_single_test("layout_tests.test_struct_layout_with_padding", layout_tests.test_struct_layout_with_padding) ? 1 : 0);
+    l1 = l1 + (run_single_test("layout_tests.test_field_offsets", layout_tests.test_field_offsets) ? 1 : 0);
+    l1 = l1 + (run_single_test("layout_tests.test_buffer_size_arithmetic", layout_tests.test_buffer_size_arithmetic) ? 1 : 0);
+    let layout_res = TestSuiteResult {
+        suite_name: "02_sso_sao_layout",
+        total: 6,
+        passed: l1,
+        failed: 6 - l1,
+    };
+    print(`  Suite Result: ${l1}/6 tests passed\n`);
+
+    // Suite 3: Allocator Tests
+    print("▶ [3/4] Running Suite: 03_allocators.test.adesh");
+    let a1 = 0;
+    a1 = a1 + (run_single_test("alloc_tests.test_arena_alloc_fits_and_oom", alloc_tests.test_arena_alloc_fits_and_oom) ? 1 : 0);
+    a1 = a1 + (run_single_test("alloc_tests.test_arena_offsets_sequence", alloc_tests.test_arena_offsets_sequence) ? 1 : 0);
+    a1 = a1 + (run_single_test("alloc_tests.test_arena_reset_reuses_capacity", alloc_tests.test_arena_reset_reuses_capacity) ? 1 : 0);
+    a1 = a1 + (run_single_test("alloc_tests.test_bump_chunk_placement", alloc_tests.test_bump_chunk_placement) ? 1 : 0);
+    a1 = a1 + (run_single_test("alloc_tests.test_slab_capacity", alloc_tests.test_slab_capacity) ? 1 : 0);
+    a1 = a1 + (run_single_test("alloc_tests.test_slab_lifecycle", alloc_tests.test_slab_lifecycle) ? 1 : 0);
+    let alloc_res = TestSuiteResult {
+        suite_name: "03_allocators",
+        total: 6,
+        passed: a1,
+        failed: 6 - a1,
+    };
+    print(`  Suite Result: ${a1}/6 tests passed\n`);
+
+    // Suite 4: Reference Counting & Cycle Tests
+    print("▶ [4/4] Running Suite: 04_refcount_cycles.test.adesh");
+    let r1 = 0;
+    r1 = r1 + (run_single_test("rc_tests.test_create_clone_drop_counts", rc_tests.test_create_clone_drop_counts) ? 1 : 0);
+    r1 = r1 + (run_single_test("rc_tests.test_weak_refs_do_not_hold_value", rc_tests.test_weak_refs_do_not_hold_value) ? 1 : 0);
+    r1 = r1 + (run_single_test("rc_tests.test_upgrade_only_while_alive", rc_tests.test_upgrade_only_while_alive) ? 1 : 0);
+    r1 = r1 + (run_single_test("rc_tests.test_strong_cycle_leaks", rc_tests.test_strong_cycle_leaks) ? 1 : 0);
+    r1 = r1 + (run_single_test("rc_tests.test_weak_edge_breaks_cycle", rc_tests.test_weak_edge_breaks_cycle) ? 1 : 0);
+    r1 = r1 + (run_single_test("rc_tests.test_observer_pattern_counts", rc_tests.test_observer_pattern_counts) ? 1 : 0);
+    let rc_res = TestSuiteResult {
+        suite_name: "04_refcount_cycles",
+        total: 6,
+        passed: r1,
+        failed: 6 - r1,
+    };
+    print(`  Suite Result: ${r1}/6 tests passed\n`);
+
+    // Final Analytics Dashboard
+    print_analytics_dashboard(own_res, layout_res, alloc_res, rc_res);
+}

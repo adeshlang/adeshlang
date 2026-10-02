@@ -1769,7 +1769,7 @@ print(fib(40));  // Computes quickly with caching
 
 ### Platform-Specific Notes
 
-- **LLVM AOT**: The `compile-native` command requires LLVM. On platforms without LLVM, use `compile-native-rust` as an alternative.
+- **Native compilation**: `adesh build` uses the bundled native toolchain (no LLVM, MSVC, or GCC required). The legacy `compile-native` command is an unimplemented placeholder; use `adesh build` (or `compile-aot`) for native executables, or `compile-native-rust` to transpile to Rust source. The Cranelift AOT path can optionally delegate its final link to external LLVM with `--codegen=cranelift --external-linker`.
 - **WebAssembly**: Some language features may not be available in WASM output.
 
 ### Workarounds
@@ -2394,35 +2394,44 @@ No migration needed. Existing `compile-aot` commands continue to work unchanged.
 
 ## Overview
 
-AdeshLang distributions on Windows target **Windows 10/11 64-bit** (`x86_64-pc-windows-msvc`). AdeshLang ships as a self-contained SDK (compiler, package manager, language server, editor, standard library). The pinned **LLVM 18.1.8 toolchain** (`clang.exe`, `lld-link.exe`, `llc.exe`) is downloaded during installation from the official llvm-project releases, SHA-256 verified, installed under `%ADESH_HOME%\toolchain\llvm` (or the upstream installer's default location), and its `bin` directory is added to the **system PATH** so the tools are available to every program. Run `adesh toolchain install --system` to fetch or repair it at any time.
+AdeshLang distributions on Windows target **Windows 10/11 64-bit** (`x86_64-pc-windows-msvc`). AdeshLang ships as a self-contained SDK (compiler, package manager, language server, editor, standard library, native linker/runtime). The **native toolchain** (native codegen, ADOB, `adeshlink`, runtime) is compiled into the distribution — the installer downloads nothing and requires no LLVM, Clang, GCC, or MSVC. An external **LLVM** toolchain (`clang.exe`, `lld-link.exe`, `llc.exe`) is an *optional* bridge for the opt-in `--external-linker` mode and for MLIR GPU source builds; register one with `adesh toolchain install --system` (or `adesh toolchain --external install llvm`) and verify it with `adesh gpu-check --external-linker`.
 
 ---
 
 ## Environment Variables
 
 The canonical variable prefix is `ADESH_` (the `ADESHLANG_*` spellings are
-still accepted as legacy aliases). The installer sets these automatically.
+still accepted as legacy aliases). The installer sets `ADESH_HOME` and adds
+the `bin` directory to PATH; everything else is resolved relative to the
+installation.
 
 | Variable | Description | Example Path |
 |---|---|---|
 | `ADESH_HOME` | Root directory of the AdeshLang installation | `C:\Program Files\AdeshLang` |
-| `ADESH_TOOLCHAIN` | Path to the LLVM toolchain directory | `%ADESH_HOME%\toolchain\llvm` |
-| `ADESH_CLANG` | Absolute path to the pinned clang executable | `%ADESH_TOOLCHAIN%\bin\clang.exe` |
-| `ADESH_LLC` | Absolute path to llc | `%ADESH_TOOLCHAIN%\bin\llc.exe` |
-| `ADESH_MLIR_OPT` | Absolute path to mlir-opt (GPU backend) | `%ADESH_TOOLCHAIN%\bin\mlir-opt.exe` |
-| `ADESH_MLIR_TRANSLATE` | Absolute path to mlir-translate (GPU backend) | `%ADESH_TOOLCHAIN%\bin\mlir-translate.exe` |
 | `ADESH_STD` | Standard library directory | `%ADESH_HOME%\std` |
 | `ADESH_PACKAGES` | User package directory | `%LOCALAPPDATA%\AdeshLang\packages` |
 | `ADESH_CACHE` | Compiler cache directory | `%LOCALAPPDATA%\AdeshLang\cache` |
-| `ADESH_TOOLCHAIN_MANIFEST` | Path/URL override for the toolchain manifest | `https://.../toolchain-manifest.json` |
 | `ADESH_REPO` | GitHub `owner/name` hosting releases (org migration helper) | `adeshlang/adeshlang` |
+
+Optional external-toolchain overrides (only consulted by `--external-linker`
+mode and the MLIR GPU path; set them yourself when needed):
+
+| Variable | Description | Example Path |
+|---|---|---|
+| `ADESH_TOOLCHAIN` | Root of an external LLVM toolchain directory | `C:\Program Files\LLVM` |
+| `ADESH_CLANG` | Absolute path to clang | `%ADESH_TOOLCHAIN%\bin\clang.exe` |
+| `ADESH_LLC` | Absolute path to llc | `%ADESH_TOOLCHAIN%\bin\llc.exe` |
+| `ADESH_LLD` | Absolute path to lld/lld-link | `%ADESH_TOOLCHAIN%\bin\lld-link.exe` |
+| `ADESH_MLIR_OPT` | Absolute path to mlir-opt (GPU backend) | `%ADESH_TOOLCHAIN%\bin\mlir-opt.exe` |
+| `ADESH_MLIR_TRANSLATE` | Absolute path to mlir-translate (GPU backend) | `%ADESH_TOOLCHAIN%\bin\mlir-translate.exe` |
+| `ADESH_TOOLCHAIN_MANIFEST` | Path/URL override for the toolchain manifest | `https://.../toolchain-manifest.json` |
 
 ---
 
 ## Installation & Maintenance Commands
 
 ### 1. `adl doctor`
-Inspects system health, compiler binary, isolated LLVM toolchain (`clang.exe`, `lld-link.exe`), standard library, and PATH environment configuration.
+Inspects system health, compiler binary, the native toolchain (codegen, `adeshlink` linker, runtime; external LLVM is reported as optional), standard library, and PATH environment configuration.
 
 ```powershell
 adl doctor
@@ -2450,14 +2459,14 @@ Manages AdeshLang packages:
 - `adl pkg remove <package>` - Uninstall a package
 
 ### 5. `adesh toolchain install`
-Downloads the pinned upstream toolchain (LLVM/Clang/LLD **18.1.8** from the official llvm-project releases, plus MLIR tools for the GPU backend), verifies SHA-256 checksums from the pinned manifest, and installs it inside the AdeshLang installation under `%ADESH_HOME%\toolchain\llvm` (never directly into `C:\Program Files\LLVM`). If the machine already has an LLVM toolchain — any version — nothing is downloaded and the existing one is reused and exposed.
+**Optional.** Downloads and registers an external LLVM toolchain (LLVM/Clang/LLD from the official llvm-project releases, plus MLIR tools for the GPU backend), verifies SHA-256 checksums from the pinned manifest, and installs it inside the AdeshLang installation under `%ADESH_HOME%\toolchain\llvm` (never directly into `C:\Program Files\LLVM`). Nothing here is needed for normal `adesh build` / `adesh run` — the native toolchain is already bundled. This only enables the opt-in `--external-linker` mode and the MLIR GPU pipeline. If the machine already has an LLVM toolchain — any version — nothing is downloaded and the existing one is reused.
 
 ```powershell
-# Install for all users (elevated shell): also registers PATH + env vars
+# Register the external LLVM bridge (elevated shell)
 adesh toolchain install --system
 
 # Also build MLIR GPU tools (mlir-opt/mlir-translate with NVVM/ROCDL)
-# from upstream source — 30–90 minutes, needs VS C++ tools + CMake
+# from upstream source — 30–90 minutes, needs a C++ compiler + CMake
 adesh toolchain install --system --build-mlir-source
 
 # Fallback channel: install via the system package manager

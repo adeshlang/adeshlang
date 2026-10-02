@@ -1,0 +1,136 @@
+// Structures Test Runner & Analytics Suite
+// Imports test cases from all structures test modules and executes them
+// step-by-step with rich analytics reporting.
+
+import "./01_struct_basics.test.adesh" as basic_tests;
+import "./02_struct_functions.test.adesh" as fn_tests;
+import "./03_struct_nested_collections.test.adesh" as nested_tests;
+
+// ─────────────────────────────────────────────────────────────
+// Native Test Harness Declarations (for `adesh run --test`)
+// ─────────────────────────────────────────────────────────────
+
+test fn test_suite_struct_basics() {
+    basic_tests.run_tests();
+}
+
+test fn test_suite_struct_functions() {
+    fn_tests.run_tests();
+}
+
+test fn test_suite_struct_nested_collections() {
+    nested_tests.run_tests();
+}
+
+// ─────────────────────────────────────────────────────────────
+// Standalone Test Runner & Analytics Engine
+// ─────────────────────────────────────────────────────────────
+
+struct TestSuiteResult {
+    suite_name: string;
+    total: i32;
+    passed: i32;
+    failed: i32;
+};
+
+fn run_single_test(test_name: string, test_fn): bool {
+    try {
+        test_fn();
+        print(`  ✓ PASS: ${test_name}`);
+        return true;
+    } catch (err) {
+        print(`  ✗ FAIL: ${test_name} - Error: ${err}`);
+        return false;
+    }
+}
+
+fn print_analytics_dashboard(
+    basic_res: TestSuiteResult,
+    fn_res: TestSuiteResult,
+    nested_res: TestSuiteResult
+) {
+    let total_all = basic_res.total + fn_res.total + nested_res.total;
+    let passed_all = basic_res.passed + fn_res.passed + nested_res.passed;
+    let failed_all = basic_res.failed + fn_res.failed + nested_res.failed;
+    let pass_rate = (passed_all * 100) / total_all;
+
+    print("");
+    print("╔══════════════════════════════════════════════════════════════════════╗");
+    print("║                     TEST ANALYTICS DASHBOARD                         ║");
+    print("╠══════════════════════════════════════════════════════════════════════╣");
+    print("║  Suite Name              │ Total │ Passed │ Failed │ Pass Rate       ║");
+    print("╟──────────────────────────┼───────┼────────┼────────┼─────────────────╢");
+    print(`║  01_struct_basics        │   ${basic_res.total}   │   ${basic_res.passed}    │   ${basic_res.failed}    │ ${pass_rate}%            ║`);
+    print(`║  02_struct_functions     │   ${fn_res.total}   │   ${fn_res.passed}    │   ${fn_res.failed}    │ ${pass_rate}%            ║`);
+    print(`║  03_struct_nested_coll   │   ${nested_res.total}   │   ${nested_res.passed}    │   ${nested_res.failed}    │ ${pass_rate}%            ║`);
+    print("╠══════════════════════════════════════════════════════════════════════╣");
+    print(`║  TOTAL OVERALL           │  ${total_all}   │  ${passed_all}   │   ${failed_all}    │ ${pass_rate}%            ║`);
+    print("╚══════════════════════════════════════════════════════════════════════╝");
+    print("");
+    if (failed_all == 0) {
+        print(`  🎉 ALL STRUCTURE TESTS PASSED SUCCESSFULLY! (${passed_all}/${total_all} tests)`);
+    } else {
+        print(`  ⚠️ WARNING: ${failed_all} test(s) failed.`);
+    }
+    print("");
+}
+
+fn main() {
+    print("╔══════════════════════════════════════════════════════════════════════╗");
+    print("║           AdeshLang Structures - Test Execution Runner               ║");
+    print("╚══════════════════════════════════════════════════════════════════════╝");
+    print("");
+
+    // Suite 1: Struct Basics Tests
+    print("▶ [1/3] Running Suite: 01_struct_basics.test.adesh");
+    let b1 = 0;
+    b1 = b1 + (run_single_test("basic_tests.test_person_literal", basic_tests.test_person_literal) ? 1 : 0);
+    b1 = b1 + (run_single_test("basic_tests.test_field_mutation", basic_tests.test_field_mutation) ? 1 : 0);
+    b1 = b1 + (run_single_test("basic_tests.test_mixed_field_types", basic_tests.test_mixed_field_types) ? 1 : 0);
+    b1 = b1 + (run_single_test("basic_tests.test_struct_typeof_sizeof", basic_tests.test_struct_typeof_sizeof) ? 1 : 0);
+    b1 = b1 + (run_single_test("basic_tests.test_numeric_struct_operations", basic_tests.test_numeric_struct_operations) ? 1 : 0);
+    let basic_res = TestSuiteResult {
+        suite_name: "01_struct_basics",
+        total: 5,
+        passed: b1,
+        failed: 5 - b1,
+    };
+    print(`  Suite Result: ${b1}/5 tests passed\n`);
+
+    // Suite 2: Struct Functions Tests
+    print("▶ [2/3] Running Suite: 02_struct_functions.test.adesh");
+    let f1 = 0;
+    f1 = f1 + (run_single_test("fn_tests.test_fn_returns_struct", fn_tests.test_fn_returns_struct) ? 1 : 0);
+    f1 = f1 + (run_single_test("fn_tests.test_struct_param_reads_fields", fn_tests.test_struct_param_reads_fields) ? 1 : 0);
+    f1 = f1 + (run_single_test("fn_tests.test_transform_returns_new_struct", fn_tests.test_transform_returns_new_struct) ? 1 : 0);
+    f1 = f1 + (run_single_test("fn_tests.test_distance_computation", fn_tests.test_distance_computation) ? 1 : 0);
+    f1 = f1 + (run_single_test("fn_tests.test_multiple_struct_params", fn_tests.test_multiple_struct_params) ? 1 : 0);
+    f1 = f1 + (run_single_test("fn_tests.test_copy_and_update_struct", fn_tests.test_copy_and_update_struct) ? 1 : 0);
+    let fn_res = TestSuiteResult {
+        suite_name: "02_struct_functions",
+        total: 6,
+        passed: f1,
+        failed: 6 - f1,
+    };
+    print(`  Suite Result: ${f1}/6 tests passed\n`);
+
+    // Suite 3: Nested & Collection Tests
+    print("▶ [3/3] Running Suite: 03_struct_nested_collections.test.adesh");
+    let n1 = 0;
+    n1 = n1 + (run_single_test("nested_tests.test_nested_field_access", nested_tests.test_nested_field_access) ? 1 : 0);
+    n1 = n1 + (run_single_test("nested_tests.test_nested_instances_are_independent", nested_tests.test_nested_instances_are_independent) ? 1 : 0);
+    n1 = n1 + (run_single_test("nested_tests.test_nested_struct_relocation", nested_tests.test_nested_struct_relocation) ? 1 : 0);
+    n1 = n1 + (run_single_test("nested_tests.test_array_of_structs_aggregate", nested_tests.test_array_of_structs_aggregate) ? 1 : 0);
+    n1 = n1 + (run_single_test("nested_tests.test_array_of_structs_search", nested_tests.test_array_of_structs_search) ? 1 : 0);
+    n1 = n1 + (run_single_test("nested_tests.test_struct_inventory_totals", nested_tests.test_struct_inventory_totals) ? 1 : 0);
+    let nested_res = TestSuiteResult {
+        suite_name: "03_struct_nested_collections",
+        total: 6,
+        passed: n1,
+        failed: 6 - n1,
+    };
+    print(`  Suite Result: ${n1}/6 tests passed\n`);
+
+    // Final Analytics Dashboard
+    print_analytics_dashboard(basic_res, fn_res, nested_res);
+}

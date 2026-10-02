@@ -2,14 +2,16 @@
 # Builds the signed/notarizable macOS .pkg installer for AdeshLang.
 #
 # Usage:
-#   ./installer/macos/build-pkg.sh [arm64|x86_64] [--with-toolchain]
+#   ./installer/macos/build-pkg.sh [arm64|x86_64]
 #
-#   ARCH             defaults to the host architecture (uname -m).
-#   --with-toolchain always-on build: the Distribution is emitted with
-#                    customize="never" (user cannot deselect the toolchain
-#                    choice) AND the baked ADESH_PKG_TOOLCHAIN=1 flag is set
-#                    in the core postinstall — belt and braces, so the LLVM
-#                    install always runs regardless of installer behavior.
+#   ARCH  defaults to the host architecture (uname -m).
+#
+# The pkg bundles the complete Adesh native toolchain (native codegen, ADOB
+# object format, adeshlink linker, adeshlang runtime library, stdlib): no
+# external LLVM/Clang/MSVC is downloaded or required during install. The
+# legacy --with-toolchain flag is accepted and ignored (kept for CI compat).
+# External LLVM remains an opt-in bridge the user registers after install
+# with `adesh toolchain --external install`.
 #
 # Environment:
 #   ADESH_SIGNING_IDENTITY   Developer ID Installer identity. When set, the
@@ -32,9 +34,11 @@ set -euo pipefail
 
 usage() {
     cat <<'EOF'
-Usage: build-pkg.sh [ARCH [--with-toolchain]]
-  ARCH             arm64 (default: host) or x86_64
-  --with-toolchain always-on LLVM toolchain install (cannot be deselected)
+Usage: build-pkg.sh [ARCH]
+  ARCH  arm64 (default: host) or x86_64
+
+The native toolchain is bundled inside the pkg; nothing external is
+downloaded during installation. (--with-toolchain is a deprecated no-op.)
 
 Environment:
   ADESH_SIGNING_IDENTITY  Developer ID Installer identity -> productbuild --sign
@@ -48,11 +52,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPTS_DIR="$ROOT/installer/macos/scripts"
 
 ARCH=""
-WITH_TOOLCHAIN=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --with-toolchain) WITH_TOOLCHAIN=1; shift ;;
+        --with-toolchain)
+            # Deprecated no-op: the native toolchain is bundled with the pkg.
+            echo "note: --with-toolchain is deprecated and ignored; the native toolchain is bundled." >&2
+            shift ;;
         -h|--help) usage; exit 0 ;;
         -*) echo "unknown option: $1" >&2; usage; exit 2 ;;
         *)
@@ -100,17 +106,30 @@ trap 'rm -rf "$WORK"' EXIT
 #    --install-location carries the (space-containing) destination path.
 # ---------------------------------------------------------------------------
 PAYLOAD="$WORK/payload"
-mkdir -p "$PAYLOAD/bin" "$PAYLOAD/std" "$PAYLOAD/config" "$PAYLOAD/licenses"
+mkdir -p "$PAYLOAD/bin" "$PAYLOAD/std" "$PAYLOAD/config" "$PAYLOAD/licenses" "$PAYLOAD/lib"
 
 echo "==> Staging payload from $DIST_DIR"
 
-# bin/ — the four CLI tools (ditto preserves the executable bit).
+# bin/ — the CLI tools including the native linker (ditto preserves the
+# executable bit).
 /usr/bin/ditto "$DIST_DIR/bin" "$PAYLOAD/bin"
 if [[ ! -x "$PAYLOAD/bin/adesh" ]]; then
     echo "error: $PAYLOAD/bin/adesh is missing or not executable." >&2
     exit 1
 fi
+if [[ ! -x "$PAYLOAD/bin/adeshlink" ]]; then
+    echo "warning: adeshlink (native linker CLI) is not in $DIST_DIR/bin;" >&2
+    echo "         builds still link through the in-process linker engine." >&2
+fi
 chmod +x "$PAYLOAD/bin/"* 2>/dev/null || true
+
+# lib/ — the adeshlang runtime library (libadeshlang.a / .dylib), staged by
+# scripts/release/package_unix.sh.
+if [[ -d "$DIST_DIR/lib" ]]; then
+    /usr/bin/ditto "$DIST_DIR/lib" "$PAYLOAD/lib"
+else
+    echo "warning: no lib/ staged in $DIST_DIR; the runtime library is not bundled." >&2
+fi
 
 # std/ — prefer the dist's copy; fall back to the repo's standard library
 # sources (they ship at <home>/std/ for the compiler).
@@ -155,28 +174,13 @@ elif [[ -f "$ROOT/ai/models/manifest.json" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 2. Stage package scripts.
-#    - core/ : copies installer/macos/scripts/postinstall (the flag line is
-#      baked to 1 for --with-toolchain).
-#    - trigger/ : the toolchain choice's payload-free package postinstall that
-#      writes /tmp/.adesh-install-toolchain.
+# 2. Stage package scripts (single core component; the native toolchain is
+#    bundled in the payload, so there is no separate toolchain package).
 # ---------------------------------------------------------------------------
-mkdir -p "$WORK/scripts/core" "$WORK/scripts/trigger" "$WORK/pkgs"
+mkdir -p "$WORK/scripts/core" "$WORK/pkgs"
 
-if [[ "$WITH_TOOLCHAIN" == "1" ]]; then
-    sed 's/^ADESH_PKG_TOOLCHAIN=.*/ADESH_PKG_TOOLCHAIN=1/' \
-        "$SCRIPTS_DIR/postinstall" > "$WORK/scripts/core/postinstall"
-    if ! grep -q '^ADESH_PKG_TOOLCHAIN=1' "$WORK/scripts/core/postinstall"; then
-        echo "error: could not bake ADESH_PKG_TOOLCHAIN=1 into the core postinstall" >&2
-        exit 1
-    fi
-else
-    cp "$SCRIPTS_DIR/postinstall" "$WORK/scripts/core/postinstall"
-fi
+cp "$SCRIPTS_DIR/postinstall" "$WORK/scripts/core/postinstall"
 chmod +x "$WORK/scripts/core/postinstall"
-
-cp "$SCRIPTS_DIR/toolchain-flag-postinstall" "$WORK/scripts/trigger/postinstall"
-chmod +x "$WORK/scripts/trigger/postinstall"
 
 # ---------------------------------------------------------------------------
 # 3. Component packages (pkgbuild).
@@ -192,15 +196,6 @@ pkgbuild \
     --ownership recommended \
     "$WORK/pkgs/core.pkg"
 
-echo "==> pkgbuild: org.adeshlang.pkg.toolchain-trigger"
-pkgbuild \
-    --nopayload \
-    --scripts "$WORK/scripts/trigger" \
-    --identifier "org.adeshlang.pkg.toolchain-trigger" \
-    --version "$VERSION" \
-    --min-os-version 12.0 \
-    "$WORK/pkgs/toolchain-trigger.pkg"
-
 # ---------------------------------------------------------------------------
 # 4. Distribution (choices.xml), then productbuild.
 # ---------------------------------------------------------------------------
@@ -209,15 +204,6 @@ cp "$SCRIPTS_DIR/choices.xml" "$DIST_XML"
 # Keep the committed XML's version attribute in sync with the build. The
 # pattern only matches version="0.3.0" (safe: nothing else in the file).
 sed -i '' -e "s/version=\"0\.3\.0\"/version=\"$VERSION\"/g" "$DIST_XML"
-if [[ "$WITH_TOOLCHAIN" == "1" ]]; then
-    # customize="never": the Installer skips the customize pane and installs
-    # every package, so the toolchain choice cannot be deselected.
-    sed -i '' -e 's/customize="allow"/customize="never"/' "$DIST_XML"
-    if grep -q 'customize="allow"' "$DIST_XML"; then
-        echo "error: could not set customize=\"never\" in the Distribution" >&2
-        exit 1
-    fi
-fi
 echo "==> using Distribution: $SCRIPTS_DIR/choices.xml"
 
 PB=(productbuild --distribution "$DIST_XML" --package-path "$WORK/pkgs")

@@ -146,7 +146,34 @@ impl<'a> LinearScanAllocator<'a> {
         let mut vreg_map = HashMap::new();
         let mut spill_map = HashMap::new();
         let mut active: Vec<LiveInterval> = Vec::new();
-        let mut next_spill_offset = -8i32;
+
+        // Spill slots must live below the locals area (negative offsets from
+        // the frame pointer), otherwise they silently collide with lowered
+        // local variables.
+        let locals_end = (func.stack_size as i32 + 7) & !7;
+        let mut next_spill_offset = -locals_end - 8;
+
+        // Prefer callee-saved registers: without live-range splitting around
+        // calls, values that live across a call survive only in callee-saved
+        // registers. Backends must still save/restore them in the prologue.
+        let callee_saved: Vec<PhysicalRegister> = self
+            .reg_file
+            .callee_saved()
+            .iter()
+            .copied()
+            .filter(|r| allocatable.contains(r))
+            .collect();
+        let callee_set: HashSet<PhysicalRegister> = callee_saved.iter().copied().collect();
+        let mut call_indices = Vec::new();
+        let mut inst_idx = 0;
+        for block in &func.blocks {
+            for inst in &block.instructions {
+                if matches!(inst, MachineInstruction::Call { .. }) {
+                    call_indices.push(inst_idx);
+                }
+                inst_idx += 1;
+            }
+        }
 
         for mut current in intervals {
             // Expire old intervals
@@ -155,8 +182,36 @@ impl<'a> LinearScanAllocator<'a> {
             let used_phys: HashSet<PhysicalRegister> =
                 active.iter().filter_map(|act| act.assigned_reg).collect();
 
-            // Find an available physical register
-            if let Some(&free_reg) = allocatable.iter().find(|r| !used_phys.contains(r)) {
+            let crosses_call = call_indices
+                .iter()
+                .any(|&c| current.start <= c && current.end >= c);
+
+            let chosen_reg = if crosses_call {
+                // If live interval spans a call, we can ONLY use an available callee-saved register
+                callee_saved
+                    .iter()
+                    .copied()
+                    .find(|r| !used_phys.contains(r))
+            } else {
+                // If it does NOT span a call, prefer caller-saved registers first, then callee-saved
+                let caller_saved: Vec<PhysicalRegister> = allocatable
+                    .iter()
+                    .copied()
+                    .filter(|r| !callee_set.contains(r))
+                    .collect();
+                caller_saved
+                    .iter()
+                    .copied()
+                    .find(|r| !used_phys.contains(r))
+                    .or_else(|| {
+                        callee_saved
+                            .iter()
+                            .copied()
+                            .find(|r| !used_phys.contains(r))
+                    })
+            };
+
+            if let Some(free_reg) = chosen_reg {
                 current.assigned_reg = Some(free_reg);
                 vreg_map.insert(current.vreg, free_reg);
                 active.push(current);
@@ -169,7 +224,8 @@ impl<'a> LinearScanAllocator<'a> {
             }
         }
 
-        let total_spill_bytes = (-next_spill_offset - 8).max(0) as u32;
+        // Each spill slot is 8 bytes; the frame must cover the deepest one.
+        let total_spill_bytes = (spill_map.len() as u32) * 8;
         func.stack_size += total_spill_bytes as u64;
 
         // Rewrite function operands with allocated physical registers or stack slots

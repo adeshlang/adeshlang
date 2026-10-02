@@ -1,0 +1,171 @@
+// Ownership Basics Tests
+// Covers the ownership themes of examples/memory/ownership_patterns.adesh,
+// complex_ownership.adesh and feature_status.adesh:
+//   - ownership transfer chains (token handed through a pipeline)
+//   - copy semantics for primitive values
+//   - borrow rules (multiple immutable OR single mutable)
+//   - use-after-move detection (invalid resource access throws)
+//   - RAII scope cleanup in LIFO order
+// All helpers are self-contained: no imports from the example files.
+
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+
+struct Token {
+    id: i32;
+    owner: str;
+};
+
+export fn make_token(id: i32) {
+    return Token { id: id, owner: "creator" };
+}
+
+export fn transfer(t: Token, new_owner: str) {
+    return Token { id: t.id, owner: new_owner };
+}
+
+export fn authenticate(t: Token) {
+    return transfer(t, "auth-service");
+}
+
+export fn authorize(t: Token) {
+    return transfer(t, "auth-manager");
+}
+
+export fn dispatch(t: Token) {
+    return transfer(t, "request-handler");
+}
+
+export fn describe(t: Token): str {
+    return t.owner + "#" + str(t.id);
+}
+
+export fn can_borrow_mutably(imm_active: i32, mut_active: i32): bool {
+    return imm_active == 0 && mut_active == 0;
+}
+
+export fn can_borrow_immutably(mut_active: i32): bool {
+    return mut_active == 0;
+}
+
+struct Resource {
+    name: str;
+    valid: bool;
+};
+
+export fn make_resource(name: str) {
+    return Resource { name: name, valid: true };
+}
+
+export fn use_resource(r: Resource): str {
+    if (r.valid == false) {
+        throw "use of moved resource: " + r.name;
+    }
+    return "used " + r.name;
+}
+
+export fn invalidate(r: Resource) {
+    return Resource { name: r.name, valid: false };
+}
+
+export fn raii_events(names: [str]): [str] {
+    let events: [str] = [];
+    for (n in names) {
+        events.push("open " + n);
+    }
+    let i = names.len() - 1;
+    while (i >= 0) {
+        events.push("close " + names[i]);
+        i = i - 1;
+    }
+    return events;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_ownership_transfer_chain() {
+    let t = make_token(1);
+    assert_eq(describe(t), "creator#1");
+    let t2 = authenticate(t);
+    assert_eq(describe(t2), "auth-service#1");
+    let t3 = authorize(t2);
+    assert_eq(describe(t3), "auth-manager#1");
+    let t4 = dispatch(t3);
+    assert_eq(describe(t4), "request-handler#1");
+    assert_eq(t4.id, 1);
+}
+
+export test fn test_copy_semantics_for_primitives() {
+    let x = 42;
+    let y = x;
+    x = x + 1;
+    assert_eq(x, 43);
+    assert_eq(y, 42);
+    let z = y + 0;
+    y = y * 2;
+    assert_eq(z, 42);
+    assert_eq(y, 84);
+}
+
+export test fn test_borrow_rule_logic() {
+    assert(can_borrow_mutably(0, 0));
+    assert(can_borrow_mutably(0, 0) == true);
+    assert_eq(can_borrow_mutably(1, 0), false);
+    assert_eq(can_borrow_mutably(0, 1), false);
+    assert_eq(can_borrow_mutably(2, 1), false);
+    assert(can_borrow_immutably(0));
+    assert_eq(can_borrow_immutably(1), false);
+}
+
+export test fn test_use_after_move_detected() {
+    let r = make_resource("database-connection");
+    assert_eq(use_resource(r), "used database-connection");
+    let moved = invalidate(r);
+    assert_eq(moved.valid, false);
+    let caught = false;
+    try {
+        use_resource(moved);
+    } catch (err) {
+        caught = true;
+        assert(str(err).includes("moved resource"));
+    }
+    assert(caught);
+    let fresh = make_resource("temp-file");
+    assert_eq(use_resource(fresh), "used temp-file");
+}
+
+export test fn test_raii_cleanup_is_lifo() {
+    let events = raii_events(["db", "file", "net"]);
+    assert_eq(events.len(), 6);
+    assert_eq(events[0], "open db");
+    assert_eq(events[1], "open file");
+    assert_eq(events[2], "open net");
+    assert_eq(events[3], "close net");
+    assert_eq(events[4], "close file");
+    assert_eq(events[5], "close db");
+    let single = raii_events(["only"]);
+    assert_eq(single.len(), 2);
+    assert_eq(single[1], "close only");
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_ownership_transfer_chain();
+    test_copy_semantics_for_primitives();
+    test_borrow_rule_logic();
+    test_use_after_move_detected();
+    test_raii_cleanup_is_lifo();
+    return 5;
+}
+
+fn main() {
+    print("Running 01_ownership_basics tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 01_ownership_basics.test.adesh`);
+}

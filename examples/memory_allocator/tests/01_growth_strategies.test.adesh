@@ -1,0 +1,166 @@
+// Dynamic Growth Strategy Tests
+// Covers examples/memory_allocator/dynamic_growth.adesh:
+//   - heap growth via doubling vs linear (fixed-step) capacity strategies
+//   - resize counting and final capacity for N pushes
+//   - total capacity "spend" across resizes (amortized growth cost)
+//   - allocation report totals for arrays / objects / strings
+// All growth is simulated with plain integer loops.
+
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+
+// Simulate `count` pushes into a buffer that starts with `start` capacity.
+// mode: "double" halves nothing, doubles on overflow; anything else grows
+// linearly by `start` each resize.
+// Returns [resizes, final_capacity].
+export fn growth_report(start: i32, count: i32, mode: str): [i32] {
+    let cap = start + 0;
+    let resizes = 0;
+    let i = 0;
+    while (i < count) {
+        i = i + 1;
+        if (i > cap) {
+            if (mode == "double") {
+                cap = cap * 2;
+            } else {
+                cap = cap + start;
+            }
+            resizes = resizes + 1;
+        }
+    }
+    return [resizes, cap];
+}
+
+// Total capacity allocated over the buffer's life (initial + each resize).
+// Larger numbers mean more copying churn during growth.
+export fn growth_spend(start: i32, count: i32, mode: str): i32 {
+    let cap = start + 0;
+    let spend = start + 0;
+    let i = 0;
+    while (i < count) {
+        i = i + 1;
+        if (i > cap) {
+            if (mode == "double") {
+                cap = cap * 2;
+            } else {
+                cap = cap + start;
+            }
+            spend = spend + cap;
+        }
+    }
+    return spend;
+}
+
+// Allocation report mirroring dynamic_growth.adesh.
+// Returns [total_allocations, retained, transient].
+export fn allocation_summary(arrays: i32, objects: i32, strings: i32): [i32] {
+    let total = arrays + objects + strings;
+    let retained = arrays + objects;
+    return [total, retained, strings];
+}
+
+// Growable buffer behaviour: capacity after each of `count` pushes.
+export fn capacity_curve(start: i32, count: i32, mode: str): [i32] {
+    let curve: [i32] = [];
+    let cap = start + 0;
+    let i = 0;
+    while (i < count) {
+        i = i + 1;
+        if (i > cap) {
+            if (mode == "double") {
+                cap = cap * 2;
+            } else {
+                cap = cap + start;
+            }
+        }
+        curve.push(cap);
+    }
+    return curve;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_doubling_growth() {
+    // start 4, 10 pushes: resize at push 5 (4->8) and push 9 (8->16)
+    let report = growth_report(4, 10, "double");
+    assert_eq(report[0], 2);
+    assert_eq(report[1], 16);
+
+    let small = growth_report(1, 5, "double");
+    assert_eq(small[0], 3);
+    assert_eq(small[1], 8);
+}
+
+export test fn test_linear_growth() {
+    // start 4, step 4, 10 pushes: 4->8 at push 5, 8->12 at push 9
+    let report = growth_report(4, 10, "linear");
+    assert_eq(report[0], 2);
+    assert_eq(report[1], 12);
+
+    let eight = growth_report(4, 8, "linear");
+    assert_eq(eight[0], 1);
+    assert_eq(eight[1], 8);
+}
+
+export test fn test_no_resize_when_capacity_sufficient() {
+    let double = growth_report(16, 16, "double");
+    assert_eq(double[0], 0);
+    assert_eq(double[1], 16);
+
+    let linear = growth_report(8, 4, "linear");
+    assert_eq(linear[0], 0);
+    assert_eq(linear[1], 8);
+}
+
+export test fn test_capacity_curve_shape() {
+    let curve = capacity_curve(4, 10, "double");
+    assert_eq(curve.len(), 10);
+    assert_eq(curve[0], 4);
+    assert_eq(curve[3], 4);
+    assert_eq(curve[4], 8);
+    assert_eq(curve[8], 16);
+    assert_eq(curve[9], 16);
+}
+
+export test fn test_growth_spend_doubling_vs_linear() {
+    // Doubling touches 4+8+16 = 28 capacity units; linear touches 4+8+12 = 24.
+    assert_eq(growth_spend(4, 10, "double"), 28);
+    assert_eq(growth_spend(4, 10, "linear"), 24);
+    // With no growth needed the spend equals the initial capacity.
+    assert_eq(growth_spend(16, 5, "double"), 16);
+}
+
+export test fn test_dynamic_allocation_totals() {
+    // Mirrors dynamic_growth.adesh: 10 arrays + 50 objects + 100 strings.
+    let report = allocation_summary(10, 50, 100);
+    assert_eq(report[0], 160);
+    assert_eq(report[1], 60);
+    assert_eq(report[2], 100);
+
+    let empty = allocation_summary(0, 0, 0);
+    assert_eq(empty[0], 0);
+    assert_eq(empty[1], 0);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_doubling_growth();
+    test_linear_growth();
+    test_no_resize_when_capacity_sufficient();
+    test_capacity_curve_shape();
+    test_growth_spend_doubling_vs_linear();
+    test_dynamic_allocation_totals();
+    return 6;
+}
+
+fn main() {
+    print("Running 01_growth_strategies tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 01_growth_strategies.test.adesh`);
+}

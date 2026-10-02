@@ -1,0 +1,137 @@
+// 01_Basics Test Runner & Analytics Suite
+// Imports test cases from all 01_Basics test modules and executes them step-by-step
+// with rich analytics reporting.
+
+import "./01_variables_types.test.adesh" as var_tests;
+import "./02_control_flow.test.adesh" as ctrl_tests;
+import "./03_patterns.test.adesh" as pattern_tests;
+
+// ─────────────────────────────────────────────────────────────
+// Native Test Harness Declarations (for `adesh run --test`)
+// ─────────────────────────────────────────────────────────────
+
+test fn test_suite_variables_types() {
+    var_tests.run_tests();
+}
+
+test fn test_suite_control_flow() {
+    ctrl_tests.run_tests();
+}
+
+test fn test_suite_patterns() {
+    pattern_tests.run_tests();
+}
+
+// ─────────────────────────────────────────────────────────────
+// Standalone Test Runner & Analytics Engine
+// ─────────────────────────────────────────────────────────────
+
+struct TestSuiteResult {
+    suite_name: string;
+    total: i32;
+    passed: i32;
+    failed: i32;
+};
+
+fn run_single_test(test_name: string, test_fn): bool {
+    try {
+        test_fn();
+        print(`  ✓ PASS: ${test_name}`);
+        return true;
+    } catch (err) {
+        print(`  ✗ FAIL: ${test_name} - Error: ${err}`);
+        return false;
+    }
+}
+
+fn print_analytics_dashboard(
+    var_res: TestSuiteResult,
+    ctrl_res: TestSuiteResult,
+    pattern_res: TestSuiteResult
+) {
+    let total_all = var_res.total + ctrl_res.total + pattern_res.total;
+    let passed_all = var_res.passed + ctrl_res.passed + pattern_res.passed;
+    let failed_all = var_res.failed + ctrl_res.failed + pattern_res.failed;
+    let pass_rate = (passed_all * 100) / total_all;
+
+    print("");
+    print("╔══════════════════════════════════════════════════════════════════════╗");
+    print("║                     TEST ANALYTICS DASHBOARD                         ║");
+    print("╠══════════════════════════════════════════════════════════════════════╣");
+    print("║  Suite Name              │ Total │ Passed │ Failed │ Pass Rate       ║");
+    print("╟──────────────────────────┼───────┼────────┼────────┼─────────────────╢");
+    print(`║  01_variables_types      │   ${var_res.total}   │   ${var_res.passed}    │   ${var_res.failed}    │ ${pass_rate}%            ║`);
+    print(`║  02_control_flow         │   ${ctrl_res.total}   │   ${ctrl_res.passed}    │   ${ctrl_res.failed}    │ ${pass_rate}%            ║`);
+    print(`║  03_patterns             │   ${pattern_res.total}   │   ${pattern_res.passed}    │   ${pattern_res.failed}    │ ${pass_rate}%            ║`);
+    print("╠══════════════════════════════════════════════════════════════════════╣");
+    print(`║  TOTAL OVERALL           │  ${total_all}   │  ${passed_all}   │   ${failed_all}    │ ${pass_rate}%            ║`);
+    print("╚══════════════════════════════════════════════════════════════════════╝");
+    print("");
+    if (failed_all == 0) {
+        print(`  🎉 ALL 01_BASICS TESTS PASSED SUCCESSFULLY! (${passed_all}/${total_all} tests)`);
+    } else {
+        print(`  ⚠️ WARNING: ${failed_all} test(s) failed.`);
+    }
+    print("");
+}
+
+fn main() {
+    print("╔══════════════════════════════════════════════════════════════════════╗");
+    print("║             AdeshLang 01_Basics - Test Execution Runner              ║");
+    print("╚══════════════════════════════════════════════════════════════════════╝");
+    print("");
+
+    // Suite 1: Variables & Types Tests
+    print("▶ [1/3] Running Suite: 01_variables_types.test.adesh");
+    let v1 = 0;
+    v1 = v1 + (run_single_test("var_tests.test_single_variable_mutation", var_tests.test_single_variable_mutation) ? 1 : 0);
+    v1 = v1 + (run_single_test("var_tests.test_multi_variable_declaration", var_tests.test_multi_variable_declaration) ? 1 : 0);
+    v1 = v1 + (run_single_test("var_tests.test_multi_variable_reassignment", var_tests.test_multi_variable_reassignment) ? 1 : 0);
+    v1 = v1 + (run_single_test("var_tests.test_typed_multi_variable", var_tests.test_typed_multi_variable) ? 1 : 0);
+    v1 = v1 + (run_single_test("var_tests.test_variable_swap_without_temp", var_tests.test_variable_swap_without_temp) ? 1 : 0);
+    v1 = v1 + (run_single_test("var_tests.test_typeof_and_sizeof", var_tests.test_typeof_and_sizeof) ? 1 : 0);
+    let var_res = TestSuiteResult {
+        suite_name: "01_variables_types",
+        total: 6,
+        passed: v1,
+        failed: 6 - v1,
+    };
+    print(`  Suite Result: ${v1}/6 tests passed\n`);
+
+    // Suite 2: Control Flow Tests
+    print("▶ [2/3] Running Suite: 02_control_flow.test.adesh");
+    let c1 = 0;
+    c1 = c1 + (run_single_test("ctrl_tests.test_cstyle_for_loop", ctrl_tests.test_cstyle_for_loop) ? 1 : 0);
+    c1 = c1 + (run_single_test("ctrl_tests.test_multivar_cstyle_for", ctrl_tests.test_multivar_cstyle_for) ? 1 : 0);
+    c1 = c1 + (run_single_test("ctrl_tests.test_continue_keeps_post_expression", ctrl_tests.test_continue_keeps_post_expression) ? 1 : 0);
+    c1 = c1 + (run_single_test("ctrl_tests.test_do_while_runs_at_least_once", ctrl_tests.test_do_while_runs_at_least_once) ? 1 : 0);
+    c1 = c1 + (run_single_test("ctrl_tests.test_do_while_with_continue", ctrl_tests.test_do_while_with_continue) ? 1 : 0);
+    c1 = c1 + (run_single_test("ctrl_tests.test_break_exits_early", ctrl_tests.test_break_exits_early) ? 1 : 0);
+    c1 = c1 + (run_single_test("ctrl_tests.test_for_in_accumulator", ctrl_tests.test_for_in_accumulator) ? 1 : 0);
+    let ctrl_res = TestSuiteResult {
+        suite_name: "02_control_flow",
+        total: 7,
+        passed: c1,
+        failed: 7 - c1,
+    };
+    print(`  Suite Result: ${c1}/7 tests passed\n`);
+
+    // Suite 3: Pattern Tests
+    print("▶ [3/3] Running Suite: 03_patterns.test.adesh");
+    let p1 = 0;
+    p1 = p1 + (run_single_test("pattern_tests.test_pyramid_row_layout", pattern_tests.test_pyramid_row_layout) ? 1 : 0);
+    p1 = p1 + (run_single_test("pattern_tests.test_pyramid_row_width", pattern_tests.test_pyramid_row_width) ? 1 : 0);
+    p1 = p1 + (run_single_test("pattern_tests.test_pyramid_total_chars", pattern_tests.test_pyramid_total_chars) ? 1 : 0);
+    p1 = p1 + (run_single_test("pattern_tests.test_pattern_border_predicate", pattern_tests.test_pattern_border_predicate) ? 1 : 0);
+    p1 = p1 + (run_single_test("pattern_tests.test_pattern_border_count", pattern_tests.test_pattern_border_count) ? 1 : 0);
+    let pattern_res = TestSuiteResult {
+        suite_name: "03_patterns",
+        total: 5,
+        passed: p1,
+        failed: 5 - p1,
+    };
+    print(`  Suite Result: ${p1}/5 tests passed\n`);
+
+    // Final Analytics Dashboard
+    print_analytics_dashboard(var_res, ctrl_res, pattern_res);
+}

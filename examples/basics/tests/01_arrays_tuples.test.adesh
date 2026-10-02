@@ -1,0 +1,137 @@
+// Array & Tuple Tests
+// Covers examples/basics/arrays.adesh (array literal, sizeof/typeof),
+// examples/basics/tuple_size_demo.adesh (tuple indexing, element types) and
+// examples/basics/data_structures_quicklook.adesh (array/tuple/object basics).
+
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+
+export fn sum(values: [int]): i32 {
+    let total = 0;
+    for (v in values) {
+        total = total + v;
+    }
+    return total;
+}
+
+export fn find_index(values: [int], target: i32): i32 {
+    let found = -1;
+    let i = 0;
+    while (i < values.len()) {
+        if (values[i] == target) {
+            found = i + 0;
+            break;
+        }
+        i = i + 1;
+    }
+    return found;
+}
+
+export fn build_sequence(n: i32): [i32] {
+    let out: [i32] = [];
+    let i = 1;
+    while (i <= n) {
+        out.push(i);
+        i = i + 1;
+    }
+    return out;
+}
+
+export fn join_with(values: [int], sep: string): string {
+    return values.join(sep);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_array_creation_and_indexing() {
+    let a = [1, 2, 3];
+    assert_eq(a.len(), 3);
+    assert_eq(a[0], 1);
+    assert_eq(a[2], 3);
+    a.push(4);
+    assert_eq(a.len(), 4);
+    assert_eq(a[3], 4);
+    a[0] = 9;
+    assert_eq(a[0], 9);
+    assert_eq(a.len(), 4);
+}
+
+export test fn test_array_methods() {
+    let a = [4, 8, 15, 16, 23, 42];
+    assert_eq(a.indexOf(15), 2);
+    assert_eq(a.indexOf(99), -1);
+    assert(a.includes(23), "includes 23");
+    assert(!a.includes(7), "does not include 7");
+    let concatted = a.concat([100, 200]);
+    assert_eq(concatted.len(), 8);
+    assert_eq(concatted[6], 100);
+    let sliced = a.slice(1, 3);
+    assert_eq(sliced.len(), 2);
+    assert_eq(sliced[0], 8);
+    assert_eq(a.join(","), "4,8,15,16,23,42");
+    let nested = [[1, 2], [3, 4]];
+    assert_eq(nested.flat().len(), 4);
+}
+
+export test fn test_array_search_helper() {
+    assert_eq(find_index([4, 8, 15, 16, 23, 42], 16), 3);
+    assert_eq(find_index([4, 8, 15], 99), -1);
+    assert_eq(find_index([], 1), -1);
+}
+
+export test fn test_array_transform_map() {
+    let doubled = [1, 2, 3].map((x) => x * 2);
+    assert_eq(doubled.len(), 3);
+    assert_eq(doubled[0], 2);
+    assert_eq(doubled[2], 6);
+    let negated = [1, 2, 3].map((x) => 0 - x);
+    assert_eq(negated[1], -2);
+}
+
+export test fn test_array_build_and_join() {
+    let seq = build_sequence(5);
+    assert_eq(seq.len(), 5);
+    assert_eq(seq[0], 1);
+    assert_eq(seq[4], 5);
+    assert_eq(join_with(seq, "-"), "1-2-3-4-5");
+    assert_eq(sum(seq), 15);
+    assert_eq(sum([]), 0);
+}
+
+export test fn test_tuple_access_and_types() {
+    let t = (10, 20, 30);
+    assert_eq(t[0], 10);
+    assert_eq(t[1], 20);
+    assert_eq(t[2], 30);
+    assert_eq(t[0] + t[1] + t[2], 60);
+    assert_eq(typeof(t), "tuple");
+    assert(sizeof(t) > 0, "tuple has size");
+    let neg = (-1000, 20, 30);
+    assert_eq(neg[0], -1000);
+    assert_eq(sizeof(neg), 28);
+    assert_eq(typeof(neg[0]), "i16");
+    assert_eq(sizeof(neg[0]), 2);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_array_creation_and_indexing();
+    test_array_methods();
+    test_array_search_helper();
+    test_array_transform_map();
+    test_array_build_and_join();
+    test_tuple_access_and_types();
+    return 6;
+}
+
+fn main() {
+    print("Running 01_arrays_tuples tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 01_arrays_tuples.test.adesh`);
+}

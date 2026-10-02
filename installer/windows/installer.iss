@@ -2,6 +2,18 @@
 ; AdeshLang Windows Distribution Installer Script (Inno Setup 6)
 ; Official Website: https://adeshlang.org
 ; Repository: https://github.com/adeshlang/adeshlang
+;
+; SELF-CONTAINED NATIVE TOOLCHAIN:
+;   The installer bundles the complete Adesh native toolchain — the native
+;   codegen engine, the ADOB object format, the adeshlink native linker
+;   (bin\adeshlink.exe), the adeshlang runtime library (lib\), and the
+;   standard library (std\). Setup NEVER downloads or asks the user to
+;   install LLVM, Clang, GCC, MSVC, or Visual Studio Build Tools.
+;
+;   External LLVM remains an opt-in bridge after installation:
+;     adesh gpu-check --external-linker     (verify an external LLVM)
+;     adesh toolchain --external install    (register external toolchains)
+;     adesh build --codegen=cranelift --external-linker
 ; =====================================================================
 
 #define MyAppURL "https://adeshlang.org"
@@ -20,6 +32,7 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
+AppComments=Self-contained native toolchain: no LLVM, GCC, or MSVC required
 AppCopyright=Copyright (C) 2026 AdeshLang (adeshlang.org)
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=AdeshLang Programming Language Setup
@@ -40,45 +53,47 @@ ChangesEnvironment=yes
 SetupIconFile=resources\installer.ico
 UninstallDisplayName={#MyAppName} {#MyAppVersion}
 UninstallDisplayIcon={app}\bin\{#MyAppExeName}
-ExtraDiskSpaceRequired=1939865600
+; Headroom on top of the bundled payload (binaries, runtime lib, stdlib,
+; AI model): the native toolchain ships inside this package, so no multi-GB
+; toolchain download allowance is required anymore.
+ExtraDiskSpaceRequired=209715200
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "downloadtoolchain"; Description: "Install pinned LLVM 18.1.8 Toolchain (Clang compiler, LLD linker, llvm-ar, llc; required for AOT & GPU compilation, ~1.5 GB)"; Flags: checkedonce; Check: ShouldShowToolchain
-Name: "vsbuildtools"; Description: "Install Visual Studio Build Tools + Windows SDK (required for Windows MSVC CRT linking: ucrt.lib, msvcrt.lib, legacy_stdio_definitions.lib, ~2 GB)"; Flags: checkedonce; Check: ShouldShowVSBuildTools
-Name: "python"; Description: "Install Python 3.12 (required for full AI features: `adesh ai train/evaluate/generate` and MLIR source builds)"; Flags: unchecked; Check: ShouldShowPython
-Name: "buildmlir"; Description: "Build MLIR GPU tools from source (adds 30–90 minutes; requires Visual Studio C++ Build Tools + CMake + Python 3)"; Flags: unchecked
 Name: "fileassoc"; Description: "Associate .adl and .adesh source files with AdeshLang"; Flags: unchecked
+Name: "python"; Description: "Install Python 3.12 (optional; only for AI model training: `adesh ai train` and MLIR source builds)"; Flags: unchecked; Check: ShouldShowPython
 
 [Files]
-; The distribution staging script supplies all files below. The toolchain is
-; downloaded and configured by `adesh toolchain install` at install time with live logs.
-;
-; Temporary files unpacked to {tmp} for bootstrapping
-Source: "..\..\dist\windows-x86_64\bin\adesh.exe"; DestDir: "{tmp}"; Flags: ignoreversion deleteafterinstall
-Source: "..\manifests\toolchain-manifest.json"; DestDir: "{tmp}"; Flags: ignoreversion deleteafterinstall
-; Core application files
+; Core application files — the full self-contained native toolchain is
+; staged by scripts\release\build_windows_dist.ps1 into dist\windows-x86_64:
+;   bin\  adesh.exe, adl.exe, als.exe, adesh-editor.exe, adeshlink.exe
+;   lib\  adeshlang.dll / adeshlang.lib (runtime library)
+;   std\  standard library sources
+;   ai\   bundled AI model + deployment configs
 Source: "..\..\dist\windows-x86_64\bin\*"; DestDir: "{app}\bin"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\..\dist\windows-x86_64\lib\*"; DestDir: "{app}\lib"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "..\..\dist\windows-x86_64\std\*"; DestDir: "{app}\std"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\..\dist\windows-x86_64\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\..\dist\windows-x86_64\ai\*"; DestDir: "{app}\ai"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+; Pinned manifest for the OPT-IN external LLVM bridge
+; (`adesh toolchain --external install`). Not used by the native pipeline.
 Source: "..\manifests\toolchain-manifest.json"; DestDir: "{app}\config"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\AdeshLang Doctor"; Filename: "{app}\bin\{#MyAppExeName}"; Parameters: "doctor"
 Name: "{group}\AdeshLang TUI Editor"; Filename: "{app}\bin\adesh-editor.exe"; Check: EditorExists
+Name: "{group}\AdeshLang Native Toolchain Check"; Filename: "{app}\bin\{#MyAppExeName}"; Parameters: "toolchain check"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 
 [Registry]
-; ADESH_HOME is machine-wide because this installer runs elevated.
+; ADESH_HOME is machine-wide because this installer runs elevated. Only the
+; native installation paths are registered: the bundled native toolchain
+; needs no ADESH_TOOLCHAIN/ADESH_CLANG/ADESH_LLC variables, so we do not set
+; them (they would shadow an external LLVM the user configured later).
 Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: string; ValueName: "ADESH_HOME"; ValueData: "{app}"; Flags: preservestringtype
-Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: string; ValueName: "ADESH_TOOLCHAIN"; ValueData: "{app}\toolchain\llvm"; Flags: preservestringtype
-Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: string; ValueName: "ADESH_CLANG"; ValueData: "{app}\toolchain\llvm\bin\clang.exe"; Flags: preservestringtype
-Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: string; ValueName: "ADESH_LLC"; ValueData: "{app}\toolchain\llvm\bin\llc.exe"; Flags: preservestringtype
-; Preserve existing system PATH and append AdeshLang bin and toolchain bin directories
+; Preserve existing system PATH and append the AdeshLang bin directory
 Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: expandsz; ValueName: "PATH"; ValueData: "{code:GetSystemPathWithBin}"; Flags: preservestringtype
 
 ; Registry file associations for .adl and .adesh source code files
@@ -90,13 +105,13 @@ Root: HKA; Subkey: "Software\Classes\AdeshLangSourceFile\shell\open\command"; Va
 
 [UninstallDelete]
 Type: files; Name: "{app}\install.log"
-Type: files; Name: "{app}\toolchain-install.log"
+; {app}\toolchain only exists when the user later registered an external
+; LLVM bridge there (`adesh toolchain --external install`), never from setup.
 Type: filesandordirs; Name: "{app}\toolchain"
 
 [Code]
 const
   SystemEnvironmentKey = 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment';
-  VSBuildToolsURL = 'https://aka.ms/vs/17/release/vs_buildtools.exe';
   WM_VSCROLL = $0115;
   SB_BOTTOM = 7;
 
@@ -135,7 +150,8 @@ end;
 
 procedure InitializeWizard;
 begin
-  // Create a live terminal log memo on the Installing page for real-time progress visibility
+  // Create a live terminal log memo on the Installing page for real-time
+  // progress visibility of the native toolchain verification.
   LogLabel := TLabel.Create(WizardForm);
   LogLabel.Parent := WizardForm.InstallingPage;
   LogLabel.Left := WizardForm.ProgressGauge.Left;
@@ -234,10 +250,11 @@ function GetSystemPathWithBin(Param: String): String;
 var
   PathValue: String;
   BinDir: String;
-  LLVMBinDir: String;
 begin
+  // Only the AdeshLang bin directory is appended: the native toolchain is
+  // bundled there, and the external-bridge toolchain (if a user registers
+  // one later) manages its own PATH exposure.
   BinDir := ExpandConstant('{app}\bin');
-  LLVMBinDir := ExpandConstant('{app}\toolchain\llvm\bin');
   if not RegQueryStringValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'PATH', PathValue) then
     PathValue := '';
   if not PathHasEntry(PathValue, BinDir) then
@@ -247,120 +264,7 @@ begin
     else
       PathValue := PathValue + ';' + BinDir;
   end;
-  if not PathHasEntry(PathValue, LLVMBinDir) then
-  begin
-    PathValue := PathValue + ';' + LLVMBinDir;
-  end;
   Result := PathValue;
-end;
-
-function HasToolchain: Boolean;
-var
-  ToolchainBin: String;
-begin
-  Result := False;
-  ToolchainBin := ExpandConstant('{app}\toolchain\llvm\bin');
-  if (FileExists(ToolchainBin + '\clang.exe') and (FileExists(ToolchainBin + '\lld-link.exe') or FileExists(ToolchainBin + '\lld.exe'))) or
-     (FileExists(ExpandConstant('{pf}\LLVM\bin\clang.exe')) and (FileExists(ExpandConstant('{pf}\LLVM\bin\lld-link.exe')) or FileExists(ExpandConstant('{pf}\LLVM\bin\lld.exe')))) or
-     (FileExists(ExpandConstant('{pf64}\LLVM\bin\clang.exe')) and (FileExists(ExpandConstant('{pf64}\LLVM\bin\lld-link.exe')) or FileExists(ExpandConstant('{pf64}\LLVM\bin\lld.exe')))) or
-     (FileExists(ExpandConstant('{pf32}\LLVM\bin\clang.exe')) and (FileExists(ExpandConstant('{pf32}\LLVM\bin\lld-link.exe')) or FileExists(ExpandConstant('{pf32}\LLVM\bin\lld.exe')))) or
-     (FileExists(ExpandConstant('{sd}\LLVM\bin\clang.exe')) and (FileExists(ExpandConstant('{sd}\LLVM\bin\lld-link.exe')) or FileExists(ExpandConstant('{sd}\LLVM\bin\lld.exe')))) then
-  begin
-    Result := True;
-    Exit;
-  end;
-  if (ExpandConstant('{%ADESH_TOOLCHAIN}') <> '') or (ExpandConstant('{%ADESH_CLANG}') <> '') then
-  begin
-    Result := True;
-    Exit;
-  end;
-end;
-
-function ShouldShowToolchain: Boolean;
-begin
-  Result := not HasToolchain;
-end;
-
-function HasVSBuildTools: Boolean;
-var
-  VSWherePath: String;
-  ResultCode: Integer;
-  PFDirs: array[0..3] of String;
-  Years: array[0..3] of String;
-  Editions: array[0..4] of String;
-  i, j, k: Integer;
-  Candidate: String;
-begin
-  Result := False;
-
-  // 1. Check vswhere.exe query dynamically across all Program Files folders
-  VSWherePath := ExpandConstant('{pf32}\Microsoft Visual Studio\Installer\vswhere.exe');
-  if not FileExists(VSWherePath) then
-    VSWherePath := ExpandConstant('{pf64}\Microsoft Visual Studio\Installer\vswhere.exe');
-  if not FileExists(VSWherePath) then
-    VSWherePath := ExpandConstant('{pf}\Microsoft Visual Studio\Installer\vswhere.exe');
-
-  if FileExists(VSWherePath) then
-  begin
-    if Exec(VSWherePath, '-latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
-    begin
-      Result := True;
-      Exit;
-    end;
-  end;
-
-  // 2. Dynamically check all Program Files directories, system drive, and editions
-  PFDirs[0] := ExpandConstant('{pf64}\Microsoft Visual Studio');
-  PFDirs[1] := ExpandConstant('{pf32}\Microsoft Visual Studio');
-  PFDirs[2] := ExpandConstant('{pf}\Microsoft Visual Studio');
-  PFDirs[3] := ExpandConstant('{sd}\Microsoft Visual Studio');
-
-  Years[0] := '2022';
-  Years[1] := '2019';
-  Years[2] := '2017';
-  Years[3] := '2025';
-
-  Editions[0] := 'BuildTools';
-  Editions[1] := 'Community';
-  Editions[2] := 'Professional';
-  Editions[3] := 'Enterprise';
-  Editions[4] := 'Preview';
-
-  for i := 0 to 3 do
-  begin
-    for j := 0 to 3 do
-    begin
-      for k := 0 to 4 do
-      begin
-        Candidate := PFDirs[i] + '\' + Years[j] + '\' + Editions[k] + '\VC\Tools\MSVC';
-        if DirExists(Candidate) then
-        begin
-          Result := True;
-          Exit;
-        end;
-      end;
-    end;
-  end;
-
-  // 3. Check Visual Studio Installer Instances registry
-  if RegKeyExists(HKEY_LOCAL_MACHINE, 'SOFTWARE\Microsoft\VisualStudio\Setup\Instances') or
-     RegKeyExists(HKEY_LOCAL_MACHINE, 'SOFTWARE\WOW6432Node\Microsoft\VisualStudio\Setup\Instances') then
-  begin
-    Result := True;
-    Exit;
-  end;
-
-  // 4. Check environment variables
-  if (ExpandConstant('{%VCToolsInstallDir}') <> '') or (ExpandConstant('{%VSINSTALLDIR}') <> '') then
-  begin
-    Result := True;
-    Exit;
-  end;
-end;
-
-function ShouldShowVSBuildTools: Boolean;
-begin
-  Result := not HasVSBuildTools;
 end;
 
 function HasPython: Boolean;
@@ -434,7 +338,6 @@ var
   Done: Boolean;
   DoneFilePath: String;
   ExitCodeFilePath: String;
-  IterCount: Integer;
 begin
   LogMessage('▶ Starting ' + Title + '...');
   TempLogPath := ExpandConstant('{tmp}\adesh_step_output.log');
@@ -446,7 +349,8 @@ begin
 
   PowerShellPath := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
 
-  // Launch the command via PowerShell and stream output to a temporary log file while tracking status
+  // Launch the command via PowerShell and stream output to a temporary log
+  // file while tracking status.
   RunnerScript :=
     '$env:ADESH_HOME = ''' + ExpandConstant('{app}') + '''; ' +
     '& ''' + ExePath + ''' ' + Args + ' 2>&1 | Tee-Object -FilePath ''' + TempLogPath + '''; ' +
@@ -465,14 +369,10 @@ begin
 
   LastLineRead := 0;
   Done := False;
-  IterCount := 0;
 
   while not Done do
   begin
     Sleep(120);
-    IterCount := IterCount + 1;
-    if LogMemo <> nil then
-      LogMemo.Refresh;
     WizardForm.Refresh;
 
     if FileExists(TempLogPath) then
@@ -487,7 +387,7 @@ begin
           end;
           LastLineRead := LastLineRead + 1;
         end;
-      end;
+      end
     end;
 
     if FileExists(DoneFilePath) then
@@ -546,7 +446,7 @@ var
   PythonURL: String;
 begin
   LogMessage('====================================================');
-  LogMessage('Python 3.12 Setup (for full AI neural engine)');
+  LogMessage('Python 3.12 Setup (optional; AI model training only)');
   LogMessage('====================================================');
 
   PythonURL := 'https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe';
@@ -582,81 +482,53 @@ begin
     ExpandConstant('{tmp}'));
 end;
 
-function InstallVSBuildTools: Boolean;
-var
-  InstallerPath: String;
-  DownloadCommand: String;
-  ResultCode: Integer;
-  PowerShellPath: String;
-begin
-  LogMessage('====================================================');
-  LogMessage('Visual Studio Build Tools & Windows SDK Setup');
-  LogMessage('====================================================');
-
-  InstallerPath := ExpandConstant('{tmp}\vs_buildtools.exe');
-  PowerShellPath := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
-
-  // Try winget first if available
-  LogMessage('Checking system package manager (winget) for VS Build Tools...');
-  if Exec('winget.exe', 'install --id Microsoft.VisualStudio.2022.BuildTools --override "--passive --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended" --source winget --silent --accept-package-agreements --accept-source-agreements',
-      '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and ((ResultCode = 0) or (ResultCode = 3010)) then
-  begin
-    LogMessage('✓ Visual Studio Build Tools installed via winget.');
-    Result := True;
-    Exit;
-  end;
-
-  // Fallback to web download
-  LogMessage('Downloading Visual Studio Build Tools bootstrapper...');
-  DownloadCommand := '$ProgressPreference=''SilentlyContinue''; Invoke-WebRequest -UseBasicParsing -Uri ''' +
-    VSBuildToolsURL + ''' -OutFile ''' + InstallerPath + '''';
-  if not Exec(PowerShellPath,
-      '-NoLogo -NoProfile -ExecutionPolicy Bypass -Command "' + DownloadCommand + '"',
-      '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
-  begin
-    LogMessage('✗ Failed to download Visual Studio Build Tools bootstrapper.');
-    Result := False;
-    Exit;
-  end;
-
-  LogMessage('Running Visual Studio Build Tools installer (MSVC C++ Tools + Windows SDK)...');
-  Result := RunCommandWithLiveLog('Visual Studio Build Tools',
-    InstallerPath,
-    '--passive --wait --norestart --nocache --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended',
-    ExpandConstant('{tmp}'));
-end;
-
-function InstallToolchain: Boolean;
+function VerifyNativeToolchain: Boolean;
 var
   AdeshPath: String;
-  ManifestPath: String;
-  Arguments: String;
+  LinkerPath: String;
+  RuntimeLib: String;
 begin
   LogMessage('====================================================');
-  LogMessage('AdeshLang Pinned LLVM 18.1.8 Toolchain Setup');
+  LogMessage('Verifying Bundled Native Toolchain Components');
   LogMessage('====================================================');
 
   AdeshPath := ExpandConstant('{app}\bin\adesh.exe');
+  LinkerPath := ExpandConstant('{app}\bin\adeshlink.exe');
+
   if not FileExists(AdeshPath) then
-    AdeshPath := ExpandConstant('{tmp}\adesh.exe');
+  begin
+    LogMessage('✗ Core compiler binary missing: ' + AdeshPath);
+    Result := False;
+    Exit;
+  end;
+  LogMessage('✓ Core compiler        : ' + AdeshPath);
 
-  ManifestPath := ExpandConstant('{app}\config\toolchain-manifest.json');
-  if not FileExists(ManifestPath) then
-    ManifestPath := ExpandConstant('{tmp}\toolchain-manifest.json');
+  if FileExists(LinkerPath) then
+    LogMessage('✓ Native linker       : ' + LinkerPath)
+  else
+    LogMessage('! Native linker CLI   : adeshlink.exe not bundled (builds use the in-process linker)');
 
-  Arguments := 'toolchain install --system --manifest "' + ManifestPath + '"';
-  if WizardIsTaskSelected('buildmlir') then
-    Arguments := Arguments + ' --build-mlir-source';
+  RuntimeLib := ExpandConstant('{app}\lib\adeshlang.dll');
+  if FileExists(RuntimeLib) then
+    LogMessage('✓ Runtime library     : ' + RuntimeLib)
+  else
+    LogMessage('! Runtime library     : adeshlang.dll not bundled (AOT native builds may need it)');
 
-  Result := RunCommandWithLiveLog('LLVM/Clang Toolchain Installer',
+  if DirExists(ExpandConstant('{app}\std')) then
+    LogMessage('✓ Standard library    : ' + ExpandConstant('{app}\std'))
+  else
+    LogMessage('! Standard library    : std\ missing');
+
+  // Ask adesh itself to self-verify its native components.
+  Result := RunCommandWithLiveLog('Native Toolchain Self-Check',
     AdeshPath,
-    Arguments,
+    'toolchain check',
     ExpandConstant('{app}'));
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  ToolchainBin: String;
+  ToolchainOk: Boolean;
 begin
   if CurStep = ssInstall then
   begin
@@ -664,40 +536,28 @@ begin
     LogMessage('====================================================');
     LogMessage('AdeshLang v0.3.0 Installation Started');
     LogMessage('Target: ' + ExpandConstant('{app}'));
+    LogMessage('Bundled native toolchain: codegen + adeshlink + ADOB + runtime');
+    LogMessage('(no external LLVM, GCC, or MSVC downloads required)');
     LogMessage('====================================================');
   end
   else if CurStep = ssPostInstall then
   begin
-    LogMessage('✓ Core binaries, standard library, and runtime extracted.');
+    LogMessage('✓ Core binaries, native linker, runtime, standard library extracted.');
 
-    if WizardIsTaskSelected('vsbuildtools') and not HasVSBuildTools then
-      InstallVSBuildTools;
-
+    // Optional AI-model-training Python install (unchecked task; never part
+    // of compilation).
     if WizardIsTaskSelected('python') and not HasPython then
       InstallPython;
 
-    if WizardIsTaskSelected('downloadtoolchain') or WizardIsTaskSelected('buildmlir') then
-      InstallToolchain;
-
-    // Register active toolchain executables into HKLM
-    ToolchainBin := ExpandConstant('{app}\toolchain\llvm\bin');
-    if FileExists(ToolchainBin + '\clang.exe') then
-      RegWriteStringValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_CLANG', ToolchainBin + '\clang.exe');
-    if FileExists(ToolchainBin + '\llc.exe') then
-      RegWriteStringValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_LLC', ToolchainBin + '\llc.exe');
-    if FileExists(ToolchainBin + '\mlir-opt.exe') then
-      RegWriteStringValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_MLIR_OPT', ToolchainBin + '\mlir-opt.exe');
-    if FileExists(ToolchainBin + '\mlir-translate.exe') then
-      RegWriteStringValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_MLIR_TRANSLATE', ToolchainBin + '\mlir-translate.exe');
-
-    // Promote the toolchain log into the program directory
-    if FileExists(ExpandConstant('{tmp}\adesh-toolchain-install.log')) then
-      FileCopy(ExpandConstant('{tmp}\adesh-toolchain-install.log'),
-        ExpandConstant('{app}\toolchain-install.log'), False);
+    // Self-verify the bundled native toolchain with live logs.
+    ToolchainOk := VerifyNativeToolchain;
 
     LogMessage('====================================================');
-    LogMessage('✓ AdeshLang Installation Complete!');
-    LogMessage('Run `adesh doctor` or `adl doctor` in terminal to verify health.');
+    if ToolchainOk then
+      LogMessage('✓ AdeshLang Installation Complete! Native toolchain verified.')
+    else
+      LogMessage('! AdeshLang installed, but native toolchain verification reported issues.');
+    LogMessage('Run `adesh doctor` in a terminal to double-check health.');
     LogMessage('====================================================');
   end;
 end;
@@ -713,19 +573,26 @@ begin
 
     FinishText := 'AdeshLang v0.3.0 has been installed successfully!' + #13#10 + #13#10;
 
+    FinishText := FinishText +
+      '═══════════════════════════════════════════════════════' + #13#10 +
+      ' [Self-Contained Native Toolchain]' + #13#10 +
+      '═══════════════════════════════════════════════════════' + #13#10 +
+      ' • Native codegen, ADOB object format, adeshlink linker, and the' + #13#10 +
+      '   adeshlang runtime are bundled — nothing else to install.' + #13#10 +
+      ' • No external LLVM, Clang, GCC, MSVC, or Visual Studio Build' + #13#10 +
+      '   Tools are required to compile and run Adesh programs.' + #13#10 + #13#10;
+
     if not HasModel then
     begin
       FinishText := FinishText +
         '═══════════════════════════════════════════════════════' + #13#10 +
         ' [AI Features & Model Setup]' + #13#10 +
         '═══════════════════════════════════════════════════════' + #13#10 +
-        ' • AI models are not bundled with this lightweight installer.' + #13#10 +
+        ' • AI models are not bundled with this installer.' + #13#10 +
         ' • To download and set up the local AI neural coder model (~275 MB):' + #13#10 +
         '     adesh ai setup' + #13#10 +
-        ' • To train or fine-tune custom AI models, Python 3.12 is required:' + #13#10 +
-        '     winget install Python.Python.3.12' + #13#10 +
-        ' • To generate code once model is setup:' + #13#10 +
-        '     adesh ai generate "create an HTTP server"' + #13#10 + #13#10;
+        ' • AI model training (optional) additionally needs Python 3.12:' + #13#10 +
+        '     winget install Python.Python.3.12' + #13#10 + #13#10;
     end
     else
     begin
@@ -739,13 +606,18 @@ begin
 
     FinishText := FinishText +
       '═══════════════════════════════════════════════════════' + #13#10 +
-      ' [Quick Start & Toolchain Verification]' + #13#10 +
+      ' [Quick Start]' + #13#10 +
       '═══════════════════════════════════════════════════════' + #13#10 +
       ' • Verify health & toolchains:  adesh doctor' + #13#10 +
+      ' • GPU device compatibility:    adesh gpu-check' + #13#10 +
       ' • Launch TUI editor:           adesh edit (or adesh-editor)' + #13#10 +
-      ' • Run Adesh source file:        adesh run hello.adesh' + #13#10 +
-      ' • AOT native compilation:       adesh build hello.adesh' + #13#10 +
-      ' • GPU kernel compilation:       adesh build --gpu=cuda kernel.adesh' + #13#10 + #13#10 +
+      ' • Run Adesh source file:       adesh run hello.adesh' + #13#10 +
+      ' • AOT native compilation:      adesh build hello.adesh' + #13#10 +
+      ' • GPU kernel compilation:      adesh build --gpu=cuda kernel.adesh' + #13#10 + #13#10 +
+      ' [Optional External LLVM Bridge]' + #13#10 +
+      ' • Verify an external LLVM:     adesh gpu-check --external-linker' + #13#10 +
+      ' • Register one:                adesh toolchain --external install' + #13#10 +
+      ' • Link through it:             adesh build --codegen=cranelift --external-linker' + #13#10 + #13#10 +
       'Documentation & Guides: https://adeshlang.org';
 
     if FinishedMemo <> nil then
@@ -758,33 +630,42 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   PathValue: String;
+  EnvValue: String;
   BinDir: String;
-  LLVMBinDir: String;
 begin
   if CurUninstallStep = usUninstall then
   begin
     BinDir := ExpandConstant('{app}\bin');
-    LLVMBinDir := ExpandConstant('{app}\toolchain\llvm\bin');
     if RegQueryStringValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'PATH', PathValue) then
     begin
       PathValue := RemovePathEntry(PathValue, BinDir);
-      PathValue := RemovePathEntry(PathValue, LLVMBinDir);
-      PathValue := RemovePathEntry(PathValue, ExpandConstant('{pf}\LLVM\bin'));
-      PathValue := RemovePathEntry(PathValue, ExpandConstant('{pf64}\LLVM\bin'));
-      PathValue := RemovePathEntry(PathValue, ExpandConstant('{pf32}\LLVM\bin'));
       RegWriteExpandStringValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'PATH', PathValue);
     end;
     RegDeleteValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_HOME');
-    RegDeleteValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_TOOLCHAIN');
-    RegDeleteValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_CLANG');
-    RegDeleteValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_LLC');
-    RegDeleteValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_MLIR_OPT');
-    RegDeleteValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_MLIR_TRANSLATE');
+
+    // Only remove toolchain variables that still point into this
+    // installation (i.e. the user registered an external bridge there);
+    // never touch values pointing at an external LLVM elsewhere.
+    if RegQueryStringValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_TOOLCHAIN', EnvValue) and
+       (Pos(ExpandConstant('{app}'), EnvValue) = 1) then
+      RegDeleteValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_TOOLCHAIN');
+    if RegQueryStringValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_CLANG', EnvValue) and
+       (Pos(ExpandConstant('{app}'), EnvValue) = 1) then
+      RegDeleteValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_CLANG');
+    if RegQueryStringValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_LLC', EnvValue) and
+       (Pos(ExpandConstant('{app}'), EnvValue) = 1) then
+      RegDeleteValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_LLC');
+    if RegQueryStringValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_MLIR_OPT', EnvValue) and
+       (Pos(ExpandConstant('{app}'), EnvValue) = 1) then
+      RegDeleteValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_MLIR_OPT');
+    if RegQueryStringValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_MLIR_TRANSLATE', EnvValue) and
+       (Pos(ExpandConstant('{app}'), EnvValue) = 1) then
+      RegDeleteValue(HKEY_LOCAL_MACHINE, SystemEnvironmentKey, 'ADESH_MLIR_TRANSLATE');
   end
   else if CurUninstallStep = usPostUninstall then
   begin
     if DirExists(ExpandConstant('{pf}\LLVM\bin')) or DirExists(ExpandConstant('{pf64}\LLVM\bin')) then
-      MsgBox('AdeshLang has been removed, including the LLVM toolchain it installed.' +
+      MsgBox('AdeshLang has been removed, including the bundled native toolchain.' +
         Chr(13) + Chr(10) + Chr(13) + Chr(10) +
         'A separate system LLVM installation was found and left untouched.',
         mbInformation, MB_OK);

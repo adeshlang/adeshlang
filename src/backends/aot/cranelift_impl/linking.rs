@@ -6,6 +6,35 @@ use target_lexicon::Triple;
 
 use crate::backends::aot::cranelift::{AotOptions, OutputFormat};
 
+/// Adesh-level directives that select the external LLVM linker. They are not
+/// real linker options, so they must be stripped before forwarding
+/// `extra_linker_args` to clang/lld.
+const EXTERNAL_LINKER_TRIGGER_ARGS: &[&str] = &[
+    "--external-linker",
+    "--external-toolchain",
+    "--use-llvm",
+    "-fuse-ld=lld",
+];
+
+pub(crate) fn is_external_linker_trigger(arg: &str) -> bool {
+    EXTERNAL_LINKER_TRIGGER_ARGS.contains(&arg)
+}
+
+fn wants_external_linker(options: &AotOptions) -> bool {
+    options
+        .extra_linker_args
+        .iter()
+        .any(|a| is_external_linker_trigger(a))
+}
+
+/// `extra_linker_args` with the external-linker directives removed.
+fn forwarded_linker_args(options: &AotOptions) -> impl Iterator<Item = &String> {
+    options
+        .extra_linker_args
+        .iter()
+        .filter(|a| !is_external_linker_trigger(a))
+}
+
 /// Link object files using self-contained native Adesh Linker (primary default)
 pub(crate) fn link_with_linker_driver(
     options: &AotOptions,
@@ -15,20 +44,7 @@ pub(crate) fn link_with_linker_driver(
     target_triple: &Triple,
 ) -> Result<(), String> {
     // Check if user explicitly requested external toolchain mode
-    let force_external = options
-        .flags
-        .get("use_external_toolchain")
-        .map_or(false, |v| v == "true" || v == "1")
-        || options
-            .flags
-            .get("use_llvm_linker")
-            .map_or(false, |v| v == "true" || v == "1")
-        || options
-            .extra_linker_args
-            .iter()
-            .any(|a| a == "--external-toolchain" || a == "--use-llvm" || a == "-fuse-ld=lld");
-
-    if force_external {
+    if wants_external_linker(options) {
         return link_with_llvm_toolchain(
             options,
             obj_path,
@@ -48,7 +64,8 @@ pub(crate) fn link_with_linker_driver(
         }
         Err(linker_err) => Err(format!(
             "ERROR:\nNative Adesh linker failed: {}\n\n\
-                Use `--external-toolchain` if you explicitly wish to invoke an external compiler/linker.",
+                Use `--external-linker` (or legacy `--external-toolchain`) if you explicitly \
+                wish to invoke an external compiler/linker.",
             linker_err
         )),
     }
@@ -61,79 +78,73 @@ pub(crate) fn link_library_only(
     output: &Path,
     target_triple: &Triple,
 ) -> Result<(), String> {
-    let force_external = options
-        .flags
-        .get("use_external_toolchain")
-        .map_or(false, |v| v == "true" || v == "1")
-        || options
-            .flags
-            .get("use_llvm_linker")
-            .map_or(false, |v| v == "true" || v == "1")
-        || options
-            .extra_linker_args
-            .iter()
-            .any(|a| a == "--external-toolchain" || a == "--use-llvm");
+    // Native adeshlink archiver/linker is the default for library outputs.
+    // The external LLVM path (llvm-ar, clang + lld) is only used when the
+    // user explicitly requested it with `--external-linker`.
+    if !wants_external_linker(options) {
+        return link_with_adesh_linker(options, obj_path, None, output, target_triple).map_err(
+            |linker_err| {
+                format!(
+                    "ERROR:\nNative Adesh linker failed: {}\n\n\
+                     Use `--external-linker` (or legacy `--external-toolchain`) if you explicitly \
+                     wish to invoke an external compiler/linker.",
+                    linker_err
+                )
+            },
+        );
+    }
 
-    match link_with_adesh_linker(options, obj_path, None, output, target_triple) {
-        Ok(()) => Ok(()),
-        Err(linker_err) => {
-            if force_external {
-                match options.output_format {
-                    OutputFormat::StaticLib => {
-                        let clang_path = find_clang()?;
-                        let llvm_bin = clang_path.parent().ok_or("Invalid clang path")?;
-                        let ar_name = if cfg!(windows) {
-                            "llvm-ar.exe"
-                        } else {
-                            "llvm-ar"
-                        };
-                        let ar_path = llvm_bin.join(ar_name);
-                        let mut cmd = Command::new(if ar_path.exists() {
-                            ar_path
-                        } else {
-                            std::path::PathBuf::from("ar")
-                        });
-                        cmd.arg("rcs").arg(output).arg(obj_path);
-                        let result = cmd
-                            .output()
-                            .map_err(|e| format!("Failed to run ar: {}", e))?;
-                        if result.status.success() {
-                            Ok(())
-                        } else {
-                            Err(format!(
-                                "Static library archiving failed: {}",
-                                String::from_utf8_lossy(&result.stderr)
-                            ))
-                        }
-                    }
-                    OutputFormat::SharedLib => {
-                        let clang_path = find_clang()?;
-                        let mut cmd = Command::new(&clang_path);
-                        cmd.arg("-shared").arg("-fuse-ld=lld");
-                        cmd.arg(format!("--target={}", target_triple));
-                        cmd.arg("-o").arg(output).arg(obj_path);
-                        let result = cmd
-                            .output()
-                            .map_err(|e| format!("Failed to run clang: {}", e))?;
-                        if result.status.success() {
-                            Ok(())
-                        } else {
-                            Err(format!(
-                                "Shared library linking failed: {}",
-                                String::from_utf8_lossy(&result.stderr)
-                            ))
-                        }
-                    }
-                    _ => Err("link_library_only called for non-library format".to_string()),
-                }
+    // Explicit external LLVM toolchain mode (llvm-ar / clang + lld).
+    match options.output_format {
+        OutputFormat::StaticLib => {
+            let clang_path = find_clang()?;
+            let llvm_bin = clang_path.parent().ok_or("Invalid clang path")?;
+            let ar_name = if cfg!(windows) {
+                "llvm-ar.exe"
+            } else {
+                "llvm-ar"
+            };
+            let ar_path = llvm_bin.join(ar_name);
+            let mut cmd = Command::new(if ar_path.exists() {
+                ar_path
+            } else {
+                std::path::PathBuf::from("ar")
+            });
+            cmd.arg("rcs").arg(output).arg(obj_path);
+            let result = cmd
+                .output()
+                .map_err(|e| format!("Failed to run ar: {}", e))?;
+            if result.status.success() {
+                Ok(())
             } else {
                 Err(format!(
-                    "ERROR:\nNative Adesh linker failed: {}\n\n\
-                    Use `--external-toolchain` if you explicitly wish to invoke an external compiler/linker.",
-                    linker_err
+                    "Static library archiving failed: {}",
+                    String::from_utf8_lossy(&result.stderr)
                 ))
             }
         }
+        OutputFormat::SharedLib => {
+            let clang_path = find_clang()?;
+            let mut cmd = Command::new(&clang_path);
+            cmd.arg("-shared").arg("-fuse-ld=lld");
+            cmd.arg(format!("--target={}", target_triple));
+            cmd.arg("-o").arg(output).arg(obj_path);
+            for arg in forwarded_linker_args(options) {
+                cmd.arg(arg);
+            }
+            let result = cmd
+                .output()
+                .map_err(|e| format!("Failed to run clang: {}", e))?;
+            if result.status.success() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "Shared library linking failed: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                ))
+            }
+        }
+        _ => Err("link_library_only called for non-library format".to_string()),
     }
 }
 
@@ -377,7 +388,7 @@ fn link_with_lld_link(
             cmd.arg(format!("{}.lib", lib));
         }
     }
-    for arg in &options.extra_linker_args {
+    for arg in forwarded_linker_args(options) {
         cmd.arg(arg);
     }
 
@@ -472,7 +483,7 @@ fn link_with_clang_lld(
     for lib in &options.link_libs {
         cmd.arg(format!("-l{}", lib));
     }
-    for arg in &options.extra_linker_args {
+    for arg in forwarded_linker_args(options) {
         cmd.arg(arg);
     }
 

@@ -1,0 +1,159 @@
+// Loop & Control-Flow Tests
+// Exercises the loop constructs demonstrated by examples/loops/*.adesh
+
+// ─────────────────────────────────────────────────────────────
+// Helpers (mirrors the example logic, kept pure for assertions)
+// ─────────────────────────────────────────────────────────────
+
+export fn sum_to(n: i32): i32 {
+    let total = 0;
+    let i = 1;
+    while (i <= n) {
+        total = total + i;
+        i = i + 1;
+    }
+    return total;
+}
+
+export fn countdown_collect(n: i32): i32 {
+    let values: [i32] = [];
+    let i = n;
+    while (i >= 1) {
+        values.push(i);
+        i = i - 1;
+    }
+    let sum = 0;
+    for (v in values) {
+        sum = sum + v;
+    }
+    return sum;
+}
+
+export fn array_sum(values: [int]): i32 {
+    let total = 0;
+    for (v in values) {
+        total = total + v;
+    }
+    return total;
+}
+
+export fn run_at_least_once(times: i32): i32 {
+    let count = 0;
+    do {
+        count = count + 1;
+    } while (count < times);
+    return count;
+}
+
+export fn first_multiple_of_seven(values: [int]): i32 {
+    let found = -1;
+    for (v in values) {
+        if (v % 7 == 0) {
+            found = v;
+            break;
+        }
+    }
+    return found;
+}
+
+export fn sum_excluding(values: [int], skip: i32): i32 {
+    let total = 0;
+    for (v in values) {
+        if (v == skip) {
+            continue;
+        }
+        total = total + v;
+    }
+    return total;
+}
+
+export fn multiplication_table_sum(rows: i32, cols: i32): i32 {
+    let total = 0;
+    let r = 1;
+    while (r <= rows) {
+        let c = 1;
+        while (c <= cols) {
+            total = total + (r * c);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    return total;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_while_countdown_sum() {
+    assert_eq(sum_to(10), 55);
+    assert_eq(sum_to(1), 1);
+    assert_eq(sum_to(0), 0);
+}
+
+export test fn test_do_while_runs_at_least_once() {
+    assert_eq(run_at_least_once(3), 3);
+    assert_eq(run_at_least_once(1), 1);
+}
+
+export test fn test_for_over_array() {
+    assert_eq(array_sum([1, 2, 3, 4, 5]), 15);
+    assert_eq(array_sum([]), 0);
+    assert_eq(array_sum([-2, 2]), 0);
+}
+
+export test fn test_while_collects_values() {
+    assert_eq(countdown_collect(5), 15);
+    assert_eq(countdown_collect(1), 1);
+}
+
+export test fn test_break_exits_early() {
+    assert_eq(first_multiple_of_seven([1, 2, 3, 14, 21]), 14);
+    assert_eq(first_multiple_of_seven([1, 2, 3]), -1);
+}
+
+export test fn test_continue_skips_iteration() {
+    assert_eq(sum_excluding([1, 2, 3, 4, 5], 3), 12);
+    assert_eq(sum_excluding([1, 2, 3], 9), 6);
+}
+
+export test fn test_nested_loops() {
+    assert_eq(multiplication_table_sum(3, 3), 36);
+    assert_eq(multiplication_table_sum(1, 1), 1);
+}
+
+export test fn test_loop_accumulator_pattern() {
+    let parity_even = 0;
+    let parity_odd = 0;
+    for (v in [1, 2, 3, 4, 5, 6]) {
+        if (v % 2 == 0) {
+            parity_even = parity_even + 1;
+        } else {
+            parity_odd = parity_odd + 1;
+        }
+    }
+    assert_eq(parity_even, 3);
+    assert_eq(parity_odd, 3);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_while_countdown_sum();
+    test_do_while_runs_at_least_once();
+    test_for_over_array();
+    test_while_collects_values();
+    test_break_exits_early();
+    test_continue_skips_iteration();
+    test_nested_loops();
+    test_loop_accumulator_pattern();
+    return 8;
+}
+
+fn main() {
+    print("Running 01_control_flow tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 01_control_flow.test.adesh`);
+}

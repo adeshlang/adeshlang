@@ -2,7 +2,9 @@
 
 use crate::error::CodegenError;
 use crate::machine_ir::{MachineFunction, NativeModule};
-use adesh_object::{AdobObject, TargetCapabilities, TargetDescriptor, TargetFeatures};
+use adesh_object::{
+    AdobObject, AdobRelocation, TargetCapabilities, TargetDescriptor, TargetFeatures,
+};
 
 /// Universal Code Generation Backend contract.
 pub trait CodegenBackend: Send + Sync {
@@ -17,6 +19,18 @@ pub trait CodegenBackend: Send + Sync {
 
     /// Generate machine code for a single machine function.
     fn generate_function(&mut self, function: &MachineFunction) -> Result<Vec<u8>, CodegenError>;
+
+    /// Generate machine code plus the relocations the function body requires.
+    ///
+    /// Relocation offsets are relative to the start of the returned code.
+    /// Backends that cannot emit relocations inherit the default, which
+    /// reports none.
+    fn generate_function_with_relocations(
+        &mut self,
+        function: &MachineFunction,
+    ) -> Result<(Vec<u8>, Vec<AdobRelocation>), CodegenError> {
+        Ok((self.generate_function(function)?, Vec::new()))
+    }
 
     /// Emit a completed, validated ADOB object from the native module.
     fn emit_object(&mut self, module: &NativeModule) -> Result<AdobObject, CodegenError>;

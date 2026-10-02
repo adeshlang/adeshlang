@@ -300,6 +300,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
 
         StmtKind::Break => Ok(LoweredStmt::Stmt(HirStmt::Break)),
         StmtKind::Continue => Ok(LoweredStmt::Stmt(HirStmt::Continue)),
+        StmtKind::Jump(expr) => Ok(LoweredStmt::Stmt(HirStmt::Jump(lower_expr(expr)?))),
 
         // Handle class declarations
         StmtKind::Class(class_decl, _export) => lower_class(class_decl).map(LoweredStmt::Class),
@@ -575,27 +576,12 @@ fn lower_expr(expr: &Expr) -> Result<HirExpr, String> {
                 if let ExprKind::Literal(val) = &operand.kind {
                     match val {
                         Value::Number(n) => {
-                            // Convert to negative and infer signed type
                             let neg = -(*n);
                             let is_integer = neg.fract().abs() < 1e-12;
-
                             if is_integer {
-                                let i = neg as i128;
-                                // Negative integer: choose smallest signed type
-                                let lit = if i >= i8::MIN as i128 && i <= i8::MAX as i128 {
-                                    HirLiteral::I8(i as i8)
-                                } else if i >= i16::MIN as i128 && i <= i16::MAX as i128 {
-                                    HirLiteral::I16(i as i16)
-                                } else if i >= i32::MIN as i128 && i <= i32::MAX as i128 {
-                                    HirLiteral::I32(i as i32)
-                                } else if i >= i64::MIN as i128 && i <= i64::MAX as i128 {
-                                    HirLiteral::I64(i as i64)
-                                } else {
-                                    HirLiteral::I128(i)
-                                };
-                                return Ok(HirExpr::Literal(lit));
+                                return Ok(HirExpr::Literal(HirLiteral::Int(neg as i64)));
                             } else {
-                                return Ok(HirExpr::Literal(HirLiteral::F64(neg)));
+                                return Ok(HirExpr::Literal(HirLiteral::Float(neg)));
                             }
                         }
                         Value::U8(n) => return Ok(HirExpr::Literal(HirLiteral::I8(-(*n as i8)))),
@@ -896,42 +882,11 @@ fn lower_expr(expr: &Expr) -> Result<HirExpr, String> {
 fn value_to_hir_literal(val: &Value) -> HirLiteral {
     match val {
         Value::Number(n) => {
-            // Smart type inference: choose smallest type based on value
             let is_integer = n.fract().abs() < 1e-12;
-
             if is_integer {
-                let i = *n as i128;
-
-                if i >= 0 {
-                    // Positive integer: choose smallest unsigned type
-                    if i <= u8::MAX as i128 {
-                        HirLiteral::U8(i as u8)
-                    } else if i <= u16::MAX as i128 {
-                        HirLiteral::U16(i as u16)
-                    } else if i <= u32::MAX as i128 {
-                        HirLiteral::U32(i as u32)
-                    } else if i <= u64::MAX as i128 {
-                        HirLiteral::U64(i as u64)
-                    } else {
-                        HirLiteral::U128(i as u128)
-                    }
-                } else {
-                    // Negative integer: choose smallest signed type
-                    if i >= i8::MIN as i128 && i <= i8::MAX as i128 {
-                        HirLiteral::I8(i as i8)
-                    } else if i >= i16::MIN as i128 && i <= i16::MAX as i128 {
-                        HirLiteral::I16(i as i16)
-                    } else if i >= i32::MIN as i128 && i <= i32::MAX as i128 {
-                        HirLiteral::I32(i as i32)
-                    } else if i >= i64::MIN as i128 && i <= i64::MAX as i128 {
-                        HirLiteral::I64(i as i64)
-                    } else {
-                        HirLiteral::I128(i)
-                    }
-                }
+                HirLiteral::Int(*n as i64)
             } else {
-                // Floating point: use f64 for precision
-                HirLiteral::F64(*n)
+                HirLiteral::Float(*n)
             }
         }
         Value::Bool(b) => HirLiteral::Bool(*b),

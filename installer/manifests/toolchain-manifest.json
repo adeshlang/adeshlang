@@ -1,17 +1,18 @@
 {
   "schema": 2,
   "adeshVersion": "0.3.0",
-  "defaultComponents": ["llvm"],
+  "defaultComponents": [],
+  "note": "The Adesh native toolchain (native codegen + ADOB + adeshlink linker + runtime) ships inside the adesh binary and distribution packages; nothing here is required for it. This manifest only pins the OPTIONAL external LLVM bridge that users can register explicitly via `adesh toolchain --external install` / verify with `adesh gpu-check --external-linker`.",
   "components": {
     "llvm": {
       "version": "18.1.8",
-      "required": true,
-      "description": "Pinned LLVM/Clang toolchain (clang, clang++, lld/lld-link, llvm-ar, llc) from official llvm-project releases; required for AOT compilation"
+      "required": false,
+      "description": "Optional external LLVM/Clang bridge (clang, clang++, lld/lld-link, llvm-ar, llc) from official llvm-project releases; only needed for the opt-in --external-linker mode. The bundled native toolchain compiles and links Adesh programs without it"
     },
     "mlir": {
       "version": "18.1.8",
       "required": false,
-      "description": "MLIR tools (mlir-opt, mlir-translate) for GPU backend. Where no official prebuilt binary exists, build from pinned upstream source with --build-mlir-source (enables NVVM/ROCDL GPU dialects)"
+      "description": "Optional external MLIR tools (mlir-opt, mlir-translate) for the external GPU MLIR pipeline. Where no official prebuilt binary exists, build from pinned upstream source with --build-mlir-source (enables NVVM/ROCDL GPU dialects)"
     }
   },
   "platforms": {

@@ -2,6 +2,12 @@
 # Automates the creation of AdeshLang Windows Distribution Assets (Portable ZIP + Inno Installer)
 # Supports x86_64 and ARM64 (aarch64) Windows targets.
 #
+# The distribution is SELF-CONTAINED: it bundles the Adesh native toolchain
+# (native codegen + ADOB object format + adeshlink native linker + adeshlang
+# runtime library + stdlib). No external LLVM, Clang, GCC, or MSVC install is
+# required at setup or build time; external LLVM is an opt-in bridge
+# (`adesh build --external-linker` / `adesh gpu-check --external-linker`).
+#
 # The default AI model (adesh-coder-0.5b-q4_0.gguf, ~275 MB) is bundled into
 # the distribution under ai\models\. It is taken from the local ai\models\
 # checkout when present; otherwise it is downloaded from the URL pinned in
@@ -36,10 +42,15 @@ if ($Arch -eq "aarch64") {
 
 $TargetBinAdesh = "$TargetBinDir\adesh.exe"
 
-# 1. Build the official `adesh` CLI binary and libraries (static & dynamic).
-Write-Host "[1/6] Compiling AdeshLang Release Binaries & Libraries ($Arch)..." -ForegroundColor Yellow
+# 1. Build the official `adesh` CLI, the native `adeshlink` linker CLI, and
+#    libraries (static & dynamic).
+Write-Host "[1/6] Compiling AdeshLang Release Binaries, Native Linker & Libraries ($Arch)..." -ForegroundColor Yellow
 Set-Location $RootDir
 cargo build --release @TargetFlag --bin adesh --bin adl --lib
+# adeshlink: standalone native linker & binary-tools CLI (link, ar, nm,
+# objdump, readobj, size, strip). Bundled so users get the full native
+# toolchain without any external LLVM/binutils.
+cargo build --release @TargetFlag -p adesh-linker --bin adeshlink
 if (Test-Path "$RootDir\als\Cargo.toml") {
     Push-Location "$RootDir\als"
     cargo build --release @TargetFlag --bin als
@@ -65,9 +76,24 @@ New-Item -ItemType Directory -Force -Path "$DistDir\config" | Out-Null
 New-Item -ItemType Directory -Force -Path "$DistDir\std" | Out-Null
 
 # 3. Copy Executables, Dynamic & Static Libraries, Standard Library, Licenses, and Toolchain Manifest
-Write-Host "[3/6] Copying Core Binaries, Dynamic & Static Libraries, and Manifest..." -ForegroundColor Yellow
+Write-Host "[3/6] Copying Core Binaries, Native Toolchain, Dynamic & Static Libraries, and Manifest..." -ForegroundColor Yellow
 Copy-Item $TargetBinAdesh "$DistDir\bin\adesh.exe" -Force
 if (Test-Path "$TargetBinDir\adl.exe") { Copy-Item "$TargetBinDir\adl.exe" "$DistDir\bin\adl.exe" -Force }
+
+# Native linker CLI (adeshlink): link, ar, nm, objdump, readobj, size, strip.
+# Built from the workspace root, so artifacts land in the shared target dir;
+# linker\target is checked as a fallback for standalone linker builds.
+$AdeshLinkBin = "$TargetBinDir\adeshlink.exe"
+if (-not (Test-Path $AdeshLinkBin)) {
+    $Fallback = if ($Arch -eq "aarch64") { "$RootDir\linker\target\aarch64-pc-windows-msvc\release\adeshlink.exe" } else { "$RootDir\linker\target\release\adeshlink.exe" }
+    if (Test-Path $Fallback) { $AdeshLinkBin = $Fallback }
+}
+if (Test-Path $AdeshLinkBin) {
+    Copy-Item $AdeshLinkBin "$DistDir\bin\adeshlink.exe" -Force
+    Write-Host "      Copied native linker adeshlink.exe to bin\" -ForegroundColor Green
+} else {
+    throw "adeshlink.exe was not built; the distribution must bundle the native linker. Re-run cargo build -p adesh-linker --bin adeshlink."
+}
 
 # Dynamic libraries (.dll)
 if (Test-Path "$TargetBinDir\adeshlang.dll") {
@@ -153,6 +179,26 @@ if ($SkipAiModel) {
         Copy-Item "$RootDir\ai\deploy\openrouter\config.json" "$DistDir\ai\deploy\openrouter\config.json" -Force
     }
 }
+
+# 3c. Verify the self-contained native toolchain payload before packaging.
+Write-Host "[3c/6] Verifying bundled native toolchain components..." -ForegroundColor Yellow
+$RequiredBinaries = @("$DistDir\bin\adesh.exe", "$DistDir\bin\adeshlink.exe")
+$Missing = @($RequiredBinaries | Where-Object { -not (Test-Path $_ })
+if ($Missing.Count -gt 0) {
+    throw "Native toolchain incomplete; missing: $($Missing -join ', ')"
+}
+$RuntimeLib = @("$DistDir\lib\adeshlang.dll", "$DistDir\lib\adeshlang.lib", "$DistDir\lib\libadeshlang.a") |
+    Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($RuntimeLib) {
+    Write-Host "      Runtime library staged: $RuntimeLib" -ForegroundColor Green
+} else {
+    Write-Warning "No adeshlang runtime library found in lib\; `adesh doctor` will flag AOT native builds."
+}
+& "$DistDir\bin\adesh.exe" toolchain check | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "adesh toolchain check failed on the staged distribution."
+}
+Write-Host "      Native toolchain verified (codegen + adeshlink + ADOB + runtime)." -ForegroundColor Green
 
 # 4. Generate Portable ZIP Distribution Package
 $CargoToml = Get-Content "$RootDir\Cargo.toml" -Raw

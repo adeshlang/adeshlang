@@ -45,13 +45,19 @@ impl X86_64Encoder {
         self.buffer.extend_from_slice(&val.to_le_bytes());
     }
 
-    /// Emit REX prefix: REX.W (64-bit operand), REX.R (reg extension), REX.X (index extension), REX.B (base/rm extension)
+    /// Emit REX prefix: REX.W (64-bit operand), REX.R (reg extension), REX.B (base/rm extension)
     fn emit_rex(&mut self, w: bool, r: u8, b: u8) {
-        let rex_w = if w { 1 << 3 } else { 0 };
-        let rex_r = if (r & 8) != 0 { 1 << 2 } else { 0 };
-        let rex_b = if (b & 8) != 0 { 1 } else { 0 };
-        let rex = 0x40 | rex_w | rex_r | rex_b;
-        if rex != 0x40 || (r & 8) != 0 || (b & 8) != 0 || w {
+        self.emit_rex_full(w, r, 0, b);
+    }
+
+    /// Emit a full REX prefix including the REX.X bit for SIB index registers.
+    fn emit_rex_full(&mut self, w: bool, r: u8, x: u8, b: u8) {
+        let rex = 0x40
+            | if w { 1 << 3 } else { 0 }
+            | if (r & 8) != 0 { 1 << 2 } else { 0 }
+            | if (x & 8) != 0 { 1 << 1 } else { 0 }
+            | if (b & 8) != 0 { 1 } else { 0 };
+        if rex != 0x40 {
             self.emit_u8(rex);
         }
     }
@@ -60,6 +66,57 @@ impl X86_64Encoder {
     fn emit_modrm(&mut self, mod_bits: u8, reg: u8, rm: u8) {
         let byte = ((mod_bits & 0b11) << 6) | ((reg & 0b111) << 3) | (rm & 0b111);
         self.emit_u8(byte);
+    }
+
+    /// Emit the ModR/M (+SIB+displacement) bytes addressing
+    /// `[base + index*scale + offset]`.
+    ///
+    /// Handles the x86-64 addressing corner cases:
+    /// - RSP/R12 as base always requires a SIB byte.
+    /// - A SIB base field of `100` with mod `00` means "no base", so
+    ///   `[rsp]` must use mod `01` with a zero disp8.
+    /// - Mod `00` with rm `101` (no SIB) is RIP-relative, so `[rbp]`
+    ///   must use mod `01` with a zero disp8.
+    fn emit_mem_operand(&mut self, reg_field: u8, base: u8, offset: i32, index: Option<(u8, u8)>) {
+        let (index_reg, scale) = match index {
+            Some((r, s)) => (r, s),
+            None => (4, 0), // SIB index field 100 = no index register
+        };
+        let disp8 = (-128..=127).contains(&offset);
+        // RSP/R12 as base always requires a SIB byte.
+        let needs_sib = index.is_some() || (base & 0b111) == 0b100;
+
+        if needs_sib {
+            let mod_bits = if offset == 0 && (base & 0b111) != 0b100 {
+                0b00
+            } else if disp8 {
+                0b01
+            } else {
+                0b10
+            };
+            self.emit_modrm(mod_bits, reg_field & 0b111, 0b100);
+            let scale_bits = scale & 0b11;
+            self.emit_u8((scale_bits << 6) | ((index_reg & 0b111) << 3) | (base & 0b111));
+            if mod_bits == 0b01 {
+                self.emit_u8(offset as i8 as u8);
+            } else if mod_bits == 0b10 {
+                self.emit_i32(offset);
+            }
+        } else {
+            let mod_bits = if offset == 0 && (base & 0b111) != 0b101 {
+                0b00
+            } else if disp8 {
+                0b01
+            } else {
+                0b10
+            };
+            self.emit_modrm(mod_bits, reg_field & 0b111, base & 0b111);
+            if mod_bits == 0b01 {
+                self.emit_u8(offset as i8 as u8);
+            } else if mod_bits == 0b10 {
+                self.emit_i32(offset);
+            }
+        }
     }
 
     // --- High-Level Instruction Encoders ---
@@ -88,6 +145,28 @@ impl X86_64Encoder {
             self.emit_u8(0x41); // REX.B
         }
         self.emit_u8(0x58 + (reg & 7));
+    }
+
+    /// PUSH imm32 (0x68 id) - sign-extended to 64-bit.
+    pub fn push_imm32(&mut self, imm: i32) {
+        self.emit_u8(0x68);
+        self.emit_i32(imm);
+    }
+
+    /// PUSH qword [base + index*scale + offset] (FF /6)
+    pub fn push_mem(&mut self, base: u8, offset: i32, index: Option<(u8, u8)>) {
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full(false, 0, x, base);
+        self.emit_u8(0xFF);
+        self.emit_mem_operand(6, base, offset, index);
+    }
+
+    /// POP qword [base + index*scale + offset] (8F /0)
+    pub fn pop_mem(&mut self, base: u8, offset: i32, index: Option<(u8, u8)>) {
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full(false, 0, x, base);
+        self.emit_u8(0x8F);
+        self.emit_mem_operand(0, base, offset, index);
     }
 
     /// MOV reg64, reg64 (0x89 with ModR/M 11)
@@ -130,6 +209,81 @@ impl X86_64Encoder {
         }
     }
 
+    /// MOV reg64, [base + index*scale + offset] (8B /r with REX.W)
+    pub fn mov_r64_mem(&mut self, dst: u8, base: u8, offset: i32, index: Option<(u8, u8)>) {
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full(true, dst, x, base);
+        self.emit_u8(0x8B);
+        self.emit_mem_operand(dst, base, offset, index);
+    }
+
+    /// MOV [base + index*scale + offset], reg64 (89 /r with REX.W)
+    pub fn mov_mem_r64(&mut self, base: u8, offset: i32, index: Option<(u8, u8)>, src: u8) {
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full(true, src, x, base);
+        self.emit_u8(0x89);
+        self.emit_mem_operand(src, base, offset, index);
+    }
+
+    /// MOV reg32, [base + index*scale + offset] (8B /r, zero-extends to 64 bits)
+    pub fn mov_r32_mem(&mut self, dst: u8, base: u8, offset: i32, index: Option<(u8, u8)>) {
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full(false, dst, x, base);
+        self.emit_u8(0x8B);
+        self.emit_mem_operand(dst, base, offset, index);
+    }
+
+    /// MOV [base + index*scale + offset], reg32 (89 /r)
+    pub fn mov_mem_r32(&mut self, base: u8, offset: i32, index: Option<(u8, u8)>, src: u8) {
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full(false, src, x, base);
+        self.emit_u8(0x89);
+        self.emit_mem_operand(src, base, offset, index);
+    }
+
+    /// MOV [base + index*scale + offset], reg16 (66 89 /r)
+    pub fn mov_mem_r16(&mut self, base: u8, offset: i32, index: Option<(u8, u8)>, src: u8) {
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_u8(0x66);
+        self.emit_rex_full(false, src, x, base);
+        self.emit_u8(0x89);
+        self.emit_mem_operand(src, base, offset, index);
+    }
+
+    /// MOV [base + index*scale + offset], reg8 (88 /r)
+    pub fn mov_mem_r8(&mut self, base: u8, offset: i32, index: Option<(u8, u8)>, src: u8) {
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full(false, src, x, base);
+        self.emit_u8(0x88);
+        self.emit_mem_operand(src, base, offset, index);
+    }
+
+    /// MOVZX reg64, reg8 (0F B6 /r with REX.W) - zero-extend byte to 64 bits.
+    pub fn movzx_r64_r8(&mut self, dst: u8, src: u8) {
+        self.emit_rex(true, src, dst);
+        self.emit_u8(0x0F);
+        self.emit_u8(0xB6);
+        self.emit_modrm(0b11, src, dst);
+    }
+
+    /// MOVZX reg64, byte [base + index*scale + offset] (0F B6 /r with REX.W)
+    pub fn movzx_r64_mem8(&mut self, dst: u8, base: u8, offset: i32, index: Option<(u8, u8)>) {
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full(true, dst, x, base);
+        self.emit_u8(0x0F);
+        self.emit_u8(0xB6);
+        self.emit_mem_operand(dst, base, offset, index);
+    }
+
+    /// MOVZX reg64, word [base + index*scale + offset] (0F B7 /r with REX.W)
+    pub fn movzx_r64_mem16(&mut self, dst: u8, base: u8, offset: i32, index: Option<(u8, u8)>) {
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full(true, dst, x, base);
+        self.emit_u8(0x0F);
+        self.emit_u8(0xB7);
+        self.emit_mem_operand(dst, base, offset, index);
+    }
+
     /// ADD reg64, reg64 (0x01)
     pub fn add_r64_r64(&mut self, dst: u8, src: u8) {
         self.emit_rex(true, src, dst);
@@ -166,6 +320,15 @@ impl X86_64Encoder {
         self.emit_u8(0x0F);
         self.emit_u8(0xAF);
         self.emit_modrm(0b11, dst, src);
+    }
+
+    /// IMUL reg64, [base + index*scale + offset] (0F AF /r with REX.W)
+    pub fn imul_r64_mem(&mut self, dst: u8, base: u8, offset: i32, index: Option<(u8, u8)>) {
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full(true, dst, x, base);
+        self.emit_u8(0x0F);
+        self.emit_u8(0xAF);
+        self.emit_mem_operand(dst, base, offset, index);
     }
 
     /// CQO (0x48 0x99 - sign extend RAX into RDX:RAX)
@@ -231,6 +394,107 @@ impl X86_64Encoder {
         self.emit_i32(imm);
     }
 
+    /// TEST reg64, reg64 (0x85 /r)
+    pub fn test_r64_r64(&mut self, lhs: u8, rhs: u8) {
+        self.emit_rex(true, rhs, lhs);
+        self.emit_u8(0x85);
+        self.emit_modrm(0b11, rhs, lhs);
+    }
+
+    /// TEST reg64, imm32 (0xF7 /0)
+    pub fn test_r64_imm32(&mut self, lhs: u8, imm: i32) {
+        self.emit_rex(true, 0, lhs);
+        self.emit_u8(0xF7);
+        self.emit_modrm(0b11, 0, lhs);
+        self.emit_i32(imm);
+    }
+
+    /// Generic `op reg64, [mem]` for the reg-from-memory encodings:
+    /// 03 ADD, 0B OR, 23 AND, 2B SUB, 33 XOR, 3B CMP.
+    pub fn op_r64_mem(
+        &mut self,
+        opcode: u8,
+        dst: u8,
+        base: u8,
+        offset: i32,
+        index: Option<(u8, u8)>,
+    ) {
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full(true, dst, x, base);
+        self.emit_u8(opcode);
+        self.emit_mem_operand(dst, base, offset, index);
+    }
+
+    /// Generic `op [mem], reg64` for the mem-from-register encodings:
+    /// 01 ADD, 09 OR, 21 AND, 29 SUB, 31 XOR, 39 CMP, 85 TEST.
+    pub fn op_mem_r64(
+        &mut self,
+        opcode: u8,
+        base: u8,
+        offset: i32,
+        index: Option<(u8, u8)>,
+        src: u8,
+    ) {
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full(true, src, x, base);
+        self.emit_u8(opcode);
+        self.emit_mem_operand(src, base, offset, index);
+    }
+
+    /// Generic `op reg64, imm32` (0x81 /x).
+    /// Extensions: 0 ADD, 1 OR, 4 AND, 5 SUB, 6 XOR, 7 CMP.
+    pub fn op_r64_imm32(&mut self, ext: u8, dst: u8, imm: i32) {
+        self.emit_rex(true, 0, dst);
+        self.emit_u8(0x81);
+        self.emit_modrm(0b11, ext, dst);
+        self.emit_i32(imm);
+    }
+
+    /// SHL reg64, imm8 (C1 /4 ib)
+    pub fn shl_r64_imm8(&mut self, dst: u8, imm: u8) {
+        self.emit_rex(true, 0, dst);
+        self.emit_u8(0xC1);
+        self.emit_modrm(0b11, 4, dst);
+        self.emit_u8(imm);
+    }
+
+    /// SHR reg64, imm8 (C1 /5 ib)
+    pub fn shr_r64_imm8(&mut self, dst: u8, imm: u8) {
+        self.emit_rex(true, 0, dst);
+        self.emit_u8(0xC1);
+        self.emit_modrm(0b11, 5, dst);
+        self.emit_u8(imm);
+    }
+
+    /// SAR reg64, imm8 (C1 /7 ib)
+    pub fn sar_r64_imm8(&mut self, dst: u8, imm: u8) {
+        self.emit_rex(true, 0, dst);
+        self.emit_u8(0xC1);
+        self.emit_modrm(0b11, 7, dst);
+        self.emit_u8(imm);
+    }
+
+    /// SHL reg64, CL (D3 /4)
+    pub fn shl_r64_cl(&mut self, dst: u8) {
+        self.emit_rex(true, 0, dst);
+        self.emit_u8(0xD3);
+        self.emit_modrm(0b11, 4, dst);
+    }
+
+    /// SHR reg64, CL (D3 /5)
+    pub fn shr_r64_cl(&mut self, dst: u8) {
+        self.emit_rex(true, 0, dst);
+        self.emit_u8(0xD3);
+        self.emit_modrm(0b11, 5, dst);
+    }
+
+    /// SAR reg64, CL (D3 /7)
+    pub fn sar_r64_cl(&mut self, dst: u8) {
+        self.emit_rex(true, 0, dst);
+        self.emit_u8(0xD3);
+        self.emit_modrm(0b11, 7, dst);
+    }
+
     /// SETcc reg8 (0x0F 0x90+cc)
     pub fn setcc_r8(&mut self, cc: ConditionCode, dst: u8) {
         let code = match cc {
@@ -245,12 +509,15 @@ impl X86_64Encoder {
             ConditionCode::Above => 0x97,                       // SETA
             ConditionCode::AboveOrEqual => 0x93,                // SETAE
         };
-        if (dst & 8) != 0 || dst >= 4 {
-            self.emit_rex(false, 0, dst);
+        // Byte-register destinations SPL(4)/BPL(5)/SIL(6)/DIL(7) require a REX
+        // prefix even with no extension bits set (without REX those encodings
+        // address AH/CH/DH/BH); R8B-R15B require REX.B.
+        if dst >= 4 || (dst & 8) != 0 {
+            self.emit_u8(0x40 | ((dst & 8) >> 3));
         }
         self.emit_u8(0x0F);
         self.emit_u8(code);
-        self.emit_modrm(0b11, 0, dst);
+        self.emit_modrm(0b11, 0, dst & 7);
     }
 
     /// JMP rel32 (0xE9 rel32)
@@ -291,6 +558,13 @@ impl X86_64Encoder {
         }
         self.emit_u8(0xFF);
         self.emit_modrm(0b11, 2, reg);
+    }
+
+    /// MFENCE (0F AE F0) - full memory ordering barrier.
+    pub fn mfence(&mut self) {
+        self.emit_u8(0x0F);
+        self.emit_u8(0xAE);
+        self.emit_u8(0xF0);
     }
 }
 

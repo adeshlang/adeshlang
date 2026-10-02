@@ -1,0 +1,138 @@
+// Enum Match & Option Tests
+// Covers `match` with unqualified payload patterns, qualified unit-variant
+// patterns, and the built-in Option enum (Some/None) as demonstrated by
+// examples/enum and examples/advanced_types.
+
+// ─────────────────────────────────────────────────────────────
+// Helpers (self-contained, pure)
+// ─────────────────────────────────────────────────────────────
+
+enum Status {
+    Ready(code),
+    Failed(message),
+    Pending
+}
+
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+enum QueryResult {
+    Ok(data),
+    Err(reason)
+}
+
+export fn status_code(status): i32 {
+    return match status {
+        Ready(code) => code,
+        Failed(message) => -1,
+        Pending => 0
+    };
+}
+
+export fn status_message(status): string {
+    return match status {
+        Ready(code) => "ready",
+        Failed(message) => message,
+        Pending => "pending"
+    };
+}
+
+export fn is_terminal(status): bool {
+    return match status {
+        Ready(code) => true,
+        Failed(message) => true,
+        Pending => false
+    };
+}
+
+export fn color_label(c): string {
+    return match c {
+        Color.Red => "red",
+        Color.Green => "green",
+        Color.Blue => "blue"
+    };
+}
+
+export fn option_value_or(opt, fallback) {
+    return match opt {
+        Some(v) => v,
+        None() => fallback
+    };
+}
+
+export fn describe_query(q): string {
+    return match q {
+        Ok(data) => data,
+        Err(reason) => reason
+    };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_match_payload_binding() {
+    assert_eq(status_code(new Status.Ready(200)), 200);
+    assert_eq(status_code(new Status.Failed("boom")), -1);
+    assert_eq(status_code(new Status.Pending()), 0);
+    assert_eq(status_message(new Status.Ready(200)), "ready");
+    assert_eq(status_message(new Status.Failed("boom")), "boom");
+    assert_eq(status_message(new Status.Pending()), "pending");
+}
+
+export test fn test_match_unit_qualified_patterns() {
+    assert_eq(color_label(Color.Red()), "red");
+    assert_eq(color_label(Color.Green()), "green");
+    assert_eq(color_label(Color.Blue()), "blue");
+    assert_ne(color_label(Color.Red()), color_label(Color.Blue()));
+}
+
+export test fn test_terminal_narrowing() {
+    assert(is_terminal(new Status.Ready(1)), "ready is terminal");
+    assert(is_terminal(new Status.Failed("x")), "failed is terminal");
+    assert_eq(is_terminal(new Status.Pending()), false);
+}
+
+export test fn test_option_match_expression() {
+    let some_val = Some(42);
+    let none_val = None();
+    assert_eq(option_value_or(some_val, 0), 42);
+    assert_eq(option_value_or(none_val, 0), 0);
+    assert_eq(option_value_or(Some("hi"), "bye"), "hi");
+}
+
+export test fn test_option_tag_value() {
+    assert_eq(Some(42).tag, "Some");
+    assert_eq(Some(42).value, 42);
+    assert_eq(None().tag, "None");
+    assert_eq(typeof None().value, "null");
+}
+
+export test fn test_query_result_match() {
+    assert_eq(describe_query(QueryResult.Ok("good")), "good");
+    assert_eq(describe_query(QueryResult.Err("bad")), "bad");
+    assert_eq(QueryResult.Ok(5).tag, "Ok");
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_match_payload_binding();
+    test_match_unit_qualified_patterns();
+    test_terminal_narrowing();
+    test_option_match_expression();
+    test_option_tag_value();
+    test_query_result_match();
+    return 6;
+}
+
+fn main() {
+    print("Running 03_match_option tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 03_match_option.test.adesh`);
+}

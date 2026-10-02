@@ -72,8 +72,6 @@ impl OsApiRouter {
             || name.contains("rust_begin_unwind")
             || name.contains("rust_panic")
             || name.starts_with("anon.")
-            || name.starts_with("adesh_")
-            || name.starts_with("aot_")
         {
             return true;
         }

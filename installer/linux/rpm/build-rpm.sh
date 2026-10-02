@@ -2,16 +2,18 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s <x86_64|aarch64> [version] [--with-toolchain]\n' "$0"
+  printf 'Usage: %s <x86_64|aarch64> [version]\n' "$0"
 }
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 arch="${1:-}"
 version="${2:-$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -n1)}"
 [[ -n "$version" ]] || version="0.3.0"
-with_toolchain=0
+# Legacy note: --with-toolchain (third argument) is accepted and ignored.
+# The Adesh native toolchain now ships inside the package itself; external
+# LLVM is registered separately via `adesh toolchain --external install`.
 if [[ "${3:-}" == "--with-toolchain" ]]; then
-  with_toolchain=1
+  printf 'Note: --with-toolchain is deprecated and ignored; the native toolchain is bundled.\n' >&2
 elif [[ -n "${3:-}" ]]; then
   usage >&2
   exit 2
@@ -58,9 +60,6 @@ rpm_args=(
   --define "_topdir $rpmbuild_root"
   --define "_adeshlang_stage $stage"
 )
-if (( with_toolchain )); then
-  rpm_args+=(--with toolchain)
-fi
 rpmbuild "${rpm_args[@]}" "$rpmbuild_root/SPECS/adeshlang.spec"
 
 find "$rpmbuild_root/RPMS" -type f -name '*.rpm' -exec cp {} "$output_dir/" \;

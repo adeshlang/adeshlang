@@ -52,13 +52,14 @@ The installer bundles everything the language needs to run: the `adesh` compiler
 the `adl` package manager, the `als` language server, the `adesh-editor` TUI editor,
 and the standard library. No Rust toolchain is required.
 
-The native toolchain (pinned **LLVM/Clang/LLD 18.1.8** from the official
-llvm-project releases, plus MLIR tools for the GPU backend) is **downloaded during
-installation** — it is not shipped inside the installer. Downloads are
-SHA-256-verified against the pinned toolchain manifest, and the toolchain
-executables are exposed system-wide (on PATH for every user), so clang/lld/llc/
-mlir-opt are usable by other programs too. On Windows, AOT targeting MSVC
-additionally uses VS Build Tools + Windows SDK, which the installer can set up.
+The **native toolchain** (native codegen, ADOB object format, `adeshlink`
+linker, and the Adesh runtime) is **bundled inside every installer** — nothing
+is downloaded during installation and no LLVM, Clang, GCC, or MSVC is
+required to compile, link, and run Adesh programs. An external LLVM toolchain
+is **optional**: register one with `adesh toolchain --external install llvm`
+to enable the opt-in `--external-linker` mode (`adesh build --codegen=cranelift
+--external-linker`) and MLIR GPU source builds; verify it with
+`adesh gpu-check --external-linker`.
 
 After installing, run:
 
@@ -66,12 +67,12 @@ After installing, run:
 adesh doctor
 ```
 
-To fetch the toolchain later (or repair it), run:
+To register the optional external LLVM bridge later:
 
 ```text
-adesh toolchain install --system              # pinned upstream LLVM 18.1.8
-adesh toolchain install --system --build-mlir-source   # also build MLIR GPU tools (30–90 min)
-adesh toolchain install --use-system-packages  # distro package manager fallback
+adesh toolchain --external install llvm          # optional external LLVM bridge
+adesh gpu-check --external-linker                # verify the external LLVM
+adesh toolchain install --system --build-mlir-source   # optional MLIR GPU tools (30–90 min)
 ```
 
 Installers are provided for Windows (setup EXE + MSI + portable ZIP), Linux

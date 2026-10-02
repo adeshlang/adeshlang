@@ -1,0 +1,187 @@
+// Allocator Strategy Tests
+// Covers the allocator logic of examples/memory/allocation_strategies.adesh,
+// memory_allocators.adesh and memory_safety_demo.adesh:
+//   - arena (bump) allocation with capacity checks and bulk reset
+//   - cumulative offsets and out-of-memory marking
+//   - chunked bump allocation (new chunk when the current one is full)
+//   - slab allocation: slots per slab, freelist lifecycle, slab growth
+// Everything is simulated with plain integer arithmetic so it runs in the
+// default interpreter (no unsafe/alloc hooks required).
+
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+
+// Returns the new "used" byte count, or -1 when the arena is full.
+export fn arena_alloc(used: i32, capacity: i32, size: i32): i32 {
+    if (used + size > capacity) {
+        return -1;
+    }
+    return used + size;
+}
+
+// Running offsets after each allocation; -1 marks an OOM allocation
+// (the arena pointer does not advance in that case).
+export fn arena_offsets(sizes: [int], capacity: i32): [i32] {
+    let offsets: [i32] = [];
+    let used = 0;
+    for (s in sizes) {
+        if (used + s > capacity) {
+            offsets.push(-1);
+        } else {
+            used = used + s;
+            offsets.push(used);
+        }
+    }
+    return offsets;
+}
+
+// Bump allocation inside a fixed-size chunk: returns the new position
+// or -1 when the request does not fit (caller starts a new chunk).
+export fn bump_place(pos: i32, chunk_size: i32, size: i32): i32 {
+    if (pos + size > chunk_size) {
+        return -1;
+    }
+    return pos + size;
+}
+
+// Repeated fixed-size allocations: returns [chunks_used, final_position].
+export fn bump_run(chunk_size: i32, size: i32, count: i32): [i32] {
+    let chunks = 1;
+    let pos = 0;
+    let i = 0;
+    while (i < count) {
+        if (pos + size > chunk_size) {
+            chunks = chunks + 1;
+            pos = 0;
+        }
+        pos = pos + size;
+        i = i + 1;
+    }
+    return [chunks, pos];
+}
+
+// How many fixed-size objects fit into one slab.
+export fn slab_capacity(object_size: i32, slab_bytes: i32): i32 {
+    let slots = 0;
+    let used = 0;
+    while (used + object_size <= slab_bytes) {
+        slots = slots + 1;
+        used = used + object_size;
+    }
+    return slots;
+}
+
+// Simulated slab lifecycle.
+// Returns [slots_per_slab, allocated, free, slabs_needed].
+export fn slab_state(object_size: i32, slab_bytes: i32, allocs: i32, frees: i32): [i32] {
+    let slots = slab_capacity(object_size, slab_bytes);
+    let capacity = slots + 0;
+    let slabs = 1;
+    let allocated = 0;
+    let i = 0;
+    while (i < allocs) {
+        if (allocated == capacity) {
+            slabs = slabs + 1;
+            capacity = capacity + slots;
+        }
+        allocated = allocated + 1;
+        i = i + 1;
+    }
+    allocated = allocated - frees;
+    return [slots, allocated, capacity - allocated, slabs];
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_arena_alloc_fits_and_oom() {
+    assert_eq(arena_alloc(0, 1000, 400), 400);
+    assert_eq(arena_alloc(400, 1000, 600), 1000);
+    assert_eq(arena_alloc(900, 1000, 100), 1000);
+    assert_eq(arena_alloc(1000, 1000, 1), -1);
+    assert_eq(arena_alloc(0, 1000, 1001), -1);
+}
+
+export test fn test_arena_offsets_sequence() {
+    let ok = arena_offsets([100, 200, 150], 1000);
+    assert_eq(ok.len(), 3);
+    assert_eq(ok[0], 100);
+    assert_eq(ok[1], 300);
+    assert_eq(ok[2], 450);
+
+    let tight = arena_offsets([100, 200, 150], 250);
+    assert_eq(tight[0], 100);
+    assert_eq(tight[1], -1);
+    assert_eq(tight[2], 250);
+}
+
+export test fn test_arena_reset_reuses_capacity() {
+    let used = arena_alloc(0, 1000, 400);
+    used = arena_alloc(used, 1000, 50);
+    assert_eq(used, 450);
+    // bulk reset: everything freed at once
+    used = 0;
+    assert_eq(arena_alloc(used, 1000, 1000), 1000);
+    assert_eq(arena_alloc(1000, 1000, 1), -1);
+}
+
+export test fn test_bump_chunk_placement() {
+    assert_eq(bump_place(475, 500, 25), 500);
+    assert_eq(bump_place(476, 500, 25), -1);
+    assert_eq(bump_place(0, 500, 500), 500);
+
+    let fits = bump_run(500, 25, 20);
+    assert_eq(fits[0], 1);
+    assert_eq(fits[1], 500);
+
+    let spills = bump_run(500, 25, 21);
+    assert_eq(spills[0], 2);
+    assert_eq(spills[1], 25);
+}
+
+export test fn test_slab_capacity() {
+    assert_eq(slab_capacity(64, 640), 10);
+    assert_eq(slab_capacity(64, 650), 10);
+    assert_eq(slab_capacity(32, 100), 3);
+    assert_eq(slab_capacity(100, 100), 1);
+    assert_eq(slab_capacity(101, 100), 0);
+}
+
+export test fn test_slab_lifecycle() {
+    // 15 allocations of 64 bytes with 10 slots per slab need 2 slabs,
+    // then 5 deallocations return 5 slots to the freelist.
+    let full = slab_state(64, 640, 15, 5);
+    assert_eq(full.len(), 4);
+    assert_eq(full[0], 10);
+    assert_eq(full[1], 10);
+    assert_eq(full[2], 10);
+    assert_eq(full[3], 2);
+
+    let small = slab_state(64, 640, 5, 2);
+    assert_eq(small[0], 10);
+    assert_eq(small[1], 3);
+    assert_eq(small[2], 7);
+    assert_eq(small[3], 1);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_arena_alloc_fits_and_oom();
+    test_arena_offsets_sequence();
+    test_arena_reset_reuses_capacity();
+    test_bump_chunk_placement();
+    test_slab_capacity();
+    test_slab_lifecycle();
+    return 6;
+}
+
+fn main() {
+    print("Running 03_allocators tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 03_allocators.test.adesh`);
+}

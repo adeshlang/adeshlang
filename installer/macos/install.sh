@@ -4,24 +4,29 @@
 #
 # Usage:
 #   curl -fsSL https://github.com/adeshlang/adeshlang/releases/download/v0.3.0/install-macos.sh | bash
-#   bash install.sh [--user] [--yes] [--skip-toolchain] [--with-gpu-source-build]
-#                   [--use-system-packages] [--install-dir DIR]
+#   bash install.sh [--user] [--yes] [--install-dir DIR]
 #
 # CI must publish THIS file as `install-macos.sh` on the v0.3.0 release, next
 # to the core tarball AdeshLang-0.3.0-macos-<arch>.tar.xz, for the one-liner
 # above to work.
 #
+# The Adesh native toolchain (native codegen, ADOB object format, adeshlink
+# linker, adeshlang runtime) ships inside the core tarball: no external LLVM,
+# Clang, GCC, MSVC, or Xcode Command Line Tools are required to install or
+# compile Adesh programs. External LLVM remains an opt-in bridge:
+#   adesh gpu-check --external-linker
+#   adesh toolchain --external install
+#
 # Flags:
 #   --user                  install under ~/.adeshlang, link into ~/.local/bin
 #                           (no sudo)
 #   --yes / -y              answer yes to every prompt
-#   --skip-toolchain        do not offer/run the LLVM toolchain install
-#   --with-gpu-source-build also build the MLIR GPU tools (mlir-opt /
-#                           mlir-translate with NVVM/ROCDL) from upstream
-#                           source — 30–90 minutes; requires cmake, ninja and
-#                           the Xcode Command Line Tools. Opt-in.
-#   --use-system-packages   install LLVM 18 via Homebrew (llvm@18) instead of
-#                           downloading the pinned tarball
+#   --skip-toolchain        deprecated no-op (kept for compatibility)
+#   --with-gpu-source-build deprecated no-op; run
+#                           `adesh toolchain install --build-mlir-source`
+#                           after installing for the optional MLIR GPU tools
+#   --use-system-packages   deprecated no-op; register external LLVM with
+#                           `adesh toolchain --external install`
 #   --install-dir DIR       override the destination directory
 #
 # The default (system) installs to /Library/Application Support/AdeshLang,
@@ -45,19 +50,19 @@ INSTALL_DIR_FLAG=""
 
 usage() {
     cat <<'EOF'
-Usage: install.sh [--user] [--yes] [--skip-toolchain]
-                  [--with-gpu-source-build] [--use-system-packages]
-                  [--install-dir DIR]
+Usage: install.sh [--user] [--yes] [--install-dir DIR]
 
   --user                  install under ~/.adeshlang (no sudo)
   --yes / -y              answer yes to every prompt
-  --skip-toolchain        do not offer/run the LLVM toolchain install
-  --with-gpu-source-build also build MLIR GPU tools from source (30-90 min,
-                          needs cmake, ninja, Xcode CLT) — opt-in
-  --use-system-packages   install LLVM 18 via Homebrew (llvm@18)
+  --skip-toolchain        deprecated no-op (native toolchain is bundled)
+  --with-gpu-source-build deprecated no-op (MLIR GPU tools are opt-in via
+                          `adesh toolchain install --build-mlir-source`)
+  --use-system-packages   deprecated no-op (external LLVM is registered via
+                          `adesh toolchain --external install`)
   --install-dir DIR       override the destination directory
 
-Ends with `adesh doctor` to verify the installation.
+The Adesh native toolchain is bundled with the core payload; no external
+LLVM/Clang/MSVC install is required. Ends with `adesh doctor` to verify.
 EOF
 }
 
@@ -102,18 +107,14 @@ if [[ -z "$MACOS_MAJOR" || "$MACOS_MAJOR" -lt 12 ]]; then
     exit 1
 fi
 
+# The Adesh native toolchain is bundled with the core payload; the Xcode
+# Command Line Tools are NOT required to install or compile Adesh programs
+# (they were only needed to drive the external clang/lld bridge, which is
+# opt-in). Mention them only for users who want that bridge.
 if ! xcode-select -p >/dev/null 2>&1; then
-    cat <<'MSG'
-
-Xcode Command Line Tools are not installed.
-
-AdeshLang needs them to drive clang/lld. Install them with:
-
-    xcode-select --install
-
-then re-run this installer.
-MSG
-    exit 1
+    echo "note: Xcode Command Line Tools are not installed."
+    echo "      They are optional — needed only for the external LLVM bridge"
+    echo "      (adesh gpu-check --external-linker) or MLIR GPU source builds."
 fi
 
 # --- Destinations ----------------------------------------------------------
@@ -166,8 +167,7 @@ if ! curl -fL -sS --retry 3 -o "$ARCHIVE" "$ARCHIVE_URL"; then
         echo "    (not found; trying legacy name $ALT_TARBALL)"
         if ! curl -fL -sS --retry 3 -o "$ARCHIVE" "${DL_BASE}${ALT_TARBALL}"; then
             echo "error: download failed for $ARCHIVE_URL" >&2
-            echo "Check that the release exists and that ADESH_REPO resolves;" >&2
-            echo "or install LLVM via Homebrew: --use-system-packages" >&2
+            echo "Check that the release exists and that ADESH_REPO resolves." >&2
             exit 1
         fi
     else
@@ -228,7 +228,7 @@ fi
 # --- Link the CLI tools -------------------------------------------------------
 echo "==> Linking CLI tools into $BIN_LINK_DIR"
 run_root /bin/mkdir -p "$BIN_LINK_DIR"
-for tool in adesh adl als adesh-editor; do
+for tool in adesh adl als adeshlink adesh-editor; do
     if [[ -x "$INSTALL_DIR/bin/$tool" ]]; then
         run_root /bin/ln -sfn "$INSTALL_DIR/bin/$tool" "$BIN_LINK_DIR/$tool"
         echo "    linked $BIN_LINK_DIR/$tool"
@@ -238,18 +238,17 @@ for tool in adesh adl als adesh-editor; do
 done
 
 # --- Shell profile -------------------------------------------------------------
+# The native toolchain is bundled inside the installation, so no
+# ADESH_TOOLCHAIN/ADESH_CLANG/ADESH_LLC variables are exported. Users who
+# opt into the external LLVM bridge register it separately with
+# `adesh toolchain --external install`.
 echo "==> Writing shell profile"
 if [[ "$MODE" == "system" ]]; then
     sudo /usr/bin/tee /etc/profile.d/adeshlang.sh >/dev/null <<EOF
 # AdeshLang environment (managed by the AdeshLang installer; safe to remove)
 export ADESH_HOME='$INSTALL_DIR'
 export ADESH_STD='$INSTALL_DIR/std'
-export ADESH_TOOLCHAIN='$INSTALL_DIR/toolchain/llvm'
-export ADESH_CLANG='$INSTALL_DIR/toolchain/llvm/bin/clang'
-export ADESH_LLC='$INSTALL_DIR/toolchain/llvm/bin/llc'
-export ADESH_MLIR_OPT='$INSTALL_DIR/toolchain/llvm/bin/mlir-opt'
-export ADESH_MLIR_TRANSLATE='$INSTALL_DIR/toolchain/llvm/bin/mlir-translate'
-export PATH='$INSTALL_DIR/bin:$INSTALL_DIR/toolchain/llvm/bin:\$PATH'
+export PATH='$INSTALL_DIR/bin:\$PATH'
 EOF
     echo "    wrote /etc/profile.d/adeshlang.sh"
 else
@@ -265,12 +264,7 @@ else
 # AdeshLang environment (managed by the AdeshLang installer; safe to remove)
 export ADESH_HOME='$INSTALL_DIR'
 export ADESH_STD='$INSTALL_DIR/std'
-export ADESH_TOOLCHAIN='$INSTALL_DIR/toolchain/llvm'
-export ADESH_CLANG='$INSTALL_DIR/toolchain/llvm/bin/clang'
-export ADESH_LLC='$INSTALL_DIR/toolchain/llvm/bin/llc'
-export ADESH_MLIR_OPT='$INSTALL_DIR/toolchain/llvm/bin/mlir-opt'
-export ADESH_MLIR_TRANSLATE='$INSTALL_DIR/toolchain/llvm/bin/mlir-translate'
-export PATH='$INSTALL_DIR/bin:$INSTALL_DIR/toolchain/llvm/bin:\$PATH'
+export PATH='$INSTALL_DIR/bin:\$PATH'
 EOF
         echo "    appended exports to $PROFILE"
     fi
@@ -280,82 +274,16 @@ fi
 echo "==> Stripping quarantine attributes from installed files (idempotent)"
 run_root /usr/bin/xattr -dr com.apple.quarantine "$INSTALL_DIR/bin" 2>/dev/null || true
 
-# --- Toolchain (LLVM 18.1.8) ----------------------------------------------------
-# We offer to download and install the pinned toolchain through `adesh
-# toolchain install --system`, which verifies SHA-256 against the manifest.
-# Skipped when non-interactive (CI) unless --toolchain is explicitly passed.
-ask_toolchain() {
-    if [[ "$SKIP_TOOLCHAIN" == "1" ]]; then
-        return 1
-    fi
-    if [[ "$YES" == "1" || "$WITH_GPU" == "1" || "$USE_SYSTEM_PACKAGES" == "1" ]]; then
-        return 0
-    fi
-    local ans=""
-    if [[ "${WANT_TOOLCHAIN:-auto}" == "auto" ]]; then
-        if [[ "${INTERACTIVE:-1}" == "1" ]]; then
-            read -r -p "Download and install pinned LLVM 18.1.8 toolchain now (~190 MB download, ~900 MB disk space)? [Y/n] " ans || ans=""
-            ans="${ans:-y}"
-        elif [[ -t 0 ]]; then
-            read -r -p "Download and install pinned LLVM 18.1.8 toolchain now (~190 MB download, ~900 MB disk space)? [Y/n] " ans < /dev/tty || ans=""
-        fi
-        case "${ans:-y}" in
-            n|N|no) return 1 ;;
-            *) return 0 ;;
-        esac
-    fi
-}
-
-install_toolchain() {
-    local scope="--system"
-    [[ "$MODE" == "user" ]] && scope="--user"
-    # Extra flags as a plain string, not an array: bash 3.2 (the macOS
-    # default) chokes on empty-array expansions under `set -u`. The values
-    # are a fixed set of internal flag constants (no spaces), so the
-    # intentional word-split below is safe.
-    local mode_flag=""
-    if [[ "$USE_SYSTEM_PACKAGES" == "1" ]]; then
-        mode_flag="--use-system-packages"
-    elif [[ "$WITH_GPU" == "1" ]]; then
-        mode_flag="--build-mlir-source"
-    fi
-    echo "==> Installing pinned LLVM 18.1.8 toolchain (~190 MB compressed download, ~900 MB disk space)"
-    if [[ "$MODE" == "system" ]]; then
-        sudo ADESH_HOME="$INSTALL_DIR" "$INSTALL_DIR/bin/adesh" toolchain install "$scope" $mode_flag
-    else
-        ADESH_HOME="$INSTALL_DIR" "$INSTALL_DIR/bin/adesh" toolchain install "$scope" $mode_flag
-    fi
-    # Freshly downloaded/extracted binaries need the quarantine strip too.
-    echo "==> Stripping quarantine attributes from the toolchain (idempotent)"
-    run_root /usr/bin/xattr -dr com.apple.quarantine "$INSTALL_DIR/toolchain" 2>/dev/null || true
-    if [[ "$WITH_GPU" == "1" ]]; then
-        echo "note: MLIR GPU tooling was built from source if required (needs cmake, ninja, Xcode CLT)."
-    fi
-}
-
-if ask_toolchain; then
-    if install_toolchain; then
-        echo "    LLVM 18.1.8 toolchain installed and exposed."
-    else
-        cat <<MSG
-
-warning: the LLVM toolchain install failed.
-AdeshLang core is installed and the interpreter/JIT/VM backends work without
-it; AOT compilation needs the toolchain. Retry later with:
-
-    sudo '$INSTALL_DIR/bin/adesh' toolchain install --system
-    sudo '$INSTALL_DIR/bin/adesh' toolchain install --use-system-packages
-
-(note: if the release manifest lists no SHA-256 for the LLVM archive,
- \`adesh toolchain install\` refuses the download by design until CI publishes
- checksums in installer/manifests/toolchain-manifest.json)
-MSG
-    fi
+# --- Native toolchain self-verification ---------------------------------------
+# Fast, offline, no downloads: the bundled native toolchain verifies itself.
+echo "==> Verifying bundled native toolchain"
+if [[ "$MODE" == "system" ]]; then
+    sudo ADESH_HOME="$INSTALL_DIR" "$INSTALL_DIR/bin/adesh" toolchain check || true
 else
-    if [[ "$SKIP_TOOLCHAIN" == "1" ]]; then
-        echo "note: toolchain install skipped (--skip-toolchain)."
-    fi
-    echo "note: toolchain skipped. Install later with: sudo '$INSTALL_DIR/bin/adesh' toolchain install --system"
+    ADESH_HOME="$INSTALL_DIR" "$INSTALL_DIR/bin/adesh" toolchain check || true
+fi
+if [[ "$SKIP_TOOLCHAIN" == "1" ]]; then
+    echo "note: --skip-toolchain is a no-op; the native toolchain is bundled with AdeshLang."
 fi
 
 # --- Verify -------------------------------------------------------------------
@@ -370,6 +298,8 @@ fi
 echo
 echo "=================================================="
 echo " AdeshLang $VERSION installed at: $INSTALL_DIR"
+echo " • Native toolchain bundled: codegen + adeshlink + ADOB + runtime."
+echo " • No external LLVM, GCC, or MSVC is required to build Adesh programs."
 if [[ ! -f "$INSTALL_DIR/ai/models/adesh-coder-0.5b-q4_0.gguf" ]]; then
     echo " • Note: Local AI coder models are not bundled with this installer."
     echo " • To download and set up the default offline AI coder model (~275 MB):"
@@ -377,6 +307,8 @@ if [[ ! -f "$INSTALL_DIR/ai/models/adesh-coder-0.5b-q4_0.gguf" ]]; then
     echo " • Custom AI training requires Python 3.12 (brew install python@3.12)"
 fi
 echo " • Quick Start: adesh doctor | adesh edit | adesh run hello.adesh"
+echo " • Native check: adesh toolchain check | GPU: adesh gpu-check"
+echo " • Optional external LLVM bridge: adesh gpu-check --external-linker"
 echo " • Website:     https://adeshlang.org"
 echo "=================================================="
 exit 0

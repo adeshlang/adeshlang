@@ -60,6 +60,10 @@ fi
 
 echo "Building AdeshLang $version for $os-$arch (target: ${target:-native})..."
 cargo build --release "${target_flags[@]}" --bin adesh --bin adl --lib
+# adeshlink: standalone native linker & binary-tools CLI (link, ar, nm,
+# objdump, readobj, size, strip). Bundled so distributions ship the full
+# self-contained native toolchain (no external LLVM/binutils required).
+cargo build --release "${target_flags[@]}" -p adesh-linker --bin adeshlink
 if [[ -f "$root/als/Cargo.toml" ]]; then
   (cd "$root/als" && cargo build --release "${target_flags[@]}" --bin als)
 fi
@@ -69,6 +73,21 @@ fi
 
 cp "$target_dir/adesh" "$stage/bin/"
 [[ -f "$target_dir/adl" ]] && cp "$target_dir/adl" "$stage/bin/"
+
+# Native linker CLI: prefer the shared workspace target dir, fall back to a
+# standalone linker/target build.
+adeshlink_bin="$target_dir/adeshlink"
+[[ -f "$adeshlink_bin" ]] || adeshlink_bin="$root/linker/target/release/adeshlink"
+if [[ -n "$target" && ! -f "$adeshlink_bin" ]]; then
+  adeshlink_bin="$root/linker/target/$target/release/adeshlink"
+fi
+if [[ -f "$adeshlink_bin" ]]; then
+  cp "$adeshlink_bin" "$stage/bin/"
+else
+  echo "error: adeshlink was not built; distributions must bundle the native linker." >&2
+  echo "       Re-run: cargo build --release -p adesh-linker --bin adeshlink" >&2
+  exit 1
+fi
 als_bin="$root/als/target/release/als"
 [[ -n "$target" && -f "$root/als/target/$target/release/als" ]] && als_bin="$root/als/target/$target/release/als"
 [[ ! -f "$als_bin" && -f "$target_dir/als" ]] && als_bin="$target_dir/als"

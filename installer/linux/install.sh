@@ -12,13 +12,20 @@ usage() {
   cat <<'USAGE'
 Usage: install.sh [core-tarball] [options]
 
+AdeshLang ships its own self-contained native toolchain (native codegen,
+ADOB object format, adeshlink linker, adeshlang runtime); no external
+LLVM, Clang, GCC, or MSVC installation is required.
+
 Options:
   --install-dir <dir>       Installation directory (default: /opt/adeshlang as root,
                             $HOME/.adeshlang otherwise)
-  --skip-toolchain          Do not install LLVM/MLIR during this run
-  --with-gpu-source-build   Build MLIR GPU tools from pinned LLVM source
-  --use-system-packages     Use the host package manager for the toolchain
-  --yes                     Accept prompts (does not enable the GPU source build)
+  --skip-toolchain          Deprecated no-op (kept for compatibility); the
+                            native toolchain is always bundled
+  --with-gpu-source-build   Deprecated no-op; build MLIR GPU tools via
+                            `adesh toolchain install --build-mlir-source`
+  --use-system-packages     Deprecated no-op; register external LLVM via
+                            `adesh toolchain --external install`
+  --yes                     Accept prompts
   -h, --help               Show this help
 USAGE
 }
@@ -49,14 +56,20 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --skip-toolchain)
+      # Deprecated no-op: the native toolchain is bundled with the core
+      # payload; nothing external is downloaded.
       skip_toolchain=1
       shift
       ;;
     --with-gpu-source-build)
+      # Deprecated no-op: run `adesh toolchain install --build-mlir-source`
+      # after installing to build the optional MLIR GPU tools.
       gpu_source_build=1
       shift
       ;;
     --use-system-packages)
+      # Deprecated no-op: register external LLVM after installing with
+      # `adesh toolchain --external install`.
       use_system_packages=1
       shift
       ;;
@@ -283,9 +296,14 @@ link_binary() {
   ln -sfn "$source" "$link_dir/$name"
 }
 
-for binary in adesh adl als adesh-editor; do
+for binary in adesh adl als adeshlink; do
   link_binary "$binary"
 done
+if [[ -x "$install_dir/bin/adesh-editor" ]]; then
+  link_binary adesh-editor
+else
+  printf 'Note: adesh-editor not bundled in this archive; skipping its symlink.\n'
+fi
 
 # Verify binary compatibility with the local C library
 if ! "$install_dir/bin/adesh" --version >/dev/null 2>&1; then
@@ -302,15 +320,15 @@ write_profile() {
   local home="$1"
   local quoted_home
   quoted_home="$(printf '%s' "$home" | sed "s/'/'\\\\''/g")"
+  # The Adesh native toolchain is bundled inside the installation, so no
+  # ADESH_TOOLCHAIN/ADESH_CLANG/ADESH_LLC variables are exported. Users who
+  # opt into the external LLVM bridge register it separately with
+  # `adesh toolchain --external install`.
   cat > "$2" <<PROFILE
 # AdeshLang environment (managed by the AdeshLang installer)
 export ADESH_HOME='$quoted_home'
-export ADESH_TOOLCHAIN='$quoted_home/toolchain/llvm'
-export ADESH_CLANG='$quoted_home/toolchain/llvm/bin/clang'
-export ADESH_LLC='$quoted_home/toolchain/llvm/bin/llc'
-export ADESH_MLIR_OPT='$quoted_home/toolchain/llvm/bin/mlir-opt'
-export ADESH_MLIR_TRANSLATE='$quoted_home/toolchain/llvm/bin/mlir-translate'
-export PATH='$quoted_home/bin:$quoted_home/toolchain/llvm/bin:\$PATH'
+export ADESH_STD='$quoted_home/std'
+export PATH='$quoted_home/bin:\$PATH'
 PROFILE
   chmod 0644 "$2" 2>/dev/null || true
 }
@@ -346,89 +364,14 @@ else
 fi
 
 toolchain_command() {
-  local scope
-  if (( system_mode )); then
-    scope="--system"
-  else
-    scope="--user"
-  fi
-  local args=(toolchain install "$scope")
-  if (( gpu_source_build )); then
-    args+=(--build-mlir-source)
-  fi
-  if (( use_system_packages )); then
-    args+=(--use-system-packages)
-  fi
-  ADESH_HOME="$install_dir" "$install_dir/bin/adesh" "${args[@]}"
-}
-
-later_toolchain_command() {
-  local scope
-  if (( system_mode )); then
-    scope="--system"
-    printf 'Run later (as root): sudo ADESH_HOME="%s" "%s/bin/adesh" toolchain install %s' \
-      "$install_dir" "$install_dir" "$scope"
-  else
-    scope="--user"
-    printf 'Run later: ADESH_HOME="%s" "%s/bin/adesh" toolchain install %s' \
-      "$install_dir" "$install_dir" "$scope"
-  fi
-  if (( use_system_packages )); then
-    printf ' --use-system-packages'
-  fi
-  if (( gpu_source_build )); then
-    printf ' --build-mlir-source'
-  fi
-  printf '\n'
-}
-
-ask_yes_no() {
-  local prompt="$1"
-  local default_yes="$2"
-  local answer=""
-  if (( assume_yes )); then
-    [[ "$default_yes" == "yes" ]]
-    return
-  fi
-  [[ -r /dev/tty && -t 1 ]] || return 1
-  printf '%s ' "$prompt"
-  IFS= read -r answer </dev/tty || return 1
-  if [[ "$default_yes" == "yes" ]]; then
-    [[ -z "$answer" || "$answer" =~ ^[Yy]([Ee][Ss])?$ ]]
-  else
-    [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]]
-  fi
+  # Self-verify the bundled native toolchain. Fast, offline, no downloads.
+  ADESH_HOME="$install_dir" "$install_dir/bin/adesh" toolchain check
 }
 
 if (( skip_toolchain )); then
-  printf 'Toolchain installation skipped.\n'
-  later_toolchain_command
-else
-  online=0
-  if command -v curl >/dev/null 2>&1 &&
-    curl -fsI --max-time 5 https://github.com >/dev/null 2>&1; then
-    online=1
-  fi
-  install_toolchain=0
-  if (( online )); then
-    if ask_yes_no 'Download and install pinned LLVM 18.1.8 toolchain now (~190 MB download, ~900 MB disk space)? [Y/n]' yes; then
-      install_toolchain=1
-    fi
-  else
-    printf 'GitHub is not reachable; the toolchain will not be downloaded now.\n'
-  fi
-
-  if (( install_toolchain )); then
-    if (( gpu_source_build == 0 )) && ask_yes_no \
-      'Build optional MLIR GPU tools from pinned LLVM source? [y/N]' no; then
-      gpu_source_build=1
-    fi
-    toolchain_command
-  else
-    printf 'Toolchain installation was declined or deferred.\n'
-    later_toolchain_command
-  fi
+  printf 'Note: --skip-toolchain is a no-op; the native toolchain is bundled with AdeshLang.\n'
 fi
+toolchain_command
 
 if (( system_mode )); then
   printf 'Running adesh doctor...\n'
@@ -442,12 +385,15 @@ fi
 printf '\n═══════════════════════════════════════════════════════\n'
 printf ' AdeshLang v%s Installation Complete!\n' "$VERSION"
 printf '═══════════════════════════════════════════════════════\n'
+printf ' • Native toolchain bundled: codegen + adeshlink + ADOB + runtime.\n'
+printf ' • No external LLVM, GCC, or MSVC is required to build Adesh programs.\n'
 if [[ ! -f "$install_dir/ai/models/adesh-coder-0.5b-q4_0.gguf" ]]; then
   printf ' • Note: AI neural models are not bundled with this lightweight installer.\n'
   printf ' • To download and set up the default offline AI coder model (~275 MB):\n'
   printf '     adesh ai setup\n'
-  printf ' • For custom AI model training & MLIR source builds, install Python 3.12:\n'
+  printf ' • AI model training additionally needs Python 3.12:\n'
   printf '     (e.g., sudo apt install python3 python3-pip / sudo dnf install python3)\n'
 fi
-printf ' • Verify health & toolchains:  adesh doctor\n'
-printf ' • Documentation & Guides:      https://adeshlang.org\n\n'
+printf ' • Verify health & native toolchain: adesh doctor | adesh toolchain check\n'
+printf ' • Optional external LLVM bridge:  adesh gpu-check --external-linker\n'
+printf ' • Documentation & Guides:          https://adeshlang.org\n\n'

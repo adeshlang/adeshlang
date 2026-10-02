@@ -879,12 +879,15 @@ pub fn help_message() -> String {
     If steps 2-4 fail (missing dialect plugins), interpreter fallback runs the program.
 
 {bold}GPU DEVICE CHECK:{reset}
-    {green}gpu-check{reset}               Probe GPU devices and MLIR toolchain compatibility
+    {green}gpu-check{reset}               Probe GPU devices and the native adesh toolchain
     {green}gpu-check -v{reset}            Verbose: include optional/missing checks
     {green}gpu-check --json{reset}        Machine-readable JSON output for scripts/CI
+    {green}gpu-check --external-linker{reset}  Also require an external LLVM toolchain
+                                       (clang + lld) for `build --external-linker`
 
-    {dim}Environment overrides for MLIR tools:{reset}
-      ADESH_MLIR_OPT, ADESH_MLIR_TRANSLATE, ADESH_LLC, ADESH_CLANG
+    {dim}Native pipeline (adesh codegen → ADOB → adeshlink) needs no external tools.{reset}
+    {dim}Environment overrides for optional external tools:{reset}
+      ADESH_MLIR_OPT, ADESH_MLIR_TRANSLATE, ADESH_LLC, ADESH_CLANG, ADESH_LLD
 
 "#,
             bold = bold,
@@ -931,7 +934,7 @@ Built with strong type inference, memory safety, and zero-cost abstractions
     {green}init{reset} <dir>            Initialize a new project
     {green}check{reset} <file>          Type-check program without execution
     {green}target{reset} [list|info]    Show cross-compilation targets
-    {green}gpu-check{reset} [-v] [--json] Check GPU device compatibility & toolchain
+    {green}gpu-check{reset} [-v] [--json] [--external-linker] Check GPU devices & toolchain
     {green}clean{reset}                 Remove build artifacts
 
 {bold}ADESH EDITOR (TUI IDE):{reset} {yellow}⭐ NEW!{reset}

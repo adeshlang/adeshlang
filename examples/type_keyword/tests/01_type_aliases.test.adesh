@@ -1,0 +1,122 @@
+// Type Alias & Parameter Default Tests
+// Covers `type` aliases with optional fields, function parameter defaults,
+// and typeof/sizeof on alias instances as demonstrated by examples/type_keyword.
+// NOTE: type-alias FIELD default fill only happens when the declaring file is
+// the entry file, so these tests assert behavior that is identical whether the
+// module runs standalone or is imported by tests/main.adesh.
+
+// ─────────────────────────────────────────────────────────────
+// Helpers (self-contained, pure)
+// ─────────────────────────────────────────────────────────────
+
+type AjayShape = {
+    name: String,
+    age?: u8 = 20,
+    isStudent: Bool,
+};
+
+type UserShape = { name?: String, age?: int };
+
+export fn make_ajay(): AjayShape {
+    return {
+        name: "Ajay",
+        age: 20,
+        isStudent: true,
+    };
+}
+
+export fn make_ajay_with_age(age: u8): AjayShape {
+    return {
+        name: "Ajay",
+        age: age,
+        isStudent: false,
+    };
+}
+
+export fn make_user(name: String, age: int = 10): UserShape {
+    return { name: name, age: age };
+}
+
+export fn membership_fee(age: u8 = 18, is_member: bool = false): i32 {
+    let fee = 100;
+    if (age < 18) {
+        fee = 50;
+    }
+    if (is_member) {
+        fee = fee - 20;
+    }
+    return fee;
+}
+
+export fn greet_summary(name: String, age: u8 = 18, is_member: bool = false): string {
+    return name + "/" + str(age) + "/" + str(is_member);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_alias_field_construction() {
+    let ajay = make_ajay();
+    assert_eq(ajay.name, "Ajay");
+    assert_eq(ajay.age, 20);
+    assert_eq(ajay.isStudent, true);
+}
+
+export test fn test_alias_field_override() {
+    let ajay = make_ajay_with_age(25);
+    assert_eq(ajay.age, 25);
+    assert_eq(ajay.isStudent, false);
+    assert_ne(ajay.age, 20);
+}
+
+export test fn test_missing_optional_is_null() {
+    let u: UserShape = { name: "Ajay" };
+    assert_eq(u.name, "Ajay");
+    assert_eq(u.age, null);
+    assert_eq(type(u.age), "null");
+}
+
+export test fn test_function_parameter_defaults() {
+    assert_eq(membership_fee(), 100);
+    assert_eq(membership_fee(16), 50);
+    assert_eq(membership_fee(25, true), 80);
+    assert_eq(membership_fee(15, true), 30);
+}
+
+export test fn test_make_user_defaults() {
+    let u1 = make_user("Ajay");
+    assert_eq(u1.name, "Ajay");
+    assert_eq(u1.age, 10);
+    let u2 = make_user("Bo", 30);
+    assert_eq(u2.age, 30);
+    assert_eq(greet_summary("Ajay"), "Ajay/18/false");
+    assert_eq(greet_summary("Bo", 25, true), "Bo/25/true");
+}
+
+export test fn test_typeof_sizeof_alias_instance() {
+    let ajay = make_ajay();
+    assert_eq(typeof ajay, "object");
+    assert(sizeof(ajay) > 0, "alias instance should take space");
+    assert_eq(typeof ajay.name, "string");
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_alias_field_construction();
+    test_alias_field_override();
+    test_missing_optional_is_null();
+    test_function_parameter_defaults();
+    test_make_user_defaults();
+    test_typeof_sizeof_alias_instance();
+    return 6;
+}
+
+fn main() {
+    print("Running 01_type_aliases tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 01_type_aliases.test.adesh`);
+}

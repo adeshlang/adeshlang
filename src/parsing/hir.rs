@@ -326,6 +326,8 @@ pub enum HirStmt {
     Break,
     /// Continue statement
     Continue,
+    /// Jump statement (jump to loop index)
+    Jump(HirExpr),
     /// Try-catch statement
     TryCatch {
         try_block: Box<HirStmt>,

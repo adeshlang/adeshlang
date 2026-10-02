@@ -9,12 +9,20 @@ use crate::symbol::{SymbolBinding, SymbolKind, SymbolVisibility};
 use crate::target::{
     Abi, Architecture, ComputeDevice, Endianness, Environment, OperatingSystem, PointerWidth,
 };
+use crate::validator::AdobValidator;
 
 pub struct AdobWriter;
 
 impl AdobWriter {
     /// Encode an AdobObject into a validated, deterministic byte vector.
+    ///
+    /// The object is validated before encoding so structural defects (bad
+    /// alignments, duplicate sections, out-of-bounds symbols, dangling
+    /// relocations) fail loudly at the point of production instead of being
+    /// discovered by the reader later.
     pub fn write(obj: &AdobObject) -> AdobResult<Vec<u8>> {
+        AdobValidator::validate(obj)?;
+
         let mut buf = Vec::with_capacity(1024 + obj.total_section_size() as usize);
 
         // 1. Header Magic & Version

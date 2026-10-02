@@ -5,22 +5,25 @@ prefix="/usr/lib/adeshlang"
 profile="/etc/profile.d/adeshlang.sh"
 
 if [ "$1" = "configure" ]; then
-    for binary in adesh adl als adesh-editor; do
+    for binary in adesh adl als adesh-editor adeshlink; do
         if [ -x "$prefix/bin/$binary" ]; then
             ln -sfn "$prefix/bin/$binary" "/usr/bin/$binary"
         fi
     done
 
     mkdir -p "$(dirname "$profile")"
+    # The Adesh native toolchain (codegen + adeshlink linker + ADOB + runtime)
+    # ships inside the package: no toolchain variables are exported and no
+    # LLVM/MSVC install is needed. Users who opt into the external LLVM
+    # bridge register it separately with `adesh toolchain --external install`.
     cat > "$profile" <<'PROFILE'
 # AdeshLang environment (managed by the adeshlang package)
 export ADESH_HOME="/usr/lib/adeshlang"
-export ADESH_TOOLCHAIN="/usr/lib/adeshlang/toolchain/llvm"
-export ADESH_CLANG="/usr/lib/adeshlang/toolchain/llvm/bin/clang"
-export ADESH_LLC="/usr/lib/adeshlang/toolchain/llvm/bin/llc"
-export ADESH_MLIR_OPT="/usr/lib/adeshlang/toolchain/llvm/bin/mlir-opt"
-export ADESH_MLIR_TRANSLATE="/usr/lib/adeshlang/toolchain/llvm/bin/mlir-translate"
-export PATH="/usr/lib/adeshlang/bin:/usr/lib/adeshlang/toolchain/llvm/bin:$PATH"
+export ADESH_STD="/usr/lib/adeshlang/std"
+case ":$PATH:" in
+  *":/usr/lib/adeshlang/bin:"*) ;;
+  *) export PATH="/usr/lib/adeshlang/bin:$PATH" ;;
+esac
 PROFILE
 
     if [ ! -f "$prefix/ai/models/adesh-coder-0.5b-q4_0.gguf" ]; then
@@ -28,16 +31,9 @@ PROFILE
         echo "To download and set up the default local AI coder model (~275 MB), run: adesh ai setup"
     fi
 
-    if [ "${ADESH_DEB_INSTALL_TOOLCHAIN:-0}" = "1" ]; then
-        if [ "${ADESH_DEB_USE_SYSTEM_PACKAGES:-${ADESH_USE_SYSTEM_PACKAGES:-0}}" = "1" ]; then
-            ADESH_HOME="$prefix" "$prefix/bin/adesh" toolchain install --system --use-system-packages
-        else
-            ADESH_HOME="$prefix" "$prefix/bin/adesh" toolchain install --system
-        fi
-    else
-        echo "AdeshLang toolchain not installed by default."
-        echo "To install it, run: sudo ADESH_HOME=$prefix $prefix/bin/adesh toolchain install --system"
-        echo "For distro packages, append: --use-system-packages"
+    # Self-verify the bundled native toolchain (fast; no downloads).
+    if [ -x "$prefix/bin/adesh" ]; then
+        ADESH_HOME="$prefix" "$prefix/bin/adesh" toolchain check || true
     fi
 fi
 

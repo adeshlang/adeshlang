@@ -102,7 +102,12 @@ When step 3 (mlir-translate) fails due to missing GPU dialect plugins (NVVM/ROCm
 
 ## Prerequisites
 
-### MLIR Toolchain
+Normal `adesh build` / `adesh run` need **nothing** from this section: the
+native toolchain (native codegen, ADOB, `adeshlink`, runtime) is bundled and
+self-contained. The tools below are only consulted by the **GPU/MLIR pipeline**
+and the opt-in `--external-linker` mode.
+
+### External MLIR/LLVM tools (GPU pipeline / --external-linker only)
 
 Install via MSYS2 (Windows):
 
@@ -114,7 +119,7 @@ pacman -S mingw-w64-x86_64-mlir
 
 Or install LLVM/MLIR from https://releases.llvm.org/ (Linux/macOS).
 
-### Required tools
+### GPU/MLIR pipeline tools
 
 | Tool             | Purpose                          | Env Override          |
 |------------------|----------------------------------|----------------------|
@@ -122,6 +127,7 @@ Or install LLVM/MLIR from https://releases.llvm.org/ (Linux/macOS).
 | `mlir-translate` | MLIR → LLVM IR translation       | `ADESH_MLIR_TRANSLATE`|
 | `llc`            | LLVM IR → object file            | `ADESH_LLC`           |
 | `clang`          | Object → executable (linker)     | `ADESH_CLANG`         |
+| `lld`/`lld-link` | External LLVM linker (`--external-linker`) | `ADESH_LLD` |
 
 ### Optional tools (detected by gpu-check)
 
@@ -194,6 +200,7 @@ adesh run --gpu --dump-mir my_program.adesh
 adesh gpu-check              # Human-readable compatibility report
 adesh gpu-check -v           # Verbose: show all checks including Missing
 adesh gpu-check --json       # Machine-readable JSON (for CI/scripts)
+adesh gpu-check --external-linker   # Also require external LLVM (clang + lld)
 ```
 
 JSON output example:
@@ -215,12 +222,14 @@ JSON output example:
 
 ## GPU Device Check
 
-`gpu-check` probes the following categories:
+`gpu-check` probes the following categories (native toolchain first; external
+tools are only *errors* in `--external-linker` mode):
 
 | Category      | What is checked                                          |
 |---------------|----------------------------------------------------------|
-| **Env**       | `ADESH_MLIR_OPT`, `ADESH_MLIR_TRANSLATE`, `ADESH_LLC`, `ADESH_CLANG`, `CUDA_VISIBLE_DEVICES`, etc. |
-| **Toolchain** | mlir-opt, mlir-translate, llc, clang, nvidia-smi, vulkaninfo, rocm-smi, clinfo |
+| **Native Toolchain** | adesh native codegen, ADOB, `adeshlink` CLI, runtime ABI (bundled with the distribution) |
+| **External LLVM/MLIR** | mlir-opt, mlir-translate, llc, clang, lld — required only with `--external-linker` |
+| **Env**       | `ADESH_MLIR_OPT`, `ADESH_MLIR_TRANSLATE`, `ADESH_LLC`, `ADESH_CLANG`, `ADESH_LLD`, `CUDA_VISIBLE_DEVICES`, etc. |
 | **CUDA/NVIDIA** | GPU name, driver, memory, compute capability via `nvidia-smi --query-gpu`, `nvcuda.dll` presence |
 | **ROCm/HIP**  | GPU detection via `rocm-smi`, HIP runtime library |
 | **Vulkan**    | Devices via `vulkaninfo --summary`, `vulkan-1.dll` / `libvulkan.so` |

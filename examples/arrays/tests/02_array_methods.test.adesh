@@ -1,0 +1,170 @@
+// Array Methods Tests
+// Exercises the method-style array API from examples/arrays/array_methods_interpreter.adesh
+// and method_syntax_demo.adesh: unshift/shift, insert/remove, extend/concat,
+// sort/reverse, clear, count/index, flat, and map/filter/reduce callbacks.
+
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+
+export fn joined(v: [int]): string {
+    return v.join(",");
+}
+
+export fn copy_of(v: [int]): [int] {
+    let out: [i32] = [];
+    for (x in v) {
+        out.push(x);
+    }
+    return out;
+}
+
+export fn sum_of(v: [int]): i32 {
+    let total = 0;
+    for (x in v) {
+        total = total + x;
+    }
+    return total;
+}
+
+export fn all_even(v: [int]): bool {
+    for (x in v) {
+        if (x % 2 != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+export fn doubled(v: [int]): [int] {
+    let out: [i32] = [];
+    for (x in v) {
+        out.push(x * 2);
+    }
+    return out;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_unshift_and_shift() {
+    let a = [2, 3];
+    let b = a.unshift(1);
+    assert_eq(b.len(), 3);
+    assert_eq(b[0], 1);
+    assert_eq(a[0], 1);
+    let c = b.shift();
+    assert_eq(c.len(), 2);
+    assert_eq(c[0], 2);
+    assert_eq(joined(c), "2,3");
+}
+
+export test fn test_insert_and_remove() {
+    let a = [1, 2, 3];
+    let b = a.insert(1, 99);
+    assert_eq(b.len(), 4);
+    assert_eq(joined(b), "1,99,2,3");
+    let c = b.remove(1);
+    assert_eq(c.len(), 3);
+    assert_eq(joined(c), "1,2,3");
+    assert_eq(joined(a), "1,99,2,3");
+}
+
+export test fn test_extend_and_concat() {
+    let a = [1, 2];
+    let b = a.extend([3, 4]);
+    assert_eq(b.len(), 4);
+    assert_eq(a.len(), 4);
+    assert_eq(joined(a), "1,2,3,4");
+    let c = b.concat([5]);
+    assert_eq(c.len(), 5);
+    assert_eq(c[4], 5);
+    assert_eq(joined(b), "1,2,3,4");
+}
+
+export test fn test_sort_and_reverse() {
+    let a = [3, 1, 2];
+    let s = a.sort();
+    assert_eq(joined(s), "1,2,3");
+    assert_eq(joined(a), "1,2,3");
+    let r = s.reverse();
+    assert_eq(joined(r), "3,2,1");
+    assert_eq(joined(s), "3,2,1");
+    let single = [42];
+    assert_eq(joined(single.sort()), "42");
+}
+
+export test fn test_clear() {
+    let a = [1, 2, 3];
+    a.clear();
+    assert_eq(a.len(), 0);
+    assert_eq(joined(a), "");
+    a.push(9);
+    assert_eq(a.len(), 1);
+    assert_eq(a[0], 9);
+}
+
+export test fn test_map_filter_reduce() {
+    let a = [1, 2, 3, 4];
+    let mapped = a.map(fn (x) { return x * 2; });
+    assert_eq(joined(mapped), "2,4,6,8");
+    let filtered = a.filter(fn (x) { return x % 2 == 0; });
+    assert_eq(joined(filtered), "2,4");
+    let total = a.reduce(fn (acc, x) { return acc + x; }, 0);
+    assert_eq(total, 10);
+    let seeded = a.reduce(fn (acc, x) { return acc + x; }, 100);
+    assert_eq(seeded, 110);
+    assert_eq(sum_of(doubled(a)), 20);
+    assert(all_even(filtered), "filtered list is all even");
+}
+
+export test fn test_flat_count_index() {
+    let nested = [[1, 2], [3, 4]];
+    let flat = nested.flat();
+    assert_eq(flat.len(), 4);
+    assert_eq(joined(flat), "1,2,3,4");
+    let a = [3, 1, 3, 2];
+    assert_eq(a.count(3), 2);
+    assert_eq(a.count(9), 0);
+    assert_eq(a.index(1), 1);
+    assert_eq(a.index(9), -1);
+    assert_eq(copy_of(a).len(), 4);
+}
+
+export test fn test_single_element_edges() {
+    let a = [5];
+    let b = a.pop();
+    assert_eq(b.len(), 0);
+    let c = [6];
+    let d = c.shift();
+    assert_eq(d.len(), 0);
+    let e = [1];
+    let f = e.insert(0, 0);
+    assert_eq(joined(f), "0,1");
+    let g = [7];
+    let h = g.remove(0);
+    assert_eq(h.len(), 0);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_unshift_and_shift();
+    test_insert_and_remove();
+    test_extend_and_concat();
+    test_sort_and_reverse();
+    test_clear();
+    test_map_filter_reduce();
+    test_flat_count_index();
+    test_single_element_edges();
+    return 8;
+}
+
+fn main() {
+    print("Running 02_array_methods tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 02_array_methods.test.adesh`);
+}

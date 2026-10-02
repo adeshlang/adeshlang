@@ -1,0 +1,136 @@
+// Basics Test Runner & Analytics Suite
+// Imports test cases from all basics test modules and executes them step-by-step
+// with rich analytics reporting.
+
+import "./01_arrays_tuples.test.adesh" as array_tests;
+import "./02_structs_objects.test.adesh" as struct_tests;
+import "./03_collections.test.adesh" as coll_tests;
+
+// ─────────────────────────────────────────────────────────────
+// Native Test Harness Declarations (for `adesh run --test`)
+// ─────────────────────────────────────────────────────────────
+
+test fn test_suite_arrays_tuples() {
+    array_tests.run_tests();
+}
+
+test fn test_suite_structs_objects() {
+    struct_tests.run_tests();
+}
+
+test fn test_suite_collections() {
+    coll_tests.run_tests();
+}
+
+// ─────────────────────────────────────────────────────────────
+// Standalone Test Runner & Analytics Engine
+// ─────────────────────────────────────────────────────────────
+
+struct TestSuiteResult {
+    suite_name: string;
+    total: i32;
+    passed: i32;
+    failed: i32;
+};
+
+fn run_single_test(test_name: string, test_fn): bool {
+    try {
+        test_fn();
+        print(`  ✓ PASS: ${test_name}`);
+        return true;
+    } catch (err) {
+        print(`  ✗ FAIL: ${test_name} - Error: ${err}`);
+        return false;
+    }
+}
+
+fn print_analytics_dashboard(
+    array_res: TestSuiteResult,
+    struct_res: TestSuiteResult,
+    coll_res: TestSuiteResult
+) {
+    let total_all = array_res.total + struct_res.total + coll_res.total;
+    let passed_all = array_res.passed + struct_res.passed + coll_res.passed;
+    let failed_all = array_res.failed + struct_res.failed + coll_res.failed;
+    let pass_rate = (passed_all * 100) / total_all;
+
+    print("");
+    print("╔══════════════════════════════════════════════════════════════════════╗");
+    print("║                     TEST ANALYTICS DASHBOARD                         ║");
+    print("╠══════════════════════════════════════════════════════════════════════╣");
+    print("║  Suite Name              │ Total │ Passed │ Failed │ Pass Rate       ║");
+    print("╟──────────────────────────┼───────┼────────┼────────┼─────────────────╢");
+    print(`║  01_arrays_tuples        │   ${array_res.total}   │   ${array_res.passed}    │   ${array_res.failed}    │ ${pass_rate}%            ║`);
+    print(`║  02_structs_objects      │   ${struct_res.total}   │   ${struct_res.passed}    │   ${struct_res.failed}    │ ${pass_rate}%            ║`);
+    print(`║  03_collections          │   ${coll_res.total}   │   ${coll_res.passed}    │   ${coll_res.failed}    │ ${pass_rate}%            ║`);
+    print("╠══════════════════════════════════════════════════════════════════════╣");
+    print(`║  TOTAL OVERALL           │  ${total_all}   │  ${passed_all}   │   ${failed_all}    │ ${pass_rate}%            ║`);
+    print("╚══════════════════════════════════════════════════════════════════════╝");
+    print("");
+    if (failed_all == 0) {
+        print(`  🎉 ALL BASICS TESTS PASSED SUCCESSFULLY! (${passed_all}/${total_all} tests)`);
+    } else {
+        print(`  ⚠️ WARNING: ${failed_all} test(s) failed.`);
+    }
+    print("");
+}
+
+fn main() {
+    print("╔══════════════════════════════════════════════════════════════════════╗");
+    print("║                AdeshLang Basics - Test Execution Runner              ║");
+    print("╚══════════════════════════════════════════════════════════════════════╝");
+    print("");
+
+    // Suite 1: Arrays & Tuples Tests
+    print("▶ [1/3] Running Suite: 01_arrays_tuples.test.adesh");
+    let a1 = 0;
+    a1 = a1 + (run_single_test("array_tests.test_array_creation_and_indexing", array_tests.test_array_creation_and_indexing) ? 1 : 0);
+    a1 = a1 + (run_single_test("array_tests.test_array_methods", array_tests.test_array_methods) ? 1 : 0);
+    a1 = a1 + (run_single_test("array_tests.test_array_search_helper", array_tests.test_array_search_helper) ? 1 : 0);
+    a1 = a1 + (run_single_test("array_tests.test_array_transform_map", array_tests.test_array_transform_map) ? 1 : 0);
+    a1 = a1 + (run_single_test("array_tests.test_array_build_and_join", array_tests.test_array_build_and_join) ? 1 : 0);
+    a1 = a1 + (run_single_test("array_tests.test_tuple_access_and_types", array_tests.test_tuple_access_and_types) ? 1 : 0);
+    let array_res = TestSuiteResult {
+        suite_name: "01_arrays_tuples",
+        total: 6,
+        passed: a1,
+        failed: 6 - a1,
+    };
+    print(`  Suite Result: ${a1}/6 tests passed\n`);
+
+    // Suite 2: Structs & Objects Tests
+    print("▶ [2/3] Running Suite: 02_structs_objects.test.adesh");
+    let s1 = 0;
+    s1 = s1 + (run_single_test("struct_tests.test_struct_literal_and_fields", struct_tests.test_struct_literal_and_fields) ? 1 : 0);
+    s1 = s1 + (run_single_test("struct_tests.test_struct_field_mutation", struct_tests.test_struct_field_mutation) ? 1 : 0);
+    s1 = s1 + (run_single_test("struct_tests.test_struct_extend_method", struct_tests.test_struct_extend_method) ? 1 : 0);
+    s1 = s1 + (run_single_test("struct_tests.test_object_literal_access", struct_tests.test_object_literal_access) ? 1 : 0);
+    s1 = s1 + (run_single_test("struct_tests.test_object_key_addition", struct_tests.test_object_key_addition) ? 1 : 0);
+    s1 = s1 + (run_single_test("struct_tests.test_string_basics", struct_tests.test_string_basics) ? 1 : 0);
+    let struct_res = TestSuiteResult {
+        suite_name: "02_structs_objects",
+        total: 6,
+        passed: s1,
+        failed: 6 - s1,
+    };
+    print(`  Suite Result: ${s1}/6 tests passed\n`);
+
+    // Suite 3: Collections Tests
+    print("▶ [3/3] Running Suite: 03_collections.test.adesh");
+    let c1 = 0;
+    c1 = c1 + (run_single_test("coll_tests.test_vec_deque", coll_tests.test_vec_deque) ? 1 : 0);
+    c1 = c1 + (run_single_test("coll_tests.test_hash_set", coll_tests.test_hash_set) ? 1 : 0);
+    c1 = c1 + (run_single_test("coll_tests.test_btree_map", coll_tests.test_btree_map) ? 1 : 0);
+    c1 = c1 + (run_single_test("coll_tests.test_binary_heap_and_priority_queue", coll_tests.test_binary_heap_and_priority_queue) ? 1 : 0);
+    c1 = c1 + (run_single_test("coll_tests.test_bitset_and_ring_buffer", coll_tests.test_bitset_and_ring_buffer) ? 1 : 0);
+    let coll_res = TestSuiteResult {
+        suite_name: "03_collections",
+        total: 5,
+        passed: c1,
+        failed: 5 - c1,
+    };
+    print(`  Suite Result: ${c1}/5 tests passed\n`);
+
+    // Final Analytics Dashboard
+    print_analytics_dashboard(array_res, struct_res, coll_res);
+}

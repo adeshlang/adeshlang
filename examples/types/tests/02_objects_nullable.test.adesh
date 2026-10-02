@@ -1,0 +1,131 @@
+// Objects, Nullability & Control-Flow Narrowing Tests
+// Covers object syntax with hasKey, null detection, Option-based
+// narrowing, and type-driven dispatch from examples/types.
+
+// ─────────────────────────────────────────────────────────────
+// Helpers (self-contained, pure)
+// ─────────────────────────────────────────────────────────────
+
+export fn has_field(o, key: string): bool {
+    return hasKey(o, key);
+}
+
+export fn describe(v): string {
+    let t = type(v);
+    if (t == "null") {
+        return "nothing";
+    }
+    if (t == "string") {
+        return v;
+    }
+    return "other";
+}
+
+export fn length_of(v): i32 {
+    let t = type(v);
+    if (t == "null") {
+        return 0;
+    }
+    if (t == "string") {
+        return v.len();
+    }
+    return -1;
+}
+
+export fn first_letter_or_dot(s): string {
+    if (s == null) {
+        return ".";
+    }
+    if (s.len() == 0) {
+        return ".";
+    }
+    return s.charAt(0);
+}
+
+export fn option_value_or(opt, fallback) {
+    if (opt.tag == "Some") {
+        return opt.value;
+    }
+    return fallback;
+}
+
+export fn count_present(values: [i32]): i32 {
+    let count = 0;
+    for (v in values) {
+        if (v != null) {
+            count = count + 1;
+        }
+    }
+    return count;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_object_literal_fields() {
+    let obj = { name: "Alice", age: 30 };
+    assert_eq(obj.name, "Alice");
+    assert_eq(obj.age, 30);
+    assert_eq(type(obj), "object");
+    assert_ne(obj.name, "alice");
+}
+
+export test fn test_has_key_object() {
+    let obj = { name: "Alice", age: 30 };
+    assert(has_field(obj, "name"), "obj should have name");
+    assert(has_field(obj, "age"), "obj should have age");
+    assert_eq(has_field(obj, "email"), false);
+}
+
+export test fn test_null_checks() {
+    let maybe_user = null;
+    assert_eq(type(maybe_user), "null");
+    assert_eq(describe(null), "nothing");
+    assert_eq(describe("hi"), "hi");
+    assert_eq(describe(5), "other");
+}
+
+export test fn test_nullable_narrowing() {
+    assert_eq(length_of(null), 0);
+    assert_eq(length_of("abcd"), 4);
+    assert_eq(length_of(12), -1);
+    assert_eq(first_letter_or_dot(null), ".");
+    assert_eq(first_letter_or_dot(""), ".");
+    assert_eq(first_letter_or_dot("Adesh"), "A");
+}
+
+export test fn test_option_narrowing() {
+    let some_name = Some("Ajay");
+    let no_name = None();
+    assert_eq(some_name.tag, "Some");
+    assert_eq(no_name.tag, "None");
+    assert_eq(option_value_or(some_name, "guest"), "Ajay");
+    assert_eq(option_value_or(no_name, "guest"), "guest");
+}
+
+export test fn test_non_null_values_count() {
+    assert_eq(count_present([1, 2, 3]), 3);
+    let empty: [i32] = [];
+    assert_eq(count_present(empty), 0);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_object_literal_fields();
+    test_has_key_object();
+    test_null_checks();
+    test_nullable_narrowing();
+    test_option_narrowing();
+    test_non_null_values_count();
+    return 6;
+}
+
+fn main() {
+    print("Running 02_objects_nullable tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 02_objects_nullable.test.adesh`);
+}

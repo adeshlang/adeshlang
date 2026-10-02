@@ -1,0 +1,190 @@
+// Ownership + Borrowing Tests (Combined)
+// Covers examples/memory_combined/ownership_with_borrowing.adesh and the
+// borrow-tracking model from examples/memory/ownership_patterns.adesh:
+//   - Buffer struct reads and copy-style modification (exclusive access)
+//   - ownership state machine: move invalidates, rebind restores
+//   - borrow state machine: multiple immutable OR single mutable
+//   - mutable borrow attempt while immutably borrowed throws
+// All state machines are pure functions over op sequences.
+
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+
+struct Buffer {
+    data: i32;
+    size: i32;
+};
+
+export fn make_buffer(data: i32, size: i32) {
+    return Buffer { data: data, size: size };
+}
+
+export fn read_buffer(b: Buffer): i32 {
+    return b.data;
+}
+
+// Returns a modified copy: the caller's buffer is untouched, which is
+// how exclusive (&mut) access looks from the outside.
+export fn modify_buffer(b: Buffer) {
+    return Buffer { data: b.data + 1, size: b.size * 2 };
+}
+
+export fn buffer_info(b: Buffer): [i32] {
+    return [b.data, b.size];
+}
+
+// Ownership checker over a sequence of operations.
+// Ops: "move" (transfers ownership), "read" (needs ownership),
+// "rebind" (re-initialises the binding). Returns false when any op
+// would be rejected (read/double-move after a move).
+export fn ownership_valid(ops: [str]): bool {
+    let moved = false;
+    for (op in ops) {
+        if (op == "move") {
+            if (moved == true) {
+                return false;
+            }
+            moved = true;
+        } else if (op == "read") {
+            if (moved == true) {
+                return false;
+            }
+        } else if (op == "rebind") {
+            moved = false;
+        }
+    }
+    return true;
+}
+
+// Borrow checker over a sequence of operations.
+// Ops: "borrow-imm", "release-imm", "borrow-mut", "release-mut".
+// Multiple immutable borrows coexist; a mutable borrow needs both
+// counters at zero and blocks every other borrow while active.
+export fn borrow_valid(ops: [str]): bool {
+    let imm = 0;
+    let mut_b = 0;
+    for (op in ops) {
+        if (op == "borrow-imm") {
+            if (mut_b > 0) {
+                return false;
+            }
+            imm = imm + 1;
+        } else if (op == "release-imm") {
+            if (imm > 0) {
+                imm = imm - 1;
+            }
+        } else if (op == "borrow-mut") {
+            if (imm > 0 || mut_b > 0) {
+                return false;
+            }
+            mut_b = 1;
+        } else if (op == "release-mut") {
+            mut_b = 0;
+        }
+    }
+    return true;
+}
+
+// Runtime guard mirroring BorrowTracker.borrowMutable() from
+// examples/memory/ownership_patterns.adesh.
+export fn borrow_mutable_checked(imm_active: i32): i32 {
+    if (imm_active > 0) {
+        throw "Cannot borrow mutably while immutably borrowed";
+    }
+    return 1;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_read_buffer() {
+    let b = make_buffer(42, 256);
+    assert_eq(read_buffer(b), 42);
+    let info = buffer_info(b);
+    assert_eq(info.len(), 2);
+    assert_eq(info[0], 42);
+    assert_eq(info[1], 256);
+
+    let empty = make_buffer(0, 0);
+    assert_eq(read_buffer(empty), 0);
+}
+
+export test fn test_modify_buffer_is_exclusive() {
+    let b = make_buffer(42, 256);
+    let modified = modify_buffer(b);
+    assert_eq(modified.data, 43);
+    assert_eq(modified.size, 512);
+    // the original keeps its values: modification went through
+    // exclusive access on a copy
+    assert_eq(b.data, 42);
+    assert_eq(b.size, 256);
+
+    let twice = modify_buffer(modified);
+    assert_eq(twice.size, 1024);
+    assert_eq(modified.size, 512);
+}
+
+export test fn test_borrow_checker_rules() {
+    // multiple immutable borrows are allowed
+    assert(borrow_valid(["borrow-imm", "borrow-imm", "release-imm", "release-imm"]));
+    // no borrows at all is trivially valid
+    assert(borrow_valid([]));
+    // mutable borrow blocked while an immutable borrow is live
+    assert_eq(borrow_valid(["borrow-imm", "borrow-mut"]), false);
+    // mutable borrow blocked while another mutable borrow is live
+    assert_eq(borrow_valid(["borrow-mut", "borrow-mut"]), false);
+    // sequential mutable borrows after release are fine
+    assert(borrow_valid(["borrow-mut", "release-mut", "borrow-mut", "release-mut"]));
+    // immutable borrow blocked while a mutable borrow is live
+    assert_eq(borrow_valid(["borrow-mut", "borrow-imm"]), false);
+}
+
+export test fn test_ownership_move_rules() {
+    // read, then move: fine
+    assert(ownership_valid(["read", "move"]));
+    // move, then read: use-after-move
+    assert_eq(ownership_valid(["move", "read"]), false);
+    // move, then move again: double move
+    assert_eq(ownership_valid(["move", "move"]), false);
+    // move, rebind, read: the rebind re-initialises the binding
+    assert(ownership_valid(["move", "rebind", "read"]));
+    // move then rebind then move: valid again
+    assert(ownership_valid(["move", "rebind", "move"]));
+}
+
+export test fn test_mutable_borrow_guard_throws() {
+    let allowed = borrow_mutable_checked(0);
+    assert_eq(allowed, 1);
+
+    let caught = false;
+    try {
+        borrow_mutable_checked(2);
+    } catch (err) {
+        caught = true;
+        assert(str(err).includes("immutably borrowed"));
+    }
+    assert(caught);
+    // after releasing the immutable borrows the mutable borrow works
+    assert_eq(borrow_mutable_checked(0), 1);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_read_buffer();
+    test_modify_buffer_is_exclusive();
+    test_borrow_checker_rules();
+    test_ownership_move_rules();
+    test_mutable_borrow_guard_throws();
+    return 5;
+}
+
+fn main() {
+    print("Running 01_ownership_borrowing tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 01_ownership_borrowing.test.adesh`);
+}

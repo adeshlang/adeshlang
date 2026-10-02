@@ -1,0 +1,167 @@
+// Decorator Factory & Stateful Decorator Tests
+// Covers the patterns from examples/decorators/factory_retry.adesh,
+// stacking_log_cache.adesh and advanced_patterns.adesh:
+//   - parameterised decorator factories (retry / prefix)
+//   - closure state living inside a decorator (memoize cache)
+//   - per-call state reset (retry attempts)
+//   - side-effect accounting through the underlying target function
+
+// ─────────────────────────────────────────────────────────────
+// Decorators (mirrored in main.adesh for imported execution)
+// ─────────────────────────────────────────────────────────────
+
+decorator retryAtMost(limit) {
+    return fn(target, meta) {
+        return fn(a) {
+            let attempts = 0;
+            let result = null;
+            while (attempts < limit) {
+                attempts = attempts + 1;
+                let r = target(a);
+                if (r != null) {
+                    result = r;
+                    break;
+                }
+            }
+            return result;
+        };
+    };
+}
+
+decorator memoizeResult(target, meta) {
+    let cache = {};
+    return fn(a) {
+        let key = "" + a;
+        if (cache[key] != null) {
+            return cache[key];
+        }
+        let computed = target(a);
+        cache[key] = computed;
+        return computed;
+    };
+}
+
+decorator prefixWith(prefix) {
+    return fn(target, meta) {
+        return fn(a) {
+            return prefix + target(a);
+        };
+    };
+}
+
+decorator suffixWith(suffix) {
+    return fn(target, meta) {
+        return fn(a) {
+            return target(a) + suffix;
+        };
+    };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Helpers (module-level counters are `export let` so they survive import)
+// ─────────────────────────────────────────────────────────────
+
+export let flakyCalls = 0;
+export let memoCalls = 0;
+export let alwaysFailCalls = 0;
+
+@retryAtMost(4)
+fn flakyWork(a) {
+    flakyCalls = flakyCalls + 1;
+    if (flakyCalls % 3 != 0) {
+        return null;
+    }
+    return a * 10;
+}
+
+@retryAtMost(3)
+fn alwaysFails(a) {
+    alwaysFailCalls = alwaysFailCalls + 1;
+    return null;
+}
+
+@memoizeResult
+fn expensiveSquare(a) {
+    memoCalls = memoCalls + 1;
+    return a * a;
+}
+
+@prefixWith("ID:")
+fn decorateId(a) {
+    return "" + a;
+}
+
+@suffixWith("!")
+fn shoutName(a) {
+    return "go" + a;
+}
+
+export fn plainIdentity(a: i32): i32 {
+    return a;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_retry_factory_succeeds_after_failures() {
+    flakyCalls = 0;
+    assert_eq(flakyWork(5), 50);
+    // target fails on call 1 and 2, succeeds on 3 → three attempts
+    assert_eq(flakyCalls, 3);
+}
+
+export test fn test_retry_factory_gives_up_after_limit() {
+    alwaysFailCalls = 0;
+    let result = alwaysFails(1);
+    assert(result == null, "retry should give up and return null");
+    assert_eq(alwaysFailCalls, 3);
+}
+
+export test fn test_retry_state_resets_each_call() {
+    // Each invocation gets a fresh retry budget: two calls to a function
+    // that always fails must burn 3 attempts apiece (not 3 total).
+    alwaysFailCalls = 0;
+    let first = alwaysFails(1);
+    assert(first == null, "first call gives up");
+    assert_eq(alwaysFailCalls, 3);
+    let second = alwaysFails(2);
+    assert(second == null, "second call gives up");
+    assert_eq(alwaysFailCalls, 6);
+}
+
+export test fn test_memoize_caches_by_argument() {
+    memoCalls = 0;
+    assert_eq(expensiveSquare(4), 16);
+    assert_eq(expensiveSquare(4), 16);
+    assert_eq(memoCalls, 1);
+    assert_eq(expensiveSquare(5), 25);
+    assert_eq(memoCalls, 2);
+    assert_eq(expensiveSquare(4), 16);
+    assert_eq(memoCalls, 2);
+}
+
+export test fn test_factory_parameters_are_independent() {
+    assert_eq(decorateId(7), "ID:7");
+    assert_eq(shoutName("up"), "goup!");
+    assert_eq(plainIdentity(9), 9);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_retry_factory_succeeds_after_failures();
+    test_retry_factory_gives_up_after_limit();
+    test_retry_state_resets_each_call();
+    test_memoize_caches_by_argument();
+    test_factory_parameters_are_independent();
+    return 5;
+}
+
+fn main() {
+    print("Running 02_factories_and_state tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 02_factories_and_state.test.adesh`);
+}

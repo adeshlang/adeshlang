@@ -1,0 +1,128 @@
+// Pattern & Pyramid Tests
+// Covers examples/01_Basics/pattern.adesh (border predicate grid) and
+// examples/01_Basics/main.adesh (pyramid built from nested while loops).
+
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+
+export fn pyramid_row(n: i32, i: i32): string {
+    let row = "";
+    let j = 0;
+    while (j < n - i) {
+        row = row + " ";
+        j = j + 1;
+    }
+    let k = 0;
+    while (k < 2 * i + 1) {
+        row = row + "#";
+        k = k + 1;
+    }
+    return row;
+}
+
+export fn pyramid_row_width(n: i32, i: i32): i32 {
+    return (n - i) + (2 * i + 1);
+}
+
+export fn pyramid_total_chars(n: i32): i32 {
+    let total = 0;
+    let i = 0;
+    while (i < n) {
+        total = total + pyramid_row_width(n, i);
+        i = i + 1;
+    }
+    return total;
+}
+
+export fn left_border(n: i32, i: i32, j: i32): bool {
+    return i == 0 || j == i || j == 0 || i == n;
+}
+
+export fn right_border(n: i32, i: i32, j: i32): bool {
+    return j == 0 || i == n || j == i;
+}
+
+export fn count_border_cells(n: i32): i32 {
+    let total = 0;
+    let i = 0;
+    while (i <= n) {
+        let j = 0;
+        while (j <= n - i) {
+            if (left_border(n, i, j)) {
+                total = total + 1;
+            }
+            j = j + 1;
+        }
+        let k = 0;
+        while (k <= i) {
+            if (right_border(n, i, k)) {
+                total = total + 1;
+            }
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    return total;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_pyramid_row_layout() {
+    assert_eq(pyramid_row(3, 0), "   #");
+    assert_eq(pyramid_row(3, 1), "  ###");
+    assert_eq(pyramid_row(3, 2), " #####");
+    assert_eq(pyramid_row(1, 0), " #");
+}
+
+export test fn test_pyramid_row_width() {
+    assert_eq(pyramid_row_width(3, 0), 4);
+    assert_eq(pyramid_row_width(3, 1), 5);
+    assert_eq(pyramid_row_width(3, 2), 6);
+    assert_eq(pyramid_row_width(10, 9), 20);
+}
+
+export test fn test_pyramid_total_chars() {
+    assert_eq(pyramid_total_chars(1), 2);
+    assert_eq(pyramid_total_chars(3), 15);
+    assert_eq(pyramid_total_chars(10), 155);
+}
+
+export test fn test_pattern_border_predicate() {
+    assert(left_border(7, 0, 5), "top row always borders");
+    assert(left_border(7, 3, 3), "diagonal borders");
+    assert(!left_border(7, 3, 2), "inner cell is blank");
+    assert(left_border(7, 7, 0), "bottom row borders");
+    assert(right_border(7, 4, 4), "right diagonal borders");
+    assert(!right_border(7, 4, 2), "inner right cell is blank");
+    assert(right_border(7, 5, 0), "left edge of right half borders");
+}
+
+export test fn test_pattern_border_count() {
+    assert_eq(count_border_cells(0), 2);
+    assert_eq(count_border_cells(1), 6);
+    assert_eq(count_border_cells(2), 12);
+    assert_eq(count_border_cells(3), 17);
+    assert_eq(count_border_cells(7), 39);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_pyramid_row_layout();
+    test_pyramid_row_width();
+    test_pyramid_total_chars();
+    test_pattern_border_predicate();
+    test_pattern_border_count();
+    return 5;
+}
+
+fn main() {
+    print("Running 03_patterns tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 03_patterns.test.adesh`);
+}

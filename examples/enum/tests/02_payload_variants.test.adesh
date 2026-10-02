@@ -1,0 +1,131 @@
+// Payload Enum Tests
+// Covers single payloads, multi-argument payloads (array payloads),
+// optional payloads, and `.value` access as demonstrated by examples/enum.
+
+// ─────────────────────────────────────────────────────────────
+// Helpers (self-contained, pure)
+// ─────────────────────────────────────────────────────────────
+
+enum Message {
+    Quit,
+    Move(coords),
+    Write(text)
+}
+
+enum QueryResult {
+    Ok(data),
+    Err(reason)
+}
+
+enum EdgeCase {
+    Empty,
+    Single(val),
+    Multi(args)
+}
+
+export fn message_text(m): string {
+    if (m.tag == "Write") {
+        return m.value;
+    }
+    return "";
+}
+
+export fn move_target(m) {
+    if (m.tag == "Move") {
+        return m.value;
+    }
+    let empty: [i32] = [];
+    return empty;
+}
+
+export fn query_ok_or(q, fallback) {
+    if (q.tag == "Ok") {
+        return q.value;
+    }
+    return fallback;
+}
+
+export fn multi_payload_sum(e): i32 {
+    let total = 0;
+    let items = e.value;
+    for (v in items) {
+        total = total + v;
+    }
+    return total;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_single_payload() {
+    let write_msg = Message.Write("Hello AdeshLang!");
+    assert_eq(write_msg.tag, "Write");
+    assert_eq(write_msg.value, "Hello AdeshLang!");
+    assert_eq(message_text(write_msg), "Hello AdeshLang!");
+    assert_eq(message_text(Message.Quit()), "");
+}
+
+export test fn test_multi_payload_array() {
+    let move_msg = Message.Move(100, 200);
+    assert_eq(move_msg.tag, "Move");
+    assert_eq(typeof move_msg.value, "array");
+    assert_eq(move_msg.value[0], 100);
+    assert_eq(move_msg.value[1], 200);
+    assert_eq(move_msg.value.len(), 2);
+    let target = move_target(move_msg);
+    assert_eq(target[0], 100);
+    assert_eq(target[1], 200);
+}
+
+export test fn test_optional_payload_is_null() {
+    let no_arg = EdgeCase.Single();
+    assert_eq(no_arg.tag, "Single");
+    assert_eq(no_arg.value, null);
+    assert_eq(typeof no_arg.value, "null");
+    assert_eq(typeof EdgeCase.Empty().value, "null");
+}
+
+export test fn test_new_keyword_payload() {
+    let with_new = new Message.Write("via new");
+    let plain = Message.Write("via new");
+    assert_eq(with_new.tag, plain.tag);
+    assert_eq(with_new.value, plain.value);
+    assert_eq(new QueryResult.Ok(7).value, 7);
+}
+
+export test fn test_query_result_payloads() {
+    let ok = QueryResult.Ok("User Profile Loaded");
+    let err = QueryResult.Err("Unauthorized Access");
+    assert_eq(ok.tag, "Ok");
+    assert_eq(err.tag, "Err");
+    assert_eq(query_ok_or(ok, "fallback"), "User Profile Loaded");
+    assert_eq(query_ok_or(err, "fallback"), "fallback");
+    assert_eq(ok.__enum, "QueryResult");
+}
+
+export test fn test_multi_payload_sum() {
+    assert_eq(multi_payload_sum(EdgeCase.Multi(1, 2, 3)), 6);
+    assert_eq(multi_payload_sum(EdgeCase.Multi(10, -10)), 0);
+    assert_eq(multi_payload_sum(Message.Move(5, 5)), 10);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_single_payload();
+    test_multi_payload_array();
+    test_optional_payload_is_null();
+    test_new_keyword_payload();
+    test_query_result_payloads();
+    test_multi_payload_sum();
+    return 6;
+}
+
+fn main() {
+    print("Running 02_payload_variants tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 02_payload_variants.test.adesh`);
+}

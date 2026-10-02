@@ -111,6 +111,11 @@ pub struct AotBuildConfig {
     pub clear_cache: bool,
     /// Deterministic build output
     pub deterministic: bool,
+    /// Delegate the final link step to an external LLVM toolchain
+    /// (clang + lld/lld-link) instead of the built-in adeshlink engine.
+    /// Requires an external LLVM installation; verify with
+    /// `adesh gpu-check --external-linker`.
+    pub external_linker: bool,
 }
 
 impl Default for AotBuildConfig {
@@ -142,6 +147,7 @@ impl Default for AotBuildConfig {
             force_rebuild: false,
             clear_cache: false,
             deterministic: false,
+            external_linker: false,
         }
     }
 }
@@ -256,6 +262,15 @@ impl AotBuildConfig {
 
     /// Convert to AotOptions for the existing pipeline
     pub fn to_aot_options(&self) -> crate::backends::cranelift_aot::AotOptions {
+        // Route the final link through the external LLVM bridge
+        // (clang + lld/lld-link) instead of the built-in adeshlink engine.
+        // The sentinel arg below is recognized (and stripped) by the linking
+        // layer; it must never go into `flags`, because Cranelift forwards
+        // `flags` to its own settings parser and rejects unknown names.
+        let mut extra_linker_args = self.linker_args.clone();
+        if self.external_linker {
+            extra_linker_args.push("--external-linker".to_string());
+        }
         crate::backends::cranelift_aot::AotOptions {
             opt_level: self.opt_level,
             target_triple: self.target.clone(),
@@ -274,7 +289,7 @@ impl AotBuildConfig {
                 .map(|p| p.to_string_lossy().to_string())
                 .collect(),
             link_libs: self.link_libs.clone(),
-            extra_linker_args: self.linker_args.clone(),
+            extra_linker_args,
             fast_compile: self.fast_compile,
             enable_dead_code_elimination: true,
             // Cranelift emits native object code, not cross-module IR. O3
@@ -484,6 +499,14 @@ pub fn parse_build_args(
             }
             "--strip" | "-s" => {
                 config.linker_args.push("-s".to_string());
+            }
+
+            // External linker bridge: delegate the final link step to an
+            // external LLVM toolchain (clang + lld/lld-link) instead of the
+            // built-in adeshlink engine. Verify readiness with
+            // `adesh gpu-check --external-linker`.
+            "--external-linker" | "--external-toolchain" | "--use-llvm" => {
+                config.external_linker = true;
             }
 
             // Target triple
@@ -824,9 +847,62 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
             .map(|t| t.contains("wasm"))
             .unwrap_or(false);
 
+    // ── --external-linker pre-flight ────────────────────────────────────────
+    // The default pipeline is fully self-contained (native codegen → ADOB →
+    // built-in adeshlink). `--external-linker` delegates the FINAL link to an
+    // external LLVM toolchain (clang + lld/lld-link), which only makes sense
+    // for pipelines that emit native object files (the Cranelift AOT backend).
+    if config.external_linker {
+        let needs_final_link = matches!(
+            config.emit,
+            EmitType::Executable | EmitType::StaticLib | EmitType::SharedLib
+        );
+        let uses_native_codegen = config.emit == EmitType::Adob
+            || config.emit == EmitType::Assembly
+            || is_wasm
+            || config.codegen_backend == "adesh";
+
+        if needs_final_link && uses_native_codegen {
+            return Err(
+                "--external-linker cannot be combined with the native adesh codegen backend:\n\
+                 it emits ADOB objects that only the built-in adeshlink linker consumes.\n\
+                 \u{2022} Drop --external-linker to link with the built-in adeshlink engine (default, no external tools), or\n\
+                 \u{2022} Pass --codegen=cranelift --external-linker to delegate the final link to clang + lld."
+                    .to_string(),
+            );
+        }
+
+        // Verify an external LLVM toolchain (clang + lld) is actually present
+        // so the failure happens here, with an actionable message, rather
+        // than deep inside the link step.
+        if needs_final_link {
+            match crate::toolchain::resolver::resolve(None) {
+                Ok(tc) => {
+                    if !config.quiet {
+                        println!(
+                            "  --external-linker: using {} (LLVM {})",
+                            tc.clang.display(),
+                            tc.version.as_deref().unwrap_or("unknown")
+                        );
+                    }
+                }
+                Err(e) => {
+                    return Err(format!(
+                        "--external-linker requires an external LLVM toolchain (clang + lld), but none was found: {}\n\
+                         \u{2022} Verify with: adesh gpu-check --external-linker\n\
+                         \u{2022} Install one with: adesh toolchain --external install llvm\n\
+                         \u{2022} Or drop --external-linker to use the built-in adeshlink linker (no external tools needed).",
+                        e
+                    ));
+                }
+            }
+        }
+    }
+
     let compile_result = if config.emit == EmitType::Adob
         || config.emit == EmitType::Assembly
         || is_wasm
+        || config.codegen_backend == "adesh"
     {
         let compile_native = || -> Result<(), String> {
             use crate::parsing::hir_lower::ast_to_hir;
@@ -930,7 +1006,7 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
                         .map_err(|e| format!("Failed to link WebAssembly binary: {}", e))?;
                 fs::write(&output, wasm_bytes)
                     .map_err(|e| format!("Failed to write WASM file: {}", e))
-            } else {
+            } else if config.emit == EmitType::Adob || config.emit == EmitType::Object {
                 let lowered = backend
                     .lower_module(&module)
                     .map_err(|e| format!("Codegen lower error: {}", e))?;
@@ -940,6 +1016,42 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
                 let bytes = AdobWriter::write(&adob)
                     .map_err(|e| format!("Failed to encode ADOB: {}", e))?;
                 fs::write(&output, bytes).map_err(|e| format!("Failed to write ADOB file: {}", e))
+            } else {
+                // EmitType::Executable (and other executable formats)
+                let lowered = backend
+                    .lower_module(&module)
+                    .map_err(|e| format!("Codegen lower error: {}", e))?;
+                let adob = backend
+                    .emit_object(&lowered)
+                    .map_err(|e| format!("ADOB emit error: {}", e))?;
+                let bytes = AdobWriter::write(&adob)
+                    .map_err(|e| format!("Failed to encode ADOB: {}", e))?;
+
+                let temp_dir = std::env::temp_dir();
+                let temp_adob = temp_dir.join(format!("{}_{}.adob", mod_name, std::process::id()));
+                fs::write(&temp_adob, bytes)
+                    .map_err(|e| format!("Failed to write temporary ADOB: {}", e))?;
+
+                let mut link_config = adesh_linker::config::LinkConfig::new(
+                    output.clone(),
+                    if let Some(ref t) = config.target {
+                        adesh_linker::target::Target::from_triple(t)
+                            .map_err(|e| format!("Invalid target: {}", e))?
+                    } else {
+                        adesh_linker::target::Target::host()
+                    },
+                );
+
+                for dir in &config.lib_dirs {
+                    link_config.library_search_paths.push(dir.clone());
+                }
+                for lib in &config.link_libs {
+                    link_config.libraries.push(lib.clone());
+                }
+
+                let link_res = adesh_linker::Linker::link(&[temp_adob.clone()], link_config);
+                let _ = fs::remove_file(&temp_adob);
+                link_res.map_err(|e| format!("Native link error: {}", e))
             }
         };
         compile_native()
@@ -1140,6 +1252,9 @@ pub fn build_help_message() -> String {
     --codegen=<BACKEND>     Codegen backend: adesh (native), cranelift [default: adesh]
     --deterministic         Bit-for-bit deterministic reproducible build output
     --strip, -s             Strip symbol and debug information from binary
+    --external-linker       Delegate the final link to external LLVM (clang + lld);
+                            requires --codegen=cranelift and an external LLVM install
+                            (verify with: adesh gpu-check --external-linker)
 
 {}OPTIMIZATION:{}
     -O0                     No optimization (fastest compile)

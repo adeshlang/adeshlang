@@ -46,6 +46,19 @@ impl Linker {
             ));
         }
 
+        // Shared-library synthesis (DLL exports, ELF .dynamic/DT_NEEDED,
+        // Mach-O dylib load commands) is not implemented yet. Fail loudly
+        // instead of silently producing a static executable.
+        if config.shared {
+            return Err(LinkError::new(
+                ErrorCode::InvalidTarget,
+                "shared-library output (`--shared`) is not supported by the native linker yet",
+            )
+            .with_suggestion(
+                "Link a static executable instead, or use --external-toolchain to delegate shared-library linking to clang/lld. No output was written.",
+            ));
+        }
+
         let mut ctx = LinkContext::new(config);
 
         // 1. Ingest input files (objects and archives)
@@ -69,10 +82,34 @@ impl Linker {
             }
         }
 
-        // Ingest library flags (-L / -l)
-        for lib_name in &ctx.config.libraries {
+        // Ingest library flags (-L / -l) and default search paths
+        let mut search_paths = ctx.config.library_search_paths.clone();
+        if let Ok(cwd) = std::env::current_dir() {
+            search_paths.push(cwd.join("target").join("debug"));
+            search_paths.push(cwd.join("target").join("release"));
+            search_paths.push(cwd.join("lib"));
+            search_paths.push(cwd.clone());
+        }
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(parent) = exe_path.parent() {
+                search_paths.push(parent.to_path_buf());
+                search_paths.push(parent.join("lib"));
+                if let Some(grandparent) = parent.parent() {
+                    search_paths.push(grandparent.join("lib"));
+                    search_paths.push(grandparent.join("target").join("debug"));
+                    search_paths.push(grandparent.join("target").join("release"));
+                }
+            }
+        }
+
+        let mut requested_libs = ctx.config.libraries.clone();
+        if !requested_libs.contains(&"adesh_runtime".to_string()) {
+            requested_libs.push("adesh_runtime".to_string());
+        }
+
+        for lib_name in &requested_libs {
             let mut found = false;
-            for search_dir in &ctx.config.library_search_paths {
+            for search_dir in &search_paths {
                 let lib_path_a = search_dir.join(format!("lib{}.a", lib_name));
                 let lib_path_lib = search_dir.join(format!("{}.lib", lib_name));
                 let target_path = if lib_path_a.exists() {
@@ -84,16 +121,18 @@ impl Linker {
                 };
 
                 if let Some(p) = target_path {
-                    let bytes = std::fs::read(&p)?;
-                    if bytes.starts_with(b"!<arch>\n") {
-                        let archive = Archive::parse(&bytes, &p)?;
-                        ctx.archives.push(archive);
-                        found = true;
-                        break;
+                    if let Ok(bytes) = std::fs::read(&p) {
+                        if bytes.starts_with(b"!<arch>\n") {
+                            if let Ok(archive) = Archive::parse(&bytes, &p) {
+                                ctx.archives.push(archive);
+                                found = true;
+                                break;
+                            }
+                        }
                     }
                 }
             }
-            if !found {
+            if !found && ctx.config.libraries.contains(lib_name) {
                 ctx.diagnostics.emit_warning(format!(
                     "library `-l{}` was not found in specified search paths",
                     lib_name

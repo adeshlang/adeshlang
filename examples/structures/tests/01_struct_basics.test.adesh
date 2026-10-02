@@ -1,0 +1,150 @@
+// Struct Basics Tests
+// Covers struct definition, literal construction, field access/mutation,
+// mixed field types, and typeof/sizeof on struct instances as demonstrated
+// by examples/structures.
+
+// ─────────────────────────────────────────────────────────────
+// Helpers (self-contained, pure)
+// ─────────────────────────────────────────────────────────────
+
+struct Person {
+    name: String;
+    age: i32;
+    isStudent: bool;
+};
+
+struct Student {
+    name: String;
+    studentId: i32;
+    gpa: f64;
+};
+
+struct MixedData {
+    text: String;
+    count: i32;
+    ratio: f64;
+    active: bool;
+};
+
+struct Product {
+    name: String;
+    price: f64;
+    quantity: i32;
+};
+
+export fn make_person(name: String, age: i32): Person {
+    return Person {
+        name: name,
+        age: age,
+        isStudent: false,
+    };
+}
+
+export fn age_label(p: Person): string {
+    if (p.age >= 18) {
+        return "adult";
+    }
+    return "minor";
+}
+
+export fn product_total(p: Product): f64 {
+    let total: f64 = 0.0;
+    let i = 0;
+    while (i < p.quantity) {
+        total = total + p.price;
+        i = i + 1;
+    }
+    return total;
+}
+
+export fn honor_roll(s: Student): bool {
+    return s.gpa >= 3.5;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_person_literal() {
+    let person = Person {
+        name: "Ajay",
+        age: 20,
+        isStudent: true,
+    };
+    assert_eq(person.name, "Ajay");
+    assert_eq(person.age, 20);
+    assert_eq(person.isStudent, true);
+}
+
+export test fn test_field_mutation() {
+    let person = make_person("Bob", 17);
+    assert_eq(person.age, 17);
+    person.age = 21;
+    assert_eq(person.age, 21);
+    person.isStudent = true;
+    assert_eq(person.isStudent, true);
+    assert_eq(age_label(person), "adult");
+}
+
+export test fn test_mixed_field_types() {
+    let data = MixedData {
+        text: "Sample Data",
+        count: 42,
+        ratio: 3.14,
+        active: true,
+    };
+    assert_eq(data.text, "Sample Data");
+    assert_eq(data.count, 42);
+    assert_eq(data.ratio, 3.14);
+    assert_eq(data.active, true);
+    assert_ne(data.count, 0);
+}
+
+export test fn test_struct_typeof_sizeof() {
+    let person = make_person("Ajay", 20);
+    assert_eq(typeof person, "object");
+    assert(sizeof(person) > 0, "struct instance should take space");
+    assert_eq(typeof person.name, "string");
+    assert_ne(typeof person, typeof person.name);
+}
+
+export test fn test_numeric_struct_operations() {
+    let product = Product {
+        name: "Laptop",
+        price: 20.5,
+        quantity: 3,
+    };
+    assert_eq(product_total(product), 61.5);
+    let student = Student {
+        name: "Emma",
+        studentId: 12345,
+        gpa: 3.8,
+    };
+    assert(honor_roll(student), "3.8 GPA is honor roll");
+    assert_eq(student.studentId, 12345);
+    let low = Student {
+        name: "Low",
+        studentId: 1,
+        gpa: 2.0,
+    };
+    assert_eq(honor_roll(low), false);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_person_literal();
+    test_field_mutation();
+    test_mixed_field_types();
+    test_struct_typeof_sizeof();
+    test_numeric_struct_operations();
+    return 5;
+}
+
+fn main() {
+    print("Running 01_struct_basics tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 01_struct_basics.test.adesh`);
+}

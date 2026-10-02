@@ -1,0 +1,178 @@
+// SSO / SAO & Type Layout Tests
+// Covers the memory-layout themes of examples/memory/sso_sao_examples.adesh,
+// type_layout.adesh, advanced_type_layout.adesh and memory_allocators.adesh:
+//   - Small String Optimization threshold (22 bytes inline)
+//   - Small Array Optimization threshold (8 elements inline)
+//   - alignment rounding (align_up) and struct layout with padding
+//   - field offsets, array byte sizes and string metadata size
+// Sizes are computed with plain arithmetic helpers (no runtime sizeof of
+// type tokens, which the default interpreter does not support).
+
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+
+export fn is_inline_string(byte_len: i32): bool {
+    return byte_len <= 22;
+}
+
+export fn is_inline_array(elem_count: i32): bool {
+    return elem_count <= 8;
+}
+
+export fn string_storage(s: str): str {
+    if (s.len() <= 22) {
+        return "inline";
+    }
+    return "heap";
+}
+
+export fn array_storage(n: i32): str {
+    if (n <= 8) {
+        return "inline";
+    }
+    return "heap";
+}
+
+export fn align_up(offset: i32, align: i32): i32 {
+    let rem = offset % align;
+    if (rem == 0) {
+        return offset;
+    }
+    return offset + (align - rem);
+}
+
+struct Field {
+    size: i32;
+    align: i32;
+};
+
+// C-style layout: align each field, then pad the struct to its max alignment.
+export fn layout_size(fields: [Field]): i32 {
+    let offset = 0;
+    let max_align = 1;
+    for (f in fields) {
+        offset = align_up(offset, f.align);
+        offset = offset + f.size;
+        if (f.align > max_align) {
+            max_align = f.align;
+        }
+    }
+    return align_up(offset, max_align);
+}
+
+// Offset of each field before the field itself is written.
+export fn layout_offsets(fields: [Field]): [i32] {
+    let offsets: [i32] = [];
+    let offset = 0;
+    for (f in fields) {
+        offset = align_up(offset, f.align);
+        offsets.push(offset);
+        offset = offset + f.size;
+    }
+    return offsets;
+}
+
+export fn array_bytes(count: i32, elem_size: i32): i32 {
+    return count * elem_size;
+}
+
+export fn string_meta_bytes(): i32 {
+    // ptr + len + capacity, all 8 bytes on a 64-bit target
+    return 8 + 8 + 8;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_sso_string_threshold() {
+    assert_eq(string_storage("Hello, World!"), "inline");
+    assert_eq(string_storage("AdeshLang"), "inline");
+    assert_eq(string_storage(""), "inline");
+    assert_eq(string_storage("a".repeat(22)), "inline");
+    assert_eq(string_storage("a".repeat(23)), "heap");
+    assert(is_inline_string(22));
+    assert_eq(is_inline_string(23), false);
+}
+
+export test fn test_sao_array_threshold() {
+    assert(is_inline_array(1));
+    assert(is_inline_array(8));
+    assert_eq(is_inline_array(9), false);
+    assert_eq(array_storage(0), "inline");
+    assert_eq(array_storage(7), "inline");
+    assert_eq(array_storage(10), "heap");
+    assert_eq(array_storage(8), "inline");
+}
+
+export test fn test_align_up_arithmetic() {
+    assert_eq(align_up(0, 4), 0);
+    assert_eq(align_up(5, 4), 8);
+    assert_eq(align_up(8, 8), 8);
+    assert_eq(align_up(7, 2), 8);
+    assert_eq(align_up(1, 8), 8);
+    assert_eq(align_up(12, 4), 12);
+}
+
+export test fn test_struct_layout_with_padding() {
+    let u8f = Field { size: 1, align: 1 };
+    let u32f = Field { size: 4, align: 4 };
+    let u64f = Field { size: 8, align: 8 };
+
+    // (u8, u32) = 1 + 3 padding + 4 = 8
+    assert_eq(layout_size([u8f, u32f]), 8);
+    // (u8, u8, u32) = 1 + 1 + 2 padding + 4 = 8
+    assert_eq(layout_size([u8f, u8f, u32f]), 8);
+    // (u64, u8) = 8 + 1 + 7 padding = 16
+    assert_eq(layout_size([u64f, u8f]), 16);
+    // struct Mixed { a: u8, b: u32, c: u8 } = 12
+    assert_eq(layout_size([u8f, u32f, u8f]), 12);
+}
+
+export test fn test_field_offsets() {
+    let u8f = Field { size: 1, align: 1 };
+    let u32f = Field { size: 4, align: 4 };
+    let u64f = Field { size: 8, align: 8 };
+
+    let pair = layout_offsets([u8f, u32f]);
+    assert_eq(pair.len(), 2);
+    assert_eq(pair[0], 0);
+    assert_eq(pair[1], 4);
+
+    let mixed = layout_offsets([u64f, u8f]);
+    assert_eq(mixed[0], 0);
+    assert_eq(mixed[1], 8);
+
+    let three = layout_offsets([u8f, u8f, u32f]);
+    assert_eq(three[2], 4);
+}
+
+export test fn test_buffer_size_arithmetic() {
+    assert_eq(array_bytes(10, 4), 40);
+    assert_eq(array_bytes(256, 1), 256);
+    assert_eq(array_bytes(3, 8), 24);
+    assert_eq(string_meta_bytes(), 24);
+    assert_eq(array_bytes(10, 4) + string_meta_bytes(), 64);
+    assert_eq(array_bytes(0, 4), 0);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_sso_string_threshold();
+    test_sao_array_threshold();
+    test_align_up_arithmetic();
+    test_struct_layout_with_padding();
+    test_field_offsets();
+    test_buffer_size_arithmetic();
+    return 6;
+}
+
+fn main() {
+    print("Running 02_sso_sao_layout tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 02_sso_sao_layout.test.adesh`);
+}

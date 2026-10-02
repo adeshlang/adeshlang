@@ -1,0 +1,275 @@
+// Decorators Test Runner & Analytics Suite
+// Imports test cases from all decorators test modules and executes them
+// step-by-step with rich analytics reporting.
+//
+// NOTE: every decorator used by the imported test modules is re-declared
+// here (before the imports) because decorator pre-registration only scans
+// the entry file — the modules declare their own copies so they also run
+// standalone via `adesh run <module>`.
+
+decorator dblResult(target, meta) {
+    return fn(a, b) {
+        return target(a, b) * 2;
+    };
+}
+
+decorator tagMeta(target, meta) {
+    return fn(a, b) {
+        return meta.name + "|" + target(a, b);
+    };
+}
+
+decorator plusOne(target, meta) {
+    return fn(a) {
+        return target(a) + 1;
+    };
+}
+
+decorator upOne(target, meta) {
+    return fn(a, b) {
+        return target(a, b) + 1;
+    };
+}
+
+decorator dblOnly(target, meta) {
+    return fn(a, b) {
+        return target(a, b) * 2;
+    };
+}
+
+decorator noopWrap(target, meta) {
+    return fn() {
+        return target();
+    };
+}
+
+decorator noopWrap1(target, meta) {
+    return fn(a) {
+        return target(a);
+    };
+}
+
+decorator noopWrap3(target, meta) {
+    return fn(a, b, c) {
+        return target(a, b, c);
+    };
+}
+
+decorator retryAtMost(limit) {
+    return fn(target, meta) {
+        return fn(a) {
+            let attempts = 0;
+            let result = null;
+            while (attempts < limit) {
+                attempts = attempts + 1;
+                let r = target(a);
+                if (r != null) {
+                    result = r;
+                    break;
+                }
+            }
+            return result;
+        };
+    };
+}
+
+decorator memoizeResult(target, meta) {
+    let cache = {};
+    return fn(a) {
+        let key = "" + a;
+        if (cache[key] != null) {
+            return cache[key];
+        }
+        let computed = target(a);
+        cache[key] = computed;
+        return computed;
+    };
+}
+
+decorator prefixWith(prefix) {
+    return fn(target, meta) {
+        return fn(a) {
+            return prefix + target(a);
+        };
+    };
+}
+
+decorator suffixWith(suffix) {
+    return fn(target, meta) {
+        return fn(a) {
+            return target(a) + suffix;
+        };
+    };
+}
+
+decorator requirePositive(target, meta) {
+    return fn(a) {
+        if (a <= 0) {
+            throw meta.name + ": input must be positive, got " + a;
+        }
+        return target(a);
+    };
+}
+
+decorator safeCallGuard(target, meta) {
+    return fn(a) {
+        try {
+            return target(a);
+        } catch (e) {
+            return -999;
+        }
+    };
+}
+
+decorator upperResult(target, meta) {
+    return fn(a) {
+        return target(a).toUpperCase();
+    };
+}
+
+decorator trimResult(target, meta) {
+    return fn(a) {
+        return target(a).trim();
+    };
+}
+
+decorator requireEven(target, meta) {
+    return fn(a, b) {
+        if (a % 2 != 0 || b % 2 != 0) {
+            throw meta.name + ": only even operands allowed";
+        }
+        return target(a, b);
+    };
+}
+
+import "./01_basic_wrapping.test.adesh" as wrap_tests;
+import "./02_factories_and_state.test.adesh" as factory_tests;
+import "./03_validation_and_safety.test.adesh" as guard_tests;
+
+// ─────────────────────────────────────────────────────────────
+// Native Test Harness Declarations (for `adesh run --test`)
+// ─────────────────────────────────────────────────────────────
+
+test fn test_suite_basic_wrapping() {
+    wrap_tests.run_tests();
+}
+
+test fn test_suite_factories_and_state() {
+    factory_tests.run_tests();
+}
+
+test fn test_suite_validation_and_safety() {
+    guard_tests.run_tests();
+}
+
+// ─────────────────────────────────────────────────────────────
+// Standalone Test Runner & Analytics Engine
+// ─────────────────────────────────────────────────────────────
+
+struct TestSuiteResult {
+    suite_name: string;
+    total: i32;
+    passed: i32;
+    failed: i32;
+};
+
+fn run_single_test(test_name: string, test_fn): bool {
+    try {
+        test_fn();
+        print(`  ✓ PASS: ${test_name}`);
+        return true;
+    } catch (err) {
+        print(`  ✗ FAIL: ${test_name} - Error: ${err}`);
+        return false;
+    }
+}
+
+fn print_analytics_dashboard(
+    wrap_res: TestSuiteResult,
+    factory_res: TestSuiteResult,
+    guard_res: TestSuiteResult
+) {
+    let total_all = wrap_res.total + factory_res.total + guard_res.total;
+    let passed_all = wrap_res.passed + factory_res.passed + guard_res.passed;
+    let failed_all = wrap_res.failed + factory_res.failed + guard_res.failed;
+    let pass_rate = (passed_all * 100) / total_all;
+
+    print("");
+    print("╔══════════════════════════════════════════════════════════════════════╗");
+    print("║                     TEST ANALYTICS DASHBOARD                         ║");
+    print("╠══════════════════════════════════════════════════════════════════════╣");
+    print("║  Suite Name              │ Total │ Passed │ Failed │ Pass Rate       ║");
+    print("╟──────────────────────────┼───────┼────────┼────────┼─────────────────╢");
+    print(`║  01_basic_wrapping        │   ${wrap_res.total}   │   ${wrap_res.passed}    │   ${wrap_res.failed}    │ ${pass_rate}%            ║`);
+    print(`║  02_factories_and_state   │   ${factory_res.total}   │   ${factory_res.passed}    │   ${factory_res.failed}    │ ${pass_rate}%            ║`);
+    print(`║  03_validation_and_safety │   ${guard_res.total}   │   ${guard_res.passed}    │   ${guard_res.failed}    │ ${pass_rate}%            ║`);
+    print("╠══════════════════════════════════════════════════════════════════════╣");
+    print(`║  TOTAL OVERALL            │  ${total_all}   │  ${passed_all}   │   ${failed_all}    │ ${pass_rate}%            ║`);
+    print("╚══════════════════════════════════════════════════════════════════════╝");
+    print("");
+    if (failed_all == 0) {
+        print(`  🎉 ALL DECORATOR TESTS PASSED SUCCESSFULLY! (${passed_all}/${total_all} tests)`);
+    } else {
+        print(`  ⚠️ WARNING: ${failed_all} test(s) failed.`);
+    }
+    print("");
+}
+
+fn main() {
+    print("╔══════════════════════════════════════════════════════════════════════╗");
+    print("║            AdeshLang Decorators - Test Execution Runner              ║");
+    print("╚══════════════════════════════════════════════════════════════════════╝");
+    print("");
+
+    // Suite 1: Basic Wrapping Tests
+    print("▶ [1/3] Running Suite: 01_basic_wrapping.test.adesh");
+    let c1 = 0;
+    c1 = c1 + (run_single_test("wrap_tests.test_wrapper_preserves_result", wrap_tests.test_wrapper_preserves_result) ? 1 : 0);
+    c1 = c1 + (run_single_test("wrap_tests.test_meta_name_accessible", wrap_tests.test_meta_name_accessible) ? 1 : 0);
+    c1 = c1 + (run_single_test("wrap_tests.test_stacking_order_bottom_up", wrap_tests.test_stacking_order_bottom_up) ? 1 : 0);
+    c1 = c1 + (run_single_test("wrap_tests.test_arity_variants", wrap_tests.test_arity_variants) ? 1 : 0);
+    c1 = c1 + (run_single_test("wrap_tests.test_six_stacked_decorators", wrap_tests.test_six_stacked_decorators) ? 1 : 0);
+    let wrap_res = TestSuiteResult {
+        suite_name: "01_basic_wrapping",
+        total: 5,
+        passed: c1,
+        failed: 5 - c1,
+    };
+    print(`  Suite Result: ${c1}/5 tests passed\n`);
+
+    // Suite 2: Decorator Factory & State Tests
+    print("▶ [2/3] Running Suite: 02_factories_and_state.test.adesh");
+    let c2 = 0;
+    c2 = c2 + (run_single_test("factory_tests.test_retry_factory_succeeds_after_failures", factory_tests.test_retry_factory_succeeds_after_failures) ? 1 : 0);
+    c2 = c2 + (run_single_test("factory_tests.test_retry_factory_gives_up_after_limit", factory_tests.test_retry_factory_gives_up_after_limit) ? 1 : 0);
+    c2 = c2 + (run_single_test("factory_tests.test_retry_state_resets_each_call", factory_tests.test_retry_state_resets_each_call) ? 1 : 0);
+    c2 = c2 + (run_single_test("factory_tests.test_memoize_caches_by_argument", factory_tests.test_memoize_caches_by_argument) ? 1 : 0);
+    c2 = c2 + (run_single_test("factory_tests.test_factory_parameters_are_independent", factory_tests.test_factory_parameters_are_independent) ? 1 : 0);
+    let factory_res = TestSuiteResult {
+        suite_name: "02_factories_and_state",
+        total: 5,
+        passed: c2,
+        failed: 5 - c2,
+    };
+    print(`  Suite Result: ${c2}/5 tests passed\n`);
+
+    // Suite 3: Validation & Safety Tests
+    print("▶ [3/3] Running Suite: 03_validation_and_safety.test.adesh");
+    let c3 = 0;
+    c3 = c3 + (run_single_test("guard_tests.test_guard_allows_valid_input", guard_tests.test_guard_allows_valid_input) ? 1 : 0);
+    c3 = c3 + (run_single_test("guard_tests.test_guard_throws_catchable_error", guard_tests.test_guard_throws_catchable_error) ? 1 : 0);
+    c3 = c3 + (run_single_test("guard_tests.test_guard_error_carries_meta_name", guard_tests.test_guard_error_carries_meta_name) ? 1 : 0);
+    c3 = c3 + (run_single_test("guard_tests.test_safe_call_returns_default_on_error", guard_tests.test_safe_call_returns_default_on_error) ? 1 : 0);
+    c3 = c3 + (run_single_test("guard_tests.test_transform_decorators", guard_tests.test_transform_decorators) ? 1 : 0);
+    c3 = c3 + (run_single_test("guard_tests.test_even_guard_validates_both_args", guard_tests.test_even_guard_validates_both_args) ? 1 : 0);
+    let guard_res = TestSuiteResult {
+        suite_name: "03_validation_and_safety",
+        total: 6,
+        passed: c3,
+        failed: 6 - c3,
+    };
+    print(`  Suite Result: ${c3}/6 tests passed\n`);
+
+    // Final Analytics Dashboard
+    print_analytics_dashboard(wrap_res, factory_res, guard_res);
+}

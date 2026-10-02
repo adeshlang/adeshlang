@@ -86,7 +86,7 @@ trap 'rm -rf "$WORK"' EXIT
 #    the double-clickable installer. Same payload assembly as build-pkg.sh.
 # ---------------------------------------------------------------------------
 STAGE="$WORK/dmgstage/AdeshLang"
-mkdir -p "$STAGE/bin" "$STAGE/std" "$STAGE/config" "$STAGE/licenses"
+mkdir -p "$STAGE/bin" "$STAGE/std" "$STAGE/config" "$STAGE/licenses" "$STAGE/lib"
 
 echo "==> Staging DMG contents from $DIST_DIR"
 /usr/bin/ditto "$DIST_DIR/bin" "$STAGE/bin"
@@ -94,7 +94,19 @@ if [[ ! -x "$STAGE/bin/adesh" ]]; then
     echo "error: $STAGE/bin/adesh is missing or not executable." >&2
     exit 1
 fi
+if [[ ! -x "$STAGE/bin/adeshlink" ]]; then
+    echo "warning: adeshlink (native linker CLI) is not in $DIST_DIR/bin;" >&2
+    echo "         builds still link through the in-process linker engine." >&2
+fi
 chmod +x "$STAGE/bin/"* 2>/dev/null || true
+
+# lib/ — the adeshlang runtime library (libadeshlang.a / .dylib), staged by
+# scripts/release/package_unix.sh.
+if [[ -d "$DIST_DIR/lib" ]]; then
+    /usr/bin/ditto "$DIST_DIR/lib" "$STAGE/lib"
+else
+    echo "warning: no lib/ staged in $DIST_DIR; the runtime library is not bundled." >&2
+fi
 
 if [[ -d "$DIST_DIR/std" ]]; then
     /usr/bin/ditto "$DIST_DIR/std" "$STAGE/std"

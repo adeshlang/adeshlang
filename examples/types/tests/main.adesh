@@ -1,0 +1,113 @@
+// Types Test Runner & Analytics Suite
+// Imports test cases from all types test modules and executes them step-by-step
+// with rich analytics reporting.
+
+import "./01_numeric_literals.test.adesh" as lit_tests;
+import "./02_objects_nullable.test.adesh" as obj_tests;
+
+// ─────────────────────────────────────────────────────────────
+// Native Test Harness Declarations (for `adesh run --test`)
+// ─────────────────────────────────────────────────────────────
+
+test fn test_suite_numeric_literals() {
+    lit_tests.run_tests();
+}
+
+test fn test_suite_objects_nullable() {
+    obj_tests.run_tests();
+}
+
+// ─────────────────────────────────────────────────────────────
+// Standalone Test Runner & Analytics Engine
+// ─────────────────────────────────────────────────────────────
+
+struct TestSuiteResult {
+    suite_name: string;
+    total: i32;
+    passed: i32;
+    failed: i32;
+};
+
+fn run_single_test(test_name: string, test_fn): bool {
+    try {
+        test_fn();
+        print(`  ✓ PASS: ${test_name}`);
+        return true;
+    } catch (err) {
+        print(`  ✗ FAIL: ${test_name} - Error: ${err}`);
+        return false;
+    }
+}
+
+fn print_analytics_dashboard(
+    lit_res: TestSuiteResult,
+    obj_res: TestSuiteResult
+) {
+    let total_all = lit_res.total + obj_res.total;
+    let passed_all = lit_res.passed + obj_res.passed;
+    let failed_all = lit_res.failed + obj_res.failed;
+    let pass_rate = (passed_all * 100) / total_all;
+
+    print("");
+    print("╔══════════════════════════════════════════════════════════════════════╗");
+    print("║                     TEST ANALYTICS DASHBOARD                         ║");
+    print("╠══════════════════════════════════════════════════════════════════════╣");
+    print("║  Suite Name              │ Total │ Passed │ Failed │ Pass Rate       ║");
+    print("╟──────────────────────────┼───────┼────────┼────────┼─────────────────╢");
+    print(`║  01_numeric_literals     │   ${lit_res.total}   │   ${lit_res.passed}    │   ${lit_res.failed}    │ ${pass_rate}%            ║`);
+    print(`║  02_objects_nullable     │   ${obj_res.total}   │   ${obj_res.passed}    │   ${obj_res.failed}    │ ${pass_rate}%            ║`);
+    print("╠══════════════════════════════════════════════════════════════════════╣");
+    print(`║  TOTAL OVERALL           │  ${total_all}   │  ${passed_all}   │   ${failed_all}    │ ${pass_rate}%            ║`);
+    print("╚══════════════════════════════════════════════════════════════════════╝");
+    print("");
+    if (failed_all == 0) {
+        print(`  🎉 ALL TYPE SYSTEM TESTS PASSED SUCCESSFULLY! (${passed_all}/${total_all} tests)`);
+    } else {
+        print(`  ⚠️ WARNING: ${failed_all} test(s) failed.`);
+    }
+    print("");
+}
+
+fn main() {
+    print("╔══════════════════════════════════════════════════════════════════════╗");
+    print("║             AdeshLang Types - Test Execution Runner                  ║");
+    print("╚══════════════════════════════════════════════════════════════════════╝");
+    print("");
+
+    // Suite 1: Numeric Literals Tests
+    print("▶ [1/2] Running Suite: 01_numeric_literals.test.adesh");
+    let l1 = 0;
+    l1 = l1 + (run_single_test("lit_tests.test_binary_literal", lit_tests.test_binary_literal) ? 1 : 0);
+    l1 = l1 + (run_single_test("lit_tests.test_hex_literal", lit_tests.test_hex_literal) ? 1 : 0);
+    l1 = l1 + (run_single_test("lit_tests.test_underscore_separators", lit_tests.test_underscore_separators) ? 1 : 0);
+    l1 = l1 + (run_single_test("lit_tests.test_literal_arithmetic", lit_tests.test_literal_arithmetic) ? 1 : 0);
+    l1 = l1 + (run_single_test("lit_tests.test_float_widths", lit_tests.test_float_widths) ? 1 : 0);
+    l1 = l1 + (run_single_test("lit_tests.test_type_introspection", lit_tests.test_type_introspection) ? 1 : 0);
+    let lit_res = TestSuiteResult {
+        suite_name: "01_numeric_literals",
+        total: 6,
+        passed: l1,
+        failed: 6 - l1,
+    };
+    print(`  Suite Result: ${l1}/6 tests passed\n`);
+
+    // Suite 2: Objects & Nullability Tests
+    print("▶ [2/2] Running Suite: 02_objects_nullable.test.adesh");
+    let o1 = 0;
+    o1 = o1 + (run_single_test("obj_tests.test_object_literal_fields", obj_tests.test_object_literal_fields) ? 1 : 0);
+    o1 = o1 + (run_single_test("obj_tests.test_has_key_object", obj_tests.test_has_key_object) ? 1 : 0);
+    o1 = o1 + (run_single_test("obj_tests.test_null_checks", obj_tests.test_null_checks) ? 1 : 0);
+    o1 = o1 + (run_single_test("obj_tests.test_nullable_narrowing", obj_tests.test_nullable_narrowing) ? 1 : 0);
+    o1 = o1 + (run_single_test("obj_tests.test_option_narrowing", obj_tests.test_option_narrowing) ? 1 : 0);
+    o1 = o1 + (run_single_test("obj_tests.test_non_null_values_count", obj_tests.test_non_null_values_count) ? 1 : 0);
+    let obj_res = TestSuiteResult {
+        suite_name: "02_objects_nullable",
+        total: 6,
+        passed: o1,
+        failed: 6 - o1,
+    };
+    print(`  Suite Result: ${o1}/6 tests passed\n`);
+
+    // Final Analytics Dashboard
+    print_analytics_dashboard(lit_res, obj_res);
+}

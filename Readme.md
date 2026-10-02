@@ -50,13 +50,15 @@ documentation hub of this repository:
 ## Installation
 
 The installer bundles the `adesh` compiler CLI, the `adl` package manager, the `als`
-language server, the TUI editor, and the standard library — no Rust toolchain required.
+language server, the TUI editor, the standard library, and the native linker/runtime —
+no Rust, LLVM, or MSVC toolchain required.
 Installers are available for **Windows** (EXE/MSI/ZIP), **Linux** (tarball, .deb, .rpm),
 **macOS** (.pkg/.dmg), and **Docker** containers.
 
 ```text
 adesh doctor                                  # verify the installation
-adesh toolchain install --system              # LLVM/Clang/LLD 18.1.8 + MLIR
+adesh gpu-check                               # native toolchain report (zero external deps)
+adesh toolchain --external install llvm       # OPTIONAL: external LLVM for --external-linker
 adesh ai status                               # bundled offline AI model
 ```
 

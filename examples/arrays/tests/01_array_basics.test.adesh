@@ -1,0 +1,187 @@
+// Array Basics Tests
+// Exercises the core array operations demonstrated by examples/arrays/*.adesh
+// (simple_aot_test, advanced_array_ops, raw_vs_dynamic): length, indexing,
+// push/pop/append, slice/concat/join, indexOf/includes, first/last access,
+// direct element assignment, and set_index copy semantics.
+
+// ─────────────────────────────────────────────────────────────
+// Helpers (self-contained, kept pure for assertions)
+// ─────────────────────────────────────────────────────────────
+
+export fn sum_of(v: [int]): i32 {
+    let total = 0;
+    for (x in v) {
+        total = total + x;
+    }
+    return total;
+}
+
+export fn element_at(v: [int], idx: i32): i32 {
+    if (idx < 0) {
+        return -1;
+    }
+    if (idx >= v.len()) {
+        return -1;
+    }
+    return v[idx];
+}
+
+export fn first_of(v: [int]): i32 {
+    if (v.len() == 0) {
+        return -1;
+    }
+    return v[0];
+}
+
+export fn last_of(v: [int]): i32 {
+    if (v.len() == 0) {
+        return -1;
+    }
+    return v[v.len() - 1];
+}
+
+export fn joined(v: [int]): string {
+    return v.join(",");
+}
+
+export fn count_of(v: [int], target: i32): i32 {
+    let c = 0;
+    for (x in v) {
+        if (x == target) {
+            c = c + 1;
+        }
+    }
+    return c;
+}
+
+export fn with_set(v: [int], idx: i32, val: i32): [int] {
+    return v.set_index(idx, val);
+}
+
+export fn reversed_copy(v: [int]): [int] {
+    let out: [i32] = [];
+    let i = v.len() - 1;
+    while (i >= 0) {
+        out.push(v[i]);
+        i = i - 1;
+    }
+    return out;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_len_and_indexing() {
+    let a = [10, 20, 30, 40];
+    assert_eq(a.len(), 4);
+    assert_eq(a[0], 10);
+    assert_eq(a[3], 40);
+    assert_eq(sum_of(a), 100);
+    assert_eq(element_at(a, 2), 30);
+    assert_eq(element_at(a, 9), -1);
+    assert_eq(element_at(a, -1), -1);
+}
+
+export test fn test_first_and_last() {
+    let a = [7, 8, 9];
+    assert_eq(first_of(a), 7);
+    assert_eq(last_of(a), 9);
+    let empty: [i32] = [];
+    assert_eq(first_of(empty), -1);
+    assert_eq(last_of(empty), -1);
+    assert_eq(joined(empty), "");
+}
+
+export test fn test_push_and_append() {
+    let a: [i32] = [];
+    let b = a.push(1);
+    let c = b.push(2);
+    assert_eq(c.len(), 2);
+    assert_eq(c[0], 1);
+    assert_eq(c[1], 2);
+    let d = c.append(3);
+    assert_eq(d.len(), 3);
+    assert_eq(last_of(d), 3);
+    assert_eq(joined(d), "1,2,3");
+}
+
+export test fn test_pop_returns_reduced_array() {
+    let a = [1, 2, 3];
+    assert_eq(last_of(a), 3);
+    let b = a.pop();
+    assert_eq(b.len(), 2);
+    assert_eq(last_of(b), 2);
+    assert_eq(a.len(), 2);
+    assert_eq(joined(a), "1,2");
+}
+
+export test fn test_slice_concat_join() {
+    let a = [1, 2, 3, 4, 5];
+    let mid = a.slice(1, 4);
+    assert_eq(mid.len(), 3);
+    assert_eq(joined(mid), "2,3,4");
+    let cat = a.concat([6, 7]);
+    assert_eq(cat.len(), 7);
+    assert_eq(last_of(cat), 7);
+    assert_eq(a.join("-"), "1-2-3-4-5");
+    assert_eq(a.join(""), "12345");
+}
+
+export test fn test_indexof_includes_count() {
+    let a = [4, 8, 15, 16, 23, 42];
+    assert_eq(a.indexOf(15), 2);
+    assert_eq(a.indexOf(99), -1);
+    assert(a.includes(16), "16 is present");
+    assert(!a.includes(99), "99 is absent");
+    assert_eq(count_of(a, 8), 1);
+    assert_eq(count_of([3, 3, 3], 3), 3);
+    assert_eq(count_of([1, 2], 7), 0);
+}
+
+export test fn test_element_assignment_and_set_index() {
+    let a = [1, 2, 3];
+    a[1] = 99;
+    assert_eq(a[1], 99);
+    assert_eq(joined(a), "1,99,3");
+    let b = with_set(a, 0, 9);
+    assert_eq(b[0], 9);
+    assert_eq(a[0], 1);
+    assert_eq(joined(a), "1,99,3");
+}
+
+export test fn test_reverse_and_empty_edges() {
+    let a = [1, 2, 3];
+    let r = reversed_copy(a);
+    assert_eq(joined(r), "3,2,1");
+    assert_eq(a.len(), 3);
+    let empty: [i32] = [];
+    assert_eq(empty.len(), 0);
+    assert_eq(empty.indexOf(1), -1);
+    assert(!empty.includes(0), "empty excludes everything");
+    let f = empty.push(42);
+    assert_eq(f.len(), 1);
+    assert_eq(f[0], 42);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_len_and_indexing();
+    test_first_and_last();
+    test_push_and_append();
+    test_pop_returns_reduced_array();
+    test_slice_concat_join();
+    test_indexof_includes_count();
+    test_element_assignment_and_set_index();
+    test_reverse_and_empty_edges();
+    return 8;
+}
+
+fn main() {
+    print("Running 01_array_basics tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 01_array_basics.test.adesh`);
+}

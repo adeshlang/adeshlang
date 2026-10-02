@@ -3,8 +3,9 @@
 #
 # Removal philosophy: only touch things this installer created.
 #   * Symlinks in /usr/local/bin (or ~/.local/bin for --user) whose target
-#     lives inside the AdeshLang install directory — this covers both the
-#     four CLI tools and any LLVM tools linked by `adesh toolchain expose`.
+#     lives inside the AdeshLang install directory — this covers the bundled
+#     CLI tools (adesh, adl, als, adeshlink, adesh-editor) and any external
+#     LLVM tools linked by `adesh toolchain expose`.
 #   * /etc/profile.d/adeshlang.sh (system) or the AdeshLang exports appended
 #     to ~/.zprofile (--user).
 #   * The install directory itself (after confirmation).
@@ -117,7 +118,7 @@ fi
 
 # 3. The install directory itself (after confirmation) --------------------------
 echo
-if confirm "Remove $INSTALL_DIR (all AdeshLang files and the LLVM toolchain)? "; then
+if confirm "Remove $INSTALL_DIR (all AdeshLang files, incl. the bundled native toolchain)? "; then
     if [[ -d "$INSTALL_DIR" ]]; then
         run_root /bin/rm -rf "$INSTALL_DIR"
         echo "removed: $INSTALL_DIR"
@@ -128,7 +129,7 @@ else
     echo "keeping: $INSTALL_DIR"
 fi
 
-# Leftover choice marker from the .pkg toolchain flag trick, if any.
+# Leftover marker from the legacy .pkg toolchain flag trick, if any.
 run_root /bin/rm -f /tmp/.adesh-install-toolchain
 
 echo

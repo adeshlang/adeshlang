@@ -2,48 +2,26 @@
 <!--
   AdeshLang product Distribution (used by productbuild).
 
-  Two choices:
-    * core      - AdeshLang compiler + tools. ALWAYS installed: it is hidden
-                  (visible="false") and selected by default, so the user
-                  cannot deselect it from the customize pane.
-    * toolchain - "Download LLVM 23.1.1 toolchain (~400 MB)", checked by
-                  default. Checking it does NOT download anything itself:
-                  the choice maps to the tiny, payload-free
-                  org.adeshlang.pkg.toolchain-trigger package whose
-                  postinstall writes /tmp/.adesh-install-toolchain. The core
-                  package's postinstall then runs `adesh toolchain install`
-                  exactly when that flag file exists (see scripts/postinstall
-                  and scripts/toolchain-flag-postinstall).
+  A single core choice: the Adesh native toolchain (native codegen, ADOB
+  object format, adeshlink linker, adeshlang runtime library, stdlib) ships
+  inside the core payload, so there is no separate toolchain package and
+  nothing is downloaded during installation. The choice is hidden and always
+  selected: the user cannot deselect the compiler itself.
 
-  Why the flag file? productbuild / the Installer do not pass choice state to
-  package scripts as environment variables. The standard trick is either one
-  distinct postinstall per choice, or a flag file written by a package that is
-  only installed when the choice is selected. We use the flag-file trick.
-
-  IMPORTANT - install order: product packages install in the order their
-  top-level pkg-ref elements appear in this document. The toolchain-trigger
-  pkg-ref MUST appear before the core pkg-ref here, so the trigger's
-  postinstall (flag write) runs before the core postinstall (flag check). If
-  the order were reversed the core postinstall would see no flag and skip the
-  toolchain. (The "with-toolchain" build in build-pkg.sh, which bakes
-  ADESH_PKG_TOOLCHAIN=1 into the core postinstall and forces
-  customize="never", is the guaranteed path for always-on installs.)
+  External LLVM remains an opt-in bridge the user registers after install:
+    adesh gpu-check --external-linker
+    adesh toolchain --external install
 
   Build (see build-pkg.sh, which does all of this):
-    - core component: pkgbuild run on the staged payload (bin, std, config,
-      licenses) with the core scripts folder, the identifier
+    - core component: pkgbuild run on the staged payload (bin, lib, std,
+      config, licenses, ai) with the core scripts folder, the identifier
       org.adeshlang.pkg.core, the install-location
       "/Library/Application Support/AdeshLang" and min OS 12 -> core.pkg
-    - trigger component: pkgbuild run with no payload, the trigger scripts
-      folder and the identifier org.adeshlang.pkg.toolchain-trigger
-      -> toolchain-trigger.pkg
     - product archive: productbuild run with this Distribution, the package
-      path set to the folder holding core.pkg and toolchain-trigger.pkg, and
-      an optional signing identity
-      -> AdeshLang-0.3.0-<arch>-macos.pkg
+      path set to the folder holding core.pkg, and an optional signing
+      identity -> AdeshLang-0.3.0-<arch>-macos.pkg
 
-  Identifiers are reverse-DNS: org.adeshlang.pkg.core and
-  org.adeshlang.pkg.toolchain-trigger.
+  Identifiers are reverse-DNS: org.adeshlang.pkg.core.
 -->
 <installer-gui-script minSpecVersion="1">
     <title>AdeshLang</title>
@@ -56,26 +34,16 @@
         </allowed-os-versions>
     </volume-check>
 
-    <!-- Order matters: toolchain-trigger (flag writer) BEFORE core. -->
-    <pkg-ref id="org.adeshlang.pkg.toolchain-trigger" version="0.3.0">toolchain-trigger.pkg</pkg-ref>
     <pkg-ref id="org.adeshlang.pkg.core" version="0.3.0">core.pkg</pkg-ref>
 
     <choices-outline>
         <line choice="core"/>
-        <line choice="toolchain"/>
     </choices-outline>
 
     <choice id="core"
             title="AdeshLang 0.3.0 - compiler, package manager, LSP, editor"
-            description="Installs AdeshLang to /Library/Application Support/AdeshLang and links adesh, adl, als and adesh-editor into /usr/local/bin. Required - cannot be deselected."
+            description="Installs AdeshLang with its bundled self-contained native toolchain (native codegen, ADOB object format, adeshlink linker, adeshlang runtime) to /Library/Application Support/AdeshLang and links adesh, adl, als, adeshlink and adesh-editor into /usr/local/bin. No external LLVM or MSVC is downloaded or required. Required - cannot be deselected."
             visible="false" start_selected="true">
         <pkg-ref id="org.adeshlang.pkg.core"/>
-    </choice>
-
-    <choice id="toolchain"
-            title="Download LLVM 18.1.8 toolchain (~190 MB compressed download, ~900 MB disk space)"
-            description="Downloads the compressed LLVM 18.1.8 toolchain archive (clang, clang++, lld, llc, llvm-ar, mlir-opt, mlir-translate) from official llvm-project releases, verifies its SHA-256 against the bundled toolchain manifest, and exposes it system-wide. Requires ~190 MB download and ~900 MB installed disk space. Can be installed later with: sudo adesh toolchain install --system"
-            start_selected="true">
-        <pkg-ref id="org.adeshlang.pkg.toolchain-trigger"/>
     </choice>
 </installer-gui-script>

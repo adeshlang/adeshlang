@@ -1,0 +1,110 @@
+// Struct & Object Tests
+// Covers examples/basics/arrays.adesh (struct declaration + extend method),
+// examples/basics/data_structures_quicklook.adesh (object literal, string) and
+// object literal basics demonstrated across examples/basics.
+
+// ─────────────────────────────────────────────────────────────
+// Struct declaration (mirrors examples/basics/arrays.adesh)
+// ─────────────────────────────────────────────────────────────
+
+struct Person {
+    isAwesome: bool,
+    age: u8,
+    name: string
+};
+
+extend on Person {
+    fn init(): string {
+        return "Hello World";
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+
+export fn make_awesome_person(name: string): Person {
+    return Person { isAwesome: true, age: 1, name: name };
+}
+
+export fn grown_up(age: u8): u8 {
+    return age + 1;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_struct_literal_and_fields() {
+    let p = Person { isAwesome: true, age: 1, name: "Adesh" };
+    assert_eq(p.age, 1);
+    assert_eq(p.name, "Adesh");
+    assert(p.isAwesome, "person is awesome");
+    assert_eq(typeof(p), "object");
+    assert_eq(sizeof(p), 85);
+}
+
+export test fn test_struct_field_mutation() {
+    let p = make_awesome_person("Ada");
+    assert_eq(p.name, "Ada");
+    p.age = 5;
+    assert_eq(p.age, 5);
+    p.isAwesome = false;
+    assert(!p.isAwesome, "no longer awesome");
+    assert_eq(grown_up(p.age), 6);
+}
+
+export test fn test_struct_extend_method() {
+    let p = Person { isAwesome: true, age: 1, name: "Adesh" };
+    assert_eq(p.init(), "Hello World");
+    let q = Person { isAwesome: false, age: 2, name: "Grace" };
+    assert_eq(q.init(), "Hello World");
+    assert_eq(q.name, "Grace");
+}
+
+export test fn test_object_literal_access() {
+    let obj = { x: 100, y: 200 };
+    assert_eq(obj.x, 100);
+    assert_eq(obj.y, 200);
+    assert_eq(typeof(obj), "object");
+    assert_eq(sizeof(obj), 52);
+    assert_eq(obj.len(), 2);
+}
+
+export test fn test_object_key_addition() {
+    let obj = { x: 100, y: 200 };
+    obj["z"] = 300;
+    assert_eq(obj["z"], 300);
+    assert_eq(obj.len(), 3);
+    obj.x = obj.x + 5;
+    assert_eq(obj.x, 105);
+}
+
+export test fn test_string_basics() {
+    let name = "FastMap Test";
+    assert_eq(typeof(name), "string");
+    assert_eq(sizeof(name), 12);
+    assert_eq(name.len(), 12);
+    assert_eq(name.toUpperCase(), "FASTMAP TEST");
+    assert(name.includes("Map"), "contains Map");
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_struct_literal_and_fields();
+    test_struct_field_mutation();
+    test_struct_extend_method();
+    test_object_literal_access();
+    test_object_key_addition();
+    test_string_basics();
+    return 6;
+}
+
+fn main() {
+    print("Running 02_structs_objects tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 02_structs_objects.test.adesh`);
+}

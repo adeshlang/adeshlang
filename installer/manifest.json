@@ -1,45 +1,41 @@
 {
   "schema": 1,
   "version": "0.3.0",
+  "note": "The Adesh native toolchain (native codegen, ADOB object format, adeshlink linker, adeshlang runtime) is bundled in every distribution package; no external LLVM, Clang, GCC, or MSVC is required. External LLVM is an opt-in bridge (`adesh gpu-check --external-linker`).",
   "platforms": {
     "windows-x86_64": {
       "artifact": "AdeshLang-0.3.0-windows-x86_64.zip",
       "architecture": "x86_64",
-      "llvm": "18.x",
-      "clang": "18.x",
-      "lld": "18.x",
+      "nativeToolchain": "bundled (codegen + adeshlink + ADOB + runtime)",
+      "externalLlvm": "optional bridge only",
       "requires": ["windows-10"]
     },
     "linux-x86_64": {
       "artifact": "AdeshLang-0.3.0-linux-x86_64.tar.xz",
       "architecture": "x86_64",
-      "llvm": "18.x",
-      "clang": "18.x",
-      "lld": "18.x",
+      "nativeToolchain": "bundled (codegen + adeshlink + ADOB + runtime)",
+      "externalLlvm": "optional bridge only",
       "requires": ["glibc-2.28"]
     },
     "linux-aarch64": {
       "artifact": "AdeshLang-0.3.0-linux-aarch64.tar.xz",
       "architecture": "aarch64",
-      "llvm": "18.x",
-      "clang": "18.x",
-      "lld": "18.x",
+      "nativeToolchain": "bundled (codegen + adeshlink + ADOB + runtime)",
+      "externalLlvm": "optional bridge only",
       "requires": ["glibc-2.28"]
     },
     "macos-arm64": {
       "artifact": "AdeshLang-0.3.0-macos-arm64.tar.xz",
       "architecture": "arm64",
-      "llvm": "18.x",
-      "clang": "18.x",
-      "lld": "18.x",
+      "nativeToolchain": "bundled (codegen + adeshlink + ADOB + runtime)",
+      "externalLlvm": "optional bridge only",
       "requires": ["macos-12"]
     },
     "macos-x86_64": {
       "artifact": "AdeshLang-0.3.0-macos-x86_64.tar.xz",
       "architecture": "x86_64",
-      "llvm": "18.x",
-      "clang": "18.x",
-      "lld": "18.x",
+      "nativeToolchain": "bundled (codegen + adeshlink + ADOB + runtime)",
+      "externalLlvm": "optional bridge only",
       "requires": ["macos-12"]
     }
   }

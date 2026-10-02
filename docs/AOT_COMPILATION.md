@@ -2895,16 +2895,22 @@ The changes are minimal, focused, and backward-compatible while providing massiv
 
 ### Prerequisites
 - Windows 10/11, x64
-- LLVM 22 (install via `choco install llvm` or download from llvm.org)
-- Rust toolchain (for building AdeshLang)
+- Nothing else for native builds: the bundled native toolchain (adesh codegen,
+  ADOB, `adeshlink`, runtime) compiles and links without LLVM, MSVC, or the
+  Windows SDK
+- Rust toolchain (only for building AdeshLang from source)
+- OPTIONAL, `--external-linker` mode only: LLVM (`choco install llvm` or
+  download from llvm.org) + Windows SDK
 
 ### Verify Installation
 ```powershell
-# Check LLVM
+# Native toolchain (no external tools needed)
+adesh gpu-check
+adesh build program.adesh
+
+# OPTIONAL external LLVM bridge (--external-linker mode)
 clang.exe --version
 lld-link.exe --help
-
-# Check Windows SDK (auto-detected)
 Get-Item "C:\Program Files (x86)\Windows Kits\10\Lib"
 ```
 
@@ -3016,13 +3022,17 @@ cargo build
 ```
 
 ### Error: "LLVM clang not found"
-**Solution**: Install LLVM 22
+This error only appears with the opt-in `--external-linker` mode (or the MLIR
+GPU pipeline); native builds never need clang.
+**Solution**: Install LLVM
 ```bash
 choco install llvm
 # Or download from: https://releases.llvm.org/download.html
 ```
 
 ### Error: "Windows SDK not found"
+This only affects `--external-linker` builds that drive lld-link; native
+builds do not use the Windows SDK.
 **Solution**: Install Windows 10/11 SDK via Visual Studio installer
 - Select: C++ development tools
 - Includes: Windows SDK

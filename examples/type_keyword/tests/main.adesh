@@ -1,0 +1,112 @@
+// Type Keyword Test Runner & Analytics Suite
+// Imports test cases from all type_keyword test modules and executes them
+// step-by-step with rich analytics reporting.
+
+import "./01_type_aliases.test.adesh" as alias_tests;
+import "./02_generic_aliases.test.adesh" as generic_tests;
+
+// ─────────────────────────────────────────────────────────────
+// Native Test Harness Declarations (for `adesh run --test`)
+// ─────────────────────────────────────────────────────────────
+
+test fn test_suite_type_aliases() {
+    alias_tests.run_tests();
+}
+
+test fn test_suite_generic_aliases() {
+    generic_tests.run_tests();
+}
+
+// ─────────────────────────────────────────────────────────────
+// Standalone Test Runner & Analytics Engine
+// ─────────────────────────────────────────────────────────────
+
+struct TestSuiteResult {
+    suite_name: string;
+    total: i32;
+    passed: i32;
+    failed: i32;
+};
+
+fn run_single_test(test_name: string, test_fn): bool {
+    try {
+        test_fn();
+        print(`  ✓ PASS: ${test_name}`);
+        return true;
+    } catch (err) {
+        print(`  ✗ FAIL: ${test_name} - Error: ${err}`);
+        return false;
+    }
+}
+
+fn print_analytics_dashboard(
+    alias_res: TestSuiteResult,
+    generic_res: TestSuiteResult
+) {
+    let total_all = alias_res.total + generic_res.total;
+    let passed_all = alias_res.passed + generic_res.passed;
+    let failed_all = alias_res.failed + generic_res.failed;
+    let pass_rate = (passed_all * 100) / total_all;
+
+    print("");
+    print("╔══════════════════════════════════════════════════════════════════════╗");
+    print("║                     TEST ANALYTICS DASHBOARD                         ║");
+    print("╠══════════════════════════════════════════════════════════════════════╣");
+    print("║  Suite Name              │ Total │ Passed │ Failed │ Pass Rate       ║");
+    print("╟──────────────────────────┼───────┼────────┼────────┼─────────────────╢");
+    print(`║  01_type_aliases         │   ${alias_res.total}   │   ${alias_res.passed}    │   ${alias_res.failed}    │ ${pass_rate}%            ║`);
+    print(`║  02_generic_aliases      │   ${generic_res.total}   │   ${generic_res.passed}    │   ${generic_res.failed}    │ ${pass_rate}%            ║`);
+    print("╠══════════════════════════════════════════════════════════════════════╣");
+    print(`║  TOTAL OVERALL           │  ${total_all}   │  ${passed_all}   │   ${failed_all}    │ ${pass_rate}%            ║`);
+    print("╚══════════════════════════════════════════════════════════════════════╝");
+    print("");
+    if (failed_all == 0) {
+        print(`  🎉 ALL TYPE KEYWORD TESTS PASSED SUCCESSFULLY! (${passed_all}/${total_all} tests)`);
+    } else {
+        print(`  ⚠️ WARNING: ${failed_all} test(s) failed.`);
+    }
+    print("");
+}
+
+fn main() {
+    print("╔══════════════════════════════════════════════════════════════════════╗");
+    print("║           AdeshLang Type Keyword - Test Execution Runner             ║");
+    print("╚══════════════════════════════════════════════════════════════════════╝");
+    print("");
+
+    // Suite 1: Type Alias Tests
+    print("▶ [1/2] Running Suite: 01_type_aliases.test.adesh");
+    let a1 = 0;
+    a1 = a1 + (run_single_test("alias_tests.test_alias_field_construction", alias_tests.test_alias_field_construction) ? 1 : 0);
+    a1 = a1 + (run_single_test("alias_tests.test_alias_field_override", alias_tests.test_alias_field_override) ? 1 : 0);
+    a1 = a1 + (run_single_test("alias_tests.test_missing_optional_is_null", alias_tests.test_missing_optional_is_null) ? 1 : 0);
+    a1 = a1 + (run_single_test("alias_tests.test_function_parameter_defaults", alias_tests.test_function_parameter_defaults) ? 1 : 0);
+    a1 = a1 + (run_single_test("alias_tests.test_make_user_defaults", alias_tests.test_make_user_defaults) ? 1 : 0);
+    a1 = a1 + (run_single_test("alias_tests.test_typeof_sizeof_alias_instance", alias_tests.test_typeof_sizeof_alias_instance) ? 1 : 0);
+    let alias_res = TestSuiteResult {
+        suite_name: "01_type_aliases",
+        total: 6,
+        passed: a1,
+        failed: 6 - a1,
+    };
+    print(`  Suite Result: ${a1}/6 tests passed\n`);
+
+    // Suite 2: Generic Type Alias Tests
+    print("▶ [2/2] Running Suite: 02_generic_aliases.test.adesh");
+    let g1 = 0;
+    g1 = g1 + (run_single_test("generic_tests.test_box_optional_tag_missing", generic_tests.test_box_optional_tag_missing) ? 1 : 0);
+    g1 = g1 + (run_single_test("generic_tests.test_box_alias_tag_override", generic_tests.test_box_alias_tag_override) ? 1 : 0);
+    g1 = g1 + (run_single_test("generic_tests.test_box_value_accessor", generic_tests.test_box_value_accessor) ? 1 : 0);
+    g1 = g1 + (run_single_test("generic_tests.test_pair_alias_roundtrip", generic_tests.test_pair_alias_roundtrip) ? 1 : 0);
+    g1 = g1 + (run_single_test("generic_tests.test_nested_generic_alias", generic_tests.test_nested_generic_alias) ? 1 : 0);
+    let generic_res = TestSuiteResult {
+        suite_name: "02_generic_aliases",
+        total: 5,
+        passed: g1,
+        failed: 5 - g1,
+    };
+    print(`  Suite Result: ${g1}/5 tests passed\n`);
+
+    // Final Analytics Dashboard
+    print_analytics_dashboard(alias_res, generic_res);
+}

@@ -1,0 +1,145 @@
+// Arrays Test Runner & Analytics Suite
+// Imports test cases from all arrays test modules and executes them step-by-step
+// with rich analytics reporting.
+
+import "./01_array_basics.test.adesh" as basics_tests;
+import "./02_array_methods.test.adesh" as methods_tests;
+import "./03_tuples.test.adesh" as tuple_tests;
+
+// ─────────────────────────────────────────────────────────────
+// Native Test Harness Declarations (for `adesh run --test`)
+// ─────────────────────────────────────────────────────────────
+
+test fn test_suite_array_basics() {
+    basics_tests.run_tests();
+}
+
+test fn test_suite_array_methods() {
+    methods_tests.run_tests();
+}
+
+test fn test_suite_tuples() {
+    tuple_tests.run_tests();
+}
+
+// ─────────────────────────────────────────────────────────────
+// Standalone Test Runner & Analytics Engine
+// ─────────────────────────────────────────────────────────────
+
+struct TestSuiteResult {
+    suite_name: string;
+    total: i32;
+    passed: i32;
+    failed: i32;
+};
+
+fn run_single_test(test_name: string, test_fn): bool {
+    try {
+        test_fn();
+        print(`  ✓ PASS: ${test_name}`);
+        return true;
+    } catch (err) {
+        print(`  ✗ FAIL: ${test_name} - Error: ${err}`);
+        return false;
+    }
+}
+
+fn print_analytics_dashboard(
+    basics_res: TestSuiteResult,
+    methods_res: TestSuiteResult,
+    tuples_res: TestSuiteResult
+) {
+    let total_all = basics_res.total + methods_res.total + tuples_res.total;
+    let passed_all = basics_res.passed + methods_res.passed + tuples_res.passed;
+    let failed_all = basics_res.failed + methods_res.failed + tuples_res.failed;
+    let pass_rate = (passed_all * 100) / total_all;
+    let basics_rate = (basics_res.passed * 100) / basics_res.total;
+    let methods_rate = (methods_res.passed * 100) / methods_res.total;
+    let tuples_rate = (tuples_res.passed * 100) / tuples_res.total;
+
+    print("");
+    print("╔══════════════════════════════════════════════════════════════════════╗");
+    print("║                     TEST ANALYTICS DASHBOARD                         ║");
+    print("╠══════════════════════════════════════════════════════════════════════╣");
+    print("║  Suite Name              │ Total │ Passed │ Failed │ Pass Rate       ║");
+    print("╟──────────────────────────┼───────┼────────┼────────┼─────────────────╢");
+    print(`║  01_array_basics          │   ${basics_res.total}   │   ${basics_res.passed}    │   ${basics_res.failed}    │ ${basics_rate}%            ║`);
+    print(`║  02_array_methods         │   ${methods_res.total}   │   ${methods_res.passed}    │   ${methods_res.failed}    │ ${methods_rate}%            ║`);
+    print(`║  03_tuples                 │   ${tuples_res.total}   │   ${tuples_res.passed}    │   ${tuples_res.failed}    │ ${tuples_rate}%            ║`);
+    print("╠══════════════════════════════════════════════════════════════════════╣");
+    print(`║  TOTAL OVERALL            │  ${total_all}   │  ${passed_all}   │   ${failed_all}    │ ${pass_rate}%            ║`);
+    print("╚══════════════════════════════════════════════════════════════════════╝");
+    print("");
+    if (failed_all == 0) {
+        print(`  🎉 ALL ARRAY TESTS PASSED SUCCESSFULLY! (${passed_all}/${total_all} tests)`);
+    } else {
+        print(`  ⚠️ WARNING: ${failed_all} test(s) failed.`);
+    }
+    print("");
+}
+
+fn main() {
+    print("╔══════════════════════════════════════════════════════════════════════╗");
+    print("║             AdeshLang Arrays - Test Execution Runner                 ║");
+    print("╚══════════════════════════════════════════════════════════════════════╝");
+    print("");
+
+    // Suite 1: Array Basics Tests
+    print("▶ [1/3] Running Suite: 01_array_basics.test.adesh");
+    let b1 = 0;
+    b1 = b1 + (run_single_test("basics_tests.test_len_and_indexing", basics_tests.test_len_and_indexing) ? 1 : 0);
+    b1 = b1 + (run_single_test("basics_tests.test_first_and_last", basics_tests.test_first_and_last) ? 1 : 0);
+    b1 = b1 + (run_single_test("basics_tests.test_push_and_append", basics_tests.test_push_and_append) ? 1 : 0);
+    b1 = b1 + (run_single_test("basics_tests.test_pop_returns_reduced_array", basics_tests.test_pop_returns_reduced_array) ? 1 : 0);
+    b1 = b1 + (run_single_test("basics_tests.test_slice_concat_join", basics_tests.test_slice_concat_join) ? 1 : 0);
+    b1 = b1 + (run_single_test("basics_tests.test_indexof_includes_count", basics_tests.test_indexof_includes_count) ? 1 : 0);
+    b1 = b1 + (run_single_test("basics_tests.test_element_assignment_and_set_index", basics_tests.test_element_assignment_and_set_index) ? 1 : 0);
+    b1 = b1 + (run_single_test("basics_tests.test_reverse_and_empty_edges", basics_tests.test_reverse_and_empty_edges) ? 1 : 0);
+    let basics_res = TestSuiteResult {
+        suite_name: "01_array_basics",
+        total: 8,
+        passed: b1,
+        failed: 8 - b1,
+    };
+    print(`  Suite Result: ${b1}/8 tests passed\n`);
+
+    // Suite 2: Array Methods Tests
+    print("▶ [2/3] Running Suite: 02_array_methods.test.adesh");
+    let m1 = 0;
+    m1 = m1 + (run_single_test("methods_tests.test_unshift_and_shift", methods_tests.test_unshift_and_shift) ? 1 : 0);
+    m1 = m1 + (run_single_test("methods_tests.test_insert_and_remove", methods_tests.test_insert_and_remove) ? 1 : 0);
+    m1 = m1 + (run_single_test("methods_tests.test_extend_and_concat", methods_tests.test_extend_and_concat) ? 1 : 0);
+    m1 = m1 + (run_single_test("methods_tests.test_sort_and_reverse", methods_tests.test_sort_and_reverse) ? 1 : 0);
+    m1 = m1 + (run_single_test("methods_tests.test_clear", methods_tests.test_clear) ? 1 : 0);
+    m1 = m1 + (run_single_test("methods_tests.test_map_filter_reduce", methods_tests.test_map_filter_reduce) ? 1 : 0);
+    m1 = m1 + (run_single_test("methods_tests.test_flat_count_index", methods_tests.test_flat_count_index) ? 1 : 0);
+    m1 = m1 + (run_single_test("methods_tests.test_single_element_edges", methods_tests.test_single_element_edges) ? 1 : 0);
+    let methods_res = TestSuiteResult {
+        suite_name: "02_array_methods",
+        total: 8,
+        passed: m1,
+        failed: 8 - m1,
+    };
+    print(`  Suite Result: ${m1}/8 tests passed\n`);
+
+    // Suite 3: Tuple Tests
+    print("▶ [3/3] Running Suite: 03_tuples.test.adesh");
+    let t1 = 0;
+    t1 = t1 + (run_single_test("tuple_tests.test_tuple_len_first_last", tuple_tests.test_tuple_len_first_last) ? 1 : 0);
+    t1 = t1 + (run_single_test("tuple_tests.test_tuple_indexing", tuple_tests.test_tuple_indexing) ? 1 : 0);
+    t1 = t1 + (run_single_test("tuple_tests.test_tuple_destructuring", tuple_tests.test_tuple_destructuring) ? 1 : 0);
+    t1 = t1 + (run_single_test("tuple_tests.test_pair_sum", tuple_tests.test_pair_sum) ? 1 : 0);
+    t1 = t1 + (run_single_test("tuple_tests.test_swap_pair", tuple_tests.test_swap_pair) ? 1 : 0);
+    t1 = t1 + (run_single_test("tuple_tests.test_string_and_bool_tuples", tuple_tests.test_string_and_bool_tuples) ? 1 : 0);
+    t1 = t1 + (run_single_test("tuple_tests.test_min_max_pair", tuple_tests.test_min_max_pair) ? 1 : 0);
+    let tuples_res = TestSuiteResult {
+        suite_name: "03_tuples",
+        total: 7,
+        passed: t1,
+        failed: 7 - t1,
+    };
+    print(`  Suite Result: ${t1}/7 tests passed\n`);
+
+    // Final Analytics Dashboard
+    print_analytics_dashboard(basics_res, methods_res, tuples_res);
+}

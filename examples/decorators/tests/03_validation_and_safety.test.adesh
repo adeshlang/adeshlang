@@ -1,0 +1,171 @@
+// Validation, Safety-Net & Transform Decorator Tests
+// Covers patterns from examples/decorators/validate_authorize.adesh,
+// advanced_patterns.adesh and the README "handle errors gracefully" section:
+//   - guard decorators that throw catchable errors on bad input
+//   - error messages carrying the decorated function's meta.name
+//   - safe-call decorators that swallow errors and return a default
+//   - result-transforming decorators
+//   - guards composed under safe-call wrappers
+
+// ─────────────────────────────────────────────────────────────
+// Decorators (mirrored in main.adesh for imported execution)
+// ─────────────────────────────────────────────────────────────
+
+decorator requirePositive(target, meta) {
+    return fn(a) {
+        if (a <= 0) {
+            throw meta.name + ": input must be positive, got " + a;
+        }
+        return target(a);
+    };
+}
+
+decorator safeCallGuard(target, meta) {
+    return fn(a) {
+        try {
+            return target(a);
+        } catch (e) {
+            return -999;
+        }
+    };
+}
+
+decorator upperResult(target, meta) {
+    return fn(a) {
+        return target(a).toUpperCase();
+    };
+}
+
+decorator trimResult(target, meta) {
+    return fn(a) {
+        return target(a).trim();
+    };
+}
+
+decorator requireEven(target, meta) {
+    return fn(a, b) {
+        if (a % 2 != 0 || b % 2 != 0) {
+            throw meta.name + ": only even operands allowed";
+        }
+        return target(a, b);
+    };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+
+@requirePositive
+fn halve(a) {
+    return a / 2;
+}
+
+@safeCallGuard
+fn safeHalve(a) {
+    return a / 2;
+}
+
+@safeCallGuard
+@requirePositive
+fn guardedHalve(a) {
+    return a / 2;
+}
+
+@upperResult
+fn tagWord(a) {
+    return "  adesh" + a + "  ";
+}
+
+@trimResult
+fn paddedWord(a) {
+    return "   " + a + "   ";
+}
+
+@requireEven
+fn sumPair(a, b) {
+    return a + b;
+}
+
+export fn plainHalve(a: i32): i32 {
+    return a / 2;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_guard_allows_valid_input() {
+    assert_eq(halve(10), 5);
+    assert_eq(halve(2), 1);
+    assert_eq(halve(1), 0.5);
+    assert_eq(plainHalve(8), 4);
+}
+
+export test fn test_guard_throws_catchable_error() {
+    let caught = false;
+    let message = "";
+    try {
+        halve(-4);
+    } catch (e) {
+        caught = true;
+        message = "" + e;
+    }
+    assert(caught, "negative input must throw");
+    assert(message.includes("input must be positive"), "message explains reason");
+}
+
+export test fn test_guard_error_carries_meta_name() {
+    let message = "";
+    try {
+        halve(0);
+    } catch (e) {
+        message = "" + e;
+    }
+    assert(message.includes("halve"), "error contains the decorated fn name");
+}
+
+export test fn test_safe_call_returns_default_on_error() {
+    // safeHalve has no guard, but guardedHalve composes guard under safe-call
+    assert_eq(safeHalve(8), 4);
+    assert_eq(guardedHalve(8), 4);
+    assert_eq(guardedHalve(-8), -999);
+}
+
+export test fn test_transform_decorators() {
+    assert_eq(tagWord("lang"), "ADESHLANG");
+    assert_eq(paddedWord("x"), "x");
+}
+
+export test fn test_even_guard_validates_both_args() {
+    assert_eq(sumPair(2, 4), 6);
+    let caught = false;
+    let message = "";
+    try {
+        sumPair(2, 3);
+    } catch (e) {
+        caught = true;
+        message = "" + e;
+    }
+    assert(caught, "odd operand must throw");
+    assert(message.includes("only even operands allowed"), "reason surfaced");
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_guard_allows_valid_input();
+    test_guard_throws_catchable_error();
+    test_guard_error_carries_meta_name();
+    test_safe_call_returns_default_on_error();
+    test_transform_decorators();
+    test_even_guard_validates_both_args();
+    return 6;
+}
+
+fn main() {
+    print("Running 03_validation_and_safety tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 03_validation_and_safety.test.adesh`);
+}

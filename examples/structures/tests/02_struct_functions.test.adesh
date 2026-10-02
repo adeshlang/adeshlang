@@ -1,0 +1,140 @@
+// Struct Functions Tests
+// Covers passing structs to functions, returning structs from functions,
+// derived computations, and multiple struct parameters as demonstrated by
+// examples/structures.
+
+// ─────────────────────────────────────────────────────────────
+// Helpers (self-contained, pure)
+// ─────────────────────────────────────────────────────────────
+
+struct User {
+    username: String;
+    email: String;
+    age: i32;
+};
+
+struct Point {
+    x: i32;
+    y: i32;
+};
+
+export fn make_user(name: String, email: String, age: i32): User {
+    return User {
+        username: name,
+        email: email,
+        age: age,
+    };
+}
+
+export fn display_name(u: User): string {
+    return u.username;
+}
+
+export fn is_email_local(u: User): bool {
+    return u.email.includes("@local");
+}
+
+export fn translate(p: Point, dx: i32, dy: i32): Point {
+    return Point {
+        x: p.x + dx,
+        y: p.y + dy,
+    };
+}
+
+export fn manhattan_from_origin(p: Point): i32 {
+    let ax = p.x;
+    let ay = p.y;
+    if (ax < 0) {
+        ax = 0 - ax;
+    }
+    if (ay < 0) {
+        ay = 0 - ay;
+    }
+    return ax + ay;
+}
+
+export fn older_of(a: User, b: User): User {
+    if (a.age >= b.age) {
+        return a;
+    }
+    return b;
+}
+
+export fn rename(u: User, name: String): User {
+    return User {
+        username: name,
+        email: u.email,
+        age: u.age,
+    };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_fn_returns_struct() {
+    let user = make_user("charlie", "charlie@example.com", 25);
+    assert_eq(user.username, "charlie");
+    assert_eq(user.email, "charlie@example.com");
+    assert_eq(user.age, 25);
+}
+
+export test fn test_struct_param_reads_fields() {
+    let user = make_user("alice123", "alice@local.host", 28);
+    assert_eq(display_name(user), "alice123");
+    assert(is_email_local(user), "email should contain @local");
+    let other = make_user("bob", "bob@example.com", 32);
+    assert_eq(is_email_local(other), false);
+}
+
+export test fn test_transform_returns_new_struct() {
+    let origin = Point { x: 10, y: 20 };
+    let moved = translate(origin, 5, -10);
+    assert_eq(moved.x, 15);
+    assert_eq(moved.y, 10);
+    assert_eq(origin.x, 10);
+    assert_eq(origin.y, 20);
+}
+
+export test fn test_distance_computation() {
+    assert_eq(manhattan_from_origin(Point { x: 3, y: 4 }), 7);
+    assert_eq(manhattan_from_origin(Point { x: -3, y: 4 }), 7);
+    assert_eq(manhattan_from_origin(Point { x: 0, y: 0 }), 0);
+}
+
+export test fn test_multiple_struct_params() {
+    let diana = make_user("diana", "diana@example.com", 30);
+    let eve = make_user("eve", "eve@example.com", 27);
+    assert_eq(older_of(diana, eve).username, "diana");
+    assert_eq(older_of(eve, diana).username, "diana");
+    assert_eq(older_of(diana, diana).age, 30);
+}
+
+export test fn test_copy_and_update_struct() {
+    let original = make_user("alice", "alice@example.com", 28);
+    let updated = rename(original, "alice2");
+    assert_eq(updated.username, "alice2");
+    assert_eq(updated.email, "alice@example.com");
+    assert_eq(updated.age, 28);
+    assert_eq(original.username, "alice");
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_fn_returns_struct();
+    test_struct_param_reads_fields();
+    test_transform_returns_new_struct();
+    test_distance_computation();
+    test_multiple_struct_params();
+    test_copy_and_update_struct();
+    return 6;
+}
+
+fn main() {
+    print("Running 02_struct_functions tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 02_struct_functions.test.adesh`);
+}

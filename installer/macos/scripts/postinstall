@@ -1,32 +1,23 @@
 #!/usr/bin/env bash
 # AdeshLang core component postinstall (productbuild / pkgbuild).
 #
-# Runs as root after the core payload (bin/, std/, config/, licenses/) lands
-# at /Library/Application Support/AdeshLang. Standard pkg scripts receive:
-#   $1 = package path, $2 = install location, $3 = target volume.
+# Runs as root after the core payload (bin/, lib/, std/, config/, licenses/)
+# lands at /Library/Application Support/AdeshLang. Standard pkg scripts
+# receive: $1 = package path, $2 = install location, $3 = target volume.
+#
+# The Adesh native toolchain (native codegen, ADOB object format, adeshlink
+# linker, adeshlang runtime library) ships inside the payload: nothing is
+# downloaded during installation and no external LLVM/Clang/MSVC is required.
+# External LLVM remains an opt-in bridge the user can register afterwards
+# with `adesh toolchain --external install`.
 #
 # Steps:
 #   1. Verify we are root (postinstalls run as root; guard anyway).
-#   2. Symlink the AdeshLang CLI tools (adesh, adl, als, adesh-editor) into
-#      /usr/local/bin.
-#   3. Write /etc/profile.d/adeshlang.sh exporting ADESH_HOME/PATH/STD.
-#   4. Install the pinned LLVM 23.1.1 toolchain via `adesh toolchain install
-#      --system` ONLY when:
-#        - the product's "toolchain" choice was selected — the tiny
-#          org.adeshlang.pkg.toolchain-trigger package then installed and its
-#          postinstall wrote /tmp/.adesh-install-toolchain (see choices.xml),
-#        - or build-pkg.sh was invoked with --with-toolchain, which bakes
-#          ADESH_PKG_TOOLCHAIN=1 into this file at build time.
-#      productbuild cannot pass choice state to scripts via environment
-#      variables, hence the flag-file mechanism.
-#      A toolchain failure NEVER fails the package: we print the retry
-#      commands and still exit 0 (the installer must complete).
+#   2. Symlink the AdeshLang CLI tools (adesh, adl, als, adeshlink,
+#      adesh-editor) into /usr/local/bin.
+#   3. Write /etc/profile.d/adeshlang.sh exporting ADESH_HOME/ADESH_STD/PATH.
+#   4. Self-verify the bundled native toolchain (fast, offline).
 set -euo pipefail
-
-# Baked at build time by build-pkg.sh: sed rewrites this one line to
-# ADESH_PKG_TOOLCHAIN=1 for --with-toolchain (always-on) builds. Keep the
-# exact prefix "ADESH_PKG_TOOLCHAIN=" on its own line.
-ADESH_PKG_TOOLCHAIN=0
 
 # $2 is the payload's install location when the product installer runs us
 # ("<target-volume>/Library/Application Support/AdeshLang"). Fall back to the
@@ -39,7 +30,6 @@ fi
 BIN_DIR="$HOME_DIR/bin"
 LINK_DIR="/usr/local/bin"
 PROFILE_FILE="/etc/profile.d/adeshlang.sh"
-FLAG_FILE="/tmp/.adesh-install-toolchain"
 
 # 1. Root check ---------------------------------------------------------------
 if [[ "$(id -u)" -ne 0 ]]; then
@@ -49,7 +39,7 @@ fi
 
 # 2. Symlink the CLI tools into /usr/local/bin (idempotent) --------------------
 mkdir -p "$LINK_DIR"
-for tool in adesh adl als adesh-editor; do
+for tool in adesh adl als adeshlink adesh-editor; do
     if [[ -x "$BIN_DIR/$tool" ]]; then
         ln -sfn "$BIN_DIR/$tool" "$LINK_DIR/$tool"
         echo "AdeshLang: linked $LINK_DIR/$tool"
@@ -61,19 +51,14 @@ done
 # 3. Shell profile -------------------------------------------------------------
 # macOS login shells pick this up where /etc/profile.d is sourced (bash and
 # zsh on most macOS setups read it via /etc/profile / /etc/zprofile chains).
-# `adesh toolchain install --system` later rewrites this same file with the
-# toolchain variables (see src/toolchain/expose.rs), so this is an idempotent,
-# ordering-safe base.
+# The native toolchain is bundled inside the installation, so no
+# ADESH_TOOLCHAIN/ADESH_CLANG/ADESH_LLC variables are exported; users who
+# register an external LLVM bridge configure those themselves.
 cat > "$PROFILE_FILE" <<EOF
 # AdeshLang environment (managed by the AdeshLang installer; safe to remove)
 export ADESH_HOME='$HOME_DIR'
 export ADESH_STD='$HOME_DIR/std'
-export ADESH_TOOLCHAIN='$HOME_DIR/toolchain/llvm'
-export ADESH_CLANG='$HOME_DIR/toolchain/llvm/bin/clang'
-export ADESH_LLC='$HOME_DIR/toolchain/llvm/bin/llc'
-export ADESH_MLIR_OPT='$HOME_DIR/toolchain/llvm/bin/mlir-opt'
-export ADESH_MLIR_TRANSLATE='$HOME_DIR/toolchain/llvm/bin/mlir-translate'
-export PATH='$HOME_DIR/bin:$HOME_DIR/toolchain/llvm/bin:\$PATH'
+export PATH='$HOME_DIR/bin:\$PATH'
 EOF
 echo "AdeshLang: wrote $PROFILE_FILE"
 
@@ -82,42 +67,13 @@ if [[ ! -f "$HOME_DIR/ai/models/adesh-coder-0.5b-q4_0.gguf" ]]; then
     echo "To download and set up the default offline AI coder model (~275 MB), run: adesh ai setup"
 fi
 
-# 4. Toolchain (only when requested) -------------------------------------------
-install_toolchain=0
-if [[ "$ADESH_PKG_TOOLCHAIN" == "1" ]]; then
-    install_toolchain=1
-elif [[ -f "$FLAG_FILE" ]]; then
-    install_toolchain=1
+# 4. Self-verify the bundled native toolchain ---------------------------------
+# Fast and offline: adesh checks its compiled-in components (codegen, ADOB,
+# adeshlink, runtime). A failure never fails the package.
+if [[ -x "$BIN_DIR/adesh" ]]; then
+    ADESH_HOME="$HOME_DIR" "$BIN_DIR/adesh" toolchain check || \
+        echo "AdeshLang: native toolchain check reported issues; run 'adesh doctor' to investigate."
 fi
 
-if [[ "$install_toolchain" == "1" ]]; then
-    echo
-    echo "AdeshLang: installing pinned LLVM 18.1.8 toolchain (~190 MB compressed download, ~900 MB disk space)..."
-    if [[ -x "$BIN_DIR/adesh" ]] && "$BIN_DIR/adesh" toolchain install --system; then
-        echo "AdeshLang: LLVM 18.1.8 toolchain installed and exposed."
-    else
-        cat <<MSG
-
-warning: the LLVM toolchain could not be installed right now.
-AdeshLang itself is installed and its interpreter/JIT/VM backends work without
-it; AOT compilation needs the toolchain. Install it later with one of:
-
-    sudo '$HOME_DIR/bin/adesh' toolchain install --system
-    sudo '$HOME_DIR/bin/adesh' toolchain install --use-system-packages
-
-Note: if the release manifest lists no SHA-256 for the LLVM archive
-(installer/manifests/toolchain-manifest.json), \`adesh toolchain install\`
-refuses the download by design until CI publishes checksums.
-
-Verify your setup with:  adesh doctor
-MSG
-    fi
-fi
-
-# The flag is only meaningful for this install run; remove it so re-running
-# the package (idempotent repair/upgrade) does not unexpectedly re-trigger a
-# ~400 MB download.
-rm -f "$FLAG_FILE"
-
-echo "AdeshLang: core installed to $HOME_DIR."
+echo "AdeshLang: core installed to $HOME_DIR (native toolchain bundled; no external LLVM required)."
 exit 0

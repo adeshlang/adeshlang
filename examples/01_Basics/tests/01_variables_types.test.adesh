@@ -1,0 +1,118 @@
+// Variable Declaration & Type Inspection Tests
+// Covers examples/01_Basics/variable.adesh:
+//   - single variable declaration & mutation
+//   - unparenthesized multi-variable declaration
+//   - per-variable type annotations
+//   - variable swapping without temporaries (x, y = y, x)
+//   - multi-variable reassignment
+//   - typeof / sizeof inspection
+
+// ─────────────────────────────────────────────────────────────
+// Helpers (self-contained mirrors of the example logic)
+// ─────────────────────────────────────────────────────────────
+
+export fn mutate_local(): i32 {
+    let a = 10;
+    a = a + 1;
+    a = a * 2;
+    return a;
+}
+
+export fn sum3(a: i32, b: i32, c: i32): i32 {
+    return a + b + c;
+}
+
+export fn swap_and_report(a: i32, b: i32): i32 {
+    let x, y = a, b;
+    x, y = y, x;
+    return x * 100 + y;
+}
+
+export fn typed_pair_value(): i32 {
+    let p: i32, q: f64 = 42, 3.14159;
+    return p + (q as i32);
+}
+
+export fn reassign_multi(): i32 {
+    let x, y, z = 10, 20, 30;
+    x, y, z = 100, 200, 300;
+    return x + y + z;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_single_variable_mutation() {
+    let a = 10;
+    assert_eq(a, 10);
+    a = 1000;
+    assert_eq(a, 1000);
+    assert_eq(mutate_local(), 22);
+}
+
+export test fn test_multi_variable_declaration() {
+    let x, y, z = 10, 20, 30;
+    assert_eq(x, 10);
+    assert_eq(y, 20);
+    assert_eq(z, 30);
+    assert_eq(sum3(x, y, z), 60);
+}
+
+export test fn test_multi_variable_reassignment() {
+    let x, y, z = 10, 20, 30;
+    x, y, z = 100, 200, 300;
+    assert_eq(sum3(x, y, z), 600);
+    assert_eq(reassign_multi(), 600);
+}
+
+export test fn test_typed_multi_variable() {
+    let p: i32, q: f64 = 42, 3.14159;
+    assert_eq(p, 42);
+    assert(q > 3.14 && q < 3.15, "q close to pi");
+    assert_eq(typed_pair_value(), 45);
+}
+
+export test fn test_variable_swap_without_temp() {
+    let a, b = 1, 2;
+    a, b = b, a;
+    assert_eq(a, 2);
+    assert_eq(b, 1);
+    assert_eq(swap_and_report(10, 20), 2010);
+    assert_eq(swap_and_report(7, 7), 707);
+}
+
+export test fn test_typeof_and_sizeof() {
+    let s = "abc";
+    assert_eq(typeof(s), "string");
+    assert_eq(sizeof(s), 3);
+    let n = 42;
+    assert_eq(typeof(n), "i64");
+    assert_eq(sizeof(n), 8);
+    let f = 2.5;
+    assert_eq(typeof(f), "f64");
+    assert_eq(sizeof(f), 8);
+    let b = true;
+    assert_eq(typeof(b), "boolean");
+    assert_eq(sizeof(b), 1);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_single_variable_mutation();
+    test_multi_variable_declaration();
+    test_multi_variable_reassignment();
+    test_typed_multi_variable();
+    test_variable_swap_without_temp();
+    test_typeof_and_sizeof();
+    return 6;
+}
+
+fn main() {
+    print("Running 01_variables_types tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 01_variables_types.test.adesh`);
+}

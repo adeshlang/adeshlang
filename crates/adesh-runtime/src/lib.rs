@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 // Runtime Value Definition
 // ============================================================================
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum RuntimeValue {
     Null,
     Bool(bool),
@@ -49,6 +49,112 @@ pub enum RuntimeValue {
     Set(Vec<RuntimeValue>),
     Object(BTreeMap<String, RuntimeValue>),
     Ref(Box<RuntimeValue>),
+    Function(usize),
+    VecDeque(std::collections::VecDeque<RuntimeValue>),
+    HashSet(std::collections::HashSet<String>),
+    BTreeMap(std::collections::BTreeMap<String, RuntimeValue>),
+    BinaryHeap(std::collections::BinaryHeap<OrderedValue>),
+    PriorityQueue(std::collections::BinaryHeap<PriorityItem>),
+    BitSet(Vec<bool>),
+    RingBuffer {
+        buffer: Vec<RuntimeValue>,
+        head: usize,
+        tail: usize,
+        count: usize,
+        cap: usize,
+    },
+}
+
+impl PartialEq for RuntimeValue {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (RuntimeValue::Null, RuntimeValue::Null) => true,
+            (RuntimeValue::Bool(a), RuntimeValue::Bool(b)) => a == b,
+            (RuntimeValue::Int(a), RuntimeValue::Int(b)) => a == b,
+            (RuntimeValue::Float(a), RuntimeValue::Float(b)) => a == b,
+            (RuntimeValue::Char(a), RuntimeValue::Char(b)) => a == b,
+            (RuntimeValue::String(a), RuntimeValue::String(b)) => a == b,
+            (RuntimeValue::Array(a), RuntimeValue::Array(b)) => a == b,
+            (RuntimeValue::Tuple(a), RuntimeValue::Tuple(b)) => a == b,
+            (RuntimeValue::Set(a), RuntimeValue::Set(b)) => a == b,
+            (RuntimeValue::Object(a), RuntimeValue::Object(b)) => a == b,
+            (RuntimeValue::Function(a), RuntimeValue::Function(b)) => a == b,
+            (RuntimeValue::VecDeque(a), RuntimeValue::VecDeque(b)) => a == b,
+            (RuntimeValue::HashSet(a), RuntimeValue::HashSet(b)) => a == b,
+            (RuntimeValue::BTreeMap(a), RuntimeValue::BTreeMap(b)) => a == b,
+            (RuntimeValue::BitSet(a), RuntimeValue::BitSet(b)) => a == b,
+            _ => {
+                if let (Some(a), Some(b)) = (self.as_i64(), other.as_i64()) {
+                    a == b
+                } else {
+                    false
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct OrderedValue(pub RuntimeValue);
+
+impl PartialEq for OrderedValue {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for OrderedValue {}
+
+impl PartialOrd for OrderedValue {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for OrderedValue {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (&self.0, &other.0) {
+            (RuntimeValue::Int(a), RuntimeValue::Int(b)) => a.cmp(b),
+            (RuntimeValue::Float(a), RuntimeValue::Float(b)) => {
+                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+            }
+            (RuntimeValue::String(a), RuntimeValue::String(b)) => a.cmp(b),
+            _ => {
+                let na = self.0.as_i64();
+                let nb = other.0.as_i64();
+                match (na, nb) {
+                    (Some(a), Some(b)) => a.cmp(&b),
+                    _ => self.0.as_string().cmp(&other.0.as_string()),
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PriorityItem {
+    pub item: RuntimeValue,
+    pub priority: i64,
+}
+
+impl PartialEq for PriorityItem {
+    fn eq(&self, other: &Self) -> bool {
+        self.priority == other.priority
+    }
+}
+
+impl Eq for PriorityItem {}
+
+impl PartialOrd for PriorityItem {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for PriorityItem {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.priority.cmp(&other.priority)
+    }
 }
 
 impl RuntimeValue {
@@ -79,25 +185,225 @@ impl RuntimeValue {
             RuntimeValue::F32(n) => n.to_string(),
             RuntimeValue::F64(n) => n.to_string(),
             RuntimeValue::Array(arr) => {
-                let items: Vec<String> = arr.iter().map(|v| v.as_string()).collect();
+                let items: Vec<String> = arr
+                    .iter()
+                    .map(|v| {
+                        if let RuntimeValue::String(s) = v {
+                            format!("\"{}\"", s)
+                        } else {
+                            v.as_string()
+                        }
+                    })
+                    .collect();
                 format!("[{}]", items.join(", "))
             }
             RuntimeValue::Tuple(tup) => {
-                let items: Vec<String> = tup.iter().map(|v| v.as_string()).collect();
+                let items: Vec<String> = tup
+                    .iter()
+                    .map(|v| {
+                        if let RuntimeValue::String(s) = v {
+                            format!("\"{}\"", s)
+                        } else {
+                            v.as_string()
+                        }
+                    })
+                    .collect();
                 format!("({})", items.join(", "))
             }
             RuntimeValue::Set(set) => {
-                let items: Vec<String> = set.iter().map(|v| v.as_string()).collect();
+                let items: Vec<String> = set
+                    .iter()
+                    .map(|v| {
+                        if let RuntimeValue::String(s) = v {
+                            format!("\"{}\"", s)
+                        } else {
+                            v.as_string()
+                        }
+                    })
+                    .collect();
                 format!("{{{}}}", items.join(", "))
             }
             RuntimeValue::Object(obj) => {
                 let items: Vec<String> = obj
                     .iter()
-                    .map(|(k, v)| format!("{}: {}", k, v.as_string()))
+                    .map(|(k, v)| {
+                        if let RuntimeValue::String(s) = v {
+                            format!("{}: \"{}\"", k, s)
+                        } else {
+                            format!("{}: {}", k, v.as_string())
+                        }
+                    })
                     .collect();
                 format!("{{{}}}", items.join(", "))
             }
             RuntimeValue::Ref(inner) => inner.as_string(),
+            RuntimeValue::Function(ptr) => format!("<function@0x{:x}>", ptr),
+            RuntimeValue::VecDeque(d) => {
+                let items: Vec<String> = d.iter().map(|v| v.as_string()).collect();
+                format!("VecDeque([{}])", items.join(", "))
+            }
+            RuntimeValue::HashSet(s) => {
+                let items: Vec<String> = s.iter().cloned().collect();
+                format!("HashSet({{{}}})", items.join(", "))
+            }
+            RuntimeValue::BTreeMap(m) => {
+                let items: Vec<String> = m
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", k, v.as_string()))
+                    .collect();
+                format!("BTreeMap({{{}}})", items.join(", "))
+            }
+            RuntimeValue::BinaryHeap(_) => "BinaryHeap".to_string(),
+            RuntimeValue::PriorityQueue(_) => "PriorityQueue".to_string(),
+            RuntimeValue::BitSet(_) => "BitSet".to_string(),
+            RuntimeValue::RingBuffer {
+                buffer: _,
+                count,
+                cap,
+                ..
+            } => format!("RingBuffer(count={}, cap={})", count, cap),
+        }
+    }
+
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            RuntimeValue::Null => "null",
+            RuntimeValue::Bool(_) => "bool",
+            RuntimeValue::Int(_) | RuntimeValue::I64(_) => "i64",
+            RuntimeValue::I32(_) => "i32",
+            RuntimeValue::I16(_) => "i16",
+            RuntimeValue::I8(_) => "i8",
+            RuntimeValue::I128(_) => "i128",
+            RuntimeValue::U64(_) => "u64",
+            RuntimeValue::U32(_) => "u32",
+            RuntimeValue::U16(_) => "u16",
+            RuntimeValue::U8(_) => "u8",
+            RuntimeValue::U128(_) => "u128",
+            RuntimeValue::Float(_) | RuntimeValue::F64(_) => "f64",
+            RuntimeValue::F32(_) => "f32",
+            RuntimeValue::Char(_) => "char",
+            RuntimeValue::String(_) => "string",
+            RuntimeValue::Array(_) => "array",
+            RuntimeValue::Tuple(_) => "tuple",
+            RuntimeValue::Set(_) => "set",
+            RuntimeValue::Object(_) => "object",
+            RuntimeValue::Ref(inner) => inner.type_name(),
+            RuntimeValue::Function(_) => "function",
+            RuntimeValue::VecDeque(_) => "VecDeque",
+            RuntimeValue::HashSet(_) => "HashSet",
+            RuntimeValue::BTreeMap(_) => "BTreeMap",
+            RuntimeValue::BinaryHeap(_) => "BinaryHeap",
+            RuntimeValue::PriorityQueue(_) => "PriorityQueue",
+            RuntimeValue::BitSet(_) => "BitSet",
+            RuntimeValue::RingBuffer { .. } => "RingBuffer",
+        }
+    }
+
+    pub fn size_of_value(&self) -> usize {
+        match self {
+            RuntimeValue::Null => 0,
+            RuntimeValue::Bool(_) | RuntimeValue::U8(_) | RuntimeValue::I8(_) => 1,
+            RuntimeValue::U16(_) | RuntimeValue::I16(_) => 2,
+            RuntimeValue::U32(_)
+            | RuntimeValue::I32(_)
+            | RuntimeValue::F32(_)
+            | RuntimeValue::Char(_) => 4,
+            RuntimeValue::Int(_)
+            | RuntimeValue::Float(_)
+            | RuntimeValue::U64(_)
+            | RuntimeValue::I64(_)
+            | RuntimeValue::F64(_)
+            | RuntimeValue::Function(_) => 8,
+            RuntimeValue::U128(_) | RuntimeValue::I128(_) => 16,
+            RuntimeValue::String(s) => s.len(),
+            RuntimeValue::Array(arr) => 24 + arr.iter().map(|v| v.size_of_value()).sum::<usize>(),
+            RuntimeValue::Tuple(tup) => 24 + tup.iter().map(|v| v.size_of_value()).sum::<usize>(),
+            RuntimeValue::Set(set) => 24 + set.iter().map(|v| v.size_of_value()).sum::<usize>(),
+            RuntimeValue::Object(obj) => {
+                32 + obj
+                    .iter()
+                    .map(|(k, v)| k.len() + v.size_of_value())
+                    .sum::<usize>()
+            }
+            RuntimeValue::Ref(inner) => 8 + inner.size_of_value(),
+            RuntimeValue::VecDeque(d) => 24 + d.iter().map(|v| v.size_of_value()).sum::<usize>(),
+            RuntimeValue::HashSet(s) => 32 + s.iter().map(|k| k.len()).sum::<usize>(),
+            RuntimeValue::BTreeMap(m) => {
+                32 + m
+                    .iter()
+                    .map(|(k, v)| k.len() + v.size_of_value())
+                    .sum::<usize>()
+            }
+            RuntimeValue::BinaryHeap(h) => 24 + h.len() * 8,
+            RuntimeValue::PriorityQueue(pq) => 24 + pq.len() * 16,
+            RuntimeValue::BitSet(bs) => 24 + (bs.len() + 7) / 8,
+            RuntimeValue::RingBuffer { cap, .. } => 32 + cap * 8,
+        }
+    }
+
+    pub fn as_usize(&self) -> Option<usize> {
+        match self {
+            RuntimeValue::Int(i) | RuntimeValue::I64(i) => Some(*i as usize),
+            RuntimeValue::I32(i) => Some(*i as usize),
+            RuntimeValue::I16(i) => Some(*i as usize),
+            RuntimeValue::I8(i) => Some(*i as usize),
+            RuntimeValue::U64(u) => Some(*u as usize),
+            RuntimeValue::U32(u) => Some(*u as usize),
+            RuntimeValue::U16(u) => Some(*u as usize),
+            RuntimeValue::U8(u) => Some(*u as usize),
+            RuntimeValue::Float(f) | RuntimeValue::F64(f) => Some(*f as usize),
+            RuntimeValue::F32(f) => Some(*f as usize),
+            _ => None,
+        }
+    }
+
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            RuntimeValue::Int(i) | RuntimeValue::I64(i) => Some(*i),
+            RuntimeValue::I32(i) => Some(*i as i64),
+            RuntimeValue::I16(i) => Some(*i as i64),
+            RuntimeValue::I8(i) => Some(*i as i64),
+            RuntimeValue::U64(u) => Some(*u as i64),
+            RuntimeValue::U32(u) => Some(*u as i64),
+            RuntimeValue::U16(u) => Some(*u as i64),
+            RuntimeValue::U8(u) => Some(*u as i64),
+            RuntimeValue::Float(f) | RuntimeValue::F64(f) => Some(*f as i64),
+            RuntimeValue::F32(f) => Some(*f as i64),
+            RuntimeValue::Bool(b) => Some(if *b { 1 } else { 0 }),
+            _ => None,
+        }
+    }
+
+    pub fn as_fn_ptr(&self) -> Option<usize> {
+        match self {
+            RuntimeValue::Function(ptr) => Some(*ptr),
+            RuntimeValue::Int(ptr) | RuntimeValue::I64(ptr) => {
+                if *ptr != 0 {
+                    Some(*ptr as usize)
+                } else {
+                    None
+                }
+            }
+            RuntimeValue::U64(ptr) => {
+                if *ptr != 0 {
+                    Some(*ptr as usize)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    pub fn is_truthy(&self) -> bool {
+        match self {
+            RuntimeValue::Null => false,
+            RuntimeValue::Bool(b) => *b,
+            RuntimeValue::Int(i) | RuntimeValue::I64(i) => *i != 0,
+            RuntimeValue::Float(f) | RuntimeValue::F64(f) => *f != 0.0 && !f.is_nan(),
+            RuntimeValue::String(s) => !s.is_empty(),
+            RuntimeValue::Array(a) => !a.is_empty(),
+            _ => true,
         }
     }
 }
@@ -124,6 +430,13 @@ pub fn aot_store_value(value: RuntimeValue) -> u64 {
         map.insert(handle, value);
     }
     handle
+}
+
+pub fn aot_update_value(handle: u64, value: RuntimeValue) {
+    let mut guard = get_store_guard();
+    if let Some(ref mut map) = *guard {
+        map.insert(handle, value);
+    }
 }
 
 pub fn aot_get_value(handle: u64) -> Option<RuntimeValue> {
@@ -157,9 +470,6 @@ pub fn get_string_val(ptr_or_handle: u64) -> Option<String> {
 }
 
 pub fn unpack_aot_arg(raw: u64) -> RuntimeValue {
-    if raw == 0 {
-        return RuntimeValue::Null;
-    }
     if let Some(v) = aot_get_value(raw) {
         return v;
     }
@@ -370,11 +680,10 @@ fn pretty_print_inner(
                 options.colors.number, n, options.colors.reset
             );
             if options.show_types {
-                let hint = infer_integer_hint_from_number(*n as f64).unwrap_or("i64");
                 let _ = write!(
                     output,
-                    " {}⟨{}⟩{}",
-                    options.colors.type_hint, hint, options.colors.reset
+                    " {}⟨i64⟩{}",
+                    options.colors.type_hint, options.colors.reset
                 );
             }
         }
@@ -385,11 +694,10 @@ fn pretty_print_inner(
                 options.colors.number, n, options.colors.reset
             );
             if options.show_types {
-                let hint = infer_integer_hint_from_number(*n).unwrap_or("number");
                 let _ = write!(
                     output,
-                    " {}⟨{}⟩{}",
-                    options.colors.type_hint, hint, options.colors.reset
+                    " {}⟨f64⟩{}",
+                    options.colors.type_hint, options.colors.reset
                 );
             }
         }
@@ -541,6 +849,49 @@ fn pretty_print_inner(
         }
         RuntimeValue::Ref(inner) => {
             pretty_print_inner(inner, options, output, depth, current_indent);
+        }
+        RuntimeValue::Function(ptr) => {
+            let _ = write!(
+                output,
+                "{}<function@0x{:x}>{}",
+                options.colors.type_hint, ptr, options.colors.reset
+            );
+        }
+        RuntimeValue::VecDeque(d) => {
+            let items: Vec<RuntimeValue> = d.iter().cloned().collect();
+            print_array_impl(&items, options, output, depth, current_indent);
+        }
+        RuntimeValue::HashSet(s) => {
+            let items: Vec<RuntimeValue> =
+                s.iter().map(|k| RuntimeValue::String(k.clone())).collect();
+            print_array_impl(&items, options, output, depth, current_indent);
+        }
+        RuntimeValue::BTreeMap(m) => {
+            print_object_impl(m, options, output, depth, current_indent);
+        }
+        RuntimeValue::BinaryHeap(_) => {
+            let _ = write!(
+                output,
+                "{}BinaryHeap{}",
+                options.colors.type_hint, options.colors.reset
+            );
+        }
+        RuntimeValue::PriorityQueue(_) => {
+            let _ = write!(
+                output,
+                "{}PriorityQueue{}",
+                options.colors.type_hint, options.colors.reset
+            );
+        }
+        RuntimeValue::BitSet(bs) => {
+            let _ = write!(
+                output,
+                "{}BitSet({:?}){}",
+                options.colors.type_hint, bs, options.colors.reset
+            );
+        }
+        RuntimeValue::RingBuffer { buffer, .. } => {
+            print_array_impl(buffer, options, output, depth, current_indent);
         }
     }
 }
@@ -737,6 +1088,28 @@ pub extern "C" fn aot_set_field(obj_handle: u64, field_handle: u64, val_handle: 
     }
 }
 
+pub fn runtime_value_to_raw_or_handle(val: RuntimeValue) -> u64 {
+    match val {
+        RuntimeValue::Int(i) | RuntimeValue::I64(i) => i as u64,
+        RuntimeValue::I32(i) => i as i64 as u64,
+        RuntimeValue::I16(i) => i as i64 as u64,
+        RuntimeValue::I8(i) => i as i64 as u64,
+        RuntimeValue::U64(u) => u,
+        RuntimeValue::U32(u) => u as u64,
+        RuntimeValue::U16(u) => u as u64,
+        RuntimeValue::U8(u) => u as u64,
+        RuntimeValue::Bool(b) => {
+            if b {
+                1
+            } else {
+                0
+            }
+        }
+        RuntimeValue::Char(c) => c as u64,
+        _ => aot_store_value(val),
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_get_field(obj_handle: u64, field_handle: u64) -> u64 {
     let field_name = match get_string_val(field_handle) {
@@ -748,7 +1121,7 @@ pub extern "C" fn aot_get_field(obj_handle: u64, field_handle: u64) -> u64 {
     match resolved {
         RuntimeValue::Object(obj) => {
             let val = obj.get(&field_name).cloned().unwrap_or(RuntimeValue::Null);
-            aot_store_value(val)
+            runtime_value_to_raw_or_handle(val)
         }
         RuntimeValue::Array(arr) => {
             let val = match field_name.as_str() {
@@ -756,14 +1129,14 @@ pub extern "C" fn aot_get_field(obj_handle: u64, field_handle: u64) -> u64 {
                 "capacity" => RuntimeValue::Int(arr.capacity() as i64),
                 _ => RuntimeValue::Null,
             };
-            aot_store_value(val)
+            runtime_value_to_raw_or_handle(val)
         }
         RuntimeValue::String(s) => {
             let val = match field_name.as_str() {
                 "len" | "length" => RuntimeValue::Int(s.len() as i64),
                 _ => RuntimeValue::Null,
             };
-            aot_store_value(val)
+            runtime_value_to_raw_or_handle(val)
         }
         _ => aot_store_value(RuntimeValue::Null),
     }
@@ -808,8 +1181,9 @@ pub extern "C" fn aot_wrap_ptr(value: u64) -> u64 {
     if aot_get_value(value).is_some() {
         return value;
     }
-    if value < 0x10000 {
-        return aot_store_value(RuntimeValue::Int(value as i64));
+    let signed = value as i64;
+    if signed < 0 || value < 0x10000 || value >= 0x0000_8000_0000_0000 {
+        return aot_store_value(RuntimeValue::Int(signed));
     }
     unsafe { aot_make_string(value as *const c_char) }
 }
@@ -855,13 +1229,15 @@ pub extern "C" fn aot_make_i64(value: i64) -> u64 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_make_f32(value: f64) -> u64 {
-    aot_store_value(RuntimeValue::F32(value as f32))
+pub extern "C" fn aot_make_f32(value_bits: u64) -> u64 {
+    let f = f32::from_bits(value_bits as u32);
+    aot_store_value(RuntimeValue::F32(f))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_make_f64(value: f64) -> u64 {
-    aot_store_value(RuntimeValue::Float(value))
+pub extern "C" fn aot_make_f64(value_bits: u64) -> u64 {
+    let f = f64::from_bits(value_bits);
+    aot_store_value(RuntimeValue::Float(f))
 }
 
 #[unsafe(no_mangle)]
@@ -1095,37 +1471,101 @@ pub extern "C" fn aot_print_null(newline: i64) -> u64 {
     0
 }
 
+fn parse_hex_color(hex: &str) -> Option<(u8, u8, u8)> {
+    let hex = hex.trim_start_matches('#');
+    if hex.len() == 6 {
+        if let (Ok(r), Ok(g), Ok(b)) = (
+            u8::from_str_radix(&hex[0..2], 16),
+            u8::from_str_radix(&hex[2..4], 16),
+            u8::from_str_radix(&hex[4..6], 16),
+        ) {
+            return Some((r, g, b));
+        }
+    } else if hex.len() == 3 {
+        let chars: Vec<char> = hex.chars().collect();
+        let r_str = format!("{}{}", chars[0], chars[0]);
+        let g_str = format!("{}{}", chars[1], chars[1]);
+        let b_str = format!("{}{}", chars[2], chars[2]);
+        if let (Ok(r), Ok(g), Ok(b)) = (
+            u8::from_str_radix(&r_str, 16),
+            u8::from_str_radix(&g_str, 16),
+            u8::from_str_radix(&b_str, 16),
+        ) {
+            return Some((r, g, b));
+        }
+    }
+    None
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_print_with_options(
     values_ptr: *const u64,
     values_count: i64,
     options_handle: u64,
 ) -> u64 {
-    if values_count <= 0 {
+    if values_count <= 0 && options_handle == 0 {
         return 0;
     }
-    let count = values_count as usize;
-    if values_ptr.is_null() {
-        return 0;
-    }
-    let handles = unsafe { std::slice::from_raw_parts(values_ptr, count) };
+    let count = values_count.max(0) as usize;
+    let handles = if !values_ptr.is_null() && count > 0 {
+        unsafe { std::slice::from_raw_parts(values_ptr, count) }
+    } else {
+        &[]
+    };
 
-    // Check options object
+    // Check options object (passed explicitly or as the last argument in handles)
     let mut pretty_mode = 0i64;
     let mut sep = " ".to_string();
     let mut end = "\n".to_string();
+    let mut file_path: Option<String> = None;
+    let mut color: Option<String> = None;
+    let mut background: Option<String> = None;
+    let mut bold = false;
+    let mut italic = false;
+    let mut underline = false;
+    let mut strikethrough = false;
+    let mut flush = false;
     let mut has_options = false;
 
-    if let Some(RuntimeValue::Object(ref opts_obj)) = aot_get_value(options_handle) {
+    let mut check_opts_handle = options_handle;
+    if check_opts_handle == 0 || aot_get_value(check_opts_handle).is_none() {
+        if let Some(&last_h) = handles.last() {
+            if let Some(RuntimeValue::Object(ref obj)) = aot_get_value(last_h) {
+                if obj.contains_key("pretty")
+                    || obj.contains_key("sep")
+                    || obj.contains_key("end")
+                    || obj.contains_key("file")
+                    || obj.contains_key("color")
+                    || obj.contains_key("background")
+                    || obj.contains_key("underline")
+                    || obj.contains_key("bold")
+                    || obj.contains_key("italic")
+                    || obj.contains_key("strikethrough")
+                    || obj.contains_key("flush")
+                {
+                    check_opts_handle = last_h;
+                }
+            }
+        }
+    }
+
+    if let Some(RuntimeValue::Object(ref opts_obj)) = aot_get_value(check_opts_handle) {
         has_options = opts_obj.contains_key("pretty")
             || opts_obj.contains_key("sep")
             || opts_obj.contains_key("end")
+            || opts_obj.contains_key("file")
             || opts_obj.contains_key("color")
-            || opts_obj.contains_key("bold");
+            || opts_obj.contains_key("background")
+            || opts_obj.contains_key("underline")
+            || opts_obj.contains_key("bold")
+            || opts_obj.contains_key("italic")
+            || opts_obj.contains_key("strikethrough")
+            || opts_obj.contains_key("flush");
 
         if let Some(pv) = opts_obj.get("pretty") {
             pretty_mode = match pv {
                 RuntimeValue::Bool(true) => 1,
+                RuntimeValue::Int(1) => 1,
                 RuntimeValue::String(s) => match s.as_str() {
                     "compact" => 2,
                     "simple" => 3,
@@ -1141,9 +1581,35 @@ pub unsafe extern "C" fn aot_print_with_options(
         if let Some(RuntimeValue::String(s)) = opts_obj.get("end") {
             end = s.clone();
         }
+        if let Some(RuntimeValue::String(s)) = opts_obj.get("file") {
+            file_path = Some(s.clone());
+        }
+        if let Some(RuntimeValue::String(s)) = opts_obj.get("color") {
+            color = Some(s.clone());
+        }
+        if let Some(RuntimeValue::String(s)) = opts_obj.get("background") {
+            background = Some(s.clone());
+        }
+        if let Some(RuntimeValue::Bool(b)) = opts_obj.get("bold") {
+            bold = *b;
+        }
+        if let Some(RuntimeValue::Bool(b)) = opts_obj.get("italic") {
+            italic = *b;
+        }
+        if let Some(RuntimeValue::Bool(b)) = opts_obj.get("underline") {
+            underline = *b;
+        }
+        if let Some(RuntimeValue::Bool(b)) = opts_obj.get("strikethrough") {
+            strikethrough = *b;
+        }
+        if let Some(RuntimeValue::Bool(b)) = opts_obj.get("flush") {
+            flush = *b;
+        }
     }
 
-    let effective_len = if has_options && handles.last() == Some(&options_handle) {
+    let effective_len = if has_options
+        && (handles.last() == Some(&check_opts_handle) || handles.last() == Some(&options_handle))
+    {
         count.saturating_sub(1)
     } else {
         count
@@ -1155,6 +1621,60 @@ pub unsafe extern "C" fn aot_print_with_options(
         1 => PrettyPrintOptions::default(),
         _ => PrettyPrintOptions::no_color(),
     };
+
+    // If file output is specified, write to file directly
+    if let Some(ref path) = file_path {
+        let mut out_str = String::new();
+        for (i, &handle) in handles.iter().take(effective_len).enumerate() {
+            if i > 0 {
+                out_str.push_str(&sep);
+            }
+            let val = aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
+            if pretty_mode > 0 {
+                out_str.push_str(&pretty_print(&val, &pretty_opts));
+            } else {
+                out_str.push_str(&val.as_string());
+            }
+        }
+        out_str.push_str(&end);
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            let _ = f.write_all(out_str.as_bytes());
+        }
+        return 0;
+    }
+
+    // Build ANSI codes
+    let mut codes = Vec::new();
+    if bold {
+        codes.push("1".to_string());
+    }
+    if italic {
+        codes.push("3".to_string());
+    }
+    if underline {
+        codes.push("4".to_string());
+    }
+    if strikethrough {
+        codes.push("9".to_string());
+    }
+    if let Some(ref hex) = color {
+        if let Some((r, g, b)) = parse_hex_color(hex) {
+            codes.push(format!("38;2;{};{};{}", r, g, b));
+        }
+    }
+    if let Some(ref hex) = background {
+        if let Some((r, g, b)) = parse_hex_color(hex) {
+            codes.push(format!("48;2;{};{};{}", r, g, b));
+        }
+    }
+
+    if !codes.is_empty() {
+        print!("\x1b[{}m", codes.join(";"));
+    }
 
     for (i, &handle) in handles.iter().take(effective_len).enumerate() {
         if i > 0 {
@@ -1169,10 +1689,17 @@ pub unsafe extern "C" fn aot_print_with_options(
         }
     }
 
+    if !codes.is_empty() {
+        print!("\x1b[0m");
+    }
+
     if !end.is_empty() {
         print!("{}", end);
     }
-    let _ = std::io::stdout().flush();
+
+    if flush || !end.is_empty() {
+        let _ = std::io::stdout().flush();
+    }
     0
 }
 
@@ -1246,30 +1773,35 @@ pub extern "C" fn aot_last(handle: u64) -> u64 {
 pub unsafe extern "C" fn aot_get_index(container_handle: u64, index_handle: u64) -> u64 {
     let container =
         aot_get_value(container_handle).unwrap_or_else(|| unpack_aot_arg(container_handle));
-    let index = match aot_get_value(index_handle).unwrap_or_else(|| unpack_aot_arg(index_handle)) {
-        RuntimeValue::Int(i) => i as usize,
-        RuntimeValue::U64(u) => u as usize,
-        _ => 0,
-    };
+    let idx_val = aot_get_value(index_handle).unwrap_or_else(|| unpack_aot_arg(index_handle));
+    let index = idx_val.as_usize().unwrap_or(0);
 
     match container {
         RuntimeValue::Array(arr) => {
             if index < arr.len() {
-                aot_store_value(arr[index].clone())
+                runtime_value_to_raw_or_handle(arr[index].clone())
             } else {
                 aot_store_value(RuntimeValue::Null)
             }
         }
         RuntimeValue::Tuple(tup) => {
             if index < tup.len() {
-                aot_store_value(tup[index].clone())
+                runtime_value_to_raw_or_handle(tup[index].clone())
             } else {
                 aot_store_value(RuntimeValue::Null)
             }
         }
         RuntimeValue::String(s) => {
             if let Some(ch) = s.chars().nth(index) {
-                aot_store_value(RuntimeValue::Char(ch))
+                runtime_value_to_raw_or_handle(RuntimeValue::Char(ch))
+            } else {
+                aot_store_value(RuntimeValue::Null)
+            }
+        }
+        RuntimeValue::Object(obj) => {
+            let key = idx_val.as_string();
+            if let Some(val) = obj.get(&key) {
+                runtime_value_to_raw_or_handle(val.clone())
             } else {
                 aot_store_value(RuntimeValue::Null)
             }
@@ -1284,12 +1816,10 @@ pub unsafe extern "C" fn aot_set_index(
     index_handle: u64,
     val_handle: u64,
 ) -> u64 {
-    let mut container = aot_get_value(container_handle).unwrap_or(RuntimeValue::Null);
-    let index = match aot_get_value(index_handle).unwrap_or_else(|| unpack_aot_arg(index_handle)) {
-        RuntimeValue::Int(i) => i as usize,
-        RuntimeValue::U64(u) => u as usize,
-        _ => 0,
-    };
+    let mut container =
+        aot_get_value(container_handle).unwrap_or_else(|| unpack_aot_arg(container_handle));
+    let idx_val = aot_get_value(index_handle).unwrap_or_else(|| unpack_aot_arg(index_handle));
+    let index = idx_val.as_usize().unwrap_or(0);
     let val = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
 
     match container {
@@ -1299,6 +1829,11 @@ pub unsafe extern "C" fn aot_set_index(
             } else if index == arr.len() {
                 arr.push(val);
             }
+            aot_store_value(container)
+        }
+        RuntimeValue::Object(ref mut obj) => {
+            let key = idx_val.as_string();
+            obj.insert(key, val);
             aot_store_value(container)
         }
         _ => container_handle,
@@ -1696,4 +2231,851 @@ pub extern "C" fn aot_throw_exception(val_handle: u64) -> i64 {
         *exc.borrow_mut() = Some(val);
     });
     0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_typeof(handle: u64) -> u64 {
+    let val = aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
+    let type_name = val.type_name();
+    aot_store_value(RuntimeValue::String(type_name.to_string()))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_sizeof(handle: u64) -> i64 {
+    let val = aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
+    val.size_of_value() as i64
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sizeof(handle: u64) -> i64 {
+    aot_sizeof(handle)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn clock() -> f64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_array_for_each(arr_handle: u64, callback_fn: extern "C" fn(u64)) -> u64 {
+    if arr_handle == 0 {
+        return 0;
+    }
+    let val = aot_get_value(arr_handle).unwrap_or_else(|| unpack_aot_arg(arr_handle));
+    if let RuntimeValue::Array(items) = val {
+        for item in items {
+            let item_h = aot_store_value(item);
+            callback_fn(item_h);
+        }
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_parallel_for_each(
+    start: i64,
+    end: i64,
+    callback_fn: extern "C" fn(i64),
+) -> i64 {
+    for i in start..end {
+        callback_fn(i);
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_make_function(fn_ptr: usize) -> u64 {
+    aot_store_value(RuntimeValue::Function(fn_ptr))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aot_collections_new(
+    type_name_handle: u64,
+    args_ptr: *const u64,
+    args_count: usize,
+) -> u64 {
+    let type_name = get_string_val(type_name_handle).unwrap_or_default();
+    let raw_args = if args_ptr.is_null() || args_count == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(args_ptr, args_count)
+    };
+    let args: Vec<RuntimeValue> = raw_args
+        .iter()
+        .map(|&h| aot_get_value(h).unwrap_or_else(|| unpack_aot_arg(h)))
+        .collect();
+
+    match type_name.as_str() {
+        "VecDeque" | "Queue" => {
+            aot_store_value(RuntimeValue::VecDeque(std::collections::VecDeque::new()))
+        }
+        "HashSet" | "OrderedSet" => {
+            aot_store_value(RuntimeValue::HashSet(std::collections::HashSet::new()))
+        }
+        "BTreeMap" | "OrderedMap" => {
+            aot_store_value(RuntimeValue::BTreeMap(std::collections::BTreeMap::new()))
+        }
+        "HashMap" => aot_store_value(RuntimeValue::Object(std::collections::BTreeMap::new())),
+        "BinaryHeap" => {
+            aot_store_value(RuntimeValue::BinaryHeap(std::collections::BinaryHeap::new()))
+        }
+        "PriorityQueue" => aot_store_value(RuntimeValue::PriorityQueue(
+            std::collections::BinaryHeap::new(),
+        )),
+        "BitSet" => aot_store_value(RuntimeValue::BitSet(vec![false; 64])),
+        "RingBuffer" => {
+            let cap = args.get(0).and_then(|v| v.as_usize()).unwrap_or(16);
+            aot_store_value(RuntimeValue::RingBuffer {
+                buffer: Vec::with_capacity(cap),
+                head: 0,
+                tail: 0,
+                count: 0,
+                cap,
+            })
+        }
+        "Vec" | "Slice" | "Stack" => aot_store_value(RuntimeValue::Array(Vec::new())),
+        _ => aot_store_value(RuntimeValue::Null),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aot_call_method(
+    target_handle: u64,
+    method_name_handle: u64,
+    args_ptr: *const u64,
+    args_count: usize,
+) -> u64 {
+    let method_name = get_string_val(method_name_handle).unwrap_or_default();
+    let raw_args = if args_ptr.is_null() || args_count == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(args_ptr, args_count)
+    };
+    let args: Vec<RuntimeValue> = raw_args
+        .iter()
+        .map(|&h| aot_get_value(h).unwrap_or_else(|| unpack_aot_arg(h)))
+        .collect();
+
+    let target_val = aot_get_value(target_handle).unwrap_or_else(|| unpack_aot_arg(target_handle));
+
+    match target_val {
+        RuntimeValue::VecDeque(mut deque) => match method_name.as_str() {
+            "pushBack" => {
+                if let Some(arg0) = args.get(0) {
+                    deque.push_back(arg0.clone());
+                }
+                aot_update_value(target_handle, RuntimeValue::VecDeque(deque));
+                aot_store_value(RuntimeValue::Null)
+            }
+            "pushFront" => {
+                if let Some(arg0) = args.get(0) {
+                    deque.push_front(arg0.clone());
+                }
+                aot_update_value(target_handle, RuntimeValue::VecDeque(deque));
+                aot_store_value(RuntimeValue::Null)
+            }
+            "popFront" => {
+                let res = deque.pop_front().unwrap_or(RuntimeValue::Null);
+                aot_update_value(target_handle, RuntimeValue::VecDeque(deque));
+                aot_store_value(res)
+            }
+            "popBack" => {
+                let res = deque.pop_back().unwrap_or(RuntimeValue::Null);
+                aot_update_value(target_handle, RuntimeValue::VecDeque(deque));
+                aot_store_value(res)
+            }
+            "len" | "length" => aot_store_value(RuntimeValue::Int(deque.len() as i64)),
+            "isEmpty" => aot_store_value(RuntimeValue::Bool(deque.is_empty())),
+            "clear" => {
+                deque.clear();
+                aot_update_value(target_handle, RuntimeValue::VecDeque(deque));
+                aot_store_value(RuntimeValue::Null)
+            }
+            "get" => {
+                let idx = args.get(0).and_then(|i| i.as_usize()).unwrap_or(0);
+                let res = deque.get(idx).cloned().unwrap_or(RuntimeValue::Null);
+                aot_store_value(res)
+            }
+            _ => aot_store_value(RuntimeValue::Null),
+        },
+        RuntimeValue::HashSet(mut set) => match method_name.as_str() {
+            "insert" | "add" => {
+                let inserted = if let Some(arg0) = args.get(0) {
+                    set.insert(arg0.as_string())
+                } else {
+                    false
+                };
+                aot_update_value(target_handle, RuntimeValue::HashSet(set));
+                aot_store_value(RuntimeValue::Bool(inserted))
+            }
+            "contains" | "has" => {
+                let has = if let Some(arg0) = args.get(0) {
+                    set.contains(&arg0.as_string())
+                } else {
+                    false
+                };
+                aot_store_value(RuntimeValue::Bool(has))
+            }
+            "remove" | "delete" => {
+                let removed = if let Some(arg0) = args.get(0) {
+                    set.remove(&arg0.as_string())
+                } else {
+                    false
+                };
+                aot_update_value(target_handle, RuntimeValue::HashSet(set));
+                aot_store_value(RuntimeValue::Bool(removed))
+            }
+            "len" | "length" => aot_store_value(RuntimeValue::Int(set.len() as i64)),
+            "clear" => {
+                set.clear();
+                aot_update_value(target_handle, RuntimeValue::HashSet(set));
+                aot_store_value(RuntimeValue::Null)
+            }
+            _ => aot_store_value(RuntimeValue::Null),
+        },
+        RuntimeValue::BTreeMap(mut map) => match method_name.as_str() {
+            "insert" | "set" => {
+                if let (Some(k), Some(v)) = (args.get(0), args.get(1)) {
+                    map.insert(k.as_string(), v.clone());
+                }
+                aot_update_value(target_handle, RuntimeValue::BTreeMap(map));
+                aot_store_value(RuntimeValue::Null)
+            }
+            "get" => {
+                let val = if let Some(k) = args.get(0) {
+                    map.get(&k.as_string())
+                        .cloned()
+                        .unwrap_or(RuntimeValue::Null)
+                } else {
+                    RuntimeValue::Null
+                };
+                aot_store_value(val)
+            }
+            "remove" | "delete" => {
+                let val = if let Some(k) = args.get(0) {
+                    map.remove(&k.as_string()).unwrap_or(RuntimeValue::Null)
+                } else {
+                    RuntimeValue::Null
+                };
+                aot_update_value(target_handle, RuntimeValue::BTreeMap(map));
+                aot_store_value(val)
+            }
+            "contains" | "containsKey" | "has" => {
+                let has = if let Some(k) = args.get(0) {
+                    map.contains_key(&k.as_string())
+                } else {
+                    false
+                };
+                aot_store_value(RuntimeValue::Bool(has))
+            }
+            "len" | "length" => aot_store_value(RuntimeValue::Int(map.len() as i64)),
+            "keys" => {
+                let keys = map
+                    .keys()
+                    .map(|k| RuntimeValue::String(k.clone()))
+                    .collect();
+                aot_store_value(RuntimeValue::Array(keys))
+            }
+            "values" => {
+                let vals = map.values().cloned().collect();
+                aot_store_value(RuntimeValue::Array(vals))
+            }
+            "clear" => {
+                map.clear();
+                aot_update_value(target_handle, RuntimeValue::BTreeMap(map));
+                aot_store_value(RuntimeValue::Null)
+            }
+            _ => aot_store_value(RuntimeValue::Null),
+        },
+        RuntimeValue::BinaryHeap(mut heap) => match method_name.as_str() {
+            "push" | "insert" => {
+                if let Some(arg0) = args.get(0) {
+                    heap.push(OrderedValue(arg0.clone()));
+                }
+                aot_update_value(target_handle, RuntimeValue::BinaryHeap(heap));
+                aot_store_value(RuntimeValue::Null)
+            }
+            "pop" => {
+                let res = heap.pop().map(|o| o.0).unwrap_or(RuntimeValue::Null);
+                aot_update_value(target_handle, RuntimeValue::BinaryHeap(heap));
+                aot_store_value(res)
+            }
+            "peek" => {
+                let res = heap
+                    .peek()
+                    .map(|o| o.0.clone())
+                    .unwrap_or(RuntimeValue::Null);
+                aot_store_value(res)
+            }
+            "len" | "length" => aot_store_value(RuntimeValue::Int(heap.len() as i64)),
+            _ => aot_store_value(RuntimeValue::Null),
+        },
+        RuntimeValue::PriorityQueue(mut pq) => match method_name.as_str() {
+            "push" => {
+                if let Some(item) = args.get(0) {
+                    let prio = args.get(1).and_then(|p| p.as_i64()).unwrap_or(0);
+                    pq.push(PriorityItem {
+                        item: item.clone(),
+                        priority: prio,
+                    });
+                }
+                aot_update_value(target_handle, RuntimeValue::PriorityQueue(pq));
+                aot_store_value(RuntimeValue::Null)
+            }
+            "pop" => {
+                let res = pq.pop().map(|p| p.item).unwrap_or(RuntimeValue::Null);
+                aot_update_value(target_handle, RuntimeValue::PriorityQueue(pq));
+                aot_store_value(res)
+            }
+            "peek" => {
+                let res = pq
+                    .peek()
+                    .map(|p| p.item.clone())
+                    .unwrap_or(RuntimeValue::Null);
+                aot_store_value(res)
+            }
+            "len" | "length" => aot_store_value(RuntimeValue::Int(pq.len() as i64)),
+            _ => aot_store_value(RuntimeValue::Null),
+        },
+        RuntimeValue::BitSet(mut bits) => match method_name.as_str() {
+            "set" => {
+                let idx = args.get(0).and_then(|i| i.as_usize()).unwrap_or(0);
+                if idx >= bits.len() {
+                    bits.resize(idx + 64, false);
+                }
+                bits[idx] = true;
+                aot_update_value(target_handle, RuntimeValue::BitSet(bits));
+                aot_store_value(RuntimeValue::Null)
+            }
+            "clear" => {
+                if let Some(idx_v) = args.get(0) {
+                    let idx = idx_v.as_usize().unwrap_or(0);
+                    if idx < bits.len() {
+                        bits[idx] = false;
+                    }
+                } else {
+                    bits.clear();
+                }
+                aot_update_value(target_handle, RuntimeValue::BitSet(bits));
+                aot_store_value(RuntimeValue::Null)
+            }
+            "test" | "get" => {
+                let idx = args.get(0).and_then(|i| i.as_usize()).unwrap_or(0);
+                let b = bits.get(idx).copied().unwrap_or(false);
+                aot_store_value(RuntimeValue::Bool(b))
+            }
+            "toggle" => {
+                let idx = args.get(0).and_then(|i| i.as_usize()).unwrap_or(0);
+                if idx >= bits.len() {
+                    bits.resize(idx + 64, false);
+                }
+                bits[idx] = !bits[idx];
+                aot_update_value(target_handle, RuntimeValue::BitSet(bits));
+                aot_store_value(RuntimeValue::Null)
+            }
+            "count" => {
+                let cnt = bits.iter().filter(|&&b| b).count() as i64;
+                aot_store_value(RuntimeValue::Int(cnt))
+            }
+            _ => aot_store_value(RuntimeValue::Null),
+        },
+        RuntimeValue::RingBuffer {
+            mut buffer,
+            mut head,
+            mut tail,
+            mut count,
+            cap,
+        } => match method_name.as_str() {
+            "push" => {
+                if let Some(arg0) = args.get(0) {
+                    if count < cap {
+                        if buffer.len() < cap {
+                            buffer.push(arg0.clone());
+                        } else {
+                            buffer[tail] = arg0.clone();
+                        }
+                        tail = (tail + 1) % cap;
+                        count += 1;
+                    } else {
+                        buffer[tail] = arg0.clone();
+                        tail = (tail + 1) % cap;
+                        head = (head + 1) % cap;
+                    }
+                }
+                aot_update_value(
+                    target_handle,
+                    RuntimeValue::RingBuffer {
+                        buffer,
+                        head,
+                        tail,
+                        count,
+                        cap,
+                    },
+                );
+                aot_store_value(RuntimeValue::Null)
+            }
+            "pop" => {
+                let res = if count == 0 {
+                    RuntimeValue::Null
+                } else {
+                    let val = buffer[head].clone();
+                    head = (head + 1) % cap;
+                    count -= 1;
+                    val
+                };
+                aot_update_value(
+                    target_handle,
+                    RuntimeValue::RingBuffer {
+                        buffer,
+                        head,
+                        tail,
+                        count,
+                        cap,
+                    },
+                );
+                aot_store_value(res)
+            }
+            "peek" => {
+                let res = if count == 0 {
+                    RuntimeValue::Null
+                } else {
+                    buffer[head].clone()
+                };
+                aot_store_value(res)
+            }
+            "isFull" => aot_store_value(RuntimeValue::Bool(count == cap)),
+            "isEmpty" => aot_store_value(RuntimeValue::Bool(count == 0)),
+            "capacity" => aot_store_value(RuntimeValue::Int(cap as i64)),
+            _ => aot_store_value(RuntimeValue::Null),
+        },
+        RuntimeValue::Array(mut arr) => match method_name.as_str() {
+            "append" | "push" => {
+                if let Some(arg0) = args.get(0) {
+                    arr.push(arg0.clone());
+                }
+                aot_update_value(target_handle, RuntimeValue::Array(arr.clone()));
+                aot_store_value(RuntimeValue::Array(arr))
+            }
+            "extend" => {
+                if let Some(RuntimeValue::Array(other)) = args.get(0) {
+                    arr.extend(other.clone());
+                }
+                aot_update_value(target_handle, RuntimeValue::Array(arr.clone()));
+                aot_store_value(RuntimeValue::Array(arr))
+            }
+            "insert" => {
+                if let (Some(idx_val), Some(item)) = (args.get(0), args.get(1)) {
+                    let idx = idx_val.as_usize().unwrap_or(0).min(arr.len());
+                    arr.insert(idx, item.clone());
+                }
+                aot_update_value(target_handle, RuntimeValue::Array(arr.clone()));
+                aot_store_value(RuntimeValue::Array(arr))
+            }
+            "remove" => {
+                if let Some(item_val) = args.get(0) {
+                    if let Some(pos) = arr.iter().position(|x| x == item_val) {
+                        arr.remove(pos);
+                    }
+                }
+                aot_update_value(target_handle, RuntimeValue::Array(arr.clone()));
+                aot_store_value(RuntimeValue::Array(arr))
+            }
+            "set_index" => {
+                if let (Some(idx_val), Some(item)) = (args.get(0), args.get(1)) {
+                    let idx = idx_val.as_usize().unwrap_or(0);
+                    if idx < arr.len() {
+                        arr[idx] = item.clone();
+                    }
+                }
+                aot_update_value(target_handle, RuntimeValue::Array(arr.clone()));
+                aot_store_value(RuntimeValue::Array(arr))
+            }
+            "pop" => {
+                if let Some(idx_val) = args.get(0) {
+                    let idx = idx_val.as_usize().unwrap_or(0);
+                    if idx < arr.len() {
+                        arr.remove(idx);
+                    }
+                } else {
+                    arr.pop();
+                }
+                aot_update_value(target_handle, RuntimeValue::Array(arr.clone()));
+                aot_store_value(RuntimeValue::Array(arr))
+            }
+            "count" => {
+                let target_item = args.get(0);
+                let cnt = if let Some(t) = target_item {
+                    arr.iter().filter(|x| *x == t).count()
+                } else {
+                    0
+                };
+                aot_store_value(RuntimeValue::Int(cnt as i64))
+            }
+            "index" => {
+                let target_item = args.get(0);
+                let pos = if let Some(t) = target_item {
+                    arr.iter()
+                        .position(|x| x == t)
+                        .map(|i| i as i64)
+                        .unwrap_or(-1)
+                } else {
+                    -1
+                };
+                aot_store_value(RuntimeValue::Int(pos))
+            }
+            "clear" => {
+                arr.clear();
+                aot_update_value(target_handle, RuntimeValue::Array(arr.clone()));
+                aot_store_value(RuntimeValue::Array(arr))
+            }
+            "sort" => {
+                arr.sort_by(|a, b| OrderedValue(a.clone()).cmp(&OrderedValue(b.clone())));
+                aot_update_value(target_handle, RuntimeValue::Array(arr.clone()));
+                aot_store_value(RuntimeValue::Array(arr))
+            }
+            "reverse" => {
+                arr.reverse();
+                aot_update_value(target_handle, RuntimeValue::Array(arr.clone()));
+                aot_store_value(RuntimeValue::Array(arr))
+            }
+            "map" => {
+                if let Some(fn_val) = args.get(0) {
+                    if let Some(fp) = fn_val.as_fn_ptr() {
+                        let f = std::mem::transmute::<usize, extern "C" fn(i64) -> u64>(fp);
+                        let mut new_arr = Vec::with_capacity(arr.len());
+                        for item in &arr {
+                            let in_h = aot_store_value(item.clone());
+                            let arg_val = item.as_i64().unwrap_or(in_h as i64);
+                            let out_h = f(arg_val);
+                            let out_val =
+                                aot_get_value(out_h).unwrap_or_else(|| unpack_aot_arg(out_h));
+                            new_arr.push(out_val);
+                        }
+                        return aot_store_value(RuntimeValue::Array(new_arr));
+                    }
+                }
+                aot_store_value(RuntimeValue::Array(arr))
+            }
+            "filter" => {
+                if let Some(fn_val) = args.get(0) {
+                    if let Some(fp) = fn_val.as_fn_ptr() {
+                        let f = std::mem::transmute::<usize, extern "C" fn(i64) -> u64>(fp);
+                        let mut new_arr = Vec::new();
+                        for item in &arr {
+                            let in_h = aot_store_value(item.clone());
+                            let arg_val = item.as_i64().unwrap_or(in_h as i64);
+                            let out_h = f(arg_val);
+                            let out_val =
+                                aot_get_value(out_h).unwrap_or_else(|| unpack_aot_arg(out_h));
+                            if out_val.is_truthy() {
+                                new_arr.push(item.clone());
+                            }
+                        }
+                        return aot_store_value(RuntimeValue::Array(new_arr));
+                    }
+                }
+                aot_store_value(RuntimeValue::Array(arr))
+            }
+            "reduce" => {
+                if let Some(fn_val) = args.get(0) {
+                    if let Some(fp) = fn_val.as_fn_ptr() {
+                        let f = std::mem::transmute::<usize, extern "C" fn(i64, i64) -> u64>(fp);
+                        let has_init = args.len() > 1;
+                        let mut acc = if has_init {
+                            args[1].clone()
+                        } else if !arr.is_empty() {
+                            arr[0].clone()
+                        } else {
+                            RuntimeValue::Null
+                        };
+                        let start_idx = if has_init { 0 } else { 1 };
+                        for item in arr.iter().skip(start_idx) {
+                            let acc_h = aot_store_value(acc.clone());
+                            let item_h = aot_store_value(item.clone());
+                            let acc_arg = acc.as_i64().unwrap_or(acc_h as i64);
+                            let item_arg = item.as_i64().unwrap_or(item_h as i64);
+                            let out_h = f(acc_arg, item_arg);
+                            acc = aot_get_value(out_h).unwrap_or_else(|| unpack_aot_arg(out_h));
+                        }
+                        return aot_store_value(acc);
+                    }
+                }
+                aot_store_value(RuntimeValue::Null)
+            }
+            "len" | "length" => aot_store_value(RuntimeValue::Int(arr.len() as i64)),
+            "join" => {
+                let sep = args.get(0).map(|s| s.as_string()).unwrap_or_default();
+                let str_items: Vec<String> = arr.iter().map(|x| x.as_string()).collect();
+                aot_store_value(RuntimeValue::String(str_items.join(&sep)))
+            }
+            _ => aot_store_value(RuntimeValue::Null),
+        },
+        RuntimeValue::Set(set) => match method_name.as_str() {
+            "union" => {
+                let mut union_items = set.clone();
+                if let Some(RuntimeValue::Set(other)) = args.get(0) {
+                    for item in other {
+                        if !union_items.contains(item) {
+                            union_items.push(item.clone());
+                        }
+                    }
+                }
+                aot_store_value(RuntimeValue::Set(union_items))
+            }
+            "intersection" => {
+                let mut inter_items = Vec::new();
+                if let Some(RuntimeValue::Set(other)) = args.get(0) {
+                    for item in &set {
+                        if other.contains(item) {
+                            inter_items.push(item.clone());
+                        }
+                    }
+                }
+                aot_store_value(RuntimeValue::Set(inter_items))
+            }
+            "len" | "length" => aot_store_value(RuntimeValue::Int(set.len() as i64)),
+            _ => aot_store_value(RuntimeValue::Null),
+        },
+        RuntimeValue::Object(mut map) => match method_name.as_str() {
+            "get" => {
+                let val = if let Some(k) = args.get(0) {
+                    map.get(&k.as_string())
+                        .cloned()
+                        .unwrap_or(RuntimeValue::Null)
+                } else {
+                    RuntimeValue::Null
+                };
+                aot_store_value(val)
+            }
+            "set" => {
+                if let (Some(k), Some(v)) = (args.get(0), args.get(1)) {
+                    map.insert(k.as_string(), v.clone());
+                }
+                aot_update_value(target_handle, RuntimeValue::Object(map.clone()));
+                aot_store_value(RuntimeValue::Object(map))
+            }
+            "has" | "hasOwnProperty" => {
+                let has = if let Some(k) = args.get(0) {
+                    map.contains_key(&k.as_string())
+                } else {
+                    false
+                };
+                aot_store_value(RuntimeValue::Bool(has))
+            }
+            "keys" => {
+                let keys = map
+                    .keys()
+                    .map(|k| RuntimeValue::String(k.clone()))
+                    .collect();
+                aot_store_value(RuntimeValue::Array(keys))
+            }
+            "values" => {
+                let vals = map.values().cloned().collect();
+                aot_store_value(RuntimeValue::Array(vals))
+            }
+            "entries" => {
+                let entries = map
+                    .iter()
+                    .map(|(k, v)| {
+                        RuntimeValue::Tuple(vec![RuntimeValue::String(k.clone()), v.clone()])
+                    })
+                    .collect();
+                aot_store_value(RuntimeValue::Array(entries))
+            }
+            "len" | "length" => aot_store_value(RuntimeValue::Int(map.len() as i64)),
+            _ => aot_store_value(RuntimeValue::Null),
+        },
+        RuntimeValue::String(s) => match method_name.as_str() {
+            "toLowerCase" => aot_store_value(RuntimeValue::String(s.to_lowercase())),
+            "toUpperCase" => aot_store_value(RuntimeValue::String(s.to_uppercase())),
+            "trim" => aot_store_value(RuntimeValue::String(s.trim().to_string())),
+            "split" => {
+                let sep = args.get(0).map(|x| x.as_string()).unwrap_or_default();
+                let parts = s
+                    .split(&sep)
+                    .map(|p| RuntimeValue::String(p.to_string()))
+                    .collect();
+                aot_store_value(RuntimeValue::Array(parts))
+            }
+            "replace" => {
+                let from = args.get(0).map(|x| x.as_string()).unwrap_or_default();
+                let to = args.get(1).map(|x| x.as_string()).unwrap_or_default();
+                aot_store_value(RuntimeValue::String(s.replace(&from, &to)))
+            }
+            "substring" | "slice" => {
+                let start = args.get(0).and_then(|i| i.as_usize()).unwrap_or(0);
+                let end = if args.len() > 1 {
+                    args[1].as_usize().unwrap_or(s.len())
+                } else {
+                    s.len()
+                };
+                let sub = if start < s.len() {
+                    let end = end.min(s.len());
+                    &s[start..end]
+                } else {
+                    ""
+                };
+                aot_store_value(RuntimeValue::String(sub.to_string()))
+            }
+            "contains" | "includes" => {
+                let sub = args.get(0).map(|x| x.as_string()).unwrap_or_default();
+                aot_store_value(RuntimeValue::Bool(s.contains(&sub)))
+            }
+            "indexOf" => {
+                let sub = args.get(0).map(|x| x.as_string()).unwrap_or_default();
+                let pos = s.find(&sub).map(|i| i as i64).unwrap_or(-1);
+                aot_store_value(RuntimeValue::Int(pos))
+            }
+            "startsWith" => {
+                let prefix = args.get(0).map(|x| x.as_string()).unwrap_or_default();
+                aot_store_value(RuntimeValue::Bool(s.starts_with(&prefix)))
+            }
+            "endsWith" => {
+                let suffix = args.get(0).map(|x| x.as_string()).unwrap_or_default();
+                aot_store_value(RuntimeValue::Bool(s.ends_with(&suffix)))
+            }
+            "len" | "length" => aot_store_value(RuntimeValue::Int(s.len() as i64)),
+            "charAt" => {
+                let idx = args.get(0).and_then(|i| i.as_usize()).unwrap_or(0);
+                let ch = s
+                    .chars()
+                    .nth(idx)
+                    .map(|c| c.to_string())
+                    .unwrap_or_default();
+                aot_store_value(RuntimeValue::String(ch))
+            }
+            _ => aot_store_value(RuntimeValue::Null),
+        },
+        _ => aot_store_value(RuntimeValue::Null),
+    }
+}
+
+// ============================================================================
+// Input & Type Conversions
+// ============================================================================
+
+static MOCK_INPUT_QUEUE: Mutex<Option<std::collections::VecDeque<String>>> = Mutex::new(None);
+
+fn get_mock_input_queue()
+-> std::sync::MutexGuard<'static, Option<std::collections::VecDeque<String>>> {
+    let mut guard = MOCK_INPUT_QUEUE.lock().unwrap();
+    if guard.is_none() {
+        *guard = Some(std::collections::VecDeque::new());
+    }
+    guard
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_input_mock(val_handle: u64) -> u64 {
+    let val = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
+    let mut guard = get_mock_input_queue();
+    if let Some(ref mut q) = *guard {
+        if let RuntimeValue::Array(arr) = val {
+            for item in arr {
+                q.push_back(item.as_string());
+            }
+        } else {
+            q.push_back(val.as_string());
+        }
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_input(prompt_handle: u64) -> u64 {
+    let prompt = if prompt_handle != 0 {
+        get_string_val(prompt_handle).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    if !prompt.is_empty() {
+        print!("{}", prompt);
+        let _ = std::io::stdout().flush();
+    }
+    let mut guard = get_mock_input_queue();
+    if let Some(ref mut q) = *guard {
+        if let Some(mock_val) = q.pop_front() {
+            return aot_store_value(RuntimeValue::String(mock_val));
+        }
+    }
+    let mut line = String::new();
+    let _ = std::io::stdin().read_line(&mut line);
+    if line.ends_with('\n') {
+        line.pop();
+        if line.ends_with('\r') {
+            line.pop();
+        }
+    }
+    aot_store_value(RuntimeValue::String(line))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_to_int(val_handle: u64) -> i64 {
+    let val = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
+    match val {
+        RuntimeValue::Int(i) | RuntimeValue::I64(i) => i,
+        RuntimeValue::I32(i) => i as i64,
+        RuntimeValue::I16(i) => i as i64,
+        RuntimeValue::I8(i) => i as i64,
+        RuntimeValue::U64(u) => u as i64,
+        RuntimeValue::U32(u) => u as i64,
+        RuntimeValue::U16(u) => u as i64,
+        RuntimeValue::U8(u) => u as i64,
+        RuntimeValue::Float(f) | RuntimeValue::F64(f) => f as i64,
+        RuntimeValue::F32(f) => f as i64,
+        RuntimeValue::Bool(b) => {
+            if b {
+                1
+            } else {
+                0
+            }
+        }
+        RuntimeValue::String(s) => s
+            .trim()
+            .parse::<i64>()
+            .unwrap_or_else(|_| s.trim().parse::<f64>().map(|f| f as i64).unwrap_or(0)),
+        _ => 0,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_to_float(val_handle: u64) -> f64 {
+    let val = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
+    match val {
+        RuntimeValue::Float(f) | RuntimeValue::F64(f) => f,
+        RuntimeValue::F32(f) => f as f64,
+        RuntimeValue::Int(i) | RuntimeValue::I64(i) => i as f64,
+        RuntimeValue::I32(i) => i as f64,
+        RuntimeValue::I16(i) => i as f64,
+        RuntimeValue::I8(i) => i as f64,
+        RuntimeValue::U64(u) => u as f64,
+        RuntimeValue::U32(u) => u as f64,
+        RuntimeValue::U16(u) => u as f64,
+        RuntimeValue::U8(u) => u as f64,
+        RuntimeValue::Bool(b) => {
+            if b {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        RuntimeValue::String(s) => s.trim().parse::<f64>().unwrap_or(0.0),
+        _ => 0.0,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_to_string(val_handle: u64) -> u64 {
+    let val = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
+    aot_store_value(RuntimeValue::String(val.as_string()))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_to_bool(val_handle: u64) -> i64 {
+    let val = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
+    if val.is_truthy() { 1 } else { 0 }
 }

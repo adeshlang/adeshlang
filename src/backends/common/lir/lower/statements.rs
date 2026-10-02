@@ -1427,6 +1427,8 @@ pub(super) fn lower_stmt(
             }
             res
         }
+
+        HirStmt::Jump(_) => Ok(()),
     }
 }
 

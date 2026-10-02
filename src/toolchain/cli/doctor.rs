@@ -234,7 +234,7 @@ pub fn execute_doctor_command() {
         match (&msvc_opt, &sdk_opt) {
             (Some(msvc), Some((um, _ucrt))) => {
                 println!(
-                    "  {}✓{} Windows MSVC SDK  : Detected (ready for AOT native MSVC linking)",
+                    "  {}✓{} Windows MSVC SDK  : Detected (optional; used only by --external-linker)",
                     green, reset
                 );
                 println!(
@@ -272,7 +272,7 @@ pub fn execute_doctor_command() {
                     yellow, reset
                 );
                 println!(
-                    "     {}↳ Required for Windows native CRT linking (ucrt.lib, msvcrt.lib){}",
+                    "     {}↳ Optional: only needed for `build --external-linker` (lld-link CRT linking){}",
                     yellow, reset
                 );
             }

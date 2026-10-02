@@ -1,0 +1,175 @@
+// Decorator Basics & Function Wrapping Tests
+// Covers the core decorator mechanics shown by examples/decorators/*.adesh:
+//   - target/meta signature and wrapper return semantics
+//   - meta.name metadata access
+//   - stacking order (bottom decorator applied first)
+//   - arity variants (0/1/2/3 argument functions)
+//   - many stacked decorators (the old 6+ hang regression)
+
+// ─────────────────────────────────────────────────────────────
+// Decorators (each module re-declares them so it also runs standalone;
+// main.adesh mirrors these declarations for the imported run)
+// ─────────────────────────────────────────────────────────────
+
+decorator dblResult(target, meta) {
+    return fn(a, b) {
+        return target(a, b) * 2;
+    };
+}
+
+decorator tagMeta(target, meta) {
+    return fn(a, b) {
+        return meta.name + "|" + target(a, b);
+    };
+}
+
+decorator plusOne(target, meta) {
+    return fn(a) {
+        return target(a) + 1;
+    };
+}
+
+decorator upOne(target, meta) {
+    return fn(a, b) {
+        return target(a, b) + 1;
+    };
+}
+
+decorator dblOnly(target, meta) {
+    return fn(a, b) {
+        return target(a, b) * 2;
+    };
+}
+
+decorator noopWrap(target, meta) {
+    return fn() {
+        return target();
+    };
+}
+
+decorator noopWrap1(target, meta) {
+    return fn(a) {
+        return target(a);
+    };
+}
+
+decorator noopWrap3(target, meta) {
+    return fn(a, b, c) {
+        return target(a, b, c);
+    };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Helpers (self-contained targets)
+// ─────────────────────────────────────────────────────────────
+
+@dblResult
+fn add(a, b) {
+    return a + b;
+}
+
+@dblResult
+fn mul(a, b) {
+    return a * b;
+}
+
+@tagMeta
+fn taggedAdd(a, b) {
+    return a + b;
+}
+
+@upOne
+@dblOnly
+fn orderFirst(a, b) {
+    return a + b;
+}
+
+@dblOnly
+@upOne
+fn orderSecond(a, b) {
+    return a + b;
+}
+
+@plusOne
+@plusOne
+@plusOne
+@plusOne
+@plusOne
+@plusOne
+fn sixDeep(a) {
+    return a;
+}
+
+@noopWrap
+fn noArgs() {
+    return 41 + 1;
+}
+
+@noopWrap1
+fn oneArg(a) {
+    return a * 10;
+}
+
+@noopWrap3
+fn threeArgs(a, b, c) {
+    return a + b + c;
+}
+
+export fn plainAdd(a: i32, b: i32): i32 {
+    return a + b;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_wrapper_preserves_result() {
+    assert_eq(add(2, 3), 10);
+    assert_eq(add(0, 0), 0);
+    assert_eq(mul(4, 5), 40);
+    assert_eq(plainAdd(2, 3), 5);
+}
+
+export test fn test_meta_name_accessible() {
+    assert_eq(taggedAdd(2, 3), "taggedAdd|5");
+    assert_ne(taggedAdd(1, 1), "add|2");
+}
+
+export test fn test_stacking_order_bottom_up() {
+    // Decorators apply bottom-up (nearest to the function wraps first):
+    // orderFirst = @upOne over @dblOnly → ((1 + 1) * 2) + 1 = 5
+    assert_eq(orderFirst(1, 1), 5);
+    // orderSecond = @dblOnly over @upOne → ((1 + 1) + 1) * 2 = 6
+    assert_eq(orderSecond(1, 1), 6);
+}
+
+export test fn test_arity_variants() {
+    assert_eq(noArgs(), 42);
+    assert_eq(oneArg(7), 70);
+    assert_eq(threeArgs(1, 2, 3), 6);
+}
+
+export test fn test_six_stacked_decorators() {
+    // Regression: 6+ stacked decorators used to hang / nest exponentially
+    assert_eq(sixDeep(2), 8);
+    assert_eq(sixDeep(0), 6);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_wrapper_preserves_result();
+    test_meta_name_accessible();
+    test_stacking_order_bottom_up();
+    test_arity_variants();
+    test_six_stacked_decorators();
+    return 5;
+}
+
+fn main() {
+    print("Running 01_basic_wrapping tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 01_basic_wrapping.test.adesh`);
+}

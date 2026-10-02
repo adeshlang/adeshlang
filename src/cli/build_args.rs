@@ -33,6 +33,8 @@ impl BuildArgParser {
     /// - `--library-mode`: Skip main function (library mode)
     /// - `--library`: Alias for --emit=lib
     /// - `--shared`: Alias for --emit=shared
+    /// - `--external-linker`: Delegate the final link to external LLVM
+    ///   (clang + lld/lld-link) instead of the built-in adeshlink engine
     /// - `--run`: Run after building
     /// - `--verbose`: Verbose output
     /// - `--quiet`: Quiet mode
@@ -158,6 +160,14 @@ impl BuildArgParser {
                 // Extra linker arguments
                 "--linker-arg" => {
                     config.linker_args.push(parser.next_arg()?);
+                }
+
+                // External linker bridge: delegate the final link step to an
+                // external LLVM toolchain (clang + lld/lld-link) instead of the
+                // built-in adeshlink engine. Verify readiness with
+                // `adesh gpu-check --external-linker`.
+                "--external-linker" | "--external-toolchain" | "--use-llvm" => {
+                    config.external_linker = true;
                 }
 
                 // Library mode
@@ -295,5 +305,28 @@ mod tests {
         ];
         let config = BuildArgParser::parse(args).unwrap();
         assert_eq!(config.link_libs, vec!["m", "pthread"]);
+    }
+
+    #[test]
+    fn test_parse_external_linker_flag() {
+        let args = vec!["test.adesh".to_string(), "--external-linker".to_string()];
+        let config = BuildArgParser::parse(args).unwrap();
+        assert!(config.external_linker);
+    }
+
+    #[test]
+    fn test_parse_external_linker_aliases() {
+        for flag in ["--external-toolchain", "--use-llvm"] {
+            let args = vec!["test.adesh".to_string(), flag.to_string()];
+            let config = BuildArgParser::parse(args).unwrap();
+            assert!(config.external_linker, "{flag} must set external_linker");
+        }
+    }
+
+    #[test]
+    fn test_external_linker_defaults_off() {
+        let args = vec!["test.adesh".to_string()];
+        let config = BuildArgParser::parse(args).unwrap();
+        assert!(!config.external_linker);
     }
 }

@@ -1,0 +1,117 @@
+// Loops Test Runner & Analytics Suite
+// Imports test cases from all loops test modules and executes them step-by-step
+// with rich analytics reporting.
+
+import "./01_control_flow.test.adesh" as ctrl_tests;
+import "./02_loop_algorithms.test.adesh" as algo_tests;
+
+// ─────────────────────────────────────────────────────────────
+// Native Test Harness Declarations (for `adesh run --test`)
+// ─────────────────────────────────────────────────────────────
+
+test fn test_suite_control_flow() {
+    ctrl_tests.run_tests();
+}
+
+test fn test_suite_loop_algorithms() {
+    algo_tests.run_tests();
+}
+
+// ─────────────────────────────────────────────────────────────
+// Standalone Test Runner & Analytics Engine
+// ─────────────────────────────────────────────────────────────
+
+struct TestSuiteResult {
+    suite_name: string;
+    total: i32;
+    passed: i32;
+    failed: i32;
+};
+
+fn run_single_test(test_name: string, test_fn): bool {
+    try {
+        test_fn();
+        print(`  ✓ PASS: ${test_name}`);
+        return true;
+    } catch (err) {
+        print(`  ✗ FAIL: ${test_name} - Error: ${err}`);
+        return false;
+    }
+}
+
+fn print_analytics_dashboard(
+    ctrl_res: TestSuiteResult,
+    algo_res: TestSuiteResult
+) {
+    let total_all = ctrl_res.total + algo_res.total;
+    let passed_all = ctrl_res.passed + algo_res.passed;
+    let failed_all = ctrl_res.failed + algo_res.failed;
+    let pass_rate = (passed_all * 100) / total_all;
+
+    print("");
+    print("╔══════════════════════════════════════════════════════════════════════╗");
+    print("║                     TEST ANALYTICS DASHBOARD                         ║");
+    print("╠══════════════════════════════════════════════════════════════════════╣");
+    print("║  Suite Name              │ Total │ Passed │ Failed │ Pass Rate       ║");
+    print("╟──────────────────────────┼───────┼────────┼────────┼─────────────────╢");
+    print(`║  01_control_flow         │   ${ctrl_res.total}   │   ${ctrl_res.passed}    │   ${ctrl_res.failed}    │ ${pass_rate}%            ║`);
+    print(`║  02_loop_algorithms      │   ${algo_res.total}   │   ${algo_res.passed}    │   ${algo_res.failed}    │ ${pass_rate}%            ║`);
+    print("╠══════════════════════════════════════════════════════════════════════╣");
+    print(`║  TOTAL OVERALL           │  ${total_all}   │  ${passed_all}   │   ${failed_all}    │ ${pass_rate}%            ║`);
+    print("╚══════════════════════════════════════════════════════════════════════╝");
+    print("");
+    if (failed_all == 0) {
+        print(`  🎉 ALL LOOP TESTS PASSED SUCCESSFULLY! (${passed_all}/${total_all} tests)`);
+    } else {
+        print(`  ⚠️ WARNING: ${failed_all} test(s) failed.`);
+    }
+    print("");
+}
+
+fn main() {
+    print("╔══════════════════════════════════════════════════════════════════════╗");
+    print("║              AdeshLang Loops - Test Execution Runner                 ║");
+    print("╚══════════════════════════════════════════════════════════════════════╝");
+    print("");
+
+    // Suite 1: Control Flow Tests
+    print("▶ [1/2] Running Suite: 01_control_flow.test.adesh");
+    let c1 = 0;
+    c1 = c1 + (run_single_test("ctrl_tests.test_while_countdown_sum", ctrl_tests.test_while_countdown_sum) ? 1 : 0);
+    c1 = c1 + (run_single_test("ctrl_tests.test_do_while_runs_at_least_once", ctrl_tests.test_do_while_runs_at_least_once) ? 1 : 0);
+    c1 = c1 + (run_single_test("ctrl_tests.test_for_over_array", ctrl_tests.test_for_over_array) ? 1 : 0);
+    c1 = c1 + (run_single_test("ctrl_tests.test_while_collects_values", ctrl_tests.test_while_collects_values) ? 1 : 0);
+    c1 = c1 + (run_single_test("ctrl_tests.test_break_exits_early", ctrl_tests.test_break_exits_early) ? 1 : 0);
+    c1 = c1 + (run_single_test("ctrl_tests.test_continue_skips_iteration", ctrl_tests.test_continue_skips_iteration) ? 1 : 0);
+    c1 = c1 + (run_single_test("ctrl_tests.test_nested_loops", ctrl_tests.test_nested_loops) ? 1 : 0);
+    c1 = c1 + (run_single_test("ctrl_tests.test_loop_accumulator_pattern", ctrl_tests.test_loop_accumulator_pattern) ? 1 : 0);
+    let ctrl_res = TestSuiteResult {
+        suite_name: "01_control_flow",
+        total: 8,
+        passed: c1,
+        failed: 8 - c1,
+    };
+    print(`  Suite Result: ${c1}/8 tests passed\n`);
+
+    // Suite 2: Loop Algorithm Tests
+    print("▶ [2/2] Running Suite: 02_loop_algorithms.test.adesh");
+    let a1 = 0;
+    a1 = a1 + (run_single_test("algo_tests.test_factorial_iterative", algo_tests.test_factorial_iterative) ? 1 : 0);
+    a1 = a1 + (run_single_test("algo_tests.test_fibonacci_iterative", algo_tests.test_fibonacci_iterative) ? 1 : 0);
+    a1 = a1 + (run_single_test("algo_tests.test_sum_of_squares", algo_tests.test_sum_of_squares) ? 1 : 0);
+    a1 = a1 + (run_single_test("algo_tests.test_reverse_array", algo_tests.test_reverse_array) ? 1 : 0);
+    a1 = a1 + (run_single_test("algo_tests.test_linear_search", algo_tests.test_linear_search) ? 1 : 0);
+    a1 = a1 + (run_single_test("algo_tests.test_count_even", algo_tests.test_count_even) ? 1 : 0);
+    a1 = a1 + (run_single_test("algo_tests.test_gcd", algo_tests.test_gcd) ? 1 : 0);
+    a1 = a1 + (run_single_test("algo_tests.test_power_iterative", algo_tests.test_power_iterative) ? 1 : 0);
+    let algo_res = TestSuiteResult {
+        suite_name: "02_loop_algorithms",
+        total: 8,
+        passed: a1,
+        failed: 8 - a1,
+    };
+    print(`  Suite Result: ${a1}/8 tests passed\n`);
+
+    // Final Analytics Dashboard
+    print_analytics_dashboard(ctrl_res, algo_res);
+}

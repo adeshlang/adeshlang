@@ -1,0 +1,112 @@
+// Basic (Unit) Enum Variant Tests
+// Covers variant construction with and without `new`, `.tag` / `.__enum`
+// introspection, and tag-based dispatch as demonstrated by examples/enum.
+
+// ─────────────────────────────────────────────────────────────
+// Helpers (self-contained, pure)
+// ─────────────────────────────────────────────────────────────
+
+enum Direction {
+    North,
+    South,
+    East,
+    West
+}
+
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+export fn direction_offset(d) {
+    if (d.tag == "North") {
+        return (0, 1);
+    } elif (d.tag == "South") {
+        return (0, -1);
+    } elif (d.tag == "East") {
+        return (1, 0);
+    } elif (d.tag == "West") {
+        return (-1, 0);
+    }
+    return (0, 0);
+}
+
+export fn is_known_color(c): bool {
+    let t = c.tag;
+    if (t == "Red" || t == "Green" || t == "Blue") {
+        return true;
+    }
+    return false;
+}
+
+export fn color_family(c): string {
+    return c.__enum;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_direction_tags() {
+    assert_eq(Direction.North().tag, "North");
+    assert_eq(Direction.South().tag, "South");
+    assert_eq(Direction.East().tag, "East");
+    assert_eq(Direction.West().tag, "West");
+}
+
+export test fn test_enum_metadata() {
+    let d = Direction.North();
+    assert_eq(d.__enum, "Direction");
+    assert_eq(color_family(Color.Green()), "Color");
+    assert_ne(d.__enum, color_family(Color.Green()));
+}
+
+export test fn test_tag_based_dispatch() {
+    let north = direction_offset(Direction.North());
+    assert_eq(north.0, 0);
+    assert_eq(north.1, 1);
+    let south = direction_offset(Direction.South());
+    assert_eq(south.0, 0);
+    assert_eq(south.1, -1);
+    let east = direction_offset(Direction.East());
+    assert_eq(east.0, 1);
+    assert_eq(east.1, 0);
+    let west = direction_offset(Direction.West());
+    assert_eq(west.0, -1);
+    assert_eq(west.1, 0);
+}
+
+export test fn test_new_vs_plain_construction() {
+    let plain = Direction.North();
+    let with_new = new Direction.North();
+    assert_eq(plain.tag, with_new.tag);
+    assert_eq(plain.__enum, with_new.__enum);
+    assert_eq(new Color.Red().tag, "Red");
+}
+
+export test fn test_variant_inequality() {
+    assert_ne(Direction.North().tag, Direction.South().tag);
+    assert_ne(Color.Red().tag, Color.Blue().tag);
+    assert(is_known_color(Color.Green()), "green is known");
+    assert_eq(is_known_color(Direction.North()), false);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_direction_tags();
+    test_enum_metadata();
+    test_tag_based_dispatch();
+    test_new_vs_plain_construction();
+    test_variant_inequality();
+    return 5;
+}
+
+fn main() {
+    print("Running 01_unit_variants tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 01_unit_variants.test.adesh`);
+}

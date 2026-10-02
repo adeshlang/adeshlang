@@ -1,0 +1,147 @@
+// Static Budget / OOM Tests
+// Covers examples/memory_allocator/static_mode.adesh:
+//   - fixed heap budget: small allocations always fit
+//   - requests beyond the remaining budget are rejected (OOM = -1)
+//   - allocation sequences record exactly where the budget ran out
+//   - OOM raises a catchable error with an "OOM" message
+//   - exhaustion accounting: how many units fit, how many bytes are left
+// Pure integer logic; no actual heap involved.
+
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+
+// Returns the new usage, or -1 if the request exceeds the static heap.
+export fn try_alloc(used: i32, budget: i32, request: i32): i32 {
+    if (request > budget - used) {
+        return -1;
+    }
+    return used + request;
+}
+
+export fn fits(budget: i32, used: i32, request: i32): bool {
+    return request <= budget - used;
+}
+
+// Runs a list of requests against a fixed budget.
+// Each entry is the running usage after a successful allocation,
+// or -1 when that request was rejected.
+export fn alloc_sequence(budget: i32, requests: [int]): [i32] {
+    let used = 0;
+    let out: [i32] = [];
+    for (r in requests) {
+        if (r > budget - used) {
+            out.push(-1);
+        } else {
+            used = used + r;
+            out.push(used);
+        }
+    }
+    return out;
+}
+
+// Same as try_alloc but throws a catchable OOM error instead of
+// returning -1 (mirrors the commented try/catch in static_mode.adesh).
+export fn alloc_or_throw(used: i32, budget: i32, request: i32): i32 {
+    if (request > budget - used) {
+        throw "OOM: allocation of " + str(request) + " bytes exceeds static heap";
+    }
+    return used + request;
+}
+
+// Exhaustion report for repeated equal-sized allocations.
+// Returns [successful_allocs, leftover_bytes].
+export fn exhaust(budget: i32, unit: i32): [i32] {
+    let fills = 0;
+    let used = 0;
+    while (used + unit <= budget) {
+        used = used + unit;
+        fills = fills + 1;
+    }
+    return [fills, budget - used];
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_small_allocations_fit() {
+    // Small arrays and objects stay comfortably inside the static heap.
+    assert_eq(try_alloc(0, 1024, 64), 64);
+    assert_eq(try_alloc(64, 1024, 32), 96);
+    assert_eq(try_alloc(96, 1024, 928), 1024);
+    assert(fits(1024, 0, 64));
+    assert_eq(fits(1024, 1000, 25), false);
+}
+
+export test fn test_over_budget_rejected() {
+    // 1024 - 1000 = 24 bytes free, request 25 -> rejected.
+    assert_eq(try_alloc(1000, 1024, 25), -1);
+    assert_eq(try_alloc(0, 1024, 2048), -1);
+    assert_eq(try_alloc(1024, 1024, 0), 1024);
+    assert_eq(try_alloc(1024, 1024, 1), -1);
+    assert_eq(fits(1024, 1024, 1), false);
+}
+
+export test fn test_allocation_sequence() {
+    // 100 + 200 + 700 fill the 1000-byte heap exactly; the 500 fails.
+    let results = alloc_sequence(1000, [100, 200, 700, 500]);
+    assert_eq(results.len(), 4);
+    assert_eq(results[0], 100);
+    assert_eq(results[1], 300);
+    assert_eq(results[2], 1000);
+    assert_eq(results[3], -1);
+
+    let all_ok = alloc_sequence(100, [10, 20, 30]);
+    assert_eq(all_ok[2], 60);
+}
+
+export test fn test_oom_throws_catchable() {
+    let used = alloc_or_throw(0, 512, 128);
+    assert_eq(used, 128);
+
+    let caught = false;
+    try {
+        alloc_or_throw(500, 512, 128);
+    } catch (err) {
+        caught = true;
+        assert(str(err).includes("OOM"));
+    }
+    assert(caught);
+
+    // Exact fill does not throw.
+    assert_eq(alloc_or_throw(384, 512, 128), 512);
+}
+
+export test fn test_budget_exhaustion_accounting() {
+    let exact = exhaust(1000, 100);
+    assert_eq(exact[0], 10);
+    assert_eq(exact[1], 0);
+
+    let remainder = exhaust(1050, 100);
+    assert_eq(remainder[0], 10);
+    assert_eq(remainder[1], 50);
+
+    let tiny = exhaust(7, 4);
+    assert_eq(tiny[0], 1);
+    assert_eq(tiny[1], 3);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic test suite runner for main.adesh integration
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests() {
+    test_small_allocations_fit();
+    test_over_budget_rejected();
+    test_allocation_sequence();
+    test_oom_throws_catchable();
+    test_budget_exhaustion_accounting();
+    return 5;
+}
+
+fn main() {
+    print("Running 02_static_budget tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 02_static_budget.test.adesh`);
+}
