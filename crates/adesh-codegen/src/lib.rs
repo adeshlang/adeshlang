@@ -20,8 +20,10 @@ pub mod targets;
 pub use accelerators::{GpuBackend, TensorAcceleratorBackend};
 pub use backend::{AcceleratorBackend, CodegenBackend};
 pub use calling_convention::{
-    Aapcs32CallingConvention, Aapcs64CallingConvention, CallingConvention, RiscVCallingConvention,
+    Aapcs32CallingConvention, Aapcs64CallingConvention, ArgumentLocation, CallingConvention,
+    MoveLocation, MoveOperation, ParallelMoveResolver, RiscVCallingConvention,
     SystemVX64CallingConvention, WasmCallingConvention, WindowsX64CallingConvention,
+    resolve_call_arguments,
 };
 pub use concurrency::{AtomicOp, ConcurrencyPass, MemoryOrder};
 pub use cranelift_adapter::CraneliftAdapter;

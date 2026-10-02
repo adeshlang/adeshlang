@@ -14,12 +14,13 @@ pub mod encoder;
 
 use crate::backend::CodegenBackend;
 use crate::calling_convention::{
-    CallingConvention, SystemVX64CallingConvention, WindowsX64CallingConvention,
+    CallingConvention, ParallelMoveResolver, SystemVX64CallingConvention,
+    WindowsX64CallingConvention,
 };
 use crate::error::CodegenError;
 use crate::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
-    NativeModule, PhysicalRegister,
+    NativeModule, PhysicalRegister, RegisterClass,
 };
 use crate::register_alloc::{LinearScanAllocator, RegisterFile};
 use crate::targets::x86_64::encoder::X86_64Encoder;
@@ -34,6 +35,8 @@ use std::collections::HashMap;
 const SCRATCH: u8 = 10;
 /// Second scratch register, used to preserve RCX around shift counts (R11).
 const SCRATCH2: u8 = 11;
+/// Encoder scratch register for floating-point operations (XMM15 = 31).
+const FP_SCRATCH: u8 = 15;
 
 // ---------------------------------------------------------------- Register File
 
@@ -43,11 +46,14 @@ const SCRATCH2: u8 = 11;
 /// RAX is the implicit DIV/IDIV operand and the return-value register,
 /// R10 backs stack-slot arithmetic sequences, and R11 preserves RCX around
 /// shift-count transfers.
+///
+/// XMM15 (31) is reserved for the encoder floating-point scratch operations.
 pub struct X86_64RegisterFile;
 
 // 0: RAX, 1: RCX, 2: RDX, 3: RBX, 4: RSP, 5: RBP, 6: RSI, 7: RDI
 // 8: R8, 9: R9, 10: R10, 11: R11, 12: R12, 13: R13, 14: R14, 15: R15
-const X86_64_ALL_REGS: [PhysicalRegister; 16] = [
+// 16: XMM0 .. 31: XMM15
+const X86_64_ALL_REGS: [PhysicalRegister; 32] = [
     PhysicalRegister(0),
     PhysicalRegister(1),
     PhysicalRegister(2),
@@ -64,9 +70,25 @@ const X86_64_ALL_REGS: [PhysicalRegister; 16] = [
     PhysicalRegister(13),
     PhysicalRegister(14),
     PhysicalRegister(15),
+    PhysicalRegister(16),
+    PhysicalRegister(17),
+    PhysicalRegister(18),
+    PhysicalRegister(19),
+    PhysicalRegister(20),
+    PhysicalRegister(21),
+    PhysicalRegister(22),
+    PhysicalRegister(23),
+    PhysicalRegister(24),
+    PhysicalRegister(25),
+    PhysicalRegister(26),
+    PhysicalRegister(27),
+    PhysicalRegister(28),
+    PhysicalRegister(29),
+    PhysicalRegister(30),
+    PhysicalRegister(31),
 ];
 
-const X86_64_ALLOCATABLE: [PhysicalRegister; 11] = [
+const X86_64_ALLOCATABLE_GPR: [PhysicalRegister; 11] = [
     PhysicalRegister(1),  // RCX
     PhysicalRegister(2),  // RDX
     PhysicalRegister(3),  // RBX
@@ -80,7 +102,7 @@ const X86_64_ALLOCATABLE: [PhysicalRegister; 11] = [
     PhysicalRegister(15), // R15
 ];
 
-const X86_64_CALLER_SAVED: [PhysicalRegister; 6] = [
+const X86_64_CALLER_SAVED_GPR: [PhysicalRegister; 6] = [
     PhysicalRegister(1), // RCX
     PhysicalRegister(2), // RDX
     PhysicalRegister(6), // RSI
@@ -89,7 +111,7 @@ const X86_64_CALLER_SAVED: [PhysicalRegister; 6] = [
     PhysicalRegister(9), // R9
 ];
 
-const X86_64_CALLEE_SAVED: [PhysicalRegister; 5] = [
+const X86_64_CALLEE_SAVED_GPR: [PhysicalRegister; 5] = [
     PhysicalRegister(3),  // RBX
     PhysicalRegister(12), // R12
     PhysicalRegister(13), // R13
@@ -97,7 +119,7 @@ const X86_64_CALLEE_SAVED: [PhysicalRegister; 5] = [
     PhysicalRegister(15), // R15
 ];
 
-const X86_64_RESERVED: [PhysicalRegister; 5] = [
+const X86_64_RESERVED_GPR: [PhysicalRegister; 5] = [
     PhysicalRegister(0),  // RAX: DIV/IDIV implicit operand, return value
     PhysicalRegister(4),  // RSP: stack pointer
     PhysicalRegister(5),  // RBP: frame pointer
@@ -105,21 +127,87 @@ const X86_64_RESERVED: [PhysicalRegister; 5] = [
     PhysicalRegister(11), // R11: encoder scratch (RCX preservation)
 ];
 
+const X86_64_ALLOCATABLE_FP: [PhysicalRegister; 15] = [
+    PhysicalRegister(16), // XMM0
+    PhysicalRegister(17), // XMM1
+    PhysicalRegister(18), // XMM2
+    PhysicalRegister(19), // XMM3
+    PhysicalRegister(20), // XMM4
+    PhysicalRegister(21), // XMM5
+    PhysicalRegister(22), // XMM6
+    PhysicalRegister(23), // XMM7
+    PhysicalRegister(24), // XMM8
+    PhysicalRegister(25), // XMM9
+    PhysicalRegister(26), // XMM10
+    PhysicalRegister(27), // XMM11
+    PhysicalRegister(28), // XMM12
+    PhysicalRegister(29), // XMM13
+    PhysicalRegister(30), // XMM14
+];
+
+const X86_64_CALLER_SAVED_FP: [PhysicalRegister; 15] = [
+    PhysicalRegister(16), // XMM0
+    PhysicalRegister(17), // XMM1
+    PhysicalRegister(18), // XMM2
+    PhysicalRegister(19), // XMM3
+    PhysicalRegister(20), // XMM4
+    PhysicalRegister(21), // XMM5
+    PhysicalRegister(22), // XMM6
+    PhysicalRegister(23), // XMM7
+    PhysicalRegister(24), // XMM8
+    PhysicalRegister(25), // XMM9
+    PhysicalRegister(26), // XMM10
+    PhysicalRegister(27), // XMM11
+    PhysicalRegister(28), // XMM12
+    PhysicalRegister(29), // XMM13
+    PhysicalRegister(30), // XMM14
+];
+
+const X86_64_CALLEE_SAVED_FP: [PhysicalRegister; 0] = [];
+
+const X86_64_RESERVED_FP: [PhysicalRegister; 1] = [
+    PhysicalRegister(31), // XMM15: FP scratch
+];
+
 impl RegisterFile for X86_64RegisterFile {
     fn registers(&self) -> &[PhysicalRegister] {
         &X86_64_ALL_REGS
     }
     fn allocatable(&self) -> &[PhysicalRegister] {
-        &X86_64_ALLOCATABLE
+        &X86_64_ALLOCATABLE_GPR
     }
     fn caller_saved(&self) -> &[PhysicalRegister] {
-        &X86_64_CALLER_SAVED
+        &X86_64_CALLER_SAVED_GPR
     }
     fn callee_saved(&self) -> &[PhysicalRegister] {
-        &X86_64_CALLEE_SAVED
+        &X86_64_CALLEE_SAVED_GPR
     }
     fn reserved(&self) -> &[PhysicalRegister] {
-        &X86_64_RESERVED
+        &X86_64_RESERVED_GPR
+    }
+    fn allocatable_for_class(&self, class: RegisterClass) -> &[PhysicalRegister] {
+        match class {
+            RegisterClass::Gpr => &X86_64_ALLOCATABLE_GPR,
+            RegisterClass::Float => &X86_64_ALLOCATABLE_FP,
+        }
+    }
+    fn caller_saved_for_class(&self, class: RegisterClass) -> &[PhysicalRegister] {
+        match class {
+            RegisterClass::Gpr => &X86_64_CALLER_SAVED_GPR,
+            RegisterClass::Float => &X86_64_CALLER_SAVED_FP,
+        }
+    }
+    fn callee_saved_for_class(&self, class: RegisterClass) -> &[PhysicalRegister] {
+        match class {
+            RegisterClass::Gpr => &X86_64_CALLEE_SAVED_GPR,
+            RegisterClass::Float => &X86_64_CALLEE_SAVED_FP,
+        }
+    }
+    fn reserved_for_class(&self, class: RegisterClass) -> &[PhysicalRegister] {
+        match class {
+            RegisterClass::Gpr => &X86_64_RESERVED_GPR,
+            RegisterClass::Float => &X86_64_RESERVED_FP,
+        }
     }
 }
 
@@ -196,6 +284,16 @@ fn instruction_name(inst: &MachineInstruction) -> &'static str {
         MachineInstruction::Vector { .. } => "Vector",
         MachineInstruction::Atomic { .. } => "Atomic",
         MachineInstruction::Barrier => "Barrier",
+        MachineInstruction::ParallelMove { .. } => "ParallelMove",
+        MachineInstruction::FAdd { .. } => "FAdd",
+        MachineInstruction::FSub { .. } => "FSub",
+        MachineInstruction::FMul { .. } => "FMul",
+        MachineInstruction::FDiv { .. } => "FDiv",
+        MachineInstruction::FNeg { .. } => "FNeg",
+        MachineInstruction::FCmp { .. } => "FCmp",
+        MachineInstruction::FCvtIntToFloat { .. } => "FCvtIntToFloat",
+        MachineInstruction::FCvtFloatToInt { .. } => "FCvtFloatToInt",
+        MachineInstruction::FCvtFloatToFloat { .. } => "FCvtFloatToFloat",
         MachineInstruction::Custom { .. } => "Custom",
     }
 }
@@ -226,6 +324,9 @@ fn instruction_uses_register(inst: &MachineInstruction, reg: u8) -> bool {
         | MachineInstruction::Branch { .. }
         | MachineInstruction::BranchCc { .. }
         | MachineInstruction::Barrier => false,
+        MachineInstruction::ParallelMove { moves } => moves
+            .iter()
+            .any(|m| hit(&m.dst.to_operand()) || hit(&m.src.to_operand())),
         MachineInstruction::Move { dst, src }
         | MachineInstruction::Load { dst, src, .. }
         | MachineInstruction::Store { dst, src, .. }
@@ -239,12 +340,21 @@ fn instruction_uses_register(inst: &MachineInstruction, reg: u8) -> bool {
         | MachineInstruction::Xor { dst, src }
         | MachineInstruction::Shl { dst, src }
         | MachineInstruction::Shr { dst, src }
-        | MachineInstruction::Sar { dst, src } => hit(dst) || hit(src),
+        | MachineInstruction::Sar { dst, src }
+        | MachineInstruction::FAdd { dst, src, .. }
+        | MachineInstruction::FSub { dst, src, .. }
+        | MachineInstruction::FMul { dst, src, .. }
+        | MachineInstruction::FDiv { dst, src, .. }
+        | MachineInstruction::FCmp { lhs: dst, rhs: src, .. }
+        | MachineInstruction::FCvtIntToFloat { dst, src, .. }
+        | MachineInstruction::FCvtFloatToInt { dst, src, .. }
+        | MachineInstruction::FCvtFloatToFloat { dst, src, .. } => hit(dst) || hit(src),
         MachineInstruction::Compare { lhs, rhs } | MachineInstruction::Test { lhs, rhs } => {
             hit(lhs) || hit(rhs)
         }
         MachineInstruction::Neg { dst }
         | MachineInstruction::Not { dst }
+        | MachineInstruction::FNeg { dst, .. }
         | MachineInstruction::SetCc { dst, .. }
         | MachineInstruction::Push { src: dst }
         | MachineInstruction::Pop { dst } => hit(dst),
@@ -346,8 +456,9 @@ struct FunctionEncoding {
     branch_fixups: Vec<BranchFixup>,
     block_offsets: HashMap<String, usize>,
     used_callee_saved: Vec<u8>,
+    callee_slots: HashMap<u8, i32>,
     /// Bytes of locals + register-spill area (8-byte aligned).
-    locals_size: i32,
+    _locals_size: i32,
     /// Total frame allocation (16-byte aligned), including the callee-saved
     /// save area.
     frame_size: i32,
@@ -369,8 +480,19 @@ impl FunctionEncoding {
         used_callee_saved.dedup();
 
         let locals_size = (func.stack_size as i32 + 7) & !7;
-        let callee_area = 8 * used_callee_saved.len() as i32;
-        let frame_size = (locals_size + callee_area + 15) & !15;
+        let mut cur_offset = locals_size;
+        let mut callee_slots = HashMap::new();
+        for &r in &used_callee_saved {
+            if r >= 16 {
+                cur_offset = (cur_offset + 15) & !15;
+                cur_offset += 16;
+                callee_slots.insert(r, -cur_offset);
+            } else {
+                cur_offset += 8;
+                callee_slots.insert(r, -cur_offset);
+            }
+        }
+        let frame_size = (cur_offset + 15) & !15;
 
         Self {
             enc: X86_64Encoder::new(),
@@ -378,16 +500,15 @@ impl FunctionEncoding {
             branch_fixups: Vec::new(),
             block_offsets: HashMap::new(),
             used_callee_saved,
-            locals_size,
+            callee_slots,
+            _locals_size: locals_size,
             frame_size,
             saw_return: false,
         }
     }
 
-    /// RBP-relative (negative) frame slot of the i-th callee-saved register.
-    /// The save area sits below locals and spills, so nothing collides.
-    fn callee_slot(&self, i: usize) -> i32 {
-        -(self.locals_size + 8 * (i as i32 + 1))
+    fn callee_slot(&self, reg: u8) -> i32 {
+        self.callee_slots[&reg]
     }
 
     fn emit_prologue(&mut self) {
@@ -397,15 +518,25 @@ impl FunctionEncoding {
             self.enc.sub_r64_imm32(4, self.frame_size); // sub rsp, frame_size
         }
         let callee_saved = self.used_callee_saved.clone();
-        for (i, reg) in callee_saved.iter().enumerate() {
-            self.enc.mov_rbp_offset_r64(self.callee_slot(i), *reg);
+        for &reg in &callee_saved {
+            let slot = self.callee_slot(reg);
+            if reg < 16 {
+                self.enc.mov_rbp_offset_r64(slot, reg);
+            } else {
+                self.enc.movsd_mem_xmm(5, slot, None, reg - 16);
+            }
         }
     }
 
     fn emit_epilogue(&mut self) {
         let callee_saved = self.used_callee_saved.clone();
-        for (i, reg) in callee_saved.iter().enumerate() {
-            self.enc.mov_r64_rbp_offset(*reg, self.callee_slot(i));
+        for &reg in &callee_saved {
+            let slot = self.callee_slot(reg);
+            if reg < 16 {
+                self.enc.mov_r64_rbp_offset(reg, slot);
+            } else {
+                self.enc.movsd_xmm_mem(reg - 16, 5, slot, None);
+            }
         }
         self.enc.mov_r64_r64(4, 5); // mov rsp, rbp
         self.enc.pop_reg64(5); // pop rbp
@@ -425,8 +556,7 @@ impl FunctionEncoding {
         .with_function(func_name)
         .with_instruction(instruction_name(inst))
         .with_suggestion(
-            "The native x86-64 backend encodes 64-bit integer GPR forms only; \
-             vector and atomic instructions are not yet supported.",
+            "The native x86-64 backend encodes 64-bit integer GPR forms and SSE2 scalar float forms only.",
         )
     }
 
@@ -516,12 +646,118 @@ impl FunctionEncoding {
         false
     }
 
+    fn load_fp_operand_into_xmm(&mut self, src: &MachineOperand, xmm_scratch: u8, is_f64: bool) -> bool {
+        if let Some(s) = phys_reg(src) {
+            if s >= 16 {
+                let s_xmm = s - 16;
+                if s_xmm != xmm_scratch {
+                    if is_f64 {
+                        self.enc.movsd_xmm_xmm(xmm_scratch, s_xmm);
+                    } else {
+                        self.enc.movss_xmm_xmm(xmm_scratch, s_xmm);
+                    }
+                }
+                return true;
+            }
+        }
+        match src {
+            MachineOperand::FloatImmediate(f) => {
+                if is_f64 {
+                    self.enc.mov_r64_imm64(SCRATCH, f.to_bits() as i64);
+                    self.enc.movq_xmm_r64(xmm_scratch, SCRATCH);
+                } else {
+                    let bits = (*f as f32).to_bits() as i32;
+                    self.enc.mov_r32_imm32(SCRATCH, bits);
+                    self.enc.movd_xmm_r32(xmm_scratch, SCRATCH);
+                }
+                true
+            }
+            MachineOperand::Immediate(v) => {
+                self.enc.mov_r64_imm64(SCRATCH, *v);
+                if is_f64 {
+                    self.enc.movq_xmm_r64(xmm_scratch, SCRATCH);
+                } else {
+                    self.enc.movd_xmm_r32(xmm_scratch, SCRATCH);
+                }
+                true
+            }
+            MachineOperand::StackSlot(slot) => {
+                if is_f64 {
+                    self.enc.movsd_xmm_mem(xmm_scratch, 5, *slot, None);
+                } else {
+                    self.enc.movss_xmm_mem(xmm_scratch, 5, *slot, None);
+                }
+                true
+            }
+            MachineOperand::Memory { .. } => {
+                if let Some((b, off, idx)) = mem_operand(src) {
+                    if is_f64 {
+                        self.enc.movsd_xmm_mem(xmm_scratch, b, off, idx);
+                    } else {
+                        self.enc.movss_xmm_mem(xmm_scratch, b, off, idx);
+                    }
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
     fn encode_move(&mut self, dst: &MachineOperand, src: &MachineOperand) -> bool {
         // Register destination.
         if let Some(d) = phys_reg(dst) {
+            if d >= 16 {
+                // FP register destination (XMM d-16)
+                let xd = d - 16;
+                if let Some(s) = phys_reg(src) {
+                    if s >= 16 {
+                        // XMM to XMM
+                        self.enc.movsd_xmm_xmm(xd, s - 16);
+                        return true;
+                    } else {
+                        // GPR to XMM (bit transfer)
+                        self.enc.movq_xmm_r64(xd, s);
+                        return true;
+                    }
+                }
+                match src {
+                    MachineOperand::FloatImmediate(f) => {
+                        self.enc.mov_r64_imm64(SCRATCH, f.to_bits() as i64);
+                        self.enc.movq_xmm_r64(xd, SCRATCH);
+                        return true;
+                    }
+                    MachineOperand::Immediate(v) => {
+                        self.enc.mov_r64_imm64(SCRATCH, *v);
+                        self.enc.movq_xmm_r64(xd, SCRATCH);
+                        return true;
+                    }
+                    MachineOperand::StackSlot(slot) => {
+                        self.enc.movsd_xmm_mem(xd, 5, *slot, None);
+                        return true;
+                    }
+                    MachineOperand::Memory { .. } => {
+                        if let Some((b, off, idx)) = mem_operand(src) {
+                            self.enc.movsd_xmm_mem(xd, b, off, idx);
+                            return true;
+                        }
+                    }
+                    _ => {}
+                }
+                return false;
+            }
+
+            // GPR register destination.
             if let Some(s) = phys_reg(src) {
-                self.enc.mov_r64_r64(d, s);
-                return true;
+                if s >= 16 {
+                    // XMM to GPR (bit transfer)
+                    self.enc.movq_r64_xmm(d, s - 16);
+                    return true;
+                } else {
+                    self.enc.mov_r64_r64(d, s);
+                    return true;
+                }
             }
             match src {
                 MachineOperand::Immediate(v) => {
@@ -551,8 +787,13 @@ impl FunctionEncoding {
         // Stack-slot destination.
         if let Some(slot) = stack_slot(dst) {
             if let Some(s) = phys_reg(src) {
-                self.enc.mov_rbp_offset_r64(slot, s);
-                return true;
+                if s >= 16 {
+                    self.enc.movsd_mem_xmm(5, slot, None, s - 16);
+                    return true;
+                } else {
+                    self.enc.mov_rbp_offset_r64(slot, s);
+                    return true;
+                }
             }
             match src {
                 MachineOperand::Immediate(v) => {
@@ -585,12 +826,22 @@ impl FunctionEncoding {
         // Memory destination.
         if let Some((b, off, idx)) = mem_operand(dst) {
             if let Some(s) = phys_reg(src) {
-                self.enc.mov_mem_r64(b, off, idx, s);
-                return true;
+                if s >= 16 {
+                    self.enc.movsd_mem_xmm(b, off, idx, s - 16);
+                    return true;
+                } else {
+                    self.enc.mov_mem_r64(b, off, idx, s);
+                    return true;
+                }
             }
             match src {
                 MachineOperand::Immediate(v) => {
                     self.enc.mov_r64_imm64(SCRATCH, *v);
+                    self.enc.mov_mem_r64(b, off, idx, SCRATCH);
+                    return true;
+                }
+                MachineOperand::FloatImmediate(f) => {
+                    self.enc.mov_r64_imm64(SCRATCH, f.to_bits() as i64);
                     self.enc.mov_mem_r64(b, off, idx, SCRATCH);
                     return true;
                 }
@@ -1039,6 +1290,18 @@ impl FunctionEncoding {
                         target: name.clone(),
                     });
                 }
+                MachineOperand::StackSlot(slot) => {
+                    self.enc.mov_r64_rbp_offset(11, *slot);
+                    self.enc.call_r64(11);
+                }
+                MachineOperand::Memory { .. } => {
+                    if let Some((b, off, idx)) = mem_operand(target) {
+                        self.enc.mov_r64_mem(11, b, off, idx);
+                        self.enc.call_r64(11);
+                    } else {
+                        return Err(self.unsupported(inst, func_name, abi));
+                    }
+                }
                 MachineOperand::Register(MachineRegister::Virtual(v)) => {
                     return Err(CodegenError::new(
                         "x86_64",
@@ -1078,6 +1341,296 @@ impl FunctionEncoding {
                 }
             }
             MachineInstruction::Barrier => self.enc.mfence(),
+            MachineInstruction::FAdd { dst, src, size } => {
+                let is_f64 = *size == 8;
+                let (d_xmm, d_slot) = if let Some(d) = phys_reg(dst) {
+                    if d >= 16 { (d - 16, None) } else { return Err(self.unsupported(inst, func_name, abi)); }
+                } else if let Some(slot) = stack_slot(dst) {
+                    if is_f64 {
+                        self.enc.movsd_xmm_mem(FP_SCRATCH, 5, slot, None);
+                    } else {
+                        self.enc.movss_xmm_mem(FP_SCRATCH, 5, slot, None);
+                    }
+                    (FP_SCRATCH, Some(slot))
+                } else {
+                    return Err(self.unsupported(inst, func_name, abi));
+                };
+                let s_xmm = if let Some(s) = phys_reg(src) {
+                    if s >= 16 { s - 16 } else { return Err(self.unsupported(inst, func_name, abi)); }
+                } else {
+                    if !self.load_fp_operand_into_xmm(src, FP_SCRATCH, is_f64) {
+                        return Err(self.unsupported(inst, func_name, abi));
+                    }
+                    FP_SCRATCH
+                };
+                if is_f64 {
+                    self.enc.addsd_xmm_xmm(d_xmm, s_xmm);
+                    if let Some(slot) = d_slot {
+                        self.enc.movsd_mem_xmm(5, slot, None, d_xmm);
+                    }
+                } else {
+                    self.enc.addss_xmm_xmm(d_xmm, s_xmm);
+                    if let Some(slot) = d_slot {
+                        self.enc.movss_mem_xmm(5, slot, None, d_xmm);
+                    }
+                }
+            }
+            MachineInstruction::FSub { dst, src, size } => {
+                let is_f64 = *size == 8;
+                let (d_xmm, d_slot) = if let Some(d) = phys_reg(dst) {
+                    if d >= 16 { (d - 16, None) } else { return Err(self.unsupported(inst, func_name, abi)); }
+                } else if let Some(slot) = stack_slot(dst) {
+                    if is_f64 {
+                        self.enc.movsd_xmm_mem(FP_SCRATCH, 5, slot, None);
+                    } else {
+                        self.enc.movss_xmm_mem(FP_SCRATCH, 5, slot, None);
+                    }
+                    (FP_SCRATCH, Some(slot))
+                } else {
+                    return Err(self.unsupported(inst, func_name, abi));
+                };
+                let s_xmm = if let Some(s) = phys_reg(src) {
+                    if s >= 16 { s - 16 } else { return Err(self.unsupported(inst, func_name, abi)); }
+                } else {
+                    if !self.load_fp_operand_into_xmm(src, FP_SCRATCH, is_f64) {
+                        return Err(self.unsupported(inst, func_name, abi));
+                    }
+                    FP_SCRATCH
+                };
+                if is_f64 {
+                    self.enc.subsd_xmm_xmm(d_xmm, s_xmm);
+                    if let Some(slot) = d_slot {
+                        self.enc.movsd_mem_xmm(5, slot, None, d_xmm);
+                    }
+                } else {
+                    self.enc.subss_xmm_xmm(d_xmm, s_xmm);
+                    if let Some(slot) = d_slot {
+                        self.enc.movss_mem_xmm(5, slot, None, d_xmm);
+                    }
+                }
+            }
+            MachineInstruction::FMul { dst, src, size } => {
+                let is_f64 = *size == 8;
+                let (d_xmm, d_slot) = if let Some(d) = phys_reg(dst) {
+                    if d >= 16 { (d - 16, None) } else { return Err(self.unsupported(inst, func_name, abi)); }
+                } else if let Some(slot) = stack_slot(dst) {
+                    if is_f64 {
+                        self.enc.movsd_xmm_mem(FP_SCRATCH, 5, slot, None);
+                    } else {
+                        self.enc.movss_xmm_mem(FP_SCRATCH, 5, slot, None);
+                    }
+                    (FP_SCRATCH, Some(slot))
+                } else {
+                    return Err(self.unsupported(inst, func_name, abi));
+                };
+                let s_xmm = if let Some(s) = phys_reg(src) {
+                    if s >= 16 { s - 16 } else { return Err(self.unsupported(inst, func_name, abi)); }
+                } else {
+                    if !self.load_fp_operand_into_xmm(src, FP_SCRATCH, is_f64) {
+                        return Err(self.unsupported(inst, func_name, abi));
+                    }
+                    FP_SCRATCH
+                };
+                if is_f64 {
+                    self.enc.mulsd_xmm_xmm(d_xmm, s_xmm);
+                    if let Some(slot) = d_slot {
+                        self.enc.movsd_mem_xmm(5, slot, None, d_xmm);
+                    }
+                } else {
+                    self.enc.mulss_xmm_xmm(d_xmm, s_xmm);
+                    if let Some(slot) = d_slot {
+                        self.enc.movss_mem_xmm(5, slot, None, d_xmm);
+                    }
+                }
+            }
+            MachineInstruction::FDiv { dst, src, size } => {
+                let is_f64 = *size == 8;
+                let (d_xmm, d_slot) = if let Some(d) = phys_reg(dst) {
+                    if d >= 16 { (d - 16, None) } else { return Err(self.unsupported(inst, func_name, abi)); }
+                } else if let Some(slot) = stack_slot(dst) {
+                    if is_f64 {
+                        self.enc.movsd_xmm_mem(FP_SCRATCH, 5, slot, None);
+                    } else {
+                        self.enc.movss_xmm_mem(FP_SCRATCH, 5, slot, None);
+                    }
+                    (FP_SCRATCH, Some(slot))
+                } else {
+                    return Err(self.unsupported(inst, func_name, abi));
+                };
+                let s_xmm = if let Some(s) = phys_reg(src) {
+                    if s >= 16 { s - 16 } else { return Err(self.unsupported(inst, func_name, abi)); }
+                } else {
+                    if !self.load_fp_operand_into_xmm(src, FP_SCRATCH, is_f64) {
+                        return Err(self.unsupported(inst, func_name, abi));
+                    }
+                    FP_SCRATCH
+                };
+                if is_f64 {
+                    self.enc.divsd_xmm_xmm(d_xmm, s_xmm);
+                    if let Some(slot) = d_slot {
+                        self.enc.movsd_mem_xmm(5, slot, None, d_xmm);
+                    }
+                } else {
+                    self.enc.divss_xmm_xmm(d_xmm, s_xmm);
+                    if let Some(slot) = d_slot {
+                        self.enc.movss_mem_xmm(5, slot, None, d_xmm);
+                    }
+                }
+            }
+            MachineInstruction::FNeg { dst, size } => {
+                let is_f64 = *size == 8;
+                let (d_xmm, d_slot) = if let Some(d) = phys_reg(dst) {
+                    if d >= 16 { (d - 16, None) } else { return Err(self.unsupported(inst, func_name, abi)); }
+                } else if let Some(slot) = stack_slot(dst) {
+                    if is_f64 {
+                        self.enc.movsd_xmm_mem(FP_SCRATCH, 5, slot, None);
+                    } else {
+                        self.enc.movss_xmm_mem(FP_SCRATCH, 5, slot, None);
+                    }
+                    (FP_SCRATCH, Some(slot))
+                } else {
+                    return Err(self.unsupported(inst, func_name, abi));
+                };
+                if is_f64 {
+                    self.enc.mov_r64_imm64(SCRATCH, i64::from_ne_bytes(0x8000_0000_0000_0000u64.to_ne_bytes()));
+                    self.enc.movq_xmm_r64(FP_SCRATCH, SCRATCH);
+                    self.enc.xorpd_xmm_xmm(d_xmm, FP_SCRATCH);
+                    if let Some(slot) = d_slot {
+                        self.enc.movsd_mem_xmm(5, slot, None, d_xmm);
+                    }
+                } else {
+                    self.enc.mov_r32_imm32(SCRATCH, 0x8000_0000u32 as i32);
+                    self.enc.movd_xmm_r32(FP_SCRATCH, SCRATCH);
+                    self.enc.xorps_xmm_xmm(d_xmm, FP_SCRATCH);
+                    if let Some(slot) = d_slot {
+                        self.enc.movss_mem_xmm(5, slot, None, d_xmm);
+                    }
+                }
+            }
+            MachineInstruction::FCmp { lhs, rhs, size } => {
+                let is_f64 = *size == 8;
+                let l_xmm = if let Some(l) = phys_reg(lhs) {
+                    if l >= 16 { l - 16 } else { return Err(self.unsupported(inst, func_name, abi)); }
+                } else if let Some(slot) = stack_slot(lhs) {
+                    if is_f64 {
+                        self.enc.movsd_xmm_mem(FP_SCRATCH, 5, slot, None);
+                    } else {
+                        self.enc.movss_xmm_mem(FP_SCRATCH, 5, slot, None);
+                    }
+                    FP_SCRATCH
+                } else {
+                    return Err(self.unsupported(inst, func_name, abi));
+                };
+                let r_xmm = if let Some(r) = phys_reg(rhs) {
+                    if r >= 16 {
+                        r - 16
+                    } else {
+                        return Err(self.unsupported(inst, func_name, abi));
+                    }
+                } else {
+                    if !self.load_fp_operand_into_xmm(rhs, FP_SCRATCH, is_f64) {
+                        return Err(self.unsupported(inst, func_name, abi));
+                    }
+                    FP_SCRATCH
+                };
+                if is_f64 {
+                    self.enc.ucomisd_xmm_xmm(l_xmm, r_xmm);
+                } else {
+                    self.enc.ucomiss_xmm_xmm(l_xmm, r_xmm);
+                }
+            }
+            MachineInstruction::FCvtIntToFloat { dst, src, is_f64, is_signed: _ } => {
+                let (d_xmm, d_slot) = if let Some(d) = phys_reg(dst) {
+                    if d >= 16 { (d - 16, None) } else { return Err(self.unsupported(inst, func_name, abi)); }
+                } else if let Some(slot) = stack_slot(dst) {
+                    (FP_SCRATCH, Some(slot))
+                } else {
+                    return Err(self.unsupported(inst, func_name, abi));
+                };
+                let s_gpr = if let Some(s) = phys_reg(src) {
+                    if s < 16 { s } else { return Err(self.unsupported(inst, func_name, abi)); }
+                } else if let Some(slot) = stack_slot(src) {
+                    self.enc.mov_r64_rbp_offset(SCRATCH, slot);
+                    SCRATCH
+                } else if let MachineOperand::Immediate(v) = src {
+                    self.enc.mov_r64_imm64(SCRATCH, *v);
+                    SCRATCH
+                } else {
+                    return Err(self.unsupported(inst, func_name, abi));
+                };
+                if *is_f64 {
+                    self.enc.cvtsi2sd_xmm_r64(d_xmm, s_gpr);
+                    if let Some(slot) = d_slot {
+                        self.enc.movsd_mem_xmm(5, slot, None, d_xmm);
+                    }
+                } else {
+                    self.enc.cvtsi2ss_xmm_r64(d_xmm, s_gpr);
+                    if let Some(slot) = d_slot {
+                        self.enc.movss_mem_xmm(5, slot, None, d_xmm);
+                    }
+                }
+            }
+            MachineInstruction::FCvtFloatToInt { dst, src, is_f64, is_signed: _ } => {
+                let d_gpr = if let Some(d) = phys_reg(dst) {
+                    if d < 16 { d } else { return Err(self.unsupported(inst, func_name, abi)); }
+                } else if let Some(_slot) = stack_slot(dst) {
+                    SCRATCH
+                } else {
+                    return Err(self.unsupported(inst, func_name, abi));
+                };
+                let s_xmm = if let Some(s) = phys_reg(src) {
+                    if s >= 16 { s - 16 } else { return Err(self.unsupported(inst, func_name, abi)); }
+                } else if let Some(slot) = stack_slot(src) {
+                    if *is_f64 {
+                        self.enc.movsd_xmm_mem(FP_SCRATCH, 5, slot, None);
+                    } else {
+                        self.enc.movss_xmm_mem(FP_SCRATCH, 5, slot, None);
+                    }
+                    FP_SCRATCH
+                } else {
+                    return Err(self.unsupported(inst, func_name, abi));
+                };
+                if *is_f64 {
+                    self.enc.cvttsd2si_r64_xmm(d_gpr, s_xmm);
+                } else {
+                    self.enc.cvttss2si_r64_xmm(d_gpr, s_xmm);
+                }
+                if let Some(slot) = stack_slot(dst) {
+                    self.enc.mov_rbp_offset_r64(slot, SCRATCH);
+                }
+            }
+            MachineInstruction::FCvtFloatToFloat { dst, src, to_f64 } => {
+                let (d_xmm, d_slot) = if let Some(d) = phys_reg(dst) {
+                    if d >= 16 { (d - 16, None) } else { return Err(self.unsupported(inst, func_name, abi)); }
+                } else if let Some(slot) = stack_slot(dst) {
+                    (FP_SCRATCH, Some(slot))
+                } else {
+                    return Err(self.unsupported(inst, func_name, abi));
+                };
+                let s_xmm = if let Some(s) = phys_reg(src) {
+                    if s >= 16 { s - 16 } else { return Err(self.unsupported(inst, func_name, abi)); }
+                } else if let Some(slot) = stack_slot(src) {
+                    if *to_f64 {
+                        self.enc.movss_xmm_mem(FP_SCRATCH, 5, slot, None);
+                    } else {
+                        self.enc.movsd_xmm_mem(FP_SCRATCH, 5, slot, None);
+                    }
+                    FP_SCRATCH
+                } else {
+                    return Err(self.unsupported(inst, func_name, abi));
+                };
+                if *to_f64 {
+                    self.enc.cvtss2sd_xmm_xmm(d_xmm, s_xmm);
+                    if let Some(slot) = d_slot {
+                        self.enc.movsd_mem_xmm(5, slot, None, d_xmm);
+                    }
+                } else {
+                    self.enc.cvtsd2ss_xmm_xmm(d_xmm, s_xmm);
+                    if let Some(slot) = d_slot {
+                        self.enc.movss_mem_xmm(5, slot, None, d_xmm);
+                    }
+                }
+            }
             MachineInstruction::Vector { op, .. } => {
                 return Err(CodegenError::new(
                     "x86_64",
@@ -1097,6 +1650,13 @@ impl FunctionEncoding {
                 .with_abi(abi)
                 .with_function(func_name)
                 .with_instruction("Atomic"));
+            }
+            MachineInstruction::ParallelMove { moves } => {
+                let resolver = ParallelMoveResolver::for_x86_64();
+                let resolved = resolver.resolve_moves(moves)?;
+                for inner_inst in &resolved {
+                    self.encode_instruction(inner_inst, func_name, abi)?;
+                }
             }
             MachineInstruction::Custom { name, .. } => {
                 return Err(CodegenError::new(
@@ -1163,20 +1723,42 @@ impl X86_64Backend {
         }
     }
 
+    /// Expand all ParallelMove instructions in a function using the ParallelMoveResolver.
+    pub fn expand_parallel_moves(func: &mut MachineFunction) -> Result<(), CodegenError> {
+        let resolver = ParallelMoveResolver::for_x86_64();
+        for block in &mut func.blocks {
+            let mut new_instructions = Vec::with_capacity(block.instructions.len());
+            for inst in block.instructions.drain(..) {
+                match inst {
+                    MachineInstruction::ParallelMove { moves } => {
+                        let resolved = resolver.resolve_moves(&moves)?;
+                        new_instructions.extend(resolved);
+                    }
+                    other => new_instructions.push(other),
+                }
+            }
+            block.instructions = new_instructions;
+        }
+        Ok(())
+    }
+
     /// Encode a single (already register-allocated) function.
     fn encode_function(
         &self,
         func: &MachineFunction,
     ) -> Result<(Vec<u8>, Vec<AdobRelocation>), CodegenError> {
+        let mut func_expanded = func.clone();
+        Self::expand_parallel_moves(&mut func_expanded)?;
+
         let conv = self.calling_convention();
         let abi = conv.name();
-        let mut ctx = FunctionEncoding::new(func, conv.as_ref());
+        let mut ctx = FunctionEncoding::new(&func_expanded, conv.as_ref());
         ctx.emit_prologue();
 
-        for block in &func.blocks {
+        for block in &func_expanded.blocks {
             ctx.block_offsets.insert(block.label.clone(), ctx.enc.len());
             for inst in &block.instructions {
-                ctx.encode_instruction(inst, &func.name, abi)?;
+                ctx.encode_instruction(inst, &func_expanded.name, abi)?;
             }
         }
 
@@ -1200,6 +1782,7 @@ impl CodegenBackend for X86_64Backend {
 
         for func in &mut lowered.functions {
             allocator.allocate(func);
+            Self::expand_parallel_moves(func)?;
         }
 
         Ok(lowered)

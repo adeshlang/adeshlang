@@ -6,14 +6,16 @@
 //! rich pretty-printing options, and branch/call relocation generation.
 
 use crate::parsing::hir::{
-    BinOp, HirExpr, HirFunction, HirLiteral, HirModule, HirStmt, HirType, UnaryOp,
+    BinOp, HirClass, HirExpr, HirFunction, HirLiteral, HirModule, HirPattern, HirStmt, HirType,
+    UnaryOp,
 };
 use adesh_codegen::calling_convention::{
-    CallingConvention, SystemVX64CallingConvention, WindowsX64CallingConvention,
+    ArgumentLocation, CallingConvention, MoveLocation, MoveOperation, ParallelMoveResolver,
+    SystemVX64CallingConvention, WindowsX64CallingConvention, resolve_call_arguments,
 };
 use adesh_codegen::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
-    NativeModule, PhysicalRegister, VirtualRegister,
+    NativeModule, PhysicalRegister, RegisterClass, VirtualRegister,
 };
 use adesh_object::{OperatingSystem, TargetDescriptor};
 use std::collections::HashMap;
@@ -26,6 +28,14 @@ pub struct LoopContext {
     pub idx_slot: Option<i32>,
 }
 
+pub fn is_float_type(ty: Option<&HirType>) -> bool {
+    matches!(ty, Some(HirType::Float | HirType::F64 | HirType::F32))
+}
+
+pub fn is_f32_type(ty: Option<&HirType>) -> bool {
+    matches!(ty, Some(HirType::F32))
+}
+
 /// Lowering context for a single function.
 pub struct FunctionLoweringContext<'a> {
     pub func: &'a mut MachineFunction,
@@ -34,9 +44,12 @@ pub struct FunctionLoweringContext<'a> {
     pub call_conv: Box<dyn CallingConvention>,
     pub local_vars: HashMap<String, (i32, Option<HirType>)>, // (stack_offset, type)
     pub loop_stack: Vec<LoopContext>,
+    pub defer_stack: Vec<HirStmt>,
     pub current_stack_offset: i32,
     pub current_block_id: u32,
     pub label_counter: u32,
+    pub func_ret_type: Option<HirType>,
+    pub fn_signatures: HashMap<String, (Vec<HirType>, Option<HirType>)>,
 }
 
 fn infer_hir_expr_type(expr: &HirExpr) -> Option<HirType> {
@@ -67,6 +80,45 @@ fn infer_hir_expr_type(expr: &HirExpr) -> Option<HirType> {
         HirExpr::ObjectLiteral(_) => Some(HirType::Object),
         HirExpr::TupleLiteral(elems) => Some(HirType::Tuple(vec![HirType::Any; elems.len()])),
         HirExpr::SetLiteral(_) => Some(HirType::Set(Box::new(HirType::Any))),
+        HirExpr::BinaryOp(lhs, op, rhs) => {
+            if matches!(
+                op,
+                BinOp::Eq
+                    | BinOp::StrictEq
+                    | BinOp::Ne
+                    | BinOp::StrictNe
+                    | BinOp::Lt
+                    | BinOp::Le
+                    | BinOp::Gt
+                    | BinOp::Ge
+                    | BinOp::And
+                    | BinOp::Or
+                    | BinOp::In
+            ) {
+                return Some(HirType::Bool);
+            }
+            let l = infer_hir_expr_type(lhs);
+            let r = infer_hir_expr_type(rhs);
+            if matches!(l, Some(HirType::Float | HirType::F64))
+                || matches!(r, Some(HirType::Float | HirType::F64))
+            {
+                return Some(HirType::Float);
+            }
+            if matches!(l, Some(HirType::F32)) || matches!(r, Some(HirType::F32)) {
+                return Some(HirType::F32);
+            }
+            l.or(r)
+        }
+        HirExpr::UnaryOp(op, inner) => {
+            if matches!(op, UnaryOp::Not) {
+                return Some(HirType::Bool);
+            }
+            if matches!(op, UnaryOp::Typeof) {
+                return Some(HirType::String);
+            }
+            infer_hir_expr_type(inner)
+        }
+        HirExpr::Cast(_, ty) => Some(ty.clone()),
         HirExpr::Call(callee, _, _) => {
             if let HirExpr::LoadVar(fn_name) = &**callee {
                 if matches!(fn_name.as_str(), "int" | "i64" | "sizeof" | "sizeOf") {
@@ -95,7 +147,28 @@ fn infer_hir_expr_type(expr: &HirExpr) -> Option<HirType> {
                 }
                 if matches!(
                     fn_name.as_str(),
-                    "float" | "f64" | "number" | "Number" | "clock"
+                    "float"
+                        | "f64"
+                        | "number"
+                        | "Number"
+                        | "clock"
+                        | "sin"
+                        | "cos"
+                        | "tan"
+                        | "sqrt"
+                        | "exp"
+                        | "log"
+                        | "log10"
+                        | "pow"
+                        | "floor"
+                        | "ceil"
+                        | "round"
+                        | "fabs"
+                        | "fmod"
+                        | "asin"
+                        | "acos"
+                        | "atan"
+                        | "atan2"
                 ) {
                     return Some(HirType::Float);
                 }
@@ -182,9 +255,244 @@ impl<'a> FunctionLoweringContext<'a> {
             call_conv,
             local_vars: HashMap::new(),
             loop_stack: Vec::new(),
+            defer_stack: Vec::new(),
             current_stack_offset: 16, // after saved RBP and return address
             current_block_id: 0,
             label_counter: 0,
+            func_ret_type: None,
+            fn_signatures: HashMap::new(),
+        }
+    }
+
+    pub fn with_signatures(
+        func: &'a mut MachineFunction,
+        module: &'a mut NativeModule,
+        target: &'a TargetDescriptor,
+        func_ret_type: Option<HirType>,
+        fn_signatures: HashMap<String, (Vec<HirType>, Option<HirType>)>,
+    ) -> Self {
+        let call_conv: Box<dyn CallingConvention> = match target.operating_system {
+            OperatingSystem::Windows => Box::new(WindowsX64CallingConvention),
+            _ => Box::new(SystemVX64CallingConvention),
+        };
+
+        Self {
+            func,
+            module,
+            target,
+            call_conv,
+            local_vars: HashMap::new(),
+            loop_stack: Vec::new(),
+            defer_stack: Vec::new(),
+            current_stack_offset: 16,
+            current_block_id: 0,
+            label_counter: 0,
+            func_ret_type,
+            fn_signatures,
+        }
+    }
+
+    pub fn is_expr_float(&self, expr: &HirExpr, vreg: VirtualRegister) -> bool {
+        if self.func.vreg_class(vreg) == RegisterClass::Float {
+            return true;
+        }
+        if let HirExpr::LoadVar(name) = expr {
+            if let Some(&(_, Some(ref ty))) = self.local_vars.get(name) {
+                return is_float_type(Some(ty));
+            }
+        }
+        is_float_type(infer_hir_expr_type(expr).as_ref())
+    }
+
+    pub fn is_expr_f32(&self, expr: &HirExpr) -> bool {
+        if let HirExpr::LoadVar(name) = expr {
+            if let Some(&(_, Some(ref ty))) = self.local_vars.get(name) {
+                return is_f32_type(Some(ty));
+            }
+        }
+        is_f32_type(infer_hir_expr_type(expr).as_ref())
+    }
+
+    pub fn run_defers(&mut self) {
+        let defers = self.defer_stack.clone();
+        for stmt in defers.iter().rev() {
+            self.lower_statement(stmt);
+        }
+    }
+
+    pub fn lower_literal(&mut self, lit: &HirLiteral) -> VirtualRegister {
+        match lit {
+            HirLiteral::Float(f) | HirLiteral::F64(f) => {
+                let out_reg = self.func.alloc_fp_vreg();
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::FloatImmediate(*f),
+                });
+                return out_reg;
+            }
+            HirLiteral::F32(f) => {
+                let out_reg = self.func.alloc_fp_vreg();
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::FloatImmediate(*f as f64),
+                });
+                return out_reg;
+            }
+            _ => {}
+        }
+        let out_reg = self.func.alloc_vreg();
+        match lit {
+            HirLiteral::Int(n) => {
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Immediate(*n),
+                });
+            }
+            HirLiteral::I8(n) => {
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Immediate(*n as i64),
+                });
+            }
+            HirLiteral::I16(n) => {
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Immediate(*n as i64),
+                });
+            }
+            HirLiteral::I32(n) => {
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Immediate(*n as i64),
+                });
+            }
+            HirLiteral::I64(n) => {
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Immediate(*n),
+                });
+            }
+            HirLiteral::U8(n) => {
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Immediate(*n as i64),
+                });
+            }
+            HirLiteral::U16(n) => {
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Immediate(*n as i64),
+                });
+            }
+            HirLiteral::U32(n) => {
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Immediate(*n as i64),
+                });
+            }
+            HirLiteral::U64(n) => {
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Immediate(*n as i64),
+                });
+            }
+            HirLiteral::Bool(b) => {
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Immediate(if *b { 1 } else { 0 }),
+                });
+            }
+            HirLiteral::String(s) => {
+                let str_idx = self.module.add_string(s);
+                let sym_name = format!("__str_{}", str_idx);
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Symbol(sym_name),
+                });
+            }
+            HirLiteral::Char(c) => {
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Immediate(*c as i64),
+                });
+            }
+            HirLiteral::BigInt(bi) => {
+                use num_traits::ToPrimitive;
+                let val = bi.to_u64().unwrap_or(0) as i64;
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Immediate(val),
+                });
+            }
+            _ => {
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Immediate(0),
+                });
+            }
+        }
+        out_reg
+    }
+
+    pub fn lower_pattern_check(
+        &mut self,
+        target_reg: &VirtualRegister,
+        pattern: &HirPattern,
+        match_lbl: &str,
+        fail_lbl: &str,
+    ) {
+        match pattern {
+            HirPattern::Wildcard | HirPattern::Variable(_) => {
+                self.emit(MachineInstruction::Branch {
+                    target: match_lbl.to_string(),
+                });
+            }
+            HirPattern::Literal(lit) => {
+                let lit_reg = self.lower_literal(lit);
+                self.emit(MachineInstruction::Compare {
+                    lhs: MachineOperand::Register(MachineRegister::Virtual(*target_reg)),
+                    rhs: MachineOperand::Register(MachineRegister::Virtual(lit_reg)),
+                });
+                self.emit(MachineInstruction::BranchCc {
+                    cc: ConditionCode::Equal,
+                    target: match_lbl.to_string(),
+                });
+                self.emit(MachineInstruction::Branch {
+                    target: fail_lbl.to_string(),
+                });
+            }
+            HirPattern::Or(p1, p2) => {
+                let try_p2_lbl = self.fresh_label("match_or_p2");
+                self.lower_pattern_check(target_reg, p1, match_lbl, &try_p2_lbl);
+
+                let p2_id = self.func.create_block(&try_p2_lbl);
+                self.current_block_id = p2_id;
+                self.lower_pattern_check(target_reg, p2, match_lbl, fail_lbl);
+            }
+            _ => {
+                self.emit(MachineInstruction::Branch {
+                    target: match_lbl.to_string(),
+                });
+            }
+        }
+    }
+
+    pub fn bind_pattern_variables(&mut self, pattern: &HirPattern, val_reg: VirtualRegister) {
+        match pattern {
+            HirPattern::Variable(var_name) => {
+                let slot = self.alloc_stack_slot(8);
+                let off = -(slot + 8);
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::StackSlot(off),
+                    src: MachineOperand::Register(MachineRegister::Virtual(val_reg)),
+                });
+                self.local_vars.insert(var_name.clone(), (off, None));
+            }
+            HirPattern::Or(p1, p2) => {
+                self.bind_pattern_variables(p1, val_reg);
+                self.bind_pattern_variables(p2, val_reg);
+            }
+            _ => {}
         }
     }
 
@@ -204,71 +512,99 @@ impl<'a> FunctionLoweringContext<'a> {
         slot
     }
 
-    /// Emit a C-ABI call sequence: register arguments, stack arguments beyond
-    /// the register file, the Win64 32-byte shadow space, and post-call stack
-    /// cleanup. `total` is 16-byte aligned so RSP stays aligned at the call
-    /// instruction (required by both SysV and Win64).
+    /// Emit a C-ABI call sequence using the production-grade ParallelMoveResolver:
+    /// parallel argument shuffling for register parameters (GPR and Float/XMM) and stack parameters,
+    /// shadow space management, and 16-byte stack alignment.
     pub fn emit_call_with_args(&mut self, symbol: &str, args: &[VirtualRegister]) {
-        if !self.module.imports.contains(&symbol.to_string()) {
+        let typed_args: Vec<(VirtualRegister, RegisterClass)> = args
+            .iter()
+            .map(|&v| (v, self.func.vreg_class(v)))
+            .collect();
+        self.emit_call_with_typed_args(symbol, &typed_args);
+    }
+
+    pub fn emit_call_with_typed_args(
+        &mut self,
+        symbol: &str,
+        args: &[(VirtualRegister, RegisterClass)],
+    ) {
+        if !self.module.functions.iter().any(|f| f.name == symbol)
+            && !self.module.imports.contains(&symbol.to_string())
+        {
             self.module.imports.push(symbol.to_string());
         }
 
-        let param_regs = self.call_conv.arg_registers().to_vec();
-        let num_reg_args = args.len().min(param_regs.len());
-        let shadow = self.call_conv.shadow_space() as i32;
-        let stack_arg_bytes = ((args.len() - num_reg_args) * 8) as i32;
-        let reg_area = (num_reg_args * 8) as i32;
-        let total = ((shadow.max(reg_area) + stack_arg_bytes) + 15) & !15;
+        let (moves, total) = resolve_call_arguments(
+            self.call_conv.as_ref(),
+            args,
+            PhysicalRegister(4), // RSP
+        )
+        .expect("call argument resolution");
 
         if total > 0 {
-            // Reserve the outgoing argument area.
+            // Reserve outgoing argument area
             self.emit(MachineInstruction::Sub {
                 dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(4))), // RSP
                 src: MachineOperand::Immediate(total as i64),
             });
+        }
 
-            // Store register arguments to outgoing area staging slots to prevent cross-clobbering
-            for (i, &r) in args.iter().take(num_reg_args).enumerate() {
-                self.emit(MachineInstruction::Store {
-                    dst: MachineOperand::Memory {
-                        base: MachineRegister::Physical(PhysicalRegister(4)), // RSP
-                        offset: (i as i32) * 8,
-                        index: None,
-                    },
-                    src: MachineOperand::Register(MachineRegister::Virtual(r)),
-                    size: 8,
-                });
-            }
-
-            // Store stack arguments beyond the register file
-            for (i, &r) in args.iter().skip(num_reg_args).enumerate() {
-                self.emit(MachineInstruction::Store {
-                    dst: MachineOperand::Memory {
-                        base: MachineRegister::Physical(PhysicalRegister(4)), // RSP
-                        offset: shadow + (i as i32) * 8,
-                        index: None,
-                    },
-                    src: MachineOperand::Register(MachineRegister::Virtual(r)),
-                    size: 8,
-                });
-            }
-
-            // Load staging slots into actual physical parameter registers safely
-            for (i, _) in args.iter().take(num_reg_args).enumerate() {
-                self.emit(MachineInstruction::Load {
-                    dst: MachineOperand::Register(MachineRegister::Physical(param_regs[i])),
-                    src: MachineOperand::Memory {
-                        base: MachineRegister::Physical(PhysicalRegister(4)), // RSP
-                        offset: (i as i32) * 8,
-                        index: None,
-                    },
-                    size: 8,
-                });
-            }
+        // Emit resolved parallel moves for arguments
+        for inst in moves {
+            self.emit(inst);
         }
 
         self.emit(MachineInstruction::Call {
             target: MachineOperand::Symbol(symbol.to_string()),
+            num_args: args.len(),
+        });
+
+        if total > 0 {
+            self.emit(MachineInstruction::Add {
+                dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(4))), // RSP
+                src: MachineOperand::Immediate(total as i64),
+            });
+        }
+    }
+
+    /// Emit an indirect call sequence through a register or memory location.
+    pub fn emit_indirect_call_with_args(
+        &mut self,
+        callee_vreg: VirtualRegister,
+        args: &[VirtualRegister],
+    ) {
+        let typed_args: Vec<(VirtualRegister, RegisterClass)> = args
+            .iter()
+            .map(|&v| (v, self.func.vreg_class(v)))
+            .collect();
+        self.emit_indirect_call_with_typed_args(callee_vreg, &typed_args);
+    }
+
+    pub fn emit_indirect_call_with_typed_args(
+        &mut self,
+        callee_vreg: VirtualRegister,
+        args: &[(VirtualRegister, RegisterClass)],
+    ) {
+        let (moves, total) = resolve_call_arguments(
+            self.call_conv.as_ref(),
+            args,
+            PhysicalRegister(4), // RSP
+        )
+        .expect("indirect call argument resolution");
+
+        if total > 0 {
+            self.emit(MachineInstruction::Sub {
+                dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(4))), // RSP
+                src: MachineOperand::Immediate(total as i64),
+            });
+        }
+
+        for inst in moves {
+            self.emit(inst);
+        }
+
+        self.emit(MachineInstruction::Call {
+            target: MachineOperand::Register(MachineRegister::Virtual(callee_vreg)),
             num_args: args.len(),
         });
 
@@ -997,6 +1333,19 @@ impl<'a> FunctionLoweringContext<'a> {
                     let val_handle = self.lower_to_handle(value);
                     self.emit_call_with_args("aot_set_index", &[obj_reg, index_handle, val_handle]);
                 }
+                HirExpr::Deref(ptr_expr) => {
+                    let ptr_reg = self.lower_expression(ptr_expr);
+                    let val_reg = self.lower_expression(value);
+                    self.emit(MachineInstruction::Store {
+                        dst: MachineOperand::Memory {
+                            base: MachineRegister::Virtual(ptr_reg),
+                            offset: 0,
+                            index: None,
+                        },
+                        src: MachineOperand::Register(MachineRegister::Virtual(val_reg)),
+                        size: 8,
+                    });
+                }
                 _ => {
                     self.lower_expression(value);
                 }
@@ -1005,17 +1354,77 @@ impl<'a> FunctionLoweringContext<'a> {
                 self.lower_expression(expr);
             }
             HirStmt::Return(expr_opt) => {
+                self.run_defers();
                 if let Some(expr) = expr_opt {
-                    let ret_vreg = self.lower_expression(expr);
-                    // Move to return register (RAX = phys 0)
+                    let vreg = self.lower_expression(expr);
+                    let is_fp = self.func.vreg_class(vreg) == RegisterClass::Float
+                        || is_float_type(self.func_ret_type.as_ref());
+                    let ret_phys = if is_fp {
+                        PhysicalRegister::xmm(0)
+                    } else {
+                        PhysicalRegister::gpr(0)
+                    };
                     self.emit(MachineInstruction::Move {
-                        dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
-                            0,
-                        ))),
-                        src: MachineOperand::Register(MachineRegister::Virtual(ret_vreg)),
+                        dst: MachineOperand::Register(MachineRegister::Physical(ret_phys)),
+                        src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
                     });
                 }
                 self.emit(MachineInstruction::Return);
+            }
+            HirStmt::Throw(expr) => {
+                let handle = self.lower_to_handle(expr);
+                self.emit_call_with_args("aot_throw_exception", &[handle]);
+                self.run_defers();
+                self.emit(MachineInstruction::Return);
+            }
+            HirStmt::Defer(stmt) => {
+                self.defer_stack.push(*stmt.clone());
+            }
+            HirStmt::Region { body, .. } => {
+                self.lower_statement(body);
+            }
+            HirStmt::Unsafe(body) => {
+                self.lower_statement(body);
+            }
+            HirStmt::ClassDef(cls) => {
+                for m in &cls.methods {
+                    let mut params = vec![("this".to_string(), Some(HirType::Instance(cls.name.clone())), None)];
+                    params.extend(m.params.iter().map(|(n, t)| (n.clone(), t.clone(), None)));
+                    let func = HirFunction {
+                        name: format!("{}_{}", cls.name, m.name),
+                        params,
+                        body: m.body.clone(),
+                        ret_type: m.ret_type.clone(),
+                        is_async: m.is_async,
+                        decorators: Vec::new(),
+                        is_exported: true,
+                        move_params: Vec::new(),
+                        is_test: false,
+                        test_ignore: false,
+                        test_expect_fail: false,
+                        test_timeout: None,
+                        is_unsafe: m.is_unsafe,
+                    };
+                    lower_hir_function(&func, self.module, self.target);
+                }
+                for m in &cls.static_methods {
+                    let func = HirFunction {
+                        name: format!("{}_{}", cls.name, m.name),
+                        params: m.params.iter().map(|(n, t)| (n.clone(), t.clone(), None)).collect(),
+                        body: m.body.clone(),
+                        ret_type: m.ret_type.clone(),
+                        is_async: m.is_async,
+                        decorators: Vec::new(),
+                        is_exported: true,
+                        move_params: Vec::new(),
+                        is_test: false,
+                        test_ignore: false,
+                        test_expect_fail: false,
+                        test_timeout: None,
+                        is_unsafe: m.is_unsafe,
+                    };
+                    lower_hir_function(&func, self.module, self.target);
+                }
             }
             HirStmt::If {
                 cond,
@@ -1271,9 +1680,6 @@ impl<'a> FunctionLoweringContext<'a> {
                 // In native code, non-faulting execution continues normally
                 let _ = catch_block;
             }
-            HirStmt::Defer(stmt) => {
-                self.lower_statement(stmt);
-            }
             HirStmt::Extend { methods, .. } => {
                 for m in methods {
                     lower_hir_function(m, self.module, self.target);
@@ -1313,6 +1719,25 @@ impl<'a> FunctionLoweringContext<'a> {
     pub fn lower_expression(&mut self, expr: &HirExpr) -> VirtualRegister {
         match expr {
             HirExpr::Literal(lit) => {
+                match lit {
+                    HirLiteral::Float(f) | HirLiteral::F64(f) => {
+                        let out_reg = self.func.alloc_fp_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::FloatImmediate(*f),
+                        });
+                        return out_reg;
+                    }
+                    HirLiteral::F32(f) => {
+                        let out_reg = self.func.alloc_fp_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::FloatImmediate(*f as f64),
+                        });
+                        return out_reg;
+                    }
+                    _ => {}
+                }
                 let out_reg = self.func.alloc_vreg();
                 match lit {
                     HirLiteral::Int(n) => {
@@ -1389,24 +1814,6 @@ impl<'a> FunctionLoweringContext<'a> {
                             src: MachineOperand::Immediate(*c as i64),
                         });
                     }
-                    HirLiteral::Float(f) => {
-                        self.emit(MachineInstruction::Move {
-                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                            src: MachineOperand::FloatImmediate(*f),
-                        });
-                    }
-                    HirLiteral::F64(f) => {
-                        self.emit(MachineInstruction::Move {
-                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                            src: MachineOperand::FloatImmediate(*f),
-                        });
-                    }
-                    HirLiteral::F32(f) => {
-                        self.emit(MachineInstruction::Move {
-                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                            src: MachineOperand::FloatImmediate(*f as f64),
-                        });
-                    }
                     HirLiteral::BigInt(bi) => {
                         use num_traits::ToPrimitive;
                         let val = bi.to_u64().unwrap_or(0) as i64;
@@ -1431,7 +1838,16 @@ impl<'a> FunctionLoweringContext<'a> {
                 out_reg
             }
             HirExpr::LoadVar(name) => {
-                let out_reg = self.func.alloc_vreg();
+                let is_fp = if let Some(&(_, Some(ref ty))) = self.local_vars.get(name) {
+                    is_float_type(Some(ty))
+                } else {
+                    false
+                };
+                let out_reg = if is_fp {
+                    self.func.alloc_fp_vreg()
+                } else {
+                    self.func.alloc_vreg()
+                };
                 if let Some(&(slot, _)) = self.local_vars.get(name) {
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -2104,17 +2520,229 @@ impl<'a> FunctionLoweringContext<'a> {
                 }
             }
             HirExpr::BinaryOp(lhs, op, rhs) => {
-                if let Some(folded_val) = eval_const_expr(expr) {
-                    let out_reg = self.func.alloc_vreg();
-                    self.emit(MachineInstruction::Move {
-                        dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                        src: MachineOperand::Immediate(folded_val),
-                    });
-                    return out_reg;
+                let mut l_reg = self.lower_expression(lhs);
+                let mut r_reg = self.lower_expression(rhs);
+                let l_is_fp = self.is_expr_float(lhs, l_reg);
+                let r_is_fp = self.is_expr_float(rhs, r_reg);
+                let is_fp = l_is_fp || r_is_fp;
+
+                if !is_fp {
+                    if let Some(folded_val) = eval_const_expr(expr) {
+                        let out_reg = self.func.alloc_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Immediate(folded_val),
+                        });
+                        return out_reg;
+                    }
                 }
 
-                let l_reg = self.lower_expression(lhs);
-                let r_reg = self.lower_expression(rhs);
+                if is_fp {
+                    let is_single = self.is_expr_f32(lhs) && self.is_expr_f32(rhs);
+
+                    // If one operand is integer and one is float, cast the integer to float
+                    if !l_is_fp {
+                        let fp_l = self.func.alloc_fp_vreg();
+                        self.emit(MachineInstruction::FCvtIntToFloat {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(fp_l)),
+                            src: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
+                            is_f64: !is_single,
+                            is_signed: true,
+                        });
+                        l_reg = fp_l;
+                    }
+                    if !r_is_fp {
+                        let fp_r = self.func.alloc_fp_vreg();
+                        self.emit(MachineInstruction::FCvtIntToFloat {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(fp_r)),
+                            src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                            is_f64: !is_single,
+                            is_signed: true,
+                        });
+                        r_reg = fp_r;
+                    }
+
+                    let size = if is_single { 4 } else { 8 };
+                    match op {
+                        BinOp::Add => {
+                            let out_reg = self.func.alloc_fp_vreg();
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
+                            });
+                            self.emit(MachineInstruction::FAdd {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                                size,
+                            });
+                            return out_reg;
+                        }
+                        BinOp::Sub => {
+                            let out_reg = self.func.alloc_fp_vreg();
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
+                            });
+                            self.emit(MachineInstruction::FSub {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                                size,
+                            });
+                            return out_reg;
+                        }
+                        BinOp::Mul => {
+                            let out_reg = self.func.alloc_fp_vreg();
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
+                            });
+                            self.emit(MachineInstruction::FMul {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                                size,
+                            });
+                            return out_reg;
+                        }
+                        BinOp::Div | BinOp::IntDiv => {
+                            let out_reg = self.func.alloc_fp_vreg();
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
+                            });
+                            self.emit(MachineInstruction::FDiv {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                                size,
+                            });
+                            return out_reg;
+                        }
+                        BinOp::Eq | BinOp::StrictEq => {
+                            let out_reg = self.func.alloc_vreg();
+                            let tmp_reg = self.func.alloc_vreg();
+                            self.emit(MachineInstruction::FCmp {
+                                lhs: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
+                                rhs: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                                size,
+                            });
+                            self.emit(MachineInstruction::SetCc {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                cc: ConditionCode::Equal,
+                            });
+                            self.emit(MachineInstruction::SetCc {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(tmp_reg)),
+                                cc: ConditionCode::NotParity,
+                            });
+                            self.emit(MachineInstruction::And {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(tmp_reg)),
+                            });
+                            return out_reg;
+                        }
+                        BinOp::Ne | BinOp::StrictNe => {
+                            let out_reg = self.func.alloc_vreg();
+                            let tmp_reg = self.func.alloc_vreg();
+                            self.emit(MachineInstruction::FCmp {
+                                lhs: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
+                                rhs: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                                size,
+                            });
+                            self.emit(MachineInstruction::SetCc {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                cc: ConditionCode::NotEqual,
+                            });
+                            self.emit(MachineInstruction::SetCc {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(tmp_reg)),
+                                cc: ConditionCode::Parity,
+                            });
+                            self.emit(MachineInstruction::Or {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(tmp_reg)),
+                            });
+                            return out_reg;
+                        }
+                        BinOp::Lt => {
+                            let out_reg = self.func.alloc_vreg();
+                            let tmp_reg = self.func.alloc_vreg();
+                            self.emit(MachineInstruction::FCmp {
+                                lhs: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
+                                rhs: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                                size,
+                            });
+                            self.emit(MachineInstruction::SetCc {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                cc: ConditionCode::Below,
+                            });
+                            self.emit(MachineInstruction::SetCc {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(tmp_reg)),
+                                cc: ConditionCode::NotParity,
+                            });
+                            self.emit(MachineInstruction::And {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(tmp_reg)),
+                            });
+                            return out_reg;
+                        }
+                        BinOp::Le => {
+                            let out_reg = self.func.alloc_vreg();
+                            let tmp_reg = self.func.alloc_vreg();
+                            self.emit(MachineInstruction::FCmp {
+                                lhs: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
+                                rhs: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                                size,
+                            });
+                            self.emit(MachineInstruction::SetCc {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                cc: ConditionCode::BelowOrEqual,
+                            });
+                            self.emit(MachineInstruction::SetCc {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(tmp_reg)),
+                                cc: ConditionCode::NotParity,
+                            });
+                            self.emit(MachineInstruction::And {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(tmp_reg)),
+                            });
+                            return out_reg;
+                        }
+                        BinOp::Gt => {
+                            let out_reg = self.func.alloc_vreg();
+                            self.emit(MachineInstruction::FCmp {
+                                lhs: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
+                                rhs: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                                size,
+                            });
+                            self.emit(MachineInstruction::SetCc {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                cc: ConditionCode::Above,
+                            });
+                            return out_reg;
+                        }
+                        BinOp::Ge => {
+                            let out_reg = self.func.alloc_vreg();
+                            let tmp_reg = self.func.alloc_vreg();
+                            self.emit(MachineInstruction::FCmp {
+                                lhs: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
+                                rhs: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                                size,
+                            });
+                            self.emit(MachineInstruction::SetCc {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                cc: ConditionCode::AboveOrEqual,
+                            });
+                            self.emit(MachineInstruction::SetCc {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(tmp_reg)),
+                                cc: ConditionCode::NotParity,
+                            });
+                            self.emit(MachineInstruction::And {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(tmp_reg)),
+                            });
+                            return out_reg;
+                        }
+                        _ => {}
+                    }
+                }
+
                 let out_reg = self.func.alloc_vreg();
 
                 self.emit(MachineInstruction::Move {
@@ -2124,10 +2752,22 @@ impl<'a> FunctionLoweringContext<'a> {
 
                 match op {
                     BinOp::Add => {
-                        self.emit(MachineInstruction::Add {
-                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                            src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
-                        });
+                        let l_is_str = matches!(infer_hir_expr_type(lhs), Some(HirType::String));
+                        let r_is_str = matches!(infer_hir_expr_type(rhs), Some(HirType::String));
+                        if l_is_str || r_is_str {
+                            let l_h = self.lower_to_handle(lhs);
+                            let r_h = self.lower_to_handle(rhs);
+                            self.emit_call_with_args("aot_string_concat", &[l_h, r_h]);
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                            });
+                        } else {
+                            self.emit(MachineInstruction::Add {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                            });
+                        }
                     }
                     BinOp::Sub => {
                         self.emit(MachineInstruction::Sub {
@@ -2249,6 +2889,47 @@ impl<'a> FunctionLoweringContext<'a> {
                             src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
                         });
                     }
+                    BinOp::In => {
+                        let l_h = self.lower_to_handle(lhs);
+                        let r_h = self.lower_to_handle(rhs);
+                        self.emit_call_with_args("aot_contains", &[r_h, l_h]);
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                        });
+                    }
+                    BinOp::NullCoalesce => {
+                        let null_lbl = self.fresh_label("coalesce_null");
+                        let end_lbl = self.fresh_label("coalesce_end");
+
+                        self.emit(MachineInstruction::Compare {
+                            lhs: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
+                            rhs: MachineOperand::Immediate(0),
+                        });
+                        self.emit(MachineInstruction::BranchCc {
+                            cc: ConditionCode::Equal,
+                            target: null_lbl.clone(),
+                        });
+
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
+                        });
+                        self.emit(MachineInstruction::Branch {
+                            target: end_lbl.clone(),
+                        });
+
+                        let null_id = self.func.create_block(&null_lbl);
+                        self.current_block_id = null_id;
+                        let r_val = self.lower_expression(rhs);
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Register(MachineRegister::Virtual(r_val)),
+                        });
+
+                        let end_id = self.func.create_block(&end_lbl);
+                        self.current_block_id = end_id;
+                    }
                     BinOp::Or => {
                         let true_lbl = self.fresh_label("or_true");
                         let end_lbl = self.fresh_label("or_end");
@@ -2335,6 +3016,22 @@ impl<'a> FunctionLoweringContext<'a> {
             }
             HirExpr::UnaryOp(op, inner) => {
                 let in_reg = self.lower_expression(inner);
+                let is_fp = self.is_expr_float(inner, in_reg);
+
+                if is_fp && matches!(op, UnaryOp::Neg) {
+                    let is_single = self.is_expr_f32(inner);
+                    let out_reg = self.func.alloc_fp_vreg();
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                        src: MachineOperand::Register(MachineRegister::Virtual(in_reg)),
+                    });
+                    self.emit(MachineInstruction::FNeg {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                        size: if is_single { 4 } else { 8 },
+                    });
+                    return out_reg;
+                }
+
                 let out_reg = self.func.alloc_vreg();
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -2368,7 +3065,6 @@ impl<'a> FunctionLoweringContext<'a> {
                             )),
                         });
                     }
-                    _ => {}
                 }
                 out_reg
             }
@@ -2602,28 +3298,469 @@ impl<'a> FunctionLoweringContext<'a> {
                     }
                 }
 
-                // General function call
+                // General function call (direct or indirect)
                 let mut arg_regs = Vec::new();
                 for arg in args {
                     let r = self.lower_expression(arg);
                     arg_regs.push(r);
                 }
 
-                let target_sym = match &**callee {
-                    HirExpr::LoadVar(name) => name.clone(),
-                    _ => "unknown_callee".to_string(),
+                if let HirExpr::LoadVar(target_sym) = &**callee {
+                    if self.local_vars.contains_key(target_sym) {
+                        let callee_reg = self.lower_expression(callee);
+                        self.emit_indirect_call_with_args(callee_reg, &arg_regs);
+                    } else {
+                        self.emit_call_with_args(target_sym, &arg_regs);
+                    }
+                } else {
+                    let callee_reg = self.lower_expression(callee);
+                    self.emit_indirect_call_with_args(callee_reg, &arg_regs);
+                }
+
+                let is_ret_fp = if let HirExpr::LoadVar(fn_name) = &**callee {
+                    if let Some((_, ret_ty)) = self.fn_signatures.get(fn_name) {
+                        is_float_type(ret_ty.as_ref())
+                    } else {
+                        false
+                    }
+                } else {
+                    false
                 };
 
-                self.emit_call_with_args(&target_sym, &arg_regs);
+                let out_reg = if is_ret_fp {
+                    self.func.alloc_fp_vreg()
+                } else {
+                    self.func.alloc_vreg()
+                };
 
-                // Retrieve return value from RAX (phys 0)
+                let ret_phys = if is_ret_fp {
+                    PhysicalRegister::xmm(0)
+                } else {
+                    PhysicalRegister::gpr(0)
+                };
+
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                    src: MachineOperand::Register(MachineRegister::Physical(ret_phys)),
                 });
 
                 out_reg
             }
+            HirExpr::Match(target, arms) => {
+                let target_reg = self.lower_expression(target);
+                let target_slot = self.alloc_stack_slot(8);
+                let target_off = -(target_slot + 8);
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::StackSlot(target_off),
+                    src: MachineOperand::Register(MachineRegister::Virtual(target_reg)),
+                });
+
+                let match_end_lbl = self.fresh_label("match_end");
+                let out_reg = self.func.alloc_vreg();
+
+                for (pattern, arm_expr) in arms {
+                    let arm_body_lbl = self.fresh_label("match_body");
+                    let next_arm_lbl = self.fresh_label("match_next");
+
+                    self.lower_pattern_check(&target_reg, pattern, &arm_body_lbl, &next_arm_lbl);
+
+                    let body_id = self.func.create_block(&arm_body_lbl);
+                    self.current_block_id = body_id;
+                    self.bind_pattern_variables(pattern, target_reg);
+                    let arm_res = self.lower_expression(arm_expr);
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                        src: MachineOperand::Register(MachineRegister::Virtual(arm_res)),
+                    });
+                    self.emit(MachineInstruction::Branch {
+                        target: match_end_lbl.clone(),
+                    });
+
+                    let next_id = self.func.create_block(&next_arm_lbl);
+                    self.current_block_id = next_id;
+                }
+
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Immediate(0),
+                });
+
+                let end_id = self.func.create_block(&match_end_lbl);
+                self.current_block_id = end_id;
+
+                out_reg
+            }
+            HirExpr::DictLiteral(entries) => {
+                let dict_handle = self.func.alloc_vreg();
+                self.emit_call_with_args("aot_make_dict", &[]);
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(dict_handle)),
+                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                });
+                for (k, v) in entries {
+                    let k_h = self.lower_to_handle(k);
+                    let v_h = self.lower_to_handle(v);
+                    self.emit_call_with_args("aot_set_index", &[dict_handle, k_h, v_h]);
+                }
+                dict_handle
+            }
+            HirExpr::NewInstance(cls_name, args) => {
+                let zero_vreg = self.func.alloc_vreg();
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(zero_vreg)),
+                    src: MachineOperand::Immediate(0),
+                });
+                let obj_handle = self.func.alloc_vreg();
+                self.emit_call_with_args("aot_make_object", &[zero_vreg, zero_vreg]);
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(obj_handle)),
+                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                });
+                let mut arg_regs = vec![obj_handle];
+                for arg in args {
+                    arg_regs.push(self.lower_expression(arg));
+                }
+                let init_func = format!("{}_init", cls_name);
+                if self.module.functions.iter().any(|f| f.name == init_func) {
+                    self.emit_call_with_args(&init_func, &arg_regs);
+                }
+                obj_handle
+            }
+            HirExpr::Range(start, end, inclusive) => {
+                let s_reg = self.lower_expression(start);
+                let e_reg = self.lower_expression(end);
+                let inc_reg = self.func.alloc_vreg();
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(inc_reg)),
+                    src: MachineOperand::Immediate(if *inclusive { 1 } else { 0 }),
+                });
+                let out_reg = self.func.alloc_vreg();
+                self.emit_call_with_args("aot_make_range", &[s_reg, e_reg, inc_reg]);
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                });
+                out_reg
+            }
+            HirExpr::Borrow(inner, _)
+            | HirExpr::BorrowImmut(inner)
+            | HirExpr::BorrowMut(inner) => {
+                let out_reg = self.func.alloc_vreg();
+                if let HirExpr::LoadVar(name) = &**inner {
+                    let slot_opt = self.local_vars.get(name).map(|(s, _)| *s);
+                    if let Some(slot) = slot_opt {
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(5))), // RBP
+                        });
+                        self.emit(MachineInstruction::Add {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Immediate(slot as i64),
+                        });
+                        return out_reg;
+                    }
+                }
+                let val_reg = self.lower_expression(inner);
+                let slot = self.alloc_stack_slot(8);
+                let off = -(slot + 8);
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::StackSlot(off),
+                    src: MachineOperand::Register(MachineRegister::Virtual(val_reg)),
+                });
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(5))), // RBP
+                });
+                self.emit(MachineInstruction::Add {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Immediate(off as i64),
+                });
+                out_reg
+            }
+            HirExpr::Deref(inner) => {
+                let ptr_reg = self.lower_expression(inner);
+                let out_reg = self.func.alloc_vreg();
+                self.emit(MachineInstruction::Load {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Memory {
+                        base: MachineRegister::Virtual(ptr_reg),
+                        offset: 0,
+                        index: None,
+                    },
+                    size: 8,
+                });
+                out_reg
+            }
+            HirExpr::Alloc(_ty, size_expr) => {
+                let size_reg = self.lower_expression(size_expr);
+                let out_reg = self.func.alloc_vreg();
+                self.emit_call_with_args("aot_alloc", &[size_reg]);
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                });
+                out_reg
+            }
+            HirExpr::Free(ptr_expr) => {
+                let ptr_reg = self.lower_expression(ptr_expr);
+                let out_reg = self.func.alloc_vreg();
+                self.emit_call_with_args("aot_free", &[ptr_reg]);
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Immediate(0),
+                });
+                out_reg
+            }
+            HirExpr::Cast(inner, target_ty) => {
+                let inner_reg = self.lower_expression(inner);
+                let inner_is_fp = self.is_expr_float(inner, inner_reg);
+                let inner_is_f32 = self.is_expr_f32(inner);
+
+                match target_ty {
+                    HirType::Float | HirType::F64 => {
+                        let out_reg = self.func.alloc_fp_vreg();
+                        if inner_is_fp {
+                            if inner_is_f32 {
+                                self.emit(MachineInstruction::FCvtFloatToFloat {
+                                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                    src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                    to_f64: true,
+                                });
+                            } else {
+                                self.emit(MachineInstruction::Move {
+                                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                    src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                });
+                            }
+                        } else {
+                            self.emit(MachineInstruction::FCvtIntToFloat {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                is_f64: true,
+                                is_signed: true,
+                            });
+                        }
+                        out_reg
+                    }
+                    HirType::F32 => {
+                        let out_reg = self.func.alloc_fp_vreg();
+                        if inner_is_fp {
+                            if !inner_is_f32 {
+                                self.emit(MachineInstruction::FCvtFloatToFloat {
+                                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                    src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                    to_f64: false,
+                                });
+                            } else {
+                                self.emit(MachineInstruction::Move {
+                                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                    src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                });
+                            }
+                        } else {
+                            self.emit(MachineInstruction::FCvtIntToFloat {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                is_f64: false,
+                                is_signed: true,
+                            });
+                        }
+                        out_reg
+                    }
+                    HirType::I64 | HirType::Int => {
+                        let out_reg = self.func.alloc_vreg();
+                        if inner_is_fp {
+                            self.emit(MachineInstruction::FCvtFloatToInt {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                is_f64: !inner_is_f32,
+                                is_signed: true,
+                            });
+                        } else {
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                            });
+                        }
+                        out_reg
+                    }
+                    HirType::I32 | HirType::U32 => {
+                        let out_reg = self.func.alloc_vreg();
+                        if inner_is_fp {
+                            self.emit(MachineInstruction::FCvtFloatToInt {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                is_f64: !inner_is_f32,
+                                is_signed: true,
+                            });
+                        } else {
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                            });
+                        }
+                        self.emit(MachineInstruction::And {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Immediate(0xFFFFFFFF),
+                        });
+                        out_reg
+                    }
+                    HirType::I16 | HirType::U16 => {
+                        let out_reg = self.func.alloc_vreg();
+                        if inner_is_fp {
+                            self.emit(MachineInstruction::FCvtFloatToInt {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                is_f64: !inner_is_f32,
+                                is_signed: true,
+                            });
+                        } else {
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                            });
+                        }
+                        self.emit(MachineInstruction::And {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Immediate(0xFFFF),
+                        });
+                        out_reg
+                    }
+                    HirType::I8 | HirType::U8 => {
+                        let out_reg = self.func.alloc_vreg();
+                        if inner_is_fp {
+                            self.emit(MachineInstruction::FCvtFloatToInt {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                is_f64: !inner_is_f32,
+                                is_signed: true,
+                            });
+                        } else {
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                            });
+                        }
+                        self.emit(MachineInstruction::And {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Immediate(0xFF),
+                        });
+                        out_reg
+                    }
+                    HirType::String => {
+                        let out_reg = self.func.alloc_vreg();
+                        let h = self.lower_to_handle(inner);
+                        self.emit_call_with_args("aot_to_string", &[h]);
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                        });
+                        out_reg
+                    }
+                    HirType::Bool => {
+                        let out_reg = self.func.alloc_vreg();
+                        self.emit(MachineInstruction::Compare {
+                            lhs: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                            rhs: MachineOperand::Immediate(0),
+                        });
+                        self.emit(MachineInstruction::SetCc {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            cc: ConditionCode::NotEqual,
+                        });
+                        out_reg
+                    }
+                    _ => {
+                        let out_reg = self.func.alloc_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                        });
+                        out_reg
+                    }
+                }
+            }
+            HirExpr::OptionalGet(target, field) => {
+                let target_reg = self.lower_expression(target);
+                let out_reg = self.func.alloc_vreg();
+                let null_lbl = self.fresh_label("opt_null");
+                let end_lbl = self.fresh_label("opt_end");
+
+                self.emit(MachineInstruction::Compare {
+                    lhs: MachineOperand::Register(MachineRegister::Virtual(target_reg)),
+                    rhs: MachineOperand::Immediate(0),
+                });
+                self.emit(MachineInstruction::BranchCc {
+                    cc: ConditionCode::Equal,
+                    target: null_lbl.clone(),
+                });
+
+                let str_idx = self.module.add_string(field);
+                let sym_name = format!("__str_{}", str_idx);
+                let str_reg = self.func.alloc_vreg();
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(str_reg)),
+                    src: MachineOperand::Symbol(sym_name),
+                });
+                let field_handle = self.func.alloc_vreg();
+                self.emit_call_with_args("aot_make_string", &[str_reg]);
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(field_handle)),
+                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                });
+                let target_handle = self.lower_to_handle(target);
+                self.emit_call_with_args("aot_get_field", &[target_handle, field_handle]);
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                });
+                self.emit(MachineInstruction::Branch {
+                    target: end_lbl.clone(),
+                });
+
+                let null_id = self.func.create_block(&null_lbl);
+                self.current_block_id = null_id;
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Immediate(0),
+                });
+
+                let end_id = self.func.create_block(&end_lbl);
+                self.current_block_id = end_id;
+
+                out_reg
+            }
+            HirExpr::Format(inner, _) => {
+                let h = self.lower_to_handle(inner);
+                let out_reg = self.func.alloc_vreg();
+                self.emit_call_with_args("aot_to_string", &[h]);
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                });
+                out_reg
+            }
+            HirExpr::This | HirExpr::Super => {
+                let out_reg = self.func.alloc_vreg();
+                if let Some((slot, _)) = self.local_vars.get("this").cloned() {
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                        src: MachineOperand::StackSlot(slot),
+                    });
+                } else {
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                        src: MachineOperand::Immediate(0),
+                    });
+                }
+                out_reg
+            }
+            HirExpr::Share(inner)
+            | HirExpr::Downgrade(inner)
+            | HirExpr::Move(inner)
+            | HirExpr::NonNull(inner)
+            | HirExpr::Spread(inner)
+            | HirExpr::Await(inner)
+            | HirExpr::Spawn(inner) => self.lower_expression(inner),
             HirExpr::AssignTuple(names, value) => {
                 if let HirExpr::TupleLiteral(elements) = &**value {
                     let mut regs = Vec::new();
@@ -2716,6 +3853,18 @@ pub fn lower_hir_function(
     module: &mut NativeModule,
     target: &TargetDescriptor,
 ) {
+    let mut sigs = HashMap::new();
+    let param_tys = hir_func.params.iter().map(|(_, ty, _)| ty.clone().unwrap_or(HirType::Int)).collect();
+    sigs.insert(hir_func.name.clone(), (param_tys, hir_func.ret_type.clone()));
+    lower_hir_function_with_signatures(hir_func, module, target, &sigs);
+}
+
+pub fn lower_hir_function_with_signatures(
+    hir_func: &HirFunction,
+    module: &mut NativeModule,
+    target: &TargetDescriptor,
+    fn_signatures: &HashMap<String, (Vec<HirType>, Option<HirType>)>,
+) {
     if module.functions.iter().any(|f| f.name == hir_func.name) {
         return;
     }
@@ -2723,30 +3872,51 @@ pub fn lower_hir_function(
     func.is_exported = true;
 
     {
-        let mut ctx = FunctionLoweringContext::new(&mut func, module, target);
-        let param_regs = ctx.call_conv.arg_registers().to_vec();
-        for (idx, (p_name, _, _)) in hir_func.params.iter().enumerate() {
+        let mut ctx = FunctionLoweringContext::with_signatures(
+            &mut func,
+            module,
+            target,
+            hir_func.ret_type.clone(),
+            fn_signatures.clone(),
+        );
+
+        let param_classes: Vec<RegisterClass> = hir_func
+            .params
+            .iter()
+            .map(|(_, ty, _)| {
+                if is_float_type(ty.as_ref()) {
+                    RegisterClass::Float
+                } else {
+                    RegisterClass::Gpr
+                }
+            })
+            .collect();
+
+        let arg_locations = ctx.call_conv.classify_incoming_args(&param_classes);
+
+        for (idx, (p_name, p_ty, _)) in hir_func.params.iter().enumerate() {
             let slot = ctx.alloc_stack_slot(8);
-            if idx < param_regs.len() {
-                ctx.emit(MachineInstruction::Move {
-                    dst: MachineOperand::StackSlot(-slot),
-                    src: MachineOperand::Register(MachineRegister::Physical(param_regs[idx])),
-                });
-            } else {
-                let shadow = ctx.call_conv.shadow_space() as i32;
-                let stack_off = 16 + shadow + 8 * (idx - param_regs.len()) as i32;
-                ctx.emit(MachineInstruction::Load {
-                    dst: MachineOperand::StackSlot(-slot),
-                    src: MachineOperand::Memory {
-                        base: MachineRegister::Physical(PhysicalRegister(5)), // RBP
-                        offset: stack_off,
-                        index: None,
-                    },
-                    size: 8,
-                });
+            let off = -(slot + 8);
+            match arg_locations[idx] {
+                ArgumentLocation::Register(p_reg) => {
+                    ctx.emit(MachineInstruction::Move {
+                        dst: MachineOperand::StackSlot(off),
+                        src: MachineOperand::Register(MachineRegister::Physical(p_reg)),
+                    });
+                }
+                ArgumentLocation::Stack(stack_off) => {
+                    ctx.emit(MachineInstruction::Load {
+                        dst: MachineOperand::StackSlot(off),
+                        src: MachineOperand::Memory {
+                            base: MachineRegister::Physical(PhysicalRegister(5)), // RBP
+                            offset: stack_off,
+                            index: None,
+                        },
+                        size: 8,
+                    });
+                }
             }
-            ctx.local_vars
-                .insert(p_name.clone(), (-slot, None::<HirType>));
+            ctx.local_vars.insert(p_name.clone(), (off, p_ty.clone()));
         }
 
         for stmt in hir_func.body.iter() {
@@ -2772,9 +3942,19 @@ pub fn lower_hir_function(
 pub fn lower_hir_module(hir: &HirModule, target: &TargetDescriptor) -> NativeModule {
     let mut module = NativeModule::new("main_module");
 
+    let mut fn_signatures = HashMap::new();
+    for f in &hir.functions {
+        let param_tys = f
+            .params
+            .iter()
+            .map(|(_, ty, _)| ty.clone().unwrap_or(HirType::Int))
+            .collect();
+        fn_signatures.insert(f.name.clone(), (param_tys, f.ret_type.clone()));
+    }
+
     // Lower user functions
     for hir_func in &hir.functions {
-        lower_hir_function(hir_func, &mut module, target);
+        lower_hir_function_with_signatures(hir_func, &mut module, target, &fn_signatures);
     }
 
     // If top-level statements exist, lower them into `main`
@@ -2811,6 +3991,9 @@ pub fn lower_hir_module(hir: &HirModule, target: &TargetDescriptor) -> NativeMod
         main_func.entry_block_mut().push(MachineInstruction::Return);
         module.add_function(main_func);
     }
+
+    // Filter out locally defined functions from imports
+    module.imports.retain(|imp| !module.functions.iter().any(|f| &f.name == imp));
 
     module
 }

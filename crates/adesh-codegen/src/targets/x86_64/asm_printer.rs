@@ -26,6 +26,22 @@ impl X86_64AsmPrinter {
             13 => "r13",
             14 => "r14",
             15 => "r15",
+            16 => "xmm0",
+            17 => "xmm1",
+            18 => "xmm2",
+            19 => "xmm3",
+            20 => "xmm4",
+            21 => "xmm5",
+            22 => "xmm6",
+            23 => "xmm7",
+            24 => "xmm8",
+            25 => "xmm9",
+            26 => "xmm10",
+            27 => "xmm11",
+            28 => "xmm12",
+            29 => "xmm13",
+            30 => "xmm14",
+            31 => "xmm15",
             _ => "unknown_reg",
         }
     }
@@ -89,6 +105,8 @@ impl X86_64AsmPrinter {
             ConditionCode::BelowOrEqual => "be",
             ConditionCode::Above => "a",
             ConditionCode::AboveOrEqual => "ae",
+            ConditionCode::Parity => "p",
+            ConditionCode::NotParity => "np",
         }
     }
 
@@ -263,6 +281,42 @@ impl X86_64AsmPrinter {
                     }
                     MachineInstruction::Pop { dst } => {
                         out.push_str(&format!("    pop {}\n", Self::format_operand(dst)));
+                    }
+                    MachineInstruction::FAdd { dst, src, size } => {
+                        let op = if *size == 8 { "addsd" } else { "addss" };
+                        out.push_str(&format!("    {} {}, {}\n", op, Self::format_operand(dst), Self::format_operand(src)));
+                    }
+                    MachineInstruction::FSub { dst, src, size } => {
+                        let op = if *size == 8 { "subsd" } else { "subss" };
+                        out.push_str(&format!("    {} {}, {}\n", op, Self::format_operand(dst), Self::format_operand(src)));
+                    }
+                    MachineInstruction::FMul { dst, src, size } => {
+                        let op = if *size == 8 { "mulsd" } else { "mulss" };
+                        out.push_str(&format!("    {} {}, {}\n", op, Self::format_operand(dst), Self::format_operand(src)));
+                    }
+                    MachineInstruction::FDiv { dst, src, size } => {
+                        let op = if *size == 8 { "divsd" } else { "divss" };
+                        out.push_str(&format!("    {} {}, {}\n", op, Self::format_operand(dst), Self::format_operand(src)));
+                    }
+                    MachineInstruction::FNeg { dst, size } => {
+                        let op = if *size == 8 { "xorpd" } else { "xorps" };
+                        out.push_str(&format!("    {} {}, [sign_bit]\n", op, Self::format_operand(dst)));
+                    }
+                    MachineInstruction::FCmp { lhs, rhs, size } => {
+                        let op = if *size == 8 { "ucomisd" } else { "ucomiss" };
+                        out.push_str(&format!("    {} {}, {}\n", op, Self::format_operand(lhs), Self::format_operand(rhs)));
+                    }
+                    MachineInstruction::FCvtIntToFloat { dst, src, is_f64, is_signed: _ } => {
+                        let op = if *is_f64 { "cvtsi2sd" } else { "cvtsi2ss" };
+                        out.push_str(&format!("    {} {}, {}\n", op, Self::format_operand(dst), Self::format_operand(src)));
+                    }
+                    MachineInstruction::FCvtFloatToInt { dst, src, is_f64, is_signed: _ } => {
+                        let op = if *is_f64 { "cvttsd2si" } else { "cvttss2si" };
+                        out.push_str(&format!("    {} {}, {}\n", op, Self::format_operand(dst), Self::format_operand(src)));
+                    }
+                    MachineInstruction::FCvtFloatToFloat { dst, src, to_f64 } => {
+                        let op = if *to_f64 { "cvtss2sd" } else { "cvtsd2ss" };
+                        out.push_str(&format!("    {} {}, {}\n", op, Self::format_operand(dst), Self::format_operand(src)));
                     }
                     _ => {}
                 }

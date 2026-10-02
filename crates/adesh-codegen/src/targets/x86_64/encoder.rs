@@ -183,6 +183,15 @@ impl X86_64Encoder {
         self.emit_i64(imm);
     }
 
+    /// MOV reg32, imm32 (B8 + (dst & 7), imm32) - zero-extends to 64-bit
+    pub fn mov_r32_imm32(&mut self, dst: u8, imm: i32) {
+        if (dst & 8) != 0 {
+            self.emit_u8(0x41); // REX.B
+        }
+        self.emit_u8(0xB8 + (dst & 7));
+        self.emit_i32(imm);
+    }
+
     /// MOV reg64, [rbp + offset]
     pub fn mov_r64_rbp_offset(&mut self, dst: u8, offset: i32) {
         self.emit_rex(true, dst, 5); // 5 is RBP
@@ -260,10 +269,10 @@ impl X86_64Encoder {
 
     /// MOVZX reg64, reg8 (0F B6 /r with REX.W) - zero-extend byte to 64 bits.
     pub fn movzx_r64_r8(&mut self, dst: u8, src: u8) {
-        self.emit_rex(true, src, dst);
+        self.emit_rex(true, dst, src);
         self.emit_u8(0x0F);
         self.emit_u8(0xB6);
-        self.emit_modrm(0b11, src, dst);
+        self.emit_modrm(0b11, dst, src);
     }
 
     /// MOVZX reg64, byte [base + index*scale + offset] (0F B6 /r with REX.W)
@@ -508,6 +517,8 @@ impl X86_64Encoder {
             ConditionCode::BelowOrEqual => 0x96,                // SETBE
             ConditionCode::Above => 0x97,                       // SETA
             ConditionCode::AboveOrEqual => 0x93,                // SETAE
+            ConditionCode::Parity => 0x9A,                      // SETP / SETPE
+            ConditionCode::NotParity => 0x9B,                   // SETNP / SETPO
         };
         // Byte-register destinations SPL(4)/BPL(5)/SIL(6)/DIL(7) require a REX
         // prefix even with no extension bits set (without REX those encodings
@@ -539,6 +550,8 @@ impl X86_64Encoder {
             ConditionCode::BelowOrEqual => 0x86,
             ConditionCode::Above => 0x87,
             ConditionCode::AboveOrEqual => 0x83,
+            ConditionCode::Parity => 0x8A,
+            ConditionCode::NotParity => 0x8B,
         };
         self.emit_u8(0x0F);
         self.emit_u8(code);
@@ -565,6 +578,310 @@ impl X86_64Encoder {
         self.emit_u8(0x0F);
         self.emit_u8(0xAE);
         self.emit_u8(0xF0);
+    }
+
+    // ---------------------------------------------------------------- SSE / SSE2
+
+    fn emit_sse_reg_reg(&mut self, prefix: Option<u8>, opcode: u8, dst: u8, src: u8) {
+        if let Some(p) = prefix {
+            self.emit_u8(p);
+        }
+        self.emit_rex(false, dst, src);
+        self.emit_u8(0x0F);
+        self.emit_u8(opcode);
+        self.emit_modrm(0b11, dst & 7, src & 7);
+    }
+
+    fn emit_sse_reg_mem(
+        &mut self,
+        prefix: Option<u8>,
+        opcode: u8,
+        dst: u8,
+        base: u8,
+        offset: i32,
+        index: Option<(u8, u8)>,
+    ) {
+        if let Some(p) = prefix {
+            self.emit_u8(p);
+        }
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full(false, dst, x, base);
+        self.emit_u8(0x0F);
+        self.emit_u8(opcode);
+        self.emit_mem_operand(dst, base, offset, index);
+    }
+
+    fn emit_sse_mem_reg(
+        &mut self,
+        prefix: Option<u8>,
+        opcode: u8,
+        base: u8,
+        offset: i32,
+        index: Option<(u8, u8)>,
+        src: u8,
+    ) {
+        if let Some(p) = prefix {
+            self.emit_u8(p);
+        }
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full(false, src, x, base);
+        self.emit_u8(0x0F);
+        self.emit_u8(opcode);
+        self.emit_mem_operand(src, base, offset, index);
+    }
+
+    /// MOVSS xmm, xmm (F3 0F 10 /r)
+    pub fn movss_xmm_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(Some(0xF3), 0x10, dst, src);
+    }
+
+    /// MOVSS xmm, [mem] (F3 0F 10 /r)
+    pub fn movss_xmm_mem(&mut self, dst: u8, base: u8, offset: i32, index: Option<(u8, u8)>) {
+        self.emit_sse_reg_mem(Some(0xF3), 0x10, dst, base, offset, index);
+    }
+
+    /// MOVSS [mem], xmm (F3 0F 11 /r)
+    pub fn movss_mem_xmm(&mut self, base: u8, offset: i32, index: Option<(u8, u8)>, src: u8) {
+        self.emit_sse_mem_reg(Some(0xF3), 0x11, base, offset, index, src);
+    }
+
+    /// MOVSS xmm, [rbp + offset]
+    pub fn movss_xmm_rbp_offset(&mut self, dst: u8, offset: i32) {
+        self.movss_xmm_mem(dst, 5, offset, None);
+    }
+
+    /// MOVSS [rbp + offset], xmm
+    pub fn movss_rbp_offset_xmm(&mut self, offset: i32, src: u8) {
+        self.movss_mem_xmm(5, offset, None, src);
+    }
+
+    /// MOVSD xmm, xmm (F2 0F 10 /r)
+    pub fn movsd_xmm_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(Some(0xF2), 0x10, dst, src);
+    }
+
+    /// MOVSD xmm, [mem] (F2 0F 10 /r)
+    pub fn movsd_xmm_mem(&mut self, dst: u8, base: u8, offset: i32, index: Option<(u8, u8)>) {
+        self.emit_sse_reg_mem(Some(0xF2), 0x10, dst, base, offset, index);
+    }
+
+    /// MOVSD [mem], xmm (F2 0F 11 /r)
+    pub fn movsd_mem_xmm(&mut self, base: u8, offset: i32, index: Option<(u8, u8)>, src: u8) {
+        self.emit_sse_mem_reg(Some(0xF2), 0x11, base, offset, index, src);
+    }
+
+    /// MOVSD xmm, [rbp + offset]
+    pub fn movsd_xmm_rbp_offset(&mut self, dst: u8, offset: i32) {
+        self.movsd_xmm_mem(dst, 5, offset, None);
+    }
+
+    /// MOVSD [rbp + offset], xmm
+    pub fn movsd_rbp_offset_xmm(&mut self, offset: i32, src: u8) {
+        self.movsd_mem_xmm(5, offset, None, src);
+    }
+
+    /// ADDSS xmm, xmm (F3 0F 58 /r)
+    pub fn addss_xmm_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(Some(0xF3), 0x58, dst, src);
+    }
+
+    /// ADDSS xmm, [mem] (F3 0F 58 /r)
+    pub fn addss_xmm_mem(&mut self, dst: u8, base: u8, offset: i32, index: Option<(u8, u8)>) {
+        self.emit_sse_reg_mem(Some(0xF3), 0x58, dst, base, offset, index);
+    }
+
+    /// SUBSS xmm, xmm (F3 0F 5C /r)
+    pub fn subss_xmm_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(Some(0xF3), 0x5C, dst, src);
+    }
+
+    /// SUBSS xmm, [mem] (F3 0F 5C /r)
+    pub fn subss_xmm_mem(&mut self, dst: u8, base: u8, offset: i32, index: Option<(u8, u8)>) {
+        self.emit_sse_reg_mem(Some(0xF3), 0x5C, dst, base, offset, index);
+    }
+
+    /// MULSS xmm, xmm (F3 0F 59 /r)
+    pub fn mulss_xmm_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(Some(0xF3), 0x59, dst, src);
+    }
+
+    /// MULSS xmm, [mem] (F3 0F 59 /r)
+    pub fn mulss_xmm_mem(&mut self, dst: u8, base: u8, offset: i32, index: Option<(u8, u8)>) {
+        self.emit_sse_reg_mem(Some(0xF3), 0x59, dst, base, offset, index);
+    }
+
+    /// DIVSS xmm, xmm (F3 0F 5E /r)
+    pub fn divss_xmm_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(Some(0xF3), 0x5E, dst, src);
+    }
+
+    /// DIVSS xmm, [mem] (F3 0F 5E /r)
+    pub fn divss_xmm_mem(&mut self, dst: u8, base: u8, offset: i32, index: Option<(u8, u8)>) {
+        self.emit_sse_reg_mem(Some(0xF3), 0x5E, dst, base, offset, index);
+    }
+
+    /// ADDSD xmm, xmm (F2 0F 58 /r)
+    pub fn addsd_xmm_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(Some(0xF2), 0x58, dst, src);
+    }
+
+    /// ADDSD xmm, [mem] (F2 0F 58 /r)
+    pub fn addsd_xmm_mem(&mut self, dst: u8, base: u8, offset: i32, index: Option<(u8, u8)>) {
+        self.emit_sse_reg_mem(Some(0xF2), 0x58, dst, base, offset, index);
+    }
+
+    /// SUBSD xmm, xmm (F2 0F 5C /r)
+    pub fn subsd_xmm_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(Some(0xF2), 0x5C, dst, src);
+    }
+
+    /// SUBSD xmm, [mem] (F2 0F 5C /r)
+    pub fn subsd_xmm_mem(&mut self, dst: u8, base: u8, offset: i32, index: Option<(u8, u8)>) {
+        self.emit_sse_reg_mem(Some(0xF2), 0x5C, dst, base, offset, index);
+    }
+
+    /// MULSD xmm, xmm (F2 0F 59 /r)
+    pub fn mulsd_xmm_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(Some(0xF2), 0x59, dst, src);
+    }
+
+    /// MULSD xmm, [mem] (F2 0F 59 /r)
+    pub fn mulsd_xmm_mem(&mut self, dst: u8, base: u8, offset: i32, index: Option<(u8, u8)>) {
+        self.emit_sse_reg_mem(Some(0xF2), 0x59, dst, base, offset, index);
+    }
+
+    /// DIVSD xmm, xmm (F2 0F 5E /r)
+    pub fn divsd_xmm_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(Some(0xF2), 0x5E, dst, src);
+    }
+
+    /// DIVSD xmm, [mem] (F2 0F 5E /r)
+    pub fn divsd_xmm_mem(&mut self, dst: u8, base: u8, offset: i32, index: Option<(u8, u8)>) {
+        self.emit_sse_reg_mem(Some(0xF2), 0x5E, dst, base, offset, index);
+    }
+
+    /// UCOMISS xmm, xmm (0F 2E /r)
+    pub fn ucomiss_xmm_xmm(&mut self, lhs: u8, rhs: u8) {
+        self.emit_sse_reg_reg(None, 0x2E, lhs, rhs);
+    }
+
+    /// UCOMISS xmm, [mem] (0F 2E /r)
+    pub fn ucomiss_xmm_mem(&mut self, lhs: u8, base: u8, offset: i32, index: Option<(u8, u8)>) {
+        self.emit_sse_reg_mem(None, 0x2E, lhs, base, offset, index);
+    }
+
+    /// UCOMISD xmm, xmm (66 0F 2E /r)
+    pub fn ucomisd_xmm_xmm(&mut self, lhs: u8, rhs: u8) {
+        self.emit_sse_reg_reg(Some(0x66), 0x2E, lhs, rhs);
+    }
+
+    /// UCOMISD xmm, [mem] (66 0F 2E /r)
+    pub fn ucomisd_xmm_mem(&mut self, lhs: u8, base: u8, offset: i32, index: Option<(u8, u8)>) {
+        self.emit_sse_reg_mem(Some(0x66), 0x2E, lhs, base, offset, index);
+    }
+
+    /// CVTSI2SS xmm, reg64 (F3 REX.W 0F 2A /r)
+    pub fn cvtsi2ss_xmm_r64(&mut self, dst: u8, src: u8) {
+        self.emit_u8(0xF3);
+        self.emit_rex(true, dst, src);
+        self.emit_u8(0x0F);
+        self.emit_u8(0x2A);
+        self.emit_modrm(0b11, dst & 7, src & 7);
+    }
+
+    /// CVTSI2SS xmm, reg32 (F3 0F 2A /r)
+    pub fn cvtsi2ss_xmm_r32(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(Some(0xF3), 0x2A, dst, src);
+    }
+
+    /// CVTSI2SD xmm, reg64 (F2 REX.W 0F 2A /r)
+    pub fn cvtsi2sd_xmm_r64(&mut self, dst: u8, src: u8) {
+        self.emit_u8(0xF2);
+        self.emit_rex(true, dst, src);
+        self.emit_u8(0x0F);
+        self.emit_u8(0x2A);
+        self.emit_modrm(0b11, dst & 7, src & 7);
+    }
+
+    /// CVTSI2SD xmm, reg32 (F2 0F 2A /r)
+    pub fn cvtsi2sd_xmm_r32(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(Some(0xF2), 0x2A, dst, src);
+    }
+
+    /// CVTTSS2SI reg64, xmm (F3 REX.W 0F 2C /r)
+    pub fn cvttss2si_r64_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_u8(0xF3);
+        self.emit_rex(true, dst, src);
+        self.emit_u8(0x0F);
+        self.emit_u8(0x2C);
+        self.emit_modrm(0b11, dst & 7, src & 7);
+    }
+
+    /// CVTTSS2SI reg32, xmm (F3 0F 2C /r)
+    pub fn cvttss2si_r32_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(Some(0xF3), 0x2C, dst, src);
+    }
+
+    /// CVTTSD2SI reg64, xmm (F2 REX.W 0F 2C /r)
+    pub fn cvttsd2si_r64_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_u8(0xF2);
+        self.emit_rex(true, dst, src);
+        self.emit_u8(0x0F);
+        self.emit_u8(0x2C);
+        self.emit_modrm(0b11, dst & 7, src & 7);
+    }
+
+    /// CVTTSD2SI reg32, xmm (F2 0F 2C /r)
+    pub fn cvttsd2si_r32_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(Some(0xF2), 0x2C, dst, src);
+    }
+
+    /// CVTSS2SD xmm, xmm (F3 0F 5A /r)
+    pub fn cvtss2sd_xmm_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(Some(0xF3), 0x5A, dst, src);
+    }
+
+    /// CVTSD2SS xmm, xmm (F2 0F 5A /r)
+    pub fn cvtsd2ss_xmm_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(Some(0xF2), 0x5A, dst, src);
+    }
+
+    /// MOVQ xmm, reg64 (66 REX.W 0F 6E /r)
+    pub fn movq_xmm_r64(&mut self, dst: u8, src: u8) {
+        self.emit_u8(0x66);
+        self.emit_rex(true, dst, src);
+        self.emit_u8(0x0F);
+        self.emit_u8(0x6E);
+        self.emit_modrm(0b11, dst & 7, src & 7);
+    }
+
+    /// MOVQ reg64, xmm (66 REX.W 0F 7E /r)
+    pub fn movq_r64_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_u8(0x66);
+        self.emit_rex(true, src, dst);
+        self.emit_u8(0x0F);
+        self.emit_u8(0x7E);
+        self.emit_modrm(0b11, src & 7, dst & 7);
+    }
+
+    /// MOVD xmm, reg32 (66 0F 6E /r)
+    pub fn movd_xmm_r32(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(Some(0x66), 0x6E, dst, src);
+    }
+
+    /// MOVD reg32, xmm (66 0F 7E /r)
+    pub fn movd_r32_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(Some(0x66), 0x7E, src, dst);
+    }
+
+    /// XORPS xmm, xmm (0F 57 /r)
+    pub fn xorps_xmm_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(None, 0x57, dst, src);
+    }
+
+    /// XORPD xmm, xmm (66 0F 57 /r)
+    pub fn xorpd_xmm_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(Some(0x66), 0x57, dst, src);
     }
 }
 

@@ -1828,3 +1828,150 @@ pub extern "C" fn aot_input_method(
     };
     aot_store_value(res)
 }
+
+/// AOT string concatenation bridge
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_string_concat(left_handle: u64, right_handle: u64) -> u64 {
+    let left_val = unpack_aot_arg(left_handle);
+    let right_val = unpack_aot_arg(right_handle);
+
+    let val_to_str = |rv: &RuntimeValue| -> String {
+        match rv {
+            RuntimeValue::String(s) => s.clone(),
+            RuntimeValue::Int(n) => n.to_string(),
+            RuntimeValue::Float(f) => f.to_string(),
+            RuntimeValue::Bool(b) => b.to_string(),
+            RuntimeValue::Char(c) => c.to_string(),
+            RuntimeValue::I8(n) => n.to_string(),
+            RuntimeValue::I16(n) => n.to_string(),
+            RuntimeValue::I32(n) => n.to_string(),
+            RuntimeValue::I64(n) => n.to_string(),
+            RuntimeValue::U8(n) => n.to_string(),
+            RuntimeValue::U16(n) => n.to_string(),
+            RuntimeValue::U32(n) => n.to_string(),
+            RuntimeValue::U64(n) => n.to_string(),
+            RuntimeValue::F32(f) => f.to_string(),
+            RuntimeValue::F64(f) => f.to_string(),
+            _ => {
+                let ast = runtime_value_to_ast_value(rv);
+                crate::execution::runtime_core::format::fmt(&ast)
+            }
+        }
+    };
+
+    let l_str = val_to_str(&left_val);
+    let r_str = val_to_str(&right_val);
+
+    aot_store_value(RuntimeValue::String(format!("{}{}", l_str, r_str)))
+}
+
+/// AOT range creation bridge (start..end or start...end)
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_make_range(start_handle: u64, end_handle: u64, inclusive: i64) -> u64 {
+    let s_val = match unpack_aot_arg(start_handle) {
+        RuntimeValue::Int(n) => n,
+        RuntimeValue::I64(n) => n,
+        RuntimeValue::I32(n) => n as i64,
+        _ => 0,
+    };
+    let e_val = match unpack_aot_arg(end_handle) {
+        RuntimeValue::Int(n) => n,
+        RuntimeValue::I64(n) => n,
+        RuntimeValue::I32(n) => n as i64,
+        _ => 0,
+    };
+
+    let mut arr = Vec::new();
+    if inclusive != 0 {
+        for i in s_val..=e_val {
+            arr.push(RuntimeValue::Int(i));
+        }
+    } else {
+        for i in s_val..e_val {
+            arr.push(RuntimeValue::Int(i));
+        }
+    }
+
+    aot_store_value(RuntimeValue::Array(arr))
+}
+
+/// AOT raw heap allocation bridge (unsafe alloc<T>(size))
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_alloc(size: usize) -> *mut u8 {
+    let layout = std::alloc::Layout::from_size_align(size.max(1), 8).unwrap_or(
+        std::alloc::Layout::new::<u8>()
+    );
+    unsafe { std::alloc::alloc_zeroed(layout) }
+}
+
+/// AOT raw heap free bridge (unsafe free(ptr))
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_free(ptr: *mut u8) {
+    if !ptr.is_null() {
+        let layout = std::alloc::Layout::from_size_align(8, 8).unwrap();
+        unsafe { std::alloc::dealloc(ptr, layout); }
+    }
+}
+
+/// AOT variant / tag pattern match bridge
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_matches_variant(val_handle: u64, tag_handle: u64) -> i64 {
+    let tag = match get_string_val(tag_handle) {
+        Some(s) => s,
+        None => return 0,
+    };
+    let val = unpack_aot_arg(val_handle);
+    match val {
+        RuntimeValue::Object(map) => {
+            if let Some(RuntimeValue::String(variant_name)) = map.get("__struct").or_else(|| map.get("__class")).or_else(|| map.get("__tag")) {
+                if variant_name == &tag { 1 } else { 0 }
+            } else {
+                0
+            }
+        }
+        RuntimeValue::String(s) => {
+            if s == tag { 1 } else { 0 }
+        }
+        _ => 0,
+    }
+}
+
+/// AOT container `in` check bridge
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_contains(container_handle: u64, elem_handle: u64) -> i64 {
+    let container = unpack_aot_arg(container_handle);
+    let elem = unpack_aot_arg(elem_handle);
+
+    match container {
+        RuntimeValue::Array(arr)
+        | RuntimeValue::RawArray(_, arr)
+        | RuntimeValue::DynArray { data: arr, .. }
+        | RuntimeValue::Tuple(arr) => {
+            if arr.contains(&elem) { 1 } else { 0 }
+        }
+        RuntimeValue::Set(set) => {
+            if set.contains(&elem) { 1 } else { 0 }
+        }
+        RuntimeValue::Object(map) => {
+            if let RuntimeValue::String(key) = elem {
+                if map.contains_key(&key) { 1 } else { 0 }
+            } else {
+                0
+            }
+        }
+        RuntimeValue::String(s) => {
+            if let RuntimeValue::String(sub) = elem {
+                if s.contains(&sub) { 1 } else { 0 }
+            } else {
+                0
+            }
+        }
+        _ => 0,
+    }
+}
+
+/// Create a dictionary with key-value pairs
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aot_make_dict(args_ptr: *const u64, arg_count: usize) -> u64 {
+    aot_make_object(args_ptr, arg_count)
+}

@@ -1,15 +1,61 @@
-//! Machine Intermediate Representation (Machine IR) - Target-Neutral Low-Level IR.
+/// Register class distinguishing GPR (Integer/Pointer) and Float (SSE/XMM) registers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum RegisterClass {
+    Gpr,
+    Float,
+}
 
 /// Register identifier for virtual registers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct VirtualRegister(pub u32);
 
 /// Register identifier for target physical registers.
+/// In x86-64:
+/// 0..15: GPR registers (RAX, RCX, RDX, RBX, RSP, RBP, RSI, RDI, R8..R15)
+/// 16..31: XMM registers (XMM0..XMM15)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PhysicalRegister(pub u8);
 
+impl PhysicalRegister {
+    pub const fn gpr(id: u8) -> Self {
+        Self(id)
+    }
+
+    pub const fn xmm(id: u8) -> Self {
+        Self(16 + id)
+    }
+
+    pub fn is_gpr(&self) -> bool {
+        self.0 < 16
+    }
+
+    pub fn is_xmm(&self) -> bool {
+        self.0 >= 16 && self.0 < 32
+    }
+
+    pub fn gpr_index(&self) -> u8 {
+        self.0
+    }
+
+    pub fn xmm_index(&self) -> u8 {
+        if self.0 >= 16 {
+            self.0 - 16
+        } else {
+            self.0
+        }
+    }
+
+    pub fn class(&self) -> RegisterClass {
+        if self.is_xmm() {
+            RegisterClass::Float
+        } else {
+            RegisterClass::Gpr
+        }
+    }
+}
+
 /// Generic machine register, either virtual (before register allocation) or physical.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum MachineRegister {
     Virtual(VirtualRegister),
     Physical(PhysicalRegister),
@@ -43,6 +89,8 @@ pub enum ConditionCode {
     AboveOrEqual,
     Zero,
     NotZero,
+    Parity,
+    NotParity,
 }
 
 /// Operands for Machine Instructions.
@@ -79,10 +127,219 @@ impl MachineOperand {
     }
 }
 
+/// An abstract location for parallel move resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum MoveLocation {
+    /// Physical register on the target architecture.
+    PhysicalRegister(PhysicalRegister),
+    /// Virtual register before register allocation.
+    VirtualRegister(VirtualRegister),
+    /// Frame or stack slot with an explicit base register and displacement.
+    StackSlot {
+        base: PhysicalRegister,
+        offset: i32,
+    },
+    /// Memory location with base register, offset, and optional scaled index.
+    Memory {
+        base: MachineRegister,
+        offset: i32,
+        index: Option<(MachineRegister, u8)>,
+    },
+    /// 64-bit integer immediate constant.
+    Immediate(i64),
+    /// 64-bit floating-point constant (bits preserved as u64/i64).
+    FloatImmediate(u64),
+}
+
+impl MoveLocation {
+    #[inline]
+    pub fn phys(id: u8) -> Self {
+        MoveLocation::PhysicalRegister(PhysicalRegister(id))
+    }
+
+    #[inline]
+    pub fn virt(id: u32) -> Self {
+        MoveLocation::VirtualRegister(VirtualRegister(id))
+    }
+
+    #[inline]
+    pub fn stack(base: PhysicalRegister, offset: i32) -> Self {
+        MoveLocation::StackSlot { base, offset }
+    }
+
+    #[inline]
+    pub fn rbp_slot(offset: i32) -> Self {
+        MoveLocation::StackSlot {
+            base: PhysicalRegister(5),
+            offset,
+        }
+    }
+
+    #[inline]
+    pub fn rsp_slot(offset: i32) -> Self {
+        MoveLocation::StackSlot {
+            base: PhysicalRegister(4),
+            offset,
+        }
+    }
+
+    #[inline]
+    pub fn imm(val: i64) -> Self {
+        MoveLocation::Immediate(val)
+    }
+
+    #[inline]
+    pub fn is_register(&self) -> bool {
+        matches!(
+            self,
+            MoveLocation::PhysicalRegister(_) | MoveLocation::VirtualRegister(_)
+        )
+    }
+
+    #[inline]
+    pub fn is_memory_or_stack(&self) -> bool {
+        matches!(self, MoveLocation::StackSlot { .. } | MoveLocation::Memory { .. })
+    }
+
+    #[inline]
+    pub fn is_immediate(&self) -> bool {
+        matches!(self, MoveLocation::Immediate(_) | MoveLocation::FloatImmediate(_))
+    }
+
+    #[inline]
+    pub fn physical_reg(&self) -> Option<PhysicalRegister> {
+        match self {
+            MoveLocation::PhysicalRegister(p) => Some(*p),
+            _ => None,
+        }
+    }
+
+    pub fn to_operand(&self) -> MachineOperand {
+        match self {
+            MoveLocation::PhysicalRegister(p) => {
+                MachineOperand::Register(MachineRegister::Physical(*p))
+            }
+            MoveLocation::VirtualRegister(v) => {
+                MachineOperand::Register(MachineRegister::Virtual(*v))
+            }
+            MoveLocation::StackSlot { base, offset } => MachineOperand::Memory {
+                base: MachineRegister::Physical(*base),
+                offset: *offset,
+                index: None,
+            },
+            MoveLocation::Memory { base, offset, index } => MachineOperand::Memory {
+                base: *base,
+                offset: *offset,
+                index: *index,
+            },
+            MoveLocation::Immediate(v) => MachineOperand::Immediate(*v),
+            MoveLocation::FloatImmediate(bits) => {
+                MachineOperand::FloatImmediate(f64::from_bits(*bits))
+            }
+        }
+    }
+
+    pub fn from_operand(op: &MachineOperand, default_stack_base: Option<PhysicalRegister>) -> Option<Self> {
+        match op {
+            MachineOperand::Register(MachineRegister::Physical(p)) => {
+                Some(MoveLocation::PhysicalRegister(*p))
+            }
+            MachineOperand::Register(MachineRegister::Virtual(v)) => {
+                Some(MoveLocation::VirtualRegister(*v))
+            }
+            MachineOperand::StackSlot(slot) => {
+                let base = default_stack_base.unwrap_or(PhysicalRegister(5));
+                Some(MoveLocation::StackSlot {
+                    base,
+                    offset: *slot,
+                })
+            }
+            MachineOperand::Memory { base, offset, index } => match base {
+                MachineRegister::Physical(p) if index.is_none() => {
+                    Some(MoveLocation::StackSlot {
+                        base: *p,
+                        offset: *offset,
+                    })
+                }
+                _ => Some(MoveLocation::Memory {
+                    base: *base,
+                    offset: *offset,
+                    index: *index,
+                }),
+            },
+            MachineOperand::Immediate(v) => Some(MoveLocation::Immediate(*v)),
+            MachineOperand::FloatImmediate(f) => Some(MoveLocation::FloatImmediate(f.to_bits())),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for MoveLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MoveLocation::PhysicalRegister(p) => write!(f, "phys_r{}", p.0),
+            MoveLocation::VirtualRegister(v) => write!(f, "v{}", v.0),
+            MoveLocation::StackSlot { base, offset } => {
+                if *offset >= 0 {
+                    write!(f, "[phys_r{}+{}]", base.0, offset)
+                } else {
+                    write!(f, "[phys_r{}{}]", base.0, offset)
+                }
+            }
+            MoveLocation::Memory { base, offset, index } => {
+                let base_str = match base {
+                    MachineRegister::Physical(p) => format!("phys_r{}", p.0),
+                    MachineRegister::Virtual(v) => format!("v{}", v.0),
+                };
+                if let Some((idx_reg, scale)) = index {
+                    let idx_str = match idx_reg {
+                        MachineRegister::Physical(p) => format!("phys_r{}", p.0),
+                        MachineRegister::Virtual(v) => format!("v{}", v.0),
+                    };
+                    write!(f, "[{}+{}+{}*{}]", base_str, offset, idx_str, scale)
+                } else if *offset >= 0 {
+                    write!(f, "[{}+{}]", base_str, offset)
+                } else {
+                    write!(f, "[{}{}]", base_str, offset)
+                }
+            }
+            MoveLocation::Immediate(v) => write!(f, "{}", v),
+            MoveLocation::FloatImmediate(bits) => write!(f, "0x{:016x}", bits),
+        }
+    }
+}
+
+/// A single move operation representing `dst <- src` of `size` bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MoveOperation {
+    pub dst: MoveLocation,
+    pub src: MoveLocation,
+    pub size: u8,
+}
+
+impl MoveOperation {
+    pub fn new(dst: MoveLocation, src: MoveLocation, size: u8) -> Self {
+        Self { dst, src, size }
+    }
+
+    pub fn new_qword(dst: MoveLocation, src: MoveLocation) -> Self {
+        Self { dst, src, size: 8 }
+    }
+}
+
+impl std::fmt::Display for MoveOperation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} <- {} ({}b)", self.dst, self.src, self.size)
+    }
+}
+
 /// Generic target-neutral machine instruction.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MachineInstruction {
     Nop,
+    ParallelMove {
+        moves: Vec<MoveOperation>,
+    },
     Move {
         dst: MachineOperand,
         src: MachineOperand,
@@ -192,6 +449,53 @@ pub enum MachineInstruction {
         name: String,
         operands: Vec<MachineOperand>,
     },
+    // Floating-Point (SSE / SSE2) instructions
+    FAdd {
+        dst: MachineOperand,
+        src: MachineOperand,
+        size: u8,
+    },
+    FSub {
+        dst: MachineOperand,
+        src: MachineOperand,
+        size: u8,
+    },
+    FMul {
+        dst: MachineOperand,
+        src: MachineOperand,
+        size: u8,
+    },
+    FDiv {
+        dst: MachineOperand,
+        src: MachineOperand,
+        size: u8,
+    },
+    FNeg {
+        dst: MachineOperand,
+        size: u8,
+    },
+    FCmp {
+        lhs: MachineOperand,
+        rhs: MachineOperand,
+        size: u8,
+    },
+    FCvtIntToFloat {
+        dst: MachineOperand,
+        src: MachineOperand,
+        is_f64: bool,
+        is_signed: bool,
+    },
+    FCvtFloatToInt {
+        dst: MachineOperand,
+        src: MachineOperand,
+        is_f64: bool,
+        is_signed: bool,
+    },
+    FCvtFloatToFloat {
+        dst: MachineOperand,
+        src: MachineOperand,
+        to_f64: bool,
+    },
 }
 
 /// Basic block containing machine instructions.
@@ -228,6 +532,7 @@ pub struct MachineFunction {
     pub stack_size: u64,
     pub is_exported: bool,
     pub vreg_count: u32,
+    pub vreg_classes: std::collections::HashMap<VirtualRegister, RegisterClass>,
 }
 
 impl MachineFunction {
@@ -238,15 +543,29 @@ impl MachineFunction {
             stack_size: 0,
             is_exported: false,
             vreg_count: 0,
+            vreg_classes: std::collections::HashMap::new(),
         };
         func.blocks.push(MachineBlock::new(0, "entry"));
         func
     }
 
     pub fn alloc_vreg(&mut self) -> VirtualRegister {
+        self.alloc_vreg_with_class(RegisterClass::Gpr)
+    }
+
+    pub fn alloc_fp_vreg(&mut self) -> VirtualRegister {
+        self.alloc_vreg_with_class(RegisterClass::Float)
+    }
+
+    pub fn alloc_vreg_with_class(&mut self, class: RegisterClass) -> VirtualRegister {
         let r = VirtualRegister(self.vreg_count);
         self.vreg_count += 1;
+        self.vreg_classes.insert(r, class);
         r
+    }
+
+    pub fn vreg_class(&self, vreg: VirtualRegister) -> RegisterClass {
+        self.vreg_classes.get(&vreg).copied().unwrap_or(RegisterClass::Gpr)
     }
 
     pub fn create_block(&mut self, label: impl Into<String>) -> u32 {

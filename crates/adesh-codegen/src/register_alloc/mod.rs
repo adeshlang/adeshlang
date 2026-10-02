@@ -1,8 +1,8 @@
 //! Register allocation framework supporting Linear Scan, Spilling, and Target-Specific Register Files.
 
 use crate::machine_ir::{
-    MachineFunction, MachineInstruction, MachineOperand, MachineRegister, PhysicalRegister,
-    VirtualRegister,
+    MachineFunction, MachineInstruction, MachineOperand, MachineRegister, MoveLocation,
+    PhysicalRegister, RegisterClass, VirtualRegister,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -13,12 +13,44 @@ pub trait RegisterFile: Send + Sync {
     fn caller_saved(&self) -> &[PhysicalRegister];
     fn callee_saved(&self) -> &[PhysicalRegister];
     fn reserved(&self) -> &[PhysicalRegister];
+
+    fn registers_for_class(&self, class: RegisterClass) -> &[PhysicalRegister] {
+        match class {
+            RegisterClass::Gpr => self.registers(),
+            RegisterClass::Float => &[],
+        }
+    }
+    fn allocatable_for_class(&self, class: RegisterClass) -> &[PhysicalRegister] {
+        match class {
+            RegisterClass::Gpr => self.allocatable(),
+            RegisterClass::Float => &[],
+        }
+    }
+    fn caller_saved_for_class(&self, class: RegisterClass) -> &[PhysicalRegister] {
+        match class {
+            RegisterClass::Gpr => self.caller_saved(),
+            RegisterClass::Float => &[],
+        }
+    }
+    fn callee_saved_for_class(&self, class: RegisterClass) -> &[PhysicalRegister] {
+        match class {
+            RegisterClass::Gpr => self.callee_saved(),
+            RegisterClass::Float => &[],
+        }
+    }
+    fn reserved_for_class(&self, class: RegisterClass) -> &[PhysicalRegister] {
+        match class {
+            RegisterClass::Gpr => self.reserved(),
+            RegisterClass::Float => &[],
+        }
+    }
 }
 
 /// Interval representing a virtual register's live range.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveInterval {
     pub vreg: VirtualRegister,
+    pub class: RegisterClass,
     pub start: usize,
     pub end: usize,
     pub assigned_reg: Option<PhysicalRegister>,
@@ -58,8 +90,10 @@ impl<'a> LinearScanAllocator<'a> {
         let mut intervals = Vec::new();
         for (vreg, start) in first_seen {
             let end = *last_seen.get(&vreg).unwrap_or(&start);
+            let class = func.vreg_class(vreg);
             intervals.push(LiveInterval {
                 vreg,
+                class,
                 start,
                 end,
                 assigned_reg: None,
@@ -111,16 +145,26 @@ impl<'a> LinearScanAllocator<'a> {
             | MachineInstruction::Xor { dst, src }
             | MachineInstruction::Shl { dst, src }
             | MachineInstruction::Shr { dst, src }
-            | MachineInstruction::Sar { dst, src } => {
+            | MachineInstruction::Sar { dst, src }
+            | MachineInstruction::FAdd { dst, src, .. }
+            | MachineInstruction::FSub { dst, src, .. }
+            | MachineInstruction::FMul { dst, src, .. }
+            | MachineInstruction::FDiv { dst, src, .. }
+            | MachineInstruction::FCvtIntToFloat { dst, src, .. }
+            | MachineInstruction::FCvtFloatToInt { dst, src, .. }
+            | MachineInstruction::FCvtFloatToFloat { dst, src, .. } => {
                 check_op(src);
                 check_op(dst);
             }
-            MachineInstruction::Compare { lhs, rhs } | MachineInstruction::Test { lhs, rhs } => {
+            MachineInstruction::Compare { lhs, rhs }
+            | MachineInstruction::Test { lhs, rhs }
+            | MachineInstruction::FCmp { lhs, rhs, .. } => {
                 check_op(lhs);
                 check_op(rhs);
             }
             MachineInstruction::Neg { dst }
             | MachineInstruction::Not { dst }
+            | MachineInstruction::FNeg { dst, .. }
             | MachineInstruction::SetCc { dst, .. }
             | MachineInstruction::Push { src: dst }
             | MachineInstruction::Pop { dst } => {
@@ -128,6 +172,12 @@ impl<'a> LinearScanAllocator<'a> {
             }
             MachineInstruction::Call { target, .. } => {
                 check_op(target);
+            }
+            MachineInstruction::ParallelMove { moves } => {
+                for m in moves {
+                    check_op(&m.dst.to_operand());
+                    check_op(&m.src.to_operand());
+                }
             }
             MachineInstruction::Custom { operands, .. } => {
                 for op in operands {
@@ -141,7 +191,6 @@ impl<'a> LinearScanAllocator<'a> {
     /// Allocate registers and spills.
     pub fn allocate(&self, func: &mut MachineFunction) -> AllocationResult {
         let intervals = self.compute_live_intervals(func);
-        let allocatable = self.reg_file.allocatable();
 
         let mut vreg_map = HashMap::new();
         let mut spill_map = HashMap::new();
@@ -153,17 +202,6 @@ impl<'a> LinearScanAllocator<'a> {
         let locals_end = (func.stack_size as i32 + 7) & !7;
         let mut next_spill_offset = -locals_end - 8;
 
-        // Prefer callee-saved registers: without live-range splitting around
-        // calls, values that live across a call survive only in callee-saved
-        // registers. Backends must still save/restore them in the prologue.
-        let callee_saved: Vec<PhysicalRegister> = self
-            .reg_file
-            .callee_saved()
-            .iter()
-            .copied()
-            .filter(|r| allocatable.contains(r))
-            .collect();
-        let callee_set: HashSet<PhysicalRegister> = callee_saved.iter().copied().collect();
         let mut call_indices = Vec::new();
         let mut inst_idx = 0;
         for block in &func.blocks {
@@ -176,6 +214,17 @@ impl<'a> LinearScanAllocator<'a> {
         }
 
         for mut current in intervals {
+            let class = current.class;
+            let allocatable = self.reg_file.allocatable_for_class(class);
+            let callee_saved: Vec<PhysicalRegister> = self
+                .reg_file
+                .callee_saved_for_class(class)
+                .iter()
+                .copied()
+                .filter(|r| allocatable.contains(r))
+                .collect();
+            let callee_set: HashSet<PhysicalRegister> = callee_saved.iter().copied().collect();
+
             // Expire old intervals
             active.retain(|act| act.end >= current.start);
 
@@ -187,7 +236,7 @@ impl<'a> LinearScanAllocator<'a> {
                 .any(|&c| current.start <= c && current.end >= c);
 
             let chosen_reg = if crosses_call {
-                // If live interval spans a call, we can ONLY use an available callee-saved register
+                // If live interval spans a call, we can ONLY use an available callee-saved register of this class
                 callee_saved
                     .iter()
                     .copied()
@@ -282,17 +331,26 @@ impl<'a> LinearScanAllocator<'a> {
                     | MachineInstruction::Xor { dst, src }
                     | MachineInstruction::Shl { dst, src }
                     | MachineInstruction::Shr { dst, src }
-                    | MachineInstruction::Sar { dst, src } => {
+                    | MachineInstruction::Sar { dst, src }
+                    | MachineInstruction::FAdd { dst, src, .. }
+                    | MachineInstruction::FSub { dst, src, .. }
+                    | MachineInstruction::FMul { dst, src, .. }
+                    | MachineInstruction::FDiv { dst, src, .. }
+                    | MachineInstruction::FCvtIntToFloat { dst, src, .. }
+                    | MachineInstruction::FCvtFloatToInt { dst, src, .. }
+                    | MachineInstruction::FCvtFloatToFloat { dst, src, .. } => {
                         rewrite_op(src);
                         rewrite_op(dst);
                     }
                     MachineInstruction::Compare { lhs, rhs }
-                    | MachineInstruction::Test { lhs, rhs } => {
+                    | MachineInstruction::Test { lhs, rhs }
+                    | MachineInstruction::FCmp { lhs, rhs, .. } => {
                         rewrite_op(lhs);
                         rewrite_op(rhs);
                     }
                     MachineInstruction::Neg { dst }
                     | MachineInstruction::Not { dst }
+                    | MachineInstruction::FNeg { dst, .. }
                     | MachineInstruction::SetCc { dst, .. }
                     | MachineInstruction::Push { src: dst }
                     | MachineInstruction::Pop { dst } => {
@@ -300,6 +358,30 @@ impl<'a> LinearScanAllocator<'a> {
                     }
                     MachineInstruction::Call { target, .. } => {
                         rewrite_op(target);
+                    }
+                    MachineInstruction::ParallelMove { moves } => {
+                        for m in moves {
+                            if let MoveLocation::VirtualRegister(v) = m.dst {
+                                if let Some(&p) = vreg_map.get(&v) {
+                                    m.dst = MoveLocation::PhysicalRegister(p);
+                                } else if let Some(&slot) = spill_map.get(&v) {
+                                    m.dst = MoveLocation::StackSlot {
+                                        base: PhysicalRegister(5),
+                                        offset: slot,
+                                    };
+                                }
+                            }
+                            if let MoveLocation::VirtualRegister(v) = m.src {
+                                if let Some(&p) = vreg_map.get(&v) {
+                                    m.src = MoveLocation::PhysicalRegister(p);
+                                } else if let Some(&slot) = spill_map.get(&v) {
+                                    m.src = MoveLocation::StackSlot {
+                                        base: PhysicalRegister(5),
+                                        offset: slot,
+                                    };
+                                }
+                            }
+                        }
                     }
                     MachineInstruction::Custom { operands, .. } => {
                         for op in operands {
