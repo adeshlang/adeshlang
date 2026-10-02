@@ -345,7 +345,9 @@ fn instruction_uses_register(inst: &MachineInstruction, reg: u8) -> bool {
         | MachineInstruction::FSub { dst, src, .. }
         | MachineInstruction::FMul { dst, src, .. }
         | MachineInstruction::FDiv { dst, src, .. }
-        | MachineInstruction::FCmp { lhs: dst, rhs: src, .. }
+        | MachineInstruction::FCmp {
+            lhs: dst, rhs: src, ..
+        }
         | MachineInstruction::FCvtIntToFloat { dst, src, .. }
         | MachineInstruction::FCvtFloatToInt { dst, src, .. }
         | MachineInstruction::FCvtFloatToFloat { dst, src, .. } => hit(dst) || hit(src),
@@ -646,7 +648,12 @@ impl FunctionEncoding {
         false
     }
 
-    fn load_fp_operand_into_xmm(&mut self, src: &MachineOperand, xmm_scratch: u8, is_f64: bool) -> bool {
+    fn load_fp_operand_into_xmm(
+        &mut self,
+        src: &MachineOperand,
+        xmm_scratch: u8,
+        is_f64: bool,
+    ) -> bool {
         if let Some(s) = phys_reg(src) {
             if s >= 16 {
                 let s_xmm = s - 16;
@@ -1344,7 +1351,11 @@ impl FunctionEncoding {
             MachineInstruction::FAdd { dst, src, size } => {
                 let is_f64 = *size == 8;
                 let (d_xmm, d_slot) = if let Some(d) = phys_reg(dst) {
-                    if d >= 16 { (d - 16, None) } else { return Err(self.unsupported(inst, func_name, abi)); }
+                    if d >= 16 {
+                        (d - 16, None)
+                    } else {
+                        return Err(self.unsupported(inst, func_name, abi));
+                    }
                 } else if let Some(slot) = stack_slot(dst) {
                     if is_f64 {
                         self.enc.movsd_xmm_mem(FP_SCRATCH, 5, slot, None);
@@ -1356,7 +1367,11 @@ impl FunctionEncoding {
                     return Err(self.unsupported(inst, func_name, abi));
                 };
                 let s_xmm = if let Some(s) = phys_reg(src) {
-                    if s >= 16 { s - 16 } else { return Err(self.unsupported(inst, func_name, abi)); }
+                    if s >= 16 {
+                        s - 16
+                    } else {
+                        return Err(self.unsupported(inst, func_name, abi));
+                    }
                 } else {
                     if !self.load_fp_operand_into_xmm(src, FP_SCRATCH, is_f64) {
                         return Err(self.unsupported(inst, func_name, abi));
@@ -1378,7 +1393,11 @@ impl FunctionEncoding {
             MachineInstruction::FSub { dst, src, size } => {
                 let is_f64 = *size == 8;
                 let (d_xmm, d_slot) = if let Some(d) = phys_reg(dst) {
-                    if d >= 16 { (d - 16, None) } else { return Err(self.unsupported(inst, func_name, abi)); }
+                    if d >= 16 {
+                        (d - 16, None)
+                    } else {
+                        return Err(self.unsupported(inst, func_name, abi));
+                    }
                 } else if let Some(slot) = stack_slot(dst) {
                     if is_f64 {
                         self.enc.movsd_xmm_mem(FP_SCRATCH, 5, slot, None);
@@ -1390,7 +1409,11 @@ impl FunctionEncoding {
                     return Err(self.unsupported(inst, func_name, abi));
                 };
                 let s_xmm = if let Some(s) = phys_reg(src) {
-                    if s >= 16 { s - 16 } else { return Err(self.unsupported(inst, func_name, abi)); }
+                    if s >= 16 {
+                        s - 16
+                    } else {
+                        return Err(self.unsupported(inst, func_name, abi));
+                    }
                 } else {
                     if !self.load_fp_operand_into_xmm(src, FP_SCRATCH, is_f64) {
                         return Err(self.unsupported(inst, func_name, abi));
@@ -1412,7 +1435,11 @@ impl FunctionEncoding {
             MachineInstruction::FMul { dst, src, size } => {
                 let is_f64 = *size == 8;
                 let (d_xmm, d_slot) = if let Some(d) = phys_reg(dst) {
-                    if d >= 16 { (d - 16, None) } else { return Err(self.unsupported(inst, func_name, abi)); }
+                    if d >= 16 {
+                        (d - 16, None)
+                    } else {
+                        return Err(self.unsupported(inst, func_name, abi));
+                    }
                 } else if let Some(slot) = stack_slot(dst) {
                     if is_f64 {
                         self.enc.movsd_xmm_mem(FP_SCRATCH, 5, slot, None);
@@ -1424,7 +1451,11 @@ impl FunctionEncoding {
                     return Err(self.unsupported(inst, func_name, abi));
                 };
                 let s_xmm = if let Some(s) = phys_reg(src) {
-                    if s >= 16 { s - 16 } else { return Err(self.unsupported(inst, func_name, abi)); }
+                    if s >= 16 {
+                        s - 16
+                    } else {
+                        return Err(self.unsupported(inst, func_name, abi));
+                    }
                 } else {
                     if !self.load_fp_operand_into_xmm(src, FP_SCRATCH, is_f64) {
                         return Err(self.unsupported(inst, func_name, abi));
@@ -1446,7 +1477,11 @@ impl FunctionEncoding {
             MachineInstruction::FDiv { dst, src, size } => {
                 let is_f64 = *size == 8;
                 let (d_xmm, d_slot) = if let Some(d) = phys_reg(dst) {
-                    if d >= 16 { (d - 16, None) } else { return Err(self.unsupported(inst, func_name, abi)); }
+                    if d >= 16 {
+                        (d - 16, None)
+                    } else {
+                        return Err(self.unsupported(inst, func_name, abi));
+                    }
                 } else if let Some(slot) = stack_slot(dst) {
                     if is_f64 {
                         self.enc.movsd_xmm_mem(FP_SCRATCH, 5, slot, None);
@@ -1458,7 +1493,11 @@ impl FunctionEncoding {
                     return Err(self.unsupported(inst, func_name, abi));
                 };
                 let s_xmm = if let Some(s) = phys_reg(src) {
-                    if s >= 16 { s - 16 } else { return Err(self.unsupported(inst, func_name, abi)); }
+                    if s >= 16 {
+                        s - 16
+                    } else {
+                        return Err(self.unsupported(inst, func_name, abi));
+                    }
                 } else {
                     if !self.load_fp_operand_into_xmm(src, FP_SCRATCH, is_f64) {
                         return Err(self.unsupported(inst, func_name, abi));
@@ -1480,7 +1519,11 @@ impl FunctionEncoding {
             MachineInstruction::FNeg { dst, size } => {
                 let is_f64 = *size == 8;
                 let (d_xmm, d_slot) = if let Some(d) = phys_reg(dst) {
-                    if d >= 16 { (d - 16, None) } else { return Err(self.unsupported(inst, func_name, abi)); }
+                    if d >= 16 {
+                        (d - 16, None)
+                    } else {
+                        return Err(self.unsupported(inst, func_name, abi));
+                    }
                 } else if let Some(slot) = stack_slot(dst) {
                     if is_f64 {
                         self.enc.movsd_xmm_mem(FP_SCRATCH, 5, slot, None);
@@ -1492,7 +1535,10 @@ impl FunctionEncoding {
                     return Err(self.unsupported(inst, func_name, abi));
                 };
                 if is_f64 {
-                    self.enc.mov_r64_imm64(SCRATCH, i64::from_ne_bytes(0x8000_0000_0000_0000u64.to_ne_bytes()));
+                    self.enc.mov_r64_imm64(
+                        SCRATCH,
+                        i64::from_ne_bytes(0x8000_0000_0000_0000u64.to_ne_bytes()),
+                    );
                     self.enc.movq_xmm_r64(FP_SCRATCH, SCRATCH);
                     self.enc.xorpd_xmm_xmm(d_xmm, FP_SCRATCH);
                     if let Some(slot) = d_slot {
@@ -1510,7 +1556,11 @@ impl FunctionEncoding {
             MachineInstruction::FCmp { lhs, rhs, size } => {
                 let is_f64 = *size == 8;
                 let l_xmm = if let Some(l) = phys_reg(lhs) {
-                    if l >= 16 { l - 16 } else { return Err(self.unsupported(inst, func_name, abi)); }
+                    if l >= 16 {
+                        l - 16
+                    } else {
+                        return Err(self.unsupported(inst, func_name, abi));
+                    }
                 } else if let Some(slot) = stack_slot(lhs) {
                     if is_f64 {
                         self.enc.movsd_xmm_mem(FP_SCRATCH, 5, slot, None);
@@ -1539,16 +1589,29 @@ impl FunctionEncoding {
                     self.enc.ucomiss_xmm_xmm(l_xmm, r_xmm);
                 }
             }
-            MachineInstruction::FCvtIntToFloat { dst, src, is_f64, is_signed: _ } => {
+            MachineInstruction::FCvtIntToFloat {
+                dst,
+                src,
+                is_f64,
+                is_signed: _,
+            } => {
                 let (d_xmm, d_slot) = if let Some(d) = phys_reg(dst) {
-                    if d >= 16 { (d - 16, None) } else { return Err(self.unsupported(inst, func_name, abi)); }
+                    if d >= 16 {
+                        (d - 16, None)
+                    } else {
+                        return Err(self.unsupported(inst, func_name, abi));
+                    }
                 } else if let Some(slot) = stack_slot(dst) {
                     (FP_SCRATCH, Some(slot))
                 } else {
                     return Err(self.unsupported(inst, func_name, abi));
                 };
                 let s_gpr = if let Some(s) = phys_reg(src) {
-                    if s < 16 { s } else { return Err(self.unsupported(inst, func_name, abi)); }
+                    if s < 16 {
+                        s
+                    } else {
+                        return Err(self.unsupported(inst, func_name, abi));
+                    }
                 } else if let Some(slot) = stack_slot(src) {
                     self.enc.mov_r64_rbp_offset(SCRATCH, slot);
                     SCRATCH
@@ -1570,16 +1633,29 @@ impl FunctionEncoding {
                     }
                 }
             }
-            MachineInstruction::FCvtFloatToInt { dst, src, is_f64, is_signed: _ } => {
+            MachineInstruction::FCvtFloatToInt {
+                dst,
+                src,
+                is_f64,
+                is_signed: _,
+            } => {
                 let d_gpr = if let Some(d) = phys_reg(dst) {
-                    if d < 16 { d } else { return Err(self.unsupported(inst, func_name, abi)); }
+                    if d < 16 {
+                        d
+                    } else {
+                        return Err(self.unsupported(inst, func_name, abi));
+                    }
                 } else if let Some(_slot) = stack_slot(dst) {
                     SCRATCH
                 } else {
                     return Err(self.unsupported(inst, func_name, abi));
                 };
                 let s_xmm = if let Some(s) = phys_reg(src) {
-                    if s >= 16 { s - 16 } else { return Err(self.unsupported(inst, func_name, abi)); }
+                    if s >= 16 {
+                        s - 16
+                    } else {
+                        return Err(self.unsupported(inst, func_name, abi));
+                    }
                 } else if let Some(slot) = stack_slot(src) {
                     if *is_f64 {
                         self.enc.movsd_xmm_mem(FP_SCRATCH, 5, slot, None);
@@ -1601,14 +1677,22 @@ impl FunctionEncoding {
             }
             MachineInstruction::FCvtFloatToFloat { dst, src, to_f64 } => {
                 let (d_xmm, d_slot) = if let Some(d) = phys_reg(dst) {
-                    if d >= 16 { (d - 16, None) } else { return Err(self.unsupported(inst, func_name, abi)); }
+                    if d >= 16 {
+                        (d - 16, None)
+                    } else {
+                        return Err(self.unsupported(inst, func_name, abi));
+                    }
                 } else if let Some(slot) = stack_slot(dst) {
                     (FP_SCRATCH, Some(slot))
                 } else {
                     return Err(self.unsupported(inst, func_name, abi));
                 };
                 let s_xmm = if let Some(s) = phys_reg(src) {
-                    if s >= 16 { s - 16 } else { return Err(self.unsupported(inst, func_name, abi)); }
+                    if s >= 16 {
+                        s - 16
+                    } else {
+                        return Err(self.unsupported(inst, func_name, abi));
+                    }
                 } else if let Some(slot) = stack_slot(src) {
                     if *to_f64 {
                         self.enc.movss_xmm_mem(FP_SCRATCH, 5, slot, None);

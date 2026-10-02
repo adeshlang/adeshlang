@@ -55,9 +55,9 @@ impl ParallelMoveResolver {
     pub fn for_x86_64() -> Self {
         let mut resolver = Self::new("x86_64");
         resolver.scratch_pool = vec![
-            PhysicalRegister(10), // R10 (caller-saved encoder scratch)
-            PhysicalRegister(11), // R11 (caller-saved encoder scratch)
-            PhysicalRegister(0),  // RAX (caller-saved)
+            PhysicalRegister(10),      // R10 (caller-saved encoder scratch)
+            PhysicalRegister(11),      // R11 (caller-saved encoder scratch)
+            PhysicalRegister(0),       // RAX (caller-saved)
             PhysicalRegister::xmm(15), // XMM15 (caller-saved FP scratch)
         ];
         resolver.reserved_registers.insert(PhysicalRegister(4)); // RSP
@@ -144,7 +144,10 @@ impl ParallelMoveResolver {
             if m.dst.is_immediate() {
                 return Err(CodegenError::new(
                     self.arch,
-                    format!("Destination of a move cannot be an immediate value: {:?}", m.dst),
+                    format!(
+                        "Destination of a move cannot be an immediate value: {:?}",
+                        m.dst
+                    ),
                 ));
             }
             // Filter out no-ops: dst == src
@@ -175,9 +178,10 @@ impl ParallelMoveResolver {
             // (a) Find ready moves: a move D <- S is ready if D is NOT used as S' in any other pending move.
             let mut ready_idx = None;
             for (idx, candidate) in pending.iter().enumerate() {
-                let dst_is_read_elsewhere = pending.iter().enumerate().any(|(other_idx, other)| {
-                    other_idx != idx && other.src == candidate.dst
-                });
+                let dst_is_read_elsewhere = pending
+                    .iter()
+                    .enumerate()
+                    .any(|(other_idx, other)| other_idx != idx && other.src == candidate.dst);
 
                 if !dst_is_read_elsewhere {
                     ready_idx = Some(idx);
@@ -392,7 +396,8 @@ impl ParallelMoveResolver {
         if dst.is_memory_or_stack() {
             if let MoveLocation::Immediate(val) = src {
                 if !(*val >= i32::MIN as i64 && *val <= i32::MAX as i64) {
-                    let scratch = self.select_scratch_register(pending, RegisterClass::Gpr, None)?;
+                    let scratch =
+                        self.select_scratch_register(pending, RegisterClass::Gpr, None)?;
                     let scratch_loc = MoveLocation::PhysicalRegister(scratch);
                     self.emit_direct_move(&scratch_loc, src, size, emitted)?;
                     self.emit_direct_move(dst, &scratch_loc, size, emitted)?;

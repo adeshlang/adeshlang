@@ -38,11 +38,7 @@ impl PhysicalRegister {
     }
 
     pub fn xmm_index(&self) -> u8 {
-        if self.0 >= 16 {
-            self.0 - 16
-        } else {
-            self.0
-        }
+        if self.0 >= 16 { self.0 - 16 } else { self.0 }
     }
 
     pub fn class(&self) -> RegisterClass {
@@ -135,10 +131,7 @@ pub enum MoveLocation {
     /// Virtual register before register allocation.
     VirtualRegister(VirtualRegister),
     /// Frame or stack slot with an explicit base register and displacement.
-    StackSlot {
-        base: PhysicalRegister,
-        offset: i32,
-    },
+    StackSlot { base: PhysicalRegister, offset: i32 },
     /// Memory location with base register, offset, and optional scaled index.
     Memory {
         base: MachineRegister,
@@ -198,12 +191,18 @@ impl MoveLocation {
 
     #[inline]
     pub fn is_memory_or_stack(&self) -> bool {
-        matches!(self, MoveLocation::StackSlot { .. } | MoveLocation::Memory { .. })
+        matches!(
+            self,
+            MoveLocation::StackSlot { .. } | MoveLocation::Memory { .. }
+        )
     }
 
     #[inline]
     pub fn is_immediate(&self) -> bool {
-        matches!(self, MoveLocation::Immediate(_) | MoveLocation::FloatImmediate(_))
+        matches!(
+            self,
+            MoveLocation::Immediate(_) | MoveLocation::FloatImmediate(_)
+        )
     }
 
     #[inline]
@@ -227,7 +226,11 @@ impl MoveLocation {
                 offset: *offset,
                 index: None,
             },
-            MoveLocation::Memory { base, offset, index } => MachineOperand::Memory {
+            MoveLocation::Memory {
+                base,
+                offset,
+                index,
+            } => MachineOperand::Memory {
                 base: *base,
                 offset: *offset,
                 index: *index,
@@ -239,7 +242,10 @@ impl MoveLocation {
         }
     }
 
-    pub fn from_operand(op: &MachineOperand, default_stack_base: Option<PhysicalRegister>) -> Option<Self> {
+    pub fn from_operand(
+        op: &MachineOperand,
+        default_stack_base: Option<PhysicalRegister>,
+    ) -> Option<Self> {
         match op {
             MachineOperand::Register(MachineRegister::Physical(p)) => {
                 Some(MoveLocation::PhysicalRegister(*p))
@@ -254,13 +260,15 @@ impl MoveLocation {
                     offset: *slot,
                 })
             }
-            MachineOperand::Memory { base, offset, index } => match base {
-                MachineRegister::Physical(p) if index.is_none() => {
-                    Some(MoveLocation::StackSlot {
-                        base: *p,
-                        offset: *offset,
-                    })
-                }
+            MachineOperand::Memory {
+                base,
+                offset,
+                index,
+            } => match base {
+                MachineRegister::Physical(p) if index.is_none() => Some(MoveLocation::StackSlot {
+                    base: *p,
+                    offset: *offset,
+                }),
                 _ => Some(MoveLocation::Memory {
                     base: *base,
                     offset: *offset,
@@ -286,7 +294,11 @@ impl std::fmt::Display for MoveLocation {
                     write!(f, "[phys_r{}{}]", base.0, offset)
                 }
             }
-            MoveLocation::Memory { base, offset, index } => {
+            MoveLocation::Memory {
+                base,
+                offset,
+                index,
+            } => {
                 let base_str = match base {
                     MachineRegister::Physical(p) => format!("phys_r{}", p.0),
                     MachineRegister::Virtual(v) => format!("v{}", v.0),
@@ -565,7 +577,10 @@ impl MachineFunction {
     }
 
     pub fn vreg_class(&self, vreg: VirtualRegister) -> RegisterClass {
-        self.vreg_classes.get(&vreg).copied().unwrap_or(RegisterClass::Gpr)
+        self.vreg_classes
+            .get(&vreg)
+            .copied()
+            .unwrap_or(RegisterClass::Gpr)
     }
 
     pub fn create_block(&mut self, label: impl Into<String>) -> u32 {

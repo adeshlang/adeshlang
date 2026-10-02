@@ -1898,9 +1898,8 @@ pub extern "C" fn aot_make_range(start_handle: u64, end_handle: u64, inclusive: 
 /// AOT raw heap allocation bridge (unsafe alloc<T>(size))
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_alloc(size: usize) -> *mut u8 {
-    let layout = std::alloc::Layout::from_size_align(size.max(1), 8).unwrap_or(
-        std::alloc::Layout::new::<u8>()
-    );
+    let layout = std::alloc::Layout::from_size_align(size.max(1), 8)
+        .unwrap_or(std::alloc::Layout::new::<u8>());
     unsafe { std::alloc::alloc_zeroed(layout) }
 }
 
@@ -1909,7 +1908,9 @@ pub extern "C" fn aot_alloc(size: usize) -> *mut u8 {
 pub extern "C" fn aot_free(ptr: *mut u8) {
     if !ptr.is_null() {
         let layout = std::alloc::Layout::from_size_align(8, 8).unwrap();
-        unsafe { std::alloc::dealloc(ptr, layout); }
+        unsafe {
+            std::alloc::dealloc(ptr, layout);
+        }
     }
 }
 
@@ -1923,14 +1924,22 @@ pub extern "C" fn aot_matches_variant(val_handle: u64, tag_handle: u64) -> i64 {
     let val = unpack_aot_arg(val_handle);
     match val {
         RuntimeValue::Object(map) => {
-            if let Some(RuntimeValue::String(variant_name)) = map.get("__struct").or_else(|| map.get("__class")).or_else(|| map.get("__tag")) {
+            if let Some(RuntimeValue::String(variant_name)) = map
+                .get("__struct")
+                .or_else(|| map.get("__class"))
+                .or_else(|| map.get("__tag"))
+            {
                 if variant_name == &tag { 1 } else { 0 }
             } else {
                 0
             }
         }
         RuntimeValue::String(s) => {
-            if s == tag { 1 } else { 0 }
+            if s == tag {
+                1
+            } else {
+                0
+            }
         }
         _ => 0,
     }
@@ -1947,10 +1956,18 @@ pub extern "C" fn aot_contains(container_handle: u64, elem_handle: u64) -> i64 {
         | RuntimeValue::RawArray(_, arr)
         | RuntimeValue::DynArray { data: arr, .. }
         | RuntimeValue::Tuple(arr) => {
-            if arr.contains(&elem) { 1 } else { 0 }
+            if arr.contains(&elem) {
+                1
+            } else {
+                0
+            }
         }
         RuntimeValue::Set(set) => {
-            if set.contains(&elem) { 1 } else { 0 }
+            if set.contains(&elem) {
+                1
+            } else {
+                0
+            }
         }
         RuntimeValue::Object(map) => {
             if let RuntimeValue::String(key) = elem {

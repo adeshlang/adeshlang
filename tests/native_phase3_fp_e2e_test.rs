@@ -97,7 +97,10 @@ fn test_fp_lowering_and_adob_validation_win64() {
     };
 
     let bytes = lower_and_validate_adob(&hir, "x86_64-pc-windows-msvc");
-    assert!(!bytes.is_empty(), "ADOB encoding must produce non-empty bytes");
+    assert!(
+        !bytes.is_empty(),
+        "ADOB encoding must produce non-empty bytes"
+    );
 }
 
 #[test]
@@ -140,7 +143,10 @@ fn test_fp_lowering_and_adob_validation_sysv() {
     };
 
     let bytes = lower_and_validate_adob(&hir, "x86_64-unknown-linux-gnu");
-    assert!(!bytes.is_empty(), "ADOB encoding must produce non-empty bytes");
+    assert!(
+        !bytes.is_empty(),
+        "ADOB encoding must produce non-empty bytes"
+    );
 }
 
 #[test]
