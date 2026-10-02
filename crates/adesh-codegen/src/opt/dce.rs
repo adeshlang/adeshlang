@@ -46,10 +46,10 @@ impl DeadCodeElimination {
                 for inst in &block.instructions {
                     match inst {
                         MachineInstruction::Branch { target }
-                        | MachineInstruction::BranchCc { target, .. } => {
-                            if reachable_labels.insert(target.clone()) {
-                                worklist.push(target.clone());
-                            }
+                        | MachineInstruction::BranchCc { target, .. }
+                            if reachable_labels.insert(target.clone()) =>
+                        {
+                            worklist.push(target.clone());
                         }
                         _ => {}
                     }
