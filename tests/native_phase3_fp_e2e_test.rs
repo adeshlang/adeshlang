@@ -43,6 +43,149 @@ fn lower_link_and_run(hir: &HirModule, test_name: &str) -> i32 {
     out.status.code().expect("exit code")
 }
 
+fn lower_and_validate_adob(hir: &HirModule, triple: &str) -> Vec<u8> {
+    let target = TargetDescriptor::from_triple(triple).expect("valid triple");
+    let native_mod = lower_hir_module(hir, &target);
+
+    let mut backend = create_backend(target.clone()).expect("backend creation");
+    let obj = backend.emit_object(&native_mod).expect("ADOB emission");
+    AdobValidator::validate(&obj).expect("emitted ADOB must validate");
+
+    AdobWriter::write(&obj).expect("ADOB encoding")
+}
+
+#[test]
+#[cfg(target_arch = "x86_64")]
+fn test_fp_lowering_and_adob_validation_win64() {
+    let hir = HirModule {
+        functions: vec![],
+        classes: vec![],
+        statements: vec![
+            HirStmt::Let {
+                name: "a".to_string(),
+                ty: Some(HirType::F64),
+                init: Some(HirExpr::Literal(HirLiteral::F64(12.5))),
+                is_const: false,
+                is_borrowed: None,
+            },
+            HirStmt::Let {
+                name: "b".to_string(),
+                ty: Some(HirType::F32),
+                init: Some(HirExpr::Literal(HirLiteral::F32(2.5))),
+                is_const: false,
+                is_borrowed: None,
+            },
+            HirStmt::Let {
+                name: "c".to_string(),
+                ty: Some(HirType::F64),
+                init: Some(HirExpr::BinaryOp(
+                    Box::new(HirExpr::LoadVar("a".to_string())),
+                    BinOp::Add,
+                    Box::new(HirExpr::Cast(
+                        Box::new(HirExpr::LoadVar("b".to_string())),
+                        HirType::F64,
+                    )),
+                )),
+                is_const: false,
+                is_borrowed: None,
+            },
+            HirStmt::Return(Some(HirExpr::Cast(
+                Box::new(HirExpr::LoadVar("c".to_string())),
+                HirType::I64,
+            ))),
+        ],
+    };
+
+    let bytes = lower_and_validate_adob(&hir, "x86_64-pc-windows-msvc");
+    assert!(!bytes.is_empty(), "ADOB encoding must produce non-empty bytes");
+}
+
+#[test]
+#[cfg(target_arch = "x86_64")]
+fn test_fp_lowering_and_adob_validation_sysv() {
+    let hir = HirModule {
+        functions: vec![],
+        classes: vec![],
+        statements: vec![
+            HirStmt::Let {
+                name: "x".to_string(),
+                ty: Some(HirType::F64),
+                init: Some(HirExpr::Literal(HirLiteral::F64(100.0))),
+                is_const: false,
+                is_borrowed: None,
+            },
+            HirStmt::Let {
+                name: "y".to_string(),
+                ty: Some(HirType::F64),
+                init: Some(HirExpr::Literal(HirLiteral::F64(4.0))),
+                is_const: false,
+                is_borrowed: None,
+            },
+            HirStmt::Let {
+                name: "res".to_string(),
+                ty: Some(HirType::F64),
+                init: Some(HirExpr::BinaryOp(
+                    Box::new(HirExpr::LoadVar("x".to_string())),
+                    BinOp::Div,
+                    Box::new(HirExpr::LoadVar("y".to_string())),
+                )),
+                is_const: false,
+                is_borrowed: None,
+            },
+            HirStmt::Return(Some(HirExpr::Cast(
+                Box::new(HirExpr::LoadVar("res".to_string())),
+                HirType::I64,
+            ))),
+        ],
+    };
+
+    let bytes = lower_and_validate_adob(&hir, "x86_64-unknown-linux-gnu");
+    assert!(!bytes.is_empty(), "ADOB encoding must produce non-empty bytes");
+}
+
+#[test]
+#[cfg(target_arch = "x86_64")]
+fn test_fp_mixed_abi_and_spill_lowering() {
+    let mut stmts = Vec::new();
+    // Allocate 18 live f64 variables to force register spills beyond 15 allocatable XMM registers
+    for i in 0..18 {
+        stmts.push(HirStmt::Let {
+            name: format!("v{}", i),
+            ty: Some(HirType::F64),
+            init: Some(HirExpr::Literal(HirLiteral::F64(i as f64 + 1.0))),
+            is_const: false,
+            is_borrowed: None,
+        });
+    }
+
+    // Accumulate sum of all 18 FP variables
+    let mut acc: HirExpr = HirExpr::LoadVar("v0".to_string());
+    for i in 1..18 {
+        acc = HirExpr::BinaryOp(
+            Box::new(acc),
+            BinOp::Add,
+            Box::new(HirExpr::LoadVar(format!("v{}", i))),
+        );
+    }
+
+    stmts.push(HirStmt::Return(Some(HirExpr::Cast(
+        Box::new(acc),
+        HirType::I64,
+    ))));
+
+    let hir = HirModule {
+        functions: vec![],
+        classes: vec![],
+        statements: stmts,
+    };
+
+    let win_bytes = lower_and_validate_adob(&hir, "x86_64-pc-windows-msvc");
+    assert!(!win_bytes.is_empty());
+
+    let sysv_bytes = lower_and_validate_adob(&hir, "x86_64-unknown-linux-gnu");
+    assert!(!sysv_bytes.is_empty());
+}
+
 #[test]
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_e2e_f64_scalar_arithmetic() {
