@@ -597,6 +597,7 @@ impl PrettyPrintOptions {
     }
 }
 
+#[allow(dead_code)]
 fn infer_integer_hint_from_number(n: f64) -> Option<&'static str> {
     if !n.is_finite() {
         return None;
@@ -2302,7 +2303,7 @@ pub unsafe extern "C" fn aot_collections_new(
     let raw_args = if args_ptr.is_null() || args_count == 0 {
         &[]
     } else {
-        std::slice::from_raw_parts(args_ptr, args_count)
+        unsafe { std::slice::from_raw_parts(args_ptr, args_count) }
     };
     let args: Vec<RuntimeValue> = raw_args
         .iter()
@@ -2353,7 +2354,7 @@ pub unsafe extern "C" fn aot_call_method(
     let raw_args = if args_ptr.is_null() || args_count == 0 {
         &[]
     } else {
-        std::slice::from_raw_parts(args_ptr, args_count)
+        unsafe { std::slice::from_raw_parts(args_ptr, args_count) }
     };
     let args: Vec<RuntimeValue> = raw_args
         .iter()
@@ -2745,7 +2746,8 @@ pub unsafe extern "C" fn aot_call_method(
             "map" => {
                 if let Some(fn_val) = args.get(0) {
                     if let Some(fp) = fn_val.as_fn_ptr() {
-                        let f = std::mem::transmute::<usize, extern "C" fn(i64) -> u64>(fp);
+                        let f =
+                            unsafe { std::mem::transmute::<usize, extern "C" fn(i64) -> u64>(fp) };
                         let mut new_arr = Vec::with_capacity(arr.len());
                         for item in &arr {
                             let in_h = aot_store_value(item.clone());
@@ -2763,7 +2765,8 @@ pub unsafe extern "C" fn aot_call_method(
             "filter" => {
                 if let Some(fn_val) = args.get(0) {
                     if let Some(fp) = fn_val.as_fn_ptr() {
-                        let f = std::mem::transmute::<usize, extern "C" fn(i64) -> u64>(fp);
+                        let f =
+                            unsafe { std::mem::transmute::<usize, extern "C" fn(i64) -> u64>(fp) };
                         let mut new_arr = Vec::new();
                         for item in &arr {
                             let in_h = aot_store_value(item.clone());
@@ -2783,7 +2786,9 @@ pub unsafe extern "C" fn aot_call_method(
             "reduce" => {
                 if let Some(fn_val) = args.get(0) {
                     if let Some(fp) = fn_val.as_fn_ptr() {
-                        let f = std::mem::transmute::<usize, extern "C" fn(i64, i64) -> u64>(fp);
+                        let f = unsafe {
+                            std::mem::transmute::<usize, extern "C" fn(i64, i64) -> u64>(fp)
+                        };
                         let has_init = args.len() > 1;
                         let mut acc = if has_init {
                             args[1].clone()

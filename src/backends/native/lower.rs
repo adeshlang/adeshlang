@@ -6,12 +6,11 @@
 //! rich pretty-printing options, and branch/call relocation generation.
 
 use crate::parsing::hir::{
-    BinOp, HirClass, HirExpr, HirFunction, HirLiteral, HirModule, HirPattern, HirStmt, HirType,
-    UnaryOp,
+    BinOp, HirExpr, HirFunction, HirLiteral, HirModule, HirPattern, HirStmt, HirType, UnaryOp,
 };
 use adesh_codegen::calling_convention::{
-    ArgumentLocation, CallingConvention, MoveLocation, MoveOperation, ParallelMoveResolver,
-    SystemVX64CallingConvention, WindowsX64CallingConvention, resolve_call_arguments,
+    ArgumentLocation, CallingConvention, SystemVX64CallingConvention, WindowsX64CallingConvention,
+    resolve_call_arguments,
 };
 use adesh_codegen::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,

@@ -11,6 +11,8 @@
 //! - incoming stack arguments loaded from `[rbp + 16 + 8*k]`,
 //! - 16-byte stack alignment across the outgoing-argument area.
 
+#![allow(dead_code, unused_imports)]
+
 use adesh_codegen::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
     NativeModule, PhysicalRegister,

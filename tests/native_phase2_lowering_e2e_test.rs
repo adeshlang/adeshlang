@@ -7,6 +7,8 @@
 //! 4. Memory operations: borrow references, pointer dereferencing, alloc and free.
 //! 5. String concatenation and type casting.
 
+#![allow(dead_code, unused_imports)]
+
 use adesh_codegen::targets::create_backend;
 use adesh_object::TargetDescriptor;
 use adesh_object::validator::AdobValidator;

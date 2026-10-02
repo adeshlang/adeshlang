@@ -1,9 +1,16 @@
+#[cfg(target_os = "windows")]
 use adesh_linker::pe::import::ImportSymbol;
+#[cfg(target_os = "windows")]
 use adesh_linker::pe::writer::PeWriter;
+#[cfg(target_os = "windows")]
 use adesh_linker::section::{MergedSection, SectionKind, flags};
+#[cfg(target_os = "windows")]
 use adesh_linker::symbol::{Symbol, SymbolBinding, SymbolType};
+#[cfg(target_os = "windows")]
 use adesh_linker::target::Target;
+#[cfg(target_os = "windows")]
 use std::process::Command;
+#[cfg(target_os = "windows")]
 use tempfile::tempdir;
 
 #[test]

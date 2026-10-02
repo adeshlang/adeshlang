@@ -9,6 +9,8 @@
 //! 6. Mixed integer (GPR) and float (XMM) ABI argument shuffling and parallel move resolution.
 //! 7. High register pressure XMM spills/reloads and non-volatile XMM preservation.
 
+#![allow(dead_code, unused_imports)]
+
 use adesh_codegen::targets::create_backend;
 use adesh_object::TargetDescriptor;
 use adesh_object::validator::AdobValidator;

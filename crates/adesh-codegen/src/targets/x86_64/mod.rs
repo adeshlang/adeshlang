@@ -654,18 +654,18 @@ impl FunctionEncoding {
         xmm_scratch: u8,
         is_f64: bool,
     ) -> bool {
-        if let Some(s) = phys_reg(src) {
-            if s >= 16 {
-                let s_xmm = s - 16;
-                if s_xmm != xmm_scratch {
-                    if is_f64 {
-                        self.enc.movsd_xmm_xmm(xmm_scratch, s_xmm);
-                    } else {
-                        self.enc.movss_xmm_xmm(xmm_scratch, s_xmm);
-                    }
+        if let Some(s) = phys_reg(src)
+            && s >= 16
+        {
+            let s_xmm = s - 16;
+            if s_xmm != xmm_scratch {
+                if is_f64 {
+                    self.enc.movsd_xmm_xmm(xmm_scratch, s_xmm);
+                } else {
+                    self.enc.movss_xmm_xmm(xmm_scratch, s_xmm);
                 }
-                return true;
             }
+            return true;
         }
         match src {
             MachineOperand::FloatImmediate(f) => {

@@ -1990,5 +1990,5 @@ pub extern "C" fn aot_contains(container_handle: u64, elem_handle: u64) -> i64 {
 /// Create a dictionary with key-value pairs
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_make_dict(args_ptr: *const u64, arg_count: usize) -> u64 {
-    aot_make_object(args_ptr, arg_count)
+    unsafe { aot_make_object(args_ptr, arg_count) }
 }
