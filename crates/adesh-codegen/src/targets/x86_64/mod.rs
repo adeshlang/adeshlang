@@ -37,6 +37,9 @@ const SCRATCH: u8 = 10;
 const SCRATCH2: u8 = 11;
 /// Encoder scratch register for floating-point operations (XMM15 = 31).
 const FP_SCRATCH: u8 = 15;
+/// Second encoder scratch register for floating-point operations (XMM14 = 30).
+#[allow(dead_code)]
+const FP_SCRATCH2: u8 = 14;
 
 // ---------------------------------------------------------------- Register File
 
@@ -47,8 +50,34 @@ const FP_SCRATCH: u8 = 15;
 /// R10 backs stack-slot arithmetic sequences, and R11 preserves RCX around
 /// shift-count transfers.
 ///
-/// XMM15 (31) is reserved for the encoder floating-point scratch operations.
-pub struct X86_64RegisterFile;
+/// XMM14 (30) and XMM15 (31) are reserved for encoder floating-point scratch operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct X86_64RegisterFile {
+    pub is_windows: bool,
+}
+
+impl Default for X86_64RegisterFile {
+    fn default() -> Self {
+        Self::sysv()
+    }
+}
+
+impl X86_64RegisterFile {
+    pub const fn sysv() -> Self {
+        Self { is_windows: false }
+    }
+
+    pub const fn windows() -> Self {
+        Self { is_windows: true }
+    }
+
+    pub fn for_os(os: OperatingSystem) -> Self {
+        match os {
+            OperatingSystem::Windows => Self::windows(),
+            _ => Self::sysv(),
+        }
+    }
+}
 
 // 0: RAX, 1: RCX, 2: RDX, 3: RBX, 4: RSP, 5: RBP, 6: RSI, 7: RDI
 // 8: R8, 9: R9, 10: R10, 11: R11, 12: R12, 13: R13, 14: R14, 15: R15
@@ -127,7 +156,7 @@ const X86_64_RESERVED_GPR: [PhysicalRegister; 5] = [
     PhysicalRegister(11), // R11: encoder scratch (RCX preservation)
 ];
 
-const X86_64_ALLOCATABLE_FP: [PhysicalRegister; 15] = [
+const X86_64_ALLOCATABLE_FP: [PhysicalRegister; 14] = [
     PhysicalRegister(16), // XMM0
     PhysicalRegister(17), // XMM1
     PhysicalRegister(18), // XMM2
@@ -142,10 +171,9 @@ const X86_64_ALLOCATABLE_FP: [PhysicalRegister; 15] = [
     PhysicalRegister(27), // XMM11
     PhysicalRegister(28), // XMM12
     PhysicalRegister(29), // XMM13
-    PhysicalRegister(30), // XMM14
 ];
 
-const X86_64_CALLER_SAVED_FP: [PhysicalRegister; 15] = [
+const X86_64_CALLER_SAVED_FP_SYSV: [PhysicalRegister; 14] = [
     PhysicalRegister(16), // XMM0
     PhysicalRegister(17), // XMM1
     PhysicalRegister(18), // XMM2
@@ -160,12 +188,32 @@ const X86_64_CALLER_SAVED_FP: [PhysicalRegister; 15] = [
     PhysicalRegister(27), // XMM11
     PhysicalRegister(28), // XMM12
     PhysicalRegister(29), // XMM13
-    PhysicalRegister(30), // XMM14
 ];
 
-const X86_64_CALLEE_SAVED_FP: [PhysicalRegister; 0] = [];
+const X86_64_CALLEE_SAVED_FP_SYSV: [PhysicalRegister; 0] = [];
 
-const X86_64_RESERVED_FP: [PhysicalRegister; 1] = [
+const X86_64_CALLER_SAVED_FP_WIN: [PhysicalRegister; 6] = [
+    PhysicalRegister(16), // XMM0
+    PhysicalRegister(17), // XMM1
+    PhysicalRegister(18), // XMM2
+    PhysicalRegister(19), // XMM3
+    PhysicalRegister(20), // XMM4
+    PhysicalRegister(21), // XMM5
+];
+
+const X86_64_CALLEE_SAVED_FP_WIN: [PhysicalRegister; 8] = [
+    PhysicalRegister(22), // XMM6
+    PhysicalRegister(23), // XMM7
+    PhysicalRegister(24), // XMM8
+    PhysicalRegister(25), // XMM9
+    PhysicalRegister(26), // XMM10
+    PhysicalRegister(27), // XMM11
+    PhysicalRegister(28), // XMM12
+    PhysicalRegister(29), // XMM13
+];
+
+const X86_64_RESERVED_FP: [PhysicalRegister; 2] = [
+    PhysicalRegister(30), // XMM14: FP scratch 2
     PhysicalRegister(31), // XMM15: FP scratch
 ];
 
@@ -194,13 +242,25 @@ impl RegisterFile for X86_64RegisterFile {
     fn caller_saved_for_class(&self, class: RegisterClass) -> &[PhysicalRegister] {
         match class {
             RegisterClass::Gpr => &X86_64_CALLER_SAVED_GPR,
-            RegisterClass::Float => &X86_64_CALLER_SAVED_FP,
+            RegisterClass::Float => {
+                if self.is_windows {
+                    &X86_64_CALLER_SAVED_FP_WIN
+                } else {
+                    &X86_64_CALLER_SAVED_FP_SYSV
+                }
+            }
         }
     }
     fn callee_saved_for_class(&self, class: RegisterClass) -> &[PhysicalRegister] {
         match class {
             RegisterClass::Gpr => &X86_64_CALLEE_SAVED_GPR,
-            RegisterClass::Float => &X86_64_CALLEE_SAVED_FP,
+            RegisterClass::Float => {
+                if self.is_windows {
+                    &X86_64_CALLEE_SAVED_FP_WIN
+                } else {
+                    &X86_64_CALLEE_SAVED_FP_SYSV
+                }
+            }
         }
     }
     fn reserved_for_class(&self, class: RegisterClass) -> &[PhysicalRegister] {
@@ -1946,7 +2006,7 @@ impl CodegenBackend for X86_64Backend {
 
     fn lower_module(&mut self, module: &NativeModule) -> Result<NativeModule, CodegenError> {
         let mut lowered = module.clone();
-        let reg_file = X86_64RegisterFile;
+        let reg_file = X86_64RegisterFile::for_os(self.target.operating_system);
         let allocator = LinearScanAllocator::new(&reg_file);
 
         for func in &mut lowered.functions {

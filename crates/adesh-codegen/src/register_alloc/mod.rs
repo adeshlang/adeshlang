@@ -94,11 +94,11 @@ impl LiveRange {
         self.segments.sort_by_key(|s| s.start);
         let mut merged: Vec<LiveSegment> = Vec::new();
         for seg in self.segments.drain(..) {
-            if let Some(last) = merged.last_mut() {
-                if seg.start <= last.end {
-                    last.end = last.end.max(seg.end);
-                    continue;
-                }
+            if let Some(last) = merged.last_mut()
+                && seg.start <= last.end
+            {
+                last.end = last.end.max(seg.end);
+                continue;
             }
             merged.push(seg);
         }
@@ -287,6 +287,12 @@ struct SpillSlotInfo {
     class: RegisterClass,
     start_pos: usize,
     end_pos: usize,
+}
+
+impl Default for SpillSlotManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SpillSlotManager {

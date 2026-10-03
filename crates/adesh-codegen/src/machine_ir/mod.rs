@@ -585,10 +585,10 @@ impl MachineInstruction {
                 }
             }
             MachineInstruction::Custom { operands, .. } => {
-                if let Some(dst) = operands.first() {
-                    if let Some(r) = dst.register_def() {
-                        defs.push(r);
-                    }
+                if let Some(dst) = operands.first()
+                    && let Some(r) = dst.register_def()
+                {
+                    defs.push(r);
                 }
             }
             _ => {}
@@ -805,15 +805,15 @@ impl MachineFunction {
         }
 
         for (src, dst) in edges {
-            if let Some(src_block) = self.blocks.iter_mut().find(|b| b.id == src) {
-                if !src_block.successors.contains(&dst) {
-                    src_block.successors.push(dst);
-                }
+            if let Some(src_block) = self.blocks.iter_mut().find(|b| b.id == src)
+                && !src_block.successors.contains(&dst)
+            {
+                src_block.successors.push(dst);
             }
-            if let Some(dst_block) = self.blocks.iter_mut().find(|b| b.id == dst) {
-                if !dst_block.predecessors.contains(&src) {
-                    dst_block.predecessors.push(src);
-                }
+            if let Some(dst_block) = self.blocks.iter_mut().find(|b| b.id == dst)
+                && !dst_block.predecessors.contains(&src)
+            {
+                dst_block.predecessors.push(src);
             }
         }
     }

@@ -62,7 +62,7 @@ fn test_cfg_rebuild_and_liveness_fixed_point() {
 #[test]
 fn test_mixed_gpr_and_xmm_spill_pressure_and_verifier() {
     let mut func = MachineFunction::new("test_spill_pressure");
-    let reg_file = X86_64RegisterFile;
+    let reg_file = X86_64RegisterFile::sysv();
     let allocator = LinearScanAllocator::new(&reg_file);
 
     let mut gpr_vregs = Vec::new();
