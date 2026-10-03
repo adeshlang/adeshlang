@@ -216,16 +216,49 @@ impl RelocationHandler for DefaultRelocationHandler {
                 target_slice.copy_from_slice(&val.to_le_bytes());
             }
             RelocationKind::Absolute32 => {
-                let val = ((symbol_va as i64).wrapping_add(addend)) as u32;
-                target_slice.copy_from_slice(&val.to_le_bytes());
+                let val = (symbol_va as i64).wrapping_add(addend);
+                if !(0..=u32::MAX as i64).contains(&val) {
+                    return Err(LinkError::relocation_overflow(
+                        reloc.kind.name(),
+                        &reloc.symbol_name,
+                        val,
+                        0,
+                        u32::MAX as i64,
+                        None,
+                        Some(reloc.offset),
+                    ));
+                }
+                target_slice.copy_from_slice(&(val as u32).to_le_bytes());
             }
             RelocationKind::Absolute16 => {
-                let val = ((symbol_va as i64).wrapping_add(addend)) as u16;
-                target_slice.copy_from_slice(&val.to_le_bytes());
+                let val = (symbol_va as i64).wrapping_add(addend);
+                if !(0..=u16::MAX as i64).contains(&val) {
+                    return Err(LinkError::relocation_overflow(
+                        reloc.kind.name(),
+                        &reloc.symbol_name,
+                        val,
+                        0,
+                        u16::MAX as i64,
+                        None,
+                        Some(reloc.offset),
+                    ));
+                }
+                target_slice.copy_from_slice(&(val as u16).to_le_bytes());
             }
             RelocationKind::Absolute8 => {
-                let val = ((symbol_va as i64).wrapping_add(addend)) as u8;
-                target_slice[0] = val;
+                let val = (symbol_va as i64).wrapping_add(addend);
+                if !(0..=u8::MAX as i64).contains(&val) {
+                    return Err(LinkError::relocation_overflow(
+                        reloc.kind.name(),
+                        &reloc.symbol_name,
+                        val,
+                        0,
+                        u8::MAX as i64,
+                        None,
+                        Some(reloc.offset),
+                    ));
+                }
+                target_slice[0] = val as u8;
             }
             RelocationKind::PcRelative32
             | RelocationKind::PltRelative32

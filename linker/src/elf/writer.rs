@@ -2,10 +2,11 @@
 
 use crate::elf::header::*;
 use crate::elf::notes::create_gnu_build_id_note;
-use crate::error::LinkResult;
+use crate::error::{ErrorCode, LinkError, LinkResult};
 use crate::section::{MergedSection, SectionKind, align_to};
 use crate::symbol::Symbol;
 use crate::target::{Arch, Target};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
@@ -125,8 +126,8 @@ impl ElfWriter {
         }
 
         // RW Segment: page-align file offset and virtual address
-        let rw_file_offset_start = align_to(current_offset, target.page_size);
-        let rw_vaddr_start = align_to(current_va, target.page_size);
+        let mut rw_file_offset_start = align_to(current_offset, target.page_size);
+        let mut rw_vaddr_start = align_to(current_va, target.page_size);
 
         if rw_file_offset_start > current_offset {
             let pad = (rw_file_offset_start - current_offset) as usize;
@@ -162,6 +163,103 @@ impl ElfWriter {
             rw_mem_size = current_va - rw_vaddr_start;
         }
 
+        // When the layout engine assigned virtual addresses (the normal link
+        // path), those addresses are authoritative: every relocation and
+        // synthesized thunk was patched against them. The writer must place
+        // each section at exactly its assigned VA instead of re-deriving its
+        // own layout, or the emitted image would be internally inconsistent.
+        // The file offset is the identity image of the VA
+        // (offset = VA - image_base), which keeps p_offset ≡ p_vaddr
+        // (mod page_size) for both PT_LOAD segments.
+        let has_layout_vas = merged_sections.iter().any(|s| s.virtual_address != 0);
+        if has_layout_vas {
+            // The sequential pass above wrote section bytes at its own
+            // offsets; start over so the authoritative placement below is the
+            // only thing in the file body.
+            output.truncate(headers_size);
+
+            let mut rx_file_end = headers_size as u64;
+            let mut rx_mem_end = headers_size as u64;
+            let mut rw_off_min: Option<u64> = None;
+            let mut rw_va_min: Option<u64> = None;
+            let mut rw_file_end = 0u64;
+            let mut rw_mem_end = 0u64;
+
+            for (idx, sec) in merged_sections.iter().enumerate() {
+                if sec.virtual_address < target.image_base {
+                    return Err(LinkError::new(
+                        ErrorCode::InvalidSection,
+                        format!(
+                            "section `{}` virtual address 0x{:x} is below the image base 0x{:x}",
+                            sec.name, sec.virtual_address, target.image_base
+                        ),
+                    ));
+                }
+                let off = sec.virtual_address - target.image_base;
+                sec_vaddrs[idx] = sec.virtual_address;
+                sec_offsets[idx] = off;
+
+                let is_rx =
+                    sec.is_executable() || (!sec.is_writable() && sec.kind != SectionKind::Bss);
+                let file_len = if sec.kind == SectionKind::Bss {
+                    0
+                } else {
+                    sec.data.len() as u64
+                };
+                let mem_len = sec.size.max(sec.data.len() as u64);
+
+                if file_len > 0 {
+                    let start = off as usize;
+                    let end = start + file_len as usize;
+                    if output.len() < end {
+                        output.resize(end, 0);
+                    }
+                    output[start..end].copy_from_slice(&sec.data);
+                }
+
+                if is_rx {
+                    rx_file_end = rx_file_end.max(off + file_len);
+                    rx_mem_end = rx_mem_end.max(off + mem_len);
+                } else {
+                    rw_off_min = Some(rw_off_min.map_or(off, |m| m.min(off)));
+                    rw_va_min =
+                        Some(rw_va_min.map_or(sec.virtual_address, |m| m.min(sec.virtual_address)));
+                    rw_file_end = rw_file_end.max(off + file_len);
+                    rw_mem_end = rw_mem_end.max(off + mem_len);
+                }
+            }
+
+            // The build-ID note is not relocated against, so park it in the
+            // unused part of the RX header gap instead of inventing a new
+            // section for it.
+            if let Some(bid) = build_id {
+                let note_data = create_gnu_build_id_note(bid);
+                let off = align_to(headers_size as u64, 8);
+                let end = off as usize + note_data.len();
+                if output.len() < end {
+                    output.resize(end, 0);
+                }
+                output[off as usize..end].copy_from_slice(&note_data);
+                rx_file_end = rx_file_end.max(end as u64);
+                rx_mem_end = rx_mem_end.max(off + note_data.len() as u64);
+            }
+
+            let (rw_off, rw_va) = match (rw_off_min, rw_va_min) {
+                (Some(off), Some(va)) => (off, va),
+                _ => (
+                    align_to(rx_file_end, target.page_size),
+                    align_to(target.image_base + rx_mem_end, target.page_size),
+                ),
+            };
+
+            rx_file_size = rx_file_end;
+            rx_mem_size = rx_mem_end;
+            rw_file_offset_start = rw_off;
+            rw_vaddr_start = rw_va;
+            rw_file_size = rw_file_end.saturating_sub(rw_off);
+            rw_mem_size = rw_mem_end.saturating_sub(rw_va);
+        }
+
         // 3. String tables and Symbol tables
         let mut shstrtab = vec![0u8]; // start with null byte
         let mut shdr_names = Vec::new();
@@ -195,6 +293,29 @@ impl ElfWriter {
             st_size: 0,
         });
 
+        // Map an input (file, section) pair to its merged output section
+        // index, so `.symtab` entries point at the section that actually
+        // contains the symbol instead of the input object's local index.
+        let mut input_sec_to_out: HashMap<(usize, usize), usize> = HashMap::new();
+        for (out_idx, sec) in merged_sections.iter().enumerate() {
+            for &(f_idx, s_idx, _) in &sec.input_sections {
+                input_sec_to_out.insert((f_idx, s_idx), out_idx);
+            }
+        }
+        let output_section_index = |sym: &Symbol| -> Option<u16> {
+            sym.file_index
+                .zip(sym.section_index)
+                .and_then(|key| input_sec_to_out.get(&key).copied())
+                .or_else(|| {
+                    merged_sections.iter().position(|sec| {
+                        sec.size > 0
+                            && sym.value >= sec.virtual_address
+                            && sym.value < sec.virtual_address + sec.size
+                    })
+                })
+                .map(|idx| (idx + 1) as u16)
+        };
+
         for sym in symbols {
             if !sym.name.is_empty() {
                 let st_name = strtab.len() as u32;
@@ -217,7 +338,7 @@ impl ElfWriter {
 
                 let st_info = (bind << 4) | (st_type & 0xF);
                 let st_shndx = if sym.is_defined {
-                    (sym.section_index.unwrap_or(0) + 1) as u16
+                    output_section_index(sym).unwrap_or(0)
                 } else {
                     0
                 };

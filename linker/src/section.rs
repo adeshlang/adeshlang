@@ -264,6 +264,16 @@ impl MergedSection {
         section_offset_in_merged
     }
 
+    /// Reserve an uninitialized block of `size` bytes with `alignment` in this
+    /// merged section. Used for COMMON (tentative definition) storage, which
+    /// has no input section to record in `input_sections`.
+    pub fn append_common(&mut self, size: u64, alignment: u64) -> u64 {
+        self.alignment = self.alignment.max(alignment.max(1));
+        let offset = align_to(self.size.max(self.data.len() as u64), alignment);
+        self.size = offset + size;
+        offset
+    }
+
     pub fn is_executable(&self) -> bool {
         (self.flags & flags::EXEC) != 0
     }

@@ -8,7 +8,7 @@ use crate::resolver::SymbolResolver;
 use crate::section::{MergedSection, SectionKind, align_to, flags};
 use crate::symbol::Symbol;
 use crate::target::Target;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// PE TLS directory information consumed by the PE writer.
 #[derive(Debug, Clone, Copy)]
@@ -32,6 +32,9 @@ pub struct LayoutEngine {
     /// RVAs of all 64-bit absolute relocations applied (for the PE `.reloc`
     /// base relocation table, enabling working ASLR).
     pub base_relocs: Vec<u32>,
+    /// RVAs of all 32-bit absolute relocations applied. Emitted as
+    /// IMAGE_REL_BASED_HIGHLOW entries for 32-bit x86 PE targets.
+    pub base_relocs32: Vec<u32>,
     /// Non-fatal issues encountered while relocating (e.g. weak/internal
     /// symbols that could not be resolved and were routed to a trap stub).
     pub warnings: Vec<String>,
@@ -46,6 +49,7 @@ impl LayoutEngine {
             pe_import_info: None,
             pe_tls_info: None,
             base_relocs: Vec::new(),
+            base_relocs32: Vec::new(),
             warnings: Vec::new(),
         }
     }
@@ -126,9 +130,28 @@ impl LayoutEngine {
             }
         }
 
+        // COMDAT groups already merged. Sections of a COMDAT group are
+        // discarded together, so the first object that contributes a group is
+        // linked and later copies of the same group are dropped together with
+        // their relocations — the resolver already folded their symbol
+        // definitions onto the first copy, so every reference to the group
+        // leader resolves there.
+        let mut merged_comdat_groups: HashSet<&str> = HashSet::new();
+
         for (f_idx, obj) in objects.iter().enumerate() {
             for (s_idx, sec) in obj.sections.iter().enumerate() {
                 if !sec.is_live {
+                    continue;
+                }
+
+                // COMDAT dedup. Checked before the ICF aliasing below so that a
+                // folded section also claims its group (a later copy would
+                // otherwise reintroduce the discarded bytes). A garbage
+                // collected first copy never claims anything, leaving the
+                // group to the next live one.
+                if let Some(group) = sec.comdat_group.as_deref()
+                    && !merged_comdat_groups.insert(group)
+                {
                     continue;
                 }
 
@@ -414,9 +437,32 @@ impl LayoutEngine {
             None
         };
 
+        // COMMON (tentative definition) blocks are allocated in `.bss`: the
+        // first object that declares a name decides its size and alignment.
+        // `Symbol.value` carries the required alignment for a COMMON symbol
+        // and `Symbol.size` the requested size (see the ELF/COFF readers).
+        let mut common_allocs: HashMap<String, u64> = HashMap::new();
+        for obj in objects.iter() {
+            for sym in &obj.symbols {
+                if !sym.is_defined || sym.sym_type != crate::symbol::SymbolType::Common {
+                    continue;
+                }
+                if sym.name.is_empty() || common_allocs.contains_key(&sym.name) {
+                    continue;
+                }
+                let off = bss_merged.append_common(sym.size.max(1), sym.value.max(1));
+                common_allocs.insert(sym.name.clone(), off);
+            }
+        }
+
         let mut merged_list = Vec::new();
         let mut cat_to_idx: HashMap<SectionCat, usize> = HashMap::new();
 
+        // Order matters for the ELF and Mach-O writers: they map the first
+        // group of sections into a read/execute segment and the rest into a
+        // read/write segment. Emitting every read-only section before the
+        // writable ones keeps those two groups contiguous, so the layout
+        // engine's virtual addresses can be used verbatim by both writers.
         if text_merged.size > 0 || !text_merged.data.is_empty() {
             cat_to_idx.insert(SectionCat::Text, merged_list.len());
             merged_list.push(text_merged);
@@ -424,6 +470,10 @@ impl LayoutEngine {
         if rodata_merged.size > 0 || !rodata_merged.data.is_empty() {
             cat_to_idx.insert(SectionCat::Rodata, merged_list.len());
             merged_list.push(rodata_merged);
+        }
+        if meta_merged.size > 0 || !meta_merged.data.is_empty() {
+            cat_to_idx.insert(SectionCat::Meta, merged_list.len());
+            merged_list.push(meta_merged);
         }
         if data_merged.size > 0 || !data_merged.data.is_empty() {
             cat_to_idx.insert(SectionCat::Data, merged_list.len());
@@ -438,10 +488,6 @@ impl LayoutEngine {
         if tls_merged.size > 0 || !tls_merged.data.is_empty() {
             cat_to_idx.insert(SectionCat::Tls, merged_list.len());
             merged_list.push(tls_merged);
-        }
-        if meta_merged.size > 0 || !meta_merged.data.is_empty() {
-            cat_to_idx.insert(SectionCat::Meta, merged_list.len());
-            merged_list.push(meta_merged);
         }
 
         // 2. Assign Virtual Addresses
@@ -515,7 +561,9 @@ impl LayoutEngine {
 
         // 4. Compute Final Symbol Virtual Addresses (both local and global)
         let mut symbol_va_map: HashMap<String, u64> = HashMap::new();
-        let mut file_local_va_map: HashMap<(usize, String), u64> = HashMap::new();
+        // Keyed by a borrowed symbol name so the per-relocation fallback does
+        // not allocate a `String` for every relocation in the link.
+        let mut file_local_va_map: HashMap<(usize, &str), u64> = HashMap::new();
         let mut final_symbols = Vec::new();
 
         // Standard linker-defined module base symbols
@@ -641,20 +689,39 @@ impl LayoutEngine {
         // Compute addresses of all defined symbols across all object files
         for (f_idx, obj) in objects.iter().enumerate() {
             for sym in &obj.symbols {
-                if sym.is_defined {
-                    if let Some(sec_idx) = sym.section_index {
-                        if let Some(&(cat, sec_off)) = sec_placement.get(&(f_idx, sec_idx)) {
-                            if let Some(&m_idx) = cat_to_idx.get(&cat) {
-                                let sec_va = merged_list[m_idx].virtual_address;
-                                let sym_va = sec_va + sec_off + sym.value;
-                                if sym.binding != crate::symbol::SymbolBinding::Local {
-                                    symbol_va_map.insert(sym.name.clone(), sym_va);
-                                } else {
-                                    symbol_va_map.entry(sym.name.clone()).or_insert(sym_va);
-                                }
-                                file_local_va_map.insert((f_idx, sym.name.clone()), sym_va);
-                                local_name_to_va.entry(sym.name.clone()).or_insert(sym_va);
+                if !sym.is_defined {
+                    continue;
+                }
+
+                // COMMON (tentative definition) storage lives in .bss.
+                if sym.sym_type == crate::symbol::SymbolType::Common {
+                    if let Some(&off) = common_allocs.get(&sym.name)
+                        && let Some(&m_idx) = cat_to_idx.get(&SectionCat::Bss)
+                    {
+                        let sym_va = merged_list[m_idx].virtual_address + off;
+                        if sym.binding != crate::symbol::SymbolBinding::Local {
+                            symbol_va_map.insert(sym.name.clone(), sym_va);
+                        } else {
+                            symbol_va_map.entry(sym.name.clone()).or_insert(sym_va);
+                        }
+                        file_local_va_map.insert((f_idx, sym.name.as_str()), sym_va);
+                        local_name_to_va.entry(sym.name.clone()).or_insert(sym_va);
+                    }
+                    continue;
+                }
+
+                if let Some(sec_idx) = sym.section_index {
+                    if let Some(&(cat, sec_off)) = sec_placement.get(&(f_idx, sec_idx)) {
+                        if let Some(&m_idx) = cat_to_idx.get(&cat) {
+                            let sec_va = merged_list[m_idx].virtual_address;
+                            let sym_va = sec_va + sec_off + sym.value;
+                            if sym.binding != crate::symbol::SymbolBinding::Local {
+                                symbol_va_map.insert(sym.name.clone(), sym_va);
+                            } else {
+                                symbol_va_map.entry(sym.name.clone()).or_insert(sym_va);
                             }
+                            file_local_va_map.insert((f_idx, sym.name.as_str()), sym_va);
+                            local_name_to_va.entry(sym.name.clone()).or_insert(sym_va);
                         }
                     }
                 }
@@ -668,6 +735,21 @@ impl LayoutEngine {
                 final_sym.value = va;
             }
             final_symbols.push(final_sym);
+        }
+
+        // Symbols the resolver bound without an input section (undefined weak
+        // symbols bound to NULL, synthesized intrinsics/specials) still need an
+        // address so relocations against them resolve instead of falling
+        // through to the undefined-symbol error path.
+        for (sym_name, resolved) in &resolver.table {
+            if resolved.symbol.is_defined
+                && resolved.symbol.section_index.is_none()
+                && resolved.symbol.sym_type != crate::symbol::SymbolType::Common
+            {
+                symbol_va_map
+                    .entry(sym_name.clone())
+                    .or_insert(resolved.symbol.value);
+            }
         }
 
         // Patch PE Import Thunks and map IAT symbols
@@ -813,7 +895,7 @@ impl LayoutEngine {
             // Name-based fallback for global/weak/imported symbols and for
             // formats whose readers do not record symbol indices.
             if let Some(f_idx) = file_idx_opt {
-                if let Some(&va) = file_local_va_map.get(&(f_idx, name.to_string())) {
+                if let Some(&va) = file_local_va_map.get(&(f_idx, name)) {
                     return (Some(va), symbol_output_base.get(name).copied());
                 }
             }
@@ -824,12 +906,18 @@ impl LayoutEngine {
             // `X`. Falling back to `X` makes a synthesized `jmp [__imp_X]`
             // thunk read its own bytes as a function pointer, so the thunk
             // jumps to itself. Import slots are registered explicitly above.
-            if let Some(stripped) = name.strip_prefix('_') {
-                if let Some(&va) = symbol_va_map.get(stripped) {
+            //
+            // The `_`-prefix equivalence is a 32-bit x86 (COFF/ELF) calling
+            // convention only. On 64-bit targets `_foo` and `foo` are distinct
+            // symbols; aliasing them silently binds the wrong definition.
+            if target.arch == crate::target::Arch::X86 {
+                if let Some(stripped) = name.strip_prefix('_') {
+                    if let Some(&va) = symbol_va_map.get(stripped) {
+                        return (Some(va), None);
+                    }
+                } else if let Some(&va) = symbol_va_map.get(&format!("_{}", name)) {
                     return (Some(va), None);
                 }
-            } else if let Some(&va) = symbol_va_map.get(&format!("_{}", name)) {
-                return (Some(va), None);
             }
             // Fall back to the first definition of any file-local symbol
             // with this name (deterministic: lowest file index wins).
@@ -851,39 +939,41 @@ impl LayoutEngine {
         let mut reloc_warnings: Vec<String> = Vec::new();
         let mut warned_syms: HashMap<String, ()> = HashMap::new();
         let mut base_relocs: Vec<u32> = tls_directory_base_relocs;
+        let mut base_relocs32: Vec<u32> = Vec::new();
 
         // 5. Apply Relocations to Merged Sections
         let handler = get_handler(target.arch);
 
         for merged in &mut merged_list {
-            if merged.kind == SectionKind::Bss || merged.data.is_empty() {
+            if merged.kind == SectionKind::Bss {
+                if !merged.relocations.is_empty() {
+                    // Relocations cannot be applied to zero-initialized
+                    // storage (there is no file-backed data to patch). Keep
+                    // skipping them, but say so instead of silently dropping
+                    // them.
+                    reloc_warnings.push(format!(
+                        "{} relocation(s) in zero-initialized section `{}` were skipped: \
+                         relocations cannot be applied to .bss/.tbss storage",
+                        merged.relocations.len(),
+                        merged.name
+                    ));
+                }
+                continue;
+            }
+            if merged.data.is_empty() {
                 continue;
             }
 
             for reloc in &merged.relocations {
                 let (sym_va_opt, sym_sec_base) =
                     resolve_sym_va(reloc.file_index, reloc.symbol_index, &reloc.symbol_name);
-                let is_weak_or_internal = reloc.symbol_name.starts_with("__weak_")
-                    || reloc.symbol_name.starts_with("_ZN")
-                    || reloc.symbol_name.starts_with("ZN")
-                    || reloc.symbol_name.starts_with("_R")
-                    || reloc.symbol_name.starts_with("R_")
-                    || reloc.symbol_name.starts_with("__rust")
-                    || reloc.symbol_name.starts_with("___rust")
-                    || reloc.symbol_name.starts_with("rust_")
-                    || reloc.symbol_name.starts_with("_rust_")
-                    || reloc.symbol_name.contains("__rust_")
-                    || reloc.symbol_name.contains("___rust")
-                    || reloc.symbol_name.starts_with("anon.")
-                    || reloc.symbol_name.starts_with("??")
-                    || reloc.symbol_name.contains("..")
-                    || reloc.symbol_name.starts_with("__extend")
-                    || reloc.symbol_name.starts_with("__trunc")
-                    || reloc.symbol_name.starts_with("__float")
-                    || reloc.symbol_name.starts_with("__fix")
-                    || reloc.symbol_name.starts_with("__gnu_")
-                    || reloc.symbol_name.starts_with("__aeabi_")
-                    || crate::os_router::OsApiRouter::is_stubbable_internal(&reloc.symbol_name);
+                // Only names that are unambiguously linker/compiler-internal may
+                // be silently stubbed. The previous heuristic matched loose
+                // substrings (`..`) and broad prefixes (`__float`, `__fix`,
+                // `__gnu_`, `R_`, ...), which could swallow a genuine undefined
+                // application symbol and zero-fill or trap-stub it instead of
+                // reporting a link error.
+                let is_weak_or_internal = is_known_internal_stub(&reloc.symbol_name);
 
                 let place_va = merged.virtual_address + reloc.offset;
 
@@ -926,12 +1016,30 @@ impl LayoutEngine {
                                 }
                             }
                         } else {
-                            return Err(LinkError::undefined_symbol(
+                            let mut dbg = LinkError::undefined_symbol(
                                 &reloc.symbol_name,
                                 &merged.name,
                                 None,
                                 Some(reloc.offset),
-                            ));
+                            );
+                            // Debug detail: why did precise resolution fail?
+                            if let (Some(f_idx), Some(si)) = (reloc.file_index, reloc.symbol_index)
+                                && let Some(obj) = objects.get(f_idx)
+                                && let Some(sym) = obj.symbols.get(si)
+                            {
+                                dbg = dbg.with_note(format!(
+                                    "precise lookup: file {} symbol {} -> defined={} local={} section={:?} placed={}",
+                                    f_idx,
+                                    si,
+                                    sym.is_defined,
+                                    sym.is_local(),
+                                    sym.section_index,
+                                    sym.section_index
+                                        .and_then(|s| sec_va_map.get(&(f_idx, s)).copied())
+                                        .is_some()
+                                ));
+                            }
+                            return Err(dbg);
                         }
                     }
                 };
@@ -995,14 +1103,29 @@ impl LayoutEngine {
 
                 match handler.apply(reloc, place_va, sym_va, reloc.addend, &mut merged.data) {
                     Ok(()) => {
-                        // Record 64-bit absolute addresses for the PE base
-                        // relocation table so ASLR can rebase the image safely.
+                        // Record absolute addresses for the PE base relocation
+                        // table so ASLR can rebase the image safely. The width
+                        // must match the target pointer size: a 64-bit field
+                        // needs an IMAGE_REL_BASED_DIR64 entry, a 32-bit field
+                        // an IMAGE_REL_BASED_HIGHLOW entry.
                         if !routed_to_trap
                             && target.format == crate::target::ObjectFormat::Pe
-                            && reloc.kind == RelocationKind::Absolute64
                             && target.image_base <= place_va
                         {
-                            base_relocs.push((place_va - target.image_base) as u32);
+                            let rva = (place_va - target.image_base) as u32;
+                            match reloc.kind {
+                                RelocationKind::Absolute64
+                                    if target.pointer_width == crate::target::PointerWidth::U64 =>
+                                {
+                                    base_relocs.push(rva);
+                                }
+                                RelocationKind::Absolute32
+                                    if target.pointer_width == crate::target::PointerWidth::U32 =>
+                                {
+                                    base_relocs32.push(rva);
+                                }
+                                _ => {}
+                            }
                         }
                     }
                     Err(e) => {
@@ -1033,8 +1156,22 @@ impl LayoutEngine {
         self.pe_import_info = pe_imp_result;
         self.pe_tls_info = pe_tls_info;
         self.base_relocs = base_relocs;
+        self.base_relocs32 = base_relocs32;
         self.warnings = reloc_warnings;
 
         Ok(())
     }
+}
+
+/// True only for symbol names that are unambiguously linker/compiler internal:
+/// Rust and MSVC mangled identities, plus the compiler-rt helpers the
+/// intrinsics engine already knows how to synthesize.
+///
+/// Anchored prefix families only. A name that merely *contains* `..`, or starts
+/// with a broad family prefix such as `__float`/`__gnu_`, is a genuine
+/// application symbol and must surface as an undefined-symbol error rather than
+/// being silently zero-filled or trap-stubbed.
+fn is_known_internal_stub(name: &str) -> bool {
+    crate::intrinsics::IntrinsicsEngine::is_intrinsic(name)
+        || crate::os_router::OsApiRouter::is_mangled_internal(name)
 }

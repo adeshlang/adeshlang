@@ -74,6 +74,7 @@ OPTIMIZATIONS & STRIPPING:
     -s, --strip-all        Strip all symbols and debug sections from output
     --strip               Alias for --strip-all
     --strip-debug         Strip debug sections only
+    --no-strip            Keep every symbol in the output symbol table
     --debug               Preserve debug metadata and line tables
 
 SECURITY & REPRODUCIBILITY:
@@ -379,9 +380,18 @@ fn main() {
             "--strip-debug" => {
                 config.strip_debug = true;
             }
+            "--no-strip" => {
+                // Keep every symbol in the emitted symbol table (see
+                // `LinkConfig::strip_symbols`).
+                config.strip = false;
+                config.strip_symbols = false;
+            }
             "--debug" => {
                 config.strip_debug = false;
                 config.strip = false;
+                // A debuggable binary keeps its symbols too, not just its
+                // line tables.
+                config.strip_symbols = false;
             }
             "--hardened" => {
                 config.hardened = true;
@@ -759,31 +769,199 @@ fn handle_strip(args: &[String]) -> Result<(), LinkError> {
     })?;
     let out = output_path.unwrap_or_else(|| inp.clone());
 
-    let target = Target::host();
-    let mut obj = ObjectReader::read_from_file(&inp, &target, 0)?;
-
-    // Strip debug sections (.debug_*, .zdebug_*, .comment)
-    obj.sections.retain(|sec| {
-        let name = sec.name.to_lowercase();
-        !name.starts_with(".debug") && !name.starts_with(".zdebug") && name != ".comment"
-    });
-
-    // Strip symbols (remove locals, keep globals, or remove all if strip_all)
-    if strip_all {
-        obj.symbols
-            .retain(|sym| sym.name == "_start" || sym.name == "main");
-    } else {
-        obj.symbols
-            .retain(|sym| sym.binding != SymbolBinding::Local);
+    let bytes = fs::read(&inp).map_err(|e| {
+        LinkError::new(
+            ErrorCode::IoError,
+            format!("failed to read `{}`: {}", inp.display(), e),
+        )
+    })?;
+    if bytes.len() < 4 {
+        return Err(LinkError::new(
+            ErrorCode::InvalidObject,
+            format!("`{}` is truncated ({} bytes)", inp.display(), bytes.len()),
+        ));
     }
 
-    adesh_linker::object::ObjectWriter::write_to_file(&obj, &out)?;
+    // Only Adesh objects can be re-encoded (the ADOB writer is the only
+    // object writer in this crate). Native containers are therefore stripped
+    // in place by removing their symbol/debug payload, and formats without a
+    // strip implementation fail loudly instead of being silently re-encoded
+    // into a different format.
+    if &bytes[0..4] == b"ADOB" {
+        let target = Target::host();
+        let mut obj = ObjectReader::read_from_file(&inp, &target, 0)?;
+
+        // Strip debug sections (.debug_*, .zdebug_*, .comment)
+        obj.sections.retain(|sec| {
+            let name = sec.name.to_lowercase();
+            !name.starts_with(".debug") && !name.starts_with(".zdebug") && name != ".comment"
+        });
+
+        // Strip symbols (remove locals, keep globals, or remove all if strip_all)
+        if strip_all {
+            obj.symbols
+                .retain(|sym| sym.name == "_start" || sym.name == "main");
+        } else {
+            obj.symbols
+                .retain(|sym| sym.binding != SymbolBinding::Local);
+        }
+
+        adesh_linker::object::ObjectWriter::write_to_file(&obj, &out)?;
+    } else if is_pe_bytes(&bytes) {
+        let stripped = strip_pe_bytes(&bytes, &inp, strip_all)?;
+        fs::write(&out, stripped).map_err(|e| {
+            LinkError::new(
+                ErrorCode::IoError,
+                format!("failed to write `{}`: {}", out.display(), e),
+            )
+        })?;
+    } else {
+        return Err(LinkError::new(
+            ErrorCode::InvalidObject,
+            format!(
+                "`adeshlink strip` cannot strip `{}`: only Adesh objects (ADOB) and PE/COFF \
+                 files are supported. Stripping would require re-writing the container, \
+                 which would silently change the file format.",
+                inp.display()
+            ),
+        )
+        .with_suggestion(
+            "Use `llvm-strip`/`strip` for ELF, Mach-O, or WASM binaries, or link with \
+             `-s/--strip-all` so symbols never reach the output.",
+        ));
+    }
+
     println!(
         "  ✓ Stripped debug info & local symbols from `{}` -> `{}`",
         inp.display(),
         out.display()
     );
     Ok(())
+}
+
+/// PE/COFF detection: an MS-DOS `MZ` image or a bare COFF object header
+/// (x86_64 0x8664, ARM64 0xAA64, i386 0x014C, all little-endian on disk).
+fn is_pe_bytes(bytes: &[u8]) -> bool {
+    if bytes.len() < 2 {
+        return false;
+    }
+    &bytes[0..2] == b"MZ"
+        || (bytes[0] == 0x64 && bytes[1] == 0x86)
+        || (bytes[0] == 0x64 && bytes[1] == 0xAA)
+        || (bytes[0] == 0x4c && bytes[1] == 0x01)
+}
+
+/// Strip a PE/COFF file in place: zero `.debug$*` section payloads, drop the
+/// COFF symbol table (and the string table that follows it) when it can be
+/// removed safely, and clear the image debug directory so no dangling debug
+/// references remain.
+fn strip_pe_bytes(bytes: &[u8], path: &Path, strip_all: bool) -> Result<Vec<u8>, LinkError> {
+    let mut buf = bytes.to_vec();
+
+    // `coff_off` is the start of the COFF header: right after the `PE\0\0`
+    // signature for images, at the first byte for bare COFF objects.
+    let coff_off = if &buf[0..2] == b"MZ" {
+        if buf.len() < 0x40 {
+            return Err(LinkError::new(
+                ErrorCode::InvalidObject,
+                format!("`{}` is not a valid PE image (truncated)", path.display()),
+            ));
+        }
+        let pe_off = u32::from_le_bytes([buf[0x3c], buf[0x3d], buf[0x3e], buf[0x3f]]) as usize;
+        if pe_off + 24 > buf.len() || &buf[pe_off..pe_off + 4] != b"PE\0\0" {
+            return Err(LinkError::new(
+                ErrorCode::InvalidObject,
+                format!(
+                    "`{}` is not a valid PE image (bad PE signature)",
+                    path.display()
+                ),
+            ));
+        }
+        pe_off + 4
+    } else {
+        0
+    };
+    // COFF header: Machine(2) NumberOfSections(2) TimeDateStamp(4)
+    // PointerToSymbolTable(4) NumberOfSymbols(4) SizeOfOptionalHeader(2)
+    // Characteristics(2)
+    if coff_off + 20 > buf.len() {
+        return Err(LinkError::new(
+            ErrorCode::InvalidObject,
+            format!(
+                "`{}` is not a valid COFF file (truncated header)",
+                path.display()
+            ),
+        ));
+    }
+    let is_image = coff_off > 0;
+    let n_sections = u16::from_le_bytes([buf[coff_off + 2], buf[coff_off + 3]]) as usize;
+    let sym_ptr = u32::from_le_bytes([
+        buf[coff_off + 8],
+        buf[coff_off + 9],
+        buf[coff_off + 10],
+        buf[coff_off + 11],
+    ]) as usize;
+    let opt_size = u16::from_le_bytes([buf[coff_off + 16], buf[coff_off + 17]]) as usize;
+    let sec_table = coff_off + 20 + opt_size;
+
+    // COFF relocations reference symbols by index into the symbol table, so
+    // it can only be dropped from images (which carry no COFF relocations) or
+    // when the user explicitly asked to strip everything.
+    if is_image || strip_all {
+        if sym_ptr != 0 && sym_ptr + 18 <= buf.len() {
+            // The symbol table (and the string table after it) is the last
+            // payload in the file; dropping to its offset keeps every other
+            // header and offset valid.
+            if sym_ptr >= sec_table + n_sections * 40 {
+                buf.truncate(sym_ptr);
+            }
+        }
+        buf[coff_off + 8..coff_off + 12].fill(0); // PointerToSymbolTable
+        buf[coff_off + 12..coff_off + 16].fill(0); // NumberOfSymbols
+    }
+
+    // Zero `.debug$*` section payloads. Section headers and offsets stay
+    // intact; only the debug bytes are removed.
+    for i in 0..n_sections {
+        let sh = sec_table + i * 40;
+        if sh + 40 > buf.len() {
+            break;
+        }
+        let name: String = buf[sh..sh + 8]
+            .iter()
+            .take_while(|c| **c != 0)
+            .map(|c| *c as char)
+            .collect();
+        if !name.starts_with(".debug$") {
+            continue;
+        }
+        let raw_size =
+            u32::from_le_bytes([buf[sh + 16], buf[sh + 17], buf[sh + 18], buf[sh + 19]]) as usize;
+        let raw_ptr =
+            u32::from_le_bytes([buf[sh + 20], buf[sh + 21], buf[sh + 22], buf[sh + 23]]) as usize;
+        if raw_ptr != 0 && raw_size != 0 && raw_ptr + raw_size <= buf.len() {
+            buf[raw_ptr..raw_ptr + raw_size].fill(0);
+        }
+    }
+
+    // Images: clear the debug directory so no dangling debug references
+    // remain after the payload is gone.
+    if is_image && opt_size >= 112 {
+        let opt = coff_off + 20;
+        let magic = u16::from_le_bytes([buf[opt], buf[opt + 1]]);
+        // Data directories start at offset 96 (PE32) / 112 (PE32+);
+        // IMAGE_DIRECTORY_ENTRY_DEBUG is slot 6.
+        let dir_base = match magic {
+            0x20B => opt + 112,
+            0x10B => opt + 96,
+            _ => 0,
+        };
+        if dir_base != 0 && dir_base + 6 * 8 + 8 <= buf.len() {
+            buf[dir_base + 6 * 8..dir_base + 6 * 8 + 8].fill(0);
+        }
+    }
+
+    Ok(buf)
 }
 
 fn handle_inspection(mode: &str, path: &Path) -> Result<(), LinkError> {

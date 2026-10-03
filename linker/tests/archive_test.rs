@@ -67,3 +67,53 @@ fn test_archive_index_retains_all_duplicate_definitions() {
     let parsed = Archive::parse(&archive.encode_gnu(), Path::new("duplicates.a")).unwrap();
     assert_eq!(parsed.symbol_index.get("duplicate"), Some(&vec![0, 1]));
 }
+
+#[test]
+fn test_archive_linker_index_is_lazy_and_resolvable() {
+    fn append_member(out: &mut Vec<u8>, name: &str, data: &[u8]) -> u32 {
+        let member_offset = out.len() as u32;
+        let mut header = [b' '; 60];
+        header[..name.len()].copy_from_slice(name.as_bytes());
+        let size = data.len().to_string();
+        header[48..48 + size.len()].copy_from_slice(size.as_bytes());
+        header[58..60].copy_from_slice(b"`\n");
+        out.extend_from_slice(&header);
+        out.extend_from_slice(data);
+        if !data.len().is_multiple_of(2) {
+            out.push(b'\n');
+        }
+        member_offset
+    }
+
+    let target = Target::host();
+    let mut obj = ObjectFile::new("lazy.o".into(), target, 0);
+    obj.add_section(Section::new_code(".text", vec![0xC3], 1));
+    obj.add_symbol(Symbol::new_defined(
+        "lazy_symbol",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        1,
+        0,
+    ));
+    let object_bytes = ObjectWriter::encode(&obj).unwrap();
+
+    let index_size = 4 + 4 + "lazy_symbol".len() + 1;
+    let object_offset = 8 + 60 + index_size as u32;
+    let mut index_data = Vec::with_capacity(index_size);
+    index_data.extend_from_slice(&1u32.to_be_bytes());
+    index_data.extend_from_slice(&object_offset.to_be_bytes());
+    index_data.extend_from_slice(b"lazy_symbol\0");
+
+    let mut bytes = b"!<arch>\n".to_vec();
+    append_member(&mut bytes, "/", &index_data);
+    append_member(&mut bytes, "lazy.o/", &object_bytes);
+
+    let parsed = Archive::parse(&bytes, Path::new("lazy.a")).unwrap();
+    assert_eq!(parsed.symbol_index.get("lazy_symbol"), Some(&vec![0]));
+    assert!(
+        parsed.members[0].obj.is_none(),
+        "indexed members should remain unparsed until extracted"
+    );
+}

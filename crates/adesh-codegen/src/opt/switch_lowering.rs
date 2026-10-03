@@ -1,7 +1,13 @@
-//! Multi-way Branch and Pattern Match Switch Lowering (Jump Tables & Binary Search).
+//! Multi-way Branch and Pattern Match Switch Lowering.
 //!
-//! Provides $O(1)$ dense jump tables and $O(\log N)$ binary search decision trees
-//! for fast pattern matching on enums, tagged unions, and integers.
+//! Chooses between a compare-chain dispatch for small or dense case sets and a
+//! balanced binary decision tree for sparse ones.
+//!
+//! Note: a true O(1) jump table (an indexed indirect branch through a rodata
+//! table of block addresses) is not expressible in Machine IR: there is no
+//! indexed-indirect-branch instruction, and per-entry relocations against
+//! function-local block labels are not modelled. Dense case sets therefore
+//! lower to an O(N) compare chain over the case values, not to a table jump.
 
 use crate::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
@@ -18,13 +24,16 @@ pub struct SwitchCase {
 /// Strategy for lowering a multi-way branch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SwitchStrategy {
-    /// Dense continuous table: O(1) indexed jump table.
-    JumpTable {
-        min_value: i64,
-        max_value: i64,
+    /// Dense continuous range of case values: O(N) compare-chain dispatch over
+    /// the case values (see the module docs for why this is not a jump table).
+    Dense {
         default_label: String,
-        table_label: String,
-        table_entries: Vec<String>,
+        /// Lowest case value in the range; entry `i` covers the value
+        /// `min_value + i`.
+        min_value: i64,
+        /// Entry `i` is the label branched to for value `min_value + i`;
+        /// entries equal to `default_label` are holes in the range.
+        entries: Vec<String>,
     },
     /// Sparse values: O(log N) balanced binary search tree.
     BinarySearchTree {
@@ -41,14 +50,16 @@ pub enum SwitchStrategy {
 pub struct SwitchLowering;
 
 impl SwitchLowering {
-    /// Analyze cases and choose the optimal execution strategy.
+    /// Analyze cases and choose the lowering strategy.
+    ///
+    /// - no or very few cases (<= 3): `Linear`
+    /// - dense range (span <= 512 and density >= 40%): `Dense`
+    /// - otherwise: `BinarySearchTree`
     pub fn select_strategy(
         mut cases: Vec<SwitchCase>,
         default_label: impl Into<String>,
-        table_label: impl Into<String>,
     ) -> SwitchStrategy {
         let def_lbl = default_label.into();
-        let tbl_lbl = table_label.into();
 
         if cases.is_empty() {
             return SwitchStrategy::Linear {
@@ -71,23 +82,21 @@ impl SwitchLowering {
         let span = (max_val - min_val + 1) as usize;
         let count = cases.len();
 
-        // If table density >= 40% and range <= 512, use O(1) Jump Table
+        // Dense range: compare-chain dispatch over the values.
         if span <= 512 && (count * 100 / span) >= 40 {
-            let mut table_entries = vec![def_lbl.clone(); span];
+            let mut entries = vec![def_lbl.clone(); span];
             for case in &cases {
                 let idx = (case.value - min_val) as usize;
-                table_entries[idx] = case.target_label.clone();
+                entries[idx] = case.target_label.clone();
             }
 
-            SwitchStrategy::JumpTable {
-                min_value: min_val,
-                max_value: max_val,
+            SwitchStrategy::Dense {
                 default_label: def_lbl,
-                table_label: tbl_lbl,
-                table_entries,
+                min_value: min_val,
+                entries,
             }
         } else {
-            // Otherwise use O(log N) Binary Search Tree
+            // Sparse values: O(log N) binary search tree.
             SwitchStrategy::BinarySearchTree {
                 default_label: def_lbl,
                 cases,
@@ -122,54 +131,24 @@ impl SwitchLowering {
                     target: default_label,
                 });
             }
-            SwitchStrategy::JumpTable {
-                min_value,
-                max_value,
+            SwitchStrategy::Dense {
                 default_label,
-                table_label: _,
-                table_entries,
+                min_value,
+                entries,
             } => {
-                let idx_vreg = func.alloc_vreg();
+                // Compare the scrutinee against every covered case value and
+                // branch to the matching label. Holes (entries pointing at the
+                // default) need no comparison: they fall through to the
+                // default branch at the end.
                 let blk = &mut func.blocks[current_block_idx];
-                let val_vreg = MachineOperand::Register(MachineRegister::Virtual(scrutinee));
-
-                // 1. Bounds check: if scrutinee < min_value -> jmp default
-                blk.push(MachineInstruction::Compare {
-                    lhs: val_vreg.clone(),
-                    rhs: MachineOperand::Immediate(min_value),
-                });
-                blk.push(MachineInstruction::BranchCc {
-                    cc: ConditionCode::LessThan,
-                    target: default_label.clone(),
-                });
-
-                // 2. Bounds check: if scrutinee > max_value -> jmp default
-                blk.push(MachineInstruction::Compare {
-                    lhs: val_vreg.clone(),
-                    rhs: MachineOperand::Immediate(max_value),
-                });
-                blk.push(MachineInstruction::BranchCc {
-                    cc: ConditionCode::GreaterThan,
-                    target: default_label.clone(),
-                });
-
-                // 3. Normalized index = scrutinee - min_value
-                blk.push(MachineInstruction::Move {
-                    dst: MachineOperand::Register(MachineRegister::Virtual(idx_vreg)),
-                    src: val_vreg,
-                });
-                if min_value != 0 {
-                    blk.push(MachineInstruction::Sub {
-                        dst: MachineOperand::Register(MachineRegister::Virtual(idx_vreg)),
-                        src: MachineOperand::Immediate(min_value),
-                    });
-                }
-
-                // 4. Emit table branch targets as individual branches (or indexed indirect jump)
-                for (offset, target) in table_entries.into_iter().enumerate() {
+                let val = MachineOperand::Register(MachineRegister::Virtual(scrutinee));
+                for (offset, target) in entries.into_iter().enumerate() {
+                    if target == default_label {
+                        continue;
+                    }
                     blk.push(MachineInstruction::Compare {
-                        lhs: MachineOperand::Register(MachineRegister::Virtual(idx_vreg)),
-                        rhs: MachineOperand::Immediate(offset as i64),
+                        lhs: val.clone(),
+                        rhs: MachineOperand::Immediate(min_value + offset as i64),
                     });
                     blk.push(MachineInstruction::BranchCc {
                         cc: ConditionCode::Equal,
@@ -271,7 +250,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_jump_table_strategy_selection() {
+    fn test_strategy_selection_dense_sparse_few() {
         // Dense cases 0, 1, 2, 3, 4, 5
         let dense_cases: Vec<SwitchCase> = (0..6)
             .map(|i| SwitchCase {
@@ -280,8 +259,8 @@ mod tests {
             })
             .collect();
 
-        let strategy = SwitchLowering::select_strategy(dense_cases, "default", "jt_table");
-        assert!(matches!(strategy, SwitchStrategy::JumpTable { .. }));
+        let strategy = SwitchLowering::select_strategy(dense_cases, "default");
+        assert!(matches!(strategy, SwitchStrategy::Dense { .. }));
 
         // Sparse cases 10, 1000, 50000, 1000000
         let sparse_cases = vec![
@@ -303,11 +282,92 @@ mod tests {
             },
         ];
 
-        let strategy_sparse = SwitchLowering::select_strategy(sparse_cases, "default", "jt_sparse");
+        let strategy_sparse = SwitchLowering::select_strategy(sparse_cases, "default");
         assert!(matches!(
             strategy_sparse,
             SwitchStrategy::BinarySearchTree { .. }
         ));
+
+        // Very few cases stay linear.
+        let few = vec![
+            SwitchCase {
+                value: 7,
+                target_label: "c1".into(),
+            },
+            SwitchCase {
+                value: 9,
+                target_label: "c2".into(),
+            },
+        ];
+        let strategy_few = SwitchLowering::select_strategy(few, "default");
+        assert!(matches!(strategy_few, SwitchStrategy::Linear { .. }));
+    }
+
+    #[test]
+    fn test_dense_lowering_emits_one_compare_per_covered_value() {
+        let mut func = MachineFunction::new("test_switch_dense");
+        let v_scrutinee = func.alloc_vreg();
+
+        // Values 1..=6 with values 3 and 5 falling through to the default
+        // (4 cases is enough to leave the `Linear` strategy, and the range is
+        // dense enough for `Dense`).
+        let cases = vec![
+            SwitchCase {
+                value: 1,
+                target_label: "handle_1".into(),
+            },
+            SwitchCase {
+                value: 2,
+                target_label: "handle_2".into(),
+            },
+            SwitchCase {
+                value: 4,
+                target_label: "handle_4".into(),
+            },
+            SwitchCase {
+                value: 6,
+                target_label: "handle_6".into(),
+            },
+        ];
+        let strategy = SwitchLowering::select_strategy(cases, "handle_default");
+
+        match &strategy {
+            SwitchStrategy::Dense {
+                min_value,
+                entries,
+                default_label,
+            } => {
+                assert_eq!(*min_value, 1);
+                assert_eq!(entries.len(), 6);
+                assert_eq!(entries[2], "handle_default");
+                assert_eq!(entries[4], "handle_default");
+                assert_eq!(default_label, "handle_default");
+            }
+            other => panic!("expected Dense strategy, got {other:?}"),
+        }
+
+        SwitchLowering::lower_switch(&mut func, 0, v_scrutinee, strategy);
+
+        let insts = &func.blocks[0].instructions;
+        // One Compare per *covered* value (1, 2, 4, 6 - holes are skipped),
+        // one BranchCc each, and the trailing default Branch.
+        let compares = insts
+            .iter()
+            .filter(|i| matches!(i, MachineInstruction::Compare { .. }))
+            .count();
+        let branches = insts
+            .iter()
+            .filter(|i| matches!(i, MachineInstruction::BranchCc { .. }))
+            .count();
+        let defaults = insts
+            .iter()
+            .filter(
+                |i| matches!(i, MachineInstruction::Branch { target } if target == "handle_default"),
+            )
+            .count();
+        assert_eq!(compares, 4);
+        assert_eq!(branches, 4);
+        assert_eq!(defaults, 1);
     }
 
     #[test]
@@ -334,7 +394,7 @@ mod tests {
             },
         ];
 
-        let strategy = SwitchLowering::select_strategy(cases, "handle_default", "jt_tbl");
+        let strategy = SwitchLowering::select_strategy(cases, "handle_default");
         SwitchLowering::lower_switch(&mut func, 0, v_scrutinee, strategy);
 
         assert!(!func.blocks[0].instructions.is_empty());

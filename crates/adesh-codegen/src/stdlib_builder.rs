@@ -1,8 +1,12 @@
-//! Precompiled Native Standard Library ADOB Generator.
+//! Precompiled native standard library ADOB generator (linkage stubs).
 //!
-//! Generates precompiled native ADOB objects (`libadesh_std.adob`) containing core runtime
-//! builtins and standard library functions for instant sub-50ms native linking without
-//! recompiling standard library source files.
+//! Emits an ADOB object (`libadesh_std.adob`) that declares the standard
+//! library's runtime symbols. **Every function body is a stub**: a bare
+//! `Return` with no implementation, so each symbol resolves at link time and
+//! the object layout can be exercised, but calling any of them at runtime does
+//! nothing (it returns immediately). Real implementations must be linked in
+//! from elsewhere (the host runtime) or written into
+//! [`StdlibAdobBuilder::build_native_module`].
 
 use crate::error::CodegenError;
 use crate::machine_ir::{MachineFunction, MachineInstruction, NativeModule};
@@ -20,7 +24,13 @@ impl StdlibAdobBuilder {
         Self { target }
     }
 
-    /// Build the standard library NativeModule containing all native runtime symbols.
+    /// Build the standard library NativeModule declaring all native runtime
+    /// symbols.
+    ///
+    /// Each function is a *stub*: an exported symbol whose body is just
+    /// `Return`. That resolves the symbol for the linker and exercises the
+    /// object layout, but it performs none of the symbol's documented
+    /// behavior (see the module docs).
     pub fn build_native_module(&self) -> NativeModule {
         let mut module = NativeModule::new("adesh_std");
 

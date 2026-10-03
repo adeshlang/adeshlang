@@ -8,6 +8,7 @@
 //! - Trait Objects & Fat Pointers (`AdeshFatPointer`)
 //! - Memory Allocation, Panics, and Drop Handlers
 
+use super::ffi_guard;
 use std::alloc::{Layout, alloc, dealloc, realloc};
 use std::ffi::CStr;
 use std::os::raw::c_char;
@@ -152,8 +153,22 @@ pub struct AdeshArray {
 impl AdeshArray {
     pub fn new(elem_size: usize, initial_cap: usize) -> Self {
         let cap = if initial_cap == 0 { 4 } else { initial_cap };
-        let layout = Layout::from_size_align(elem_size * cap, 8)
-            .unwrap_or(Layout::from_size_align(elem_size * cap, 1).unwrap());
+        // Audit fix: the old code computed `elem_size * cap` (overflowing
+        // multiplication) and used a bare `.unwrap()` on the layout — both
+        // panic paths reachable from the `adesh_arr_new` C export. On any
+        // invalid size, return a degenerate (empty, null) array instead;
+        // `push` reports failure on such an array rather than touching
+        // undefined behavior.
+        let total = elem_size.saturating_mul(cap);
+        let Ok(layout) = Layout::from_size_align(total, 8) else {
+            return Self {
+                data: null_mut(),
+                len: 0,
+                cap: 0,
+                elem_size,
+            };
+        };
+        // SAFETY: layout was just validated.
         let data = unsafe { alloc(layout) };
         Self {
             data,
@@ -168,12 +183,27 @@ impl AdeshArray {
             return false;
         }
         if self.len >= self.cap {
-            let new_cap = if self.cap == 0 { 4 } else { self.cap * 2 };
-            let old_layout = match Layout::from_size_align(self.elem_size * self.cap, 8) {
-                Ok(l) => l,
-                Err(_) => return false,
+            // Audit fix: `realloc` with a null pointer is undefined
+            // behavior, and the size multiplications below could overflow
+            // into wrapped layouts. Bail out with `false` instead.
+            if self.data.is_null() {
+                return false;
+            }
+            let new_cap = if self.cap == 0 {
+                4
+            } else {
+                self.cap.saturating_mul(2)
             };
-            let new_size = self.elem_size * new_cap;
+            let Some(old_total) = self.elem_size.checked_mul(self.cap) else {
+                return false;
+            };
+            let Ok(old_layout) = Layout::from_size_align(old_total, 8) else {
+                return false;
+            };
+            let Some(new_size) = self.elem_size.checked_mul(new_cap) else {
+                return false;
+            };
+            // SAFETY: old_layout matches the allocation of self.data.
             let new_data = unsafe { realloc(self.data, old_layout, new_size) };
             if new_data.is_null() {
                 return false;
@@ -482,35 +512,37 @@ pub extern "C" fn adesh_panic_abort(msg: *const c_char, len: usize) -> ! {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_print_str(s: *const c_char) {
-    if s.is_null() {
-        return;
-    }
-    unsafe {
-        let cstr = CStr::from_ptr(s);
-        if let Ok(rust_str) = cstr.to_str() {
-            print!("{}", rust_str);
+    ffi_guard((), || {
+        if s.is_null() {
+            return;
         }
-    }
+        unsafe {
+            let cstr = CStr::from_ptr(s);
+            if let Ok(rust_str) = cstr.to_str() {
+                print!("{}", rust_str);
+            }
+        }
+    });
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_print_i64(val: i64) {
-    print!("{}", val);
+    ffi_guard((), || print!("{}", val));
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_print_f64(val: f64) {
-    print!("{}", val);
+    ffi_guard((), || print!("{}", val));
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_print_bool(val: bool) {
-    print!("{}", if val { "true" } else { "false" });
+    ffi_guard((), || print!("{}", if val { "true" } else { "false" }));
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_print_newline() {
-    println!();
+    ffi_guard((), || println!());
 }
 
 #[cfg(test)]

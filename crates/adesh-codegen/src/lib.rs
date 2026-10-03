@@ -9,13 +9,18 @@ pub mod backend;
 pub mod calling_convention;
 pub mod concurrency;
 pub mod cranelift_adapter;
+pub mod debug_info;
+pub mod driver;
 pub mod error;
 pub mod machine_ir;
 pub mod opt;
 pub mod register_alloc;
 pub mod safety;
+pub mod stack_maps;
 pub mod stdlib_builder;
+pub mod target_spec;
 pub mod targets;
+pub mod unwind_info;
 
 pub use accelerators::{GpuBackend, TensorAcceleratorBackend};
 pub use backend::{AcceleratorBackend, CodegenBackend};
@@ -27,19 +32,33 @@ pub use calling_convention::{
 };
 pub use concurrency::{AtomicOp, ConcurrencyPass, MemoryOrder};
 pub use cranelift_adapter::CraneliftAdapter;
+pub use debug_info::{FunctionDebugMetadata, LineTableEntry, ModuleDebugInfo, SourceLocation};
+pub use driver::{
+    CompilationCacheKey, CompilerDriver, CompilerResourceLimits, CompilerStats, DriverConfig,
+};
 pub use error::CodegenError;
 pub use machine_ir::{
     ConditionCode, MachineBlock, MachineFunction, MachineInstruction, MachineOperand,
     MachineRegister, NativeModule, PhysicalRegister, VirtualRegister,
 };
 pub use opt::{
-    ArrayOptimizer, DeadCodeElimination, OptimizationPipeline, PeepholeOptimizer, SwitchCase,
-    SwitchLowering, SwitchStrategy,
+    AliasAnalysis, ArrayOptimizer, AutoVectorizePass, BasicBlockScheduler, BlockProfile,
+    CpuFeatures, DeadCodeElimination, DominatorTree, EdgeProfile, FunctionProfile, FunctionSummary,
+    LtoConfig, LtoEngine, LtoMode, LtoReport, ModuleSummary, OptLevel, OptimizationPipeline,
+    PeepholeOptimizer, PgoInstrumentationPass, PgoOptimizationPass, ProfileData, SwitchCase,
+    SwitchLowering, SwitchStrategy, VectorCostModel, VectorElementType, VectorType,
 };
 pub use register_alloc::{LinearScanAllocator, RegisterFile};
 pub use safety::{ControlFlowIntegrityPass, StackCanaryPass};
+pub use stack_maps::{FunctionStackMap, LiveLocationKind, LiveLocationRecord, SafepointRecord};
 pub use stdlib_builder::StdlibAdobBuilder;
-pub use targets::{create_backend, x86_64::X86_64Backend};
+pub use target_spec::{
+    CodeModel, Endianness, ObjectFormatKind, RelocationModel, TargetAbi, TargetSpec,
+};
+pub use targets::{
+    aarch64::AArch64Backend, create_backend, riscv::RiscVBackend, x86_64::X86_64Backend,
+};
+pub use unwind_info::{DwarfCallFrameInfo, FunctionUnwindDescriptor, Win64UnwindInfo};
 
 #[cfg(test)]
 mod tests {
@@ -94,10 +113,11 @@ mod tests {
         let r1 = func.alloc_vreg(); // unused dead reg
 
         let block = func.entry_block_mut();
-        // r0 = 10; r0 = r0 * 8; r1 = 999; return
-        block.push(MachineInstruction::Move {
+        // r0 = load [rsp]; r0 = r0 * 8; r1 = 999; return
+        block.push(MachineInstruction::Load {
             dst: MachineOperand::Register(MachineRegister::Virtual(r0)),
-            src: MachineOperand::Immediate(10),
+            src: MachineOperand::StackSlot(-8),
+            size: 8,
         });
         block.push(MachineInstruction::Mul {
             dst: MachineOperand::Register(MachineRegister::Virtual(r0)),
@@ -109,8 +129,10 @@ mod tests {
         });
         block.push(MachineInstruction::Return);
 
-        let pipeline = OptimizationPipeline::new(2);
-        let improvements = pipeline.optimize_function(&mut func);
+        let mut pipeline = OptimizationPipeline::new(OptLevel::O2);
+        let improvements = pipeline
+            .optimize_function_pre_alloc(&mut func)
+            .expect("opt succeeds");
         assert!(improvements > 0);
 
         // Check that mul was strength reduced to shl

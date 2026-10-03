@@ -4,9 +4,10 @@
 //! that have no downstream uses.
 
 use crate::machine_ir::{
-    MachineFunction, MachineInstruction, MachineOperand, MachineRegister, VirtualRegister,
+    MachineFunction, MachineInstruction, MachineOperand, MachineRegister, MoveLocation,
+    VirtualRegister,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub struct DeadCodeElimination;
 
@@ -28,30 +29,60 @@ impl DeadCodeElimination {
         total_changes
     }
 
-    /// Eliminate unreachable blocks via BFS reachability from entry block.
+    /// Eliminate unreachable blocks.
+    ///
+    /// Successors are the `Branch`/`BranchCc` targets plus the *implicit
+    /// fallthrough* to the following block (unless the block ends in an
+    /// unconditional `Branch` or `Return`). Ignoring fallthrough would delete
+    /// blocks that are still reachable.
     fn eliminate_dead_blocks(&self, func: &mut MachineFunction) -> usize {
         if func.blocks.is_empty() {
             return 0;
+        }
+
+        // label -> successor labels, following real control flow.
+        let mut successors: HashMap<String, Vec<String>> = HashMap::new();
+        for (idx, block) in func.blocks.iter().enumerate() {
+            let mut succ = Vec::new();
+            let mut unconditional = false;
+            let mut returns = false;
+
+            for inst in &block.instructions {
+                if unconditional || returns {
+                    // Unreachable tail of the block.
+                    continue;
+                }
+                match inst {
+                    MachineInstruction::Branch { target } => {
+                        succ.push(target.clone());
+                        unconditional = true;
+                    }
+                    MachineInstruction::BranchCc { target, .. } => {
+                        succ.push(target.clone());
+                    }
+                    MachineInstruction::Return => {
+                        returns = true;
+                    }
+                    _ => {}
+                }
+            }
+
+            if !unconditional && !returns && idx + 1 < func.blocks.len() {
+                succ.push(func.blocks[idx + 1].label.clone());
+            }
+
+            successors.insert(block.label.clone(), succ);
         }
 
         let mut reachable_labels = HashSet::new();
         reachable_labels.insert(func.blocks[0].label.clone());
 
         let mut worklist = vec![func.blocks[0].label.clone()];
-        let label_to_block: std::collections::HashMap<_, _> =
-            func.blocks.iter().map(|b| (b.label.clone(), b)).collect();
-
         while let Some(current_label) = worklist.pop() {
-            if let Some(block) = label_to_block.get(&current_label) {
-                for inst in &block.instructions {
-                    match inst {
-                        MachineInstruction::Branch { target }
-                        | MachineInstruction::BranchCc { target, .. }
-                            if reachable_labels.insert(target.clone()) =>
-                        {
-                            worklist.push(target.clone());
-                        }
-                        _ => {}
+            if let Some(succ) = successors.get(&current_label) {
+                for target in succ {
+                    if reachable_labels.insert(target.clone()) {
+                        worklist.push(target.clone());
                     }
                 }
             }
@@ -91,6 +122,13 @@ impl DeadCodeElimination {
         removed
     }
 
+    /// Collect every virtual register *read* by `inst`.
+    ///
+    /// Every instruction form that can read a virtual register must be covered
+    /// here: a vreg whose only read is missed would have its defining `Move`
+    /// deleted, silently changing program behaviour. Forms that can also write
+    /// through memory (SetCc/Load/Store to a memory operand) contribute their
+    /// base/index registers.
     fn collect_uses(&self, inst: &MachineInstruction, used: &mut HashSet<VirtualRegister>) {
         let mut check_operand = |op: &MachineOperand| match op {
             MachineOperand::Register(MachineRegister::Virtual(vreg)) => {
@@ -108,8 +146,19 @@ impl DeadCodeElimination {
         };
 
         match inst {
-            MachineInstruction::Move { src, .. } => check_operand(src),
-            MachineInstruction::Load { src, .. } => check_operand(src),
+            MachineInstruction::Move { dst, src } => {
+                check_operand(src);
+                // A move into memory reads the address registers.
+                if matches!(dst, MachineOperand::Memory { .. }) {
+                    check_operand(dst);
+                }
+            }
+            MachineInstruction::Load { dst, src, .. } => {
+                check_operand(src);
+                if matches!(dst, MachineOperand::Memory { .. }) {
+                    check_operand(dst);
+                }
+            }
             MachineInstruction::Store { dst, src, .. } => {
                 check_operand(dst);
                 check_operand(src);
@@ -124,17 +173,108 @@ impl DeadCodeElimination {
             | MachineInstruction::Xor { dst, src }
             | MachineInstruction::Shl { dst, src }
             | MachineInstruction::Shr { dst, src }
-            | MachineInstruction::Sar { dst, src } => {
+            | MachineInstruction::Sar { dst, src }
+            | MachineInstruction::FAdd { dst, src, .. }
+            | MachineInstruction::FSub { dst, src, .. }
+            | MachineInstruction::FMul { dst, src, .. }
+            | MachineInstruction::FDiv { dst, src, .. }
+            | MachineInstruction::VectorAdd { dst, src, .. }
+            | MachineInstruction::VectorSub { dst, src, .. }
+            | MachineInstruction::VectorMul { dst, src, .. }
+            | MachineInstruction::VectorDiv { dst, src, .. }
+            | MachineInstruction::VectorAnd { dst, src, .. }
+            | MachineInstruction::VectorOr { dst, src, .. }
+            | MachineInstruction::VectorXor { dst, src, .. }
+            | MachineInstruction::VectorBroadcast { dst, src, .. }
+            | MachineInstruction::VectorShuffle { dst, src, .. }
+            | MachineInstruction::VectorReduceAdd { dst, src, .. }
+            | MachineInstruction::VectorStore { dst, src, .. }
+            | MachineInstruction::AtomicStore { dst, src, .. }
+            | MachineInstruction::AtomicFetchAdd { dst, src, .. } => {
                 check_operand(dst);
                 check_operand(src);
+            }
+            MachineInstruction::VectorLoad { dst, src, .. }
+            | MachineInstruction::AtomicLoad { dst, src, .. } => {
+                check_operand(src);
+                if matches!(dst, MachineOperand::Memory { .. }) {
+                    check_operand(dst);
+                }
+            }
+            MachineInstruction::AtomicCompareExchange {
+                dst,
+                expected,
+                desired,
+                ..
+            } => {
+                check_operand(dst);
+                check_operand(expected);
+                check_operand(desired);
+            }
+            MachineInstruction::FCmp { lhs, rhs, .. } => {
+                check_operand(lhs);
+                check_operand(rhs);
+            }
+            MachineInstruction::FCvtIntToFloat { dst, src, .. }
+            | MachineInstruction::FCvtFloatToInt { dst, src, .. }
+            | MachineInstruction::FCvtFloatToFloat { dst, src, .. } => {
+                check_operand(src);
+                if matches!(dst, MachineOperand::Memory { .. }) {
+                    check_operand(dst);
+                }
             }
             MachineInstruction::Compare { lhs, rhs } | MachineInstruction::Test { lhs, rhs } => {
                 check_operand(lhs);
                 check_operand(rhs);
             }
+            MachineInstruction::Neg { dst }
+            | MachineInstruction::Not { dst }
+            | MachineInstruction::FNeg { dst, .. }
+            | MachineInstruction::Push { src: dst } => {
+                check_operand(dst);
+            }
+            MachineInstruction::SetCc { dst, .. } => {
+                // The condition code itself reads EFLAGS; only a memory
+                // destination contributes vregs.
+                if matches!(dst, MachineOperand::Memory { .. }) {
+                    check_operand(dst);
+                }
+            }
+            MachineInstruction::Pop { dst } => {
+                if matches!(dst, MachineOperand::Memory { .. }) {
+                    check_operand(dst);
+                }
+            }
             MachineInstruction::Call { target, .. } => check_operand(target),
-            MachineInstruction::Push { src } => check_operand(src),
-            _ => {}
+            MachineInstruction::ParallelMove { moves } => {
+                for m in moves {
+                    if let MoveLocation::VirtualRegister(vreg) = m.src {
+                        used.insert(vreg);
+                    }
+                    for loc in [&m.src, &m.dst] {
+                        if let MoveLocation::Memory { base, index, .. } = loc {
+                            if let MachineRegister::Virtual(vreg) = base {
+                                used.insert(*vreg);
+                            }
+                            if let Some((MachineRegister::Virtual(vreg), _)) = index {
+                                used.insert(*vreg);
+                            }
+                        }
+                    }
+                }
+            }
+            MachineInstruction::Custom { operands, .. } => {
+                // Custom instructions are opaque: conservatively treat every
+                // operand as a use.
+                for op in operands {
+                    check_operand(op);
+                }
+            }
+            MachineInstruction::Nop
+            | MachineInstruction::Return
+            | MachineInstruction::Branch { .. }
+            | MachineInstruction::BranchCc { .. }
+            | MachineInstruction::Barrier => {}
         }
     }
 }

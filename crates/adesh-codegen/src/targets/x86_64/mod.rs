@@ -22,6 +22,7 @@ use crate::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
     NativeModule, PhysicalRegister, RegisterClass,
 };
+use crate::opt::{OptLevel, OptimizationPipeline};
 use crate::register_alloc::{LinearScanAllocator, RegisterFile};
 use crate::targets::x86_64::encoder::X86_64Encoder;
 use adesh_object::{
@@ -38,7 +39,6 @@ const SCRATCH2: u8 = 11;
 /// Encoder scratch register for floating-point operations (XMM15 = 31).
 const FP_SCRATCH: u8 = 15;
 /// Second encoder scratch register for floating-point operations (XMM14 = 30).
-#[allow(dead_code)]
 const FP_SCRATCH2: u8 = 14;
 
 // ---------------------------------------------------------------- Register File
@@ -341,8 +341,22 @@ fn instruction_name(inst: &MachineInstruction) -> &'static str {
         MachineInstruction::Call { .. } => "Call",
         MachineInstruction::Push { .. } => "Push",
         MachineInstruction::Pop { .. } => "Pop",
-        MachineInstruction::Vector { .. } => "Vector",
-        MachineInstruction::Atomic { .. } => "Atomic",
+        MachineInstruction::VectorAdd { .. } => "VectorAdd",
+        MachineInstruction::VectorSub { .. } => "VectorSub",
+        MachineInstruction::VectorMul { .. } => "VectorMul",
+        MachineInstruction::VectorDiv { .. } => "VectorDiv",
+        MachineInstruction::VectorAnd { .. } => "VectorAnd",
+        MachineInstruction::VectorOr { .. } => "VectorOr",
+        MachineInstruction::VectorXor { .. } => "VectorXor",
+        MachineInstruction::VectorLoad { .. } => "VectorLoad",
+        MachineInstruction::VectorStore { .. } => "VectorStore",
+        MachineInstruction::VectorBroadcast { .. } => "VectorBroadcast",
+        MachineInstruction::VectorShuffle { .. } => "VectorShuffle",
+        MachineInstruction::VectorReduceAdd { .. } => "VectorReduceAdd",
+        MachineInstruction::AtomicLoad { .. } => "AtomicLoad",
+        MachineInstruction::AtomicStore { .. } => "AtomicStore",
+        MachineInstruction::AtomicFetchAdd { .. } => "AtomicFetchAdd",
+        MachineInstruction::AtomicCompareExchange { .. } => "AtomicCompareExchange",
         MachineInstruction::Barrier => "Barrier",
         MachineInstruction::ParallelMove { .. } => "ParallelMove",
         MachineInstruction::FAdd { .. } => "FAdd",
@@ -358,35 +372,56 @@ fn instruction_name(inst: &MachineInstruction) -> &'static str {
     }
 }
 
-fn function_uses_register(func: &MachineFunction, reg: u8) -> bool {
-    func.blocks
-        .iter()
-        .flat_map(|b| b.instructions.iter())
-        .any(|inst| instruction_uses_register(inst, reg))
-}
-
-fn instruction_uses_register(inst: &MachineInstruction, reg: u8) -> bool {
-    let hit = |op: &MachineOperand| -> bool {
+/// Append every physical register referenced (read or written, including
+/// memory base/index registers) by `inst` to `out`.
+///
+/// This is the single source of truth for "which physical registers does this
+/// instruction touch" and backs both the frame layout (callee-saved usage) and
+/// the assembly printer.
+fn collect_instruction_registers(inst: &MachineInstruction, out: &mut Vec<u8>) {
+    fn add_op(op: &MachineOperand, out: &mut Vec<u8>) {
         match op {
-            MachineOperand::Register(MachineRegister::Physical(p)) => p.0 == reg,
+            MachineOperand::Register(MachineRegister::Physical(p)) => out.push(p.0),
             MachineOperand::Memory { base, index, .. } => {
-                matches!(base, MachineRegister::Physical(p) if p.0 == reg)
-                    || index.as_ref().is_some_and(
-                        |(r, _)| matches!(r, MachineRegister::Physical(p) if p.0 == reg),
-                    )
+                if let MachineRegister::Physical(p) = base {
+                    out.push(p.0);
+                }
+                if let Some((MachineRegister::Physical(p), _)) = index {
+                    out.push(p.0);
+                }
             }
-            _ => false,
+            _ => {}
         }
-    };
+    }
+
+    fn add_location(loc: &crate::machine_ir::MoveLocation, out: &mut Vec<u8>) {
+        match loc {
+            crate::machine_ir::MoveLocation::PhysicalRegister(p) => out.push(p.0),
+            crate::machine_ir::MoveLocation::StackSlot { base, .. } => out.push(base.0),
+            crate::machine_ir::MoveLocation::Memory { base, index, .. } => {
+                if let MachineRegister::Physical(p) = base {
+                    out.push(p.0);
+                }
+                if let Some((MachineRegister::Physical(p), _)) = index {
+                    out.push(p.0);
+                }
+            }
+            _ => {}
+        }
+    }
+
     match inst {
         MachineInstruction::Nop
         | MachineInstruction::Return
         | MachineInstruction::Branch { .. }
         | MachineInstruction::BranchCc { .. }
-        | MachineInstruction::Barrier => false,
-        MachineInstruction::ParallelMove { moves } => moves
-            .iter()
-            .any(|m| hit(&m.dst.to_operand()) || hit(&m.src.to_operand())),
+        | MachineInstruction::Barrier => {}
+        MachineInstruction::ParallelMove { moves } => {
+            for m in moves {
+                add_location(&m.dst, out);
+                add_location(&m.src, out);
+            }
+        }
         MachineInstruction::Move { dst, src }
         | MachineInstruction::Load { dst, src, .. }
         | MachineInstruction::Store { dst, src, .. }
@@ -410,21 +445,146 @@ fn instruction_uses_register(inst: &MachineInstruction, reg: u8) -> bool {
         }
         | MachineInstruction::FCvtIntToFloat { dst, src, .. }
         | MachineInstruction::FCvtFloatToInt { dst, src, .. }
-        | MachineInstruction::FCvtFloatToFloat { dst, src, .. } => hit(dst) || hit(src),
+        | MachineInstruction::FCvtFloatToFloat { dst, src, .. }
+        | MachineInstruction::VectorAdd { dst, src, .. }
+        | MachineInstruction::VectorSub { dst, src, .. }
+        | MachineInstruction::VectorMul { dst, src, .. }
+        | MachineInstruction::VectorDiv { dst, src, .. }
+        | MachineInstruction::VectorAnd { dst, src, .. }
+        | MachineInstruction::VectorOr { dst, src, .. }
+        | MachineInstruction::VectorXor { dst, src, .. }
+        | MachineInstruction::VectorLoad { dst, src, .. }
+        | MachineInstruction::VectorStore { dst, src, .. }
+        | MachineInstruction::VectorBroadcast { dst, src, .. }
+        | MachineInstruction::VectorShuffle { dst, src, .. }
+        | MachineInstruction::VectorReduceAdd { dst, src, .. }
+        | MachineInstruction::AtomicLoad { dst, src, .. }
+        | MachineInstruction::AtomicStore { dst, src, .. }
+        | MachineInstruction::AtomicFetchAdd { dst, src, .. } => {
+            add_op(dst, out);
+            add_op(src, out);
+        }
+        MachineInstruction::AtomicCompareExchange {
+            dst,
+            expected,
+            desired,
+            ..
+        } => {
+            add_op(dst, out);
+            add_op(expected, out);
+            add_op(desired, out);
+        }
         MachineInstruction::Compare { lhs, rhs } | MachineInstruction::Test { lhs, rhs } => {
-            hit(lhs) || hit(rhs)
+            add_op(lhs, out);
+            add_op(rhs, out);
         }
         MachineInstruction::Neg { dst }
         | MachineInstruction::Not { dst }
         | MachineInstruction::FNeg { dst, .. }
         | MachineInstruction::SetCc { dst, .. }
         | MachineInstruction::Push { src: dst }
-        | MachineInstruction::Pop { dst } => hit(dst),
-        MachineInstruction::Call { target, .. } => hit(target),
-        MachineInstruction::Vector { dst, src, .. } => hit(dst) || hit(src),
-        MachineInstruction::Atomic { dst, src, .. } => hit(dst) || hit(src),
-        MachineInstruction::Custom { operands, .. } => operands.iter().any(hit),
+        | MachineInstruction::Pop { dst } => add_op(dst, out),
+        MachineInstruction::Call { target, .. } => add_op(target, out),
+        MachineInstruction::Custom { operands, .. } => {
+            for op in operands {
+                add_op(op, out);
+            }
+        }
     }
+}
+
+/// Every physical register touched by `func`, in a single pass over the
+/// instruction stream.
+fn collect_function_registers(func: &MachineFunction) -> std::collections::HashSet<u8> {
+    let mut touched = Vec::new();
+    for block in &func.blocks {
+        for inst in &block.instructions {
+            collect_instruction_registers(inst, &mut touched);
+        }
+    }
+    touched.into_iter().collect()
+}
+
+/// Shared frame layout, computed identically for the binary encoder and the
+/// assembly printer so the two paths cannot describe different frames.
+pub struct FrameLayout {
+    /// Callee-saved registers the function actually touches, ascending.
+    pub used_callee_saved: Vec<u8>,
+    /// Save-area offset from RBP for each used callee-saved register.
+    pub callee_slots: HashMap<u8, i32>,
+    /// Bytes of locals + register-spill area (8-byte aligned).
+    pub locals_size: i32,
+    /// Total frame allocation (16-byte aligned), including the save area.
+    pub frame_size: i32,
+}
+
+/// Compute the frame layout for `func` under calling convention `conv`.
+///
+/// A single pass collects the physical registers the function touches; the
+/// callee-saved subset determines the save area, which is laid out below the
+/// locals/spill area at negative RBP offsets.
+pub fn compute_frame_layout(func: &MachineFunction, conv: &dyn CallingConvention) -> FrameLayout {
+    let touched = collect_function_registers(func);
+    let mut used_callee_saved: Vec<u8> = conv
+        .callee_saved_registers()
+        .iter()
+        .map(|r| r.0)
+        .filter(|&r| r != 4 && r != 5)
+        .filter(|r| touched.contains(r))
+        .collect();
+    used_callee_saved.sort_unstable();
+    used_callee_saved.dedup();
+
+    let locals_size = (func.stack_size as i32 + 7) & !7;
+    let mut cur_offset = locals_size;
+    let mut callee_slots = HashMap::new();
+    for &r in &used_callee_saved {
+        if r >= 16 {
+            cur_offset = (cur_offset + 15) & !15;
+            cur_offset += 16;
+            callee_slots.insert(r, -cur_offset);
+        } else {
+            cur_offset += 8;
+            callee_slots.insert(r, -cur_offset);
+        }
+    }
+    let frame_size = (cur_offset + 15) & !15;
+
+    FrameLayout {
+        used_callee_saved,
+        callee_slots,
+        locals_size,
+        frame_size,
+    }
+}
+
+/// Whether `inst` leaves EFLAGS meaningful for a later condition test, either
+/// by writing them or by consuming them without clearing them.
+///
+/// Used to keep the `xor r, r` zero idiom away from a pending condition test.
+fn instruction_writes_flags(inst: &MachineInstruction) -> bool {
+    matches!(
+        inst,
+        MachineInstruction::Add { .. }
+            | MachineInstruction::Sub { .. }
+            | MachineInstruction::Mul { .. }
+            | MachineInstruction::Div { .. }
+            | MachineInstruction::Mod { .. }
+            | MachineInstruction::Neg { .. }
+            | MachineInstruction::And { .. }
+            | MachineInstruction::Or { .. }
+            | MachineInstruction::Xor { .. }
+            | MachineInstruction::Shl { .. }
+            | MachineInstruction::Shr { .. }
+            | MachineInstruction::Sar { .. }
+            | MachineInstruction::Compare { .. }
+            | MachineInstruction::Test { .. }
+            | MachineInstruction::SetCc { .. }
+            | MachineInstruction::FCmp { .. }
+            | MachineInstruction::FCvtIntToFloat { .. }
+            | MachineInstruction::FCvtFloatToInt { .. }
+            | MachineInstruction::ParallelMove { .. }
+    )
 }
 
 // ------------------------------------------------------------------ Binary ops
@@ -497,6 +657,15 @@ enum UnOp {
     Not,
 }
 
+/// Scalar floating-point binary operation kind.
+#[derive(Clone, Copy)]
+enum FpOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
 // ------------------------------------------------------------ Function encoding
 
 /// A pending branch/call fixup whose displacement is patched once all block
@@ -525,47 +694,32 @@ struct FunctionEncoding {
     /// save area.
     frame_size: i32,
     saw_return: bool,
+    /// True when the most recently emitted instruction wrote EFLAGS. Used to
+    /// keep the `xor r, r` zero idiom away from a pending condition test.
+    flags_dirty: bool,
+    /// Set when the current instruction emitted the `xor r, r` zero idiom,
+    /// which itself writes flags.
+    zero_idiom_used: bool,
 }
 
 impl FunctionEncoding {
     fn new(func: &MachineFunction, conv: &dyn CallingConvention) -> Self {
-        // Callee-saved registers the function actually touches (excluding
-        // RSP/RBP, which the frame itself manages).
-        let mut used_callee_saved: Vec<u8> = conv
-            .callee_saved_registers()
-            .iter()
-            .map(|r| r.0)
-            .filter(|&r| r != 4 && r != 5)
-            .filter(|&r| function_uses_register(func, r))
-            .collect();
-        used_callee_saved.sort_unstable();
-        used_callee_saved.dedup();
-
-        let locals_size = (func.stack_size as i32 + 7) & !7;
-        let mut cur_offset = locals_size;
-        let mut callee_slots = HashMap::new();
-        for &r in &used_callee_saved {
-            if r >= 16 {
-                cur_offset = (cur_offset + 15) & !15;
-                cur_offset += 16;
-                callee_slots.insert(r, -cur_offset);
-            } else {
-                cur_offset += 8;
-                callee_slots.insert(r, -cur_offset);
-            }
-        }
-        let frame_size = (cur_offset + 15) & !15;
+        // Frame layout (callee-saved save area) is shared with the assembly
+        // printer so both describe the identical frame.
+        let layout = compute_frame_layout(func, conv);
 
         Self {
             enc: X86_64Encoder::new(),
             relocations: Vec::new(),
             branch_fixups: Vec::new(),
             block_offsets: HashMap::new(),
-            used_callee_saved,
-            callee_slots,
-            _locals_size: locals_size,
-            frame_size,
+            used_callee_saved: layout.used_callee_saved,
+            callee_slots: layout.callee_slots,
+            _locals_size: layout.locals_size,
+            frame_size: layout.frame_size,
             saw_return: false,
+            flags_dirty: false,
+            zero_idiom_used: false,
         }
     }
 
@@ -637,7 +791,88 @@ impl FunctionEncoding {
     fn binop_reg_imm(&mut self, op: BinOp, d: u8, imm: i32) {
         match op {
             BinOp::Test => self.enc.test_r64_imm32(d, imm),
+            // The sign-extended 8-bit immediate form (`0x83 /x ib`) is one byte
+            // shorter than `0x81 /x id` and encodes identically for -128..=127.
+            _ if (-128..=127).contains(&imm) => self.enc.op_r64_imm8(op.imm_ext(), d, imm as i8),
             _ => self.enc.op_r64_imm32(op.imm_ext(), d, imm),
+        }
+    }
+
+    /// Materialize a 64-bit integer constant into `reg`.
+    ///
+    /// Uses the 5-byte `mov r32, imm32` form whenever the zero-extension is
+    /// value-preserving (value fits in `u32`); otherwise falls back to the
+    /// 10-byte `mov r64, imm64`. Negative values keep the full 64-bit form:
+    /// the 32-bit form would zero-extend instead of sign-extending.
+    fn load_int_imm(&mut self, reg: u8, value: i64) {
+        match u32::try_from(value) {
+            Ok(u) => self.enc.mov_r32_imm32(reg, u as i32),
+            Err(_) => self.enc.mov_r64_imm64(reg, value),
+        }
+    }
+
+    /// Materialize an integer zero into a GPR.
+    ///
+    /// The 3-byte `xor r, r` idiom is preferred over `mov r64, 0` when EFLAGS
+    /// are not live (a pending `Compare`/`Test`/`FCmp` may still be consumed by
+    /// a later `SetCc`/`BranchCc`); otherwise the flag-preserving 5-byte
+    /// `mov r32, 0` is used.
+    fn zero_gpr(&mut self, reg: u8) {
+        if self.flags_dirty {
+            self.enc.mov_r32_imm32(reg, 0);
+        } else {
+            self.enc.xor_r64_r64(reg, reg);
+            self.zero_idiom_used = true;
+        }
+    }
+
+    /// Materialize a raw 64-bit pattern into a GPR, using the short zero idiom
+    /// for an all-zero pattern.
+    fn materialize_bits(&mut self, reg: u8, bits: i64) {
+        if bits == 0 {
+            self.zero_gpr(reg);
+        } else {
+            self.load_int_imm(reg, bits);
+        }
+    }
+
+    /// Emit `op dst, cl` for the given shift kind.
+    fn emit_shift_by_cl(&mut self, op: ShiftOp, d: u8) {
+        match op {
+            ShiftOp::Shl => self.enc.shl_r64_cl(d),
+            ShiftOp::Shr => self.enc.shr_r64_cl(d),
+            ShiftOp::Sar => self.enc.sar_r64_cl(d),
+        }
+    }
+
+    /// Transfer a shift count from `count` into CL and shift `d`, preserving
+    /// RCX and the destination.
+    ///
+    /// `shl dst, cl` reads its count from CL, so the sequence has to borrow
+    /// RCX. Two aliasing cases must be handled explicitly:
+    /// - `d == RCX`: the destination value must be shifted *after* RCX is
+    ///   overwritten with the count, and the result moved back into RCX (a
+    ///   naive save/restore would discard the result).
+    /// - `d == SCRATCH2`: the usual RCX save register is the destination, so a
+    ///   different save register (RAX) is used.
+    fn emit_shift_by_reg(&mut self, op: ShiftOp, d: u8, count: u8) {
+        // Save register for RCX: the encoder scratch R11 unless the
+        // destination or the count source already occupies it.
+        let save = [SCRATCH2, 0, 2, 3]
+            .into_iter()
+            .find(|c| *c != d && *c != count && *c != 1)
+            .unwrap_or(SCRATCH2);
+        self.enc.mov_r64_r64(save, 1); // save rcx
+        if d == 1 {
+            // The destination is RCX: shift the saved copy, then move the
+            // result back into RCX.
+            self.enc.mov_r64_r64(1, count);
+            self.emit_shift_by_cl(op, save);
+            self.enc.mov_r64_r64(1, save);
+        } else {
+            self.enc.mov_r64_r64(1, count);
+            self.emit_shift_by_cl(op, d);
+            self.enc.mov_r64_r64(1, save);
         }
     }
 
@@ -655,7 +890,7 @@ impl FunctionEncoding {
                 if imm_fits_i32(*v) {
                     self.binop_reg_imm(op, d, *v as i32);
                 } else {
-                    self.enc.mov_r64_imm64(SCRATCH, *v);
+                    self.load_int_imm(SCRATCH, *v);
                     self.binop_reg_reg(op, d, SCRATCH);
                 }
                 return true;
@@ -684,7 +919,7 @@ impl FunctionEncoding {
                 if imm_fits_i32(*v) {
                     self.binop_reg_imm(op, SCRATCH, *v as i32);
                 } else {
-                    self.enc.mov_r64_imm64(SCRATCH2, *v);
+                    self.load_int_imm(SCRATCH2, *v);
                     self.binop_reg_reg(op, SCRATCH, SCRATCH2);
                 }
                 self.enc.mov_rbp_offset_r64(slot, SCRATCH);
@@ -791,12 +1026,12 @@ impl FunctionEncoding {
                 }
                 match src {
                     MachineOperand::FloatImmediate(f) => {
-                        self.enc.mov_r64_imm64(SCRATCH, f.to_bits() as i64);
+                        self.materialize_bits(SCRATCH, f.to_bits() as i64);
                         self.enc.movq_xmm_r64(xd, SCRATCH);
                         return true;
                     }
                     MachineOperand::Immediate(v) => {
-                        self.enc.mov_r64_imm64(SCRATCH, *v);
+                        self.materialize_bits(SCRATCH, *v);
                         self.enc.movq_xmm_r64(xd, SCRATCH);
                         return true;
                     }
@@ -828,12 +1063,12 @@ impl FunctionEncoding {
             }
             match src {
                 MachineOperand::Immediate(v) => {
-                    self.enc.mov_r64_imm64(d, *v);
+                    self.materialize_bits(d, *v);
                     return true;
                 }
                 MachineOperand::FloatImmediate(f) => {
                     // Materialize the IEEE-754 double bit pattern into the GPR.
-                    self.enc.mov_r64_imm64(d, f.to_bits() as i64);
+                    self.materialize_bits(d, f.to_bits() as i64);
                     return true;
                 }
                 MachineOperand::StackSlot(slot) => {
@@ -864,12 +1099,12 @@ impl FunctionEncoding {
             }
             match src {
                 MachineOperand::Immediate(v) => {
-                    self.enc.mov_r64_imm64(SCRATCH, *v);
+                    self.materialize_bits(SCRATCH, *v);
                     self.enc.mov_rbp_offset_r64(slot, SCRATCH);
                     return true;
                 }
                 MachineOperand::FloatImmediate(f) => {
-                    self.enc.mov_r64_imm64(SCRATCH, f.to_bits() as i64);
+                    self.materialize_bits(SCRATCH, f.to_bits() as i64);
                     self.enc.mov_rbp_offset_r64(slot, SCRATCH);
                     return true;
                 }
@@ -903,12 +1138,12 @@ impl FunctionEncoding {
             }
             match src {
                 MachineOperand::Immediate(v) => {
-                    self.enc.mov_r64_imm64(SCRATCH, *v);
+                    self.materialize_bits(SCRATCH, *v);
                     self.enc.mov_mem_r64(b, off, idx, SCRATCH);
                     return true;
                 }
                 MachineOperand::FloatImmediate(f) => {
-                    self.enc.mov_r64_imm64(SCRATCH, f.to_bits() as i64);
+                    self.materialize_bits(SCRATCH, f.to_bits() as i64);
                     self.enc.mov_mem_r64(b, off, idx, SCRATCH);
                     return true;
                 }
@@ -924,45 +1159,83 @@ impl FunctionEncoding {
     }
 
     fn encode_mul(&mut self, dst: &MachineOperand, src: &MachineOperand) -> bool {
-        let Some(d) = phys_reg(dst) else {
-            return false;
-        };
-        match src {
-            MachineOperand::Register(MachineRegister::Physical(s)) => {
-                self.enc.imul_r64_r64(d, s.0);
-                true
-            }
-            MachineOperand::Immediate(v) => {
-                self.enc.mov_r64_imm64(SCRATCH, *v);
-                self.enc.imul_r64_r64(d, SCRATCH);
-                true
-            }
-            MachineOperand::StackSlot(slot) => {
-                self.enc.imul_r64_mem(d, 5, *slot, None);
-                true
-            }
-            MachineOperand::Memory { .. } => match mem_operand(src) {
-                Some((b, off, idx)) => {
-                    self.enc.imul_r64_mem(d, b, off, idx);
+        if let Some(d) = phys_reg(dst) {
+            return match src {
+                MachineOperand::Register(MachineRegister::Physical(s)) => {
+                    self.enc.imul_r64_r64(d, s.0);
                     true
                 }
-                None => false,
-            },
-            _ => false,
+                MachineOperand::Immediate(v) => {
+                    self.load_int_imm(SCRATCH, *v);
+                    self.enc.imul_r64_r64(d, SCRATCH);
+                    true
+                }
+                MachineOperand::StackSlot(slot) => {
+                    self.enc.imul_r64_mem(d, 5, *slot, None);
+                    true
+                }
+                MachineOperand::Memory { .. } => match mem_operand(src) {
+                    Some((b, off, idx)) => {
+                        self.enc.imul_r64_mem(d, b, off, idx);
+                        true
+                    }
+                    None => false,
+                },
+                _ => false,
+            };
         }
+
+        // Spilled destination: load into scratch, multiply, store back.
+        if let Some(slot) = stack_slot(dst) {
+            self.enc.mov_r64_rbp_offset(SCRATCH, slot);
+            let src_reg = match src {
+                MachineOperand::Register(MachineRegister::Physical(s)) => s.0,
+                MachineOperand::Immediate(v) => {
+                    self.load_int_imm(SCRATCH2, *v);
+                    SCRATCH2
+                }
+                MachineOperand::StackSlot(vs) => {
+                    self.enc.mov_r64_rbp_offset(SCRATCH2, *vs);
+                    SCRATCH2
+                }
+                MachineOperand::Memory { .. } => match mem_operand(src) {
+                    Some((b, off, idx)) => {
+                        self.enc.mov_r64_mem(SCRATCH2, b, off, idx);
+                        SCRATCH2
+                    }
+                    None => return false,
+                },
+                _ => return false,
+            };
+            if src_reg != SCRATCH {
+                self.enc.imul_r64_r64(SCRATCH, src_reg);
+            }
+            self.enc.mov_rbp_offset_r64(slot, SCRATCH);
+            return true;
+        }
+        false
     }
 
     /// Encode DIV (quotient) or MOD (remainder). RAX/RDX are implicit
     /// operands of IDIV; both are reserved scratch registers, so clobbering
     /// them is safe.
+    ///
+    /// A spilled destination is computed in SCRATCH2 and stored back.
     fn encode_divmod(&mut self, is_mod: bool, dst: &MachineOperand, src: &MachineOperand) -> bool {
-        let Some(d) = phys_reg(dst) else {
+        let (d, d_slot) = if let Some(d) = phys_reg(dst) {
+            (d, None)
+        } else if let Some(slot) = stack_slot(dst) {
+            // Load the dividend out of the spill slot first; the result is
+            // computed in SCRATCH2 and stored back.
+            self.enc.mov_r64_rbp_offset(SCRATCH2, slot);
+            (SCRATCH2, Some(slot))
+        } else {
             return false;
         };
         let src_reg = match src {
             MachineOperand::Register(MachineRegister::Physical(s)) => s.0,
             MachineOperand::Immediate(v) => {
-                self.enc.mov_r64_imm64(SCRATCH, *v);
+                self.load_int_imm(SCRATCH, *v);
                 SCRATCH
             }
             MachineOperand::StackSlot(slot) => {
@@ -994,21 +1267,149 @@ impl FunctionEncoding {
         } else if d != 0 {
             self.enc.mov_r64_r64(d, 0); // mov dst, rax
         }
+        if let Some(slot) = d_slot {
+            self.enc.mov_rbp_offset_r64(slot, d);
+        }
         true
+    }
+
+    /// Encode a scalar FP binary operation (`addsd`/`addss`/...).
+    ///
+    /// A spilled destination is computed in FP_SCRATCH and stored back; the
+    /// source then uses the *other* FP scratch register so it cannot clobber
+    /// the destination.
+    fn encode_fp_binop(
+        &mut self,
+        op: FpOp,
+        dst: &MachineOperand,
+        src: &MachineOperand,
+        size: u8,
+    ) -> bool {
+        let is_f64 = size == 8;
+        let (d_xmm, d_slot) = if let Some(d) = phys_reg(dst) {
+            if d >= 16 {
+                (d - 16, None)
+            } else {
+                return false;
+            }
+        } else if let Some(slot) = stack_slot(dst) {
+            if is_f64 {
+                self.enc.movsd_xmm_mem(FP_SCRATCH, 5, slot, None);
+            } else {
+                self.enc.movss_xmm_mem(FP_SCRATCH, 5, slot, None);
+            }
+            (FP_SCRATCH, Some(slot))
+        } else {
+            return false;
+        };
+
+        let src_scratch = if d_xmm == FP_SCRATCH {
+            FP_SCRATCH2
+        } else {
+            FP_SCRATCH
+        };
+        let s_xmm = if let Some(s) = phys_reg(src) {
+            if s >= 16 {
+                s - 16
+            } else {
+                return false;
+            }
+        } else {
+            if !self.load_fp_operand_into_xmm(src, src_scratch, is_f64) {
+                return false;
+            }
+            src_scratch
+        };
+
+        if is_f64 {
+            match op {
+                FpOp::Add => self.enc.addsd_xmm_xmm(d_xmm, s_xmm),
+                FpOp::Sub => self.enc.subsd_xmm_xmm(d_xmm, s_xmm),
+                FpOp::Mul => self.enc.mulsd_xmm_xmm(d_xmm, s_xmm),
+                FpOp::Div => self.enc.divsd_xmm_xmm(d_xmm, s_xmm),
+            }
+            if let Some(slot) = d_slot {
+                self.enc.movsd_mem_xmm(5, slot, None, d_xmm);
+            }
+        } else {
+            match op {
+                FpOp::Add => self.enc.addss_xmm_xmm(d_xmm, s_xmm),
+                FpOp::Sub => self.enc.subss_xmm_xmm(d_xmm, s_xmm),
+                FpOp::Mul => self.enc.mulss_xmm_xmm(d_xmm, s_xmm),
+                FpOp::Div => self.enc.divss_xmm_xmm(d_xmm, s_xmm),
+            }
+            if let Some(slot) = d_slot {
+                self.enc.movss_mem_xmm(5, slot, None, d_xmm);
+            }
+        }
+        true
+    }
+
+    /// Emit an unsigned 64-bit integer to scalar float conversion.
+    ///
+    /// `cvtsi2sd`/`cvtsi2ss` interpret their source as signed, so values with
+    /// the top bit set are converted by the standard trick: the value is
+    /// halved (arithmetic shift), rounded up with its low bit, converted, and
+    /// the result doubled - `f = (x>>1) + (x>>1) + (x&1)`.
+    ///
+    /// The source is copied into the scratch registers first, so a source that
+    /// already lives in a scratch register (spilled or immediate operand) is
+    /// not destroyed.
+    fn encode_unsigned_int_to_float(&mut self, dst_xmm: u8, src_gpr: u8, is_f64: bool) {
+        self.enc.test_r64_r64(src_gpr, src_gpr);
+        let jns_instr_offset = self.enc.len();
+        self.enc.jcc_rel32(ConditionCode::GreaterOrEqual, 0);
+        let jns_disp_offset = self.enc.len() - 4;
+
+        self.enc.mov_r64_r64(SCRATCH, src_gpr);
+        self.enc.mov_r64_r64(SCRATCH2, SCRATCH);
+        self.enc.shr_r64_imm8(SCRATCH, 1);
+        self.enc.op_r64_imm8(4, SCRATCH2, 1); // and scratch2, 1
+        self.enc.or_r64_r64(SCRATCH, SCRATCH2);
+        if is_f64 {
+            self.enc.cvtsi2sd_xmm_r64(dst_xmm, SCRATCH);
+            self.enc.addsd_xmm_xmm(dst_xmm, dst_xmm);
+        } else {
+            self.enc.cvtsi2ss_xmm_r64(dst_xmm, SCRATCH);
+            self.enc.addss_xmm_xmm(dst_xmm, dst_xmm);
+        }
+
+        let jmp_instr_offset = self.enc.len();
+        self.enc.jmp_rel32(0);
+        let jmp_disp_offset = self.enc.len() - 4;
+
+        let pos_offset = self.enc.len();
+        if is_f64 {
+            self.enc.cvtsi2sd_xmm_r64(dst_xmm, src_gpr);
+        } else {
+            self.enc.cvtsi2ss_xmm_r64(dst_xmm, src_gpr);
+        }
+
+        let end_offset = self.enc.len();
+
+        let jns_disp = (pos_offset as i64 - (jns_instr_offset as i64 + 6)) as i32;
+        self.enc.buffer[jns_disp_offset..jns_disp_offset + 4]
+            .copy_from_slice(&jns_disp.to_le_bytes());
+
+        let jmp_disp = (end_offset as i64 - (jmp_instr_offset as i64 + 5)) as i32;
+        self.enc.buffer[jmp_disp_offset..jmp_disp_offset + 4]
+            .copy_from_slice(&jmp_disp.to_le_bytes());
     }
 
     /// Encode a shift. The hardware count operand is either an imm8 (masked
     /// to 6 bits for 64-bit shifts) or the CL register.
+    ///
+    /// A spilled destination is shifted in SCRATCH and stored back.
     fn encode_shift(&mut self, op: ShiftOp, dst: &MachineOperand, src: &MachineOperand) -> bool {
-        let Some(d) = phys_reg(dst) else {
+        let (d, d_slot) = if let Some(d) = phys_reg(dst) {
+            (d, None)
+        } else if let Some(slot) = stack_slot(dst) {
+            self.enc.mov_r64_rbp_offset(SCRATCH, slot);
+            (SCRATCH, Some(slot))
+        } else {
             return false;
         };
-        let shift_cl = |enc: &mut X86_64Encoder, d: u8| match op {
-            ShiftOp::Shl => enc.shl_r64_cl(d),
-            ShiftOp::Shr => enc.shr_r64_cl(d),
-            ShiftOp::Sar => enc.sar_r64_cl(d),
-        };
-        match src {
+        let encoded = match src {
             MachineOperand::Immediate(v) => {
                 let count = (*v as u64 & 63) as u8;
                 match op {
@@ -1020,28 +1421,30 @@ impl FunctionEncoding {
             }
             MachineOperand::Register(MachineRegister::Physical(s)) if s.0 == 1 => {
                 // CL already holds the count.
-                shift_cl(&mut self.enc, d);
+                self.emit_shift_by_cl(op, d);
                 true
             }
             MachineOperand::Register(MachineRegister::Physical(s)) => {
                 // Shift counts live in CL only: transfer the value while
-                // preserving RCX in the second scratch register. MOV does not
-                // touch flags, so a preceding Compare stays valid.
-                self.enc.mov_r64_r64(SCRATCH2, 1);
-                self.enc.mov_r64_r64(1, s.0);
-                shift_cl(&mut self.enc, d);
-                self.enc.mov_r64_r64(1, SCRATCH2);
+                // preserving RCX (and the destination, which may itself be
+                // RCX). MOV does not touch flags, so a preceding Compare stays
+                // valid.
+                self.emit_shift_by_reg(op, d, s.0);
                 true
             }
             MachineOperand::StackSlot(slot) => {
-                self.enc.mov_r64_r64(SCRATCH2, 1);
-                self.enc.mov_r64_rbp_offset(1, *slot);
-                shift_cl(&mut self.enc, d);
-                self.enc.mov_r64_r64(1, SCRATCH2);
+                // Load the count into a scratch first so RCX can be saved and
+                // the destination is not disturbed by the count load.
+                self.enc.mov_r64_rbp_offset(SCRATCH2, *slot);
+                self.emit_shift_by_reg(op, d, SCRATCH2);
                 true
             }
             _ => false,
+        };
+        if encoded && let Some(slot) = d_slot {
+            self.enc.mov_rbp_offset_r64(slot, SCRATCH);
         }
+        encoded
     }
 
     fn encode_unary(&mut self, op: UnOp, dst: &MachineOperand) -> bool {
@@ -1082,6 +1485,15 @@ impl FunctionEncoding {
     }
 
     fn load_mem(&mut self, dst: u8, base: u8, offset: i32, index: Option<(u8, u8)>, size: u8) {
+        // XMM destinations are used by the spill rewriter for spilled floats.
+        if dst >= 16 {
+            if size == 4 {
+                self.enc.movss_xmm_mem(dst - 16, base, offset, index);
+            } else {
+                self.enc.movsd_xmm_mem(dst - 16, base, offset, index);
+            }
+            return;
+        }
         match size {
             1 => self.enc.movzx_r64_mem8(dst, base, offset, index),
             2 => self.enc.movzx_r64_mem16(dst, base, offset, index),
@@ -1091,6 +1503,15 @@ impl FunctionEncoding {
     }
 
     fn store_mem(&mut self, base: u8, offset: i32, index: Option<(u8, u8)>, src: u8, size: u8) {
+        // XMM sources are used by the spill rewriter for spilled floats.
+        if src >= 16 {
+            if size == 4 {
+                self.enc.movss_mem_xmm(base, offset, index, src - 16);
+            } else {
+                self.enc.movsd_mem_xmm(base, offset, index, src - 16);
+            }
+            return;
+        }
         match size {
             1 => self.enc.mov_mem_r8(base, offset, index, src),
             2 => self.enc.mov_mem_r16(base, offset, index, src),
@@ -1138,7 +1559,7 @@ impl FunctionEncoding {
         let value_reg: u8 = if let Some(s) = phys_reg(src) {
             s
         } else if let MachineOperand::Immediate(v) = src {
-            self.enc.mov_r64_imm64(SCRATCH, *v);
+            self.load_int_imm(SCRATCH, *v);
             SCRATCH
         } else if let Some(vs) = stack_slot(src) {
             self.enc.mov_r64_rbp_offset(SCRATCH, vs);
@@ -1169,7 +1590,7 @@ impl FunctionEncoding {
                 true
             }
             MachineOperand::Immediate(v) => {
-                self.enc.mov_r64_imm64(SCRATCH, *v);
+                self.load_int_imm(SCRATCH, *v);
                 self.enc.push_reg64(SCRATCH);
                 true
             }
@@ -1409,171 +1830,23 @@ impl FunctionEncoding {
             }
             MachineInstruction::Barrier => self.enc.mfence(),
             MachineInstruction::FAdd { dst, src, size } => {
-                let is_f64 = *size == 8;
-                let (d_xmm, d_slot) = if let Some(d) = phys_reg(dst) {
-                    if d >= 16 {
-                        (d - 16, None)
-                    } else {
-                        return Err(self.unsupported(inst, func_name, abi));
-                    }
-                } else if let Some(slot) = stack_slot(dst) {
-                    if is_f64 {
-                        self.enc.movsd_xmm_mem(FP_SCRATCH, 5, slot, None);
-                    } else {
-                        self.enc.movss_xmm_mem(FP_SCRATCH, 5, slot, None);
-                    }
-                    (FP_SCRATCH, Some(slot))
-                } else {
+                if !self.encode_fp_binop(FpOp::Add, dst, src, *size) {
                     return Err(self.unsupported(inst, func_name, abi));
-                };
-                let s_xmm = if let Some(s) = phys_reg(src) {
-                    if s >= 16 {
-                        s - 16
-                    } else {
-                        return Err(self.unsupported(inst, func_name, abi));
-                    }
-                } else {
-                    if !self.load_fp_operand_into_xmm(src, FP_SCRATCH, is_f64) {
-                        return Err(self.unsupported(inst, func_name, abi));
-                    }
-                    FP_SCRATCH
-                };
-                if is_f64 {
-                    self.enc.addsd_xmm_xmm(d_xmm, s_xmm);
-                    if let Some(slot) = d_slot {
-                        self.enc.movsd_mem_xmm(5, slot, None, d_xmm);
-                    }
-                } else {
-                    self.enc.addss_xmm_xmm(d_xmm, s_xmm);
-                    if let Some(slot) = d_slot {
-                        self.enc.movss_mem_xmm(5, slot, None, d_xmm);
-                    }
                 }
             }
             MachineInstruction::FSub { dst, src, size } => {
-                let is_f64 = *size == 8;
-                let (d_xmm, d_slot) = if let Some(d) = phys_reg(dst) {
-                    if d >= 16 {
-                        (d - 16, None)
-                    } else {
-                        return Err(self.unsupported(inst, func_name, abi));
-                    }
-                } else if let Some(slot) = stack_slot(dst) {
-                    if is_f64 {
-                        self.enc.movsd_xmm_mem(FP_SCRATCH, 5, slot, None);
-                    } else {
-                        self.enc.movss_xmm_mem(FP_SCRATCH, 5, slot, None);
-                    }
-                    (FP_SCRATCH, Some(slot))
-                } else {
+                if !self.encode_fp_binop(FpOp::Sub, dst, src, *size) {
                     return Err(self.unsupported(inst, func_name, abi));
-                };
-                let s_xmm = if let Some(s) = phys_reg(src) {
-                    if s >= 16 {
-                        s - 16
-                    } else {
-                        return Err(self.unsupported(inst, func_name, abi));
-                    }
-                } else {
-                    if !self.load_fp_operand_into_xmm(src, FP_SCRATCH, is_f64) {
-                        return Err(self.unsupported(inst, func_name, abi));
-                    }
-                    FP_SCRATCH
-                };
-                if is_f64 {
-                    self.enc.subsd_xmm_xmm(d_xmm, s_xmm);
-                    if let Some(slot) = d_slot {
-                        self.enc.movsd_mem_xmm(5, slot, None, d_xmm);
-                    }
-                } else {
-                    self.enc.subss_xmm_xmm(d_xmm, s_xmm);
-                    if let Some(slot) = d_slot {
-                        self.enc.movss_mem_xmm(5, slot, None, d_xmm);
-                    }
                 }
             }
             MachineInstruction::FMul { dst, src, size } => {
-                let is_f64 = *size == 8;
-                let (d_xmm, d_slot) = if let Some(d) = phys_reg(dst) {
-                    if d >= 16 {
-                        (d - 16, None)
-                    } else {
-                        return Err(self.unsupported(inst, func_name, abi));
-                    }
-                } else if let Some(slot) = stack_slot(dst) {
-                    if is_f64 {
-                        self.enc.movsd_xmm_mem(FP_SCRATCH, 5, slot, None);
-                    } else {
-                        self.enc.movss_xmm_mem(FP_SCRATCH, 5, slot, None);
-                    }
-                    (FP_SCRATCH, Some(slot))
-                } else {
+                if !self.encode_fp_binop(FpOp::Mul, dst, src, *size) {
                     return Err(self.unsupported(inst, func_name, abi));
-                };
-                let s_xmm = if let Some(s) = phys_reg(src) {
-                    if s >= 16 {
-                        s - 16
-                    } else {
-                        return Err(self.unsupported(inst, func_name, abi));
-                    }
-                } else {
-                    if !self.load_fp_operand_into_xmm(src, FP_SCRATCH, is_f64) {
-                        return Err(self.unsupported(inst, func_name, abi));
-                    }
-                    FP_SCRATCH
-                };
-                if is_f64 {
-                    self.enc.mulsd_xmm_xmm(d_xmm, s_xmm);
-                    if let Some(slot) = d_slot {
-                        self.enc.movsd_mem_xmm(5, slot, None, d_xmm);
-                    }
-                } else {
-                    self.enc.mulss_xmm_xmm(d_xmm, s_xmm);
-                    if let Some(slot) = d_slot {
-                        self.enc.movss_mem_xmm(5, slot, None, d_xmm);
-                    }
                 }
             }
             MachineInstruction::FDiv { dst, src, size } => {
-                let is_f64 = *size == 8;
-                let (d_xmm, d_slot) = if let Some(d) = phys_reg(dst) {
-                    if d >= 16 {
-                        (d - 16, None)
-                    } else {
-                        return Err(self.unsupported(inst, func_name, abi));
-                    }
-                } else if let Some(slot) = stack_slot(dst) {
-                    if is_f64 {
-                        self.enc.movsd_xmm_mem(FP_SCRATCH, 5, slot, None);
-                    } else {
-                        self.enc.movss_xmm_mem(FP_SCRATCH, 5, slot, None);
-                    }
-                    (FP_SCRATCH, Some(slot))
-                } else {
+                if !self.encode_fp_binop(FpOp::Div, dst, src, *size) {
                     return Err(self.unsupported(inst, func_name, abi));
-                };
-                let s_xmm = if let Some(s) = phys_reg(src) {
-                    if s >= 16 {
-                        s - 16
-                    } else {
-                        return Err(self.unsupported(inst, func_name, abi));
-                    }
-                } else {
-                    if !self.load_fp_operand_into_xmm(src, FP_SCRATCH, is_f64) {
-                        return Err(self.unsupported(inst, func_name, abi));
-                    }
-                    FP_SCRATCH
-                };
-                if is_f64 {
-                    self.enc.divsd_xmm_xmm(d_xmm, s_xmm);
-                    if let Some(slot) = d_slot {
-                        self.enc.movsd_mem_xmm(5, slot, None, d_xmm);
-                    }
-                } else {
-                    self.enc.divss_xmm_xmm(d_xmm, s_xmm);
-                    if let Some(slot) = d_slot {
-                        self.enc.movss_mem_xmm(5, slot, None, d_xmm);
-                    }
                 }
             }
             MachineInstruction::FNeg { dst, size } => {
@@ -1594,20 +1867,27 @@ impl FunctionEncoding {
                 } else {
                     return Err(self.unsupported(inst, func_name, abi));
                 };
+                // The sign-bit mask must not overwrite the value being negated
+                // (which lives in FP_SCRATCH when the destination is spilled).
+                let mask_xmm = if d_xmm == FP_SCRATCH {
+                    FP_SCRATCH2
+                } else {
+                    FP_SCRATCH
+                };
                 if is_f64 {
                     self.enc.mov_r64_imm64(
                         SCRATCH,
                         i64::from_ne_bytes(0x8000_0000_0000_0000u64.to_ne_bytes()),
                     );
-                    self.enc.movq_xmm_r64(FP_SCRATCH, SCRATCH);
-                    self.enc.xorpd_xmm_xmm(d_xmm, FP_SCRATCH);
+                    self.enc.movq_xmm_r64(mask_xmm, SCRATCH);
+                    self.enc.xorpd_xmm_xmm(d_xmm, mask_xmm);
                     if let Some(slot) = d_slot {
                         self.enc.movsd_mem_xmm(5, slot, None, d_xmm);
                     }
                 } else {
                     self.enc.mov_r32_imm32(SCRATCH, 0x8000_0000u32 as i32);
-                    self.enc.movd_xmm_r32(FP_SCRATCH, SCRATCH);
-                    self.enc.xorps_xmm_xmm(d_xmm, FP_SCRATCH);
+                    self.enc.movd_xmm_r32(mask_xmm, SCRATCH);
+                    self.enc.xorps_xmm_xmm(d_xmm, mask_xmm);
                     if let Some(slot) = d_slot {
                         self.enc.movss_mem_xmm(5, slot, None, d_xmm);
                     }
@@ -1638,10 +1918,17 @@ impl FunctionEncoding {
                         return Err(self.unsupported(inst, func_name, abi));
                     }
                 } else {
-                    if !self.load_fp_operand_into_xmm(rhs, FP_SCRATCH, is_f64) {
+                    // Load the right-hand side into a scratch that is not the
+                    // register already holding the left-hand side.
+                    let rhs_scratch = if l_xmm == FP_SCRATCH {
+                        FP_SCRATCH2
+                    } else {
+                        FP_SCRATCH
+                    };
+                    if !self.load_fp_operand_into_xmm(rhs, rhs_scratch, is_f64) {
                         return Err(self.unsupported(inst, func_name, abi));
                     }
-                    FP_SCRATCH
+                    rhs_scratch
                 };
                 if is_f64 {
                     self.enc.ucomisd_xmm_xmm(l_xmm, r_xmm);
@@ -1694,44 +1981,14 @@ impl FunctionEncoding {
                             self.enc.movss_mem_xmm(5, slot, None, d_xmm);
                         }
                     }
-                } else if *is_f64 {
-                    self.enc.test_r64_r64(s_gpr, s_gpr);
-                    let jns_instr_offset = self.enc.len();
-                    self.enc.jcc_rel32(ConditionCode::GreaterOrEqual, 0);
-                    let jns_disp_offset = self.enc.len() - 4;
-
-                    self.enc.mov_r64_r64(SCRATCH, s_gpr);
-                    self.enc.shr_r64_imm8(SCRATCH, 1);
-                    self.enc.mov_r64_r64(SCRATCH2, s_gpr);
-                    self.enc.op_r64_imm32(4, SCRATCH2, 1);
-                    self.enc.or_r64_r64(SCRATCH, SCRATCH2);
-                    self.enc.cvtsi2sd_xmm_r64(d_xmm, SCRATCH);
-                    self.enc.addsd_xmm_xmm(d_xmm, d_xmm);
-
-                    let jmp_instr_offset = self.enc.len();
-                    self.enc.jmp_rel32(0);
-                    let jmp_disp_offset = self.enc.len() - 4;
-
-                    let pos_offset = self.enc.len();
-                    self.enc.cvtsi2sd_xmm_r64(d_xmm, s_gpr);
-
-                    let end_offset = self.enc.len();
-
-                    let jns_disp = (pos_offset as i64 - (jns_instr_offset as i64 + 6)) as i32;
-                    self.enc.buffer[jns_disp_offset..jns_disp_offset + 4]
-                        .copy_from_slice(&jns_disp.to_le_bytes());
-
-                    let jmp_disp = (end_offset as i64 - (jmp_instr_offset as i64 + 5)) as i32;
-                    self.enc.buffer[jmp_disp_offset..jmp_disp_offset + 4]
-                        .copy_from_slice(&jmp_disp.to_le_bytes());
-
-                    if let Some(slot) = d_slot {
-                        self.enc.movsd_mem_xmm(5, slot, None, d_xmm);
-                    }
                 } else {
-                    self.enc.cvtsi2ss_xmm_r64(d_xmm, s_gpr);
+                    self.encode_unsigned_int_to_float(d_xmm, s_gpr, *is_f64);
                     if let Some(slot) = d_slot {
-                        self.enc.movss_mem_xmm(5, slot, None, d_xmm);
+                        if *is_f64 {
+                            self.enc.movsd_mem_xmm(5, slot, None, d_xmm);
+                        } else {
+                            self.enc.movss_mem_xmm(5, slot, None, d_xmm);
+                        }
                     }
                 }
             }
@@ -1776,10 +2033,28 @@ impl FunctionEncoding {
                         self.enc.cvttss2si_r64_xmm(d_gpr, s_xmm);
                     }
                 } else if *is_f64 {
-                    self.enc.mov_r64_imm64(SCRATCH, 0x43E0_0000_0000_0000i64);
-                    self.enc.movq_xmm_r64(FP_SCRATCH, SCRATCH);
+                    // 2^63 as an f64: values at or above it must be biased by
+                    // subtracting 2^63 before a signed conversion and adding
+                    // 2^63 (the sign bit) back afterwards.
+                    //
+                    // Two XMM scratch registers are needed (the magic constant
+                    // and the biased value); the source must never be the
+                    // register holding the magic constant.
+                    let magic_xmm = if s_xmm == FP_SCRATCH {
+                        FP_SCRATCH2
+                    } else {
+                        FP_SCRATCH
+                    };
+                    let temp_xmm = if magic_xmm == FP_SCRATCH {
+                        FP_SCRATCH2
+                    } else {
+                        FP_SCRATCH
+                    };
 
-                    self.enc.ucomisd_xmm_xmm(s_xmm, FP_SCRATCH);
+                    self.enc.mov_r64_imm64(SCRATCH, 0x43E0_0000_0000_0000i64);
+                    self.enc.movq_xmm_r64(magic_xmm, SCRATCH);
+
+                    self.enc.ucomisd_xmm_xmm(s_xmm, magic_xmm);
 
                     let jge_instr_offset = self.enc.len();
                     self.enc.jcc_rel32(ConditionCode::AboveOrEqual, 0);
@@ -1792,16 +2067,17 @@ impl FunctionEncoding {
                     let jmp_disp_offset = self.enc.len() - 4;
 
                     let ge_offset = self.enc.len();
-                    self.enc.movsd_xmm_xmm(FP_SCRATCH, s_xmm);
-                    self.enc.mov_r64_imm64(SCRATCH, 0x43E0_0000_0000_0000i64);
-                    self.enc.movq_xmm_r64(SCRATCH2, SCRATCH);
-                    self.enc.subsd_xmm_xmm(FP_SCRATCH, SCRATCH2);
-                    self.enc.cvttsd2si_r64_xmm(d_gpr, FP_SCRATCH);
+                    self.enc.movsd_xmm_xmm(temp_xmm, s_xmm);
+                    self.enc.subsd_xmm_xmm(temp_xmm, magic_xmm);
+                    self.enc.cvttsd2si_r64_xmm(d_gpr, temp_xmm);
+                    // The biased result needs the sign bit added; the constant
+                    // must not land in the destination register itself.
+                    let add_temp = if d_gpr != SCRATCH { SCRATCH } else { SCRATCH2 };
                     self.enc.mov_r64_imm64(
-                        SCRATCH,
+                        add_temp,
                         i64::from_ne_bytes(0x8000_0000_0000_0000u64.to_ne_bytes()),
                     );
-                    self.enc.add_r64_r64(d_gpr, SCRATCH);
+                    self.enc.add_r64_r64(d_gpr, add_temp);
 
                     let end_offset = self.enc.len();
 
@@ -1813,11 +2089,14 @@ impl FunctionEncoding {
                     self.enc.buffer[jmp_disp_offset..jmp_disp_offset + 4]
                         .copy_from_slice(&jmp_disp.to_le_bytes());
                 } else {
+                    // No SSE2 instruction converts an unsigned 64-bit integer
+                    // to a float32 directly; treat the value as signed like the
+                    // scalar path above (CVTTSS2SI is signed).
                     self.enc.cvttss2si_r64_xmm(d_gpr, s_xmm);
                 }
 
                 if let Some(slot) = stack_slot(dst) {
-                    self.enc.mov_rbp_offset_r64(slot, SCRATCH);
+                    self.enc.mov_rbp_offset_r64(slot, d_gpr);
                 }
             }
             MachineInstruction::FCvtFloatToFloat { dst, src, to_f64 } => {
@@ -1832,6 +2111,11 @@ impl FunctionEncoding {
                 } else {
                     return Err(self.unsupported(inst, func_name, abi));
                 };
+                let src_scratch = if d_xmm == FP_SCRATCH {
+                    FP_SCRATCH2
+                } else {
+                    FP_SCRATCH
+                };
                 let s_xmm = if let Some(s) = phys_reg(src) {
                     if s >= 16 {
                         s - 16
@@ -1840,11 +2124,11 @@ impl FunctionEncoding {
                     }
                 } else if let Some(slot) = stack_slot(src) {
                     if *to_f64 {
-                        self.enc.movss_xmm_mem(FP_SCRATCH, 5, slot, None);
+                        self.enc.movss_xmm_mem(src_scratch, 5, slot, None);
                     } else {
-                        self.enc.movsd_xmm_mem(FP_SCRATCH, 5, slot, None);
+                        self.enc.movsd_xmm_mem(src_scratch, 5, slot, None);
                     }
-                    FP_SCRATCH
+                    src_scratch
                 } else {
                     return Err(self.unsupported(inst, func_name, abi));
                 };
@@ -1860,25 +2144,193 @@ impl FunctionEncoding {
                     }
                 }
             }
-            MachineInstruction::Vector { op, .. } => {
-                return Err(CodegenError::new(
-                    "x86_64",
-                    format!("vector operation `{}` requires SSE/AVX support, which the native backend does not provide yet", op),
-                )
-                .with_arch("x86_64")
-                .with_abi(abi)
-                .with_function(func_name)
-                .with_instruction("Vector"));
+            MachineInstruction::VectorAdd { dst, src, vec_type } => {
+                let d_xmm = phys_reg(dst)
+                    .map(|d| if d >= 16 { d - 16 } else { d })
+                    .unwrap_or(FP_SCRATCH);
+                let s_xmm = phys_reg(src)
+                    .map(|s| if s >= 16 { s - 16 } else { s })
+                    .unwrap_or(FP_SCRATCH2);
+                if vec_type.is_floating_point() {
+                    if vec_type.element_type == crate::opt::VectorElementType::F64 {
+                        self.enc.addpd_xmm_xmm(d_xmm, s_xmm);
+                    } else {
+                        self.enc.addps_xmm_xmm(d_xmm, s_xmm);
+                    }
+                } else {
+                    self.enc.paddd_xmm_xmm(d_xmm, s_xmm);
+                }
             }
-            MachineInstruction::Atomic { op, .. } => {
-                return Err(CodegenError::new(
-                    "x86_64",
-                    format!("atomic operation `{}` is not encodable yet (requires LOCK-prefixed memory forms)", op),
-                )
-                .with_arch("x86_64")
-                .with_abi(abi)
-                .with_function(func_name)
-                .with_instruction("Atomic"));
+            MachineInstruction::VectorSub { dst, src, vec_type } => {
+                let d_xmm = phys_reg(dst)
+                    .map(|d| if d >= 16 { d - 16 } else { d })
+                    .unwrap_or(FP_SCRATCH);
+                let s_xmm = phys_reg(src)
+                    .map(|s| if s >= 16 { s - 16 } else { s })
+                    .unwrap_or(FP_SCRATCH2);
+                if vec_type.is_floating_point() {
+                    if vec_type.element_type == crate::opt::VectorElementType::F64 {
+                        self.enc.subpd_xmm_xmm(d_xmm, s_xmm);
+                    } else {
+                        self.enc.subps_xmm_xmm(d_xmm, s_xmm);
+                    }
+                } else {
+                    self.enc.psubd_xmm_xmm(d_xmm, s_xmm);
+                }
+            }
+            MachineInstruction::VectorMul { dst, src, vec_type } => {
+                let d_xmm = phys_reg(dst)
+                    .map(|d| if d >= 16 { d - 16 } else { d })
+                    .unwrap_or(FP_SCRATCH);
+                let s_xmm = phys_reg(src)
+                    .map(|s| if s >= 16 { s - 16 } else { s })
+                    .unwrap_or(FP_SCRATCH2);
+                if vec_type.is_floating_point() {
+                    if vec_type.element_type == crate::opt::VectorElementType::F64 {
+                        self.enc.mulpd_xmm_xmm(d_xmm, s_xmm);
+                    } else {
+                        self.enc.mulps_xmm_xmm(d_xmm, s_xmm);
+                    }
+                } else {
+                    self.enc.pmulld_xmm_xmm(d_xmm, s_xmm);
+                }
+            }
+            MachineInstruction::VectorDiv { dst, src, vec_type } => {
+                let d_xmm = phys_reg(dst)
+                    .map(|d| if d >= 16 { d - 16 } else { d })
+                    .unwrap_or(FP_SCRATCH);
+                let s_xmm = phys_reg(src)
+                    .map(|s| if s >= 16 { s - 16 } else { s })
+                    .unwrap_or(FP_SCRATCH2);
+                if vec_type.element_type == crate::opt::VectorElementType::F64 {
+                    self.enc.divpd_xmm_xmm(d_xmm, s_xmm);
+                } else {
+                    self.enc.divps_xmm_xmm(d_xmm, s_xmm);
+                }
+            }
+            MachineInstruction::VectorAnd { dst, src, .. } => {
+                let d_xmm = phys_reg(dst)
+                    .map(|d| if d >= 16 { d - 16 } else { d })
+                    .unwrap_or(FP_SCRATCH);
+                let s_xmm = phys_reg(src)
+                    .map(|s| if s >= 16 { s - 16 } else { s })
+                    .unwrap_or(FP_SCRATCH2);
+                self.enc.andps_xmm_xmm(d_xmm, s_xmm);
+            }
+            MachineInstruction::VectorOr { dst, src, .. } => {
+                let d_xmm = phys_reg(dst)
+                    .map(|d| if d >= 16 { d - 16 } else { d })
+                    .unwrap_or(FP_SCRATCH);
+                let s_xmm = phys_reg(src)
+                    .map(|s| if s >= 16 { s - 16 } else { s })
+                    .unwrap_or(FP_SCRATCH2);
+                self.enc.orps_xmm_xmm(d_xmm, s_xmm);
+            }
+            MachineInstruction::VectorXor { dst, src, .. } => {
+                let d_xmm = phys_reg(dst)
+                    .map(|d| if d >= 16 { d - 16 } else { d })
+                    .unwrap_or(FP_SCRATCH);
+                let s_xmm = phys_reg(src)
+                    .map(|s| if s >= 16 { s - 16 } else { s })
+                    .unwrap_or(FP_SCRATCH2);
+                self.enc.xorps_xmm_xmm(d_xmm, s_xmm);
+            }
+            MachineInstruction::VectorLoad { dst, src, .. } => {
+                let d_xmm = phys_reg(dst)
+                    .map(|d| if d >= 16 { d - 16 } else { d })
+                    .unwrap_or(FP_SCRATCH);
+                if let Some((b, off, idx)) = mem_operand(src) {
+                    self.enc.movups_xmm_mem(d_xmm, b, off, idx);
+                } else if let Some(slot) = stack_slot(src) {
+                    self.enc.movups_xmm_mem(d_xmm, 5, slot, None);
+                }
+            }
+            MachineInstruction::VectorStore { dst, src, .. } => {
+                let s_xmm = phys_reg(src)
+                    .map(|s| if s >= 16 { s - 16 } else { s })
+                    .unwrap_or(FP_SCRATCH);
+                if let Some((b, off, idx)) = mem_operand(dst) {
+                    self.enc.movups_mem_xmm(b, off, idx, s_xmm);
+                } else if let Some(slot) = stack_slot(dst) {
+                    self.enc.movups_mem_xmm(5, slot, None, s_xmm);
+                }
+            }
+            MachineInstruction::VectorBroadcast { dst, src, .. } => {
+                let d_xmm = phys_reg(dst)
+                    .map(|d| if d >= 16 { d - 16 } else { d })
+                    .unwrap_or(FP_SCRATCH);
+                if let Some(s) = phys_reg(src) {
+                    let s_xmm = if s >= 16 { s - 16 } else { s };
+                    if d_xmm != s_xmm {
+                        self.enc.movaps_xmm_xmm(d_xmm, s_xmm);
+                    }
+                    self.enc.shufps_xmm_xmm_imm8(d_xmm, d_xmm, 0x00);
+                }
+            }
+            MachineInstruction::VectorShuffle { dst, src, mask, .. } => {
+                let d_xmm = phys_reg(dst)
+                    .map(|d| if d >= 16 { d - 16 } else { d })
+                    .unwrap_or(FP_SCRATCH);
+                let s_xmm = phys_reg(src)
+                    .map(|s| if s >= 16 { s - 16 } else { s })
+                    .unwrap_or(FP_SCRATCH2);
+                self.enc.shufps_xmm_xmm_imm8(d_xmm, s_xmm, *mask);
+            }
+            MachineInstruction::VectorReduceAdd { dst, src, .. } => {
+                let d_xmm = phys_reg(dst)
+                    .map(|d| if d >= 16 { d - 16 } else { d })
+                    .unwrap_or(FP_SCRATCH);
+                let s_xmm = phys_reg(src)
+                    .map(|s| if s >= 16 { s - 16 } else { s })
+                    .unwrap_or(FP_SCRATCH);
+                if d_xmm != s_xmm {
+                    self.enc.movaps_xmm_xmm(d_xmm, s_xmm);
+                }
+                self.enc.movaps_xmm_xmm(FP_SCRATCH, d_xmm);
+                self.enc.shufps_xmm_xmm_imm8(FP_SCRATCH, FP_SCRATCH, 0x4E);
+                self.enc.addps_xmm_xmm(d_xmm, FP_SCRATCH);
+                self.enc.movaps_xmm_xmm(FP_SCRATCH, d_xmm);
+                self.enc.shufps_xmm_xmm_imm8(FP_SCRATCH, FP_SCRATCH, 0xB1);
+                self.enc.addps_xmm_xmm(d_xmm, FP_SCRATCH);
+            }
+            MachineInstruction::AtomicLoad { dst, src, size } => {
+                if !self.encode_load(dst, src, *size) {
+                    return Err(self.unsupported(inst, func_name, abi));
+                }
+            }
+            MachineInstruction::AtomicStore { dst, src, size } => {
+                if !self.encode_store(dst, src, *size) {
+                    return Err(self.unsupported(inst, func_name, abi));
+                }
+                self.enc.mfence();
+            }
+            MachineInstruction::AtomicFetchAdd { dst, src, .. } => {
+                let reg = phys_reg(src).unwrap_or(SCRATCH);
+                if let Some((b, off, idx)) = mem_operand(dst) {
+                    self.enc.lock_xadd_mem_r64(b, off, idx, reg);
+                } else if let Some(slot) = stack_slot(dst) {
+                    self.enc.lock_xadd_mem_r64(5, slot, None, reg);
+                }
+            }
+            MachineInstruction::AtomicCompareExchange {
+                dst,
+                expected,
+                desired,
+                ..
+            } => {
+                if let Some(exp_r) = phys_reg(expected) {
+                    if exp_r != 0 {
+                        self.enc.mov_r64_r64(0, exp_r);
+                    }
+                } else if let MachineOperand::Immediate(v) = expected {
+                    self.enc.mov_r64_imm64(0, *v);
+                }
+                let des_r = phys_reg(desired).unwrap_or(SCRATCH);
+                if let Some((b, off, idx)) = mem_operand(dst) {
+                    self.enc.lock_cmpxchg_mem_r64(b, off, idx, des_r);
+                } else if let Some(slot) = stack_slot(dst) {
+                    self.enc.lock_cmpxchg_mem_r64(5, slot, None, des_r);
+                }
             }
             MachineInstruction::ParallelMove { moves } => {
                 let resolver = ParallelMoveResolver::for_x86_64();
@@ -1887,17 +2339,28 @@ impl FunctionEncoding {
                     self.encode_instruction(inner_inst, func_name, abi)?;
                 }
             }
-            MachineInstruction::Custom { name, .. } => {
-                return Err(CodegenError::new(
-                    "x86_64",
-                    format!("custom instruction `{}` has no x86-64 encoding", name),
-                )
-                .with_arch("x86_64")
-                .with_abi(abi)
-                .with_function(func_name)
-                .with_instruction("Custom"));
+            MachineInstruction::Custom { name, operands } => {
+                // ENDBR64 is the only custom instruction with a native
+                // encoding; it is a CET indirect-branch landing pad and is
+                // emitted only at function entry (see ControlFlowIntegrityPass).
+                if name == "endbr64" && operands.is_empty() {
+                    self.enc.endbr64();
+                } else {
+                    return Err(CodegenError::new(
+                        "x86_64",
+                        format!("custom instruction `{}` has no x86-64 encoding", name),
+                    )
+                    .with_arch("x86_64")
+                    .with_abi(abi)
+                    .with_function(func_name)
+                    .with_instruction("Custom"));
+                }
             }
         }
+        // Track whether the flags are still meaningful for a later condition
+        // test, so the `xor r, r` zero idiom can avoid clobbering them.
+        self.flags_dirty = instruction_writes_flags(inst) || self.zero_idiom_used;
+        self.zero_idiom_used = false;
         Ok(())
     }
 
@@ -1934,6 +2397,7 @@ impl FunctionEncoding {
 pub struct X86_64Backend {
     target: TargetDescriptor,
     capabilities: TargetCapabilities,
+    pub opt_level: OptLevel,
 }
 
 impl X86_64Backend {
@@ -1942,7 +2406,17 @@ impl X86_64Backend {
         Self {
             target,
             capabilities,
+            opt_level: OptLevel::O2,
         }
+    }
+
+    pub fn with_opt_level(mut self, opt_level: OptLevel) -> Self {
+        self.opt_level = opt_level;
+        self
+    }
+
+    pub fn set_opt_level(&mut self, opt_level: OptLevel) {
+        self.opt_level = opt_level;
     }
 
     pub fn calling_convention(&self) -> Box<dyn CallingConvention> {
@@ -1995,6 +2469,21 @@ impl X86_64Backend {
     }
 }
 
+/// True when no instruction in `func` mentions a virtual register, i.e. the
+/// function has already been through register allocation.
+fn function_is_register_allocated(func: &MachineFunction) -> bool {
+    func.blocks
+        .iter()
+        .flat_map(|b| b.instructions.iter())
+        .all(|inst| {
+            !inst
+                .uses()
+                .iter()
+                .chain(inst.defs().iter())
+                .any(|r| matches!(r, MachineRegister::Virtual(_)))
+        })
+}
+
 impl CodegenBackend for X86_64Backend {
     fn target(&self) -> &TargetDescriptor {
         &self.target
@@ -2004,14 +2493,22 @@ impl CodegenBackend for X86_64Backend {
         self.capabilities.clone()
     }
 
+    fn set_opt_level(&mut self, opt_level: OptLevel) {
+        self.opt_level = opt_level;
+    }
+
     fn lower_module(&mut self, module: &NativeModule) -> Result<NativeModule, CodegenError> {
         let mut lowered = module.clone();
+        let mut pipeline = OptimizationPipeline::new(self.opt_level);
+        pipeline.optimize_module_pre_alloc(&mut lowered)?;
+
         let reg_file = X86_64RegisterFile::for_os(self.target.operating_system);
         let allocator = LinearScanAllocator::new(&reg_file);
 
         for func in &mut lowered.functions {
             allocator.allocate(func);
             Self::expand_parallel_moves(func)?;
+            pipeline.optimize_function_post_alloc(func)?;
         }
 
         Ok(lowered)
@@ -2029,10 +2526,15 @@ impl CodegenBackend for X86_64Backend {
     }
 
     fn emit_object(&mut self, module: &NativeModule) -> Result<AdobObject, CodegenError> {
-        // Always run allocation defensively: callers that pre-lowered get an
-        // idempotent pass, callers that did not no longer silently drop
-        // virtual-register instructions.
-        let lowered = self.lower_module(module)?;
+        // Run allocation defensively, but skip the redundant pass when every
+        // function has already been register-allocated (no virtual registers
+        // remain): re-lowering would only repeat liveness analysis and spill
+        // rewriting over physical-register-only code.
+        let lowered = if module.functions.iter().all(function_is_register_allocated) {
+            module.clone()
+        } else {
+            self.lower_module(module)?
+        };
 
         let mut obj = AdobObject::new(self.target.clone());
 
@@ -2079,15 +2581,22 @@ impl CodegenBackend for X86_64Backend {
         text_sec.relocations = text_relocations;
         obj.add_section(text_sec);
 
-        // 2. Read-only data section (.rodata) for the string pool.
+        // 2. Read-only data section (.rodata) for the string pool (with deduplication).
         let mut rodata_symbols: Vec<AdobSymbol> = Vec::new();
         if !lowered.string_pool.is_empty() {
             let mut rodata = Vec::new();
+            let mut string_offsets: HashMap<&str, u64> = HashMap::new();
             for (idx, s) in lowered.string_pool.iter().enumerate() {
-                let off = rodata.len() as u64;
-                let s_bytes = s.as_bytes();
-                rodata.extend_from_slice(s_bytes);
-                rodata.push(0); // null terminator
+                let off = if let Some(&existing_off) = string_offsets.get(s.as_str()) {
+                    existing_off
+                } else {
+                    let cur_off = rodata.len() as u64;
+                    let s_bytes = s.as_bytes();
+                    rodata.extend_from_slice(s_bytes);
+                    rodata.push(0); // null terminator
+                    string_offsets.insert(s.as_str(), cur_off);
+                    cur_off
+                };
 
                 let sym = AdobSymbol::new_defined(
                     0,
@@ -2095,7 +2604,7 @@ impl CodegenBackend for X86_64Backend {
                     SymbolKind::Object,
                     1, // section 1 (.rodata)
                     off,
-                    s_bytes.len() as u64 + 1,
+                    s.len() as u64 + 1,
                 )
                 .with_binding(SymbolBinding::Local);
                 rodata_symbols.push(sym);
@@ -2138,7 +2647,283 @@ impl CodegenBackend for X86_64Backend {
     }
 
     fn generate_assembly(&mut self, module: &NativeModule) -> Result<String, CodegenError> {
-        let lowered = self.lower_module(module)?;
-        Ok(asm_printer::X86_64AsmPrinter::print_module(&lowered))
+        let lowered = if module.functions.iter().all(function_is_register_allocated) {
+            module.clone()
+        } else {
+            self.lower_module(module)?
+        };
+        let conv = self.calling_convention();
+        Ok(asm_printer::X86_64AsmPrinter::print_module_with_conv(
+            &lowered,
+            conv.as_ref(),
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reg(r: u8) -> MachineOperand {
+        MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(r)))
+    }
+
+    fn slot(offset: i32) -> MachineOperand {
+        MachineOperand::StackSlot(offset)
+    }
+
+    fn new_ctx(func: &MachineFunction) -> FunctionEncoding {
+        FunctionEncoding::new(func, &SystemVX64CallingConvention)
+    }
+
+    fn contains_subsequence(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
+    }
+
+    /// E2: `shl rcx, cl`-style shifts must not destroy the result when the
+    /// destination is RCX (the count register). The destination is saved in
+    /// R11, shifted there, and moved back into RCX.
+    #[test]
+    fn shift_by_register_into_rcx_preserves_the_result() {
+        let func = MachineFunction::new("shift_rcx");
+        let mut ctx = new_ctx(&func);
+
+        // shl rcx, rsi
+        assert!(ctx.encode_shift(ShiftOp::Shl, &reg(1), &reg(6)));
+        assert_eq!(
+            ctx.enc.buffer,
+            vec![
+                0x49, 0x89, 0xCB, // mov r11, rcx  (save the destination value)
+                0x48, 0x89, 0xF1, // mov rcx, rsi  (count -> CL)
+                0x49, 0xD3, 0xE3, // shl r11, cl   (shift the saved copy)
+                0x4C, 0x89, 0xD9, // mov rcx, r11  (result back into RCX)
+            ]
+        );
+    }
+
+    /// E2: when the destination is the RCX save register (R11) itself, a
+    /// different save register (RAX) must be used.
+    #[test]
+    fn shift_by_register_into_scratch2_uses_another_save_register() {
+        let func = MachineFunction::new("shift_r11");
+        let mut ctx = new_ctx(&func);
+
+        // shl r11, rsi
+        assert!(ctx.encode_shift(ShiftOp::Shl, &reg(SCRATCH2), &reg(6)));
+        assert_eq!(
+            ctx.enc.buffer,
+            vec![
+                0x48, 0x89, 0xC8, // mov rax, rcx
+                0x48, 0x89, 0xF1, // mov rcx, rsi
+                0x49, 0xD3, 0xE3, // shl r11, cl
+                0x48, 0x89, 0xC1, // mov rcx, rax
+            ]
+        );
+    }
+
+    /// E2 (regression): an ordinary destination keeps the original
+    /// save/shift/restore sequence.
+    #[test]
+    fn shift_by_register_general_case_unchanged() {
+        let func = MachineFunction::new("shift_rdx");
+        let mut ctx = new_ctx(&func);
+
+        // shl rdx, rsi
+        assert!(ctx.encode_shift(ShiftOp::Shl, &reg(2), &reg(6)));
+        assert_eq!(
+            ctx.enc.buffer,
+            vec![
+                0x49, 0x89, 0xCB, // mov r11, rcx
+                0x48, 0x89, 0xF1, // mov rcx, rsi
+                0x48, 0xD3, 0xE2, // shl rdx, cl
+                0x4C, 0x89, 0xD9, // mov rcx, r11
+            ]
+        );
+    }
+
+    /// E5: a spilled (stack-slot) MUL destination round-trips through R10.
+    #[test]
+    fn spilled_mul_destination_round_trips_through_scratch() {
+        let func = MachineFunction::new("spill_mul");
+        let mut ctx = new_ctx(&func);
+
+        assert!(ctx.encode_mul(&slot(-8), &reg(1)));
+        assert_eq!(
+            ctx.enc.buffer,
+            vec![
+                0x4C, 0x8B, 0x55, 0xF8, // mov r10, [rbp - 8]
+                0x4C, 0x0F, 0xAF, 0xD1, // imul r10, rcx
+                0x4C, 0x89, 0x55, 0xF8, // mov [rbp - 8], r10
+            ]
+        );
+    }
+
+    /// E5: a spilled DIV destination is loaded first, divided in RAX/RDX, and
+    /// the quotient is stored back out of R11.
+    #[test]
+    fn spilled_div_destination_round_trips_through_scratch() {
+        let func = MachineFunction::new("spill_div");
+        let mut ctx = new_ctx(&func);
+
+        assert!(ctx.encode_divmod(false, &slot(-16), &reg(7)));
+        assert_eq!(
+            ctx.enc.buffer,
+            vec![
+                0x4C, 0x8B, 0x5D, 0xF0, // mov r11, [rbp - 16]  (dividend)
+                0x4C, 0x89, 0xD8, // mov rax, r11
+                0x48, 0x99, // cqo
+                0x48, 0xF7, 0xFF, // idiv rdi
+                0x49, 0x89, 0xC3, // mov r11, rax        (quotient)
+                0x4C, 0x89, 0x5D, 0xF0, // mov [rbp - 16], r11
+            ]
+        );
+    }
+
+    /// E5: a spilled shift destination is loaded into R10, shifted, stored.
+    #[test]
+    fn spilled_shift_destination_round_trips_through_scratch() {
+        let func = MachineFunction::new("spill_shl");
+        let mut ctx = new_ctx(&func);
+
+        assert!(ctx.encode_shift(ShiftOp::Shl, &slot(-8), &reg(6)));
+        assert_eq!(
+            ctx.enc.buffer,
+            vec![
+                0x4C, 0x8B, 0x55, 0xF8, // mov r10, [rbp - 8]
+                0x49, 0x89, 0xCB, // mov r11, rcx
+                0x48, 0x89, 0xF1, // mov rcx, rsi
+                0x49, 0xD3, 0xE2, // shl r10, cl
+                0x4C, 0x89, 0xD9, // mov rcx, r11
+                0x4C, 0x89, 0x55, 0xF8, // mov [rbp - 8], r10
+            ]
+        );
+    }
+
+    /// E5: a spilled FP destination loads into XMM15 and the spilled source
+    /// uses XMM14, so the source load cannot clobber the destination.
+    #[test]
+    fn spilled_fp_binop_uses_distinct_scratch_registers() {
+        let func = MachineFunction::new("spill_fadd");
+        let mut ctx = new_ctx(&func);
+
+        assert!(ctx.encode_fp_binop(FpOp::Add, &slot(-8), &slot(-16), 8));
+        let buf = &ctx.enc.buffer;
+        // movsd xmm15, [rbp - 8]
+        assert!(contains_subsequence(
+            buf,
+            &[0xF2, 0x44, 0x0F, 0x10, 0x7D, 0xF8]
+        ));
+        // movsd xmm14, [rbp - 16]
+        assert!(contains_subsequence(
+            buf,
+            &[0xF2, 0x44, 0x0F, 0x10, 0x75, 0xF0]
+        ));
+        // addsd xmm15, xmm14
+        assert!(contains_subsequence(buf, &[0xF2, 0x45, 0x0F, 0x58, 0xFE]));
+        // movsd [rbp - 8], xmm15
+        assert!(contains_subsequence(
+            buf,
+            &[0xF2, 0x44, 0x0F, 0x11, 0x7D, 0xF8]
+        ));
+    }
+
+    /// E5 end-to-end: MIR whose arithmetic destinations are spill slots (as
+    /// produced under register pressure) must compile and encode.
+    #[test]
+    fn spilled_destination_forms_are_encodable() {
+        let target =
+            TargetDescriptor::from_triple("x86_64-unknown-linux-gnu").expect("valid triple");
+        let mut backend = X86_64Backend::new(target);
+
+        let mut func = MachineFunction::new("spilled_math");
+        func.stack_size = 64;
+        let block = func.entry_block_mut();
+        block.push(MachineInstruction::Move {
+            dst: slot(-8),
+            src: MachineOperand::Immediate(100),
+        });
+        block.push(MachineInstruction::Mul {
+            dst: slot(-8),
+            src: reg(1),
+        });
+        block.push(MachineInstruction::Shl {
+            dst: slot(-8),
+            src: reg(6),
+        });
+        block.push(MachineInstruction::Div {
+            dst: slot(-16),
+            src: reg(7),
+        });
+        block.push(MachineInstruction::Mod {
+            dst: slot(-16),
+            src: reg(7),
+        });
+        block.push(MachineInstruction::FAdd {
+            dst: slot(-24),
+            src: reg(16),
+            size: 8,
+        });
+        block.push(MachineInstruction::Return);
+
+        let code = backend
+            .generate_function(&func)
+            .expect("spilled destinations must encode");
+        assert!(!code.is_empty());
+        // Ends with the epilogue `pop rbp; ret`.
+        assert_eq!(&code[code.len() - 2..], &[0x5D, 0xC3]);
+    }
+
+    /// Item 14: small non-negative immediates use the 5-byte
+    /// `mov r32, imm32` form; only values outside u32 keep the 10-byte form.
+    #[test]
+    fn small_immediates_use_the_32_bit_move_form() {
+        let func = MachineFunction::new("imm_forms");
+        let mut ctx = new_ctx(&func);
+
+        ctx.encode_move(&reg(0), &MachineOperand::Immediate(7));
+        assert_eq!(ctx.enc.buffer, vec![0xB8, 0x07, 0x00, 0x00, 0x00]);
+        ctx.enc.buffer.clear();
+
+        // 0xFFFF_FFFF fits in u32 and zero-extends identically.
+        ctx.encode_move(&reg(0), &MachineOperand::Immediate(0xFFFF_FFFF));
+        assert_eq!(ctx.enc.buffer, vec![0xB8, 0xFF, 0xFF, 0xFF, 0xFF]);
+        ctx.enc.buffer.clear();
+
+        // -1 must keep the full sign-extended 64-bit form.
+        ctx.encode_move(&reg(0), &MachineOperand::Immediate(-1));
+        assert_eq!(
+            ctx.enc.buffer,
+            vec![0x48, 0xB8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+        );
+    }
+
+    /// Item 16: a zero materialization uses `xor r, r` (3 bytes) when no
+    /// condition test is pending.
+    #[test]
+    fn zero_immediate_uses_xor_idiom() {
+        let func = MachineFunction::new("zero_idiom");
+        let mut ctx = new_ctx(&func);
+
+        ctx.encode_move(&reg(2), &MachineOperand::Immediate(0));
+        assert_eq!(ctx.enc.buffer, vec![0x48, 0x31, 0xD2]); // xor rdx, rdx
+    }
+
+    /// Item 15: `add r, imm8` uses the short 0x83 form.
+    #[test]
+    fn binop_immediate_uses_imm8_form_when_it_fits() {
+        let func = MachineFunction::new("imm8_binop");
+        let mut ctx = new_ctx(&func);
+
+        ctx.encode_binop(BinOp::Add, &reg(2), &MachineOperand::Immediate(5));
+        assert_eq!(ctx.enc.buffer, vec![0x48, 0x83, 0xC2, 0x05]); // add rdx, 5
+
+        ctx.enc.buffer.clear();
+        ctx.encode_binop(BinOp::Add, &reg(2), &MachineOperand::Immediate(1000));
+        assert_eq!(
+            ctx.enc.buffer,
+            vec![0x48, 0x81, 0xC2, 0xE8, 0x03, 0x00, 0x00] // add rdx, 1000
+        );
     }
 }

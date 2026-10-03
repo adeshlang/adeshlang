@@ -156,6 +156,7 @@ impl ElfReader {
         let mut symtab_idx = None;
         let mut strtab_idx = None;
         let mut rela_sections = Vec::new();
+        let mut group_sections = Vec::new();
 
         for (i, shdr) in raw_shdrs.iter().enumerate() {
             if i == 0 || shdr.sh_type == SHT_NULL {
@@ -174,11 +175,29 @@ impl ElfReader {
                 continue;
             }
 
+            // COMDAT group descriptions are link metadata, not content: they
+            // must not be merged into the output image as ordinary data.
+            if shdr.sh_type == SHT_GROUP {
+                group_sections.push(i);
+                continue;
+            }
+
             if shdr.sh_type == SHT_STRTAB && i != shstrndx {
                 continue;
             }
 
-            let kind = if name.starts_with(".text") || (shdr.sh_flags & SHF_EXECINSTR) != 0 {
+            let is_tls = (shdr.sh_flags & SHF_TLS) != 0;
+            let kind = if is_tls {
+                // Thread-local data must keep its TLS section kind so the
+                // layout engine routes it to the TLS template (and so the
+                // "no runtime TLS descriptor" guard can fire) instead of
+                // silently merging it as ordinary writable data.
+                if shdr.sh_type == SHT_NOBITS {
+                    SectionKind::TBss
+                } else {
+                    SectionKind::TData
+                }
+            } else if name.starts_with(".text") || (shdr.sh_flags & SHF_EXECINSTR) != 0 {
                 SectionKind::Text
             } else if name.starts_with(".rodata")
                 || (shdr.sh_flags & (SHF_WRITE | SHF_ALLOC)) == SHF_ALLOC
@@ -298,19 +317,27 @@ impl ElfReader {
                     _ => SymbolType::Unknown,
                 };
 
-                let is_defined = st_shndx != 0 && st_shndx < 0xff00;
-                let mapped_sec_idx = if is_defined && (st_shndx as usize) < elf_to_obj_sec_map.len()
-                {
-                    elf_to_obj_sec_map[st_shndx as usize]
-                } else {
-                    None
-                };
+                let is_common = st_shndx == SHN_COMMON;
+                let is_defined = (st_shndx != SHN_UNDEF && st_shndx < SHN_LORESERVE) || is_common;
+                let mapped_sec_idx =
+                    if !is_common && is_defined && (st_shndx as usize) < elf_to_obj_sec_map.len() {
+                        elf_to_obj_sec_map[st_shndx as usize]
+                    } else {
+                        None
+                    };
 
                 let sym = Symbol {
                     name: sym_name,
                     binding,
                     visibility: SymbolVisibility::Default,
-                    sym_type,
+                    // SHN_COMMON is a tentative definition: `st_value` is the
+                    // required alignment and `st_size` the requested size. The
+                    // layout engine allocates the block in .bss.
+                    sym_type: if is_common {
+                        SymbolType::Common
+                    } else {
+                        sym_type
+                    },
                     section_index: mapped_sec_idx,
                     value: st_value,
                     size: st_size,
@@ -326,6 +353,45 @@ impl ElfReader {
                 raw_symbols.push(sym.clone());
                 if !sym.name.is_empty() || sym.sym_type == SymbolType::Section {
                     obj.add_symbol(sym);
+                }
+            }
+        }
+
+        // Apply SHT_GROUP COMDAT keys to the member sections (and the symbols
+        // they define) so duplicate definitions of an inline function or
+        // template instantiation can be folded by the resolver instead of
+        // being reported as a duplicate-symbol error.
+        for g_idx in group_sections {
+            let g_hdr = &raw_shdrs[g_idx];
+            let start = g_hdr.sh_offset as usize;
+            let end = start + g_hdr.sh_size as usize;
+            if g_hdr.sh_size < 4 || end > bytes.len() {
+                continue;
+            }
+            let grp_flags = u32::from_le_bytes(bytes[start..start + 4].try_into().unwrap());
+            if (grp_flags & GRP_COMDAT) == 0 {
+                continue;
+            }
+            let key = raw_symbols
+                .get(g_hdr.sh_info as usize)
+                .map(|s| s.name.clone())
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| format!(".group{}", g_idx));
+
+            let mut off = start + 4;
+            while off + 4 <= end {
+                let member = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()) as usize;
+                off += 4;
+                if let Some(Some(obj_sec)) = elf_to_obj_sec_map.get(member).copied() {
+                    obj.sections[obj_sec].comdat_group = Some(key.clone());
+                    obj.sections[obj_sec].flags |= flags::COMDAT;
+                }
+            }
+            for sym in obj.symbols.iter_mut() {
+                if let Some(si) = sym.section_index
+                    && obj.sections[si].comdat_group.as_deref() == Some(key.as_str())
+                {
+                    sym.comdat_group = Some(key.clone());
                 }
             }
         }

@@ -3,7 +3,11 @@
 //! Performs local instruction rewrites, algebraic simplifications, strength reductions,
 //! redundant move/store elimination, and branch folding to produce compact, high-speed machine code.
 
-use crate::machine_ir::{MachineBlock, MachineFunction, MachineInstruction, MachineOperand};
+use crate::machine_ir::{
+    MachineBlock, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
+    RegisterClass, VirtualRegister,
+};
+use std::collections::HashMap;
 
 pub struct PeepholeOptimizer {
     pub level: u8,
@@ -16,13 +20,44 @@ impl PeepholeOptimizer {
 
     pub fn optimize_function(&self, func: &mut MachineFunction) -> usize {
         let mut total_changes = 0;
+        let classes = func.vreg_classes.clone();
         for block in &mut func.blocks {
-            total_changes += self.optimize_block(block);
+            total_changes += self.optimize_block_inner(block, Some(&classes));
         }
         total_changes
     }
 
     pub fn optimize_block(&self, block: &mut MachineBlock) -> usize {
+        // No virtual-register class information is available at this level, so
+        // class-sensitive rewrites are skipped.
+        self.optimize_block_inner(block, None)
+    }
+
+    /// True when `dst` is provably an integer GPR (safe for the `xor r, r`
+    /// zero idiom). XMM/float destinations and memory operands must be left
+    /// alone: `xor [mem], [mem]` has no encoding and XOR-ing an XMM register
+    /// requires XORPS/XORPD.
+    fn is_integer_gpr(
+        dst: &MachineOperand,
+        classes: Option<&HashMap<VirtualRegister, RegisterClass>>,
+    ) -> bool {
+        match dst {
+            MachineOperand::Register(MachineRegister::Physical(p)) => p.0 < 16,
+            MachineOperand::Register(MachineRegister::Virtual(v)) => match classes {
+                Some(map) => {
+                    map.get(v).copied().unwrap_or(RegisterClass::Gpr) == RegisterClass::Gpr
+                }
+                None => false,
+            },
+            _ => false,
+        }
+    }
+
+    fn optimize_block_inner(
+        &self,
+        block: &mut MachineBlock,
+        classes: Option<&HashMap<VirtualRegister, RegisterClass>>,
+    ) -> usize {
         if self.level == 0 {
             return 0;
         }
@@ -137,11 +172,12 @@ impl PeepholeOptimizer {
                     continue;
                 }
 
-                // 9. Canonical zeroing: xor r, r -> canonical xor r, r (or mov r, 0)
+                // 9. Canonical zeroing: mov r, 0 -> xor r, r
+                // Only for provably integer GPR destinations.
                 MachineInstruction::Move {
                     dst,
                     src: MachineOperand::Immediate(0),
-                } => {
+                } if Self::is_integer_gpr(dst, classes) => {
                     optimized.push(MachineInstruction::Xor {
                         dst: dst.clone(),
                         src: dst.clone(),

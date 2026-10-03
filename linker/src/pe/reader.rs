@@ -80,6 +80,10 @@ impl PeReader {
             default_entry: "mainCRTStartup".to_string(),
         };
 
+        // COFF does not record an alignment for COMMON (tentative) definitions;
+        // the natural pointer width is the conservative default.
+        let common_alignment: u64 = if arch == Arch::X86 { 4 } else { 8 };
+
         let mut obj = ObjectFile::new(path.to_path_buf(), target, file_index);
 
         let section_table_offset = offset + 20 + opt_hdr_size;
@@ -94,6 +98,13 @@ impl PeReader {
                 ),
             ));
         }
+
+        // Per-section COMDAT metadata, indexed by COFF section number - 1.
+        // `comdat_select` holds the Selection field of the section symbol's
+        // auxiliary record; `comdat_assoc` holds the associated section for
+        // IMAGE_COMDAT_SELECT_ASSOCIATIVE sections.
+        let mut comdat_select: Vec<Option<u8>> = vec![None; num_sections];
+        let mut comdat_assoc: Vec<Option<usize>> = vec![None; num_sections];
 
         // String table is located immediately after the COFF symbol table
         let string_table_offset = sym_ptr + num_symbols * 18;
@@ -173,6 +184,12 @@ impl PeReader {
             if matches!(kind, SectionKind::TData | SectionKind::TBss) {
                 sec_flags |= flags::TLS | flags::WRITE;
             }
+            if (characteristics & IMAGE_SCN_LNK_COMDAT) != 0 {
+                // Marked so the resolver can fold duplicate COMDAT
+                // definitions (inline functions, templates, vftables)
+                // instead of reporting a duplicate-symbol error.
+                sec_flags |= flags::COMDAT;
+            }
 
             let data = if !matches!(kind, SectionKind::Bss | SectionKind::TBss)
                 && raw_data_ptr + raw_data_size <= bytes.len()
@@ -246,28 +263,66 @@ impl PeReader {
                 let storage_class = bytes[off + 16];
                 let num_aux = bytes[off + 17] as usize;
 
-                let is_defined = sec_num > 0;
-                let sec_idx = if is_defined && (sec_num as usize) <= obj.sections.len() {
+                // A tentative definition (`COMMON` block) is encoded as an
+                // external symbol with section number 0 whose Value field
+                // holds the requested size. Section number 0 with Value 0 is a
+                // genuine undefined reference.
+                let is_common =
+                    storage_class == IMAGE_SYM_CLASS_EXTERNAL && sec_num == 0 && value > 0;
+
+                let is_defined = sec_num > 0 || is_common;
+                let sec_idx = if sec_num > 0 && (sec_num as usize) <= obj.sections.len() {
                     Some((sec_num as usize) - 1)
                 } else {
                     None
                 };
 
                 let binding = match storage_class {
-                    2 => SymbolBinding::Global, // IMAGE_SYM_CLASS_EXTERNAL
-                    3 => SymbolBinding::Local,  // IMAGE_SYM_CLASS_STATIC
-                    105 => SymbolBinding::Weak, // IMAGE_SYM_CLASS_WEAK_EXTERNAL
+                    IMAGE_SYM_CLASS_EXTERNAL => SymbolBinding::Global,
+                    IMAGE_SYM_CLASS_STATIC => SymbolBinding::Local,
+                    IMAGE_SYM_CLASS_WEAK_EXTERNAL => SymbolBinding::Weak,
                     _ => SymbolBinding::Global,
                 };
+
+                // COMDAT section symbols carry the selection type (and, for
+                // associative sections, the associated section number) in
+                // their auxiliary record.
+                if storage_class == IMAGE_SYM_CLASS_STATIC
+                    && sec_num > 0
+                    && value == 0
+                    && num_aux >= 1
+                {
+                    let s0 = (sec_num as usize) - 1;
+                    let aux_off = off + 18;
+                    if s0 < comdat_select.len() && aux_off + 18 <= bytes.len() {
+                        let selection = bytes[aux_off];
+                        comdat_select[s0] = Some(selection);
+                        if selection == IMAGE_COMDAT_SELECT_ASSOCIATIVE {
+                            let assoc = u16::from_le_bytes(
+                                bytes[aux_off + 2..aux_off + 4].try_into().unwrap(),
+                            );
+                            if assoc > 0 {
+                                comdat_assoc[s0] = Some((assoc as usize) - 1);
+                            }
+                        }
+                    }
+                }
 
                 let sym = Symbol {
                     name: sym_name.clone(),
                     binding,
                     visibility: SymbolVisibility::Default,
-                    sym_type: SymbolType::Function,
+                    sym_type: if is_common {
+                        SymbolType::Common
+                    } else {
+                        SymbolType::Function
+                    },
                     section_index: sec_idx,
-                    value,
-                    size: 0,
+                    // For a COMMON block the reader repurposes `value` as the
+                    // required alignment (the layout engine allocates the block
+                    // in .bss) and keeps the requested size in `size`.
+                    value: if is_common { common_alignment } else { value },
+                    size: if is_common { value } else { 0 },
                     is_defined,
                     is_imported: false,
                     is_exported: false,
@@ -306,6 +361,61 @@ impl PeReader {
                 }
 
                 s_idx += 1 + num_aux; // Skip auxiliary symbol records
+            }
+        }
+
+        // Resolve the COMDAT group key of every IMAGE_SCN_LNK_COMDAT section.
+        //
+        // The key is the section's leader symbol (the external symbol defined
+        // at offset 0). Associative COMDAT sections inherit their associated
+        // section's key, because they are discarded together with it and are
+        // not independent duplicates. Recording the key lets
+        // `SymbolResolver` fold repeated definitions (inline functions,
+        // templates, vftables) across objects.
+        //
+        // Sections WITHOUT an external leader symbol must NOT fall back to
+        // the section name: LLVM emits many per-function switch tables and
+        // per-static sections all literally named `.rdata`/`.data` (COMDAT,
+        // NoDuplicates, only local alias symbols like `switch.table.f.rel`).
+        // Keying those by name made every one of them collide across all
+        // objects, so all but the first were discarded as "duplicates" and
+        // their relocations failed with LNK001/LNK009. Without an external
+        // leader there is nothing to deduplicate on, so such sections get NO
+        // comdat group and are always placed.
+        {
+            let mut group_keys: Vec<Option<String>> = vec![None; obj.sections.len()];
+            for (i, sec) in obj.sections.iter().enumerate() {
+                if (sec.flags & flags::COMDAT) == 0 {
+                    continue;
+                }
+                if comdat_select.get(i).copied().flatten() == Some(IMAGE_COMDAT_SELECT_ASSOCIATIVE)
+                    && let Some(assoc) = comdat_assoc.get(i).copied().flatten()
+                    && let Some(Some(key)) = group_keys.get(assoc)
+                {
+                    group_keys[i] = Some(key.clone());
+                    continue;
+                }
+                let leader = obj.symbols.iter().find(|s| {
+                    s.section_index == Some(i)
+                        && s.is_defined
+                        && !s.name.is_empty()
+                        && s.value == 0
+                        && matches!(s.binding, SymbolBinding::Global | SymbolBinding::Weak)
+                });
+                group_keys[i] = match leader {
+                    Some(s) => Some(s.name.clone()),
+                    None => None,
+                };
+            }
+
+            for (i, key) in group_keys.into_iter().enumerate() {
+                let Some(key) = key else { continue };
+                obj.sections[i].comdat_group = Some(key.clone());
+                for sym in obj.symbols.iter_mut() {
+                    if sym.section_index == Some(i) {
+                        sym.comdat_group = Some(key.clone());
+                    }
+                }
             }
         }
 
@@ -454,14 +564,21 @@ impl PeReader {
                             (crate::relocation::RelocationKind::Absolute32, add)
                         }
                         (Arch::X86, 0x0014) => {
-                            let add = if v_usize + 4 <= sec.data.len() {
+                            // IMAGE_REL_I386_REL32: the embedded displacement is
+                            // relative to the *end* of the 4-byte field, and the
+                            // handler computes `S + A - P`, so the addend must
+                            // carry the -4 (exactly like IMAGE_REL_AMD64_REL32).
+                            let embedded = if v_usize + 4 <= sec.data.len() {
                                 i32::from_le_bytes(
                                     sec.data[v_usize..v_usize + 4].try_into().unwrap(),
                                 ) as i64
                             } else {
-                                -4
+                                0
                             };
-                            (crate::relocation::RelocationKind::PcRelative32, add)
+                            (
+                                crate::relocation::RelocationKind::PcRelative32,
+                                embedded - 4,
+                            )
                         }
                         _ => (crate::relocation::RelocationKind::Absolute64, 0),
                     };

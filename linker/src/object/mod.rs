@@ -65,6 +65,26 @@ impl ObjectFile {
         self.sections.iter().find(|s| s.name == name)
     }
 
+    /// Re-stamp this object's identity after extraction from a pre-parsed
+    /// archive member. Archive members are eagerly parsed with a placeholder
+    /// file index, and every embedded symbol/section/relocation index carries
+    /// that placeholder; precise `(file, index)` relocation resolution would
+    /// otherwise consult the wrong object (e.g. the user's ADOB, which is
+    /// what file index 0 usually is) and fall back to name-based resolution,
+    /// which cannot see file-local symbols such as LLVM's `switch.table.*`.
+    pub fn reassign_file_index(&mut self, new_index: usize) {
+        self.file_index = new_index;
+        for sec in &mut self.sections {
+            sec.file_index = Some(new_index);
+            for reloc in &mut sec.relocations {
+                reloc.file_index = Some(new_index);
+            }
+        }
+        for sym in &mut self.symbols {
+            sym.file_index = Some(new_index);
+        }
+    }
+
     pub fn find_section_mut(&mut self, name: &str) -> Option<&mut Section> {
         self.sections.iter_mut().find(|s| s.name == name)
     }

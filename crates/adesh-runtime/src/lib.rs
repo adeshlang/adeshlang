@@ -6,10 +6,12 @@
 
 pub mod abi;
 pub mod allocator;
+pub mod native_abi;
 pub mod threading;
 
 pub use abi::*;
 pub use allocator::*;
+pub use native_abi::*;
 pub use threading::*;
 
 use std::collections::BTreeMap;
@@ -412,73 +414,120 @@ impl RuntimeValue {
 // Handle Storage Management
 // ============================================================================
 
-static VALUE_STORE: Mutex<Option<BTreeMap<u64, RuntimeValue>>> = Mutex::new(None);
+// Audit fix (global-lock contention): the store used to be one global
+// `Mutex<Option<BTreeMap>>` hit by every runtime call on every thread. It is
+// now split into N_SHARDS independent shards, each behind its own Mutex; a
+// handle is routed to shard `handle % N_SHARDS`. The handle counter stays a
+// single atomic (it is never a lock), and consecutive handles cycle through
+// all shards, so handle values — and therefore id/LIFO semantics — are
+// identical to the old single-store scheme; only lock contention changed.
+
+const N_SHARDS: usize = 16;
+
+static HANDLE_SHARDS: [Mutex<BTreeMap<u64, RuntimeValue>>; N_SHARDS] =
+    [const { Mutex::new(BTreeMap::new()) }; N_SHARDS];
 static HANDLE_COUNTER: AtomicU64 = AtomicU64::new(100);
 
-fn get_store_guard() -> std::sync::MutexGuard<'static, Option<BTreeMap<u64, RuntimeValue>>> {
-    let mut guard = VALUE_STORE.lock().unwrap();
-    if guard.is_none() {
-        *guard = Some(BTreeMap::new());
-    }
-    guard
+fn shard_index(handle: u64) -> usize {
+    (handle % N_SHARDS as u64) as usize
+}
+
+/// Lock the shard owning `handle` without panicking: if another thread
+/// panicked while holding the lock (poison), recover the inner map instead of
+/// propagating a panic across the C ABI.
+fn lock_shard(handle: u64) -> std::sync::MutexGuard<'static, BTreeMap<u64, RuntimeValue>> {
+    HANDLE_SHARDS[shard_index(handle)]
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 pub fn aot_store_value(value: RuntimeValue) -> u64 {
     let handle = HANDLE_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let mut guard = get_store_guard();
-    if let Some(ref mut map) = *guard {
-        map.insert(handle, value);
-    }
+    lock_shard(handle).insert(handle, value);
     handle
 }
 
 pub fn aot_update_value(handle: u64, value: RuntimeValue) {
-    let mut guard = get_store_guard();
-    if let Some(ref mut map) = *guard {
-        map.insert(handle, value);
-    }
+    lock_shard(handle).insert(handle, value);
 }
 
 pub fn aot_get_value(handle: u64) -> Option<RuntimeValue> {
-    let guard = get_store_guard();
-    guard.as_ref().and_then(|map| map.get(&handle).cloned())
+    lock_shard(handle).get(&handle).cloned()
 }
 
 pub fn aot_remove_value(handle: u64) -> Option<RuntimeValue> {
-    let mut guard = get_store_guard();
-    guard.as_mut().and_then(|map| map.remove(&handle))
+    lock_shard(handle).remove(&handle)
 }
 
-pub fn get_string_val(ptr_or_handle: u64) -> Option<String> {
-    if ptr_or_handle == 0 {
-        return None;
+/// Resolve a runtime string handle. Raw C strings must go through APIs that
+/// explicitly accept `*const c_char`; guessing that an arbitrary integer is a
+/// pointer can dereference invalid addresses.
+pub fn get_string_val(handle: u64) -> Option<String> {
+    match aot_get_value(handle)? {
+        RuntimeValue::String(s) => Some(s),
+        _ => None,
     }
-    if let Some(v) = aot_get_value(ptr_or_handle) {
-        return match v {
-            RuntimeValue::String(s) => Some(s),
-            _ => None,
-        };
-    }
-    if ptr_or_handle > 0x10000 {
-        unsafe {
-            if let Ok(c_str) = CStr::from_ptr(ptr_or_handle as *const c_char).to_str() {
-                return Some(c_str.to_string());
-            }
-        }
-    }
-    None
 }
 
 pub fn unpack_aot_arg(raw: u64) -> RuntimeValue {
     if let Some(v) = aot_get_value(raw) {
         return v;
     }
-    if raw > 0x10000 {
-        if let Some(s) = get_string_val(raw) {
-            return RuntimeValue::String(s);
-        }
-    }
     RuntimeValue::Int(raw as i64)
+}
+
+#[inline]
+fn valid_aot_arg_count(count: usize) -> bool {
+    count <= isize::MAX as usize / std::mem::size_of::<u64>()
+}
+
+// ============================================================================
+// FFI Panic Containment
+// ============================================================================
+//
+// Audit fix: a Rust panic unwinding out of an `extern "C"` function is
+// undefined behavior and takes the whole AOT process down. Exports whose
+// bodies cannot reasonably be made total run through `ffi_guard`, which
+// catches unwinds and returns a safe fallback (0 / a null value) instead.
+// The success path is unchanged. The default panic hook is replaced (once,
+// globally) with a quiet one-liner so contained panics do not spray a full
+// backtrace over the program's stderr. Note: release profiles of this
+// workspace build with `panic = "abort"`, where `catch_unwind` never sees a
+// panic (the process aborts instead — still defined behavior, not UB); the
+// guard matters for dev/test builds.
+
+static QUIET_PANIC_HOOK: std::sync::Once = std::sync::Once::new();
+
+fn ensure_quiet_panic_hook() {
+    QUIET_PANIC_HOOK.call_once(|| {
+        std::panic::set_hook(Box::new(|info| {
+            let message = info
+                .payload()
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| info.payload().downcast_ref::<String>().map(|s| s.as_str()))
+                .unwrap_or("<non-string panic payload>");
+            let location = info
+                .location()
+                .map(|l| format!(" ({}:{})", l.file(), l.line()))
+                .unwrap_or_default();
+            eprintln!(
+                "adesh-runtime: caught panic: {}{}; the operation was skipped safely",
+                message, location
+            );
+        }));
+    });
+}
+
+/// Run `body`, catching any panic so it cannot unwind across the C ABI.
+/// Returns `fallback` if `body` panicked. Success-path behavior is unchanged.
+#[inline]
+fn ffi_guard<T>(fallback: T, body: impl FnOnce() -> T) -> T {
+    ensure_quiet_panic_hook();
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)) {
+        Ok(value) => value,
+        Err(_panic_payload) => fallback,
+    }
 }
 
 // ============================================================================
@@ -1041,52 +1090,59 @@ fn print_object_impl(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_make_object(args_ptr: *const u64, arg_count: usize) -> u64 {
-    if arg_count == 0 {
-        return aot_store_value(RuntimeValue::Object(BTreeMap::new()));
-    }
-    if args_ptr.is_null() || arg_count % 2 != 0 {
-        return 0;
-    }
-
-    let args = unsafe { std::slice::from_raw_parts(args_ptr, arg_count) };
-    let mut obj = BTreeMap::new();
-
-    for chunk in args.chunks(2) {
-        if chunk.len() == 2 {
-            let key_handle = chunk[0];
-            let val_handle = chunk[1];
-
-            let key_str = if let Some(s) = get_string_val(key_handle) {
-                s
-            } else if let Some(RuntimeValue::String(s)) = aot_get_value(key_handle) {
-                s
-            } else {
-                continue;
-            };
-
-            let val = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
-            obj.insert(key_str, val);
+    // FFI trap: raw slice construction below can panic on malformed inputs;
+    // never let that unwind across the C ABI.
+    ffi_guard(0, move || {
+        if arg_count == 0 {
+            return aot_store_value(RuntimeValue::Object(BTreeMap::new()));
         }
-    }
+        if args_ptr.is_null() || arg_count % 2 != 0 || !valid_aot_arg_count(arg_count) {
+            return 0;
+        }
 
-    aot_store_value(RuntimeValue::Object(obj))
+        let args = unsafe { std::slice::from_raw_parts(args_ptr, arg_count) };
+        let mut obj = BTreeMap::new();
+
+        for chunk in args.chunks(2) {
+            if chunk.len() == 2 {
+                let key_handle = chunk[0];
+                let val_handle = chunk[1];
+
+                let key_str = if let Some(s) = get_string_val(key_handle) {
+                    s
+                } else if let Some(RuntimeValue::String(s)) = aot_get_value(key_handle) {
+                    s
+                } else {
+                    continue;
+                };
+
+                let val = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
+                obj.insert(key_str, val);
+            }
+        }
+
+        aot_store_value(RuntimeValue::Object(obj))
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_set_field(obj_handle: u64, field_handle: u64, val_handle: u64) -> u64 {
-    let field_name = match get_string_val(field_handle) {
-        Some(s) => s,
-        None => return 0,
-    };
-    let value = aot_get_value(val_handle).unwrap_or(RuntimeValue::Null);
+    ffi_guard(0, || {
+        let field_name = match get_string_val(field_handle) {
+            Some(s) => s,
+            None => return 0,
+        };
+        let value = aot_get_value(val_handle).unwrap_or(RuntimeValue::Null);
 
-    match aot_get_value(obj_handle) {
-        Some(RuntimeValue::Object(mut obj)) => {
-            obj.insert(field_name, value);
-            aot_store_value(RuntimeValue::Object(obj))
+        match aot_get_value(obj_handle) {
+            Some(RuntimeValue::Object(mut obj)) => {
+                obj.insert(field_name, value);
+                aot_update_value(obj_handle, RuntimeValue::Object(obj));
+                obj_handle
+            }
+            _ => 0,
         }
-        _ => 0,
-    }
+    })
 }
 
 pub fn runtime_value_to_raw_or_handle(val: RuntimeValue) -> u64 {
@@ -1111,82 +1167,119 @@ pub fn runtime_value_to_raw_or_handle(val: RuntimeValue) -> u64 {
     }
 }
 
+/// Unbox a runtime value handle into its raw representation (ints, bools,
+/// chars pass through as raw words; strings/arrays/dicts stay handles).
+/// Intended for lowering paths that consumed `aot_call_method` results,
+/// which always return a handle even for `len()`/`contains()` style methods.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aot_unbox(handle: u64) -> u64 {
+    match aot_get_value(handle) {
+        Some(RuntimeValue::Null) => 0,
+        Some(v) => runtime_value_to_raw_or_handle(v),
+        None => handle, // already raw
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_get_field(obj_handle: u64, field_handle: u64) -> u64 {
-    let field_name = match get_string_val(field_handle) {
-        Some(s) => s,
-        None => return aot_store_value(RuntimeValue::Null),
-    };
+    ffi_guard(0, || {
+        let field_name = match get_string_val(field_handle) {
+            Some(s) => s,
+            None => return aot_store_value(RuntimeValue::Null),
+        };
 
-    let resolved = aot_get_value(obj_handle).unwrap_or(RuntimeValue::Null);
-    match resolved {
-        RuntimeValue::Object(obj) => {
-            let val = obj.get(&field_name).cloned().unwrap_or(RuntimeValue::Null);
-            runtime_value_to_raw_or_handle(val)
+        let resolved = aot_get_value(obj_handle).unwrap_or(RuntimeValue::Null);
+        match resolved {
+            RuntimeValue::Object(obj) => {
+                let val = obj.get(&field_name).cloned().unwrap_or(RuntimeValue::Null);
+                runtime_value_to_raw_or_handle(val)
+            }
+            RuntimeValue::Array(arr) => {
+                let val = match field_name.as_str() {
+                    "len" | "length" => RuntimeValue::Int(arr.len() as i64),
+                    "capacity" => RuntimeValue::Int(arr.capacity() as i64),
+                    _ => RuntimeValue::Null,
+                };
+                runtime_value_to_raw_or_handle(val)
+            }
+            RuntimeValue::String(s) => {
+                let val = match field_name.as_str() {
+                    "len" | "length" => RuntimeValue::Int(s.len() as i64),
+                    _ => RuntimeValue::Null,
+                };
+                runtime_value_to_raw_or_handle(val)
+            }
+            _ => aot_store_value(RuntimeValue::Null),
         }
-        RuntimeValue::Array(arr) => {
-            let val = match field_name.as_str() {
-                "len" | "length" => RuntimeValue::Int(arr.len() as i64),
-                "capacity" => RuntimeValue::Int(arr.capacity() as i64),
-                _ => RuntimeValue::Null,
-            };
-            runtime_value_to_raw_or_handle(val)
-        }
-        RuntimeValue::String(s) => {
-            let val = match field_name.as_str() {
-                "len" | "length" => RuntimeValue::Int(s.len() as i64),
-                _ => RuntimeValue::Null,
-            };
-            runtime_value_to_raw_or_handle(val)
-        }
-        _ => aot_store_value(RuntimeValue::Null),
-    }
+    })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_make_array(args_ptr: *const u64, arg_count: usize) -> u64 {
-    if args_ptr.is_null() || arg_count == 0 {
-        return aot_store_value(RuntimeValue::Array(Vec::new()));
-    }
+    ffi_guard(0, move || {
+        if args_ptr.is_null() || arg_count == 0 {
+            return aot_store_value(RuntimeValue::Array(Vec::new()));
+        }
+        if !valid_aot_arg_count(arg_count) {
+            return 0;
+        }
 
-    let args = unsafe { std::slice::from_raw_parts(args_ptr, arg_count) };
-    let mut arr = Vec::with_capacity(arg_count);
+        let args = unsafe { std::slice::from_raw_parts(args_ptr, arg_count) };
+        let mut arr = Vec::with_capacity(arg_count);
 
-    for &handle in args {
-        let val = aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
-        arr.push(val);
-    }
+        for &handle in args {
+            let val = aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
+            arr.push(val);
+        }
 
-    aot_store_value(RuntimeValue::Array(arr))
+        aot_store_value(RuntimeValue::Array(arr))
+    })
 }
 
 #[unsafe(no_mangle)]
+/// Box a NUL-terminated UTF-8 string, or pass through a string handle.
+///
+/// # Safety
+/// If `string_ptr` is not already a live runtime string handle, it must point
+/// to readable memory containing a NUL terminator.
 pub unsafe extern "C" fn aot_make_string(string_ptr: *const c_char) -> u64 {
-    if string_ptr.is_null() {
-        return aot_store_value(RuntimeValue::String(String::new()));
-    }
-    let s = unsafe {
-        CStr::from_ptr(string_ptr)
-            .to_str()
-            .unwrap_or("")
-            .to_string()
-    };
-    aot_store_value(RuntimeValue::String(s))
+    ffi_guard(0, move || {
+        if string_ptr.is_null() {
+            return aot_store_value(RuntimeValue::String(String::new()));
+        }
+        // Native locals may already hold a runtime string handle (for example,
+        // the result of `a + b`), while string literals and string parameters
+        // still arrive as raw C-string pointers. Make boxing idempotent for
+        // handles so typed `String` locals are safe to pass through this helper.
+        let raw = string_ptr as usize as u64;
+        if aot_get_value(raw).is_some() {
+            return raw;
+        }
+        // SAFETY: this ABI accepts a NUL-terminated C string; callers must provide
+        // a readable pointer to the terminator.
+        let s = unsafe {
+            CStr::from_ptr(string_ptr)
+                .to_str()
+                .unwrap_or("")
+                .to_string()
+        };
+        aot_store_value(RuntimeValue::String(s))
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_wrap_ptr(value: u64) -> u64 {
-    if value == 0 {
-        return aot_store_value(RuntimeValue::Null);
-    }
-    if aot_get_value(value).is_some() {
-        return value;
-    }
-    let signed = value as i64;
-    if signed < 0 || value < 0x10000 || value >= 0x0000_8000_0000_0000 {
-        return aot_store_value(RuntimeValue::Int(signed));
-    }
-    unsafe { aot_make_string(value as *const c_char) }
+    ffi_guard(0, || {
+        if value == 0 {
+            return aot_store_value(RuntimeValue::Null);
+        }
+        if aot_get_value(value).is_some() {
+            return value;
+        }
+        // An untyped word is not enough to distinguish a pointer from an integer.
+        // Never dereference it speculatively; string pointers use aot_make_string.
+        aot_store_value(RuntimeValue::Int(value as i64))
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -1254,28 +1347,38 @@ pub extern "C" fn aot_make_char(value: u64) -> u64 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_make_tuple(args_ptr: *const u64, arg_count: usize) -> u64 {
-    if args_ptr.is_null() || arg_count == 0 {
-        return aot_store_value(RuntimeValue::Tuple(Vec::new()));
-    }
-    let args = unsafe { std::slice::from_raw_parts(args_ptr, arg_count) };
-    let mut arr = Vec::with_capacity(arg_count);
-    for &handle in args {
-        arr.push(aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle)));
-    }
-    aot_store_value(RuntimeValue::Tuple(arr))
+    ffi_guard(0, move || {
+        if args_ptr.is_null() || arg_count == 0 {
+            return aot_store_value(RuntimeValue::Tuple(Vec::new()));
+        }
+        if !valid_aot_arg_count(arg_count) {
+            return 0;
+        }
+        let args = unsafe { std::slice::from_raw_parts(args_ptr, arg_count) };
+        let mut arr = Vec::with_capacity(arg_count);
+        for &handle in args {
+            arr.push(aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle)));
+        }
+        aot_store_value(RuntimeValue::Tuple(arr))
+    })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_make_set(args_ptr: *const u64, arg_count: usize) -> u64 {
-    if args_ptr.is_null() || arg_count == 0 {
-        return aot_store_value(RuntimeValue::Set(Vec::new()));
-    }
-    let args = unsafe { std::slice::from_raw_parts(args_ptr, arg_count) };
-    let mut arr = Vec::with_capacity(arg_count);
-    for &handle in args {
-        arr.push(aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle)));
-    }
-    aot_store_value(RuntimeValue::Set(arr))
+    ffi_guard(0, move || {
+        if args_ptr.is_null() || arg_count == 0 {
+            return aot_store_value(RuntimeValue::Set(Vec::new()));
+        }
+        if !valid_aot_arg_count(arg_count) {
+            return 0;
+        }
+        let args = unsafe { std::slice::from_raw_parts(args_ptr, arg_count) };
+        let mut arr = Vec::with_capacity(arg_count);
+        for &handle in args {
+            arr.push(aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle)));
+        }
+        aot_store_value(RuntimeValue::Set(arr))
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -1289,213 +1392,189 @@ pub extern "C" fn aot_make_null() -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_print_value_pretty(handle: u64, mode: i64) -> u64 {
-    let val = aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
-    let opts = match mode {
-        2 => PrettyPrintOptions::compact(),
-        3 => PrettyPrintOptions::simple_color(),
-        1 => PrettyPrintOptions::default(),
-        _ => {
-            print!("{}", val.as_string());
-            let _ = std::io::stdout().flush();
-            return 0;
-        }
-    };
-    let output = pretty_print(&val, &opts);
-    print!("{}", output);
+    // FFI trap: `print!` panics when writing to stdout fails (broken pipe).
+    ffi_guard(0, || {
+        let val = aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
+        let opts = match mode {
+            2 => PrettyPrintOptions::compact(),
+            3 => PrettyPrintOptions::simple_color(),
+            1 => PrettyPrintOptions::default(),
+            _ => {
+                print!("{}", val.as_string());
+                let _ = std::io::stdout().flush();
+                return 0;
+            }
+        };
+        let output = pretty_print(&val, &opts);
+        print!("{}", output);
+        let _ = std::io::stdout().flush();
+        0
+    })
+}
+
+/// Print any Display value, optionally with a trailing newline, then flush
+/// stdout. `print!`/`println!` panic when writing to stdout fails (e.g. a
+/// broken pipe), so callers route this through `ffi_guard` to keep such a
+/// panic off the C ABI.
+fn print_line<T: std::fmt::Display>(value: T, newline: bool) {
+    if newline {
+        println!("{}", value);
+    } else {
+        print!("{}", value);
+    }
     let _ = std::io::stdout().flush();
-    0
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_print_newline() -> u64 {
-    println!();
-    let _ = std::io::stdout().flush();
-    0
+    ffi_guard(0, || {
+        println!();
+        let _ = std::io::stdout().flush();
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_print_space() -> u64 {
-    print!(" ");
-    let _ = std::io::stdout().flush();
-    0
+    ffi_guard(0, || {
+        print_line(" ", false);
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_print_i8(value: i8, newline: i64) -> u64 {
-    if newline != 0 {
-        println!("{}", value);
-    } else {
-        print!("{}", value);
-    }
-    let _ = std::io::stdout().flush();
-    0
+    ffi_guard(0, || {
+        print_line(value, newline != 0);
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_print_i16(value: i16, newline: i64) -> u64 {
-    if newline != 0 {
-        println!("{}", value);
-    } else {
-        print!("{}", value);
-    }
-    let _ = std::io::stdout().flush();
-    0
+    ffi_guard(0, || {
+        print_line(value, newline != 0);
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_print_i32(value: i32, newline: i64) -> u64 {
-    if newline != 0 {
-        println!("{}", value);
-    } else {
-        print!("{}", value);
-    }
-    let _ = std::io::stdout().flush();
-    0
+    ffi_guard(0, || {
+        print_line(value, newline != 0);
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_print_i64(value: i64, newline: i64) -> u64 {
-    if newline != 0 {
-        println!("{}", value);
-    } else {
-        print!("{}", value);
-    }
-    let _ = std::io::stdout().flush();
-    0
+    ffi_guard(0, || {
+        print_line(value, newline != 0);
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_print_u8(value: u8, newline: i64) -> u64 {
-    if newline != 0 {
-        println!("{}", value);
-    } else {
-        print!("{}", value);
-    }
-    let _ = std::io::stdout().flush();
-    0
+    ffi_guard(0, || {
+        print_line(value, newline != 0);
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_print_u16(value: u16, newline: i64) -> u64 {
-    if newline != 0 {
-        println!("{}", value);
-    } else {
-        print!("{}", value);
-    }
-    let _ = std::io::stdout().flush();
-    0
+    ffi_guard(0, || {
+        print_line(value, newline != 0);
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_print_u32(value: u32, newline: i64) -> u64 {
-    if newline != 0 {
-        println!("{}", value);
-    } else {
-        print!("{}", value);
-    }
-    let _ = std::io::stdout().flush();
-    0
+    ffi_guard(0, || {
+        print_line(value, newline != 0);
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_print_u64(value: u64, newline: i64) -> u64 {
-    if newline != 0 {
-        println!("{}", value);
-    } else {
-        print!("{}", value);
-    }
-    let _ = std::io::stdout().flush();
-    0
+    ffi_guard(0, || {
+        print_line(value, newline != 0);
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_print_f32(value: f32, newline: i64) -> u64 {
-    if newline != 0 {
-        println!("{}", value);
-    } else {
-        print!("{}", value);
-    }
-    let _ = std::io::stdout().flush();
-    0
+    ffi_guard(0, || {
+        print_line(value, newline != 0);
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_print_f64(value: f64, newline: i64) -> u64 {
-    if newline != 0 {
-        println!("{}", value);
-    } else {
-        print!("{}", value);
-    }
-    let _ = std::io::stdout().flush();
-    0
+    ffi_guard(0, || {
+        print_line(value, newline != 0);
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_print_str(string_ptr: i64, newline: i64) -> u64 {
-    if string_ptr == 0 {
-        return 0;
-    }
-    unsafe {
-        let ptr = string_ptr as *const c_char;
-        if let Ok(s) = CStr::from_ptr(ptr).to_str() {
-            if newline != 0 {
-                println!("{}", s);
-            } else {
-                print!("{}", s);
+    ffi_guard(0, || {
+        if string_ptr == 0 {
+            return 0;
+        }
+        unsafe {
+            let ptr = string_ptr as *const c_char;
+            if let Ok(s) = CStr::from_ptr(ptr).to_str() {
+                print_line(s, newline != 0);
             }
         }
-    }
-    let _ = std::io::stdout().flush();
-    0
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_print_bool(value: i64, newline: i64) -> u64 {
-    let bool_val = value != 0;
-    if newline != 0 {
-        println!("{}", bool_val);
-    } else {
-        print!("{}", bool_val);
-    }
-    let _ = std::io::stdout().flush();
-    0
+    ffi_guard(0, || {
+        print_line(value != 0, newline != 0);
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_print_null(newline: i64) -> u64 {
-    if newline != 0 {
-        println!("null");
-    } else {
-        print!("null");
-    }
-    let _ = std::io::stdout().flush();
-    0
+    ffi_guard(0, || {
+        print_line("null", newline != 0);
+        0
+    })
 }
 
 fn parse_hex_color(hex: &str) -> Option<(u8, u8, u8)> {
-    let hex = hex.trim_start_matches('#');
+    // Audit fix: slicing `&hex[0..2]` panics when the string contains
+    // multi-byte UTF-8 (char boundary error). Work on raw bytes instead so
+    // this is total; non-hex input simply yields None.
+    let hex = hex.trim_start_matches('#').as_bytes();
     if hex.len() == 6 {
-        if let (Ok(r), Ok(g), Ok(b)) = (
-            u8::from_str_radix(&hex[0..2], 16),
-            u8::from_str_radix(&hex[2..4], 16),
-            u8::from_str_radix(&hex[4..6], 16),
-        ) {
-            return Some((r, g, b));
-        }
+        let byte = |pair: &[u8]| -> Option<u8> {
+            let hi = (pair[0] as char).to_digit(16)?;
+            let lo = (pair[1] as char).to_digit(16)?;
+            Some((hi * 16 + lo) as u8)
+        };
+        Some((byte(&hex[0..2])?, byte(&hex[2..4])?, byte(&hex[4..6])?))
     } else if hex.len() == 3 {
-        let chars: Vec<char> = hex.chars().collect();
-        let r_str = format!("{}{}", chars[0], chars[0]);
-        let g_str = format!("{}{}", chars[1], chars[1]);
-        let b_str = format!("{}{}", chars[2], chars[2]);
-        if let (Ok(r), Ok(g), Ok(b)) = (
-            u8::from_str_radix(&r_str, 16),
-            u8::from_str_radix(&g_str, 16),
-            u8::from_str_radix(&b_str, 16),
-        ) {
-            return Some((r, g, b));
-        }
+        let expand = |digit: u8| -> Option<u8> {
+            let d = (digit as char).to_digit(16)?;
+            Some((d * 17) as u8)
+        };
+        Some((expand(hex[0])?, expand(hex[1])?, expand(hex[2])?))
+    } else {
+        None
     }
-    None
 }
 
 #[unsafe(no_mangle)]
@@ -1504,10 +1583,25 @@ pub unsafe extern "C" fn aot_print_with_options(
     values_count: i64,
     options_handle: u64,
 ) -> u64 {
+    // FFI trap: option parsing (hex colors), raw slices, and printing below
+    // all have panic paths; keep them off the C ABI.
+    ffi_guard(0, || {
+        aot_print_with_options_impl(values_ptr, values_count, options_handle)
+    })
+}
+
+fn aot_print_with_options_impl(
+    values_ptr: *const u64,
+    values_count: i64,
+    options_handle: u64,
+) -> u64 {
     if values_count <= 0 && options_handle == 0 {
         return 0;
     }
     let count = values_count.max(0) as usize;
+    if !valid_aot_arg_count(count) {
+        return 0;
+    }
     let handles = if !values_ptr.is_null() && count > 0 {
         unsafe { std::slice::from_raw_parts(values_ptr, count) }
     } else {
@@ -1706,7 +1800,51 @@ pub unsafe extern "C" fn aot_print_with_options(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_free_handle(handle: u64) {
+    // Double frees are safe: removing an absent handle is a no-op and the
+    // sharded store cannot panic (poisoned locks are recovered).
     aot_remove_value(handle);
+}
+
+/// Remove every live handle in `[start, end)`. Returns how many values were
+/// actually removed. Bulk counterpart of `aot_free_handle` for backends that
+/// release whole allocation regions; unknown ids are silently ignored (no
+/// double-free hazard). Deliberately no automatic GC: the backend keeps
+/// ownership of handle lifetimes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aot_free_range(start: u64, end: u64) -> u64 {
+    ffi_guard(0, || {
+        if end <= start {
+            return 0;
+        }
+        let mut freed = 0u64;
+        // One shard lock at a time (never two at once), so this cannot
+        // deadlock against the sharded store.
+        for shard in HANDLE_SHARDS.iter() {
+            let mut map = shard
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let doomed: Vec<u64> = map.range(start..end).map(|(k, _)| *k).collect();
+            freed += doomed.len() as u64;
+            for key in doomed {
+                map.remove(&key);
+            }
+        }
+        freed
+    })
+}
+
+/// Number of values currently held by the handle store (leak debugging aid).
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_live_handles() -> u64 {
+    HANDLE_SHARDS
+        .iter()
+        .map(|shard| {
+            shard
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .len() as u64
+        })
+        .sum()
 }
 
 // ============================================================================
@@ -1772,6 +1910,10 @@ pub extern "C" fn aot_last(handle: u64) -> u64 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_get_index(container_handle: u64, index_handle: u64) -> u64 {
+    ffi_guard(0, || aot_get_index_impl(container_handle, index_handle))
+}
+
+fn aot_get_index_impl(container_handle: u64, index_handle: u64) -> u64 {
     let container =
         aot_get_value(container_handle).unwrap_or_else(|| unpack_aot_arg(container_handle));
     let idx_val = aot_get_value(index_handle).unwrap_or_else(|| unpack_aot_arg(index_handle));
@@ -1817,6 +1959,13 @@ pub unsafe extern "C" fn aot_set_index(
     index_handle: u64,
     val_handle: u64,
 ) -> u64 {
+    ffi_guard(0, || {
+        aot_set_index_impl(container_handle, index_handle, val_handle)
+    })
+}
+
+fn aot_set_index_impl(container_handle: u64, index_handle: u64, val_handle: u64) -> u64 {
+    let update_existing = aot_get_value(container_handle).is_some();
     let mut container =
         aot_get_value(container_handle).unwrap_or_else(|| unpack_aot_arg(container_handle));
     let idx_val = aot_get_value(index_handle).unwrap_or_else(|| unpack_aot_arg(index_handle));
@@ -1830,12 +1979,22 @@ pub unsafe extern "C" fn aot_set_index(
             } else if index == arr.len() {
                 arr.push(val);
             }
-            aot_store_value(container)
+            if update_existing {
+                aot_update_value(container_handle, container);
+                container_handle
+            } else {
+                aot_store_value(container)
+            }
         }
         RuntimeValue::Object(ref mut obj) => {
             let key = idx_val.as_string();
             obj.insert(key, val);
-            aot_store_value(container)
+            if update_existing {
+                aot_update_value(container_handle, container);
+                container_handle
+            } else {
+                aot_store_value(container)
+            }
         }
         _ => container_handle,
     }
@@ -1845,21 +2004,32 @@ pub unsafe extern "C" fn aot_set_index(
 // ARC / Reference Counting Runtime
 // ============================================================================
 
+// Weak-ref protocol (audit fix):
+// * `adesh_rt_weak_new`     — increments the weak count of an existing block.
+// * `adesh_rt_weak_upgrade` — CAS-increments `strong` ONLY while it is still
+//   positive; returns 0 for dead blocks, so a dangling weak ref can never
+//   resurrect a freed value.
+// * `adesh_rt_arc_drop`     — on the last strong ref, moves the payload out
+//   (running its destructor) and marks the block dead. The block itself
+//   stays in the map while weak refs remain, then
+// * `adesh_rt_weak_drop`    — on the last weak ref of a dead block, removes
+//   the block from the map.
+
 struct ArcControlBlock {
     strong: AtomicI64,
     weak: AtomicI64,
-    value: RuntimeValue,
+    // Mutex<Option<..>> lets the last strong drop move the payload out while
+    // weak refs still point at the block; a dead block reads back as None.
+    value: Mutex<Option<RuntimeValue>>,
 }
 
-static ARC_MAP: Mutex<Option<BTreeMap<u64, Arc<ArcControlBlock>>>> = Mutex::new(None);
+static ARC_MAP: Mutex<BTreeMap<u64, Arc<ArcControlBlock>>> = Mutex::new(BTreeMap::new());
 static ARC_COUNTER: AtomicU64 = AtomicU64::new(1000);
 
-fn get_arc_map() -> std::sync::MutexGuard<'static, Option<BTreeMap<u64, Arc<ArcControlBlock>>>> {
-    let mut guard = ARC_MAP.lock().unwrap();
-    if guard.is_none() {
-        *guard = Some(BTreeMap::new());
-    }
-    guard
+fn get_arc_map() -> std::sync::MutexGuard<'static, BTreeMap<u64, Arc<ArcControlBlock>>> {
+    ARC_MAP
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[unsafe(no_mangle)]
@@ -1868,21 +2038,19 @@ pub extern "C" fn adesh_rt_arc_new(val_handle: u64) -> u64 {
     let block = Arc::new(ArcControlBlock {
         strong: AtomicI64::new(1),
         weak: AtomicI64::new(0),
-        value: val,
+        value: Mutex::new(Some(val)),
     });
     let id = ARC_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let mut map = get_arc_map();
-    if let Some(ref mut m) = *map {
-        m.insert(id, block);
-    }
+    get_arc_map().insert(id, block);
     id
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_arc_clone(handle: u64) -> u64 {
     let map = get_arc_map();
-    if let Some(ref m) = *map {
-        if let Some(block) = m.get(&handle) {
+    if let Some(block) = map.get(&handle) {
+        // Never revive a dead block (strong == 0): its payload is gone.
+        if block.strong.load(Ordering::SeqCst) > 0 {
             block.strong.fetch_add(1, Ordering::SeqCst);
         }
     }
@@ -1892,16 +2060,33 @@ pub extern "C" fn adesh_rt_arc_clone(handle: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_arc_drop(handle: u64) -> u64 {
     let mut map = get_arc_map();
-    if let Some(ref mut m) = *map {
-        let should_remove = if let Some(block) = m.get(&handle) {
-            let prev = block.strong.fetch_sub(1, Ordering::SeqCst);
-            prev <= 1
-        } else {
-            false
-        };
-        if should_remove {
-            m.remove(&handle);
-        }
+    let block = match map.get(&handle) {
+        Some(block) => Arc::clone(block),
+        None => return 0,
+    };
+    let prev = block.strong.fetch_sub(1, Ordering::SeqCst);
+    if prev > 1 {
+        return 0; // at least one strong reference remains
+    }
+    if prev <= 0 {
+        // Double drop of a dead block: undo the spurious decrement so the
+        // count cannot drift negative (and later look alive again).
+        block.strong.store(0, Ordering::SeqCst);
+        return 0;
+    }
+    // prev == 1: the last strong reference is gone. Move the payload out so
+    // weak holders can never observe or resurrect it...
+    {
+        let mut value = block
+            .value
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *value = None;
+    }
+    // ...but keep the (now dead) block in the map while weak refs remain, so
+    // they can distinguish "dead, upgrade fails" from "unknown id".
+    if block.weak.load(Ordering::SeqCst) <= 0 {
+        map.remove(&handle);
     }
     0
 }
@@ -1909,59 +2094,111 @@ pub extern "C" fn adesh_rt_arc_drop(handle: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_arc_get(handle: u64) -> u64 {
     let map = get_arc_map();
-    if let Some(ref m) = *map {
-        if let Some(block) = m.get(&handle) {
-            return aot_store_value(block.value.clone());
-        }
+    let value = map.get(&handle).and_then(|block| {
+        let guard = block
+            .value
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.clone()
+    });
+    match value {
+        Some(v) => aot_store_value(v),
+        None => aot_store_value(RuntimeValue::Null),
     }
-    aot_store_value(RuntimeValue::Null)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn adesh_rt_arc_set(_handle: u64, _val: u64) -> u64 {
+pub extern "C" fn adesh_rt_arc_set(handle: u64, val_handle: u64) -> u64 {
+    let map = get_arc_map();
+    let Some(block) = map.get(&handle).cloned() else {
+        return 0;
+    };
+    if block.strong.load(Ordering::SeqCst) <= 0 {
+        return 0;
+    }
+    let value = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
+    *block
+        .value
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(value);
     0
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_arc_strong_count(handle: u64) -> i64 {
     let map = get_arc_map();
-    if let Some(ref m) = *map {
-        if let Some(block) = m.get(&handle) {
-            return block.strong.load(Ordering::SeqCst);
-        }
-    }
-    0
+    map.get(&handle)
+        .map(|block| block.strong.load(Ordering::SeqCst))
+        .unwrap_or(0)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_arc_weak_count(handle: u64) -> i64 {
     let map = get_arc_map();
-    if let Some(ref m) = *map {
-        if let Some(block) = m.get(&handle) {
-            return block.weak.load(Ordering::SeqCst);
-        }
-    }
-    0
+    map.get(&handle)
+        .map(|block| block.weak.load(Ordering::SeqCst))
+        .unwrap_or(0)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_weak_new(handle: u64) -> u64 {
     let map = get_arc_map();
-    if let Some(ref m) = *map {
-        if let Some(block) = m.get(&handle) {
+    match map.get(&handle) {
+        Some(block) => {
+            if block.strong.load(Ordering::SeqCst) <= 0 {
+                return 0;
+            }
             block.weak.fetch_add(1, Ordering::SeqCst);
+            handle
         }
+        // Unknown id: report failure with 0 instead of handing back a weak
+        // reference that can never be resolved.
+        None => 0,
     }
-    handle
+}
+
+/// Try to promote a weak reference back to a strong one. Returns the strong
+/// id on success, or 0 if the block is dead (its strong count already hit
+/// zero) or unknown. A successful upgrade bumps `strong` by one.
+#[unsafe(no_mangle)]
+pub extern "C" fn adesh_rt_weak_upgrade(handle: u64) -> u64 {
+    let map = get_arc_map();
+    let Some(block) = map.get(&handle) else {
+        return 0;
+    };
+    loop {
+        let current = block.strong.load(Ordering::SeqCst);
+        if current <= 0 {
+            return 0; // dead block: the payload has already been moved out
+        }
+        if block
+            .strong
+            .compare_exchange(current, current + 1, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            return handle;
+        }
+        // Lost the race with another clone/drop; retry with the fresh count.
+    }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_weak_drop(handle: u64) -> u64 {
-    let map = get_arc_map();
-    if let Some(ref m) = *map {
-        if let Some(block) = m.get(&handle) {
-            block.weak.fetch_sub(1, Ordering::SeqCst);
-        }
+    let mut map = get_arc_map();
+    let block = match map.get(&handle) {
+        Some(block) => Arc::clone(block),
+        None => return 0,
+    };
+    let prev = block.weak.fetch_sub(1, Ordering::SeqCst);
+    if prev <= 0 {
+        // Underflow: dropping a weak ref that was never created. Clamp back
+        // instead of letting the count go negative.
+        block.weak.store(0, Ordering::SeqCst);
+        return 0;
+    }
+    // The final weak reference of an already-dead block releases the block.
+    if prev == 1 && block.strong.load(Ordering::SeqCst) <= 0 {
+        map.remove(&handle);
     }
     0
 }
@@ -1970,22 +2207,112 @@ pub extern "C" fn adesh_rt_weak_drop(handle: u64) -> u64 {
 // Memory Tracking / Heap Guard
 // ============================================================================
 
+#[derive(Clone, Copy)]
+struct TrackedAllocation {
+    scope_token: u64,
+    size: usize,
+    thread_id: std::thread::ThreadId,
+}
+
+static TRACKED_ALLOCATIONS: Mutex<BTreeMap<usize, TrackedAllocation>> = Mutex::new(BTreeMap::new());
+static TRACKED_SCOPE_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+thread_local! {
+    static TRACKED_SCOPE_STACK: std::cell::RefCell<Vec<(i64, u64)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn lock_tracked_allocations() -> std::sync::MutexGuard<'static, BTreeMap<usize, TrackedAllocation>>
+{
+    TRACKED_ALLOCATIONS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_assert_heap_allowed() -> i32 {
     1
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn adesh_rt_scope_enter(scope_id: i64) -> i64 {
+    let token = TRACKED_SCOPE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    TRACKED_SCOPE_STACK.with(|stack| stack.borrow_mut().push((scope_id, token)));
+    token as i64
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_alloc_tracked(size: i64, _metadata_ptr: i64) -> i64 {
-    unsafe {
-        let ptr = libc::malloc(size as usize);
+    ffi_guard(0, || {
+        let Ok(size) = usize::try_from(size) else {
+            return 0;
+        };
+        if size == 0 {
+            return 0;
+        }
+        let ptr = unsafe { libc::malloc(size) };
+        if ptr.is_null() {
+            return 0;
+        }
+        let (_scope_id, scope_token) =
+            TRACKED_SCOPE_STACK.with(|stack| stack.borrow().last().copied().unwrap_or((0, 0)));
+        lock_tracked_allocations().insert(
+            ptr as usize,
+            TrackedAllocation {
+                scope_token,
+                size,
+                thread_id: std::thread::current().id(),
+            },
+        );
         ptr as i64
-    }
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_free_tracked(ptr: i64, _metadata_ptr: i64) -> i64 {
     if ptr != 0 {
+        let tracked = lock_tracked_allocations().remove(&(ptr as usize));
+        if tracked.is_some() {
+            unsafe {
+                libc::free(ptr as *mut libc::c_void);
+            }
+        }
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn adesh_rt_scope_exit(scope_id: i64) -> i64 {
+    let scope_token = TRACKED_SCOPE_STACK.with(|stack| {
+        let mut stack = stack.borrow_mut();
+        if let Some(index) = stack.iter().rposition(|&(active, _)| active == scope_id) {
+            let token = stack[index].1;
+            stack.truncate(index);
+            Some(token)
+        } else {
+            None
+        }
+    });
+    let Some(scope_token) = scope_token else {
+        return 0;
+    };
+
+    let thread_id = std::thread::current().id();
+    let to_free: Vec<(usize, usize)> = {
+        let mut allocations = lock_tracked_allocations();
+        let pointers: Vec<(usize, usize)> = allocations
+            .iter()
+            .filter_map(|(&ptr, allocation)| {
+                (allocation.scope_token == scope_token && allocation.thread_id == thread_id)
+                    .then_some((ptr, allocation.size))
+            })
+            .collect();
+        for (ptr, _) in &pointers {
+            allocations.remove(ptr);
+        }
+        pointers
+    };
+    for (ptr, _size) in to_free {
         unsafe {
             libc::free(ptr as *mut libc::c_void);
         }
@@ -1994,13 +2321,12 @@ pub extern "C" fn adesh_rt_free_tracked(ptr: i64, _metadata_ptr: i64) -> i64 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn adesh_rt_scope_exit(_scope_id: i64) -> i64 {
-    0
-}
-
-#[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_validate_ptr(ptr: i64, _metadata_ptr: i64) -> i32 {
-    if ptr != 0 { 1 } else { 0 }
+    if ptr != 0 && lock_tracked_allocations().contains_key(&(ptr as usize)) {
+        1
+    } else {
+        0
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -2136,17 +2462,22 @@ pub extern "C" fn aot_fs_move(src_val: u64, dst_val: u64) -> u64 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_fs_path_join(args_ptr: *const u64, arg_count: usize) -> u64 {
-    if args_ptr.is_null() || arg_count == 0 {
-        return aot_store_value(RuntimeValue::String(String::new()));
-    }
-    let args = unsafe { std::slice::from_raw_parts(args_ptr, arg_count) };
-    let mut path = std::path::PathBuf::new();
-    for &arg in args {
-        if let Some(s) = get_string_val(arg) {
-            path.push(s);
+    ffi_guard(0, || {
+        if args_ptr.is_null() || arg_count == 0 {
+            return aot_store_value(RuntimeValue::String(String::new()));
         }
-    }
-    aot_store_value(RuntimeValue::String(path.to_string_lossy().into_owned()))
+        if !valid_aot_arg_count(arg_count) {
+            return 0;
+        }
+        let args = unsafe { std::slice::from_raw_parts(args_ptr, arg_count) };
+        let mut path = std::path::PathBuf::new();
+        for &arg in args {
+            if let Some(s) = get_string_val(arg) {
+                path.push(s);
+            }
+        }
+        aot_store_value(RuntimeValue::String(path.to_string_lossy().into_owned()))
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -2208,13 +2539,13 @@ pub extern "C" fn aot_has_exception() -> i64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_get_exception() -> u64 {
-    CURRENT_EXCEPTION.with(|exc| {
-        if let Some(val) = exc.borrow_mut().take() {
-            aot_store_value(val)
-        } else {
-            aot_store_value(RuntimeValue::Null)
-        }
-    })
+    // Take the exception out first so the thread-local RefCell borrow is
+    // released before calling back into the handle store.
+    let val = CURRENT_EXCEPTION.with(|exc| exc.borrow_mut().take());
+    match val {
+        Some(v) => aot_store_value(v),
+        None => aot_store_value(RuntimeValue::Null),
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -2263,17 +2594,21 @@ pub extern "C" fn clock() -> f64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_array_for_each(arr_handle: u64, callback_fn: extern "C" fn(u64)) -> u64 {
-    if arr_handle == 0 {
-        return 0;
-    }
-    let val = aot_get_value(arr_handle).unwrap_or_else(|| unpack_aot_arg(arr_handle));
-    if let RuntimeValue::Array(items) = val {
-        for item in items {
-            let item_h = aot_store_value(item);
-            callback_fn(item_h);
+    // FFI trap: the loop stores one handle per element and calls foreign
+    // code; keep any residual panic risk off the C ABI.
+    ffi_guard(0, || {
+        if arr_handle == 0 {
+            return 0;
         }
-    }
-    0
+        let val = aot_get_value(arr_handle).unwrap_or_else(|| unpack_aot_arg(arr_handle));
+        if let RuntimeValue::Array(items) = val {
+            for item in items {
+                let item_h = aot_store_value(item);
+                callback_fn(item_h);
+            }
+        }
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -2282,10 +2617,27 @@ pub extern "C" fn aot_parallel_for_each(
     end: i64,
     callback_fn: extern "C" fn(i64),
 ) -> i64 {
-    for i in start..end {
-        callback_fn(i);
-    }
-    0
+    // FFI trap + audit fix: loops used to run inline (the old per-call thread
+    // spawning is gone). Now they run on the shared static worker pool, which
+    // lazily spawns its workers once, parks them while idle, and reuses them
+    // across calls. Returns 0 on success, 1 if any task panicked (the panic
+    // itself is contained inside the worker by `catch_unwind`).
+    ffi_guard(0, || {
+        let total = end.saturating_sub(start);
+        let threads = AdeshThreadPool::global().thread_count().max(1) as i64;
+        // Small ranges run inline: pool overhead would dominate, and the
+        // serial path keeps iteration order deterministic.
+        if total <= threads {
+            for i in start..end {
+                callback_fn(i);
+            }
+            return 0;
+        }
+        // Round the chunk size up so `threads` chunks cover the whole range.
+        let chunk = total / threads + i64::from(total % threads != 0);
+        let failed = AdeshThreadPool::global().parallel_for_each(start, end, chunk, callback_fn);
+        if failed > 0 { 1 } else { 0 }
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -2293,13 +2645,33 @@ pub extern "C" fn aot_make_function(fn_ptr: usize) -> u64 {
     aot_store_value(RuntimeValue::Function(fn_ptr))
 }
 
+/// Upper bound for a `BitSet` index accepted by `aot_call_method`. Guarding
+/// this keeps the resize/index paths total: a bogus huge index previously
+/// overflowed `idx + 64` and panicked.
+const MAX_BITSET_BITS: usize = 1 << 24;
+
+/// Upper bound for a `RingBuffer` capacity. A negative argument converts to a
+/// huge usize and `Vec::with_capacity` would panic (capacity overflow) or
+/// abort (OOM) instead of failing safely.
+const MAX_RING_BUFFER_CAP: usize = 1 << 20;
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_collections_new(
     type_name_handle: u64,
     args_ptr: *const u64,
     args_count: usize,
 ) -> u64 {
+    // FFI trap: raw slice construction below can panic on malformed inputs.
+    ffi_guard(0, || {
+        aot_collections_new_impl(type_name_handle, args_ptr, args_count)
+    })
+}
+
+fn aot_collections_new_impl(type_name_handle: u64, args_ptr: *const u64, args_count: usize) -> u64 {
     let type_name = get_string_val(type_name_handle).unwrap_or_default();
+    if !valid_aot_arg_count(args_count) {
+        return 0;
+    }
     let raw_args = if args_ptr.is_null() || args_count == 0 {
         &[]
     } else {
@@ -2329,7 +2701,12 @@ pub unsafe extern "C" fn aot_collections_new(
         )),
         "BitSet" => aot_store_value(RuntimeValue::BitSet(vec![false; 64])),
         "RingBuffer" => {
-            let cap = args.get(0).and_then(|v| v.as_usize()).unwrap_or(16);
+            // Clamp the requested capacity (see MAX_RING_BUFFER_CAP).
+            let cap = args
+                .get(0)
+                .and_then(|v| v.as_usize())
+                .unwrap_or(16)
+                .clamp(1, MAX_RING_BUFFER_CAP);
             aot_store_value(RuntimeValue::RingBuffer {
                 buffer: Vec::with_capacity(cap),
                 head: 0,
@@ -2350,7 +2727,25 @@ pub unsafe extern "C" fn aot_call_method(
     args_ptr: *const u64,
     args_count: usize,
 ) -> u64 {
+    // FFI trap: this dispatcher has by far the most panic-capable surface in
+    // the runtime (ring-buffer modulo/index paths, bit-set resizes, string
+    // byte slicing, transmuted callback calls). The known paths are made
+    // total inside the impl; the guard is the belt-and-braces backstop.
+    ffi_guard(0, || {
+        aot_call_method_impl(target_handle, method_name_handle, args_ptr, args_count)
+    })
+}
+
+fn aot_call_method_impl(
+    target_handle: u64,
+    method_name_handle: u64,
+    args_ptr: *const u64,
+    args_count: usize,
+) -> u64 {
     let method_name = get_string_val(method_name_handle).unwrap_or_default();
+    if !valid_aot_arg_count(args_count) {
+        return 0;
+    }
     let raw_args = if args_ptr.is_null() || args_count == 0 {
         &[]
     } else {
@@ -2546,9 +2941,16 @@ pub unsafe extern "C" fn aot_call_method(
             "set" => {
                 let idx = args.get(0).and_then(|i| i.as_usize()).unwrap_or(0);
                 if idx >= bits.len() {
-                    bits.resize(idx + 64, false);
+                    // Audit fix: `idx + 64` overflows (and then panics, on
+                    // the add or on `bits[idx]`) when idx is huge (e.g. a
+                    // negative index argument). Clamp instead.
+                    if idx < MAX_BITSET_BITS {
+                        bits.resize((idx + 64).min(MAX_BITSET_BITS), false);
+                        bits[idx] = true;
+                    }
+                } else {
+                    bits[idx] = true;
                 }
-                bits[idx] = true;
                 aot_update_value(target_handle, RuntimeValue::BitSet(bits));
                 aot_store_value(RuntimeValue::Null)
             }
@@ -2572,9 +2974,14 @@ pub unsafe extern "C" fn aot_call_method(
             "toggle" => {
                 let idx = args.get(0).and_then(|i| i.as_usize()).unwrap_or(0);
                 if idx >= bits.len() {
-                    bits.resize(idx + 64, false);
+                    // Audit fix: same overflow clamp as "set" above.
+                    if idx < MAX_BITSET_BITS {
+                        bits.resize((idx + 64).min(MAX_BITSET_BITS), false);
+                        bits[idx] = !bits[idx];
+                    }
+                } else {
+                    bits[idx] = !bits[idx];
                 }
-                bits[idx] = !bits[idx];
                 aot_update_value(target_handle, RuntimeValue::BitSet(bits));
                 aot_store_value(RuntimeValue::Null)
             }
@@ -2593,15 +3000,21 @@ pub unsafe extern "C" fn aot_call_method(
         } => match method_name.as_str() {
             "push" => {
                 if let Some(arg0) = args.get(0) {
-                    if count < cap {
+                    // Audit fix: a zero-capacity ring used to panic here
+                    // (integer division by zero in `% cap` and an index out
+                    // of bounds on `buffer[tail]`). The guards keep every
+                    // path total; well-formed buffers behave identically.
+                    if cap == 0 {
+                        // A zero-capacity ring can never store anything.
+                    } else if count < cap {
                         if buffer.len() < cap {
                             buffer.push(arg0.clone());
-                        } else {
+                        } else if tail < buffer.len() {
                             buffer[tail] = arg0.clone();
                         }
                         tail = (tail + 1) % cap;
                         count += 1;
-                    } else {
+                    } else if tail < buffer.len() {
                         buffer[tail] = arg0.clone();
                         tail = (tail + 1) % cap;
                         head = (head + 1) % cap;
@@ -2620,7 +3033,7 @@ pub unsafe extern "C" fn aot_call_method(
                 aot_store_value(RuntimeValue::Null)
             }
             "pop" => {
-                let res = if count == 0 {
+                let res = if count == 0 || cap == 0 || head >= buffer.len() {
                     RuntimeValue::Null
                 } else {
                     let val = buffer[head].clone();
@@ -2641,7 +3054,7 @@ pub unsafe extern "C" fn aot_call_method(
                 aot_store_value(res)
             }
             "peek" => {
-                let res = if count == 0 {
+                let res = if count == 0 || head >= buffer.len() {
                     RuntimeValue::Null
                 } else {
                     buffer[head].clone()
@@ -2918,12 +3331,10 @@ pub unsafe extern "C" fn aot_call_method(
                 } else {
                     s.len()
                 };
-                let sub = if start < s.len() {
-                    let end = end.min(s.len());
-                    &s[start..end]
-                } else {
-                    ""
-                };
+                // Audit fix: byte slicing `&s[start..end]` panics when the
+                // indices are inverted or land inside a multi-byte character;
+                // the checked `get` yields an empty string for those instead.
+                let sub = s.get(start..end.min(s.len())).unwrap_or("");
                 aot_store_value(RuntimeValue::String(sub.to_string()))
             }
             "contains" | "includes" => {
@@ -2963,59 +3374,56 @@ pub unsafe extern "C" fn aot_call_method(
 // Input & Type Conversions
 // ============================================================================
 
-static MOCK_INPUT_QUEUE: Mutex<Option<std::collections::VecDeque<String>>> = Mutex::new(None);
+static MOCK_INPUT_QUEUE: Mutex<std::collections::VecDeque<String>> =
+    Mutex::new(std::collections::VecDeque::new());
 
-fn get_mock_input_queue()
--> std::sync::MutexGuard<'static, Option<std::collections::VecDeque<String>>> {
-    let mut guard = MOCK_INPUT_QUEUE.lock().unwrap();
-    if guard.is_none() {
-        *guard = Some(std::collections::VecDeque::new());
-    }
-    guard
+fn get_mock_input_queue() -> std::sync::MutexGuard<'static, std::collections::VecDeque<String>> {
+    MOCK_INPUT_QUEUE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_input_mock(val_handle: u64) -> u64 {
     let val = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
-    let mut guard = get_mock_input_queue();
-    if let Some(ref mut q) = *guard {
-        if let RuntimeValue::Array(arr) = val {
-            for item in arr {
-                q.push_back(item.as_string());
-            }
-        } else {
-            q.push_back(val.as_string());
+    let mut q = get_mock_input_queue();
+    if let RuntimeValue::Array(arr) = val {
+        for item in arr {
+            q.push_back(item.as_string());
         }
+    } else {
+        q.push_back(val.as_string());
     }
     0
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_input(prompt_handle: u64) -> u64 {
-    let prompt = if prompt_handle != 0 {
-        get_string_val(prompt_handle).unwrap_or_default()
-    } else {
-        String::new()
-    };
-    if !prompt.is_empty() {
-        print!("{}", prompt);
-        let _ = std::io::stdout().flush();
-    }
-    let mut guard = get_mock_input_queue();
-    if let Some(ref mut q) = *guard {
+    // FFI trap: `print!` panics when writing to stdout fails (broken pipe).
+    ffi_guard(0, || {
+        let prompt = if prompt_handle != 0 {
+            get_string_val(prompt_handle).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        if !prompt.is_empty() {
+            print!("{}", prompt);
+            let _ = std::io::stdout().flush();
+        }
+        let mut q = get_mock_input_queue();
         if let Some(mock_val) = q.pop_front() {
             return aot_store_value(RuntimeValue::String(mock_val));
         }
-    }
-    let mut line = String::new();
-    let _ = std::io::stdin().read_line(&mut line);
-    if line.ends_with('\n') {
-        line.pop();
-        if line.ends_with('\r') {
+        let mut line = String::new();
+        let _ = std::io::stdin().read_line(&mut line);
+        if line.ends_with('\n') {
             line.pop();
+            if line.ends_with('\r') {
+                line.pop();
+            }
         }
-    }
-    aot_store_value(RuntimeValue::String(line))
+        aot_store_value(RuntimeValue::String(line))
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -3083,4 +3491,314 @@ pub extern "C" fn aot_to_string(val_handle: u64) -> u64 {
 pub extern "C" fn aot_to_bool(val_handle: u64) -> i64 {
     let val = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
     if val.is_truthy() { 1 } else { 0 }
+}
+
+// ============================================================================
+// Audit Regression Tests
+// ============================================================================
+
+#[cfg(test)]
+mod audit_tests {
+    use super::*;
+
+    // The handle store and ARC map are process-global; tests touching them
+    // run under this lock so their exact-count assertions stay deterministic.
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn locked<R>(body: impl FnOnce() -> R) -> R {
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        body()
+    }
+
+    fn str_handle(s: &str) -> u64 {
+        aot_store_value(RuntimeValue::String(s.to_string()))
+    }
+
+    fn int_handle(i: i64) -> u64 {
+        aot_store_value(RuntimeValue::Int(i))
+    }
+
+    #[test]
+    fn audit_sharded_store_free_range_and_live_handles() {
+        locked(|| {
+            let base = aot_live_handles();
+            let h1 = aot_store_value(RuntimeValue::Int(11));
+            let h2 = aot_store_value(RuntimeValue::Int(22));
+            let h3 = aot_store_value(RuntimeValue::Int(33));
+            assert!(h2 > h1 && h3 > h2, "handles must stay sequential");
+            assert_eq!(aot_live_handles(), base + 3);
+            assert_eq!(aot_get_value(h2), Some(RuntimeValue::Int(22)));
+
+            // [h1, h3) removes h1 and h2 exactly.
+            assert_eq!(unsafe { aot_free_range(h1, h3) }, 2);
+            assert_eq!(aot_get_value(h1), None);
+            assert_eq!(aot_get_value(h2), None);
+            assert_eq!(aot_get_value(h3), Some(RuntimeValue::Int(33)));
+
+            // Double frees must be harmless no-ops, never panics.
+            aot_free_handle(h1);
+            aot_free_handle(h1);
+            assert_eq!(unsafe { aot_free_range(h1, h3) }, 0);
+            aot_free_handle(h3);
+            assert_eq!(aot_live_handles(), base);
+
+            // Degenerate range is a no-op.
+            assert_eq!(unsafe { aot_free_range(50, 50) }, 0);
+            assert_eq!(unsafe { aot_free_range(60, 50) }, 0);
+        });
+    }
+
+    #[test]
+    fn audit_arc_weak_protocol() {
+        locked(|| {
+            let base = aot_live_handles();
+            let v = int_handle(42);
+            let strong = adesh_rt_arc_new(v);
+            assert_eq!(adesh_rt_arc_strong_count(strong), 1);
+            assert_eq!(adesh_rt_arc_weak_count(strong), 0);
+
+            let replacement = int_handle(99);
+            assert_eq!(adesh_rt_arc_set(strong, replacement), 0);
+            let updated = adesh_rt_arc_get(strong);
+            assert_eq!(aot_get_value(updated), Some(RuntimeValue::Int(99)));
+            aot_free_handle(updated);
+
+            let weak = adesh_rt_weak_new(strong);
+            assert_eq!(weak, strong);
+            assert_eq!(adesh_rt_arc_weak_count(strong), 1);
+
+            // Upgrade works while the block is alive and bumps strong.
+            assert_eq!(adesh_rt_weak_upgrade(weak), strong);
+            assert_eq!(adesh_rt_arc_strong_count(strong), 2);
+
+            // Drop both strong refs: the block dies and the value moves out.
+            assert_eq!(adesh_rt_arc_drop(strong), 0);
+            assert_eq!(adesh_rt_arc_drop(strong), 0);
+            assert_eq!(adesh_rt_arc_strong_count(strong), 0);
+
+            // A dangling weak ref must NOT resurrect the dead block.
+            assert_eq!(adesh_rt_weak_upgrade(weak), 0);
+            assert_eq!(adesh_rt_arc_clone(strong), strong); // no-op on dead block
+            assert_eq!(adesh_rt_arc_strong_count(strong), 0);
+            assert_eq!(adesh_rt_weak_new(strong), 0);
+            let got = adesh_rt_arc_get(strong);
+            assert_eq!(aot_get_value(got), Some(RuntimeValue::Null));
+            aot_free_handle(got);
+
+            // Double drop is a safe no-op (count cannot drift negative).
+            assert_eq!(adesh_rt_arc_drop(strong), 0);
+
+            // The final weak drop releases the dead block from the map.
+            assert_eq!(adesh_rt_weak_drop(weak), 0);
+            // Weak underflow is clamped, not negative.
+            assert_eq!(adesh_rt_weak_drop(weak), 0);
+            assert_eq!(adesh_rt_arc_weak_count(strong), 0);
+            let got2 = adesh_rt_arc_get(strong);
+            assert_eq!(aot_get_value(got2), Some(RuntimeValue::Null));
+            aot_free_handle(got2);
+
+            // Unknown ids report failure without inventing references.
+            assert_eq!(adesh_rt_weak_new(999_999), 0);
+            assert_eq!(adesh_rt_weak_upgrade(999_999), 0);
+            assert_eq!(adesh_rt_weak_drop(999_999), 0);
+
+            aot_free_handle(v);
+            aot_free_handle(replacement);
+            assert_eq!(aot_live_handles(), base);
+        });
+    }
+
+    #[test]
+    fn audit_ring_buffer_zero_cap_is_total() {
+        locked(|| {
+            let name = str_handle("RingBuffer");
+            let zero = int_handle(0); // zero capacity: used to panic on push/pop
+            let rb = unsafe { aot_collections_new(name, [zero].as_ptr(), 1) };
+            let item = int_handle(5);
+
+            let push_m = str_handle("push");
+            let _ = unsafe { aot_call_method(rb, push_m, [item].as_ptr(), 1) };
+            let pop_m = str_handle("pop");
+            let popped = unsafe { aot_call_method(rb, pop_m, std::ptr::null(), 0) };
+            assert_eq!(aot_get_value(popped), Some(RuntimeValue::Null));
+            let peek_m = str_handle("peek");
+            let peeked = unsafe { aot_call_method(rb, peek_m, std::ptr::null(), 0) };
+            assert_eq!(aot_get_value(peeked), Some(RuntimeValue::Null));
+
+            // A normal ring still round-trips values.
+            let cap8 = int_handle(8);
+            let rb2 = unsafe { aot_collections_new(name, [cap8].as_ptr(), 1) };
+            let _ = unsafe { aot_call_method(rb2, push_m, [item].as_ptr(), 1) };
+            let got = unsafe { aot_call_method(rb2, peek_m, std::ptr::null(), 0) };
+            assert_eq!(aot_get_value(got), Some(RuntimeValue::Int(5)));
+        });
+    }
+
+    #[test]
+    fn audit_bitset_huge_index_is_total() {
+        locked(|| {
+            let name = str_handle("BitSet");
+            let bs = unsafe { aot_collections_new(name, std::ptr::null(), 0) };
+            let neg = int_handle(-1); // as_usize -> usize::MAX: used to panic
+            let set_m = str_handle("set");
+            let _ = unsafe { aot_call_method(bs, set_m, [neg].as_ptr(), 1) };
+            let toggle_m = str_handle("toggle");
+            let _ = unsafe { aot_call_method(bs, toggle_m, [neg].as_ptr(), 1) };
+        });
+    }
+
+    #[test]
+    fn audit_string_substring_boundaries() {
+        locked(|| {
+            let s = str_handle("héllo"); // byte 1 is inside a multi-byte char
+            let sub_m = str_handle("substring");
+            let one = int_handle(1);
+            let two = int_handle(2);
+            let four = int_handle(4);
+            let five = int_handle(5);
+
+            let mid_char = unsafe { aot_call_method(s, sub_m, [one, four].as_ptr(), 2) };
+            assert_eq!(
+                aot_get_value(mid_char),
+                Some(RuntimeValue::String(String::new()))
+            );
+
+            let inverted = unsafe { aot_call_method(s, sub_m, [five, two].as_ptr(), 2) };
+            assert_eq!(
+                aot_get_value(inverted),
+                Some(RuntimeValue::String(String::new()))
+            );
+
+            let whole = unsafe { aot_call_method(s, sub_m, std::ptr::null(), 0) };
+            assert_eq!(
+                aot_get_value(whole),
+                Some(RuntimeValue::String("héllo".to_string()))
+            );
+        });
+    }
+
+    #[test]
+    fn audit_parse_hex_color_is_total() {
+        assert_eq!(parse_hex_color("#ff8000"), Some((255, 128, 0)));
+        assert_eq!(parse_hex_color("fa0"), Some((255, 170, 0)));
+        // Multi-byte UTF-8 in the color string used to panic the byte slicing.
+        assert_eq!(parse_hex_color("aébcd"), None);
+        assert_eq!(parse_hex_color(""), None);
+        assert_eq!(parse_hex_color("zzzzzz"), None);
+    }
+
+    static TP_SUM: AtomicI64 = AtomicI64::new(0);
+
+    extern "C" fn tp_callback(i: i64) {
+        TP_SUM.fetch_add(i, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn audit_parallel_for_each_covers_range() {
+        TP_SUM.store(0, Ordering::Relaxed);
+        let rc = aot_parallel_for_each(0, 10_000, tp_callback);
+        assert_eq!(rc, 0);
+        assert_eq!(TP_SUM.load(Ordering::Relaxed), 10_000 * 9_999 / 2);
+    }
+
+    #[test]
+    fn audit_ffi_guard_returns_fallback_on_panic() {
+        // A panicking body must be contained and produce the fallback, not
+        // unwind out of the guard.
+        let out = ffi_guard(7u64, || -> u64 {
+            panic!("audit: contained panic");
+        });
+        assert_eq!(out, 7);
+    }
+
+    #[test]
+    fn audit_raw_integer_words_are_never_dereferenced_as_strings() {
+        locked(|| {
+            let raw = 0x20_000u64;
+            assert_eq!(unpack_aot_arg(raw), RuntimeValue::Int(raw as i64));
+
+            let wrapped = aot_wrap_ptr(raw);
+            assert_eq!(aot_get_value(wrapped), Some(RuntimeValue::Int(raw as i64)));
+
+            let args = [raw];
+            let array = unsafe { aot_make_array(args.as_ptr(), args.len()) };
+            assert_eq!(
+                aot_get_value(array),
+                Some(RuntimeValue::Array(vec![RuntimeValue::Int(raw as i64)]))
+            );
+            aot_free_handle(array);
+            aot_free_handle(wrapped);
+        });
+    }
+
+    #[test]
+    fn audit_ffi_rejects_impossible_slice_counts() {
+        let count = isize::MAX as usize / std::mem::size_of::<u64>() + 1;
+        let invalid_ptr = 1usize as *const u64;
+        assert_eq!(unsafe { aot_make_array(invalid_ptr, count) }, 0);
+        assert_eq!(unsafe { aot_make_object(invalid_ptr, count) }, 0);
+        assert_eq!(unsafe { aot_make_tuple(invalid_ptr, count) }, 0);
+        assert_eq!(unsafe { aot_make_set(invalid_ptr, count) }, 0);
+        assert_eq!(unsafe { aot_fs_path_join(invalid_ptr, count) }, 0);
+        assert_eq!(unsafe { aot_collections_new(0, invalid_ptr, count) }, 0);
+        assert_eq!(unsafe { aot_call_method(0, 0, invalid_ptr, count) }, 0);
+        assert_eq!(
+            unsafe { aot_print_with_options(invalid_ptr, i64::MAX, 0) },
+            0
+        );
+    }
+
+    #[test]
+    fn audit_tracked_allocations_free_explicitly_and_at_scope_exit() {
+        locked(|| {
+            let scope = 70_001;
+            assert_ne!(adesh_rt_scope_enter(scope), 0);
+            let first = adesh_rt_alloc_tracked(32, 0);
+            let second = adesh_rt_alloc_tracked(16, 0);
+            assert_ne!(first, 0);
+            assert_ne!(second, 0);
+            assert_eq!(adesh_rt_validate_ptr(first, 0), 1);
+            assert_eq!(adesh_rt_validate_ptr(second, 0), 1);
+
+            adesh_rt_free_tracked(first, 0);
+            assert_eq!(adesh_rt_validate_ptr(first, 0), 0);
+            assert_eq!(adesh_rt_validate_ptr(second, 0), 1);
+
+            adesh_rt_scope_exit(scope);
+            assert_eq!(adesh_rt_validate_ptr(second, 0), 0);
+        });
+    }
+
+    #[test]
+    fn audit_nested_tracked_scopes_with_reused_ids_are_isolated() {
+        locked(|| {
+            let scope = 70_002;
+            adesh_rt_scope_enter(scope);
+            let outer = adesh_rt_alloc_tracked(8, 0);
+            adesh_rt_scope_enter(scope);
+            let inner = adesh_rt_alloc_tracked(8, 0);
+            adesh_rt_scope_exit(scope);
+            assert_eq!(adesh_rt_validate_ptr(inner, 0), 0);
+            assert_eq!(adesh_rt_validate_ptr(outer, 0), 1);
+            adesh_rt_scope_exit(scope);
+            assert_eq!(adesh_rt_validate_ptr(outer, 0), 0);
+        });
+    }
+
+    #[test]
+    fn audit_object_field_updates_preserve_handle_identity() {
+        locked(|| {
+            let object = aot_store_value(RuntimeValue::Object(BTreeMap::new()));
+            let field = str_handle("count");
+            let value = int_handle(42);
+            assert_eq!(aot_set_field(object, field, value), object);
+            let got = aot_get_field(object, field);
+            assert_eq!(got, 42);
+            aot_free_handle(object);
+            aot_free_handle(field);
+            aot_free_handle(value);
+        });
+    }
 }

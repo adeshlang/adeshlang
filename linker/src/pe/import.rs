@@ -186,11 +186,17 @@ pub fn build_import_table(
     // Group imports by DLL
     use std::collections::BTreeMap;
     let mut by_dll: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // A membership set keeps the per-symbol dedup O(1) instead of rescanning
+    // the accumulated vector for every import (previously O(n^2)).
+    let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
     for imp in imports {
-        let sym_list = by_dll.entry(imp.dll_name.clone()).or_default();
-        if !sym_list.contains(&imp.symbol_name) {
-            sym_list.push(imp.symbol_name.clone());
+        if !seen.insert((imp.dll_name.clone(), imp.symbol_name.clone())) {
+            continue;
         }
+        by_dll
+            .entry(imp.dll_name.clone())
+            .or_default()
+            .push(imp.symbol_name.clone());
     }
 
     let mut idata = Vec::new();

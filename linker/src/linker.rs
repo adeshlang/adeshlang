@@ -174,6 +174,13 @@ impl Linker {
         ctx.resolver
             .resolve_with_target(&mut ctx.objects, &ctx.archives, &ctx.config.target)?;
 
+        // Surface non-fatal resolution diagnostics (e.g. undefined weak symbols
+        // bound to NULL, which is legal but worth reporting).
+        for warning in &ctx.resolver.warnings {
+            ctx.diagnostics.emit_warning(warning.clone());
+            eprintln!("adeshlink: warning: {}", warning);
+        }
+
         // 4.1 Synthesize Compiler Intrinsics, Entry Thunks, and Import Thunks for Unimplemented Symbols
         let is_pe = ctx.config.target.format == ObjectFormat::Pe;
 
@@ -192,6 +199,24 @@ impl Linker {
 
         let mut missing_symbols: Vec<String> = Vec::new();
         if is_pe && !ctx.resolver.table.contains_key("mainCRTStartup") {
+            // The CRT startup stub synthesizer emits x86_64 machine code. For
+            // any other PE architecture there is nothing to synthesize, so fail
+            // loudly instead of writing the wrong instruction set.
+            if ctx.config.target.arch != crate::target::Arch::X86_64
+                && !ctx.resolver.table.contains_key("__adesh_windows_start")
+            {
+                return Err(LinkError::new(
+                    ErrorCode::InvalidTarget,
+                    format!(
+                        "no `mainCRTStartup` entry point is defined for the {} PE target",
+                        ctx.config.target.arch.as_str()
+                    ),
+                )
+                .with_suggestion(
+                    "Provide a `mainCRTStartup` (or `__adesh_windows_start`) definition in an \
+                     input object: the linker only synthesizes the x86_64 CRT startup stub.",
+                ));
+            }
             missing_symbols.push("mainCRTStartup".to_string());
         }
         for (name, resolved) in &ctx.resolver.table {
@@ -512,6 +537,23 @@ impl Linker {
         };
 
         // 9. Emit Output Executable / Library according to Target Object Format
+        //
+        // Non-global symbols are dropped from the emitted symbol table by
+        // default (see `LinkConfig::strip_symbols`): they are not needed at run
+        // time and dominate the table size. `-s/--strip-all` implies the same,
+        // `--no-strip` keeps every symbol.
+        let emit_symbols: Vec<crate::symbol::Symbol> = if ctx.config.should_strip_symbols() {
+            ctx.layout
+                .resolved_symbols
+                .iter()
+                .filter(|s| !s.is_local())
+                .cloned()
+                .collect()
+        } else {
+            ctx.layout.resolved_symbols.clone()
+        };
+        let emit_symbols = emit_symbols.as_slice();
+
         match ctx.config.target.format {
             ObjectFormat::Elf => {
                 ElfWriter::write_executable(
@@ -519,7 +561,7 @@ impl Linker {
                     &ctx.config.target,
                     ctx.layout.entry_va,
                     &ctx.layout.merged_sections,
-                    &ctx.layout.resolved_symbols,
+                    emit_symbols,
                     build_id_bytes.as_ref().map(|b| &b[..20]),
                 )?;
             }
@@ -534,11 +576,12 @@ impl Linker {
                     &ctx.config.target,
                     ctx.layout.entry_va,
                     &ctx.layout.merged_sections,
-                    &ctx.layout.resolved_symbols,
+                    emit_symbols,
                     &[],
                     ctx.layout.pe_import_info.as_ref(),
                     ctx.layout.pe_tls_info.as_ref(),
                     &ctx.layout.base_relocs,
+                    &ctx.layout.base_relocs32,
                 )?;
             }
             ObjectFormat::MachO => {
@@ -547,7 +590,7 @@ impl Linker {
                     &ctx.config.target,
                     ctx.layout.entry_va,
                     &ctx.layout.merged_sections,
-                    &ctx.layout.resolved_symbols,
+                    emit_symbols,
                 )?;
             }
             ObjectFormat::Wasm => {
@@ -555,7 +598,7 @@ impl Linker {
                     &ctx.config.output_path,
                     &ctx.config.target,
                     &ctx.layout.merged_sections,
-                    &ctx.layout.resolved_symbols,
+                    emit_symbols,
                 )?;
             }
             ObjectFormat::Xcoff => {
@@ -564,21 +607,21 @@ impl Linker {
                     &ctx.config.target,
                     ctx.layout.entry_va,
                     &ctx.layout.merged_sections,
-                    &ctx.layout.resolved_symbols,
+                    emit_symbols,
                 )?;
             }
             ObjectFormat::GpuFatbin => {
                 crate::accelerators::GpuFatbinWriter::write_fatbin(
                     &ctx.config.output_path,
                     &ctx.layout.merged_sections,
-                    &ctx.layout.resolved_symbols,
+                    emit_symbols,
                 )?;
             }
             ObjectFormat::QirQuantum => {
                 crate::quantum::QuantumPackageWriter::write_qir_artifact(
                     &ctx.config.output_path,
                     &ctx.layout.merged_sections,
-                    &ctx.layout.resolved_symbols,
+                    emit_symbols,
                 )?;
             }
             ObjectFormat::AdeshNative => {
@@ -588,6 +631,16 @@ impl Linker {
                     ctx.config.target.clone(),
                     0,
                 );
+                // Map each input section to its merged output section index so
+                // the emitted symbols carry a valid section index (otherwise
+                // the output cannot be re-linked).
+                let mut input_sec_to_out: std::collections::HashMap<(usize, usize), usize> =
+                    std::collections::HashMap::new();
+                for (out_idx, sec) in ctx.layout.merged_sections.iter().enumerate() {
+                    for &(f_idx, s_idx, _) in &sec.input_sections {
+                        input_sec_to_out.insert((f_idx, s_idx), out_idx);
+                    }
+                }
                 for sec in &ctx.layout.merged_sections {
                     dummy_obj.add_section(crate::section::Section {
                         name: sec.name.clone(),
@@ -605,6 +658,21 @@ impl Linker {
                         is_folded: false,
                         folded_into: None,
                     });
+                }
+                for sym in emit_symbols {
+                    let mut out_sym = sym.clone();
+                    out_sym.section_index = sym
+                        .file_index
+                        .zip(sym.section_index)
+                        .and_then(|key| input_sec_to_out.get(&key).copied())
+                        .or_else(|| {
+                            ctx.layout.merged_sections.iter().position(|sec| {
+                                sec.size > 0
+                                    && sym.value >= sec.virtual_address
+                                    && sym.value < sec.virtual_address + sec.size
+                            })
+                        });
+                    dummy_obj.add_symbol(out_sym);
                 }
                 crate::object::writer::ObjectWriter::write_to_file(
                     &dummy_obj,

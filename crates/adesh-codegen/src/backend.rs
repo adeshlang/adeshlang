@@ -2,6 +2,7 @@
 
 use crate::error::CodegenError;
 use crate::machine_ir::{MachineFunction, NativeModule};
+use crate::opt::OptLevel;
 use adesh_object::{
     AdobObject, AdobRelocation, TargetCapabilities, TargetDescriptor, TargetFeatures,
 };
@@ -13,6 +14,9 @@ pub trait CodegenBackend: Send + Sync {
 
     /// Target capabilities exposed by this backend.
     fn capabilities(&self) -> TargetCapabilities;
+
+    /// Set optimization level for the backend.
+    fn set_opt_level(&mut self, _opt_level: OptLevel) {}
 
     /// Lower an entire high-level or intermediate module to a NativeModule.
     fn lower_module(&mut self, module: &NativeModule) -> Result<NativeModule, CodegenError>;

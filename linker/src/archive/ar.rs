@@ -39,8 +39,11 @@ impl Archive {
         let mut members = Vec::new();
         let mut string_table = Vec::new();
         let mut symbol_index = HashMap::new();
+        let mut member_header_offsets = Vec::new();
+        let mut archive_symbol_tables: Vec<(String, Vec<u8>)> = Vec::new();
 
         while offset + 60 <= bytes.len() {
+            let header_offset = offset;
             let header = &bytes[offset..offset + 60];
             let name_raw = std::str::from_utf8(&header[0..16]).unwrap_or("").trim_end();
             let size_str = std::str::from_utf8(&header[48..58]).unwrap_or("0").trim();
@@ -68,11 +71,17 @@ impl Archive {
                 // GNU string table
                 string_table = member_data.to_vec();
             } else if name_raw == "/"
+                || name_raw == "/SYM64/"
                 || name_raw == "__.SYMDEF"
                 || name_raw == "__.SYMDEF SORTED"
                 || name_raw.starts_with("/ ")
             {
-                // Symbol directory member (skipped in raw extraction; indexed below)
+                // Keep archive linker indexes for a cheap symbol scan. The
+                // member payloads are decoded only if the resolver extracts
+                // them, rather than eagerly parsing every object at startup.
+                if name_raw == "/" || name_raw == "/SYM64/" {
+                    archive_symbol_tables.push((name_raw.to_string(), member_data.to_vec()));
+                }
             } else {
                 let name = if name_raw.starts_with('/') && !string_table.is_empty() {
                     // GNU extended filename: /123
@@ -107,6 +116,7 @@ impl Archive {
                     name_raw.trim_end_matches('/').to_string()
                 };
 
+                member_header_offsets.push((header_offset as u64, members.len()));
                 members.push(ArchiveMember {
                     name,
                     size,
@@ -116,24 +126,42 @@ impl Archive {
             }
         }
 
-        // Build accurate symbol index across all members and cache decoded ObjectFiles
-        for (m_idx, m) in members.iter_mut().enumerate() {
-            if let Ok(obj) = crate::object::reader::ObjectReader::read_from_memory(
-                &m.data,
-                std::path::Path::new(&m.name),
-                &crate::target::Target::host(),
-                0,
-            ) {
-                for sym in &obj.symbols {
-                    if sym.is_defined && !sym.is_local() {
-                        let candidates: &mut Vec<usize> =
-                            symbol_index.entry(sym.name.clone()).or_default();
-                        if candidates.last() != Some(&m_idx) {
-                            candidates.push(m_idx);
+        let offset_to_member: HashMap<u64, usize> = member_header_offsets
+            .into_iter()
+            .filter(|&(_, member_idx)| !is_coff_import_object(&members[member_idx].data))
+            .collect();
+        let mut has_usable_index = false;
+        for (table_name, table_data) in &archive_symbol_tables {
+            has_usable_index |= parse_archive_symbol_index(
+                table_name,
+                table_data,
+                &offset_to_member,
+                &mut symbol_index,
+            );
+        }
+
+        // Archives created without a linker index are uncommon but valid.
+        // Preserve support by scanning those members as a fallback; normal
+        // GNU/COFF archives remain lazy and parse only selected members.
+        if !has_usable_index {
+            for (m_idx, m) in members.iter_mut().enumerate() {
+                if let Ok(obj) = crate::object::reader::ObjectReader::read_from_memory(
+                    &m.data,
+                    std::path::Path::new(&m.name),
+                    &crate::target::Target::host(),
+                    0,
+                ) {
+                    for sym in &obj.symbols {
+                        if sym.is_defined && !sym.is_local() {
+                            let candidates: &mut Vec<usize> =
+                                symbol_index.entry(sym.name.clone()).or_default();
+                            if candidates.last() != Some(&m_idx) {
+                                candidates.push(m_idx);
+                            }
                         }
                     }
+                    m.obj = Some(obj);
                 }
-                m.obj = Some(obj);
             }
         }
 
@@ -207,7 +235,14 @@ impl Archive {
                     let id = format!("/{}", off);
                     hdr[0..id.len().min(16)].copy_from_slice(id.as_bytes());
                 } else {
-                    let truncated = format!("{}/", &m.name[..15]);
+                    // `m.name.len() > 15` here, but 15 is a byte index: slicing
+                    // must land on a char boundary or it panics for a
+                    // multi-byte filename.
+                    let mut cut = 15.min(m.name.len());
+                    while cut > 0 && !m.name.is_char_boundary(cut) {
+                        cut -= 1;
+                    }
+                    let truncated = format!("{}/", &m.name[..cut]);
                     hdr[0..truncated.len().min(16)].copy_from_slice(truncated.as_bytes());
                 }
             } else {
@@ -237,4 +272,161 @@ impl Archive {
 
         out
     }
+}
+
+fn is_coff_import_object(data: &[u8]) -> bool {
+    data.len() >= 4 && data[..2] == [0, 0] && data[2..4] == [0xff, 0xff]
+}
+
+/// Add symbol names from a GNU/BSD-style first linker member or a COFF
+/// second-linker-member table. Returns true when the table structure was
+/// valid, including a valid empty index.
+fn parse_archive_symbol_index(
+    table_name: &str,
+    data: &[u8],
+    offset_to_member: &HashMap<u64, usize>,
+    symbols: &mut HashMap<String, Vec<usize>>,
+) -> bool {
+    fn read_u32_be(data: &[u8], offset: usize) -> Option<u32> {
+        Some(u32::from_be_bytes(
+            data.get(offset..offset + 4)?.try_into().ok()?,
+        ))
+    }
+    fn read_u32_le(data: &[u8], offset: usize) -> Option<u32> {
+        Some(u32::from_le_bytes(
+            data.get(offset..offset + 4)?.try_into().ok()?,
+        ))
+    }
+    fn read_u64_be(data: &[u8], offset: usize) -> Option<u64> {
+        Some(u64::from_be_bytes(
+            data.get(offset..offset + 8)?.try_into().ok()?,
+        ))
+    }
+    fn add_name(
+        name: &[u8],
+        member_offset: u64,
+        offset_to_member: &HashMap<u64, usize>,
+        symbols: &mut HashMap<String, Vec<usize>>,
+    ) {
+        let Some(&member_idx) = offset_to_member.get(&member_offset) else {
+            return;
+        };
+        let name = String::from_utf8_lossy(name).into_owned();
+        if name.is_empty() {
+            return;
+        }
+        let candidates = symbols.entry(name).or_default();
+        if candidates.last() != Some(&member_idx) {
+            candidates.push(member_idx);
+        }
+    }
+
+    if table_name == "/SYM64/" {
+        let Some(count) = read_u64_be(data, 0).map(|v| v as usize) else {
+            return false;
+        };
+        let Some(names_start) = count.checked_mul(8).and_then(|n| n.checked_add(8)) else {
+            return false;
+        };
+        if names_start > data.len() {
+            return false;
+        }
+        let mut names = names_start;
+        for i in 0..count {
+            let Some(member_offset) = read_u64_be(data, 8 + i * 8) else {
+                return false;
+            };
+            let Some(end_rel) = data[names..].iter().position(|&b| b == 0) else {
+                return false;
+            };
+            add_name(
+                &data[names..names + end_rel],
+                member_offset,
+                offset_to_member,
+                symbols,
+            );
+            names += end_rel + 1;
+        }
+        return true;
+    }
+
+    // GNU and COFF first linker members both use a big-endian symbol count,
+    // offset array, then NUL-terminated names.
+    if let Some(count) = read_u32_be(data, 0).map(|v| v as usize) {
+        if let Some(names_start) = count.checked_mul(4).and_then(|n| n.checked_add(4)) {
+            if names_start <= data.len() {
+                let mut names = names_start;
+                let mut valid = true;
+                for i in 0..count {
+                    let Some(member_offset) = read_u32_be(data, 4 + i * 4) else {
+                        valid = false;
+                        break;
+                    };
+                    let Some(end_rel) = data[names..].iter().position(|&b| b == 0) else {
+                        valid = false;
+                        break;
+                    };
+                    add_name(
+                        &data[names..names + end_rel],
+                        u64::from(member_offset),
+                        offset_to_member,
+                        symbols,
+                    );
+                    names += end_rel + 1;
+                }
+                if valid {
+                    return true;
+                }
+            }
+        }
+    }
+
+    // MSVC's second linker member stores a member-offset array, then a symbol
+    // count and 1-based u16 indices into that array, followed by symbol names.
+    let Some(member_count) = read_u32_le(data, 0).map(|v| v as usize) else {
+        return false;
+    };
+    let Some(symbol_count_at) = member_count.checked_mul(4).and_then(|n| n.checked_add(4)) else {
+        return false;
+    };
+    let Some(symbol_count) = read_u32_le(data, symbol_count_at).map(|v| v as usize) else {
+        return false;
+    };
+    let Some(names_start) = symbol_count
+        .checked_mul(2)
+        .and_then(|n| n.checked_add(symbol_count_at + 4))
+    else {
+        return false;
+    };
+    if names_start > data.len() {
+        return false;
+    }
+    let mut names = names_start;
+    for i in 0..symbol_count {
+        let Some(member_ordinal) = data
+            .get(symbol_count_at + 4 + i * 2..symbol_count_at + 6 + i * 2)
+            .and_then(|b| <[u8; 2]>::try_from(b).ok())
+            .map(u16::from_le_bytes)
+        else {
+            return false;
+        };
+        let Some(member_offset) = member_ordinal
+            .checked_sub(1)
+            .and_then(|idx| ((idx as usize) < member_count).then_some(idx as usize))
+            .and_then(|idx| read_u32_le(data, 4 + idx * 4))
+        else {
+            return false;
+        };
+        let Some(end_rel) = data[names..].iter().position(|&b| b == 0) else {
+            return false;
+        };
+        add_name(
+            &data[names..names + end_rel],
+            u64::from(member_offset),
+            offset_to_member,
+            symbols,
+        );
+        names += end_rel + 1;
+    }
+    true
 }

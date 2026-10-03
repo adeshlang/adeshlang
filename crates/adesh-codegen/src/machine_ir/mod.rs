@@ -89,6 +89,20 @@ pub enum ConditionCode {
     NotParity,
 }
 
+/// Register constraints for instruction operands requiring fixed registers,
+/// two-address binding, or register class separation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RegisterConstraint {
+    /// Any register of the appropriate RegisterClass.
+    Any,
+    /// Must be placed in a specific PhysicalRegister.
+    Fixed(PhysicalRegister),
+    /// Two-address requirement: destination must be the same register as the operand index.
+    SameAs(usize),
+    /// May not be placed in the specified PhysicalRegister.
+    DifferentFrom(PhysicalRegister),
+}
+
 /// Operands for Machine Instructions.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MachineOperand {
@@ -468,17 +482,6 @@ pub enum MachineInstruction {
     Pop {
         dst: MachineOperand,
     },
-    Vector {
-        op: String,
-        dst: MachineOperand,
-        src: MachineOperand,
-    },
-    Atomic {
-        op: String,
-        dst: MachineOperand,
-        src: MachineOperand,
-    },
-    Barrier,
     Custom {
         name: String,
         operands: Vec<MachineOperand>,
@@ -530,6 +533,91 @@ pub enum MachineInstruction {
         src: MachineOperand,
         to_f64: bool,
     },
+    // First-Class SIMD Vector Instructions
+    VectorAdd {
+        dst: MachineOperand,
+        src: MachineOperand,
+        vec_type: crate::opt::VectorType,
+    },
+    VectorSub {
+        dst: MachineOperand,
+        src: MachineOperand,
+        vec_type: crate::opt::VectorType,
+    },
+    VectorMul {
+        dst: MachineOperand,
+        src: MachineOperand,
+        vec_type: crate::opt::VectorType,
+    },
+    VectorDiv {
+        dst: MachineOperand,
+        src: MachineOperand,
+        vec_type: crate::opt::VectorType,
+    },
+    VectorAnd {
+        dst: MachineOperand,
+        src: MachineOperand,
+        vec_type: crate::opt::VectorType,
+    },
+    VectorOr {
+        dst: MachineOperand,
+        src: MachineOperand,
+        vec_type: crate::opt::VectorType,
+    },
+    VectorXor {
+        dst: MachineOperand,
+        src: MachineOperand,
+        vec_type: crate::opt::VectorType,
+    },
+    VectorLoad {
+        dst: MachineOperand,
+        src: MachineOperand,
+        vec_type: crate::opt::VectorType,
+    },
+    VectorStore {
+        dst: MachineOperand,
+        src: MachineOperand,
+        vec_type: crate::opt::VectorType,
+    },
+    VectorBroadcast {
+        dst: MachineOperand,
+        src: MachineOperand,
+        vec_type: crate::opt::VectorType,
+    },
+    VectorShuffle {
+        dst: MachineOperand,
+        src: MachineOperand,
+        mask: u8,
+        vec_type: crate::opt::VectorType,
+    },
+    VectorReduceAdd {
+        dst: MachineOperand,
+        src: MachineOperand,
+        vec_type: crate::opt::VectorType,
+    },
+    // First-Class Atomic Concurrency Instructions
+    AtomicLoad {
+        dst: MachineOperand,
+        src: MachineOperand,
+        size: u8,
+    },
+    AtomicStore {
+        dst: MachineOperand,
+        src: MachineOperand,
+        size: u8,
+    },
+    AtomicFetchAdd {
+        dst: MachineOperand,
+        src: MachineOperand,
+        size: u8,
+    },
+    AtomicCompareExchange {
+        dst: MachineOperand,
+        expected: MachineOperand,
+        desired: MachineOperand,
+        size: u8,
+    },
+    Barrier,
 }
 
 impl MachineInstruction {
@@ -559,7 +647,21 @@ impl MachineInstruction {
             | MachineInstruction::FNeg { dst, .. }
             | MachineInstruction::FCvtIntToFloat { dst, .. }
             | MachineInstruction::FCvtFloatToInt { dst, .. }
-            | MachineInstruction::FCvtFloatToFloat { dst, .. } => {
+            | MachineInstruction::FCvtFloatToFloat { dst, .. }
+            | MachineInstruction::VectorAdd { dst, .. }
+            | MachineInstruction::VectorSub { dst, .. }
+            | MachineInstruction::VectorMul { dst, .. }
+            | MachineInstruction::VectorDiv { dst, .. }
+            | MachineInstruction::VectorAnd { dst, .. }
+            | MachineInstruction::VectorOr { dst, .. }
+            | MachineInstruction::VectorXor { dst, .. }
+            | MachineInstruction::VectorLoad { dst, .. }
+            | MachineInstruction::VectorBroadcast { dst, .. }
+            | MachineInstruction::VectorShuffle { dst, .. }
+            | MachineInstruction::VectorReduceAdd { dst, .. }
+            | MachineInstruction::AtomicLoad { dst, .. }
+            | MachineInstruction::AtomicFetchAdd { dst, .. }
+            | MachineInstruction::AtomicCompareExchange { dst, .. } => {
                 if let Some(r) = dst.register_def() {
                     defs.push(r);
                 }
@@ -609,13 +711,19 @@ impl MachineInstruction {
             | MachineInstruction::Load { src, dst, .. }
             | MachineInstruction::FCvtIntToFloat { src, dst, .. }
             | MachineInstruction::FCvtFloatToInt { src, dst, .. }
-            | MachineInstruction::FCvtFloatToFloat { src, dst, .. } => {
+            | MachineInstruction::FCvtFloatToFloat { src, dst, .. }
+            | MachineInstruction::VectorLoad { src, dst, .. }
+            | MachineInstruction::VectorBroadcast { src, dst, .. }
+            | MachineInstruction::VectorReduceAdd { src, dst, .. }
+            | MachineInstruction::AtomicLoad { src, dst, .. } => {
                 add_op(src);
                 if matches!(dst, MachineOperand::Memory { .. }) {
                     add_op(dst);
                 }
             }
-            MachineInstruction::Store { dst, src, .. } => {
+            MachineInstruction::Store { dst, src, .. }
+            | MachineInstruction::VectorStore { dst, src, .. }
+            | MachineInstruction::AtomicStore { dst, src, .. } => {
                 add_op(dst);
                 add_op(src);
             }
@@ -633,9 +741,28 @@ impl MachineInstruction {
             | MachineInstruction::FAdd { dst, src, .. }
             | MachineInstruction::FSub { dst, src, .. }
             | MachineInstruction::FMul { dst, src, .. }
-            | MachineInstruction::FDiv { dst, src, .. } => {
+            | MachineInstruction::FDiv { dst, src, .. }
+            | MachineInstruction::VectorAdd { dst, src, .. }
+            | MachineInstruction::VectorSub { dst, src, .. }
+            | MachineInstruction::VectorMul { dst, src, .. }
+            | MachineInstruction::VectorDiv { dst, src, .. }
+            | MachineInstruction::VectorAnd { dst, src, .. }
+            | MachineInstruction::VectorOr { dst, src, .. }
+            | MachineInstruction::VectorXor { dst, src, .. }
+            | MachineInstruction::VectorShuffle { dst, src, .. }
+            | MachineInstruction::AtomicFetchAdd { dst, src, .. } => {
                 add_op(dst);
                 add_op(src);
+            }
+            MachineInstruction::AtomicCompareExchange {
+                dst,
+                expected,
+                desired,
+                ..
+            } => {
+                add_op(dst);
+                add_op(expected);
+                add_op(desired);
             }
             MachineInstruction::Compare { lhs, rhs }
             | MachineInstruction::Test { lhs, rhs }
@@ -758,6 +885,8 @@ impl MachineFunction {
     }
 
     /// Build and update control flow graph edges (`predecessors` and `successors`) for all basic blocks.
+    /// Evaluates actual block terminators (Branch, BranchCc, Return, fallthrough) and maintains
+    /// deterministic, deduplicated predecessor/successor lists.
     pub fn rebuild_cfg(&mut self) {
         let label_to_id: std::collections::HashMap<String, u32> = self
             .blocks
@@ -775,30 +904,48 @@ impl MachineFunction {
 
         for (i, block) in self.blocks.iter().enumerate() {
             let src_id = block.id;
-            let mut has_unconditional_jump = false;
-            let mut terminates = false;
+
+            // Determine terminator(s) at the end of the block.
+            // A well-formed block ends with:
+            // 1. Return
+            // 2. Branch { target }
+            // 3. BranchCc { target, .. } followed by Branch { target: target2 }
+            // 4. BranchCc { target, .. } (with fallthrough to block i + 1)
+            // 5. Fallthrough to block i + 1 (no branches)
+            let mut branch_cc_target = None;
+            let mut unconditional_target = None;
+            let mut is_return = false;
 
             for inst in &block.instructions {
+                if is_return || unconditional_target.is_some() {
+                    // Instruction after Return or unconditional Branch is unreachable
+                    continue;
+                }
                 match inst {
-                    MachineInstruction::Branch { target } => {
-                        if let Some(&tgt_id) = label_to_id.get(target) {
-                            edges.push((src_id, tgt_id));
-                        }
-                        has_unconditional_jump = true;
-                    }
                     MachineInstruction::BranchCc { target, .. } => {
-                        if let Some(&tgt_id) = label_to_id.get(target) {
-                            edges.push((src_id, tgt_id));
-                        }
+                        branch_cc_target = Some(target.clone());
+                    }
+                    MachineInstruction::Branch { target } => {
+                        unconditional_target = Some(target.clone());
                     }
                     MachineInstruction::Return => {
-                        terminates = true;
+                        is_return = true;
                     }
                     _ => {}
                 }
             }
 
-            if !has_unconditional_jump && !terminates && i + 1 < num_blocks {
+            if let Some(target) = branch_cc_target
+                && let Some(&tgt_id) = label_to_id.get(&target)
+            {
+                edges.push((src_id, tgt_id));
+            }
+
+            if let Some(target) = unconditional_target {
+                if let Some(&tgt_id) = label_to_id.get(&target) {
+                    edges.push((src_id, tgt_id));
+                }
+            } else if !is_return && i + 1 < num_blocks {
                 let fallthrough_id = self.blocks[i + 1].id;
                 edges.push((src_id, fallthrough_id));
             }
@@ -815,6 +962,13 @@ impl MachineFunction {
             {
                 dst_block.predecessors.push(src);
             }
+        }
+
+        for block in &mut self.blocks {
+            block.predecessors.sort_unstable();
+            block.predecessors.dedup();
+            block.successors.sort_unstable();
+            block.successors.dedup();
         }
     }
 

@@ -963,7 +963,8 @@ fn type_from_annotation(ann: &str) -> HirType {
     let ann_lower = ann.to_ascii_lowercase();
 
     match ann_lower.as_str() {
-        "int" | "number" | "float" | "array" => HirType::Unknown,
+        "int" | "number" | "array" => HirType::Unknown,
+        "float" => HirType::Float,
         "f32" => HirType::F32,
         "f64" => HirType::F64,
         "u8" => HirType::U8,
@@ -1188,7 +1189,7 @@ mod tests {
             HirType::Array(Box::new(HirType::U8), ArrayKind::Dynamic)
         );
         assert_eq!(type_from_annotation("int"), HirType::Unknown);
-        assert_eq!(type_from_annotation("float"), HirType::Unknown);
+        assert_eq!(type_from_annotation("float"), HirType::Float);
         assert_eq!(type_from_annotation("array<u8>"), HirType::Unknown);
     }
 }

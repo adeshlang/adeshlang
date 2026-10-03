@@ -1,8 +1,8 @@
 use adesh_codegen::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
-    NativeModule,
+    NativeModule, PhysicalRegister,
 };
-use adesh_codegen::opt::{ArrayOptimizer, OptimizationPipeline};
+use adesh_codegen::opt::{ArrayOptimizer, OptLevel, OptimizationPipeline};
 use adesh_codegen::safety::StackCanaryPass;
 use adesh_codegen::targets::create_backend;
 use adesh_object::TargetDescriptor;
@@ -96,10 +96,11 @@ fn test_binary_optimization_and_size_reduction() {
     let dead_r = func.alloc_vreg();
 
     let block = func.entry_block_mut();
-    // r0 = 100; r0 = r0 * 4 (strength reduced to shl 2); dead_r = 500 (DCE); return
-    block.push(MachineInstruction::Move {
+    // r0 = load [rsp-8]; r0 = r0 * 4 (strength reduced to shl 2); dead_r = 500 (DCE); return
+    block.push(MachineInstruction::Load {
         dst: MachineOperand::Register(MachineRegister::Virtual(r0)),
-        src: MachineOperand::Immediate(100),
+        src: MachineOperand::StackSlot(-8),
+        size: 8,
     });
     block.push(MachineInstruction::Mul {
         dst: MachineOperand::Register(MachineRegister::Virtual(r0)),
@@ -111,8 +112,10 @@ fn test_binary_optimization_and_size_reduction() {
     });
     block.push(MachineInstruction::Return);
 
-    let pipeline = OptimizationPipeline::new(3);
-    let total_savings = pipeline.optimize_function(&mut func);
+    let mut pipeline = OptimizationPipeline::new(OptLevel::O3);
+    let total_savings = pipeline
+        .optimize_function_pre_alloc(&mut func)
+        .expect("optimize pre-alloc");
     assert!(
         total_savings > 0,
         "Optimization passes should improve instruction stream"

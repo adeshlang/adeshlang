@@ -1,10 +1,11 @@
 //! Mach-O 64-bit Executable Writer.
 
-use crate::error::LinkResult;
+use crate::error::{ErrorCode, LinkError, LinkResult};
 use crate::macho::header::*;
 use crate::section::{MergedSection, SectionKind, align_to};
 use crate::symbol::Symbol;
 use crate::target::{Arch, Target};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
@@ -113,12 +114,12 @@ impl MachOWriter {
             current_vmaddr += sec.data.len() as u64;
         }
 
-        let text_filesize = current_file_offset;
-        let text_vmsize = align_to(current_vmaddr - text_vmaddr, target.page_size);
+        let mut text_filesize = current_file_offset;
+        let mut text_vmsize = align_to(current_vmaddr - text_vmaddr, target.page_size);
 
         // 3. Layout __DATA segment payload
-        let data_file_offset_start = align_to(current_file_offset, target.page_size);
-        let data_vmaddr_start = text_vmaddr + text_vmsize;
+        let mut data_file_offset_start = align_to(current_file_offset, target.page_size);
+        let mut data_vmaddr_start = text_vmaddr + text_vmsize;
 
         if data_file_offset_start > current_file_offset {
             let pad = (data_file_offset_start - current_file_offset) as usize;
@@ -156,8 +157,110 @@ impl MachOWriter {
             current_vmaddr += sec.size;
         }
 
-        let data_filesize = current_file_offset - data_file_offset_start;
-        let data_vmsize = align_to(current_vmaddr - data_vmaddr_start, target.page_size);
+        let mut data_filesize = current_file_offset - data_file_offset_start;
+        let mut data_vmsize = align_to(current_vmaddr - data_vmaddr_start, target.page_size);
+
+        // When the layout engine assigned virtual addresses (the normal link
+        // path), those addresses are authoritative: every relocation was
+        // patched against them, so the writer must place each section at
+        // exactly its assigned VA rather than re-deriving its own layout.
+        // The file offset is the identity image of the VA
+        // (offset = VA - __TEXT vmaddr), which keeps each segment's fileoff
+        // ≡ vmaddr (mod page_size).
+        let has_layout_vas = merged_sections.iter().any(|s| s.virtual_address != 0);
+        if has_layout_vas {
+            // The sequential pass above wrote section bytes at its own
+            // offsets; start over so the authoritative placement below is the
+            // only thing in the file body.
+            output.truncate(headers_size);
+
+            let mut text_file_end = headers_size as u64;
+            let mut text_va_end = text_vmaddr + headers_size as u64;
+            let mut data_off_min: Option<u64> = None;
+            let mut data_va_min: Option<u64> = None;
+            let mut data_file_end = 0u64;
+            let mut data_va_end = 0u64;
+            text_sec_records.clear();
+            data_sec_records.clear();
+
+            for sec in merged_sections {
+                if sec.virtual_address < text_vmaddr {
+                    return Err(LinkError::new(
+                        ErrorCode::InvalidSection,
+                        format!(
+                            "section `{}` virtual address 0x{:x} is below the __TEXT vmaddr 0x{:x}",
+                            sec.name, sec.virtual_address, text_vmaddr
+                        ),
+                    ));
+                }
+                let off = sec.virtual_address - text_vmaddr;
+                let file_len = if sec.kind == SectionKind::Bss {
+                    0
+                } else {
+                    sec.data.len() as u64
+                };
+                let mem_len = sec.size.max(sec.data.len() as u64);
+
+                if file_len > 0 {
+                    let start = off as usize;
+                    let end = start + file_len as usize;
+                    if output.len() < end {
+                        output.resize(end, 0);
+                    }
+                    output[start..end].copy_from_slice(&sec.data);
+                }
+
+                let is_text =
+                    sec.is_executable() || (!sec.is_writable() && sec.kind != SectionKind::Bss);
+                if is_text {
+                    text_sec_records.push((
+                        sec.name.clone(),
+                        sec.virtual_address,
+                        file_len,
+                        off as u32,
+                        sec.alignment,
+                    ));
+                    text_file_end = text_file_end.max(off + file_len);
+                    text_va_end = text_va_end.max(sec.virtual_address + mem_len);
+                } else {
+                    data_sec_records.push((
+                        sec.name.clone(),
+                        sec.virtual_address,
+                        mem_len,
+                        if sec.kind == SectionKind::Bss {
+                            0
+                        } else {
+                            off as u32
+                        },
+                        sec.alignment,
+                    ));
+                    data_off_min = Some(data_off_min.map_or(off, |m| m.min(off)));
+                    data_va_min = Some(
+                        data_va_min.map_or(sec.virtual_address, |m| m.min(sec.virtual_address)),
+                    );
+                    data_file_end = data_file_end.max(off + file_len);
+                    data_va_end = data_va_end.max(sec.virtual_address + mem_len);
+                }
+            }
+
+            let (data_off_start, data_va_start) = match (data_off_min, data_va_min) {
+                (Some(off), Some(va)) => (off, va),
+                _ => (
+                    align_to(text_file_end, target.page_size),
+                    align_to(text_va_end, target.page_size),
+                ),
+            };
+
+            text_filesize = text_file_end;
+            text_vmsize = align_to(text_va_end - text_vmaddr, target.page_size);
+            data_file_offset_start = data_off_start;
+            data_vmaddr_start = data_va_start;
+            // With no writable sections there is no __DATA payload at all.
+            data_filesize = data_file_end.saturating_sub(data_off_start);
+            data_vmsize = data_va_end.saturating_sub(data_va_start);
+            // __LINKEDIT continues after the last section byte.
+            current_file_offset = output.len() as u64;
+        }
 
         // 4. Layout __LINKEDIT (Symbols and Strings)
         let linkedit_file_offset = align_to(current_file_offset, target.page_size);
@@ -171,6 +274,47 @@ impl MachOWriter {
         let mut strtab = vec![0u8, 0u8, 0u8, 0u8]; // start with 4-byte padding
         let mut nlists = Vec::new();
 
+        // Map an input (file, section) pair to its merged output section.
+        // Mach-O numbers sections across __TEXT then __DATA (n_sect = 1..),
+        // so a symbol's section must be looked up in the merged output rather
+        // than reused from the input object's local index.
+        let mut input_sec_to_out: HashMap<(usize, usize), usize> = HashMap::new();
+        for (out_idx, sec) in merged_sections.iter().enumerate() {
+            for &(f_idx, s_idx, _) in &sec.input_sections {
+                input_sec_to_out.insert((f_idx, s_idx), out_idx);
+            }
+        }
+        let is_text_flags: Vec<bool> = merged_sections
+            .iter()
+            .map(|sec| sec.is_executable() || (!sec.is_writable() && sec.kind != SectionKind::Bss))
+            .collect();
+        let text_count = is_text_flags.iter().filter(|t| **t).count();
+        let mut n_sect_for: Vec<u8> = Vec::with_capacity(merged_sections.len());
+        let mut text_seen = 0usize;
+        let mut data_seen = 0usize;
+        for is_text in is_text_flags {
+            if is_text {
+                text_seen += 1;
+                n_sect_for.push(text_seen as u8);
+            } else {
+                data_seen += 1;
+                n_sect_for.push((text_count + data_seen) as u8);
+            }
+        }
+        let output_section_number = |sym: &Symbol| -> Option<u8> {
+            sym.file_index
+                .zip(sym.section_index)
+                .and_then(|key| input_sec_to_out.get(&key).copied())
+                .or_else(|| {
+                    merged_sections.iter().position(|sec| {
+                        sec.size > 0
+                            && sym.value >= sec.virtual_address
+                            && sym.value < sec.virtual_address + sec.size
+                    })
+                })
+                .and_then(|idx| n_sect_for.get(idx).copied())
+        };
+
         for sym in symbols {
             if !sym.name.is_empty() {
                 let n_strx = strtab.len() as u32;
@@ -178,7 +322,11 @@ impl MachOWriter {
                 strtab.push(0);
 
                 let n_type = if sym.is_defined { 0x0E } else { 0x01 }; // N_SECT | N_EXT vs N_UNDF | N_EXT
-                let n_sect = if sym.is_defined { 1 } else { 0 };
+                let n_sect = if sym.is_defined {
+                    output_section_number(sym).unwrap_or(0)
+                } else {
+                    0
+                };
 
                 nlists.push(Nlist64 {
                     n_strx,

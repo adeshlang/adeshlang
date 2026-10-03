@@ -54,6 +54,10 @@ pub const SHT_NOTE: u32 = 7;
 pub const SHT_NOBITS: u32 = 8;
 pub const SHT_REL: u32 = 9;
 pub const SHT_DYNSYM: u32 = 11;
+pub const SHT_GROUP: u32 = 17;
+
+// Section group flags
+pub const GRP_COMDAT: u32 = 0x1;
 
 // Section flags (sh_flags)
 pub const SHF_WRITE: u64 = 0x1;
@@ -62,7 +66,13 @@ pub const SHF_EXECINSTR: u64 = 0x4;
 pub const SHF_MERGE: u64 = 0x10;
 pub const SHF_STRINGS: u64 = 0x20;
 pub const SHF_INFO_LINK: u64 = 0x40;
+pub const SHF_GROUP: u64 = 0x200;
 pub const SHF_TLS: u64 = 0x400;
+
+// Special section indices
+pub const SHN_UNDEF: u16 = 0;
+pub const SHN_LORESERVE: u16 = 0xff00;
+pub const SHN_COMMON: u16 = 0xfff2;
 
 // Symbol bindings
 pub const STB_LOCAL: u8 = 0;

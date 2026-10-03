@@ -13,6 +13,18 @@
 //!  3. The PE emitter consumes the `DllImport` routes directly for the import table.
 
 use crate::target::{ObjectFormat, Target};
+use std::collections::HashSet;
+use std::sync::LazyLock;
+
+/// O(1) membership test for one exact DLL export table.
+///
+/// `clean` has its leading underscores stripped; `raw` keeps them (several
+/// tables also list `__`-prefixed MSVC specials). Building the set once per
+/// table removes the two linear scans per symbol the previous implementation
+/// performed.
+fn in_set(table: &HashSet<&'static str>, clean: &str, raw: &str) -> bool {
+    table.contains(clean) || (raw != clean && table.contains(raw))
+}
 
 /// Where to route an unresolved symbol.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,6 +116,37 @@ impl OsApiRouter {
             return false;
         }
         Self::is_internal(name)
+    }
+
+    /// Strictly anchored internal-name test: Rust and MSVC/Adesh mangled
+    /// identities only.
+    ///
+    /// Unlike [`Self::is_internal`], this never matches on a loose substring
+    /// (for example `..`), so a genuinely unknown application symbol is not
+    /// misclassified as toolchain-internal and silently stubbed.
+    pub fn is_mangled_internal(name: &str) -> bool {
+        let n = name
+            .strip_prefix("__imp_")
+            .or_else(|| name.strip_prefix("_imp_"))
+            .unwrap_or(name);
+        // Rust legacy (_ZN.../ZN...) and v0 (R_.../_R...) mangling.
+        if n.starts_with("_ZN") || n.starts_with("ZN") || n.starts_with("_R") || n.starts_with("R_")
+        {
+            return true;
+        }
+        // MSVC C++ mangling.
+        if n.starts_with("??") {
+            return true;
+        }
+        // Rust/Adesh runtime internals and compiler-local labels.
+        n.starts_with("__rust")
+            || n.starts_with("___rust")
+            || n.starts_with("rust_")
+            || n.starts_with("_rust_")
+            || n.starts_with("anon.")
+            || n.starts_with("__func__")
+            || n.starts_with('$')
+            || n.starts_with('.')
     }
 
     /// Returns true for Adesh compiler/runtime ABI entry points.
@@ -217,14 +260,18 @@ impl OsApiRouter {
             "NtCancelIoFileEx",
             "NtQueryVolumeInformationFile",
         ];
-        if NTDLL_EXACT.contains(&clean) || NTDLL_EXACT.contains(&raw) {
+        static NTDLL_SET: LazyLock<HashSet<&'static str>> =
+            LazyLock::new(|| NTDLL_EXACT.iter().copied().collect());
+        if in_set(&NTDLL_SET, clean, raw) {
             return Some("ntdll.dll");
         }
 
         // ── Exact-match: kernelbase.dll ──────────────────────────────────────
         const KERNELBASE_EXACT: &[&str] =
             &["WaitOnAddress", "WakeByAddressAll", "WakeByAddressSingle"];
-        if KERNELBASE_EXACT.contains(&clean) || KERNELBASE_EXACT.contains(&raw) {
+        static KERNELBASE_SET: LazyLock<HashSet<&'static str>> =
+            LazyLock::new(|| KERNELBASE_EXACT.iter().copied().collect());
+        if in_set(&KERNELBASE_SET, clean, raw) {
             return Some("kernelbase.dll");
         }
 
@@ -271,7 +318,9 @@ impl OsApiRouter {
             "gethostname",
             "GetHostNameW",
         ];
-        if WS2_EXACT.contains(&clean) || WS2_EXACT.contains(&raw) {
+        static WS2_SET: LazyLock<HashSet<&'static str>> =
+            LazyLock::new(|| WS2_EXACT.iter().copied().collect());
+        if in_set(&WS2_SET, clean, raw) {
             return Some("ws2_32.dll");
         }
 
@@ -416,8 +465,159 @@ impl OsApiRouter {
             "LockFileEx",
             "UnlockFile",
             "LockFile",
+            // Common APIs that the previous broad verb prefixes used to catch.
+            // Prefix routing was removed (it turned user symbols such as
+            // `GetValue` into bogus KERNEL32 imports), so the well-known names
+            // must be listed explicitly.
+            "GetFileSize",
+            "GetFileTime",
+            "GetVersion",
+            "GetVersionExA",
+            "GetVersionExW",
+            "GetSystemTime",
+            "GetLocalTime",
+            "GetTickCount",
+            "GetTickCount64",
+            "GetTimeZoneInformation",
+            "GetACP",
+            "GetOEMCP",
+            "GetCPInfo",
+            "GetStartupInfoA",
+            "GetStartupInfoW",
+            "GetThreadContext",
+            "GetModuleHandleExA",
+            "GetModuleHandleExW",
+            "GetModuleFileNameA",
+            "GetFileAttributesA",
+            "GetFileAttributesExA",
+            "GetFileAttributesExW",
+            "GetSystemWindowsDirectoryW",
+            "GetComputerNameW",
+            "GetUserNameW",
+            "GetActiveProcessorCount",
+            "GetCurrentThreadStackLimits",
+            "GetThreadDescription",
+            "GetEnvironmentStringsA",
+            "GetEnvironmentVariableA",
+            "GetStringTypeW",
+            "GetLocaleInfoW",
+            "GetLocaleInfoEx",
+            "GetProcessHeap",
+            "GetProcessTimes",
+            "GetThreadTimes",
+            "GetConsoleCP",
+            "GetConsoleWindow",
+            "GetConsoleScreenBufferInfo",
+            "GetExitCodeThread",
+            "GetThreadPriority",
+            "GetTempFileNameW",
+            "GetTempPathA",
+            "GetVolumeInformationW",
+            "GetDiskFreeSpaceExW",
+            "GetUserDefaultLocaleName",
+            "GetSystemDefaultLocaleName",
+            "CreateFileA",
+            "CreateFileW",
+            "CreateFileMappingA",
+            "CreateFileMappingW",
+            "OpenFileMappingW",
+            "CreateIoCompletionPort",
+            "CreateSemaphoreW",
+            "CreateTimerQueueTimer",
+            "CreateToolhelp32Snapshot",
+            "ReadFile",
+            "ReadDirectoryChangesW",
+            "WriteFile",
+            "CloseHandle",
+            "DeleteCriticalSection",
+            "DeleteFileA",
+            "MoveFileA",
+            "MoveFileW",
+            "MoveFileExA",
+            "FindFirstFileA",
+            "FindFirstFileW",
+            "FindNextFileA",
+            "FindFirstFileExA",
+            "GlobalLock",
+            "GlobalUnlock",
+            "GlobalHandle",
+            "GlobalFlags",
+            "GlobalReAlloc",
+            "GlobalSize",
+            "FreeLibraryAndExitThread",
+            "HeapAlloc",
+            "HeapFree",
+            "HeapCreate",
+            "HeapDestroy",
+            "HeapValidate",
+            "HeapLock",
+            "HeapUnlock",
+            "HeapSetInformation",
+            "HeapQueryInformation",
+            "HeapSummary",
+            "HeapCompact",
+            "VirtualAlloc",
+            "VirtualFree",
+            "VirtualLock",
+            "VirtualUnlock",
+            "VirtualProtectEx",
+            "QueryFullProcessImageNameW",
+            "QueryThreadCycleTime",
+            "QueryProcessCycleTime",
+            "AddVectoredContinueHandler",
+            "RemoveVectoredContinueHandler",
+            "AddDllDirectory",
+            "RemoveDllDirectory",
+            "InitializeCriticalSection",
+            "InitializeCriticalSectionEx",
+            "InitializeCriticalSectionAndSpinCount",
+            "InitializeSListHead",
+            "InitializeConditionVariable",
+            "InitializeSRWLock",
+            "EnterCriticalSection",
+            "TryEnterCriticalSection",
+            "LeaveCriticalSection",
+            "DeleteTimerQueueTimer",
+            "ReleaseSemaphore",
+            "SleepConditionVariableCS",
+            "WakeConditionVariable",
+            "WakeAllConditionVariable",
+            "SetFilePointer",
+            "SetFileTime",
+            "SetEndOfFile",
+            "SetErrorMode",
+            "SetPriorityClass",
+            "SetThreadPriority",
+            "SetProcessAffinityMask",
+            "SetConsoleCtrlHandler",
+            "SetConsoleTextAttribute",
+            "SetConsoleTitleW",
+            "SetDefaultDllDirectories",
+            "SetDllDirectoryW",
+            "SetThreadLocale",
+            "SetEnvironmentVariableA",
+            "SetNamedPipeHandleState",
+            "SetFileValidData",
+            "SetFileCompletionNotificationModes",
+            "Process32FirstW",
+            "Process32NextW",
+            "Module32FirstW",
+            "Module32NextW",
+            "OpenProcess",
+            "OpenThread",
+            "CancelSynchronousIo",
+            "MapViewOfFile",
+            "UnmapViewOfFile",
+            "FlushViewOfFile",
+            "CompareStringA",
+            "LCMapStringW",
+            "TerminateThread",
+            "SetThreadContext",
+            "GetSystemFirmwareTable",
         ];
-        if KERNEL32_EXACT.contains(&clean) || KERNEL32_EXACT.contains(&raw) {
+        static KERNEL32_SET: LazyLock<HashSet<&'static str>> =
+            LazyLock::new(|| KERNEL32_EXACT.iter().copied().collect());
+        if in_set(&KERNEL32_SET, clean, raw) {
             return Some("KERNEL32.dll");
         }
 
@@ -431,7 +631,9 @@ impl OsApiRouter {
             "LookupPrivilegeValueW",
             "SystemFunction036",
         ];
-        if ADVAPI32_EXACT.contains(&clean) || ADVAPI32_EXACT.contains(&raw) {
+        static ADVAPI32_SET: LazyLock<HashSet<&'static str>> =
+            LazyLock::new(|| ADVAPI32_EXACT.iter().copied().collect());
+        if in_set(&ADVAPI32_SET, clean, raw) {
             return Some("advapi32.dll");
         }
 
@@ -466,7 +668,9 @@ impl OsApiRouter {
             "GetClientRect",
             "GetWindowRect",
         ];
-        if USER32_EXACT.contains(&clean) || USER32_EXACT.contains(&raw) {
+        static USER32_SET: LazyLock<HashSet<&'static str>> =
+            LazyLock::new(|| USER32_EXACT.iter().copied().collect());
+        if in_set(&USER32_SET, clean, raw) {
             return Some("user32.dll");
         }
 
@@ -480,7 +684,9 @@ impl OsApiRouter {
             "BCryptHashData",
             "BCryptFinishHash",
         ];
-        if BCRYPT_EXACT.contains(&clean) || BCRYPT_EXACT.contains(&raw) {
+        static BCRYPT_SET: LazyLock<HashSet<&'static str>> =
+            LazyLock::new(|| BCRYPT_EXACT.iter().copied().collect());
+        if in_set(&BCRYPT_SET, clean, raw) {
             return Some("bcrypt.dll");
         }
 
@@ -492,295 +698,281 @@ impl OsApiRouter {
             "StackWalk64",
             "MiniDumpWriteDump",
         ];
-        if DBGHELP_EXACT.contains(&clean) || DBGHELP_EXACT.contains(&raw) {
+        static DBGHELP_SET: LazyLock<HashSet<&'static str>> =
+            LazyLock::new(|| DBGHELP_EXACT.iter().copied().collect());
+        if in_set(&DBGHELP_SET, clean, raw) {
             return Some("dbghelp.dll");
         }
 
-        // ── Prefix rules: ntdll.dll ──────────────────────────────────────────
+        // ── Prefix rules: unambiguous API namespaces only ────────────────────
+        //
+        // Only families whose names cannot plausibly be user symbols are routed
+        // by prefix. The previous implementation also routed the broad English
+        // verb families (`Get*`, `Set*`, `Create*`, `Read*`, `Write*`, ...),
+        // which turned any undefined application symbol such as `GetValue`
+        // into a bogus KERNEL32.dll import: the image still linked, but the
+        // Windows loader then refused to start it. Everything else must be in
+        // the exact tables above, otherwise the symbol stays Undefined and the
+        // link fails with a clear, actionable error.
         if clean.starts_with("Nt") || clean.starts_with("Zw") || clean.starts_with("RtlNtStatus") {
             return Some("ntdll.dll");
         }
-
-        // ── Prefix rules: KERNEL32.dll ───────────────────────────────────────
-        if clean.starts_with("Rtl")         // RtlCaptureContext, RtlVirtualUnwind…
-            || clean.starts_with("Heap")    // HeapAlloc, HeapFree…
-            || clean.starts_with("Virtual") // VirtualAlloc, VirtualFree…
-            || clean.starts_with("Tls")     // TlsAlloc, TlsFree…
-            || clean.starts_with("Get")
-            || clean.starts_with("Set")
-            || clean.starts_with("Create")
-            || clean.starts_with("Close")
-            || clean.starts_with("Read")
-            || clean.starts_with("Write")
-            || clean.starts_with("Delete")
-            || clean.starts_with("Move")
-            || clean.starts_with("Find")
-            || clean.starts_with("Local")
-            || clean.starts_with("Global")
-            || clean.starts_with("Load")
-            || clean.starts_with("Free")
-            || clean.starts_with("Sleep")
-            || clean.starts_with("Switch")
-            || clean.starts_with("Query")
-            || clean.starts_with("Add")
-            || clean.starts_with("Remove")
-            || clean.starts_with("Duplicate")
-            || clean.starts_with("Flush")
-            || clean.starts_with("WaitFor")
-            || clean.starts_with("Terminate")
-            || clean.starts_with("FormatMessage")
-            || clean.starts_with("WideChar")
-            || clean.starts_with("MultiByte")
-            || clean.starts_with("SystemTime")
-            || clean.starts_with("FileTime")
-            || clean.starts_with("DeviceIoControl")
-            || clean.starts_with("CancelIo")
-            || clean.starts_with("Initialize")
-            || clean.starts_with("Enter")
-            || clean.starts_with("Leave")
-        {
+        if clean.starts_with("Rtl") {
             return Some("KERNEL32.dll");
         }
-
-        // ── Prefix rules: ws2_32.dll ─────────────────────────────────────────
-        if clean.starts_with("WSA")
-            || clean.starts_with("GetAddrInfo")
-            || clean.starts_with("FreeAddrInfo")
-        {
+        if clean.starts_with("WSA") {
             return Some("ws2_32.dll");
         }
-
-        // ── Prefix rules: advapi32.dll ───────────────────────────────────────
+        if clean.starts_with("BCrypt") {
+            return Some("bcrypt.dll");
+        }
         if clean.starts_with("Reg")
             || clean.starts_with("Crypt")
-            || clean.starts_with("BCrypt")
             || clean.starts_with("SystemFunction")
         {
             return Some("advapi32.dll");
         }
-
-        // ── Prefix rules: user32.dll ─────────────────────────────────────────
-        if clean.starts_with("MessageBox")
-            || clean.starts_with("GetDesktop")
-            || clean.starts_with("ShowWindow")
-        {
+        if clean.starts_with("MessageBox") {
             return Some("user32.dll");
         }
 
-        // ── CRT functions → msvcrt.dll ───────────────────────────────────────
-        const MSVCRT_EXACT: &[&str] = &[
-            // stdio
-            "printf",
-            "fprintf",
-            "sprintf",
-            "snprintf",
-            "vprintf",
-            "vfprintf",
-            "vsprintf",
-            "vsnprintf",
-            "puts",
-            "putchar",
-            "putchar_unlocked",
-            "gets",
-            "getchar",
-            "fopen",
-            "fclose",
-            "fread",
-            "fwrite",
-            "fseek",
-            "ftell",
-            "fflush",
-            "feof",
-            "ferror",
-            "clearerr",
-            "fgetc",
-            "fputc",
-            "fgets",
-            "fputs",
-            "freopen",
-            "tmpfile",
-            "tmpnam",
-            "scanf",
-            "fscanf",
-            "sscanf",
-            "perror",
-            "__acrt_iob_func",
-            "__stdio_common_vfprintf",
-            "__stdio_common_vsprintf",
-            "__stdio_common_vsscanf",
-            // stdlib
-            "malloc",
-            "calloc",
-            "realloc",
-            "free",
-            "exit",
-            "abort",
-            "_exit",
-            "atexit",
-            "at_quick_exit",
-            "getenv",
-            "system",
-            "atoi",
-            "atol",
-            "atoll",
-            "atof",
-            "strtol",
-            "strtoul",
-            "strtoll",
-            "strtoull",
-            "strtod",
-            "strtof",
-            "qsort",
-            "bsearch",
-            "abs",
-            "labs",
-            "llabs",
-            "rand",
-            "srand",
-            // string
-            "strlen",
-            "strcpy",
-            "strncpy",
-            "strcat",
-            "strncat",
-            "strcmp",
-            "strncmp",
-            "strcasecmp",
-            "strncasecmp",
-            "strchr",
-            "strrchr",
-            "strstr",
-            "strtok",
-            "strtok_r",
-            "strdup",
-            "strndup",
-            // memory
-            "memcpy",
-            "memmove",
-            "memset",
-            "memcmp",
-            "memchr",
-            // math
-            "sin",
-            "cos",
-            "tan",
-            "asin",
-            "acos",
-            "atan",
-            "atan2",
-            "sinh",
-            "cosh",
-            "tanh",
-            "asinh",
-            "acosh",
-            "atanh",
-            "exp",
-            "exp2",
-            "log",
-            "log2",
-            "log10",
-            "pow",
-            "sqrt",
-            "cbrt",
-            "hypot",
-            "floor",
-            "ceil",
-            "round",
-            "trunc",
-            "fabs",
-            "fmod",
-            "remainder",
-            "fmin",
-            "fmax",
-            "fma",
-            "copysign",
-            "ldexp",
-            "frexp",
-            "modf",
-            "scalbn",
-            "sinf",
-            "cosf",
-            "tanf",
-            "asinf",
-            "acosf",
-            "atanf",
-            "atan2f",
-            "sinhf",
-            "coshf",
-            "tanhf",
-            "expf",
-            "exp2f",
-            "logf",
-            "log2f",
-            "log10f",
-            "powf",
-            "sqrtf",
-            "cbrtf",
-            "hypotf",
-            "floorf",
-            "ceilf",
-            "roundf",
-            "truncf",
-            "fabsf",
-            "fmodf",
-            "fminf",
-            "fmaxf",
-            "copysignf",
-            // time
-            "time",
-            "clock",
-            "difftime",
-            "mktime",
-            "gmtime",
-            "localtime",
-            "strftime",
-            "asctime",
-            "ctime",
-            // io / locale
-            "setlocale",
-            "islower",
-            "isupper",
-            "isdigit",
-            "isalpha",
-            "isalnum",
-            "isspace",
-            "ispunct",
-            "tolower",
-            "toupper",
-            // MSVC CRT specials
-            "__chkstk",
-            "___chkstk_ms",
-            "__CxxFrameHandler3",
-            "__CxxFrameHandler4",
-            "_CxxThrowException",
-            "CxxThrowException",
-            "_purecall",
-            "purecall",
-            "__p__argc",
-            "__p__argv",
-            "__p__wenviron",
-            "acrt_iob_func",
-            "stdio_common_vfprintf",
-            "stdio_common_vsprintf",
-            "chkstk",
-            "CxxFrameHandler3",
-            "CxxFrameHandler4",
-        ];
-        if MSVCRT_EXACT.contains(&clean) || MSVCRT_EXACT.contains(&raw) {
-            return Some("msvcrt.dll");
-        }
-
-        // ── Prefix rules: msvcrt.dll ─────────────────────────────────────────
-        if clean.starts_with("acrt")
+        // ── Universal CRT internals → ucrtbase.dll ───────────────────────────
+        // msvcrt.dll does not export these symbols; routing them there produced
+        // an image the loader refuses to start (STATUS_ENTRYPOINT_NOT_FOUND).
+        static UCRT_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+            HashSet::from([
+                "__acrt_iob_func",
+                "acrt_iob_func",
+                "__stdio_common_vfprintf",
+                "stdio_common_vfprintf",
+                "__stdio_common_vsprintf",
+                "stdio_common_vsprintf",
+                "__stdio_common_vsscanf",
+                "stdio_common_vsscanf",
+                "__stdio_common_vfwprintf",
+                "__stdio_common_vswprintf",
+                "_get_osfhandle",
+                "_open_osfhandle",
+                "_fileno",
+                "_isatty",
+                "_setmode",
+            ])
+        });
+        if in_set(&UCRT_SET, clean, raw)
+            || clean.starts_with("acrt")
             || clean.starts_with("stdio")
-            || clean.starts_with("Cxx")
-            || clean.starts_with("crt")
-            || clean.starts_with("chkstk")
+            || clean.starts_with("ucrt")
             || raw.starts_with("__acrt")
             || raw.starts_with("__stdio")
+            || raw.starts_with("__ucrt")
+            || raw.starts_with("__crt")
+        {
+            return Some("ucrtbase.dll");
+        }
+
+        // ── CRT functions → msvcrt.dll ───────────────────────────────────────
+        static MSVCRT_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+            HashSet::from([
+                // stdio
+                "printf",
+                "fprintf",
+                "sprintf",
+                "snprintf",
+                "vprintf",
+                "vfprintf",
+                "vsprintf",
+                "vsnprintf",
+                "puts",
+                "putchar",
+                "putchar_unlocked",
+                "gets",
+                "getchar",
+                "fopen",
+                "fclose",
+                "fread",
+                "fwrite",
+                "fseek",
+                "ftell",
+                "fflush",
+                "feof",
+                "ferror",
+                "clearerr",
+                "fgetc",
+                "fputc",
+                "fgets",
+                "fputs",
+                "freopen",
+                "tmpfile",
+                "tmpnam",
+                "scanf",
+                "fscanf",
+                "sscanf",
+                "perror",
+                // stdlib
+                "malloc",
+                "calloc",
+                "realloc",
+                "free",
+                "exit",
+                "abort",
+                "_exit",
+                "atexit",
+                "at_quick_exit",
+                "getenv",
+                "system",
+                "atoi",
+                "atol",
+                "atoll",
+                "atof",
+                "strtol",
+                "strtoul",
+                "strtoll",
+                "strtoull",
+                "strtod",
+                "strtof",
+                "qsort",
+                "bsearch",
+                "abs",
+                "labs",
+                "llabs",
+                "rand",
+                "srand",
+                // string
+                "strlen",
+                "strcpy",
+                "strncpy",
+                "strcat",
+                "strncat",
+                "strcmp",
+                "strncmp",
+                "strcasecmp",
+                "strncasecmp",
+                "strchr",
+                "strrchr",
+                "strstr",
+                "strtok",
+                "strtok_r",
+                "strdup",
+                "strndup",
+                // memory
+                "memcpy",
+                "memmove",
+                "memset",
+                "memcmp",
+                "memchr",
+                // math
+                "sin",
+                "cos",
+                "tan",
+                "asin",
+                "acos",
+                "atan",
+                "atan2",
+                "sinh",
+                "cosh",
+                "tanh",
+                "asinh",
+                "acosh",
+                "atanh",
+                "exp",
+                "exp2",
+                "log",
+                "log2",
+                "log10",
+                "pow",
+                "sqrt",
+                "cbrt",
+                "hypot",
+                "floor",
+                "ceil",
+                "round",
+                "trunc",
+                "fabs",
+                "fmod",
+                "remainder",
+                "fmin",
+                "fmax",
+                "fma",
+                "copysign",
+                "ldexp",
+                "frexp",
+                "modf",
+                "scalbn",
+                "sinf",
+                "cosf",
+                "tanf",
+                "asinf",
+                "acosf",
+                "atanf",
+                "atan2f",
+                "sinhf",
+                "coshf",
+                "tanhf",
+                "expf",
+                "exp2f",
+                "logf",
+                "log2f",
+                "log10f",
+                "powf",
+                "sqrtf",
+                "cbrtf",
+                "hypotf",
+                "floorf",
+                "ceilf",
+                "roundf",
+                "truncf",
+                "fabsf",
+                "fmodf",
+                "fminf",
+                "fmaxf",
+                "copysignf",
+                // time
+                "time",
+                "clock",
+                "difftime",
+                "mktime",
+                "gmtime",
+                "localtime",
+                "strftime",
+                "asctime",
+                "ctime",
+                // io / locale
+                "setlocale",
+                "islower",
+                "isupper",
+                "isdigit",
+                "isalpha",
+                "isalnum",
+                "isspace",
+                "ispunct",
+                "tolower",
+                "toupper",
+                // MSVC CRT specials
+                "__chkstk",
+                "___chkstk_ms",
+                "__CxxFrameHandler3",
+                "__CxxFrameHandler4",
+                "_CxxThrowException",
+                "CxxThrowException",
+                "_purecall",
+                "purecall",
+                "__p__argc",
+                "__p__argv",
+                "__p__wenviron",
+                "chkstk",
+                "CxxFrameHandler3",
+                "CxxFrameHandler4",
+            ])
+        });
+
+        // ── MSVC C++ / CRT specials → msvcrt.dll ─────────────────────────────
+        if MSVCRT_SET.contains(clean)
+            || MSVCRT_SET.contains(raw)
+            || clean.starts_with("Cxx")
+            || clean.starts_with("chkstk")
+            || clean.starts_with("crt")
             || raw.starts_with("__Cxx")
             || raw.starts_with("_Cxx")
-            || raw.starts_with("__crt")
             || raw.starts_with("__chkstk")
         {
             return Some("msvcrt.dll");

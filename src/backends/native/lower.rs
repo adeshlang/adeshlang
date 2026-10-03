@@ -25,6 +25,9 @@ pub struct LoopContext {
     pub step_label: String,
     pub end_label: String,
     pub idx_slot: Option<i32>,
+    /// `defer_stack` depth at loop entry: `break`/`continue` must run all
+    /// defers registered inside the loop body before branching out.
+    pub defer_mark: usize,
 }
 
 pub fn is_float_type(ty: Option<&HirType>) -> bool {
@@ -42,7 +45,13 @@ pub struct FunctionLoweringContext<'a> {
     pub target: &'a TargetDescriptor,
     pub call_conv: Box<dyn CallingConvention>,
     pub local_vars: HashMap<String, (i32, Option<HirType>)>, // (stack_offset, type)
+    /// Block-scope stack for shadowing: declarations are recorded in the
+    /// innermost scope and the outer binding is restored when the block exits.
+    pub var_scopes: Vec<HashMap<String, (i32, Option<HirType>)>>,
     pub loop_stack: Vec<LoopContext>,
+    /// Active catch destinations and their defer-scope boundary, innermost
+    /// first. Explicit `throw` branches directly to the nearest handler.
+    pub try_stack: Vec<(String, usize)>,
     pub defer_stack: Vec<HirStmt>,
     pub current_stack_offset: i32,
     pub current_block_id: u32,
@@ -90,11 +99,17 @@ fn infer_hir_expr_type(expr: &HirExpr) -> Option<HirType> {
                     | BinOp::Le
                     | BinOp::Gt
                     | BinOp::Ge
-                    | BinOp::And
-                    | BinOp::Or
                     | BinOp::In
             ) {
                 return Some(HirType::Bool);
+            }
+            if matches!(op, BinOp::And | BinOp::Or) {
+                // JS-style value semantics: `&&`/`||` yield one of their
+                // OPERANDS (see `lower_logical_short_circuit`), not a fresh
+                // boolean. The runtime value type depends on the branch taken,
+                // so no static type is reported here; boxing falls back to the
+                // runtime's raw-value heuristic instead of forcing Bool.
+                return None;
             }
             let l = infer_hir_expr_type(lhs);
             let r = infer_hir_expr_type(rhs);
@@ -253,7 +268,9 @@ impl<'a> FunctionLoweringContext<'a> {
             target,
             call_conv,
             local_vars: HashMap::new(),
+            var_scopes: vec![HashMap::new()],
             loop_stack: Vec::new(),
+            try_stack: Vec::new(),
             defer_stack: Vec::new(),
             current_stack_offset: 16, // after saved RBP and return address
             current_block_id: 0,
@@ -281,7 +298,9 @@ impl<'a> FunctionLoweringContext<'a> {
             target,
             call_conv,
             local_vars: HashMap::new(),
+            var_scopes: vec![HashMap::new()],
             loop_stack: Vec::new(),
+            try_stack: Vec::new(),
             defer_stack: Vec::new(),
             current_stack_offset: 16,
             current_block_id: 0,
@@ -304,19 +323,114 @@ impl<'a> FunctionLoweringContext<'a> {
     }
 
     pub fn is_expr_f32(&self, expr: &HirExpr) -> bool {
-        if let HirExpr::LoadVar(name) = expr {
-            if let Some(&(_, Some(ref ty))) = self.local_vars.get(name) {
+        match expr {
+            HirExpr::LoadVar(name) => {
+                if let Some(&(_, Some(ref ty))) = self.local_vars.get(name) {
+                    return is_f32_type(Some(ty));
+                }
+            }
+            HirExpr::BinaryOp(lhs, _, rhs) => {
+                return self.is_expr_f32(lhs) || self.is_expr_f32(rhs);
+            }
+            HirExpr::UnaryOp(_, inner) => {
+                return self.is_expr_f32(inner);
+            }
+            HirExpr::Cast(_, ty) => {
                 return is_f32_type(Some(ty));
             }
+            HirExpr::Literal(HirLiteral::F32(_)) => {
+                return true;
+            }
+            _ => {}
         }
         is_f32_type(infer_hir_expr_type(expr).as_ref())
     }
 
+    /// Run (and drain) ALL pending defers, innermost first. Used at an
+    /// unconditional function fall-through, where no alternate path needs the
+    /// compile-time stack preserved.
     pub fn run_defers(&mut self) {
-        let defers = self.defer_stack.clone();
-        for stmt in defers.iter().rev() {
-            self.lower_statement(stmt);
+        while let Some(stmt) = self.defer_stack.pop() {
+            self.lower_statement(&stmt);
         }
+    }
+
+    /// Run (and drain) defers registered above `mark` (a previously captured
+    /// `defer_stack.len()`), innermost first. Used at block/loop exits.
+    pub fn run_defers_down_to(&mut self, mark: usize) {
+        while self.defer_stack.len() > mark {
+            let stmt = self.defer_stack.pop().expect("defer mark invariant");
+            self.lower_statement(&stmt);
+        }
+    }
+
+    /// Emit pending defers above `mark` without draining the compile-time
+    /// stack. Used on a conditional throw path so normal try fallthrough can
+    /// still emit its own cleanup path.
+    fn emit_defers_since(&mut self, mark: usize) {
+        let pending: Vec<HirStmt> = self
+            .defer_stack
+            .get(mark..)
+            .unwrap_or(&[])
+            .iter()
+            .rev()
+            .cloned()
+            .collect();
+        for stmt in pending {
+            self.lower_statement(&stmt);
+        }
+    }
+
+    /// Declare a local variable in the innermost scope (and the flat lookup
+    /// map). Shadowing an outer binding is allowed; the outer binding is
+    /// restored when the enclosing block exits.
+    pub fn declare_local(&mut self, name: &str, slot: i32, ty: Option<HirType>) {
+        self.local_vars.insert(name.to_string(), (slot, ty.clone()));
+        if let Some(top) = self.var_scopes.last_mut() {
+            top.insert(name.to_string(), (slot, ty));
+        }
+    }
+
+    /// Enter a block scope.
+    pub fn push_var_scope(&mut self) {
+        self.var_scopes.push(HashMap::new());
+    }
+
+    /// Exit a block scope: drop declarations made inside and restore the
+    /// nearest enclosing binding for shadowed names.
+    pub fn pop_var_scope(&mut self) {
+        let popped = self.var_scopes.pop().unwrap_or_default();
+        for (name, _) in popped {
+            let restored = self
+                .var_scopes
+                .iter()
+                .rev()
+                .find_map(|scope| scope.get(&name).cloned());
+            match restored {
+                Some((slot, ty)) => {
+                    self.local_vars.insert(name, (slot, ty));
+                }
+                None => {
+                    self.local_vars.remove(&name);
+                }
+            }
+        }
+    }
+
+    /// Lower a nested function (class method / function statement / extend
+    /// method) with the module-wide signature map plus its own signature, so
+    /// cross-function float returns and typed args resolve identically to
+    /// top-level functions. Previously these lowered with a signature map
+    /// containing only themselves.
+    pub fn lower_nested_function(&mut self, func: &HirFunction) {
+        let mut sigs = self.fn_signatures.clone();
+        let param_tys = func
+            .params
+            .iter()
+            .map(|(_, ty, _)| ty.clone().unwrap_or(HirType::Int))
+            .collect();
+        sigs.insert(func.name.clone(), (param_tys, func.ret_type.clone()));
+        lower_hir_function_with_signatures(func, self.module, self.target, &sigs);
     }
 
     pub fn lower_literal(&mut self, lit: &HirLiteral) -> VirtualRegister {
@@ -333,7 +447,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 let out_reg = self.func.alloc_fp_vreg();
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                    src: MachineOperand::FloatImmediate(*f as f64),
+                    src: MachineOperand::Immediate(f.to_bits() as u32 as i64),
                 });
                 return out_reg;
             }
@@ -423,7 +537,37 @@ impl<'a> FunctionLoweringContext<'a> {
                     src: MachineOperand::Immediate(val),
                 });
             }
+            HirLiteral::Null => {
+                self.emit_call_with_args("aot_make_null", &[]);
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                });
+            }
+            HirLiteral::U128(n) => {
+                // u128/i128 exceed the 64-bit machine word; truncate loudly
+                // rather than silently emitting 0.
+                if *n > u64::MAX as u128 {
+                    self.emit_abort_with_msg("panic: u128 literal exceeds 64-bit word");
+                }
+                let val = (*n as u64) as i64;
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Immediate(val),
+                });
+            }
+            HirLiteral::I128(n) => {
+                if *n > i64::MAX as i128 || *n < i64::MIN as i128 {
+                    self.emit_abort_with_msg("panic: i128 literal exceeds 64-bit word");
+                }
+                let val = *n as i64;
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Immediate(val),
+                });
+            }
             _ => {
+                self.emit_abort_with_msg("panic: unsupported literal in native backend");
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                     src: MachineOperand::Immediate(0),
@@ -485,7 +629,7 @@ impl<'a> FunctionLoweringContext<'a> {
                     dst: MachineOperand::StackSlot(off),
                     src: MachineOperand::Register(MachineRegister::Virtual(val_reg)),
                 });
-                self.local_vars.insert(var_name.clone(), (off, None));
+                self.declare_local(var_name, off, None);
             }
             HirPattern::Or(p1, p2) => {
                 self.bind_pattern_variables(p1, val_reg);
@@ -562,6 +706,347 @@ impl<'a> FunctionLoweringContext<'a> {
                 src: MachineOperand::Immediate(total as i64),
             });
         }
+    }
+
+    /// Coerce a lowered value into an f64 FP vreg (GPR ints are converted
+    /// with a signed FCvt; FP vregs pass through unchanged).
+    fn coerce_to_f64(&mut self, vreg: VirtualRegister) -> VirtualRegister {
+        if self.func.vreg_class(vreg) == RegisterClass::Float {
+            return vreg;
+        }
+        let fp = self.func.alloc_fp_vreg();
+        self.emit(MachineInstruction::FCvtIntToFloat {
+            dst: MachineOperand::Register(MachineRegister::Virtual(fp)),
+            src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
+            is_f64: true,
+            is_signed: true,
+        });
+        fp
+    }
+
+    /// Return the raw IEEE-754 bits of an FP vreg in a GPR. Runtime boxing
+    /// helpers accept `u64` bit patterns, not C floating-point arguments.
+    fn fp_bits_to_gpr(&mut self, vreg: VirtualRegister) -> VirtualRegister {
+        if self.func.vreg_class(vreg) != RegisterClass::Float {
+            return vreg;
+        }
+        let bits = self.func.alloc_vreg();
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(bits)),
+            src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
+        });
+        bits
+    }
+
+    /// Call the runtime f64 math dispatcher `aot_math_f64(op, x, y)` and
+    /// return the f64 result vreg (result arrives in XMM0).
+    fn emit_math_f64(
+        &mut self,
+        op_code: i64,
+        x: VirtualRegister,
+        y: VirtualRegister,
+    ) -> VirtualRegister {
+        let op_vreg = self.func.alloc_vreg();
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(op_vreg)),
+            src: MachineOperand::Immediate(op_code),
+        });
+        self.emit_call_with_typed_args(
+            "aot_math_f64",
+            &[
+                (op_vreg, RegisterClass::Gpr),
+                (x, RegisterClass::Float),
+                (y, RegisterClass::Float),
+            ],
+        );
+        let res = self.func.alloc_fp_vreg();
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(res)),
+            src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister::xmm(0))),
+        });
+        res
+    }
+
+    /// Context-aware type inference. Improves on the free
+    /// `infer_hir_expr_type` by resolving:
+    /// - `LoadVar` against the local variable table, so `let x = 1.5` makes
+    ///   `x` a Float (the free function returned None here, and float
+    ///   arithmetic through variables silently compiled to integer ops), and
+    /// - direct calls against `fn_signatures`.
+    pub fn infer_expr_type(&self, expr: &HirExpr) -> Option<HirType> {
+        match expr {
+            HirExpr::LoadVar(name) => self.local_vars.get(name).and_then(|(_, ty)| ty.clone()),
+            HirExpr::Call(callee, _, _) => {
+                if let HirExpr::LoadVar(fn_name) = &**callee {
+                    if let Some((_, ret)) = self.fn_signatures.get(fn_name) {
+                        return ret.clone();
+                    }
+                }
+                infer_hir_expr_type(expr)
+            }
+            HirExpr::BinaryOp(lhs, op, rhs) => {
+                if matches!(
+                    op,
+                    BinOp::Eq
+                        | BinOp::StrictEq
+                        | BinOp::Ne
+                        | BinOp::StrictNe
+                        | BinOp::Lt
+                        | BinOp::Le
+                        | BinOp::Gt
+                        | BinOp::Ge
+                        | BinOp::In
+                ) {
+                    return Some(HirType::Bool);
+                }
+                let l = self.infer_expr_type(lhs);
+                let r = self.infer_expr_type(rhs);
+                if matches!(op, BinOp::And | BinOp::Or) {
+                    // These operators return one of their operands. Preserve
+                    // the common type where possible, and use a floating
+                    // result when either arm is floating-point.
+                    if matches!(l, Some(HirType::Float | HirType::F64))
+                        || matches!(r, Some(HirType::Float | HirType::F64))
+                    {
+                        return Some(HirType::Float);
+                    }
+                    if matches!(l, Some(HirType::F32)) || matches!(r, Some(HirType::F32)) {
+                        return Some(HirType::F32);
+                    }
+                    return if l == r { l } else { None };
+                }
+                if matches!(l, Some(HirType::Float | HirType::F64))
+                    || matches!(r, Some(HirType::Float | HirType::F64))
+                {
+                    return Some(HirType::Float);
+                }
+                if matches!(l, Some(HirType::F32)) || matches!(r, Some(HirType::F32)) {
+                    return Some(HirType::F32);
+                }
+                l.or(r)
+            }
+            HirExpr::UnaryOp(op, inner) => {
+                if matches!(op, UnaryOp::Not) {
+                    return Some(HirType::Bool);
+                }
+                if matches!(op, UnaryOp::Typeof) {
+                    return Some(HirType::String);
+                }
+                self.infer_expr_type(inner)
+            }
+            other => infer_hir_expr_type(other),
+        }
+    }
+
+    /// True when the expression is known to have an unsigned integer type
+    /// (only these take the logical `>>` form; untyped ints are signed).
+    pub fn is_expr_unsigned_int(&self, expr: &HirExpr) -> bool {
+        matches!(
+            self.infer_expr_type(expr),
+            Some(HirType::U8 | HirType::U16 | HirType::U32 | HirType::U64)
+        )
+    }
+
+    /// Emit a runtime-abort call with a static message (the message is
+    /// placed in .rodata and printed by the runtime before aborting).
+    fn emit_abort_with_msg(&mut self, msg: &str) {
+        let msg_idx = self.module.add_string(msg);
+        let msg_sym = format!("__str_{}", msg_idx);
+        let msg_reg = self.func.alloc_vreg();
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(msg_reg)),
+            src: MachineOperand::Symbol(msg_sym),
+        });
+        self.emit_call_with_args("aot_abort_str", &[msg_reg]);
+    }
+
+    /// Guard integer division against #DE faults: divisor == 0 and
+    /// INT64_MIN / -1 overflow abort loudly via the runtime instead of
+    /// crashing the process with 0xC0000094.
+    fn emit_int_div_guard(
+        &mut self,
+        l_reg: VirtualRegister,
+        r_reg: VirtualRegister,
+        rhs: &HirExpr,
+    ) {
+        // Constant divisors that are provably safe skip the guard.
+        if let Some(c) = eval_const_expr(rhs) {
+            if c != 0 && c != -1 {
+                return;
+            }
+        }
+        let bad_lbl = self.fresh_label("div_bad");
+        let ok_lbl = self.fresh_label("div_ok");
+
+        self.emit(MachineInstruction::Compare {
+            lhs: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+            rhs: MachineOperand::Immediate(0),
+        });
+        self.emit(MachineInstruction::BranchCc {
+            cc: ConditionCode::Equal,
+            target: bad_lbl.clone(),
+        });
+        self.emit(MachineInstruction::Compare {
+            lhs: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+            rhs: MachineOperand::Immediate(-1),
+        });
+        self.emit(MachineInstruction::BranchCc {
+            cc: ConditionCode::NotEqual,
+            target: ok_lbl.clone(),
+        });
+        self.emit(MachineInstruction::Compare {
+            lhs: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
+            rhs: MachineOperand::Immediate(i64::MIN),
+        });
+        self.emit(MachineInstruction::BranchCc {
+            cc: ConditionCode::NotEqual,
+            target: ok_lbl.clone(),
+        });
+
+        let bad_id = self.func.create_block(&bad_lbl);
+        self.current_block_id = bad_id;
+        self.emit_abort_with_msg("panic: integer division by zero (or INT64_MIN / -1 overflow)");
+
+        let ok_id = self.func.create_block(&ok_lbl);
+        self.current_block_id = ok_id;
+    }
+
+    /// Short-circuiting `&&` / `||`: the right operand is only lowered (and
+    /// its side effects only executed) when the left operand does not
+    /// already decide the result. Matching the interpreter's JS-style
+    /// semantics, the RESULT is the deciding operand's value (not a fresh
+    /// boolean): `1 || 2` yields 1, `0 && x` yields 0.
+    fn lower_logical_short_circuit(
+        &mut self,
+        lhs: &HirExpr,
+        op: &BinOp,
+        rhs: &HirExpr,
+    ) -> VirtualRegister {
+        let is_and = matches!(op, BinOp::And);
+
+        let l_reg = self.lower_expression(lhs);
+        let l_is_fp = self.is_expr_float(lhs, l_reg);
+        let r_will_be_fp =
+            matches!(self.infer_expr_type(rhs), Some(ref t) if is_float_type(Some(t)));
+        let out_is_fp = l_is_fp || r_will_be_fp;
+        let out_reg = if out_is_fp {
+            self.func.alloc_fp_vreg()
+        } else {
+            self.func.alloc_vreg()
+        };
+
+        let rhs_lbl = self.fresh_label(if is_and { "and_rhs" } else { "or_rhs" });
+        let end_lbl = self.fresh_label(if is_and { "and_end" } else { "or_end" });
+
+        self.emit_truthiness_test(lhs, l_reg);
+        // Left operand does not decide the result -> lower the right operand.
+        // (`&&` continues when the left is truthy; `||` when falsy.)
+        self.emit(MachineInstruction::BranchCc {
+            cc: if is_and {
+                ConditionCode::NotEqual
+            } else {
+                ConditionCode::Equal
+            },
+            target: rhs_lbl.clone(),
+        });
+
+        // Left operand decided: the result is the left operand's value.
+        let l_out = if out_is_fp && !l_is_fp {
+            self.coerce_to_f64(l_reg)
+        } else {
+            l_reg
+        };
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+            src: MachineOperand::Register(MachineRegister::Virtual(l_out)),
+        });
+        self.emit(MachineInstruction::Branch {
+            target: end_lbl.clone(),
+        });
+
+        let rhs_id = self.func.create_block(&rhs_lbl);
+        self.current_block_id = rhs_id;
+        let r_reg = self.lower_expression(rhs);
+        let r_out = if out_is_fp && self.func.vreg_class(r_reg) != RegisterClass::Float {
+            self.coerce_to_f64(r_reg)
+        } else {
+            r_reg
+        };
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+            src: MachineOperand::Register(MachineRegister::Virtual(r_out)),
+        });
+
+        let end_id = self.func.create_block(&end_lbl);
+        self.current_block_id = end_id;
+        out_reg
+    }
+
+    /// Emit a zero-comparison truthiness test for a value (FCmp against a
+    /// materialized 0.0 for floats, Compare against 0 for ints).
+    fn emit_truthiness_test(&mut self, expr: &HirExpr, vreg: VirtualRegister) {
+        if self.func.vreg_class(vreg) == RegisterClass::Float {
+            let zero = self.func.alloc_fp_vreg();
+            let size: u8 = if self.is_expr_f32(expr) { 4 } else { 8 };
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(zero)),
+                src: MachineOperand::FloatImmediate(0.0),
+            });
+            self.emit(MachineInstruction::FCmp {
+                lhs: MachineOperand::Register(MachineRegister::Virtual(vreg)),
+                rhs: MachineOperand::Register(MachineRegister::Virtual(zero)),
+                size,
+            });
+        } else {
+            self.emit(MachineInstruction::Compare {
+                lhs: MachineOperand::Register(MachineRegister::Virtual(vreg)),
+                rhs: MachineOperand::Immediate(0),
+            });
+        }
+    }
+
+    /// Wrap an already-lowered value vreg into a runtime handle using type
+    /// knowledge. Avoids re-lowering the expression (which would run its
+    /// side effects twice) and routes strings through their explicit
+    /// NUL-terminated-string boxing ABI rather than guessing from raw words.
+    fn wrap_vreg_to_handle(&mut self, expr: &HirExpr, vreg: VirtualRegister) -> VirtualRegister {
+        let make_fn: Option<&'static str> = match self.infer_expr_type(expr) {
+            Some(HirType::Bool) => Some("aot_make_bool"),
+            Some(HirType::Char) => Some("aot_make_char"),
+            Some(HirType::F32) => Some("aot_make_f32"),
+            Some(HirType::Float | HirType::F64) => Some("aot_make_f64"),
+            Some(HirType::String) => Some("aot_make_string"),
+            Some(
+                HirType::Int
+                | HirType::I8
+                | HirType::I16
+                | HirType::I32
+                | HirType::I64
+                | HirType::U8
+                | HirType::U16
+                | HirType::U32
+                | HirType::U64,
+            ) => Some("aot_make_i64"),
+            _ => None,
+        };
+        let out = self.func.alloc_vreg();
+        if let Some(f) = make_fn {
+            let arg = if matches!(f, "aot_make_f32" | "aot_make_f64") {
+                self.fp_bits_to_gpr(vreg)
+            } else {
+                vreg
+            };
+            self.emit_call_with_args(f, &[arg]);
+        } else {
+            // Unknown type: wrap the raw word without guessing that it is a
+            // C string pointer. String pointers use the typed string path.
+            self.emit_call_with_args("aot_wrap_ptr", &[vreg]);
+        }
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(out)),
+            src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+        });
+        out
     }
 
     /// Emit an indirect call sequence through a register or memory location.
@@ -734,7 +1219,8 @@ impl<'a> FunctionLoweringContext<'a> {
                 HirType::F32 => {
                     let vreg = self.lower_expression(expr);
                     let out = self.func.alloc_vreg();
-                    self.emit_call_with_args("aot_make_f32", &[vreg]);
+                    let bits = self.fp_bits_to_gpr(vreg);
+                    self.emit_call_with_args("aot_make_f32", &[bits]);
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(out)),
                         src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
@@ -746,7 +1232,8 @@ impl<'a> FunctionLoweringContext<'a> {
                 HirType::F64 | HirType::Float => {
                     let vreg = self.lower_expression(expr);
                     let out = self.func.alloc_vreg();
-                    self.emit_call_with_args("aot_make_f64", &[vreg]);
+                    let bits = self.fp_bits_to_gpr(vreg);
+                    self.emit_call_with_args("aot_make_f64", &[bits]);
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(out)),
                         src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
@@ -1116,7 +1603,8 @@ impl<'a> FunctionLoweringContext<'a> {
                         }
                         HirType::F32 => {
                             let out = self.func.alloc_vreg();
-                            self.emit_call_with_args("aot_make_f32", &[val_reg]);
+                            let bits = self.fp_bits_to_gpr(val_reg);
+                            self.emit_call_with_args("aot_make_f32", &[bits]);
                             self.emit(MachineInstruction::Move {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(out)),
                                 src: MachineOperand::Register(MachineRegister::Physical(
@@ -1127,7 +1615,8 @@ impl<'a> FunctionLoweringContext<'a> {
                         }
                         HirType::F64 | HirType::Float => {
                             let out = self.func.alloc_vreg();
-                            self.emit_call_with_args("aot_make_f64", &[val_reg]);
+                            let bits = self.fp_bits_to_gpr(val_reg);
+                            self.emit_call_with_args("aot_make_f64", &[bits]);
                             self.emit(MachineInstruction::Move {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(out)),
                                 src: MachineOperand::Register(MachineRegister::Physical(
@@ -1181,9 +1670,11 @@ impl<'a> FunctionLoweringContext<'a> {
             | HirExpr::SetLiteral(_)
             | HirExpr::DictLiteral(_)
             | HirExpr::MemberAccess(..)
-            | HirExpr::Index(..)
-            | HirExpr::Call(..)
-            | HirExpr::MethodCall(..) => self.lower_expression(expr),
+            | HirExpr::Index(..) => self.lower_expression(expr),
+            HirExpr::Call(..) | HirExpr::MethodCall(..) => {
+                let value = self.lower_expression(expr);
+                self.wrap_vreg_to_handle(expr, value)
+            }
             HirExpr::Lambda(..) => {
                 let fn_ptr_reg = self.lower_expression(expr);
                 let out_handle = self.func.alloc_vreg();
@@ -1195,14 +1686,12 @@ impl<'a> FunctionLoweringContext<'a> {
                 out_handle
             }
             _ => {
+                // Unknown shape: lower the value once and wrap it using type
+                // inference. Routing known scalar types through the make_*
+                // constructors avoids the raw-pointer heuristic (which used
+                // to crash on computed ints >= 0x10000, e.g. print(70000 + 5)).
                 let val_reg = self.lower_expression(expr);
-                let out_handle = self.func.alloc_vreg();
-                self.emit_call_with_args("aot_wrap_ptr", &[val_reg]);
-                self.emit(MachineInstruction::Move {
-                    dst: MachineOperand::Register(MachineRegister::Virtual(out_handle)),
-                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
-                });
-                out_handle
+                self.wrap_vreg_to_handle(expr, val_reg)
             }
         }
     }
@@ -1215,7 +1704,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 let inferred_ty = if let Some(t) = ty {
                     Some(t.clone())
                 } else if let Some(expr) = init {
-                    infer_hir_expr_type(expr)
+                    self.infer_expr_type(expr)
                 } else {
                     None
                 };
@@ -1226,7 +1715,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
                     });
                 }
-                self.local_vars.insert(name.clone(), (off, inferred_ty));
+                self.declare_local(name, off, inferred_ty);
             }
             HirStmt::LetTuple { names, init, .. } => {
                 if let Some(expr) = init {
@@ -1234,7 +1723,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         let mut regs = Vec::new();
                         for elem in elements {
                             let r = self.lower_expression(elem);
-                            regs.push((r, infer_hir_expr_type(elem)));
+                            regs.push((r, self.infer_expr_type(elem)));
                         }
                         for (name, (r, ty)) in names.iter().zip(regs) {
                             let slot = self.alloc_stack_slot(8);
@@ -1243,7 +1732,7 @@ impl<'a> FunctionLoweringContext<'a> {
                                 dst: MachineOperand::StackSlot(off),
                                 src: MachineOperand::Register(MachineRegister::Virtual(r)),
                             });
-                            self.local_vars.insert(name.clone(), (off, ty));
+                            self.declare_local(name, off, ty);
                         }
                     } else {
                         let tup_handle = self.lower_to_handle(expr);
@@ -1279,6 +1768,9 @@ impl<'a> FunctionLoweringContext<'a> {
                             });
                             self.local_vars
                                 .insert(name.clone(), (off, Some(HirType::Any)));
+                            if let Some(top) = self.var_scopes.last_mut() {
+                                top.insert(name.clone(), (off, Some(HirType::Any)));
+                            }
                         }
                     }
                 }
@@ -1298,8 +1790,8 @@ impl<'a> FunctionLoweringContext<'a> {
                             dst: MachineOperand::StackSlot(off),
                             src: MachineOperand::Register(MachineRegister::Virtual(val_vreg)),
                         });
-                        let ty = infer_hir_expr_type(value);
-                        self.local_vars.insert(name.clone(), (off, ty));
+                        let ty = self.infer_expr_type(value);
+                        self.declare_local(name, off, ty);
                     }
                 }
                 HirExpr::MemberAccess(obj_expr, field_name) => {
@@ -1342,6 +1834,12 @@ impl<'a> FunctionLoweringContext<'a> {
                     });
                 }
                 _ => {
+                    // Unsupported assignment target (e.g. destructuring
+                    // assign). Previously the RHS was evaluated and the
+                    // assignment silently dropped.
+                    self.emit_abort_with_msg(
+                        "panic: unsupported assignment target in native backend",
+                    );
                     self.lower_expression(value);
                 }
             },
@@ -1349,9 +1847,11 @@ impl<'a> FunctionLoweringContext<'a> {
                 self.lower_expression(expr);
             }
             HirStmt::Return(expr_opt) => {
-                self.run_defers();
-                if let Some(expr) = expr_opt {
-                    let vreg = self.lower_expression(expr);
+                // Evaluate the return expression before cleanup, then retain
+                // its value while emitting the deferred statements.
+                let return_value = expr_opt.as_ref().map(|expr| self.lower_expression(expr));
+                self.emit_defers_since(0);
+                if let Some(vreg) = return_value {
                     let is_fp = self.func.vreg_class(vreg) == RegisterClass::Float
                         || is_float_type(self.func_ret_type.as_ref());
                     let ret_phys = if is_fp {
@@ -1369,8 +1869,15 @@ impl<'a> FunctionLoweringContext<'a> {
             HirStmt::Throw(expr) => {
                 let handle = self.lower_to_handle(expr);
                 self.emit_call_with_args("aot_throw_exception", &[handle]);
-                self.run_defers();
-                self.emit(MachineInstruction::Return);
+                if let Some((catch_label, defer_mark)) = self.try_stack.last().cloned() {
+                    self.emit_defers_since(defer_mark);
+                    self.emit(MachineInstruction::Branch {
+                        target: catch_label,
+                    });
+                } else {
+                    self.emit_defers_since(0);
+                    self.emit(MachineInstruction::Return);
+                }
             }
             HirStmt::Defer(stmt) => {
                 self.defer_stack.push(*stmt.clone());
@@ -1404,7 +1911,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         test_timeout: None,
                         is_unsafe: m.is_unsafe,
                     };
-                    lower_hir_function(&func, self.module, self.target);
+                    self.lower_nested_function(&func);
                 }
                 for m in &cls.static_methods {
                     let func = HirFunction {
@@ -1426,7 +1933,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         test_timeout: None,
                         is_unsafe: m.is_unsafe,
                     };
-                    lower_hir_function(&func, self.module, self.target);
+                    self.lower_nested_function(&func);
                 }
             }
             HirStmt::If {
@@ -1438,11 +1945,8 @@ impl<'a> FunctionLoweringContext<'a> {
                 let else_lbl = self.fresh_label("else_branch");
                 let end_lbl = self.fresh_label("end_if");
 
-                // Test condition != 0
-                self.emit(MachineInstruction::Compare {
-                    lhs: MachineOperand::Register(MachineRegister::Virtual(cond_vreg)),
-                    rhs: MachineOperand::Immediate(0),
-                });
+                // Test condition != 0 (float-safe: FCmp for FP values)
+                self.emit_truthiness_test(cond, cond_vreg);
 
                 if else_branch.is_some() {
                     self.emit(MachineInstruction::BranchCc {
@@ -1483,6 +1987,7 @@ impl<'a> FunctionLoweringContext<'a> {
                     step_label: loop_start_lbl.clone(),
                     end_label: loop_end_lbl.clone(),
                     idx_slot: None,
+                    defer_mark: self.defer_stack.len(),
                 });
 
                 self.emit(MachineInstruction::Branch {
@@ -1493,10 +1998,8 @@ impl<'a> FunctionLoweringContext<'a> {
                 self.current_block_id = loop_id;
 
                 let cond_vreg = self.lower_expression(cond);
-                self.emit(MachineInstruction::Compare {
-                    lhs: MachineOperand::Register(MachineRegister::Virtual(cond_vreg)),
-                    rhs: MachineOperand::Immediate(0),
-                });
+                // Float-safe truthiness test (FCmp for FP values)
+                self.emit_truthiness_test(cond, cond_vreg);
                 self.emit(MachineInstruction::BranchCc {
                     cc: ConditionCode::Equal,
                     target: loop_end_lbl.clone(),
@@ -1555,6 +2058,7 @@ impl<'a> FunctionLoweringContext<'a> {
                     step_label: step_lbl.clone(),
                     end_label: end_lbl.clone(),
                     idx_slot: Some(idx_off),
+                    defer_mark: self.defer_stack.len(),
                 });
 
                 self.emit(MachineInstruction::Branch {
@@ -1601,7 +2105,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 } else {
                     let s = self.alloc_stack_slot(8);
                     let off = -(s + 8);
-                    self.local_vars.insert(var.clone(), (off, None));
+                    self.declare_local(var, off, None);
                     off
                 };
                 self.emit(MachineInstruction::Move {
@@ -1639,16 +2143,24 @@ impl<'a> FunctionLoweringContext<'a> {
             }
             HirStmt::Break => {
                 if let Some(ctx) = self.loop_stack.last() {
-                    self.emit(MachineInstruction::Branch {
-                        target: ctx.end_label.clone(),
-                    });
+                    let end_label = ctx.end_label.clone();
+                    let defer_mark = ctx.defer_mark;
+                    // Emit defers registered inside the loop body before
+                    // branching out, but preserve the stack for sibling paths.
+                    self.emit_defers_since(defer_mark);
+                    self.emit(MachineInstruction::Branch { target: end_label });
+                } else {
+                    self.emit_abort_with_msg("panic: break outside of a loop");
                 }
             }
             HirStmt::Continue => {
                 if let Some(ctx) = self.loop_stack.last() {
-                    self.emit(MachineInstruction::Branch {
-                        target: ctx.step_label.clone(),
-                    });
+                    let step_label = ctx.step_label.clone();
+                    let defer_mark = ctx.defer_mark;
+                    self.emit_defers_since(defer_mark);
+                    self.emit(MachineInstruction::Branch { target: step_label });
+                } else {
+                    self.emit_abort_with_msg("panic: continue outside of a loop");
                 }
             }
             HirStmt::Jump(expr) => {
@@ -1670,22 +2182,63 @@ impl<'a> FunctionLoweringContext<'a> {
                 }
             }
             HirStmt::Block(stmts) => {
+                // Blocks are defer + variable scopes: defers registered inside
+                // run at block exit (innermost first), and inner `let`s stop
+                // shadowing outer variables once the block ends.
+                let defer_mark = self.defer_stack.len();
+                self.push_var_scope();
                 for s in stmts {
                     self.lower_statement(s);
                 }
+                self.run_defers_down_to(defer_mark);
+                self.pop_var_scope();
             }
             HirStmt::TryCatch {
                 try_block,
                 catch_block,
                 ..
             } => {
+                // After the try body, check the runtime exception flag: if a
+                // runtime call recorded an exception, run the catch block.
+                // (The catch handler used to be silently discarded.)
+                let catch_lbl = self.fresh_label("catch_entry");
+                let end_lbl = self.fresh_label("try_end");
+
+                let defer_mark = self.defer_stack.len();
+                self.try_stack.push((catch_lbl.clone(), defer_mark));
                 self.lower_statement(try_block);
-                // In native code, non-faulting execution continues normally
-                let _ = catch_block;
+                self.try_stack.pop();
+                self.run_defers_down_to(defer_mark);
+
+                self.emit_call_with_args("aot_has_exception", &[]);
+                let flag_reg = self.func.alloc_vreg();
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(flag_reg)),
+                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                });
+                self.emit(MachineInstruction::Compare {
+                    lhs: MachineOperand::Register(MachineRegister::Virtual(flag_reg)),
+                    rhs: MachineOperand::Immediate(0),
+                });
+                self.emit(MachineInstruction::BranchCc {
+                    cc: ConditionCode::NotEqual,
+                    target: catch_lbl.clone(),
+                });
+                self.emit(MachineInstruction::Branch {
+                    target: end_lbl.clone(),
+                });
+
+                let catch_id = self.func.create_block(&catch_lbl);
+                self.current_block_id = catch_id;
+                self.emit_call_with_args("aot_clear_exception", &[]);
+                self.lower_statement(catch_block);
+
+                let end_id = self.func.create_block(&end_lbl);
+                self.current_block_id = end_id;
             }
             HirStmt::Extend { methods, .. } => {
                 for m in methods {
-                    lower_hir_function(m, self.module, self.target);
+                    self.lower_nested_function(m);
                 }
             }
             HirStmt::FunctionDef {
@@ -1713,7 +2266,7 @@ impl<'a> FunctionLoweringContext<'a> {
                     test_timeout: None,
                     is_unsafe: *is_unsafe,
                 };
-                lower_hir_function(&func, self.module, self.target);
+                self.lower_nested_function(&func);
             }
             _ => {}
         }
@@ -1735,7 +2288,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         let out_reg = self.func.alloc_fp_vreg();
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                            src: MachineOperand::FloatImmediate(*f as f64),
+                            src: MachineOperand::Immediate(f.to_bits() as u32 as i64),
                         });
                         return out_reg;
                     }
@@ -1856,8 +2409,17 @@ impl<'a> FunctionLoweringContext<'a> {
                         dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                         src: MachineOperand::StackSlot(slot),
                     });
+                } else if self.module.functions.iter().any(|f| f.name == *name) {
+                    // Function referenced as a value: materialize its address
+                    // (used by indirect calls).
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                        src: MachineOperand::Symbol(name.clone()),
+                    });
                 } else {
-                    // Fallback to 0 if undeclared
+                    // Silently reading 0 for undeclared variables hid real
+                    // bugs; abort loudly instead.
+                    self.emit_abort_with_msg(&format!("panic: undefined variable '{}'", name));
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                         src: MachineOperand::Immediate(0),
@@ -1867,7 +2429,7 @@ impl<'a> FunctionLoweringContext<'a> {
             }
             HirExpr::StoreVar(name, expr) => {
                 let val_reg = self.lower_expression(expr);
-                let ty = infer_hir_expr_type(expr);
+                let ty = self.infer_expr_type(expr);
                 if let Some((slot, existing_ty)) = self.local_vars.get(name).cloned() {
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::StackSlot(slot),
@@ -1882,7 +2444,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         dst: MachineOperand::StackSlot(off),
                         src: MachineOperand::Register(MachineRegister::Virtual(val_reg)),
                     });
-                    self.local_vars.insert(name.clone(), (off, ty));
+                    self.declare_local(name, off, ty);
                 }
                 val_reg
             }
@@ -2380,6 +2942,14 @@ impl<'a> FunctionLoweringContext<'a> {
                     "aot_call_method",
                     &[target_handle, method_handle, ptr_reg, count_reg],
                 );
+                // aot_call_method returns a boxed handle even for int/bool
+                // results (`q.len()`, `set.contains(x)`); unbox so callers see
+                // the raw word like every other result path.
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                });
+                self.emit_call_with_args("aot_unbox", &[out_reg]);
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                     src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
@@ -2394,39 +2964,52 @@ impl<'a> FunctionLoweringContext<'a> {
                 {
                     let mut lambda_ctx =
                         FunctionLoweringContext::new(&mut lambda_func, self.module, self.target);
-                    for (i, (p_name, p_ty)) in params.iter().enumerate() {
+                    // Classify params through the calling convention so float
+                    // params arrive in XMM registers and stack args use the
+                    // convention's RBP-relative offsets (matches the caller,
+                    // which lowers indirect calls via classify_args).
+                    let param_classes: Vec<RegisterClass> = params
+                        .iter()
+                        .map(|(_, p_ty)| {
+                            if is_float_type(p_ty.as_ref()) {
+                                RegisterClass::Float
+                            } else {
+                                RegisterClass::Gpr
+                            }
+                        })
+                        .collect();
+                    let arg_locations = lambda_ctx.call_conv.classify_incoming_args(&param_classes);
+                    for (idx, (p_name, p_ty)) in params.iter().enumerate() {
                         let slot = lambda_ctx.alloc_stack_slot(8);
                         let off = -(slot + 8);
-                        if i < lambda_ctx.call_conv.arg_registers().len() {
-                            let p_reg = lambda_ctx.call_conv.arg_registers()[i];
-                            lambda_ctx.emit(MachineInstruction::Move {
-                                dst: MachineOperand::StackSlot(off),
-                                src: MachineOperand::Register(MachineRegister::Physical(p_reg)),
-                            });
-                        } else {
-                            let caller_arg_offset =
-                                16 + ((i - lambda_ctx.call_conv.arg_registers().len()) as i32 * 8);
-                            let scratch_reg = lambda_ctx.func.alloc_vreg();
-                            lambda_ctx.emit(MachineInstruction::Move {
-                                dst: MachineOperand::Register(MachineRegister::Virtual(
-                                    scratch_reg,
-                                )),
-                                src: MachineOperand::StackSlot(caller_arg_offset),
-                            });
-                            lambda_ctx.emit(MachineInstruction::Move {
-                                dst: MachineOperand::StackSlot(off),
-                                src: MachineOperand::Register(MachineRegister::Virtual(
-                                    scratch_reg,
-                                )),
-                            });
+                        match arg_locations[idx] {
+                            ArgumentLocation::Register(p_reg) => {
+                                lambda_ctx.emit(MachineInstruction::Move {
+                                    dst: MachineOperand::StackSlot(off),
+                                    src: MachineOperand::Register(MachineRegister::Physical(p_reg)),
+                                });
+                            }
+                            ArgumentLocation::Stack(stack_off) => {
+                                lambda_ctx.emit(MachineInstruction::Load {
+                                    dst: MachineOperand::StackSlot(off),
+                                    src: MachineOperand::Memory {
+                                        base: MachineRegister::Physical(PhysicalRegister(5)),
+                                        offset: stack_off,
+                                        index: None,
+                                    },
+                                    size: 8,
+                                });
+                            }
                         }
-                        lambda_ctx
-                            .local_vars
-                            .insert(p_name.clone(), (off, p_ty.clone()));
+                        lambda_ctx.declare_local(p_name, off, p_ty.clone());
                     }
                     for stmt in body.iter() {
                         lambda_ctx.lower_statement(stmt);
                     }
+                    // Flush any defers registered in the lambda body before
+                    // the synthesized return (explicit returns already drained
+                    // the stack).
+                    lambda_ctx.run_defers();
                     lambda_ctx.emit(MachineInstruction::Return);
                 }
                 self.module.add_function(lambda_func);
@@ -2503,9 +3086,10 @@ impl<'a> FunctionLoweringContext<'a> {
                             dst: MachineOperand::StackSlot(slot),
                             src: MachineOperand::Register(MachineRegister::Virtual(new_reg)),
                         });
-                        self.local_vars.insert(name.clone(), (slot, existing_ty));
+                        self.declare_local(name, slot, existing_ty);
                         if *is_prefix { new_reg } else { val_reg }
                     } else {
+                        self.emit_abort_with_msg("panic: ++/-- of undeclared variable");
                         let out_reg = self.func.alloc_vreg();
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -2513,7 +3097,38 @@ impl<'a> FunctionLoweringContext<'a> {
                         });
                         out_reg
                     }
+                } else if let HirExpr::Index(container, index_expr) = &**inner {
+                    // `arr[i]++` / `a[k]--`: fetch element, adjust, store back.
+                    let obj_reg = self.lower_expression(container);
+                    let index_handle = self.lower_to_handle(index_expr);
+                    self.emit_call_with_args("aot_get_index", &[obj_reg, index_handle]);
+                    let val_reg = self.func.alloc_vreg();
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(val_reg)),
+                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
+                            0,
+                        ))),
+                    });
+                    let new_reg = self.func.alloc_vreg();
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(new_reg)),
+                        src: MachineOperand::Register(MachineRegister::Virtual(val_reg)),
+                    });
+                    if *is_inc {
+                        self.emit(MachineInstruction::Add {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(new_reg)),
+                            src: MachineOperand::Immediate(1),
+                        });
+                    } else {
+                        self.emit(MachineInstruction::Sub {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(new_reg)),
+                            src: MachineOperand::Immediate(1),
+                        });
+                    }
+                    self.emit_call_with_args("aot_set_index", &[obj_reg, index_handle, new_reg]);
+                    if *is_prefix { new_reg } else { val_reg }
                 } else {
+                    self.emit_abort_with_msg("panic: ++/-- target must be a variable or index");
                     let out_reg = self.func.alloc_vreg();
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -2523,6 +3138,12 @@ impl<'a> FunctionLoweringContext<'a> {
                 }
             }
             HirExpr::BinaryOp(lhs, op, rhs) => {
+                if matches!(op, BinOp::And | BinOp::Or) {
+                    // Short-circuiting logic: the right operand (and its side
+                    // effects) must only execute when the left operand has
+                    // not already decided the result.
+                    return self.lower_logical_short_circuit(lhs, op, rhs);
+                }
                 let mut l_reg = self.lower_expression(lhs);
                 let mut r_reg = self.lower_expression(rhs);
                 let l_is_fp = self.is_expr_float(lhs, l_reg);
@@ -2755,11 +3376,13 @@ impl<'a> FunctionLoweringContext<'a> {
 
                 match op {
                     BinOp::Add => {
-                        let l_is_str = matches!(infer_hir_expr_type(lhs), Some(HirType::String));
-                        let r_is_str = matches!(infer_hir_expr_type(rhs), Some(HirType::String));
+                        let l_is_str = matches!(self.infer_expr_type(lhs), Some(HirType::String));
+                        let r_is_str = matches!(self.infer_expr_type(rhs), Some(HirType::String));
                         if l_is_str || r_is_str {
-                            let l_h = self.lower_to_handle(lhs);
-                            let r_h = self.lower_to_handle(rhs);
+                            // Build handles from the already-lowered operands
+                            // (re-lowering would run side effects twice).
+                            let l_h = self.wrap_vreg_to_handle(lhs, l_reg);
+                            let r_h = self.wrap_vreg_to_handle(rhs, r_reg);
                             self.emit_call_with_args("aot_string_concat", &[l_h, r_h]);
                             self.emit(MachineInstruction::Move {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -2787,12 +3410,14 @@ impl<'a> FunctionLoweringContext<'a> {
                         });
                     }
                     BinOp::Div => {
+                        self.emit_int_div_guard(l_reg, r_reg, rhs);
                         self.emit(MachineInstruction::Div {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
                         });
                     }
                     BinOp::Mod => {
+                        self.emit_int_div_guard(l_reg, r_reg, rhs);
                         self.emit(MachineInstruction::Mod {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
@@ -2823,10 +3448,19 @@ impl<'a> FunctionLoweringContext<'a> {
                         });
                     }
                     BinOp::ShiftRight => {
-                        self.emit(MachineInstruction::Shr {
-                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                            src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
-                        });
+                        // `>>` is arithmetic for signed (and untyped) values;
+                        // only unsigned types take the logical form.
+                        if self.is_expr_unsigned_int(lhs) {
+                            self.emit(MachineInstruction::Shr {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                            });
+                        } else {
+                            self.emit(MachineInstruction::Sar {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                            });
+                        }
                     }
                     BinOp::Eq | BinOp::StrictEq => {
                         self.emit(MachineInstruction::Compare {
@@ -2889,14 +3523,17 @@ impl<'a> FunctionLoweringContext<'a> {
                         });
                     }
                     BinOp::IntDiv => {
+                        self.emit_int_div_guard(l_reg, r_reg, rhs);
                         self.emit(MachineInstruction::Div {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
                         });
                     }
                     BinOp::In => {
-                        let l_h = self.lower_to_handle(lhs);
-                        let r_h = self.lower_to_handle(rhs);
+                        // Build handles from the already-lowered operands
+                        // (re-lowering would run side effects twice).
+                        let l_h = self.wrap_vreg_to_handle(lhs, l_reg);
+                        let r_h = self.wrap_vreg_to_handle(rhs, r_reg);
                         self.emit_call_with_args("aot_contains", &[r_h, l_h]);
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -2937,28 +3574,67 @@ impl<'a> FunctionLoweringContext<'a> {
                         let end_id = self.func.create_block(&end_lbl);
                         self.current_block_id = end_id;
                     }
-                    BinOp::Or => {
-                        let true_lbl = self.fresh_label("or_true");
-                        let end_lbl = self.fresh_label("or_end");
+                    BinOp::Pow => {
+                        // `**` previously fell into the catch-all and silently
+                        // returned the left operand. Implement it for real:
+                        // floats dispatch to aot_math_f64(op=pow), ints use a
+                        // multiplication loop (negative exponents yield 0).
+                        let l_is_fp = self.func.vreg_class(l_reg) == RegisterClass::Float;
+                        let r_is_fp = self.func.vreg_class(r_reg) == RegisterClass::Float;
+                        if l_is_fp || r_is_fp {
+                            let x_fp = self.coerce_to_f64(l_reg);
+                            let y_fp = self.coerce_to_f64(r_reg);
+                            return self.emit_math_f64(16, x_fp, y_fp);
+                        }
 
+                        let zero_lbl = self.fresh_label("pow_zero");
+                        let end_lbl = self.fresh_label("pow_end");
+                        let loop_lbl = self.fresh_label("pow_loop");
+
+                        let cnt_reg = self.func.alloc_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(cnt_reg)),
+                            src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                        });
+                        // out_reg currently holds a copy of the base; use it
+                        // as the accumulator, starting at 1.
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Immediate(1),
+                        });
                         self.emit(MachineInstruction::Compare {
-                            lhs: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
+                            lhs: MachineOperand::Register(MachineRegister::Virtual(cnt_reg)),
                             rhs: MachineOperand::Immediate(0),
                         });
                         self.emit(MachineInstruction::BranchCc {
-                            cc: ConditionCode::NotEqual,
-                            target: true_lbl.clone(),
+                            cc: ConditionCode::LessThan,
+                            target: zero_lbl.clone(),
                         });
 
+                        let loop_id = self.func.create_block(&loop_lbl);
+                        self.current_block_id = loop_id;
                         self.emit(MachineInstruction::Compare {
-                            lhs: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                            lhs: MachineOperand::Register(MachineRegister::Virtual(cnt_reg)),
                             rhs: MachineOperand::Immediate(0),
                         });
                         self.emit(MachineInstruction::BranchCc {
-                            cc: ConditionCode::NotEqual,
-                            target: true_lbl.clone(),
+                            cc: ConditionCode::LessOrEqual,
+                            target: end_lbl.clone(),
+                        });
+                        self.emit(MachineInstruction::Mul {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
+                        });
+                        self.emit(MachineInstruction::Sub {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(cnt_reg)),
+                            src: MachineOperand::Immediate(1),
+                        });
+                        self.emit(MachineInstruction::Branch {
+                            target: loop_lbl.clone(),
                         });
 
+                        let zero_id = self.func.create_block(&zero_lbl);
+                        self.current_block_id = zero_id;
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Immediate(0),
@@ -2967,57 +3643,22 @@ impl<'a> FunctionLoweringContext<'a> {
                             target: end_lbl.clone(),
                         });
 
-                        let t_id = self.func.create_block(&true_lbl);
-                        self.current_block_id = t_id;
-                        self.emit(MachineInstruction::Move {
-                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                            src: MachineOperand::Immediate(1),
-                        });
-
                         let end_id = self.func.create_block(&end_lbl);
                         self.current_block_id = end_id;
                     }
-                    BinOp::And => {
-                        let false_lbl = self.fresh_label("and_false");
-                        let end_lbl = self.fresh_label("and_end");
-
-                        self.emit(MachineInstruction::Compare {
-                            lhs: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
-                            rhs: MachineOperand::Immediate(0),
-                        });
-                        self.emit(MachineInstruction::BranchCc {
-                            cc: ConditionCode::Equal,
-                            target: false_lbl.clone(),
-                        });
-
-                        self.emit(MachineInstruction::Compare {
-                            lhs: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
-                            rhs: MachineOperand::Immediate(0),
-                        });
-                        self.emit(MachineInstruction::BranchCc {
-                            cc: ConditionCode::Equal,
-                            target: false_lbl.clone(),
-                        });
-
-                        self.emit(MachineInstruction::Move {
-                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                            src: MachineOperand::Immediate(1),
-                        });
-                        self.emit(MachineInstruction::Branch {
-                            target: end_lbl.clone(),
-                        });
-
-                        let f_id = self.func.create_block(&false_lbl);
-                        self.current_block_id = f_id;
-                        self.emit(MachineInstruction::Move {
-                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                            src: MachineOperand::Immediate(0),
-                        });
-
-                        let end_id = self.func.create_block(&end_lbl);
-                        self.current_block_id = end_id;
+                    BinOp::Instanceof => {
+                        // Requires class tags on runtime objects, which the
+                        // native object model does not carry yet. Fail loudly
+                        // instead of returning a silently wrong value.
+                        self.emit_abort_with_msg(
+                            "instanceof is not supported in native builds yet",
+                        );
                     }
-                    _ => {}
+                    _ => {
+                        // Unknown binary operator: fail loudly instead of
+                        // silently returning the left operand.
+                        self.emit_abort_with_msg("unsupported binary operator in native codegen");
+                    }
                 }
                 out_reg
             }
@@ -3133,15 +3774,18 @@ impl<'a> FunctionLoweringContext<'a> {
                         "float" | "f64" | "f32" | "number" | "Number"
                     ) && !args.is_empty()
                     {
+                        // `aot_to_float` returns f64 in the first FP return
+                        // register (XMM0), not in RAX.
                         let handle = self.lower_to_handle(&args[0]);
                         self.emit_call_with_args("aot_to_float", &[handle]);
+                        let fp_reg = self.func.alloc_fp_vreg();
                         self.emit(MachineInstruction::Move {
-                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            dst: MachineOperand::Register(MachineRegister::Virtual(fp_reg)),
                             src: MachineOperand::Register(MachineRegister::Physical(
-                                PhysicalRegister(0),
+                                PhysicalRegister::xmm(0),
                             )),
                         });
-                        return out_reg;
+                        return fp_reg;
                     }
                     if matches!(fn_name.as_str(), "str" | "string" | "String") && !args.is_empty() {
                         let handle = self.lower_to_handle(&args[0]);
@@ -3186,7 +3830,96 @@ impl<'a> FunctionLoweringContext<'a> {
                         return out_reg;
                     }
                     if fn_name == "clock" {
-                        self.emit_call_with_args("clock", &[]);
+                        // `aot_clock` returns epoch seconds as f64 in XMM0.
+                        // (The external msvcrt `clock` used previously returns
+                        // process CPU time as an integer in RAX — different
+                        // semantics entirely.)
+                        self.emit_call_with_args("aot_clock", &[]);
+                        let fp_reg = self.func.alloc_fp_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(fp_reg)),
+                            src: MachineOperand::Register(MachineRegister::Physical(
+                                PhysicalRegister::xmm(0),
+                            )),
+                        });
+                        return fp_reg;
+                    }
+                    if matches!(
+                        fn_name.as_str(),
+                        "sin"
+                            | "cos"
+                            | "tan"
+                            | "asin"
+                            | "acos"
+                            | "atan"
+                            | "sqrt"
+                            | "exp"
+                            | "log"
+                            | "log10"
+                            | "fabs"
+                            | "floor"
+                            | "ceil"
+                            | "round"
+                    ) && args.len() == 1
+                    {
+                        // Runtime f64 math dispatcher: aot_math_f64(op, x, y) -> f64.
+                        let op_code = match fn_name.as_str() {
+                            "sin" => 1,
+                            "cos" => 2,
+                            "tan" => 3,
+                            "asin" => 4,
+                            "acos" => 5,
+                            "atan" => 6,
+                            "sqrt" => 7,
+                            "exp" => 8,
+                            "log" => 9,
+                            "log10" => 10,
+                            "fabs" => 11,
+                            "floor" => 12,
+                            "ceil" => 13,
+                            _ => 14, // round
+                        };
+                        let x_reg = self.lower_expression(&args[0]);
+                        let x_fp = self.coerce_to_f64(x_reg);
+                        let y_fp = self.func.alloc_fp_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(y_fp)),
+                            src: MachineOperand::FloatImmediate(0.0),
+                        });
+                        return self.emit_math_f64(op_code, x_fp, y_fp);
+                    }
+                    if fn_name == "pow" && args.len() == 2 {
+                        let op_code = 16; // pow
+                        let x_reg = self.lower_expression(&args[0]);
+                        let y_reg = self.lower_expression(&args[1]);
+                        let x_fp = self.coerce_to_f64(x_reg);
+                        let y_fp = self.coerce_to_f64(y_reg);
+                        return self.emit_math_f64(op_code, x_fp, y_fp);
+                    }
+                    if fn_name == "range" && (args.len() == 1 || args.len() == 2) {
+                        // `range(n)` / `range(start, end)` calls materialize an
+                        // exclusive integer array via the runtime, matching the
+                        // interpreter builtin. (The `a..b` operator syntax goes
+                        // through `HirExpr::Range` instead.)
+                        let zero_reg = self.func.alloc_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(zero_reg)),
+                            src: MachineOperand::Immediate(0),
+                        });
+                        let (s_reg, e_reg) = if args.len() == 1 {
+                            (zero_reg, self.lower_expression(&args[0]))
+                        } else {
+                            (
+                                self.lower_expression(&args[0]),
+                                self.lower_expression(&args[1]),
+                            )
+                        };
+                        let inc_reg = self.func.alloc_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(inc_reg)),
+                            src: MachineOperand::Immediate(0),
+                        });
+                        self.emit_call_with_args("aot_make_range", &[s_reg, e_reg, inc_reg]);
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Register(MachineRegister::Physical(
@@ -3222,7 +3955,9 @@ impl<'a> FunctionLoweringContext<'a> {
                                     dst: MachineOperand::Register(MachineRegister::Virtual(nl_reg)),
                                     src: MachineOperand::Immediate(1),
                                 });
-                                self.emit_call_with_args("aot_print_str", &[str_reg, nl_reg]);
+                                // Lean literal path: raw OS write, no handle
+                                // creation and no Rust formatting machinery.
+                                self.emit_call_with_args("aot_print_cstr", &[str_reg, nl_reg]);
                                 self.emit(MachineInstruction::Move {
                                     dst: MachineOperand::Register(MachineRegister::Virtual(
                                         out_reg,
@@ -3293,9 +4028,10 @@ impl<'a> FunctionLoweringContext<'a> {
                             &[ptr_reg, count_reg, opts_reg],
                         );
 
-                        if fn_name == "println" && !has_opts {
-                            self.emit_call_with_args("aot_print_newline", &[]);
-                        }
+                        // NOTE: `aot_print_with_options` already ends output with
+                        // a newline (matching interpreter `print` semantics), so
+                        // `println` must NOT add a second one (it used to emit
+                        // a double newline through this path).
 
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -3791,7 +4527,7 @@ impl<'a> FunctionLoweringContext<'a> {
                     let mut regs = Vec::new();
                     for elem in elements {
                         let r = self.lower_expression(elem);
-                        regs.push((r, infer_hir_expr_type(elem)));
+                        regs.push((r, self.infer_expr_type(elem)));
                     }
                     let out_reg = self.func.alloc_vreg();
                     for (name, (r, ty)) in names.iter().zip(regs) {
@@ -3809,7 +4545,7 @@ impl<'a> FunctionLoweringContext<'a> {
                                 dst: MachineOperand::StackSlot(off),
                                 src: MachineOperand::Register(MachineRegister::Virtual(r)),
                             });
-                            self.local_vars.insert(name.clone(), (off, ty));
+                            self.declare_local(name, off, ty);
                         }
                     }
                     self.emit(MachineInstruction::Move {
@@ -3948,7 +4684,7 @@ pub fn lower_hir_function_with_signatures(
                     });
                 }
             }
-            ctx.local_vars.insert(p_name.clone(), (off, p_ty.clone()));
+            ctx.declare_local(p_name, off, p_ty.clone());
         }
 
         for stmt in hir_func.body.iter() {
@@ -3963,6 +4699,8 @@ pub fn lower_hir_function_with_signatures(
             .and_then(|b| b.instructions.last())
             .map_or(false, |i| matches!(i, MachineInstruction::Return));
         if !last_is_ret {
+            // Falling off the end still runs pending defers.
+            ctx.run_defers();
             ctx.emit(MachineInstruction::Return);
         }
     }
@@ -3970,9 +4708,93 @@ pub fn lower_hir_function_with_signatures(
     module.add_function(func);
 }
 
+/// Collect signatures of functions declared as *statements* (fn statements,
+/// extends, inline classes) into the module-wide signature map.
+fn collect_stmt_signatures(
+    stmts: &[HirStmt],
+    sigs: &mut HashMap<String, (Vec<HirType>, Option<HirType>)>,
+) {
+    for s in stmts {
+        match s {
+            HirStmt::FunctionDef {
+                name,
+                params,
+                ret_type,
+                ..
+            } => {
+                let param_tys: Vec<HirType> = params
+                    .iter()
+                    .map(|(_, ty, _)| ty.clone().unwrap_or(HirType::Int))
+                    .collect();
+                sigs.insert(name.clone(), (param_tys, ret_type.clone()));
+            }
+            HirStmt::Extend { methods, .. } => {
+                for m in methods {
+                    let param_tys: Vec<HirType> = m
+                        .params
+                        .iter()
+                        .map(|(_, ty, _)| ty.clone().unwrap_or(HirType::Int))
+                        .collect();
+                    sigs.insert(m.name.clone(), (param_tys, m.ret_type.clone()));
+                }
+            }
+            HirStmt::ClassDef(cls) => {
+                for m in cls.methods.iter().chain(cls.static_methods.iter()) {
+                    let param_tys: Vec<HirType> = m
+                        .params
+                        .iter()
+                        .map(|(_, ty)| ty.clone().unwrap_or(HirType::Int))
+                        .collect();
+                    sigs.insert(
+                        format!("{}_{}", cls.name, m.name),
+                        (param_tys, m.ret_type.clone()),
+                    );
+                }
+            }
+            HirStmt::Block(inner) => collect_stmt_signatures(inner, sigs),
+            _ => {}
+        }
+    }
+}
+
 /// Lower entire HirModule to NativeModule.
 pub fn lower_hir_module(hir: &HirModule, target: &TargetDescriptor) -> NativeModule {
     let mut module = NativeModule::new("main_module");
+
+    // Materialize top-level classes (hir.classes) as ClassDef statements so
+    // their methods actually get lowered. Previously only ClassDef *statements*
+    // were handled, so methods of top-level classes never reached codegen and
+    // any call to them failed at link time.
+    let has_fn_main = hir.functions.iter().any(|f| f.name == "main");
+    let owned: Option<HirModule> = if !hir.classes.is_empty() || has_fn_main {
+        let mut m = hir.clone();
+        if !m.classes.is_empty() {
+            let class_stmts: Vec<HirStmt> = m
+                .classes
+                .iter()
+                .map(|cls| HirStmt::ClassDef(cls.clone()))
+                .collect();
+            let mut body = class_stmts;
+            body.append(&mut m.statements);
+            m.statements = body;
+        }
+        // When an explicit `fn main` coexists with top-level statements
+        // (e.g. a `struct` declaration alongside `fn main`), merge the
+        // statements into main's body as module initialization. Previously
+        // both were lowered into separate functions named `main`, producing
+        // a duplicate-symbol ADOB error at encode time.
+        if has_fn_main && !m.statements.is_empty() {
+            if let Some(main_fn) = m.functions.iter_mut().find(|f| f.name == "main") {
+                let mut body = std::mem::take(&mut m.statements);
+                body.extend(main_fn.body.iter().cloned());
+                main_fn.body = body.into();
+            }
+        }
+        Some(m)
+    } else {
+        None
+    };
+    let hir = owned.as_ref().unwrap_or(hir);
 
     let mut fn_signatures = HashMap::new();
     for f in &hir.functions {
@@ -3983,6 +4805,24 @@ pub fn lower_hir_module(hir: &HirModule, target: &TargetDescriptor) -> NativeMod
             .collect();
         fn_signatures.insert(f.name.clone(), (param_tys, f.ret_type.clone()));
     }
+    // Class methods lower as `Class_method` module functions: register their
+    // signatures up front so sibling method calls resolve float args/returns.
+    for cls in &hir.classes {
+        for m in cls.methods.iter().chain(cls.static_methods.iter()) {
+            let param_tys: Vec<HirType> = m
+                .params
+                .iter()
+                .map(|(_, ty)| ty.clone().unwrap_or(HirType::Int))
+                .collect();
+            fn_signatures.insert(
+                format!("{}_{}", cls.name, m.name),
+                (param_tys, m.ret_type.clone()),
+            );
+        }
+    }
+    // Nested function definitions (fn statements, extends, inline classes)
+    // participate in the same signature map.
+    collect_stmt_signatures(&hir.statements, &mut fn_signatures);
 
     // Lower user functions
     for hir_func in &hir.functions {
@@ -3994,7 +4834,13 @@ pub fn lower_hir_module(hir: &HirModule, target: &TargetDescriptor) -> NativeMod
         let mut main_func = MachineFunction::new("main");
         main_func.is_exported = true;
         {
-            let mut ctx = FunctionLoweringContext::new(&mut main_func, &mut module, target);
+            let mut ctx = FunctionLoweringContext::with_signatures(
+                &mut main_func,
+                &mut module,
+                target,
+                None,
+                fn_signatures.clone(),
+            );
             for stmt in &hir.statements {
                 ctx.lower_statement(stmt);
             }
@@ -4005,6 +4851,8 @@ pub fn lower_hir_module(hir: &HirModule, target: &TargetDescriptor) -> NativeMod
                 .and_then(|b| b.instructions.last())
                 .map_or(false, |i| matches!(i, MachineInstruction::Return));
             if !last_is_ret {
+                // Falling off the end still runs pending defers.
+                ctx.run_defers();
                 ctx.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
                     src: MachineOperand::Immediate(0),

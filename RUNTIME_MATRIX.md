@@ -1,47 +1,46 @@
 # Adesh Standalone Runtime Matrix
 
-**Generated:** 2026-10-01  
-**Scope:** Standalone Native Runtime (`crates/adesh-runtime`) Features & OS Mapping
+**Scope:** Implemented behavior in `crates/adesh-runtime`; this is not a list
+of planned platform APIs.
 
----
+## 1. Build and Runtime Selection
 
-## 1. Runtime Modes
+The native linker adds the `adesh_runtime` archive by default and extracts
+members needed to resolve program symbols. The CLI does not currently provide
+the `--runtime=minimal|static|dynamic|none` profiles described in older
+versions of this document. Native Windows PE execution is the platform
+validated by the current end-to-end tests. ELF and Mach-O linker pipeline
+tests are not OS runtime tests.
 
-Adesh binaries can be compiled with selectable runtime profiles:
+## 2. Implemented Runtime Features
 
-```bash
-adesh build --runtime=minimal     # Size-optimized minimal runtime (no networking/crypto)
-adesh build --runtime=static      # Full statically-linked runtime (default for native executables)
-adesh build --runtime=dynamic     # Linked against shared adesh_rt.dll / libadesh_rt.so
-adesh build --runtime=none        # Bare-metal / embedded no_std mode
-```
+| Feature | Current behavior | Limits |
+| :--- | :--- | :--- |
+| Runtime values and handles | `RuntimeValue` store with `aot_*` construction, access, and removal exports. | Handle lifetimes are caller-managed; there is no automatic collection policy. |
+| Collections | Arrays, tuples, sets, objects, strings, ranges, and collection helpers. Array/object index and field updates preserve existing handle identity. | Native language coverage is partial. |
+| Strings and output | String conversion/concatenation helpers, value printers, and raw native literal output (`aot_print_cstr`). | Only selected FFI exports catch Rust panics. |
+| Allocation | `aot_alloc`/`aot_free`, `adesh_mem_alloc`/`adesh_mem_free`/`adesh_mem_realloc`, plus tracked-allocation APIs. | `aot_alloc` is not tracked by the scope API. Raw pointer validity remains the caller's responsibility. |
+| Tracked scopes | `adesh_rt_scope_enter`, `adesh_rt_alloc_tracked`, `adesh_rt_free_tracked`, `adesh_rt_scope_exit`, and `adesh_rt_validate_ptr`; scope tokens distinguish nested scopes with reused IDs. | Native lowering does not yet emit these scope calls; `Alloc`/`Free` use `aot_alloc`/`aot_free`. |
+| ARC and weak references | Strong/weak handles, dead-object detection, and safe weak upgrade behavior. | These are runtime APIs, not a complete language ownership implementation. |
+| Threading | Mutex/condition-variable wrappers and a shared reusable worker pool; parallel iteration submits work to the pool and contains task panics. | Small ranges execute inline. This is not an async executor. |
+| Filesystem and input | Selected `aot_fs_*` helpers and input exports. | Not a comprehensive cross-platform OS abstraction. |
 
----
+## 3. ABI and Safety Notes
 
-## 2. Platform Feature Mapping
+The runtime exposes both `aot_*` functions used by native lowering and
+`adesh_*` functions from the versioned C ABI. Examples include
+`adesh_abi_version`, `adesh_str_new`, `adesh_arr_new`, `adesh_mem_alloc`,
+`aot_make_array`, `aot_make_string`, and `aot_set_index`.
 
-| Runtime Feature | Windows Native | Linux Native | macOS Native | Embedded / Bare-Metal | WASM / WASI |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Virtual Memory** | `VirtualAlloc` / `VirtualFree` | `mmap` / `munmap` | `mmap` / `munmap` | Fixed Static Heap / Arena | `memory.grow` |
-| **OS Threads** | `CreateThread` / `WaitForSingleObject` | `pthread_create` / `pthread_join` | `pthread_create` / `pthread_join` | No threads / RTOS task | Web Workers / WASI Threads |
-| **Atomics & Futex** | `WaitOnAddress` / `WakeByAddressSingle` | `sys_futex` (`FUTEX_WAIT`/`WAKE`) | `__ulock_wait` / `__ulock_wake` | Primitive spinlocks / CLI-SEI | `atomic.wait` / `atomic.notify` |
-| **High-Res Timers** | `QueryPerformanceCounter` | `clock_gettime(CLOCK_MONOTONIC)` | `mach_absolute_time` | SysTick timer / cycle counter | `clock_time_get` |
-| **Dynamic Libraries** | `LoadLibraryW` / `GetProcAddress` | `dlopen` / `dlsym` | `dlopen` / `dlsym` | Not Supported | Not Supported |
-| **File System** | Win32 File APIs (`CreateFileW`) | POSIX `open`, `read`, `write` | POSIX `open`, `read`, `write` | Flash memory / LittleFS | `fd_read` / `fd_write` |
-| **Networking** | `Winsock2` (`WSAStartup`, `socket`) | Berkeley Sockets (`sys/socket.h`) | Berkeley Sockets (`sys/socket.h`) | LwIP / Ethernet driver | WASI Sockets (0.2) |
-| **Process Control** | `CreateProcessW` / `TerminateProcess` | `fork` / `execve` / `waitpid` | `posix_spawn` / `waitpid` | Reset vector | Not Supported |
-| **Terminal / ANSI** | Win32 Console Mode / Virtual Term | POSIX termios / ANSI sequences | POSIX termios / ANSI sequences | UART / Serial console | Canvas / DOM Console |
+Functions that accept raw pointers require the caller to provide valid memory
+for the full length/count passed. A null check cannot make an arbitrary
+non-null pointer safe. Panic containment is present on selected exports, not
+all of them, so consumers must also obey each function's documented preconditions.
 
----
+## 4. Platform Notes
 
-## 3. C ABI Export Catalog (`adesh_rt_*`)
-
-All runtime functions follow the stable C ABI for seamless static/dynamic linking without symbol name mangling:
-
-* **Memory**: `adesh_rt_alloc(size, align)`, `adesh_rt_free(ptr, size, align)`, `adesh_rt_realloc(ptr, old_size, new_size, align)`.
-* **ARC Reference Counting**: `adesh_rt_retain(ptr)`, `adesh_rt_release(ptr, drop_fn)`.
-* **Value System**: `aot_store_value(val) -> handle`, `aot_get_value(handle)`, `aot_remove_value(handle)`, `unpack_aot_arg(raw)`.
-* **I/O & Output**: `adesh_rt_print(val_handle)`, `adesh_rt_eprint(val_handle)`, `adesh_rt_println()`.
-* **Strings**: `adesh_rt_string_concat(h1, h2)`, `adesh_rt_string_len(h)`, `adesh_rt_string_slice(h, start, end)`.
-* **Collections**: `adesh_rt_array_new(cap)`, `adesh_rt_array_push(arr_h, val_h)`, `adesh_rt_object_new()`, `adesh_rt_object_insert(obj_h, key, val_h)`.
-* **Panic & Diagnostics**: `adesh_rt_panic(msg_ptr, len)`, `adesh_rt_assert_failed(file, line, col, msg)`.
+The runtime is implemented in Rust and uses Rust `std` plus selected `libc`
+calls; it does not provide the previously listed direct OS mappings for every
+feature. For example, the native literal-output path uses Win32 calls on
+Windows and POSIX `write` on non-Windows targets. Do not infer implemented
+thread, timer, network, dynamic-library, or WASI support from this table.

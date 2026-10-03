@@ -3,7 +3,7 @@
 use crate::archive::Archive;
 use crate::error::{LinkError, LinkResult};
 use crate::object::ObjectFile;
-use crate::symbol::{Symbol, SymbolBinding};
+use crate::symbol::{Symbol, SymbolBinding, SymbolType, SymbolVisibility};
 use std::collections::{HashMap, HashSet};
 
 /// Policy governing unresolved symbol resolution.
@@ -35,6 +35,9 @@ pub struct SymbolResolver {
     pub table: HashMap<String, ResolvedSymbol>,
     pub undefined: HashSet<String>,
     pub policy: UndefinedSymbolPolicy,
+    /// Non-fatal resolution diagnostics (e.g. undefined weak symbols bound to
+    /// NULL). Surfaced by the linker pipeline after resolution.
+    pub warnings: Vec<String>,
 }
 
 impl Default for SymbolResolver {
@@ -49,6 +52,7 @@ impl SymbolResolver {
             table: HashMap::new(),
             undefined: HashSet::new(),
             policy: UndefinedSymbolPolicy::Error,
+            warnings: Vec::new(),
         }
     }
 
@@ -57,6 +61,7 @@ impl SymbolResolver {
             table: HashMap::new(),
             undefined: HashSet::new(),
             policy,
+            warnings: Vec::new(),
         }
     }
 
@@ -83,47 +88,61 @@ impl SymbolResolver {
 
         // 2. Archive resolution loop: Extract required members until fixed point
         let mut progress = true;
-        let mut extracted_members = HashSet::new();
+        // Keyed by (archive index, member index) so the fixed-point loop does
+        // not allocate a PathBuf per lookup.
+        let mut extracted_members: HashSet<(usize, usize)> = HashSet::new();
         while progress && !self.undefined.is_empty() {
             progress = false;
-            for ar in archives {
+            for (ar_idx, ar) in archives.iter().enumerate() {
                 let mut current_undef: Vec<String> = self.undefined.iter().cloned().collect();
                 current_undef.sort();
                 for undef_sym in current_undef {
                     if !self.undefined.contains(&undef_sym) {
                         continue;
                     }
-                    let candidates = ar
-                        .symbol_index
-                        .get(&undef_sym)
-                        .or_else(|| {
-                            ar.symbol_index
-                                .get(undef_sym.strip_prefix('_').unwrap_or(&undef_sym))
-                        })
-                        .or_else(|| ar.symbol_index.get(&format!("_{}", undef_sym)));
+                    let candidates = ar.symbol_index.get(&undef_sym);
+                    let prefixed;
+                    let candidates = if candidates.is_some() {
+                        candidates
+                    } else if target.arch == crate::target::Arch::X86 {
+                        // The `_`-prefix equivalence is a 32-bit x86
+                        // (COFF/ELF) name-mangling convention only. On 64-bit
+                        // targets `_foo` and `foo` are distinct symbols and
+                        // aliasing them binds the wrong definition.
+                        let stripped = undef_sym.strip_prefix('_').unwrap_or(&undef_sym);
+                        prefixed = format!("_{}", undef_sym);
+                        ar.symbol_index
+                            .get(stripped)
+                            .or_else(|| ar.symbol_index.get(&prefixed))
+                    } else {
+                        None
+                    };
                     if let Some(candidates) = candidates {
                         // A COFF archive can contain several COMDAT
                         // definitions with the same name. If one candidate
                         // was extracted for another symbol, try another
                         // defining member instead of abandoning this symbol.
                         if let Some(&m_idx) = candidates.iter().find(|&&idx| {
-                            idx < ar.members.len()
-                                && !extracted_members.contains(&(ar.path.clone(), idx))
+                            idx < ar.members.len() && !extracted_members.contains(&(ar_idx, idx))
                         }) {
-                            extracted_members.insert((ar.path.clone(), m_idx));
+                            extracted_members.insert((ar_idx, m_idx));
                             let member = &ar.members[m_idx];
                             let mut member_obj = if let Some(ref o) = member.obj {
-                                let mut cloned = o.clone();
-                                cloned.file_index = objects.len();
-                                cloned
+                                o.clone()
                             } else {
                                 crate::object::reader::ObjectReader::read_from_memory(
                                     &member.data,
                                     std::path::Path::new(&member.name),
                                     &crate::target::Target::host(),
-                                    objects.len(),
+                                    0,
                                 )?
                             };
+                            // Archive members are pre-parsed with a
+                            // placeholder file index; every embedded
+                            // (file, index) pair must be re-stamped to the
+                            // slot this member now occupies, or precise
+                            // relocation resolution consults the wrong object.
+                            member_obj.reassign_file_index(objects.len());
                             member_obj.is_archive_member = true;
                             member_obj.archive_name = Some(ar.path.display().to_string());
                             self.ingest_object(&member_obj)?;
@@ -296,6 +315,17 @@ impl SymbolResolver {
 
         // 4. Final verification of remaining undefined symbols
         if !self.undefined.is_empty() {
+            // Under the explicit `WeakUndefined` policy every remaining
+            // unresolved symbol is bound to NULL (the ABI-defined value of a
+            // weak reference) instead of failing the link.
+            if self.policy == UndefinedSymbolPolicy::WeakUndefined {
+                let remaining: Vec<String> = self.undefined.drain().collect();
+                for name in remaining {
+                    self.bind_weak_undefined(&name);
+                }
+                return Ok(());
+            }
+
             // Pick first undefined symbol to report
             let first_undef = self.undefined.iter().next().unwrap();
             let mut ref_file = "input object";
@@ -332,6 +362,33 @@ impl SymbolResolver {
             if sym.is_defined {
                 if let Some(existing) = self.table.get_mut(&sym.name) {
                     if existing.symbol.is_defined {
+                        // A weak-undefined placeholder (bound to NULL earlier)
+                        // is not a real definition: a real one replaces it.
+                        let is_weak_zero_placeholder = existing.symbol.section_index.is_none()
+                            && existing.symbol.binding == SymbolBinding::Weak
+                            && existing.symbol.sym_type != SymbolType::Common;
+                        if is_weak_zero_placeholder {
+                            existing.symbol = sym.clone();
+                            existing.defined_in_file_index = obj.file_index;
+                            existing.defined_in_sec_index = sym.section_index;
+                            continue;
+                        }
+
+                        // Tentative definitions (COMMON blocks) are never a
+                        // duplicate-symbol conflict. A real definition wins;
+                        // among several common blocks the first one wins
+                        // (matching the first-seen-wins .bss allocation in
+                        // the layout engine).
+                        if sym.sym_type == SymbolType::Common {
+                            continue;
+                        }
+                        if existing.symbol.sym_type == SymbolType::Common {
+                            existing.symbol = sym.clone();
+                            existing.defined_in_file_index = obj.file_index;
+                            existing.defined_in_sec_index = sym.section_index;
+                            continue;
+                        }
+
                         if existing.symbol.binding == SymbolBinding::Global
                             && sym.binding == SymbolBinding::Global
                         {
@@ -382,6 +439,12 @@ impl SymbolResolver {
                     );
                     self.undefined.remove(&sym.name);
                 }
+            } else if sym.binding == SymbolBinding::Weak {
+                // An undefined weak symbol has the ABI-defined value NULL in
+                // ELF (`SHN_UNDEF` + `STB_WEAK`) and COFF
+                // (`IMAGE_SYM_CLASS_WEAK_EXTERNAL`, section 0). It must bind
+                // to address 0, never fail the link.
+                self.bind_weak_undefined(&sym.name);
             } else {
                 // Undefined symbol reference
                 if !self.table.contains_key(&sym.name) {
@@ -412,5 +475,49 @@ impl SymbolResolver {
 
     pub fn lookup(&self, name: &str) -> Option<&ResolvedSymbol> {
         self.table.get(name)
+    }
+
+    /// Bind an undefined weak symbol to address 0.
+    ///
+    /// This is the ABI-defined value of a weak reference: ELF encodes it as
+    /// `SHN_UNDEF` with `STB_WEAK`, COFF as `IMAGE_SYM_CLASS_WEAK_EXTERNAL`
+    /// with section number 0. The link must not fail, but the binding is
+    /// reported as a warning unless the caller explicitly selected the
+    /// `WeakUndefined` policy.
+    fn bind_weak_undefined(&mut self, name: &str) {
+        if self.table.contains_key(name) {
+            return;
+        }
+        self.undefined.remove(name);
+        self.table.insert(
+            name.to_string(),
+            ResolvedSymbol {
+                symbol: Symbol {
+                    name: name.to_string(),
+                    binding: SymbolBinding::Weak,
+                    visibility: SymbolVisibility::Hidden,
+                    sym_type: SymbolType::Function,
+                    section_index: None,
+                    value: 0,
+                    size: 0,
+                    is_defined: true,
+                    is_imported: false,
+                    is_exported: false,
+                    file_index: Some(0),
+                    alias_of: None,
+                    comdat_group: None,
+                    version: None,
+                },
+                defined_in_file_index: 0,
+                defined_in_sec_index: None,
+                references: Vec::new(),
+            },
+        );
+        if self.policy != UndefinedSymbolPolicy::WeakUndefined {
+            self.warnings.push(format!(
+                "undefined weak symbol `{}` resolved to 0 (NULL); a weak reference may be null",
+                name
+            ));
+        }
     }
 }

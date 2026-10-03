@@ -32,6 +32,7 @@ impl PeWriter {
             None,
             None,
             &[],
+            &[],
         )
     }
 
@@ -55,6 +56,7 @@ impl PeWriter {
         import_info: Option<&ImportTableResult>,
         tls_info: Option<&PeTlsInfo>,
         base_relocs: &[u32],
+        base_relocs32: &[u32],
     ) -> LinkResult<()> {
         let bytes = Self::encode_executable(
             target,
@@ -65,6 +67,7 @@ impl PeWriter {
             import_info,
             tls_info,
             base_relocs,
+            base_relocs32,
             false,
         )?;
         fs::write(path, bytes)?;
@@ -81,6 +84,7 @@ impl PeWriter {
         import_info: Option<&ImportTableResult>,
         tls_info: Option<&PeTlsInfo>,
         base_relocs: &[u32],
+        base_relocs32: &[u32],
         is_dll: bool,
     ) -> LinkResult<Vec<u8>> {
         let machine = match target.arch {
@@ -122,6 +126,7 @@ impl PeWriter {
         struct OutSection {
             name: String,
             flags: u32,
+            kind: crate::section::SectionKind,
             data: Vec<u8>,
             size: u64,
             /// RVA dictated by the layout engine, if any.
@@ -151,6 +156,7 @@ impl PeWriter {
             pe_sections.push(OutSection {
                 name: sec.name.clone(),
                 flags: sec.flags,
+                kind: sec.kind,
                 data: sec.data.clone(),
                 size: sec.size,
                 layout_rva,
@@ -189,6 +195,7 @@ impl PeWriter {
                 flags: crate::section::flags::READ
                     | crate::section::flags::WRITE
                     | crate::section::flags::ALLOC,
+                kind: crate::section::SectionKind::Data,
                 data: res.data.clone(),
                 size: data_len,
                 layout_rva: Some(idata_rva),
@@ -238,7 +245,7 @@ impl PeWriter {
         }
 
         // Add .reloc section (real base relocations when ASLR rebases the image).
-        let reloc_data = build_base_reloc_table(base_relocs, true);
+        let reloc_data = build_base_reloc_table(base_relocs, base_relocs32);
         let next_rva = pe_sections
             .iter()
             .map(|s| {
@@ -255,6 +262,7 @@ impl PeWriter {
             flags: crate::section::flags::READ
                 | crate::section::flags::ALLOC
                 | crate::section::flags::DISCARD,
+            kind: crate::section::SectionKind::Reloc,
             data: reloc_data,
             size: reloc_size_val,
             layout_rva: Some(reloc_rva),
@@ -269,6 +277,7 @@ impl PeWriter {
         let mut section_headers = Vec::with_capacity(num_sections as usize);
         let mut size_of_code = 0u32;
         let mut size_of_init_data = 0u32;
+        let mut size_of_uninit_data = 0u32;
         let mut base_of_code = 0u32;
         let mut prev_rva = 0u32;
 
@@ -320,6 +329,12 @@ impl PeWriter {
                         base_of_code = rva;
                     }
                     size_of_code += raw_size;
+                } else if sec.kind == crate::section::SectionKind::Bss {
+                    // Zero-initialized storage is not file-backed: it must be
+                    // marked UNINITIALIZED (not INITIALIZED) data, and its size
+                    // reported as SizeOfUninitializedData.
+                    c |= IMAGE_SCN_CNT_UNINITIALIZED_DATA;
+                    size_of_uninit_data += virt_size;
                 } else {
                     c |= IMAGE_SCN_CNT_INITIALIZED_DATA;
                     size_of_init_data += raw_size;
@@ -395,7 +410,7 @@ impl PeWriter {
         opt_buf[3] = 0; // MinorLinkerVersion
         opt_buf[4..8].copy_from_slice(&size_of_code.to_le_bytes());
         opt_buf[8..12].copy_from_slice(&size_of_init_data.to_le_bytes());
-        opt_buf[12..16].copy_from_slice(&0u32.to_le_bytes()); // SizeOfUninitializedData
+        opt_buf[12..16].copy_from_slice(&size_of_uninit_data.to_le_bytes());
 
         let entry_rva = if entry_va >= image_base {
             (entry_va - image_base) as u32

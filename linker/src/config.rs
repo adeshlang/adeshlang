@@ -65,6 +65,10 @@ pub struct LinkConfig {
     pub shared: bool,
     pub static_link: bool,
     pub strip: bool,
+    /// Strip non-global (local/file/section) symbols from the emitted symbol
+    /// table. Enabled by default for executables: local symbols are not needed
+    /// at run time and dominate symbol-table size. `--no-strip` disables it.
+    pub strip_symbols: bool,
     pub strip_debug: bool,
     pub debug_info: bool,
     pub deterministic: bool,
@@ -94,11 +98,16 @@ impl Default for LinkConfig {
             opt_level: OptLevel::O2,
             lto: LtoMode::Off,
             print_gc_sections: false,
-            icf: IcfMode::None,
+            // The default optimization policy is `-O2`, and the portable
+            // `-O2` policy implies safe ICF (see `apply_optimization_level`).
+            // Leaving this at `None` made the documented default diverge from
+            // the actual default configuration.
+            icf: IcfMode::Safe,
             print_icf: false,
             shared: false,
             static_link: true,
             strip: false,
+            strip_symbols: true,
             strip_debug: false,
             debug_info: true,
             deterministic: true,
@@ -135,6 +144,12 @@ impl LinkConfig {
         }
     }
 
+    /// Whether non-global symbols should be omitted from the emitted symbol
+    /// table. `-s/--strip-all` implies it; `--no-strip` opts out.
+    pub fn should_strip_symbols(&self) -> bool {
+        self.strip || self.strip_symbols
+    }
+
     /// Apply the portable optimization policy for a requested level. Explicit
     /// CLI/API settings applied afterwards can still override these defaults.
     pub fn apply_optimization_level(&mut self, level: OptLevel) {
@@ -143,10 +158,13 @@ impl LinkConfig {
             OptLevel::O0 => {
                 self.gc_sections = false;
                 self.icf = IcfMode::None;
+                // An unoptimized link keeps local symbols so a debugger can
+                // still resolve them.
+                self.strip_symbols = false;
             }
             OptLevel::O1 => {
                 self.gc_sections = true;
-                self.icf = IcfMode::None;
+                self.icf = IcfMode::Safe;
             }
             OptLevel::O2 => {
                 self.gc_sections = true;
