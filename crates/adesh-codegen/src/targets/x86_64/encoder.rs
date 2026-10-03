@@ -890,3 +890,68 @@ impl Default for X86_64Encoder {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sse2_scalar_float_encodings() {
+        let mut enc = X86_64Encoder::new();
+
+        // movsd xmm0, xmm1 -> F2 0F 10 C1
+        enc.movsd_xmm_xmm(0, 1);
+        assert_eq!(enc.buffer, vec![0xF2, 0x0F, 0x10, 0xC1]);
+        enc.buffer.clear();
+
+        // addsd xmm0, xmm1 -> F2 0F 58 C1
+        enc.addsd_xmm_xmm(0, 1);
+        assert_eq!(enc.buffer, vec![0xF2, 0x0F, 0x58, 0xC1]);
+        enc.buffer.clear();
+
+        // subsd xmm0, xmm1 -> F2 0F 5C C1
+        enc.subsd_xmm_xmm(0, 1);
+        assert_eq!(enc.buffer, vec![0xF2, 0x0F, 0x5C, 0xC1]);
+        enc.buffer.clear();
+
+        // mulsd xmm0, xmm1 -> F2 0F 59 C1
+        enc.mulsd_xmm_xmm(0, 1);
+        assert_eq!(enc.buffer, vec![0xF2, 0x0F, 0x59, 0xC1]);
+        enc.buffer.clear();
+
+        // divsd xmm0, xmm1 -> F2 0F 5E C1
+        enc.divsd_xmm_xmm(0, 1);
+        assert_eq!(enc.buffer, vec![0xF2, 0x0F, 0x5E, 0xC1]);
+        enc.buffer.clear();
+
+        // ucomisd xmm0, xmm1 -> 66 0F 2E C1
+        enc.ucomisd_xmm_xmm(0, 1);
+        assert_eq!(enc.buffer, vec![0x66, 0x0F, 0x2E, 0xC1]);
+        enc.buffer.clear();
+
+        // cvtsi2sd xmm0, rcx (1) -> F2 48 0F 2A C1
+        enc.cvtsi2sd_xmm_r64(0, 1);
+        assert_eq!(enc.buffer, vec![0xF2, 0x48, 0x0F, 0x2A, 0xC1]);
+        enc.buffer.clear();
+
+        // cvttsd2si rcx (1), xmm0 -> F3 48 0F 2C C0
+        enc.cvttsd2si_r64_xmm(1, 0);
+        assert_eq!(enc.buffer, vec![0xF2, 0x48, 0x0F, 0x2C, 0xC8]);
+        enc.buffer.clear();
+
+        // cvtss2sd xmm0, xmm1 -> F3 0F 5A C1
+        enc.cvtss2sd_xmm_xmm(0, 1);
+        assert_eq!(enc.buffer, vec![0xF3, 0x0F, 0x5A, 0xC1]);
+        enc.buffer.clear();
+
+        // cvtsd2ss xmm0, xmm1 -> F2 0F 5A C1
+        enc.cvtsd2ss_xmm_xmm(0, 1);
+        assert_eq!(enc.buffer, vec![0xF2, 0x0F, 0x5A, 0xC1]);
+        enc.buffer.clear();
+
+        // xorpd xmm0, xmm1 -> 66 0F 57 C1
+        enc.xorpd_xmm_xmm(0, 1);
+        assert_eq!(enc.buffer, vec![0x66, 0x0F, 0x57, 0xC1]);
+        enc.buffer.clear();
+    }
+}

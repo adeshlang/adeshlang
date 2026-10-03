@@ -1593,7 +1593,7 @@ impl FunctionEncoding {
                 dst,
                 src,
                 is_f64,
-                is_signed: _,
+                is_signed,
             } => {
                 let (d_xmm, d_slot) = if let Some(d) = phys_reg(dst) {
                     if d >= 16 {
@@ -1621,8 +1621,50 @@ impl FunctionEncoding {
                 } else {
                     return Err(self.unsupported(inst, func_name, abi));
                 };
-                if *is_f64 {
+
+                if *is_signed {
+                    if *is_f64 {
+                        self.enc.cvtsi2sd_xmm_r64(d_xmm, s_gpr);
+                        if let Some(slot) = d_slot {
+                            self.enc.movsd_mem_xmm(5, slot, None, d_xmm);
+                        }
+                    } else {
+                        self.enc.cvtsi2ss_xmm_r64(d_xmm, s_gpr);
+                        if let Some(slot) = d_slot {
+                            self.enc.movss_mem_xmm(5, slot, None, d_xmm);
+                        }
+                    }
+                } else if *is_f64 {
+                    self.enc.test_r64_r64(s_gpr, s_gpr);
+                    let jns_instr_offset = self.enc.len();
+                    self.enc.jcc_rel32(ConditionCode::GreaterOrEqual, 0);
+                    let jns_disp_offset = self.enc.len() - 4;
+
+                    self.enc.mov_r64_r64(SCRATCH, s_gpr);
+                    self.enc.shr_r64_imm8(SCRATCH, 1);
+                    self.enc.mov_r64_r64(SCRATCH2, s_gpr);
+                    self.enc.op_r64_imm32(4, SCRATCH2, 1);
+                    self.enc.or_r64_r64(SCRATCH, SCRATCH2);
+                    self.enc.cvtsi2sd_xmm_r64(d_xmm, SCRATCH);
+                    self.enc.addsd_xmm_xmm(d_xmm, d_xmm);
+
+                    let jmp_instr_offset = self.enc.len();
+                    self.enc.jmp_rel32(0);
+                    let jmp_disp_offset = self.enc.len() - 4;
+
+                    let pos_offset = self.enc.len();
                     self.enc.cvtsi2sd_xmm_r64(d_xmm, s_gpr);
+
+                    let end_offset = self.enc.len();
+
+                    let jns_disp = (pos_offset as i64 - (jns_instr_offset as i64 + 6)) as i32;
+                    self.enc.buffer[jns_disp_offset..jns_disp_offset + 4]
+                        .copy_from_slice(&jns_disp.to_le_bytes());
+
+                    let jmp_disp = (end_offset as i64 - (jmp_instr_offset as i64 + 5)) as i32;
+                    self.enc.buffer[jmp_disp_offset..jmp_disp_offset + 4]
+                        .copy_from_slice(&jmp_disp.to_le_bytes());
+
                     if let Some(slot) = d_slot {
                         self.enc.movsd_mem_xmm(5, slot, None, d_xmm);
                     }
@@ -1637,7 +1679,7 @@ impl FunctionEncoding {
                 dst,
                 src,
                 is_f64,
-                is_signed: _,
+                is_signed,
             } => {
                 let d_gpr = if let Some(d) = phys_reg(dst) {
                     if d < 16 {
@@ -1666,11 +1708,54 @@ impl FunctionEncoding {
                 } else {
                     return Err(self.unsupported(inst, func_name, abi));
                 };
-                if *is_f64 {
+
+                if *is_signed {
+                    if *is_f64 {
+                        self.enc.cvttsd2si_r64_xmm(d_gpr, s_xmm);
+                    } else {
+                        self.enc.cvttss2si_r64_xmm(d_gpr, s_xmm);
+                    }
+                } else if *is_f64 {
+                    self.enc.mov_r64_imm64(SCRATCH, 0x43E0_0000_0000_0000i64);
+                    self.enc.movq_xmm_r64(FP_SCRATCH, SCRATCH);
+
+                    self.enc.ucomisd_xmm_xmm(s_xmm, FP_SCRATCH);
+
+                    let jge_instr_offset = self.enc.len();
+                    self.enc.jcc_rel32(ConditionCode::AboveOrEqual, 0);
+                    let jge_disp_offset = self.enc.len() - 4;
+
                     self.enc.cvttsd2si_r64_xmm(d_gpr, s_xmm);
+
+                    let jmp_instr_offset = self.enc.len();
+                    self.enc.jmp_rel32(0);
+                    let jmp_disp_offset = self.enc.len() - 4;
+
+                    let ge_offset = self.enc.len();
+                    self.enc.movsd_xmm_xmm(FP_SCRATCH, s_xmm);
+                    self.enc.mov_r64_imm64(SCRATCH, 0x43E0_0000_0000_0000i64);
+                    self.enc.movq_xmm_r64(SCRATCH2, SCRATCH);
+                    self.enc.subsd_xmm_xmm(FP_SCRATCH, SCRATCH2);
+                    self.enc.cvttsd2si_r64_xmm(d_gpr, FP_SCRATCH);
+                    self.enc.mov_r64_imm64(
+                        SCRATCH,
+                        i64::from_ne_bytes(0x8000_0000_0000_0000u64.to_ne_bytes()),
+                    );
+                    self.enc.add_r64_r64(d_gpr, SCRATCH);
+
+                    let end_offset = self.enc.len();
+
+                    let jge_disp = (ge_offset as i64 - (jge_instr_offset as i64 + 6)) as i32;
+                    self.enc.buffer[jge_disp_offset..jge_disp_offset + 4]
+                        .copy_from_slice(&jge_disp.to_le_bytes());
+
+                    let jmp_disp = (end_offset as i64 - (jmp_instr_offset as i64 + 5)) as i32;
+                    self.enc.buffer[jmp_disp_offset..jmp_disp_offset + 4]
+                        .copy_from_slice(&jmp_disp.to_le_bytes());
                 } else {
                     self.enc.cvttss2si_r64_xmm(d_gpr, s_xmm);
                 }
+
                 if let Some(slot) = stack_slot(dst) {
                     self.enc.mov_rbp_offset_r64(slot, SCRATCH);
                 }
