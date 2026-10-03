@@ -1,3 +1,4 @@
+#[allow(unused_imports)]
 use adesh_codegen::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
     NativeModule, PhysicalRegister,

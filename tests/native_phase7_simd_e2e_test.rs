@@ -76,7 +76,7 @@ fn test_vector_type_system_and_cost_model() {
 #[test]
 fn test_auto_vectorize_pass_transformation() {
     let mut func = MachineFunction::new("vector_loop");
-    let loop_block_id = func.create_block("loop_body");
+    let _loop_block_id = func.create_block("loop_body");
 
     // Block 0: entry jumps to loop_body
     func.blocks[0].push(MachineInstruction::Branch {

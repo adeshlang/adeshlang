@@ -20,8 +20,8 @@ use adesh_codegen::opt::{
 #[test]
 fn test_pgo_instrumentation_pass() {
     let mut func = MachineFunction::new("hot_loop");
-    let b1 = func.create_block("header");
-    let b2 = func.create_block("latch");
+    let _b1 = func.create_block("header");
+    let _b2 = func.create_block("latch");
 
     let pass = PgoInstrumentationPass::new();
     pass.instrument_function(&mut func);
