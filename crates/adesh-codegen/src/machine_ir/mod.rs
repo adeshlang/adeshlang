@@ -38,11 +38,7 @@ impl PhysicalRegister {
     }
 
     pub fn xmm_index(&self) -> u8 {
-        if self.0 >= 16 {
-            self.0 - 16
-        } else {
-            self.0
-        }
+        if self.0 >= 16 { self.0 - 16 } else { self.0 }
     }
 
     pub fn class(&self) -> RegisterClass {
@@ -125,6 +121,28 @@ impl MachineOperand {
     pub fn stack(slot: i32) -> Self {
         MachineOperand::StackSlot(slot)
     }
+
+    pub fn registers(&self) -> Vec<MachineRegister> {
+        let mut regs = Vec::new();
+        match self {
+            MachineOperand::Register(r) => regs.push(*r),
+            MachineOperand::Memory { base, index, .. } => {
+                regs.push(*base);
+                if let Some((idx_reg, _)) = index {
+                    regs.push(*idx_reg);
+                }
+            }
+            _ => {}
+        }
+        regs
+    }
+
+    pub fn register_def(&self) -> Option<MachineRegister> {
+        match self {
+            MachineOperand::Register(r) => Some(*r),
+            _ => None,
+        }
+    }
 }
 
 /// An abstract location for parallel move resolution.
@@ -135,10 +153,7 @@ pub enum MoveLocation {
     /// Virtual register before register allocation.
     VirtualRegister(VirtualRegister),
     /// Frame or stack slot with an explicit base register and displacement.
-    StackSlot {
-        base: PhysicalRegister,
-        offset: i32,
-    },
+    StackSlot { base: PhysicalRegister, offset: i32 },
     /// Memory location with base register, offset, and optional scaled index.
     Memory {
         base: MachineRegister,
@@ -198,12 +213,18 @@ impl MoveLocation {
 
     #[inline]
     pub fn is_memory_or_stack(&self) -> bool {
-        matches!(self, MoveLocation::StackSlot { .. } | MoveLocation::Memory { .. })
+        matches!(
+            self,
+            MoveLocation::StackSlot { .. } | MoveLocation::Memory { .. }
+        )
     }
 
     #[inline]
     pub fn is_immediate(&self) -> bool {
-        matches!(self, MoveLocation::Immediate(_) | MoveLocation::FloatImmediate(_))
+        matches!(
+            self,
+            MoveLocation::Immediate(_) | MoveLocation::FloatImmediate(_)
+        )
     }
 
     #[inline]
@@ -227,7 +248,11 @@ impl MoveLocation {
                 offset: *offset,
                 index: None,
             },
-            MoveLocation::Memory { base, offset, index } => MachineOperand::Memory {
+            MoveLocation::Memory {
+                base,
+                offset,
+                index,
+            } => MachineOperand::Memory {
                 base: *base,
                 offset: *offset,
                 index: *index,
@@ -239,7 +264,10 @@ impl MoveLocation {
         }
     }
 
-    pub fn from_operand(op: &MachineOperand, default_stack_base: Option<PhysicalRegister>) -> Option<Self> {
+    pub fn from_operand(
+        op: &MachineOperand,
+        default_stack_base: Option<PhysicalRegister>,
+    ) -> Option<Self> {
         match op {
             MachineOperand::Register(MachineRegister::Physical(p)) => {
                 Some(MoveLocation::PhysicalRegister(*p))
@@ -254,13 +282,15 @@ impl MoveLocation {
                     offset: *slot,
                 })
             }
-            MachineOperand::Memory { base, offset, index } => match base {
-                MachineRegister::Physical(p) if index.is_none() => {
-                    Some(MoveLocation::StackSlot {
-                        base: *p,
-                        offset: *offset,
-                    })
-                }
+            MachineOperand::Memory {
+                base,
+                offset,
+                index,
+            } => match base {
+                MachineRegister::Physical(p) if index.is_none() => Some(MoveLocation::StackSlot {
+                    base: *p,
+                    offset: *offset,
+                }),
                 _ => Some(MoveLocation::Memory {
                     base: *base,
                     offset: *offset,
@@ -286,7 +316,11 @@ impl std::fmt::Display for MoveLocation {
                     write!(f, "[phys_r{}{}]", base.0, offset)
                 }
             }
-            MoveLocation::Memory { base, offset, index } => {
+            MoveLocation::Memory {
+                base,
+                offset,
+                index,
+            } => {
                 let base_str = match base {
                     MachineRegister::Physical(p) => format!("phys_r{}", p.0),
                     MachineRegister::Virtual(v) => format!("v{}", v.0),
@@ -498,6 +532,152 @@ pub enum MachineInstruction {
     },
 }
 
+impl MachineInstruction {
+    /// Collect registers defined (written) by this instruction, including implicit registers and call return values.
+    pub fn defs(&self) -> Vec<MachineRegister> {
+        let mut defs = Vec::new();
+        match self {
+            MachineInstruction::Move { dst, .. }
+            | MachineInstruction::Load { dst, .. }
+            | MachineInstruction::Add { dst, .. }
+            | MachineInstruction::Sub { dst, .. }
+            | MachineInstruction::Mul { dst, .. }
+            | MachineInstruction::Neg { dst }
+            | MachineInstruction::Not { dst }
+            | MachineInstruction::And { dst, .. }
+            | MachineInstruction::Or { dst, .. }
+            | MachineInstruction::Xor { dst, .. }
+            | MachineInstruction::Shl { dst, .. }
+            | MachineInstruction::Shr { dst, .. }
+            | MachineInstruction::Sar { dst, .. }
+            | MachineInstruction::SetCc { dst, .. }
+            | MachineInstruction::Pop { dst }
+            | MachineInstruction::FAdd { dst, .. }
+            | MachineInstruction::FSub { dst, .. }
+            | MachineInstruction::FMul { dst, .. }
+            | MachineInstruction::FDiv { dst, .. }
+            | MachineInstruction::FNeg { dst, .. }
+            | MachineInstruction::FCvtIntToFloat { dst, .. }
+            | MachineInstruction::FCvtFloatToInt { dst, .. }
+            | MachineInstruction::FCvtFloatToFloat { dst, .. } => {
+                if let Some(r) = dst.register_def() {
+                    defs.push(r);
+                }
+            }
+            MachineInstruction::Div { dst, src: _ } | MachineInstruction::Mod { dst, src: _ } => {
+                if let Some(r) = dst.register_def() {
+                    defs.push(r);
+                }
+                defs.push(MachineRegister::Physical(PhysicalRegister::gpr(0)));
+                defs.push(MachineRegister::Physical(PhysicalRegister::gpr(2)));
+            }
+            MachineInstruction::Call { .. } => {
+                defs.push(MachineRegister::Physical(PhysicalRegister::gpr(0)));
+                defs.push(MachineRegister::Physical(PhysicalRegister::xmm(0)));
+            }
+            MachineInstruction::ParallelMove { moves } => {
+                for m in moves {
+                    if let MoveLocation::PhysicalRegister(p) = m.dst {
+                        defs.push(MachineRegister::Physical(p));
+                    } else if let MoveLocation::VirtualRegister(v) = m.dst {
+                        defs.push(MachineRegister::Virtual(v));
+                    }
+                }
+            }
+            MachineInstruction::Custom { operands, .. } => {
+                if let Some(dst) = operands.first()
+                    && let Some(r) = dst.register_def()
+                {
+                    defs.push(r);
+                }
+            }
+            _ => {}
+        }
+        defs.dedup();
+        defs
+    }
+
+    /// Collect registers used (read) by this instruction, including memory base/index, binary source operands, and explicit call arguments.
+    pub fn uses(&self) -> Vec<MachineRegister> {
+        let mut uses = Vec::new();
+        let mut add_op = |op: &MachineOperand| {
+            uses.extend(op.registers());
+        };
+
+        match self {
+            MachineInstruction::Move { src, dst }
+            | MachineInstruction::Load { src, dst, .. }
+            | MachineInstruction::FCvtIntToFloat { src, dst, .. }
+            | MachineInstruction::FCvtFloatToInt { src, dst, .. }
+            | MachineInstruction::FCvtFloatToFloat { src, dst, .. } => {
+                add_op(src);
+                if matches!(dst, MachineOperand::Memory { .. }) {
+                    add_op(dst);
+                }
+            }
+            MachineInstruction::Store { dst, src, .. } => {
+                add_op(dst);
+                add_op(src);
+            }
+            MachineInstruction::Add { dst, src }
+            | MachineInstruction::Sub { dst, src }
+            | MachineInstruction::Mul { dst, src }
+            | MachineInstruction::Div { dst, src }
+            | MachineInstruction::Mod { dst, src }
+            | MachineInstruction::And { dst, src }
+            | MachineInstruction::Or { dst, src }
+            | MachineInstruction::Xor { dst, src }
+            | MachineInstruction::Shl { dst, src }
+            | MachineInstruction::Shr { dst, src }
+            | MachineInstruction::Sar { dst, src }
+            | MachineInstruction::FAdd { dst, src, .. }
+            | MachineInstruction::FSub { dst, src, .. }
+            | MachineInstruction::FMul { dst, src, .. }
+            | MachineInstruction::FDiv { dst, src, .. } => {
+                add_op(dst);
+                add_op(src);
+            }
+            MachineInstruction::Compare { lhs, rhs }
+            | MachineInstruction::Test { lhs, rhs }
+            | MachineInstruction::FCmp { lhs, rhs, .. } => {
+                add_op(lhs);
+                add_op(rhs);
+            }
+            MachineInstruction::Neg { dst }
+            | MachineInstruction::Not { dst }
+            | MachineInstruction::FNeg { dst, .. }
+            | MachineInstruction::Push { src: dst } => {
+                add_op(dst);
+            }
+            MachineInstruction::Call { target, .. } => {
+                add_op(target);
+            }
+            MachineInstruction::ParallelMove { moves } => {
+                for m in moves {
+                    if let MoveLocation::PhysicalRegister(p) = m.src {
+                        uses.push(MachineRegister::Physical(p));
+                    } else if let MoveLocation::VirtualRegister(v) = m.src {
+                        uses.push(MachineRegister::Virtual(v));
+                    } else if let MoveLocation::Memory { base, index, .. } = &m.src {
+                        uses.push(*base);
+                        if let Some((idx_reg, _)) = index {
+                            uses.push(*idx_reg);
+                        }
+                    }
+                }
+            }
+            MachineInstruction::Custom { operands, .. } => {
+                for op in operands {
+                    add_op(op);
+                }
+            }
+            _ => {}
+        }
+        uses.dedup();
+        uses
+    }
+}
+
 /// Basic block containing machine instructions.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MachineBlock {
@@ -565,13 +745,77 @@ impl MachineFunction {
     }
 
     pub fn vreg_class(&self, vreg: VirtualRegister) -> RegisterClass {
-        self.vreg_classes.get(&vreg).copied().unwrap_or(RegisterClass::Gpr)
+        self.vreg_classes
+            .get(&vreg)
+            .copied()
+            .unwrap_or(RegisterClass::Gpr)
     }
 
     pub fn create_block(&mut self, label: impl Into<String>) -> u32 {
         let id = self.blocks.len() as u32;
         self.blocks.push(MachineBlock::new(id, label));
         id
+    }
+
+    /// Build and update control flow graph edges (`predecessors` and `successors`) for all basic blocks.
+    pub fn rebuild_cfg(&mut self) {
+        let label_to_id: std::collections::HashMap<String, u32> = self
+            .blocks
+            .iter()
+            .map(|b| (b.label.clone(), b.id))
+            .collect();
+
+        for block in &mut self.blocks {
+            block.predecessors.clear();
+            block.successors.clear();
+        }
+
+        let num_blocks = self.blocks.len();
+        let mut edges: Vec<(u32, u32)> = Vec::new();
+
+        for (i, block) in self.blocks.iter().enumerate() {
+            let src_id = block.id;
+            let mut has_unconditional_jump = false;
+            let mut terminates = false;
+
+            for inst in &block.instructions {
+                match inst {
+                    MachineInstruction::Branch { target } => {
+                        if let Some(&tgt_id) = label_to_id.get(target) {
+                            edges.push((src_id, tgt_id));
+                        }
+                        has_unconditional_jump = true;
+                    }
+                    MachineInstruction::BranchCc { target, .. } => {
+                        if let Some(&tgt_id) = label_to_id.get(target) {
+                            edges.push((src_id, tgt_id));
+                        }
+                    }
+                    MachineInstruction::Return => {
+                        terminates = true;
+                    }
+                    _ => {}
+                }
+            }
+
+            if !has_unconditional_jump && !terminates && i + 1 < num_blocks {
+                let fallthrough_id = self.blocks[i + 1].id;
+                edges.push((src_id, fallthrough_id));
+            }
+        }
+
+        for (src, dst) in edges {
+            if let Some(src_block) = self.blocks.iter_mut().find(|b| b.id == src)
+                && !src_block.successors.contains(&dst)
+            {
+                src_block.successors.push(dst);
+            }
+            if let Some(dst_block) = self.blocks.iter_mut().find(|b| b.id == dst)
+                && !dst_block.predecessors.contains(&src)
+            {
+                dst_block.predecessors.push(src);
+            }
+        }
     }
 
     pub fn entry_block_mut(&mut self) -> &mut MachineBlock {

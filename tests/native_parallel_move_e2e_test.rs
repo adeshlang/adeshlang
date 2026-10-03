@@ -8,6 +8,8 @@
 //! 5. Complex dependency chains and fan-out argument distributions.
 //! 6. Native compilation -> ADOB generation -> PE link -> executable execution -> exact exit code assertion.
 
+#![allow(dead_code, unused_imports)]
+
 use adesh_codegen::calling_convention::{
     MoveLocation, MoveOperation, ParallelMoveResolver, WindowsX64CallingConvention,
     resolve_call_arguments_gpr,

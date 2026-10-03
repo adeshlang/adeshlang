@@ -254,10 +254,7 @@ const SYSV64_RETS: [PhysicalRegister; 2] = [
     PhysicalRegister(2), // RDX
 ];
 
-const SYSV64_FP_RETS: [PhysicalRegister; 2] = [
-    PhysicalRegister::xmm(0),
-    PhysicalRegister::xmm(1),
-];
+const SYSV64_FP_RETS: [PhysicalRegister; 2] = [PhysicalRegister::xmm(0), PhysicalRegister::xmm(1)];
 
 const SYSV64_CALLER_SAVED: [PhysicalRegister; 25] = [
     PhysicalRegister(0),  // RAX

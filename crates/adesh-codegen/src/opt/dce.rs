@@ -45,15 +45,11 @@ impl DeadCodeElimination {
             if let Some(block) = label_to_block.get(&current_label) {
                 for inst in &block.instructions {
                     match inst {
-                        MachineInstruction::Branch { target } => {
-                            if reachable_labels.insert(target.clone()) {
-                                worklist.push(target.clone());
-                            }
-                        }
-                        MachineInstruction::BranchCc { target, .. } => {
-                            if reachable_labels.insert(target.clone()) {
-                                worklist.push(target.clone());
-                            }
+                        MachineInstruction::Branch { target }
+                        | MachineInstruction::BranchCc { target, .. }
+                            if reachable_labels.insert(target.clone()) =>
+                        {
+                            worklist.push(target.clone());
                         }
                         _ => {}
                     }
@@ -83,14 +79,10 @@ impl DeadCodeElimination {
             block.instructions.retain(|inst| match inst {
                 MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(vreg)),
-                    src: _,
-                } => {
-                    if !used_vregs.contains(vreg) {
-                        removed += 1;
-                        false
-                    } else {
-                        true
-                    }
+                    ..
+                } if !used_vregs.contains(vreg) => {
+                    removed += 1;
+                    false
                 }
                 _ => true,
             });

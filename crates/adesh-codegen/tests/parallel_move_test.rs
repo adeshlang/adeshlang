@@ -42,7 +42,11 @@ impl StateLoc {
         match loc {
             MoveLocation::PhysicalRegister(p) => Some(StateLoc::Reg(p.0)),
             MoveLocation::StackSlot { base, offset } => Some(StateLoc::Stack(base.0, *offset)),
-            MoveLocation::Memory { base, offset, index } if index.is_none() => {
+            MoveLocation::Memory {
+                base,
+                offset,
+                index,
+            } if index.is_none() => {
                 if let MachineRegister::Physical(p) = base {
                     Some(StateLoc::Stack(p.0, *offset))
                 } else {
@@ -56,7 +60,11 @@ impl StateLoc {
     fn from_op(op: &MachineOperand) -> Option<Self> {
         match op {
             MachineOperand::Register(MachineRegister::Physical(p)) => Some(StateLoc::Reg(p.0)),
-            MachineOperand::Memory { base, offset, index } if index.is_none() => {
+            MachineOperand::Memory {
+                base,
+                offset,
+                index,
+            } if index.is_none() => {
                 if let MachineRegister::Physical(p) = base {
                     Some(StateLoc::Stack(p.0, *offset))
                 } else {
@@ -289,7 +297,10 @@ fn test_win64_argument_lowering() {
         resolve_call_arguments_gpr(&conv, &[v0, v1, v2, v3, v4, v5], PhysicalRegister(4))
             .expect("resolves");
 
-    assert_eq!(total, 48, "Win64 shadow (32) + 2 stack args (16) = 48 bytes (16-aligned)");
+    assert_eq!(
+        total, 48,
+        "Win64 shadow (32) + 2 stack args (16) = 48 bytes (16-aligned)"
+    );
     assert_eq!(insts.len(), 1);
     if let MachineInstruction::ParallelMove { moves } = &insts[0] {
         assert_eq!(moves.len(), 6);
@@ -322,13 +333,28 @@ fn test_win64_mixed_fp_argument_lowering() {
     let (insts, total) =
         resolve_call_arguments(&conv, &typed_args, PhysicalRegister(4)).expect("resolves");
 
-    assert_eq!(total, 48, "Win64 shadow (32) + 1 stack arg (8 aligned to 16) = 48 bytes");
+    assert_eq!(
+        total, 48,
+        "Win64 shadow (32) + 1 stack arg (8 aligned to 16) = 48 bytes"
+    );
     if let MachineInstruction::ParallelMove { moves } = &insts[0] {
         assert_eq!(moves.len(), 5);
-        assert_eq!(moves[0].dst, MoveLocation::PhysicalRegister(PhysicalRegister(1))); // RCX
-        assert_eq!(moves[1].dst, MoveLocation::PhysicalRegister(PhysicalRegister::xmm(1))); // XMM1
-        assert_eq!(moves[2].dst, MoveLocation::PhysicalRegister(PhysicalRegister(8))); // R8
-        assert_eq!(moves[3].dst, MoveLocation::PhysicalRegister(PhysicalRegister::xmm(3))); // XMM3
+        assert_eq!(
+            moves[0].dst,
+            MoveLocation::PhysicalRegister(PhysicalRegister(1))
+        ); // RCX
+        assert_eq!(
+            moves[1].dst,
+            MoveLocation::PhysicalRegister(PhysicalRegister::xmm(1))
+        ); // XMM1
+        assert_eq!(
+            moves[2].dst,
+            MoveLocation::PhysicalRegister(PhysicalRegister(8))
+        ); // R8
+        assert_eq!(
+            moves[3].dst,
+            MoveLocation::PhysicalRegister(PhysicalRegister::xmm(3))
+        ); // XMM3
         assert_eq!(
             moves[4].dst,
             MoveLocation::StackSlot {
@@ -350,7 +376,10 @@ fn test_sysv_argument_lowering() {
     let (insts, total) =
         resolve_call_arguments_gpr(&conv, &args, PhysicalRegister(4)).expect("resolves");
 
-    assert_eq!(total, 16, "SysV shadow (0) + 2 stack args (16) = 16 bytes (16-aligned)");
+    assert_eq!(
+        total, 16,
+        "SysV shadow (0) + 2 stack args (16) = 16 bytes (16-aligned)"
+    );
     assert_eq!(insts.len(), 1);
     if let MachineInstruction::ParallelMove { moves } = &insts[0] {
         assert_eq!(moves.len(), 8);
@@ -371,8 +400,7 @@ fn test_scratch_exhaustion_safety() {
         reserved.insert(PhysicalRegister(i));
     }
 
-    let resolver = ParallelMoveResolver::for_x86_64()
-        .with_reserved_registers(reserved);
+    let resolver = ParallelMoveResolver::for_x86_64().with_reserved_registers(reserved);
 
     // A cycle requiring a temporary must fail safely with an error, not panic
     let res = resolver.resolve_moves(&[
@@ -380,7 +408,10 @@ fn test_scratch_exhaustion_safety() {
         MoveOperation::new_qword(phys(0), phys(3)),
     ]);
 
-    assert!(res.is_err(), "Must return structured CodegenError on scratch exhaustion");
+    assert!(
+        res.is_err(),
+        "Must return structured CodegenError on scratch exhaustion"
+    );
 }
 
 #[test]
@@ -390,14 +421,15 @@ fn test_conflicting_destinations() {
         MoveOperation::new_qword(phys(1), phys(0)),
         MoveOperation::new_qword(phys(1), phys(2)),
     ]);
-    assert!(res.is_err(), "Must fail when two moves target the same destination");
+    assert!(
+        res.is_err(),
+        "Must fail when two moves target the same destination"
+    );
 }
 
 #[test]
 fn test_immediate_destination_rejected() {
     let resolver = ParallelMoveResolver::for_x86_64();
-    let res = resolver.resolve_moves(&[
-        MoveOperation::new_qword(MoveLocation::imm(10), phys(0)),
-    ]);
+    let res = resolver.resolve_moves(&[MoveOperation::new_qword(MoveLocation::imm(10), phys(0))]);
     assert!(res.is_err(), "Must fail when destination is an immediate");
 }
