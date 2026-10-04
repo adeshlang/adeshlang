@@ -579,6 +579,49 @@ impl FuncPrinter {
                     X86_64AsmPrinter::format_operand(src)
                 ));
             }
+            MachineInstruction::VectorMin { dst, src, .. } => {
+                self.line(&format!(
+                    "minps {}, {}",
+                    X86_64AsmPrinter::format_operand(dst),
+                    X86_64AsmPrinter::format_operand(src)
+                ));
+            }
+            MachineInstruction::VectorMax { dst, src, .. } => {
+                self.line(&format!(
+                    "maxps {}, {}",
+                    X86_64AsmPrinter::format_operand(dst),
+                    X86_64AsmPrinter::format_operand(src)
+                ));
+            }
+            MachineInstruction::VectorCmp { dst, src, .. } => {
+                self.line(&format!(
+                    "cmpps {}, {}",
+                    X86_64AsmPrinter::format_operand(dst),
+                    X86_64AsmPrinter::format_operand(src)
+                ));
+            }
+            MachineInstruction::VectorBlend { dst, src, mask, .. } => {
+                self.line(&format!(
+                    "blendps {}, {}, {}",
+                    X86_64AsmPrinter::format_operand(dst),
+                    X86_64AsmPrinter::format_operand(src),
+                    mask
+                ));
+            }
+            MachineInstruction::VectorShiftLeft { dst, count, .. } => {
+                self.line(&format!(
+                    "pslld {}, {}",
+                    X86_64AsmPrinter::format_operand(dst),
+                    count
+                ));
+            }
+            MachineInstruction::VectorShiftRight { dst, count, .. } => {
+                self.line(&format!(
+                    "psrld {}, {}",
+                    X86_64AsmPrinter::format_operand(dst),
+                    count
+                ));
+            }
             MachineInstruction::AtomicLoad { dst, src, .. } => {
                 self.line(&format!(
                     "mov {}, {}",

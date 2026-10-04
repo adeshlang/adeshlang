@@ -474,6 +474,46 @@ impl CodegenBackend for AArch64Backend {
                         let ins = 0x4E209C00u32 | (vs << 16) | (vd << 5) | vd;
                         code.extend_from_slice(&ins.to_le_bytes());
                     }
+                    MachineInstruction::VectorMin { dst, src, .. } => {
+                        let (d, s) = get_regs(dst, src);
+                        let vd = (d.unwrap_or(32).saturating_sub(32)) as u32;
+                        let vs = (s.unwrap_or(33).saturating_sub(32)) as u32;
+                        // FMIN Vd.4S, Vd.4S, Vs.4S (0x4E20F400)
+                        let ins = 0x4E20F400u32 | (vs << 16) | (vd << 5) | vd;
+                        code.extend_from_slice(&ins.to_le_bytes());
+                    }
+                    MachineInstruction::VectorMax { dst, src, .. } => {
+                        let (d, s) = get_regs(dst, src);
+                        let vd = (d.unwrap_or(32).saturating_sub(32)) as u32;
+                        let vs = (s.unwrap_or(33).saturating_sub(32)) as u32;
+                        // FMAX Vd.4S, Vd.4S, Vs.4S (0x4E20C400)
+                        let ins = 0x4E20C400u32 | (vs << 16) | (vd << 5) | vd;
+                        code.extend_from_slice(&ins.to_le_bytes());
+                    }
+                    MachineInstruction::VectorCmp { dst, src, .. } => {
+                        let (d, s) = get_regs(dst, src);
+                        let vd = (d.unwrap_or(32).saturating_sub(32)) as u32;
+                        let vs = (s.unwrap_or(33).saturating_sub(32)) as u32;
+                        // CMEQ Vd.4S, Vd.4S, Vs.4S (0x4E208C00)
+                        let ins = 0x4E208C00u32 | (vs << 16) | (vd << 5) | vd;
+                        code.extend_from_slice(&ins.to_le_bytes());
+                    }
+                    MachineInstruction::VectorShiftLeft { dst, src, .. } => {
+                        let (d, s) = get_regs(dst, src);
+                        let vd = (d.unwrap_or(32).saturating_sub(32)) as u32;
+                        let vs = (s.unwrap_or(33).saturating_sub(32)) as u32;
+                        // SSHL Vd.4S, Vd.4S, Vs.4S (0x4E204400)
+                        let ins = 0x4E204400u32 | (vs << 16) | (vd << 5) | vd;
+                        code.extend_from_slice(&ins.to_le_bytes());
+                    }
+                    MachineInstruction::VectorShiftRight { dst, src, .. } => {
+                        let (d, s) = get_regs(dst, src);
+                        let vd = (d.unwrap_or(32).saturating_sub(32)) as u32;
+                        let vs = (s.unwrap_or(33).saturating_sub(32)) as u32;
+                        // USHL Vd.4S, Vd.4S, Vs.4S (0x4EA04400)
+                        let ins = 0x4EA04400u32 | (vs << 16) | (vd << 5) | vd;
+                        code.extend_from_slice(&ins.to_le_bytes());
+                    }
                     // Atomics & Barrier
                     MachineInstruction::Barrier => {
                         // DMB ISH (0xD5033BFF)

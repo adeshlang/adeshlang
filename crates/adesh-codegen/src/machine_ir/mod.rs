@@ -595,6 +595,40 @@ pub enum MachineInstruction {
         src: MachineOperand,
         vec_type: crate::opt::VectorType,
     },
+    VectorMin {
+        dst: MachineOperand,
+        src: MachineOperand,
+        vec_type: crate::opt::VectorType,
+    },
+    VectorMax {
+        dst: MachineOperand,
+        src: MachineOperand,
+        vec_type: crate::opt::VectorType,
+    },
+    VectorCmp {
+        dst: MachineOperand,
+        src: MachineOperand,
+        cc: ConditionCode,
+        vec_type: crate::opt::VectorType,
+    },
+    VectorBlend {
+        dst: MachineOperand,
+        src: MachineOperand,
+        mask: u8,
+        vec_type: crate::opt::VectorType,
+    },
+    VectorShiftLeft {
+        dst: MachineOperand,
+        src: MachineOperand,
+        count: u8,
+        vec_type: crate::opt::VectorType,
+    },
+    VectorShiftRight {
+        dst: MachineOperand,
+        src: MachineOperand,
+        count: u8,
+        vec_type: crate::opt::VectorType,
+    },
     // First-Class Atomic Concurrency Instructions
     AtomicLoad {
         dst: MachineOperand,
@@ -659,6 +693,12 @@ impl MachineInstruction {
             | MachineInstruction::VectorBroadcast { dst, .. }
             | MachineInstruction::VectorShuffle { dst, .. }
             | MachineInstruction::VectorReduceAdd { dst, .. }
+            | MachineInstruction::VectorMin { dst, .. }
+            | MachineInstruction::VectorMax { dst, .. }
+            | MachineInstruction::VectorCmp { dst, .. }
+            | MachineInstruction::VectorBlend { dst, .. }
+            | MachineInstruction::VectorShiftLeft { dst, .. }
+            | MachineInstruction::VectorShiftRight { dst, .. }
             | MachineInstruction::AtomicLoad { dst, .. }
             | MachineInstruction::AtomicFetchAdd { dst, .. }
             | MachineInstruction::AtomicCompareExchange { dst, .. } => {
@@ -750,6 +790,12 @@ impl MachineInstruction {
             | MachineInstruction::VectorOr { dst, src, .. }
             | MachineInstruction::VectorXor { dst, src, .. }
             | MachineInstruction::VectorShuffle { dst, src, .. }
+            | MachineInstruction::VectorMin { dst, src, .. }
+            | MachineInstruction::VectorMax { dst, src, .. }
+            | MachineInstruction::VectorCmp { dst, src, .. }
+            | MachineInstruction::VectorBlend { dst, src, .. }
+            | MachineInstruction::VectorShiftLeft { dst, src, .. }
+            | MachineInstruction::VectorShiftRight { dst, src, .. }
             | MachineInstruction::AtomicFetchAdd { dst, src, .. } => {
                 add_op(dst);
                 add_op(src);

@@ -52,6 +52,7 @@ print-bench = []
 adesh-object = { path = "crates/adesh-object" }
 adesh-codegen = { path = "crates/adesh-codegen" }
 adesh-linker = { path = "linker" }
+adesh-runtime = { path = "crates/adesh-runtime" }
 colored = "2.0"
 regex = "1.9"
 num-bigint = "0.4"

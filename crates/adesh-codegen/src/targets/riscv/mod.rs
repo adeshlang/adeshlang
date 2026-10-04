@@ -438,6 +438,59 @@ impl CodegenBackend for RiscVBackend {
                             code.extend_from_slice(&ins.to_le_bytes());
                         }
                     }
+                    // RISC-V Vector Extension (RVV 1.0)
+                    MachineInstruction::VectorAdd { dst, src, .. } => {
+                        let (d, s) = get_regs(dst, src);
+                        let vd = (d.unwrap_or(0) & 0x1F) as u32;
+                        let vs = (s.unwrap_or(1) & 0x1F) as u32;
+                        // VADD.VV vd, vd, vs (0x02000057 | (vs << 20) | (vd << 15) | (vd << 7))
+                        let ins = 0x02000057u32 | (vs << 20) | (vd << 15) | (vd << 7);
+                        code.extend_from_slice(&ins.to_le_bytes());
+                    }
+                    MachineInstruction::VectorSub { dst, src, .. } => {
+                        let (d, s) = get_regs(dst, src);
+                        let vd = (d.unwrap_or(0) & 0x1F) as u32;
+                        let vs = (s.unwrap_or(1) & 0x1F) as u32;
+                        // VSUB.VV vd, vd, vs (0x0A000057 | (vs << 20) | (vd << 15) | (vd << 7))
+                        let ins = 0x0A000057u32 | (vs << 20) | (vd << 15) | (vd << 7);
+                        code.extend_from_slice(&ins.to_le_bytes());
+                    }
+                    MachineInstruction::VectorMul { dst, src, .. } => {
+                        let (d, s) = get_regs(dst, src);
+                        let vd = (d.unwrap_or(0) & 0x1F) as u32;
+                        let vs = (s.unwrap_or(1) & 0x1F) as u32;
+                        // VMUL.VV vd, vd, vs (0x92002057 | (vs << 20) | (vd << 15) | (vd << 7))
+                        let ins = 0x92002057u32 | (vs << 20) | (vd << 15) | (vd << 7);
+                        code.extend_from_slice(&ins.to_le_bytes());
+                    }
+                    MachineInstruction::VectorMin { dst, src, .. } => {
+                        let (d, s) = get_regs(dst, src);
+                        let vd = (d.unwrap_or(0) & 0x1F) as u32;
+                        let vs = (s.unwrap_or(1) & 0x1F) as u32;
+                        // VMIN.VV vd, vd, vs (0x12000057 | (vs << 20) | (vd << 15) | (vd << 7))
+                        let ins = 0x12000057u32 | (vs << 20) | (vd << 15) | (vd << 7);
+                        code.extend_from_slice(&ins.to_le_bytes());
+                    }
+                    MachineInstruction::VectorMax { dst, src, .. } => {
+                        let (d, s) = get_regs(dst, src);
+                        let vd = (d.unwrap_or(0) & 0x1F) as u32;
+                        let vs = (s.unwrap_or(1) & 0x1F) as u32;
+                        // VMAX.VV vd, vd, vs (0x1A000057 | (vs << 20) | (vd << 15) | (vd << 7))
+                        let ins = 0x1A000057u32 | (vs << 20) | (vd << 15) | (vd << 7);
+                        code.extend_from_slice(&ins.to_le_bytes());
+                    }
+                    MachineInstruction::VectorLoad { dst, .. } => {
+                        let d = get_reg(dst).unwrap_or(0) & 0x1F;
+                        // VLE32.V vd, (sp=2) (0x02000007 | (2 << 15) | (vd << 7))
+                        let ins = 0x02000007u32 | (2 << 15) | ((d as u32) << 7);
+                        code.extend_from_slice(&ins.to_le_bytes());
+                    }
+                    MachineInstruction::VectorStore { src, .. } => {
+                        let s = get_reg(src).unwrap_or(0) & 0x1F;
+                        // VSE32.V vs3, (sp=2) (0x02000027 | (2 << 15) | (vs3 << 7))
+                        let ins = 0x02000027u32 | (2 << 15) | ((s as u32) << 7);
+                        code.extend_from_slice(&ins.to_le_bytes());
+                    }
                     // Atomics & Barrier
                     MachineInstruction::Barrier => {
                         // FENCE iorw, iorw (0x0FF0000F)

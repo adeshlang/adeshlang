@@ -79,6 +79,7 @@ version = "0.3.0"
 dependencies = [
  "colored",
  "libc",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -99,6 +100,7 @@ dependencies = [
  "adesh-codegen",
  "adesh-linker",
  "adesh-object",
+ "adesh-runtime",
  "adler2",
  "aes-gcm",
  "argon2",

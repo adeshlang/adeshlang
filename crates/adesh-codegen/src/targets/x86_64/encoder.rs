@@ -1021,6 +1021,68 @@ impl X86_64Encoder {
         self.emit_u8(imm);
     }
 
+    /// MAXPS xmm, xmm (0F 5F /r)
+    pub fn maxps_xmm_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(None, 0x5F, dst, src);
+    }
+
+    /// MINPS xmm, xmm (0F 5D /r)
+    pub fn minps_xmm_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(None, 0x5D, dst, src);
+    }
+
+    /// MAXPD xmm, xmm (66 0F 5F /r)
+    pub fn maxpd_xmm_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(Some(0x66), 0x5F, dst, src);
+    }
+
+    /// MINPD xmm, xmm (66 0F 5D /r)
+    pub fn minpd_xmm_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(Some(0x66), 0x5D, dst, src);
+    }
+
+    /// CMPPS xmm, xmm, imm8 (0F C2 /r ib)
+    pub fn cmpps_xmm_xmm_imm8(&mut self, dst: u8, src: u8, imm: u8) {
+        self.emit_sse_reg_reg(None, 0xC2, dst, src);
+        self.emit_u8(imm);
+    }
+
+    /// BLENDPS xmm, xmm, imm8 (66 0F 3A 0C /r ib)
+    pub fn blendps_xmm_xmm_imm8(&mut self, dst: u8, src: u8, imm: u8) {
+        self.emit_u8(0x66);
+        self.emit_rex(false, dst, src);
+        self.emit_u8(0x0F);
+        self.emit_u8(0x3A);
+        self.emit_u8(0x0C);
+        self.emit_modrm(0b11, dst & 7, src & 7);
+        self.emit_u8(imm);
+    }
+
+    /// PSLLD xmm, imm8 (66 0F 72 /6 ib)
+    pub fn pslld_xmm_imm8(&mut self, dst: u8, imm: u8) {
+        self.emit_u8(0x66);
+        self.emit_rex(false, 6, dst);
+        self.emit_u8(0x0F);
+        self.emit_u8(0x72);
+        self.emit_modrm(0b11, 6, dst & 7);
+        self.emit_u8(imm);
+    }
+
+    /// PSRLD xmm, imm8 (66 0F 72 /2 ib)
+    pub fn psrld_xmm_imm8(&mut self, dst: u8, imm: u8) {
+        self.emit_u8(0x66);
+        self.emit_rex(false, 2, dst);
+        self.emit_u8(0x0F);
+        self.emit_u8(0x72);
+        self.emit_modrm(0b11, 2, dst & 7);
+        self.emit_u8(imm);
+    }
+
+    /// HADDPS xmm, xmm (F2 0F 7C /r)
+    pub fn haddps_xmm_xmm(&mut self, dst: u8, src: u8) {
+        self.emit_sse_reg_reg(Some(0xF2), 0x7C, dst, src);
+    }
+
     // ---------------------------------------------------------------- Atomic Instructions
 
     /// LOCK XADD [mem], reg64 (F0 48 0F C1 /r)

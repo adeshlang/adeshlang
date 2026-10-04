@@ -7,11 +7,13 @@
 pub mod abi;
 pub mod allocator;
 pub mod native_abi;
+pub mod platform;
 pub mod threading;
 
 pub use abi::*;
 pub use allocator::*;
 pub use native_abi::*;
+pub use platform::*;
 pub use threading::*;
 
 use std::collections::BTreeMap;

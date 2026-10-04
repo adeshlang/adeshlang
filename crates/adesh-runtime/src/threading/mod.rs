@@ -3,18 +3,18 @@
 use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex as StdMutex, OnceLock};
 use std::thread::{JoinHandle, spawn};
 
 /// Native Adesh Mutex wrapping fast OS synchronization primitives.
 pub struct AdeshMutex<T> {
-    inner: Mutex<T>,
+    inner: StdMutex<T>,
 }
 
 impl<T> AdeshMutex<T> {
     pub fn new(value: T) -> Self {
         Self {
-            inner: Mutex::new(value),
+            inner: StdMutex::new(value),
         }
     }
 
@@ -75,7 +75,7 @@ struct PoolQueue {
 /// panicked mid-flight, so a panicking task can never leave its caller
 /// blocked in `run_batch` forever.
 struct BatchTicket {
-    pending: Arc<(Mutex<usize>, Condvar)>,
+    pending: Arc<(StdMutex<usize>, Condvar)>,
 }
 
 impl Drop for BatchTicket {
@@ -100,12 +100,12 @@ impl Drop for BatchTicket {
 /// internal lock (the lock is poison-recovering anyway).
 pub struct AdeshThreadPool {
     workers: Vec<Option<JoinHandle<()>>>,
-    queue: Arc<Mutex<PoolQueue>>,
+    queue: Arc<StdMutex<PoolQueue>>,
     wake: Arc<Condvar>,
     total_failures: Arc<AtomicUsize>,
 }
 
-fn worker_loop(queue: Arc<Mutex<PoolQueue>>, wake: Arc<Condvar>, failures: Arc<AtomicUsize>) {
+fn worker_loop(queue: Arc<StdMutex<PoolQueue>>, wake: Arc<Condvar>, failures: Arc<AtomicUsize>) {
     loop {
         // Park until a job arrives or the pool is shut down.
         let job = {
@@ -136,7 +136,7 @@ fn worker_loop(queue: Arc<Mutex<PoolQueue>>, wake: Arc<Condvar>, failures: Arc<A
 impl AdeshThreadPool {
     pub fn new(num_threads: usize) -> Self {
         let threads = num_threads.max(1);
-        let queue = Arc::new(Mutex::new(PoolQueue {
+        let queue = Arc::new(StdMutex::new(PoolQueue {
             jobs: VecDeque::new(),
             shutdown: false,
         }));
@@ -176,7 +176,7 @@ impl AdeshThreadPool {
         if jobs.is_empty() {
             return 0;
         }
-        let pending = Arc::new((Mutex::new(jobs.len()), Condvar::new()));
+        let pending = Arc::new((StdMutex::new(jobs.len()), Condvar::new()));
         let batch_panics = Arc::new(AtomicUsize::new(0));
 
         for job in jobs {
@@ -279,6 +279,192 @@ impl Drop for AdeshThreadPool {
         }
     }
 }
+
+// ============================================================================
+// Section 25: Production Native Threading Primitives
+// ============================================================================
+
+/// Native Adesh Thread handle.
+pub struct AdeshThread {
+    handle: Option<JoinHandle<()>>,
+}
+
+impl AdeshThread {
+    pub fn spawn<F>(f: F) -> Self
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        Self {
+            handle: Some(spawn(f)),
+        }
+    }
+
+    pub fn join(mut self) -> Result<(), ()> {
+        if let Some(h) = self.handle.take() {
+            h.join().map_err(|_| ())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// Native Adesh Reader-Writer Lock.
+pub struct AdeshRwLock<T> {
+    inner: std::sync::RwLock<T>,
+}
+
+impl<T> AdeshRwLock<T> {
+    pub fn new(value: T) -> Self {
+        Self {
+            inner: std::sync::RwLock::new(value),
+        }
+    }
+
+    pub fn read(&self) -> std::sync::RwLockReadGuard<'_, T> {
+        self.inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    pub fn write(&self) -> std::sync::RwLockWriteGuard<'_, T> {
+        self.inner
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+/// Native Counting Semaphore.
+pub struct AdeshSemaphore {
+    count: StdMutex<usize>,
+    cond: Condvar,
+}
+
+impl AdeshSemaphore {
+    pub fn new(initial: usize) -> Self {
+        Self {
+            count: StdMutex::new(initial),
+            cond: Condvar::new(),
+        }
+    }
+
+    pub fn acquire(&self) {
+        let mut count = self.count.lock().unwrap_or_else(|p| p.into_inner());
+        while *count == 0 {
+            count = self.cond.wait(count).unwrap_or_else(|p| p.into_inner());
+        }
+        *count -= 1;
+    }
+
+    pub fn release(&self) {
+        let mut count = self.count.lock().unwrap_or_else(|p| p.into_inner());
+        *count += 1;
+        self.cond.notify_one();
+    }
+}
+
+/// Native Once initialization primitive.
+pub struct AdeshOnce {
+    inner: std::sync::Once,
+}
+
+impl AdeshOnce {
+    pub const fn new() -> Self {
+        Self {
+            inner: std::sync::Once::new(),
+        }
+    }
+
+    pub fn call_once<F: FnOnce()>(&self, f: F) {
+        self.inner.call_once(f);
+    }
+}
+
+impl Default for AdeshOnce {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Native SpinLock with pause instruction for low-latency synchronization.
+pub struct AdeshSpinLock {
+    locked: std::sync::atomic::AtomicBool,
+}
+
+impl AdeshSpinLock {
+    pub const fn new() -> Self {
+        Self {
+            locked: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    pub fn lock(&self) {
+        while self.locked.swap(true, Ordering::Acquire) {
+            while self.locked.load(Ordering::Relaxed) {
+                std::hint::spin_loop();
+            }
+        }
+    }
+
+    pub fn unlock(&self) {
+        self.locked.store(false, Ordering::Release);
+    }
+}
+
+impl Default for AdeshSpinLock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Native 64-bit Atomic Variable supporting memory models.
+pub struct AdeshAtomicI64 {
+    inner: std::sync::atomic::AtomicI64,
+}
+
+impl AdeshAtomicI64 {
+    pub const fn new(val: i64) -> Self {
+        Self {
+            inner: std::sync::atomic::AtomicI64::new(val),
+        }
+    }
+
+    #[inline]
+    pub fn load(&self, order: Ordering) -> i64 {
+        self.inner.load(order)
+    }
+
+    #[inline]
+    pub fn store(&self, val: i64, order: Ordering) {
+        self.inner.store(val, order);
+    }
+
+    #[inline]
+    pub fn fetch_add(&self, val: i64, order: Ordering) -> i64 {
+        self.inner.fetch_add(val, order)
+    }
+
+    #[inline]
+    pub fn compare_exchange(
+        &self,
+        current: i64,
+        new: i64,
+        success: Ordering,
+        failure: Ordering,
+    ) -> Result<i64, i64> {
+        self.inner.compare_exchange(current, new, success, failure)
+    }
+}
+
+// Re-exports conforming to Section 25 names
+pub type Thread = AdeshThread;
+pub type Mutex<T> = AdeshMutex<T>;
+pub type RWLock<T> = AdeshRwLock<T>;
+pub type ConditionVariable = AdeshCondVar;
+pub type Semaphore = AdeshSemaphore;
+pub type Once = AdeshOnce;
+pub type SpinLock = AdeshSpinLock;
+pub type Atomic = AdeshAtomicI64;
+pub use std::sync::atomic::Ordering as AtomicOrdering;
 
 #[cfg(test)]
 mod tests {

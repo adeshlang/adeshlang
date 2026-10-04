@@ -188,6 +188,12 @@ impl DeadCodeElimination {
             | MachineInstruction::VectorBroadcast { dst, src, .. }
             | MachineInstruction::VectorShuffle { dst, src, .. }
             | MachineInstruction::VectorReduceAdd { dst, src, .. }
+            | MachineInstruction::VectorMin { dst, src, .. }
+            | MachineInstruction::VectorMax { dst, src, .. }
+            | MachineInstruction::VectorCmp { dst, src, .. }
+            | MachineInstruction::VectorBlend { dst, src, .. }
+            | MachineInstruction::VectorShiftLeft { dst, src, .. }
+            | MachineInstruction::VectorShiftRight { dst, src, .. }
             | MachineInstruction::VectorStore { dst, src, .. }
             | MachineInstruction::AtomicStore { dst, src, .. }
             | MachineInstruction::AtomicFetchAdd { dst, src, .. } => {

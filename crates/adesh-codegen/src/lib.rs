@@ -4,6 +4,7 @@
 
 #![allow(clippy::result_large_err)]
 
+pub mod abi;
 pub mod accelerators;
 pub mod backend;
 pub mod calling_convention;
@@ -12,6 +13,7 @@ pub mod cranelift_adapter;
 pub mod debug_info;
 pub mod driver;
 pub mod error;
+pub mod ffi;
 pub mod machine_ir;
 pub mod opt;
 pub mod register_alloc;
@@ -22,6 +24,12 @@ pub mod target_spec;
 pub mod targets;
 pub mod unwind_info;
 
+pub use abi::{
+    Aapcs64Abi, AbiSpec, AbiType, AggregateReturnRules, CalleeSavedSet, CallerSavedSet,
+    RedZone, ReturnLocation, RiscV64Abi, ShadowSpace, StackAlignment, StackArgument,
+    StackFrameLayout, StructPassingRules, SystemVX64Abi, UnwindRules, VariadicRules,
+    WindowsX64Abi, create_abi_spec,
+};
 pub use accelerators::{GpuBackend, TensorAcceleratorBackend};
 pub use backend::{AcceleratorBackend, CodegenBackend};
 pub use calling_convention::{
@@ -37,6 +45,10 @@ pub use driver::{
     CompilationCacheKey, CompilerDriver, CompilerResourceLimits, CompilerStats, DriverConfig,
 };
 pub use error::CodegenError;
+pub use ffi::{
+    FfiCallLowerer, ForeignCallingConvention, ForeignFunctionDeclaration, ForeignParam,
+    ForeignSignature, ForeignType,
+};
 pub use machine_ir::{
     ConditionCode, MachineBlock, MachineFunction, MachineInstruction, MachineOperand,
     MachineRegister, NativeModule, PhysicalRegister, VirtualRegister,

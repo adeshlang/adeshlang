@@ -353,6 +353,12 @@ fn instruction_name(inst: &MachineInstruction) -> &'static str {
         MachineInstruction::VectorBroadcast { .. } => "VectorBroadcast",
         MachineInstruction::VectorShuffle { .. } => "VectorShuffle",
         MachineInstruction::VectorReduceAdd { .. } => "VectorReduceAdd",
+        MachineInstruction::VectorMin { .. } => "VectorMin",
+        MachineInstruction::VectorMax { .. } => "VectorMax",
+        MachineInstruction::VectorCmp { .. } => "VectorCmp",
+        MachineInstruction::VectorBlend { .. } => "VectorBlend",
+        MachineInstruction::VectorShiftLeft { .. } => "VectorShiftLeft",
+        MachineInstruction::VectorShiftRight { .. } => "VectorShiftRight",
         MachineInstruction::AtomicLoad { .. } => "AtomicLoad",
         MachineInstruction::AtomicStore { .. } => "AtomicStore",
         MachineInstruction::AtomicFetchAdd { .. } => "AtomicFetchAdd",
@@ -458,6 +464,12 @@ fn collect_instruction_registers(inst: &MachineInstruction, out: &mut Vec<u8>) {
         | MachineInstruction::VectorBroadcast { dst, src, .. }
         | MachineInstruction::VectorShuffle { dst, src, .. }
         | MachineInstruction::VectorReduceAdd { dst, src, .. }
+        | MachineInstruction::VectorMin { dst, src, .. }
+        | MachineInstruction::VectorMax { dst, src, .. }
+        | MachineInstruction::VectorCmp { dst, src, .. }
+        | MachineInstruction::VectorBlend { dst, src, .. }
+        | MachineInstruction::VectorShiftLeft { dst, src, .. }
+        | MachineInstruction::VectorShiftRight { dst, src, .. }
         | MachineInstruction::AtomicLoad { dst, src, .. }
         | MachineInstruction::AtomicStore { dst, src, .. }
         | MachineInstruction::AtomicFetchAdd { dst, src, .. } => {
@@ -2292,6 +2304,69 @@ impl FunctionEncoding {
                 self.enc.movaps_xmm_xmm(FP_SCRATCH, d_xmm);
                 self.enc.shufps_xmm_xmm_imm8(FP_SCRATCH, FP_SCRATCH, 0xB1);
                 self.enc.addps_xmm_xmm(d_xmm, FP_SCRATCH);
+            }
+            MachineInstruction::VectorMin { dst, src, vec_type } => {
+                let d_xmm = phys_reg(dst)
+                    .map(|d| if d >= 16 { d - 16 } else { d })
+                    .unwrap_or(FP_SCRATCH);
+                let s_xmm = phys_reg(src)
+                    .map(|s| if s >= 16 { s - 16 } else { s })
+                    .unwrap_or(FP_SCRATCH2);
+                if vec_type.element_type == crate::opt::VectorElementType::F64 {
+                    self.enc.minpd_xmm_xmm(d_xmm, s_xmm);
+                } else {
+                    self.enc.minps_xmm_xmm(d_xmm, s_xmm);
+                }
+            }
+            MachineInstruction::VectorMax { dst, src, vec_type } => {
+                let d_xmm = phys_reg(dst)
+                    .map(|d| if d >= 16 { d - 16 } else { d })
+                    .unwrap_or(FP_SCRATCH);
+                let s_xmm = phys_reg(src)
+                    .map(|s| if s >= 16 { s - 16 } else { s })
+                    .unwrap_or(FP_SCRATCH2);
+                if vec_type.element_type == crate::opt::VectorElementType::F64 {
+                    self.enc.maxpd_xmm_xmm(d_xmm, s_xmm);
+                } else {
+                    self.enc.maxps_xmm_xmm(d_xmm, s_xmm);
+                }
+            }
+            MachineInstruction::VectorCmp { dst, src, cc, .. } => {
+                let d_xmm = phys_reg(dst)
+                    .map(|d| if d >= 16 { d - 16 } else { d })
+                    .unwrap_or(FP_SCRATCH);
+                let s_xmm = phys_reg(src)
+                    .map(|s| if s >= 16 { s - 16 } else { s })
+                    .unwrap_or(FP_SCRATCH2);
+                let imm = match cc {
+                    ConditionCode::Equal => 0,
+                    ConditionCode::LessThan => 1,
+                    ConditionCode::LessOrEqual => 2,
+                    ConditionCode::NotEqual => 4,
+                    _ => 0,
+                };
+                self.enc.cmpps_xmm_xmm_imm8(d_xmm, s_xmm, imm);
+            }
+            MachineInstruction::VectorBlend { dst, src, mask, .. } => {
+                let d_xmm = phys_reg(dst)
+                    .map(|d| if d >= 16 { d - 16 } else { d })
+                    .unwrap_or(FP_SCRATCH);
+                let s_xmm = phys_reg(src)
+                    .map(|s| if s >= 16 { s - 16 } else { s })
+                    .unwrap_or(FP_SCRATCH2);
+                self.enc.blendps_xmm_xmm_imm8(d_xmm, s_xmm, *mask);
+            }
+            MachineInstruction::VectorShiftLeft { dst, count, .. } => {
+                let d_xmm = phys_reg(dst)
+                    .map(|d| if d >= 16 { d - 16 } else { d })
+                    .unwrap_or(FP_SCRATCH);
+                self.enc.pslld_xmm_imm8(d_xmm, *count);
+            }
+            MachineInstruction::VectorShiftRight { dst, count, .. } => {
+                let d_xmm = phys_reg(dst)
+                    .map(|d| if d >= 16 { d - 16 } else { d })
+                    .unwrap_or(FP_SCRATCH);
+                self.enc.psrld_xmm_imm8(d_xmm, *count);
             }
             MachineInstruction::AtomicLoad { dst, src, size } => {
                 if !self.encode_load(dst, src, *size) {
