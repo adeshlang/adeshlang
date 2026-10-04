@@ -52,6 +52,54 @@ impl Default for AdeshAbiHeader {
     }
 }
 
+/// Verify ABI compatibility between two object headers prior to linking (Section 45).
+pub fn verify_abi_compatibility(
+    header_a: &AdeshAbiHeader,
+    header_b: &AdeshAbiHeader,
+) -> Result<(), crate::error::LinkError> {
+    if header_a.abi_version != header_b.abi_version {
+        return Err(crate::error::LinkError::new(
+            crate::error::ErrorCode::AbiMismatch,
+            format!(
+                "ABI version mismatch: object A uses v{}, object B uses v{}",
+                header_a.abi_version, header_b.abi_version
+            ),
+        ));
+    }
+
+    if header_a.target_arch != header_b.target_arch {
+        return Err(crate::error::LinkError::new(
+            crate::error::ErrorCode::ArchitectureMismatch,
+            format!(
+                "Target architecture mismatch: object A arch {}, object B arch {}",
+                header_a.target_arch, header_b.target_arch
+            ),
+        ));
+    }
+
+    if header_a.pointer_width != header_b.pointer_width {
+        return Err(crate::error::LinkError::new(
+            crate::error::ErrorCode::AbiMismatch,
+            format!(
+                "Pointer width mismatch: object A has {} bits, object B has {} bits",
+                header_a.pointer_width, header_b.pointer_width
+            ),
+        ));
+    }
+
+    if header_a.endianness != header_b.endianness {
+        return Err(crate::error::LinkError::new(
+            crate::error::ErrorCode::AbiMismatch,
+            format!(
+                "Endianness mismatch: object A has endian {}, object B has endian {}",
+                header_a.endianness, header_b.endianness
+            ),
+        ));
+    }
+
+    Ok(())
+}
+
 /// Scope-Aware Instruction-Range RAII Cleanup Record.
 ///
 /// Maps a specific instruction interval `[start_pc, end_pc)` within a function

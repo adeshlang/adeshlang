@@ -6,14 +6,22 @@
 
 pub mod abi;
 pub mod allocator;
+pub mod async_rt;
 pub mod native_abi;
+pub mod panic;
 pub mod platform;
+pub mod plugin;
+pub mod sanitizer_rt;
 pub mod threading;
 
 pub use abi::*;
 pub use allocator::*;
+pub use async_rt::*;
 pub use native_abi::*;
+pub use panic::*;
 pub use platform::*;
+pub use plugin::*;
+pub use sanitizer_rt::*;
 pub use threading::*;
 
 use std::collections::BTreeMap;

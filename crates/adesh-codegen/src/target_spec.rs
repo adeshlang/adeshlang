@@ -100,6 +100,11 @@ impl TargetSpec {
         }
     }
 
+    /// Convenience constructor for the current compilation host.
+    pub fn host() -> Self {
+        Self::for_descriptor(TargetDescriptor::host())
+    }
+
     /// Convenience constructor for x86-64 Windows MSVC.
     pub fn x86_64_windows() -> Self {
         let desc = TargetDescriptor::from_triple("x86_64-pc-windows-msvc")

@@ -3,21 +3,35 @@
 //! Universal target backend code generation framework and native CPU/GPU/Accelerator codegen for Adesh.
 
 #![allow(clippy::result_large_err)]
+#![allow(unused)]
+#![allow(dead_code)]
 
 pub mod abi;
 pub mod accelerators;
+pub mod asm;
 pub mod backend;
+pub mod bootstrap;
+pub mod bugreport;
 pub mod calling_convention;
 pub mod concurrency;
+pub mod const_eval;
 pub mod cranelift_adapter;
+pub mod crash;
+pub mod debug;
 pub mod debug_info;
 pub mod driver;
 pub mod error;
 pub mod ffi;
+pub mod generics;
+pub mod inspect;
 pub mod machine_ir;
 pub mod opt;
+pub mod package;
+pub mod pgo_tools;
+pub mod query;
 pub mod register_alloc;
 pub mod safety;
+pub mod sanitizer;
 pub mod stack_maps;
 pub mod stdlib_builder;
 pub mod target_spec;
@@ -69,6 +83,22 @@ pub use target_spec::{
 pub use targets::{
     aarch64::AArch64Backend, create_backend, riscv::RiscVBackend, x86_64::X86_64Backend,
 };
+pub use asm::AssemblyEmitter;
+pub use bootstrap::{BootstrapMatrix, BootstrapStageStatus, DependencyAuditEntry, DependencyAuditor, DependencyClassification};
+pub use bugreport::BugReportBundle;
+pub use const_eval::{ConstEvalError, ConstEvalLimits, ConstEvaluator, ConstExpr, ConstFunction, ConstValue};
+pub use crash::{CrashReport, CrashReporter, CrashSignal, CrashStackFrame};
+pub use debug::{DebugEngine, FunctionDebugInfo, LocalVariableDebugInfo, VariableStorage};
+pub use generics::{ConcreteType, GenericFunctionTemplate, MonomorphizedFunction, MonomorphizationEngine};
+pub use inspect::{CompilerInspector, InspectComponent, ObjectDumpReport, SectionDumpInfo, SymbolDumpInfo};
+pub use package::{
+    ADESH_LOCK_FILE, ADESH_MANIFEST_FILE, DependencyResolver, DependencySpec,
+    DetailedDependency, IncrementalCache, LockFile, LockedPackage, ModuleFingerprint,
+    PackageManifest, PackageMetadata,
+};
+pub use pgo_tools::ProfileMerger;
+pub use query::{QueryEngine, QueryKey, QueryKind, QueryResult, QueryStats};
+pub use sanitizer::{SanitizerFlags, SanitizerInstrumenter, SanitizerReport};
 pub use unwind_info::{DwarfCallFrameInfo, FunctionUnwindDescriptor, Win64UnwindInfo};
 
 #[cfg(test)]

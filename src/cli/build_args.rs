@@ -84,6 +84,52 @@ impl BuildArgParser {
                         .map_err(|_| format!("Invalid optimization level: {}", level_str))?;
                     config.fast_compile = false;
                 }
+                arg if arg.starts_with("--opt-level=") => {
+                    let level_str = &arg["--opt-level=".len()..];
+                    config.opt_level = level_str
+                        .parse::<u8>()
+                        .map_err(|_| format!("Invalid optimization level: {}", level_str))?;
+                    config.fast_compile = false;
+                }
+
+                // Release mode shortcut (-O3, not fast)
+                "--release" => {
+                    config.opt_level = 3;
+                    config.fast_compile = false;
+                }
+
+                // Profile and jobs
+                "--profile" => {
+                    config.verbose = true;
+                }
+                "--jobs" | "-j" => {
+                    let _ = parser.next_arg();
+                }
+                arg if arg.starts_with("--jobs=") || arg.starts_with("-j=") => {}
+
+                // Features
+                "--features" => {
+                    let _ = parser.next_arg();
+                }
+                arg if arg.starts_with("--features=") => {}
+
+                // LTO, PGO, Sanitizer, Hardening
+                "--lto" => {
+                    let _ = parser.next_arg();
+                }
+                arg if arg.starts_with("--lto=") => {}
+
+                "--pgo" => {
+                    let _ = parser.next_arg();
+                }
+                arg if arg.starts_with("--pgo=") => {}
+
+                "--sanitizer" => {
+                    let _ = parser.next_arg();
+                }
+                arg if arg.starts_with("--sanitizer=") => {}
+
+                "--hardening" => {}
 
                 // Output file
                 "-o" | "--output" => {

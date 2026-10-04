@@ -452,6 +452,81 @@ impl ParsedArgs {
                     config.recursion_opt = RecursionOptMode::from_str(mode_str)
                         .ok_or_else(|| format!("Invalid recursion opt mode: {}", mode_str))?;
                 }
+                "--release" => {
+                    config.opt_level = OptLevel::O3;
+                    config.debug = false;
+                    program_args.push(arg.clone());
+                }
+                "--opt-level" if i + 1 < args.len() && !args[i + 1].starts_with("-") => {
+                    let level_str = &args[i + 1];
+                    config.opt_level = OptLevel::from_str(level_str)
+                        .ok_or_else(|| format!("Invalid optimization level: {}", level_str))?;
+                    program_args.push(arg.clone());
+                    program_args.push(args[i + 1].clone());
+                    i += 1;
+                }
+                _ if arg.starts_with("--opt-level=") => {
+                    let level_str = &arg["--opt-level=".len()..];
+                    config.opt_level = OptLevel::from_str(level_str)
+                        .ok_or_else(|| format!("Invalid optimization level: {}", level_str))?;
+                    program_args.push(arg.clone());
+                }
+                "--jobs" if i + 1 < args.len() && !args[i + 1].starts_with("-") => {
+                    program_args.push(arg.clone());
+                    program_args.push(args[i + 1].clone());
+                    i += 1;
+                }
+                _ if arg.starts_with("--jobs=") || arg.starts_with("-j=") => {
+                    program_args.push(arg.clone());
+                }
+                "--features" if i + 1 < args.len() && !args[i + 1].starts_with("-") => {
+                    program_args.push(arg.clone());
+                    program_args.push(args[i + 1].clone());
+                    i += 1;
+                }
+                _ if arg.starts_with("--features=") => {
+                    program_args.push(arg.clone());
+                }
+                "--lto" if i + 1 < args.len() && !args[i + 1].starts_with("-") => {
+                    program_args.push(arg.clone());
+                    program_args.push(args[i + 1].clone());
+                    i += 1;
+                }
+                _ if arg.starts_with("--lto=") => {
+                    program_args.push(arg.clone());
+                }
+                "--pgo" if i + 1 < args.len() && !args[i + 1].starts_with("-") => {
+                    program_args.push(arg.clone());
+                    program_args.push(args[i + 1].clone());
+                    i += 1;
+                }
+                _ if arg.starts_with("--pgo=") => {
+                    program_args.push(arg.clone());
+                }
+                "--sanitizer" if i + 1 < args.len() && !args[i + 1].starts_with("-") => {
+                    program_args.push(arg.clone());
+                    program_args.push(args[i + 1].clone());
+                    i += 1;
+                }
+                _ if arg.starts_with("--sanitizer=") => {
+                    program_args.push(arg.clone());
+                }
+                "--hardening" => {
+                    program_args.push(arg.clone());
+                }
+                "--target" if i + 1 < args.len() && !args[i + 1].starts_with("-") => {
+                    program_args.push(arg.clone());
+                    program_args.push(args[i + 1].clone());
+                    i += 1;
+                }
+                "--emit" if i + 1 < args.len() && !args[i + 1].starts_with("-") => {
+                    program_args.push(arg.clone());
+                    program_args.push(args[i + 1].clone());
+                    i += 1;
+                }
+                _ if arg.starts_with("--emit=") => {
+                    program_args.push(arg.clone());
+                }
                 _ if arg.starts_with("--opt=")
                     || arg.starts_with("--opt ")
                     || arg.starts_with("-O") =>

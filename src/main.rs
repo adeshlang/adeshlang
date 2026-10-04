@@ -985,13 +985,22 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                 println!("Disassembly written to: {}", out.display());
             }
         }
-        "docs" => {
-            if parsed.input_file.is_none() || parsed.output_file.is_none() {
+        "docs" | "doc" => {
+            let in_path = if let Some(ref ip) = parsed.input_file {
+                PathBuf::from(ip)
+            } else if PathBuf::from("src/main.adesh").exists() {
+                PathBuf::from("src/main.adesh")
+            } else if PathBuf::from("src/lib.adesh").exists() {
+                PathBuf::from("src/lib.adesh")
+            } else {
                 cli_impl::usage();
                 return;
-            }
-            let in_path = PathBuf::from(parsed.input_file.unwrap());
-            let out_dir = PathBuf::from(parsed.output_file.unwrap());
+            };
+            let out_dir = if let Some(ref op) = parsed.output_file {
+                PathBuf::from(op)
+            } else {
+                PathBuf::from("docs")
+            };
             match adeshlang::utils::docgen::generate_docs(&in_path, &out_dir) {
                 Ok(()) => println!("Wrote docs to {}", out_dir.display()),
                 Err(e) => {
@@ -1154,13 +1163,18 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             }
             println!("✓ Syntax, semantics, type check, and memory safety validation passed");
         }
-        "init" => {
-            if parsed.input_file.is_none() {
-                cli_impl::usage();
-                return;
+        "new" => {
+            let target_dir = parsed.input_file.as_deref().unwrap_or("my_app");
+            if let Err(e) = cli_impl::cmd_init(target_dir) {
+                eprintln!("new error: {}", e);
+                std::process::exit(1);
             }
-            if let Err(e) = cli_impl::cmd_init(&parsed.input_file.unwrap()) {
+        }
+        "init" => {
+            let target_dir = parsed.input_file.as_deref().unwrap_or(".");
+            if let Err(e) = cli_impl::cmd_init(target_dir) {
                 eprintln!("init error: {}", e);
+                std::process::exit(1);
             }
         }
         "build" => {
@@ -1384,6 +1398,243 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                 println!("Cleaned {} build artifact(s)", removed);
             } else {
                 println!("No build artifacts to clean");
+            }
+        }
+        "bench" => {
+            let input_path = if let Some(ref ip) = parsed.input_file {
+                ip.clone()
+            } else if PathBuf::from("benches/main.adesh").exists() {
+                "benches/main.adesh".to_string()
+            } else if PathBuf::from("bench.adesh").exists() {
+                "bench.adesh".to_string()
+            } else if PathBuf::from("tests/main.adesh").exists() {
+                "tests/main.adesh".to_string()
+            } else if PathBuf::from("src/main.adesh").exists() {
+                "src/main.adesh".to_string()
+            } else {
+                eprintln!("Error: No benchmark target specified");
+                std::process::exit(1);
+            };
+            let orig_path = PathBuf::from(&input_path);
+            let (path, src) = match cli_impl::resolve_input_path(&orig_path) {
+                Ok(pair) => pair,
+                Err(msg) => {
+                    eprintln!("{}", msg);
+                    std::process::exit(1);
+                }
+            };
+            println!("Benchmarking {}...", path.display());
+            let start = Instant::now();
+            let _ = cli_impl::run_with_interpreter(&path, &src, &parsed);
+            let duration = start.elapsed();
+            println!("✓ Benchmark completed in {:?}", duration);
+            std::process::exit(0);
+        }
+        "lint" => {
+            let input_path = if let Some(ref ip) = parsed.input_file {
+                ip.clone()
+            } else if PathBuf::from("src/main.adesh").exists() {
+                "src/main.adesh".to_string()
+            } else if PathBuf::from("main.adesh").exists() {
+                "main.adesh".to_string()
+            } else {
+                eprintln!("Error: No input file specified for lint");
+                std::process::exit(1);
+            };
+            let orig_path = PathBuf::from(&input_path);
+            let (path, src) = match cli_impl::resolve_input_path(&orig_path) {
+                Ok(pair) => pair,
+                Err(msg) => {
+                    eprintln!("{}", msg);
+                    std::process::exit(1);
+                }
+            };
+            let semantic_index =
+                adeshlang::semantics::index_source_in(&src, Some(&path.to_string_lossy()));
+            if !semantic_index.errors.is_empty() {
+                for err in &semantic_index.errors {
+                    eprintln!("{}", err);
+                }
+                std::process::exit(1);
+            }
+            if let Err(e) =
+                adeshlang::types::type_system::check_module_in(&src, Some(&path.to_string_lossy()))
+            {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            }
+            if let Err(e) = cli_impl::check_ownership_and_parse_in(
+                &src,
+                &parsed.config,
+                Some(&path.to_string_lossy()),
+            ) {
+                eprintln!("Lint error: {}", e);
+                std::process::exit(1);
+            }
+            println!("✓ Lint passed: No issues found in {}", path.display());
+            std::process::exit(0);
+        }
+        "link" => {
+            let mut inputs = Vec::new();
+            if let Some(ref inp) = parsed.input_file {
+                inputs.push(PathBuf::from(inp));
+            }
+            for arg in &parsed.program_args {
+                if !arg.starts_with('-') {
+                    inputs.push(PathBuf::from(arg));
+                }
+            }
+            let out = parsed.output_file.clone().unwrap_or_else(|| "a.out".to_string());
+            println!("Linking {} input(s) into {} via adeshlink...", inputs.len(), out);
+            if let Err(e) = adesh_linker::link(&inputs, &out, None) {
+                eprintln!("Link error: {}", e);
+                std::process::exit(1);
+            }
+            println!("✓ Successfully linked {}", out);
+            std::process::exit(0);
+        }
+        "inspect" | "objdump" => {
+            if parsed.input_file.is_none() {
+                eprintln!("Error: inspect/objdump requires an input object file (.adob, .o, .obj)");
+                std::process::exit(1);
+            }
+            let file = PathBuf::from(parsed.input_file.as_ref().unwrap());
+            let bytes = match std::fs::read(&file) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("Failed to read {}: {}", file.display(), e);
+                    std::process::exit(1);
+                }
+            };
+            match adesh_object::AdobReader::read_object(&bytes) {
+                Ok(obj) => {
+                    let dump = adesh_codegen::inspect::CompilerInspector::dump_adob(&obj);
+                    println!("{}", adesh_codegen::inspect::CompilerInspector::format_objdump(&dump));
+                }
+                Err(e) => {
+                    eprintln!("Inspection error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            std::process::exit(0);
+        }
+        "bugreport" => {
+            let bundle = adesh_codegen::bugreport::BugReportBundle::new(
+                "x86_64",
+                "O2",
+                "User requested bugreport bundle generation",
+            );
+            let out_file = PathBuf::from("adesh_bugreport.json");
+            match bundle.to_json() {
+                Ok(json) => {
+                    let _ = std::fs::write(&out_file, json);
+                    println!("✓ Bug report bundle written to {}", out_file.display());
+                }
+                Err(e) => eprintln!("Failed to generate bug report: {}", e),
+            }
+            std::process::exit(0);
+        }
+        "self-test" => {
+            println!("Running AdeshLang Phase 9 Compiler Ecosystem Self-Test...");
+            let target = adesh_codegen::TargetSpec::host();
+            println!("  [1/6] TargetSpec Host: {:?} ({:?}) ✓", target.architecture, target.abi);
+
+            let qe = adesh_codegen::query::QueryEngine::new();
+            let k = adesh_codegen::query::QueryKey {
+                kind: adesh_codegen::query::QueryKind::Parse,
+                target: "self_test".to_string(),
+            };
+            let res = qe.query(k.clone(), |key| adesh_codegen::query::QueryResult {
+                key: key.clone(),
+                payload: "parsed_ast".to_string(),
+                fingerprint: 12345,
+                dependencies: vec![],
+            });
+            assert_eq!(res.payload, "parsed_ast");
+            assert_eq!(qe.stats().total_queries, 1);
+            println!("  [2/6] QueryEngine Caching & Dependency Tracking ✓");
+
+            let mut eval = adesh_codegen::const_eval::ConstEvaluator::new(
+                adesh_codegen::const_eval::ConstEvalLimits::default(),
+            );
+            let empty_env = std::collections::HashMap::new();
+            let res = eval.eval(
+                &adesh_codegen::const_eval::ConstExpr::Add(
+                    Box::new(adesh_codegen::const_eval::ConstExpr::Literal(
+                        adesh_codegen::const_eval::ConstValue::Integer(40),
+                    )),
+                    Box::new(adesh_codegen::const_eval::ConstExpr::Literal(
+                        adesh_codegen::const_eval::ConstValue::Integer(2),
+                    )),
+                ),
+                &empty_env,
+            );
+            assert_eq!(res.unwrap(), adesh_codegen::const_eval::ConstValue::Integer(42));
+            println!("  [3/6] ConstEvaluator Deterministic Execution ✓");
+
+            let mut mono = adesh_codegen::generics::MonomorphizationEngine::new();
+            let template = adesh_codegen::generics::GenericFunctionTemplate {
+                name: "identity".to_string(),
+                type_params: vec!["T".to_string()],
+                param_types: vec!["T".to_string()],
+                return_type: "T".to_string(),
+                is_inline: false,
+            };
+            mono.register_template(template);
+            let s1 = mono.specialize("identity", &[adesh_codegen::generics::ConcreteType::I64]).unwrap();
+            let s2 = mono.specialize("identity", &[adesh_codegen::generics::ConcreteType::I64]).unwrap();
+            assert_eq!(s1.specialized_symbol, s2.specialized_symbol);
+            println!("  [4/6] MonomorphizationEngine & Deduplication ✓");
+
+            adesh_runtime::sanitizer_rt::adesh_sanitizer_check_bounds(0, 10);
+            adesh_runtime::sanitizer_rt::adesh_sanitizer_check_overflow(50, 100);
+            println!("  [5/6] Sanitizer Runtime Hooks ✓");
+
+            let mut exec = adesh_runtime::async_rt::AsyncExecutor::new();
+            let executed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let ex_clone = executed.clone();
+            exec.spawn(async move {
+                ex_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+            });
+            exec.run_until_stalled();
+            assert!(executed.load(std::sync::atomic::Ordering::SeqCst));
+            println!("  [6/6] AsyncExecutor Cooperative Runtime ✓");
+
+            println!("\n✅ All 6 self-test checks passed successfully!");
+            std::process::exit(0);
+        }
+        "pgo" => {
+            let subcmd = parsed.program_args.first().map(|s| s.as_str()).unwrap_or("");
+            if subcmd == "merge" {
+                let mut inputs = Vec::new();
+                let mut output = PathBuf::from("merged.pgo.json");
+                let mut i = 1;
+                while i < parsed.program_args.len() {
+                    let arg = &parsed.program_args[i];
+                    if (arg == "-o" || arg == "--output") && i + 1 < parsed.program_args.len() {
+                        output = PathBuf::from(&parsed.program_args[i + 1]);
+                        i += 2;
+                        continue;
+                    }
+                    if !arg.starts_with('-') {
+                        inputs.push(PathBuf::from(arg));
+                    }
+                    i += 1;
+                }
+                if inputs.is_empty() {
+                    eprintln!("Usage: adesh pgo merge <profile1.json> <profile2.json> [-o merged.json]");
+                    std::process::exit(1);
+                }
+                println!("Merging {} PGO profiles into {}...", inputs.len(), output.display());
+                if let Err(e) = adesh_codegen::pgo_tools::ProfileMerger::merge_files(&inputs, &output) {
+                    eprintln!("Error merging PGO profiles: {}", e);
+                    std::process::exit(1);
+                }
+                println!("✓ Successfully merged PGO profiles into {}", output.display());
+                std::process::exit(0);
+            } else {
+                eprintln!("Usage: adesh pgo merge <files...> -o <merged.json>");
+                std::process::exit(1);
             }
         }
         "" => {

@@ -26,6 +26,7 @@ dependencies = [
  "serde",
  "serde_json",
  "target-lexicon 0.12.16",
+ "toml",
 ]
 
 [[package]]
@@ -174,6 +175,7 @@ dependencies = [
  "target-lexicon 0.12.16",
  "tempfile",
  "tokio",
+ "toml",
  "unicode-width",
  "uuid",
  "wasmtime",
