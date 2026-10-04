@@ -39,11 +39,10 @@ impl DeadCodeElimination {
                     inst,
                     MachineInstruction::Return | MachineInstruction::Branch { .. }
                 )
-            }) {
-                if pos + 1 < block.instructions.len() {
-                    removed += block.instructions.len() - (pos + 1);
-                    block.instructions.truncate(pos + 1);
-                }
+            }) && pos + 1 < block.instructions.len()
+            {
+                removed += block.instructions.len() - (pos + 1);
+                block.instructions.truncate(pos + 1);
             }
         }
         removed

@@ -1403,35 +1403,83 @@ impl<'a> SpillRewriter<'a> {
                 self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
                 out.push(MachineInstruction::VectorReduceAdd { dst, src, vec_type });
             }
-            MachineInstruction::VectorMin { mut dst, mut src, vec_type } => {
+            MachineInstruction::VectorMin {
+                mut dst,
+                mut src,
+                vec_type,
+            } => {
                 self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
                 self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
                 out.push(MachineInstruction::VectorMin { dst, src, vec_type });
             }
-            MachineInstruction::VectorMax { mut dst, mut src, vec_type } => {
+            MachineInstruction::VectorMax {
+                mut dst,
+                mut src,
+                vec_type,
+            } => {
                 self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
                 self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
                 out.push(MachineInstruction::VectorMax { dst, src, vec_type });
             }
-            MachineInstruction::VectorCmp { mut dst, mut src, cc, vec_type } => {
+            MachineInstruction::VectorCmp {
+                mut dst,
+                mut src,
+                cc,
+                vec_type,
+            } => {
                 self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
                 self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
-                out.push(MachineInstruction::VectorCmp { dst, src, cc, vec_type });
+                out.push(MachineInstruction::VectorCmp {
+                    dst,
+                    src,
+                    cc,
+                    vec_type,
+                });
             }
-            MachineInstruction::VectorBlend { mut dst, mut src, mask, vec_type } => {
+            MachineInstruction::VectorBlend {
+                mut dst,
+                mut src,
+                mask,
+                vec_type,
+            } => {
                 self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
                 self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
-                out.push(MachineInstruction::VectorBlend { dst, src, mask, vec_type });
+                out.push(MachineInstruction::VectorBlend {
+                    dst,
+                    src,
+                    mask,
+                    vec_type,
+                });
             }
-            MachineInstruction::VectorShiftLeft { mut dst, mut src, count, vec_type } => {
+            MachineInstruction::VectorShiftLeft {
+                mut dst,
+                mut src,
+                count,
+                vec_type,
+            } => {
                 self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
                 self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
-                out.push(MachineInstruction::VectorShiftLeft { dst, src, count, vec_type });
+                out.push(MachineInstruction::VectorShiftLeft {
+                    dst,
+                    src,
+                    count,
+                    vec_type,
+                });
             }
-            MachineInstruction::VectorShiftRight { mut dst, mut src, count, vec_type } => {
+            MachineInstruction::VectorShiftRight {
+                mut dst,
+                mut src,
+                count,
+                vec_type,
+            } => {
                 self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
                 self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
-                out.push(MachineInstruction::VectorShiftRight { dst, src, count, vec_type });
+                out.push(MachineInstruction::VectorShiftRight {
+                    dst,
+                    src,
+                    count,
+                    vec_type,
+                });
             }
             MachineInstruction::AtomicLoad {
                 mut dst,

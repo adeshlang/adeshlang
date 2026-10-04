@@ -377,28 +377,28 @@ impl IntrinsicsEngine {
             }
             "log2" => {
                 vec![
-                    0xd9, 0xe8,                         // fld1
-                    0x48, 0x83, 0xec, 0x08,             // sub rsp, 8
-                    0xf2, 0x0f, 0x11, 0x04, 0x24,       // movsd qword ptr [rsp], xmm0
-                    0xdd, 0x04, 0x24,                   // fld qword ptr [rsp]
-                    0xd9, 0xf1,                         // fyl2x
-                    0xdd, 0x1c, 0x24,                   // fstp qword ptr [rsp]
-                    0xf2, 0x0f, 0x10, 0x04, 0x24,       // movsd xmm0, qword ptr [rsp]
-                    0x48, 0x83, 0xc4, 0x08,             // add rsp, 8
-                    0xc3,                               // ret
+                    0xd9, 0xe8, // fld1
+                    0x48, 0x83, 0xec, 0x08, // sub rsp, 8
+                    0xf2, 0x0f, 0x11, 0x04, 0x24, // movsd qword ptr [rsp], xmm0
+                    0xdd, 0x04, 0x24, // fld qword ptr [rsp]
+                    0xd9, 0xf1, // fyl2x
+                    0xdd, 0x1c, 0x24, // fstp qword ptr [rsp]
+                    0xf2, 0x0f, 0x10, 0x04, 0x24, // movsd xmm0, qword ptr [rsp]
+                    0x48, 0x83, 0xc4, 0x08, // add rsp, 8
+                    0xc3, // ret
                 ]
             }
             "log2f" => {
                 vec![
-                    0xd9, 0xe8,                         // fld1
-                    0x48, 0x83, 0xec, 0x08,             // sub rsp, 8
-                    0xf3, 0x0f, 0x11, 0x04, 0x24,       // movss dword ptr [rsp], xmm0
-                    0xd9, 0x04, 0x24,                   // fld dword ptr [rsp]
-                    0xd9, 0xf1,                         // fyl2x
-                    0xd9, 0x1c, 0x24,                   // fstp dword ptr [rsp]
-                    0xf3, 0x0f, 0x10, 0x04, 0x24,       // movss xmm0, dword ptr [rsp]
-                    0x48, 0x83, 0xc4, 0x08,             // add rsp, 8
-                    0xc3,                               // ret
+                    0xd9, 0xe8, // fld1
+                    0x48, 0x83, 0xec, 0x08, // sub rsp, 8
+                    0xf3, 0x0f, 0x11, 0x04, 0x24, // movss dword ptr [rsp], xmm0
+                    0xd9, 0x04, 0x24, // fld dword ptr [rsp]
+                    0xd9, 0xf1, // fyl2x
+                    0xd9, 0x1c, 0x24, // fstp dword ptr [rsp]
+                    0xf3, 0x0f, 0x10, 0x04, 0x24, // movss xmm0, dword ptr [rsp]
+                    0x48, 0x83, 0xc4, 0x08, // add rsp, 8
+                    0xc3, // ret
                 ]
             }
             _ => {

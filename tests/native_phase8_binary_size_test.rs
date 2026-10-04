@@ -44,10 +44,30 @@ fn compile_link_and_measure(
     let obj = backend.emit_object(module).expect("ADOB emission");
     AdobValidator::validate(&obj).expect("ADOB validation");
 
-    let text_size = obj.sections.iter().find(|s| s.name == ".text").map(|s| s.data.len()).unwrap_or(0);
-    let rodata_size = obj.sections.iter().find(|s| s.name == ".rodata" || s.name == ".rdata").map(|s| s.data.len()).unwrap_or(0);
-    let data_size = obj.sections.iter().find(|s| s.name == ".data").map(|s| s.data.len()).unwrap_or(0);
-    let bss_size = obj.sections.iter().find(|s| s.name == ".bss").map(|s| s.data.len()).unwrap_or(0);
+    let text_size = obj
+        .sections
+        .iter()
+        .find(|s| s.name == ".text")
+        .map(|s| s.data.len())
+        .unwrap_or(0);
+    let rodata_size = obj
+        .sections
+        .iter()
+        .find(|s| s.name == ".rodata" || s.name == ".rdata")
+        .map(|s| s.data.len())
+        .unwrap_or(0);
+    let data_size = obj
+        .sections
+        .iter()
+        .find(|s| s.name == ".data")
+        .map(|s| s.data.len())
+        .unwrap_or(0);
+    let bss_size = obj
+        .sections
+        .iter()
+        .find(|s| s.name == ".bss")
+        .map(|s| s.data.len())
+        .unwrap_or(0);
     let relocation_count: usize = obj.sections.iter().map(|s| s.relocations.len()).sum();
     let symbol_count = obj.symbols.len();
 
@@ -99,8 +119,14 @@ fn test_c_level_minimal_binary_size() {
     assert_eq!(code_oz, 42);
 
     println!("=== Binary Size Report ===");
-    println!("O2: Text Size: {}B, Relocs: {}, Total Exe: {}B", metrics_o2.text_size, metrics_o2.relocation_count, metrics_o2.total_file_size);
-    println!("Oz: Text Size: {}B, Relocs: {}, Total Exe: {}B", metrics_oz.text_size, metrics_oz.relocation_count, metrics_oz.total_file_size);
+    println!(
+        "O2: Text Size: {}B, Relocs: {}, Total Exe: {}B",
+        metrics_o2.text_size, metrics_o2.relocation_count, metrics_o2.total_file_size
+    );
+    println!(
+        "Oz: Text Size: {}B, Relocs: {}, Total Exe: {}B",
+        metrics_oz.text_size, metrics_oz.relocation_count, metrics_oz.total_file_size
+    );
 
     // C-level comparison: A native C program compiled with MSVC / Clang produces a 2-4 KB executable.
     // Our Adesh executable is self-contained and must be <= 4 KB!
@@ -109,7 +135,10 @@ fn test_c_level_minimal_binary_size() {
         "Oz executable must be <= 4KB (compact C level), was {}B",
         metrics_oz.total_file_size
     );
-    assert!(metrics_oz.text_size <= 64, "Text section for minimal program should be tiny");
+    assert!(
+        metrics_oz.text_size <= 64,
+        "Text section for minimal program should be tiny"
+    );
 }
 
 #[test]

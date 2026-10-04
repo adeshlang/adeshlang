@@ -10,7 +10,9 @@
 #![allow(dead_code, unused_imports)]
 
 use adesh_runtime::platform::{DynamicLibrary, PlatformTimer, VirtualMemory, system_error_code};
-use adesh_runtime::threading::{AdeshAtomicI64, AtomicOrdering, Mutex, Once, RWLock, Semaphore, SpinLock, Thread};
+use adesh_runtime::threading::{
+    AdeshAtomicI64, AtomicOrdering, Mutex, Once, RWLock, Semaphore, SpinLock, Thread,
+};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -42,7 +44,7 @@ fn test_platform_dynamic_library_loading() {
     let lib_name = "libc.so.6";
 
     let lib = DynamicLibrary::load(lib_name).expect("load system dynamic library");
-    
+
     #[cfg(target_os = "windows")]
     let sym_name = "GetCurrentProcessId";
     #[cfg(not(target_os = "windows"))]
@@ -61,7 +63,11 @@ fn test_platform_timer_and_system_error() {
     let t0 = PlatformTimer::now();
     std::thread::sleep(Duration::from_millis(15));
     let elapsed = PlatformTimer::elapsed_nanos(t0);
-    assert!(elapsed >= 10_000_000, "elapsed time must be at least 10ms, got {}ns", elapsed);
+    assert!(
+        elapsed >= 10_000_000,
+        "elapsed time must be at least 10ms, got {}ns",
+        elapsed
+    );
 
     let _err = system_error_code();
 }

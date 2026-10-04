@@ -81,7 +81,9 @@ fn test_lexer_and_parser_fuzz_robustness() {
             })
             .expect("spawn fuzz test thread");
 
-        handle.join().expect("fuzz worker thread must not panic or crash");
+        handle
+            .join()
+            .expect("fuzz worker thread must not panic or crash");
     }
 }
 
@@ -90,10 +92,10 @@ fn test_adob_reader_and_validator_bounds_fuzz() {
     let corrupted_buffers: Vec<Vec<u8>> = vec![
         vec![],
         vec![0x00],
-        vec![0x41, 0x44, 0x4f], // partial magic "ADO"
+        vec![0x41, 0x44, 0x4f],       // partial magic "ADO"
         vec![0x41, 0x44, 0x4f, 0x42], // only magic "ADOB"
-        vec![0xff; 32], // 32 bytes of 0xFF
-        vec![0x00; 128], // zeroed buffer
+        vec![0xff; 32],               // 32 bytes of 0xFF
+        vec![0x00; 128],              // zeroed buffer
         // Header with huge invalid section count
         {
             let mut b = b"ADOB\x01\x00\x00\x00".to_vec();
@@ -104,7 +106,10 @@ fn test_adob_reader_and_validator_bounds_fuzz() {
 
     for buf in &corrupted_buffers {
         let res = AdobReader::read_object(buf);
-        assert!(res.is_err(), "corrupted buffer must fail gracefully without panicking");
+        assert!(
+            res.is_err(),
+            "corrupted buffer must fail gracefully without panicking"
+        );
     }
 }
 

@@ -151,7 +151,10 @@ fn test_linked_binary_determinism_and_execution_e2e() {
     assert_eq!(bytes1, bytes2, "ADOB bytes must be identical");
     let exe_bytes1 = std::fs::read(&exe1).expect("read exe1");
     let exe_bytes2 = std::fs::read(&exe2).expect("read exe2");
-    assert_eq!(exe_bytes1, exe_bytes2, "Linked executables must be byte-for-byte identical");
+    assert_eq!(
+        exe_bytes1, exe_bytes2,
+        "Linked executables must be byte-for-byte identical"
+    );
 
     // Execute
     let out = Command::new(&exe1).output().expect("execute");

@@ -68,15 +68,25 @@ fn test_ffi_declaration_and_lowering() {
     // Lower for Win64
     let win64_insts = FfiCallLowerer::lower_call(&decl, &arg_vregs, &win64_abi, ret_vreg);
     assert_eq!(win64_insts.len(), 4); // mov RCX, v0; mov XMM1, v1; call test_func; mov v2, RAX
-    assert!(matches!(&win64_insts[0], MachineInstruction::Move { dst: MachineOperand::Register(MachineRegister::Physical(p)), .. } if p.0 == 1));
-    assert!(matches!(&win64_insts[1], MachineInstruction::Move { dst: MachineOperand::Register(MachineRegister::Physical(p)), .. } if p.0 == 17)); // XMM1
-    assert!(matches!(&win64_insts[2], MachineInstruction::Call { target: MachineOperand::Symbol(s), .. } if s == "test_func"));
+    assert!(
+        matches!(&win64_insts[0], MachineInstruction::Move { dst: MachineOperand::Register(MachineRegister::Physical(p)), .. } if p.0 == 1)
+    );
+    assert!(
+        matches!(&win64_insts[1], MachineInstruction::Move { dst: MachineOperand::Register(MachineRegister::Physical(p)), .. } if p.0 == 17)
+    ); // XMM1
+    assert!(
+        matches!(&win64_insts[2], MachineInstruction::Call { target: MachineOperand::Symbol(s), .. } if s == "test_func")
+    );
 
     // Lower for SysV: arg 0 in RDI, arg 1 in XMM0
     let sysv_insts = FfiCallLowerer::lower_call(&decl, &arg_vregs, &sysv_abi, ret_vreg);
     assert_eq!(sysv_insts.len(), 4);
-    assert!(matches!(&sysv_insts[0], MachineInstruction::Move { dst: MachineOperand::Register(MachineRegister::Physical(p)), .. } if p.0 == 7)); // RDI
-    assert!(matches!(&sysv_insts[1], MachineInstruction::Move { dst: MachineOperand::Register(MachineRegister::Physical(p)), .. } if p.0 == 16)); // XMM0
+    assert!(
+        matches!(&sysv_insts[0], MachineInstruction::Move { dst: MachineOperand::Register(MachineRegister::Physical(p)), .. } if p.0 == 7)
+    ); // RDI
+    assert!(
+        matches!(&sysv_insts[1], MachineInstruction::Move { dst: MachineOperand::Register(MachineRegister::Physical(p)), .. } if p.0 == 16)
+    ); // XMM0
 }
 
 #[test]
@@ -140,7 +150,8 @@ fn test_native_ffi_execution_e2e() {
         false,
     );
     let win64_abi = WindowsX64Abi;
-    let call_insts = FfiCallLowerer::lower_call(&ffi_decl, &[v_arg1, v_arg2], &win64_abi, Some(v_ret));
+    let call_insts =
+        FfiCallLowerer::lower_call(&ffi_decl, &[v_arg1, v_arg2], &win64_abi, Some(v_ret));
     for inst in call_insts {
         m_block.push(inst);
     }
@@ -155,5 +166,8 @@ fn test_native_ffi_execution_e2e() {
 
     let code = emit_link_and_run(&module, OptLevel::O2, "test_ffi_exec");
     // 5 * 10 + 7 = 57
-    assert_eq!(code, 57, "c_compute(5, 10) through FFI boundary should return 57");
+    assert_eq!(
+        code, 57,
+        "c_compute(5, 10) through FFI boundary should return 57"
+    );
 }

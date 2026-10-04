@@ -9,7 +9,9 @@
 #![allow(dead_code, unused_imports)]
 
 use adesh_codegen::CodegenBackend;
-use adesh_codegen::abi::{Aapcs64Abi, AbiSpec, RiscV64Abi, SystemVX64Abi, UnwindRules, WindowsX64Abi};
+use adesh_codegen::abi::{
+    Aapcs64Abi, AbiSpec, RiscV64Abi, SystemVX64Abi, UnwindRules, WindowsX64Abi,
+};
 use adesh_codegen::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
     NativeModule, PhysicalRegister, RegisterClass, VirtualRegister,
@@ -93,7 +95,10 @@ fn test_scope_aware_unwind_action_table_encoding() {
 
     // Verify binary encoding
     let encoded = table.encode_binary();
-    assert!(encoded.starts_with(b"AUNWND\x01\x00"), "must start with AUNWND magic header");
+    assert!(
+        encoded.starts_with(b"AUNWND\x01\x00"),
+        "must start with AUNWND magic header"
+    );
     assert!(encoded.len() > 16);
 }
 

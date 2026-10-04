@@ -16,7 +16,9 @@ use adesh_codegen::machine_ir::{
 use adesh_codegen::opt::OptLevel;
 use adesh_codegen::targets::x86_64::X86_64Backend;
 use adesh_object::TargetDescriptor;
-use adesh_object::metadata::{DebugInfo, DebugLineRecord, DebugSourceFile, DebugVariable, SecurityMetadata};
+use adesh_object::metadata::{
+    DebugInfo, DebugLineRecord, DebugSourceFile, DebugVariable, SecurityMetadata,
+};
 use adesh_object::validator::AdobValidator;
 use adesh_object::writer::AdobWriter;
 use std::process::Command;
@@ -129,5 +131,8 @@ fn test_native_debug_execution_e2e() {
     module.add_function(main_func);
 
     let code = emit_link_and_run(&module, OptLevel::O0, "test_debug_exec");
-    assert_eq!(code, 64, "debug-built executable must execute and return 64");
+    assert_eq!(
+        code, 64,
+        "debug-built executable must execute and return 64"
+    );
 }

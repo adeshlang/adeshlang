@@ -54,16 +54,33 @@ fn test_pgo_profile_serialization_and_queries() {
     let mut pdata = ProfileData::new();
     let mut fprof = FunctionProfile::new("compute_sum");
     fprof.entry_count = 1000;
-    fprof.add_block_profile(0, BlockProfile { execution_count: 1000 });
-    fprof.add_block_profile(1, BlockProfile { execution_count: 950 });
-    fprof.add_block_profile(2, BlockProfile { execution_count: 50 });
+    fprof.add_block_profile(
+        0,
+        BlockProfile {
+            execution_count: 1000,
+        },
+    );
+    fprof.add_block_profile(
+        1,
+        BlockProfile {
+            execution_count: 950,
+        },
+    );
+    fprof.add_block_profile(
+        2,
+        BlockProfile {
+            execution_count: 50,
+        },
+    );
 
     pdata.add_function_profile(fprof);
 
     let json = pdata.to_json().expect("serialize to json");
     let restored = ProfileData::from_json(&json).expect("deserialize from json");
 
-    let retrieved = restored.get_function_profile("compute_sum").expect("find profile");
+    let retrieved = restored
+        .get_function_profile("compute_sum")
+        .expect("find profile");
     assert_eq!(retrieved.entry_count, 1000);
     assert_eq!(retrieved.block_frequency(1), 950);
     assert!(retrieved.is_hot_block(1, 0.5));
@@ -81,20 +98,32 @@ fn test_pgo_instrumentation_and_optimization_passes() {
     instr_pass.instrument_function(&mut func);
     assert_eq!(func.blocks[0].instructions.len(), 1);
     assert_eq!(func.blocks[1].instructions.len(), 1);
-    assert!(matches!(&func.blocks[0].instructions[0], MachineInstruction::Custom { name, .. } if name == "pgo_inc"));
+    assert!(
+        matches!(&func.blocks[0].instructions[0], MachineInstruction::Custom { name, .. } if name == "pgo_inc")
+    );
 
     // Prepare profile data
     let mut pdata = ProfileData::new();
     let mut fprof = FunctionProfile::new("hot_loop");
     fprof.entry_count = 100;
-    fprof.add_block_profile(1, BlockProfile { execution_count: 90 });
+    fprof.add_block_profile(
+        1,
+        BlockProfile {
+            execution_count: 90,
+        },
+    );
     fprof.add_block_profile(2, BlockProfile { execution_count: 5 });
     pdata.add_function_profile(fprof);
 
     let mut opt_pass = PgoOptimizationPass::new(pdata);
-    let changed = opt_pass.run_on_function(&mut func).expect("run pgo optimization");
+    let changed = opt_pass
+        .run_on_function(&mut func)
+        .expect("run pgo optimization");
     assert!(changed);
-    assert_eq!(opt_pass.spill_weight_for_block("hot_loop", 1), 1.0 + 90.0 * 10.0);
+    assert_eq!(
+        opt_pass.spill_weight_for_block("hot_loop", 1),
+        1.0 + 90.0 * 10.0
+    );
 }
 
 #[test]

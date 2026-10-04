@@ -62,7 +62,10 @@ fn test_atomic_memory_ordering_lowering() {
             order,
         };
         let lowered = ConcurrencyPass::lower_atomic(op).expect("lower atomic op");
-        assert!(!lowered.is_empty(), "lowering should produce machine instructions");
+        assert!(
+            !lowered.is_empty(),
+            "lowering should produce machine instructions"
+        );
     }
 }
 
