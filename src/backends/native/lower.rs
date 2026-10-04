@@ -1103,6 +1103,14 @@ impl<'a> FunctionLoweringContext<'a> {
             .iter_mut()
             .find(|b| b.id == self.current_block_id)
         {
+            if let Some(last) = block.instructions.last() {
+                if matches!(
+                    last,
+                    MachineInstruction::Return | MachineInstruction::Branch { .. }
+                ) {
+                    return;
+                }
+            }
             block.push(inst);
         }
     }

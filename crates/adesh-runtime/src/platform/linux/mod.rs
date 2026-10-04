@@ -1,7 +1,7 @@
 //! Linux Platform Specifics.
 
+#[allow(unused_imports)]
 pub use super::unix::*;
-
 use std::sync::atomic::{AtomicI32, Ordering};
 
 /// Linux futex wait wrapper (SYS_futex).

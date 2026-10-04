@@ -22,6 +22,8 @@ use std::fmt::Write as FmtWrite;
 use std::io::Write;
 use std::os::raw::c_char;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+#[allow(unused_imports)]
+
 use std::sync::{Arc, Mutex};
 
 // ============================================================================

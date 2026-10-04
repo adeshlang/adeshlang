@@ -24,9 +24,29 @@ impl DeadCodeElimination {
 
     pub fn run(&self, func: &mut MachineFunction) -> usize {
         let mut total_changes = 0;
+        total_changes += self.eliminate_dead_instructions_after_terminators(func);
         total_changes += self.eliminate_dead_blocks(func);
         total_changes += self.eliminate_unused_vregs(func);
         total_changes
+    }
+
+    /// Truncate any instructions following a terminator (Return or unconditional Branch) in each block.
+    fn eliminate_dead_instructions_after_terminators(&self, func: &mut MachineFunction) -> usize {
+        let mut removed = 0;
+        for block in &mut func.blocks {
+            if let Some(pos) = block.instructions.iter().position(|inst| {
+                matches!(
+                    inst,
+                    MachineInstruction::Return | MachineInstruction::Branch { .. }
+                )
+            }) {
+                if pos + 1 < block.instructions.len() {
+                    removed += block.instructions.len() - (pos + 1);
+                    block.instructions.truncate(pos + 1);
+                }
+            }
+        }
+        removed
     }
 
     /// Eliminate unreachable blocks.

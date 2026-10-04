@@ -1,4 +1,5 @@
 //! Shared Unix Platform Implementation (POSIX, Linux, macOS, BSD).
+#[allow(unused_imports)]
 
 use std::ffi::{c_void, CString};
 use std::ptr::{null, null_mut};

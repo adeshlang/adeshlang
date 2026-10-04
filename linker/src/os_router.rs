@@ -407,6 +407,21 @@ impl OsApiRouter {
             "TlsFree",
             "TlsGetValue",
             "TlsSetValue",
+            "FlsAlloc",
+            "FlsFree",
+            "FlsGetValue",
+            "FlsSetValue",
+            "IsThreadAFiber",
+            "ConvertFiberToThread",
+            "ConvertThreadToFiber",
+            "CreateFiber",
+            "CreateFiberEx",
+            "DeleteFiber",
+            "SwitchToFiber",
+            "GetSystemTimeAdjustment",
+            "SetSystemTimeAdjustment",
+            "SetThreadErrorMode",
+            "GetThreadErrorMode",
             "LocalAlloc",
             "LocalFree",
             "LocalReAlloc",
@@ -854,6 +869,32 @@ impl OsApiRouter {
                 "strtok_r",
                 "strdup",
                 "strndup",
+                // wide string
+                "wcslen",
+                "wcscpy",
+                "wcsncpy",
+                "wcscat",
+                "wcsncat",
+                "wcscmp",
+                "wcsncmp",
+                "wcschr",
+                "wcsrchr",
+                "wcsstr",
+                "wcstok",
+                "wcsdup",
+                "towlower",
+                "towupper",
+                "iswalpha",
+                "iswdigit",
+                "iswspace",
+                "iswpunct",
+                "_wcsicmp",
+                "_wcsnicmp",
+                "wmemchr",
+                "wmemcmp",
+                "wmemcpy",
+                "wmemmove",
+                "wmemset",
                 // memory
                 "memcpy",
                 "memmove",
@@ -981,33 +1022,59 @@ impl OsApiRouter {
         None
     }
 
+    /// Returns true if a symbol is a standard C runtime / libc / libm function.
+    pub fn is_libc_symbol(sym: &str) -> bool {
+        let raw = sym
+            .strip_prefix("__imp_")
+            .or_else(|| sym.strip_prefix("_imp_"))
+            .unwrap_or(sym);
+        let clean = raw.trim_start_matches('_');
+        if clean.is_empty() || Self::is_internal(raw) || Self::is_internal(clean) {
+            return false;
+        }
+        Self::windows_dll_for(sym)
+            .map_or(false, |dll| dll == "msvcrt.dll" || dll == "ucrtbase.dll")
+    }
+
     // ─── Linux / ELF ───────────────────────────────────────────────────────────
 
     fn classify_elf(raw: &str, _target: &Target) -> SymbolRoute {
         let clean = raw.trim_start_matches('_');
 
-        if Self::is_internal(raw) {
+        if Self::is_internal(raw) || Self::is_internal(clean) {
             return SymbolRoute::InternalRuntime;
         }
-        if crate::intrinsics::IntrinsicsEngine::is_intrinsic(raw) {
+        if crate::intrinsics::IntrinsicsEngine::is_intrinsic(raw)
+            || crate::intrinsics::IntrinsicsEngine::is_intrinsic(clean)
+        {
             return SymbolRoute::Intrinsic;
         }
 
-        // On Linux, libc symbols are resolved via -lc (shared link), not DLL import tables.
-        // Return `Undefined` so the ELF writer can handle them via dynamic entries.
-        let _ = clean;
+        if Self::is_libc_symbol(raw) || Self::is_libc_symbol(clean) {
+            return SymbolRoute::Intrinsic;
+        }
+
         SymbolRoute::Undefined
     }
 
     // ─── macOS / Mach-O ────────────────────────────────────────────────────────
 
     fn classify_macho(raw: &str) -> SymbolRoute {
-        if Self::is_internal(raw) {
+        let clean = raw.trim_start_matches('_');
+
+        if Self::is_internal(raw) || Self::is_internal(clean) {
             return SymbolRoute::InternalRuntime;
         }
-        if crate::intrinsics::IntrinsicsEngine::is_intrinsic(raw) {
+        if crate::intrinsics::IntrinsicsEngine::is_intrinsic(raw)
+            || crate::intrinsics::IntrinsicsEngine::is_intrinsic(clean)
+        {
             return SymbolRoute::Intrinsic;
         }
+
+        if Self::is_libc_symbol(raw) || Self::is_libc_symbol(clean) {
+            return SymbolRoute::Intrinsic;
+        }
+
         SymbolRoute::Undefined
     }
 }

@@ -73,9 +73,9 @@ impl IntrinsicsEngine {
             || name.starts_with("___rust")
             || name.starts_with("rust_")
             || name.starts_with("_rust_")
-            || name.contains("___rust")
             || name.starts_with("adesh_")
             || name.starts_with("__adesh_")
+            || crate::os_router::OsApiRouter::is_libc_symbol(name)
     }
 
     /// Synthesize machine code section and symbols for missing runtime intrinsics.
@@ -375,9 +375,35 @@ impl IntrinsicsEngine {
                 // Safe runtime stub ret
                 vec![0xc3] // ret
             }
+            "log2" => {
+                vec![
+                    0xd9, 0xe8,                         // fld1
+                    0x48, 0x83, 0xec, 0x08,             // sub rsp, 8
+                    0xf2, 0x0f, 0x11, 0x04, 0x24,       // movsd qword ptr [rsp], xmm0
+                    0xdd, 0x04, 0x24,                   // fld qword ptr [rsp]
+                    0xd9, 0xf1,                         // fyl2x
+                    0xdd, 0x1c, 0x24,                   // fstp qword ptr [rsp]
+                    0xf2, 0x0f, 0x10, 0x04, 0x24,       // movsd xmm0, qword ptr [rsp]
+                    0x48, 0x83, 0xc4, 0x08,             // add rsp, 8
+                    0xc3,                               // ret
+                ]
+            }
+            "log2f" => {
+                vec![
+                    0xd9, 0xe8,                         // fld1
+                    0x48, 0x83, 0xec, 0x08,             // sub rsp, 8
+                    0xf3, 0x0f, 0x11, 0x04, 0x24,       // movss dword ptr [rsp], xmm0
+                    0xd9, 0x04, 0x24,                   // fld dword ptr [rsp]
+                    0xd9, 0xf1,                         // fyl2x
+                    0xd9, 0x1c, 0x24,                   // fstp dword ptr [rsp]
+                    0xf3, 0x0f, 0x10, 0x04, 0x24,       // movss xmm0, dword ptr [rsp]
+                    0x48, 0x83, 0xc4, 0x08,             // add rsp, 8
+                    0xc3,                               // ret
+                ]
+            }
             _ => {
-                // Default ret
-                vec![0xc3]
+                // Default safe return 0 / NULL
+                vec![0x31, 0xc0, 0xc3] // xor eax, eax; ret
             }
         }
     }
