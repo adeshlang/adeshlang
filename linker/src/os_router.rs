@@ -1032,8 +1032,7 @@ impl OsApiRouter {
         if clean.is_empty() || Self::is_internal(raw) || Self::is_internal(clean) {
             return false;
         }
-        Self::windows_dll_for(sym)
-            .map_or(false, |dll| dll == "msvcrt.dll" || dll == "ucrtbase.dll")
+        Self::windows_dll_for(sym).map_or(false, |dll| dll == "msvcrt.dll" || dll == "ucrtbase.dll")
     }
 
     // ─── Linux / ELF ───────────────────────────────────────────────────────────

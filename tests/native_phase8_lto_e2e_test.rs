@@ -78,9 +78,14 @@ fn test_lto_module_summary_and_gdfe() {
     });
 
     let mut modules = vec![mod1];
-    let report = engine.optimize_modules(&mut modules).expect("LTO optimization");
+    let report = engine
+        .optimize_modules(&mut modules)
+        .expect("LTO optimization");
     assert_eq!(modules.len(), 1);
-    assert!(report.dead_functions_removed >= 1, "unused_internal should be eliminated by GDFE");
+    assert!(
+        report.dead_functions_removed >= 1,
+        "unused_internal should be eliminated by GDFE"
+    );
     assert_eq!(modules[0].functions.len(), 1);
     assert_eq!(modules[0].functions[0].name, "main");
 }
@@ -124,7 +129,9 @@ fn test_lto_cross_module_execution_e2e() {
     });
 
     let mut modules = vec![mod1, mod2];
-    let _report = engine.optimize_modules(&mut modules).expect("LTO optimization");
+    let _report = engine
+        .optimize_modules(&mut modules)
+        .expect("LTO optimization");
     assert_eq!(modules.len(), 1, "modules merged into 1");
 
     let code = emit_link_and_run(&modules[0], OptLevel::O2, "test_lto_exec");

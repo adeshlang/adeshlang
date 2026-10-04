@@ -82,12 +82,17 @@ fn test_cross_target_emission_and_validation() {
 
         module.add_function(func);
 
-        let obj = backend.emit_object(&module).expect("ADOB emission succeeds");
+        let obj = backend
+            .emit_object(&module)
+            .expect("ADOB emission succeeds");
         AdobValidator::validate(&obj).expect("emitted ADOB must be structurally valid");
 
         let bytes = AdobWriter::write(&obj).expect("ADOB encoding succeeds");
         assert!(!bytes.is_empty(), "encoded ADOB bytes must not be empty");
-        assert!(bytes.starts_with(b"ADOB"), "encoded ADOB must start with magic header");
+        assert!(
+            bytes.starts_with(b"ADOB"),
+            "encoded ADOB must start with magic header"
+        );
     }
 }
 

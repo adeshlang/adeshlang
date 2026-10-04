@@ -30,13 +30,22 @@ pub enum AbiType {
 
 impl AbiType {
     pub fn i32() -> Self {
-        AbiType::Integer { bits: 32, is_signed: true }
+        AbiType::Integer {
+            bits: 32,
+            is_signed: true,
+        }
     }
     pub fn i64() -> Self {
-        AbiType::Integer { bits: 64, is_signed: true }
+        AbiType::Integer {
+            bits: 64,
+            is_signed: true,
+        }
     }
     pub fn u64() -> Self {
-        AbiType::Integer { bits: 64, is_signed: false }
+        AbiType::Integer {
+            bits: 64,
+            is_signed: false,
+        }
     }
     pub fn f32() -> Self {
         AbiType::Float { bits: 32 }
@@ -48,12 +57,15 @@ impl AbiType {
         AbiType::Pointer
     }
     pub fn v128_f32() -> Self {
-        AbiType::Vector { total_bytes: 16, lane_size: 4 }
+        AbiType::Vector {
+            total_bytes: 16,
+            lane_size: 4,
+        }
     }
 
     pub fn size_in_bytes(&self) -> usize {
         match self {
-            AbiType::Integer { bits, .. } => ((*bits as usize) + 7) / 8,
+            AbiType::Integer { bits, .. } => (*bits as usize).div_ceil(8),
             AbiType::Float { bits } => (*bits as usize) / 8,
             AbiType::Vector { total_bytes, .. } => *total_bytes as usize,
             AbiType::Pointer => 8,
@@ -64,7 +76,7 @@ impl AbiType {
 
     pub fn alignment(&self) -> usize {
         match self {
-            AbiType::Integer { bits, .. } => (((*bits as usize) + 7) / 8).max(1),
+            AbiType::Integer { bits, .. } => (*bits as usize).div_ceil(8).max(1),
             AbiType::Float { bits } => ((*bits as usize) / 8).max(4),
             AbiType::Vector { total_bytes, .. } => (*total_bytes as usize).min(16),
             AbiType::Pointer => 8,
@@ -370,7 +382,8 @@ impl AbiSpec for WindowsX64Abi {
                         if [1, 2, 4, 8].contains(size) {
                             locations.push(ArgumentLocation::Register(WIN64_GPR_ARGS[i]));
                         } else {
-                            locations.push(ArgumentLocation::IndirectByReference(WIN64_GPR_ARGS[i]));
+                            locations
+                                .push(ArgumentLocation::IndirectByReference(WIN64_GPR_ARGS[i]));
                         }
                     }
                     _ => {
@@ -635,7 +648,10 @@ impl AbiSpec for Aapcs64Abi {
     fn caller_saved(&self) -> CallerSavedSet {
         CallerSavedSet {
             gpr: (0..=18).map(PhysicalRegister).collect(),
-            fpr: (32..=63).filter(|&r| r < 40 || r > 47).map(PhysicalRegister).collect(),
+            fpr: (32..=63)
+                .filter(|&r| !(40..=47).contains(&r))
+                .map(PhysicalRegister)
+                .collect(),
         }
     }
     fn variadic_rules(&self) -> VariadicRules {

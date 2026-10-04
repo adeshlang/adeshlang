@@ -2,7 +2,7 @@
 
 #[allow(unused_imports)]
 pub use super::unix::*;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::AtomicI32;
 
 /// Linux futex wait wrapper (SYS_futex).
 pub fn linux_futex_wait(uaddr: &AtomicI32, val: i32) -> i32 {

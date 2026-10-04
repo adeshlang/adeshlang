@@ -2,13 +2,19 @@
 //!
 //! Wraps Win32 APIs for virtual memory, threading, synchronization, dynamic libraries, and processes.
 
-use std::ffi::{c_void, CString};
+#[allow(unused_imports)]
+use std::ffi::{CString, c_void};
 use std::ptr::null_mut;
 use std::time::Instant;
 
 #[cfg(windows)]
 unsafe extern "system" {
-    fn VirtualAlloc(lpAddress: *mut c_void, dwSize: usize, flAllocationType: u32, flProtect: u32) -> *mut c_void;
+    fn VirtualAlloc(
+        lpAddress: *mut c_void,
+        dwSize: usize,
+        flAllocationType: u32,
+        flProtect: u32,
+    ) -> *mut c_void;
     fn VirtualFree(lpAddress: *mut c_void, dwSize: usize, dwFreeType: u32) -> i32;
     fn LoadLibraryA(lpLibFileName: *const u8) -> *mut c_void;
     fn GetProcAddress(hModule: *mut c_void, lpProcName: *const u8) -> *mut c_void;
@@ -16,10 +22,15 @@ unsafe extern "system" {
     fn GetLastError() -> u32;
 }
 
+#[allow(dead_code)]
 const MEM_COMMIT: u32 = 0x00001000;
+#[allow(dead_code)]
 const MEM_RESERVE: u32 = 0x00002000;
+#[allow(dead_code)]
 const MEM_RELEASE: u32 = 0x00008000;
+#[allow(dead_code)]
 const PAGE_READWRITE: u32 = 0x04;
+#[allow(dead_code)]
 const PAGE_EXECUTE_READWRITE: u32 = 0x40;
 
 /// Allocate virtual memory with read/write or read/write/execute permissions.
@@ -61,11 +72,7 @@ pub fn load_dynamic_library(name: &str) -> Option<*mut c_void> {
     unsafe {
         let c_name = CString::new(name).ok()?;
         let handle = LoadLibraryA(c_name.as_ptr() as *const u8);
-        if handle.is_null() {
-            None
-        } else {
-            Some(handle)
-        }
+        if handle.is_null() { None } else { Some(handle) }
     }
     #[cfg(not(windows))]
     {
@@ -80,11 +87,7 @@ pub fn lookup_dynamic_symbol(handle: *mut c_void, symbol: &str) -> Option<*mut c
     unsafe {
         let c_sym = CString::new(symbol).ok()?;
         let addr = GetProcAddress(handle, c_sym.as_ptr() as *const u8);
-        if addr.is_null() {
-            None
-        } else {
-            Some(addr)
-        }
+        if addr.is_null() { None } else { Some(addr) }
     }
     #[cfg(not(windows))]
     {

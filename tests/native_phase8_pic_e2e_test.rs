@@ -52,11 +52,23 @@ fn test_pic_relocation_kinds() {
     assert_eq!(rel_pcrel.width, 4);
     assert_eq!(rel_pcrel.kind, RelocationKind::PcRelative32);
 
-    let rel_got = AdobRelocation::new(0x40, 2, "_GLOBAL_OFFSET_TABLE_", RelocationKind::X86_64_GotPcrel, -4);
+    let rel_got = AdobRelocation::new(
+        0x40,
+        2,
+        "_GLOBAL_OFFSET_TABLE_",
+        RelocationKind::X86_64_GotPcrel,
+        -4,
+    );
     assert_eq!(rel_got.width, 4);
     assert_eq!(rel_got.kind, RelocationKind::X86_64_GotPcrel);
 
-    let rel_aarch64 = AdobRelocation::new(0x60, 3, "external_sym", RelocationKind::AArch64_AdrPage21, 0);
+    let rel_aarch64 = AdobRelocation::new(
+        0x60,
+        3,
+        "external_sym",
+        RelocationKind::AArch64_AdrPage21,
+        0,
+    );
     assert_eq!(rel_aarch64.width, 4);
 
     let rel_riscv = AdobRelocation::new(0x80, 4, "rv_call", RelocationKind::RiscV_Call, 0);

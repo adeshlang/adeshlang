@@ -1,8 +1,7 @@
 //! Shared Unix Platform Implementation (POSIX, Linux, macOS, BSD).
 #[allow(unused_imports)]
-
-use std::ffi::{c_void, CString};
-use std::ptr::{null, null_mut};
+use std::ffi::{CString, c_void};
+use std::ptr::null_mut;
 
 /// Allocate virtual memory using POSIX mmap.
 pub fn unix_virtual_alloc(size: usize, executable: bool) -> *mut u8 {
@@ -46,11 +45,7 @@ pub fn unix_dlopen(name: &str) -> Option<*mut c_void> {
     unsafe {
         let c_name = CString::new(name).ok()?;
         let handle = libc::dlopen(c_name.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
-        if handle.is_null() {
-            None
-        } else {
-            Some(handle)
-        }
+        if handle.is_null() { None } else { Some(handle) }
     }
     #[cfg(not(unix))]
     {
@@ -65,11 +60,7 @@ pub fn unix_dlsym(handle: *mut c_void, symbol: &str) -> Option<*mut c_void> {
     unsafe {
         let c_sym = CString::new(symbol).ok()?;
         let addr = libc::dlsym(handle, c_sym.as_ptr());
-        if addr.is_null() {
-            None
-        } else {
-            Some(addr)
-        }
+        if addr.is_null() { None } else { Some(addr) }
     }
     #[cfg(not(unix))]
     {

@@ -47,20 +47,47 @@ impl ForeignType {
     pub fn to_abi_type(&self) -> AbiType {
         match self {
             ForeignType::Void => AbiType::Void,
-            ForeignType::Bool => AbiType::Integer { bits: 8, is_signed: false },
-            ForeignType::Int8 => AbiType::Integer { bits: 8, is_signed: true },
-            ForeignType::Int16 => AbiType::Integer { bits: 16, is_signed: true },
-            ForeignType::Int32 => AbiType::Integer { bits: 32, is_signed: true },
-            ForeignType::Int64 => AbiType::Integer { bits: 64, is_signed: true },
-            ForeignType::UInt8 => AbiType::Integer { bits: 8, is_signed: false },
-            ForeignType::UInt16 => AbiType::Integer { bits: 16, is_signed: false },
-            ForeignType::UInt32 => AbiType::Integer { bits: 32, is_signed: false },
-            ForeignType::UInt64 | ForeignType::SizeT => AbiType::Integer { bits: 64, is_signed: false },
+            ForeignType::Bool => AbiType::Integer {
+                bits: 8,
+                is_signed: false,
+            },
+            ForeignType::Int8 => AbiType::Integer {
+                bits: 8,
+                is_signed: true,
+            },
+            ForeignType::Int16 => AbiType::Integer {
+                bits: 16,
+                is_signed: true,
+            },
+            ForeignType::Int32 => AbiType::Integer {
+                bits: 32,
+                is_signed: true,
+            },
+            ForeignType::Int64 => AbiType::Integer {
+                bits: 64,
+                is_signed: true,
+            },
+            ForeignType::UInt8 => AbiType::Integer {
+                bits: 8,
+                is_signed: false,
+            },
+            ForeignType::UInt16 => AbiType::Integer {
+                bits: 16,
+                is_signed: false,
+            },
+            ForeignType::UInt32 => AbiType::Integer {
+                bits: 32,
+                is_signed: false,
+            },
+            ForeignType::UInt64 | ForeignType::SizeT => AbiType::Integer {
+                bits: 64,
+                is_signed: false,
+            },
             ForeignType::Float32 => AbiType::Float { bits: 32 },
             ForeignType::Float64 => AbiType::Float { bits: 64 },
-            ForeignType::RawPointer { .. } | ForeignType::CString | ForeignType::FunctionPointer(_) => {
-                AbiType::Pointer
-            }
+            ForeignType::RawPointer { .. }
+            | ForeignType::CString
+            | ForeignType::FunctionPointer(_) => AbiType::Pointer,
         }
     }
 
@@ -239,7 +266,9 @@ impl FfiCallLowerer {
         }
 
         // 3. Handle SysV variadic AL register count
-        if decl.signature.is_variadic && abi.variadic_rules() == crate::abi::VariadicRules::SysVAlVectorCount {
+        if decl.signature.is_variadic
+            && abi.variadic_rules() == crate::abi::VariadicRules::SysVAlVectorCount
+        {
             instructions.push(MachineInstruction::Move {
                 dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))), // RAX / AL
                 src: MachineOperand::Immediate(fp_reg_count as i64),

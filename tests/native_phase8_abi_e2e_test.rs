@@ -83,22 +83,52 @@ fn test_abi_framework_classification_all_architectures() {
     // Win64: slots 0..3 are RCX, XMM1, R8, R9; slots 4 & 5 are stack slots at offset 48, 56
     let win64_locs = win64.classify_arguments(&args);
     assert_eq!(win64_locs.len(), 6);
-    assert_eq!(win64_locs[0], ArgumentLocation::Register(PhysicalRegister(1))); // RCX
-    assert_eq!(win64_locs[1], ArgumentLocation::FloatRegister(PhysicalRegister::xmm(1))); // XMM1
-    assert_eq!(win64_locs[2], ArgumentLocation::Register(PhysicalRegister(8))); // R8
-    assert_eq!(win64_locs[3], ArgumentLocation::Register(PhysicalRegister(9))); // R9
+    assert_eq!(
+        win64_locs[0],
+        ArgumentLocation::Register(PhysicalRegister(1))
+    ); // RCX
+    assert_eq!(
+        win64_locs[1],
+        ArgumentLocation::FloatRegister(PhysicalRegister::xmm(1))
+    ); // XMM1
+    assert_eq!(
+        win64_locs[2],
+        ArgumentLocation::Register(PhysicalRegister(8))
+    ); // R8
+    assert_eq!(
+        win64_locs[3],
+        ArgumentLocation::Register(PhysicalRegister(9))
+    ); // R9
     assert!(matches!(win64_locs[4], ArgumentLocation::Stack(s) if s.offset == 48));
     assert!(matches!(win64_locs[5], ArgumentLocation::Stack(s) if s.offset == 56));
 
     // SysV: RDI, XMM0, RSI, RDX, RCX, XMM1 (independent integer and FP register sequences)
     let sysv_locs = sysv.classify_arguments(&args);
     assert_eq!(sysv_locs.len(), 6);
-    assert_eq!(sysv_locs[0], ArgumentLocation::Register(PhysicalRegister(7))); // RDI
-    assert_eq!(sysv_locs[1], ArgumentLocation::FloatRegister(PhysicalRegister::xmm(0))); // XMM0
-    assert_eq!(sysv_locs[2], ArgumentLocation::Register(PhysicalRegister(6))); // RSI
-    assert_eq!(sysv_locs[3], ArgumentLocation::Register(PhysicalRegister(2))); // RDX
-    assert_eq!(sysv_locs[4], ArgumentLocation::Register(PhysicalRegister(1))); // RCX
-    assert_eq!(sysv_locs[5], ArgumentLocation::FloatRegister(PhysicalRegister::xmm(1))); // XMM1
+    assert_eq!(
+        sysv_locs[0],
+        ArgumentLocation::Register(PhysicalRegister(7))
+    ); // RDI
+    assert_eq!(
+        sysv_locs[1],
+        ArgumentLocation::FloatRegister(PhysicalRegister::xmm(0))
+    ); // XMM0
+    assert_eq!(
+        sysv_locs[2],
+        ArgumentLocation::Register(PhysicalRegister(6))
+    ); // RSI
+    assert_eq!(
+        sysv_locs[3],
+        ArgumentLocation::Register(PhysicalRegister(2))
+    ); // RDX
+    assert_eq!(
+        sysv_locs[4],
+        ArgumentLocation::Register(PhysicalRegister(1))
+    ); // RCX
+    assert_eq!(
+        sysv_locs[5],
+        ArgumentLocation::FloatRegister(PhysicalRegister::xmm(1))
+    ); // XMM1
 
     // Large Struct return rules:
     let large_struct = AbiType::Struct {
@@ -106,10 +136,18 @@ fn test_abi_framework_classification_all_architectures() {
         size: 24,
         align: 8,
     };
-    assert!(matches!(win64.classify_return(&large_struct), ReturnLocation::HiddenSret(r) if r.0 == 1)); // RCX
-    assert!(matches!(sysv.classify_return(&large_struct), ReturnLocation::HiddenSret(r) if r.0 == 7)); // RDI
-    assert!(matches!(aapcs.classify_return(&large_struct), ReturnLocation::HiddenSret(r) if r.0 == 8)); // X8
-    assert!(matches!(riscv.classify_return(&large_struct), ReturnLocation::HiddenSret(r) if r.0 == 10)); // a0
+    assert!(
+        matches!(win64.classify_return(&large_struct), ReturnLocation::HiddenSret(r) if r.0 == 1)
+    ); // RCX
+    assert!(
+        matches!(sysv.classify_return(&large_struct), ReturnLocation::HiddenSret(r) if r.0 == 7)
+    ); // RDI
+    assert!(
+        matches!(aapcs.classify_return(&large_struct), ReturnLocation::HiddenSret(r) if r.0 == 8)
+    ); // X8
+    assert!(
+        matches!(riscv.classify_return(&large_struct), ReturnLocation::HiddenSret(r) if r.0 == 10)
+    ); // a0
 }
 
 #[test]

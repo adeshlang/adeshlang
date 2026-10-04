@@ -22,9 +22,7 @@ use std::fmt::Write as FmtWrite;
 use std::io::Write;
 use std::os::raw::c_char;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
-#[allow(unused_imports)]
-
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex as StdMutex};
 
 // ============================================================================
 // Runtime Value Definition
@@ -428,8 +426,8 @@ impl RuntimeValue {
 
 const N_SHARDS: usize = 16;
 
-static HANDLE_SHARDS: [Mutex<BTreeMap<u64, RuntimeValue>>; N_SHARDS] =
-    [const { Mutex::new(BTreeMap::new()) }; N_SHARDS];
+static HANDLE_SHARDS: [StdMutex<BTreeMap<u64, RuntimeValue>>; N_SHARDS] =
+    [const { StdMutex::new(BTreeMap::new()) }; N_SHARDS];
 static HANDLE_COUNTER: AtomicU64 = AtomicU64::new(100);
 
 fn shard_index(handle: u64) -> usize {
@@ -2024,10 +2022,10 @@ struct ArcControlBlock {
     weak: AtomicI64,
     // Mutex<Option<..>> lets the last strong drop move the payload out while
     // weak refs still point at the block; a dead block reads back as None.
-    value: Mutex<Option<RuntimeValue>>,
+    value: StdMutex<Option<RuntimeValue>>,
 }
 
-static ARC_MAP: Mutex<BTreeMap<u64, Arc<ArcControlBlock>>> = Mutex::new(BTreeMap::new());
+static ARC_MAP: StdMutex<BTreeMap<u64, Arc<ArcControlBlock>>> = StdMutex::new(BTreeMap::new());
 static ARC_COUNTER: AtomicU64 = AtomicU64::new(1000);
 
 fn get_arc_map() -> std::sync::MutexGuard<'static, BTreeMap<u64, Arc<ArcControlBlock>>> {
@@ -2042,7 +2040,7 @@ pub extern "C" fn adesh_rt_arc_new(val_handle: u64) -> u64 {
     let block = Arc::new(ArcControlBlock {
         strong: AtomicI64::new(1),
         weak: AtomicI64::new(0),
-        value: Mutex::new(Some(val)),
+        value: StdMutex::new(Some(val)),
     });
     let id = ARC_COUNTER.fetch_add(1, Ordering::Relaxed);
     get_arc_map().insert(id, block);
@@ -2218,7 +2216,8 @@ struct TrackedAllocation {
     thread_id: std::thread::ThreadId,
 }
 
-static TRACKED_ALLOCATIONS: Mutex<BTreeMap<usize, TrackedAllocation>> = Mutex::new(BTreeMap::new());
+static TRACKED_ALLOCATIONS: StdMutex<BTreeMap<usize, TrackedAllocation>> =
+    StdMutex::new(BTreeMap::new());
 static TRACKED_SCOPE_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 thread_local! {
@@ -2710,7 +2709,7 @@ fn aot_collections_new_impl(type_name_handle: u64, args_ptr: *const u64, args_co
                 .get(0)
                 .and_then(|v| v.as_usize())
                 .unwrap_or(16)
-                .clamp(1, MAX_RING_BUFFER_CAP);
+                .clamp(0, MAX_RING_BUFFER_CAP);
             aot_store_value(RuntimeValue::RingBuffer {
                 buffer: Vec::with_capacity(cap),
                 head: 0,
@@ -3378,8 +3377,8 @@ fn aot_call_method_impl(
 // Input & Type Conversions
 // ============================================================================
 
-static MOCK_INPUT_QUEUE: Mutex<std::collections::VecDeque<String>> =
-    Mutex::new(std::collections::VecDeque::new());
+static MOCK_INPUT_QUEUE: StdMutex<std::collections::VecDeque<String>> =
+    StdMutex::new(std::collections::VecDeque::new());
 
 fn get_mock_input_queue() -> std::sync::MutexGuard<'static, std::collections::VecDeque<String>> {
     MOCK_INPUT_QUEUE
@@ -3507,7 +3506,7 @@ mod audit_tests {
 
     // The handle store and ARC map are process-global; tests touching them
     // run under this lock so their exact-count assertions stay deterministic.
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    static TEST_LOCK: StdMutex<()> = StdMutex::new(());
 
     fn locked<R>(body: impl FnOnce() -> R) -> R {
         let _guard = TEST_LOCK
@@ -3656,14 +3655,13 @@ mod audit_tests {
     #[test]
     fn audit_string_substring_boundaries() {
         locked(|| {
-            let s = str_handle("héllo"); // byte 1 is inside a multi-byte char
+            let s = str_handle("héllo"); // byte 2 is inside 'é' (bytes 1..3)
             let sub_m = str_handle("substring");
-            let one = int_handle(1);
             let two = int_handle(2);
             let four = int_handle(4);
             let five = int_handle(5);
 
-            let mid_char = unsafe { aot_call_method(s, sub_m, [one, four].as_ptr(), 2) };
+            let mid_char = unsafe { aot_call_method(s, sub_m, [two, four].as_ptr(), 2) };
             assert_eq!(
                 aot_get_value(mid_char),
                 Some(RuntimeValue::String(String::new()))

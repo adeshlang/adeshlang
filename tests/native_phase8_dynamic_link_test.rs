@@ -88,8 +88,14 @@ fn test_exported_and_imported_symbol_attributes() {
     let obj = backend.emit_object(&module).expect("emit object");
 
     // Verify symbols in emitted object
-    let has_exported = obj.symbols.iter().any(|s| s.name == "adesh_exported_fn" && s.binding == SymbolBinding::Global);
-    assert!(has_exported, "adesh_exported_fn must be a global exported symbol");
+    let has_exported = obj
+        .symbols
+        .iter()
+        .any(|s| s.name == "adesh_exported_fn" && s.binding == SymbolBinding::Global);
+    assert!(
+        has_exported,
+        "adesh_exported_fn must be a global exported symbol"
+    );
 }
 
 #[test]
