@@ -23,6 +23,65 @@ impl PeReader {
             ));
         }
 
+        // Check if COFF Short Import Header (Sig1 = 0, Sig2 = 0xFFFF)
+        if bytes.len() >= 20 && bytes[0] == 0 && bytes[1] == 0 && bytes[2] == 0xFF && bytes[3] == 0xFF {
+            let machine_val = u16::from_le_bytes(bytes[6..8].try_into().unwrap());
+            let arch = match machine_val {
+                IMAGE_FILE_MACHINE_AMD64 => Arch::X86_64,
+                IMAGE_FILE_MACHINE_ARM64 => Arch::AArch64,
+                IMAGE_FILE_MACHINE_I386 => Arch::X86,
+                _ => Arch::X86_64,
+            };
+            let target = Target::from_triple(if arch == Arch::AArch64 {
+                "aarch64-pc-windows-msvc"
+            } else {
+                "x86_64-pc-windows-msvc"
+            })
+            .unwrap_or_else(|_| Target::host());
+            let size_of_data = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+            if 20 + size_of_data <= bytes.len() {
+                let data = &bytes[20..20 + size_of_data];
+                let parts: Vec<&[u8]> = data.split(|&b| b == 0).collect();
+                if !parts.is_empty() {
+                    let sym_name = String::from_utf8_lossy(parts[0]).to_string();
+                    let mut obj = ObjectFile::new(path.to_path_buf(), target, file_index);
+                    obj.add_symbol(Symbol {
+                        name: sym_name.clone(),
+                        binding: SymbolBinding::Global,
+                        visibility: SymbolVisibility::Default,
+                        sym_type: SymbolType::Function,
+                        section_index: None,
+                        value: 0,
+                        size: 0,
+                        is_defined: false,
+                        is_imported: true,
+                        is_exported: false,
+                        file_index: Some(file_index),
+                        alias_of: None,
+                        comdat_group: None,
+                        version: None,
+                    });
+                    obj.add_symbol(Symbol {
+                        name: format!("__imp_{}", sym_name),
+                        binding: SymbolBinding::Global,
+                        visibility: SymbolVisibility::Default,
+                        sym_type: SymbolType::Object,
+                        section_index: None,
+                        value: 0,
+                        size: 8,
+                        is_defined: false,
+                        is_imported: true,
+                        is_exported: false,
+                        file_index: Some(file_index),
+                        alias_of: None,
+                        comdat_group: None,
+                        version: None,
+                    });
+                    return Ok(obj);
+                }
+            }
+        }
+
         let mut offset = 0;
         // Check if MS-DOS header present
         if &bytes[0..2] == b"MZ" {
@@ -84,7 +143,7 @@ impl PeReader {
         // the natural pointer width is the conservative default.
         let common_alignment: u64 = if arch == Arch::X86 { 4 } else { 8 };
 
-        let mut obj = ObjectFile::new(path.to_path_buf(), target, file_index);
+        let mut obj = ObjectFile::new(path.to_path_buf(), target.clone(), file_index);
 
         let section_table_offset = offset + 20 + opt_hdr_size;
         let section_entry_size = 40;
@@ -143,6 +202,8 @@ impl PeReader {
 
             let virtual_size =
                 u32::from_le_bytes(bytes[s_off + 8..s_off + 12].try_into().unwrap()) as u64;
+            let virtual_address =
+                u32::from_le_bytes(bytes[s_off + 12..s_off + 16].try_into().unwrap()) as u64;
             let raw_data_size =
                 u32::from_le_bytes(bytes[s_off + 16..s_off + 20].try_into().unwrap()) as usize;
             let raw_data_ptr =
@@ -204,7 +265,7 @@ impl PeReader {
                 kind,
                 flags: sec_flags,
                 alignment: 16,
-                virtual_address: 0,
+                virtual_address,
                 file_offset: raw_data_ptr as u64,
                 size: if virtual_size > 0 {
                     virtual_size
@@ -361,6 +422,91 @@ impl PeReader {
                 }
 
                 s_idx += 1 + num_aux; // Skip auxiliary symbol records
+            }
+        }
+
+        // If this is a PE executable/DLL with an Export Directory, parse exported symbols
+        if &bytes[0..2] == b"MZ" && opt_hdr_size >= 120 {
+            let opt_off = offset + 20;
+            let exp_rva_off = opt_off + 112 + IMAGE_DIRECTORY_ENTRY_EXPORT * 8;
+            if exp_rva_off + 8 <= bytes.len() {
+                let exp_rva = u32::from_le_bytes(bytes[exp_rva_off..exp_rva_off + 4].try_into().unwrap()) as usize;
+                let exp_size = u32::from_le_bytes(bytes[exp_rva_off + 4..exp_rva_off + 8].try_into().unwrap()) as usize;
+                if exp_rva > 0 && exp_size > 0 {
+                    let mut exported_symbols = Vec::new();
+                    for s in &obj.sections {
+                        let sec_va = s.virtual_address as usize;
+                        let sec_sz = (s.size as usize).max(s.data.len());
+                        if exp_rva >= sec_va && exp_rva < sec_va + sec_sz {
+                            let file_off = (s.file_offset as usize) + (exp_rva - sec_va);
+                            let rva_to_file = |rva: usize| -> Option<usize> {
+                                for sec in &obj.sections {
+                                    let s_va = sec.virtual_address as usize;
+                                    let s_sz = (sec.size as usize).max(sec.data.len());
+                                    if rva >= s_va && rva < s_va + s_sz {
+                                        return Some((sec.file_offset as usize) + (rva - s_va));
+                                    }
+                                }
+                                None
+                            };
+
+                            if file_off + 40 <= bytes.len() {
+                                let num_names = u32::from_le_bytes(bytes[file_off + 24..file_off + 28].try_into().unwrap()) as usize;
+                                let addr_funcs = u32::from_le_bytes(bytes[file_off + 28..file_off + 32].try_into().unwrap()) as usize;
+                                let addr_names = u32::from_le_bytes(bytes[file_off + 32..file_off + 36].try_into().unwrap()) as usize;
+                                let addr_ords = u32::from_le_bytes(bytes[file_off + 36..file_off + 40].try_into().unwrap()) as usize;
+
+                                if let (Some(names_off), Some(funcs_off), Some(ords_off)) = (
+                                    rva_to_file(addr_names),
+                                    rva_to_file(addr_funcs),
+                                    rva_to_file(addr_ords),
+                                ) {
+                                    for i in 0..num_names {
+                                        if names_off + (i + 1) * 4 <= bytes.len() && ords_off + (i + 1) * 2 <= bytes.len() {
+                                            let name_rva = u32::from_le_bytes(bytes[names_off + i * 4..names_off + (i + 1) * 4].try_into().unwrap()) as usize;
+                                            let ord = u16::from_le_bytes(bytes[ords_off + i * 2..ords_off + (i + 1) * 2].try_into().unwrap()) as usize;
+                                            let func_rva = if funcs_off + (ord + 1) * 4 <= bytes.len() {
+                                                u32::from_le_bytes(bytes[funcs_off + ord * 4..funcs_off + (ord + 1) * 4].try_into().unwrap()) as u64
+                                            } else {
+                                                0
+                                            };
+
+                                            if let Some(name_file_off) = rva_to_file(name_rva) {
+                                                let end = bytes[name_file_off..].iter().position(|&b| b == 0).unwrap_or(0);
+                                                let exp_name = String::from_utf8_lossy(&bytes[name_file_off..name_file_off + end]).to_string();
+                                                if !exp_name.is_empty() {
+                                                    exported_symbols.push(Symbol {
+                                                        name: exp_name,
+                                                        binding: SymbolBinding::Global,
+                                                        visibility: SymbolVisibility::Default,
+                                                        sym_type: SymbolType::Function,
+                                                        section_index: None,
+                                                        value: func_rva + target.image_base,
+                                                        size: 0,
+                                                        is_defined: true,
+                                                        is_imported: false,
+                                                        is_exported: true,
+                                                        file_index: Some(file_index),
+                                                        alias_of: None,
+                                                        comdat_group: None,
+                                                        version: None,
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                    }
+
+                    for sym in exported_symbols {
+                        if !obj.symbols.iter().any(|s| s.name == sym.name) {
+                            obj.add_symbol(sym);
+                        }
+                    }
+                }
             }
         }
 

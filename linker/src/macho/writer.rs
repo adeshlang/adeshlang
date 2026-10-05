@@ -271,17 +271,23 @@ impl MachOWriter {
             text_sec_records.clear();
             data_sec_records.clear();
 
+            let base_va = if is_shared && merged_sections.iter().all(|s| s.virtual_address >= 0x100000000) {
+                0x100000000u64
+            } else {
+                text_vmaddr
+            };
+
             for sec in merged_sections {
-                if sec.virtual_address < text_vmaddr {
+                if sec.virtual_address < base_va {
                     return Err(LinkError::new(
                         ErrorCode::InvalidSection,
                         format!(
                             "section `{}` virtual address 0x{:x} is below the __TEXT vmaddr 0x{:x}",
-                            sec.name, sec.virtual_address, text_vmaddr
+                            sec.name, sec.virtual_address, base_va
                         ),
                     ));
                 }
-                let off = sec.virtual_address - text_vmaddr;
+                let off = sec.virtual_address - base_va;
                 let file_len = if sec.kind == SectionKind::Bss {
                     0
                 } else {

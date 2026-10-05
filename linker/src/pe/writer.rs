@@ -33,18 +33,12 @@ impl PeWriter {
             None,
             &[],
             &[],
+            false,
         )
     }
 
-    /// Write a PE executable, using the layout engine's import table and base
+    /// Write a PE executable or DLL, using the layout engine's import table and base
     /// relocation records when available.
-    ///
-    /// `import_info` MUST be the same `ImportTableResult` whose bytes already
-    /// live in the `.idata` merged section and whose `symbol_iat_rvas` were
-    /// used to patch import thunks and `__imp_*` references. Rebuilding the
-    /// table here from a differently ordered `imports` list would shift ILT /
-    /// IAT offsets and send every thunk through the wrong slot (this was a
-    /// real bug: thunks jumped into the unpatched ILT and crashed).
     #[allow(clippy::too_many_arguments)]
     pub fn write_executable_with_layout(
         path: &Path,
@@ -57,8 +51,13 @@ impl PeWriter {
         tls_info: Option<&PeTlsInfo>,
         base_relocs: &[u32],
         base_relocs32: &[u32],
+        is_dll: bool,
     ) -> LinkResult<()> {
-        let bytes = Self::encode_executable(
+        let dll_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("output.dll");
+        let (bytes, import_lib) = Self::encode_executable_impl(
             target,
             entry_va,
             merged_sections,
@@ -68,9 +67,14 @@ impl PeWriter {
             tls_info,
             base_relocs,
             base_relocs32,
-            false,
+            is_dll,
+            dll_name,
         )?;
         fs::write(path, bytes)?;
+        if is_dll && !import_lib.is_empty() {
+            let lib_path = path.with_extension("lib");
+            let _ = fs::write(lib_path, import_lib);
+        }
         Ok(())
     }
 
@@ -79,7 +83,7 @@ impl PeWriter {
         target: &Target,
         entry_va: u64,
         merged_sections: &[MergedSection],
-        _symbols: &[Symbol],
+        symbols: &[Symbol],
         imports: &[ImportSymbol],
         import_info: Option<&ImportTableResult>,
         tls_info: Option<&PeTlsInfo>,
@@ -87,6 +91,36 @@ impl PeWriter {
         base_relocs32: &[u32],
         is_dll: bool,
     ) -> LinkResult<Vec<u8>> {
+        let (bytes, _) = Self::encode_executable_impl(
+            target,
+            entry_va,
+            merged_sections,
+            symbols,
+            imports,
+            import_info,
+            tls_info,
+            base_relocs,
+            base_relocs32,
+            is_dll,
+            "output.dll",
+        )?;
+        Ok(bytes)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn encode_executable_impl(
+        target: &Target,
+        entry_va: u64,
+        merged_sections: &[MergedSection],
+        symbols: &[Symbol],
+        imports: &[ImportSymbol],
+        import_info: Option<&ImportTableResult>,
+        tls_info: Option<&PeTlsInfo>,
+        base_relocs: &[u32],
+        base_relocs32: &[u32],
+        is_dll: bool,
+        dll_name: &str,
+    ) -> LinkResult<(Vec<u8>, Vec<u8>)> {
         let machine = match target.arch {
             Arch::AArch64 => IMAGE_FILE_MACHINE_ARM64,
             Arch::X86 => IMAGE_FILE_MACHINE_I386,
@@ -165,7 +199,7 @@ impl PeWriter {
 
         // Compute header size first (needed to validate/place section RVAs).
         let num_sections_base = pe_sections.len();
-        let extra_sections = 2; // potential .idata + .reloc
+        let extra_sections = 3; // potential .idata + .edata + .reloc
         let opt_hdr_size = 240u16; // PE32+ Optional Header size
         let headers_unaligned_max = (lfanew as usize)
             + 4
@@ -173,6 +207,35 @@ impl PeWriter {
             + (opt_hdr_size as usize)
             + ((num_sections_base + extra_sections) * 40);
         let headers_size = align_to(headers_unaligned_max as u64, file_alignment as u64) as u32;
+
+        // Synthesize .edata (Export Directory) for DLLs or when exports exist
+        let has_edata = pe_sections.iter().any(|s| s.name == ".edata");
+        let mut generated_exp = None;
+        if !has_edata && is_dll {
+            let next_rva = pe_sections
+                .iter()
+                .map(|s| {
+                    let rva = s.layout_rva.unwrap_or(0);
+                    rva + align_to(s.size.max(s.data.len() as u64), section_alignment as u64) as u32
+                })
+                .max()
+                .unwrap_or(align_to(headers_size as u64, section_alignment as u64) as u32);
+            let edata_rva = align_to(next_rva as u64, section_alignment as u64) as u32;
+            if let Some(exp_res) =
+                crate::pe::export::build_export_table(dll_name, symbols, image_base, edata_rva)
+            {
+                let data_len = exp_res.data.len() as u64;
+                pe_sections.push(OutSection {
+                    name: ".edata".to_string(),
+                    flags: crate::section::flags::READ | crate::section::flags::ALLOC,
+                    kind: crate::section::SectionKind::Rodata,
+                    data: exp_res.data.clone(),
+                    size: data_len,
+                    layout_rva: Some(edata_rva),
+                });
+                generated_exp = Some(exp_res);
+            }
+        }
 
         // Standalone path only: synthesize .idata when the layout engine did
         // not provide one (e.g. the gen_windows_exe helper). The real link
@@ -315,6 +378,8 @@ impl PeWriter {
                 IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_DISCARDABLE
             } else if sec.name == ".idata" {
                 IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE
+            } else if sec.name == ".edata" {
+                IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ
             } else {
                 let mut c = 0u32;
                 if (sec.flags & crate::section::flags::READ) != 0 {
@@ -532,6 +597,16 @@ impl PeWriter {
             sec_table_off += 40;
         }
 
-        Ok(output)
+        let import_lib_bytes = if is_dll {
+            if let Some(ref exp_res) = generated_exp {
+                crate::pe::export::create_import_library(dll_name, &exp_res.exports, machine)
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+
+        Ok((output, import_lib_bytes))
     }
 }

@@ -1,117 +1,337 @@
-# Adesh Native Production Toolchain — Master Implementation Plan
+# Adesh Consolidation Plan — Master Implementation Plan (v2)
 
-**Generated:** 2026-10-01  
-**Architecture:** Self-Contained Native Multi-Target Compiler & Linker Pipeline
+**Generated:** 2026-10-05, following a full code-level audit of commit `4fad2d9` ("State").
+**Replaces:** the previous 2026-10-01 seven-phase plan.
+**Relationship to other docs:** `CURRENT_STATE.md` is the canonical, single source of truth
+for *current status*. This file is the roadmap for how status changes. All other status
+documents (`TARGET_MATRIX.md`, `ARCHITECTURE_GAPS.md`, `TOOLCHAIN_CAPABILITIES.md`,
+`linker/docs/abi_v1.md`, docs-website pages) must be kept consistent with `CURRENT_STATE.md`.
 
 ---
 
-## Roadmap Overview
+## 0. Guiding Principles
+
+1. **Consolidation over expansion.** Adesh has enough architecture. No new subsystems
+   (no new targets, no async runtime, no GPU/quantum language work) until Phase 5 is done.
+2. **Never silently wrong.** Every language construct either compiles to correct code or
+   produces a structured compile error. Silent wrong-code paths are the highest-priority
+   bug class in this plan.
+3. **Execution-driven validation.** Every phase ends with produced binaries being executed
+   with asserted exit codes/stdout in CI. Constructing bytes/headers without running them
+   no longer counts as verification for status claims.
+4. **Truth in documentation.** No document may claim a capability that no execution test
+   verifies. The status matrix stays aggressively conservative.
+5. **Wire-or-delete.** Unwired or orphaned code is either wired into the production path
+   in its phase or deleted. Nothing stays half-connected. (Decision recorded 2026-10-05.)
+
+---
+
+## 1. Verified Baseline (2026-10-05 Audit)
+
+### 1.1 What is real and verified
+
+- **Native pipeline is the CLI default** (`src/cli/build.rs:1282`, dispatch at
+  `:858-861`): Lexer → Parser → HIR → Machine IR → x86-64 → ADOB → `adeshlink` → PE32+.
+  Windows execution tests assert exit codes (`tests/native_x86_64_e2e_test.rs`,
+  `tests/native_semantics_e2e_test.rs`, `linker/tests/pe_windows_e2e_test.rs`).
+- **ADOB v1.0** (`crates/adesh-object`): complete spec, validating writer, reader,
+  round-trip tests, ~28 relocation kinds, TLS/debug/unwind/custom section kinds.
+- **x86-64 backend** (`crates/adesh-codegen`): real REX/ModR/M/SIB encoding, scalar
+  SSE2 + packed SSE encoders, XMM0-13 allocation with Win64 nonvolatile tracking,
+  structured `CodegenError`s for unsupported instruction forms.
+- **Parallel-move resolver** (`crates/adesh-codegen/src/calling_convention/parallel_move.rs`):
+  cycles, swaps, mem/imm moves, GPR/XMM mixed; wired into native call lowering.
+- **Machine-IR optimization pipeline** (`crates/adesh-codegen/src/opt/mod.rs:81-237`):
+  constant folding, SCCP, copy prop, DCE, LICM, induction, branch opt, peephole, cmov,
+  coalescing, frame opt, alias/DSE, with fixpoint loop and verifier.
+- **Native runtime** (`crates/adesh-runtime`): C ABI handle table, ARC/weak refs,
+  tracked-allocation scopes, worker pool with panic containment, FFI guards.
+- **Windows PE linker path** (`linker/src/pe`): imports/IAT, base relocations, TLS
+  directory, ASLR/NX, entry synthesis, `--shared` (DLL) support, execution-tested.
+
+### 1.2 Confirmed correctness bugs (all verified first-hand; fix in Phase 1 unless noted)
+
+| # | Bug | Location |
+|---|---|---|
+| 1 | Unknown HIR expressions silently lower to constant `0` | `src/backends/native/lower.rs:4605-4613` |
+| 2 | `HirPattern::EnumVariant` always matches and binds nothing (silent wrong code) | `src/backends/native/lower.rs:615`, `:623-638` |
+| 3 | Import statements silently dropped | `src/backends/native/lower.rs:2279` |
+| 4 | `Await`/`Spawn`/`Share` lowered as plain sequential expressions | `src/backends/native/lower.rs:4526-4532` |
+| 5 | Lambdas compile without captured environment | `src/backends/native/lower.rs:2967-3031` |
+| 6 | `Region` blocks lose arena bulk-free semantics | `src/backends/native/lower.rs:1893-1895` |
+| 7 | `lower_hir_module` never returns `Err`; "loud" failures are runtime aborts or link errors only | `src/backends/native/lower.rs:4769` |
+| 8 | sret (`ReturnLocation::HiddenSret`) falls into `_ => {}`; no return value loaded | `crates/adesh-codegen/src/ffi/mod.rs:314-317` |
+| 9 | FFI call arguments use sequential moves, bypassing the parallel-move resolver | `crates/adesh-codegen/src/ffi/mod.rs:201-309` |
+| 10 | Win64 nonvolatile XMM6-13 saved/restored with 64-bit `movsd`; ABI requires low 128 bits | `crates/adesh-codegen/src/targets/x86_64/mod.rs:748-767` |
+| 11 | Post-allocation verifier result discarded (`let _ =`) | `crates/adesh-codegen/src/register_alloc/mod.rs:1963-1971` |
+| 12 | Stack canary emits `Compare` with no branch/abort | `crates/adesh-codegen/src/safety/mod.rs:140-173` |
+| 13 | Sanitizer instrumenter dead (calls inserted with `num_args: 0`, no callers) | `crates/adesh-codegen/src/sanitizer.rs` |
+| 14 | `--codegen` value unvalidated; typos silently select Cranelift | `src/cli/build.rs:858-861` |
+| 15 | Duplicate `aot_alloc`/`aot_free`; `aot_free` deallocs with fixed `Layout(8,8)` (UB) | `src/backends/aot/runtime_bridge.rs:1809-1825` |
+| 16 | `--pgo` CLI flag parsed then silently discarded | `src/cli/build_args.rs:136-139` |
+| 17 | `--lto` silently degrades to GC+ICF+strip while CLI help says it errors | `linker/src/linker.rs:36-46`, `linker/src/main.rs:67` |
+
+### 1.3 Linker honesty gaps (fix in Phase 3 unless noted)
+
+- ELF: no GOT/PLT (dynamic imports remain unresolved VA-0 refs); RELRO covers only
+  `.dynamic`; `e_entry` points at `main` with no argc/argv setup; no `PT_TLS`
+  (`linker/src/elf/writer.rs`).
+- Mach-O: no dyld info, chained fixups, exports trie, or indirect symbol table; only
+  fully-static code could ever run (`linker/src/macho/writer.rs`).
+- Linker WASM writer emits the merged native machine-code section verbatim as the wasm
+  function body — structurally parseable, not runnable (`linker/src/wasm/writer.rs:87-105`).
+- Archive writer emits no symbol index (`/` member); no thin-archive support
+  (`linker/src/archive/ar.rs:203-271`).
+- GC name-based fallback over-retains same-named symbols (`linker/src/gc.rs:66-96`);
+  ICF `Safe` and `All` are behaviorally identical (`linker/src/icf.rs:14-16`).
+- No SEH `.pdata`/`.xdata` synthesis in the pipeline (`WindowsPdataGenerator` never invoked);
+  no CIE/FDE writer (Phase 5).
+
+### 1.4 CI state (fix in Phase 0)
+
+- Phase 5-8 execution suites are **not** OS-gated (only `native_x86_64_e2e_test`,
+  `native_semantics_e2e_test`, phase 2/3, and `native_parallel_move_e2e_test` are), while
+  Ubuntu runs `cargo test --tests` — Linux CI attempts to execute Windows PEs.
+  The comment at `.github/workflows/ci.yml:106-110` falsely claims full gating.
+- Phase 8/9/10 suites appear in no CI step list at all; macOS runs `--lib` only.
+- No CI job on any OS executes an ELF, Mach-O, or WASM produced by `adeshlink`.
+- Clippy is fully silenced workspace-wide (`Cargo.toml:22-28`).
+
+### 1.5 Dead / unwired code (wire-or-delete in the phase shown)
+
+| Item | Status | Phase |
+|---|---|---|
+| `src/ir/hir/` (429+976 lines) | Orphaned duplicate HIR, never compiled | 0 (delete) |
+| `src/ir/optimizations/` (6 passes incl. 528-line inliner) | Never wired | 4 |
+| `crates/adesh-codegen/src/opt/switch_lowering.rs` | Never called from lowering; match emits compare chains | 1 (wire into match) |
+| `crates/adesh-codegen/src/opt/vectorization.rs`, `scheduler*.rs` | Test-only callers | 4 |
+| `crates/adesh-codegen/src/opt/ipo.rs` | Fabricates counters from hand-supplied data | 4 (delete) |
+| `crates/adesh-codegen/src/opt/pgo.rs` | Markers never emitted by any encoder; CLI flag discarded | 4 |
+| `crates/adesh-codegen/src/opt/lto.rs` + `driver.rs` | Real engine, `CompilerDriver` never instantiated | 4 |
+| `Dwarf5Generator` / `CodeViewGenerator` | Never invoked | 5 |
+| `WindowsPdataGenerator` | Never invoked | 5 |
+| `SanitizerInstrumenter` | Never invoked, malformed calls | 1 (delete or fix) |
+| MIR (`src/ir/mir/`, not SSA) / VIR (SSA) | Native path bypasses both: AST → HIR → Machine IR directly; MIR only behind `ADESH_USE_VIR=1` | informational |
+
+### 1.6 Documentation corrections needed (Phase 0)
+
+- `TARGET_MATRIX.md`: says default builds use Cranelift (false — native is default), says
+  "no SSE/SIMD" (false), cites wrong test path for `pe_windows_e2e_test.rs`.
+- `CURRENT_STATE.md`: internally contradictory — §0 says LTO/shared-libs implemented,
+  §2.3 says both are loud errors; truth for PE `--shared` is "works".
+- `linker/docs/abi_v1.md:106-114`: claims Tier 1 "Production Verified, continuous e2e
+  suite, binary execution validation" for 8 targets including `i686-windows` /
+  `i686-linux` (do not exist) and `aarch64-macos` (not functional).
+- `docs/TOOLCHAIN_CAPABILITIES.md`: stale duplicate claiming everything "Production
+  Ready", DWARF 5, GPU drivers.
+- `docs/TOOLCHAIN_PLATFORM_ARCHITECTURE.md:41-51`: macOS/WASM/RISC-V/Cortex-M "Tier 1".
+- `ADESH_TOOLCHAIN.md`: MsgPack HSACO metadata, AIR bitcode, Apple ANE (no code exists),
+  XLA HLO serialization, QIR runtime bindings (constants only).
+- `README.md`: `.deb/.rpm/.pkg/.dmg` installers not produced by `installer/manifest.json`;
+  "Rust-grade compile-time memory safety"; "guaranteed semantic parity".
+- `docs/MEMORY_SAFETY.md`: "100% compile-time memory safety across all backends",
+  "if your code compiles, it's memory-safe".
+- `docs/gpu/gpu-guide.md:510,775-787`, `docs/type-system-guide.md:3575-4107`: stale
+  "Production Ready" notes.
+- `docs-website/docs/compiler/{codegen,native-toolchain,runtime-abi}.md`: claim default
+  AOT still uses Cranelift (stale the other direction).
+- GPU reality: invented container formats (fake fatbin, HSACO without MsgPack, one
+  hardcoded empty SPIR-V shader, no ANE code), zero driver API calls; only real GPU path
+  is external MLIR (`mlir-opt`/`llc`/`clang`) with interpreter fallback.
+- Quantum reality: measurement is a deterministic 0.5-threshold mock
+  (`linker/src/quantum/sim.rs:246-262`); QIRB embeds QASM text; no language constructs.
+
+---
+
+## 2. Phases
+
+### Phase 0 — Truth Reset: Docs + CI (≈1 week)
+
+**Goal:** the repo stops overstating, and CI stops claiming to test what it doesn't.
+
+Tasks:
+1. Fix `CURRENT_STATE.md` internal contradictions (LTO, `--shared`, Mach-O sections).
+2. Fix `TARGET_MATRIX.md` (native default, FP/SSE2 status, correct paths, real
+   execution-verified list) and `ARCHITECTURE_GAPS.md` (mark parallel-move/FP resolved).
+3. Correct all docs listed in §1.6. Adopt conservative wording everywhere:
+   "execution-tested on Windows x86-64; expanding outward".
+4. CI gating fixes: gate phase 4-8 execution suites to `cfg(all(windows, target_arch = "x86_64"))`;
+   add phase 8/9/10 to the Windows step list; correct the false comment in `ci.yml`;
+   each OS runs only suites it can actually run.
+5. Delete the orphaned `src/ir/hir/` duplicate (decision: wire-or-delete, recorded 2026-10-05).
+6. Adopt the docs policy: every capability claim must reference an execution test.
+
+**Acceptance:** docs and code agree everywhere; CI green on all three OSes with correct
+gating; `cargo check --workspace` and existing test suites still pass.
+
+### Phase 1 — Zero Silent Miscompiles on x86-64 (≈2-3 weeks)
+
+**Goal:** the compiler is never silently wrong; every construct lowers correctly or
+produces a structured compile error.
+
+Tasks:
+1. Make `lower_hir_module` fallible with structured diagnostics; replace every silent
+   `_ =>` fallback (unknown expr → 0, dropped imports, Region semantics) with a compile
+   error or a correct implementation (bug table rows 1, 3, 6, 7).
+2. Fix `EnumVariant` pattern semantics: correct matching + binding, or reject loudly
+   (row 2). Add an execution regression test.
+3. Async constructs (`Await`/`Spawn`/`Share`): explicit "not supported in native backend"
+   compile error instead of silent sequential execution (row 4).
+4. Lambda captures: error when captures are detected (row 5); closures proper are a
+   separate scoped decision.
+5. Validate `--codegen` values; error on unknown backend names (row 14).
+6. Route FFI calls through the parallel-move resolver (row 9); implement `HiddenSret`
+   return or error loudly until Phase 2 (row 8).
+7. Fix Win64 nonvolatile XMM preservation to full low 128 bits via `movaps` (row 10).
+8. Wire `AllocationVerifier::verify` results: fail the build on violated invariants
+   instead of discarding (row 11).
+9. Complete (branch + abort) or remove the stack canary (row 12); delete or fix the
+   dead sanitizer instrumenter (row 13).
+10. Fix the `runtime_bridge.rs` `aot_free` Layout UB; single source of truth for runtime
+    ABI symbols; add link-time runtime ABI handshake using the existing
+    `AdeshRuntimeAbiV1` descriptor (rows 15, Phase 3 follow-up).
+11. Wire `switch_lowering` into match lowering (per wire-or-delete policy).
+12. Build the **execution-driven conformance corpus**: run every program in `examples/`
+    through the native pipeline and the interpreter, assert stdout/exit parity; any
+    unsupported construct must yield a structured error, never silent divergence. This
+    corpus becomes the definition of the "supported subset" and runs in Windows CI.
+
+**Acceptance:** full `examples/` sweep produces verified parity or structured errors —
+zero silent divergence; regression tests (executing real binaries) exist for every bug in
+§1.2.
+
+### Phase 2 — Full x86-64 ABI (≈3-4 weeks)
+
+**Goal:** complete C-ABI compatibility on the strongest target, designed to not preclude
+value types (decision: value-type structs deferred until after Phase 2).
+
+Tasks:
+1. One shared argument classifier (SysV eightbyte classification, MS x64 by-value rules)
+   consumed by the native calling convention, lowering, and FFI — today three paths
+   disagree and the executable path only knows Gpr/Float. Design it around field
+   layouts so value types can adopt it later.
+2. sret for large aggregates in both directions.
+3. Variadics: SysV register save area + `AL` + `va_list`; Win64 RCX/RDX/R8/R9 spill to
+   shadow space.
+4. Struct-by-value args and returns end-to-end with execution tests (Win64 first; SysV
+   verified in Phase 3 CI).
+5. TLS on Windows end-to-end: `fs:` thread-pointer sequences, `_tls_index` usage. The PE
+   TLS directory already works; codegen emits no access sequences and all TLS relocation
+   kinds are inert. Keep ELF/Mach-O TLS as loud errors.
+6. Complete atomics: 8/16/32/64-bit widths, fences.
+7. C-interop proof: call real ucrt functions (including `printf` varargs, `memcpy`) from
+   Adesh-compiled code, execute, verify output.
+
+**Acceptance:** ABI conformance suite executes binaries covering ints, floats, mixed,
+small structs, large-struct sret, varargs, atomics, TLS — green in Windows CI.
+
+### Phase 3 — Linux Execution For Real (≈2-3 weeks)
+
+**Goal:** turn "Emits; not run-tested" into "Execution-tested in CI".
+
+Tasks:
+1. Proper `_start` synthesis: read argc/argv from the initial stack, call `main`, exit
+   syscall. Today `e_entry` points at `main` with no stack setup.
+2. Decide ELF dynamic scope honestly: either implement GOT/PLT (+ `.gnu.hash`, full
+   RELRO) or restrict the native linker to static executables until it exists. Imports
+   must never silently resolve to VA-0.
+3. Ubuntu CI job: Adesh source → ADOB → ELF → execute → assert exit/stdout. Add an
+   Alpine/musl variant. Lean on existing Docker assets.
+4. Archive writer symbol index (`/` member) so produced archives stop forcing readers
+   into full-scan fallback; thin-archive reading (stretch).
+5. GC: drop the name-based fallback that over-retains; make ICF `Safe`/`All` differ.
+
+**Acceptance:** `x86_64-unknown-linux-gnu` and `-musl` execute in CI with asserted exit
+codes/stdout; `TARGET_MATRIX.md` updated accordingly.
+
+### Phase 4 — Optimizer and Register Allocator Maturity (≈4-6 weeks)
+
+**Goal:** generated-code quality, honest flags, measurable numbers.
+
+Tasks:
+1. Wire-or-delete (policy of record): delete `src/ir/optimizations/` and `opt/ipo.rs`;
+   wire PGO end-to-end or remove the `--pgo` flag; wire `opt/lto.rs` via `CompilerDriver`
+   or delete it; until real cross-module IR optimization exists, `--lto` help must
+   describe what it does (GC+ICF+strip); decide vectorization/scheduler disposition.
+2. Register allocator: live-range splitting at call boundaries (replacing the
+   conservative callee-saved-or-spill rule), spill-weight eviction, verification-driven
+   retry.
+3. Post-allocation copy coalescing and move elimination.
+4. Binary-size attack on hello-world (127,488 bytes, ≈5.8x the 22,016-byte C baseline):
+   PE section alignment, import trimming, unused runtime symbol pruning, section
+   merging, CRT dependency audit. Target: < 40 KB; stretch: 22 KB parity.
+5. Benchmark harness (criterion): codegen+link at 10/100/1K/10K LOC; per-phase timing
+   (parse / typecheck / lower / regalloc / encode / link); instruction counts and
+   runtime of produced binaries across O0-O3.
+
+**Acceptance:** benchmark numbers tracked in CI; measurable improvements in spills,
+code size, binary size; every CLI flag does exactly what its help says.
+
+### Phase 5 — Debuggability (≈2-4 weeks; Linux part gated on Phase 3)
+
+Tasks:
+1. Windows first: wire `WindowsPdataGenerator` into the real link path with real unwind
+   codes (`.pdata`/`.xdata`); panic aborts carry function info; verify backtraces in
+   WinDbg/cdb.
+2. Wire `Dwarf5Generator` for ELF with a real `.debug_line` state machine; verify
+   breakpoints in GDB on Linux once Phase 3 lands.
+3. Local-variable location lists (stretch); inline frames (later).
+
+**Acceptance:** breakpoint at an Adesh function, backtrace, and source-line stepping
+work on Windows (and on Linux after Phase 3).
+
+### Phase 6 — AArch64, For Real (only after Phases 1-5)
+
+Tasks:
+1. Real backend: `ldr/str/ldp/stp`, branches (`b/bl/cbz/b.cond`), prologues/epilogues,
+   full AAPCS64 (fix the empty AArch64 callee-saved list; x19-x28 preserved),
+   relocations (ADRP/ADD/CALL26/JUMP26), frame layout, scalar FP, atomics.
+2. qemu-user execution tests in CI (existing Docker targets can host this).
+
+**Acceptance:** `aarch64-linux` static binary runs under qemu with asserted exit code;
+target matrix moves from proof-of-concept.
+
+---
+
+## 3. Explicitly Parked (documented honestly, not grown)
+
+- GPU/NPU/TPU ISA generation and drivers (today: packaging scaffolding only).
+- Quantum language integration (library-level only; measurement is a mock).
+- Running Mach-O executables (needs dyld info/chained fixups/exports trie; documented
+  as "artifact emission only").
+- Linker WASM writer (the compiler backend is the real WASM path).
+- Async runtime (epoll/IOCP/kqueue reactor) — until Phase 1 makes async errors honest.
+- Self-hosting; i686/PowerPC targets.
+- Value-type composites (unboxed structs) — deferred until after Phase 2 by decision
+  of 2026-10-05; Phase 2 classifier design must not preclude them.
+
+---
+
+## 4. Decisions Log
+
+| Date | Decision |
+|---|---|
+| 2026-10-05 | Execution starts with Phase 0 (docs + CI truth reset). |
+| 2026-10-05 | This file (`IMPLEMENTATION_PLAN.md`) replaces the previous 2026-10-01 plan. |
+| 2026-10-05 | Dead/unwired code policy: wire-or-delete within the phase that owns it. |
+| 2026-10-05 | Value-type structs: deferred until after Phase 2; ABI classifier designed around field layouts to keep the door open. |
+
+---
+
+## 5. Phase Dependencies
 
 ```text
-Phase 1: Direct MIR -> Machine IR Lowering & Full Native Instruction Emission
+Phase 0 (truth reset)
     ↓
-Phase 2: ABI Subsystem & Calling Convention Robustness (SysV, MS x64, AAPCS64, RV64)
+Phase 1 (no silent miscompiles)  ← highest correctness risk, do first after docs/CI
     ↓
-Phase 3: Linker Enhancements (Full DLL/SO/Dylib Generation, TLS, DWARF/CodeView)
+Phase 2 (full x86-64 ABI)
     ↓
-Phase 4: Modular Zero-Dependency Native Runtime & Allocator Subsystems
+Phase 3 (Linux execution)  ← ABI work from Phase 2 is exercised on SysV here
     ↓
-Phase 5: LTO & ThinLTO with ADOB Bitcode Container Integration
+Phase 4 (optimizer/regalloc maturity, size/speed)
     ↓
-Phase 6: Native Quantum (AQIR -> Hardware/Simulator) & Heterogeneous GPU Pipelines
+Phase 5 (debuggability: Win64 SEH first; DWARF needs Phase 3)
     ↓
-Phase 7: Self-Hosting Verification & Deterministic Golden Testing
+Phase 6 (AArch64 for real)
 ```
-
----
-
-## Phase 1: Direct MIR -> Machine IR Lowering & Native Codegen
-
-### Objectives:
-1. Implement a complete MIR lowering engine in `crates/adesh-codegen/src/lowering/` that transforms `src/ir/mir/` structures into `NativeModule` and `MachineFunction`.
-2. Map all MIR instructions:
-   - Arithmetic / Logic / Comparison / Bitwise operations.
-   - Structured branches (`BranchCc`, `Jump`, `SwitchTable`).
-   - Local variable stack slots and spill area offsets.
-   - Function calls with caller/callee-saved register management.
-   - Runtime C ABI function calls (`adesh_rt_alloc`, `adesh_rt_print`, `adesh_rt_free`, `adesh_rt_retain`).
-3. Connect `--emit=adob` and `--emit=exe` in `src/cli/build.rs` to route through native lowering directly to `adesh-linker`.
-
----
-
-## Phase 2: Production ABI Subsystem
-
-### Objectives:
-1. Implement precise parameter classification across all 4 primary target ABIs:
-   - **System V AMD64**: Integer/pointer in `rdi, rsi, rdx, rcx, r8, r9`; Float in `xmm0-xmm7`; stack passing with 16-byte alignment.
-   - **Microsoft x64**: 4-register fastcall `rcx, rdx, r8, r9` (or `xmm0-xmm3`), 32-byte shadow stack allocation in caller frame.
-   - **AAPCS64 (AArch64)**: General registers `x0-x7`, vector/FP `v0-v7`, 16-byte aligned stack.
-   - **RISC-V (RV64/RV32)**: Arguments `a0-a7`, FP `fa0-fa7`.
-2. Stack frame epilogue and prologue generation with proper SEH unwind codes (for Windows x64 `.pdata`/`.xdata`) and DWARF CIE/FDE generation.
-3. Struct and aggregate passing rules (by-value in registers if $\le 16$ bytes, by-reference hidden pointer otherwise).
-
----
-
-## Phase 3: Linker Dynamic Linking & Debug Generation
-
-### Objectives:
-1. **Dynamic Shared Libraries**:
-   - Windows PE DLL: synthesize Export Address Table (EAT), Export Name Table (ENT), Export Ordinal Table (EOT), and base `.reloc` table.
-   - Linux ELF Shared Object (`.so`): synthesize `DT_SONAME`, `DT_NEEDED`, `.dynsym`, `.dynstr`, `.hash`, `.gnu.hash`, `.plt`, and `.got`.
-   - macOS Mach-O (`.dylib`): synthesize `LC_ID_DYLIB`, export trie, and dynamic rebase/bind streams.
-2. **Thread-Local Storage (TLS)**:
-   - Generate PE TLS Directory (`IMAGE_TLS_DIRECTORY64`) pointing to `_tls_start`, `_tls_end`, `_tls_index`, `_tls_callbacks`.
-   - ELF `PT_TLS` segment with `R_X86_64_TPOFF32` / `R_AARCH64_TLSLE_ADD_TPREL_HI12`.
-3. **Debug Info**:
-   - Emit DWARF 5 `.debug_info`, `.debug_abbrev`, `.debug_line`, `.debug_str` for Linux/macOS.
-   - Emit CodeView symbol stream for Windows PDB generation.
-
----
-
-## Phase 4: Runtime Subsystems & OS Abstraction
-
-### Objectives:
-1. **Modular Allocator Layer**:
-   - `SystemAllocator` (defaulting to OS VirtualAlloc/mmap).
-   - `ArenaAllocator` / `BumpAllocator` for short-lived scopes.
-   - `PoolAllocator` for fixed-size object caching.
-2. **Platform Threading & Concurrency**:
-   - Windows: `CreateThread`, `WaitOnAddress`, `WakeByAddressSingle`.
-   - Linux: `pthread_create`, `futex` syscalls.
-   - macOS: `pthread` & GCD QoS hooks.
-3. **Zero-Dependency Event Loop**:
-   - Epoll/IOCP/kqueue unified reactor trait.
-
----
-
-## Phase 5: Link-Time Optimization (LTO)
-
-### Objectives:
-1. Define ADOB section `.adesh_ir` holding serialized MIR bytecode and symbol call graphs.
-2. When `-O3 --lto` or `--lto=thin` is supplied:
-   - Linker collects `.adesh_ir` sections across all input ADOB objects and static archives.
-   - Runs cross-module inlining, devirtualization, dead function removal, and global value propagation.
-   - Invokes target backend to generate optimized final machine code.
-
----
-
-## Phase 6: Quantum & Heterogeneous Accelerator Pipeline
-
-### Objectives:
-1. **Language-Level Quantum Integration**:
-   - Parse and type-check `qubit`, `qubit[n]`, `measure()`, and quantum gates.
-   - Generate AQIR instructions in MIR.
-   - In JIT/Simulator mode: route directly to `StateVectorSimulator`.
-   - In AOT mode: emit OpenQASM 3.0 / QIR package into ADOB `.quantum_pkg` section.
-2. **GPU / Tensor Pipeline**:
-   - SPIR-V code generator for compute kernels.
-   - Runtime CUDA / Vulkan Compute dispatch bridge.
-
----
-
-## Phase 7: Self-Hosting & Verification
-
-### Objectives:
-1. Golden test suite: compile all `examples/` through the native pipeline and execute them on the host.
-2. Automated binary validation: check headers, section alignments, relocations, import tables, and permission flags.
-3. Eliminate bootstrap dependencies progressively until Adesh compiles Adesh natively.

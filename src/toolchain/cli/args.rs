@@ -161,7 +161,7 @@ impl ParsedArgs {
                 "--tiered" | "--tiered-jit" | "--tjit" => {
                     config.backend = ExecutionBackend::TieredJit;
                 }
-                "--aot" | "--aot-native" => {
+                "--aot" | "--aot-native" | "--compile" => {
                     config.backend = ExecutionBackend::Aot;
                 }
                 #[cfg(debug_assertions)]
@@ -1074,7 +1074,7 @@ Built with strong type inference, memory safety, and zero-cost abstractions
     {dim}mixed{reset}       Hybrid interpreter + JIT for hot functions
     {dim}adaptive{reset}    Adaptive JIT with speculative optimisation
     {dim}tiered{reset}      Tiered JIT (T0 -> T1 -> T2)
-    {dim}aot{reset}         Ahead-of-Time Cranelift compilation (subprocess)
+    {dim}aot{reset}         Ahead-of-Time native compilation (subprocess)
     {dim}wasm{reset}        WebAssembly backend via Wasmtime (subprocess)
     {dim}gpu{reset}         MLIR GPU backend (debug builds; set ADESH_TEST_GPU=1)
 

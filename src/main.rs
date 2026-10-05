@@ -650,8 +650,11 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                 eprintln!("Ownership Error: {}", e);
                 std::process::exit(1);
             }
-            match adeshlang::backends::backend::compile_native(&src, &out_path) {
-                Ok(()) => println!("Wrote native to {}", out_path.display()),
+            let mut build_config = adeshlang::cli::build::AotBuildConfig::new(in_path);
+            build_config.output = Some(out_path.clone());
+            build_config.codegen_backend = "adesh".to_string();
+            match adeshlang::cli::build::execute_build(&build_config) {
+                Ok(_) => println!("Wrote native to {}", out_path.display()),
                 Err(e) => {
                     eprintln!("compile native error: {}", e);
                     std::process::exit(1);
@@ -829,11 +832,61 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             aot_options.link_libs = link_libs;
             aot_options.include_dirs = include_dirs;
 
-            match adeshlang::backends::cranelift_aot::aot_compile_with_options(
-                &src,
-                &out_path,
-                aot_options,
-            ) {
+            let use_cranelift = parsed
+                .program_args
+                .iter()
+                .any(|a| a == "--codegen=cranelift" || a == "--cranelift");
+
+            let compile_res = if use_cranelift {
+                adeshlang::backends::cranelift_aot::aot_compile_with_options(
+                    &src,
+                    &out_path,
+                    aot_options,
+                )
+            } else {
+                let mut build_config = adeshlang::cli::build::AotBuildConfig::new(in_path.clone());
+                build_config.output = Some(out_path.clone());
+                build_config.opt_level = aot_options.opt_level;
+                build_config.codegen_backend = "adesh".to_string();
+                build_config.emit = match aot_options.output_format {
+                    adeshlang::backends::cranelift_aot::OutputFormat::Executable => {
+                        adeshlang::cli::build::EmitType::Executable
+                    }
+                    adeshlang::backends::cranelift_aot::OutputFormat::SharedLib => {
+                        adeshlang::cli::build::EmitType::SharedLib
+                    }
+                    adeshlang::backends::cranelift_aot::OutputFormat::StaticLib => {
+                        adeshlang::cli::build::EmitType::StaticLib
+                    }
+                    adeshlang::backends::cranelift_aot::OutputFormat::Object => {
+                        adeshlang::cli::build::EmitType::Object
+                    }
+                    adeshlang::backends::cranelift_aot::OutputFormat::Assembly => {
+                        adeshlang::cli::build::EmitType::Assembly
+                    }
+                };
+                build_config.debug_info = aot_options.debug_info;
+                build_config.fast_compile = aot_options.fast_compile;
+                build_config.incremental = aot_options.incremental;
+                build_config.force_rebuild = aot_options.force_rebuild;
+                build_config.target = aot_options.target_triple.clone();
+                build_config.lib_dirs = aot_options.lib_dirs.iter().map(PathBuf::from).collect();
+                build_config.link_libs = aot_options.link_libs.clone();
+                build_config.verbose = parsed.config.verbose;
+                build_config.quiet = parsed.config.quiet;
+
+                adeshlang::cli::build::execute_build(&build_config)
+                    .map(|_| ())
+                    .or_else(|_| {
+                        adeshlang::backends::cranelift_aot::aot_compile_with_options(
+                            &src,
+                            &out_path,
+                            aot_options,
+                        )
+                    })
+            };
+
+            match compile_res {
                 Ok(()) => {
                     println!("Successfully compiled AOT to {}", out_path.display());
 

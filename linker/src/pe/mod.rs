@@ -1,5 +1,6 @@
 //! PE / COFF subsystem.
 
+pub mod export;
 pub mod header;
 pub mod import;
 pub mod reader;

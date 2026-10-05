@@ -834,10 +834,8 @@ fn gpu_pass_pipeline(target: crate::toolchain::config::GpuTarget) -> String {
     format!("builtin.module({})", pipeline)
 }
 
-/// Run program using AOT (Ahead-of-Time Cranelift compilation)
+/// Run program using AOT (Ahead-of-Time compilation)
 pub fn run_with_aot(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Result<(), String> {
-    use crate::backends::aot::cranelift::AotOptions;
-    use crate::backends::cranelift_aot::aot_compile_with_options;
     use std::process::Command;
 
     let body = super::directives::strip_compile_directive(src).to_string();
@@ -845,7 +843,7 @@ pub fn run_with_aot(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Result<()
 
     let mut progress = if !parsed.config.quiet {
         Some(BuildProgress::new(
-            "Compiling with AOT Cranelift backend...",
+            "Compiling with native AOT backend...",
         ))
     } else {
         None
@@ -857,26 +855,37 @@ pub fn run_with_aot(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Result<()
         path.with_extension("aot.out")
     };
 
-    let mut options = AotOptions::default();
-    options.opt_level = match parsed.config.opt_level {
+    let opt_num = match parsed.config.opt_level {
         crate::toolchain::config::OptLevel::O0 => 0,
         crate::toolchain::config::OptLevel::O1 => 1,
         crate::toolchain::config::OptLevel::O2 => 2,
         crate::toolchain::config::OptLevel::O3 => 3,
     };
 
-    match aot_compile_with_options(&body, &exe_path, options) {
-        Ok(()) => {
+    let mut build_config = crate::cli::build::AotBuildConfig::new(path.clone());
+    build_config.output = Some(exe_path.clone());
+    build_config.opt_level = opt_num;
+    build_config.codegen_backend = "adesh".to_string();
+    build_config.quiet = true;
+    build_config.verbose = parsed.config.verbose;
+    build_config.lib_dirs = parsed.config.lib_paths.iter().map(PathBuf::from).collect();
+    build_config.link_libs = parsed.config.link_libs.clone();
+
+    // 1. Try Adesh native toolchain backend
+    let compile_res = crate::cli::build::execute_build(&build_config);
+
+    match compile_res {
+        Ok(out_bin) => {
             if let Some(p) = progress.take() {
-                p.success("AOT backend ready");
+                p.success("Native AOT backend ready");
             }
 
-            let status = Command::new(&exe_path)
+            let status = Command::new(&out_bin)
                 .args(&parsed.program_args)
                 .status()
                 .map_err(|e| format!("Failed to run AOT binary: {}", e))?;
 
-            let _ = std::fs::remove_file(&exe_path);
+            let _ = std::fs::remove_file(&out_bin);
 
             if !status.success() {
                 return Err(format!("AOT binary exited with: {}", status));
@@ -884,18 +893,49 @@ pub fn run_with_aot(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Result<()
             Ok(())
         }
         Err(e) => {
-            if let Some(p) = progress {
-                p.fail("AOT compilation failed");
-            }
+            // 2. Fall back to Cranelift AOT backend if native codegen encounters unsupported constructs
             if parsed.config.verbose {
                 eprintln!(
-                    "[aot] compile failed: {}\n[aot] Falling back to interpreter...",
+                    "[aot] Native build encountered: {}\n[aot] Attempting Cranelift fallback...",
                     e
                 );
             }
-            match run_with_interpreter(path, src, parsed) {
-                Ok(_) => Ok(()),
-                Err(err) => Err(err),
+            let mut cranelift_config = build_config.clone();
+            cranelift_config.codegen_backend = "cranelift".to_string();
+
+            match crate::cli::build::execute_build(&cranelift_config) {
+                Ok(out_bin) => {
+                    if let Some(p) = progress.take() {
+                        p.success("AOT backend ready (Cranelift fallback)");
+                    }
+
+                    let status = Command::new(&out_bin)
+                        .args(&parsed.program_args)
+                        .status()
+                        .map_err(|e| format!("Failed to run AOT binary: {}", e))?;
+
+                    let _ = std::fs::remove_file(&out_bin);
+
+                    if !status.success() {
+                        return Err(format!("AOT binary exited with: {}", status));
+                    }
+                    Ok(())
+                }
+                Err(err2) => {
+                    if let Some(p) = progress {
+                        p.fail("AOT compilation failed");
+                    }
+                    if parsed.config.verbose {
+                        eprintln!(
+                            "[aot] Cranelift also failed: {}\n[aot] Falling back to interpreter...",
+                            err2
+                        );
+                    }
+                    match run_with_interpreter(path, src, parsed) {
+                        Ok(_) => Ok(()),
+                        Err(err) => Err(err),
+                    }
+                }
             }
         }
     }

@@ -34,6 +34,9 @@ impl Linker {
         }
 
         let mut config = config;
+        if config.shared && config.target.format == ObjectFormat::MachO {
+            config.target.image_base = 0;
+        }
         if config.lto != LtoMode::Off {
             // Whole-program Link-Time Optimization (LTO):
             // Activate whole-program section GC, aggressive ICF, and symbol stripping to minimize binary size.
@@ -182,7 +185,7 @@ impl Linker {
         };
 
         let mut missing_symbols: Vec<String> = Vec::new();
-        if is_pe && !ctx.resolver.table.contains_key("mainCRTStartup") {
+        if is_pe && !ctx.config.shared && !ctx.resolver.table.contains_key("mainCRTStartup") {
             // The CRT startup stub synthesizer emits x86_64 machine code. For
             // any other PE architecture there is nothing to synthesize, so fail
             // loudly instead of writing the wrong instruction set.
@@ -221,7 +224,7 @@ impl Linker {
             let mut synth_symbols = Vec::new();
             let mut synth_relocs = Vec::new();
 
-            if is_pe && missing_symbols.contains(&"mainCRTStartup".to_string()) {
+            if is_pe && !ctx.config.shared && missing_symbols.contains(&"mainCRTStartup".to_string()) {
                 let (bytes, relocs, syms) = crate::pe::x86_64::synthesize_windows_x86_64_entry(
                     &program_entry_symbol,
                     file_idx,
@@ -474,6 +477,18 @@ impl Linker {
             "__top_level_wrapper".to_string(),
         ];
         roots.extend(ctx.config.exports.iter().cloned());
+        if ctx.config.shared {
+            roots.push("DllMain".to_string());
+            roots.push("_DllMainCRTStartup".to_string());
+            roots.push("DllRegisterServer".to_string());
+            for obj in &ctx.objects {
+                for sym in &obj.symbols {
+                    if sym.is_defined && !sym.is_local() {
+                        roots.push(sym.name.clone());
+                    }
+                }
+            }
+        }
 
         let removed_sections = if ctx.config.gc_sections {
             GarbageCollector::collect_dead_sections(
@@ -574,6 +589,7 @@ impl Linker {
                     ctx.layout.pe_tls_info.as_ref(),
                     &ctx.layout.base_relocs,
                     &ctx.layout.base_relocs32,
+                    ctx.config.shared,
                 )?;
             }
             ObjectFormat::MachO => {

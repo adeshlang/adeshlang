@@ -375,3 +375,68 @@ fn test_link_macho_executable_full_headers() {
     let parsed = read_obj.unwrap();
     assert!(parsed.symbols.iter().any(|s| s.name == "_main"));
 }
+
+#[test]
+fn test_link_pe_shared_library_dll_full() {
+    use adesh_linker::pe::PeReader;
+
+    let dir = tempdir().unwrap();
+    let target = Target::from_triple("x86_64-pc-windows-msvc").unwrap();
+
+    let mut obj = ObjectFile::new(dir.path().join("lib.o"), target.clone(), 0);
+    // Function returning 42: mov eax, 42; ret
+    let sec = Section::new_code(".text", vec![0xB8, 0x2A, 0x00, 0x00, 0x00, 0xC3], 16);
+    obj.add_section(sec);
+    let mut exp_sym = Symbol::new_defined(
+        "compute_answer",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        6,
+        0,
+    );
+    exp_sym.is_exported = true;
+    obj.add_symbol(exp_sym);
+    let obj_path = dir.path().join("lib.o");
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    let out_path = dir.path().join("mylib.dll");
+    let mut config = LinkConfig::new(out_path.clone(), target);
+    config.shared = true;
+
+    let res = Linker::link(&[obj_path], config);
+    assert!(res.is_ok(), "PE DLL linking failed: {:?}", res.err());
+    assert!(out_path.exists());
+
+    // Check .lib import library exists
+    let lib_path = out_path.with_extension("lib");
+    assert!(lib_path.exists(), "Expected import library mylib.lib to be generated");
+
+    let bytes = std::fs::read(&out_path).unwrap();
+    assert_eq!(&bytes[0..2], b"MZ", "Missing DOS magic");
+
+    let lfanew = u32::from_le_bytes(bytes[0x3C..0x40].try_into().unwrap()) as usize;
+    assert_eq!(&bytes[lfanew..lfanew + 4], b"PE\0\0");
+
+    let characteristics = u16::from_le_bytes(bytes[lfanew + 22..lfanew + 24].try_into().unwrap());
+    assert_ne!(
+        characteristics & 0x2000,
+        0,
+        "Expected IMAGE_FILE_DLL (0x2000) characteristic"
+    );
+
+    // Verify PeReader reads the produced DLL and finds exported symbol
+    let read_obj = PeReader::read(&bytes, &out_path, 0);
+    assert!(
+        read_obj.is_ok(),
+        "PeReader failed to parse emitted DLL: {:?}",
+        read_obj.err()
+    );
+    let parsed = read_obj.unwrap();
+    assert!(
+        parsed.symbols.iter().any(|s| s.name == "compute_answer"),
+        "Exported symbol compute_answer not found in emitted DLL"
+    );
+}
+
