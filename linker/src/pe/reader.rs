@@ -24,7 +24,12 @@ impl PeReader {
         }
 
         // Check if COFF Short Import Header (Sig1 = 0, Sig2 = 0xFFFF)
-        if bytes.len() >= 20 && bytes[0] == 0 && bytes[1] == 0 && bytes[2] == 0xFF && bytes[3] == 0xFF {
+        if bytes.len() >= 20
+            && bytes[0] == 0
+            && bytes[1] == 0
+            && bytes[2] == 0xFF
+            && bytes[3] == 0xFF
+        {
             let machine_val = u16::from_le_bytes(bytes[6..8].try_into().unwrap());
             let arch = match machine_val {
                 IMAGE_FILE_MACHINE_AMD64 => Arch::X86_64,
@@ -430,8 +435,12 @@ impl PeReader {
             let opt_off = offset + 20;
             let exp_rva_off = opt_off + 112 + IMAGE_DIRECTORY_ENTRY_EXPORT * 8;
             if exp_rva_off + 8 <= bytes.len() {
-                let exp_rva = u32::from_le_bytes(bytes[exp_rva_off..exp_rva_off + 4].try_into().unwrap()) as usize;
-                let exp_size = u32::from_le_bytes(bytes[exp_rva_off + 4..exp_rva_off + 8].try_into().unwrap()) as usize;
+                let exp_rva =
+                    u32::from_le_bytes(bytes[exp_rva_off..exp_rva_off + 4].try_into().unwrap())
+                        as usize;
+                let exp_size =
+                    u32::from_le_bytes(bytes[exp_rva_off + 4..exp_rva_off + 8].try_into().unwrap())
+                        as usize;
                 if exp_rva > 0 && exp_size > 0 {
                     let mut exported_symbols = Vec::new();
                     for s in &obj.sections {
@@ -451,10 +460,18 @@ impl PeReader {
                             };
 
                             if file_off + 40 <= bytes.len() {
-                                let num_names = u32::from_le_bytes(bytes[file_off + 24..file_off + 28].try_into().unwrap()) as usize;
-                                let addr_funcs = u32::from_le_bytes(bytes[file_off + 28..file_off + 32].try_into().unwrap()) as usize;
-                                let addr_names = u32::from_le_bytes(bytes[file_off + 32..file_off + 36].try_into().unwrap()) as usize;
-                                let addr_ords = u32::from_le_bytes(bytes[file_off + 36..file_off + 40].try_into().unwrap()) as usize;
+                                let num_names = u32::from_le_bytes(
+                                    bytes[file_off + 24..file_off + 28].try_into().unwrap(),
+                                ) as usize;
+                                let addr_funcs = u32::from_le_bytes(
+                                    bytes[file_off + 28..file_off + 32].try_into().unwrap(),
+                                ) as usize;
+                                let addr_names = u32::from_le_bytes(
+                                    bytes[file_off + 32..file_off + 36].try_into().unwrap(),
+                                ) as usize;
+                                let addr_ords = u32::from_le_bytes(
+                                    bytes[file_off + 36..file_off + 40].try_into().unwrap(),
+                                ) as usize;
 
                                 if let (Some(names_off), Some(funcs_off), Some(ords_off)) = (
                                     rva_to_file(addr_names),
@@ -462,18 +479,43 @@ impl PeReader {
                                     rva_to_file(addr_ords),
                                 ) {
                                     for i in 0..num_names {
-                                        if names_off + (i + 1) * 4 <= bytes.len() && ords_off + (i + 1) * 2 <= bytes.len() {
-                                            let name_rva = u32::from_le_bytes(bytes[names_off + i * 4..names_off + (i + 1) * 4].try_into().unwrap()) as usize;
-                                            let ord = u16::from_le_bytes(bytes[ords_off + i * 2..ords_off + (i + 1) * 2].try_into().unwrap()) as usize;
-                                            let func_rva = if funcs_off + (ord + 1) * 4 <= bytes.len() {
-                                                u32::from_le_bytes(bytes[funcs_off + ord * 4..funcs_off + (ord + 1) * 4].try_into().unwrap()) as u64
-                                            } else {
-                                                0
-                                            };
+                                        if names_off + (i + 1) * 4 <= bytes.len()
+                                            && ords_off + (i + 1) * 2 <= bytes.len()
+                                        {
+                                            let name_rva = u32::from_le_bytes(
+                                                bytes[names_off + i * 4..names_off + (i + 1) * 4]
+                                                    .try_into()
+                                                    .unwrap(),
+                                            )
+                                                as usize;
+                                            let ord = u16::from_le_bytes(
+                                                bytes[ords_off + i * 2..ords_off + (i + 1) * 2]
+                                                    .try_into()
+                                                    .unwrap(),
+                                            )
+                                                as usize;
+                                            let func_rva =
+                                                if funcs_off + (ord + 1) * 4 <= bytes.len() {
+                                                    u32::from_le_bytes(
+                                                        bytes[funcs_off + ord * 4
+                                                            ..funcs_off + (ord + 1) * 4]
+                                                            .try_into()
+                                                            .unwrap(),
+                                                    )
+                                                        as u64
+                                                } else {
+                                                    0
+                                                };
 
                                             if let Some(name_file_off) = rva_to_file(name_rva) {
-                                                let end = bytes[name_file_off..].iter().position(|&b| b == 0).unwrap_or(0);
-                                                let exp_name = String::from_utf8_lossy(&bytes[name_file_off..name_file_off + end]).to_string();
+                                                let end = bytes[name_file_off..]
+                                                    .iter()
+                                                    .position(|&b| b == 0)
+                                                    .unwrap_or(0);
+                                                let exp_name = String::from_utf8_lossy(
+                                                    &bytes[name_file_off..name_file_off + end],
+                                                )
+                                                .to_string();
                                                 if !exp_name.is_empty() {
                                                     exported_symbols.push(Symbol {
                                                         name: exp_name,

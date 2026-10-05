@@ -110,7 +110,9 @@ impl LoopOptimizer {
             let mut i = 0;
             while i < func.blocks[b_idx].instructions.len() {
                 let is_invariant = match &func.blocks[b_idx].instructions[i] {
-                    MachineInstruction::Move { src, .. } => matches!(src, MachineOperand::Immediate(_)),
+                    MachineInstruction::Move { src, .. } => {
+                        matches!(src, MachineOperand::Immediate(_))
+                    }
                     MachineInstruction::Add { src, .. } | MachineInstruction::Sub { src, .. } => {
                         matches!(src, MachineOperand::Immediate(_))
                     }

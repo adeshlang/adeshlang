@@ -56,7 +56,10 @@ pub extern "C" fn adesh_sanitizer_check_uaf(ptr: *const u8) -> bool {
         // If memory contains poison byte 0xAA, report UAF violation
         if *ptr == 0xAA {
             UAF_VIOLATIONS.fetch_add(1, Ordering::SeqCst);
-            eprintln!("Adesh Sanitizer Error: Use-after-free detected at address {:p}", ptr);
+            eprintln!(
+                "Adesh Sanitizer Error: Use-after-free detected at address {:p}",
+                ptr
+            );
             return true;
         }
     }

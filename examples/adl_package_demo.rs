@@ -8,9 +8,8 @@
 //! 5. Fine-grained incremental compilation cache using cryptographic module fingerprints.
 
 use adesh_codegen::package::{
-    ADESH_LOCK_FILE, ADESH_MANIFEST_FILE, DependencyResolver, DependencySpec,
-    DetailedDependency, IncrementalCache, LockFile, ModuleFingerprint,
-    PackageManifest, ProfileConfig,
+    ADESH_LOCK_FILE, ADESH_MANIFEST_FILE, DependencyResolver, DependencySpec, DetailedDependency,
+    IncrementalCache, LockFile, ModuleFingerprint, PackageManifest, ProfileConfig,
 };
 use std::collections::BTreeMap;
 use tempfile::tempdir;
@@ -62,18 +61,15 @@ fn main() {
     );
 
     // Features
-    manifest.features.insert(
-        "default".to_string(),
-        vec!["accelerated".to_string()],
-    );
-    manifest.features.insert(
-        "accelerated".to_string(),
-        vec!["adesh-simd".to_string()],
-    );
-    manifest.features.insert(
-        "networking".to_string(),
-        vec!["adesh-net".to_string()],
-    );
+    manifest
+        .features
+        .insert("default".to_string(), vec!["accelerated".to_string()]);
+    manifest
+        .features
+        .insert("accelerated".to_string(), vec!["adesh-simd".to_string()]);
+    manifest
+        .features
+        .insert("networking".to_string(), vec!["adesh-net".to_string()]);
 
     // Compiler Profiles
     let mut dev_profile = ProfileConfig::default();
@@ -85,15 +81,22 @@ fn main() {
     release_profile.opt_level = Some(3);
     release_profile.lto = Some("fat".to_string());
     release_profile.debug = Some(false);
-    manifest.profile.insert("release".to_string(), release_profile);
+    manifest
+        .profile
+        .insert("release".to_string(), release_profile);
 
     // Save manifest to `adesh.adl`
-    manifest.save_to_file(&adl_path).expect("Failed to write adesh.adl");
+    manifest
+        .save_to_file(&adl_path)
+        .expect("Failed to write adesh.adl");
     println!("✓ Successfully wrote '{}' to disk.", ADESH_MANIFEST_FILE);
 
     // Read back and inspect
     let manifest_content = std::fs::read_to_string(&adl_path).expect("Read adesh.adl");
-    println!("\n--- Content of {} ---\n{}", ADESH_MANIFEST_FILE, manifest_content);
+    println!(
+        "\n--- Content of {} ---\n{}",
+        ADESH_MANIFEST_FILE, manifest_content
+    );
 
     // -------------------------------------------------------------------------
     // STEP 2: Deterministic Dependency Graph Resolution
@@ -126,18 +129,31 @@ fn main() {
         .resolve(&manifest, &active_features)
         .expect("Failed to resolve dependencies");
 
-    println!("✓ Dependency resolution succeeded. Total locked packages: {}", lock_file.packages.len());
+    println!(
+        "✓ Dependency resolution succeeded. Total locked packages: {}",
+        lock_file.packages.len()
+    );
     for pkg in &lock_file.packages {
-        println!("  • Package: {:<15} Version: {:<8} Checksum: {:<16}", pkg.name, pkg.version, &pkg.checksum[..16]);
+        println!(
+            "  • Package: {:<15} Version: {:<8} Checksum: {:<16}",
+            pkg.name,
+            pkg.version,
+            &pkg.checksum[..16]
+        );
     }
 
     // -------------------------------------------------------------------------
     // STEP 3: Emit and Reload `adesh.lock.adl`
     // -------------------------------------------------------------------------
     println!("\n------------------------------------------------------------------------");
-    println!("[Step 3] Emitting Deterministic Lockfile ({}) ...", ADESH_LOCK_FILE);
+    println!(
+        "[Step 3] Emitting Deterministic Lockfile ({}) ...",
+        ADESH_LOCK_FILE
+    );
 
-    lock_file.save_to_file(&lock_path).expect("Failed to write adesh.lock.adl");
+    lock_file
+        .save_to_file(&lock_path)
+        .expect("Failed to write adesh.lock.adl");
     println!("✓ Saved '{}' successfully.", ADESH_LOCK_FILE);
 
     let lock_content = std::fs::read_to_string(&lock_path).expect("Read adesh.lock.adl");
@@ -166,7 +182,13 @@ fn main() {
     dep_hashes.insert("adesh-simd".to_string(), 0x1122334455667788_u64);
 
     // Initial Fingerprint
-    let fp_v1 = ModuleFingerprint::compute("matrix_core", mod_source, mod_interface, flags, dep_hashes.clone());
+    let fp_v1 = ModuleFingerprint::compute(
+        "matrix_core",
+        mod_source,
+        mod_interface,
+        flags,
+        dep_hashes.clone(),
+    );
     println!("  Initial Module Fingerprint (v1):");
     println!("    Source Hash:    0x{:016x}", fp_v1.source_hash);
     println!("    Interface Hash: 0x{:016x}", fp_v1.interface_hash);
@@ -174,7 +196,10 @@ fn main() {
 
     // Check if rebuild needed on clean cache
     let needs_rebuild_1 = cache.should_rebuild(&fp_v1);
-    println!("  -> First build: should_rebuild = {} (Expected: true - Cache Miss)", needs_rebuild_1);
+    println!(
+        "  -> First build: should_rebuild = {} (Expected: true - Cache Miss)",
+        needs_rebuild_1
+    );
     assert!(needs_rebuild_1);
 
     // Record compilation in cache
@@ -183,17 +208,30 @@ fn main() {
 
     // Second check with unchanged module
     let needs_rebuild_2 = cache.should_rebuild(&fp_v1);
-    println!("  -> Unchanged re-run: should_rebuild = {} (Expected: false - Cache Hit)", needs_rebuild_2);
+    println!(
+        "  -> Unchanged re-run: should_rebuild = {} (Expected: false - Cache Hit)",
+        needs_rebuild_2
+    );
     assert!(!needs_rebuild_2);
 
     // Modify internal implementation ONLY (interface and flags unchanged)
-    let mod_source_v2 = "fn multiply_matrix(a: &Matrix, b: &Matrix) -> Matrix { /* AVX-512 Optimized */ }";
-    let fp_v2 = ModuleFingerprint::compute("matrix_core", mod_source_v2, mod_interface, flags, dep_hashes.clone());
+    let mod_source_v2 =
+        "fn multiply_matrix(a: &Matrix, b: &Matrix) -> Matrix { /* AVX-512 Optimized */ }";
+    let fp_v2 = ModuleFingerprint::compute(
+        "matrix_core",
+        mod_source_v2,
+        mod_interface,
+        flags,
+        dep_hashes.clone(),
+    );
     let needs_rebuild_3 = cache.should_rebuild(&fp_v2);
     let interface_changed = fp_v1.public_interface_changed(&fp_v2);
     println!("  -> Internal body edit:");
     println!("     should_rebuild = {} (Expected: true)", needs_rebuild_3);
-    println!("     public_interface_changed = {} (Expected: false - Downstream dependents skip rebuild!)", interface_changed);
+    println!(
+        "     public_interface_changed = {} (Expected: false - Downstream dependents skip rebuild!)",
+        interface_changed
+    );
     assert!(needs_rebuild_3);
     assert!(!interface_changed);
 

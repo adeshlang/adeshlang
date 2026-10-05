@@ -1,85 +1,110 @@
 # Adesh Native Linker & Multi-Domain Toolchain (`adeshlink`)
 
-The **Adesh Native Linker (`adeshlink`)** is a production-grade, self-contained, multi-format binary linker and toolchain suite written in 100% safe Rust. It eliminates all external dependencies on LLVM (`lld`, `llvm-ar`, `llvm-nm`, `llvm-objdump`), GNU Binutils (`ld`, `ar`, `nm`, `strip`), and Microsoft Visual C++ (`link.exe`, `lib.exe`).
+The **Adesh Native Linker (`adeshlink`)** is a self-contained, multi-format
+binary linker and toolchain suite written in 100% safe Rust. It eliminates
+external dependencies on LLVM (`lld`, `llvm-ar`, `llvm-nm`, `llvm-objdump`),
+GNU Binutils (`ld`, `ar`, `nm`, `strip`), and Microsoft Visual C++
+(`link.exe`, `lib.exe`).
+
+**Status (2026-10-05):** only the **Windows x86-64 PE path is
+execution-verified** (tests produce and run binaries). ELF and Mach-O
+outputs are emitted and structurally validated but never executed. The
+accelerator/quantum sections below are **container packaging scaffolding**:
+no device machine code is generated from Adesh source and no GPU/NPU driver
+is ever called. See `CURRENT_STATE.md` (canonical) for details.
 
 ---
 
 ## 1. Zero-Dependency End-Execution Binary Generation
 
-`adeshlink` generates complete, executable native binaries without requiring any external compiler runtime or linker:
+- **Windows PE32+ (`.exe`, `.dll`):** Full DOS/PE headers, optional headers,
+  Import Address Tables (IAT) (`kernel32.dll`, `msvcrt.dll`,
+  `ucrtbase.dll`), base relocations (`.reloc`), ASLR/NX flags, TLS
+  directory, entry synthesis, and DLL export tables for `--shared`.
+  **Executables are execution-tested on Windows.** SEH `.pdata`/`.xdata`
+  synthesis is not yet wired into the link path (a generator exists but is
+  never invoked).
+- **Linux ELF64 (`ET_EXEC`, `ET_DYN`):** ELF headers, program load segments
+  (`PT_LOAD`), GNU stack permissions, and `.eh_frame_hdr` table structures.
+  **Not run-tested**; `ET_DYN` objects have no GOT/PLT, so imported symbols
+  are unresolved.
+- **macOS Mach-O 64-bit:** `LC_SEGMENT_64`, `LC_MAIN`, and loader-command
+  layouts. **Not functional for programs that link system libraries**: no
+  dyld info / chained fixups / exports trie exists, so external symbols
+  cannot bind.
+- **WebAssembly Core 2.0 / WASI Preview 1:** the *linker's* WASM writer is a
+  single-function stub. Real, runnable WASM comes from the compiler
+  backend (`src/backends/wasm`), not from `adeshlink`.
 
-- **Windows PE32+ (`.exe`, `.dll`):** Generates full DOS/PE headers, optional headers with subsystem configurations, Import Address Tables (IAT) with write permissions (`kernel32.dll`, `msvcrt.dll`), base relocations (`.reloc`), and 64-bit SEH `.pdata`/`.xdata` exception unwind tables. Verified on the native Windows NT loader.
-- **Linux ELF64 (`ET_EXEC`, `ET_DYN` PIE):** Generates ELF headers, program load segments (`PT_LOAD`), GNU stack permissions (`PT_GNU_STACK`), and binary search `.eh_frame_hdr` frame unwinding tables.
-- **macOS Mach-O 64-bit:** Generates `LC_SEGMENT_64`, `LC_MAIN`, and dynamic loader commands.
-- **WebAssembly Core 2.0 / WASI Preview 1:** Generates standard WASM binary modules with Type, Function, Memory, Global, Export, Code, and Data sections.
+## 2. MLIR & Polyhedral Dialect Layer
 
----
+- MLIR **text** is generated from Adesh IR and processed by **external**
+  `mlir-opt`/`mlir-translate`/`llc` (optional; missing tools fall back to
+  the interpreter). Dialects include `affine`, `linalg`, `tensor`,
+  `memref`, `gpu`, `nvvm`, `rocdl`, `spirv`, `quantum`, `adesh`.
+- **MLIR Bytecode Container (`MLïR`):** a storage container that
+  encodes/decodes module operations and attributes into binary sections;
+  it is not a code generator.
 
-## 2. MLIR & Polyhedral Dialect Linking Layer
+## 3. GPU Packaging (CUDA, ROCm, Vulkan, Metal) — Scaffolding
 
-`adeshlink` features a native MLIR dialect container and bytecode serializer (`.mlir.bytecode`):
+- **NVIDIA CUDA Fatbin (magic `0xBA55ED50`):** a **custom** container that
+  repackages caller-supplied PTX text / CUBIN bytes. It is not NVIDIA's
+  fatbin layout and cannot be loaded by the CUDA driver.
+- **AMD ROCm HSACO:** a partial-ELF container with a custom kernel
+  descriptor; no MsgPack metadata is emitted (earlier docs claimed
+  otherwise — that was aspirational).
+- **Vulkan SPIR-V 1.6 (`.spv`):** the standalone header emitter exists, but
+  the compute-shader path emits a fixed, empty shader and ignores
+  descriptor set / binding parameters.
+- **Apple MetalLib (`.metallib`):** wraps caller-supplied bytes in a
+  magic-prefixed blob; no AIR bitcode is generated.
+- **Baremetal GPU command buffers:** not implemented (earlier docs claimed
+  "hardware command stream generation" — that was aspirational).
+- There are **zero CUDA/HIP/Vulkan driver API calls**; no kernel can be
+  launched from the toolchain.
 
-- **Dialects Supported:**
-  - `affine`: Polyhedral iteration domains, loop nest tiling, and dependency analysis.
-  - `linalg`: Structured linear algebra operations (`matmul`, `conv_2d`, `pooling`) on tensors.
-  - `tensor`: N-dimensional shape definitions and layout transformations.
-  - `memref`: Strided memory buffer descriptors and view slicing.
-  - `gpu`, `nvvm`, `rocdl`, `spirv`: Hardware accelerator abstractions.
-  - `quantum`: Quantum gate operations and circuit representations.
-  - `adesh`: High-level language constructs and ownership tracking.
-- **MLIR Bytecode Container (`MLïR`):** Encodes/decodes module operations, attributes, tensor constants, and polyhedral schedule maps directly into binary sections.
+## 4. NPU & TPU Neural Accelerator Packaging — Scaffolding
 
----
+- **Arm Ethos-U MicroNPU:** packs self-defined command-packet structures
+  (`ETHU` magic); these are not real Ethos-U command streams.
+- **Apple Neural Engine (ANE):** **no implementation exists** (earlier docs
+  claimed FP16/INT8 weight layouts — aspirational).
+- **Google TPU:** a padded section container (`ADTP` magic); no XLA HLO
+  module serialization exists (earlier claims were aspirational).
 
-## 3. GPU Hardware Acceleration (CUDA, ROCm, Vulkan, Metal, Baremetal)
+## 5. Quantum Computing — Library-Level
 
-`adeshlink` provides in-depth binary container generators for all major GPU platforms:
-
-- **NVIDIA CUDA Fatbin (`CUDA_FATBIN_MAGIC = 0xBA55ED50`):** Multi-architecture packaging (SM70 Volta through SM100 Blackwell), embedding PTX text and CUBIN ELF64 objects with kernel symbol tables.
-- **AMD ROCm HSACO (`.amdgpu_code_object`):** ELF64 AMDGPU target code objects containing kernel descriptors with SGPR/VGPR counts, wavefront configurations, and MsgPack metadata.
-- **Khronos Vulkan SPIR-V 1.6 (`.spv`):** Full standalone SPIR-V binary generator (`0x07230203`) emitting `OpCapability`, `OpMemoryModel`, `OpEntryPoint`, `OpExecutionMode`, descriptor set bindings, and function blocks.
-- **Apple MetalLib (`.metallib`):** Metal shader library packaging with function dictionaries and AIR bitcode payloads.
-- **Baremetal GPU Command Buffers:** Hardware command stream generation for direct compute queue dispatching on discrete/integrated GPU rings.
-
----
-
-## 4. NPU & TPU Neural Accelerator Infrastructure
-
-- **Arm Ethos-U MicroNPU:** Emits hardware command stream packets (`ETHU` magic) with weight/bias payload compression, IFM/OFM 4D tensor shapes, and SRAM/Flash memory mapping.
-- **Apple Neural Engine (ANE):** Neural Engine intermediate tensor packages, FP16/INT8 quantized weight layouts, and activation memory configurations.
-- **Google TPU (V3/V4/V5/Trillium):** TPU executable container (`ADTP` magic) with XLA HLO module serialization, Matrix Multiply Unit (MXU) systolic tile layout (128x128 matrix systolic arrays), VPU vector lanes, and HBM memory layouts.
-
----
-
-## 5. Quantum Computing (QIR, OpenQASM 3.0, Pulse Control)
-
-- **Quantum Intermediate Representation (QIR):** Emits QIR binary packages (`QIRB` magic) with standard QIR runtime symbol bindings (`__quantum__qis__*`, `__quantum__rt__*`), qubit allocation records, and measurement syndrome tables.
-- **OpenQASM 3.0 Generator:** Serializes quantum gate instruction streams (H, X, Y, Z, S, T, Rx, Ry, Rz, CX, CZ, Swap, Measure, Barrier) into standard OpenQASM 3.0 representations.
-- **Microwave Pulse Calibration (`.quantum.pulses`):** Physical drive channel pulse records (Gaussian, DRAG, Square, Cosine) with frequency (GHz), phase (radians), amplitude, duration (ns), and drag beta parameters.
-- **Hybrid Classical-Quantum Linker:** Interweaves host CPU execution threads with embedded quantum circuit payloads.
-
----
+- **OpenQASM 3.0 Generator:** real; serializes the 15-gate circuit IR.
+- **Circuit IR, gate decomposition, topological routing, calibration pulse
+  records:** real library components (`linker/src/quantum/`).
+- **State-vector simulator:** real, but **measurement is a deterministic
+  0.5-threshold mock**.
+- **QIR Container (`QIRB`):** embeds QASM text plus packed sections; it is
+  not LLVM QIR. `__quantum__qis__*` / `__quantum__rt__*` symbol names exist
+  as string constants only and are never emitted.
+- **Hybrid Classical-Quantum execution:** not implemented.
+- **No language-level `qubit` construct exists.**
 
 ## 6. Embedded Bare Chips & Microcontrollers
 
-- **Linker Script Engine:** Evaluates custom `MEMORY` and `SECTIONS` scripts with memory region constraints (`FLASH (rx)`, `RAM (rwx)`), boundary allocation, and overflow prevention.
-- **Interrupt Vector Table (IVT):**
-  - **ARM Cortex-M (M0/M3/M4/M7/M33):** Initial SP, Thumb Reset_Handler, NMI, HardFault, MemManage, BusFault, UsageFault, SVCall, PendSV, SysTick, and device IRQ vectors.
-  - **RISC-V (RV32I/RV64):** Trap vector tables in direct and vectored modes.
-- **Zero-Dependency `crt0` Startup Synthesizer:** Synthesizes the Flash $\to$ RAM data segment copy loop, BSS zeroing, stack pointer setup, and jump to `main()`.
-- **Flash Firmware Image Formats:**
-  - **Flat Binary (`.bin`):** Direct flash memory image.
-  - **Intel HEX (`.hex`):** Extended linear address records (Type 04) with two's complement checksums.
-  - **Motorola S-Records (`.srec`):** S0/S3/S7 record sequences.
-
----
+- **Linker Script Engine:** evaluates custom `MEMORY` and `SECTIONS`
+  scripts with memory region constraints and overflow prevention.
+- **Interrupt Vector Table (IVT):** ARM Cortex-M (M0/M3/M4/M7/M33) initial
+  SP / Thumb vectors; RISC-V direct and vectored trap tables.
+- **Zero-Dependency `crt0` Startup Synthesizer:** Flash→RAM data copy
+  loop, BSS zeroing, stack pointer setup, jump to `main()`.
+- **Flash Firmware Image Formats:** Flat Binary (`.bin`), Intel HEX
+  (`.hex`), Motorola S-Records (`.srec`).
+- *Note: the embedded codegen behind these is proof-of-concept; none of it
+  is execution-verified on hardware.*
 
 ## 7. CLI Reference & Subcommands
 
 | Command | Purpose |
 | :--- | :--- |
 | `adeshlink link` | Native linker producing executable binaries or libraries |
-| `adeshlink ar` | Static archive manager (`rcs`, `t`, `x`) |
+| `adeshlink ar` | Static archive manager (`rcs`, `t`, `x`) — note: written archives lack a symbol index |
 | `adeshlink nm` | Symbol table listing with addresses and type letters |
 | `adeshlink objdump` | Section headers (`-h`), hex dump (`-s`), and disassembly |
 | `adeshlink readobj` | Detailed headers, segments, and symbol records |

@@ -7,8 +7,10 @@
 
 #![allow(dead_code, unused_imports)]
 
-use adesh_linker::abi::{verify_abi_compatibility, AdeshAbiHeader, ADESH_ABI_MAGIC, ADESH_ABI_VERSION};
-use adesh_runtime::plugin::{AdeshPluginHeader, ADESH_PLUGIN_ABI_VERSION, ADESH_PLUGIN_MAGIC};
+use adesh_linker::abi::{
+    ADESH_ABI_MAGIC, ADESH_ABI_VERSION, AdeshAbiHeader, verify_abi_compatibility,
+};
+use adesh_runtime::plugin::{ADESH_PLUGIN_ABI_VERSION, ADESH_PLUGIN_MAGIC, AdeshPluginHeader};
 
 #[test]
 fn test_plugin_header_validation() {

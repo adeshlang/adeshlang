@@ -111,6 +111,7 @@ fn test_atomic_compare_exchange_e2e() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_native_atomic_execution_on_windows_x64() {
     let mut module = NativeModule::new("test_atomic_native");
     let mut main_func = MachineFunction::new("main");

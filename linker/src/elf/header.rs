@@ -267,4 +267,3 @@ pub fn gnu_hash(name: &[u8]) -> u32 {
     }
     h
 }
-

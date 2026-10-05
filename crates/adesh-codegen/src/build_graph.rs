@@ -49,9 +49,15 @@ impl BuildGraphScheduler {
         for (name, node) in &self.nodes {
             for dep in &node.dependencies {
                 if !self.nodes.contains_key(dep) {
-                    return Err(format!("Unresolved dependency '{}' for module '{}'", dep, name));
+                    return Err(format!(
+                        "Unresolved dependency '{}' for module '{}'",
+                        dep, name
+                    ));
                 }
-                dependents.entry(dep.clone()).or_default().push(name.clone());
+                dependents
+                    .entry(dep.clone())
+                    .or_default()
+                    .push(name.clone());
                 *in_degrees.get_mut(name).unwrap() += 1;
             }
         }

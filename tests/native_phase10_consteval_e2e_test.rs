@@ -41,10 +41,7 @@ fn test_const_vm_instruction_limit() {
     let mut vm = ConstVm::new(limits);
 
     // Infinite loop
-    let code = vec![
-        VmOpCode::PushInt(1),
-        VmOpCode::Jump(0),
-    ];
+    let code = vec![VmOpCode::PushInt(1), VmOpCode::Jump(0)];
 
     let result = vm.execute(&code);
     assert_eq!(result, Err(VmError::InstructionLimitExceeded));

@@ -9,7 +9,9 @@
 #![allow(dead_code, unused_imports)]
 
 use adesh_codegen::crash::{CrashReporter, CrashSignal, CrashStackFrame};
-use adesh_codegen::debug::{DebugEngine, FunctionDebugInfo, LocalVariableDebugInfo, SourceLocation};
+use adesh_codegen::debug::{
+    DebugEngine, FunctionDebugInfo, LocalVariableDebugInfo, SourceLocation,
+};
 
 #[test]
 fn test_debug_engine_line_and_variable_tracking() {
@@ -36,7 +38,9 @@ fn test_debug_engine_line_and_variable_tracking() {
     assert_eq!(loc.line, 13);
     assert_eq!(loc.column, 8);
 
-    let func_info = engine.get_function("compute_metrics").expect("function info");
+    let func_info = engine
+        .get_function("compute_metrics")
+        .expect("function info");
     assert_eq!(func_info.locals.len(), 1);
     assert_eq!(func_info.locals[0].name, "result");
 }

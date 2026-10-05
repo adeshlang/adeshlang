@@ -109,14 +109,17 @@ cargo test --tests
 cargo test --workspace
 ```
 
-The CI pipeline (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on both
-Ubuntu and Windows and must pass before a pull request can be merged:
+The CI pipeline (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on
+Ubuntu, Windows, and macOS and must pass before a pull request can be merged:
 
 - `cargo fmt --all -- --check`
-- `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- `cargo clippy --workspace --all-targets --all-features` (advisory; the
+  workspace currently allows warnings — see `Cargo.toml` lints)
 - `cargo test --lib`
-- `cargo test --tests` (Ubuntu only)
-- `cargo check --bin adesh`
+- `cargo test --tests` (Ubuntu; native tests that link **and execute**
+  produced binaries are gated `#[cfg(all(target_os = "windows",
+  target_arch = "x86_64"))]`, so Ubuntu runs only the portable suites)
+- Named native e2e suites (Windows; these link and execute produced binaries)
 
 Run all of these locally before pushing to keep CI green.
 
@@ -135,9 +138,11 @@ Run all of these locally before pushing to keep CI green.
   ```bash
   cargo fmt --all
   ```
-- **Linting:** Clippy must pass with warnings denied:
+- **Linting:** Clippy is currently advisory (the workspace sets
+  `clippy::all = "allow"`; CI runs it with `continue-on-error`). Do not
+  introduce new warnings:
   ```bash
-  cargo clippy --workspace --all-targets --all-features -- -D warnings
+  cargo clippy --workspace --all-targets --all-features
   ```
 - **Language sources:** `.adesh` examples should follow the conventions in
   [`docs/`](docs/) and the existing [`examples/`](examples/) code.
@@ -167,7 +172,7 @@ Run all of these locally before pushing to keep CI green.
 ### Pull Request Checklist
 
 - [ ] `cargo fmt --all -- --check` passes
-- [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings` passes
+- [ ] `cargo clippy --workspace --all-targets --all-features` reports no new warnings
 - [ ] `cargo test --lib` and `cargo test --tests` pass
 - [ ] New/changed behavior is covered by tests
 - [ ] Documentation in `docs/` updated where relevant
@@ -181,6 +186,14 @@ The documentation hub is [`docs/README.md`](docs/README.md). When you change beh
   [`docs/memory-safety-guide.md`](docs/memory-safety-guide.md)).
 - Add or update a runnable example in [`examples/`](examples/) if your change introduces a
   user-facing capability.
+- **Truth policy (2026-10-05):** every capability claim must reference an
+  execution test. A capability is "implemented" only when a produced
+  artifact is executed and its behavior asserted in CI; emitting bytes is
+  "emission", not "support". `CURRENT_STATE.md` is the canonical status
+  document — update it and any dependent status docs
+  (`TARGET_MATRIX.md`, `ARCHITECTURE_GAPS.md`, `TOOLCHAIN_CAPABILITIES.md`,
+  `ABI_MATRIX.md`, `linker/docs/abi_v1.md`, and the docs-website compiler
+  pages) in the same PR.
 
 ## Reporting Issues
 

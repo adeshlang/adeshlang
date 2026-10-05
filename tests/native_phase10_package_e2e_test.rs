@@ -23,7 +23,9 @@ fn test_package_manifest_and_lockfile_roundtrip() {
         "core".to_string(),
         DependencySpec::Simple("1.0.0".to_string()),
     );
-    manifest.save_to_file(&manifest_path).expect("save manifest");
+    manifest
+        .save_to_file(&manifest_path)
+        .expect("save manifest");
 
     let mut resolver = DependencyResolver::new();
     resolver.register_package("core", "1.0.0", vec![]);

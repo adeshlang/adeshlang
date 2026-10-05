@@ -7,9 +7,9 @@
 
 #![allow(dead_code, unused_imports)]
 
-use adesh_runtime::panic::{catch_unwind_safe, register_cleanup_handler, PanicStrategy};
-use std::sync::atomic::{AtomicBool, Ordering};
+use adesh_runtime::panic::{PanicStrategy, catch_unwind_safe, register_cleanup_handler};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[test]
 fn test_panic_strategy_configuration() {
@@ -30,8 +30,6 @@ fn test_panic_cleanup_handler_registration() {
     });
 
     // Verify boundary catch
-    let res = catch_unwind_safe(|| {
-        "ok"
-    });
+    let res = catch_unwind_safe(|| "ok");
     assert_eq!(res.unwrap(), "ok");
 }

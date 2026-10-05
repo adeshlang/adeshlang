@@ -86,7 +86,9 @@ impl SanitizerInstrumenter {
                     // Array/buffer loads: insert bounds check
                     MachineInstruction::Load { .. } if self.flags.bounds_check => {
                         let check_inst = MachineInstruction::Call {
-                            target: MachineOperand::Symbol("adesh_sanitizer_check_bounds".to_string()),
+                            target: MachineOperand::Symbol(
+                                "adesh_sanitizer_check_bounds".to_string(),
+                            ),
                             num_args: 0,
                         };
                         block.instructions.insert(i, check_inst);
@@ -96,7 +98,9 @@ impl SanitizerInstrumenter {
                     // Signed addition: insert overflow check
                     MachineInstruction::Add { .. } if self.flags.integer_overflow => {
                         let overflow_check = MachineInstruction::Call {
-                            target: MachineOperand::Symbol("adesh_sanitizer_check_overflow".to_string()),
+                            target: MachineOperand::Symbol(
+                                "adesh_sanitizer_check_overflow".to_string(),
+                            ),
                             num_args: 0,
                         };
                         block.instructions.insert(i + 1, overflow_check);
@@ -116,7 +120,8 @@ impl SanitizerInstrumenter {
                 let mut uaf_hooks = Vec::new();
                 for (idx, inst) in block.instructions.iter().enumerate() {
                     if let MachineInstruction::Call { target, .. } = inst {
-                        if matches!(target, MachineOperand::Symbol(s) if s == "free" || s == "adesh_free") {
+                        if matches!(target, MachineOperand::Symbol(s) if s == "free" || s == "adesh_free")
+                        {
                             uaf_hooks.push(idx + 1);
                         }
                     }
@@ -125,7 +130,9 @@ impl SanitizerInstrumenter {
                     block.instructions.insert(
                         hook_idx,
                         MachineInstruction::Call {
-                            target: MachineOperand::Symbol("adesh_sanitizer_poison_memory".to_string()),
+                            target: MachineOperand::Symbol(
+                                "adesh_sanitizer_poison_memory".to_string(),
+                            ),
                             num_args: 0,
                         },
                     );

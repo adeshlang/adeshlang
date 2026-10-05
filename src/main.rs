@@ -1537,8 +1537,15 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                     inputs.push(PathBuf::from(arg));
                 }
             }
-            let out = parsed.output_file.clone().unwrap_or_else(|| "a.out".to_string());
-            println!("Linking {} input(s) into {} via adeshlink...", inputs.len(), out);
+            let out = parsed
+                .output_file
+                .clone()
+                .unwrap_or_else(|| "a.out".to_string());
+            println!(
+                "Linking {} input(s) into {} via adeshlink...",
+                inputs.len(),
+                out
+            );
             if let Err(e) = adesh_linker::link(&inputs, &out, None) {
                 eprintln!("Link error: {}", e);
                 std::process::exit(1);
@@ -1562,7 +1569,10 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             match adesh_object::AdobReader::read_object(&bytes) {
                 Ok(obj) => {
                     let dump = adesh_codegen::inspect::CompilerInspector::dump_adob(&obj);
-                    println!("{}", adesh_codegen::inspect::CompilerInspector::format_objdump(&dump));
+                    println!(
+                        "{}",
+                        adesh_codegen::inspect::CompilerInspector::format_objdump(&dump)
+                    );
                 }
                 Err(e) => {
                     eprintln!("Inspection error: {}", e);
@@ -1590,7 +1600,10 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
         "self-test" => {
             println!("Running AdeshLang Phase 9 Compiler Ecosystem Self-Test...");
             let target = adesh_codegen::TargetSpec::host();
-            println!("  [1/6] TargetSpec Host: {:?} ({:?}) ✓", target.architecture, target.abi);
+            println!(
+                "  [1/6] TargetSpec Host: {:?} ({:?}) ✓",
+                target.architecture, target.abi
+            );
 
             let qe = adesh_codegen::query::QueryEngine::new();
             let k = adesh_codegen::query::QueryKey {
@@ -1622,7 +1635,10 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                 ),
                 &empty_env,
             );
-            assert_eq!(res.unwrap(), adesh_codegen::const_eval::ConstValue::Integer(42));
+            assert_eq!(
+                res.unwrap(),
+                adesh_codegen::const_eval::ConstValue::Integer(42)
+            );
             println!("  [3/6] ConstEvaluator Deterministic Execution ✓");
 
             let mut mono = adesh_codegen::generics::MonomorphizationEngine::new();
@@ -1634,8 +1650,12 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                 is_inline: false,
             };
             mono.register_template(template);
-            let s1 = mono.specialize("identity", &[adesh_codegen::generics::ConcreteType::I64]).unwrap();
-            let s2 = mono.specialize("identity", &[adesh_codegen::generics::ConcreteType::I64]).unwrap();
+            let s1 = mono
+                .specialize("identity", &[adesh_codegen::generics::ConcreteType::I64])
+                .unwrap();
+            let s2 = mono
+                .specialize("identity", &[adesh_codegen::generics::ConcreteType::I64])
+                .unwrap();
             assert_eq!(s1.specialized_symbol, s2.specialized_symbol);
             println!("  [4/6] MonomorphizationEngine & Deduplication ✓");
 
@@ -1657,7 +1677,11 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             std::process::exit(0);
         }
         "pgo" => {
-            let subcmd = parsed.program_args.first().map(|s| s.as_str()).unwrap_or("");
+            let subcmd = parsed
+                .program_args
+                .first()
+                .map(|s| s.as_str())
+                .unwrap_or("");
             if subcmd == "merge" {
                 let mut inputs = Vec::new();
                 let mut output = PathBuf::from("merged.pgo.json");
@@ -1675,15 +1699,26 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                     i += 1;
                 }
                 if inputs.is_empty() {
-                    eprintln!("Usage: adesh pgo merge <profile1.json> <profile2.json> [-o merged.json]");
+                    eprintln!(
+                        "Usage: adesh pgo merge <profile1.json> <profile2.json> [-o merged.json]"
+                    );
                     std::process::exit(1);
                 }
-                println!("Merging {} PGO profiles into {}...", inputs.len(), output.display());
-                if let Err(e) = adesh_codegen::pgo_tools::ProfileMerger::merge_files(&inputs, &output) {
+                println!(
+                    "Merging {} PGO profiles into {}...",
+                    inputs.len(),
+                    output.display()
+                );
+                if let Err(e) =
+                    adesh_codegen::pgo_tools::ProfileMerger::merge_files(&inputs, &output)
+                {
                     eprintln!("Error merging PGO profiles: {}", e);
                     std::process::exit(1);
                 }
-                println!("✓ Successfully merged PGO profiles into {}", output.display());
+                println!(
+                    "✓ Successfully merged PGO profiles into {}",
+                    output.display()
+                );
                 std::process::exit(0);
             } else {
                 eprintln!("Usage: adesh pgo merge <files...> -o <merged.json>");
@@ -1706,41 +1741,53 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             };
             let analyzer = adesh_codegen::binary_tools::BinaryAnalyzer::new();
             match analyzer.analyze_adob(&bytes) {
-                Ok(report) => {
-                    match parsed.command.as_str() {
-                        "size" => {
-                            println!("Binary Size Analysis for {}:", input_path);
-                            println!("  Format:     {}", report.format);
-                            println!("  .text size: {} bytes", report.total_text_size);
-                            println!("  .data size: {} bytes", report.total_data_size);
-                        }
-                        "symbols" => {
-                            println!("Symbols in {}:", input_path);
-                            for sym in &report.symbols {
-                                println!("  0x{:016x} {:<8} {:<10} {}", sym.address, sym.binding, sym.section, sym.name);
-                            }
-                        }
-                        "sections" => {
-                            println!("Sections in {}:", input_path);
-                            for sec in &report.sections {
-                                println!("  {:<12} at 0x{:016x} (size: {} bytes, flags: {})", sec.name, sec.address, sec.size, sec.flags);
-                            }
-                        }
-                        "relocations" => {
-                            println!("Relocations in {}:", input_path);
-                            for rel in &report.relocations {
-                                println!("  Offset 0x{:08x}: {} ({})", rel.offset, rel.symbol, rel.rel_type);
-                            }
-                        }
-                        "map" => {
-                            println!("Link Map for {}:", input_path);
-                            for sec in &report.sections {
-                                println!("  Section {} [0x{:x} - 0x{:x}]", sec.name, sec.address, sec.address + sec.size);
-                            }
-                        }
-                        _ => {}
+                Ok(report) => match parsed.command.as_str() {
+                    "size" => {
+                        println!("Binary Size Analysis for {}:", input_path);
+                        println!("  Format:     {}", report.format);
+                        println!("  .text size: {} bytes", report.total_text_size);
+                        println!("  .data size: {} bytes", report.total_data_size);
                     }
-                }
+                    "symbols" => {
+                        println!("Symbols in {}:", input_path);
+                        for sym in &report.symbols {
+                            println!(
+                                "  0x{:016x} {:<8} {:<10} {}",
+                                sym.address, sym.binding, sym.section, sym.name
+                            );
+                        }
+                    }
+                    "sections" => {
+                        println!("Sections in {}:", input_path);
+                        for sec in &report.sections {
+                            println!(
+                                "  {:<12} at 0x{:016x} (size: {} bytes, flags: {})",
+                                sec.name, sec.address, sec.size, sec.flags
+                            );
+                        }
+                    }
+                    "relocations" => {
+                        println!("Relocations in {}:", input_path);
+                        for rel in &report.relocations {
+                            println!(
+                                "  Offset 0x{:08x}: {} ({})",
+                                rel.offset, rel.symbol, rel.rel_type
+                            );
+                        }
+                    }
+                    "map" => {
+                        println!("Link Map for {}:", input_path);
+                        for sec in &report.sections {
+                            println!(
+                                "  Section {} [0x{:x} - 0x{:x}]",
+                                sec.name,
+                                sec.address,
+                                sec.address + sec.size
+                            );
+                        }
+                    }
+                    _ => {}
+                },
                 Err(e) => {
                     eprintln!("Binary analysis error: {}", e);
                     std::process::exit(1);
@@ -1752,7 +1799,10 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             println!("Starting Adesh persistent compiler daemon (server mode)...");
             let mut server = adesh_codegen::compiler_server::CompilerServer::new();
             let _ = server.compile_module("prelude", "fn prelude_init() {}");
-            println!("✓ Adesh compiler daemon active. Cached modules: {}", server.cached_modules_count());
+            println!(
+                "✓ Adesh compiler daemon active. Cached modules: {}",
+                server.cached_modules_count()
+            );
             std::process::exit(0);
         }
         "fmt" => {

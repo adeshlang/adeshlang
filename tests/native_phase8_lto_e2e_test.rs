@@ -91,6 +91,7 @@ fn test_lto_module_summary_and_gdfe() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_lto_cross_module_execution_e2e() {
     // Module 1 defines compute_offset() -> returns 30
     let mut mod1 = NativeModule::new("math_mod");

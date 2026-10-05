@@ -97,6 +97,7 @@ fn test_cross_target_emission_and_validation() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_cross_compile_host_execution_e2e() {
     let mut module = NativeModule::new("test_cross_host");
     let mut main_func = MachineFunction::new("main");

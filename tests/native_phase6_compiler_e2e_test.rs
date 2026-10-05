@@ -132,6 +132,7 @@ fn test_natural_loop_detection() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_alias_analysis_and_dse_e2e() {
     // Stack slots: store [slot -8], 111 (dead); store [slot -8], 222 (live); store [slot -16], 333 (live); return 222 + 333 (555) % 256 = 43
     assert_eq!(
@@ -216,6 +217,7 @@ fn test_alias_analysis_and_dse_e2e() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_sccp_branch_folding_e2e() {
     // Tests: condition is statically constant 10 < 20 (always taken) -> jump to true_block (return 77)
     let mut func = MachineFunction::new("main");
@@ -265,6 +267,7 @@ fn test_sccp_branch_folding_e2e() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_gvn_global_cse_e2e() {
     // Tests: b1 computes x = a + b (30 + 12 = 42). b2 dominates b3 which recomputes a + b.
     // GVN reuses the earlier computed value.

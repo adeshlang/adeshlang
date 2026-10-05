@@ -5,7 +5,7 @@
 //! - Implementations: `SystemAllocator`, `ArenaAllocator`, `BumpAllocator`, `PoolAllocator`, `AlignedAllocator`.
 //! - Live allocation counters and memory leak tracking.
 
-use std::alloc::{alloc, dealloc, Layout};
+use std::alloc::{Layout, alloc, dealloc};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Allocation metrics tracking memory consumption.
@@ -61,7 +61,9 @@ unsafe impl Allocator for SystemAllocator {
         let ptr = alloc(layout);
         if !ptr.is_null() {
             self.stats.allocations.fetch_add(1, Ordering::Relaxed);
-            self.stats.bytes_allocated.fetch_add(layout.size(), Ordering::Relaxed);
+            self.stats
+                .bytes_allocated
+                .fetch_add(layout.size(), Ordering::Relaxed);
         }
         ptr
     }
@@ -69,7 +71,9 @@ unsafe impl Allocator for SystemAllocator {
     unsafe fn deallocate(&self, ptr: *mut u8, layout: Layout) {
         if !ptr.is_null() {
             self.stats.deallocations.fetch_add(1, Ordering::Relaxed);
-            self.stats.bytes_deallocated.fetch_add(layout.size(), Ordering::Relaxed);
+            self.stats
+                .bytes_deallocated
+                .fetch_add(layout.size(), Ordering::Relaxed);
             dealloc(ptr, layout);
         }
     }

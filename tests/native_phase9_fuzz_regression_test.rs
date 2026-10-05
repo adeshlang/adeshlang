@@ -7,7 +7,9 @@
 
 #![allow(dead_code, unused_imports)]
 
-use adesh_codegen::const_eval::{ConstEvalError, ConstEvalLimits, ConstEvaluator, ConstExpr, ConstValue};
+use adesh_codegen::const_eval::{
+    ConstEvalError, ConstEvalLimits, ConstEvaluator, ConstExpr, ConstValue,
+};
 use adesh_codegen::generics::{ConcreteType, GenericFunctionTemplate, MonomorphizationEngine};
 use adesh_codegen::opt::loop_opt::{LoopOptConfig, LoopOptimizer};
 use std::collections::HashMap;
@@ -22,7 +24,10 @@ fn test_fuzz_const_eval_division_by_zero() {
         Box::new(ConstExpr::Literal(ConstValue::Integer(0))),
     );
 
-    let err = eval.eval(&div_zero, &env).err().expect("must fail on div zero");
+    let err = eval
+        .eval(&div_zero, &env)
+        .err()
+        .expect("must fail on div zero");
     assert_eq!(err, ConstEvalError::DivisionByZero);
 }
 
@@ -46,7 +51,10 @@ fn test_fuzz_const_eval_step_limit_exceeded() {
         );
     }
 
-    let err = eval.eval(&tree, &env).err().expect("must fail on step limit");
+    let err = eval
+        .eval(&tree, &env)
+        .err()
+        .expect("must fail on step limit");
     assert!(matches!(err, ConstEvalError::StepLimitExceeded(_)));
 }
 
@@ -63,9 +71,13 @@ fn test_fuzz_monomorphization_deduplication_stress() {
     mono.register_template(template);
 
     // Repeated specializations of identical types must return identical canonical symbols
-    let first = mono.specialize("buffer_alloc", &[ConcreteType::U8]).unwrap();
+    let first = mono
+        .specialize("buffer_alloc", &[ConcreteType::U8])
+        .unwrap();
     for _ in 0..100 {
-        let subsequent = mono.specialize("buffer_alloc", &[ConcreteType::U8]).unwrap();
+        let subsequent = mono
+            .specialize("buffer_alloc", &[ConcreteType::U8])
+            .unwrap();
         assert_eq!(first.specialized_symbol, subsequent.specialized_symbol);
     }
 }

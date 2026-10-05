@@ -99,6 +99,7 @@ fn test_exported_and_imported_symbol_attributes() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_native_dynamic_linking_execution_e2e() {
     let mut module = NativeModule::new("test_dyn_exec");
     let mut main_func = MachineFunction::new("main");

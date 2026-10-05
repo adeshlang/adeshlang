@@ -8,8 +8,8 @@
 #![allow(dead_code, unused_imports)]
 
 use adesh_runtime::async_rt::{AsyncExecutor, EventMuxKind};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[test]
 fn test_async_executor_multi_task_execution() {

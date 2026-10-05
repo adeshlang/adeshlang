@@ -114,7 +114,9 @@ impl IpoEngine {
                 if !site.known_constant_args.is_empty()
                     && report.functions_specialized < self.config.max_specialized_variants
                 {
-                    if let Some(target_func) = module.functions.iter().find(|f| f.name == site.callee) {
+                    if let Some(target_func) =
+                        module.functions.iter().find(|f| f.name == site.callee)
+                    {
                         let mut specialized = target_func.clone();
                         let spec_name = format!(
                             "{}_spec_arg{}",

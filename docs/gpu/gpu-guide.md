@@ -507,9 +507,9 @@ The interpreter fallback ran but produced no output. This is normal for programs
 
 # VIR Backend Quick Start Guide
 
-**Status:** ✅ Production Ready  
-**Feature Parity:** 100% with LIR  
-**Performance:** 3-10x faster
+**Status:** 🧪 Experimental — opt-in via `ADESH_USE_VIR=1`; not the default backend  
+**Feature Parity:** aims for parity with the LIR backend; some constructs may fall back  
+**Performance:** 3-10x faster on JIT-path benchmarks
 
 ---
 
@@ -772,19 +772,18 @@ print("Styled", { bold: true });  // ~0.4ms
 
 ## Support
 
-VIR backend is **production ready** with:
-- ✅ Full feature parity with LIR
-- ✅ 3-10x performance improvement
-- ✅ Comprehensive test coverage
-- ✅ Zero breaking changes
+VIR backend status:
+- 🧪 Experimental; opt-in via `ADESH_USE_VIR=1` (the LIR backend remains the default JIT path)
+- Aims for feature parity with LIR; some constructs may fall back
+- 3-10x faster on JIT-path benchmarks
 
-**Recommendation:** Enable VIR as default immediately.
+**Recommendation:** evaluate VIR per-project; keep LIR as the default until
+VIR reaches validated parity.
 
 ---
 
-*Updated: February 2026*  
-*All features verified working*  
-*Production ready* ✅
+*Status revised: 2026-10-05 (Phase 0 truth reset; earlier "production ready"
+notes were overstated)*
 
 
 ---

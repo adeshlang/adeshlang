@@ -61,34 +61,74 @@ impl AssemblyEmitter {
     fn format_instruction(&self, inst: &MachineInstruction) -> String {
         match inst {
             MachineInstruction::Move { dst, src } => {
-                format!("mov {}, {}", self.format_operand(dst), self.format_operand(src))
+                format!(
+                    "mov {}, {}",
+                    self.format_operand(dst),
+                    self.format_operand(src)
+                )
             }
             MachineInstruction::Add { dst, src } => {
-                format!("add {}, {}", self.format_operand(dst), self.format_operand(src))
+                format!(
+                    "add {}, {}",
+                    self.format_operand(dst),
+                    self.format_operand(src)
+                )
             }
             MachineInstruction::Sub { dst, src } => {
-                format!("sub {}, {}", self.format_operand(dst), self.format_operand(src))
+                format!(
+                    "sub {}, {}",
+                    self.format_operand(dst),
+                    self.format_operand(src)
+                )
             }
             MachineInstruction::Mul { dst, src } => {
-                format!("imul {}, {}", self.format_operand(dst), self.format_operand(src))
+                format!(
+                    "imul {}, {}",
+                    self.format_operand(dst),
+                    self.format_operand(src)
+                )
             }
             MachineInstruction::And { dst, src } => {
-                format!("and {}, {}", self.format_operand(dst), self.format_operand(src))
+                format!(
+                    "and {}, {}",
+                    self.format_operand(dst),
+                    self.format_operand(src)
+                )
             }
             MachineInstruction::Or { dst, src } => {
-                format!("or {}, {}", self.format_operand(dst), self.format_operand(src))
+                format!(
+                    "or {}, {}",
+                    self.format_operand(dst),
+                    self.format_operand(src)
+                )
             }
             MachineInstruction::Xor { dst, src } => {
-                format!("xor {}, {}", self.format_operand(dst), self.format_operand(src))
+                format!(
+                    "xor {}, {}",
+                    self.format_operand(dst),
+                    self.format_operand(src)
+                )
             }
             MachineInstruction::Shl { dst, src } => {
-                format!("shl {}, {}", self.format_operand(dst), self.format_operand(src))
+                format!(
+                    "shl {}, {}",
+                    self.format_operand(dst),
+                    self.format_operand(src)
+                )
             }
             MachineInstruction::Shr { dst, src } => {
-                format!("shr {}, {}", self.format_operand(dst), self.format_operand(src))
+                format!(
+                    "shr {}, {}",
+                    self.format_operand(dst),
+                    self.format_operand(src)
+                )
             }
             MachineInstruction::Compare { lhs, rhs } => {
-                format!("cmp {}, {}", self.format_operand(lhs), self.format_operand(rhs))
+                format!(
+                    "cmp {}, {}",
+                    self.format_operand(lhs),
+                    self.format_operand(rhs)
+                )
             }
             MachineInstruction::Branch { target } => {
                 format!("jmp {}", target)
@@ -110,10 +150,20 @@ impl AssemblyEmitter {
             }
             MachineInstruction::Return => "ret".to_string(),
             MachineInstruction::Load { dst, src, size } => {
-                format!("mov {}, {} ({}b)", self.format_operand(dst), self.format_operand(src), size)
+                format!(
+                    "mov {}, {} ({}b)",
+                    self.format_operand(dst),
+                    self.format_operand(src),
+                    size
+                )
             }
             MachineInstruction::Store { dst, src, size } => {
-                format!("mov {}, {} ({}b)", self.format_operand(dst), self.format_operand(src), size)
+                format!(
+                    "mov {}, {} ({}b)",
+                    self.format_operand(dst),
+                    self.format_operand(src),
+                    size
+                )
             }
             _ => format!("; custom {:?}", inst),
         }
@@ -123,7 +173,9 @@ impl AssemblyEmitter {
         match op {
             MachineOperand::Immediate(imm) => format!("0x{:x}", imm),
             MachineOperand::Register(r) => self.format_reg(r),
-            MachineOperand::Memory { base, offset, .. } => format!("[{} + {}]", self.format_reg(base), offset),
+            MachineOperand::Memory { base, offset, .. } => {
+                format!("[{} + {}]", self.format_reg(base), offset)
+            }
             MachineOperand::Symbol(sym) => sym.clone(),
             _ => format!("{:?}", op),
         }

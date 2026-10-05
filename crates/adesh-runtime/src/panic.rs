@@ -6,8 +6,8 @@
 //! - RAII cleanup and drop handler execution during unwinding
 //! - FFI boundary defense: prevents panics from escaping across C/foreign ABI boundaries
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 static PANIC_IS_ABORT: AtomicBool = AtomicBool::new(false);
 static CLEANUP_STACK: Mutex<Vec<Box<dyn Fn() + Send + 'static>>> = Mutex::new(Vec::new());

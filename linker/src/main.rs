@@ -64,7 +64,8 @@ CORE LINKING OPTIONS:
 OPTIMIZATIONS & STRIPPING:
     -O0|-O1|-O2|-O3     Select link-time optimization policy (default: -O2)
     -Os|-Oz             Optimize for size; -Oz also strips symbols
-    --lto[=thin|full]   Request IR LTO (errors until an IR optimizer is integrated)
+    --lto[=thin|full]   Link-time optimization: currently enables aggressive section GC,
+                        ICF folding, and symbol stripping (no cross-module IR optimization yet)
     --no-lto            Disable link-time optimization policy
     --gc-sections         Remove unreferenced dead sections [default: enabled]
     --no-gc-sections      Disable dead section garbage collection

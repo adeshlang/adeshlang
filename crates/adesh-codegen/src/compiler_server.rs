@@ -63,7 +63,8 @@ impl CompilerServer {
 
         self.ast_cache.insert(module_name.to_string(), parsed_ast);
         self.hir_cache.insert(module_name.to_string(), lowered_hir);
-        self.type_cache.insert(module_name.to_string(), checked_types);
+        self.type_cache
+            .insert(module_name.to_string(), checked_types);
 
         Ok(format!("compiled_{}", module_name))
     }

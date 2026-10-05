@@ -109,12 +109,16 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: cargo test --tests
 
-      # The native x86-64 e2e suites (Machine IR -> codegen -> ADOB -> PE link
-      # -> execute) are `cfg(windows)`-gated, so the ubuntu-only
-      # `cargo test --tests` step above never executes them. Run each suite
-      # individually on Windows to keep the native pipeline covered. The
-      # semantics suite also executes linked binaries that import `aot_*`
-      # symbols, so the runtime staticlib must be built first.
+      # The native x86-64 e2e tests that link AND execute a produced binary are
+      # gated with `#[cfg(all(target_os = "windows", target_arch = "x86_64"))]`
+      # at the test level, so the ubuntu-only `cargo test --tests` step above
+      # compiles them out instead of attempting to run Windows PEs on Linux.
+      # Portable structure/runtime suites (phase 7 target emission, phase 9/10,
+      # and the non-execution tests inside phase 4-8 files) still run on
+      # ubuntu. Every e2e suite is also run individually on Windows to keep the
+      # native pipeline covered. The semantics suite executes linked binaries
+      # that import `aot_*` symbols, so the runtime staticlib must be built
+      # first.
       - name: Test native x86-64 e2e suites (Windows)
         if: matrix.os == 'windows-latest'
         run: |
@@ -135,6 +139,21 @@ jobs:
           cargo test --test native_phase7_riscv64_e2e_test
           cargo test --test native_phase7_atomic_e2e_test
           cargo test --test native_phase7_cross_target_test
+          cargo test --test native_phase8_abi_e2e_test
+          cargo test --test native_phase8_atomic_e2e_test
+          cargo test --test native_phase8_binary_size_test
+          cargo test --test native_phase8_cross_compile_test
+          cargo test --test native_phase8_debug_e2e_test
+          cargo test --test native_phase8_determinism_test
+          cargo test --test native_phase8_dynamic_link_test
+          cargo test --test native_phase8_ffi_e2e_test
+          cargo test --test native_phase8_fuzz_smoke_test
+          cargo test --test native_phase8_lto_e2e_test
+          cargo test --test native_phase8_pgo_e2e_test
+          cargo test --test native_phase8_pic_e2e_test
+          cargo test --test native_phase8_runtime_e2e_test
+          cargo test --test native_phase8_simd_e2e_test
+          cargo test --test native_phase8_unwind_e2e_test
           cargo test --test native_semantics_e2e_test
 
       - name: Display sccache stats

@@ -36,7 +36,12 @@ fn test_lto_whole_program_optimization_modes() {
         let mut config = LinkConfig::new(output.clone(), target.clone());
         config.lto = mode;
         let res = Linker::link(&[obj_path.clone()], config);
-        assert!(res.is_ok(), "LTO linking failed for {:?}: {:?}", mode, res.err());
+        assert!(
+            res.is_ok(),
+            "LTO linking failed for {:?}: {:?}",
+            mode,
+            res.err()
+        );
         assert!(output.exists());
     }
 }

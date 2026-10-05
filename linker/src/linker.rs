@@ -224,7 +224,10 @@ impl Linker {
             let mut synth_symbols = Vec::new();
             let mut synth_relocs = Vec::new();
 
-            if is_pe && !ctx.config.shared && missing_symbols.contains(&"mainCRTStartup".to_string()) {
+            if is_pe
+                && !ctx.config.shared
+                && missing_symbols.contains(&"mainCRTStartup".to_string())
+            {
                 let (bytes, relocs, syms) = crate::pe::x86_64::synthesize_windows_x86_64_entry(
                     &program_entry_symbol,
                     file_idx,
@@ -555,11 +558,7 @@ impl Linker {
 
         match ctx.config.target.format {
             ObjectFormat::Elf => {
-                let soname_str = ctx
-                    .config
-                    .output_path
-                    .file_name()
-                    .and_then(|n| n.to_str());
+                let soname_str = ctx.config.output_path.file_name().and_then(|n| n.to_str());
                 ElfWriter::write_elf(
                     &ctx.config.output_path,
                     &ctx.config.target,
@@ -593,11 +592,7 @@ impl Linker {
                 )?;
             }
             ObjectFormat::MachO => {
-                let install_name_str = ctx
-                    .config
-                    .output_path
-                    .file_name()
-                    .and_then(|n| n.to_str());
+                let install_name_str = ctx.config.output_path.file_name().and_then(|n| n.to_str());
                 MachOWriter::write_macho(
                     &ctx.config.output_path,
                     &ctx.config.target,

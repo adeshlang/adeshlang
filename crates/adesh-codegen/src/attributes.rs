@@ -41,10 +41,7 @@ pub enum AttributeTarget {
 pub struct AttributeValidator;
 
 impl AttributeValidator {
-    pub fn validate(
-        attr: &AttributeKind,
-        target: AttributeTarget,
-    ) -> Result<(), String> {
+    pub fn validate(attr: &AttributeKind, target: AttributeTarget) -> Result<(), String> {
         match attr {
             AttributeKind::Inline(_) | AttributeKind::Cold => {
                 if target != AttributeTarget::Function {

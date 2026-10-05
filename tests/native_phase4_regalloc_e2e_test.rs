@@ -170,7 +170,7 @@ fn test_mixed_gpr_and_xmm_spill_pressure_and_verifier() {
 }
 
 #[test]
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_gpr_heavy_register_pressure_e2e() {
     // 25 GPR variables initialized, all live simultaneously, then summed
     // Expected sum: 1 + 2 + 3 + ... + 25 = 25 * 26 / 2 = 325
@@ -226,7 +226,7 @@ fn test_gpr_heavy_register_pressure_e2e() {
 }
 
 #[test]
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_xmm_heavy_register_pressure_e2e() {
     // 20 XMM variables initialized with floating point numbers, all live simultaneously
     // v1 = 1.0, v2 = 2.0, ..., v20 = 20.0
@@ -284,7 +284,7 @@ fn test_xmm_heavy_register_pressure_e2e() {
 }
 
 #[test]
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_values_live_across_function_call_e2e() {
     // Function that computes a simple multiplier
     let mult_func = HirFunction {
@@ -378,7 +378,7 @@ fn test_values_live_across_function_call_e2e() {
 }
 
 #[test]
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_loop_carried_spill_reload_e2e() {
     // A loop that updates 15 variables on each iteration
     // Tests that spilled loop-carried values are properly loaded, updated, and stored across back-edges
@@ -479,7 +479,7 @@ fn test_loop_carried_spill_reload_e2e() {
 }
 
 #[test]
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_mixed_gpr_and_fp_arithmetic_under_spill_pressure_e2e() {
     // Mix integer and float computations simultaneously under high pressure
     let mut stmts = Vec::new();

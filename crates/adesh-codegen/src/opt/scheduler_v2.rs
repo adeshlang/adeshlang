@@ -26,7 +26,7 @@ pub struct SchedulerV2Config {
 impl Default for SchedulerV2Config {
     fn default() -> Self {
         Self {
-            issue_width: 2, // 2-way superscalar default
+            issue_width: 2,  // 2-way superscalar default
             load_latency: 3, // 3-cycle load-use latency
             mul_latency: 3,
             max_register_pressure: 14,

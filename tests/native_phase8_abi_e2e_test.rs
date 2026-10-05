@@ -163,6 +163,7 @@ fn test_stack_frame_layout_calculation() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_native_execution_multi_arg_call_e2e() {
     let mut module = NativeModule::new("test_abi_multi_arg");
 

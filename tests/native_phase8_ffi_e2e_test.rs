@@ -90,6 +90,7 @@ fn test_ffi_declaration_and_lowering() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_native_ffi_execution_e2e() {
     // Construct an Adesh module that calls an exported native helper through an FFI boundary
     let mut module = NativeModule::new("test_ffi_execution");

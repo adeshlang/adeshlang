@@ -73,6 +73,7 @@ fn test_module_summary_json_roundtrip() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_lto_cross_module_inline_and_dead_func_elim_e2e() {
     // Module A: helper function `compute_val` -> returns 42
     // Module B: main function -> calls `compute_val`, plus a dead function `unused_dead_fn`

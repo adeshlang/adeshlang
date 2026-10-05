@@ -137,4 +137,3 @@ pub struct DyldInfoCommand {
     pub export_off: u32,
     pub export_size: u32,
 }
-

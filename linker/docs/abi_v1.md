@@ -71,32 +71,38 @@ Function: foo()
 
 ## 4. Target Maturity Classification
 
-Adesh classifies all supported platforms into three distinct production readiness tiers:
+Adesh classifies all supported platforms by **what is actually verified in
+CI** (revised 2026-10-05; matches `TARGET_MATRIX.md` and
+`CURRENT_STATE.md`, which are canonical):
 
-### Tier 1 — Supported & Production Verified
-*Continuous End-to-End Test Suite, Binary Execution Validation, Full Toolchain.*
-- `x86_64-linux` (ELF64, GNU/Musl)
-- `x86_64-windows` (PE32+, Windows x64 SEH Unwind)
-- `aarch64-linux` (Linux ARM64, System V)
-- `aarch64-macos` (Apple Silicon Mach-O 64)
-- `x86_64-macos` (Intel macOS Mach-O 64)
-- `wasm32-wasi` (WebAssembly Core 2.0 / WASI Preview 1)
-- `i686-windows` (Windows PE32 x86)
-- `i686-linux` (Linux ELF32 x86)
+### Tier 1 — Execution-Verified
+*Produced binaries are executed by tests in CI with asserted exit codes and output.*
+- `x86_64-windows` (PE32+; currently the only execution-verified target)
 
-### Tier 2 — Experimental
-*Codegen and Object Linking Validated; Ongoing Platform Hardware Run Validation.*
-- `riscv64-linux` (RISC-V 64-bit LP64D ELF)
-- `riscv32-none` (RISC-V Embedded Bare-Metal)
-- `ppc64le-linux` (PowerPC 64-bit Little-Endian ELFv2)
-- `armv7-linux-gnueabihf` (32-bit ARM Hard-Float)
-- `nvptx64-cuda` (NVIDIA CUDA Fatbin)
-- `amdgcn-rocm` (AMD ROCm HSACO)
-- `qpu-quantum` (QIR / OpenQASM 3.0 Classical-Quantum Packages)
+### Tier 2 — Emission-Validated
+*Artifacts are emitted and structurally validated (headers, sections, relocations, reader round-trips); binaries are never executed.*
+- `x86_64-linux` (ELF64 static; `ET_DYN` object emission exists but has no
+  GOT/PLT; not run-tested)
+- `wasm32-wasi` (compiler backend path only; the linker's WASM writer is a stub)
+- `riscv64-linux`, `riscv32-none` (proof-of-concept codegen: Nop/Return/Add/Sub)
+- `armv7-*` / `thumbv7em` bare-metal (minimal Thumb-2 ALU)
 
-### Tier 3 — Declared
-*Binary Format Header, Section Layout, and Relocation Table Specifications Defined.*
-- `s390x-linux`, `mips64-linux`, `loong64-linux`, `sparc64-solaris`, `ppc64-aix` (XCOFF), `spirv-vulkan`, `hexagon-qdsp6`, `ane-apple`, `ethos-arm`, `tpu-google`.
+### Tier 3 — Proof-of-Concept / Declared
+*Headers, section layouts, and relocation kinds exist; no real codegen or no implementation at all.*
+- `aarch64-linux`, `aarch64-windows` (4-instruction proof-of-concept backend)
+- `aarch64-macos`, `x86_64-macos` (Mach-O artifact emission only; missing
+  dyld info/chained fixups/exports trie, so external symbols cannot bind;
+  not loadable by dyld with dependencies)
+- `nvptx64-cuda`, `amdgcn-rocm`, `qpu-quantum` (container packaging only;
+  no device ISA is generated; no driver API calls exist)
+- Declared, no implementation: `i686-windows`, `i686-linux`,
+  `ppc64le-linux`, `s390x-linux`, `mips64-linux`, `loong64-linux`,
+  `sparc64-solaris`, `ppc64-aix` (XCOFF), `spirv-vulkan`, `hexagon-qdsp6`,
+  `ane-apple`, `ethos-arm`, `tpu-google`
+
+> Earlier versions of this document listed eight targets as "Tier 1 —
+> Supported & Production Verified". That was incorrect: as of 2026-10-05
+> only Windows x86-64 binaries are executed and verified by tests.
 
 ---
 

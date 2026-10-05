@@ -47,7 +47,11 @@ impl std::fmt::Display for ConstEvalError {
                 write!(f, "Const eval exceeded maximum step limit ({})", lim)
             }
             ConstEvalError::MemoryLimitExceeded(lim) => {
-                write!(f, "Const eval exceeded maximum memory limit ({} bytes)", lim)
+                write!(
+                    f,
+                    "Const eval exceeded maximum memory limit ({} bytes)",
+                    lim
+                )
             }
             ConstEvalError::RecursionLimitExceeded(lim) => {
                 write!(f, "Const eval exceeded maximum recursion depth ({})", lim)
@@ -58,7 +62,9 @@ impl std::fmt::Display for ConstEvalError {
             ConstEvalError::DivisionByZero => write!(f, "Division by zero in const expression"),
             ConstEvalError::TypeMismatch(msg) => write!(f, "Type mismatch in const eval: {}", msg),
             ConstEvalError::UndefinedVariable(v) => write!(f, "Undefined const variable '{}'", v),
-            ConstEvalError::UndefinedFunction(func) => write!(f, "Undefined const function '{}'", func),
+            ConstEvalError::UndefinedFunction(func) => {
+                write!(f, "Undefined const function '{}'", func)
+            }
             ConstEvalError::AssertionFailed(msg) => write!(f, "Const assertion failed: {}", msg),
         }
     }
@@ -98,7 +104,10 @@ impl ConstValue {
 
     pub fn approximate_size(&self) -> usize {
         match self {
-            ConstValue::Integer(_) | ConstValue::Float(_) | ConstValue::Bool(_) | ConstValue::Unit => 8,
+            ConstValue::Integer(_)
+            | ConstValue::Float(_)
+            | ConstValue::Bool(_)
+            | ConstValue::Unit => 8,
             ConstValue::String(s) => 24 + s.len(),
             ConstValue::Array(arr) => 24 + arr.iter().map(|v| v.approximate_size()).sum::<usize>(),
             ConstValue::Struct { fields, .. } => {
@@ -226,7 +235,9 @@ impl ConstEvaluator {
                         let res = format!("{}{}", a, b);
                         Ok(ConstValue::String(res))
                     }
-                    _ => Err(ConstEvalError::TypeMismatch("Unsupported operands for +".to_string())),
+                    _ => Err(ConstEvalError::TypeMismatch(
+                        "Unsupported operands for +".to_string(),
+                    )),
                 }
             }
             ConstExpr::Sub(lhs, rhs) => {
@@ -237,7 +248,9 @@ impl ConstEvaluator {
                         Ok(ConstValue::Integer(a.wrapping_sub(b)))
                     }
                     (ConstValue::Float(a), ConstValue::Float(b)) => Ok(ConstValue::Float(a - b)),
-                    _ => Err(ConstEvalError::TypeMismatch("Unsupported operands for -".to_string())),
+                    _ => Err(ConstEvalError::TypeMismatch(
+                        "Unsupported operands for -".to_string(),
+                    )),
                 }
             }
             ConstExpr::Mul(lhs, rhs) => {
@@ -248,7 +261,9 @@ impl ConstEvaluator {
                         Ok(ConstValue::Integer(a.wrapping_mul(b)))
                     }
                     (ConstValue::Float(a), ConstValue::Float(b)) => Ok(ConstValue::Float(a * b)),
-                    _ => Err(ConstEvalError::TypeMismatch("Unsupported operands for *".to_string())),
+                    _ => Err(ConstEvalError::TypeMismatch(
+                        "Unsupported operands for *".to_string(),
+                    )),
                 }
             }
             ConstExpr::Div(lhs, rhs) => {
@@ -269,7 +284,9 @@ impl ConstEvaluator {
                             Ok(ConstValue::Float(a / b))
                         }
                     }
-                    _ => Err(ConstEvalError::TypeMismatch("Unsupported operands for /".to_string())),
+                    _ => Err(ConstEvalError::TypeMismatch(
+                        "Unsupported operands for /".to_string(),
+                    )),
                 }
             }
             ConstExpr::Mod(lhs, rhs) => {
@@ -283,7 +300,9 @@ impl ConstEvaluator {
                             Ok(ConstValue::Integer(a % b))
                         }
                     }
-                    _ => Err(ConstEvalError::TypeMismatch("Unsupported operands for %".to_string())),
+                    _ => Err(ConstEvalError::TypeMismatch(
+                        "Unsupported operands for %".to_string(),
+                    )),
                 }
             }
             ConstExpr::BitAnd(lhs, rhs) => {

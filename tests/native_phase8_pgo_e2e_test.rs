@@ -127,6 +127,7 @@ fn test_pgo_instrumentation_and_optimization_passes() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_native_pgo_execution_e2e() {
     let mut module = NativeModule::new("test_pgo");
     let mut main_func = MachineFunction::new("main");

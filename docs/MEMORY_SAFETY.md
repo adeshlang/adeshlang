@@ -3,6 +3,14 @@
 > Consolidated from 18 markdown files on 2026-08-29.
 > This file merges related root-level .md documents by category.
 
+> **Status note (2026-10-05):** the checks described here are the language's
+> compile-time memory-safety *architecture* (frontend ownership/borrow/lifetime
+> analysis plus ARC). Backend coverage is uneven and the native pipeline
+> lowers a subset of the language; the absolute guarantees quoted in the
+> historical documents below ("100% memory safety across all backends",
+> "if it compiles, it's memory-safe") are design goals, not verified claims.
+> See `CURRENT_STATE.md` for the honest status.
+
 ---
 
 
@@ -409,7 +417,7 @@ cargo test test_free_while_borrowed
 
 ---
 
-**Remember:** All memory safety is guaranteed at compile-time. If your code compiles, it's memory-safe across all backends!
+**Remember:** memory safety is *checked* at compile time for the constructs the frontend analyzer covers. "If it compiles, it's memory-safe" is the design goal, not yet a verified guarantee for every backend and every construct (see the status note at the top of this file and `CURRENT_STATE.md`).
 
 
 ---
@@ -420,7 +428,7 @@ cargo test test_free_while_borrowed
 
 **Status:** IMPLEMENTED ✅  
 **Date:** January 6, 2026  
-**Guarantee:** 100% compile-time memory safety across all backends
+**Guarantee (design goal, not yet a verified claim):** compile-time memory safety across backends; verified coverage varies by backend and construct
 
 ---
 
@@ -719,7 +727,7 @@ If code compiles through the unified safety pass:
 5. **No memory leaks** - RAII ensures cleanup
 6. **No undefined behavior** - All operations are defined
 
-**These guarantees hold across ALL backends, ALL platforms, ALL optimizations.**
+**These guarantees are the design intent across backends; verified coverage today varies by backend and construct (see `CURRENT_STATE.md`).**
 
 ---
 

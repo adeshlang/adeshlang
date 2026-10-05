@@ -32,10 +32,17 @@ fn test_pgo_multi_profile_merging() {
     prof2.functions.insert("compute_sum".to_string(), f2);
 
     let merged = ProfileMerger::merge(&[prof1, prof2]).expect("merge profiles");
-    let sum_prof = merged.functions.get("compute_sum").expect("function profile");
+    let sum_prof = merged
+        .functions
+        .get("compute_sum")
+        .expect("function profile");
     assert_eq!(sum_prof.entry_count, 350);
     assert_eq!(
-        sum_prof.block_profiles.get("entry").unwrap().execution_count,
+        sum_prof
+            .block_profiles
+            .get("entry")
+            .unwrap()
+            .execution_count,
         350
     );
 }

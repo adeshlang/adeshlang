@@ -114,6 +114,7 @@ fn test_adob_reader_and_validator_bounds_fuzz() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_boundary_values_execution_e2e() {
     let mut module = NativeModule::new("test_fuzz_boundary");
     let mut main_func = MachineFunction::new("main");

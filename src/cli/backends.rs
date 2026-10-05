@@ -842,9 +842,7 @@ pub fn run_with_aot(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Result<()
     ensure_type_check(&body, Some(&path.to_string_lossy()))?;
 
     let mut progress = if !parsed.config.quiet {
-        Some(BuildProgress::new(
-            "Compiling with native AOT backend...",
-        ))
+        Some(BuildProgress::new("Compiling with native AOT backend..."))
     } else {
         None
     };

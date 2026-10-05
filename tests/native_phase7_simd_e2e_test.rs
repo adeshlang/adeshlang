@@ -127,6 +127,7 @@ fn test_auto_vectorize_pass_transformation() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_simd_vector_arithmetic_and_reduction_e2e() {
     let mut module = NativeModule::new("test_simd");
     let mut main_func = MachineFunction::new("main");

@@ -152,7 +152,10 @@ impl CompilerInspector {
                 sym.value, sym.name, sym.section, sym.size, sym.is_exported
             ));
         }
-        s.push_str(&format!("\nTotal Relocations: {}\n", report.relocations_count));
+        s.push_str(&format!(
+            "\nTotal Relocations: {}\n",
+            report.relocations_count
+        ));
         s
     }
 }

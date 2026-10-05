@@ -103,6 +103,7 @@ fn test_scope_aware_unwind_action_table_encoding() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_native_execution_with_unwind_frame() {
     let mut module = NativeModule::new("test_unwind");
     let mut main_func = MachineFunction::new("main");

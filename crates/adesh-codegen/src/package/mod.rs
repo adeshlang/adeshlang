@@ -305,9 +305,10 @@ impl DependencyResolver {
             visited.insert(dep_name.clone());
 
             // Check known packages
-            let versions = self.known_packages.get(&dep_name).ok_or_else(|| {
-                format!("Package '{}' not found in registry", dep_name)
-            })?;
+            let versions = self
+                .known_packages
+                .get(&dep_name)
+                .ok_or_else(|| format!("Package '{}' not found in registry", dep_name))?;
 
             // Find matching version supporting exact, wildcard, ^, ~, and >= constraints
             let (matched_ver, transitive_deps) = versions
@@ -334,7 +335,10 @@ impl DependencyResolver {
                     false
                 })
                 .ok_or_else(|| {
-                    format!("No matching version found for '{}' with req '{}'", dep_name, dep_req)
+                    format!(
+                        "No matching version found for '{}' with req '{}'",
+                        dep_name, dep_req
+                    )
                 })?;
 
             let mut dep_names = Vec::new();
@@ -383,8 +387,8 @@ impl ModuleFingerprint {
         flags: &str,
         dependency_hashes: BTreeMap<String, u64>,
     ) -> Self {
-        use std::hash::{Hash, Hasher};
         use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
 
         let mut h1 = DefaultHasher::new();
         source.hash(&mut h1);

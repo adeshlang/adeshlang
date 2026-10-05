@@ -9,8 +9,8 @@
 #![allow(dead_code, unused_imports)]
 
 use adesh_codegen::package::{
-    DependencyResolver, LockFile, LockedPackage, PackageDependency, PackageManifest,
-    PackageMetadata, ADESH_MANIFEST_FILE, ADESH_LOCK_FILE,
+    ADESH_LOCK_FILE, ADESH_MANIFEST_FILE, DependencyResolver, LockFile, LockedPackage,
+    PackageDependency, PackageManifest, PackageMetadata,
 };
 use std::collections::BTreeMap;
 use tempfile::tempdir;
@@ -47,7 +47,10 @@ winapi = "0.3.9"
     assert_eq!(manifest.dependencies.len(), 2);
     assert!(manifest.dependencies.contains_key("http"));
     assert!(manifest.dependencies.contains_key("json"));
-    assert_eq!(manifest.features.get("default"), Some(&vec!["json".to_string()]));
+    assert_eq!(
+        manifest.features.get("default"),
+        Some(&vec!["json".to_string()])
+    );
     assert!(manifest.target.contains_key("x86_64-pc-windows-msvc"));
 
     // Serialize and re-read to ensure symmetry
@@ -103,7 +106,9 @@ fn test_package_dependency_resolution_and_lockfile() {
     let mut resolver = DependencyResolver::new();
     resolver.register_package("net_lib", "1.2.0", vec![]);
     resolver.register_package("crypto_core", "0.9.1", vec![]);
-    let lockfile = resolver.resolve(&manifest, &[]).expect("resolve dependencies");
+    let lockfile = resolver
+        .resolve(&manifest, &[])
+        .expect("resolve dependencies");
     assert_eq!(lockfile.packages.len(), 2);
     assert!(lockfile.packages.iter().any(|p| p.name == "net_lib"));
     assert!(lockfile.packages.iter().any(|p| p.name == "crypto_core"));

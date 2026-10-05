@@ -69,6 +69,7 @@ fn lower_link_and_run_opt(hir: &HirModule, opt_level: OptLevel, test_name: &str)
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_constant_folding_and_propagation_e2e() {
     // Computes: a = 20; b = 22; c = a + b; return c (should fold to 42)
     let mut func = MachineFunction::new("main");
@@ -108,6 +109,7 @@ fn test_constant_folding_and_propagation_e2e() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_dead_code_elimination_e2e() {
     // Computes: dead_1 = 100; dead_2 = 200; res = 37; return res
     let mut func = MachineFunction::new("main");
@@ -147,6 +149,7 @@ fn test_dead_code_elimination_e2e() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_strength_reduction_and_identities_e2e() {
     // Tests: val = 5; val = val * 8 (shl 3 -> 40); val = val + 0; val = val * 1; val = val + 2; return val (42)
     let mut func = MachineFunction::new("main");
@@ -188,6 +191,7 @@ fn test_strength_reduction_and_identities_e2e() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_branch_optimization_and_jump_threading_e2e() {
     // Creates a jump chain: entry -> b1 -> b2 -> b3 (exit)
     // Branch optimization should thread entry directly to b3 or collapse the chain.
@@ -234,6 +238,7 @@ fn test_branch_optimization_and_jump_threading_e2e() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_copy_propagation_and_coalescing_e2e() {
     // Long copy chain: v0 = 88; v1 = v0; v2 = v1; v3 = v2; v4 = v3; return v4
     let mut func = MachineFunction::new("main");
@@ -279,6 +284,7 @@ fn test_copy_propagation_and_coalescing_e2e() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_local_cse_e2e() {
     // a = 15; b = 7; x = a + b (22); y = a + b (reused 22); res = x + y (44)
     let mut func = MachineFunction::new("main");
@@ -388,6 +394,7 @@ fn test_rodata_string_deduplication() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_differential_opt_levels_equivalence_e2e() {
     // HIR loop summing 1 to 10: sum = 0; i = 1; while (i < 11) { sum = sum + i; i = i + 1 }; return sum (55)
     let mut stmts = Vec::new();

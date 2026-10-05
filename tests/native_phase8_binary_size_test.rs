@@ -98,6 +98,7 @@ fn compile_link_and_measure(
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_c_level_minimal_binary_size() {
     let mut module = NativeModule::new("test_minimal_size");
     let mut main_func = MachineFunction::new("main");
@@ -142,6 +143,7 @@ fn test_c_level_minimal_binary_size() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_dead_code_elimination_reduces_size() {
     let mut module = NativeModule::new("test_dce_size");
     let mut main_func = MachineFunction::new("main");

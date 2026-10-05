@@ -11,13 +11,13 @@ use serde::{Deserialize, Serialize};
 /// Signal or hardware exception kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CrashSignal {
-    AccessViolation,      // SIGSEGV / EXCEPTION_ACCESS_VIOLATION
+    AccessViolation,     // SIGSEGV / EXCEPTION_ACCESS_VIOLATION
     SegmentationFault,   // Alias for AccessViolation
-    IllegalInstruction,   // SIGILL / EXCEPTION_ILLEGAL_INSTRUCTION
-    IntegerDivideByZero,  // SIGFPE / EXCEPTION_INT_DIVIDE_BY_ZERO
-    StackOverflow,        // EXCEPTION_STACK_OVERFLOW
-    Abort,                // SIGABRT
-    Breakpoint,           // SIGTRAP / EXCEPTION_BREAKPOINT
+    IllegalInstruction,  // SIGILL / EXCEPTION_ILLEGAL_INSTRUCTION
+    IntegerDivideByZero, // SIGFPE / EXCEPTION_INT_DIVIDE_BY_ZERO
+    StackOverflow,       // EXCEPTION_STACK_OVERFLOW
+    Abort,               // SIGABRT
+    Breakpoint,          // SIGTRAP / EXCEPTION_BREAKPOINT
 }
 
 impl std::fmt::Display for CrashSignal {
@@ -69,8 +69,14 @@ impl CrashReport {
         s.push_str("                        Adesh Native Crash Report                     \n");
         s.push_str("======================================================================\n");
         s.push_str(&format!("Signal:             {}\n", self.signal));
-        s.push_str(&format!("Fault Address:      0x{:016x}\n", self.fault_address));
-        s.push_str(&format!("Instruction (PC):   0x{:016x}\n", self.instruction_address));
+        s.push_str(&format!(
+            "Fault Address:      0x{:016x}\n",
+            self.fault_address
+        ));
+        s.push_str(&format!(
+            "Instruction (PC):   0x{:016x}\n",
+            self.instruction_address
+        ));
         s.push_str(&format!("Thread ID:          {}\n", self.thread_id));
         s.push_str(&format!("Target:             {}\n", self.target_triple));
         s.push_str(&format!("Build ID:           {}\n", self.build_id));
@@ -83,7 +89,10 @@ impl CrashReport {
             } else {
                 format!("pc:0x{:x}", frame.instruction_address)
             };
-            s.push_str(&format!("  #{:02} {} at {}\n", frame.frame_index, func_str, loc_str));
+            s.push_str(&format!(
+                "  #{:02} {} at {}\n",
+                frame.frame_index, func_str, loc_str
+            ));
         }
         s.push_str("======================================================================\n");
         s

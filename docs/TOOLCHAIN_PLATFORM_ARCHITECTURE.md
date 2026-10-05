@@ -1,6 +1,13 @@
 # Adesh Toolchain Platform Architecture & Roadmap
 
-This document defines the formal architecture, design principles, and execution roadmap for the **Adesh Native Toolchain Platform**.
+This document defines the formal architecture, design principles, and
+execution roadmap for the **Adesh Native Toolchain Platform**.
+
+**Status (2026-10-05):** revised during the Phase 0 documentation truth
+reset. The canonical status document is
+[`CURRENT_STATE.md`](../CURRENT_STATE.md); the tiers below describe what is
+actually verified, not aspirations. Only the Windows x86-64 path is
+execution-verified.
 
 ---
 
@@ -16,60 +23,70 @@ The Adesh ecosystem is divided into three cleanly decoupled pillars:
         adeshc                          adeshlink                         adeshrt
   (Compiler & Codegen)           (Binary Integration & Linking)        (Execution & Runtime)
            │                                │                                │
-   ├── Frontend (Lexer/Parser)      ├── Multi-pass Symbol Resolution  ├── Safe GC-free RAII drops
-   ├── AST / HIR / LIR Engine       ├── Relocation Patching (x86/ARM) ├── Compiler-RT Intrinsics
-   ├── Extensible MLIR / Dialects   ├── Formal ABI v1 (.adesh.meta)   ├── Scope-aware Unwind Tables
-   ├── Quantum IR & Qubit Router    ├── Executable Formats:           ├── Async Green-Thread Runtime
-   ├── Machine Code Encoders:       │   ├── Windows PE32+ (.exe/.dll) ├── Embedded Bootstraps (crt0)
-   │   ├── x86_64 Machine Code      │   ├── Linux ELF64 (PIE/Static)  ├── GPU Driver Bridges (Vulkan/CUDA)
-   │   ├── AArch64 Machine Code     │   ├── macOS Mach-O 64-bit       └── Quantum Simulation &
-   │   ├── RISC-V RV32/RV64         │   └── WebAssembly (WASM 2.0)        QPU Provider Dispatch
-   │   ├── Vulkan SPIR-V 1.6        ├── Embedded Linker Scripts:
-   │   └── NVIDIA PTX / CUBIN       │   ├── MEMORY / SECTIONS Layout
-   └── Native Object Writer (.o)    │   ├── Interrupt Vector Tables
-                                    │   └── Flat Image (BIN/HEX/SREC)
-                                    ├── Dead Code Elimination (GC)
+   ├── Frontend (Lexer/Parser)      ├── Multi-pass Symbol Resolution  ├── GC-free runtime + ARC
+   ├── AST / HIR Engine             ├── Relocation Patching (x86-64)   ├── tracked-allocation scopes
+   ├── MLIR Text Lowering           ├── Formal ABI v1 (.adesh.meta)    ├── worker pool (threads)
+   │   (external mlir-opt/llc)      ├── Executable Formats:           ├── handle table + panic guards
+   ├── Machine Code Encoders:       │   ├── Windows PE32+ (execution-tested)
+   │   ├── x86_64 (substantial)     │   ├── Linux ELF64 (emits; not run-tested)
+   │   ├── AArch64 (PoC: 4 ops)     │   ├── macOS Mach-O (skeletal)
+   │   └── RISC-V (PoC: 4 ops)      │   └── WebAssembly (writer is a stub)
+   └── Native Object Writer (.o)    ├── Dead Code Elimination (GC)
                                     └── Identical Code Folding (ICF)
 ```
 
----
+Components sometimes listed here in earlier revisions that do **not** exist
+yet: an async green-thread runtime (no epoll/IOCP/kqueue reactor), GPU
+driver bridges (zero CUDA/HIP/Vulkan calls), Vulkan SPIR-V / PTX / CUBIN
+encoders, and quantum QPU provider dispatch.
 
-## 2. Capability & Execution Boundaries
+## 2. Capability & Execution Boundaries (verified 2026-10-05)
 
-| Domain | `adeshc` Compiles | `adeshlink` Links & Packages | Hardware / OS Executes | Maturity Tier |
+| Domain | `adeshc` Compiles | `adeshlink` Links & Packages | Verified how | Maturity Tier |
 | :--- | :---: | :---: | :---: | :---: |
-| **Windows x86_64** | Native x86_64 Instructions | PE32+ Image, IAT, SEH `.pdata` | Windows NT Loader | **Tier 1 (Production)** |
-| **Linux x86_64 / ARM64** | Native x86_64 / AArch64 | ELF64, `.eh_frame_hdr`, PT_LOAD | Linux Kernel (`sys_execve`) | **Tier 1 (Production)** |
-| **macOS Apple Silicon / Intel** | AArch64 / x86_64 | Mach-O 64-bit, `LC_MAIN` | macOS `dyld` | **Tier 1 (Production)** |
-| **WebAssembly** | WASM OpCodes | Core 2.0 / WASI Preview 1 Module | Wasmtime / Browser Engine | **Tier 1 (Production)** |
-| **ARM Cortex-M (M0-M7)** | Thumb-2 Instructions | Linker Script, IVT, HEX/BIN | Microcontroller Hardware | **Tier 1 (Production)** |
-| **RISC-V Bare-Metal (RV32/64)** | RISC-V Instructions | Trap Vector, `crt0`, SREC | RISC-V Hardware Core | **Tier 1 (Production)** |
-| **Vulkan SPIR-V** | Compute Shader IR | SPIR-V 1.6 Binary & Bindings | Vulkan Driver / GPU | **Tier 2 (Structured)** |
-| **NVIDIA CUDA** | GPU IR / PTX Text | Multi-Arch Fatbin (`0xBA55ED50`) | NVIDIA Driver & GPU | **Tier 2 (Structured)** |
-| **AMD ROCm** | GPU IR | AMDGPU HSACO & Kernel Descriptors | AMD ROCR / HSA Runtime | **Tier 2 (Structured)** |
-| **NPU (Arm Ethos-U / TPU)** | Neural IR | Command Stream (`ETHU` / `ADTP`) | NPU Firmware / Accelerator | **Tier 2 (Structured)** |
-| **Quantum (QIR / OpenQASM)** | Quantum Gate AST | QIR Container (`QIRB`) & Pulses | Cloud QPU / `adeshrt` Simulator | **Tier 2 (Structured)** |
-
----
+| **Windows x86_64** | Native x86-64 (integer + scalar SSE2 FP subset) | PE32+ image, IAT, base relocs, TLS dir | **Binaries executed in CI (exit codes asserted)** | **Tier 1 — Execution-verified** |
+| **Linux x86_64** | Native x86-64 (same subset) | ELF64 static (`ET_EXEC`) | Structure/magic-byte checks only | **Tier 2 — Emits; not run-tested** |
+| **Linux AArch64** | PoC (Nop/Return/Add/Sub) | ELF64 static | Structure checks only | **Tier 3 — Proof-of-concept** |
+| **macOS (AArch64 / x86_64)** | PoC / native subset | Mach-O 64 (no dyld info/exports trie) | Structure checks only; cannot bind system libraries | **Tier 3 — Artifact emission** |
+| **WebAssembly** | WASM opcodes (compiler backend) | Linker writer is a stub | Compiler output runs via Wasmtime/Node | **Tier 2 via compiler backend** |
+| **ARM Cortex-M (M0-M7)** | Minimal Thumb-2 ALU | Linker script, IVT, HEX/BIN | Structure checks only | **Tier 3 — Proof-of-concept** |
+| **RISC-V (RV32/64)** | PoC (4 ops) | Trap vector, `crt0`, SREC | Structure checks only | **Tier 3 — Proof-of-concept** |
+| **GPU (CUDA / ROCm / Vulkan)** | Source re-embedding only | Custom container packaging (not driver-loadable formats) | Structure checks only; no driver calls | **Scaffolding (parked)** |
+| **NPU (Ethos-U / ANE / TPU)** | None | Custom packet/section packaging | Structure checks only; no ANE implementation exists | **Scaffolding (parked)** |
+| **Quantum (QIR / OpenQASM)** | No language construct | QIRB container (embeds QASM text) | Library-level simulator (mock measurement) | **Scaffolding (parked)** |
 
 ## 3. Detailed Phase Roadmap
 
-### Phase 1: Foundation (COMPLETED)
-- [x] 100% Safe-Rust native linker (`adeshlink`) with zero external C/C++ toolchain dependencies.
-- [x] End-to-end executable binary generation: Windows PE32+ (`.exe`), Linux ELF64, macOS Mach-O, WebAssembly WASM.
-- [x] Verified execution of compiled binaries on native Windows loader without external runtime DLLs.
-- [x] Complete built-in toolchain CLI replacements (`ar`, `nm`, `objdump`, `readobj`, `size`, `strip`, `inspect`, `symbols`, `sections`, `relocations`, `deps`, `targets`, `version`).
-- [x] Embedded Linker Script Engine (`MEMORY` & `SECTIONS` evaluation), Interrupt Vector Tables (`ArmCortexVectorTable`, `RiscvTrapVectorTable`), `crt0` startup synthesizers, and Flash firmware formats (Raw `.bin`, Intel `.hex`, Motorola `.srec`).
-- [x] Formal Adesh ABI v1 specification, scope-aware RAII drop action tables (`.adesh.unwind_map`), and compiler-RT intrinsics (`memcpy`, `memset`, `memcmp`, `__multi3`, `__chkstk`, `__stack_chk_fail`).
+The roadmap is maintained in
+[`IMPLEMENTATION_PLAN.md`](../IMPLEMENTATION_PLAN.md) (v2, 2026-10-05). Its
+phase ordering is: Phase 0 truth reset → Phase 1 zero silent miscompiles →
+Phase 2 full x86-64 ABI → Phase 3 Linux execution → Phase 4 optimizer and
+register-allocator maturity → Phase 5 debuggability → Phase 6 AArch64 for
+real. GPU, quantum, macOS executables, the linker WASM writer, and the
+async runtime are explicitly **parked** until the core targets are solid.
 
-### Phase 2: Native Codegen & Accelerator Independence (ACTIVE)
-- [ ] Pure-Rust bit-level Machine Code Encoders for x86_64, AArch64, and RISC-V (eliminating external codegen dependencies).
-- [ ] Pure-Rust Vulkan SPIR-V 1.6 compute shader instruction encoder with descriptor set decorations.
-- [ ] Pure-Rust NVIDIA PTX / CUBIN multi-architecture fatbin generation.
-- [ ] Pure-Rust AMDGPU ROCm HSACO code object packaging.
-- [ ] High-speed contiguous buffer serialization and hash-indexed symbol tables for sub-millisecond compile & link times.
+### Foundation (completed, as previously listed)
+- [x] Safe-Rust native linker (`adeshlink`) with zero external C/C++
+  toolchain dependencies.
+- [x] Executable binary generation: Windows PE32+ (**execution-verified**),
+  Linux ELF64 and macOS Mach-O (emission-validated only), linker WASM
+  (stub).
+- [x] Verified execution of compiled binaries on the native Windows loader
+  without external runtime DLLs.
+- [x] Built-in toolchain CLI replacements (`ar`, `nm`, `objdump`, `readobj`,
+  `size`, `strip`, `inspect`, `symbols`, `sections`, `relocations`, `deps`,
+  `targets`, `version`).
+- [x] Embedded linker script engine (`MEMORY` & `SECTIONS` evaluation),
+  interrupt vector tables, `crt0` startup synthesizers, and flash firmware
+  formats (Raw `.bin`, Intel `.hex`, Motorola `.srec`).
+- [x] Formal Adesh ABI v1 specification, scope-aware RAII drop action tables
+  (`.adesh.unwind_map`), and compiler-RT intrinsics (`memcpy`, `memset`,
+  `memcmp`, `__multi3`, `__chkstk`, `__stack_chk_fail`).
 
-### Phase 3: Deep Neural & Quantum Toolchain
-- [ ] MLIR dialect lowering pipeline (`affine`, `linalg`, `tensor` $\to$ hardware kernels).
-- [ ] Arm Ethos-U & Google TPU systolic tile schedule emission.
-- [ ] OpenQASM 3.0 / QIR emission with hardware coupling graph SWAP routing and state-vector simulation.
+### Native Codegen (subset working; completion tracked in IMPLEMENTATION_PLAN.md)
+- [x] Pure-Rust bit-level machine code encoding for x86_64 (integer +
+  scalar SSE2; execution-tested on Windows).
+- [ ] AArch64 and RISC-V real backends (currently 4-operation
+  proof-of-concepts) — `IMPLEMENTATION_PLAN.md` Phase 6.
+- [ ] Vulkan SPIR-V / NVIDIA PTX / AMDGCN code generation — **parked**;
+  requires a kernel-launch runtime that does not exist. Not active work.

@@ -34,9 +34,8 @@ impl ProfileMerger {
                         .block_profiles
                         .entry(blk_id.clone())
                         .or_insert_with(BlockProfile::default);
-                    b_entry.execution_count = b_entry
-                        .execution_count
-                        .saturating_add(blk.execution_count);
+                    b_entry.execution_count =
+                        b_entry.execution_count.saturating_add(blk.execution_count);
                 }
 
                 for (edge_id, edge) in &func_prof.edge_profiles {
@@ -56,7 +55,10 @@ impl ProfileMerger {
     }
 
     /// Read multiple profile files from disk, merge them, and write output.
-    pub fn merge_files(input_paths: &[impl AsRef<Path>], output_path: impl AsRef<Path>) -> Result<(), String> {
+    pub fn merge_files(
+        input_paths: &[impl AsRef<Path>],
+        output_path: impl AsRef<Path>,
+    ) -> Result<(), String> {
         let mut profiles = Vec::new();
         for p in input_paths {
             let json = std::fs::read_to_string(p.as_ref())

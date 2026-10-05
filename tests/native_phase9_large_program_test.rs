@@ -8,7 +8,9 @@
 #![allow(dead_code, unused_imports)]
 
 use adesh_codegen::const_eval::{ConstEvalLimits, ConstEvaluator, ConstExpr, ConstValue};
-use adesh_codegen::machine_ir::{MachineFunction, MachineInstruction, MachineOperand, NativeModule};
+use adesh_codegen::machine_ir::{
+    MachineFunction, MachineInstruction, MachineOperand, NativeModule,
+};
 use adesh_codegen::query::{QueryEngine, QueryKey, QueryKind, QueryResult};
 use std::collections::HashMap;
 

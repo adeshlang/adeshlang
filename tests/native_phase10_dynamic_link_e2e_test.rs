@@ -7,7 +7,7 @@
 #![allow(dead_code, unused_imports)]
 
 use adesh_codegen::binary_tools::BinaryAnalyzer;
-use adesh_runtime::abi_v1::{AdeshRuntimeAbiV1, ADESH_RUNTIME_ABI_VERSION_1};
+use adesh_runtime::abi_v1::{ADESH_RUNTIME_ABI_VERSION_1, AdeshRuntimeAbiV1};
 
 #[test]
 fn test_runtime_abi_v1_compatibility() {

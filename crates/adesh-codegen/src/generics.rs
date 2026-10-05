@@ -162,8 +162,7 @@ impl MonomorphizationEngine {
             call_count: 1,
         };
 
-        self.specializations
-            .insert(mangled_symbol, mono.clone());
+        self.specializations.insert(mangled_symbol, mono.clone());
 
         Ok(mono)
     }

@@ -37,7 +37,10 @@ fn test_self_hosting_dependency_auditor() {
 fn test_bootstrap_matrix_stages() {
     let matrix = BootstrapMatrix::current();
     assert_eq!(matrix.frontend_status, BootstrapStageStatus::Autonomous);
-    assert_eq!(matrix.native_backend_status, BootstrapStageStatus::Autonomous);
+    assert_eq!(
+        matrix.native_backend_status,
+        BootstrapStageStatus::Autonomous
+    );
     assert_eq!(matrix.adeshlink_status, BootstrapStageStatus::Autonomous);
     assert!(matrix.is_fully_autonomous());
 }

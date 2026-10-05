@@ -76,6 +76,7 @@ fn test_pic_relocation_kinds() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_pic_inter_function_calls_execution_e2e() {
     let mut module = NativeModule::new("test_pic");
 

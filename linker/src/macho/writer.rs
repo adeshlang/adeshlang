@@ -19,7 +19,16 @@ impl MachOWriter {
         merged_sections: &[MergedSection],
         symbols: &[Symbol],
     ) -> LinkResult<()> {
-        Self::write_macho(path, target, entry_va, merged_sections, symbols, false, &[], None)
+        Self::write_macho(
+            path,
+            target,
+            entry_va,
+            merged_sections,
+            symbols,
+            false,
+            &[],
+            None,
+        )
     }
 
     pub fn write_macho(
@@ -147,7 +156,11 @@ impl MachOWriter {
             }
             b
         };
-        let cmd_id_dylib_sz = if is_shared { 24 + id_dylib_bytes.len() } else { 0 };
+        let cmd_id_dylib_sz = if is_shared {
+            24 + id_dylib_bytes.len()
+        } else {
+            0
+        };
 
         let mut ncmds = 0u32;
         if !is_shared {
@@ -271,7 +284,11 @@ impl MachOWriter {
             text_sec_records.clear();
             data_sec_records.clear();
 
-            let base_va = if is_shared && merged_sections.iter().all(|s| s.virtual_address >= 0x100000000) {
+            let base_va = if is_shared
+                && merged_sections
+                    .iter()
+                    .all(|s| s.virtual_address >= 0x100000000)
+            {
                 0x100000000u64
             } else {
                 text_vmaddr

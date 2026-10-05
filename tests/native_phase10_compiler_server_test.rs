@@ -16,7 +16,11 @@ fn test_compiler_server_persistence_and_recovery() {
     assert_eq!(server.cached_modules_count(), 1);
 
     // 2. Syntax error compile — must fail without wiping existing cache
-    assert!(server.compile_module("mod_bad", "syntax_error_intentional").is_err());
+    assert!(
+        server
+            .compile_module("mod_bad", "syntax_error_intentional")
+            .is_err()
+    );
     assert_eq!(server.cached_modules_count(), 1);
 
     // 3. Second valid compile

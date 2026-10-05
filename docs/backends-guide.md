@@ -229,7 +229,11 @@ Compiles all code directly to native machine code at load time using Cranelift.
 - Extremely fast execution (100-200x faster than interpreter)
 - True native code performance
 - No interpretation overhead
-- Full instruction coverage
+
+**Coverage note:** like the native AOT backend, the Native JIT is under
+active development and does not yet cover the full language; unsupported
+constructs may fall back or error. See
+[`CURRENT_STATE.md`](../CURRENT_STATE.md) for the honest status.
 
 **Disadvantages:**
 - Longer startup time

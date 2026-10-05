@@ -8,13 +8,10 @@
 
 [![Rust](https://img.shields.io/badge/Rust-2024%20Edition%20%7C%201.70%2B-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-AdeshLang%20v2.0-blue.svg)](../LICENSE)
-[![Build](https://img.shields.io/badge/Build-Passing-brightgreen.svg)](https://github.com/adeshlang/adeshlang)
-[![Tests](https://img.shields.io/badge/Tests-Passing%20(100%25)-brightgreen.svg)]()
-[![Code Quality](https://img.shields.io/badge/Code%20Quality-Zero%20Errors%20%26%20Warnings-brightgreen.svg)]()
-[![GPU](https://img.shields.io/badge/GPU-MLIR%20Backend-purple.svg)](gpu/gpu-guide.md)
 [![Memory Safety](https://img.shields.io/badge/Memory-Zero%20GC%20%2B%20ARC-red.svg)](MEMORY_SAFETY.md)
+[![Status](https://img.shields.io/badge/Native%20Toolchain-Experimental%20%2B%20Execution--tested%20on%20Windows%20x64-yellow.svg)](../CURRENT_STATE.md)
 
-*Compile-Time Memory Safety • Zero Garbage Collector • 11 Execution Backends • Native JIT & AOT • GPU/MLIR Acceleration • First-Class ARC • Cross-Platform TUI Editor • SIMD & Parallel Execution • Modern Standard Library*
+*Compile-Time Memory-Safety Architecture • Zero Garbage Collector • 11 Execution Backends • Native JIT & AOT • Self-Contained Native Toolchain (ADOB + adeshlink) • First-Class ARC • Cross-Platform TUI Editor • SIMD & Parallel Execution • Modern Standard Library*
 
 [Quick Start](#quick-start) • [Adesh Editor](#adesh-editor) • [Developer Tools & IDE Support (ALS)](#developer-tools--ide-support-als) • [Documentation](#documentation) • [License](#license)
 
@@ -24,13 +21,13 @@
 
 ## Overview
 
-**AdeshLang** is a modern, statically-typed, multi-backend programming language designed for both high-level developer ergonomics and low-level bare-metal performance. It delivers Rust-grade compile-time memory safety without a garbage collector, paired with versatile execution models ranging from instant interpretation to Native JIT compilation, standalone native binaries (AOT), WebAssembly, and MLIR-based GPU execution.
+**AdeshLang** is a modern, statically-typed, multi-backend programming language designed for both high-level developer ergonomics and low-level bare-metal performance. It has a zero-GC compile-time memory-safety architecture (ownership, borrowing, and lifetime checking, plus first-class ARC), paired with versatile execution models ranging from instant interpretation to Native JIT compilation, standalone native binaries (AOT), WebAssembly, and an experimental external-MLIR GPU path.
 
 ### Key Pillars
 
-- 🔒 **Deterministic Memory Safety (Zero-GC)**: Enforced compile-time ownership, borrowing, and lifetime checking. Enjoy absolute memory safety with zero garbage collection pauses and zero runtime overhead.
+- 🔒 **Deterministic Memory Safety (Zero-GC)**: Enforced compile-time ownership, borrowing, and lifetime checking, with no garbage collection pauses. (Note: this is the language *architecture*; backend coverage and the native path are still maturing — see [MEMORY_SAFETY.md](MEMORY_SAFETY.md) scope notes and [../CURRENT_STATE.md](../CURRENT_STATE.md).)
 - ⚡ **First-Class Automatic Reference Counting (ARC)**: Built-in `share`, `strong`, and `weak` keywords with `.strong_count()`, `.weak_count()`, `.is_alive()`, and safe `.upgrade()` mechanics to break reference cycles effortlessly.
-- 🚀 **Multi-Backend Architecture**: Write once, run on any backend with 100% semantic parity — 11 execution backends: Interpreter, Bytecode VM, Mixed (hybrid), JIT, Native JIT (100–232x faster), Adaptive JIT, Tiered JIT, Safe mode, AOT Compiler (standalone binaries), WebAssembly, and GPU/MLIR.
+- 🚀 **Multi-Backend Architecture**: Write once and target 11 execution backends — Interpreter, Bytecode VM, Mixed (hybrid), JIT, Native JIT (100–232x faster on compute benchmarks), Adaptive JIT, Tiered JIT, Safe mode, AOT Compiler (standalone binaries), WebAssembly, and GPU/MLIR (experimental, external tools). Feature coverage varies by backend; semantic parity is a goal, not a guarantee (see [backends-guide.md](backends-guide.md)).
 - 🎨 **Cross-Platform TUI Editor (`adesh editor`)**: Keyboard-driven terminal IDE inspired by Neovim, featuring syntax highlighting, multi-buffer tabs, integrated output panel, file explorer, command palette, and backend runner.
 - 🤖 **Specialized AdeshLang AI/LLM (`adesh ai`)**: Lightweight, compiler-verified local language model specialized in understanding, generating, explaining, debugging, and completing AdeshLang code (`ai/`).
 - 🧠 **Expressive Modern Type System**: Flow-sensitive type inference, generics, sum types (`Option<T>`, `Result<T, E>`), structural tuples, type aliases, union types, and numeric types (`i8`–`i64`, `u8`–`u64`, `f32`, `f64`).

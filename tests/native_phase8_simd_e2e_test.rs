@@ -79,6 +79,7 @@ fn test_advanced_simd_instruction_types() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_advanced_simd_execution_min_max_e2e() {
     let mut module = NativeModule::new("test_advanced_simd");
     let mut main_func = MachineFunction::new("main");

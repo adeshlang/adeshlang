@@ -243,7 +243,11 @@ fn test_link_elf_shared_library_full() {
     config.libraries.push("m".to_string()); // DT_NEEDED: libm.so
 
     let res = Linker::link(&[obj_path], config);
-    assert!(res.is_ok(), "ELF shared library linking failed: {:?}", res.err());
+    assert!(
+        res.is_ok(),
+        "ELF shared library linking failed: {:?}",
+        res.err()
+    );
     assert!(out_path.exists());
 
     let bytes = std::fs::read(&out_path).unwrap();
@@ -254,7 +258,11 @@ fn test_link_elf_shared_library_full() {
 
     // Verify ElfReader reads the produced shared library successfully
     let read_obj = ElfReader::read(&bytes, &out_path, 0);
-    assert!(read_obj.is_ok(), "ElfReader failed to parse emitted shared library: {:?}", read_obj.err());
+    assert!(
+        read_obj.is_ok(),
+        "ElfReader failed to parse emitted shared library: {:?}",
+        read_obj.err()
+    );
     let parsed = read_obj.unwrap();
     assert!(parsed.symbols.iter().any(|s| s.name == "exported_api_func"));
 }
@@ -284,7 +292,11 @@ fn test_link_elf_dynamic_executable_with_interp() {
     config.libraries.push("c".to_string());
 
     let res = Linker::link(&[obj_path], config);
-    assert!(res.is_ok(), "ELF dynamic executable link failed: {:?}", res.err());
+    assert!(
+        res.is_ok(),
+        "ELF dynamic executable link failed: {:?}",
+        res.err()
+    );
     assert!(out_path.exists());
 
     let bytes = std::fs::read(&out_path).unwrap();
@@ -324,7 +336,10 @@ fn test_link_macho_dylib_full() {
     assert!(out_path.exists());
 
     let bytes = std::fs::read(&out_path).unwrap();
-    assert_eq!(u32::from_le_bytes(bytes[0..4].try_into().unwrap()), 0xFEEDFACF);
+    assert_eq!(
+        u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
+        0xFEEDFACF
+    );
 
     // Verify filetype == MH_DYLIB (6)
     let filetype = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
@@ -332,7 +347,11 @@ fn test_link_macho_dylib_full() {
 
     // Verify MachOReader reads the produced dylib successfully
     let read_obj = MachOReader::read(&bytes, &out_path, 0);
-    assert!(read_obj.is_ok(), "MachOReader failed to parse emitted dylib: {:?}", read_obj.err());
+    assert!(
+        read_obj.is_ok(),
+        "MachOReader failed to parse emitted dylib: {:?}",
+        read_obj.err()
+    );
     let parsed = read_obj.unwrap();
     assert!(parsed.symbols.iter().any(|s| s.name == "_my_dylib_symbol"));
 }
@@ -361,11 +380,18 @@ fn test_link_macho_executable_full_headers() {
     let config = LinkConfig::new(out_path.clone(), target);
 
     let res = Linker::link(&[obj_path], config);
-    assert!(res.is_ok(), "Mach-O executable linking failed: {:?}", res.err());
+    assert!(
+        res.is_ok(),
+        "Mach-O executable linking failed: {:?}",
+        res.err()
+    );
     assert!(out_path.exists());
 
     let bytes = std::fs::read(&out_path).unwrap();
-    assert_eq!(u32::from_le_bytes(bytes[0..4].try_into().unwrap()), 0xFEEDFACF);
+    assert_eq!(
+        u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
+        0xFEEDFACF
+    );
     let filetype = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
     assert_eq!(filetype, 2, "Expected MH_EXECUTE (2) for executable");
 
@@ -411,7 +437,10 @@ fn test_link_pe_shared_library_dll_full() {
 
     // Check .lib import library exists
     let lib_path = out_path.with_extension("lib");
-    assert!(lib_path.exists(), "Expected import library mylib.lib to be generated");
+    assert!(
+        lib_path.exists(),
+        "Expected import library mylib.lib to be generated"
+    );
 
     let bytes = std::fs::read(&out_path).unwrap();
     assert_eq!(&bytes[0..2], b"MZ", "Missing DOS magic");
@@ -439,4 +468,3 @@ fn test_link_pe_shared_library_dll_full() {
         "Exported symbol compute_answer not found in emitted DLL"
     );
 }
-

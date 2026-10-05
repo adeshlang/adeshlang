@@ -3570,9 +3570,13 @@ Find practical examples in:
 
 # Comprehensive Multi-Tier Array System Implementation
 
-## ✅ Implementation Complete
+## Historical Design Document (December 2025)
 
-This document summarizes the comprehensive array system implementation for AdeshLang, designed to match and exceed the performance of production JIT compilers like V8, SpiderMonkey, and JavaScriptCore.
+This document describes the multi-tier array system design for AdeshLang,
+with the goal of matching the performance of production JIT compilers like
+V8, SpiderMonkey, and JavaScriptCore. It is a design summary, not a status
+claim: implementation coverage varies across backends and the design is
+still being integrated into the native pipeline (see `CURRENT_STATE.md`).
 
 ---
 
@@ -4088,15 +4092,17 @@ print("Metadata overhead: ", metadata_size(arr)); // 16 bytes
 
 ## ✨ Conclusion
 
-This implementation provides AdeshLang with a **production-grade, multi-tier array system** that:
+The multi-tier array system design provides:
 
-- ✅ Minimizes memory overhead (0-24 bytes)
-- ✅ Maximizes performance through specialization
-- ✅ Supports gradual optimization (interpreter → JIT → AOT)
-- ✅ Provides explicit control when needed
-- ✅ Matches or exceeds competing language implementations
+- Minimized memory overhead (0-24 bytes)
+- Performance through specialization
+- Gradual optimization (interpreter → JIT → AOT)
+- Explicit control when needed
 
-The array system is now **feature-complete and ready for integration** with the rest of the AdeshLang compiler pipeline.
+**Status note (2026-10-05):** this is a design document from December 2025,
+not a status claim. Integration with the rest of the compiler pipeline and
+the native backend is still in progress; per-backend coverage varies (see
+`CURRENT_STATE.md`).
 
 ---
 
@@ -4104,7 +4110,7 @@ The array system is now **feature-complete and ready for integration** with the 
 **Total Lines of Code**: ~2,400 lines
 **Files Created/Modified**: 9 files
 **Test Coverage**: Core functionality validated
-**Status**: ✅ Complete & Ready for Production
+**Status**: Implemented in the interpreter/JIT paths; native-path integration in progress
 
 
 ---

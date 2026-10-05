@@ -1,31 +1,61 @@
 # Adesh Toolchain Capabilities Matrix
 
-**Generated:** 2026-10-01  
-**Authority:** Master Toolchain Capability Registry  
+**Generated:** 2026-10-05 (Phase 0 documentation truth-reset revision)
+**Canonical sources:** `CURRENT_STATE.md` (status) and the root
+[`TOOLCHAIN_CAPABILITIES.md`](../TOOLCHAIN_CAPABILITIES.md) (capability
+registry). This page must agree with both; earlier copies of this file
+claiming "Production Ready" status for every target were stale and have
+been replaced.
 
 ---
 
 ## Toolchain Capabilities by Target
 
-| Target | Codegen | Object (ADOB) | Linker | Runtime | Threads | ABI | Debug | LTO | Status |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| **x86_64 Windows (MSVC)** | **Native** | **v1.0** | **Native PE** | **Native** | **Win32** | **MS x64** | **Line/DWARF**| **GC/ICF** | **Production Ready** |
-| **x86_64 Linux (GNU/Musl)**| **Native** | **v1.0** | **Native ELF**| **Native** | **POSIX** | **SysV AMD64**| **DWARF 5** | **GC/ICF** | **Production Ready** |
-| **AArch64 Linux** | **Native** | **v1.0** | **Native ELF**| **Native** | **POSIX** | **AAPCS64** | **DWARF 5** | **GC/ICF** | **Production Ready** |
-| **AArch64 macOS (Darwin)** | **Native** | **v1.0** | **Native Mach-O**| **Native** | **Darwin** | **AAPCS64** | **DWARF 5** | **GC/ICF** | **Production Ready** |
-| **x86_64 macOS (Darwin)** | **Native** | **v1.0** | **Native Mach-O**| **Native** | **Darwin** | **SysV AMD64**| **DWARF 5** | **GC/ICF** | **Production Ready** |
-| **RISC-V 64 Linux** | **Native** | **v1.0** | **Native ELF**| **Native** | **POSIX** | **RV64GC** | **DWARF 5** | **GC/ICF** | **Production Ready** |
-| **RISC-V 32 Embedded** | **Native** | **v1.0** | **Native ELF**| **BareMetal**| **None** | **RV32IMAC** | **DWARF 5** | **GC/ICF** | **Production Ready** |
-| **WASM (WASI / Web)** | **Native** | **v1.0** | **Native WASM**| **WASI** | **WASI-Th** | **WASM** | **SourceMap** | **GC/ICF** | **Production Ready** |
-| **ARM Cortex-M (Thumb-2)** | **Native** | **v1.0** | **Native ELF**| **Embedded**| **RTOS** | **AAPCS32** | **DWARF 5** | **GC/ICF** | **Production Ready** |
-| **GPU (CUDA / ROCm)** | **Kernel IR**| **ADOB Pkg** | **Packager** | **Driver** | **GPU Grid**| **GPU ABI** | **Kernel Sym**| **DeviceOpt**| **Accelerator Tier** |
-| **NPU / TPU** | **Tensor IR**| **ADOB Pkg** | **Packager** | **DMA/Driver**| **Async**| **Tensor ABI**| **Tensor Sym**| **Graph Opt**| **Accelerator Tier** |
-| **Quantum (QPU / Sim)** | **AQIR** | **QIRB Pkg** | **Q-Linker** | **Sim/QPU** | **Q-Thread**| **AQIR ABI** | **Circuit Dbg**| **Gate Decomp**| **Quantum Native** |
+Honest per-target status. "Debug" means what the link path actually emits:
+only section stripping (the DWARF 5 / CodeView generators exist but are
+never invoked and emit a single DIE / two records). "LTO" in this table
+means what `--lto` does today: section GC + ICF + stripping (no
+cross-module IR optimization).
+
+| Target | Codegen | Object (ADOB) | Linker | Runtime | ABI | Debug | LTO | Status |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
+| **x86_64 Windows (MSVC)** | **Native (integer + scalar SSE2 FP subset)** | **v1.0** | **Native PE (execution-tested)** | **Native** | **Win64 regs + stack args + shadow + scalar FP** | **Strip only** | **GC/ICF only** | **Working native pipeline (the only execution-verified target)** |
+| **x86_64 Linux (GNU/Musl)** | **Native (integer + scalar SSE2 FP subset)** | **v1.0** | **Native ELF (static)** | **Native** | **SysV regs + stack args + scalar FP** | **Strip only** | **GC/ICF only** | **Emits; not run-tested** |
+| **AArch64 Linux** | **PoC (4 ops)** | **v1.0** | **Native ELF (static)** | **Native** | **AAPCS64 regs only** | **Strip only** | **GC/ICF only** | **Proof-of-concept** |
+| **AArch64 / x86_64 macOS** | **PoC (4 ops)** | **v1.0** | **Native Mach-O (skeletal)** | **Native** | **Partial** | **Strip only** | **GC/ICF only** | **Artifact emission only; cannot bind external libraries** |
+| **RISC-V 64 Linux** | **PoC (4 ops)** | **v1.0** | **Native ELF (static)** | **Native** | **RV regs only** | **Strip only** | **GC/ICF only** | **Proof-of-concept** |
+| **RISC-V 32 Embedded** | **PoC (4 ops)** | **v1.0** | **Native ELF (static)** | **Bare-metal** | **Partial** | **Strip only** | **GC/ICF only** | **Proof-of-concept** |
+| **WASM (WASI / Web)** | **Native (compiler backend)** | **v1.0** | **Stub writer** | **WASI** | **WASM** | **None** | **None** | **Compiler path works; linker path is a stub** |
+| **ARM Cortex-M (Thumb-2)** | **PoC** | **v1.0** | **Native ELF (static)** | **Embedded** | **Partial** | **Strip only** | **GC/ICF only** | **Proof-of-concept** |
+| **GPU (CUDA / ROCm)** | **Source re-embedding only** | **ADOB packaging** | **Packager** | **Driver (external)** | **N/A** | **None** | **N/A** | **Scaffolding (container packaging; no device ISA, no driver calls)** |
+| **NPU / TPU** | **Weight packaging only** | **ADOB packaging** | **Packager** | **External** | **N/A** | **None** | **N/A** | **Scaffolding (no Apple ANE implementation exists)** |
+| **Quantum (QPU / Sim)** | **None (no language construct)** | **QIRB container** | **Container embed** | **State-vector sim only** | **N/A** | **None** | **N/A** | **Simulator + QASM export only (measurement is a deterministic mock)** |
 
 ---
 
 ## Subsystem Self-Containment Assessment
 
-* **External Compiler Dependency (LLVM/GCC/Clang):** **0% Required for Core Pipeline**. The native toolchain directly encodes machine code and links executables.
-* **External Linker Dependency (GNU ld/lld/link.exe):** **0% Required**. The Adesh Linker synthesizes PE32+, ELF32/64, Mach-O, and WASM binaries with custom OS API classification and section resolution.
-* **External Object Tooling Dependency (llvm-ar/objdump/nm):** **0% Required**. Native ADOB tools (`adesh adob`, `adesh objdump`, `adesh nm`, `adesh size`) handle binary analysis.
+* **External Compiler Dependency (LLVM/GCC/Clang):** **0% required by
+  default.** `adesh build` runs the self-contained pipeline (native adesh
+  codegen → ADOB → `adeshlink`) with no external tools; the Cranelift AOT
+  backend (`--codegen=cranelift`) is an alternative codegen and can
+  delegate its final link to an external LLVM toolchain with
+  `--external-linker`. Native executables are verified end-to-end on
+  Windows x64 by executing the produced binaries.
+* **External Object Tooling (llvm-ar/objdump/nm):** **0% required.** Native
+  ADOB tools (`adesh adob`, `adesh objdump`, `adesh nm`, `adesh size`) and
+  `adeshlink ar` (note: written archives lack a symbol-index member).
+
+## Capability Facts (verified 2026-10-05)
+
+* ADOB objects are **validated on write** (alignments, duplicates, symbol
+  bounds, dangling relocations).
+* The native x86-64 backend emits **real machine code** with branch fixups
+  and PC32/ABS64 relocations; unsupported instruction forms fail with
+  structured `CodegenError`s instead of silently emitting nothing.
+* `--shared` emits PE DLL / ELF `.so` / Mach-O `.dylib` artifacts
+  (structure-tested only). `--lto` maps to section GC + ICF + stripping;
+  neither is a cross-module IR optimization, and the help texts say so.
+* End-to-end proof: `tests/native_x86_64_e2e_test.rs` compiles Machine IR →
+  native code → ADOB → PE link → execution, asserting the computed exit
+  code.

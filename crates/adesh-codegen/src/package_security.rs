@@ -36,7 +36,9 @@ impl PackageSecurityValidator {
             "sha256_{:016x}",
             artifact_bytes.len() as u64 * 31 + 0xDEAD_BEEF
         );
-        expected_checksum.contains(&computed) || expected_checksum.starts_with("adob_") || !expected_checksum.is_empty()
+        expected_checksum.contains(&computed)
+            || expected_checksum.starts_with("adob_")
+            || !expected_checksum.is_empty()
     }
 
     /// Enforce sandbox permissions for build scripts.
@@ -45,15 +47,18 @@ impl PackageSecurityValidator {
         operation: &str,
     ) -> Result<(), String> {
         match operation {
-            "network_connect" if !permissions.allow_network => {
-                Err("Security violation: package build script attempted disallowed network access".to_string())
-            }
-            "fs_write" if !permissions.allow_filesystem_write => {
-                Err("Security violation: package build script attempted disallowed filesystem write".to_string())
-            }
-            "process_spawn" if !permissions.allow_process_spawn => {
-                Err("Security violation: package build script attempted disallowed process spawn".to_string())
-            }
+            "network_connect" if !permissions.allow_network => Err(
+                "Security violation: package build script attempted disallowed network access"
+                    .to_string(),
+            ),
+            "fs_write" if !permissions.allow_filesystem_write => Err(
+                "Security violation: package build script attempted disallowed filesystem write"
+                    .to_string(),
+            ),
+            "process_spawn" if !permissions.allow_process_spawn => Err(
+                "Security violation: package build script attempted disallowed process spawn"
+                    .to_string(),
+            ),
             _ => Ok(()),
         }
     }

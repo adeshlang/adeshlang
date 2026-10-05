@@ -114,6 +114,7 @@ fn test_multi_target_emission_determinism() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_linked_binary_determinism_and_execution_e2e() {
     let target = TargetDescriptor::from_triple("x86_64-pc-windows-msvc").expect("valid triple");
     let mut module = NativeModule::new("det_exec");

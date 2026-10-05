@@ -63,6 +63,7 @@ fn test_atomic_ir_representation_and_concurrency_pass() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_atomic_fetch_add_and_barrier_execution_e2e() {
     let mut module = NativeModule::new("test_atomic");
     let mut main_func = MachineFunction::new("main");

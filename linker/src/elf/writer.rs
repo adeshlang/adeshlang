@@ -159,7 +159,7 @@ impl ElfWriter {
                         let disp = (main_va as i64 - (stub_va as i64 + 16)) as i32;
                         let mut code = vec![
                             0x31, 0xED, // xor ebp, ebp
-                            0x5F,       // pop rdi (argc)
+                            0x5F, // pop rdi (argc)
                             0x48, 0x89, 0xE6, // mov rsi, rsp (argv)
                             0x48, 0x83, 0xE4, 0xF0, // and rsp, -16
                             0xE8, 0x00, 0x00, 0x00, 0x00, // call main

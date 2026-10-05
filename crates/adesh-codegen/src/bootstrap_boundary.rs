@@ -145,10 +145,19 @@ impl FsModuleLoader {
 impl ModuleLoader for FsModuleLoader {
     fn load_module(&self, module_name: &str) -> Result<String, String> {
         if let Some(path) = self.resolve_path(module_name) {
-            std::fs::read_to_string(&path)
-                .map_err(|e| format!("Failed to read module '{}' at {}: {}", module_name, path.display(), e))
+            std::fs::read_to_string(&path).map_err(|e| {
+                format!(
+                    "Failed to read module '{}' at {}: {}",
+                    module_name,
+                    path.display(),
+                    e
+                )
+            })
         } else {
-            Err(format!("Module '{}' not found in search paths", module_name))
+            Err(format!(
+                "Module '{}' not found in search paths",
+                module_name
+            ))
         }
     }
 
@@ -213,10 +222,5 @@ impl ObjectWriter for FsObjectWriter {
 
 /// Abstract Linker Interface decoupling driver from underlying linker toolchain.
 pub trait LinkerInterface {
-    fn link(
-        &self,
-        objects: &[PathBuf],
-        output: &Path,
-        libraries: &[String],
-    ) -> Result<(), String>;
+    fn link(&self, objects: &[PathBuf], output: &Path, libraries: &[String]) -> Result<(), String>;
 }

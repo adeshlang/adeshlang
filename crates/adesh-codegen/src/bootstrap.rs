@@ -124,8 +124,8 @@ impl DependencyAuditor {
 /// Pipeline stage status for native bootstrap verification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BootstrapStageStatus {
-    Autonomous,      // 100% autonomous native Adesh toolchain implementation
-    ExternalFallback,// Relies on system tools (e.g. clang/lld fallback)
+    Autonomous,       // 100% autonomous native Adesh toolchain implementation
+    ExternalFallback, // Relies on system tools (e.g. clang/lld fallback)
     Planned,
 }
 

@@ -117,6 +117,7 @@ fn test_security_metadata_hardening_flags() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_native_debug_execution_e2e() {
     let mut module = NativeModule::new("test_debug");
     let mut main_func = MachineFunction::new("main");

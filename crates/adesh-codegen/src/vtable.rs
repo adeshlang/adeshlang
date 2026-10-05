@@ -60,8 +60,10 @@ impl Devirtualizer {
     }
 
     pub fn register_vtable(&mut self, layout: VTableLayout) {
-        self.known_vtables
-            .insert((layout.trait_name.clone(), layout.concrete_type.clone()), layout);
+        self.known_vtables.insert(
+            (layout.trait_name.clone(), layout.concrete_type.clone()),
+            layout,
+        );
     }
 
     /// Try devirtualizing a dynamic interface call into a direct function symbol.

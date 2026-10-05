@@ -12,7 +12,9 @@ use adesh_codegen::machine_ir::{
     MachineFunction, MachineInstruction, MachineOperand, MachineRegister, NativeModule,
     PhysicalRegister,
 };
-use adesh_codegen::package::{DependencyResolver, PackageDependency, PackageManifest, PackageMetadata};
+use adesh_codegen::package::{
+    DependencyResolver, PackageDependency, PackageManifest, PackageMetadata,
+};
 use std::collections::BTreeMap;
 
 #[test]
@@ -39,15 +41,27 @@ fn test_assembly_and_ir_emission_determinism() {
     let asm1 = AssemblyEmitter::emit_module(&mod1);
     let asm2 = AssemblyEmitter::emit_module(&mod2);
 
-    assert_eq!(asm1, asm2, "Assembly emission must be bit-for-bit deterministic");
+    assert_eq!(
+        asm1, asm2,
+        "Assembly emission must be bit-for-bit deterministic"
+    );
 }
 
 #[test]
 fn test_lockfile_resolution_determinism() {
     let mut deps = BTreeMap::new();
-    deps.insert("z_crate".to_string(), PackageDependency::Simple("1.0.0".to_string()));
-    deps.insert("a_crate".to_string(), PackageDependency::Simple("2.0.0".to_string()));
-    deps.insert("m_crate".to_string(), PackageDependency::Simple("3.0.0".to_string()));
+    deps.insert(
+        "z_crate".to_string(),
+        PackageDependency::Simple("1.0.0".to_string()),
+    );
+    deps.insert(
+        "a_crate".to_string(),
+        PackageDependency::Simple("2.0.0".to_string()),
+    );
+    deps.insert(
+        "m_crate".to_string(),
+        PackageDependency::Simple("3.0.0".to_string()),
+    );
 
     let manifest = PackageManifest {
         package: PackageMetadata {

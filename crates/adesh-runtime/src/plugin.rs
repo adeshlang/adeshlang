@@ -86,7 +86,12 @@ impl PluginInstance {
     }
 
     /// Invoke a plugin export function.
-    pub fn invoke(&self, symbol_name: &str, input: &[u8], output: &mut [u8]) -> Result<i32, String> {
+    pub fn invoke(
+        &self,
+        symbol_name: &str,
+        input: &[u8],
+        output: &mut [u8],
+    ) -> Result<i32, String> {
         let sym = self
             .dylib
             .symbol(symbol_name)

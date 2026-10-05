@@ -53,12 +53,21 @@ impl BugReportBundle {
         s.push_str("### Adesh Compiler Bug Report\n\n");
         s.push_str("| Field | Value |\n");
         s.push_str("| --- | --- |\n");
-        s.push_str(&format!("| **Compiler Version** | `{}` |\n", self.compiler_version));
-        s.push_str(&format!("| **Target Triple** | `{}` |\n", self.target_triple));
+        s.push_str(&format!(
+            "| **Compiler Version** | `{}` |\n",
+            self.compiler_version
+        ));
+        s.push_str(&format!(
+            "| **Target Triple** | `{}` |\n",
+            self.target_triple
+        ));
         s.push_str(&format!("| **Host OS** | `{}` |\n", self.host_os));
         s.push_str(&format!("| **Build Mode** | `{}` |\n", self.build_mode));
         s.push_str(&format!("| **Optimization** | `{}` |\n", self.opt_level));
-        s.push_str(&format!("| **LTO / PGO** | LTO: {}, PGO: {} |\n", self.lto_enabled, self.pgo_enabled));
+        s.push_str(&format!(
+            "| **LTO / PGO** | LTO: {}, PGO: {} |\n",
+            self.lto_enabled, self.pgo_enabled
+        ));
         s.push_str("\n#### Diagnostic Error:\n```text\n");
         s.push_str(&self.error_message);
         s.push_str("\n```\n");

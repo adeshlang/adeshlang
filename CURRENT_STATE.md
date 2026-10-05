@@ -1,6 +1,6 @@
 # Adesh Native Production Toolchain — Current State
 
-**Generated:** 2026-10-02 (revised after a full code-level audit and native codegen correctness fixes)
+**Generated:** 2026-10-05 (Phase 0 documentation truth-reset revision)
 **Toolchain Version:** 0.3.0
 **Target:** Production-Grade Self-Contained Native Toolchain
 
@@ -17,14 +17,14 @@
 | Native HIR lowering coverage | **Partial, with end-to-end coverage for more semantics** — integers, scalar floats/math, strings/concat, ranges, membership, arrays/index mutation, methods, short-circuit values, try/catch, and defers have focused native tests. Unsupported constructs remain incomplete or fail loudly. |
 | AArch64 / RISC-V codegen | **Proof-of-concept** — 4 instruction forms each (Nop/Return/Add/Sub reg-reg). No Move, load/store, branch, or call. |
 | ELF generation | **Implemented in full** — static executables (`ET_EXEC` with native Linux `_start` syscall exit synthesis for x86_64 and AArch64) and dynamic shared objects (`ET_DYN` with `.interp`, `.dynsym`, `.dynstr`, `.hash`, `.dynamic`, `PT_DYNAMIC`, `PT_GNU_RELRO`, `PT_INTERP`, ELF/GNU hash generation). |
-| Mach-O generation | **Implemented in full** — 64-bit Mach-O executables (`MH_EXECUTE`, 4GB `__PAGEZERO`, `LC_MAIN`) and dylibs (`MH_DYLIB`, `LC_ID_DYLIB`), with `LC_BUILD_VERSION` (macOS 11.0+), `LC_LOAD_DYLIB` (`/usr/lib/libSystem.B.dylib`), `LC_SYMTAB`, and partitioned `LC_DYSYMTAB`. |
+| Mach-O generation | **Artifact emission implemented; not loadable with external dependencies** — emits 64-bit Mach-O executables (`MH_EXECUTE`, 4GB `__PAGEZERO`, `LC_MAIN`) and dylibs (`MH_DYLIB`, `LC_ID_DYLIB`), with `LC_BUILD_VERSION` (macOS 11.0+), `LC_LOAD_DYLIB`, `LC_SYMTAB`, and partitioned `LC_DYSYMTAB`. Missing for real executables: dyld info / chained fixups / bind opcodes, exports trie, indirect symbol table. Only fully-static code could ever run; no macOS execution test exists. |
 | WASM | **Compiler backend real** (87KB codegen, data segments, host imports, runs via wasmtime/node); the linker's WASM writer is a single-function stub. |
 | Static libraries | **Implemented, with limitations** — GNU/COFF indexed archives can resolve members lazily; archives without a usable index fall back to scanning. The archive writer still does not emit a symbol index. |
-| Shared libraries | **Implemented for ELF and Mach-O** — `--shared` produces `.so` (`ET_DYN`) on Linux and `.dylib` (`MH_DYLIB`) on macOS, routing standard library symbols to `libc.so.6` / `libSystem.B.dylib`. |
+| Shared libraries | **Artifact emission only; not execution-tested** — `--shared` produces PE DLLs (with export tables), ELF `.so` (`ET_DYN`), and Mach-O `.dylib` (`MH_DYLIB`). ELF dynamic objects have no GOT/PLT, so imported symbols are not resolved; Mach-O dylibs lack dyld info, so external symbols cannot bind. Structure-tested only. |
 | TLS generation | **Incomplete** — PE TLS directory/`_tls_index` synthesis is real. TLS relocation kinds are inert, codegen emits no thread-pointer sequences, and ELF/Mach-O TLS inputs are a hard error. |
 | Full ABI aggregates/variadic | **Incomplete** — register lists, stack-passed arguments, and Win64 shadow space are implemented; no struct-by-value classification, sret, FP/vector argument registers, or variadic support. |
 | DWARF / CodeView | **Incomplete** — link path only strips debug sections. `Dwarf5Generator`/`CodeViewGenerator` emit a single DIE / two records and are never invoked. No `.debug_line` state machine. |
-| Whole-program LTO | **Implemented** — `--lto` / `--enable-lto` activates whole-program optimization pipeline: aggressive ICF (`IcfMode::All`), recursive section GC, symbol stripping, and multi-pass dead data pruning. |
+| Link-time optimization (`--lto`) | **Section-level only** — `--lto` / `--enable-lto` enables aggressive ICF (`IcfMode::All`), recursive section GC, symbol stripping, and multi-pass dead data pruning. No cross-module IR optimization is performed; the machine-IR LTO engine (`crates/adesh-codegen/src/opt/lto.rs`) exists but is not wired into the pipeline. CLI help text updated to match (2026-10-05). |
 | Build time & binary size | **Optimized** — `mimalloc` default allocator; dev profile tuned with `split-debuginfo = "unpacked"` and `opt-level = 0`; release profile with `lto = "thin"`, `codegen-units = 1`, and `strip = true`; `release-small` profile with `opt-level = "z"` and `lto = "fat"`. |
 | Async runtime | **Not implemented** — the runtime crate has no executor/waker/reactor; the HTTP stdlib uses Tokio. The native runtime does have a reusable worker pool for parallel iteration. |
 | GPU / NPU / TPU codegen | **Scaffolding** — kernel "compilation" re-embeds source text; container writers require externally produced ISA; the MLIR GPU path shells out to external `mlir-opt`/`llc`; no kernel-launch runtime. |
@@ -66,6 +66,8 @@ Native x86-64 codegen correctness fixes (previously silent miscompiles, now corr
   allocatable, eliminating clobber hazards in spill and shift sequences.
 - **`--shared` now fails loudly** in `adeshlink` instead of silently emitting
   a static executable (matching the existing `--lto` behavior).
+  *(Superseded by the 2026-10-05 revision: `--shared` now emits PE DLL /
+  ELF `.so` / Mach-O `.dylib` artifacts — structure-tested only, see §0.)*
 - **`AdobWriter::write` now validates** the object before encoding
   (alignments, duplicates, symbol bounds, dangling relocations).
 - **New end-to-end test** (`tests/native_x86_64_e2e_test.rs`): Machine IR →
@@ -106,6 +108,43 @@ subset.
   build took 10.6 s wall time while the CLI reported 1.69 s internally.
   These are Windows debug-build observations, not release performance
   claims; the cold-build outlier needs repeated profiling.
+
+## 0.3 Phase 0 Truth Reset (2026-10-05)
+
+Per `IMPLEMENTATION_PLAN.md` Phase 0, this file is now the canonical status
+document for the toolchain. `TARGET_MATRIX.md`, `ARCHITECTURE_GAPS.md`,
+`TOOLCHAIN_CAPABILITIES.md`, `ABI_MATRIX.md`, `linker/docs/abi_v1.md`, and
+the docs-website compiler pages must agree with it; any status claim
+elsewhere that contradicts this file is stale.
+
+Changes in this revision:
+
+- Corrected the internal contradiction on `--shared` and `--lto` between
+  §0 and §2.3 (the working tree implements shared-object emission for
+  PE/ELF/Mach-O and maps `--lto` to GC + ICF + stripping).
+- Corrected Mach-O status: artifact emission exists, but no dyld
+  info/chained fixups/exports trie/indirect symbol table means nothing with
+  an external call can run; there is no macOS execution test.
+- Corrected the x86-64 calling-convention row: scalar FP argument/return
+  registers are implemented (Win64 XMM0-3, SysV XMM0-7); aggregate
+  classification, sret, vector classification, and variadics are not.
+- Every native e2e test that links and executes a produced binary is now
+  gated `#[cfg(all(target_os = "windows", target_arch = "x86_64"))]`, so
+  Ubuntu's `cargo test --tests` compiles them out instead of attempting to
+  run Windows PEs; all phase 8 suites were added to the Windows CI step
+  list (`.github/workflows/ci.yml`).
+- Deleted the orphaned duplicate HIR at `src/ir/hir/` (never compiled;
+  `crate::ir::hir` resolves to `crate::parsing::hir` via re-export).
+- `adeshlink`'s `--lto` help text now describes what the flag does.
+
+### Documentation Policy
+
+Every capability claim in this repository must be verifiable. A capability
+is "implemented" only when a produced artifact is executed and its behavior
+asserted by a test that runs in CI. Emitting bytes without running them is
+"emission", not "support". No document may claim a capability that no
+execution test verifies. When behavior changes, update this file in the
+same change set.
 
 ## 1. Executive Summary
 
@@ -163,15 +202,15 @@ Real, working subsystems:
 ### 2.3 Native Linker (`linker`)
 | Feature | Status | Notes |
 | :--- | :--- | :--- |
-| **PE/COFF (Windows)** | **Significantly implemented** | PE32+ generator, import tables (IDT/ILT/IAT), base relocations, TLS directory, ASLR/NX flags, entry synthesis. Missing: delay imports, Authenticode, resources, exports (`build_export_table` is dead code). Execution-tested. |
-| **ELF (Linux)** | **Static executables only** | ET_EXEC, program headers, symtab, build-id; linker pipeline test passes. No dynamic linking support (PT_DYNAMIC/.dynsym/GOT/PLT/.gnu.hash/RELRO); no OS execution test. |
-| **Mach-O (macOS)** | **Incomplete** | Linker pipeline test passes; no LC_LOAD_DYLIB, dyld info, chained fixups, or exports trie. No macOS execution test. |
+| **PE/COFF (Windows)** | **Significantly implemented** | PE32+ generator, import tables (IDT/ILT/IAT), base relocations, TLS directory, ASLR/NX flags, entry synthesis, DLL export tables + COFF import libraries for `--shared`. Missing: delay imports, Authenticode, resources, and SEH `.pdata`/`.xdata` synthesis (the generator exists but is never invoked). Execution-tested. |
+| **ELF (Linux)** | **Static executables; dynamic emission unverified** | ET_EXEC, program headers, symtab, build-id, `_start` syscall-exit synthesis; dynamic `ET_DYN` object emission (`.interp`, `.dynsym`, `.dynstr`, `.hash`, `PT_DYNAMIC`, `PT_GNU_RELRO`) exists but has no GOT/PLT, so imported symbols are unresolved; RELRO covers only `.dynamic`. No OS execution test exists for any ELF output. |
+| **Mach-O (macOS)** | **Artifact emission only; not functional** | Emits `MH_EXECUTE`/`MH_DYLIB` layouts with `LC_LOAD_DYLIB`, `LC_SYMTAB`, `LC_DYSYMTAB`; no dyld info, chained fixups, bind opcodes, exports trie, or indirect symbol table, so external symbols cannot bind. Only fully-static code could run. No macOS execution test. |
 | **WASM** | **Stub writer** | Single-function emission; no import section (WASI), relocations never applied. Real WASM output comes from the compiler backend (`src/backends/wasm`). |
 | **Section GC & ICF** | **Complete** | Reachability GC (`--gc-sections`), SHA256 ICF (`--icf`). |
 | **Static archives** | **Implemented, with limitations** | Lazy GNU/COFF indexed member resolution with fallback scanning; writer output still lacks a symbol index. |
-| **Shared libraries** | **Unsupported (loud error)** | PE export tables / ELF dynamic / Mach-O dylib synthesis not implemented; `--shared` errors. |
-| **LTO** | **Unsupported (loud error)** | `--lto` errors; GC/ICF are the available link-time optimizations. |
-| **OS API Router** | **Complete for Windows** | Real DLL routing database; ELF/Mach-O paths classify to `Undefined`. |
+| **Shared libraries** | **Emission only; not execution-tested** | `--shared` emits PE DLLs (export tables), ELF `.so` (`ET_DYN`), Mach-O `.dylib` (`MH_DYLIB`). ELF imports unresolved (no GOT/PLT); Mach-O lacks dyld binding info. |
+| **LTO** | **Section-level only** | `--lto` enables section GC + ICF(All) + stripping; no cross-module IR optimization is performed. Help text matches as of 2026-10-05. |
+| **OS API Router** | **Complete for Windows** | Real DLL routing database (incl. ucrtbase/msvcrt). ELF routes libc symbols to `libc.so.6` and Mach-O to `libSystem.B.dylib`, but the ELF/Mach-O writers cannot actually bind those imports (no GOT/PLT or dyld info). |
 
 ### 2.4 Code Generation & ABI (`crates/adesh-codegen`)
 | Architecture | Status | Notes |
@@ -182,7 +221,7 @@ Real, working subsystems:
 | **WASM** | **Real** | Stack-based opcode stream with SLEB128, locals, control structures. |
 | **Embedded ARM** | **Proof-of-concept** | Minimal Thumb-2 ALU. |
 | **Register allocator** | **Working linear scan** | Callee-saved-first allocation, spill slots below locals; no CFG awareness, no live-range splitting around calls. |
-| **Calling conventions** | **Register lists + stack args** | SysV AMD64, Win64, AAPCS64/32, RISC-V, WASM tables; arg registers, stack arguments, shadow space. Missing: aggregate classification, sret, FP/vector registers, variadic. |
+| **Calling conventions** | **Register lists + stack args + scalar FP regs** | SysV AMD64, Win64, AAPCS64/32, RISC-V, WASM tables; arg registers, stack arguments, shadow space; scalar FP args/returns via XMM0-3 (Win64) / XMM0-7 (SysV). Missing: aggregate classification, sret, vector-register classification, variadics. |
 
 ### 2.5 Runtime Subsystem (`crates/adesh-runtime`)
 | Subsystem | Status | Notes |

@@ -26,7 +26,9 @@ pub enum SimdArchitecture {
 impl SimdArchitecture {
     pub fn vector_bytes(&self) -> usize {
         match self {
-            SimdArchitecture::Generic128 | SimdArchitecture::X86Sse42 | SimdArchitecture::ArmNeon => 16,
+            SimdArchitecture::Generic128
+            | SimdArchitecture::X86Sse42
+            | SimdArchitecture::ArmNeon => 16,
             SimdArchitecture::X86Avx2 => 32,
             SimdArchitecture::RiscVVector => 32,
         }

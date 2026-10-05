@@ -59,6 +59,7 @@ fn test_compilation_cache_key_determinism() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_multi_object_linking_e2e() {
     let target = TargetDescriptor::from_triple("x86_64-pc-windows-msvc").expect("valid triple");
 

@@ -8,8 +8,8 @@
 #![allow(dead_code, unused_imports)]
 
 use adesh_runtime::concurrency_v2::TaskScope;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 #[test]

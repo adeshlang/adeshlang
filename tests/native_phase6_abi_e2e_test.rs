@@ -102,6 +102,7 @@ fn test_unwind_descriptor_and_stack_maps() {
 }
 
 #[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn test_abi_function_call_and_return_e2e() {
     // Helper function `add_three(a, b, c)` -> returns a + b + c
     let mut func_add = MachineFunction::new("add_three");

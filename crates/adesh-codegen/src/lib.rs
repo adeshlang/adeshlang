@@ -55,7 +55,13 @@ pub use abi::{
     StructPassingRules, SystemVX64Abi, UnwindRules, VariadicRules, WindowsX64Abi, create_abi_spec,
 };
 pub use accelerators::{GpuBackend, TensorAcceleratorBackend};
+pub use asm::AssemblyEmitter;
 pub use backend::{AcceleratorBackend, CodegenBackend};
+pub use bootstrap::{
+    BootstrapMatrix, BootstrapStageStatus, DependencyAuditEntry, DependencyAuditor,
+    DependencyClassification,
+};
+pub use bugreport::BugReportBundle;
 pub use calling_convention::{
     Aapcs32CallingConvention, Aapcs64CallingConvention, ArgumentLocation, CallingConvention,
     MoveLocation, MoveOperation, ParallelMoveResolver, RiscVCallingConvention,
@@ -63,7 +69,12 @@ pub use calling_convention::{
     resolve_call_arguments,
 };
 pub use concurrency::{AtomicOp, ConcurrencyPass, MemoryOrder};
+pub use const_eval::{
+    ConstEvalError, ConstEvalLimits, ConstEvaluator, ConstExpr, ConstFunction, ConstValue,
+};
 pub use cranelift_adapter::CraneliftAdapter;
+pub use crash::{CrashReport, CrashReporter, CrashSignal, CrashStackFrame};
+pub use debug::{DebugEngine, FunctionDebugInfo, LocalVariableDebugInfo, VariableStorage};
 pub use debug_info::{FunctionDebugMetadata, LineTableEntry, ModuleDebugInfo, SourceLocation};
 pub use driver::{
     CompilationCacheKey, CompilerDriver, CompilerResourceLimits, CompilerStats, DriverConfig,
@@ -72,6 +83,12 @@ pub use error::CodegenError;
 pub use ffi::{
     FfiCallLowerer, ForeignCallingConvention, ForeignFunctionDeclaration, ForeignParam,
     ForeignSignature, ForeignType,
+};
+pub use generics::{
+    ConcreteType, GenericFunctionTemplate, MonomorphizationEngine, MonomorphizedFunction,
+};
+pub use inspect::{
+    CompilerInspector, InspectComponent, ObjectDumpReport, SectionDumpInfo, SymbolDumpInfo,
 };
 pub use machine_ir::{
     ConditionCode, MachineBlock, MachineFunction, MachineInstruction, MachineOperand,
@@ -84,8 +101,15 @@ pub use opt::{
     PeepholeOptimizer, PgoInstrumentationPass, PgoOptimizationPass, ProfileData, SwitchCase,
     SwitchLowering, SwitchStrategy, VectorCostModel, VectorElementType, VectorType,
 };
+pub use package::{
+    ADESH_LOCK_FILE, ADESH_MANIFEST_FILE, DependencyResolver, DependencySpec, DetailedDependency,
+    IncrementalCache, LockFile, LockedPackage, ModuleFingerprint, PackageManifest, PackageMetadata,
+};
+pub use pgo_tools::ProfileMerger;
+pub use query::{QueryEngine, QueryKey, QueryKind, QueryResult, QueryStats};
 pub use register_alloc::{LinearScanAllocator, RegisterFile};
 pub use safety::{ControlFlowIntegrityPass, StackCanaryPass};
+pub use sanitizer::{SanitizerFlags, SanitizerInstrumenter, SanitizerReport};
 pub use stack_maps::{FunctionStackMap, LiveLocationKind, LiveLocationRecord, SafepointRecord};
 pub use stdlib_builder::StdlibAdobBuilder;
 pub use target_spec::{
@@ -94,22 +118,6 @@ pub use target_spec::{
 pub use targets::{
     aarch64::AArch64Backend, create_backend, riscv::RiscVBackend, x86_64::X86_64Backend,
 };
-pub use asm::AssemblyEmitter;
-pub use bootstrap::{BootstrapMatrix, BootstrapStageStatus, DependencyAuditEntry, DependencyAuditor, DependencyClassification};
-pub use bugreport::BugReportBundle;
-pub use const_eval::{ConstEvalError, ConstEvalLimits, ConstEvaluator, ConstExpr, ConstFunction, ConstValue};
-pub use crash::{CrashReport, CrashReporter, CrashSignal, CrashStackFrame};
-pub use debug::{DebugEngine, FunctionDebugInfo, LocalVariableDebugInfo, VariableStorage};
-pub use generics::{ConcreteType, GenericFunctionTemplate, MonomorphizedFunction, MonomorphizationEngine};
-pub use inspect::{CompilerInspector, InspectComponent, ObjectDumpReport, SectionDumpInfo, SymbolDumpInfo};
-pub use package::{
-    ADESH_LOCK_FILE, ADESH_MANIFEST_FILE, DependencyResolver, DependencySpec,
-    DetailedDependency, IncrementalCache, LockFile, LockedPackage, ModuleFingerprint,
-    PackageManifest, PackageMetadata,
-};
-pub use pgo_tools::ProfileMerger;
-pub use query::{QueryEngine, QueryKey, QueryKind, QueryResult, QueryStats};
-pub use sanitizer::{SanitizerFlags, SanitizerInstrumenter, SanitizerReport};
 pub use unwind_info::{DwarfCallFrameInfo, FunctionUnwindDescriptor, Win64UnwindInfo};
 
 #[cfg(test)]

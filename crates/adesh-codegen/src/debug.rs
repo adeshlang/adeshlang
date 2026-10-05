@@ -128,7 +128,9 @@ impl DebugEngine {
     pub fn resolve_address(&self, address: u64) -> Option<(String, SourceLocation)> {
         // Find the function whose [start_address, start_address + size) contains address
         for (func_name, info) in &self.functions {
-            if address >= info.start_address && address < (info.start_address + info.size_bytes as u64) {
+            if address >= info.start_address
+                && address < (info.start_address + info.size_bytes as u64)
+            {
                 let offset = (address - info.start_address) as u32;
                 // Find closest preceding line table entry
                 let loc = info
