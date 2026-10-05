@@ -59,8 +59,8 @@ pub use opt_level::OptLevel;
 pub use pass::{MachinePass, ModulePass, OptimizationReport, PassStats};
 pub use peephole::PeepholeOptimizer;
 pub use pgo::{
-    BlockProfile, EdgeProfile, FunctionProfile, PgoInstrumentationPass, PgoOptimizationPass,
-    ProfileData,
+    BlockProfile, EdgeProfile, FunctionProfile, PgoConfig, PgoEngine, PgoInstrumentationPass,
+    PgoMode, PgoOptimizationPass, ProfileData,
 };
 pub use sccp::SCCPPass;
 pub use scheduler::BasicBlockScheduler;

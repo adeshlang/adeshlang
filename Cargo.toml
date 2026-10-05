@@ -27,6 +27,10 @@ path = "src/main.rs"
 name = "adl"
 path = "src/bin/adl.rs"
 
+[[example]]
+name = "adl_package_demo"
+path = "examples/adl_package_demo.rs"
+
 [workspace.lints.clippy]
 all = "allow"
 
@@ -42,7 +46,7 @@ crate-type = ["rlib", "cdylib"]
 path = "src/lib.rs"
 
 [features]
-default = []
+default = ["mimalloc"]
 mimalloc = ["dep:mimalloc"]
 # Allow HTTP requests to localhost/internal network addresses (disabled by default for SSRF protection)
 allow_internal_network = []
@@ -162,13 +166,30 @@ name = "benchmarks"
 harness = false
 path = "benches/benchmarks.rs"
 
+[profile.dev]
+opt-level = 0
+debug = 1
+split-debuginfo = "unpacked"
+incremental = true
+
+[profile.dev.package."*"]
+opt-level = 2
+
 [profile.release]
 opt-level = 3
-lto = "fat"
+lto = "thin"
 codegen-units = 1
 panic = "abort"
 strip = true
 debug = false
+
+[profile.release-small]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
 
 [profile.release-dev]
 inherits = "dev"

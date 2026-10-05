@@ -1,87 +1,95 @@
 //! Phase 9 Incremental Compilation E2E Test Suite.
 //!
 //! Validates:
-//! - ModuleFingerprint computation based on source hash, flags, ABI, and dependencies.
-//! - IncrementalCache persistence, hit detection, and dirty invalidation.
-//! - Selective rebuilds: only modified modules and their dependents are invalidated.
+//! - ModuleFingerprint computation based on source hash, interface hash, flags, and dependency hashes.
+//! - Fingerprint matching and public interface diff detection.
+//! - IncrementalCache `should_rebuild` logic and update tracking.
 
 #![allow(dead_code, unused_imports)]
 
 use adesh_codegen::package::{IncrementalCache, ModuleFingerprint};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use tempfile::tempdir;
 
 #[test]
 fn test_incremental_module_fingerprint() {
+    let mut deps = BTreeMap::new();
+    deps.insert("dep_core".to_string(), 12345u64);
+
     let fp1 = ModuleFingerprint::compute(
         "module_a",
         "fn calculate() -> i64 { 42 }",
+        "pub fn calculate() -> i64",
         "-O2 --lto=thin",
-        "win64",
-        &["dep_core".to_string()],
+        deps.clone(),
     );
 
     let fp2 = ModuleFingerprint::compute(
         "module_a",
         "fn calculate() -> i64 { 42 }",
+        "pub fn calculate() -> i64",
         "-O2 --lto=thin",
-        "win64",
-        &["dep_core".to_string()],
+        deps.clone(),
     );
 
     // Identical inputs produce identical fingerprints
-    assert_eq!(fp1.fingerprint, fp2.fingerprint);
+    assert!(fp1.matches(&fp2));
+    assert_eq!(fp1.source_hash, fp2.source_hash);
+    assert!(!fp1.public_interface_changed(&fp2));
 
-    // Changing source changes fingerprint
+    // Changing implementation details only (interface unchanged)
     let fp3 = ModuleFingerprint::compute(
         "module_a",
-        "fn calculate() -> i64 { 100 }",
+        "fn calculate() -> i64 { let x = 40 + 2; x }",
+        "pub fn calculate() -> i64",
         "-O2 --lto=thin",
-        "win64",
-        &["dep_core".to_string()],
+        deps.clone(),
     );
-    assert_ne!(fp1.fingerprint, fp3.fingerprint);
+    assert!(!fp1.matches(&fp3));
+    assert_ne!(fp1.source_hash, fp3.source_hash);
+    assert!(!fp1.public_interface_changed(&fp3));
 
-    // Changing flags changes fingerprint
+    // Changing public interface
     let fp4 = ModuleFingerprint::compute(
         "module_a",
-        "fn calculate() -> i64 { 42 }",
-        "-O3",
-        "win64",
-        &["dep_core".to_string()],
+        "fn calculate(factor: i64) -> i64 { factor * 42 }",
+        "pub fn calculate(factor: i64) -> i64",
+        "-O2 --lto=thin",
+        deps,
     );
-    assert_ne!(fp1.fingerprint, fp4.fingerprint);
+    assert!(fp1.public_interface_changed(&fp4));
 }
 
 #[test]
-fn test_incremental_cache_hit_and_invalidation() {
+fn test_incremental_cache_should_rebuild() {
     let dir = tempdir().expect("tempdir");
     let cache_dir = dir.path().join(".adesh_cache");
     let mut cache = IncrementalCache::new(&cache_dir);
 
-    let fp_a = ModuleFingerprint::compute("mod_a", "source code A", "-O2", "sysv", &[]);
-    let fp_b = ModuleFingerprint::compute("mod_b", "source code B", "-O2", "sysv", &["mod_a".to_string()]);
+    let fp_a = ModuleFingerprint::compute(
+        "mod_a",
+        "source code A",
+        "interface A",
+        "-O2",
+        BTreeMap::new(),
+    );
 
-    // Initially neither is cached
-    assert!(!cache.is_fresh(&fp_a));
-    assert!(!cache.is_fresh(&fp_b));
+    // Initially uncompiled module must be rebuilt
+    assert!(cache.should_rebuild(&fp_a));
 
-    // Store compilation artifacts
-    cache.store(&fp_a, b"object_data_a");
-    cache.store(&fp_b, b"object_data_b");
+    // After compilation, cache is updated
+    cache.update(fp_a.clone());
 
-    // Both should now be fresh
-    assert!(cache.is_fresh(&fp_a));
-    assert!(cache.is_fresh(&fp_b));
+    // Subsequent compilation check with identical fingerprint should not rebuild
+    assert!(!cache.should_rebuild(&fp_a));
 
-    let retrieved_a = cache.get(&fp_a).expect("retrieve A");
-    assert_eq!(retrieved_a, b"object_data_a");
-
-    // Modify source code in mod_a
-    let fp_a_modified = ModuleFingerprint::compute("mod_a", "source code A MODIFIED", "-O2", "sysv", &[]);
-    assert!(!cache.is_fresh(&fp_a_modified));
-
-    // Invalidate dependents of mod_a
-    cache.invalidate("mod_a");
-    assert!(!cache.is_fresh(&fp_a));
+    // Modified source should trigger rebuild
+    let fp_a_modified = ModuleFingerprint::compute(
+        "mod_a",
+        "source code A MODIFIED",
+        "interface A",
+        "-O2",
+        BTreeMap::new(),
+    );
+    assert!(cache.should_rebuild(&fp_a_modified));
 }

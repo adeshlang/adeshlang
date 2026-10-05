@@ -19,21 +19,26 @@ pub struct SourceLocation {
 }
 
 /// Variable storage location in native frame.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum VariableStorage {
+    #[default]
+    RegisterZero,
     Register(u16),
     StackOffset(i32),
     Constant(i64),
 }
 
 /// Local variable debug descriptor.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LocalVariableDebugInfo {
     pub name: String,
     pub type_name: String,
     pub location: VariableStorage,
     pub live_start_pc: u32,
     pub live_end_pc: u32,
+    pub stack_offset: Option<i32>,
+    pub scope_start_line: u32,
+    pub scope_end_line: u32,
 }
 
 /// Function debug information descriptor.
@@ -46,6 +51,48 @@ pub struct FunctionDebugInfo {
     pub source_location: SourceLocation,
     pub line_table: BTreeMap<u32, SourceLocation>, // instruction byte offset -> source location
     pub local_variables: Vec<LocalVariableDebugInfo>,
+    pub locals: Vec<LocalVariableDebugInfo>,
+}
+
+impl FunctionDebugInfo {
+    pub fn new(name: impl Into<String>, file: impl Into<String>, line: u32) -> Self {
+        let name_str = name.into();
+        Self {
+            linkage_name: name_str.clone(),
+            name: name_str,
+            start_address: 0x1000,
+            size_bytes: 0x1000,
+            source_location: SourceLocation {
+                file: file.into(),
+                line,
+                column: 1,
+            },
+            line_table: BTreeMap::new(),
+            local_variables: Vec::new(),
+            locals: Vec::new(),
+        }
+    }
+
+    pub fn add_line_mapping(&mut self, addr: u64, line: u32, column: u32) {
+        let offset = if addr >= self.start_address {
+            (addr - self.start_address) as u32
+        } else {
+            addr as u32
+        };
+        self.line_table.insert(
+            offset,
+            SourceLocation {
+                file: self.source_location.file.clone(),
+                line,
+                column,
+            },
+        );
+    }
+
+    pub fn add_local(&mut self, local: LocalVariableDebugInfo) {
+        self.local_variables.push(local.clone());
+        self.locals.push(local);
+    }
 }
 
 /// Unified Debug Symbol Engine.
@@ -60,6 +107,14 @@ impl DebugEngine {
             functions: BTreeMap::new(),
             address_map: BTreeMap::new(),
         }
+    }
+
+    pub fn lookup_location(&self, address: u64) -> Option<SourceLocation> {
+        self.resolve_address(address).map(|(_, loc)| loc)
+    }
+
+    pub fn get_function(&self, name: &str) -> Option<&FunctionDebugInfo> {
+        self.functions.get(name)
     }
 
     /// Register a function's debug metadata.

@@ -5,8 +5,12 @@
 //! ARC reference counting, tracked allocations, and standard builtins.
 
 pub mod abi;
+pub mod abi_v1;
 pub mod allocator;
+pub mod allocator_v2;
 pub mod async_rt;
+pub mod backtrace;
+pub mod concurrency_v2;
 pub mod native_abi;
 pub mod panic;
 pub mod platform;
@@ -15,8 +19,12 @@ pub mod sanitizer_rt;
 pub mod threading;
 
 pub use abi::*;
+pub use abi_v1::*;
 pub use allocator::*;
+pub use allocator_v2::*;
 pub use async_rt::*;
+pub use backtrace::*;
+pub use concurrency_v2::*;
 pub use native_abi::*;
 pub use panic::*;
 pub use platform::*;
@@ -2594,7 +2602,6 @@ pub extern "C" fn sizeof(handle: u64) -> i64 {
     aot_sizeof(handle)
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn clock() -> f64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()

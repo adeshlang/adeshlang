@@ -1018,6 +1018,10 @@ impl MachineFunction {
         }
     }
 
+    pub fn entry_block(&self) -> &MachineBlock {
+        &self.blocks[0]
+    }
+
     pub fn entry_block_mut(&mut self) -> &mut MachineBlock {
         &mut self.blocks[0]
     }

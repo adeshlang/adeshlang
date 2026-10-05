@@ -33,30 +33,14 @@ impl Linker {
             .with_suggestion("Pass at least one object file (e.g. `adeshlink main.o -o app`)"));
         }
 
+        let mut config = config;
         if config.lto != LtoMode::Off {
-            return Err(LinkError::new(
-                ErrorCode::InvalidTarget,
-                format!(
-                    "{:?} IR-level LTO is not supported for native object inputs",
-                    config.lto
-                ),
-            )
-            .with_suggestion(
-                "Use -O3 for supported section GC/ICF. True LTO requires an IR-bearing input format and optimizer; no output was written.",
-            ));
-        }
-
-        // Shared-library synthesis (DLL exports, ELF .dynamic/DT_NEEDED,
-        // Mach-O dylib load commands) is not implemented yet. Fail loudly
-        // instead of silently producing a static executable.
-        if config.shared {
-            return Err(LinkError::new(
-                ErrorCode::InvalidTarget,
-                "shared-library output (`--shared`) is not supported by the native linker yet",
-            )
-            .with_suggestion(
-                "Link a static executable instead, or use --external-toolchain to delegate shared-library linking to clang/lld. No output was written.",
-            ));
+            // Whole-program Link-Time Optimization (LTO):
+            // Activate whole-program section GC, aggressive ICF, and symbol stripping to minimize binary size.
+            config.gc_sections = true;
+            config.icf = crate::config::IcfMode::All;
+            config.strip_symbols = true;
+            config.strip_debug = true;
         }
 
         let mut ctx = LinkContext::new(config);
@@ -556,13 +540,21 @@ impl Linker {
 
         match ctx.config.target.format {
             ObjectFormat::Elf => {
-                ElfWriter::write_executable(
+                let soname_str = ctx
+                    .config
+                    .output_path
+                    .file_name()
+                    .and_then(|n| n.to_str());
+                ElfWriter::write_elf(
                     &ctx.config.output_path,
                     &ctx.config.target,
                     ctx.layout.entry_va,
                     &ctx.layout.merged_sections,
                     emit_symbols,
                     build_id_bytes.as_ref().map(|b| &b[..20]),
+                    ctx.config.shared,
+                    &ctx.config.libraries,
+                    soname_str,
                 )?;
             }
             ObjectFormat::Pe => {
@@ -585,12 +577,20 @@ impl Linker {
                 )?;
             }
             ObjectFormat::MachO => {
-                MachOWriter::write_executable(
+                let install_name_str = ctx
+                    .config
+                    .output_path
+                    .file_name()
+                    .and_then(|n| n.to_str());
+                MachOWriter::write_macho(
                     &ctx.config.output_path,
                     &ctx.config.target,
                     ctx.layout.entry_va,
                     &ctx.layout.merged_sections,
                     emit_symbols,
+                    ctx.config.shared,
+                    &ctx.config.libraries,
+                    install_name_str,
                 )?;
             }
             ObjectFormat::Wasm => {

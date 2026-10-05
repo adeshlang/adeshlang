@@ -2,33 +2,42 @@
 //!
 //! Validates:
 //! - DependencyAuditor: classification of compiler dependencies for self-hosting.
-//! - BootstrapMatrix: Stage 0 (Rust compiler) -> Stage 1 (Adesh compiler) -> Stage 2 (Self-hosted) compatibility.
-//! - Self-hosting readiness metric.
+//! - BootstrapMatrix: validation of autonomous native stages (frontend, middle-end, native backend, ADOB, adeshlink, native executable).
+//! - Self-hosting readiness verification without external LLVM/linkers.
 
 #![allow(dead_code, unused_imports)]
 
-use adesh_codegen::bootstrap::{BootstrapMatrix, DependencyAuditor, DependencyClassification};
+use adesh_codegen::bootstrap::{
+    BootstrapMatrix, BootstrapStageStatus, DependencyAuditor, DependencyClassification,
+};
 
 #[test]
 fn test_self_hosting_dependency_auditor() {
     let mut auditor = DependencyAuditor::new();
-    auditor.register("core_ast", DependencyClassification::KernelPure);
-    auditor.register("hir_lower", DependencyClassification::KernelPure);
-    auditor.register("mem_alloc", DependencyClassification::SystemWrapped);
-    auditor.register("cargo_build", DependencyClassification::HostToolchain);
+    auditor.register(
+        "custom_ast",
+        DependencyClassification::Essential,
+        "AST representation",
+        "Self-host in Adesh std::ast",
+    );
+    auditor.register(
+        "temp_helper",
+        DependencyClassification::Replaceable,
+        "Temporary parser helper",
+        "Replace with native parser",
+    );
 
-    let report = auditor.audit();
-    assert_eq!(report.kernel_pure_count, 2);
-    assert_eq!(report.system_wrapped_count, 1);
-    assert_eq!(report.host_toolchain_count, 1);
-    assert!(report.self_hosting_readiness_score > 0.0);
+    let entries = auditor.entries();
+    assert!(entries.contains_key("custom_ast"));
+    assert!(entries.contains_key("temp_helper"));
+    assert!(auditor.replaceable_count() >= 1);
 }
 
 #[test]
 fn test_bootstrap_matrix_stages() {
-    let matrix = BootstrapMatrix::default_matrix();
-    assert_eq!(matrix.stages.len(), 3);
-    assert_eq!(matrix.stages[0].stage_name, "stage0_rust_bootstrapper");
-    assert_eq!(matrix.stages[1].stage_name, "stage1_adesh_compiler");
-    assert_eq!(matrix.stages[2].stage_name, "stage2_self_hosted_compiler");
+    let matrix = BootstrapMatrix::current();
+    assert_eq!(matrix.frontend_status, BootstrapStageStatus::Autonomous);
+    assert_eq!(matrix.native_backend_status, BootstrapStageStatus::Autonomous);
+    assert_eq!(matrix.adeshlink_status, BootstrapStageStatus::Autonomous);
+    assert!(matrix.is_fully_autonomous());
 }

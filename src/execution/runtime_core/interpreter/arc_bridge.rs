@@ -99,7 +99,6 @@ fn runtime_value_to_ast_value(rv: &crate::backends::common::builtins::RuntimeVal
 
 // FFI exports for AOT runtime
 
-#[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_arc_new(value: i64) -> u64 {
     #[cfg(not(target_arch = "wasm32"))]
     let val = if let Some(rv) =
@@ -122,7 +121,6 @@ pub extern "C" fn adesh_rt_arc_new(value: i64) -> u64 {
     }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_arc_clone(handle: u64) -> u64 {
     match arc_manager().lock() {
         Ok(guard) => match guard.clone_arc(handle) {
@@ -139,7 +137,6 @@ pub extern "C" fn adesh_rt_arc_clone(handle: u64) -> u64 {
     }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_arc_drop(handle: u64) -> u64 {
     match arc_manager().lock() {
         Ok(mut guard) => {
@@ -155,7 +152,6 @@ pub extern "C" fn adesh_rt_arc_drop(handle: u64) -> u64 {
     }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_weak_new(handle: u64) -> u64 {
     match arc_manager().lock() {
         Ok(guard) => match guard.create_weak(handle) {
@@ -172,7 +168,6 @@ pub extern "C" fn adesh_rt_weak_new(handle: u64) -> u64 {
     }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_weak_drop(handle: u64) -> u64 {
     match arc_manager().lock() {
         Ok(mut guard) => {
@@ -188,7 +183,6 @@ pub extern "C" fn adesh_rt_weak_drop(handle: u64) -> u64 {
     }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_arc_get(handle: u64) -> i64 {
     match arc_manager().lock() {
         Ok(guard) => match guard.get_value(handle) {
@@ -205,7 +199,6 @@ pub extern "C" fn adesh_rt_arc_get(handle: u64) -> i64 {
     }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_arc_set(handle: u64, value: i64) -> u64 {
     #[cfg(not(target_arch = "wasm32"))]
     let val = if let Some(rv) =
@@ -234,7 +227,6 @@ pub extern "C" fn adesh_rt_arc_set(handle: u64, value: i64) -> u64 {
     }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_arc_strong_count(handle: u64) -> i64 {
     match arc_manager().lock() {
         Ok(guard) => match guard.strong_count(handle) {
@@ -251,7 +243,6 @@ pub extern "C" fn adesh_rt_arc_strong_count(handle: u64) -> i64 {
     }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_arc_weak_count(handle: u64) -> i64 {
     match arc_manager().lock() {
         Ok(guard) => match guard.weak_count(handle) {
@@ -270,7 +261,6 @@ pub extern "C" fn adesh_rt_arc_weak_count(handle: u64) -> i64 {
 
 /// Runtime heap allocation guard
 /// Returns 1 if heap allocation is allowed, 0 otherwise
-#[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_assert_heap_allowed() -> i32 {
     // For now, always allow heap allocation
     // This could be extended to enforce compile-time safety policies

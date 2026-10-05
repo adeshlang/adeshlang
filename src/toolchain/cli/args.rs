@@ -492,6 +492,12 @@ impl ParsedArgs {
                     program_args.push(args[i + 1].clone());
                     i += 1;
                 }
+                "--lto" | "--enable-lto" => {
+                    program_args.push(arg.clone());
+                }
+                "--disable-lto" | "--no-lto" => {
+                    program_args.push(arg.clone());
+                }
                 _ if arg.starts_with("--lto=") => {
                     program_args.push(arg.clone());
                 }

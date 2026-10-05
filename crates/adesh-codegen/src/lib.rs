@@ -9,24 +9,34 @@
 pub mod abi;
 pub mod accelerators;
 pub mod asm;
+pub mod attributes;
 pub mod backend;
+pub mod binary_tools;
 pub mod bootstrap;
+pub mod bootstrap_boundary;
 pub mod bugreport;
+pub mod build_graph;
 pub mod calling_convention;
+pub mod compiler_arena;
+pub mod compiler_server;
 pub mod concurrency;
 pub mod const_eval;
+pub mod const_eval_vm;
 pub mod cranelift_adapter;
 pub mod crash;
 pub mod debug;
 pub mod debug_info;
 pub mod driver;
 pub mod error;
+pub mod escape_analysis;
 pub mod ffi;
 pub mod generics;
+pub mod generics_v2;
 pub mod inspect;
 pub mod machine_ir;
 pub mod opt;
 pub mod package;
+pub mod package_security;
 pub mod pgo_tools;
 pub mod query;
 pub mod register_alloc;
@@ -37,6 +47,7 @@ pub mod stdlib_builder;
 pub mod target_spec;
 pub mod targets;
 pub mod unwind_info;
+pub mod vtable;
 
 pub use abi::{
     Aapcs64Abi, AbiSpec, AbiType, AggregateReturnRules, CalleeSavedSet, CallerSavedSet, RedZone,

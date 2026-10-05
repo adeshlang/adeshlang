@@ -20,6 +20,11 @@ impl AssemblyEmitter {
         }
     }
 
+    /// Convenience function to emit assembly for a module with a default target triple.
+    pub fn emit_module(module: &NativeModule) -> String {
+        Self::new("x86_64").emit_module_asm(module)
+    }
+
     /// Emit complete assembly text for a NativeModule.
     pub fn emit_module_asm(&self, module: &NativeModule) -> String {
         let mut s = String::new();

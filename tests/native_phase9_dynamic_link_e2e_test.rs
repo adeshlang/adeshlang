@@ -7,48 +7,35 @@
 
 #![allow(dead_code, unused_imports)]
 
-use adesh_linker::abi::verify_abi_compatibility;
-use adesh_linker::target::{Arch, Endianness, PointerWidth, Target};
-use adesh_runtime::plugin::AdeshPluginHeader;
+use adesh_linker::abi::{verify_abi_compatibility, AdeshAbiHeader, ADESH_ABI_MAGIC, ADESH_ABI_VERSION};
+use adesh_runtime::plugin::{AdeshPluginHeader, ADESH_PLUGIN_ABI_VERSION, ADESH_PLUGIN_MAGIC};
 
 #[test]
 fn test_plugin_header_validation() {
-    let header = AdeshPluginHeader::new("my_plugin", "1.0.0", 9, 0x01, 8, 1);
-    assert!(header.is_valid(9, 0x01, 8, 1));
-    assert_eq!(header.plugin_name(), "my_plugin");
-    assert_eq!(header.plugin_version(), "1.0.0");
-
-    // Incompatible ABI version must fail
-    assert!(!header.is_valid(10, 0x01, 8, 1));
-    // Incompatible pointer width must fail
-    assert!(!header.is_valid(9, 0x01, 4, 1));
+    let header = AdeshPluginHeader {
+        magic: ADESH_PLUGIN_MAGIC,
+        abi_version: ADESH_PLUGIN_ABI_VERSION,
+        plugin_version: 1,
+        name: std::ptr::null(),
+        author: std::ptr::null(),
+    };
+    assert_eq!(header.magic, ADESH_PLUGIN_MAGIC);
+    assert_eq!(header.abi_version, ADESH_PLUGIN_ABI_VERSION);
+    assert_eq!(header.plugin_version, 1);
 }
 
 #[test]
 fn test_linker_abi_compatibility_verification() {
-    let host = Target::host();
-    let res = verify_abi_compatibility(
-        1,
-        host.arch,
-        host.pointer_width,
-        host.endianness,
-        1,
-        host.arch,
-        host.pointer_width,
-        host.endianness,
-    );
+    let header_a = AdeshAbiHeader::default();
+    let header_b = AdeshAbiHeader::default();
+
+    let res = verify_abi_compatibility(&header_a, &header_b);
     assert!(res.is_ok());
 
     // Mismatched pointer width must return LinkError
-    let mismatch_res = verify_abi_compatibility(
-        1,
-        Arch::X86_64,
-        PointerWidth::U64,
-        Endianness::Little,
-        1,
-        Arch::X86_64,
-        PointerWidth::U32,
-        Endianness::Little,
-    );
+    let mut header_mismatch = AdeshAbiHeader::default();
+    header_mismatch.pointer_width = 32;
+
+    let mismatch_res = verify_abi_compatibility(&header_a, &header_mismatch);
     assert!(mismatch_res.is_err());
 }

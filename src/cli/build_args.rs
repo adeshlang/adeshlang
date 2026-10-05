@@ -115,9 +115,23 @@ impl BuildArgParser {
 
                 // LTO, PGO, Sanitizer, Hardening
                 "--lto" => {
-                    let _ = parser.next_arg();
+                    let next = parser.next_arg();
+                    if let Ok(val) = next {
+                        config.lto = val != "off" && val != "no" && val != "false";
+                    } else {
+                        config.lto = true;
+                    }
                 }
-                arg if arg.starts_with("--lto=") => {}
+                "--enable-lto" => {
+                    config.lto = true;
+                }
+                "--no-lto" | "--disable-lto" => {
+                    config.lto = false;
+                }
+                arg if arg.starts_with("--lto=") => {
+                    let mode = &arg["--lto=".len()..];
+                    config.lto = mode != "off" && mode != "no" && mode != "false";
+                }
 
                 "--pgo" => {
                     let _ = parser.next_arg();

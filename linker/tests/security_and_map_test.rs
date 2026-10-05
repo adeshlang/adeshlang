@@ -4,22 +4,40 @@ use adesh_linker::layout::LayoutEngine;
 use adesh_linker::linker::Linker;
 use adesh_linker::map::LinkMapGenerator;
 use adesh_linker::object::ObjectFile;
-use adesh_linker::section::{MergedSection, SectionKind, flags};
+use adesh_linker::object::writer::ObjectWriter;
+use adesh_linker::section::{MergedSection, Section, SectionKind, flags};
 use adesh_linker::symbol::{Symbol, SymbolBinding, SymbolType};
 use adesh_linker::target::Target;
 use std::path::PathBuf;
 use tempfile::tempdir;
 
 #[test]
-fn test_ir_lto_request_fails_without_emitting_an_unoptimized_binary() {
+fn test_lto_whole_program_optimization_modes() {
     let dir = tempdir().unwrap();
-    let output = dir.path().join("not_lto.exe");
-    let mut config = LinkConfig::new(output.clone(), Target::x86_64_windows());
-    for mode in [LtoMode::Thin, LtoMode::Full] {
+    let target = Target::x86_64_windows();
+
+    let mut obj = ObjectFile::new(dir.path().join("main.obj"), target.clone(), 0);
+    let sec = Section::new_code(".text", vec![0x48, 0x31, 0xC0, 0xC3], 16);
+    obj.add_section(sec);
+    obj.add_symbol(Symbol::new_defined(
+        "mainCRTStartup",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        4,
+        0,
+    ));
+    let obj_path = dir.path().join("main.obj");
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    for (i, mode) in [LtoMode::Thin, LtoMode::Full].into_iter().enumerate() {
+        let output = dir.path().join(format!("lto_{}.exe", i));
+        let mut config = LinkConfig::new(output.clone(), target.clone());
         config.lto = mode;
-        let error = Linker::link(&[dir.path().join("native.obj")], config.clone()).unwrap_err();
-        assert!(error.to_string().contains("IR-level LTO"));
-        assert!(!output.exists());
+        let res = Linker::link(&[obj_path.clone()], config);
+        assert!(res.is_ok(), "LTO linking failed for {:?}: {:?}", mode, res.err());
+        assert!(output.exists());
     }
 }
 

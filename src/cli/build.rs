@@ -111,6 +111,8 @@ pub struct AotBuildConfig {
     pub clear_cache: bool,
     /// Deterministic build output
     pub deterministic: bool,
+    /// Enable Link-Time Optimization (whole-program LTO)
+    pub lto: bool,
     /// Delegate the final link step to an external LLVM toolchain
     /// (clang + lld/lld-link) instead of the built-in adeshlink engine.
     /// Requires an external LLVM installation; verify with
@@ -147,6 +149,7 @@ impl Default for AotBuildConfig {
             force_rebuild: false,
             clear_cache: false,
             deterministic: false,
+            lto: false,
             external_linker: false,
         }
     }
@@ -292,9 +295,7 @@ impl AotBuildConfig {
             extra_linker_args,
             fast_compile: self.fast_compile,
             enable_dead_code_elimination: true,
-            // Cranelift emits native object code, not cross-module IR. O3
-            // must not implicitly claim that ThinLTO was performed.
-            enable_lto: false,
+            enable_lto: self.lto,
             incremental: self.incremental,
             cache_dir: None,
             force_rebuild: self.force_rebuild,
@@ -340,6 +341,14 @@ impl AotBuildConfig {
                 String::new()
             }
         );
+
+        if self.lto {
+            println!(
+                "  {}LTO:{}          enabled (whole-program optimization)",
+                colors::GREEN,
+                colors::RESET
+            );
+        }
 
         if self.fast_compile {
             println!(
@@ -499,6 +508,14 @@ pub fn parse_build_args(
             }
             "--strip" | "-s" => {
                 config.linker_args.push("-s".to_string());
+            }
+
+            // LTO optimization
+            "--lto" | "--enable-lto" => config.lto = true,
+            "--no-lto" | "--disable-lto" => config.lto = false,
+            _ if arg.starts_with("--lto=") => {
+                let mode = &arg[6..];
+                config.lto = mode != "off" && mode != "no" && mode != "false";
             }
 
             // External linker bridge: delegate the final link step to an
@@ -1041,6 +1058,19 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
                         adesh_linker::target::Target::host()
                     },
                 );
+
+                link_config.shared = matches!(config.emit, EmitType::SharedLib);
+                let opt_level = match config.opt_level {
+                    0 => adesh_linker::config::OptLevel::O0,
+                    1 => adesh_linker::config::OptLevel::O1,
+                    2 => adesh_linker::config::OptLevel::O2,
+                    _ => adesh_linker::config::OptLevel::O3,
+                };
+                link_config.apply_optimization_level(opt_level);
+                if config.lto {
+                    link_config.lto = adesh_linker::config::LtoMode::Thin;
+                }
+                link_config.strip_debug = !config.debug_info;
 
                 for dir in &config.lib_dirs {
                     link_config.library_search_paths.push(dir.clone());

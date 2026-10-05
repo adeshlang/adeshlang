@@ -26,6 +26,7 @@ fn test_debug_engine_line_and_variable_tracking() {
         stack_offset: Some(-16),
         scope_start_line: 12,
         scope_end_line: 15,
+        ..Default::default()
     });
 
     engine.register_function(func_debug);
@@ -49,6 +50,7 @@ fn test_crash_reporter_generation() {
             symbol_name: Some("process_frame".to_string()),
             source_file: Some("src/render.adesh".to_string()),
             line_number: Some(42),
+            ..Default::default()
         },
         CrashStackFrame {
             frame_index: 1,
@@ -56,6 +58,7 @@ fn test_crash_reporter_generation() {
             symbol_name: Some("main".to_string()),
             source_file: Some("src/main.adesh".to_string()),
             line_number: Some(15),
+            ..Default::default()
         },
     ];
 

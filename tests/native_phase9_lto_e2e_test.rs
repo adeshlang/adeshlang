@@ -45,6 +45,7 @@ fn test_ipo_function_specialization_and_constant_propagation() {
         enable_cross_module_const_prop: true,
         enable_hot_cold_splitting: true,
         max_specialization_depth: 3,
+        ..Default::default()
     });
 
     let call_sites = vec![CallSiteInfo {
@@ -52,6 +53,7 @@ fn test_ipo_function_specialization_and_constant_propagation() {
         callee: "process_data".to_string(),
         known_constant_args: vec![(0, 42)],
         call_count: 500,
+        ..Default::default()
     }];
 
     let report = engine

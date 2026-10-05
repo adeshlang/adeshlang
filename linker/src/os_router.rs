@@ -1050,7 +1050,10 @@ impl OsApiRouter {
         }
 
         if Self::is_libc_symbol(raw) || Self::is_libc_symbol(clean) {
-            return SymbolRoute::Intrinsic;
+            return SymbolRoute::DllImport {
+                dll: "libc.so.6",
+                name: clean.to_string(),
+            };
         }
 
         SymbolRoute::Undefined
@@ -1071,7 +1074,10 @@ impl OsApiRouter {
         }
 
         if Self::is_libc_symbol(raw) || Self::is_libc_symbol(clean) {
-            return SymbolRoute::Intrinsic;
+            return SymbolRoute::DllImport {
+                dll: "/usr/lib/libSystem.B.dylib",
+                name: format!("_{}", clean),
+            };
         }
 
         SymbolRoute::Undefined

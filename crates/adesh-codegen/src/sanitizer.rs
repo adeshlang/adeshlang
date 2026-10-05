@@ -52,6 +52,22 @@ impl SanitizerInstrumenter {
         Self { flags }
     }
 
+    /// Instrument an entire NativeModule with executable safety checks.
+    pub fn instrument_module(
+        &mut self,
+        module: &mut crate::machine_ir::NativeModule,
+    ) -> Result<SanitizerReport, crate::error::CodegenError> {
+        let mut total_report = SanitizerReport::default();
+        for func in &mut module.functions {
+            let r = self.instrument_function(func);
+            total_report.bounds_checks_inserted += r.bounds_checks_inserted;
+            total_report.overflow_checks_inserted += r.overflow_checks_inserted;
+            total_report.uaf_hooks_inserted += r.uaf_hooks_inserted;
+            total_report.stack_canaries_inserted += r.stack_canaries_inserted;
+        }
+        Ok(total_report)
+    }
+
     /// Instrument a MachineFunction with executable safety checks.
     pub fn instrument_function(&self, func: &mut MachineFunction) -> SanitizerReport {
         let mut report = SanitizerReport::default();

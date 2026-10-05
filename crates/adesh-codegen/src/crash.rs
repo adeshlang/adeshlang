@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CrashSignal {
     AccessViolation,      // SIGSEGV / EXCEPTION_ACCESS_VIOLATION
+    SegmentationFault,   // Alias for AccessViolation
     IllegalInstruction,   // SIGILL / EXCEPTION_ILLEGAL_INSTRUCTION
     IntegerDivideByZero,  // SIGFPE / EXCEPTION_INT_DIVIDE_BY_ZERO
     StackOverflow,        // EXCEPTION_STACK_OVERFLOW
@@ -23,6 +24,7 @@ impl std::fmt::Display for CrashSignal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CrashSignal::AccessViolation => write!(f, "Access Violation (SIGSEGV)"),
+            CrashSignal::SegmentationFault => write!(f, "SegmentationFault"),
             CrashSignal::IllegalInstruction => write!(f, "Illegal Instruction (SIGILL)"),
             CrashSignal::IntegerDivideByZero => write!(f, "Integer Division by Zero (SIGFPE)"),
             CrashSignal::StackOverflow => write!(f, "Stack Overflow"),
@@ -33,12 +35,16 @@ impl std::fmt::Display for CrashSignal {
 }
 
 /// Stack frame captured during a crash.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CrashStackFrame {
     pub frame_index: usize,
     pub instruction_address: u64,
     pub function_name: Option<String>,
     pub source_location: Option<SourceLocation>,
+    pub instruction_pointer: u64,
+    pub symbol_name: Option<String>,
+    pub source_file: Option<String>,
+    pub line_number: Option<u32>,
 }
 
 /// Comprehensive native crash report.
@@ -51,6 +57,7 @@ pub struct CrashReport {
     pub build_id: String,
     pub target_triple: String,
     pub stack_frames: Vec<CrashStackFrame>,
+    pub stack_trace: Vec<CrashStackFrame>,
     pub timestamp_utc: String,
 }
 
@@ -97,6 +104,40 @@ impl CrashReporter {
         }
     }
 
+    /// Generate a report directly from frames.
+    pub fn generate_report(
+        signal: CrashSignal,
+        fault_address: u64,
+        frames: Vec<CrashStackFrame>,
+    ) -> CrashReport {
+        let ip = frames
+            .first()
+            .map(|f| {
+                if f.instruction_pointer != 0 {
+                    f.instruction_pointer
+                } else {
+                    f.instruction_address
+                }
+            })
+            .unwrap_or(0);
+        CrashReport {
+            signal,
+            fault_address,
+            instruction_address: ip,
+            thread_id: 1,
+            build_id: "default-build-id".to_string(),
+            target_triple: "x86_64-pc-windows-msvc".to_string(),
+            stack_frames: frames.clone(),
+            stack_trace: frames,
+            timestamp_utc: "2026-10-04T00:00:00Z".to_string(),
+        }
+    }
+
+    /// Format a crash report as text.
+    pub fn format_report(report: &CrashReport) -> String {
+        report.format_diagnostic()
+    }
+
     /// Symbolicate a raw stack trace using the provided DebugEngine.
     pub fn create_report(
         &self,
@@ -120,11 +161,19 @@ impl CrashReporter {
                 (None, None)
             };
 
+            let symbol_name = func.clone();
+            let source_file = loc.as_ref().map(|l| l.file.clone());
+            let line_number = loc.as_ref().map(|l| l.line);
+
             stack_frames.push(CrashStackFrame {
                 frame_index: idx,
                 instruction_address: pc,
                 function_name: func,
                 source_location: loc,
+                instruction_pointer: pc,
+                symbol_name,
+                source_file,
+                line_number,
             });
         }
 
@@ -135,7 +184,8 @@ impl CrashReporter {
             thread_id,
             build_id: self.build_id.clone(),
             target_triple: self.target_triple.clone(),
-            stack_frames,
+            stack_frames: stack_frames.clone(),
+            stack_trace: stack_frames,
             timestamp_utc: "2026-10-04T00:00:00Z".to_string(),
         }
     }

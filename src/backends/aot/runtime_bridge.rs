@@ -260,7 +260,6 @@ fn runtime_value_to_ast_value_impl(rv: &RuntimeValue, depth: usize, max_depth: u
 /// Create an object with key-value pairs
 /// args: [key1_handle, value1_handle, key2_handle, value2_handle, ...]
 /// Returns handle to the created object
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_make_object(args_ptr: *const u64, arg_count: usize) -> u64 {
     use crate::utils::collections::FastMap;
 
@@ -296,7 +295,6 @@ pub unsafe extern "C" fn aot_make_object(args_ptr: *const u64, arg_count: usize)
 
 /// Set an object field and return a new object handle.
 /// Expects handles: object, field-name string, value.
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_set_field(obj_handle: u64, field_handle: u64, val_handle: u64) -> u64 {
     let field_name = match aot_get_value(field_handle) {
         Some(RuntimeValue::String(s)) => s,
@@ -315,7 +313,6 @@ pub extern "C" fn aot_set_field(obj_handle: u64, field_handle: u64, val_handle: 
 }
 
 /// Get an object field and return it as a value handle.
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_get_field(obj_handle: u64, field_handle: u64) -> u64 {
     let field_name = match get_string_val(field_handle) {
         Some(s) => s,
@@ -416,13 +413,11 @@ pub extern "C" fn aot_get_field(obj_handle: u64, field_handle: u64) -> u64 {
 }
 
 // Exception Handling Bridge
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_has_exception() -> i64 {
     crate::backends::common::builtins::CURRENT_EXCEPTION
         .with(|exc| if exc.borrow().is_some() { 1 } else { 0 })
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_get_exception() -> u64 {
     crate::backends::common::builtins::CURRENT_EXCEPTION.with(|exc| {
         if let Some(val) = exc.borrow_mut().take() {
@@ -433,7 +428,6 @@ pub extern "C" fn aot_get_exception() -> u64 {
     })
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_clear_exception() -> i64 {
     crate::backends::common::builtins::CURRENT_EXCEPTION.with(|exc| {
         *exc.borrow_mut() = None;
@@ -441,7 +435,6 @@ pub extern "C" fn aot_clear_exception() -> i64 {
     0
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_throw_exception(val_handle: u64) -> i64 {
     let val = unpack_aot_arg(val_handle);
     crate::backends::common::builtins::CURRENT_EXCEPTION.with(|exc| {
@@ -451,7 +444,6 @@ pub extern "C" fn aot_throw_exception(val_handle: u64) -> i64 {
 }
 
 // Array type conversions
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_array_to_fixed(
     arr_handle: u64,
     type_handle_or_ptr: u64,
@@ -467,7 +459,6 @@ pub unsafe extern "C" fn aot_array_to_fixed(
     aot_store_value(res)
 }
 
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_array_to_fixed_raw(
     arr_handle: u64,
     type_handle_or_ptr: u64,
@@ -484,7 +475,6 @@ pub unsafe extern "C" fn aot_array_to_fixed_raw(
 }
 
 // Method calls and array operations
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_call_method(
     obj_handle: u64,
     method_name_ptr_or_handle: u64,
@@ -515,7 +505,6 @@ pub unsafe extern "C" fn aot_call_method(
     aot_store_value(res)
 }
 
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_set_index(
     container_handle: u64,
     index_handle: u64,
@@ -529,7 +518,6 @@ pub unsafe extern "C" fn aot_set_index(
     aot_store_value(res)
 }
 
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_get_index(container_handle: u64, index_handle: u64) -> u64 {
     let container = unpack_aot_arg(container_handle);
     let index = unpack_aot_arg(index_handle);
@@ -537,7 +525,6 @@ pub unsafe extern "C" fn aot_get_index(container_handle: u64, index_handle: u64)
     aot_store_value(res)
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_len(handle: u64) -> i64 {
     let val = unpack_aot_arg(handle);
     match val {
@@ -551,7 +538,6 @@ pub extern "C" fn aot_len(handle: u64) -> i64 {
     }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_capacity(arr_handle: u64) -> i64 {
     let arr = unpack_aot_arg(arr_handle);
     let res = crate::backends::common::builtins::arrays::runtime_capacity(&[arr]);
@@ -561,7 +547,6 @@ pub extern "C" fn aot_capacity(arr_handle: u64) -> i64 {
     }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_metadata_size(arr_handle: u64) -> i64 {
     let arr = unpack_aot_arg(arr_handle);
     let res = crate::backends::common::builtins::arrays::runtime_metadata_size(&[arr]);
@@ -571,14 +556,12 @@ pub extern "C" fn aot_metadata_size(arr_handle: u64) -> i64 {
     }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_first(arr_handle: u64) -> u64 {
     let arr = unpack_aot_arg(arr_handle);
     let res = crate::backends::common::builtins::arrays::runtime_first(&[arr]);
     aot_store_value(res)
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_last(arr_handle: u64) -> u64 {
     let arr = unpack_aot_arg(arr_handle);
     let res = crate::backends::common::builtins::arrays::runtime_last(&[arr]);
@@ -589,7 +572,6 @@ pub extern "C" fn aot_last(arr_handle: u64) -> u64 {
 /// args_ptr: pointer to array of value handles
 /// arg_count: number of elements
 /// Returns handle to the created array
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_make_array(args_ptr: *const u64, arg_count: usize) -> u64 {
     if args_ptr.is_null() {
         return aot_store_value(RuntimeValue::Array(Vec::new()));
@@ -610,7 +592,6 @@ pub unsafe extern "C" fn aot_make_array(args_ptr: *const u64, arg_count: usize) 
 }
 
 /// Create a string from a C string
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_make_string(string_ptr: *const c_char) -> u64 {
     if string_ptr.is_null() {
         return aot_store_value(RuntimeValue::String(String::new()));
@@ -629,7 +610,6 @@ pub unsafe extern "C" fn aot_make_string(string_ptr: *const c_char) -> u64 {
 /// - Returns existing handle as-is if already known to runtime store.
 /// - Converts null to RuntimeValue::Null.
 /// - Otherwise interprets pointer as C string and wraps as RuntimeValue::String.
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_wrap_ptr(value: u64) -> u64 {
     if value == 0 {
         return aot_store_value(RuntimeValue::Null);
@@ -648,80 +628,67 @@ pub extern "C" fn aot_wrap_ptr(value: u64) -> u64 {
 }
 
 /// Create an unsigned 8-bit integer value (u8)
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_make_u8(value: u64) -> u64 {
     aot_store_value(RuntimeValue::U8(value as u8))
 }
 
 /// Create an unsigned 16-bit integer value (u16)
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_make_u16(value: u64) -> u64 {
     aot_store_value(RuntimeValue::U16(value as u16))
 }
 
 /// Create an unsigned 32-bit integer value (u32)
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_make_u32(value: u64) -> u64 {
     aot_store_value(RuntimeValue::U32(value as u32))
 }
 
 /// Create an unsigned 64-bit integer value (u64)
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_make_u64(value: u64) -> u64 {
     aot_store_value(RuntimeValue::U64(value))
 }
 
 /// Create a signed 8-bit integer value (i8)
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_make_i8(value: i64) -> u64 {
     aot_store_value(RuntimeValue::I8(value as i8))
 }
 
 /// Create a signed 16-bit integer value (i16)
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_make_i16(value: i64) -> u64 {
     aot_store_value(RuntimeValue::I16(value as i16))
 }
 
 /// Create a signed 32-bit integer value (i32)
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_make_i32(value: i64) -> u64 {
     aot_store_value(RuntimeValue::I32(value as i32))
 }
 
 /// Create an integer value (i64)
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_make_i64(value: i64) -> u64 {
     aot_store_value(RuntimeValue::Int(value))
 }
 
 /// Create a 32-bit float value (f32)
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_make_f32(value: f64) -> u64 {
     aot_store_value(RuntimeValue::F32(value as f32))
 }
 
 /// Create a float value (f64)
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_make_f64(value: f64) -> u64 {
     aot_store_value(RuntimeValue::Float(value))
 }
 
 /// Create a boolean value
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_make_bool(value: i64) -> u64 {
     aot_store_value(RuntimeValue::Bool(value != 0))
 }
 
 /// Create a character value
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_make_char(value: u64) -> u64 {
     let ch = char::from_u32(value as u32).unwrap_or('\0');
     aot_store_value(RuntimeValue::Char(ch))
 }
 
 /// Create a tuple from element handles
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_make_tuple(args_ptr: *const u64, arg_count: usize) -> u64 {
     if args_ptr.is_null() {
         return aot_store_value(RuntimeValue::Tuple(Vec::new()));
@@ -735,7 +702,6 @@ pub unsafe extern "C" fn aot_make_tuple(args_ptr: *const u64, arg_count: usize) 
 }
 
 /// Create a set from element handles
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_make_set(args_ptr: *const u64, arg_count: usize) -> u64 {
     if args_ptr.is_null() {
         return aot_store_value(RuntimeValue::Set(Vec::new()));
@@ -749,7 +715,6 @@ pub unsafe extern "C" fn aot_make_set(args_ptr: *const u64, arg_count: usize) ->
 }
 
 /// Create a null value
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_make_null() -> u64 {
     aot_store_value(RuntimeValue::Null)
 }
@@ -760,7 +725,6 @@ pub extern "C" fn aot_make_null() -> u64 {
 /// Pretty print a value with the specified mode
 /// mode: 0 = no pretty, 1 = full (colors + types), 2 = compact (inline, no colors), 3 = simple (basic colors)
 /// Returns 0 on success
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_print_value_pretty(handle: u64, mode: i64) -> u64 {
     use crate::execution::runtime_core::pretty_print::{PrettyPrintOptions, pretty_print};
 
@@ -790,7 +754,6 @@ pub extern "C" fn aot_print_value_pretty(handle: u64, mode: i64) -> u64 {
 }
 
 /// Print a newline to stdout
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_print_newline() -> u64 {
     println!();
     let _ = std::io::stdout().flush();
@@ -798,7 +761,6 @@ pub extern "C" fn aot_print_newline() -> u64 {
 }
 
 /// Print a space to stdout
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_print_space() -> u64 {
     print!(" ");
     let _ = std::io::stdout().flush();
@@ -806,7 +768,6 @@ pub extern "C" fn aot_print_space() -> u64 {
 }
 
 /// Print an i8 integer with optional newline
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_print_i8(value: i8, newline: i64) -> u64 {
     if newline != 0 {
         println!("{}", value);
@@ -818,7 +779,6 @@ pub extern "C" fn aot_print_i8(value: i8, newline: i64) -> u64 {
 }
 
 /// Print an i16 integer with optional newline
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_print_i16(value: i16, newline: i64) -> u64 {
     if newline != 0 {
         println!("{}", value);
@@ -830,7 +790,6 @@ pub extern "C" fn aot_print_i16(value: i16, newline: i64) -> u64 {
 }
 
 /// Print an i32 integer with optional newline
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_print_i32(value: i32, newline: i64) -> u64 {
     if newline != 0 {
         println!("{}", value);
@@ -842,7 +801,6 @@ pub extern "C" fn aot_print_i32(value: i32, newline: i64) -> u64 {
 }
 
 /// Print an i64 integer with optional newline
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_print_i64(value: i64, newline: i64) -> u64 {
     if newline != 0 {
         println!("{}", value);
@@ -854,7 +812,6 @@ pub extern "C" fn aot_print_i64(value: i64, newline: i64) -> u64 {
 }
 
 /// Print a u8 integer with optional newline
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_print_u8(value: u8, newline: i64) -> u64 {
     if newline != 0 {
         println!("{}", value);
@@ -866,7 +823,6 @@ pub extern "C" fn aot_print_u8(value: u8, newline: i64) -> u64 {
 }
 
 /// Print a u16 integer with optional newline
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_print_u16(value: u16, newline: i64) -> u64 {
     if newline != 0 {
         println!("{}", value);
@@ -878,7 +834,6 @@ pub extern "C" fn aot_print_u16(value: u16, newline: i64) -> u64 {
 }
 
 /// Print a u32 integer with optional newline
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_print_u32(value: u32, newline: i64) -> u64 {
     if newline != 0 {
         println!("{}", value);
@@ -890,7 +845,6 @@ pub extern "C" fn aot_print_u32(value: u32, newline: i64) -> u64 {
 }
 
 /// Print a u64 integer with optional newline
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_print_u64(value: u64, newline: i64) -> u64 {
     if newline != 0 {
         println!("{}", value);
@@ -902,7 +856,6 @@ pub extern "C" fn aot_print_u64(value: u64, newline: i64) -> u64 {
 }
 
 /// Print an f32 float with optional newline
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_print_f32(value: f32, newline: i64) -> u64 {
     if newline != 0 {
         println!("{}", value);
@@ -914,7 +867,6 @@ pub extern "C" fn aot_print_f32(value: f32, newline: i64) -> u64 {
 }
 
 /// Print an f64 float with optional newline
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_print_f64(value: f64, newline: i64) -> u64 {
     if newline != 0 {
         println!("{}", value);
@@ -926,7 +878,6 @@ pub extern "C" fn aot_print_f64(value: f64, newline: i64) -> u64 {
 }
 
 /// Print a string with optional newline
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_print_str(string_ptr: i64, newline: i64) -> u64 {
     if string_ptr == 0 {
         return 0;
@@ -947,7 +898,6 @@ pub extern "C" fn aot_print_str(string_ptr: i64, newline: i64) -> u64 {
 }
 
 /// Print a boolean with optional newline
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_print_bool(value: i64, newline: i64) -> u64 {
     let bool_val = value != 0;
     if newline != 0 {
@@ -960,7 +910,6 @@ pub extern "C" fn aot_print_bool(value: i64, newline: i64) -> u64 {
 }
 
 /// Print null with optional newline
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_print_null(newline: i64) -> u64 {
     if newline != 0 {
         println!("null");
@@ -976,7 +925,6 @@ pub extern "C" fn aot_print_null(newline: i64) -> u64 {
 /// values_count: number of values
 /// options_handle: handle to options object, or 0 for no options
 /// Returns 0 on success
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_print_with_options(
     values_ptr: *const u64,
     values_count: i64,
@@ -1263,7 +1211,6 @@ pub unsafe extern "C" fn aot_print_with_options(
 }
 
 /// Free a runtime value by its handle
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_free_handle(handle: u64) {
     aot_remove_value(handle);
 }
@@ -1286,7 +1233,6 @@ fn get_string_value(val: u64) -> Option<String> {
     }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_fs_read(path_val: u64) -> u64 {
     let path = match get_string_value(path_val) {
         Some(p) => p,
@@ -1298,7 +1244,6 @@ pub extern "C" fn aot_fs_read(path_val: u64) -> u64 {
     }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_fs_write(path_val: u64, content_val: u64) -> u64 {
     let path = match get_string_value(path_val) {
         Some(p) => p,
@@ -1314,7 +1259,6 @@ pub extern "C" fn aot_fs_write(path_val: u64, content_val: u64) -> u64 {
     }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_fs_exists(path_val: u64) -> u64 {
     let path = match get_string_value(path_val) {
         Some(p) => p,
@@ -1324,7 +1268,6 @@ pub extern "C" fn aot_fs_exists(path_val: u64) -> u64 {
     aot_store_value(RuntimeValue::Bool(exists))
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_fs_is_file(path_val: u64) -> u64 {
     let path = match get_string_value(path_val) {
         Some(p) => p,
@@ -1334,7 +1277,6 @@ pub extern "C" fn aot_fs_is_file(path_val: u64) -> u64 {
     aot_store_value(RuntimeValue::Bool(is_file))
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_fs_is_dir(path_val: u64) -> u64 {
     let path = match get_string_value(path_val) {
         Some(p) => p,
@@ -1344,7 +1286,6 @@ pub extern "C" fn aot_fs_is_dir(path_val: u64) -> u64 {
     aot_store_value(RuntimeValue::Bool(is_dir))
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_fs_mkdir(path_val: u64) -> u64 {
     let path = match get_string_value(path_val) {
         Some(p) => p,
@@ -1356,7 +1297,6 @@ pub extern "C" fn aot_fs_mkdir(path_val: u64) -> u64 {
     }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_fs_copy(src_val: u64, dst_val: u64) -> u64 {
     let src = match get_string_value(src_val) {
         Some(s) => s,
@@ -1372,7 +1312,6 @@ pub extern "C" fn aot_fs_copy(src_val: u64, dst_val: u64) -> u64 {
     }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_fs_move(src_val: u64, dst_val: u64) -> u64 {
     let src = match get_string_value(src_val) {
         Some(s) => s,
@@ -1388,7 +1327,6 @@ pub extern "C" fn aot_fs_move(src_val: u64, dst_val: u64) -> u64 {
     }
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_fs_delete(path_val: u64) -> u64 {
     let path = match get_string_value(path_val) {
         Some(p) => p,
@@ -1403,7 +1341,6 @@ pub extern "C" fn aot_fs_delete(path_val: u64) -> u64 {
     aot_store_value(RuntimeValue::Bool(res))
 }
 
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_fs_path_join(args_ptr: *const u64, arg_count: usize) -> u64 {
     if args_ptr.is_null() || arg_count == 0 {
         return aot_store_value(RuntimeValue::String(String::new()));
@@ -1418,7 +1355,6 @@ pub unsafe extern "C" fn aot_fs_path_join(args_ptr: *const u64, arg_count: usize
     aot_store_value(RuntimeValue::String(path.to_string_lossy().into_owned()))
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_fs_path_basename(path_val: u64) -> u64 {
     let path_str = match get_string_value(path_val) {
         Some(p) => p,
@@ -1432,7 +1368,6 @@ pub extern "C" fn aot_fs_path_basename(path_val: u64) -> u64 {
     aot_store_value(RuntimeValue::String(base))
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_fs_path_dirname(path_val: u64) -> u64 {
     let path_str = match get_string_value(path_val) {
         Some(p) => p,
@@ -1446,7 +1381,6 @@ pub extern "C" fn aot_fs_path_dirname(path_val: u64) -> u64 {
     aot_store_value(RuntimeValue::String(dir))
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_fs_path_extname(path_val: u64) -> u64 {
     let path_str = match get_string_value(path_val) {
         Some(p) => p,
@@ -1460,7 +1394,6 @@ pub extern "C" fn aot_fs_path_extname(path_val: u64) -> u64 {
     aot_store_value(RuntimeValue::String(ext))
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn adesh_value_to_string(value: u64) -> *mut std::os::raw::c_char {
     let s = if let Some(rv) = aot_get_value(value) {
         match rv {
@@ -1497,7 +1430,6 @@ pub extern "C" fn adesh_value_to_string(value: u64) -> *mut std::os::raw::c_char
 }
 
 /// AOT C-ABI bridge for input()
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_input(prompt_val: u64, opts_val: u64) -> u64 {
     let prompt = get_string_value(prompt_val).unwrap_or_default();
     let opts = aot_get_value(opts_val);
@@ -1515,7 +1447,6 @@ pub extern "C" fn aot_input(prompt_val: u64, opts_val: u64) -> u64 {
 }
 
 /// AOT C-ABI bridge for generic typed input<T>()
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_input_generic(
     prompt_val: u64,
     opts_val: u64,
@@ -1542,7 +1473,6 @@ pub extern "C" fn aot_input_generic(
     aot_store_value(res)
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_input_mock(arg0: u64) -> u64 {
     let args = vec![unpack_aot_arg(arg0)];
     let registry = crate::backends::common::builtins::BuiltinRegistry::new();
@@ -1554,7 +1484,6 @@ pub extern "C" fn aot_input_mock(arg0: u64) -> u64 {
     aot_store_value(res)
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_input_confirm(arg0: u64, arg1: u64) -> u64 {
     let args = vec![unpack_aot_arg(arg0), unpack_aot_arg(arg1)];
     let registry = crate::backends::common::builtins::BuiltinRegistry::new();
@@ -1566,7 +1495,6 @@ pub extern "C" fn aot_input_confirm(arg0: u64, arg1: u64) -> u64 {
     aot_store_value(res)
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_input_password(arg0: u64, arg1: u64) -> u64 {
     let args = vec![unpack_aot_arg(arg0), unpack_aot_arg(arg1)];
     let registry = crate::backends::common::builtins::BuiltinRegistry::new();
@@ -1578,7 +1506,6 @@ pub extern "C" fn aot_input_password(arg0: u64, arg1: u64) -> u64 {
     aot_store_value(res)
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_input_select(arg0: u64, arg1: u64, arg2: u64) -> u64 {
     let args = vec![
         unpack_aot_arg(arg0),
@@ -1594,7 +1521,6 @@ pub extern "C" fn aot_input_select(arg0: u64, arg1: u64, arg2: u64) -> u64 {
     aot_store_value(res)
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_input_checkbox(arg0: u64, arg1: u64, arg2: u64) -> u64 {
     let args = vec![
         unpack_aot_arg(arg0),
@@ -1610,7 +1536,6 @@ pub extern "C" fn aot_input_checkbox(arg0: u64, arg1: u64, arg2: u64) -> u64 {
     aot_store_value(res)
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_input_radio(arg0: u64, arg1: u64, arg2: u64) -> u64 {
     let args = vec![
         unpack_aot_arg(arg0),
@@ -1626,7 +1551,6 @@ pub extern "C" fn aot_input_radio(arg0: u64, arg1: u64, arg2: u64) -> u64 {
     aot_store_value(res)
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_input_fuzzy(arg0: u64, arg1: u64) -> u64 {
     let args = vec![unpack_aot_arg(arg0), unpack_aot_arg(arg1)];
     let registry = crate::backends::common::builtins::BuiltinRegistry::new();
@@ -1638,7 +1562,6 @@ pub extern "C" fn aot_input_fuzzy(arg0: u64, arg1: u64) -> u64 {
     aot_store_value(res)
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_input_slider(arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64) -> u64 {
     let args = vec![
         unpack_aot_arg(arg0),
@@ -1656,7 +1579,6 @@ pub extern "C" fn aot_input_slider(arg0: u64, arg1: u64, arg2: u64, arg3: u64, a
     aot_store_value(res)
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_input_tree(arg0: u64, arg1: u64, arg2: u64) -> u64 {
     let args = vec![
         unpack_aot_arg(arg0),
@@ -1672,7 +1594,6 @@ pub extern "C" fn aot_input_tree(arg0: u64, arg1: u64, arg2: u64) -> u64 {
     aot_store_value(res)
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_input_table(arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
     let args = vec![
         unpack_aot_arg(arg0),
@@ -1689,7 +1610,6 @@ pub extern "C" fn aot_input_table(arg0: u64, arg1: u64, arg2: u64, arg3: u64) ->
     aot_store_value(res)
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_input_datepicker(arg0: u64, arg1: u64) -> u64 {
     let args = vec![unpack_aot_arg(arg0), unpack_aot_arg(arg1)];
     let registry = crate::backends::common::builtins::BuiltinRegistry::new();
@@ -1701,7 +1621,6 @@ pub extern "C" fn aot_input_datepicker(arg0: u64, arg1: u64) -> u64 {
     aot_store_value(res)
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_input_datetime(arg0: u64, arg1: u64) -> u64 {
     let args = vec![unpack_aot_arg(arg0), unpack_aot_arg(arg1)];
     let registry = crate::backends::common::builtins::BuiltinRegistry::new();
@@ -1713,7 +1632,6 @@ pub extern "C" fn aot_input_datetime(arg0: u64, arg1: u64) -> u64 {
     aot_store_value(res)
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_input_timepicker(arg0: u64, arg1: u64) -> u64 {
     let args = vec![unpack_aot_arg(arg0), unpack_aot_arg(arg1)];
     let registry = crate::backends::common::builtins::BuiltinRegistry::new();
@@ -1725,7 +1643,6 @@ pub extern "C" fn aot_input_timepicker(arg0: u64, arg1: u64) -> u64 {
     aot_store_value(res)
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_input_color(arg0: u64, arg1: u64) -> u64 {
     let args = vec![unpack_aot_arg(arg0), unpack_aot_arg(arg1)];
     let registry = crate::backends::common::builtins::BuiltinRegistry::new();
@@ -1737,7 +1654,6 @@ pub extern "C" fn aot_input_color(arg0: u64, arg1: u64) -> u64 {
     aot_store_value(res)
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_input_pin(arg0: u64, arg1: u64, arg2: u64) -> u64 {
     let args = vec![
         unpack_aot_arg(arg0),
@@ -1753,7 +1669,6 @@ pub extern "C" fn aot_input_pin(arg0: u64, arg1: u64, arg2: u64) -> u64 {
     aot_store_value(res)
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_input_diff(arg0: u64, arg1: u64, arg2: u64) -> u64 {
     let args = vec![
         unpack_aot_arg(arg0),
@@ -1769,7 +1684,6 @@ pub extern "C" fn aot_input_diff(arg0: u64, arg1: u64, arg2: u64) -> u64 {
     aot_store_value(res)
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_input_hotkey(arg0: u64, arg1: u64) -> u64 {
     let args = vec![unpack_aot_arg(arg0), unpack_aot_arg(arg1)];
     let registry = crate::backends::common::builtins::BuiltinRegistry::new();
@@ -1781,7 +1695,6 @@ pub extern "C" fn aot_input_hotkey(arg0: u64, arg1: u64) -> u64 {
     aot_store_value(res)
 }
 
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_input_form(arg0: u64, arg1: u64) -> u64 {
     let args = vec![unpack_aot_arg(arg0), unpack_aot_arg(arg1)];
     let registry = crate::backends::common::builtins::BuiltinRegistry::new();
@@ -1794,7 +1707,6 @@ pub extern "C" fn aot_input_form(arg0: u64, arg1: u64) -> u64 {
 }
 
 /// AOT C-ABI wrapper for input.* methods
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_input_method(
     method_name_ptr: *const std::os::raw::c_char,
     arg0: u64,
@@ -1830,7 +1742,6 @@ pub extern "C" fn aot_input_method(
 }
 
 /// AOT string concatenation bridge
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_string_concat(left_handle: u64, right_handle: u64) -> u64 {
     let left_val = unpack_aot_arg(left_handle);
     let right_val = unpack_aot_arg(right_handle);
@@ -1866,7 +1777,6 @@ pub extern "C" fn aot_string_concat(left_handle: u64, right_handle: u64) -> u64 
 }
 
 /// AOT range creation bridge (start..end or start...end)
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_make_range(start_handle: u64, end_handle: u64, inclusive: i64) -> u64 {
     let s_val = match unpack_aot_arg(start_handle) {
         RuntimeValue::Int(n) => n,
@@ -1896,7 +1806,6 @@ pub extern "C" fn aot_make_range(start_handle: u64, end_handle: u64, inclusive: 
 }
 
 /// AOT raw heap allocation bridge (unsafe alloc<T>(size))
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_alloc(size: usize) -> *mut u8 {
     let layout = std::alloc::Layout::from_size_align(size.max(1), 8)
         .unwrap_or(std::alloc::Layout::new::<u8>());
@@ -1904,7 +1813,6 @@ pub extern "C" fn aot_alloc(size: usize) -> *mut u8 {
 }
 
 /// AOT raw heap free bridge (unsafe free(ptr))
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_free(ptr: *mut u8) {
     if !ptr.is_null() {
         let layout = std::alloc::Layout::from_size_align(8, 8).unwrap();
@@ -1915,7 +1823,6 @@ pub extern "C" fn aot_free(ptr: *mut u8) {
 }
 
 /// AOT variant / tag pattern match bridge
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_matches_variant(val_handle: u64, tag_handle: u64) -> i64 {
     let tag = match get_string_val(tag_handle) {
         Some(s) => s,
@@ -1946,7 +1853,6 @@ pub extern "C" fn aot_matches_variant(val_handle: u64, tag_handle: u64) -> i64 {
 }
 
 /// AOT container `in` check bridge
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_contains(container_handle: u64, elem_handle: u64) -> i64 {
     let container = unpack_aot_arg(container_handle);
     let elem = unpack_aot_arg(elem_handle);
@@ -1988,7 +1894,6 @@ pub extern "C" fn aot_contains(container_handle: u64, elem_handle: u64) -> i64 {
 }
 
 /// Create a dictionary with key-value pairs
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_make_dict(args_ptr: *const u64, arg_count: usize) -> u64 {
     unsafe { aot_make_object(args_ptr, arg_count) }
 }

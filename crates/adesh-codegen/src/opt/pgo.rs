@@ -196,3 +196,65 @@ impl MachinePass for PgoOptimizationPass {
         Ok(true)
     }
 }
+
+/// Profile-Guided Optimization Operating Mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum PgoMode {
+    #[default]
+    Disabled,
+    Generate,
+    Use,
+}
+
+/// Configuration for PGO transformations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PgoConfig {
+    pub mode: PgoMode,
+    pub profile_path: Option<std::path::PathBuf>,
+    pub hot_threshold: f64,
+}
+
+impl Default for PgoConfig {
+    fn default() -> Self {
+        Self {
+            mode: PgoMode::Disabled,
+            profile_path: None,
+            hot_threshold: 0.5,
+        }
+    }
+}
+
+/// Profile-Guided Optimization Engine coordinating profile collection and consumption.
+pub struct PgoEngine {
+    pub config: PgoConfig,
+    pub profile: ProfileData,
+}
+
+impl PgoEngine {
+    pub fn new(config: PgoConfig) -> Self {
+        Self {
+            config,
+            profile: ProfileData::new(),
+        }
+    }
+
+    pub fn with_profile(config: PgoConfig, profile: ProfileData) -> Self {
+        Self { config, profile }
+    }
+
+    pub fn optimize_function(&self, func: &mut MachineFunction) -> Result<bool, CodegenError> {
+        match self.config.mode {
+            PgoMode::Use => {
+                let mut pass = PgoOptimizationPass::new(self.profile.clone());
+                pass.hot_threshold_ratio = self.config.hot_threshold;
+                pass.run_on_function(func)
+            }
+            PgoMode::Generate => {
+                let pass = PgoInstrumentationPass::new();
+                pass.instrument_function(func);
+                Ok(true)
+            }
+            PgoMode::Disabled => Ok(false),
+        }
+    }
+}

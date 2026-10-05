@@ -56,6 +56,8 @@ fn default_edition() -> String {
     "2026".to_string()
 }
 
+pub type PackageDependency = DependencySpec;
+
 /// Dependency specification.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -180,6 +182,10 @@ impl PackageManifest {
         std::fs::write(path.as_ref(), content)
             .map_err(|e| format!("Failed to write {}: {}", path.as_ref().display(), e))
     }
+
+    pub fn to_file(&self, path: impl AsRef<Path>) -> Result<(), String> {
+        self.save_to_file(path)
+    }
 }
 
 /// Lockfile representing `Adesh.lock`.
@@ -228,6 +234,19 @@ impl LockFile {
         let content = self.to_toml()?;
         std::fs::write(path.as_ref(), content)
             .map_err(|e| format!("Failed to write {}: {}", path.as_ref().display(), e))
+    }
+
+    pub fn to_file(&self, path: impl AsRef<Path>) -> Result<(), String> {
+        self.save_to_file(path)
+    }
+}
+
+impl std::fmt::Display for LockFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.to_toml() {
+            Ok(s) => write!(f, "{}", s),
+            Err(_) => Err(std::fmt::Error),
+        }
     }
 }
 
@@ -290,10 +309,30 @@ impl DependencyResolver {
                 format!("Package '{}' not found in registry", dep_name)
             })?;
 
-            // Find matching version
+            // Find matching version supporting exact, wildcard, ^, ~, and >= constraints
             let (matched_ver, transitive_deps) = versions
                 .iter()
-                .find(|(ver, _)| ver == &dep_req || dep_req == "*")
+                .find(|(ver, _)| {
+                    if dep_req == "*" || ver == &dep_req {
+                        return true;
+                    }
+                    if let Some(req_prefix) = dep_req.strip_prefix('^') {
+                        let req_parts: Vec<&str> = req_prefix.split('.').collect();
+                        let ver_parts: Vec<&str> = ver.split('.').collect();
+                        if !req_parts.is_empty() && !ver_parts.is_empty() {
+                            return req_parts[0] == ver_parts[0];
+                        }
+                    } else if let Some(req_prefix) = dep_req.strip_prefix('~') {
+                        let req_parts: Vec<&str> = req_prefix.split('.').collect();
+                        let ver_parts: Vec<&str> = ver.split('.').collect();
+                        if req_parts.len() >= 2 && ver_parts.len() >= 2 {
+                            return req_parts[0] == ver_parts[0] && req_parts[1] == ver_parts[1];
+                        }
+                    } else if let Some(req_prefix) = dep_req.strip_prefix(">=") {
+                        return ver.as_str() >= req_prefix.trim();
+                    }
+                    false
+                })
                 .ok_or_else(|| {
                     format!("No matching version found for '{}' with req '{}'", dep_name, dep_req)
                 })?;

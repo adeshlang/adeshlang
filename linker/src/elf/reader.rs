@@ -170,6 +170,14 @@ impl ElfReader {
                 continue;
             }
 
+            if shdr.sh_type == SHT_DYNSYM {
+                if symtab_idx.is_none() {
+                    symtab_idx = Some(i);
+                    strtab_idx = Some(shdr.sh_link as usize);
+                }
+                continue;
+            }
+
             if shdr.sh_type == SHT_RELA || shdr.sh_type == SHT_REL {
                 rela_sections.push(i);
                 continue;
@@ -342,8 +350,8 @@ impl ElfReader {
                     value: st_value,
                     size: st_size,
                     is_defined,
-                    is_imported: false,
-                    is_exported: false,
+                    is_imported: !is_defined,
+                    is_exported: is_defined && binding == SymbolBinding::Global,
                     file_index: Some(file_index),
                     alias_of: None,
                     comdat_group: None,

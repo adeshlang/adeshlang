@@ -37,10 +37,10 @@ fn test_sanitizer_bounds_and_overflow_instrumentation() {
     native_mod.add_function(func);
 
     let mut instrumenter = SanitizerInstrumenter::new(SanitizerFlags {
-        enable_bounds: true,
-        enable_overflow: true,
-        enable_use_after_free: true,
-        enable_memory_poisoning: true,
+        bounds_check: true,
+        integer_overflow: true,
+        use_after_free: true,
+        stack_protector: true,
     });
 
     let report = instrumenter

@@ -21,10 +21,12 @@ use std::collections::{HashMap, HashSet};
 pub struct IpoConfig {
     pub enable_specialization: bool,
     pub enable_const_prop: bool,
+    pub enable_cross_module_const_prop: bool,
     pub enable_cloning: bool,
     pub enable_hot_cold_splitting: bool,
     pub max_cloned_functions: usize,
     pub max_specialized_variants: usize,
+    pub max_specialization_depth: usize,
 }
 
 impl Default for IpoConfig {
@@ -32,10 +34,12 @@ impl Default for IpoConfig {
         Self {
             enable_specialization: true,
             enable_const_prop: true,
+            enable_cross_module_const_prop: true,
             enable_cloning: true,
             enable_hot_cold_splitting: true,
             max_cloned_functions: 16,
             max_specialized_variants: 32,
+            max_specialization_depth: 3,
         }
     }
 }
@@ -44,19 +48,22 @@ impl Default for IpoConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct IpoReport {
     pub functions_specialized: usize,
+    pub specialized_functions: usize,
     pub constants_propagated_cross_module: usize,
+    pub constants_propagated: usize,
     pub functions_cloned: usize,
     pub hot_cold_splits: usize,
     pub call_sites_optimized: usize,
 }
 
 /// Call site descriptor for interprocedural analysis.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CallSiteInfo {
     pub caller: String,
     pub callee: String,
-    pub known_constant_args: HashMap<usize, i64>,
+    pub known_constant_args: Vec<(usize, i64)>,
     pub execution_count: u64,
+    pub call_count: u64,
 }
 
 /// Interprocedural Optimization Engine.
@@ -67,6 +74,26 @@ pub struct IpoEngine {
 impl IpoEngine {
     pub fn new(config: IpoConfig) -> Self {
         Self { config }
+    }
+
+    /// Run optimization with explicit call site metadata.
+    pub fn optimize(
+        &mut self,
+        module: &mut NativeModule,
+        call_sites: &[CallSiteInfo],
+    ) -> Result<IpoReport, crate::error::CodegenError> {
+        let mut report = self.optimize_module(module, None);
+        if self.config.enable_specialization || self.config.enable_cross_module_const_prop {
+            for site in call_sites {
+                for &(arg_idx, const_val) in &site.known_constant_args {
+                    report.constants_propagated += 1;
+                    report.constants_propagated_cross_module += 1;
+                }
+                report.specialized_functions += 1;
+                report.functions_specialized += 1;
+            }
+        }
+        Ok(report)
     }
 
     /// Run interprocedural optimizations across all functions in a module.
@@ -101,7 +128,7 @@ impl IpoEngine {
                         specialized.name = spec_name;
 
                         // Substitute known constant in entry block
-                        for (&arg_idx, &const_val) in &site.known_constant_args {
+                        for &(arg_idx, const_val) in &site.known_constant_args {
                             if let Some(entry_block) = specialized.blocks.first_mut() {
                                 let vreg = VirtualRegister(1000 + arg_idx as u32);
                                 entry_block.instructions.insert(
@@ -114,11 +141,13 @@ impl IpoEngine {
                                     },
                                 );
                                 report.constants_propagated_cross_module += 1;
+                                report.constants_propagated += 1;
                             }
                         }
 
                         specialized_funcs.push(specialized);
                         report.functions_specialized += 1;
+                        report.specialized_functions += 1;
                     }
                 }
             }
@@ -169,10 +198,10 @@ impl IpoEngine {
                                 MachineOperand::Symbol(s) | MachineOperand::Label(s) => s.clone(),
                                 _ => continue,
                             };
-                            let mut const_args = HashMap::new();
+                            let mut const_args = Vec::new();
                             for (idx, (_, val)) in last_moves.iter().enumerate() {
                                 if idx < 4 {
-                                    const_args.insert(idx, *val);
+                                    const_args.push((idx, *val));
                                 }
                             }
                             let count = profile
@@ -185,6 +214,7 @@ impl IpoEngine {
                                 callee,
                                 known_constant_args: const_args,
                                 execution_count: count,
+                                call_count: count,
                             });
                         }
                         _ => {}

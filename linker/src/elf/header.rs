@@ -188,3 +188,83 @@ pub struct Elf64_Rela {
     pub r_info: u64,
     pub r_addend: i64,
 }
+
+// Dynamic Array Tags (d_tag)
+pub const DT_NULL: i64 = 0;
+pub const DT_NEEDED: i64 = 1;
+pub const DT_PLTRELSZ: i64 = 2;
+pub const DT_PLTGOT: i64 = 3;
+pub const DT_HASH: i64 = 4;
+pub const DT_STRTAB: i64 = 5;
+pub const DT_SYMTAB: i64 = 6;
+pub const DT_RELA: i64 = 7;
+pub const DT_RELASZ: i64 = 8;
+pub const DT_RELAENT: i64 = 9;
+pub const DT_STRSZ: i64 = 10;
+pub const DT_SYMENT: i64 = 11;
+pub const DT_INIT: i64 = 12;
+pub const DT_FINI: i64 = 13;
+pub const DT_SONAME: i64 = 14;
+pub const DT_RPATH: i64 = 15;
+pub const DT_SYMBOLIC: i64 = 16;
+pub const DT_REL: i64 = 17;
+pub const DT_RELSZ: i64 = 18;
+pub const DT_RELENT: i64 = 19;
+pub const DT_PLTREL: i64 = 20;
+pub const DT_DEBUG: i64 = 21;
+pub const DT_TEXTREL: i64 = 22;
+pub const DT_JMPREL: i64 = 23;
+pub const DT_BIND_NOW: i64 = 24;
+pub const DT_INIT_ARRAY: i64 = 25;
+pub const DT_FINI_ARRAY: i64 = 26;
+pub const DT_INIT_ARRAYSZ: i64 = 27;
+pub const DT_FINI_ARRAYSZ: i64 = 28;
+pub const DT_RUNPATH: i64 = 29;
+pub const DT_FLAGS: i64 = 30;
+pub const DT_GNU_HASH: i64 = 0x6ffffef5;
+pub const DT_FLAGS_1: i64 = 0x6ffffffb;
+
+pub const DF_1_NOW: u64 = 0x00000001;
+pub const DF_1_PIE: u64 = 0x08000000;
+
+// Dynamic Relocations
+pub const R_X86_64_GLOB_DAT: u32 = 6;
+pub const R_X86_64_JUMP_SLOT: u32 = 7;
+pub const R_X86_64_RELATIVE: u32 = 8;
+
+pub const R_AARCH64_COPY: u32 = 1024;
+pub const R_AARCH64_GLOB_DAT: u32 = 1025;
+pub const R_AARCH64_JUMP_SLOT: u32 = 1026;
+pub const R_AARCH64_RELATIVE: u32 = 1027;
+
+/// 64-bit ELF Dynamic Array Entry (`Elf64_Dyn`, 16 bytes).
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub struct Elf64_Dyn {
+    pub d_tag: i64,
+    pub d_val: u64,
+}
+
+/// Standard System V ELF symbol name hash function.
+pub fn elf_hash(name: &[u8]) -> u32 {
+    let mut h: u32 = 0;
+    for &byte in name {
+        h = (h << 4).wrapping_add(byte as u32);
+        let g = h & 0xf0000000;
+        if g != 0 {
+            h ^= g >> 24;
+        }
+        h &= !g;
+    }
+    h
+}
+
+/// GNU style hash function for .gnu.hash section.
+pub fn gnu_hash(name: &[u8]) -> u32 {
+    let mut h: u32 = 5381;
+    for &byte in name {
+        h = h.wrapping_mul(33).wrapping_add(byte as u32);
+    }
+    h
+}
+

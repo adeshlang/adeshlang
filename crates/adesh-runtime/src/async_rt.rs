@@ -86,6 +86,11 @@ impl AsyncExecutor {
         executed
     }
 
+    /// Return the number of currently active / queued tasks.
+    pub fn active_tasks(&self) -> usize {
+        self.ready_queue.lock().unwrap().len()
+    }
+
     /// Block on a single future until it produces a result.
     pub fn block_on<F: Future>(&self, mut future: F) -> F::Output {
         let mut pin = Box::pin(future);
@@ -126,17 +131,24 @@ pub enum EventMuxKind {
     LinuxEpoll,
     MacosKqueue,
     PortablePolling,
+    Epoll,
+    Kqueue,
+    Iocp,
 }
 
 impl EventMuxKind {
     pub fn current() -> Self {
         #[cfg(target_os = "windows")]
-        return EventMuxKind::WindowsIocp;
+        return EventMuxKind::Iocp;
         #[cfg(target_os = "linux")]
-        return EventMuxKind::LinuxEpoll;
+        return EventMuxKind::Epoll;
         #[cfg(target_os = "macos")]
-        return EventMuxKind::MacosKqueue;
+        return EventMuxKind::Kqueue;
         #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
         return EventMuxKind::PortablePolling;
+    }
+
+    pub fn for_current_platform() -> Self {
+        Self::current()
     }
 }

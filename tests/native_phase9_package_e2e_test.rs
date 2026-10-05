@@ -48,7 +48,7 @@ winapi = "0.3.9"
     assert!(manifest.dependencies.contains_key("http"));
     assert!(manifest.dependencies.contains_key("json"));
     assert_eq!(manifest.features.get("default"), Some(&vec!["json".to_string()]));
-    assert!(manifest.target_dependencies.contains_key("x86_64-pc-windows-msvc"));
+    assert!(manifest.target.contains_key("x86_64-pc-windows-msvc"));
 
     // Serialize and re-read to ensure symmetry
     let out_path = dir.path().join("copy.adl");
@@ -72,12 +72,13 @@ fn test_package_dependency_resolution_and_lockfile() {
     );
     deps.insert(
         "crypto_core".to_string(),
-        PackageDependency::Detailed {
+        PackageDependency::Detailed(adesh_codegen::package::DetailedDependency {
             version: "0.9.1".to_string(),
-            features: vec!["sha256".to_string()],
-            optional: false,
+            features: Some(vec!["sha256".to_string()]),
+            optional: Some(false),
             path: None,
-        },
+            default_features: None,
+        }),
     );
 
     let manifest = PackageManifest {
@@ -88,17 +89,21 @@ fn test_package_dependency_resolution_and_lockfile() {
             edition: "2024".to_string(),
             license: Some("Apache-2.0".to_string()),
             description: Some("Service application".to_string()),
+            entry: None,
         },
         dependencies: deps,
         dev_dependencies: BTreeMap::new(),
-        target_dependencies: BTreeMap::new(),
+        target: BTreeMap::new(),
         features: BTreeMap::new(),
         workspace: None,
+        profile: BTreeMap::new(),
     };
     manifest.to_file(&manifest_path).expect("write manifest");
 
-    let resolver = DependencyResolver::new();
-    let lockfile = resolver.resolve(&manifest).expect("resolve dependencies");
+    let mut resolver = DependencyResolver::new();
+    resolver.register_package("net_lib", "1.2.0", vec![]);
+    resolver.register_package("crypto_core", "0.9.1", vec![]);
+    let lockfile = resolver.resolve(&manifest, &[]).expect("resolve dependencies");
     assert_eq!(lockfile.packages.len(), 2);
     assert!(lockfile.packages.iter().any(|p| p.name == "net_lib"));
     assert!(lockfile.packages.iter().any(|p| p.name == "crypto_core"));

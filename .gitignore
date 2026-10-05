@@ -112,3 +112,4 @@ ai/llama_cpp_repo/
 /downloads_web
 .factory
 /linker/target
+/target-test

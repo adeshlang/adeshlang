@@ -112,9 +112,31 @@ impl TargetSpec {
         Self::for_descriptor(desc)
     }
 
+    pub fn windows_x64() -> Self {
+        Self::x86_64_windows()
+    }
+
     /// Convenience constructor for x86-64 Linux GNU (SysV).
     pub fn x86_64_linux() -> Self {
         let desc = TargetDescriptor::from_triple("x86_64-unknown-linux-gnu")
+            .unwrap_or_else(|_| TargetDescriptor::host());
+        Self::for_descriptor(desc)
+    }
+
+    pub fn linux_x64() -> Self {
+        Self::x86_64_linux()
+    }
+
+    /// Convenience constructor for AArch64 macOS.
+    pub fn macos_arm64() -> Self {
+        let desc = TargetDescriptor::from_triple("aarch64-apple-darwin")
+            .unwrap_or_else(|_| TargetDescriptor::host());
+        Self::for_descriptor(desc)
+    }
+
+    /// Convenience constructor for RISC-V 64.
+    pub fn riscv64() -> Self {
+        let desc = TargetDescriptor::from_triple("riscv64gc-unknown-linux-gnu")
             .unwrap_or_else(|_| TargetDescriptor::host());
         Self::for_descriptor(desc)
     }

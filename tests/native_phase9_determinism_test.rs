@@ -57,17 +57,23 @@ fn test_lockfile_resolution_determinism() {
             edition: "2024".to_string(),
             license: None,
             description: None,
+            entry: None,
         },
         dependencies: deps,
         dev_dependencies: BTreeMap::new(),
-        target_dependencies: BTreeMap::new(),
+        target: BTreeMap::new(),
         features: BTreeMap::new(),
         workspace: None,
+        profile: BTreeMap::new(),
     };
 
-    let resolver = DependencyResolver::new();
-    let lock1 = resolver.resolve(&manifest).expect("res 1");
-    let lock2 = resolver.resolve(&manifest).expect("res 2");
+    let mut resolver = DependencyResolver::new();
+    resolver.register_package("z_crate", "1.0.0", vec![]);
+    resolver.register_package("a_crate", "2.0.0", vec![]);
+    resolver.register_package("m_crate", "3.0.0", vec![]);
+
+    let lock1 = resolver.resolve(&manifest, &[]).expect("res 1");
+    let lock2 = resolver.resolve(&manifest, &[]).expect("res 2");
 
     let s1 = lock1.to_string();
     let s2 = lock2.to_string();

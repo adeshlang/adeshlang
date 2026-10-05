@@ -1,5 +1,7 @@
 use adesh_linker::config::LinkConfig;
+use adesh_linker::elf::ElfReader;
 use adesh_linker::linker::Linker;
+use adesh_linker::macho::MachOReader;
 use adesh_linker::object::ObjectFile;
 use adesh_linker::object::writer::ObjectWriter;
 use adesh_linker::relocation::{Relocation, RelocationKind};
@@ -213,4 +215,163 @@ fn test_link_gpu_fatbin_and_quantum_qir() {
     let q_cfg = LinkConfig::new(q_out.clone(), q_target);
     assert!(Linker::link(&[q_obj_path], q_cfg).is_ok());
     assert!(q_out.exists());
+}
+
+#[test]
+fn test_link_elf_shared_library_full() {
+    let dir = tempdir().unwrap();
+    let target = Target::from_triple("x86_64-linux").unwrap();
+
+    let mut obj = ObjectFile::new(dir.path().join("libfunc.o"), target.clone(), 0);
+    let sec = Section::new_code(".text", vec![0x48, 0x31, 0xC0, 0xC3], 16);
+    obj.add_section(sec);
+    obj.add_symbol(Symbol::new_defined(
+        "exported_api_func",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        4,
+        0,
+    ));
+    let obj_path = dir.path().join("libfunc.o");
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    let out_path = dir.path().join("libmyapi.so");
+    let mut config = LinkConfig::new(out_path.clone(), target);
+    config.shared = true;
+    config.libraries.push("m".to_string()); // DT_NEEDED: libm.so
+
+    let res = Linker::link(&[obj_path], config);
+    assert!(res.is_ok(), "ELF shared library linking failed: {:?}", res.err());
+    assert!(out_path.exists());
+
+    let bytes = std::fs::read(&out_path).unwrap();
+    assert_eq!(&bytes[0..4], b"\x7fELF");
+    // Verify e_type == ET_DYN (3)
+    let e_type = u16::from_le_bytes(bytes[16..18].try_into().unwrap());
+    assert_eq!(e_type, 3, "Expected ET_DYN (3) for shared library");
+
+    // Verify ElfReader reads the produced shared library successfully
+    let read_obj = ElfReader::read(&bytes, &out_path, 0);
+    assert!(read_obj.is_ok(), "ElfReader failed to parse emitted shared library: {:?}", read_obj.err());
+    let parsed = read_obj.unwrap();
+    assert!(parsed.symbols.iter().any(|s| s.name == "exported_api_func"));
+}
+
+#[test]
+fn test_link_elf_dynamic_executable_with_interp() {
+    let dir = tempdir().unwrap();
+    let target = Target::from_triple("x86_64-linux").unwrap();
+
+    let mut obj = ObjectFile::new(dir.path().join("main.o"), target.clone(), 0);
+    let sec = Section::new_code(".text", vec![0x48, 0x31, 0xC0, 0xC3], 16);
+    obj.add_section(sec);
+    obj.add_symbol(Symbol::new_defined(
+        "_start",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        4,
+        0,
+    ));
+    let obj_path = dir.path().join("main.o");
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    let out_path = dir.path().join("dynamic_app");
+    let mut config = LinkConfig::new(out_path.clone(), target);
+    config.libraries.push("c".to_string());
+
+    let res = Linker::link(&[obj_path], config);
+    assert!(res.is_ok(), "ELF dynamic executable link failed: {:?}", res.err());
+    assert!(out_path.exists());
+
+    let bytes = std::fs::read(&out_path).unwrap();
+    assert_eq!(&bytes[0..4], b"\x7fELF");
+
+    // Verify ElfReader roundtrips
+    let read_obj = ElfReader::read(&bytes, &out_path, 0);
+    assert!(read_obj.is_ok());
+}
+
+#[test]
+fn test_link_macho_dylib_full() {
+    let dir = tempdir().unwrap();
+    let target = Target::from_triple("aarch64-macos").unwrap();
+
+    let mut obj = ObjectFile::new(dir.path().join("lib.o"), target.clone(), 0);
+    let sec = Section::new_code("__text", vec![0xC0, 0x03, 0x5F, 0xD6], 16); // ret
+    obj.add_section(sec);
+    obj.add_symbol(Symbol::new_defined(
+        "_my_dylib_symbol",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        4,
+        0,
+    ));
+    let obj_path = dir.path().join("lib.o");
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    let out_path = dir.path().join("libmytest.dylib");
+    let mut config = LinkConfig::new(out_path.clone(), target);
+    config.shared = true;
+
+    let res = Linker::link(&[obj_path], config);
+    assert!(res.is_ok(), "Mach-O dylib linking failed: {:?}", res.err());
+    assert!(out_path.exists());
+
+    let bytes = std::fs::read(&out_path).unwrap();
+    assert_eq!(u32::from_le_bytes(bytes[0..4].try_into().unwrap()), 0xFEEDFACF);
+
+    // Verify filetype == MH_DYLIB (6)
+    let filetype = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
+    assert_eq!(filetype, 6, "Expected MH_DYLIB (6) for shared dylib");
+
+    // Verify MachOReader reads the produced dylib successfully
+    let read_obj = MachOReader::read(&bytes, &out_path, 0);
+    assert!(read_obj.is_ok(), "MachOReader failed to parse emitted dylib: {:?}", read_obj.err());
+    let parsed = read_obj.unwrap();
+    assert!(parsed.symbols.iter().any(|s| s.name == "_my_dylib_symbol"));
+}
+
+#[test]
+fn test_link_macho_executable_full_headers() {
+    let dir = tempdir().unwrap();
+    let target = Target::from_triple("x86_64-macos").unwrap();
+
+    let mut obj = ObjectFile::new(dir.path().join("main.o"), target.clone(), 0);
+    let sec = Section::new_code("__text", vec![0x48, 0x31, 0xC0, 0xC3], 16);
+    obj.add_section(sec);
+    obj.add_symbol(Symbol::new_defined(
+        "_main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        4,
+        0,
+    ));
+    let obj_path = dir.path().join("main.o");
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    let out_path = dir.path().join("mac_app");
+    let config = LinkConfig::new(out_path.clone(), target);
+
+    let res = Linker::link(&[obj_path], config);
+    assert!(res.is_ok(), "Mach-O executable linking failed: {:?}", res.err());
+    assert!(out_path.exists());
+
+    let bytes = std::fs::read(&out_path).unwrap();
+    assert_eq!(u32::from_le_bytes(bytes[0..4].try_into().unwrap()), 0xFEEDFACF);
+    let filetype = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
+    assert_eq!(filetype, 2, "Expected MH_EXECUTE (2) for executable");
+
+    // Verify MachOReader roundtrip
+    let read_obj = MachOReader::read(&bytes, &out_path, 0);
+    assert!(read_obj.is_ok());
+    let parsed = read_obj.unwrap();
+    assert!(parsed.symbols.iter().any(|s| s.name == "_main"));
 }
