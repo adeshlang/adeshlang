@@ -155,6 +155,7 @@ jobs:
           cargo test --test native_phase8_simd_e2e_test
           cargo test --test native_phase8_unwind_e2e_test
           cargo test --test native_semantics_e2e_test
+          cargo test --test native_stack_canary_e2e_test
 
       - name: Display sccache stats
         shell: bash
