@@ -1,14 +1,12 @@
 pub mod parallel_move;
+pub use crate::abi::{AbiType, ArgumentLocation, ReturnLocation, StackArgument};
 pub use crate::machine_ir::{MoveLocation, MoveOperation, RegisterClass};
-pub use parallel_move::{ParallelMoveResolver, resolve_call_arguments, resolve_call_arguments_gpr};
+pub use parallel_move::{
+    ParallelMoveResolver, resolve_abi_call_arguments, resolve_call_arguments,
+    resolve_call_arguments_gpr,
+};
 
 use crate::machine_ir::{PhysicalRegister, VirtualRegister};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ArgumentLocation {
-    Register(PhysicalRegister),
-    Stack(i32),
-}
 
 pub trait CallingConvention: Send + Sync {
     fn name(&self) -> &'static str;
@@ -27,6 +25,28 @@ pub trait CallingConvention: Send + Sync {
         0
     }
 
+    /// Classifies return type according to full ABI rules.
+    fn classify_return_location(&self, ret_type: &AbiType) -> ReturnLocation {
+        match ret_type {
+            AbiType::Void => ReturnLocation::Void,
+            AbiType::Float { .. } => ReturnLocation::FloatRegister(PhysicalRegister::xmm(0)),
+            AbiType::Vector { .. } => ReturnLocation::VectorRegister(PhysicalRegister::xmm(0)),
+            _ => ReturnLocation::Register(PhysicalRegister(0)),
+        }
+    }
+
+    /// Classify incoming arguments according to full ABI types.
+    fn classify_incoming_abi_args(&self, param_types: &[AbiType]) -> Vec<ArgumentLocation> {
+        let classes: Vec<RegisterClass> = param_types
+            .iter()
+            .map(|t| match t {
+                AbiType::Float { .. } => RegisterClass::Float,
+                _ => RegisterClass::Gpr,
+            })
+            .collect();
+        self.classify_incoming_args(&classes)
+    }
+
     /// Classify incoming arguments into register or stack locations on function entry.
     fn classify_incoming_args(&self, param_classes: &[RegisterClass]) -> Vec<ArgumentLocation> {
         let param_regs = self.arg_registers();
@@ -39,10 +59,33 @@ pub trait CallingConvention: Send + Sync {
                     ArgumentLocation::Register(param_regs[i])
                 } else {
                     let offset = 16 + shadow + (i - param_regs.len()) as i32 * 8;
-                    ArgumentLocation::Stack(offset)
+                    ArgumentLocation::Stack(StackArgument {
+                        offset,
+                        size: 8,
+                        align: 8,
+                    })
                 }
             })
             .collect()
+    }
+
+    /// Classify arguments into ABI locations (physical registers or stack slots) using full ABI types.
+    fn classify_abi_args(
+        &self,
+        args: &[(VirtualRegister, AbiType)],
+        outgoing_stack_base: PhysicalRegister,
+    ) -> (Vec<MoveOperation>, i32) {
+        let classes: Vec<(VirtualRegister, RegisterClass)> = args
+            .iter()
+            .map(|(v, t)| {
+                let c = match t {
+                    AbiType::Float { .. } => RegisterClass::Float,
+                    _ => RegisterClass::Gpr,
+                };
+                (*v, c)
+            })
+            .collect();
+        self.classify_args(&classes, outgoing_stack_base)
     }
 
     /// Classify arguments into ABI locations (physical registers or stack slots).
@@ -170,21 +213,72 @@ impl CallingConvention for WindowsX64CallingConvention {
         32
     }
 
+    fn classify_return_location(&self, ret_type: &AbiType) -> ReturnLocation {
+        crate::abi::win64::classify_win64_return(ret_type)
+    }
+
+    fn classify_incoming_abi_args(&self, param_types: &[AbiType]) -> Vec<ArgumentLocation> {
+        crate::abi::win64::classify_win64_arguments(param_types)
+    }
+
     fn classify_incoming_args(&self, param_classes: &[RegisterClass]) -> Vec<ArgumentLocation> {
-        let mut locs = Vec::new();
-        for (i, &class) in param_classes.iter().enumerate() {
-            if i < 4 {
-                let phys_reg = match class {
-                    RegisterClass::Float => WIN64_FP_ARGS[i],
-                    RegisterClass::Gpr => WIN64_ARGS[i],
-                };
-                locs.push(ArgumentLocation::Register(phys_reg));
-            } else {
-                let offset = 48 + ((i - 4) as i32 * 8);
-                locs.push(ArgumentLocation::Stack(offset));
+        let types: Vec<AbiType> = param_classes
+            .iter()
+            .map(|&c| match c {
+                RegisterClass::Float => AbiType::f64(),
+                RegisterClass::Gpr => AbiType::i64(),
+            })
+            .collect();
+        self.classify_incoming_abi_args(&types)
+    }
+
+    fn classify_abi_args(
+        &self,
+        args: &[(VirtualRegister, AbiType)],
+        outgoing_stack_base: PhysicalRegister,
+    ) -> (Vec<MoveOperation>, i32) {
+        let mut moves = Vec::new();
+        let types: Vec<AbiType> = args.iter().map(|(_, t)| t.clone()).collect();
+        let locations = self.classify_incoming_abi_args(&types);
+        let num_stack_args = args.len().saturating_sub(4);
+        let stack_bytes = (num_stack_args * 8) as i32;
+        let total_outgoing = (32 + stack_bytes + 15) & !15;
+
+        for (i, &(vreg, _)) in args.iter().enumerate() {
+            let loc = &locations[i];
+            match loc {
+                ArgumentLocation::Register(phys)
+                | ArgumentLocation::FloatRegister(phys)
+                | ArgumentLocation::VectorRegister(phys)
+                | ArgumentLocation::IndirectByReference(phys) => {
+                    moves.push(MoveOperation::new(
+                        MoveLocation::PhysicalRegister(*phys),
+                        MoveLocation::VirtualRegister(vreg),
+                        8,
+                    ));
+                }
+                ArgumentLocation::Stack(stack_arg) | ArgumentLocation::IndirectStack(stack_arg) => {
+                    let offset = stack_arg.offset - 16;
+                    moves.push(MoveOperation::new(
+                        MoveLocation::StackSlot {
+                            base: outgoing_stack_base,
+                            offset,
+                        },
+                        MoveLocation::VirtualRegister(vreg),
+                        8,
+                    ));
+                }
+                ArgumentLocation::Pair(r1, _) => {
+                    moves.push(MoveOperation::new(
+                        MoveLocation::PhysicalRegister(*r1),
+                        MoveLocation::VirtualRegister(vreg),
+                        8,
+                    ));
+                }
             }
         }
-        locs
+
+        (moves, total_outgoing)
     }
 
     fn classify_args(
@@ -192,37 +286,17 @@ impl CallingConvention for WindowsX64CallingConvention {
         args: &[(VirtualRegister, RegisterClass)],
         outgoing_stack_base: PhysicalRegister,
     ) -> (Vec<MoveOperation>, i32) {
-        let mut moves = Vec::new();
-        let num_stack_args = args.len().saturating_sub(4);
-        let stack_bytes = (num_stack_args * 8) as i32;
-        let total_outgoing = (32 + stack_bytes + 15) & !15;
-
-        for (i, &(vreg, class)) in args.iter().enumerate() {
-            let size = 8;
-            if i < 4 {
-                let phys_reg = match class {
-                    RegisterClass::Float => WIN64_FP_ARGS[i],
-                    RegisterClass::Gpr => WIN64_ARGS[i],
+        let abi_args: Vec<(VirtualRegister, AbiType)> = args
+            .iter()
+            .map(|&(v, c)| {
+                let ty = match c {
+                    RegisterClass::Float => AbiType::f64(),
+                    RegisterClass::Gpr => AbiType::i64(),
                 };
-                moves.push(MoveOperation::new(
-                    MoveLocation::PhysicalRegister(phys_reg),
-                    MoveLocation::VirtualRegister(vreg),
-                    size,
-                ));
-            } else {
-                let offset = 32 + ((i - 4) as i32 * 8);
-                moves.push(MoveOperation::new(
-                    MoveLocation::StackSlot {
-                        base: outgoing_stack_base,
-                        offset,
-                    },
-                    MoveLocation::VirtualRegister(vreg),
-                    size,
-                ));
-            }
-        }
-
-        (moves, total_outgoing)
+                (v, ty)
+            })
+            .collect();
+        self.classify_abi_args(&abi_args, outgoing_stack_base)
     }
 }
 
@@ -320,37 +394,73 @@ impl CallingConvention for SystemVX64CallingConvention {
         16
     }
 
-    fn classify_incoming_args(&self, param_classes: &[RegisterClass]) -> Vec<ArgumentLocation> {
-        let mut locs = Vec::new();
-        let mut gpr_idx = 0;
-        let mut fp_idx = 0;
-        let mut stack_idx = 0;
+    fn classify_return_location(&self, ret_type: &AbiType) -> ReturnLocation {
+        crate::abi::sysv64::classify_sysv_return(ret_type)
+    }
 
-        for &class in param_classes {
-            match class {
-                RegisterClass::Gpr => {
-                    if gpr_idx < SYSV64_ARGS.len() {
-                        locs.push(ArgumentLocation::Register(SYSV64_ARGS[gpr_idx]));
-                        gpr_idx += 1;
-                    } else {
-                        let offset = 16 + (stack_idx * 8);
-                        stack_idx += 1;
-                        locs.push(ArgumentLocation::Stack(offset));
-                    }
+    fn classify_incoming_abi_args(&self, param_types: &[AbiType]) -> Vec<ArgumentLocation> {
+        crate::abi::sysv64::classify_sysv_arguments(param_types)
+    }
+
+    fn classify_incoming_args(&self, param_classes: &[RegisterClass]) -> Vec<ArgumentLocation> {
+        let types: Vec<AbiType> = param_classes
+            .iter()
+            .map(|&c| match c {
+                RegisterClass::Float => AbiType::f64(),
+                RegisterClass::Gpr => AbiType::i64(),
+            })
+            .collect();
+        self.classify_incoming_abi_args(&types)
+    }
+
+    fn classify_abi_args(
+        &self,
+        args: &[(VirtualRegister, AbiType)],
+        outgoing_stack_base: PhysicalRegister,
+    ) -> (Vec<MoveOperation>, i32) {
+        let mut moves = Vec::new();
+        let types: Vec<AbiType> = args.iter().map(|(_, t)| t.clone()).collect();
+        let locations = self.classify_incoming_abi_args(&types);
+        let mut max_stack_offset = 0i32;
+
+        for (i, &(vreg, _)) in args.iter().enumerate() {
+            let loc = &locations[i];
+            match loc {
+                ArgumentLocation::Register(phys)
+                | ArgumentLocation::FloatRegister(phys)
+                | ArgumentLocation::VectorRegister(phys)
+                | ArgumentLocation::IndirectByReference(phys) => {
+                    moves.push(MoveOperation::new(
+                        MoveLocation::PhysicalRegister(*phys),
+                        MoveLocation::VirtualRegister(vreg),
+                        8,
+                    ));
                 }
-                RegisterClass::Float => {
-                    if fp_idx < SYSV64_FP_ARGS.len() {
-                        locs.push(ArgumentLocation::Register(SYSV64_FP_ARGS[fp_idx]));
-                        fp_idx += 1;
-                    } else {
-                        let offset = 16 + (stack_idx * 8);
-                        stack_idx += 1;
-                        locs.push(ArgumentLocation::Stack(offset));
-                    }
+                ArgumentLocation::Stack(stack_arg) | ArgumentLocation::IndirectStack(stack_arg) => {
+                    let offset = stack_arg.offset - 16;
+                    let sz = stack_arg.size.max(8);
+                    moves.push(MoveOperation::new(
+                        MoveLocation::StackSlot {
+                            base: outgoing_stack_base,
+                            offset,
+                        },
+                        MoveLocation::VirtualRegister(vreg),
+                        sz as u8,
+                    ));
+                    max_stack_offset = max_stack_offset.max(offset + sz as i32);
+                }
+                ArgumentLocation::Pair(r1, _) => {
+                    moves.push(MoveOperation::new(
+                        MoveLocation::PhysicalRegister(*r1),
+                        MoveLocation::VirtualRegister(vreg),
+                        8,
+                    ));
                 }
             }
         }
-        locs
+
+        let total_outgoing = (max_stack_offset + 15) & !15;
+        (moves, total_outgoing)
     }
 
     fn classify_args(
@@ -358,60 +468,17 @@ impl CallingConvention for SystemVX64CallingConvention {
         args: &[(VirtualRegister, RegisterClass)],
         outgoing_stack_base: PhysicalRegister,
     ) -> (Vec<MoveOperation>, i32) {
-        let mut moves = Vec::new();
-        let mut gpr_idx = 0;
-        let mut fp_idx = 0;
-        let mut stack_idx = 0;
-
-        for &(vreg, class) in args {
-            match class {
-                RegisterClass::Gpr => {
-                    if gpr_idx < SYSV64_ARGS.len() {
-                        moves.push(MoveOperation::new(
-                            MoveLocation::PhysicalRegister(SYSV64_ARGS[gpr_idx]),
-                            MoveLocation::VirtualRegister(vreg),
-                            8,
-                        ));
-                        gpr_idx += 1;
-                    } else {
-                        let offset = stack_idx * 8;
-                        stack_idx += 1;
-                        moves.push(MoveOperation::new(
-                            MoveLocation::StackSlot {
-                                base: outgoing_stack_base,
-                                offset,
-                            },
-                            MoveLocation::VirtualRegister(vreg),
-                            8,
-                        ));
-                    }
-                }
-                RegisterClass::Float => {
-                    if fp_idx < SYSV64_FP_ARGS.len() {
-                        moves.push(MoveOperation::new(
-                            MoveLocation::PhysicalRegister(SYSV64_FP_ARGS[fp_idx]),
-                            MoveLocation::VirtualRegister(vreg),
-                            8,
-                        ));
-                        fp_idx += 1;
-                    } else {
-                        let offset = stack_idx * 8;
-                        stack_idx += 1;
-                        moves.push(MoveOperation::new(
-                            MoveLocation::StackSlot {
-                                base: outgoing_stack_base,
-                                offset,
-                            },
-                            MoveLocation::VirtualRegister(vreg),
-                            8,
-                        ));
-                    }
-                }
-            }
-        }
-
-        let total_outgoing = (stack_idx * 8 + 15) & !15;
-        (moves, total_outgoing)
+        let abi_args: Vec<(VirtualRegister, AbiType)> = args
+            .iter()
+            .map(|&(v, c)| {
+                let ty = match c {
+                    RegisterClass::Float => AbiType::f64(),
+                    RegisterClass::Gpr => AbiType::i64(),
+                };
+                (v, ty)
+            })
+            .collect();
+        self.classify_abi_args(&abi_args, outgoing_stack_base)
     }
 }
 

@@ -4,6 +4,17 @@
 //! struct passing rules, aggregate return rules, stack frame layout calculation, variadic rules,
 //! and calling convention definitions for x86-64 (Windows & SysV), AArch64 (AAPCS64), and RISC-V (RV64).
 
+pub mod sysv64;
+pub mod variadic;
+pub mod win64;
+
+pub use sysv64::{
+    EightbyteClass, SYSV_FPR_ARGS, SYSV_GPR_ARGS, classify_eightbytes, classify_sysv_arguments,
+    classify_sysv_return,
+};
+pub use variadic::{SysVVariadics, Win64Variadics};
+pub use win64::{WIN64_FPR_ARGS, WIN64_GPR_ARGS, classify_win64_arguments, classify_win64_return};
+
 use crate::machine_ir::PhysicalRegister;
 use crate::target_spec::{TargetAbi, TargetSpec};
 
@@ -107,8 +118,47 @@ pub enum ArgumentLocation {
     Pair(PhysicalRegister, PhysicalRegister),
     /// Passed in a stack slot.
     Stack(StackArgument),
-    /// Passed by reference (invisible pointer in GPR or stack).
+    /// Passed by reference (invisible pointer in GPR).
     IndirectByReference(PhysicalRegister),
+    /// Passed by reference (invisible pointer in a stack slot).
+    IndirectStack(StackArgument),
+}
+
+impl ArgumentLocation {
+    pub fn is_register(&self) -> bool {
+        matches!(
+            self,
+            ArgumentLocation::Register(_)
+                | ArgumentLocation::FloatRegister(_)
+                | ArgumentLocation::VectorRegister(_)
+                | ArgumentLocation::IndirectByReference(_)
+        )
+    }
+
+    pub fn is_stack(&self) -> bool {
+        matches!(
+            self,
+            ArgumentLocation::Stack(_) | ArgumentLocation::IndirectStack(_)
+        )
+    }
+
+    pub fn stack_offset(&self) -> Option<i32> {
+        match self {
+            ArgumentLocation::Stack(s) | ArgumentLocation::IndirectStack(s) => Some(s.offset),
+            _ => None,
+        }
+    }
+
+    pub fn primary_register(&self) -> Option<PhysicalRegister> {
+        match self {
+            ArgumentLocation::Register(r)
+            | ArgumentLocation::FloatRegister(r)
+            | ArgumentLocation::VectorRegister(r)
+            | ArgumentLocation::IndirectByReference(r) => Some(*r),
+            ArgumentLocation::Pair(r, _) => Some(*r),
+            _ => None,
+        }
+    }
 }
 
 /// Precise physical location for returning a function value.
@@ -295,20 +345,6 @@ pub trait AbiSpec: Send + Sync {
 
 pub struct WindowsX64Abi;
 
-const WIN64_GPR_ARGS: [PhysicalRegister; 4] = [
-    PhysicalRegister(1), // RCX
-    PhysicalRegister(2), // RDX
-    PhysicalRegister(8), // R8
-    PhysicalRegister(9), // R9
-];
-
-const WIN64_FPR_ARGS: [PhysicalRegister; 4] = [
-    PhysicalRegister::xmm(0),
-    PhysicalRegister::xmm(1),
-    PhysicalRegister::xmm(2),
-    PhysicalRegister::xmm(3),
-];
-
 impl AbiSpec for WindowsX64Abi {
     fn name(&self) -> &'static str {
         "x86_64-windows-msvc (Win64)"
@@ -368,55 +404,11 @@ impl AbiSpec for WindowsX64Abi {
     }
 
     fn classify_arguments(&self, args: &[AbiType]) -> Vec<ArgumentLocation> {
-        let mut locations = Vec::new();
-        for (i, arg) in args.iter().enumerate() {
-            if i < 4 {
-                match arg {
-                    AbiType::Float { .. } => {
-                        locations.push(ArgumentLocation::FloatRegister(WIN64_FPR_ARGS[i]));
-                    }
-                    AbiType::Vector { .. } => {
-                        locations.push(ArgumentLocation::VectorRegister(WIN64_FPR_ARGS[i]));
-                    }
-                    AbiType::Struct { size, .. } => {
-                        if [1, 2, 4, 8].contains(size) {
-                            locations.push(ArgumentLocation::Register(WIN64_GPR_ARGS[i]));
-                        } else {
-                            locations
-                                .push(ArgumentLocation::IndirectByReference(WIN64_GPR_ARGS[i]));
-                        }
-                    }
-                    _ => {
-                        locations.push(ArgumentLocation::Register(WIN64_GPR_ARGS[i]));
-                    }
-                }
-            } else {
-                // Stack arguments starting after 32 bytes shadow space + 16 bytes return addr/frame
-                let offset = 48 + ((i - 4) as i32 * 8);
-                locations.push(ArgumentLocation::Stack(StackArgument {
-                    offset,
-                    size: arg.size_in_bytes().max(8),
-                    align: arg.alignment().max(8),
-                }));
-            }
-        }
-        locations
+        win64::classify_win64_arguments(args)
     }
 
     fn classify_return(&self, ret: &AbiType) -> ReturnLocation {
-        match ret {
-            AbiType::Void => ReturnLocation::Void,
-            AbiType::Float { .. } => ReturnLocation::FloatRegister(PhysicalRegister::xmm(0)),
-            AbiType::Vector { .. } => ReturnLocation::VectorRegister(PhysicalRegister::xmm(0)),
-            AbiType::Struct { size, .. } => {
-                if [1, 2, 4, 8].contains(size) {
-                    ReturnLocation::Register(PhysicalRegister(0)) // RAX
-                } else {
-                    ReturnLocation::HiddenSret(PhysicalRegister(1)) // RCX
-                }
-            }
-            _ => ReturnLocation::Register(PhysicalRegister(0)), // RAX
-        }
+        win64::classify_win64_return(ret)
     }
 }
 
@@ -425,26 +417,6 @@ impl AbiSpec for WindowsX64Abi {
 // ============================================================================
 
 pub struct SystemVX64Abi;
-
-const SYSV_GPR_ARGS: [PhysicalRegister; 6] = [
-    PhysicalRegister(7), // RDI
-    PhysicalRegister(6), // RSI
-    PhysicalRegister(2), // RDX
-    PhysicalRegister(1), // RCX
-    PhysicalRegister(8), // R8
-    PhysicalRegister(9), // R9
-];
-
-const SYSV_FPR_ARGS: [PhysicalRegister; 8] = [
-    PhysicalRegister::xmm(0),
-    PhysicalRegister::xmm(1),
-    PhysicalRegister::xmm(2),
-    PhysicalRegister::xmm(3),
-    PhysicalRegister::xmm(4),
-    PhysicalRegister::xmm(5),
-    PhysicalRegister::xmm(6),
-    PhysicalRegister::xmm(7),
-];
 
 impl AbiSpec for SystemVX64Abi {
     fn name(&self) -> &'static str {
@@ -505,93 +477,11 @@ impl AbiSpec for SystemVX64Abi {
     }
 
     fn classify_arguments(&self, args: &[AbiType]) -> Vec<ArgumentLocation> {
-        let mut locations = Vec::new();
-        let mut gpr_idx = 0;
-        let mut fpr_idx = 0;
-        let mut stack_offset = 16;
-
-        for arg in args {
-            match arg {
-                AbiType::Float { .. } => {
-                    if fpr_idx < SYSV_FPR_ARGS.len() {
-                        locations.push(ArgumentLocation::FloatRegister(SYSV_FPR_ARGS[fpr_idx]));
-                        fpr_idx += 1;
-                    } else {
-                        locations.push(ArgumentLocation::Stack(StackArgument {
-                            offset: stack_offset,
-                            size: 8,
-                            align: 8,
-                        }));
-                        stack_offset += 8;
-                    }
-                }
-                AbiType::Vector { .. } => {
-                    if fpr_idx < SYSV_FPR_ARGS.len() {
-                        locations.push(ArgumentLocation::VectorRegister(SYSV_FPR_ARGS[fpr_idx]));
-                        fpr_idx += 1;
-                    } else {
-                        locations.push(ArgumentLocation::Stack(StackArgument {
-                            offset: stack_offset,
-                            size: 16,
-                            align: 16,
-                        }));
-                        stack_offset += 16;
-                    }
-                }
-                AbiType::Struct { size, .. } => {
-                    if *size <= 8 && gpr_idx < SYSV_GPR_ARGS.len() {
-                        locations.push(ArgumentLocation::Register(SYSV_GPR_ARGS[gpr_idx]));
-                        gpr_idx += 1;
-                    } else if *size <= 16 && gpr_idx + 1 < SYSV_GPR_ARGS.len() {
-                        locations.push(ArgumentLocation::Pair(
-                            SYSV_GPR_ARGS[gpr_idx],
-                            SYSV_GPR_ARGS[gpr_idx + 1],
-                        ));
-                        gpr_idx += 2;
-                    } else {
-                        let sz = ((*size + 7) & !7) as i32;
-                        locations.push(ArgumentLocation::Stack(StackArgument {
-                            offset: stack_offset,
-                            size: *size,
-                            align: 8,
-                        }));
-                        stack_offset += sz;
-                    }
-                }
-                _ => {
-                    if gpr_idx < SYSV_GPR_ARGS.len() {
-                        locations.push(ArgumentLocation::Register(SYSV_GPR_ARGS[gpr_idx]));
-                        gpr_idx += 1;
-                    } else {
-                        locations.push(ArgumentLocation::Stack(StackArgument {
-                            offset: stack_offset,
-                            size: 8,
-                            align: 8,
-                        }));
-                        stack_offset += 8;
-                    }
-                }
-            }
-        }
-        locations
+        sysv64::classify_sysv_arguments(args)
     }
 
     fn classify_return(&self, ret: &AbiType) -> ReturnLocation {
-        match ret {
-            AbiType::Void => ReturnLocation::Void,
-            AbiType::Float { .. } => ReturnLocation::FloatRegister(PhysicalRegister::xmm(0)),
-            AbiType::Vector { .. } => ReturnLocation::VectorRegister(PhysicalRegister::xmm(0)),
-            AbiType::Struct { size, .. } => {
-                if *size <= 8 {
-                    ReturnLocation::Register(PhysicalRegister(0)) // RAX
-                } else if *size <= 16 {
-                    ReturnLocation::Pair(PhysicalRegister(0), PhysicalRegister(2)) // RAX:RDX
-                } else {
-                    ReturnLocation::HiddenSret(PhysicalRegister(7)) // RDI
-                }
-            }
-            _ => ReturnLocation::Register(PhysicalRegister(0)), // RAX
-        }
+        sysv64::classify_sysv_return(ret)
     }
 }
 

@@ -11,6 +11,7 @@
 //! - Immediate-to-register and immediate-to-stack transfers.
 //! - Safe temporary register selection aware of live, reserved, source, and destination registers.
 
+use crate::abi::AbiType;
 use crate::calling_convention::CallingConvention;
 use crate::error::CodegenError;
 use crate::machine_ir::{
@@ -451,6 +452,20 @@ impl ParallelMoveResolver {
 
         Ok(())
     }
+}
+
+/// Shuffles function call arguments into their ABI parameter locations (registers and stack)
+/// using full ABI types and the CallingConvention classification.
+pub fn resolve_abi_call_arguments(
+    call_conv: &dyn CallingConvention,
+    args: &[(VirtualRegister, AbiType)],
+    outgoing_stack_base: PhysicalRegister,
+) -> Result<(Vec<MachineInstruction>, i32), CodegenError> {
+    let (moves, total_outgoing) = call_conv.classify_abi_args(args, outgoing_stack_base);
+    Ok((
+        vec![MachineInstruction::ParallelMove { moves }],
+        total_outgoing,
+    ))
 }
 
 /// Shuffles function call arguments into their ABI parameter locations (registers and stack)

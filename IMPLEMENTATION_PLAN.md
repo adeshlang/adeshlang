@@ -274,6 +274,23 @@ Tasks:
 **Acceptance:** ABI conformance suite executes binaries covering ints, floats, mixed,
 small structs, large-struct sret, varargs, atomics, TLS — green in Windows CI.
 
+#### Phase 2 progress (updated 2026-10-07)
+
+Phase 2 tasks P2-1 through P2-4: **complete**. Tasks P2-5 through P2-10: **in progress / queued**.
+
+| Task | Scope | Status | Evidence |
+|---|---|---|---|
+| P2-1 Unified Argument Classifier (task 1) | SysV eightbyte psABI + Win64 by-value rules | Done | `crates/adesh-codegen/src/abi/{sysv64,win64,mod}.rs`, `calling_convention/mod.rs`, `lower.rs::hir_type_to_abi_type`. Tests: `native_phase8_abi_e2e_test` 3/3, `abi_ffi_integration` 31/31 |
+| P2-2 sret for large aggregates (task 2) | Caller buffer alloc + callee hidden sret pointer in RAX | Done | Callee hidden first arg extraction + RAX return in `lower.rs`; caller stack buffer alloc & RAX pointer capture in `lower.rs` and `FfiCallLowerer`. Execution test: `test_native_ffi_sret_execution_e2e` (exits 33) |
+| P2-3 Variadics (task 3) | Win64 shadow spill + SysV RSA/va_list + caller %al/shadow | Done | `Win64Variadics::emit_callee_shadow_spill` into `[RBP + 16..40]`; `SysVVariadics` 176B RSA spill + 24B `va_list`; caller shadow space (32B) allocation on RSP in `FfiCallLowerer`; caller-side `%al` float count on SysV. Execution test: `test_native_variadic_execution_e2e` (exits 60) |
+| P2-4 Struct-by-value args & returns (task 4) | Small structs (1, 2, 4, 8B) in GPRs and stack | Done | Win64 pass-by-value in registers (RCX, RDX, R8, R9) and stack (`[RSP + 32]`), return by value in RAX; SysV eightbyte GPR/SSE classification. Tests: `tests/native_phase2_abi_struct_by_value_test.rs` 5/5 passing (unpack 4B struct exits 37, make 8B struct exits 35, mixed 5 args with struct on stack exits 20) |
+| P2-5 Windows TLS (task 5) | `gs:[0x58]` / `_tls_index` sequences | Queued | Next up |
+| P2-6 Complete Atomics (task 6) | 8/16/32/64-bit widths, fences | Queued | Pending |
+| P2-7 C-Interop Proof (task 7) | Real UCRT printf/memcpy calls | Queued | Pending |
+| P2-8 Native Enums (task 8) | Tagged layout & pattern matching | Queued | Pending |
+| P2-9 Closures (task 9) | Captured environments | Queued | Pending |
+| P2-10 Conformance Corpus (task 10) | Multi-file showcase & parity corpus | Queued | Pending |
+
 ### Phase 3 — Linux Execution For Real (≈2-3 weeks)
 
 **Goal:** turn "Emits; not run-tested" into "Execution-tested in CI".

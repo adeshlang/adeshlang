@@ -8,9 +8,10 @@
 use crate::parsing::hir::{
     BinOp, HirExpr, HirFunction, HirLiteral, HirModule, HirPattern, HirStmt, HirType, UnaryOp,
 };
+use adesh_codegen::abi::AbiType;
 use adesh_codegen::calling_convention::{
-    ArgumentLocation, CallingConvention, SystemVX64CallingConvention, WindowsX64CallingConvention,
-    resolve_call_arguments,
+    ArgumentLocation, CallingConvention, ReturnLocation, SystemVX64CallingConvention,
+    WindowsX64CallingConvention, resolve_abi_call_arguments, resolve_call_arguments,
 };
 use adesh_codegen::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
@@ -41,6 +42,62 @@ pub fn is_f32_type(ty: Option<&HirType>) -> bool {
     matches!(ty, Some(HirType::F32))
 }
 
+pub fn hir_type_to_abi_type(ty: Option<&HirType>) -> AbiType {
+    match ty {
+        Some(HirType::Float) | Some(HirType::F64) => AbiType::f64(),
+        Some(HirType::F32) => AbiType::f32(),
+        Some(HirType::Int) | Some(HirType::I64) => AbiType::i64(),
+        Some(HirType::U64) => AbiType::u64(),
+        Some(HirType::I32) => AbiType::i32(),
+        Some(HirType::U32) => AbiType::Integer {
+            bits: 32,
+            is_signed: false,
+        },
+        Some(HirType::I16) => AbiType::Integer {
+            bits: 16,
+            is_signed: true,
+        },
+        Some(HirType::U16) => AbiType::Integer {
+            bits: 16,
+            is_signed: false,
+        },
+        Some(HirType::I8) => AbiType::Integer {
+            bits: 8,
+            is_signed: true,
+        },
+        Some(HirType::U8) | Some(HirType::Bool) | Some(HirType::Char) => AbiType::Integer {
+            bits: 8,
+            is_signed: false,
+        },
+        Some(HirType::Simd(_inner, lanes)) => AbiType::Vector {
+            total_bytes: 16,
+            lane_size: (16 / (*lanes).max(1)).min(16) as u8,
+        },
+        Some(HirType::Tuple(elems)) => {
+            let fields: Vec<AbiType> = elems
+                .iter()
+                .map(|e| hir_type_to_abi_type(Some(e)))
+                .collect();
+            let mut size = 0usize;
+            let mut max_align = 1usize;
+            for f in &fields {
+                let align = f.alignment();
+                max_align = max_align.max(align);
+                size = (size + align - 1) & !(align - 1);
+                size += f.size_in_bytes();
+            }
+            size = (size + max_align - 1) & !(max_align - 1);
+            AbiType::Struct {
+                fields,
+                size,
+                align: max_align,
+            }
+        }
+        Some(HirType::Null) => AbiType::Void,
+        _ => AbiType::Pointer,
+    }
+}
+
 /// Lowering context for a single function.
 pub struct FunctionLoweringContext<'a> {
     pub func: &'a mut MachineFunction,
@@ -60,6 +117,7 @@ pub struct FunctionLoweringContext<'a> {
     pub current_block_id: u32,
     pub label_counter: u32,
     pub func_ret_type: Option<HirType>,
+    pub sret_slot: Option<i32>,
     pub fn_signatures: HashMap<String, (Vec<HirType>, Option<HirType>)>,
     /// Constructs the native backend cannot lower correctly. Shared with
     /// nested function lowering so one compile reports every problem.
@@ -353,6 +411,7 @@ impl<'a> FunctionLoweringContext<'a> {
             current_block_id: 0,
             label_counter: 0,
             func_ret_type: None,
+            sret_slot: None,
             fn_signatures: HashMap::new(),
             diagnostics: Diagnostics::default(),
             enclosing_locals: HashSet::new(),
@@ -385,6 +444,7 @@ impl<'a> FunctionLoweringContext<'a> {
             current_block_id: 0,
             label_counter: 0,
             func_ret_type,
+            sret_slot: None,
             fn_signatures,
             diagnostics: Diagnostics::default(),
             enclosing_locals: HashSet::new(),
@@ -2045,7 +2105,45 @@ impl<'a> FunctionLoweringContext<'a> {
                 // its value while emitting the deferred statements.
                 let return_value = expr_opt.as_ref().map(|expr| self.lower_expression(expr));
                 self.emit_defers_since(0);
-                if let Some(vreg) = return_value {
+                if let Some(sret_off) = self.sret_slot {
+                    let sret_ptr = self.func.alloc_vreg();
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(sret_ptr)),
+                        src: MachineOperand::StackSlot(sret_off),
+                    });
+                    if let Some(src_vreg) = return_value {
+                        let ret_abi = hir_type_to_abi_type(self.func_ret_type.as_ref());
+                        let bytes = ret_abi.size_in_bytes();
+                        let qwords = (bytes + 7) / 8;
+                        for q in 0..qwords {
+                            let temp_vreg = self.func.alloc_vreg();
+                            self.emit(MachineInstruction::Load {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(temp_vreg)),
+                                src: MachineOperand::Memory {
+                                    base: MachineRegister::Virtual(src_vreg),
+                                    offset: (q * 8) as i32,
+                                    index: None,
+                                },
+                                size: 8,
+                            });
+                            self.emit(MachineInstruction::Store {
+                                dst: MachineOperand::Memory {
+                                    base: MachineRegister::Virtual(sret_ptr),
+                                    offset: (q * 8) as i32,
+                                    index: None,
+                                },
+                                src: MachineOperand::Register(MachineRegister::Virtual(temp_vreg)),
+                                size: 8,
+                            });
+                        }
+                    }
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
+                            0,
+                        ))),
+                        src: MachineOperand::Register(MachineRegister::Virtual(sret_ptr)),
+                    });
+                } else if let Some(vreg) = return_value {
                     let is_fp = self.func.vreg_class(vreg) == RegisterClass::Float
                         || is_float_type(self.func_ret_type.as_ref());
                     let ret_phys = if is_fp {
@@ -3186,36 +3284,44 @@ impl<'a> FunctionLoweringContext<'a> {
                     // params arrive in XMM registers and stack args use the
                     // convention's RBP-relative offsets (matches the caller,
                     // which lowers indirect calls via classify_args).
-                    let param_classes: Vec<RegisterClass> = params
+                    let param_abi_types: Vec<AbiType> = params
                         .iter()
-                        .map(|(_, p_ty)| {
-                            if is_float_type(p_ty.as_ref()) {
-                                RegisterClass::Float
-                            } else {
-                                RegisterClass::Gpr
-                            }
-                        })
+                        .map(|(_, p_ty)| hir_type_to_abi_type(p_ty.as_ref()))
                         .collect();
-                    let arg_locations = lambda_ctx.call_conv.classify_incoming_args(&param_classes);
+                    let arg_locations = lambda_ctx
+                        .call_conv
+                        .classify_incoming_abi_args(&param_abi_types);
                     for (idx, (p_name, p_ty)) in params.iter().enumerate() {
                         let slot = lambda_ctx.alloc_stack_slot(8);
                         let off = -(slot + 8);
-                        match arg_locations[idx] {
-                            ArgumentLocation::Register(p_reg) => {
+                        match &arg_locations[idx] {
+                            ArgumentLocation::Register(p_reg)
+                            | ArgumentLocation::FloatRegister(p_reg)
+                            | ArgumentLocation::VectorRegister(p_reg)
+                            | ArgumentLocation::IndirectByReference(p_reg) => {
                                 lambda_ctx.emit(MachineInstruction::Move {
                                     dst: MachineOperand::StackSlot(off),
-                                    src: MachineOperand::Register(MachineRegister::Physical(p_reg)),
+                                    src: MachineOperand::Register(MachineRegister::Physical(
+                                        *p_reg,
+                                    )),
                                 });
                             }
-                            ArgumentLocation::Stack(stack_off) => {
+                            ArgumentLocation::Stack(stack_arg)
+                            | ArgumentLocation::IndirectStack(stack_arg) => {
                                 lambda_ctx.emit(MachineInstruction::Load {
                                     dst: MachineOperand::StackSlot(off),
                                     src: MachineOperand::Memory {
                                         base: MachineRegister::Physical(PhysicalRegister(5)),
-                                        offset: stack_off,
+                                        offset: stack_arg.offset,
                                         index: None,
                                     },
                                     size: 8,
+                                });
+                            }
+                            ArgumentLocation::Pair(r1, _) => {
+                                lambda_ctx.emit(MachineInstruction::Move {
+                                    dst: MachineOperand::StackSlot(off),
+                                    src: MachineOperand::Register(MachineRegister::Physical(*r1)),
                                 });
                             }
                         }
@@ -4262,7 +4368,34 @@ impl<'a> FunctionLoweringContext<'a> {
                 }
 
                 // General function call (direct or indirect)
+                let ret_ty_opt = if let HirExpr::LoadVar(fn_name) = &**callee {
+                    self.fn_signatures
+                        .get(fn_name)
+                        .and_then(|(_, ret)| ret.clone())
+                } else {
+                    None
+                };
+                let ret_abi = hir_type_to_abi_type(ret_ty_opt.as_ref());
+                let ret_loc = self.call_conv.classify_return_location(&ret_abi);
+                let is_sret = matches!(ret_loc, ReturnLocation::HiddenSret(_));
+
                 let mut arg_regs = Vec::new();
+                if is_sret {
+                    let buf_size = ret_abi.size_in_bytes().max(8) as i32;
+                    let sret_slot = self.alloc_stack_slot(buf_size);
+                    let sret_ptr_reg = self.func.alloc_vreg();
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(sret_ptr_reg)),
+                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
+                            5,
+                        ))), // RBP
+                    });
+                    self.emit(MachineInstruction::Sub {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(sret_ptr_reg)),
+                        src: MachineOperand::Immediate((sret_slot + buf_size) as i64),
+                    });
+                    arg_regs.push(sret_ptr_reg);
+                }
                 for arg in args {
                     let r = self.lower_expression(arg);
                     arg_regs.push(r);
@@ -4280,14 +4413,10 @@ impl<'a> FunctionLoweringContext<'a> {
                     self.emit_indirect_call_with_args(callee_reg, &arg_regs);
                 }
 
-                let is_ret_fp = if let HirExpr::LoadVar(fn_name) = &**callee {
-                    if let Some((_, ret_ty)) = self.fn_signatures.get(fn_name) {
-                        is_float_type(ret_ty.as_ref())
-                    } else {
-                        false
-                    }
-                } else {
+                let is_ret_fp = if is_sret {
                     false
+                } else {
+                    is_float_type(ret_ty_opt.as_ref())
                 };
 
                 let out_reg = if is_ret_fp {
@@ -4943,43 +5072,85 @@ fn lower_hir_function_inner(
             ctx.unsupported("`async fn` (the native backend has no async runtime)");
         }
 
-        let param_classes: Vec<RegisterClass> = hir_func
-            .params
-            .iter()
-            .map(|(_, ty, _)| {
-                if is_float_type(ty.as_ref()) {
-                    RegisterClass::Float
-                } else {
-                    RegisterClass::Gpr
-                }
-            })
-            .collect();
+        let ret_abi = hir_type_to_abi_type(hir_func.ret_type.as_ref());
+        let ret_loc = ctx.call_conv.classify_return_location(&ret_abi);
+        let is_sret = matches!(ret_loc, ReturnLocation::HiddenSret(_));
 
-        let arg_locations = ctx.call_conv.classify_incoming_args(&param_classes);
+        let mut param_abi_types: Vec<AbiType> = Vec::new();
+        if is_sret {
+            param_abi_types.push(AbiType::Pointer);
+        }
+        param_abi_types.extend(
+            hir_func
+                .params
+                .iter()
+                .map(|(_, ty, _)| hir_type_to_abi_type(ty.as_ref())),
+        );
 
-        for (idx, (p_name, p_ty, _)) in hir_func.params.iter().enumerate() {
+        let arg_locations = ctx.call_conv.classify_incoming_abi_args(&param_abi_types);
+
+        let mut loc_idx = 0;
+        if is_sret {
             let slot = ctx.alloc_stack_slot(8);
             let off = -(slot + 8);
-            match arg_locations[idx] {
-                ArgumentLocation::Register(p_reg) => {
+            ctx.sret_slot = Some(off);
+            match &arg_locations[loc_idx] {
+                ArgumentLocation::Register(p_reg)
+                | ArgumentLocation::IndirectByReference(p_reg) => {
                     ctx.emit(MachineInstruction::Move {
                         dst: MachineOperand::StackSlot(off),
-                        src: MachineOperand::Register(MachineRegister::Physical(p_reg)),
+                        src: MachineOperand::Register(MachineRegister::Physical(*p_reg)),
                     });
                 }
-                ArgumentLocation::Stack(stack_off) => {
+                ArgumentLocation::Stack(stack_arg) | ArgumentLocation::IndirectStack(stack_arg) => {
                     ctx.emit(MachineInstruction::Load {
                         dst: MachineOperand::StackSlot(off),
                         src: MachineOperand::Memory {
                             base: MachineRegister::Physical(PhysicalRegister(5)), // RBP
-                            offset: stack_off,
+                            offset: stack_arg.offset,
                             index: None,
                         },
                         size: 8,
                     });
                 }
+                _ => {}
+            }
+            loc_idx += 1;
+        }
+
+        for (p_name, p_ty, _) in &hir_func.params {
+            let slot = ctx.alloc_stack_slot(8);
+            let off = -(slot + 8);
+            match &arg_locations[loc_idx] {
+                ArgumentLocation::Register(p_reg)
+                | ArgumentLocation::FloatRegister(p_reg)
+                | ArgumentLocation::VectorRegister(p_reg)
+                | ArgumentLocation::IndirectByReference(p_reg) => {
+                    ctx.emit(MachineInstruction::Move {
+                        dst: MachineOperand::StackSlot(off),
+                        src: MachineOperand::Register(MachineRegister::Physical(*p_reg)),
+                    });
+                }
+                ArgumentLocation::Stack(stack_arg) | ArgumentLocation::IndirectStack(stack_arg) => {
+                    ctx.emit(MachineInstruction::Load {
+                        dst: MachineOperand::StackSlot(off),
+                        src: MachineOperand::Memory {
+                            base: MachineRegister::Physical(PhysicalRegister(5)), // RBP
+                            offset: stack_arg.offset,
+                            index: None,
+                        },
+                        size: 8,
+                    });
+                }
+                ArgumentLocation::Pair(r1, _) => {
+                    ctx.emit(MachineInstruction::Move {
+                        dst: MachineOperand::StackSlot(off),
+                        src: MachineOperand::Register(MachineRegister::Physical(*r1)),
+                    });
+                }
             }
             ctx.declare_local(p_name, off, p_ty.clone());
+            loc_idx += 1;
         }
 
         for stmt in hir_func.body.iter() {
@@ -4996,6 +5167,17 @@ fn lower_hir_function_inner(
         if !last_is_ret {
             // Falling off the end still runs pending defers.
             ctx.run_defers();
+            if let Some(sret_off) = ctx.sret_slot {
+                let sret_ptr = ctx.func.alloc_vreg();
+                ctx.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(sret_ptr)),
+                    src: MachineOperand::StackSlot(sret_off),
+                });
+                ctx.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                    src: MachineOperand::Register(MachineRegister::Virtual(sret_ptr)),
+                });
+            }
             ctx.emit(MachineInstruction::Return);
         }
     }
