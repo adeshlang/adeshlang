@@ -64,7 +64,7 @@ fn emit_link_and_run(native_mod: &NativeModule, opt_level: OptLevel, test_name: 
 
 fn lower_link_and_run_opt(hir: &HirModule, opt_level: OptLevel, test_name: &str) -> i32 {
     let target = TargetDescriptor::from_triple("x86_64-pc-windows-msvc").expect("valid triple");
-    let native_mod = lower_hir_module(hir, &target);
+    let native_mod = lower_hir_module(hir, &target).expect("native lowering");
     emit_link_and_run(&native_mod, opt_level, test_name)
 }
 

@@ -295,9 +295,10 @@ fn test_e2e_seven_arguments_register_and_stack() {
     let mut main_fn = MachineFunction::new("main");
     main_fn.is_exported = true;
     {
+        // Materialize arguments into virtual registers (allocated through the
+        // function so the MIR verifier accepts them).
+        let v_args: Vec<VirtualRegister> = (0..7).map(|_| main_fn.alloc_vreg()).collect();
         let entry = main_fn.entry_block_mut();
-        // Materialize arguments into virtual registers
-        let v_args: Vec<VirtualRegister> = (0..7).map(VirtualRegister).collect();
         for (i, &v) in v_args.iter().enumerate() {
             entry.push(MachineInstruction::Move {
                 dst: MachineOperand::Register(MachineRegister::Virtual(v)),

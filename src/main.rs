@@ -1663,7 +1663,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             adesh_runtime::sanitizer_rt::adesh_sanitizer_check_overflow(50, 100);
             println!("  [5/6] Sanitizer Runtime Hooks ✓");
 
-            let mut exec = adesh_runtime::async_rt::AsyncExecutor::new();
+            let exec = adesh_runtime::async_rt::AsyncExecutor::new();
             let executed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let ex_clone = executed.clone();
             exec.spawn(async move {
@@ -1803,21 +1803,6 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                 "✓ Adesh compiler daemon active. Cached modules: {}",
                 server.cached_modules_count()
             );
-            std::process::exit(0);
-        }
-        "fmt" => {
-            let input_path = if let Some(ref ip) = parsed.input_file {
-                ip.clone()
-            } else if PathBuf::from("src/main.adesh").exists() {
-                "src/main.adesh".to_string()
-            } else if PathBuf::from("main.adesh").exists() {
-                "main.adesh".to_string()
-            } else {
-                eprintln!("Usage: adesh fmt <file.adesh>");
-                std::process::exit(1);
-            };
-            println!("Formatting {}...", input_path);
-            println!("✓ Formatted {}", input_path);
             std::process::exit(0);
         }
         "" => {

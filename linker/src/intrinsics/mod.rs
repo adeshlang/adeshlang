@@ -51,6 +51,8 @@ impl IntrinsicsEngine {
                     | "roundf"
                     | "fabs"
                     | "fabsf"
+                    | "log2"
+                    | "log2f"
             )
             || name.starts_with("__extend")
             || name.starts_with("__trunc")
@@ -75,7 +77,9 @@ impl IntrinsicsEngine {
             || name.starts_with("_rust_")
             || name.starts_with("adesh_")
             || name.starts_with("__adesh_")
-            || crate::os_router::OsApiRouter::is_libc_symbol(name)
+        // Plain libc functions (strlen, malloc, sqrt, ...) are deliberately not
+        // intrinsics: the emitter has no body for them and would fall back to a
+        // `return 0` stub, so they must be routed to the platform C runtime.
     }
 
     /// Synthesize machine code section and symbols for missing runtime intrinsics.
@@ -358,23 +362,6 @@ impl IntrinsicsEngine {
                 // Default no-op drop glue
                 vec![0xc3] // ret
             }
-            "adesh_str_concat" | "adesh_str_new" => {
-                // Return arg0 (rdi/rcx)
-                vec![0x48, 0x89, 0xf8, 0xc3] // mov rax, rdi; ret
-            }
-            "adesh_print_str"
-            | "adesh_print_i64"
-            | "adesh_print_f64"
-            | "adesh_print_bool"
-            | "adesh_print_newline"
-            | "adesh_io_print"
-            | "adesh_io_println"
-            | "adesh_str_free"
-            | "adesh_arr_free"
-            | "adesh_mem_free" => {
-                // Safe runtime stub ret
-                vec![0xc3] // ret
-            }
             "log2" => {
                 vec![
                     0xd9, 0xe8, // fld1
@@ -401,10 +388,10 @@ impl IntrinsicsEngine {
                     0xc3, // ret
                 ]
             }
-            _ => {
-                // Default safe return 0 / NULL
-                vec![0x31, 0xc0, 0xc3] // xor eax, eax; ret
-            }
+            // No body exists for this builtin (e.g. a runtime function whose
+            // library was not linked). Returning 0 here silently miscompiled
+            // every caller, so trap at the first call instead.
+            _ => vec![0x0f, 0x0b], // ud2
         }
     }
 
@@ -433,28 +420,18 @@ impl IntrinsicsEngine {
                     0xc0, 0x03, 0x5f, 0xd6, // ret
                 ]
             }
-            "__stack_chk_fail" | "__adesh_panic" => {
-                // brk #0 (trap)
-                vec![0x00, 0x00, 0x20, 0xd4]
-            }
-            _ => {
-                // ret
-                vec![0xc0, 0x03, 0x5f, 0xd6]
-            }
+            "__adesh_drop_in_place" => vec![0xc0, 0x03, 0x5f, 0xd6], // ret
+            // Unimplemented builtins trap rather than return a garbage x0.
+            _ => vec![0x00, 0x00, 0x20, 0xd4], // brk #0
         }
     }
 
     /// RISC-V 64 machine code sequences for compiler runtime builtins.
     fn emit_riscv64(name: &str) -> Vec<u8> {
         match name {
-            "__stack_chk_fail" | "__adesh_panic" => {
-                // ebreak (0x00100073)
-                vec![0x73, 0x00, 0x10, 0x00]
-            }
-            _ => {
-                // ret (jalr x0, x1, 0 -> 0x00008067)
-                vec![0x67, 0x80, 0x00, 0x00]
-            }
+            "__adesh_drop_in_place" => vec![0x67, 0x80, 0x00, 0x00], // ret
+            // Unimplemented builtins trap rather than return a garbage a0.
+            _ => vec![0x73, 0x00, 0x10, 0x00], // ebreak
         }
     }
 }

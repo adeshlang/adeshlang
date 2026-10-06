@@ -21,7 +21,7 @@ use tempfile::tempdir;
 
 fn lower_link_and_run(hir: &HirModule, test_name: &str) -> i32 {
     let target = TargetDescriptor::from_triple("x86_64-pc-windows-msvc").expect("valid triple");
-    let native_mod = lower_hir_module(hir, &target);
+    let native_mod = lower_hir_module(hir, &target).expect("native lowering");
 
     let mut backend = create_backend(target.clone()).expect("backend creation");
     let obj = backend.emit_object(&native_mod).expect("ADOB emission");
@@ -509,8 +509,10 @@ fn test_e2e_defer_execution_order() {
         classes: Vec::new(),
     };
 
+    // The return value is captured before the defers run (matching the
+    // interpreter), so the defers' mutations of `res` are not observed.
     let code = lower_link_and_run(&hir, "test_defer_order");
-    assert_eq!(code, 25);
+    assert_eq!(code, 10);
 }
 
 #[test]

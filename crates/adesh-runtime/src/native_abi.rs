@@ -311,3 +311,24 @@ pub extern "C" fn aot_free(ptr: *mut core::ffi::c_void) {
         unsafe { libc::free(ptr as *mut core::ffi::c_void) }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn alloc_free_roundtrip_across_sizes() {
+        for size in [1i64, 8, 24, 256, 4096, 1 << 20] {
+            let p = aot_alloc(size) as *mut u8;
+            assert!(!p.is_null(), "size {size}");
+            unsafe {
+                p.write(0xAB);
+                p.add(size as usize - 1).write(0xCD);
+            }
+            aot_free(p as *mut core::ffi::c_void);
+        }
+        assert!(aot_alloc(0).is_null());
+        assert!(aot_alloc(-5).is_null());
+        aot_free(core::ptr::null_mut());
+    }
+}

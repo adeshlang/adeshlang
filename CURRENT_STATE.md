@@ -188,7 +188,7 @@ Real, working subsystems:
 | **Type System** | Production ready | Inference, interfaces, generics, layouts, vtables. |
 | **Borrow / Ownership** | Production ready | Ownership, lifetimes, borrow tracking, escape analysis. |
 | **HIR / MIR** | Production ready | SSA control-flow IR with constant folding, DCE, CSE. |
-| **Native lowering (HIR → Machine IR)** | **Partial** | Focused end-to-end tests cover integers, scalar floats/math, strings, ranges, membership, indexing/mutation, methods, short-circuit values, try/catch, and defer. This is not full language coverage; unsupported constructs must still be audited. |
+| **Native lowering (HIR → Machine IR)** | **Partial; unsupported constructs fail the build** | Focused end-to-end tests cover integers, scalar floats/math, strings, ranges, membership, indexing/mutation, methods, short-circuit values, try/catch, defer, integer `match` (switch lowering), and non-capturing lambdas. Since Phase 1 (2026-10-06), `lower_hir_module` returns structured errors for constructs it cannot compile correctly: module imports, `region` blocks, enum variant patterns, `async fn`/`await`/`spawn`, closures that capture enclosing locals, `instanceof`, and unknown expressions. Not full language coverage; no `examples/` conformance sweep yet (planned for Phase 2). |
 
 ### 2.2 Native Object Format (ADOB v1.0)
 | Component | Status |

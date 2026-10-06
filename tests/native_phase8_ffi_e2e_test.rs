@@ -16,7 +16,7 @@ use adesh_codegen::ffi::{
 };
 use adesh_codegen::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
-    NativeModule, PhysicalRegister, VirtualRegister,
+    MoveLocation, NativeModule, PhysicalRegister, VirtualRegister,
 };
 use adesh_codegen::opt::OptLevel;
 use adesh_codegen::targets::x86_64::X86_64Backend;
@@ -65,28 +65,72 @@ fn test_ffi_declaration_and_lowering() {
     let arg_vregs = vec![VirtualRegister(0), VirtualRegister(1)];
     let ret_vreg = Some(VirtualRegister(2));
 
-    // Lower for Win64
-    let win64_insts = FfiCallLowerer::lower_call(&decl, &arg_vregs, &win64_abi, ret_vreg);
-    assert_eq!(win64_insts.len(), 4); // mov RCX, v0; mov XMM1, v1; call test_func; mov v2, RAX
+    // Register arguments must be one simultaneous ParallelMove, followed by
+    // the call and the result move.
+    fn arg_dsts(insts: &[MachineInstruction]) -> Vec<u8> {
+        match &insts[0] {
+            MachineInstruction::ParallelMove { moves } => moves
+                .iter()
+                .map(|m| match m.dst {
+                    MoveLocation::PhysicalRegister(p) => p.0,
+                    ref other => panic!("unexpected destination {other:?}"),
+                })
+                .collect(),
+            other => panic!("expected ParallelMove, got {other:?}"),
+        }
+    }
+
+    // Win64: arg 0 in RCX, arg 1 in XMM1
+    let win64_insts =
+        FfiCallLowerer::lower_call(&decl, &arg_vregs, &win64_abi, ret_vreg).expect("lowering");
+    assert_eq!(win64_insts.len(), 3);
+    assert_eq!(arg_dsts(&win64_insts), vec![1, 17]);
     assert!(
-        matches!(&win64_insts[0], MachineInstruction::Move { dst: MachineOperand::Register(MachineRegister::Physical(p)), .. } if p.0 == 1)
-    );
-    assert!(
-        matches!(&win64_insts[1], MachineInstruction::Move { dst: MachineOperand::Register(MachineRegister::Physical(p)), .. } if p.0 == 17)
-    ); // XMM1
-    assert!(
-        matches!(&win64_insts[2], MachineInstruction::Call { target: MachineOperand::Symbol(s), .. } if s == "test_func")
+        matches!(&win64_insts[1], MachineInstruction::Call { target: MachineOperand::Symbol(s), .. } if s == "test_func")
     );
 
-    // Lower for SysV: arg 0 in RDI, arg 1 in XMM0
-    let sysv_insts = FfiCallLowerer::lower_call(&decl, &arg_vregs, &sysv_abi, ret_vreg);
-    assert_eq!(sysv_insts.len(), 4);
+    // SysV: arg 0 in RDI, arg 1 in XMM0
+    let sysv_insts =
+        FfiCallLowerer::lower_call(&decl, &arg_vregs, &sysv_abi, ret_vreg).expect("lowering");
+    assert_eq!(sysv_insts.len(), 3);
+    assert_eq!(arg_dsts(&sysv_insts), vec![7, 16]);
+}
+
+#[test]
+fn test_ffi_lowering_rejects_unrepresentable_calls() {
+    let win64_abi = WindowsX64Abi;
+
+    // Extra variadic arguments used to be dropped silently by `zip`.
+    let printf = ForeignFunctionDeclaration::printf();
+    let err = FfiCallLowerer::lower_call(
+        &printf,
+        &[VirtualRegister(0), VirtualRegister(1)],
+        &win64_abi,
+        None,
+    )
+    .expect_err("extra variadic arguments must be rejected");
+    assert!(err.to_string().contains("variadic"), "{err}");
+
+    // Missing arguments.
+    let decl = ForeignFunctionDeclaration::c_fn(
+        "two_args",
+        vec![("a", ForeignType::Int64), ("b", ForeignType::Int64)],
+        ForeignType::Int64,
+        false,
+    );
+    assert!(FfiCallLowerer::lower_call(&decl, &[VirtualRegister(0)], &win64_abi, None).is_err());
+
+    // A void function cannot supply a result value.
+    let free = ForeignFunctionDeclaration::free();
     assert!(
-        matches!(&sysv_insts[0], MachineInstruction::Move { dst: MachineOperand::Register(MachineRegister::Physical(p)), .. } if p.0 == 7)
-    ); // RDI
-    assert!(
-        matches!(&sysv_insts[1], MachineInstruction::Move { dst: MachineOperand::Register(MachineRegister::Physical(p)), .. } if p.0 == 16)
-    ); // XMM0
+        FfiCallLowerer::lower_call(
+            &free,
+            &[VirtualRegister(0)],
+            &win64_abi,
+            Some(VirtualRegister(1))
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -152,7 +196,8 @@ fn test_native_ffi_execution_e2e() {
     );
     let win64_abi = WindowsX64Abi;
     let call_insts =
-        FfiCallLowerer::lower_call(&ffi_decl, &[v_arg1, v_arg2], &win64_abi, Some(v_ret));
+        FfiCallLowerer::lower_call(&ffi_decl, &[v_arg1, v_arg2], &win64_abi, Some(v_ret))
+            .expect("FFI lowering");
     for inst in call_insts {
         m_block.push(inst);
     }

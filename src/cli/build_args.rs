@@ -133,17 +133,15 @@ impl BuildArgParser {
                     config.lto = mode != "off" && mode != "no" && mode != "false";
                 }
 
-                "--pgo" => {
-                    let _ = parser.next_arg();
+                // These used to be accepted and silently ignored, so a build
+                // that asked for them got none of the requested behaviour.
+                "--pgo" | "--sanitizer" | "--hardening" => {
+                    return Err(format!("`{}` is not supported by `adesh build` yet", arg));
                 }
-                arg if arg.starts_with("--pgo=") => {}
-
-                "--sanitizer" => {
-                    let _ = parser.next_arg();
+                arg if arg.starts_with("--pgo=") || arg.starts_with("--sanitizer=") => {
+                    let flag = arg.split('=').next().unwrap_or(arg);
+                    return Err(format!("`{}` is not supported by `adesh build` yet", flag));
                 }
-                arg if arg.starts_with("--sanitizer=") => {}
-
-                "--hardening" => {}
 
                 // Output file
                 "-o" | "--output" => {
@@ -306,6 +304,21 @@ mod tests {
             let config = BuildArgParser::parse(args).unwrap();
             assert_eq!(config.opt_level, level);
             assert!(!config.fast_compile);
+        }
+    }
+
+    #[test]
+    fn test_unimplemented_flags_are_rejected() {
+        for flag in [
+            "--pgo",
+            "--pgo=profile.data",
+            "--sanitizer",
+            "--sanitizer=address",
+            "--hardening",
+        ] {
+            let args = vec!["test.adesh".to_string(), flag.to_string()];
+            let err = BuildArgParser::parse(args).expect_err(flag);
+            assert!(err.contains("not supported"), "{flag}: {err}");
         }
     }
 

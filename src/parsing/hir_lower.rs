@@ -373,7 +373,34 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
             LoweredStmt::Skip => Err("Test function not allowed inside defer block".into()),
         },
 
-        _ => Ok(LoweredStmt::Stmt(HirStmt::Block(Vec::new()))),
+        StmtKind::Region { name, body } => match lower_stmt(body, include_tests)? {
+            LoweredStmt::Stmt(inner) => Ok(LoweredStmt::Stmt(HirStmt::Region {
+                name: name.clone().unwrap_or_else(|| "_".to_string()),
+                body: Box::new(inner),
+            })),
+            _ => Err("Function, class, or test not allowed directly inside region block".into()),
+        },
+
+        StmtKind::ExportDefaultFunction(func) => {
+            lower_function_with_export(func, true).map(LoweredStmt::Function)
+        }
+        StmtKind::ExportDefaultClass(class_decl) => lower_class(class_decl).map(LoweredStmt::Class),
+
+        StmtKind::LetObject(..) => {
+            Err("object destructuring (`let { .. } = ..`) is not supported in compiled code".into())
+        }
+
+        // Type-level and linkage declarations carry no runtime statements:
+        // types are consumed by the checker, externs resolve as imports.
+        StmtKind::TypeAlias(..)
+        | StmtKind::Struct(..)
+        | StmtKind::Enum(..)
+        | StmtKind::Interface(..)
+        | StmtKind::ExportDefault(_)
+        | StmtKind::HeaderImport { .. }
+        | StmtKind::ExternFunction(_)
+        | StmtKind::ExternBlock { .. }
+        | StmtKind::Decorator(..) => Ok(LoweredStmt::Stmt(HirStmt::Block(Vec::new()))),
     }
 }
 

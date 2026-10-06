@@ -58,7 +58,7 @@ impl Default for SystemAllocator {
 
 unsafe impl Allocator for SystemAllocator {
     unsafe fn allocate(&self, layout: Layout) -> *mut u8 {
-        let ptr = alloc(layout);
+        let ptr = unsafe { alloc(layout) };
         if !ptr.is_null() {
             self.stats.allocations.fetch_add(1, Ordering::Relaxed);
             self.stats
@@ -74,7 +74,9 @@ unsafe impl Allocator for SystemAllocator {
             self.stats
                 .bytes_deallocated
                 .fetch_add(layout.size(), Ordering::Relaxed);
-            dealloc(ptr, layout);
+            unsafe {
+                dealloc(ptr, layout);
+            }
         }
     }
 }

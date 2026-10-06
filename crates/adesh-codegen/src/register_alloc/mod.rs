@@ -1826,9 +1826,15 @@ impl<'a> LinearScanAllocator<'a> {
         Self { reg_file }
     }
 
-    pub fn allocate(&self, func: &mut MachineFunction) -> AllocationResult {
+    pub fn allocate(
+        &self,
+        func: &mut MachineFunction,
+    ) -> Result<AllocationResult, VerificationError> {
         let liveness = LivenessAnalysis::compute(func);
         let intervals = liveness.build_live_ranges(func);
+        // The loop below assigns registers on clones; the verifier must see
+        // those decisions, not the unassigned originals.
+        let mut assigned_intervals: Vec<LiveInterval> = Vec::with_capacity(intervals.len());
 
         let mut vreg_map = HashMap::new();
         let mut spill_map = HashMap::new();
@@ -1940,6 +1946,7 @@ impl<'a> LinearScanAllocator<'a> {
                 if callee_set.contains(&free_reg) {
                     used_callee_saved.insert(free_reg);
                 }
+                assigned_intervals.push(current.clone());
                 Self::insert_active(&mut active, current);
             } else {
                 let size = 8;
@@ -1949,6 +1956,7 @@ impl<'a> LinearScanAllocator<'a> {
                 current.spill_slot = Some(slot);
                 spill_map.insert(current.vreg, slot);
                 spill_size_map.insert(current.vreg, size as u8);
+                assigned_intervals.push(current.clone());
                 Self::insert_active(&mut active, current);
             }
         }
@@ -1961,24 +1969,23 @@ impl<'a> LinearScanAllocator<'a> {
         let rewriter = SpillRewriter::new(self.reg_file, &vreg_map, &spill_map, &spill_size_map);
         rewriter.rewrite_function(func);
 
-        // Run comprehensive post-allocation verifier
-        let _ = AllocationVerifier::verify(
+        AllocationVerifier::verify(
             func,
             &vreg_map,
             &spill_map,
             &used_callee_saved,
-            &intervals,
+            &assigned_intervals,
             &call_indices,
             self.reg_file,
-        );
+        )?;
 
-        AllocationResult {
+        Ok(AllocationResult {
             vreg_map,
             spill_map,
             spill_size_map,
             total_spill_bytes,
             used_callee_saved,
-        }
+        })
     }
 
     /// Insert an interval into the expiry-sorted `active` list.
@@ -2106,6 +2113,38 @@ mod tests {
     }
 
     #[test]
+    fn test_verifier_rejects_interfering_assignment() {
+        let mut func = MachineFunction::new("test_verifier_interference");
+        let v0 = func.alloc_vreg();
+        let v1 = func.alloc_vreg();
+        let reg_file = X86_64RegisterFile::sysv();
+        let p = reg_file.allocatable_for_class(RegisterClass::Gpr)[0];
+
+        let mut r0 = LiveRange::new(v0, RegisterClass::Gpr);
+        r0.add_segment(0, 4);
+        r0.assigned_reg = Some(p);
+        let mut r1 = LiveRange::new(v1, RegisterClass::Gpr);
+        r1.add_segment(2, 6);
+        r1.assigned_reg = Some(p);
+
+        let vreg_map = HashMap::from([(v0, p), (v1, p)]);
+        let err = AllocationVerifier::verify(
+            &func,
+            &vreg_map,
+            &HashMap::new(),
+            &HashSet::new(),
+            &[r0, r1],
+            &[],
+            &reg_file,
+        )
+        .expect_err("two overlapping ranges in one register must be rejected");
+        assert!(matches!(
+            err,
+            VerificationError::LiveRangeInterference { .. }
+        ));
+    }
+
+    #[test]
     fn test_caller_saved_across_call_forces_callee_or_spill() {
         let mut func = MachineFunction::new("test_call_clobber");
         let v0 = func.alloc_vreg();
@@ -2127,7 +2166,9 @@ mod tests {
 
         let reg_file = X86_64RegisterFile::sysv();
         let allocator = LinearScanAllocator::new(&reg_file);
-        let res = allocator.allocate(&mut func);
+        let res = allocator
+            .allocate(&mut func)
+            .expect("allocation must pass verification");
 
         if let Some(&p) = res.vreg_map.get(&v0) {
             assert!(

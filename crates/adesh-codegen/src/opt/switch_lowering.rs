@@ -215,17 +215,19 @@ impl SwitchLowering {
             });
         }
 
-        // Left partition (< mid)
-        let left_block_id = func.create_block(format!("bst_left_{}", mid_case.value));
-        // Right partition (> mid)
-        let right_block_id = func.create_block(format!("bst_right_{}", mid_case.value));
+        // Labels are keyed by block index: two switches in one function can
+        // share a pivot value, and duplicate block labels misroute branches.
+        let left_label = format!("bst_left_b{}", func.blocks.len());
+        let left_block_id = func.create_block(left_label.clone());
+        let right_label = format!("bst_right_b{}", func.blocks.len());
+        let right_block_id = func.create_block(right_label.clone());
 
         func.blocks[block_idx].push(MachineInstruction::BranchCc {
             cc: ConditionCode::LessThan,
-            target: format!("bst_left_{}", mid_case.value),
+            target: left_label,
         });
         func.blocks[block_idx].push(MachineInstruction::Branch {
-            target: format!("bst_right_{}", mid_case.value),
+            target: right_label,
         });
 
         Self::emit_bst(

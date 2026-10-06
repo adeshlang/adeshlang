@@ -916,6 +916,18 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
         }
     }
 
+    // Validate the codegen backend up front so a typo fails loudly instead
+    // of silently falling through to the Cranelift AOT path.
+    match config.codegen_backend.as_str() {
+        "adesh" | "cranelift" => {}
+        other => {
+            return Err(format!(
+                "unknown codegen backend `{}` (expected `adesh` (native) or `cranelift`)",
+                other
+            ));
+        }
+    }
+
     let compile_result = if config.emit == EmitType::Adob
         || config.emit == EmitType::Assembly
         || is_wasm
@@ -955,7 +967,8 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("module");
-            let mut module = crate::backends::native::lower_hir_module(&hir, &target);
+            let mut module = crate::backends::native::lower_hir_module(&hir, &target)
+                .map_err(|e| e.to_string())?;
             module.name = mod_name.to_string();
 
             if config.emit == EmitType::Assembly {

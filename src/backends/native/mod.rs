@@ -2,4 +2,4 @@
 
 pub mod lower;
 
-pub use lower::{FunctionLoweringContext, lower_hir_module};
+pub use lower::{FunctionLoweringContext, NativeLoweringError, lower_hir_module};

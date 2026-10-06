@@ -751,7 +751,11 @@ impl FunctionEncoding {
             if reg < 16 {
                 self.enc.mov_rbp_offset_r64(slot, reg);
             } else {
-                self.enc.movsd_mem_xmm(5, slot, None, reg - 16);
+                // Win64 preserves the low 128 bits of XMM6-15; `movsd` only
+                // saves 64 bits and would corrupt the caller's upper halves.
+                // The slot is 16-byte aligned and 16 bytes wide (see
+                // `compute_frame_layout`), so a full 128-bit save fits.
+                self.enc.movups_mem_xmm(5, slot, None, reg - 16);
             }
         }
     }
@@ -763,7 +767,8 @@ impl FunctionEncoding {
             if reg < 16 {
                 self.enc.mov_r64_rbp_offset(reg, slot);
             } else {
-                self.enc.movsd_xmm_mem(reg - 16, 5, slot, None);
+                // Restore the full low 128 bits (see prologue comment).
+                self.enc.movups_xmm_mem(reg - 16, 5, slot, None);
             }
         }
         self.enc.mov_r64_r64(4, 5); // mov rsp, rbp
@@ -2581,7 +2586,10 @@ impl CodegenBackend for X86_64Backend {
         let allocator = LinearScanAllocator::new(&reg_file);
 
         for func in &mut lowered.functions {
-            allocator.allocate(func);
+            allocator.allocate(func).map_err(|e| {
+                CodegenError::new(self.target.triple_string(), e.to_string())
+                    .with_function(func.name.clone())
+            })?;
             Self::expand_parallel_moves(func)?;
             pipeline.optimize_function_post_alloc(func)?;
         }

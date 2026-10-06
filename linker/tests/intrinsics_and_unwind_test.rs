@@ -61,6 +61,58 @@ fn test_x64_stack_probe_preserves_size_and_branches_to_page_boundary() {
     );
 }
 
+/// Regression: libc functions used to count as intrinsics, so on PE `strlen`
+/// was synthesized as `xor eax, eax; ret` instead of being imported. Every
+/// `CStr::from_ptr` in the runtime then produced an empty string.
+#[test]
+fn test_libc_functions_are_imported_not_stubbed() {
+    use adesh_linker::os_router::{OsApiRouter, SymbolRoute};
+
+    let target = Target::x86_64_windows();
+    for name in ["strlen", "strcmp", "malloc", "free", "sqrt"] {
+        assert!(
+            !IntrinsicsEngine::is_intrinsic(name),
+            "`{name}` has no synthesized body and must not be an intrinsic"
+        );
+        match OsApiRouter::classify(name, &target) {
+            SymbolRoute::DllImport { dll, .. } => assert_eq!(dll, "msvcrt.dll", "{name}"),
+            other => panic!("`{name}` must be a CRT import on PE, got {other:?}"),
+        }
+    }
+
+    for name in ["memcpy", "memset", "floor", "log2", "__chkstk"] {
+        assert!(IntrinsicsEngine::is_intrinsic(name), "{name}");
+    }
+}
+
+/// Intrinsics without a real body used to return 0 (or, for
+/// `adesh_str_concat`, their first argument), silently miscompiling callers
+/// whenever the runtime library was missing. They must trap instead.
+#[test]
+fn test_unimplemented_intrinsics_trap_instead_of_returning_zero() {
+    let cases = [
+        (Target::x86_64_windows(), vec![0x0f, 0x0b]),
+        (Target::x86_64_linux(), vec![0x0f, 0x0b]),
+        (Target::aarch64_macos(), vec![0x00, 0x00, 0x20, 0xd4]),
+    ];
+    for (target, trap) in cases {
+        for name in [
+            "__udivti3",
+            "__floatsidf",
+            "adesh_str_concat",
+            "adesh_print_str",
+        ] {
+            assert!(IntrinsicsEngine::is_intrinsic(name), "{name}");
+            assert_eq!(
+                IntrinsicsEngine::emit_intrinsic_code(name, &target),
+                trap,
+                "`{name}` on {:?}",
+                target.arch
+            );
+        }
+    }
+}
+
 #[test]
 fn test_eh_frame_hdr_table_generation() {
     let hdr_va = 0x400000;

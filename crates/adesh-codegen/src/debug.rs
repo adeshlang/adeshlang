@@ -101,6 +101,12 @@ pub struct DebugEngine {
     address_map: BTreeMap<u64, String>, // start_addr -> func_name
 }
 
+impl Default for DebugEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DebugEngine {
     pub fn new() -> Self {
         Self {

@@ -200,6 +200,36 @@ Tasks:
 zero silent divergence; regression tests (executing real binaries) exist for every bug in
 §1.2.
 
+**Closed 2026-10-06 with task 12 deferred:** every §1.2 row (1-16) is fixed or turned into
+a structured error, each with a regression test (most execute real binaries). The
+`examples/` sweep (task 12) moved to Phase 2 task 10, where a wider native subset makes its
+results actionable.
+
+#### Phase 0 / Phase 1 progress (updated 2026-10-06)
+
+Phase 0: **complete.** Phase 1: **complete** (P1-j deferred to Phase 2 task 10).
+
+| Task | Bug rows | Status | Evidence |
+|---|---|---|---|
+| P1-a `--codegen` validation (task 5) | 14 | Done | `src/cli/build.rs` rejects values other than `adesh`/`cranelift` |
+| P1-b Win64 XMM preservation (task 7) | 10 | Done | 128-bit `movups` save/restore; `native_phase3_fp_e2e_test` 13/13 |
+| P1-bug linker libc stubs (found during P1) | new | Done | `strlen`/`malloc`/`sqrt`/... were synthesized as `xor eax,eax; ret` on PE because `is_intrinsic` included every libc symbol; now imported from the CRT (`linker/src/intrinsics/mod.rs`). Regression: `test_libc_functions_are_imported_not_stubbed`; `native_semantics_e2e_test` 17/17 |
+| P1-c Allocation verifier (task 8) | 11 | Done | `LinearScanAllocator::allocate` returns `Result`; verifier now sees the *assigned* intervals (it previously checked unassigned copies); backends surface a `CodegenError`. Regression: `test_verifier_rejects_interfering_assignment` |
+| P1-d FFI parallel moves + sret (task 6) | 8, 9 | Done | `FfiCallLowerer::lower_call` returns `Result`; register args emitted as one `ParallelMove`; sret, register-pair args/returns, extra variadic args, arity mismatch, and void-with-result are structured errors. Tests: `native_phase8_ffi_e2e_test` 3/3 (incl. execution) |
+| P1-e `aot_free` Layout UB (task 10) | 15 | Done | Deleted the unreferenced duplicate `aot_alloc`/`aot_free` from `src/backends/aot/runtime_bridge.rs`; `crates/adesh-runtime/src/native_abi.rs` (`malloc`/`free`) is the single definition. Test: `native_abi::tests::alloc_free_roundtrip_across_sizes`. Runtime ABI handshake deferred to Phase 3 as planned. Note: no source syntax currently produces `HirExpr::Alloc`; `alloc(n)` in source is a plain call and fails at link time |
+| P1-f Canary + sanitizer (task 9) | 12, 13, 16 | Done | Canary was already complete (mismatch branches to `__stack_chk_fail`, linker-synthesized as `ud2`); now execution-tested: `native_stack_canary_e2e_test` (intact frame exits 42, smashed frame traps with `STATUS_ILLEGAL_INSTRUCTION`). Opt-in API only; a CLI `--stack-protector` flag is not wired yet. Deleted the dead `crates/adesh-codegen/src/sanitizer.rs` (zero-argument check calls, unfalsifiable canary) and its test; runtime hooks in `adesh-runtime::sanitizer_rt` kept. `adesh build --pgo/--sanitizer/--hardening` now error instead of being ignored (`test_unimplemented_flags_are_rejected`) |
+| P1-g Lowering fallibility (task 1) | 1, 3, 6, 7 | Done | `lower_hir_module` now returns `Result<_, NativeLoweringError>`; unsupported constructs (imports, `region`, unknown expressions/literals/binops, `instanceof`, unsupported assignment targets) are collected as diagnostics and fail the build instead of compiling to nothing. AST→HIR (`src/parsing/hir_lower.rs`) no longer turns unhandled statements into empty blocks: `region` lowers to `HirStmt::Region`, `export default fn/class` lower as their contents, `let { .. } =` errors; only type/extern declarations are no-ops. Linker intrinsics without a real body now trap (`ud2`/`brk`/`ebreak`) instead of returning 0; the fake `adesh_str_concat` (returned arg0) and no-op `adesh_print_*` stubs were removed. Tests: `test_native_rejects_imports_and_regions`, `test_unimplemented_intrinsics_trap_instead_of_returning_zero`. Fixed a stale expectation in `test_e2e_defer_execution_order` (return value is captured before defers run, matching the interpreter: 10, not 25) |
+| P1-h EnumVariant / async / lambda (tasks 2-4) | 2, 4, 5 | Done (loud errors; real support deferred) | Enum variant patterns (`Some(x)`, `E::V`) are a compile error (they always matched and bound nothing). `async fn`, async lambdas, `await` and `spawn` are compile errors (they ran synchronously). Lambdas and nested `fn`s that read or assign an enclosing function's local are a compile error (they lost the capture and aborted at runtime); non-capturing lambdas still compile and run. Lambda bodies now share the module's diagnostics (errors inside lambdas were previously lost). `Share`/`Downgrade`/`Move` still lower as the inner value (no semantic loss for value handles). Tests: `test_native_rejects_enum_patterns_async_and_captures`, `test_native_non_capturing_lambda_runs`. Real support: enums and closures in Phase 2 (tasks 8-9), async parked (section 3) |
+| P1-i `switch_lowering` (task 11) | — | Done | Matches whose arms are integer literals (4+ cases, values fit imm32, optional final `_`/binding catch-all) lower through `SwitchLowering` (binary search tree for sparse values, compare chain for dense); all other matches keep the general compare chain. Fixed duplicate BST block labels when two switches in one function share a pivot value. Test: `test_native_int_match_switch_lowering`. **Found while testing:** `StackFrameOptimizationPass` (`opt/frame_opt.rs`) shrank `stack_size` to the deepest `StackSlot` operand, ignoring RBP-relative `Memory` operands and most instruction kinds, so live locals (e.g. `print` argument arrays) ended up below RSP and were overwritten by calls: every program with 5+ `print`s printed garbage from the fifth on. The pass now walks all operands exhaustively, counts RBP-relative accesses, and never shrinks when RBP escapes into a value. Tests: `frame_opt::tests::*`, `test_native_many_prints_keep_frame`. Also fixed `test_e2e_seven_arguments_register_and_stack`, which used unallocated vregs and was rejected by the MIR verifier |
+| P1-j Conformance corpus (task 12) | — | Deferred → Phase 2 task 10 | A full sweep of the 1,018 `examples/` programs would take roughly 15-30 min per debug run, and most failures today would be unsupported runtime features (Phase 2+ work) rather than Phase 1 miscompiles. Phase 1 correctness is covered by the per-bug regression tests above |
+
+Known follow-ups: weak `__udivti3`, `__extendhfsf2`, `__truncsfhf2` resolve to NULL in
+runtime links (pre-existing; a call would crash). ELF/Mach-O now take the libc import path
+that was previously unreachable; not yet execution-tested. The parser lowers an `unsafe { .. }`
+*expression* block to an immediately-called lambda, so such a block that reads an outer
+local is now rejected as a capture (before P1-h it aborted at runtime); lower it as a plain
+block instead when closures land.
+
 ### Phase 2 — Full x86-64 ABI (≈3-4 weeks)
 
 **Goal:** complete C-ABI compatibility on the strongest target, designed to not preclude
@@ -221,6 +251,25 @@ Tasks:
 6. Complete atomics: 8/16/32/64-bit widths, fences.
 7. C-interop proof: call real ucrt functions (including `printf` varargs, `memcpy`) from
    Adesh-compiled code, execute, verify output.
+8. Native enums (deferred from P1-h): define a tagged layout (tag word + payload laid out
+   by the task 1 classifier), lower variant construction, and implement
+   `HirPattern::EnumVariant` matching (tag compare) with payload binding, including
+   `Option`/`Result`. Remove the P1-h compile error once execution tests pass.
+9. Closures (deferred from P1-h): free-variable analysis in lowering, heap-allocated
+   environment captured by value (by-reference for mutated captures via boxed cells),
+   closure values as (fn ptr, env) pairs with the env passed as a hidden first argument;
+   update indirect calls and `aot_make_function`. Remove the capture error once
+   execution tests pass; then lower `unsafe { .. }` expression blocks without a lambda.
+10. Conformance corpus (deferred from Phase 1 task 12):
+    - A two-file showcase example (`examples/showcase/`: a main program plus a library
+      module it imports via `import`/`export`) that exercises the language features and
+      std libraries in labeled sections. Run each section in both the interpreter and
+      the native build, and record what fails where (`examples/showcase/RESULTS.md`).
+      Native imports must be implemented first (P1-g made them a compile error).
+    - A curated corpus (~30-40 core-language programs) asserting native vs interpreter
+      stdout/exit parity, plus must-reject programs; runs on every Windows CI run.
+    - The full `examples/` sweep as a nightly / on-demand job with a checked-in status
+      file (parity / rejected / skipped); any silent divergence fails the job.
 
 **Acceptance:** ABI conformance suite executes binaries covering ints, floats, mixed,
 small structs, large-struct sret, varargs, atomics, TLS — green in Windows CI.
@@ -300,7 +349,10 @@ target matrix moves from proof-of-concept.
 - Running Mach-O executables (needs dyld info/chained fixups/exports trie; documented
   as "artifact emission only").
 - Linker WASM writer (the compiler backend is the real WASM path).
-- Async runtime (epoll/IOCP/kqueue reactor) — until Phase 1 makes async errors honest.
+- Async runtime (epoll/IOCP/kqueue reactor). Since P1-h the native backend rejects
+  `async fn`, async lambdas, `await` and `spawn` at compile time. Unpark after Phase 3
+  (needs Linux execution for epoll) and after closures (Phase 2 task 9), since async
+  bodies become state machines that capture their locals.
 - Self-hosting; i686/PowerPC targets.
 - Value-type composites (unboxed structs) — deferred until after Phase 2 by decision
   of 2026-10-05; Phase 2 classifier design must not preclude them.
@@ -315,6 +367,10 @@ target matrix moves from proof-of-concept.
 | 2026-10-05 | This file (`IMPLEMENTATION_PLAN.md`) replaces the previous 2026-10-01 plan. |
 | 2026-10-05 | Dead/unwired code policy: wire-or-delete within the phase that owns it. |
 | 2026-10-05 | Value-type structs: deferred until after Phase 2; ABI classifier designed around field layouts to keep the door open. |
+| 2026-10-06 | FFI sret and register-pair values are rejected with a structured error until Phase 2 implements them (row 8). |
+| 2026-10-06 | Linker intrinsics are limited to names with real synthesized bodies; libc functions are always imported. |
+| 2026-10-06 | Native enums, closures and async are compile errors until implemented; enums and closures scheduled as Phase 2 tasks 8-9, async stays parked. |
+| 2026-10-06 | Phase 1 closed. The conformance corpus (task 12), including the two-file showcase with imports/exports, is deferred to Phase 2 task 10. |
 
 ---
 

@@ -226,10 +226,11 @@ impl MachineSchedulerV2 {
                     uses.push(*r);
                 }
             }
-            MachineInstruction::Store { src, .. } => {
-                if let MachineOperand::Register(r) = src {
-                    uses.push(*r);
-                }
+            MachineInstruction::Store {
+                src: MachineOperand::Register(r),
+                ..
+            } => {
+                uses.push(*r);
             }
             _ => {}
         }

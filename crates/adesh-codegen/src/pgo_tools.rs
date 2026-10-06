@@ -30,19 +30,13 @@ impl ProfileMerger {
                 entry.entry_count = entry.entry_count.saturating_add(func_prof.entry_count);
 
                 for (blk_id, blk) in &func_prof.block_profiles {
-                    let b_entry = entry
-                        .block_profiles
-                        .entry(blk_id.clone())
-                        .or_insert_with(BlockProfile::default);
+                    let b_entry = entry.block_profiles.entry(blk_id.clone()).or_default();
                     b_entry.execution_count =
                         b_entry.execution_count.saturating_add(blk.execution_count);
                 }
 
                 for (edge_id, edge) in &func_prof.edge_profiles {
-                    let e_entry = entry
-                        .edge_profiles
-                        .entry(edge_id.clone())
-                        .or_insert_with(EdgeProfile::default);
+                    let e_entry = entry.edge_profiles.entry(edge_id.clone()).or_default();
                     e_entry.transition_count = e_entry
                         .transition_count
                         .saturating_add(edge.transition_count);

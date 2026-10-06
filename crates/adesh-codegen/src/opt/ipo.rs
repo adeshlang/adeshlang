@@ -113,64 +113,60 @@ impl IpoEngine {
             for site in &call_sites {
                 if !site.known_constant_args.is_empty()
                     && report.functions_specialized < self.config.max_specialized_variants
-                {
-                    if let Some(target_func) =
+                    && let Some(target_func) =
                         module.functions.iter().find(|f| f.name == site.callee)
-                    {
-                        let mut specialized = target_func.clone();
-                        let spec_name = format!(
-                            "{}_spec_arg{}",
-                            site.callee,
-                            site.known_constant_args
-                                .iter()
-                                .map(|(k, v)| format!("{}_{}", k, v))
-                                .collect::<Vec<_>>()
-                                .join("_")
-                        );
-                        specialized.name = spec_name;
+                {
+                    let mut specialized = target_func.clone();
+                    let spec_name = format!(
+                        "{}_spec_arg{}",
+                        site.callee,
+                        site.known_constant_args
+                            .iter()
+                            .map(|(k, v)| format!("{}_{}", k, v))
+                            .collect::<Vec<_>>()
+                            .join("_")
+                    );
+                    specialized.name = spec_name;
 
-                        // Substitute known constant in entry block
-                        for &(arg_idx, const_val) in &site.known_constant_args {
-                            if let Some(entry_block) = specialized.blocks.first_mut() {
-                                let vreg = VirtualRegister(1000 + arg_idx as u32);
-                                entry_block.instructions.insert(
-                                    0,
-                                    MachineInstruction::Move {
-                                        dst: MachineOperand::Register(MachineRegister::Virtual(
-                                            vreg,
-                                        )),
-                                        src: MachineOperand::Immediate(const_val),
-                                    },
-                                );
-                                report.constants_propagated_cross_module += 1;
-                                report.constants_propagated += 1;
-                            }
+                    // Substitute known constant in entry block
+                    for &(arg_idx, const_val) in &site.known_constant_args {
+                        if let Some(entry_block) = specialized.blocks.first_mut() {
+                            let vreg = VirtualRegister(1000 + arg_idx as u32);
+                            entry_block.instructions.insert(
+                                0,
+                                MachineInstruction::Move {
+                                    dst: MachineOperand::Register(MachineRegister::Virtual(vreg)),
+                                    src: MachineOperand::Immediate(const_val),
+                                },
+                            );
+                            report.constants_propagated_cross_module += 1;
+                            report.constants_propagated += 1;
                         }
-
-                        specialized_funcs.push(specialized);
-                        report.functions_specialized += 1;
-                        report.specialized_functions += 1;
                     }
+
+                    specialized_funcs.push(specialized);
+                    report.functions_specialized += 1;
+                    report.specialized_functions += 1;
                 }
             }
             module.functions.extend(specialized_funcs);
         }
 
         // 3. Hot/cold splitting using profile information
-        if self.config.enable_hot_cold_splitting {
-            if let Some(prof) = profile {
-                for func in &mut module.functions {
-                    if let Some(func_prof) = prof.get_function_profile(&func.name) {
-                        if func_prof.entry_count > 100 {
-                            // Split cold error handling blocks into .text.cold
-                            let split_count = func
-                                .blocks
-                                .iter_mut()
-                                .filter(|b| b.label.contains("error") || b.label.contains("cold"))
-                                .count();
-                            report.hot_cold_splits += split_count;
-                        }
-                    }
+        if self.config.enable_hot_cold_splitting
+            && let Some(prof) = profile
+        {
+            for func in &mut module.functions {
+                if let Some(func_prof) = prof.get_function_profile(&func.name)
+                    && func_prof.entry_count > 100
+                {
+                    // Split cold error handling blocks into .text.cold
+                    let split_count = func
+                        .blocks
+                        .iter_mut()
+                        .filter(|b| b.label.contains("error") || b.label.contains("cold"))
+                        .count();
+                    report.hot_cold_splits += split_count;
                 }
             }
         }

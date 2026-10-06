@@ -210,7 +210,10 @@ impl CodegenBackend for AArch64Backend {
         let reg_file = AArch64RegisterFile;
         let allocator = LinearScanAllocator::new(&reg_file);
         for func in &mut lowered.functions {
-            allocator.allocate(func);
+            allocator.allocate(func).map_err(|e| {
+                CodegenError::new(self.target.triple_string(), e.to_string())
+                    .with_function(func.name.clone())
+            })?;
         }
         Ok(lowered)
     }

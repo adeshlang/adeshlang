@@ -67,8 +67,10 @@ impl LoopOptimizer {
     /// Run the full suite of loop optimizations on a MachineFunction.
     pub fn optimize_function(&self, func: &mut MachineFunction) -> LoopOptReport {
         let start = Instant::now();
-        let mut report = LoopOptReport::default();
-        report.input_instructions = func.blocks.iter().map(|b| b.instructions.len()).sum();
+        let mut report = LoopOptReport {
+            input_instructions: func.blocks.iter().map(|b| b.instructions.len()).sum(),
+            ..Default::default()
+        };
 
         // 1. Loop Invariant Code Motion (LICM)
         if self.config.enable_licm {

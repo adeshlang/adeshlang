@@ -41,7 +41,6 @@ pub mod pgo_tools;
 pub mod query;
 pub mod register_alloc;
 pub mod safety;
-pub mod sanitizer;
 pub mod stack_maps;
 pub mod stdlib_builder;
 pub mod target_spec;
@@ -109,7 +108,6 @@ pub use pgo_tools::ProfileMerger;
 pub use query::{QueryEngine, QueryKey, QueryKind, QueryResult, QueryStats};
 pub use register_alloc::{LinearScanAllocator, RegisterFile};
 pub use safety::{ControlFlowIntegrityPass, StackCanaryPass};
-pub use sanitizer::{SanitizerFlags, SanitizerInstrumenter, SanitizerReport};
 pub use stack_maps::{FunctionStackMap, LiveLocationKind, LiveLocationRecord, SafepointRecord};
 pub use stdlib_builder::StdlibAdobBuilder;
 pub use target_spec::{

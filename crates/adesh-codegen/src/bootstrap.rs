@@ -43,6 +43,12 @@ pub struct DependencyAuditor {
     entries: BTreeMap<String, DependencyAuditEntry>,
 }
 
+impl Default for DependencyAuditor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DependencyAuditor {
     pub fn new() -> Self {
         let mut auditor = Self {

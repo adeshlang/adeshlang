@@ -4,8 +4,10 @@
 //! parameter marshalling, calling convention resolution, and unsafe boundary isolation.
 
 use crate::abi::{AbiSpec, AbiType, ArgumentLocation, ReturnLocation};
+use crate::error::CodegenError;
 use crate::machine_ir::{
-    MachineInstruction, MachineOperand, MachineRegister, PhysicalRegister, VirtualRegister,
+    MachineInstruction, MachineOperand, MachineRegister, MoveLocation, MoveOperation,
+    PhysicalRegister, VirtualRegister,
 };
 
 /// Foreign calling convention.
@@ -193,51 +195,82 @@ pub struct FfiCallLowerer;
 impl FfiCallLowerer {
     /// Lower an external native function call using the target ABI specification.
     ///
-    /// Generates operand moves into physical registers / stack slots, handles shadow space,
-    /// sets up AL register for SysV variadic floating-point counts, and places return value into vreg.
+    /// Register arguments are emitted as a single `ParallelMove` so that a source
+    /// allocated to another argument's register is never clobbered before it is read.
+    /// Stack arguments are stored first, while every source is still intact. Shapes
+    /// this lowering cannot represent (split `Pair` arguments, sret returns, extra
+    /// variadic arguments) are rejected instead of being miscompiled.
     pub fn lower_call(
         decl: &ForeignFunctionDeclaration,
         arg_vregs: &[VirtualRegister],
         abi: &dyn AbiSpec,
         ret_vreg: Option<VirtualRegister>,
-    ) -> Vec<MachineInstruction> {
-        let mut instructions = Vec::new();
+    ) -> Result<Vec<MachineInstruction>, CodegenError> {
+        let unsupported = |reason: String| {
+            CodegenError::new("ffi", reason).with_function(decl.symbol_name.clone())
+        };
 
-        // 1. Map argument types to AbiTypes
-        let arg_abi_types: Vec<AbiType> = decl
-            .signature
-            .params
-            .iter()
-            .map(|p| p.param_type.to_abi_type())
-            .collect();
+        let params = &decl.signature.params;
+        if arg_vregs.len() != params.len() {
+            return Err(unsupported(if arg_vregs.len() > params.len() {
+                format!(
+                    "call to `{}` passes {} arguments but declares {}; extra variadic arguments are not supported by FFI lowering yet",
+                    decl.symbol_name,
+                    arg_vregs.len(),
+                    params.len()
+                )
+            } else {
+                format!(
+                    "call to `{}` passes {} arguments but requires {}",
+                    decl.symbol_name,
+                    arg_vregs.len(),
+                    params.len()
+                )
+            }));
+        }
 
-        // 2. Classify locations according to ABI
+        // The callee writes through the hidden pointer even when the result is
+        // discarded, so an sret call is unsafe without a caller-allocated buffer.
+        let ret_abi = decl.signature.return_type.to_abi_type();
+        let ret_loc = abi.classify_return(&ret_abi);
+        if matches!(ret_loc, ReturnLocation::HiddenSret(_)) {
+            return Err(unsupported(format!(
+                "`{}` returns a large aggregate through a hidden sret pointer; sret returns are not supported yet",
+                decl.symbol_name
+            )));
+        }
+
+        let arg_abi_types: Vec<AbiType> =
+            params.iter().map(|p| p.param_type.to_abi_type()).collect();
         let locations = abi.classify_arguments(&arg_abi_types);
+        if locations.len() != arg_vregs.len() {
+            return Err(unsupported(format!(
+                "ABI classified {} argument locations for {} arguments of `{}`",
+                locations.len(),
+                arg_vregs.len(),
+                decl.symbol_name
+            )));
+        }
 
+        let mut instructions = Vec::new();
+        let mut reg_moves: Vec<MoveOperation> = Vec::new();
         let mut fp_reg_count = 0u8;
 
-        for (i, (&vreg, loc)) in arg_vregs.iter().zip(locations.iter()).enumerate() {
-            let _ = i;
+        for (&vreg, loc) in arg_vregs.iter().zip(locations.iter()) {
+            let src = MoveLocation::VirtualRegister(vreg);
             match loc {
-                ArgumentLocation::Register(phys) => {
-                    instructions.push(MachineInstruction::Move {
-                        dst: MachineOperand::Register(MachineRegister::Physical(*phys)),
-                        src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
-                    });
+                ArgumentLocation::Register(phys) | ArgumentLocation::IndirectByReference(phys) => {
+                    reg_moves.push(MoveOperation::new_qword(
+                        MoveLocation::PhysicalRegister(*phys),
+                        src,
+                    ));
                 }
-                ArgumentLocation::FloatRegister(phys) => {
+                ArgumentLocation::FloatRegister(phys) | ArgumentLocation::VectorRegister(phys) => {
                     fp_reg_count += 1;
-                    instructions.push(MachineInstruction::Move {
-                        dst: MachineOperand::Register(MachineRegister::Physical(*phys)),
-                        src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
-                    });
-                }
-                ArgumentLocation::VectorRegister(phys) => {
-                    fp_reg_count += 1;
-                    instructions.push(MachineInstruction::Move {
-                        dst: MachineOperand::Register(MachineRegister::Physical(*phys)),
-                        src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
-                    });
+                    reg_moves.push(MoveOperation::new_qword(
+                        MoveLocation::PhysicalRegister(*phys),
+                        src,
+                    ));
                 }
                 ArgumentLocation::Stack(stack_slot) => {
                     instructions.push(MachineInstruction::Store {
@@ -246,23 +279,17 @@ impl FfiCallLowerer {
                         size: stack_slot.size as u8,
                     });
                 }
-                ArgumentLocation::IndirectByReference(phys) => {
-                    instructions.push(MachineInstruction::Move {
-                        dst: MachineOperand::Register(MachineRegister::Physical(*phys)),
-                        src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
-                    });
-                }
-                ArgumentLocation::Pair(first, second) => {
-                    instructions.push(MachineInstruction::Move {
-                        dst: MachineOperand::Register(MachineRegister::Physical(*first)),
-                        src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
-                    });
-                    instructions.push(MachineInstruction::Move {
-                        dst: MachineOperand::Register(MachineRegister::Physical(*second)),
-                        src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
-                    });
+                ArgumentLocation::Pair(..) => {
+                    return Err(unsupported(format!(
+                        "argument of `{}` must be split across two registers; one virtual register cannot supply both halves",
+                        decl.symbol_name
+                    )));
                 }
             }
+        }
+
+        if !reg_moves.is_empty() {
+            instructions.push(MachineInstruction::ParallelMove { moves: reg_moves });
         }
 
         // 3. Handle SysV variadic AL register count
@@ -283,36 +310,31 @@ impl FfiCallLowerer {
 
         // 5. Retrieve return value into destination virtual register
         if let Some(dest) = ret_vreg {
-            let ret_abi = decl.signature.return_type.to_abi_type();
-            match abi.classify_return(&ret_abi) {
-                ReturnLocation::Register(phys) => {
+            match ret_loc {
+                ReturnLocation::Register(phys)
+                | ReturnLocation::FloatRegister(phys)
+                | ReturnLocation::VectorRegister(phys) => {
                     instructions.push(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(dest)),
                         src: MachineOperand::Register(MachineRegister::Physical(phys)),
                     });
                 }
-                ReturnLocation::FloatRegister(phys) => {
-                    instructions.push(MachineInstruction::Move {
-                        dst: MachineOperand::Register(MachineRegister::Virtual(dest)),
-                        src: MachineOperand::Register(MachineRegister::Physical(phys)),
-                    });
+                ReturnLocation::Pair(..) => {
+                    return Err(unsupported(format!(
+                        "`{}` returns its value in two registers; capturing a register-pair return is not supported yet",
+                        decl.symbol_name
+                    )));
                 }
-                ReturnLocation::VectorRegister(phys) => {
-                    instructions.push(MachineInstruction::Move {
-                        dst: MachineOperand::Register(MachineRegister::Virtual(dest)),
-                        src: MachineOperand::Register(MachineRegister::Physical(phys)),
-                    });
+                ReturnLocation::HiddenSret(_) => unreachable!("rejected before argument lowering"),
+                ReturnLocation::Void => {
+                    return Err(unsupported(format!(
+                        "`{}` returns void but the call expects a result value",
+                        decl.symbol_name
+                    )));
                 }
-                ReturnLocation::Pair(first, _) => {
-                    instructions.push(MachineInstruction::Move {
-                        dst: MachineOperand::Register(MachineRegister::Virtual(dest)),
-                        src: MachineOperand::Register(MachineRegister::Physical(first)),
-                    });
-                }
-                _ => {}
             }
         }
 
-        instructions
+        Ok(instructions)
     }
 }

@@ -208,6 +208,12 @@ pub struct LockedPackage {
     pub enabled_features: Vec<String>,
 }
 
+impl Default for LockFile {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LockFile {
     pub fn new() -> Self {
         Self {
@@ -250,9 +256,18 @@ impl std::fmt::Display for LockFile {
     }
 }
 
+type RawDependency = (String, String);
+type VersionEntry = (String, Vec<RawDependency>);
+
 /// Deterministic Dependency Resolver.
 pub struct DependencyResolver {
-    known_packages: HashMap<String, Vec<(String, Vec<(String, String)>)>>,
+    known_packages: HashMap<String, Vec<VersionEntry>>,
+}
+
+impl Default for DependencyResolver {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DependencyResolver {

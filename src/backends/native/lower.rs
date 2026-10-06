@@ -16,8 +16,11 @@ use adesh_codegen::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
     NativeModule, PhysicalRegister, RegisterClass, VirtualRegister,
 };
+use adesh_codegen::opt::{SwitchCase, SwitchLowering};
 use adesh_object::{OperatingSystem, TargetDescriptor};
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 #[derive(Clone, Debug)]
 pub struct LoopContext {
@@ -58,6 +61,80 @@ pub struct FunctionLoweringContext<'a> {
     pub label_counter: u32,
     pub func_ret_type: Option<HirType>,
     pub fn_signatures: HashMap<String, (Vec<HirType>, Option<HirType>)>,
+    /// Constructs the native backend cannot lower correctly. Shared with
+    /// nested function lowering so one compile reports every problem.
+    pub diagnostics: Diagnostics,
+    /// Locals of the enclosing function(s) when lowering a lambda or nested
+    /// `fn`. There is no closure environment, so referencing one is a capture
+    /// this backend cannot compile.
+    pub enclosing_locals: HashSet<String>,
+}
+
+pub type Diagnostics = Rc<RefCell<Vec<String>>>;
+
+/// Native lowering refused the program: every listed construct would
+/// otherwise have compiled to wrong code.
+#[derive(Debug, Clone)]
+pub struct NativeLoweringError {
+    pub diagnostics: Vec<String>,
+}
+
+impl std::fmt::Display for NativeLoweringError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "native backend cannot compile this program ({} unsupported construct(s)):",
+            self.diagnostics.len()
+        )?;
+        for d in &self.diagnostics {
+            write!(f, "\n  - {}", d)?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for NativeLoweringError {}
+
+/// `Debug` variant name of a HIR node, without its payload.
+fn hir_variant_name(node: &impl std::fmt::Debug) -> String {
+    let s = format!("{:?}", node);
+    let end = s
+        .find(|c: char| c == '(' || c == ' ' || c == '{')
+        .unwrap_or(s.len());
+    s[..end].to_string()
+}
+
+/// Switch plan for a match whose arms are all integer literals (or `|` of
+/// them), optionally ending in one catch-all arm: `(value, arm index)` cases
+/// in arm order (first arm wins on duplicates) plus the catch-all arm.
+/// `None` when any arm needs general pattern testing, or when there are too
+/// few cases for a switch to beat the plain compare chain.
+fn int_switch_plan(arms: &[(HirPattern, HirExpr)]) -> Option<(Vec<(i64, usize)>, Option<usize>)> {
+    fn collect(p: &HirPattern, arm: usize, out: &mut Vec<(i64, usize)>) -> bool {
+        match p {
+            // Values must fit a sign-extended imm32 compare operand.
+            HirPattern::Literal(HirLiteral::Int(v)) if i32::try_from(*v).is_ok() => {
+                if !out.iter().any(|(seen, _)| seen == v) {
+                    out.push((*v, arm));
+                }
+                true
+            }
+            HirPattern::Or(a, b) => collect(a, arm, out) && collect(b, arm, out),
+            _ => false,
+        }
+    }
+    let mut cases = Vec::new();
+    let mut default_arm = None;
+    for (i, (pattern, _)) in arms.iter().enumerate() {
+        match pattern {
+            HirPattern::Wildcard | HirPattern::Variable(_) if i + 1 == arms.len() => {
+                default_arm = Some(i);
+            }
+            _ if collect(pattern, i, &mut cases) => {}
+            _ => return None,
+        }
+    }
+    (cases.len() >= 4).then_some((cases, default_arm))
 }
 
 fn infer_hir_expr_type(expr: &HirExpr) -> Option<HirType> {
@@ -277,6 +354,8 @@ impl<'a> FunctionLoweringContext<'a> {
             label_counter: 0,
             func_ret_type: None,
             fn_signatures: HashMap::new(),
+            diagnostics: Diagnostics::default(),
+            enclosing_locals: HashSet::new(),
         }
     }
 
@@ -307,7 +386,37 @@ impl<'a> FunctionLoweringContext<'a> {
             label_counter: 0,
             func_ret_type,
             fn_signatures,
+            diagnostics: Diagnostics::default(),
+            enclosing_locals: HashSet::new(),
         }
+    }
+
+    /// Names visible to a lambda or nested function defined at this point.
+    fn locals_for_nested(&self) -> HashSet<String> {
+        let mut names = self.enclosing_locals.clone();
+        names.extend(self.local_vars.keys().cloned());
+        names
+    }
+
+    /// Report `name` if it resolves only to an enclosing function's local.
+    fn check_capture(&mut self, name: &str) -> bool {
+        if !self.local_vars.contains_key(name) && self.enclosing_locals.contains(name) {
+            self.unsupported(format!(
+                "capture of enclosing variable `{}` (closures are not supported by the native backend)",
+                name
+            ));
+            return true;
+        }
+        false
+    }
+
+    /// Record a construct this backend cannot lower correctly. Lowering
+    /// continues (so every problem is reported at once) but
+    /// `lower_hir_module` returns `Err`.
+    pub fn unsupported(&mut self, what: impl Into<String>) {
+        self.diagnostics
+            .borrow_mut()
+            .push(format!("in `{}`: {}", self.func.name, what.into()));
     }
 
     pub fn is_expr_float(&self, expr: &HirExpr, vreg: VirtualRegister) -> bool {
@@ -430,7 +539,15 @@ impl<'a> FunctionLoweringContext<'a> {
             .map(|(_, ty, _)| ty.clone().unwrap_or(HirType::Int))
             .collect();
         sigs.insert(func.name.clone(), (param_tys, func.ret_type.clone()));
-        lower_hir_function_with_signatures(func, self.module, self.target, &sigs);
+        let enclosing = self.locals_for_nested();
+        lower_hir_function_inner(
+            func,
+            self.module,
+            self.target,
+            &sigs,
+            &self.diagnostics,
+            enclosing,
+        );
     }
 
     pub fn lower_literal(&mut self, lit: &HirLiteral) -> VirtualRegister {
@@ -567,6 +684,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 });
             }
             _ => {
+                self.unsupported(format!("literal `{}`", hir_variant_name(lit)));
                 self.emit_abort_with_msg("panic: unsupported literal in native backend");
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -575,6 +693,63 @@ impl<'a> FunctionLoweringContext<'a> {
             }
         }
         out_reg
+    }
+
+    /// Lower a match whose arms are integer literals (plus an optional final
+    /// catch-all) through `SwitchLowering`, which picks a compare chain or a
+    /// balanced binary search tree for sparse values.
+    fn lower_int_switch_match(
+        &mut self,
+        target_reg: VirtualRegister,
+        arms: &[(HirPattern, HirExpr)],
+        cases: &[(i64, usize)],
+        default_arm: Option<usize>,
+        out_reg: VirtualRegister,
+        match_end_lbl: &str,
+    ) {
+        let body_lbls: Vec<String> = arms
+            .iter()
+            .map(|_| self.fresh_label("match_body"))
+            .collect();
+        let nomatch_lbl = self.fresh_label("match_nomatch");
+        let default_lbl = default_arm.map_or_else(|| nomatch_lbl.clone(), |i| body_lbls[i].clone());
+        let switch_cases = cases
+            .iter()
+            .map(|&(value, arm)| SwitchCase {
+                value,
+                target_label: body_lbls[arm].clone(),
+            })
+            .collect();
+        let strategy = SwitchLowering::select_strategy(switch_cases, default_lbl);
+        SwitchLowering::lower_switch(
+            self.func,
+            self.current_block_id as usize,
+            target_reg,
+            strategy,
+        );
+
+        for ((pattern, arm_expr), lbl) in arms.iter().zip(&body_lbls) {
+            let body_id = self.func.create_block(lbl);
+            self.current_block_id = body_id;
+            self.bind_pattern_variables(pattern, target_reg);
+            let arm_res = self.lower_expression(arm_expr);
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                src: MachineOperand::Register(MachineRegister::Virtual(arm_res)),
+            });
+            self.emit(MachineInstruction::Branch {
+                target: match_end_lbl.to_string(),
+            });
+        }
+
+        let nomatch_id = self.func.create_block(&nomatch_lbl);
+        self.current_block_id = nomatch_id;
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+            src: MachineOperand::Immediate(0),
+        });
+        let end_id = self.func.create_block(match_end_lbl);
+        self.current_block_id = end_id;
     }
 
     pub fn lower_pattern_check(
@@ -612,9 +787,15 @@ impl<'a> FunctionLoweringContext<'a> {
                 self.current_block_id = p2_id;
                 self.lower_pattern_check(target_reg, p2, match_lbl, fail_lbl);
             }
-            _ => {
+            HirPattern::EnumVariant(name, _) => {
+                // Native values carry no enum tag, so a correct test is
+                // impossible; this used to always match and bind nothing.
+                self.unsupported(format!(
+                    "enum variant pattern `{}` (native enum layout is not implemented)",
+                    name
+                ));
                 self.emit(MachineInstruction::Branch {
-                    target: match_lbl.to_string(),
+                    target: fail_lbl.to_string(),
                 });
             }
         }
@@ -1792,6 +1973,7 @@ impl<'a> FunctionLoweringContext<'a> {
                             src: MachineOperand::Register(MachineRegister::Virtual(val_vreg)),
                         });
                     } else {
+                        self.check_capture(name);
                         let slot = self.alloc_stack_slot(8);
                         let off = -(slot + 8);
                         self.emit(MachineInstruction::Move {
@@ -1845,6 +2027,10 @@ impl<'a> FunctionLoweringContext<'a> {
                     // Unsupported assignment target (e.g. destructuring
                     // assign). Previously the RHS was evaluated and the
                     // assignment silently dropped.
+                    self.unsupported(format!(
+                        "assignment to `{}` target",
+                        hir_variant_name(target)
+                    ));
                     self.emit_abort_with_msg(
                         "panic: unsupported assignment target in native backend",
                     );
@@ -1890,8 +2076,13 @@ impl<'a> FunctionLoweringContext<'a> {
             HirStmt::Defer(stmt) => {
                 self.defer_stack.push(*stmt.clone());
             }
-            HirStmt::Region { body, .. } => {
-                self.lower_statement(body);
+            HirStmt::Region { name, .. } => {
+                // Lowering only the body would silently drop the arena's
+                // bulk free at region exit.
+                self.unsupported(format!(
+                    "`region {}` blocks (arena bulk-free semantics are not implemented)",
+                    name
+                ));
             }
             HirStmt::Unsafe(body) => {
                 self.lower_statement(body);
@@ -2276,7 +2467,14 @@ impl<'a> FunctionLoweringContext<'a> {
                 };
                 self.lower_nested_function(&func);
             }
-            _ => {}
+            HirStmt::Import { path, .. }
+            | HirStmt::ImportDefault { path, .. }
+            | HirStmt::ImportNames { path, .. } => {
+                self.unsupported(format!(
+                    "import of \"{}\" (module imports are not supported by the native backend)",
+                    path
+                ));
+            }
         }
     }
 
@@ -2417,6 +2615,11 @@ impl<'a> FunctionLoweringContext<'a> {
                         dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                         src: MachineOperand::StackSlot(slot),
                     });
+                } else if self.check_capture(name) {
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                        src: MachineOperand::Immediate(0),
+                    });
                 } else if self.module.functions.iter().any(|f| f.name == *name) {
                     // Function referenced as a value: materialize its address
                     // (used by indirect calls).
@@ -2446,6 +2649,7 @@ impl<'a> FunctionLoweringContext<'a> {
                     self.local_vars
                         .insert(name.clone(), (slot, ty.or(existing_ty)));
                 } else {
+                    self.check_capture(name);
                     let slot = self.alloc_stack_slot(8);
                     let off = -(slot + 8);
                     self.emit(MachineInstruction::Move {
@@ -2964,14 +3168,20 @@ impl<'a> FunctionLoweringContext<'a> {
                 });
                 out_reg
             }
-            HirExpr::Lambda(params, body, _) => {
+            HirExpr::Lambda(params, body, is_async) => {
+                if *is_async {
+                    self.unsupported("async lambda (the native backend has no async runtime)");
+                }
                 let lambda_name = format!("__lambda_{}_{}", self.func.name, self.label_counter);
                 self.label_counter += 1;
                 let mut lambda_func = MachineFunction::new(&lambda_name);
                 lambda_func.is_exported = true;
                 {
+                    let enclosing = self.locals_for_nested();
                     let mut lambda_ctx =
                         FunctionLoweringContext::new(&mut lambda_func, self.module, self.target);
+                    lambda_ctx.diagnostics = self.diagnostics.clone();
+                    lambda_ctx.enclosing_locals = enclosing;
                     // Classify params through the calling convention so float
                     // params arrive in XMM registers and stack args use the
                     // convention's RBP-relative offsets (matches the caller,
@@ -3658,6 +3868,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         // Requires class tags on runtime objects, which the
                         // native object model does not carry yet. Fail loudly
                         // instead of returning a silently wrong value.
+                        self.unsupported("`instanceof` (native objects carry no class tags)");
                         self.emit_abort_with_msg(
                             "instanceof is not supported in native builds yet",
                         );
@@ -3665,6 +3876,7 @@ impl<'a> FunctionLoweringContext<'a> {
                     _ => {
                         // Unknown binary operator: fail loudly instead of
                         // silently returning the left operand.
+                        self.unsupported(format!("binary operator `{:?}`", op));
                         self.emit_abort_with_msg("unsupported binary operator in native codegen");
                     }
                 }
@@ -4109,6 +4321,31 @@ impl<'a> FunctionLoweringContext<'a> {
                 let match_end_lbl = self.fresh_label("match_end");
                 let out_reg = self.func.alloc_vreg();
 
+                if let Some((cases, default_arm)) = int_switch_plan(arms) {
+                    let terminated = self
+                        .func
+                        .blocks
+                        .get(self.current_block_id as usize)
+                        .and_then(|b| b.instructions.last())
+                        .is_some_and(|i| {
+                            matches!(
+                                i,
+                                MachineInstruction::Return | MachineInstruction::Branch { .. }
+                            )
+                        });
+                    if !terminated {
+                        self.lower_int_switch_match(
+                            target_reg,
+                            arms,
+                            &cases,
+                            default_arm,
+                            out_reg,
+                            &match_end_lbl,
+                        );
+                        return out_reg;
+                    }
+                }
+
                 for (pattern, arm_expr) in arms {
                     let arm_body_lbl = self.fresh_label("match_body");
                     let next_arm_lbl = self.fresh_label("match_next");
@@ -4527,9 +4764,18 @@ impl<'a> FunctionLoweringContext<'a> {
             | HirExpr::Downgrade(inner)
             | HirExpr::Move(inner)
             | HirExpr::NonNull(inner)
-            | HirExpr::Spread(inner)
-            | HirExpr::Await(inner)
-            | HirExpr::Spawn(inner) => self.lower_expression(inner),
+            | HirExpr::Spread(inner) => self.lower_expression(inner),
+            HirExpr::Await(inner) | HirExpr::Spawn(inner) => {
+                self.unsupported(format!(
+                    "`{}` (the native backend has no async runtime)",
+                    if matches!(expr, HirExpr::Await(_)) {
+                        "await"
+                    } else {
+                        "spawn"
+                    }
+                ));
+                self.lower_expression(inner)
+            }
             HirExpr::AssignTuple(names, value) => {
                 if let HirExpr::TupleLiteral(elements) = &**value {
                     let mut regs = Vec::new();
@@ -4605,6 +4851,10 @@ impl<'a> FunctionLoweringContext<'a> {
                 }
             }
             _ => {
+                self.unsupported(format!(
+                    "expression `{}` is not supported by the native backend",
+                    hir_variant_name(expr)
+                ));
                 let out_reg = self.func.alloc_vreg();
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -4621,7 +4871,8 @@ pub fn lower_hir_function(
     hir_func: &HirFunction,
     module: &mut NativeModule,
     target: &TargetDescriptor,
-) {
+) -> Result<(), NativeLoweringError> {
+    let diagnostics = Diagnostics::default();
     let mut sigs = HashMap::new();
     let param_tys = hir_func
         .params
@@ -4632,7 +4883,17 @@ pub fn lower_hir_function(
         hir_func.name.clone(),
         (param_tys, hir_func.ret_type.clone()),
     );
-    lower_hir_function_with_signatures(hir_func, module, target, &sigs);
+    lower_hir_function_with_signatures(hir_func, module, target, &sigs, &diagnostics);
+    into_result(diagnostics)
+}
+
+fn into_result(diagnostics: Diagnostics) -> Result<(), NativeLoweringError> {
+    let diagnostics = std::mem::take(&mut *diagnostics.borrow_mut());
+    if diagnostics.is_empty() {
+        Ok(())
+    } else {
+        Err(NativeLoweringError { diagnostics })
+    }
 }
 
 pub fn lower_hir_function_with_signatures(
@@ -4640,6 +4901,25 @@ pub fn lower_hir_function_with_signatures(
     module: &mut NativeModule,
     target: &TargetDescriptor,
     fn_signatures: &HashMap<String, (Vec<HirType>, Option<HirType>)>,
+    diagnostics: &Diagnostics,
+) {
+    lower_hir_function_inner(
+        hir_func,
+        module,
+        target,
+        fn_signatures,
+        diagnostics,
+        HashSet::new(),
+    );
+}
+
+fn lower_hir_function_inner(
+    hir_func: &HirFunction,
+    module: &mut NativeModule,
+    target: &TargetDescriptor,
+    fn_signatures: &HashMap<String, (Vec<HirType>, Option<HirType>)>,
+    diagnostics: &Diagnostics,
+    enclosing_locals: HashSet<String>,
 ) {
     if module.functions.iter().any(|f| f.name == hir_func.name) {
         return;
@@ -4655,6 +4935,13 @@ pub fn lower_hir_function_with_signatures(
             hir_func.ret_type.clone(),
             fn_signatures.clone(),
         );
+        ctx.diagnostics = diagnostics.clone();
+        ctx.enclosing_locals = enclosing_locals;
+        if hir_func.is_async {
+            // Running the body synchronously would silently change
+            // scheduling and ordering semantics.
+            ctx.unsupported("`async fn` (the native backend has no async runtime)");
+        }
 
         let param_classes: Vec<RegisterClass> = hir_func
             .params
@@ -4766,7 +5053,11 @@ fn collect_stmt_signatures(
 }
 
 /// Lower entire HirModule to NativeModule.
-pub fn lower_hir_module(hir: &HirModule, target: &TargetDescriptor) -> NativeModule {
+pub fn lower_hir_module(
+    hir: &HirModule,
+    target: &TargetDescriptor,
+) -> Result<NativeModule, NativeLoweringError> {
+    let diagnostics = Diagnostics::default();
     let mut module = NativeModule::new("main_module");
 
     // Materialize top-level classes (hir.classes) as ClassDef statements so
@@ -4834,7 +5125,13 @@ pub fn lower_hir_module(hir: &HirModule, target: &TargetDescriptor) -> NativeMod
 
     // Lower user functions
     for hir_func in &hir.functions {
-        lower_hir_function_with_signatures(hir_func, &mut module, target, &fn_signatures);
+        lower_hir_function_with_signatures(
+            hir_func,
+            &mut module,
+            target,
+            &fn_signatures,
+            &diagnostics,
+        );
     }
 
     // If top-level statements exist, lower them into `main`
@@ -4849,6 +5146,7 @@ pub fn lower_hir_module(hir: &HirModule, target: &TargetDescriptor) -> NativeMod
                 None,
                 fn_signatures.clone(),
             );
+            ctx.diagnostics = diagnostics.clone();
             for stmt in &hir.statements {
                 ctx.lower_statement(stmt);
             }
@@ -4885,5 +5183,6 @@ pub fn lower_hir_module(hir: &HirModule, target: &TargetDescriptor) -> NativeMod
         .imports
         .retain(|imp| !module.functions.iter().any(|f| &f.name == imp));
 
-    module
+    into_result(diagnostics)?;
+    Ok(module)
 }

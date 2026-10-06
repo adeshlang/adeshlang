@@ -23,7 +23,7 @@ use tempfile::tempdir;
 
 fn lower_link_and_run(hir: &HirModule, test_name: &str) -> i32 {
     let target = TargetDescriptor::from_triple("x86_64-pc-windows-msvc").expect("valid triple");
-    let native_mod = lower_hir_module(hir, &target);
+    let native_mod = lower_hir_module(hir, &target).expect("native lowering");
 
     let mut backend = create_backend(target.clone()).expect("backend creation");
     let obj = backend.emit_object(&native_mod).expect("ADOB emission");
@@ -47,7 +47,7 @@ fn lower_link_and_run(hir: &HirModule, test_name: &str) -> i32 {
 
 fn lower_and_validate_adob(hir: &HirModule, triple: &str) -> Vec<u8> {
     let target = TargetDescriptor::from_triple(triple).expect("valid triple");
-    let native_mod = lower_hir_module(hir, &target);
+    let native_mod = lower_hir_module(hir, &target).expect("native lowering");
 
     let mut backend = create_backend(target.clone()).expect("backend creation");
     let obj = backend.emit_object(&native_mod).expect("ADOB emission");

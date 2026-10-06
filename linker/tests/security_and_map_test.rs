@@ -35,7 +35,7 @@ fn test_lto_whole_program_optimization_modes() {
         let output = dir.path().join(format!("lto_{}.exe", i));
         let mut config = LinkConfig::new(output.clone(), target.clone());
         config.lto = mode;
-        let res = Linker::link(&[obj_path.clone()], config);
+        let res = Linker::link(std::slice::from_ref(&obj_path), config);
         assert!(
             res.is_ok(),
             "LTO linking failed for {:?}: {:?}",

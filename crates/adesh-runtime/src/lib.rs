@@ -21,7 +21,7 @@ pub mod threading;
 pub use abi::*;
 pub use abi_v1::*;
 pub use allocator::*;
-pub use allocator_v2::*;
+pub use allocator_v2::{AlignedAllocator, AllocStats, Allocator, BumpAllocator};
 pub use async_rt::*;
 pub use backtrace::*;
 pub use concurrency_v2::*;

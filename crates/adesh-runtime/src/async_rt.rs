@@ -12,7 +12,6 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-use std::time::{Duration, Instant};
 
 static NEXT_TASK_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -92,7 +91,7 @@ impl AsyncExecutor {
     }
 
     /// Block on a single future until it produces a result.
-    pub fn block_on<F: Future>(&self, mut future: F) -> F::Output {
+    pub fn block_on<F: Future>(&self, future: F) -> F::Output {
         let mut pin = Box::pin(future);
         let waker = dummy_waker();
         let mut cx = Context::from_waker(&waker);

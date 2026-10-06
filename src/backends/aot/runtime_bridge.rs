@@ -1805,23 +1805,6 @@ pub extern "C" fn aot_make_range(start_handle: u64, end_handle: u64, inclusive: 
     aot_store_value(RuntimeValue::Array(arr))
 }
 
-/// AOT raw heap allocation bridge (unsafe alloc<T>(size))
-pub extern "C" fn aot_alloc(size: usize) -> *mut u8 {
-    let layout = std::alloc::Layout::from_size_align(size.max(1), 8)
-        .unwrap_or(std::alloc::Layout::new::<u8>());
-    unsafe { std::alloc::alloc_zeroed(layout) }
-}
-
-/// AOT raw heap free bridge (unsafe free(ptr))
-pub extern "C" fn aot_free(ptr: *mut u8) {
-    if !ptr.is_null() {
-        let layout = std::alloc::Layout::from_size_align(8, 8).unwrap();
-        unsafe {
-            std::alloc::dealloc(ptr, layout);
-        }
-    }
-}
-
 /// AOT variant / tag pattern match bridge
 pub extern "C" fn aot_matches_variant(val_handle: u64, tag_handle: u64) -> i64 {
     let tag = match get_string_val(tag_handle) {

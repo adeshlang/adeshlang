@@ -88,6 +88,12 @@ pub struct MonomorphizationEngine {
     symbol_table: HashMap<String, String>, // mangled_symbol -> canonical_symbol (for deduplication)
 }
 
+impl Default for MonomorphizationEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MonomorphizationEngine {
     pub fn new() -> Self {
         Self {

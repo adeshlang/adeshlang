@@ -28,7 +28,7 @@ impl AssemblyEmitter {
     /// Emit complete assembly text for a NativeModule.
     pub fn emit_module_asm(&self, module: &NativeModule) -> String {
         let mut s = String::new();
-        s.push_str(&format!("; Adesh Native Assembly Output\n"));
+        s.push_str("; Adesh Native Assembly Output\n");
         s.push_str(&format!("; Target: {}\n", self.target_triple));
         s.push_str(&format!("; Module: {}\n\n", module.name));
 

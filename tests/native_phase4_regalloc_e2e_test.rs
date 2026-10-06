@@ -32,7 +32,7 @@ use tempfile::tempdir;
 
 fn lower_link_and_run(hir: &HirModule, test_name: &str) -> i32 {
     let target = TargetDescriptor::from_triple("x86_64-pc-windows-msvc").expect("valid triple");
-    let native_mod = lower_hir_module(hir, &target);
+    let native_mod = lower_hir_module(hir, &target).expect("native lowering");
 
     let mut backend = create_backend(target.clone()).expect("backend creation");
     let obj = backend.emit_object(&native_mod).expect("ADOB emission");
@@ -163,7 +163,9 @@ fn test_mixed_gpr_and_xmm_spill_pressure_and_verifier() {
 
     entry.push(MachineInstruction::Return);
 
-    let res = allocator.allocate(&mut func);
+    let res = allocator
+        .allocate(&mut func)
+        .expect("allocation must pass verification");
 
     assert!(res.total_spill_bytes > 0);
     assert!(!res.spill_map.is_empty());

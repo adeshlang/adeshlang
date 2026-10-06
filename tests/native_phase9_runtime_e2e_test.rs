@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[test]
 fn test_async_executor_multi_task_execution() {
-    let mut exec = AsyncExecutor::new();
+    let exec = AsyncExecutor::new();
     let counter = Arc::new(AtomicUsize::new(0));
 
     for i in 1..=5 {

@@ -31,7 +31,7 @@ fn compile_run_src(src: &str, test_name: &str) -> (String, i32) {
     let hir = ast_to_hir(&ast, true).expect("ast_to_hir");
 
     let target = TargetDescriptor::from_triple("x86_64-pc-windows-msvc").expect("valid triple");
-    let native_mod = lower_hir_module(&hir, &target);
+    let native_mod = lower_hir_module(&hir, &target).expect("native lowering");
 
     let mut backend = create_backend(target.clone()).expect("backend creation");
     let obj = backend.emit_object(&native_mod).expect("ADOB emission");
@@ -53,6 +53,202 @@ fn compile_run_src(src: &str, test_name: &str) -> (String, i32) {
     let code = out.status.code().unwrap_or(-1);
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
     (stdout, code)
+}
+
+/// Lower source text and return the native lowering diagnostics (empty if
+/// lowering succeeded).
+fn lowering_diagnostics(src: &str) -> Vec<String> {
+    let tokens = Lexer::new(src).tokenize().expect("tokenize");
+    let mut parser = Parser::new(tokens, None);
+    let ast = parser.parse_program().expect("parse");
+    let hir = ast_to_hir(&ast, true).expect("ast_to_hir");
+    let target = TargetDescriptor::from_triple("x86_64-pc-windows-msvc").expect("valid triple");
+    match lower_hir_module(&hir, &target) {
+        Ok(_) => Vec::new(),
+        Err(e) => e.diagnostics,
+    }
+}
+
+/// Imports and `region` blocks used to be dropped silently (the import did
+/// nothing; the region lost its bulk free). Both must now be compile errors.
+#[test]
+fn test_native_rejects_imports_and_regions() {
+    let diags = lowering_diagnostics(
+        r#"
+        import "lib/util.adesh" as util;
+        print("x");
+        "#,
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.contains("import of \"lib/util.adesh\"")),
+        "{diags:?}"
+    );
+
+    let diags = lowering_diagnostics(
+        r#"
+        region Scratch {
+            let a = 1;
+        }
+        "#,
+    );
+    assert!(
+        diags.iter().any(|d| d.contains("region Scratch")),
+        "{diags:?}"
+    );
+
+    assert!(lowering_diagnostics("print(1 + 2);").is_empty());
+}
+
+/// Enum variant patterns used to always match and bind nothing; async code
+/// ran synchronously; lambdas silently lost captured variables. Each must now
+/// be a compile error until the backend implements it.
+#[test]
+fn test_native_rejects_enum_patterns_async_and_captures() {
+    let diags = lowering_diagnostics(
+        r#"
+        let v = 3;
+        let r = match v {
+            Some(x) => x,
+            _ => 0,
+        };
+        print(r);
+        "#,
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.contains("enum variant pattern `Some`")),
+        "{diags:?}"
+    );
+
+    let diags = lowering_diagnostics(
+        r#"
+        async fn work(): int { return 1; }
+        fn main() {
+            let x = await work();
+            print(x);
+        }
+        "#,
+    );
+    assert!(diags.iter().any(|d| d.contains("`async fn`")), "{diags:?}");
+    assert!(diags.iter().any(|d| d.contains("`await`")), "{diags:?}");
+
+    let diags = lowering_diagnostics(
+        r#"
+        fn main() {
+            let base = 10;
+            let add = fn(a) { return a + base; };
+            print(add(1));
+        }
+        "#,
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.contains("capture of enclosing variable `base`")),
+        "{diags:?}"
+    );
+}
+
+/// Lambdas that only use their own parameters need no environment and must
+/// keep compiling and running.
+#[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+fn test_native_non_capturing_lambda_runs() {
+    let (stdout, code) = compile_run_src(
+        r#"
+        fn main() {
+            let add = fn(a, b) { return a + b; };
+            print(add(2, 3));
+        }
+        "#,
+        "sem_lambda",
+    );
+    assert_eq!(code, 0);
+    assert_eq!(stdout, "5\n");
+}
+
+/// Integer-literal matches with 4+ cases go through `SwitchLowering`
+/// (binary search tree for sparse values, compare chain for dense ones).
+/// Two sparse matches in one function share pivot values, which used to
+/// produce duplicate BST block labels.
+#[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+fn test_native_int_match_switch_lowering() {
+    let (stdout, code) = compile_run_src(
+        r#"
+        fn sparse(v: int): int {
+            return match v {
+                1 => 10,
+                100 => 20,
+                1000 => 30,
+                50000 => 40,
+                70000 => 50,
+                _ => 99,
+            };
+        }
+        fn sparse_again(v: int): int {
+            return match v {
+                1 => 11,
+                100 => 21,
+                1000 => 31,
+                50000 => 41,
+                70000 => 51,
+                _ => 98,
+            };
+        }
+        fn dense(v: int): int {
+            return match v {
+                0 => 5,
+                1 => 6,
+                2 => 6,
+                3 => 7,
+                4 => 8,
+                5 => 9,
+                other => other * 2,
+            };
+        }
+        fn main() {
+            print(sparse(1));
+            print(sparse(1000));
+            print(sparse(70000));
+            print(sparse(7));
+            print(sparse(-3));
+            print(sparse_again(100));
+            print(sparse_again(50000));
+            print(sparse_again(2));
+            print(dense(0));
+            print(dense(2));
+            print(dense(5));
+            print(dense(21));
+        }
+        "#,
+        "sem_switch",
+    );
+    assert_eq!(code, 0);
+    assert_eq!(stdout, "10\n30\n50\n99\n99\n21\n41\n98\n5\n6\n9\n42\n");
+}
+
+/// Each `print` stores its argument handles in an RBP-relative array. The
+/// frame optimizer only counted `StackSlot` operands, shrank the frame below
+/// those arrays, and calls overwrote them: from the fifth `print` on, garbage
+/// addresses were printed.
+#[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+fn test_native_many_prints_keep_frame() {
+    let (stdout, code) = compile_run_src(
+        r#"
+        fn main() {
+            print(1); print(2); print(3); print(4);
+            print(5); print(6); print(7); print(8);
+        }
+        "#,
+        "sem_many_prints",
+    );
+    assert_eq!(code, 0);
+    assert_eq!(stdout, "1\n2\n3\n4\n5\n6\n7\n8\n");
 }
 
 /// `print(70000 + 5)`: large immediate arithmetic used to crash with
