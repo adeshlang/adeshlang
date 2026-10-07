@@ -363,6 +363,7 @@ fn instruction_name(inst: &MachineInstruction) -> &'static str {
         MachineInstruction::AtomicStore { .. } => "AtomicStore",
         MachineInstruction::AtomicFetchAdd { .. } => "AtomicFetchAdd",
         MachineInstruction::AtomicCompareExchange { .. } => "AtomicCompareExchange",
+        MachineInstruction::AtomicExchange { .. } => "AtomicExchange",
         MachineInstruction::Barrier => "Barrier",
         MachineInstruction::ParallelMove { .. } => "ParallelMove",
         MachineInstruction::FAdd { .. } => "FAdd",
@@ -375,6 +376,7 @@ fn instruction_name(inst: &MachineInstruction) -> &'static str {
         MachineInstruction::FCvtFloatToInt { .. } => "FCvtFloatToInt",
         MachineInstruction::FCvtFloatToFloat { .. } => "FCvtFloatToFloat",
         MachineInstruction::Custom { .. } => "Custom",
+        MachineInstruction::TlsAddress { .. } => "TlsAddress",
     }
 }
 
@@ -472,6 +474,7 @@ fn collect_instruction_registers(inst: &MachineInstruction, out: &mut Vec<u8>) {
         | MachineInstruction::VectorShiftRight { dst, src, .. }
         | MachineInstruction::AtomicLoad { dst, src, .. }
         | MachineInstruction::AtomicStore { dst, src, .. }
+        | MachineInstruction::AtomicExchange { dst, src, .. }
         | MachineInstruction::AtomicFetchAdd { dst, src, .. } => {
             add_op(dst, out);
             add_op(src, out);
@@ -495,7 +498,8 @@ fn collect_instruction_registers(inst: &MachineInstruction, out: &mut Vec<u8>) {
         | MachineInstruction::FNeg { dst, .. }
         | MachineInstruction::SetCc { dst, .. }
         | MachineInstruction::Push { src: dst }
-        | MachineInstruction::Pop { dst } => add_op(dst, out),
+        | MachineInstruction::Pop { dst }
+        | MachineInstruction::TlsAddress { dst, .. } => add_op(dst, out),
         MachineInstruction::Call { target, .. } => add_op(target, out),
         MachineInstruction::Custom { operands, .. } => {
             for op in operands {
@@ -2384,32 +2388,158 @@ impl FunctionEncoding {
                 }
                 self.enc.mfence();
             }
-            MachineInstruction::AtomicFetchAdd { dst, src, .. } => {
-                let reg = phys_reg(src).unwrap_or(SCRATCH);
-                if let Some((b, off, idx)) = mem_operand(dst) {
-                    self.enc.lock_xadd_mem_r64(b, off, idx, reg);
-                } else if let Some(slot) = stack_slot(dst) {
-                    self.enc.lock_xadd_mem_r64(5, slot, None, reg);
+            MachineInstruction::AtomicFetchAdd { dst, src, size } => {
+                let reg = if let Some(r) = phys_reg(src) {
+                    r
+                } else if let MachineOperand::Immediate(v) = src {
+                    self.materialize_bits(SCRATCH, *v);
+                    SCRATCH
+                } else if let Some((b, off, idx)) = mem_operand(src) {
+                    self.enc.mov_r64_mem(SCRATCH, b, off, idx);
+                    SCRATCH
+                } else if let Some(slot) = stack_slot(src) {
+                    self.enc.mov_r64_mem(SCRATCH, 5, slot, None);
+                    SCRATCH
+                } else {
+                    SCRATCH
+                };
+                match size {
+                    1 => {
+                        if let Some((b, off, idx)) = mem_operand(dst) {
+                            self.enc.lock_xadd_mem_r8(b, off, idx, reg);
+                        } else if let Some(slot) = stack_slot(dst) {
+                            self.enc.lock_xadd_mem_r8(5, slot, None, reg);
+                        }
+                    }
+                    2 => {
+                        if let Some((b, off, idx)) = mem_operand(dst) {
+                            self.enc.lock_xadd_mem_r16(b, off, idx, reg);
+                        } else if let Some(slot) = stack_slot(dst) {
+                            self.enc.lock_xadd_mem_r16(5, slot, None, reg);
+                        }
+                    }
+                    4 => {
+                        if let Some((b, off, idx)) = mem_operand(dst) {
+                            self.enc.lock_xadd_mem_r32(b, off, idx, reg);
+                        } else if let Some(slot) = stack_slot(dst) {
+                            self.enc.lock_xadd_mem_r32(5, slot, None, reg);
+                        }
+                    }
+                    _ => {
+                        if let Some((b, off, idx)) = mem_operand(dst) {
+                            self.enc.lock_xadd_mem_r64(b, off, idx, reg);
+                        } else if let Some(slot) = stack_slot(dst) {
+                            self.enc.lock_xadd_mem_r64(5, slot, None, reg);
+                        }
+                    }
                 }
             }
             MachineInstruction::AtomicCompareExchange {
                 dst,
                 expected,
                 desired,
-                ..
+                size,
             } => {
                 if let Some(exp_r) = phys_reg(expected) {
                     if exp_r != 0 {
                         self.enc.mov_r64_r64(0, exp_r);
                     }
                 } else if let MachineOperand::Immediate(v) = expected {
-                    self.enc.mov_r64_imm64(0, *v);
+                    self.materialize_bits(0, *v);
+                } else if let Some((b, off, idx)) = mem_operand(expected) {
+                    self.enc.mov_r64_mem(0, b, off, idx);
+                } else if let Some(slot) = stack_slot(expected) {
+                    self.enc.mov_r64_mem(0, 5, slot, None);
                 }
-                let des_r = phys_reg(desired).unwrap_or(SCRATCH);
-                if let Some((b, off, idx)) = mem_operand(dst) {
-                    self.enc.lock_cmpxchg_mem_r64(b, off, idx, des_r);
-                } else if let Some(slot) = stack_slot(dst) {
-                    self.enc.lock_cmpxchg_mem_r64(5, slot, None, des_r);
+                let des_r = if let Some(r) = phys_reg(desired) {
+                    r
+                } else if let MachineOperand::Immediate(v) = desired {
+                    self.materialize_bits(SCRATCH, *v);
+                    SCRATCH
+                } else if let Some((b, off, idx)) = mem_operand(desired) {
+                    self.enc.mov_r64_mem(SCRATCH, b, off, idx);
+                    SCRATCH
+                } else if let Some(slot) = stack_slot(desired) {
+                    self.enc.mov_r64_mem(SCRATCH, 5, slot, None);
+                    SCRATCH
+                } else {
+                    SCRATCH
+                };
+                match size {
+                    1 => {
+                        if let Some((b, off, idx)) = mem_operand(dst) {
+                            self.enc.lock_cmpxchg_mem_r8(b, off, idx, des_r);
+                        } else if let Some(slot) = stack_slot(dst) {
+                            self.enc.lock_cmpxchg_mem_r8(5, slot, None, des_r);
+                        }
+                    }
+                    2 => {
+                        if let Some((b, off, idx)) = mem_operand(dst) {
+                            self.enc.lock_cmpxchg_mem_r16(b, off, idx, des_r);
+                        } else if let Some(slot) = stack_slot(dst) {
+                            self.enc.lock_cmpxchg_mem_r16(5, slot, None, des_r);
+                        }
+                    }
+                    4 => {
+                        if let Some((b, off, idx)) = mem_operand(dst) {
+                            self.enc.lock_cmpxchg_mem_r32(b, off, idx, des_r);
+                        } else if let Some(slot) = stack_slot(dst) {
+                            self.enc.lock_cmpxchg_mem_r32(5, slot, None, des_r);
+                        }
+                    }
+                    _ => {
+                        if let Some((b, off, idx)) = mem_operand(dst) {
+                            self.enc.lock_cmpxchg_mem_r64(b, off, idx, des_r);
+                        } else if let Some(slot) = stack_slot(dst) {
+                            self.enc.lock_cmpxchg_mem_r64(5, slot, None, des_r);
+                        }
+                    }
+                }
+            }
+            MachineInstruction::AtomicExchange { dst, src, size } => {
+                let reg = if let Some(r) = phys_reg(src) {
+                    r
+                } else if let MachineOperand::Immediate(v) = src {
+                    self.materialize_bits(SCRATCH, *v);
+                    SCRATCH
+                } else if let Some((b, off, idx)) = mem_operand(src) {
+                    self.enc.mov_r64_mem(SCRATCH, b, off, idx);
+                    SCRATCH
+                } else if let Some(slot) = stack_slot(src) {
+                    self.enc.mov_r64_mem(SCRATCH, 5, slot, None);
+                    SCRATCH
+                } else {
+                    SCRATCH
+                };
+                match size {
+                    1 => {
+                        if let Some((b, off, idx)) = mem_operand(dst) {
+                            self.enc.lock_xchg_mem_r8(b, off, idx, reg);
+                        } else if let Some(slot) = stack_slot(dst) {
+                            self.enc.lock_xchg_mem_r8(5, slot, None, reg);
+                        }
+                    }
+                    2 => {
+                        if let Some((b, off, idx)) = mem_operand(dst) {
+                            self.enc.lock_xchg_mem_r16(b, off, idx, reg);
+                        } else if let Some(slot) = stack_slot(dst) {
+                            self.enc.lock_xchg_mem_r16(5, slot, None, reg);
+                        }
+                    }
+                    4 => {
+                        if let Some((b, off, idx)) = mem_operand(dst) {
+                            self.enc.lock_xchg_mem_r32(b, off, idx, reg);
+                        } else if let Some(slot) = stack_slot(dst) {
+                            self.enc.lock_xchg_mem_r32(5, slot, None, reg);
+                        }
+                    }
+                    _ => {
+                        if let Some((b, off, idx)) = mem_operand(dst) {
+                            self.enc.lock_xchg_mem_r64(b, off, idx, reg);
+                        } else if let Some(slot) = stack_slot(dst) {
+                            self.enc.lock_xchg_mem_r64(5, slot, None, reg);
+                        }
+                    }
                 }
             }
             MachineInstruction::ParallelMove { moves } => {
@@ -2436,11 +2566,64 @@ impl FunctionEncoding {
                     .with_instruction("Custom"));
                 }
             }
+            MachineInstruction::TlsAddress { dst, symbol } => {
+                let d = phys_reg(dst).ok_or_else(|| self.unsupported(inst, func_name, abi))?;
+                if abi.to_lowercase().contains("win") {
+                    self.encode_win64_tls_address(d, symbol)?;
+                } else {
+                    return Err(CodegenError::new(
+                        "x86_64",
+                        "non-Windows TLS is not supported; SysV/ELF TLS will be implemented in Phase 3",
+                    )
+                    .with_arch("x86_64")
+                    .with_abi(abi)
+                    .with_function(func_name)
+                    .with_instruction("TlsAddress"));
+                }
+            }
         }
         // Track whether the flags are still meaningful for a later condition
         // test, so the `xor r, r` zero idiom can avoid clobbering them.
         self.flags_dirty = instruction_writes_flags(inst) || self.zero_idiom_used;
         self.zero_idiom_used = false;
+        Ok(())
+    }
+
+    /// Emit Windows x64 thread-local storage resolution sequence:
+    /// 1. mov scratch_32, dword ptr [rip + _tls_index]
+    /// 2. mov dst, qword ptr gs:[0x58] (TEB ThreadLocalStoragePointer)
+    /// 3. mov dst, qword ptr [dst + scratch*8] (module TLS pointer)
+    /// 4. add dst, imm32 (SECREL / TlsLocalExec relocation against symbol)
+    fn encode_win64_tls_address(&mut self, dst: u8, symbol: &str) -> Result<(), CodegenError> {
+        let scratch = if dst != SCRATCH { SCRATCH } else { SCRATCH2 };
+        // 1. mov scratch_32, dword ptr [rip + _tls_index]
+        self.enc.mov_r32_rip_rel(scratch, 0);
+        let disp_off = self.enc.len() - 4;
+        self.relocations.push(AdobRelocation::new(
+            disp_off as u64,
+            0,
+            "_tls_index".to_string(),
+            RelocationKind::PcRelative32,
+            -4,
+        ));
+
+        // 2. mov dst, qword ptr gs:[0x58]
+        self.enc.mov_r64_gs_offset(dst, 0x58);
+
+        // 3. mov dst, qword ptr [dst + scratch*8]
+        self.enc.mov_r64_mem(dst, dst, 0, Some((scratch, 3)));
+
+        // 4. add dst, imm32 (relocated with TlsLe)
+        self.enc.add_r64_imm32(dst, 0);
+        let imm_off = self.enc.len() - 4;
+        self.relocations.push(AdobRelocation::new(
+            imm_off as u64,
+            0,
+            symbol.to_string(),
+            RelocationKind::TlsLe,
+            0,
+        ));
+
         Ok(())
     }
 
@@ -2700,12 +2883,85 @@ impl CodegenBackend for X86_64Backend {
             obj.add_section(rodata_sec);
         }
 
-        // 3. Symbols: functions first (preserving module order), then string
-        //    literals, then imports.
+        // 3. Thread-local storage (.tls) section
+        let mut tls_symbols: Vec<AdobSymbol> = Vec::new();
+        if !lowered.tls_sections.is_empty() {
+            let mut tls_data = Vec::new();
+            let sec_idx = obj.sections.len() as u32;
+            for (name, init_bytes) in &lowered.tls_sections {
+                let aligned_off = (tls_data.len() + 7) & !7;
+                tls_data.resize(aligned_off, 0);
+                let off = tls_data.len() as u64;
+                let size = init_bytes.len() as u64;
+                tls_data.extend_from_slice(init_bytes);
+
+                let sym = AdobSymbol::new_defined(
+                    0,
+                    name.clone(),
+                    SymbolKind::Object,
+                    sec_idx,
+                    off,
+                    size,
+                )
+                .with_binding(SymbolBinding::Global);
+                tls_symbols.push(sym);
+            }
+
+            let tls_sec = AdobSection::new(".tls", SectionKind::Tls)
+                .with_flags(
+                    section_flags::READ
+                        | section_flags::WRITE
+                        | section_flags::TLS
+                        | section_flags::ALLOC,
+                )
+                .with_alignment(16)
+                .with_data(tls_data);
+            obj.add_section(tls_sec);
+        }
+
+        // 4. Global / static data sections (.data)
+        let mut data_symbols: Vec<AdobSymbol> = Vec::new();
+        if !lowered.data_sections.is_empty() {
+            let mut data_bytes = Vec::new();
+            let sec_idx = obj.sections.len() as u32;
+            for (name, init_bytes) in &lowered.data_sections {
+                let aligned_off = (data_bytes.len() + 7) & !7;
+                data_bytes.resize(aligned_off, 0);
+                let off = data_bytes.len() as u64;
+                let size = init_bytes.len() as u64;
+                data_bytes.extend_from_slice(init_bytes);
+
+                let sym = AdobSymbol::new_defined(
+                    0,
+                    name.clone(),
+                    SymbolKind::Object,
+                    sec_idx,
+                    off,
+                    size,
+                )
+                .with_binding(SymbolBinding::Global);
+                data_symbols.push(sym);
+            }
+
+            let data_sec = AdobSection::new(".data", SectionKind::Data)
+                .with_flags(section_flags::READ | section_flags::WRITE | section_flags::ALLOC)
+                .with_alignment(16)
+                .with_data(data_bytes);
+            obj.add_section(data_sec);
+        }
+
+        // 5. Symbols: functions first (preserving module order), then string
+        //    literals, then TLS variables, then data symbols, then imports.
         for sym in function_symbols {
             obj.add_symbol(sym);
         }
         for sym in rodata_symbols {
+            obj.add_symbol(sym);
+        }
+        for sym in tls_symbols {
+            obj.add_symbol(sym);
+        }
+        for sym in data_symbols {
             obj.add_symbol(sym);
         }
         for imp in &lowered.imports {
@@ -2715,7 +2971,14 @@ impl CodegenBackend for X86_64Backend {
             obj.add_symbol(sym);
         }
 
-        // 4. Resolve relocation symbol IDs by name (ids are assigned above).
+        // Add undefined _tls_index symbol if TLS is used so relocations can bind to it
+        if !lowered.tls_sections.is_empty() && !obj.symbols.iter().any(|s| s.name == "_tls_index") {
+            let sym = AdobSymbol::new_undefined(0, "_tls_index".to_string(), SymbolKind::Object)
+                .with_binding(SymbolBinding::Global);
+            obj.add_symbol(sym);
+        }
+
+        // 5. Resolve relocation symbol IDs by name (ids are assigned above).
         let name_to_id: HashMap<String, u32> =
             obj.symbols.iter().map(|s| (s.name.clone(), s.id)).collect();
         if let Some((_, sec)) = obj.find_section_mut(".text") {

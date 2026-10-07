@@ -64,6 +64,7 @@ impl SysVVariadics {
     /// - fp_offset: 4 bytes (offset in reg_save_area)
     /// - overflow_arg_area: 8 bytes (pointer to next stack argument)
     /// - reg_save_area: 8 bytes (pointer to base of reg_save_area)
+    ///
     /// Total: 24 bytes.
     pub const VA_LIST_SIZE: usize = 24;
 

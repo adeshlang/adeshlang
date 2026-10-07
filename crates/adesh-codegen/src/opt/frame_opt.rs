@@ -171,6 +171,7 @@ impl FrameUsage {
             | MachineInstruction::VectorShiftRight { dst, src, .. }
             | MachineInstruction::AtomicLoad { dst, src, .. }
             | MachineInstruction::AtomicStore { dst, src, .. }
+            | MachineInstruction::AtomicExchange { dst, src, .. }
             | MachineInstruction::AtomicFetchAdd { dst, src, .. } => {
                 self.operand(dst);
                 self.operand(src);
@@ -194,7 +195,8 @@ impl FrameUsage {
             | MachineInstruction::FNeg { dst, .. }
             | MachineInstruction::SetCc { dst, .. }
             | MachineInstruction::Push { src: dst }
-            | MachineInstruction::Pop { dst } => self.operand(dst),
+            | MachineInstruction::Pop { dst }
+            | MachineInstruction::TlsAddress { dst, .. } => self.operand(dst),
             MachineInstruction::Call { target, .. } => self.operand(target),
             MachineInstruction::Custom { operands, .. } => {
                 for op in operands {

@@ -212,7 +212,14 @@ impl AdobV2 {
                 1 => SectionKind::Rodata,
                 2 => SectionKind::Data,
                 3 => SectionKind::Bss,
-                4 => SectionKind::AdeshMeta,
+                4 => {
+                    if data.is_empty() {
+                        SectionKind::TBss
+                    } else {
+                        SectionKind::TData
+                    }
+                }
+                7 => SectionKind::AdeshMeta,
                 _ => SectionKind::Custom,
             };
 
@@ -233,6 +240,10 @@ impl AdobV2 {
                     3 => RelocationKind::PcRelative64,
                     4 => RelocationKind::PltRelative32,
                     5 => RelocationKind::GotRelative32,
+                    6 => RelocationKind::TlsGeneralDynamic,
+                    7 => RelocationKind::TlsGeneralDynamic,
+                    8 => RelocationKind::TlsInitialExec,
+                    9 => RelocationKind::TlsLocalExec,
                     _ => RelocationKind::Absolute64,
                 };
 
@@ -336,6 +347,13 @@ impl AdobV2 {
                 adesh_object::SectionKind::Rodata => SectionKind::Rodata,
                 adesh_object::SectionKind::Data => SectionKind::Data,
                 adesh_object::SectionKind::Bss => SectionKind::Bss,
+                adesh_object::SectionKind::Tls => {
+                    if sec.data.is_empty() {
+                        SectionKind::TBss
+                    } else {
+                        SectionKind::TData
+                    }
+                }
                 adesh_object::SectionKind::AdeshMeta => SectionKind::AdeshMeta,
                 _ => SectionKind::Custom,
             };
@@ -349,6 +367,10 @@ impl AdobV2 {
                     adesh_object::RelocationKind::PcRelative64 => RelocationKind::PcRelative64,
                     adesh_object::RelocationKind::PltRelative32 => RelocationKind::PltRelative32,
                     adesh_object::RelocationKind::GotRelative32 => RelocationKind::GotRelative32,
+                    adesh_object::RelocationKind::TlsGd => RelocationKind::TlsGeneralDynamic,
+                    adesh_object::RelocationKind::TlsLd => RelocationKind::TlsGeneralDynamic,
+                    adesh_object::RelocationKind::TlsIe => RelocationKind::TlsInitialExec,
+                    adesh_object::RelocationKind::TlsLe => RelocationKind::TlsLocalExec,
                     _ => RelocationKind::Absolute64,
                 };
                 relocations.push(Relocation::new(

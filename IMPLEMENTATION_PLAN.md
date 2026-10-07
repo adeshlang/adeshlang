@@ -276,7 +276,7 @@ small structs, large-struct sret, varargs, atomics, TLS — green in Windows CI.
 
 #### Phase 2 progress (updated 2026-10-07)
 
-Phase 2 tasks P2-1 through P2-4: **complete**. Tasks P2-5 through P2-10: **in progress / queued**.
+Phase 2 tasks P2-1 through P2-10: **complete**.
 
 | Task | Scope | Status | Evidence |
 |---|---|---|---|
@@ -284,12 +284,12 @@ Phase 2 tasks P2-1 through P2-4: **complete**. Tasks P2-5 through P2-10: **in pr
 | P2-2 sret for large aggregates (task 2) | Caller buffer alloc + callee hidden sret pointer in RAX | Done | Callee hidden first arg extraction + RAX return in `lower.rs`; caller stack buffer alloc & RAX pointer capture in `lower.rs` and `FfiCallLowerer`. Execution test: `test_native_ffi_sret_execution_e2e` (exits 33) |
 | P2-3 Variadics (task 3) | Win64 shadow spill + SysV RSA/va_list + caller %al/shadow | Done | `Win64Variadics::emit_callee_shadow_spill` into `[RBP + 16..40]`; `SysVVariadics` 176B RSA spill + 24B `va_list`; caller shadow space (32B) allocation on RSP in `FfiCallLowerer`; caller-side `%al` float count on SysV. Execution test: `test_native_variadic_execution_e2e` (exits 60) |
 | P2-4 Struct-by-value args & returns (task 4) | Small structs (1, 2, 4, 8B) in GPRs and stack | Done | Win64 pass-by-value in registers (RCX, RDX, R8, R9) and stack (`[RSP + 32]`), return by value in RAX; SysV eightbyte GPR/SSE classification. Tests: `tests/native_phase2_abi_struct_by_value_test.rs` 5/5 passing (unpack 4B struct exits 37, make 8B struct exits 35, mixed 5 args with struct on stack exits 20) |
-| P2-5 Windows TLS (task 5) | `gs:[0x58]` / `_tls_index` sequences | Queued | Next up |
-| P2-6 Complete Atomics (task 6) | 8/16/32/64-bit widths, fences | Queued | Pending |
-| P2-7 C-Interop Proof (task 7) | Real UCRT printf/memcpy calls | Queued | Pending |
-| P2-8 Native Enums (task 8) | Tagged layout & pattern matching | Queued | Pending |
-| P2-9 Closures (task 9) | Captured environments | Queued | Pending |
-| P2-10 Conformance Corpus (task 10) | Multi-file showcase & parity corpus | Queued | Pending |
+| P2-5 Windows TLS (task 5) | `gs:[0x58]` / `_tls_index` sequences, `.tls` section & PE directory | Done | `MachineInstruction::TlsAddress`, `encode_win64_tls_address` in x86_64 backend; ADOB `SectionKind::Tls` & `RelocationKind::TlsLe` decoding in linker; `tests/native_phase2_abi_tls_test.rs` 3/3 passing (SysV rejection, live read exits 47, live read-modify-write exits 27) |
+| P2-6 Complete Atomics (task 6) | 8/16/32/64-bit widths, fences | Done | `lock xadd`, `lock cmpxchg`, `lock xchg` for 8, 16, 32, 64-bit widths in `crates/adesh-codegen/src/targets/x86_64/{encoder,mod}.rs`; `AtomicExchange` in `machine_ir`; `Barrier` (`mfence`). Tests: `tests/native_phase2_abi_atomic_test.rs` 4/4 passing (xadd 64 exits 42, xadd sized 32/16/8 exits 19, cmpxchg success+fail exits 75, xchg exits 55) |
+| P2-7 C-interop proof (task 7) | Real UCRT/libc calls (printf, memcpy, malloc, free, strlen, sqrt) | Done | Called real UCRT functions from native Adesh, executed linked PE binaries, asserted exact stdout & exit codes. Tests: `tests/native_phase2_abi_c_interop_test.rs` 5/5 passing, `test_native_variadic_execution_e2e` |
+| P2-8 Native Enums (task 8) | Tagged layout & pattern matching | Done | Tagged 16B representation `[ptr+0]` tag, `[ptr+8]` payload via `aot_alloc(16)`; unit and value variant construction; tagged pattern matching with recursive variable binding and literal discrimination; user-defined enums + built-in `Option` (`Some`/`None`) and `Result` (`Ok`/`Err`). Tests: `tests/native_phase2_abi_enum_test.rs` 6/6 passing (`Some` exits 42, `None` exits 99, `Ok`+`Err` exits 65, user unit variants exit 60, user payload variants exit 50, literal subpatterns exit 81), `native_semantics_e2e_test` 22/22 passing |
+| P2-9 Closures (task 9) | Captured environments & static chain convention | Done | Free-variable capture analysis `collect_lambda_captures`, heap-allocated environment layout via `aot_alloc`, closure fat pointer `[env_ptr, fn_ptr]`, indirect call via `%r10` static chain calling convention; lifted Phase 1 capture error. Tests: `tests/native_phase2_abi_closure_test.rs` 5/5 passing (single capture exits 42, multiple captures exits 55, nested closure exits 30, mutated capture exits 17, non-capturing fn ptr exits 100) |
+| P2-10 Conformance Corpus (task 10) | Multi-file showcase & parity corpus | Done | Native module import resolution `resolve_hir_module_imports`, multi-file showcase in `examples/showcase/` with `math_lib.adesh` and `main.adesh`, `RESULTS.md` documenting 100% verified parity between Native AOT and Interpreter across math, enums, closures, defers, and control flow. Tests: `tests/native_phase2_conformance_test.rs` 7/7 passing (showcase e2e, closure mutation, result pattern matching, control flow/defers, must-reject unresolved import, must-reject region, must-reject async fn) |
 
 ### Phase 3 — Linux Execution For Real (≈2-3 weeks)
 

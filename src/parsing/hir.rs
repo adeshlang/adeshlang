@@ -381,11 +381,19 @@ pub struct HirFunction {
     pub is_unsafe: bool,
 }
 
+/// HIR Enum definition
+#[derive(Debug, Clone)]
+pub struct HirEnum {
+    pub name: String,
+    pub variants: Vec<(String, Option<String>)>,
+}
+
 /// HIR Module - the top-level compilation unit
 #[derive(Debug, Clone)]
 pub struct HirModule {
     pub functions: Vec<HirFunction>,
     pub classes: Vec<HirClass>,
+    pub enums: Vec<HirEnum>,
     pub statements: Vec<HirStmt>,
 }
 
@@ -394,6 +402,7 @@ impl HirModule {
         HirModule {
             functions: Vec::new(),
             classes: Vec::new(),
+            enums: Vec::new(),
             statements: Vec::new(),
         }
     }

@@ -169,7 +169,10 @@ impl LayoutEngine {
                     continue;
                 }
 
-                if matches!(sec.kind, SectionKind::TData | SectionKind::TBss) {
+                if matches!(sec.kind, SectionKind::TData | SectionKind::TBss)
+                    || (sec.flags & crate::section::flags::TLS != 0)
+                    || sec.name.starts_with(".tls")
+                {
                     // COFF TLS contribution order is lexical by full section
                     // name (`.tls$AAA` ... `.tls$ZZZ`), not archive order.
                     // Preserve each contribution so the loader sees one
@@ -940,6 +943,9 @@ impl LayoutEngine {
         let mut warned_syms: HashMap<String, ()> = HashMap::new();
         let mut base_relocs: Vec<u32> = tls_directory_base_relocs;
         let mut base_relocs32: Vec<u32> = Vec::new();
+        let tls_sec_va = cat_to_idx
+            .get(&SectionCat::Tls)
+            .map(|idx| merged_list[*idx].virtual_address);
 
         // 5. Apply Relocations to Merged Sections
         let handler = get_handler(target.arch);
@@ -1068,14 +1074,16 @@ impl LayoutEngine {
                                 ),
                             ));
                         }
-                        RelocationKind::SectionRelative32 => {
+                        RelocationKind::SectionRelative32
+                        | RelocationKind::TlsLocalExec
+                        | RelocationKind::TlsInitialExec => {
                             // Offset within the merged output section. An
                             // unknown base cannot safely become an RVA.
-                            let sec_base = sym_sec_base.ok_or_else(|| {
+                            let sec_base = sym_sec_base.or(tls_sec_va).ok_or_else(|| {
                                 LinkError::new(
                                     ErrorCode::InvalidSection,
                                     format!(
-                                        "section-relative relocation against `{}` has no output section",
+                                        "section-relative / TLS relocation against `{}` has no output section",
                                         reloc.symbol_name
                                     ),
                                 )
@@ -1092,7 +1100,7 @@ impl LayoutEngine {
                             return Err(LinkError::new(
                                 crate::error::ErrorCode::RelocationOverflow,
                                 format!(
-                                    "section-relative relocation at {}+0x{:x} exceeds section size",
+                                    "section-relative / TLS relocation at {}+0x{:x} exceeds section size",
                                     merged.name, reloc.offset
                                 ),
                             ));

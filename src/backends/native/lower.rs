@@ -8,10 +8,13 @@
 use crate::parsing::hir::{
     BinOp, HirExpr, HirFunction, HirLiteral, HirModule, HirPattern, HirStmt, HirType, UnaryOp,
 };
+use crate::parsing::hir_lower::ast_to_hir;
+use crate::parsing::lexer::Lexer;
+use crate::parsing::parser::Parser;
 use adesh_codegen::abi::AbiType;
 use adesh_codegen::calling_convention::{
     ArgumentLocation, CallingConvention, ReturnLocation, SystemVX64CallingConvention,
-    WindowsX64CallingConvention, resolve_abi_call_arguments, resolve_call_arguments,
+    WindowsX64CallingConvention, resolve_call_arguments,
 };
 use adesh_codegen::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
@@ -21,6 +24,7 @@ use adesh_codegen::opt::{SwitchCase, SwitchLowering};
 use adesh_object::{OperatingSystem, TargetDescriptor};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 #[derive(Clone, Debug)]
@@ -119,13 +123,31 @@ pub struct FunctionLoweringContext<'a> {
     pub func_ret_type: Option<HirType>,
     pub sret_slot: Option<i32>,
     pub fn_signatures: HashMap<String, (Vec<HirType>, Option<HirType>)>,
+    pub variant_tags: HashMap<String, (i64, bool)>,
     /// Constructs the native backend cannot lower correctly. Shared with
     /// nested function lowering so one compile reports every problem.
     pub diagnostics: Diagnostics,
-    /// Locals of the enclosing function(s) when lowering a lambda or nested
-    /// `fn`. There is no closure environment, so referencing one is a capture
-    /// this backend cannot compile.
+    /// Locals of the enclosing function(s) when lowering a lambda or nested `fn`.
     pub enclosing_locals: HashSet<String>,
+    /// Offsets in closure environment for captured variables.
+    pub captured_vars: HashMap<String, i32>,
+    /// Stack slot containing closure env pointer (if in a closure).
+    pub closure_env_slot: Option<i32>,
+    /// Module aliases for imported namespaces.
+    pub module_aliases: HashSet<String>,
+}
+
+pub fn default_variant_tags() -> HashMap<String, (i64, bool)> {
+    let mut map = HashMap::new();
+    map.insert("None".to_string(), (0, false));
+    map.insert("Some".to_string(), (1, true));
+    map.insert("Option::None".to_string(), (0, false));
+    map.insert("Option::Some".to_string(), (1, true));
+    map.insert("Ok".to_string(), (0, true));
+    map.insert("Err".to_string(), (1, true));
+    map.insert("Result::Ok".to_string(), (0, true));
+    map.insert("Result::Err".to_string(), (1, true));
+    map
 }
 
 pub type Diagnostics = Rc<RefCell<Vec<String>>>;
@@ -413,8 +435,12 @@ impl<'a> FunctionLoweringContext<'a> {
             func_ret_type: None,
             sret_slot: None,
             fn_signatures: HashMap::new(),
+            variant_tags: default_variant_tags(),
             diagnostics: Diagnostics::default(),
             enclosing_locals: HashSet::new(),
+            captured_vars: HashMap::new(),
+            closure_env_slot: None,
+            module_aliases: HashSet::new(),
         }
     }
 
@@ -424,6 +450,7 @@ impl<'a> FunctionLoweringContext<'a> {
         target: &'a TargetDescriptor,
         func_ret_type: Option<HirType>,
         fn_signatures: HashMap<String, (Vec<HirType>, Option<HirType>)>,
+        variant_tags: HashMap<String, (i64, bool)>,
     ) -> Self {
         let call_conv: Box<dyn CallingConvention> = match target.operating_system {
             OperatingSystem::Windows => Box::new(WindowsX64CallingConvention),
@@ -446,8 +473,12 @@ impl<'a> FunctionLoweringContext<'a> {
             func_ret_type,
             sret_slot: None,
             fn_signatures,
+            variant_tags,
             diagnostics: Diagnostics::default(),
             enclosing_locals: HashSet::new(),
+            captured_vars: HashMap::new(),
+            closure_env_slot: None,
+            module_aliases: HashSet::new(),
         }
     }
 
@@ -455,14 +486,460 @@ impl<'a> FunctionLoweringContext<'a> {
     fn locals_for_nested(&self) -> HashSet<String> {
         let mut names = self.enclosing_locals.clone();
         names.extend(self.local_vars.keys().cloned());
+        names.extend(self.captured_vars.keys().cloned());
         names
     }
+}
 
+/// Analyze a lambda body and collect all variable names that are free in the lambda
+/// but present in the enclosing scope.
+fn collect_lambda_captures(
+    body: &[HirStmt],
+    params: &[(String, Option<HirType>)],
+    enclosing_scope: &HashSet<String>,
+) -> Vec<String> {
+    let param_set: HashSet<String> = params.iter().map(|(n, _)| n.clone()).collect();
+    let mut local_set: HashSet<String> = HashSet::new();
+    let mut captured = Vec::new();
+    let mut captured_set = HashSet::new();
+
+    fn scan_expr(
+        expr: &HirExpr,
+        param_set: &HashSet<String>,
+        local_set: &HashSet<String>,
+        enclosing_scope: &HashSet<String>,
+        captured: &mut Vec<String>,
+        captured_set: &mut HashSet<String>,
+    ) {
+        match expr {
+            HirExpr::LoadVar(name) => {
+                if !param_set.contains(name)
+                    && !local_set.contains(name)
+                    && enclosing_scope.contains(name)
+                    && !captured_set.contains(name)
+                {
+                    captured_set.insert(name.clone());
+                    captured.push(name.clone());
+                }
+            }
+            HirExpr::StoreVar(name, val) => {
+                if !param_set.contains(name)
+                    && !local_set.contains(name)
+                    && enclosing_scope.contains(name)
+                    && !captured_set.contains(name)
+                {
+                    captured_set.insert(name.clone());
+                    captured.push(name.clone());
+                }
+                scan_expr(
+                    val,
+                    param_set,
+                    local_set,
+                    enclosing_scope,
+                    captured,
+                    captured_set,
+                );
+            }
+            HirExpr::BinaryOp(l, _, r) => {
+                scan_expr(
+                    l,
+                    param_set,
+                    local_set,
+                    enclosing_scope,
+                    captured,
+                    captured_set,
+                );
+                scan_expr(
+                    r,
+                    param_set,
+                    local_set,
+                    enclosing_scope,
+                    captured,
+                    captured_set,
+                );
+            }
+            HirExpr::UnaryOp(_, inner) | HirExpr::Cast(inner, _) => {
+                scan_expr(
+                    inner,
+                    param_set,
+                    local_set,
+                    enclosing_scope,
+                    captured,
+                    captured_set,
+                );
+            }
+            HirExpr::Call(callee, args, _) => {
+                scan_expr(
+                    callee,
+                    param_set,
+                    local_set,
+                    enclosing_scope,
+                    captured,
+                    captured_set,
+                );
+                for a in args {
+                    scan_expr(
+                        a,
+                        param_set,
+                        local_set,
+                        enclosing_scope,
+                        captured,
+                        captured_set,
+                    );
+                }
+            }
+            HirExpr::MethodCall(target, _, args) => {
+                scan_expr(
+                    target,
+                    param_set,
+                    local_set,
+                    enclosing_scope,
+                    captured,
+                    captured_set,
+                );
+                for a in args {
+                    scan_expr(
+                        a,
+                        param_set,
+                        local_set,
+                        enclosing_scope,
+                        captured,
+                        captured_set,
+                    );
+                }
+            }
+            HirExpr::Conditional(c, t, e) => {
+                scan_expr(
+                    c,
+                    param_set,
+                    local_set,
+                    enclosing_scope,
+                    captured,
+                    captured_set,
+                );
+                scan_expr(
+                    t,
+                    param_set,
+                    local_set,
+                    enclosing_scope,
+                    captured,
+                    captured_set,
+                );
+                scan_expr(
+                    e,
+                    param_set,
+                    local_set,
+                    enclosing_scope,
+                    captured,
+                    captured_set,
+                );
+            }
+            HirExpr::ArrayLiteral(elems)
+            | HirExpr::SetLiteral(elems)
+            | HirExpr::TupleLiteral(elems) => {
+                for el in elems {
+                    scan_expr(
+                        el,
+                        param_set,
+                        local_set,
+                        enclosing_scope,
+                        captured,
+                        captured_set,
+                    );
+                }
+            }
+            HirExpr::DictLiteral(entries) => {
+                for (k, v) in entries {
+                    scan_expr(
+                        k,
+                        param_set,
+                        local_set,
+                        enclosing_scope,
+                        captured,
+                        captured_set,
+                    );
+                    scan_expr(
+                        v,
+                        param_set,
+                        local_set,
+                        enclosing_scope,
+                        captured,
+                        captured_set,
+                    );
+                }
+            }
+            HirExpr::ObjectLiteral(entries) | HirExpr::StructLiteral(_, entries) => {
+                for (_, v) in entries {
+                    scan_expr(
+                        v,
+                        param_set,
+                        local_set,
+                        enclosing_scope,
+                        captured,
+                        captured_set,
+                    );
+                }
+            }
+            HirExpr::MemberAccess(target, _) => {
+                scan_expr(
+                    target,
+                    param_set,
+                    local_set,
+                    enclosing_scope,
+                    captured,
+                    captured_set,
+                );
+            }
+            HirExpr::SetMember(target, _, val) => {
+                scan_expr(
+                    target,
+                    param_set,
+                    local_set,
+                    enclosing_scope,
+                    captured,
+                    captured_set,
+                );
+                scan_expr(
+                    val,
+                    param_set,
+                    local_set,
+                    enclosing_scope,
+                    captured,
+                    captured_set,
+                );
+            }
+            HirExpr::Index(target, idx) => {
+                scan_expr(
+                    target,
+                    param_set,
+                    local_set,
+                    enclosing_scope,
+                    captured,
+                    captured_set,
+                );
+                scan_expr(
+                    idx,
+                    param_set,
+                    local_set,
+                    enclosing_scope,
+                    captured,
+                    captured_set,
+                );
+            }
+            HirExpr::Update(inner, _, _) => {
+                scan_expr(
+                    inner,
+                    param_set,
+                    local_set,
+                    enclosing_scope,
+                    captured,
+                    captured_set,
+                );
+            }
+            HirExpr::Lambda(inner_params, inner_body, _) => {
+                let mut inner_locals = local_set.clone();
+                for (p, _) in inner_params {
+                    inner_locals.insert(p.clone());
+                }
+                for s in inner_body.as_ref() {
+                    scan_stmt(
+                        s,
+                        param_set,
+                        &mut inner_locals,
+                        enclosing_scope,
+                        captured,
+                        captured_set,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn scan_stmt(
+        stmt: &HirStmt,
+        param_set: &HashSet<String>,
+        local_set: &mut HashSet<String>,
+        enclosing_scope: &HashSet<String>,
+        captured: &mut Vec<String>,
+        captured_set: &mut HashSet<String>,
+    ) {
+        match stmt {
+            HirStmt::Let { name, init, .. } => {
+                if let Some(i) = init {
+                    scan_expr(
+                        i,
+                        param_set,
+                        local_set,
+                        enclosing_scope,
+                        captured,
+                        captured_set,
+                    );
+                }
+                local_set.insert(name.clone());
+            }
+            HirStmt::LetTuple { names, init, .. } => {
+                if let Some(i) = init {
+                    scan_expr(
+                        i,
+                        param_set,
+                        local_set,
+                        enclosing_scope,
+                        captured,
+                        captured_set,
+                    );
+                }
+                for n in names {
+                    local_set.insert(n.clone());
+                }
+            }
+            HirStmt::Assign { target, value, .. } => {
+                scan_expr(
+                    target,
+                    param_set,
+                    local_set,
+                    enclosing_scope,
+                    captured,
+                    captured_set,
+                );
+                scan_expr(
+                    value,
+                    param_set,
+                    local_set,
+                    enclosing_scope,
+                    captured,
+                    captured_set,
+                );
+            }
+            HirStmt::Expr(e) => {
+                scan_expr(
+                    e,
+                    param_set,
+                    local_set,
+                    enclosing_scope,
+                    captured,
+                    captured_set,
+                );
+            }
+            HirStmt::Return(ret_opt) => {
+                if let Some(e) = ret_opt {
+                    scan_expr(
+                        e,
+                        param_set,
+                        local_set,
+                        enclosing_scope,
+                        captured,
+                        captured_set,
+                    );
+                }
+            }
+            HirStmt::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                scan_expr(
+                    cond,
+                    param_set,
+                    local_set,
+                    enclosing_scope,
+                    captured,
+                    captured_set,
+                );
+                scan_stmt(
+                    then_branch,
+                    param_set,
+                    local_set,
+                    enclosing_scope,
+                    captured,
+                    captured_set,
+                );
+                if let Some(eb) = else_branch {
+                    scan_stmt(
+                        eb,
+                        param_set,
+                        local_set,
+                        enclosing_scope,
+                        captured,
+                        captured_set,
+                    );
+                }
+            }
+            HirStmt::While { cond, body } => {
+                scan_expr(
+                    cond,
+                    param_set,
+                    local_set,
+                    enclosing_scope,
+                    captured,
+                    captured_set,
+                );
+                scan_stmt(
+                    body,
+                    param_set,
+                    local_set,
+                    enclosing_scope,
+                    captured,
+                    captured_set,
+                );
+            }
+            HirStmt::ForIn { var, iter, body } => {
+                scan_expr(
+                    iter,
+                    param_set,
+                    local_set,
+                    enclosing_scope,
+                    captured,
+                    captured_set,
+                );
+                local_set.insert(var.clone());
+                scan_stmt(
+                    body,
+                    param_set,
+                    local_set,
+                    enclosing_scope,
+                    captured,
+                    captured_set,
+                );
+            }
+            HirStmt::Block(stmts) => {
+                for s in stmts {
+                    scan_stmt(
+                        s,
+                        param_set,
+                        local_set,
+                        enclosing_scope,
+                        captured,
+                        captured_set,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for s in body {
+        scan_stmt(
+            s,
+            &param_set,
+            &mut local_set,
+            enclosing_scope,
+            &mut captured,
+            &mut captured_set,
+        );
+    }
+    captured
+}
+
+impl<'a> FunctionLoweringContext<'a> {
     /// Report `name` if it resolves only to an enclosing function's local.
     fn check_capture(&mut self, name: &str) -> bool {
+        if self.captured_vars.contains_key(name) {
+            return false;
+        }
         if !self.local_vars.contains_key(name) && self.enclosing_locals.contains(name) {
             self.unsupported(format!(
-                "capture of enclosing variable `{}` (closures are not supported by the native backend)",
+                "unresolved capture of enclosing variable `{}`",
                 name
             ));
             return true;
@@ -605,6 +1082,8 @@ impl<'a> FunctionLoweringContext<'a> {
             self.module,
             self.target,
             &sigs,
+            &self.variant_tags,
+            &self.module_aliases,
             &self.diagnostics,
             enclosing,
         );
@@ -847,16 +1326,69 @@ impl<'a> FunctionLoweringContext<'a> {
                 self.current_block_id = p2_id;
                 self.lower_pattern_check(target_reg, p2, match_lbl, fail_lbl);
             }
-            HirPattern::EnumVariant(name, _) => {
-                // Native values carry no enum tag, so a correct test is
-                // impossible; this used to always match and bind nothing.
-                self.unsupported(format!(
-                    "enum variant pattern `{}` (native enum layout is not implemented)",
-                    name
-                ));
+            HirPattern::EnumVariant(name, sub_pats) => {
+                let tag = if let Some(&(t, _)) = self.variant_tags.get(name) {
+                    t
+                } else {
+                    match name.as_str() {
+                        "None" => 0,
+                        "Some" => 1,
+                        "Ok" => 0,
+                        "Err" => 1,
+                        _ => {
+                            self.unsupported(format!("unknown enum variant pattern `{}`", name));
+                            self.emit(MachineInstruction::Branch {
+                                target: fail_lbl.to_string(),
+                            });
+                            return;
+                        }
+                    }
+                };
+
+                let loaded_tag_reg = self.func.alloc_vreg();
+                self.emit(MachineInstruction::Load {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(loaded_tag_reg)),
+                    src: MachineOperand::Memory {
+                        base: MachineRegister::Virtual(*target_reg),
+                        offset: 0,
+                        index: None,
+                    },
+                    size: 8,
+                });
+                self.emit(MachineInstruction::Compare {
+                    lhs: MachineOperand::Register(MachineRegister::Virtual(loaded_tag_reg)),
+                    rhs: MachineOperand::Immediate(tag),
+                });
+
+                let tag_match_lbl = if sub_pats.is_empty() {
+                    match_lbl.to_string()
+                } else {
+                    self.fresh_label("enum_tag_match")
+                };
+
+                self.emit(MachineInstruction::BranchCc {
+                    cc: ConditionCode::Equal,
+                    target: tag_match_lbl.clone(),
+                });
                 self.emit(MachineInstruction::Branch {
                     target: fail_lbl.to_string(),
                 });
+
+                if !sub_pats.is_empty() {
+                    let block_id = self.func.create_block(&tag_match_lbl);
+                    self.current_block_id = block_id;
+                    let payload_reg = self.func.alloc_vreg();
+                    self.emit(MachineInstruction::Load {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(payload_reg)),
+                        src: MachineOperand::Memory {
+                            base: MachineRegister::Virtual(*target_reg),
+                            offset: 8,
+                            index: None,
+                        },
+                        size: 8,
+                    });
+                    self.lower_pattern_check(&payload_reg, &sub_pats[0], match_lbl, fail_lbl);
+                }
             }
         }
     }
@@ -876,8 +1408,85 @@ impl<'a> FunctionLoweringContext<'a> {
                 self.bind_pattern_variables(p1, val_reg);
                 self.bind_pattern_variables(p2, val_reg);
             }
+            HirPattern::EnumVariant(_name, sub_pats) => {
+                if !sub_pats.is_empty() {
+                    let payload_reg = self.func.alloc_vreg();
+                    self.emit(MachineInstruction::Load {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(payload_reg)),
+                        src: MachineOperand::Memory {
+                            base: MachineRegister::Virtual(val_reg),
+                            offset: 8,
+                            index: None,
+                        },
+                        size: 8,
+                    });
+                    self.bind_pattern_variables(&sub_pats[0], payload_reg);
+                }
+            }
             _ => {}
         }
+    }
+
+    pub fn emit_construct_enum(
+        &mut self,
+        tag: i64,
+        payload_reg: Option<VirtualRegister>,
+    ) -> VirtualRegister {
+        let size_reg = self.func.alloc_vreg();
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(size_reg)),
+            src: MachineOperand::Immediate(16),
+        });
+        self.emit_call_with_args("aot_alloc", &[size_reg]);
+        let ptr_reg = self.func.alloc_vreg();
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(ptr_reg)),
+            src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+        });
+
+        let tag_reg = self.func.alloc_vreg();
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(tag_reg)),
+            src: MachineOperand::Immediate(tag),
+        });
+        self.emit(MachineInstruction::Store {
+            dst: MachineOperand::Memory {
+                base: MachineRegister::Virtual(ptr_reg),
+                offset: 0,
+                index: None,
+            },
+            src: MachineOperand::Register(MachineRegister::Virtual(tag_reg)),
+            size: 8,
+        });
+
+        if let Some(pay_reg) = payload_reg {
+            self.emit(MachineInstruction::Store {
+                dst: MachineOperand::Memory {
+                    base: MachineRegister::Virtual(ptr_reg),
+                    offset: 8,
+                    index: None,
+                },
+                src: MachineOperand::Register(MachineRegister::Virtual(pay_reg)),
+                size: 8,
+            });
+        } else {
+            let zero_reg = self.func.alloc_vreg();
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(zero_reg)),
+                src: MachineOperand::Immediate(0),
+            });
+            self.emit(MachineInstruction::Store {
+                dst: MachineOperand::Memory {
+                    base: MachineRegister::Virtual(ptr_reg),
+                    offset: 8,
+                    index: None,
+                },
+                src: MachineOperand::Register(MachineRegister::Virtual(zero_reg)),
+                size: 8,
+            });
+        }
+
+        ptr_reg
     }
 
     pub fn fresh_label(&mut self, prefix: &str) -> String {
@@ -1306,6 +1915,18 @@ impl<'a> FunctionLoweringContext<'a> {
         callee_vreg: VirtualRegister,
         args: &[(VirtualRegister, RegisterClass)],
     ) {
+        // The callee value is a closure fat pointer. Load the code pointer from [callee_vreg + 0].
+        let code_ptr_reg = self.func.alloc_vreg();
+        self.emit(MachineInstruction::Load {
+            dst: MachineOperand::Register(MachineRegister::Virtual(code_ptr_reg)),
+            src: MachineOperand::Memory {
+                base: MachineRegister::Virtual(callee_vreg),
+                offset: 0,
+                index: None,
+            },
+            size: 8,
+        });
+
         let (moves, total) = resolve_call_arguments(
             self.call_conv.as_ref(),
             args,
@@ -1324,8 +1945,14 @@ impl<'a> FunctionLoweringContext<'a> {
             self.emit(inst);
         }
 
+        // Pass callee_vreg (the closure pointer) in R10 (static chain pointer)
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(10))),
+            src: MachineOperand::Register(MachineRegister::Virtual(callee_vreg)),
+        });
+
         self.emit(MachineInstruction::Call {
-            target: MachineOperand::Register(MachineRegister::Virtual(callee_vreg)),
+            target: MachineOperand::Register(MachineRegister::Virtual(code_ptr_reg)),
             num_args: args.len(),
         });
 
@@ -2032,6 +2659,22 @@ impl<'a> FunctionLoweringContext<'a> {
                             dst: MachineOperand::StackSlot(slot),
                             src: MachineOperand::Register(MachineRegister::Virtual(val_vreg)),
                         });
+                    } else if let Some(&env_offset) = self.captured_vars.get(name) {
+                        let env_ptr_reg = self.func.alloc_vreg();
+                        let env_slot = self.closure_env_slot.expect("closure_env_slot must be set");
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(env_ptr_reg)),
+                            src: MachineOperand::StackSlot(env_slot),
+                        });
+                        self.emit(MachineInstruction::Store {
+                            dst: MachineOperand::Memory {
+                                base: MachineRegister::Virtual(env_ptr_reg),
+                                offset: env_offset,
+                                index: None,
+                            },
+                            src: MachineOperand::Register(MachineRegister::Virtual(val_vreg)),
+                            size: 8,
+                        });
                     } else {
                         self.check_capture(name);
                         let slot = self.alloc_stack_slot(8);
@@ -2569,7 +3212,7 @@ impl<'a> FunctionLoweringContext<'a> {
             | HirStmt::ImportDefault { path, .. }
             | HirStmt::ImportNames { path, .. } => {
                 self.unsupported(format!(
-                    "import of \"{}\" (module imports are not supported by the native backend)",
+                    "import of \"{}\" (module file could not be resolved)",
                     path
                 ));
             }
@@ -2713,18 +3356,73 @@ impl<'a> FunctionLoweringContext<'a> {
                         dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                         src: MachineOperand::StackSlot(slot),
                     });
+                } else if let Some(&env_off) = self.captured_vars.get(name) {
+                    let env_ptr_reg = self.func.alloc_vreg();
+                    let env_slot = self.closure_env_slot.expect("closure_env_slot must be set");
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(env_ptr_reg)),
+                        src: MachineOperand::StackSlot(env_slot),
+                    });
+                    self.emit(MachineInstruction::Load {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                        src: MachineOperand::Memory {
+                            base: MachineRegister::Virtual(env_ptr_reg),
+                            offset: env_off,
+                            index: None,
+                        },
+                        size: 8,
+                    });
+                } else if let Some(&(tag, _)) = self.variant_tags.get(name) {
+                    return self.emit_construct_enum(tag, None);
                 } else if self.check_capture(name) {
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                         src: MachineOperand::Immediate(0),
                     });
                 } else if self.module.functions.iter().any(|f| f.name == *name) {
-                    // Function referenced as a value: materialize its address
-                    // (used by indirect calls).
+                    // Function referenced as a value: allocate 16-byte closure [fn_ptr, 0]
+                    let size_reg = self.func.alloc_vreg();
                     self.emit(MachineInstruction::Move {
-                        dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                        dst: MachineOperand::Register(MachineRegister::Virtual(size_reg)),
+                        src: MachineOperand::Immediate(16),
+                    });
+                    self.emit_call_with_args("aot_alloc", &[size_reg]);
+                    let closure_reg = self.func.alloc_vreg();
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(closure_reg)),
+                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
+                            0,
+                        ))),
+                    });
+                    let fn_ptr_reg = self.func.alloc_vreg();
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(fn_ptr_reg)),
                         src: MachineOperand::Symbol(name.clone()),
                     });
+                    self.emit(MachineInstruction::Store {
+                        dst: MachineOperand::Memory {
+                            base: MachineRegister::Virtual(closure_reg),
+                            offset: 0,
+                            index: None,
+                        },
+                        src: MachineOperand::Register(MachineRegister::Virtual(fn_ptr_reg)),
+                        size: 8,
+                    });
+                    let zero_reg = self.func.alloc_vreg();
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(zero_reg)),
+                        src: MachineOperand::Immediate(0),
+                    });
+                    self.emit(MachineInstruction::Store {
+                        dst: MachineOperand::Memory {
+                            base: MachineRegister::Virtual(closure_reg),
+                            offset: 8,
+                            index: None,
+                        },
+                        src: MachineOperand::Register(MachineRegister::Virtual(zero_reg)),
+                        size: 8,
+                    });
+                    return closure_reg;
                 } else {
                     // Silently reading 0 for undeclared variables hid real
                     // bugs; abort loudly instead.
@@ -2746,6 +3444,22 @@ impl<'a> FunctionLoweringContext<'a> {
                     });
                     self.local_vars
                         .insert(name.clone(), (slot, ty.or(existing_ty)));
+                } else if let Some(&env_off) = self.captured_vars.get(name) {
+                    let env_ptr_reg = self.func.alloc_vreg();
+                    let env_slot = self.closure_env_slot.expect("closure_env_slot must be set");
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(env_ptr_reg)),
+                        src: MachineOperand::StackSlot(env_slot),
+                    });
+                    self.emit(MachineInstruction::Store {
+                        dst: MachineOperand::Memory {
+                            base: MachineRegister::Virtual(env_ptr_reg),
+                            offset: env_off,
+                            index: None,
+                        },
+                        src: MachineOperand::Register(MachineRegister::Virtual(val_reg)),
+                        size: 8,
+                    });
                 } else {
                     self.check_capture(name);
                     let slot = self.alloc_stack_slot(8);
@@ -2993,6 +3707,12 @@ impl<'a> FunctionLoweringContext<'a> {
                 out_reg
             }
             HirExpr::MemberAccess(target, field_name) => {
+                if let HirExpr::LoadVar(name) = &**target {
+                    let qualified = format!("{}::{}", name, field_name);
+                    if let Some(&(tag, _)) = self.variant_tags.get(&qualified) {
+                        return self.emit_construct_enum(tag, None);
+                    }
+                }
                 let target_reg = self.lower_expression(target);
                 let str_idx = self.module.add_string(field_name);
                 let sym_name = format!("__str_{}", str_idx);
@@ -3060,6 +3780,42 @@ impl<'a> FunctionLoweringContext<'a> {
             HirExpr::MethodCall(target, method_name, args) => {
                 let out_reg = self.func.alloc_vreg();
                 if let HirExpr::LoadVar(name) = &**target {
+                    if self.module_aliases.contains(name) {
+                        let mut arg_regs = Vec::new();
+                        for arg in args {
+                            arg_regs.push(self.lower_expression(arg));
+                        }
+                        self.emit_call_with_args(method_name, &arg_regs);
+                        let ret_ty = self
+                            .fn_signatures
+                            .get(method_name)
+                            .and_then(|(_, r)| r.clone());
+                        let is_ret_fp = is_float_type(ret_ty.as_ref());
+                        let ret_phys = if is_ret_fp {
+                            PhysicalRegister::xmm(0)
+                        } else {
+                            PhysicalRegister::gpr(0)
+                        };
+                        let res_reg = if is_ret_fp {
+                            self.func.alloc_fp_vreg()
+                        } else {
+                            self.func.alloc_vreg()
+                        };
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(res_reg)),
+                            src: MachineOperand::Register(MachineRegister::Physical(ret_phys)),
+                        });
+                        return res_reg;
+                    }
+                    let qualified = format!("{}::{}", name, method_name);
+                    if let Some(&(tag, _)) = self.variant_tags.get(&qualified) {
+                        let payload_reg = if !args.is_empty() {
+                            Some(self.lower_expression(&args[0]))
+                        } else {
+                            None
+                        };
+                        return self.emit_construct_enum(tag, payload_reg);
+                    }
                     if name == "input" && (method_name == "mock" || method_name == "play") {
                         let handle = if !args.is_empty() {
                             self.lower_to_handle(&args[0])
@@ -3274,12 +4030,35 @@ impl<'a> FunctionLoweringContext<'a> {
                 self.label_counter += 1;
                 let mut lambda_func = MachineFunction::new(&lambda_name);
                 lambda_func.is_exported = true;
+                let enclosing = self.locals_for_nested();
+                let captured = collect_lambda_captures(body, params, &enclosing);
+
                 {
-                    let enclosing = self.locals_for_nested();
                     let mut lambda_ctx =
                         FunctionLoweringContext::new(&mut lambda_func, self.module, self.target);
                     lambda_ctx.diagnostics = self.diagnostics.clone();
                     lambda_ctx.enclosing_locals = enclosing;
+                    lambda_ctx.variant_tags = self.variant_tags.clone();
+                    lambda_ctx.fn_signatures = self.fn_signatures.clone();
+                    lambda_ctx.module_aliases = self.module_aliases.clone();
+
+                    if !captured.is_empty() {
+                        let env_slot = lambda_ctx.alloc_stack_slot(8);
+                        let env_off = -(env_slot + 8);
+                        lambda_ctx.closure_env_slot = Some(env_off);
+                        // Save incoming R10 (closure pointer)
+                        lambda_ctx.emit(MachineInstruction::Move {
+                            dst: MachineOperand::StackSlot(env_off),
+                            src: MachineOperand::Register(MachineRegister::Physical(
+                                PhysicalRegister(10),
+                            )),
+                        });
+                        for (i, name) in captured.iter().enumerate() {
+                            let off = (8 + 8 * i) as i32;
+                            lambda_ctx.captured_vars.insert(name.clone(), off);
+                        }
+                    }
+
                     // Classify params through the calling convention so float
                     // params arrive in XMM registers and stack args use the
                     // convention's RBP-relative offsets (matches the caller,
@@ -3338,12 +4117,101 @@ impl<'a> FunctionLoweringContext<'a> {
                 }
                 self.module.add_function(lambda_func);
 
-                let out_reg = self.func.alloc_vreg();
+                // Allocate closure on the heap: size is at least 16, or 8 * (1 + captured.len())
+                let closure_size = ((1 + captured.len()) * 8).max(16);
+                let size_reg = self.func.alloc_vreg();
                 self.emit(MachineInstruction::Move {
-                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    dst: MachineOperand::Register(MachineRegister::Virtual(size_reg)),
+                    src: MachineOperand::Immediate(closure_size as i64),
+                });
+                self.emit_call_with_args("aot_alloc", &[size_reg]);
+                let closure_reg = self.func.alloc_vreg();
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(closure_reg)),
+                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                });
+
+                // Store fn_ptr at offset 0
+                let fn_ptr_reg = self.func.alloc_vreg();
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(fn_ptr_reg)),
                     src: MachineOperand::Symbol(lambda_name),
                 });
-                out_reg
+                self.emit(MachineInstruction::Store {
+                    dst: MachineOperand::Memory {
+                        base: MachineRegister::Virtual(closure_reg),
+                        offset: 0,
+                        index: None,
+                    },
+                    src: MachineOperand::Register(MachineRegister::Virtual(fn_ptr_reg)),
+                    size: 8,
+                });
+
+                // Store captured variables
+                for (i, name) in captured.iter().enumerate() {
+                    let val_reg = if let Some(&(slot, _)) = self.local_vars.get(name) {
+                        let r = self.func.alloc_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(r)),
+                            src: MachineOperand::StackSlot(slot),
+                        });
+                        r
+                    } else if let Some(&env_off) = self.captured_vars.get(name) {
+                        let r = self.func.alloc_vreg();
+                        let env_ptr_reg = self.func.alloc_vreg();
+                        let env_slot = self.closure_env_slot.expect("closure_env_slot must be set");
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(env_ptr_reg)),
+                            src: MachineOperand::StackSlot(env_slot),
+                        });
+                        self.emit(MachineInstruction::Load {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(r)),
+                            src: MachineOperand::Memory {
+                                base: MachineRegister::Virtual(env_ptr_reg),
+                                offset: env_off,
+                                index: None,
+                            },
+                            size: 8,
+                        });
+                        r
+                    } else {
+                        let r = self.func.alloc_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(r)),
+                            src: MachineOperand::Immediate(0),
+                        });
+                        r
+                    };
+
+                    self.emit(MachineInstruction::Store {
+                        dst: MachineOperand::Memory {
+                            base: MachineRegister::Virtual(closure_reg),
+                            offset: (8 + 8 * i) as i32,
+                            index: None,
+                        },
+                        src: MachineOperand::Register(MachineRegister::Virtual(val_reg)),
+                        size: 8,
+                    });
+                }
+
+                if captured.is_empty() {
+                    let zero_reg = self.func.alloc_vreg();
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(zero_reg)),
+                        src: MachineOperand::Immediate(0),
+                    });
+                    self.emit(MachineInstruction::Store {
+                        dst: MachineOperand::Memory {
+                            base: MachineRegister::Virtual(closure_reg),
+                            offset: 8,
+                            index: None,
+                        },
+                        src: MachineOperand::Register(MachineRegister::Virtual(zero_reg)),
+                        size: 8,
+                    });
+                }
+
+                closure_reg
             }
             HirExpr::Conditional(cond, then_b, else_b) => {
                 let cond_reg = self.lower_expression(cond);
@@ -3411,6 +4279,49 @@ impl<'a> FunctionLoweringContext<'a> {
                             src: MachineOperand::Register(MachineRegister::Virtual(new_reg)),
                         });
                         self.declare_local(name, slot, existing_ty);
+                        if *is_prefix { new_reg } else { val_reg }
+                    } else if let Some(&env_off) = self.captured_vars.get(name) {
+                        let env_ptr_reg = self.func.alloc_vreg();
+                        let env_slot = self.closure_env_slot.expect("closure_env_slot must be set");
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(env_ptr_reg)),
+                            src: MachineOperand::StackSlot(env_slot),
+                        });
+                        let val_reg = self.func.alloc_vreg();
+                        self.emit(MachineInstruction::Load {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(val_reg)),
+                            src: MachineOperand::Memory {
+                                base: MachineRegister::Virtual(env_ptr_reg),
+                                offset: env_off,
+                                index: None,
+                            },
+                            size: 8,
+                        });
+                        let new_reg = self.func.alloc_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(new_reg)),
+                            src: MachineOperand::Register(MachineRegister::Virtual(val_reg)),
+                        });
+                        if *is_inc {
+                            self.emit(MachineInstruction::Add {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(new_reg)),
+                                src: MachineOperand::Immediate(1),
+                            });
+                        } else {
+                            self.emit(MachineInstruction::Sub {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(new_reg)),
+                                src: MachineOperand::Immediate(1),
+                            });
+                        }
+                        self.emit(MachineInstruction::Store {
+                            dst: MachineOperand::Memory {
+                                base: MachineRegister::Virtual(env_ptr_reg),
+                                offset: env_off,
+                                index: None,
+                            },
+                            src: MachineOperand::Register(MachineRegister::Virtual(new_reg)),
+                            size: 8,
+                        });
                         if *is_prefix { new_reg } else { val_reg }
                     } else {
                         self.emit_abort_with_msg("panic: ++/-- of undeclared variable");
@@ -4045,7 +4956,29 @@ impl<'a> FunctionLoweringContext<'a> {
             HirExpr::Call(callee, args, _) => {
                 let out_reg = self.func.alloc_vreg();
 
+                if let HirExpr::MemberAccess(target, method_name) = &**callee {
+                    if let HirExpr::LoadVar(name) = &**target {
+                        let qualified = format!("{}::{}", name, method_name);
+                        if let Some(&(tag, _)) = self.variant_tags.get(&qualified) {
+                            let payload_reg = if !args.is_empty() {
+                                Some(self.lower_expression(&args[0]))
+                            } else {
+                                None
+                            };
+                            return self.emit_construct_enum(tag, payload_reg);
+                        }
+                    }
+                }
+
                 if let HirExpr::LoadVar(fn_name) = &**callee {
+                    if let Some(&(tag, _)) = self.variant_tags.get(fn_name) {
+                        let payload_reg = if !args.is_empty() {
+                            Some(self.lower_expression(&args[0]))
+                        } else {
+                            None
+                        };
+                        return self.emit_construct_enum(tag, payload_reg);
+                    }
                     if (fn_name == "sizeof" || fn_name == "sizeOf") && !args.is_empty() {
                         let handle = self.lower_to_handle(&args[0]);
                         self.emit_call_with_args("aot_sizeof", &[handle]);
@@ -5012,7 +5945,15 @@ pub fn lower_hir_function(
         hir_func.name.clone(),
         (param_tys, hir_func.ret_type.clone()),
     );
-    lower_hir_function_with_signatures(hir_func, module, target, &sigs, &diagnostics);
+    let variant_tags = default_variant_tags();
+    lower_hir_function_with_signatures(
+        hir_func,
+        module,
+        target,
+        &sigs,
+        &variant_tags,
+        &diagnostics,
+    );
     into_result(diagnostics)
 }
 
@@ -5030,6 +5971,7 @@ pub fn lower_hir_function_with_signatures(
     module: &mut NativeModule,
     target: &TargetDescriptor,
     fn_signatures: &HashMap<String, (Vec<HirType>, Option<HirType>)>,
+    variant_tags: &HashMap<String, (i64, bool)>,
     diagnostics: &Diagnostics,
 ) {
     lower_hir_function_inner(
@@ -5037,6 +5979,29 @@ pub fn lower_hir_function_with_signatures(
         module,
         target,
         fn_signatures,
+        variant_tags,
+        &HashSet::new(),
+        diagnostics,
+        HashSet::new(),
+    );
+}
+
+pub fn lower_hir_function_with_all(
+    hir_func: &HirFunction,
+    module: &mut NativeModule,
+    target: &TargetDescriptor,
+    fn_signatures: &HashMap<String, (Vec<HirType>, Option<HirType>)>,
+    variant_tags: &HashMap<String, (i64, bool)>,
+    module_aliases: &HashSet<String>,
+    diagnostics: &Diagnostics,
+) {
+    lower_hir_function_inner(
+        hir_func,
+        module,
+        target,
+        fn_signatures,
+        variant_tags,
+        module_aliases,
         diagnostics,
         HashSet::new(),
     );
@@ -5047,6 +6012,8 @@ fn lower_hir_function_inner(
     module: &mut NativeModule,
     target: &TargetDescriptor,
     fn_signatures: &HashMap<String, (Vec<HirType>, Option<HirType>)>,
+    variant_tags: &HashMap<String, (i64, bool)>,
+    module_aliases: &HashSet<String>,
     diagnostics: &Diagnostics,
     enclosing_locals: HashSet<String>,
 ) {
@@ -5063,7 +6030,9 @@ fn lower_hir_function_inner(
             target,
             hir_func.ret_type.clone(),
             fn_signatures.clone(),
+            variant_tags.clone(),
         );
+        ctx.module_aliases = module_aliases.clone();
         ctx.diagnostics = diagnostics.clone();
         ctx.enclosing_locals = enclosing_locals;
         if hir_func.is_async {
@@ -5234,12 +6203,166 @@ fn collect_stmt_signatures(
     }
 }
 
+fn find_module_file(path: &str, base_dir: Option<&Path>) -> Option<PathBuf> {
+    let p = Path::new(path);
+    let mut candidates = Vec::new();
+
+    if let Some(base) = base_dir {
+        candidates.push(base.join(p));
+        if p.extension().is_none() {
+            candidates.push(base.join(format!("{}.adesh", path)));
+            candidates.push(base.join(format!("{}.adl", path)));
+        }
+    }
+    candidates.push(p.to_path_buf());
+    if p.extension().is_none() {
+        candidates.push(PathBuf::from(format!("{}.adesh", path)));
+        candidates.push(PathBuf::from(format!("{}.adl", path)));
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join(p));
+        if p.extension().is_none() {
+            candidates.push(cwd.join(format!("{}.adesh", path)));
+            candidates.push(cwd.join(format!("{}.adl", path)));
+        }
+    }
+
+    for c in candidates {
+        if c.exists() && c.is_file() {
+            return Some(c);
+        }
+    }
+    None
+}
+
+fn resolve_hir_module_imports(
+    hir: &mut HirModule,
+    base_dir: Option<&Path>,
+    module_aliases: &mut HashSet<String>,
+    diagnostics: &Diagnostics,
+    visited: &mut HashSet<PathBuf>,
+) {
+    let mut retained_stmts = Vec::new();
+    let original_stmts = std::mem::take(&mut hir.statements);
+
+    for stmt in original_stmts {
+        match stmt {
+            HirStmt::Import {
+                ref path,
+                ref alias,
+            }
+            | HirStmt::ImportDefault {
+                ref path,
+                ref alias,
+            } => {
+                if let Some(file_path) = find_module_file(path, base_dir) {
+                    let can_path = file_path
+                        .canonicalize()
+                        .unwrap_or_else(|_| file_path.clone());
+                    module_aliases.insert(alias.clone());
+                    if let Some(stem) = Path::new(path).file_stem().and_then(|s| s.to_str()) {
+                        module_aliases.insert(stem.to_string());
+                    }
+                    if visited.insert(can_path) {
+                        if let Ok(src) = std::fs::read_to_string(&file_path) {
+                            if let Ok(tokens) = Lexer::new(&src).tokenize() {
+                                let mut parser = Parser::new(
+                                    tokens,
+                                    Some(file_path.to_string_lossy().to_string()),
+                                );
+                                if let Ok(ast) = parser.parse_program() {
+                                    if let Ok(mut imported_hir) = ast_to_hir(&ast, false) {
+                                        resolve_hir_module_imports(
+                                            &mut imported_hir,
+                                            file_path.parent(),
+                                            module_aliases,
+                                            diagnostics,
+                                            visited,
+                                        );
+                                        hir.functions.extend(imported_hir.functions);
+                                        hir.classes.extend(imported_hir.classes);
+                                        hir.enums.extend(imported_hir.enums);
+                                        retained_stmts.extend(imported_hir.statements);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    retained_stmts.push(stmt);
+                }
+            }
+            HirStmt::ImportNames { ref path, .. } => {
+                if let Some(file_path) = find_module_file(path, base_dir) {
+                    let can_path = file_path
+                        .canonicalize()
+                        .unwrap_or_else(|_| file_path.clone());
+                    if let Some(stem) = Path::new(path).file_stem().and_then(|s| s.to_str()) {
+                        module_aliases.insert(stem.to_string());
+                    }
+                    if visited.insert(can_path) {
+                        if let Ok(src) = std::fs::read_to_string(&file_path) {
+                            if let Ok(tokens) = Lexer::new(&src).tokenize() {
+                                let mut parser = Parser::new(
+                                    tokens,
+                                    Some(file_path.to_string_lossy().to_string()),
+                                );
+                                if let Ok(ast) = parser.parse_program() {
+                                    if let Ok(mut imported_hir) = ast_to_hir(&ast, false) {
+                                        resolve_hir_module_imports(
+                                            &mut imported_hir,
+                                            file_path.parent(),
+                                            module_aliases,
+                                            diagnostics,
+                                            visited,
+                                        );
+                                        hir.functions.extend(imported_hir.functions);
+                                        hir.classes.extend(imported_hir.classes);
+                                        hir.enums.extend(imported_hir.enums);
+                                        retained_stmts.extend(imported_hir.statements);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    retained_stmts.push(stmt);
+                }
+            }
+            other => retained_stmts.push(other),
+        }
+    }
+
+    hir.statements = retained_stmts;
+}
+
 /// Lower entire HirModule to NativeModule.
 pub fn lower_hir_module(
     hir: &HirModule,
     target: &TargetDescriptor,
 ) -> Result<NativeModule, NativeLoweringError> {
+    lower_hir_module_with_base(hir, target, None)
+}
+
+/// Lower entire HirModule to NativeModule with an optional base search directory for imports.
+pub fn lower_hir_module_with_base(
+    hir: &HirModule,
+    target: &TargetDescriptor,
+    base_dir: Option<&Path>,
+) -> Result<NativeModule, NativeLoweringError> {
     let diagnostics = Diagnostics::default();
+    let mut module_aliases = HashSet::new();
+    let mut visited = HashSet::new();
+
+    let mut resolved_hir = hir.clone();
+    resolve_hir_module_imports(
+        &mut resolved_hir,
+        base_dir,
+        &mut module_aliases,
+        &diagnostics,
+        &mut visited,
+    );
+    let hir = &resolved_hir;
     let mut module = NativeModule::new("main_module");
 
     // Materialize top-level classes (hir.classes) as ClassDef statements so
@@ -5305,13 +6428,28 @@ pub fn lower_hir_module(
     // participate in the same signature map.
     collect_stmt_signatures(&hir.statements, &mut fn_signatures);
 
+    let mut variant_tags = default_variant_tags();
+    for e in &hir.enums {
+        for (i, (var_name, var_type)) in e.variants.iter().enumerate() {
+            let has_payload = var_type.is_some();
+            let tag = i as i64;
+            let qualified = format!("{}::{}", e.name, var_name);
+            variant_tags.insert(qualified, (tag, has_payload));
+            variant_tags
+                .entry(var_name.clone())
+                .or_insert((tag, has_payload));
+        }
+    }
+
     // Lower user functions
     for hir_func in &hir.functions {
-        lower_hir_function_with_signatures(
+        lower_hir_function_with_all(
             hir_func,
             &mut module,
             target,
             &fn_signatures,
+            &variant_tags,
+            &module_aliases,
             &diagnostics,
         );
     }
@@ -5327,7 +6465,9 @@ pub fn lower_hir_module(
                 target,
                 None,
                 fn_signatures.clone(),
+                variant_tags.clone(),
             );
+            ctx.module_aliases = module_aliases.clone();
             ctx.diagnostics = diagnostics.clone();
             for stmt in &hir.statements {
                 ctx.lower_statement(stmt);

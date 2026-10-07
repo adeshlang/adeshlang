@@ -1,0 +1,130 @@
+// AdeshLang Showcase: Main Program
+// Exercises language features in labeled sections.
+
+import { add, multiply, factorial, hypotenuse_squared, Status } from "./math_lib.adesh";
+
+fn apply_op(f, x: int): int {
+    return f(x);
+}
+
+fn make_adder(base: int) {
+    return fn(x: int): int {
+        return base + x;
+    };
+}
+
+fn check_status(s): int {
+    return match s {
+        Ready => 1,
+        Running => 2,
+        Done => 3,
+        _ => 0,
+    };
+}
+
+fn check_opt(o: int?): int {
+    return match o {
+        Some(v) => v,
+        None => 0,
+        _ => 0,
+    };
+}
+
+fn check_res(r): int {
+    return match r {
+        Ok(v) => v,
+        Err(e) => e,
+        _ => 0,
+    };
+}
+
+fn test_defers(): int {
+    defer {
+        print("defer 1: cleanup");
+    }
+    defer {
+        print("defer 2: finalizer");
+    }
+    print("body: inside test_defers");
+    return 42;
+}
+
+fn main() {
+    print("=== Section 1: Module Imports ===");
+    let s = add(15, 27);
+    print("add(15, 27) =");
+    print(s);
+    let p = multiply(6, 7);
+    print("multiply(6, 7) =");
+    print(p);
+    let f5 = factorial(5);
+    print("factorial(5) =");
+    print(f5);
+    let h = hypotenuse_squared(3, 4);
+    print("hypotenuse_squared(3, 4) =");
+    print(h);
+
+    print("=== Section 2: Closures & Higher-Order Functions ===");
+    let add10 = make_adder(10);
+    let res_ho = apply_op(add10, 32);
+    print("apply_op(make_adder(10), 32) =");
+    print(res_ho);
+
+    let factor = 3;
+    let multiplier = fn(v: int): int {
+        return v * factor;
+    };
+    print("multiplier(7) =");
+    print(multiplier(7));
+
+    let counter = 0;
+    let inc = fn(): int {
+        counter++;
+        return counter;
+    };
+    print("inc() =");
+    print(inc());
+    print("inc() =");
+    print(inc());
+    print("inc() =");
+    print(inc());
+
+    print("=== Section 3: Pattern Matching & Enums ===");
+    let st1 = Status.Ready();
+    let st2 = Status.Done();
+    print("check_status(Ready) =");
+    print(check_status(st1));
+    print("check_status(Done) =");
+    print(check_status(st2));
+
+    let o1 = Some(100);
+    let o2 = None();
+    print("check_opt(Some(100)) =");
+    print(check_opt(o1));
+    print("check_opt(None) =");
+    print(check_opt(o2));
+
+    let r1 = Ok(200);
+    let r2 = Err(404);
+    print("check_res(Ok(200)) =");
+    print(check_res(r1));
+    print("check_res(Err(404)) =");
+    print(check_res(r2));
+
+    print("=== Section 4: Loops & Control Flow ===");
+    let sum = 0;
+    let i = 1;
+    while (i <= 5) {
+        sum = sum + i;
+        i++;
+    }
+    print("sum(1..5) =");
+    print(sum);
+
+    print("=== Section 5: Defers ===");
+    let d = test_defers();
+    print("test_defers() returned");
+    print(d);
+
+    print("=== Showcase Complete ===");
+}

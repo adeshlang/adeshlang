@@ -643,6 +643,13 @@ impl FuncPrinter {
                     X86_64AsmPrinter::format_operand(src)
                 ));
             }
+            MachineInstruction::AtomicExchange { dst, src, .. } => {
+                self.line(&format!(
+                    "lock xchg {}, {}",
+                    X86_64AsmPrinter::format_operand(dst),
+                    X86_64AsmPrinter::format_operand(src)
+                ));
+            }
             MachineInstruction::AtomicCompareExchange { dst, desired, .. } => {
                 self.line(&format!(
                     "lock cmpxchg {}, {}",
@@ -662,6 +669,13 @@ impl FuncPrinter {
                         name
                     ));
                 }
+            }
+            MachineInstruction::TlsAddress { dst, symbol } => {
+                self.line(&format!(
+                    "# tls address of {} into {}",
+                    symbol,
+                    X86_64AsmPrinter::format_operand(dst)
+                ));
             }
         }
     }

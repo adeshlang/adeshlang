@@ -651,7 +651,16 @@ pub enum MachineInstruction {
         desired: MachineOperand,
         size: u8,
     },
+    AtomicExchange {
+        dst: MachineOperand,
+        src: MachineOperand,
+        size: u8,
+    },
     Barrier,
+    TlsAddress {
+        dst: MachineOperand,
+        symbol: String,
+    },
 }
 
 impl MachineInstruction {
@@ -700,8 +709,19 @@ impl MachineInstruction {
             | MachineInstruction::VectorShiftLeft { dst, .. }
             | MachineInstruction::VectorShiftRight { dst, .. }
             | MachineInstruction::AtomicLoad { dst, .. }
-            | MachineInstruction::AtomicFetchAdd { dst, .. }
-            | MachineInstruction::AtomicCompareExchange { dst, .. } => {
+            | MachineInstruction::TlsAddress { dst, .. } => {
+                if let Some(r) = dst.register_def() {
+                    defs.push(r);
+                }
+            }
+            MachineInstruction::AtomicFetchAdd { src, .. }
+            | MachineInstruction::AtomicExchange { src, .. } => {
+                if let Some(r) = src.register_def() {
+                    defs.push(r);
+                }
+            }
+            MachineInstruction::AtomicCompareExchange { dst, .. } => {
+                defs.push(MachineRegister::Physical(PhysicalRegister::gpr(0)));
                 if let Some(r) = dst.register_def() {
                     defs.push(r);
                 }
@@ -796,7 +816,8 @@ impl MachineInstruction {
             | MachineInstruction::VectorBlend { dst, src, .. }
             | MachineInstruction::VectorShiftLeft { dst, src, .. }
             | MachineInstruction::VectorShiftRight { dst, src, .. }
-            | MachineInstruction::AtomicFetchAdd { dst, src, .. } => {
+            | MachineInstruction::AtomicFetchAdd { dst, src, .. }
+            | MachineInstruction::AtomicExchange { dst, src, .. } => {
                 add_op(dst);
                 add_op(src);
             }
@@ -1033,6 +1054,7 @@ pub struct NativeModule {
     pub name: String,
     pub functions: Vec<MachineFunction>,
     pub data_sections: Vec<(String, Vec<u8>)>,
+    pub tls_sections: Vec<(String, Vec<u8>)>,
     pub string_pool: Vec<String>,
     pub imports: Vec<String>,
     pub exports: Vec<String>,
@@ -1044,6 +1066,7 @@ impl NativeModule {
             name: name.into(),
             functions: Vec::new(),
             data_sections: Vec::new(),
+            tls_sections: Vec::new(),
             string_pool: Vec::new(),
             imports: Vec::new(),
             exports: Vec::new(),

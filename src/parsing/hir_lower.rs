@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use super::ast::{ClassDecl, Expr, ExprKind, Function, Pattern, Stmt, StmtKind, TokenKind, Value};
 use super::hir::{
-    ArrayKind, BinOp, HirClass, HirExpr, HirFunction, HirLiteral, HirMethod, HirModule, HirPattern,
-    HirStmt, HirType, UnaryOp,
+    ArrayKind, BinOp, HirClass, HirEnum, HirExpr, HirFunction, HirLiteral, HirMethod, HirModule,
+    HirPattern, HirStmt, HirType, UnaryOp,
 };
 
 /// Transform an AST program into an HIR module
@@ -24,6 +24,7 @@ pub fn ast_to_hir(stmts: &[Stmt], include_tests: bool) -> Result<HirModule, Stri
             LoweredStmt::Stmt(s) => module.statements.push(s),
             LoweredStmt::Function(f) => module.functions.push(f),
             LoweredStmt::Class(c) => module.classes.push(c),
+            LoweredStmt::Enum(e) => module.enums.push(e),
             LoweredStmt::Skip => {} // Skip test functions in production builds
         }
     }
@@ -35,6 +36,7 @@ enum LoweredStmt {
     Stmt(HirStmt),
     Function(HirFunction),
     Class(HirClass),
+    Enum(HirEnum),
     Skip, // For test functions that should be excluded
 }
 
@@ -219,6 +221,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                     LoweredStmt::Class(c) => {
                         hir_stmts.push(HirStmt::ClassDef(c));
                     }
+                    LoweredStmt::Enum(_) => {}
                     LoweredStmt::Skip => {} // Skip test functions
                 }
             }
@@ -235,6 +238,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                 LoweredStmt::Stmt(s) => s,
                 LoweredStmt::Function(_) => return Err("Function not allowed as if branch".into()),
                 LoweredStmt::Class(_) => return Err("Class not allowed as if branch".into()),
+                LoweredStmt::Enum(_) => return Err("Enum not allowed as if branch".into()),
                 LoweredStmt::Skip => return Err("Test function not allowed as if branch".into()),
             };
             let hir_else = else_branch
@@ -245,6 +249,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                     LoweredStmt::Stmt(s) => Ok(s),
                     LoweredStmt::Function(_) => Err("Function not allowed as else branch"),
                     LoweredStmt::Class(_) => Err("Class not allowed as else branch"),
+                    LoweredStmt::Enum(_) => Err("Enum not allowed as else branch"),
                     LoweredStmt::Skip => Err("Test function not allowed as else branch"),
                 })
                 .transpose()?;
@@ -262,6 +267,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                 LoweredStmt::Stmt(s) => s,
                 LoweredStmt::Function(_) => return Err("Function not allowed as while body".into()),
                 LoweredStmt::Class(_) => return Err("Class not allowed as while body".into()),
+                LoweredStmt::Enum(_) => return Err("Enum not allowed as while body".into()),
                 LoweredStmt::Skip => return Err("Test function not allowed as while body".into()),
             };
             Ok(LoweredStmt::Stmt(HirStmt::While {
@@ -276,6 +282,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                 LoweredStmt::Stmt(s) => s,
                 LoweredStmt::Function(_) => return Err("Function not allowed as for body".into()),
                 LoweredStmt::Class(_) => return Err("Class not allowed as for body".into()),
+                LoweredStmt::Enum(_) => return Err("Enum not allowed as for body".into()),
                 LoweredStmt::Skip => return Err("Test function not allowed as for body".into()),
             };
             Ok(LoweredStmt::Stmt(HirStmt::ForIn {
@@ -360,6 +367,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                 Err("Function not allowed directly inside unsafe block".into())
             }
             LoweredStmt::Class(_) => Err("Class not allowed directly inside unsafe block".into()),
+            LoweredStmt::Enum(_) => Err("Enum not allowed directly inside unsafe block".into()),
             LoweredStmt::Skip => {
                 Err("Test function not allowed directly inside unsafe block".into())
             }
@@ -370,6 +378,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
             LoweredStmt::Stmt(inner) => Ok(LoweredStmt::Stmt(HirStmt::Defer(Box::new(inner)))),
             LoweredStmt::Function(_) => Err("Function not allowed inside defer block".into()),
             LoweredStmt::Class(_) => Err("Class not allowed inside defer block".into()),
+            LoweredStmt::Enum(_) => Err("Enum not allowed inside defer block".into()),
             LoweredStmt::Skip => Err("Test function not allowed inside defer block".into()),
         },
 
@@ -390,11 +399,15 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
             Err("object destructuring (`let { .. } = ..`) is not supported in compiled code".into())
         }
 
+        StmtKind::Enum(enum_decl, _) => Ok(LoweredStmt::Enum(HirEnum {
+            name: enum_decl.name.clone(),
+            variants: enum_decl.variants.clone(),
+        })),
+
         // Type-level and linkage declarations carry no runtime statements:
         // types are consumed by the checker, externs resolve as imports.
         StmtKind::TypeAlias(..)
         | StmtKind::Struct(..)
-        | StmtKind::Enum(..)
         | StmtKind::Interface(..)
         | StmtKind::ExportDefault(_)
         | StmtKind::HeaderImport { .. }
@@ -460,6 +473,7 @@ fn lower_method(func: &Function, is_static: bool) -> Result<HirMethod, String> {
             LoweredStmt::Class(c) => {
                 body_stmts.push(HirStmt::ClassDef(c));
             }
+            LoweredStmt::Enum(_) => {}
             LoweredStmt::Skip => {} // Won't happen since include_tests=true
         }
     }
@@ -519,6 +533,7 @@ fn lower_function_with_export(func: &Function, is_exported: bool) -> Result<HirF
             LoweredStmt::Class(c) => {
                 body_stmts.push(HirStmt::ClassDef(c));
             }
+            LoweredStmt::Enum(_) => {}
             LoweredStmt::Skip => {} // Won't happen since include_tests=true
         }
     }
@@ -784,6 +799,7 @@ fn lower_expr(expr: &Expr) -> Result<HirExpr, String> {
                     LoweredStmt::Class(c) => {
                         hir_body.push(HirStmt::ClassDef(c));
                     }
+                    LoweredStmt::Enum(_) => {}
                     LoweredStmt::Skip => {} // Won't happen in lambda body
                 }
             }

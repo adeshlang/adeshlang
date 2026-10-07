@@ -1,0 +1,27 @@
+// Showcase Math Library Module
+// Exported functions, enums, and utility routines.
+
+export fn add(a: int, b: int): int {
+    return a + b;
+}
+
+export fn multiply(a: int, b: int): int {
+    return a * b;
+}
+
+export fn factorial(n: int): int {
+    if (n <= 1) {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+export fn hypotenuse_squared(a: int, b: int): int {
+    return (a * a) + (b * b);
+}
+
+export enum Status {
+    Ready,
+    Running,
+    Done
+}

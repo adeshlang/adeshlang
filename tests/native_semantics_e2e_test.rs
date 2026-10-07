@@ -105,24 +105,7 @@ fn test_native_rejects_imports_and_regions() {
 /// ran synchronously; lambdas silently lost captured variables. Each must now
 /// be a compile error until the backend implements it.
 #[test]
-fn test_native_rejects_enum_patterns_async_and_captures() {
-    let diags = lowering_diagnostics(
-        r#"
-        let v = 3;
-        let r = match v {
-            Some(x) => x,
-            _ => 0,
-        };
-        print(r);
-        "#,
-    );
-    assert!(
-        diags
-            .iter()
-            .any(|d| d.contains("enum variant pattern `Some`")),
-        "{diags:?}"
-    );
-
+fn test_native_rejects_async() {
     let diags = lowering_diagnostics(
         r#"
         async fn work(): int { return 1; }
@@ -134,8 +117,12 @@ fn test_native_rejects_enum_patterns_async_and_captures() {
     );
     assert!(diags.iter().any(|d| d.contains("`async fn`")), "{diags:?}");
     assert!(diags.iter().any(|d| d.contains("`await`")), "{diags:?}");
+}
 
-    let diags = lowering_diagnostics(
+#[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+fn test_native_capturing_lambda_runs() {
+    let (stdout, code) = compile_run_src(
         r#"
         fn main() {
             let base = 10;
@@ -143,13 +130,10 @@ fn test_native_rejects_enum_patterns_async_and_captures() {
             print(add(1));
         }
         "#,
+        "sem_lambda_capture",
     );
-    assert!(
-        diags
-            .iter()
-            .any(|d| d.contains("capture of enclosing variable `base`")),
-        "{diags:?}"
-    );
+    assert_eq!(code, 0);
+    assert_eq!(stdout, "11\n");
 }
 
 /// Lambdas that only use their own parameters need no environment and must

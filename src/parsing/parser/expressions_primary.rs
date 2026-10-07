@@ -509,7 +509,13 @@ impl Parser {
         }
         // Support JS-style concise arrow: `x => expr` (single ident) or `(a, b) => expr`
         if self.matchk(&[Identifier]) {
-            let ident = self.prev().lexeme.clone();
+            let mut ident = self.prev().lexeme.clone();
+            if self.check(TokenKind::Colon) && self.peek_next_kind(TokenKind::Colon) {
+                self.advance();
+                self.advance();
+                let variant = self.consume_ident("Expect variant name after '::'")?;
+                ident = format!("{}::{}", ident, variant);
+            }
             let span = self.previous_span();
             if self.matchk(&[TokenKind::Arrow]) {
                 // single-identifier arrow: build pub(super) fn with one param and expression body

@@ -215,6 +215,7 @@ impl DeadCodeElimination {
             | MachineInstruction::VectorShiftRight { dst, src, .. }
             | MachineInstruction::VectorStore { dst, src, .. }
             | MachineInstruction::AtomicStore { dst, src, .. }
+            | MachineInstruction::AtomicExchange { dst, src, .. }
             | MachineInstruction::AtomicFetchAdd { dst, src, .. } => {
                 check_operand(dst);
                 check_operand(src);
@@ -300,6 +301,11 @@ impl DeadCodeElimination {
             | MachineInstruction::Branch { .. }
             | MachineInstruction::BranchCc { .. }
             | MachineInstruction::Barrier => {}
+            MachineInstruction::TlsAddress { dst, .. } => {
+                if matches!(dst, MachineOperand::Memory { .. }) {
+                    check_operand(dst);
+                }
+            }
         }
     }
 }

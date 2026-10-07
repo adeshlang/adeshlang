@@ -164,13 +164,13 @@ pub fn classify_eightbytes(ty: &AbiType) -> Vec<EightbyteClass> {
             if total_size > 16 {
                 return vec![EightbyteClass::Memory];
             }
-            let num_eightbytes = (total_size + 7) / 8;
+            let num_eightbytes = total_size.div_ceil(8);
             let mut eightbytes = vec![EightbyteClass::NoClass; num_eightbytes];
             walk_struct_fields(fields, 0, &mut eightbytes);
 
             // Post-merger rules:
             // 1. If any eightbyte is Memory, entire aggregate is Memory.
-            if eightbytes.iter().any(|&c| c == EightbyteClass::Memory) {
+            if eightbytes.contains(&EightbyteClass::Memory) {
                 return vec![EightbyteClass::Memory; num_eightbytes];
             }
             // 2. If size exceeds two eightbytes and is not SSEUP, Memory.
@@ -210,7 +210,7 @@ pub fn classify_sysv_arguments(args: &[AbiType]) -> Vec<ArgumentLocation> {
             continue;
         }
 
-        let is_memory = classes.iter().any(|&c| c == EightbyteClass::Memory);
+        let is_memory = classes.contains(&EightbyteClass::Memory);
         if is_memory {
             let sz = arg.size_in_bytes().max(8);
             locations.push(ArgumentLocation::Stack(StackArgument {
@@ -339,7 +339,7 @@ pub fn classify_sysv_return(ret: &AbiType) -> ReturnLocation {
             let classes = classify_eightbytes(ret);
             if classes.is_empty() {
                 ReturnLocation::Void
-            } else if classes.len() > 2 || classes.iter().any(|&c| c == EightbyteClass::Memory) {
+            } else if classes.len() > 2 || classes.contains(&EightbyteClass::Memory) {
                 // Large struct or memory class -> hidden sret pointer in RDI
                 ReturnLocation::HiddenSret(PhysicalRegister(7)) // RDI
             } else if classes.len() == 1 {

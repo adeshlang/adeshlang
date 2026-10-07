@@ -249,6 +249,28 @@ impl X86_64Encoder {
         self.emit_mem_operand(dst, base, offset, index);
     }
 
+    /// MOV reg64, qword ptr gs:[disp32] (65 REX.W 8B /r 04 25 disp32)
+    /// Used for Windows TEB / TLS dereferencing.
+    pub fn mov_r64_gs_offset(&mut self, dst: u8, offset: u32) {
+        self.emit_u8(0x65); // GS segment override prefix
+        self.emit_rex(true, dst, 0); // REX.W (with REX.R if dst >= 8)
+        self.emit_u8(0x8B); // MOV r64, r/m64
+        self.emit_modrm(0b00, dst & 7, 4); // SIB follows
+        self.emit_u8(0x25); // SIB: scale=0, index=4 (none), base=5 (disp32)
+        self.emit_u32(offset);
+    }
+
+    /// MOV reg32, dword ptr [rip + disp32] (8B /r with mod=00, rm=5)
+    /// Loads 32-bit value zero-extended to 64 bits.
+    pub fn mov_r32_rip_rel(&mut self, dst: u8, disp32: i32) {
+        if (dst & 8) != 0 {
+            self.emit_u8(0x44); // REX.R
+        }
+        self.emit_u8(0x8B);
+        self.emit_modrm(0b00, dst & 7, 5); // mod=00, rm=5 is RIP-relative in 64-bit mode
+        self.emit_i32(disp32);
+    }
+
     /// MOV [base + index*scale + offset], reg64 (89 /r with REX.W)
     pub fn mov_mem_r64(&mut self, base: u8, offset: i32, index: Option<(u8, u8)>, src: u8) {
         let x = index.map(|(r, _)| r).unwrap_or(0);
@@ -1085,6 +1107,37 @@ impl X86_64Encoder {
 
     // ---------------------------------------------------------------- Atomic Instructions
 
+    /// LOCK XADD [mem], reg8 (F0 0F C0 /r)
+    pub fn lock_xadd_mem_r8(&mut self, base: u8, offset: i32, index: Option<(u8, u8)>, reg: u8) {
+        self.emit_u8(0xF0);
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full_byte(false, reg, x, base);
+        self.emit_u8(0x0F);
+        self.emit_u8(0xC0);
+        self.emit_mem_operand(reg, base, offset, index);
+    }
+
+    /// LOCK XADD [mem], reg16 (F0 66 0F C1 /r)
+    pub fn lock_xadd_mem_r16(&mut self, base: u8, offset: i32, index: Option<(u8, u8)>, reg: u8) {
+        self.emit_u8(0xF0);
+        self.emit_u8(0x66);
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full(false, reg, x, base);
+        self.emit_u8(0x0F);
+        self.emit_u8(0xC1);
+        self.emit_mem_operand(reg, base, offset, index);
+    }
+
+    /// LOCK XADD [mem], reg32 (F0 0F C1 /r)
+    pub fn lock_xadd_mem_r32(&mut self, base: u8, offset: i32, index: Option<(u8, u8)>, reg: u8) {
+        self.emit_u8(0xF0);
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full(false, reg, x, base);
+        self.emit_u8(0x0F);
+        self.emit_u8(0xC1);
+        self.emit_mem_operand(reg, base, offset, index);
+    }
+
     /// LOCK XADD [mem], reg64 (F0 48 0F C1 /r)
     pub fn lock_xadd_mem_r64(&mut self, base: u8, offset: i32, index: Option<(u8, u8)>, reg: u8) {
         self.emit_u8(0xF0);
@@ -1092,6 +1145,49 @@ impl X86_64Encoder {
         self.emit_rex_full(true, reg, x, base);
         self.emit_u8(0x0F);
         self.emit_u8(0xC1);
+        self.emit_mem_operand(reg, base, offset, index);
+    }
+
+    /// LOCK CMPXCHG [mem], reg8 (F0 0F B0 /r)
+    pub fn lock_cmpxchg_mem_r8(&mut self, base: u8, offset: i32, index: Option<(u8, u8)>, reg: u8) {
+        self.emit_u8(0xF0);
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full_byte(false, reg, x, base);
+        self.emit_u8(0x0F);
+        self.emit_u8(0xB0);
+        self.emit_mem_operand(reg, base, offset, index);
+    }
+
+    /// LOCK CMPXCHG [mem], reg16 (F0 66 0F B1 /r)
+    pub fn lock_cmpxchg_mem_r16(
+        &mut self,
+        base: u8,
+        offset: i32,
+        index: Option<(u8, u8)>,
+        reg: u8,
+    ) {
+        self.emit_u8(0xF0);
+        self.emit_u8(0x66);
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full(false, reg, x, base);
+        self.emit_u8(0x0F);
+        self.emit_u8(0xB1);
+        self.emit_mem_operand(reg, base, offset, index);
+    }
+
+    /// LOCK CMPXCHG [mem], reg32 (F0 0F B1 /r)
+    pub fn lock_cmpxchg_mem_r32(
+        &mut self,
+        base: u8,
+        offset: i32,
+        index: Option<(u8, u8)>,
+        reg: u8,
+    ) {
+        self.emit_u8(0xF0);
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full(false, reg, x, base);
+        self.emit_u8(0x0F);
+        self.emit_u8(0xB1);
         self.emit_mem_operand(reg, base, offset, index);
     }
 
@@ -1109,6 +1205,57 @@ impl X86_64Encoder {
         self.emit_u8(0x0F);
         self.emit_u8(0xB1);
         self.emit_mem_operand(reg, base, offset, index);
+    }
+
+    /// LOCK XCHG [mem], reg8 (F0 86 /r)
+    pub fn lock_xchg_mem_r8(&mut self, base: u8, offset: i32, index: Option<(u8, u8)>, reg: u8) {
+        self.emit_u8(0xF0);
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full_byte(false, reg, x, base);
+        self.emit_u8(0x86);
+        self.emit_mem_operand(reg, base, offset, index);
+    }
+
+    /// LOCK XCHG [mem], reg16 (F0 66 87 /r)
+    pub fn lock_xchg_mem_r16(&mut self, base: u8, offset: i32, index: Option<(u8, u8)>, reg: u8) {
+        self.emit_u8(0xF0);
+        self.emit_u8(0x66);
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full(false, reg, x, base);
+        self.emit_u8(0x87);
+        self.emit_mem_operand(reg, base, offset, index);
+    }
+
+    /// LOCK XCHG [mem], reg32 (F0 87 /r)
+    pub fn lock_xchg_mem_r32(&mut self, base: u8, offset: i32, index: Option<(u8, u8)>, reg: u8) {
+        self.emit_u8(0xF0);
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full(false, reg, x, base);
+        self.emit_u8(0x87);
+        self.emit_mem_operand(reg, base, offset, index);
+    }
+
+    /// LOCK XCHG [mem], reg64 (F0 48 87 /r)
+    pub fn lock_xchg_mem_r64(&mut self, base: u8, offset: i32, index: Option<(u8, u8)>, reg: u8) {
+        self.emit_u8(0xF0);
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full(true, reg, x, base);
+        self.emit_u8(0x87);
+        self.emit_mem_operand(reg, base, offset, index);
+    }
+
+    /// LFENCE (0F AE E8) - load memory ordering barrier.
+    pub fn lfence(&mut self) {
+        self.emit_u8(0x0F);
+        self.emit_u8(0xAE);
+        self.emit_u8(0xE8);
+    }
+
+    /// SFENCE (0F AE F8) - store memory ordering barrier.
+    pub fn sfence(&mut self) {
+        self.emit_u8(0x0F);
+        self.emit_u8(0xAE);
+        self.emit_u8(0xF8);
     }
 
     /// PAUSE (F3 90) - spin-loop hint

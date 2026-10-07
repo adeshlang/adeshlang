@@ -303,7 +303,14 @@ impl Parser {
                 }
                 self.consume(TokenKind::RightParen, "Expect ')' after pattern args")?;
                 Ok(Pattern::EnumVariant(name, patterns))
-            } else if name == "None" || name.contains("::") || name.contains('.') {
+            } else if name == "None"
+                || name.contains("::")
+                || name.contains('.')
+                || name
+                    .chars()
+                    .next()
+                    .map_or(false, |c| c.is_ascii_uppercase())
+            {
                 Ok(Pattern::EnumVariant(name, Vec::new()))
             } else {
                 Ok(Pattern::Variable(name))
