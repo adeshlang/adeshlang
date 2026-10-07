@@ -254,7 +254,10 @@ impl StackFrameLayout {
 /// Variadic argument passing rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VariadicRules {
-    /// Windows x64: Float variadics passed in both XMM and corresponding GPR slot.
+    /// Windows x64: variadic register arguments are spilled to the callee's
+    /// shadow space (`[RBP+16..40]`). NOTE: the Win64 rule that float
+    /// variadics are also duplicated into the corresponding GPR slot is NOT
+    /// implemented yet; float varargs would be misread by the callee.
     Win64ShadowSlots,
     /// System V AMD64: AL register contains count of SSE vector/float registers used (0..8).
     SysVAlVectorCount,

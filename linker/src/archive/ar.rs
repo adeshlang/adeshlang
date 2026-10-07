@@ -195,8 +195,26 @@ impl Archive {
 
     /// Encode the archive into standard GNU AR format bytes.
     pub fn encode_gnu(&self) -> Vec<u8> {
-        let mut out = Vec::new();
-        out.extend_from_slice(&AR_MAGIC);
+        let mut symbols: Vec<(String, usize)> = Vec::new();
+        for (m_idx, m) in self.members.iter().enumerate() {
+            let mut add_syms = |obj: &crate::object::ObjectFile| {
+                for sym in &obj.symbols {
+                    if sym.is_defined && !sym.is_local() && !sym.name.is_empty() {
+                        symbols.push((sym.name.clone(), m_idx));
+                    }
+                }
+            };
+            if let Some(ref obj) = m.obj {
+                add_syms(obj);
+            } else if let Ok(obj) = crate::object::reader::ObjectReader::read_from_memory(
+                &m.data,
+                Path::new(&m.name),
+                &crate::target::Target::host(),
+                0,
+            ) {
+                add_syms(&obj);
+            }
+        }
 
         // Build string table for filenames > 15 characters
         let mut string_table = Vec::new();
@@ -212,7 +230,89 @@ impl Archive {
             }
         }
 
-        // If we have long names, emit GNU string table member `//`
+        let mut current_file_offset = 8u64; // AR_MAGIC (8 bytes)
+
+        // If symbols are present, calculate `/` member size
+        let sym_index_payload_size = if !symbols.is_empty() {
+            let count = symbols.len();
+            let str_pool_len: usize = symbols.iter().map(|(s, _)| s.len() + 1).sum();
+            let body_len = 4 + count * 4 + str_pool_len;
+            Some((
+                body_len,
+                if (body_len & 1) != 0 {
+                    body_len + 1
+                } else {
+                    body_len
+                },
+            ))
+        } else {
+            None
+        };
+
+        if let Some((_, total_sym_sec_len)) = sym_index_payload_size {
+            current_file_offset += 60 + (total_sym_sec_len as u64);
+        }
+
+        // If string table is present, calculate `//` member size
+        if !string_table.is_empty() {
+            let st_len = string_table.len();
+            let padded_st_len = if (st_len & 1) != 0 {
+                st_len + 1
+            } else {
+                st_len
+            };
+            current_file_offset += 60 + (padded_st_len as u64);
+        }
+
+        // Compute member offsets
+        let mut member_offsets = Vec::with_capacity(self.members.len());
+        for m in &self.members {
+            member_offsets.push(current_file_offset);
+            let data_len = m.data.len();
+            let padded_len = if (data_len & 1) != 0 {
+                data_len + 1
+            } else {
+                data_len
+            };
+            current_file_offset += 60 + (padded_len as u64);
+        }
+
+        let mut out = Vec::new();
+        out.extend_from_slice(&AR_MAGIC);
+
+        // 1. Emit GNU `/` symbol index member if symbols present
+        if let Some((body_len, _)) = sym_index_payload_size {
+            let mut hdr = [b' '; 60];
+            hdr[0..1].copy_from_slice(b"/");
+            hdr[16..17].copy_from_slice(b"0");
+            hdr[28..29].copy_from_slice(b"0");
+            hdr[34..35].copy_from_slice(b"0");
+            hdr[40..46].copy_from_slice(b"100644");
+            let size_str = format!("{}", body_len);
+            hdr[48..48 + size_str.len().min(10)].copy_from_slice(size_str.as_bytes());
+            hdr[58..60].copy_from_slice(b"`\n");
+
+            out.extend_from_slice(&hdr);
+
+            // Body:
+            // u32 BE count
+            out.extend_from_slice(&(symbols.len() as u32).to_be_bytes());
+            // u32 BE offsets
+            for (_, m_idx) in &symbols {
+                let off = member_offsets[*m_idx] as u32;
+                out.extend_from_slice(&off.to_be_bytes());
+            }
+            // String pool: null-terminated strings
+            for (name, _) in &symbols {
+                out.extend_from_slice(name.as_bytes());
+                out.push(0);
+            }
+            if (body_len & 1) != 0 {
+                out.push(b'\n'); // 2-byte alignment padding
+            }
+        }
+
+        // 2. Emit GNU string table member `//` if long names present
         if !string_table.is_empty() {
             let mut hdr = [b' '; 60];
             hdr[0..2].copy_from_slice(b"//");
@@ -227,7 +327,7 @@ impl Archive {
             }
         }
 
-        // Emit each member
+        // 3. Emit each member
         for (idx, m) in self.members.iter().enumerate() {
             let mut hdr = [b' '; 60];
             if m.name.len() > 15 {
@@ -429,4 +529,105 @@ fn parse_archive_symbol_index(
         names += end_rel + 1;
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::symbol::{Symbol, SymbolBinding, SymbolType};
+
+    #[test]
+    fn test_archive_gnu_symbol_index_roundtrip() {
+        let mut ar = Archive::new();
+
+        // Create dummy member 1 with symbols "foo" and "bar"
+        let mut obj1 = crate::object::ObjectFile::new(
+            PathBuf::from("obj1.o"),
+            crate::target::Target::host(),
+            0,
+        );
+        obj1.add_symbol(Symbol {
+            name: "foo".to_string(),
+            binding: SymbolBinding::Global,
+            visibility: crate::symbol::SymbolVisibility::Default,
+            sym_type: SymbolType::Function,
+            section_index: Some(0),
+            value: 0,
+            size: 16,
+            is_defined: true,
+            is_imported: false,
+            is_exported: false,
+            file_index: Some(0),
+            alias_of: None,
+            comdat_group: None,
+            version: None,
+        });
+        obj1.add_symbol(Symbol {
+            name: "bar".to_string(),
+            binding: SymbolBinding::Global,
+            visibility: crate::symbol::SymbolVisibility::Default,
+            sym_type: SymbolType::Function,
+            section_index: Some(0),
+            value: 16,
+            size: 16,
+            is_defined: true,
+            is_imported: false,
+            is_exported: false,
+            file_index: Some(0),
+            alias_of: None,
+            comdat_group: None,
+            version: None,
+        });
+
+        ar.members.push(ArchiveMember {
+            name: "obj1.o".to_string(),
+            size: 64,
+            data: vec![0x90; 64],
+            obj: Some(obj1),
+        });
+
+        // Create dummy member 2 with symbol "baz"
+        let mut obj2 = crate::object::ObjectFile::new(
+            PathBuf::from("long_member_name_for_gnu_table.o"),
+            crate::target::Target::host(),
+            1,
+        );
+        obj2.add_symbol(Symbol {
+            name: "baz".to_string(),
+            binding: SymbolBinding::Global,
+            visibility: crate::symbol::SymbolVisibility::Default,
+            sym_type: SymbolType::Function,
+            section_index: Some(0),
+            value: 0,
+            size: 32,
+            is_defined: true,
+            is_imported: false,
+            is_exported: false,
+            file_index: Some(1),
+            alias_of: None,
+            comdat_group: None,
+            version: None,
+        });
+
+        ar.members.push(ArchiveMember {
+            name: "long_member_name_for_gnu_table.o".to_string(),
+            size: 32,
+            data: vec![0xc3; 32],
+            obj: Some(obj2),
+        });
+
+        let encoded = ar.encode_gnu();
+        assert!(encoded.starts_with(b"!<arch>\n"));
+
+        // Parse back the generated bytes
+        let parsed = Archive::parse(&encoded, Path::new("test.a")).expect("parse must succeed");
+        assert_eq!(parsed.members.len(), 2);
+        assert_eq!(parsed.members[0].name, "obj1.o");
+        assert_eq!(parsed.members[1].name, "long_member_name_for_gnu_table.o");
+
+        // Verify symbol index contains foo, bar -> member 0, baz -> member 1
+        assert_eq!(parsed.symbol_index.get("foo"), Some(&vec![0]));
+        assert_eq!(parsed.symbol_index.get("bar"), Some(&vec![0]));
+        assert_eq!(parsed.symbol_index.get("baz"), Some(&vec![1]));
+    }
 }

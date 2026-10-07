@@ -138,65 +138,24 @@ impl ElfWriter {
         let headers_size = ehdr_size + phnum * phdr_size;
         output.resize(headers_size, 0);
 
-        // 2. Synthesize Linux _start entry stub if needed for static executables
-        let mut text_sections: Vec<MergedSection> = merged_sections.to_vec();
-        let has_start_symbol = symbols.iter().any(|s| s.name == "_start" && s.is_defined);
-
-        if !is_shared && !has_start_symbol && entry_va == 0 {
-            // Find main virtual address or first text address
-            let main_va = symbols
+        // 2. Resolve ELF entry address if not explicitly set
+        let text_sections: &[MergedSection] = merged_sections;
+        if entry_va == 0 {
+            entry_va = symbols
                 .iter()
-                .find(|s| s.name == "main" && s.is_defined)
+                .find(|s| (s.name == "_start" || s.name == "main") && s.is_defined)
                 .map(|s| s.value)
-                .unwrap_or(target.image_base + 0x1000);
-
-            if let Some(text_sec) = text_sections.iter_mut().find(|s| s.is_executable()) {
-                let stub_offset = text_sec.data.len() as u64;
-                let stub_va = text_sec.virtual_address + stub_offset;
-
-                let stub_bytes = match target.arch {
-                    Arch::X86_64 => {
-                        let disp = (main_va as i64 - (stub_va as i64 + 16)) as i32;
-                        let mut code = vec![
-                            0x31, 0xED, // xor ebp, ebp
-                            0x5F, // pop rdi (argc)
-                            0x48, 0x89, 0xE6, // mov rsi, rsp (argv)
-                            0x48, 0x83, 0xE4, 0xF0, // and rsp, -16
-                            0xE8, 0x00, 0x00, 0x00, 0x00, // call main
-                            0x89, 0xC7, // mov edi, eax
-                            0xB8, 0x3C, 0x00, 0x00, 0x00, // mov eax, 60 (sys_exit)
-                            0x0F, 0x05, // syscall
-                        ];
-                        code[12..16].copy_from_slice(&disp.to_le_bytes());
-                        code
-                    }
-                    Arch::AArch64 => {
-                        let disp = ((main_va as i64 - (stub_va as i64 + 12)) >> 2) as i32;
-                        let bl_inst = 0x94000000u32 | ((disp as u32) & 0x03FFFFFF);
-                        let mut code = vec![
-                            0x1F, 0x20, 0x03, 0xD5, // nop
-                            0xE0, 0x87, 0x40, 0xF8, // ldr x0, [sp], #8 (argc)
-                            0xE1, 0x03, 0x00, 0x91, // mov x1, sp (argv)
-                            0x00, 0x00, 0x00, 0x00, // bl main
-                            0xA8, 0x0B, 0x80, 0xD2, // mov x8, #93 (sys_exit)
-                            0x01, 0x00, 0x00, 0xD4, // svc #0
-                        ];
-                        code[12..16].copy_from_slice(&bl_inst.to_le_bytes());
-                        code
-                    }
-                    _ => {
-                        // Fallback exit stub
-                        vec![0xC3]
-                    }
-                };
-
-                text_sec.data.extend_from_slice(&stub_bytes);
-                text_sec.size += stub_bytes.len() as u64;
-                entry_va = stub_va;
-            }
+                .unwrap_or_else(|| {
+                    merged_sections
+                        .iter()
+                        .find(|s| s.is_executable())
+                        .map(|s| s.virtual_address)
+                        .unwrap_or(target.image_base + 0x1000)
+                });
         }
 
         // 3. Lay out sections
+
         let mut rx_sections = Vec::new();
         let mut rw_sections = Vec::new();
 
@@ -604,7 +563,7 @@ impl ElfWriter {
         let mut shdr_names = Vec::new();
         shdr_names.push(0);
 
-        for sec in &text_sections {
+        for sec in text_sections {
             let name_off = shstrtab.len() as u32;
             shstrtab.extend_from_slice(sec.name.as_bytes());
             shstrtab.push(0);

@@ -109,14 +109,18 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: cargo test --tests
 
-      # The native x86-64 e2e tests that link AND execute a produced binary are
-      # gated with `#[cfg(all(target_os = "windows", target_arch = "x86_64"))]`
+      # The native x86-64 e2e tests that link AND execute a produced Windows PE
+      # are gated with `#[cfg(all(target_os = "windows", target_arch = "x86_64"))]`
       # at the test level, so the ubuntu-only `cargo test --tests` step above
       # compiles them out instead of attempting to run Windows PEs on Linux.
       # Portable structure/runtime suites (phase 7 target emission, phase 9/10,
       # and the non-execution tests inside phase 4-8 files) still run on
-      # ubuntu. Every e2e suite is also run individually on Windows to keep the
-      # native pipeline covered. The semantics suite executes linked binaries
+      # ubuntu. The Phase 3 Linux execution suite
+      # (tests/native_phase3_linux_e2e_test.rs) is deliberately NOT
+      # Windows-gated: on ubuntu it links and executes real static ELF
+      # binaries natively and asserts their exit codes. Every Windows PE e2e
+      # suite is also run individually on Windows below to keep the native
+      # pipeline covered. The semantics suite executes linked binaries
       # that import `aot_*` symbols, so the runtime staticlib must be built
       # first.
       - name: Test native x86-64 e2e suites (Windows)
@@ -126,6 +130,13 @@ jobs:
           cargo test --test native_x86_64_e2e_test
           cargo test --test native_parallel_move_e2e_test
           cargo test --test native_phase2_lowering_e2e_test
+          cargo test --test native_phase2_abi_atomic_test
+          cargo test --test native_phase2_abi_c_interop_test
+          cargo test --test native_phase2_abi_closure_test
+          cargo test --test native_phase2_abi_enum_test
+          cargo test --test native_phase2_abi_struct_by_value_test
+          cargo test --test native_phase2_abi_tls_test
+          cargo test --test native_phase2_conformance_test
           cargo test --test native_phase3_fp_e2e_test
           cargo test --test native_phase4_regalloc_e2e_test
           cargo test --test native_phase5_optimization_e2e_test

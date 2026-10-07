@@ -450,6 +450,7 @@ fn test_differential_opt_levels_equivalence_e2e() {
     let hir_module = HirModule {
         functions: vec![],
         classes: vec![],
+        enums: vec![],
         statements: stmts,
     };
 

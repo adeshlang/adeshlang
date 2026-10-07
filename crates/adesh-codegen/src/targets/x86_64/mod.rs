@@ -2403,6 +2403,18 @@ impl FunctionEncoding {
                 } else {
                     SCRATCH
                 };
+                if (mem_operand(dst).is_none() && stack_slot(dst).is_none())
+                    || !matches!(size, 1 | 2 | 4 | 8)
+                {
+                    return Err(CodegenError::new(
+                        "x86_64",
+                        "AtomicFetchAdd destination must be a memory operand or stack slot and size must be 1, 2, 4 or 8",
+                    )
+                    .with_arch("x86_64")
+                    .with_abi(abi)
+                    .with_function(func_name)
+                    .with_instruction("AtomicFetchAdd"));
+                }
                 match size {
                     1 => {
                         if let Some((b, off, idx)) = mem_operand(dst) {
@@ -2465,6 +2477,18 @@ impl FunctionEncoding {
                 } else {
                     SCRATCH
                 };
+                if (mem_operand(dst).is_none() && stack_slot(dst).is_none())
+                    || !matches!(size, 1 | 2 | 4 | 8)
+                {
+                    return Err(CodegenError::new(
+                        "x86_64",
+                        "AtomicCompareExchange destination must be a memory operand or stack slot and size must be 1, 2, 4 or 8",
+                    )
+                    .with_arch("x86_64")
+                    .with_abi(abi)
+                    .with_function(func_name)
+                    .with_instruction("AtomicCompareExchange"));
+                }
                 match size {
                     1 => {
                         if let Some((b, off, idx)) = mem_operand(dst) {
@@ -2511,6 +2535,18 @@ impl FunctionEncoding {
                 } else {
                     SCRATCH
                 };
+                if (mem_operand(dst).is_none() && stack_slot(dst).is_none())
+                    || !matches!(size, 1 | 2 | 4 | 8)
+                {
+                    return Err(CodegenError::new(
+                        "x86_64",
+                        "AtomicExchange destination must be a memory operand or stack slot and size must be 1, 2, 4 or 8",
+                    )
+                    .with_arch("x86_64")
+                    .with_abi(abi)
+                    .with_function(func_name)
+                    .with_instruction("AtomicExchange"));
+                }
                 match size {
                     1 => {
                         if let Some((b, off, idx)) = mem_operand(dst) {

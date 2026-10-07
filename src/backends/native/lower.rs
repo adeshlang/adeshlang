@@ -133,6 +133,11 @@ pub struct FunctionLoweringContext<'a> {
     pub captured_vars: HashMap<String, i32>,
     /// Stack slot containing closure env pointer (if in a closure).
     pub closure_env_slot: Option<i32>,
+    /// True while lowering a lambda body. Lambda values are always invoked
+    /// indirectly through the closure pointer, and indirect call sites read
+    /// the integer return register (RAX), so a float return placed in XMM0
+    /// would be silently unreadable.
+    pub is_lambda_body: bool,
     /// Module aliases for imported namespaces.
     pub module_aliases: HashSet<String>,
 }
@@ -440,6 +445,7 @@ impl<'a> FunctionLoweringContext<'a> {
             enclosing_locals: HashSet::new(),
             captured_vars: HashMap::new(),
             closure_env_slot: None,
+            is_lambda_body: false,
             module_aliases: HashSet::new(),
         }
     }
@@ -478,6 +484,7 @@ impl<'a> FunctionLoweringContext<'a> {
             enclosing_locals: HashSet::new(),
             captured_vars: HashMap::new(),
             closure_env_slot: None,
+            is_lambda_body: false,
             module_aliases: HashSet::new(),
         }
     }
@@ -1327,6 +1334,16 @@ impl<'a> FunctionLoweringContext<'a> {
                 self.lower_pattern_check(target_reg, p2, match_lbl, fail_lbl);
             }
             HirPattern::EnumVariant(name, sub_pats) => {
+                if sub_pats.len() > 1 {
+                    self.unsupported(format!(
+                        "enum variant pattern `{name}` has {} sub-patterns; only single-payload variants are supported in the native backend",
+                        sub_pats.len()
+                    ));
+                    self.emit(MachineInstruction::Branch {
+                        target: fail_lbl.to_string(),
+                    });
+                    return;
+                }
                 let tag = if let Some(&(t, _)) = self.variant_tags.get(name) {
                     t
                 } else {
@@ -1408,7 +1425,14 @@ impl<'a> FunctionLoweringContext<'a> {
                 self.bind_pattern_variables(p1, val_reg);
                 self.bind_pattern_variables(p2, val_reg);
             }
-            HirPattern::EnumVariant(_name, sub_pats) => {
+            HirPattern::EnumVariant(name, sub_pats) => {
+                if sub_pats.len() > 1 {
+                    self.unsupported(format!(
+                        "enum variant pattern `{name}` has {} sub-patterns; only single-payload variants are supported in the native backend",
+                        sub_pats.len()
+                    ));
+                    return;
+                }
                 if !sub_pats.is_empty() {
                     let payload_reg = self.func.alloc_vreg();
                     self.emit(MachineInstruction::Load {
@@ -2789,6 +2813,12 @@ impl<'a> FunctionLoweringContext<'a> {
                 } else if let Some(vreg) = return_value {
                     let is_fp = self.func.vreg_class(vreg) == RegisterClass::Float
                         || is_float_type(self.func_ret_type.as_ref());
+                    if is_fp && self.is_lambda_body {
+                        self.unsupported(
+                            "float-returning lambda: closure calls are indirect and read the \
+                             integer return register, so the float result would be lost",
+                        );
+                    }
                     let ret_phys = if is_fp {
                         PhysicalRegister::xmm(0)
                     } else {
@@ -3809,6 +3839,12 @@ impl<'a> FunctionLoweringContext<'a> {
                     }
                     let qualified = format!("{}::{}", name, method_name);
                     if let Some(&(tag, _)) = self.variant_tags.get(&qualified) {
+                        if args.len() > 1 {
+                            self.unsupported(format!(
+                                "enum variant `{qualified}` constructed with {} payload arguments; only single-payload variants are supported in the native backend",
+                                args.len()
+                            ));
+                        }
                         let payload_reg = if !args.is_empty() {
                             Some(self.lower_expression(&args[0]))
                         } else {
@@ -4041,6 +4077,7 @@ impl<'a> FunctionLoweringContext<'a> {
                     lambda_ctx.variant_tags = self.variant_tags.clone();
                     lambda_ctx.fn_signatures = self.fn_signatures.clone();
                     lambda_ctx.module_aliases = self.module_aliases.clone();
+                    lambda_ctx.is_lambda_body = true;
 
                     if !captured.is_empty() {
                         let env_slot = lambda_ctx.alloc_stack_slot(8);
@@ -4960,6 +4997,12 @@ impl<'a> FunctionLoweringContext<'a> {
                     if let HirExpr::LoadVar(name) = &**target {
                         let qualified = format!("{}::{}", name, method_name);
                         if let Some(&(tag, _)) = self.variant_tags.get(&qualified) {
+                            if args.len() > 1 {
+                                self.unsupported(format!(
+                                    "enum variant `{qualified}` constructed with {} payload arguments; only single-payload variants are supported in the native backend",
+                                    args.len()
+                                ));
+                            }
                             let payload_reg = if !args.is_empty() {
                                 Some(self.lower_expression(&args[0]))
                             } else {
@@ -4972,6 +5015,12 @@ impl<'a> FunctionLoweringContext<'a> {
 
                 if let HirExpr::LoadVar(fn_name) = &**callee {
                     if let Some(&(tag, _)) = self.variant_tags.get(fn_name) {
+                        if args.len() > 1 {
+                            self.unsupported(format!(
+                                "enum variant `{fn_name}` constructed with {} payload arguments; only single-payload variants are supported in the native backend",
+                                args.len()
+                            ));
+                        }
                         let payload_reg = if !args.is_empty() {
                             Some(self.lower_expression(&args[0]))
                         } else {
@@ -6264,27 +6313,47 @@ fn resolve_hir_module_imports(
                         module_aliases.insert(stem.to_string());
                     }
                     if visited.insert(can_path) {
-                        if let Ok(src) = std::fs::read_to_string(&file_path) {
-                            if let Ok(tokens) = Lexer::new(&src).tokenize() {
+                        let loaded = std::fs::read_to_string(&file_path)
+                            .map_err(|e| format!("read failed: {e}"))
+                            .and_then(|src| {
+                                Lexer::new(&src)
+                                    .tokenize()
+                                    .map_err(|e| format!("lex failed: {e:?}"))
+                            })
+                            .and_then(|tokens| {
                                 let mut parser = Parser::new(
                                     tokens,
                                     Some(file_path.to_string_lossy().to_string()),
                                 );
-                                if let Ok(ast) = parser.parse_program() {
-                                    if let Ok(mut imported_hir) = ast_to_hir(&ast, false) {
-                                        resolve_hir_module_imports(
-                                            &mut imported_hir,
-                                            file_path.parent(),
-                                            module_aliases,
-                                            diagnostics,
-                                            visited,
-                                        );
-                                        hir.functions.extend(imported_hir.functions);
-                                        hir.classes.extend(imported_hir.classes);
-                                        hir.enums.extend(imported_hir.enums);
-                                        retained_stmts.extend(imported_hir.statements);
-                                    }
-                                }
+                                parser
+                                    .parse_program()
+                                    .map_err(|e| format!("parse failed: {e:?}"))
+                            })
+                            .and_then(|ast| {
+                                ast_to_hir(&ast, false)
+                                    .map_err(|e| format!("HIR lowering failed: {e:?}"))
+                            });
+                        match loaded {
+                            Ok(mut imported_hir) => {
+                                resolve_hir_module_imports(
+                                    &mut imported_hir,
+                                    file_path.parent(),
+                                    module_aliases,
+                                    diagnostics,
+                                    visited,
+                                );
+                                hir.functions.extend(imported_hir.functions);
+                                hir.classes.extend(imported_hir.classes);
+                                hir.enums.extend(imported_hir.enums);
+                                retained_stmts.extend(imported_hir.statements);
+                            }
+                            Err(why) => {
+                                diagnostics.borrow_mut().push(format!(
+                                    "import of \"{}\" ({}): {}",
+                                    path,
+                                    file_path.display(),
+                                    why
+                                ));
                             }
                         }
                     }
@@ -6301,27 +6370,47 @@ fn resolve_hir_module_imports(
                         module_aliases.insert(stem.to_string());
                     }
                     if visited.insert(can_path) {
-                        if let Ok(src) = std::fs::read_to_string(&file_path) {
-                            if let Ok(tokens) = Lexer::new(&src).tokenize() {
+                        let loaded = std::fs::read_to_string(&file_path)
+                            .map_err(|e| format!("read failed: {e}"))
+                            .and_then(|src| {
+                                Lexer::new(&src)
+                                    .tokenize()
+                                    .map_err(|e| format!("lex failed: {e:?}"))
+                            })
+                            .and_then(|tokens| {
                                 let mut parser = Parser::new(
                                     tokens,
                                     Some(file_path.to_string_lossy().to_string()),
                                 );
-                                if let Ok(ast) = parser.parse_program() {
-                                    if let Ok(mut imported_hir) = ast_to_hir(&ast, false) {
-                                        resolve_hir_module_imports(
-                                            &mut imported_hir,
-                                            file_path.parent(),
-                                            module_aliases,
-                                            diagnostics,
-                                            visited,
-                                        );
-                                        hir.functions.extend(imported_hir.functions);
-                                        hir.classes.extend(imported_hir.classes);
-                                        hir.enums.extend(imported_hir.enums);
-                                        retained_stmts.extend(imported_hir.statements);
-                                    }
-                                }
+                                parser
+                                    .parse_program()
+                                    .map_err(|e| format!("parse failed: {e:?}"))
+                            })
+                            .and_then(|ast| {
+                                ast_to_hir(&ast, false)
+                                    .map_err(|e| format!("HIR lowering failed: {e:?}"))
+                            });
+                        match loaded {
+                            Ok(mut imported_hir) => {
+                                resolve_hir_module_imports(
+                                    &mut imported_hir,
+                                    file_path.parent(),
+                                    module_aliases,
+                                    diagnostics,
+                                    visited,
+                                );
+                                hir.functions.extend(imported_hir.functions);
+                                hir.classes.extend(imported_hir.classes);
+                                hir.enums.extend(imported_hir.enums);
+                                retained_stmts.extend(imported_hir.statements);
+                            }
+                            Err(why) => {
+                                diagnostics.borrow_mut().push(format!(
+                                    "import of \"{}\" ({}): {}",
+                                    path,
+                                    file_path.display(),
+                                    why
+                                ));
                             }
                         }
                     }

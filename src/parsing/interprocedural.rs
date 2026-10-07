@@ -782,6 +782,7 @@ mod tests {
         let module = HirModule {
             functions: vec![func],
             classes: vec![],
+            enums: vec![],
             statements: vec![],
         };
 

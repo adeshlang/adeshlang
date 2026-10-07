@@ -376,7 +376,7 @@ fn test_native_ffi_sret_execution_e2e() {
 
     let v_x = main_func.alloc_vreg();
     let v_buf = main_func.alloc_vreg();
-    let v_ret = main_func.alloc_vreg();
+    let _v_ret = main_func.alloc_vreg();
     let f0 = main_func.alloc_vreg();
     let f1 = main_func.alloc_vreg();
     let f2 = main_func.alloc_vreg();
@@ -565,7 +565,7 @@ fn test_native_variadic_execution_e2e() {
     let sum_reg = callee.alloc_vreg();
     let idx_reg = callee.alloc_vreg();
     let elem_reg = callee.alloc_vreg();
-    let addr_reg = callee.alloc_vreg();
+    let _addr_reg = callee.alloc_vreg();
 
     let c_block = callee.entry_block_mut();
     // 1. Spill RCX, RDX, R8, R9 into shadow space

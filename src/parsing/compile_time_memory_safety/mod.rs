@@ -258,6 +258,7 @@ mod tests {
         HirModule {
             functions,
             classes: Vec::new(),
+            enums: Vec::new(),
             statements,
         }
     }

@@ -132,6 +132,7 @@ fn test_e2e_nested_if_else_and_arithmetic() {
         functions: vec![compute_fn, main_fn],
         statements: Vec::new(),
         classes: Vec::new(),
+        enums: Vec::new(),
     };
 
     let code = lower_link_and_run(&hir, "test_nested_if");
@@ -233,6 +234,7 @@ fn test_e2e_while_loop_with_break_and_continue() {
         functions: vec![main_fn],
         statements: Vec::new(),
         classes: Vec::new(),
+        enums: Vec::new(),
     };
 
     let code = lower_link_and_run(&hir, "test_while_loop");
@@ -321,6 +323,7 @@ fn test_e2e_match_expression_lowering() {
         functions: vec![classify_fn, main_fn],
         statements: Vec::new(),
         classes: Vec::new(),
+        enums: Vec::new(),
     };
 
     let code = lower_link_and_run(&hir, "test_match_expr");
@@ -386,6 +389,7 @@ fn test_e2e_tuple_destructuring_and_operations() {
         functions: vec![main_fn],
         statements: Vec::new(),
         classes: Vec::new(),
+        enums: Vec::new(),
     };
 
     let code = lower_link_and_run(&hir, "test_tuple_destructuring");
@@ -445,6 +449,7 @@ fn test_e2e_memory_borrow_and_deref() {
         functions: vec![main_fn],
         statements: Vec::new(),
         classes: Vec::new(),
+        enums: Vec::new(),
     };
 
     let code = lower_link_and_run(&hir, "test_memory_borrow_deref");
@@ -507,6 +512,7 @@ fn test_e2e_defer_execution_order() {
         functions: vec![main_fn],
         statements: Vec::new(),
         classes: Vec::new(),
+        enums: Vec::new(),
     };
 
     // The return value is captured before the defers run (matching the
@@ -599,6 +605,7 @@ fn test_e2e_indirect_lambda_calls() {
         functions: vec![apply_fn, main_fn],
         statements: Vec::new(),
         classes: Vec::new(),
+        enums: Vec::new(),
     };
 
     let code = lower_link_and_run(&hir, "test_indirect_lambda");

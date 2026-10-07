@@ -5,6 +5,7 @@ pub mod notes;
 pub mod reader;
 pub mod reloc;
 pub mod writer;
+pub mod x86_64;
 
 pub use reader::ElfReader;
 pub use writer::ElfWriter;

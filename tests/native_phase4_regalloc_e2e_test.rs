@@ -220,6 +220,7 @@ fn test_gpr_heavy_register_pressure_e2e() {
     let hir = HirModule {
         functions: vec![],
         classes: vec![],
+        enums: vec![],
         statements: stmts,
     };
 
@@ -275,6 +276,7 @@ fn test_xmm_heavy_register_pressure_e2e() {
     let hir = HirModule {
         functions: vec![],
         classes: vec![],
+        enums: vec![],
         statements: stmts,
     };
 
@@ -369,6 +371,7 @@ fn test_values_live_across_function_call_e2e() {
     let hir = HirModule {
         functions: vec![mult_func],
         classes: vec![],
+        enums: vec![],
         statements: stmts,
     };
 
@@ -470,6 +473,7 @@ fn test_loop_carried_spill_reload_e2e() {
     let hir = HirModule {
         functions: vec![],
         classes: vec![],
+        enums: vec![],
         statements: stmts,
     };
 
@@ -572,6 +576,7 @@ fn test_mixed_gpr_and_fp_arithmetic_under_spill_pressure_e2e() {
     let hir = HirModule {
         functions: vec![],
         classes: vec![],
+        enums: vec![],
         statements: stmts,
     };
 

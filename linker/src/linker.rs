@@ -170,6 +170,7 @@ impl Linker {
 
         // 4.1 Synthesize Compiler Intrinsics, Entry Thunks, and Import Thunks for Unimplemented Symbols
         let is_pe = ctx.config.target.format == ObjectFormat::Pe;
+        let is_elf = ctx.config.target.format == ObjectFormat::Elf;
 
         // Determine actual Adesh program entry symbol
         let program_entry_symbol = if ctx.resolver.table.contains_key("main") {
@@ -205,6 +206,20 @@ impl Linker {
                 ));
             }
             missing_symbols.push("mainCRTStartup".to_string());
+        } else if is_elf && !ctx.config.shared && !ctx.resolver.table.contains_key("_start") {
+            if ctx.config.target.arch != crate::target::Arch::X86_64 {
+                return Err(LinkError::new(
+                    ErrorCode::InvalidTarget,
+                    format!(
+                        "no `_start` entry point is defined for the {} ELF target",
+                        ctx.config.target.arch.as_str()
+                    ),
+                )
+                .with_suggestion(
+                    "Provide a `_start` definition in an input object: the linker only synthesizes the x86_64 Linux startup stub.",
+                ));
+            }
+            missing_symbols.push("_start".to_string());
         }
         for (name, resolved) in &ctx.resolver.table {
             if resolved.symbol.section_index.is_none() && !missing_symbols.contains(name) {
@@ -242,6 +257,24 @@ impl Linker {
                     s.value += start_off;
                     synth_symbols.push(s);
                 }
+            } else if is_elf
+                && !ctx.config.shared
+                && missing_symbols.contains(&"_start".to_string())
+            {
+                let (bytes, relocs, syms) = crate::elf::x86_64::synthesize_elf_x86_64_entry(
+                    &program_entry_symbol,
+                    file_idx,
+                );
+                let start_off = code_bytes.len() as u64;
+                code_bytes.extend_from_slice(&bytes);
+                for mut r in relocs {
+                    r.offset += start_off;
+                    synth_relocs.push(r);
+                }
+                for mut s in syms {
+                    s.value += start_off;
+                    synth_symbols.push(s);
+                }
             }
 
             // Undefined symbols that are neither importable nor synthesizable.
@@ -255,7 +288,7 @@ impl Linker {
             let mut data_stub_syms: Vec<(String, u64)> = Vec::new();
 
             for name in &missing_symbols {
-                if name == "mainCRTStartup" || name == "__adesh_windows_start" {
+                if name == "mainCRTStartup" || name == "__adesh_windows_start" || name == "_start" {
                     continue;
                 }
 
@@ -559,6 +592,11 @@ impl Linker {
         match ctx.config.target.format {
             ObjectFormat::Elf => {
                 let soname_str = ctx.config.output_path.file_name().and_then(|n| n.to_str());
+                let needed_libs: &[String] = if ctx.config.shared {
+                    &ctx.config.libraries
+                } else {
+                    &[]
+                };
                 ElfWriter::write_elf(
                     &ctx.config.output_path,
                     &ctx.config.target,
@@ -567,7 +605,7 @@ impl Linker {
                     emit_symbols,
                     build_id_bytes.as_ref().map(|b| &b[..20]),
                     ctx.config.shared,
-                    &ctx.config.libraries,
+                    needed_libs,
                     soname_str,
                 )?;
             }

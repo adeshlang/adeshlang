@@ -1049,13 +1049,6 @@ impl OsApiRouter {
             return SymbolRoute::Intrinsic;
         }
 
-        if Self::is_libc_symbol(raw) || Self::is_libc_symbol(clean) {
-            return SymbolRoute::DllImport {
-                dll: "libc.so.6",
-                name: clean.to_string(),
-            };
-        }
-
         SymbolRoute::Undefined
     }
 
