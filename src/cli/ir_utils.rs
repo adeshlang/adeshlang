@@ -292,5 +292,6 @@ fn opt_level_to_u8(level: OptLevel) -> u8 {
         OptLevel::O1 => 1,
         OptLevel::O2 => 2,
         OptLevel::O3 => 3,
+        OptLevel::Os | OptLevel::Oz => 2,
     }
 }

@@ -2631,4 +2631,19 @@ mod tests {
             "the nearer-next-use interval should keep a register"
         );
     }
+
+    #[test]
+    fn test_spill_priority_protects_dense_loop_weighted_uses() {
+        let mut hot = LiveInterval::new(VirtualRegister(0), RegisterClass::Gpr);
+        hot.use_positions = vec![1, 2, 3];
+        let mut cold = LiveInterval::new(VirtualRegister(1), RegisterClass::Gpr);
+        cold.use_positions = vec![1];
+        let weights = [1, 10, 10, 10];
+
+        assert!(
+            LinearScanAllocator::spill_priority(&hot, 0, &weights)
+                > LinearScanAllocator::spill_priority(&cold, 0, &weights),
+            "dense, loop-weighted future uses should make an interval more expensive to spill"
+        );
+    }
 }

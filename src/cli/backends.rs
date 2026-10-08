@@ -776,6 +776,8 @@ fn opt_level_to_u8(level: crate::toolchain::config::OptLevel) -> u8 {
         crate::toolchain::config::OptLevel::O1 => 1,
         crate::toolchain::config::OptLevel::O2 => 2,
         crate::toolchain::config::OptLevel::O3 => 3,
+        crate::toolchain::config::OptLevel::Os => 4,
+        crate::toolchain::config::OptLevel::Oz => 5,
     }
 }
 
@@ -858,6 +860,8 @@ pub fn run_with_aot(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Result<()
         crate::toolchain::config::OptLevel::O1 => 1,
         crate::toolchain::config::OptLevel::O2 => 2,
         crate::toolchain::config::OptLevel::O3 => 3,
+        crate::toolchain::config::OptLevel::Os => 4,
+        crate::toolchain::config::OptLevel::Oz => 5,
     };
 
     let mut build_config = crate::cli::build::AotBuildConfig::new(path.clone());

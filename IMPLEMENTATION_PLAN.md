@@ -361,39 +361,58 @@ code size, binary size; every CLI flag does exactly what its help says.
   behavior have focused tests.
 - `BasicBlockScheduler` is wired post-allocation with conservative ordering
   barriers and focused hazard tests.
-- Linear scan now uses farthest-next-use eviction when a nearer-use interval
-  needs a register. Its existing allocation verifier still gates the result;
-  focused pressure, call-clobber, and native execution tests pass. This is not
-  call-boundary splitting or frequency-weighted spill costing.
+- Linear scan now considers exact liveness at call sites and saves eligible
+  caller-saved values across calls, avoiding whole-function callee-save
+  conservatism. Pressure eviction uses future-use density, loop-depth weights,
+  and next-use distance. A single verifier-failure fallback restores the
+  original function and retries with unconstrained virtual registers spilled.
+  The call-preservation implementation currently keeps a stack copy and inserts
+  stores/reloads; it does not yet split allocator intervals at call boundaries.
+  Focused tests cover live-through-call values, values dying at calls, weighted
+  spill priority, farthest-next-use eviction, and fallback verification.
+- Copy coalescing now checks interference outside the copy position and fails
+  closed on unsupported operands. Post-allocation cleanup removes redundant
+  physical-register moves and stack-slot self-copies.
 - The previous auto-vectorizer's scalar-to-vector substitution was unsound.
   It is now wired fail-closed and tested to preserve scalar instructions.
   Real lane construction, loop legality, and remainder handling remain
   incomplete and are not claimed as implemented.
-- The current Criterion suite covers value operations and front-end/language
-  passes, but not native codegen/link timing at 10/100/1K/10K LOC or generated
-  binary runtime. The focused minimal PE-size test reports 2,560 bytes for
-  both O2 and Oz; this synthetic return-only case does not measure hello-world.
-- Still pending: call-boundary live-range splitting, spill-weight eviction,
-  verification-driven allocation retry, post-allocation copy coalescing,
-  the <40 KB hello-world binary-size target, and completing the Criterion
-  harness with native codegen/link and runtime measurements.
+- Added `benches/native_pipeline.rs` for generated modules with 10/100/1K/10K
+  functions. It separates parse/HIR, typecheck, native lowering, register
+  allocation, encoding, ADOB generation, and linking, plus Windows executable
+  runtime cases at O0-O3. `cargo check -p adeshlang --bench native_pipeline`
+  passes. Criterion measurements and CI tracking are still outstanding because
+  this work is constrained to debug-only checks and no release builds.
+- Rebuilt the debug runtime archive after finding the CLI had linked a stale
+  copy. The fixed-buffer UTF-16 console writer reduced the measured Windows
+  hello-world PE from 123,904 to 112,640 bytes; both CLI `-O2` and `-Oz`
+  builds produced 112,640-byte binaries and printed the expected output.
+  Debug CLI smoke builds also executed successfully at `-O0`, `-O1`, `-O2`,
+  `-O3`, `-Os`, and `-Oz`. `-O0` measured 9,972,224 bytes; the other five
+  levels each measured 112,640 bytes for this hello-world program.
+  Current raw PE section sizes are `.text` 83,968 bytes and `.rodata` 19,968
+  bytes. The archive-member GC-root change passes its focused regression but
+  did not independently reduce the earlier baseline. The <40 KB target remains
+  unmet. The focused return-only PE test remains 2,560 bytes and is not a
+  substitute for the hello-world result.
+- Still pending: true call-boundary interval splitting, measured Criterion
+  baselines and CI tracking, demonstrated allocator spill/instruction-count
+  improvements, automated CLI/runtime tests for `-Os` and `-Oz`, and further
+  runtime/linker size reduction to <40 KB. Phase 4 acceptance is therefore not
+  complete.
 
 **Recommended next sequence:**
-1. Implement call-boundary live-range splitting, with regressions for values used
-   both before and after calls, call arguments that die at the call, and values
-   crossing calls inside loops. Keep the call-clobber verifier as the correctness
-   gate.
-2. Replace next-use-only eviction with spill costs that account for use density
-   and loop frequency. Add a bounded verifier-driven retry/fallback that cannot
-   return an unverified allocation.
-3. Add post-allocation copy coalescing and move elimination, then measure spill
-   counts and instruction counts against allocator baselines.
-4. Extend Criterion with native codegen/link cases at 10/100/1K/10K LOC and
-   separate phase timings. Capture runtime and instruction-count baselines before
-   making broader code-size changes.
-5. Measure the actual hello-world PE, then prioritize size work using its section,
-   import, runtime-symbol, and alignment breakdown. Do not treat the 2,560-byte
-   return-only test as the hello-world result.
+1. Replace caller-saved stack-copy preservation with true interval splitting
+   around calls, retaining the exact-liveness and verifier regressions.
+2. Add the debug-only allocator regressions and native execution cases to CI;
+   collect spill counts and instruction counts against a recorded baseline.
+3. Run the Criterion suite in an explicitly permitted release/benchmark job and
+   publish its stage timings and O0-O3 runtime results in CI.
+4. Continue the hello-world size investigation from the measured `.text` and
+   `.rodata` footprint, including runtime symbol/dependency and section-retention
+   breakdowns. Keep the <40 KB acceptance target open until an executed PE meets it.
+5. Add automated end-to-end tests for `-Os` and `-Oz`, then verify their behavior
+   across supported target/linker combinations.
 
 Real vectorization stays deferred until lane construction, loop legality, and
 remainder handling have dedicated correctness tests. Continue running only

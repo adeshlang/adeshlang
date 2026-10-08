@@ -334,10 +334,14 @@ impl AotBuildConfig {
             self.emit
         );
         println!(
-            "  {}Optimization:{} O{}{}",
+            "  {}Optimization:{} {}{}",
             colors::GREEN,
             colors::RESET,
-            self.opt_level,
+            match self.opt_level {
+                4 => "Os".to_string(),
+                5 => "Oz".to_string(),
+                level => format!("O{}", level),
+            },
             if self.fast_compile {
                 format!(" {}(fast mode - no optimization)", colors::YELLOW)
             } else {
@@ -469,6 +473,18 @@ pub fn parse_build_args(
             "-O1" | "--opt=1" => config.opt_level = 1,
             "-O2" | "--opt=2" => config.opt_level = 2,
             "-O3" | "--opt=3" | "--release" => config.opt_level = 3,
+            "-Os" | "--opt=s" | "--opt=Os" => config.opt_level = 4,
+            "-Oz" | "--opt=z" | "--opt=Oz" => config.opt_level = 5,
+            "--opt-level" => {
+                let Some(level) = args.get(i + 1) else {
+                    return Err("--opt-level requires a value".to_string());
+                };
+                config.opt_level = parse_build_opt_level(level)?;
+                i += 1;
+            }
+            _ if arg.starts_with("--opt-level=") => {
+                config.opt_level = parse_build_opt_level(&arg["--opt-level=".len()..])?;
+            }
             "--fast" => {
                 config.fast_compile = true;
                 config.opt_level = 0;
@@ -786,6 +802,23 @@ pub fn resolve_project_targets(config: &AotBuildConfig) -> Result<Vec<AotBuildCo
 }
 
 /// Execute the build command
+fn parse_build_opt_level(level: &str) -> Result<u8, String> {
+    match level.to_ascii_lowercase().as_str() {
+        "os" | "s" => Ok(4),
+        "oz" | "z" => Ok(5),
+        numeric => {
+            let parsed = numeric
+                .parse::<u8>()
+                .map_err(|_| format!("Invalid optimization level: {level}"))?;
+            if parsed <= 3 {
+                Ok(parsed)
+            } else {
+                Err(format!("Invalid optimization level: {level}"))
+            }
+        }
+    }
+}
+
 pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
     use crate::backends::cranelift_aot::aot_compile_with_options;
     use std::fs;
@@ -1507,4 +1540,38 @@ For the legacy AOT command with full control: adesh compile-aot --help
         colors::BOLD,
         colors::RESET,
     )
+}
+
+#[cfg(test)]
+mod optimization_level_tests {
+    use super::parse_build_args;
+
+    #[test]
+    fn parse_build_command_size_optimization_levels() {
+        for (flag, expected) in [
+            ("-Os", 4),
+            ("-Oz", 5),
+            ("--opt-level=Os", 4),
+            ("--opt-level=Oz", 5),
+        ] {
+            let args = vec![
+                "build".to_string(),
+                "program.adesh".to_string(),
+                flag.to_string(),
+            ];
+            let (config, _) = parse_build_args(&args, 1).expect("optimization flag should parse");
+            assert_eq!(config.opt_level, expected, "flag {flag}");
+        }
+
+        for (level, expected) in [("Os", 4), ("Oz", 5)] {
+            let args = vec![
+                "build".to_string(),
+                "program.adesh".to_string(),
+                "--opt-level".to_string(),
+                level.to_string(),
+            ];
+            let (config, _) = parse_build_args(&args, 1).expect("level should parse");
+            assert_eq!(config.opt_level, expected, "level {level}");
+        }
+    }
 }

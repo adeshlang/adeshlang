@@ -15,124 +15,12 @@ use std::os::raw::c_char;
 
 use crate::{RuntimeValue, aot_store_value, get_string_val, unpack_aot_arg};
 
-// ============================================================================
-// Raw OS console output
-// ============================================================================
-
-#[cfg(windows)]
-mod raw_io {
-    const STD_OUTPUT_HANDLE: u32 = 0xFFFF_FFF5; // (u32)-11
-    type Handle = *mut core::ffi::c_void;
-
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn GetStdHandle(nStdHandle: u32) -> Handle;
-        fn GetConsoleMode(hConsoleHandle: Handle, lpMode: *mut u32) -> i32;
-        fn WriteFile(
-            hFile: Handle,
-            lpBuffer: *const u8,
-            nNumberOfBytesToWrite: u32,
-            lpNumberOfBytesWritten: *mut u32,
-            lpOverlapped: *mut core::ffi::c_void,
-        ) -> i32;
-        fn WriteConsoleW(
-            hConsoleOutput: Handle,
-            lpBuffer: *const u16,
-            nNumberOfCharsToWrite: u32,
-            lpNumberOfCharsWritten: *mut u32,
-            lpReserved: *mut core::ffi::c_void,
-        ) -> i32;
-        fn ExitProcess(uExitCode: u32) -> !;
-    }
-
-    /// Write UTF-8 bytes to stdout. Console handles get a UTF-16 conversion so
-    /// non-ASCII text renders like the interpreter's output; pipes and
-    /// redirection receive the raw bytes.
-    pub fn stdout_write(bytes: &[u8]) {
-        unsafe {
-            let h = GetStdHandle(STD_OUTPUT_HANDLE);
-            if h.is_null() {
-                return;
-            }
-            let mut mode = 0u32;
-            if GetConsoleMode(h, &mut mode) != 0 {
-                if let Ok(s) = core::str::from_utf8(bytes) {
-                    let mut encoded = s.encode_utf16();
-                    let mut units = [0u16; 256];
-                    loop {
-                        let mut count = 0usize;
-                        for unit in &mut units {
-                            let Some(next) = encoded.next() else {
-                                break;
-                            };
-                            *unit = next;
-                            count += 1;
-                        }
-                        if count == 0 {
-                            break;
-                        }
-                        let mut written = 0u32;
-                        if WriteConsoleW(
-                            h,
-                            units.as_ptr(),
-                            count as u32,
-                            &mut written,
-                            core::ptr::null_mut(),
-                        ) == 0
-                        {
-                            break;
-                        }
-                    }
-                    return;
-                }
-            }
-            let mut written = 0u32;
-            WriteFile(
-                h,
-                bytes.as_ptr(),
-                bytes.len() as u32,
-                &mut written,
-                core::ptr::null_mut(),
-            );
-        }
-    }
-
-    pub fn exit(code: i32) -> ! {
-        unsafe { ExitProcess(code as u32) }
-    }
-}
-
-#[cfg(not(windows))]
-mod raw_io {
-    #[link(name = "c")]
-    unsafe extern "C" {
-        fn write(fd: i32, buf: *const u8, count: usize) -> isize;
-        fn _exit(code: i32) -> !;
-    }
-
-    pub fn stdout_write(bytes: &[u8]) {
-        let mut off = 0usize;
-        while off < bytes.len() {
-            let n = unsafe { write(1, bytes.as_ptr().add(off), bytes.len() - off) };
-            if n <= 0 {
-                break;
-            }
-            off += n as usize;
-        }
-    }
-
-    pub fn exit(code: i32) -> ! {
-        unsafe { _exit(code) }
-    }
-}
-
-/// Length of a NUL-terminated byte string (the native backend's `.rodata`
-/// string literals are NUL-terminated `__str_N` symbols).
+/// Length of a NUL-terminated byte string used by native runtime metadata.
 unsafe fn cstr_bytes(ptr: *const c_char) -> &'static [u8] {
     if ptr.is_null() {
         return &[];
     }
-    let start = ptr as *const u8;
+    let start = ptr.cast::<u8>();
     let mut end = start;
     unsafe {
         while *end != 0 {
@@ -140,31 +28,6 @@ unsafe fn cstr_bytes(ptr: *const c_char) -> &'static [u8] {
         }
     }
     unsafe { core::slice::from_raw_parts(start, end.offset_from(start) as usize) }
-}
-
-/// Print a NUL-terminated string literal, optionally appending a newline.
-/// Both `print` and `println` append the newline (interpreter `print`
-/// semantics); the backend decides by passing `newline`.
-#[unsafe(no_mangle)]
-pub extern "C" fn aot_print_cstr(string_ptr: *const c_char, newline: i64) -> u64 {
-    let bytes = unsafe { cstr_bytes(string_ptr) };
-    raw_io::stdout_write(bytes);
-    if newline != 0 {
-        raw_io::stdout_write(b"\n");
-    }
-    0
-}
-
-/// Print a NUL-terminated message and terminate the process. Used by the
-/// backend's loud-abort paths (division guards, unsupported constructs).
-#[unsafe(no_mangle)]
-pub extern "C" fn aot_abort_str(msg_ptr: *const c_char) -> ! {
-    let bytes = unsafe { cstr_bytes(msg_ptr) };
-    if !bytes.is_empty() {
-        raw_io::stdout_write(bytes);
-        raw_io::stdout_write(b"\n");
-    }
-    raw_io::exit(101)
 }
 
 // ============================================================================

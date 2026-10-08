@@ -78,6 +78,7 @@ dependencies = [
 name = "adesh-runtime"
 version = "0.3.0"
 dependencies = [
+ "cc",
  "colored",
  "libc",
  "windows-sys 0.52.0",

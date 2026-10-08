@@ -714,6 +714,8 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                     "--opt=1" | "-O1" => aot_options.opt_level = 1,
                     "--opt=2" | "-O2" => aot_options.opt_level = 2,
                     "--opt=3" | "-O3" => aot_options.opt_level = 3,
+                    "--opt=s" | "-Os" => aot_options.opt_level = 4,
+                    "--opt=z" | "-Oz" => aot_options.opt_level = 5,
                     "--fast" => {
                         aot_options.fast_compile = true;
                         aot_options.opt_level = 0;

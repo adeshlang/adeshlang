@@ -104,6 +104,10 @@ pub enum OptLevel {
     O2,
     /// Maximum optimization (slowest compilation, fastest runtime)
     O3,
+    /// Optimize for smaller code
+    Os,
+    /// Aggressively optimize for the smallest code
+    Oz,
 }
 
 impl OptLevel {
@@ -113,6 +117,8 @@ impl OptLevel {
             "O1" | "1" => Some(Self::O1),
             "O2" | "2" => Some(Self::O2),
             "O3" | "3" => Some(Self::O3),
+            "OS" | "S" => Some(Self::Os),
+            "OZ" | "Z" => Some(Self::Oz),
             _ => None,
         }
     }
@@ -694,6 +700,8 @@ mod tests {
     fn test_opt_level_from_str() {
         assert_eq!(OptLevel::from_str("O0"), Some(OptLevel::O0));
         assert_eq!(OptLevel::from_str("O3"), Some(OptLevel::O3));
+        assert_eq!(OptLevel::from_str("Os"), Some(OptLevel::Os));
+        assert_eq!(OptLevel::from_str("Oz"), Some(OptLevel::Oz));
         assert_eq!(OptLevel::from_str("invalid"), None);
     }
 
