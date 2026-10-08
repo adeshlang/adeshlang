@@ -88,6 +88,13 @@ class ExampleService {
       assetPath: 'assets/examples/10_advanced.adesh',
       description: 'Recursive algorithms in AdeshLang',
     ),
+    ExampleItem(
+      id: '11',
+      title: 'DSA: Sorting & Matrix',
+      category: 'Data Structures',
+      assetPath: 'assets/examples/11_dsa_algorithms.adesh',
+      description: 'Bubble sort in-place and 2D matrix iteration',
+    ),
   ];
 
   static Future<String> loadExampleContent(ExampleItem example) async {

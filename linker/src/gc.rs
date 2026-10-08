@@ -66,7 +66,14 @@ impl GarbageCollector {
 
             for sym in &obj.symbols {
                 if sym.is_defined {
-                    if root_set.contains(sym.name.as_str()) || sym.is_exported {
+                    // Public symbols from extracted static-archive members
+                    // are not executable roots by themselves. Keep archive
+                    // code only when referenced (or explicitly named as a
+                    // root); otherwise a runtime archive's entire public API
+                    // defeats section-level dead-code elimination.
+                    if root_set.contains(sym.name.as_str())
+                        || (sym.is_exported && !obj.is_archive_member)
+                    {
                         if let Some(s_idx) = sym.section_index {
                             if live_sections.insert((f_idx, s_idx)) {
                                 worklist.push_back((f_idx, s_idx));
@@ -233,6 +240,32 @@ mod tests {
             !objects[1].sections[1].is_live,
             "unused must be collected even though it shares a file with helper"
         );
+    }
+
+    #[test]
+    fn gc_discards_unreferenced_exported_archive_member_sections() {
+        let mut main_obj = object_with_funcs("main.o", 0, &[("main", true)]);
+        main_obj.sections[0].relocations.push(Relocation::new(
+            0,
+            "needed_runtime",
+            RelocationKind::PcRelative32,
+            -4,
+        ));
+        let mut runtime_obj = object_with_funcs(
+            "runtime.o",
+            1,
+            &[("needed_runtime", false), ("unused_runtime", false)],
+        );
+        runtime_obj.is_archive_member = true;
+        runtime_obj.symbols[0].is_exported = true;
+        runtime_obj.symbols[1].is_exported = true;
+        let mut objects = vec![main_obj, runtime_obj];
+
+        let removed =
+            GarbageCollector::collect_dead_sections(&mut objects, &["main".to_string()], false);
+        assert_eq!(removed, 1);
+        assert!(objects[1].sections[0].is_live);
+        assert!(!objects[1].sections[1].is_live);
     }
 
     #[test]

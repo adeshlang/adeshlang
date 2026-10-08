@@ -340,8 +340,18 @@ impl<'a> AdobReader<'a> {
                     42 => RelocationKind::WasmGlobalIndex,
                     43 => RelocationKind::WasmTypeIndex,
                     44 => RelocationKind::WasmMemoryAddress,
+                    60 => RelocationKind::ImageRelative32,
                     custom if custom >= 1000 => RelocationKind::Custom(custom - 1000),
-                    _ => RelocationKind::Absolute64,
+                    unknown => {
+                        return Err(AdobError::new(
+                            AdobErrorCode::InvalidRelocation,
+                            format!(
+                                "unknown relocation kind id {} (cannot safely guess a meaning; \
+                                 refusing to silently treat it as Absolute64)",
+                                unknown
+                            ),
+                        ));
+                    }
                 };
                 let r_addend = self.read_i64_le()?;
                 let r_width = self.read_u8()?;

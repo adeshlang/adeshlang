@@ -332,8 +332,9 @@ Tasks:
    or delete it; until real cross-module IR optimization exists, `--lto` help must
    describe what it does (GC+ICF+strip); decide vectorization/scheduler disposition.
 2. Register allocator: live-range splitting at call boundaries (replacing the
-   conservative callee-saved-or-spill rule), spill-weight eviction, verification-driven
-   retry.
+   conservative callee-saved-or-spill rule), spill-cost eviction, verification-driven
+   retry. Farthest-next-use eviction is an initial improvement, not completion of
+   weighted spill costing.
 3. Post-allocation copy coalescing and move elimination.
 4. Binary-size attack on hello-world (127,488 bytes, ≈5.8x the 22,016-byte C baseline):
    PE section alignment, import trimming, unused runtime symbol pruning, section
@@ -344,6 +345,59 @@ Tasks:
 
 **Acceptance:** benchmark numbers tracked in CI; measurable improvements in spills,
 code size, binary size; every CLI flag does exactly what its help says.
+
+**Progress (2026-10-08):**
+- The orphaned `src/ir/optimizations/` tree and fabricated-counter `opt/ipo.rs`
+  were removed. Native `--lto` now routes through `CompilerDriver` and
+  `LtoEngine`; the wired path has an individual execution test.
+- Native PGO now accepts `--pgo=generate` and `--pgo=use=<path>`. PE generation
+  emits thread-safe block counters and an RVA table; the Windows startup stub
+  calls the runtime dumper before process exit. The generate/run/use cycle is
+  execution-tested, both with and without LTO. ELF counter dumping remains
+  unsupported and fails loudly.
+- Self tail recursion is converted to a CFG backedge for the proven scalar
+  subset; eligible integer/pointer local tail calls use frame teardown plus a
+  PC-relative jump. Deep recursion, linked execution, and ADOB relocation
+  behavior have focused tests.
+- `BasicBlockScheduler` is wired post-allocation with conservative ordering
+  barriers and focused hazard tests.
+- Linear scan now uses farthest-next-use eviction when a nearer-use interval
+  needs a register. Its existing allocation verifier still gates the result;
+  focused pressure, call-clobber, and native execution tests pass. This is not
+  call-boundary splitting or frequency-weighted spill costing.
+- The previous auto-vectorizer's scalar-to-vector substitution was unsound.
+  It is now wired fail-closed and tested to preserve scalar instructions.
+  Real lane construction, loop legality, and remainder handling remain
+  incomplete and are not claimed as implemented.
+- The current Criterion suite covers value operations and front-end/language
+  passes, but not native codegen/link timing at 10/100/1K/10K LOC or generated
+  binary runtime. The focused minimal PE-size test reports 2,560 bytes for
+  both O2 and Oz; this synthetic return-only case does not measure hello-world.
+- Still pending: call-boundary live-range splitting, spill-weight eviction,
+  verification-driven allocation retry, post-allocation copy coalescing,
+  the <40 KB hello-world binary-size target, and completing the Criterion
+  harness with native codegen/link and runtime measurements.
+
+**Recommended next sequence:**
+1. Implement call-boundary live-range splitting, with regressions for values used
+   both before and after calls, call arguments that die at the call, and values
+   crossing calls inside loops. Keep the call-clobber verifier as the correctness
+   gate.
+2. Replace next-use-only eviction with spill costs that account for use density
+   and loop frequency. Add a bounded verifier-driven retry/fallback that cannot
+   return an unverified allocation.
+3. Add post-allocation copy coalescing and move elimination, then measure spill
+   counts and instruction counts against allocator baselines.
+4. Extend Criterion with native codegen/link cases at 10/100/1K/10K LOC and
+   separate phase timings. Capture runtime and instruction-count baselines before
+   making broader code-size changes.
+5. Measure the actual hello-world PE, then prioritize size work using its section,
+   import, runtime-symbol, and alignment breakdown. Do not treat the 2,560-byte
+   return-only test as the hello-world result.
+
+Real vectorization stays deferred until lane construction, loop legality, and
+remainder handling have dedicated correctness tests. Continue running only
+individual debug-mode tests; do not run full `cargo test` or release builds.
 
 ### Phase 5 — Debuggability (≈2-4 weeks; Linux part gated on Phase 3)
 

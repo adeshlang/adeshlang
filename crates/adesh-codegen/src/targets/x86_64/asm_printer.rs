@@ -291,7 +291,9 @@ impl FuncPrinter {
                 self.out.push_str(&format!(".L_{}:\n", block.label));
             }
             for inst in &block.instructions {
-                if let MachineInstruction::Return = inst {
+                if matches!(inst, MachineInstruction::Return)
+                    || matches!(inst, MachineInstruction::Custom { name, .. } if name == "tail_jmp")
+                {
                     saw_return = true;
                 }
                 self.print_inst(inst);
@@ -325,6 +327,11 @@ impl FuncPrinter {
     }
 
     fn epilogue(&mut self) {
+        self.frame_teardown();
+        self.line("ret");
+    }
+
+    fn frame_teardown(&mut self) {
         let callee_saved = self.layout.used_callee_saved.clone();
         for reg in callee_saved {
             let slot = self.layout.callee_slots[&reg];
@@ -337,7 +344,6 @@ impl FuncPrinter {
         }
         self.line("mov rsp, rbp");
         self.line("pop rbp");
-        self.line("ret");
     }
 
     /// Materialize a 64-bit constant into `reg`, mirroring the encoder's
@@ -663,6 +669,13 @@ impl FuncPrinter {
             MachineInstruction::Custom { name, .. } => {
                 if name == "endbr64" {
                     self.line("endbr64");
+                } else if name == "tail_jmp" {
+                    self.frame_teardown();
+                    if let MachineInstruction::Custom { operands, .. } = inst {
+                        if let Some(MachineOperand::Symbol(target)) = operands.first() {
+                            self.line(&format!("jmp {}", target));
+                        }
+                    }
                 } else {
                     self.comment(&format!(
                         "custom instruction `{}` is rejected by the native encoder",

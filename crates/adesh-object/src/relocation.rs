@@ -20,6 +20,9 @@ pub enum RelocationKind {
     TlsIe,
     TlsLe,
 
+    /// 32-bit image-base-relative address (PE RVA): `S + A - ImageBase`.
+    ImageRelative32,
+
     // x86_64 Specific
     X86_64_GotPcrel,
     X86_64_Plt32,

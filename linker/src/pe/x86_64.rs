@@ -14,6 +14,14 @@ pub fn synthesize_windows_x86_64_entry(
     program_entry_symbol: &str,
     file_index: usize,
 ) -> (Vec<u8>, Vec<Relocation>, Vec<Symbol>) {
+    synthesize_windows_x86_64_entry_with_pgo(program_entry_symbol, file_index, false)
+}
+
+pub fn synthesize_windows_x86_64_entry_with_pgo(
+    program_entry_symbol: &str,
+    file_index: usize,
+    dump_pgo: bool,
+) -> (Vec<u8>, Vec<Relocation>, Vec<Symbol>) {
     let mut code_bytes = Vec::new();
     let mut relocs = Vec::new();
     let mut symbols = Vec::new();
@@ -81,19 +89,38 @@ pub fn synthesize_windows_x86_64_entry(
     // pop rbp                   ; 5d
     // ret                       ; c3
     let start_off = code_bytes.len() as u64;
-    let start_bytes = vec![
+    let mut start_bytes = vec![
         0x55, // 0: push rbp
         0x48, 0x89, 0xe5, // 1..3: mov rbp, rsp
         0x48, 0x83, 0xec, 0x30, // 4..7: sub rsp, 48
         0x31, 0xc9, // 8..9: xor ecx, ecx
         0x31, 0xd2, // 10..11: xor edx, edx
         0xe8, 0x00, 0x00, 0x00, 0x00, // 12..16: call <program_entry> (disp32 @ 13)
-        0x89, 0xc1, // 17..18: mov ecx, eax
-        0xff, 0x15, 0x00, 0x00, 0x00, 0x00, // 19..24: call [__imp_ExitProcess] (disp32 @ 21)
-        0x48, 0x89, 0xec, // 25..27: mov rsp, rbp
-        0x5d, // 28: pop rbp
-        0xc3, // 29: ret
     ];
+    if dump_pgo {
+        start_bytes.extend_from_slice(&[0x89, 0x44, 0x24, 0x20]); // save EAX outside shadow space
+        start_bytes.extend_from_slice(&[0x48, 0x8d, 0x0d]); // LEA RCX, [RIP+table]
+        for name in ["__pgo_table", "aot_pgo_dump"] {
+            relocs.push(Relocation {
+                offset: start_off + start_bytes.len() as u64,
+                symbol_name: name.into(),
+                symbol_index: None,
+                file_index: None,
+                kind: RelocationKind::PcRelative32,
+                addend: -4,
+            });
+            start_bytes.extend_from_slice(&[0; 4]);
+            if name == "__pgo_table" {
+                start_bytes.push(0xe8);
+            }
+        }
+        start_bytes.extend_from_slice(&[0x8b, 0x4c, 0x24, 0x20]); // restore exit code in ECX
+    } else {
+        start_bytes.extend_from_slice(&[0x89, 0xc1]);
+    }
+    let exit_disp = start_off + start_bytes.len() as u64 + 2;
+    start_bytes.extend_from_slice(&[0xff, 0x15, 0, 0, 0, 0]);
+    start_bytes.extend_from_slice(&[0x48, 0x89, 0xec, 0x5d, 0xc3]);
     let start_sz = start_bytes.len() as u64;
     code_bytes.extend_from_slice(&start_bytes);
 
@@ -107,7 +134,7 @@ pub fn synthesize_windows_x86_64_entry(
     });
 
     relocs.push(Relocation {
-        offset: start_off + 21,
+        offset: exit_disp,
         symbol_name: "__imp_ExitProcess".to_string(),
         symbol_index: None,
         file_index: None,

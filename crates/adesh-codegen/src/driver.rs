@@ -92,6 +92,10 @@ pub struct DriverConfig {
     pub enable_debug_info: bool,
     pub limits: CompilerResourceLimits,
     pub verbose_diagnostics: bool,
+    pub pgo: Option<(
+        crate::opt::pgo::PgoConfig,
+        Option<crate::opt::pgo::ProfileData>,
+    )>,
 }
 
 impl DriverConfig {
@@ -104,6 +108,7 @@ impl DriverConfig {
             enable_debug_info: false,
             limits: CompilerResourceLimits::default(),
             verbose_diagnostics: false,
+            pgo: None,
         }
     }
 
@@ -140,8 +145,9 @@ impl CompilerDriver {
     ) -> Result<Vec<AdobObject>, CodegenError> {
         let start = Instant::now();
 
-        // 1. Perform LTO if multiple modules are provided and LTO is enabled
-        if self.config.enable_lto && modules.len() > 1 {
+        // 1. Perform LTO when enabled. A single module still benefits:
+        //    global dead-function elimination and inlining apply within it.
+        if self.config.enable_lto && !modules.is_empty() {
             let mut lto_engine = LtoEngine::new(self.config.lto_config.clone());
             for module in &modules {
                 lto_engine.add_module(module);
@@ -155,12 +161,19 @@ impl CompilerDriver {
         let mut backend =
             crate::targets::create_backend(self.config.target_spec.descriptor.clone())?;
         backend.set_opt_level(self.config.opt_level);
+        if let Some((config, profile)) = &self.config.pgo {
+            backend.set_pgo(config.clone(), profile.clone())?;
+        }
 
-        // 3. Lower and emit objects
+        // 3. Run the per-module optimization pipeline (`lower_module`) and
+        //    then emit objects. Skipping `lower_module` here would silently
+        //    produce unoptimized, unallocated code that differs from the
+        //    production CLI path.
         let mut objects = Vec::with_capacity(modules.len());
         for module in &modules {
             self.stats.functions_compiled += module.functions.len();
-            let obj = backend.emit_object(module)?;
+            let lowered = backend.lower_module(module)?;
+            let obj = backend.emit_object(&lowered)?;
             objects.push(obj);
         }
 

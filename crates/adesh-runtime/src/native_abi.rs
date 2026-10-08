@@ -57,16 +57,31 @@ mod raw_io {
             let mut mode = 0u32;
             if GetConsoleMode(h, &mut mode) != 0 {
                 if let Ok(s) = core::str::from_utf8(bytes) {
-                    let units: Vec<u16> = s.encode_utf16().collect();
-                    if !units.is_empty() {
+                    let mut encoded = s.encode_utf16();
+                    let mut units = [0u16; 256];
+                    loop {
+                        let mut count = 0usize;
+                        for unit in &mut units {
+                            let Some(next) = encoded.next() else {
+                                break;
+                            };
+                            *unit = next;
+                            count += 1;
+                        }
+                        if count == 0 {
+                            break;
+                        }
                         let mut written = 0u32;
-                        WriteConsoleW(
+                        if WriteConsoleW(
                             h,
                             units.as_ptr(),
-                            units.len() as u32,
+                            count as u32,
                             &mut written,
                             core::ptr::null_mut(),
-                        );
+                        ) == 0
+                        {
+                            break;
+                        }
                     }
                     return;
                 }
@@ -331,4 +346,172 @@ mod tests {
         assert!(aot_alloc(-5).is_null());
         aot_free(core::ptr::null_mut());
     }
+}
+
+// ============================================================================
+// PGO profile dump (Phase 4, `--pgo=generate`)
+// ============================================================================
+
+/// One `__pgo_table` entry: `{name_rva, counter_rva}` image RVAs. The table
+/// is zero-terminated and emitted by the backend's `emit_object` whenever
+/// `pgo_inc` instrumentation is present.
+#[repr(C)]
+pub struct PgoTableEntry {
+    name_rva: u32,
+    counter_rva: u32,
+}
+
+/// Per-function counters aggregated from the table: the entry-block count
+/// (`entry_count`) and per-block execution counts keyed by block id.
+#[derive(Default)]
+struct PgoFnProfile {
+    entry_count: u64,
+    blocks: std::collections::BTreeMap<u32, u64>,
+}
+
+/// Called by the `__adesh_windows_start` stub after `main` returns, before
+/// `ExitProcess`: walks the `__pgo_table` and writes
+/// `adesh_pgo_profile.json` (in the process working directory) in exactly
+/// the `ProfileData` JSON shape the compiler consumes via
+/// `--pgo=use=<path>`.
+///
+/// Best-effort and panic-isolated (unwinding through the FFI boundary from
+/// the synthesized startup stub would be undefined behaviour); failures go
+/// to stderr and never alter the program's exit code.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_pgo_dump(table_ptr: *const PgoTableEntry) {
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| pgo_dump_impl(table_ptr)));
+    if result.is_err() {
+        eprintln!("adesh pgo: profile dump failed (instrumented process panicked while dumping)");
+    }
+}
+
+fn pgo_dump_impl(table_ptr: *const PgoTableEntry) {
+    if table_ptr.is_null() {
+        return;
+    }
+    let base = match image_base() {
+        Some(b) => b,
+        None => {
+            eprintln!("adesh pgo: image base unavailable; profile not dumped");
+            return;
+        }
+    };
+
+    let mut funcs: std::collections::BTreeMap<String, PgoFnProfile> =
+        std::collections::BTreeMap::new();
+    // Sanity bound: a corrupt table must never walk off the mapping.
+    const MAX_ENTRIES: usize = 1 << 20;
+    unsafe {
+        for i in 0..MAX_ENTRIES {
+            let entry = &*table_ptr.add(i);
+            if entry.name_rva == 0 && entry.counter_rva == 0 {
+                break;
+            }
+            let name = cstr_bytes((base + entry.name_rva as usize) as *const c_char);
+            let count = ((base + entry.counter_rva as usize) as *const u64).read_unaligned();
+            pgo_record(&mut funcs, name, count);
+        }
+    }
+    pgo_write_profile(&funcs);
+}
+
+/// Map one counter observation onto the aggregate. Counter names follow the
+/// instrumentation pass grammar: `__pgo_entry_<fn>_<block_id>` (the entry
+/// block) and `__pgo_counter_<fn>_<block_id>`; the block id is the last
+/// `_`-separated component so function names may contain underscores.
+fn pgo_record(
+    funcs: &mut std::collections::BTreeMap<String, PgoFnProfile>,
+    name: &[u8],
+    count: u64,
+) {
+    let (is_entry, rest) = if let Some(r) = name.strip_prefix(b"__pgo_entry_") {
+        (true, r)
+    } else if let Some(r) = name.strip_prefix(b"__pgo_counter_") {
+        (false, r)
+    } else {
+        eprintln!(
+            "adesh pgo: unrecognized counter name `{}`, skipping",
+            String::from_utf8_lossy(name)
+        );
+        return;
+    };
+    let rest = String::from_utf8_lossy(rest);
+    let Some((fn_name, id_str)) = rest.rsplit_once('_') else {
+        eprintln!("adesh pgo: malformed counter name `{}`, skipping", rest);
+        return;
+    };
+    let Ok(block_id) = id_str.parse::<u32>() else {
+        eprintln!(
+            "adesh pgo: counter `{}` has a non-numeric block id, skipping",
+            rest
+        );
+        return;
+    };
+    let prof = funcs.entry(fn_name.to_string()).or_default();
+    if is_entry {
+        prof.entry_count = prof.entry_count.saturating_add(count);
+    }
+    prof.blocks.insert(block_id, count);
+}
+
+/// Minimal JSON string escaping (identifiers only need `"` and `\`).
+fn pgo_json_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn pgo_write_profile(funcs: &std::collections::BTreeMap<String, PgoFnProfile>) {
+    if funcs.is_empty() {
+        return;
+    }
+    // Hand-rolled JSON in the exact `ProfileData` serde shape (all fields
+    // are required on deserialize); keeps serde_json out of every linked
+    // program's binary.
+    let mut json = String::from("{\n  \"functions\": {");
+    for (i, (fname, prof)) in funcs.iter().enumerate() {
+        if i > 0 {
+            json.push(',');
+        }
+        let esc = pgo_json_escape(fname);
+        json.push_str(&format!(
+            "\n    \"{esc}\": {{\n      \"name\": \"{esc}\",\n      \"entry_count\": {},\n      \"block_profiles\": {{",
+            prof.entry_count
+        ));
+        for (j, (block_id, count)) in prof.blocks.iter().enumerate() {
+            if j > 0 {
+                json.push(',');
+            }
+            json.push_str(&format!(
+                "\n        \"{block_id}\": {{\"execution_count\": {count}}}"
+            ));
+        }
+        json.push_str("\n      },\n      \"edge_profiles\": {}\n    }");
+    }
+    json.push_str("\n  }\n}");
+
+    if let Err(e) = std::fs::write("adesh_pgo_profile.json", json) {
+        eprintln!("adesh pgo: failed to write adesh_pgo_profile.json: {e}");
+    }
+}
+
+/// Image base of the main module (needed to turn table RVAs into VAs).
+#[cfg(windows)]
+fn image_base() -> Option<usize> {
+    unsafe {
+        let handle = windows_sys::Win32::System::LibraryLoader::GetModuleHandleW(core::ptr::null());
+        if handle == 0 {
+            None
+        } else {
+            Some(handle as usize)
+        }
+    }
+}
+
+/// Non-Windows hosts never link an instrumented PE (the backend rejects
+/// `--pgo=generate` for non-PE targets loudly), so there is no image base
+/// to query.
+#[cfg(not(windows))]
+fn image_base() -> Option<usize> {
+    None
 }

@@ -24,6 +24,97 @@ impl MoveCoalescingPass {
     pub fn new() -> Self {
         Self
     }
+
+    /// Removes copies whose assigned source and destination are already the
+    /// same physical register. Stack-slot self-copies are safe to remove too.
+    pub fn eliminate_redundant_allocated_moves(func: &mut MachineFunction) -> usize {
+        let mut removed = 0;
+        for block in &mut func.blocks {
+            block.instructions.retain(|inst| {
+                let redundant = match inst {
+                    MachineInstruction::Move { dst, src } => match (dst, src) {
+                        (
+                            MachineOperand::Register(MachineRegister::Physical(dst)),
+                            MachineOperand::Register(MachineRegister::Physical(src)),
+                        ) => dst == src,
+                        (MachineOperand::StackSlot(dst), MachineOperand::StackSlot(src)) => {
+                            dst == src
+                        }
+                        (
+                            MachineOperand::Register(MachineRegister::Virtual(dst)),
+                            MachineOperand::Register(MachineRegister::Virtual(src)),
+                        ) => dst == src,
+                        _ => false,
+                    },
+                    _ => false,
+                };
+                if redundant {
+                    removed += 1;
+                }
+                !redundant
+            });
+        }
+        removed
+    }
+
+    fn has_unsupported_reference(func: &MachineFunction, vreg: VirtualRegister) -> bool {
+        func.blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .any(|inst| {
+                let references_vreg = inst
+                    .uses()
+                    .into_iter()
+                    .chain(inst.defs())
+                    .any(|reg| reg == MachineRegister::Virtual(vreg));
+                references_vreg && !Self::rewrites_instruction_operands(inst)
+            })
+    }
+
+    fn rewrites_instruction_operands(inst: &MachineInstruction) -> bool {
+        matches!(
+            inst,
+            MachineInstruction::Move { .. }
+                | MachineInstruction::Add { .. }
+                | MachineInstruction::Sub { .. }
+                | MachineInstruction::Mul { .. }
+                | MachineInstruction::Div { .. }
+                | MachineInstruction::Mod { .. }
+                | MachineInstruction::And { .. }
+                | MachineInstruction::Or { .. }
+                | MachineInstruction::Xor { .. }
+                | MachineInstruction::Shl { .. }
+                | MachineInstruction::Shr { .. }
+                | MachineInstruction::Sar { .. }
+                | MachineInstruction::FAdd { .. }
+                | MachineInstruction::FSub { .. }
+                | MachineInstruction::FMul { .. }
+                | MachineInstruction::FDiv { .. }
+                | MachineInstruction::Compare { .. }
+                | MachineInstruction::Test { .. }
+                | MachineInstruction::FCmp { .. }
+                | MachineInstruction::Neg { .. }
+                | MachineInstruction::Not { .. }
+                | MachineInstruction::FNeg { .. }
+                | MachineInstruction::SetCc { .. }
+                | MachineInstruction::Push { .. }
+                | MachineInstruction::Pop { .. }
+        )
+    }
+
+    fn overlaps_outside_copy(
+        left: &crate::register_alloc::LiveRange,
+        right: &crate::register_alloc::LiveRange,
+        copy_position: usize,
+    ) -> bool {
+        left.segments.iter().any(|left_segment| {
+            right.segments.iter().any(|right_segment| {
+                let start = left_segment.start.max(right_segment.start);
+                let end = left_segment.end.min(right_segment.end);
+                start < end && (start < copy_position || end > copy_position + 1)
+            })
+        })
+    }
 }
 
 impl MachinePass for MoveCoalescingPass {
@@ -44,7 +135,7 @@ impl MachinePass for MoveCoalescingPass {
         let mut coalesced_count = 0;
 
         for block in &func.blocks {
-            for inst in &block.instructions {
+            for (local_idx, inst) in block.instructions.iter().enumerate() {
                 if let MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(dst_v)),
                     src: MachineOperand::Register(MachineRegister::Virtual(src_v)),
@@ -54,9 +145,16 @@ impl MachinePass for MoveCoalescingPass {
                     let r1 = interval_map.get(dst_v);
                     let r2 = interval_map.get(src_v);
 
+                    let copy_position = liveness
+                        .inst_index_map
+                        .get(&(block.id, local_idx))
+                        .copied()
+                        .unwrap_or(usize::MAX);
                     if let (Some(iv1), Some(iv2)) = (r1, r2)
                         && iv1.class == iv2.class
-                        && !iv1.overlaps(iv2)
+                        && !Self::overlaps_outside_copy(iv1, iv2, copy_position)
+                        && !Self::has_unsupported_reference(func, *dst_v)
+                        && !Self::has_unsupported_reference(func, *src_v)
                     {
                         // Safe to coalesce!
                         let target_v = merge_map.get(src_v).copied().unwrap_or(*src_v);
@@ -140,5 +238,105 @@ impl MachinePass for MoveCoalescingPass {
         }
 
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::machine_ir::{MachineRegister, PhysicalRegister};
+
+    #[test]
+    fn removes_only_redundant_allocated_copies() {
+        let mut func = MachineFunction::new("allocated_move_elimination");
+        let block = func.entry_block_mut();
+        block.push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+            src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+        });
+        block.push(MachineInstruction::Move {
+            dst: MachineOperand::StackSlot(-8),
+            src: MachineOperand::StackSlot(-8),
+        });
+        block.push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(1))),
+            src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+        });
+
+        assert_eq!(
+            MoveCoalescingPass::eliminate_redundant_allocated_moves(&mut func),
+            2
+        );
+        assert_eq!(func.blocks[0].instructions.len(), 1);
+    }
+
+    #[test]
+    fn coalesces_copy_with_only_copy_position_interference() {
+        let mut func = MachineFunction::new("virtual_copy_coalescing");
+        let source = func.alloc_vreg();
+        let destination = func.alloc_vreg();
+        let entry = func.entry_block_mut();
+        entry.push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(source)),
+            src: MachineOperand::Immediate(1),
+        });
+        entry.push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(destination)),
+            src: MachineOperand::Register(MachineRegister::Virtual(source)),
+        });
+        entry.push(MachineInstruction::Add {
+            dst: MachineOperand::Register(MachineRegister::Virtual(destination)),
+            src: MachineOperand::Immediate(2),
+        });
+        entry.push(MachineInstruction::Return);
+
+        let mut pass = MoveCoalescingPass::new();
+        assert!(pass.run_on_function(&mut func).unwrap());
+        assert!(!func.blocks[0].instructions.iter().any(|inst| matches!(
+            inst,
+            MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(_)),
+                src: MachineOperand::Register(MachineRegister::Virtual(_)),
+            }
+        )));
+        assert!(func.blocks[0].instructions.iter().any(|inst| matches!(
+            inst,
+            MachineInstruction::Add {
+                dst: MachineOperand::Register(MachineRegister::Virtual(v)),
+                ..
+            } if *v == source
+        )));
+    }
+
+    #[test]
+    fn refuses_coalescing_when_an_unsupported_instruction_uses_value() {
+        let mut func = MachineFunction::new("unsafe_copy_coalescing_guard");
+        let source = func.alloc_vreg();
+        let destination = func.alloc_vreg();
+        let entry = func.entry_block_mut();
+        entry.push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(source)),
+            src: MachineOperand::Immediate(1),
+        });
+        entry.push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(destination)),
+            src: MachineOperand::Register(MachineRegister::Virtual(source)),
+        });
+        entry.push(MachineInstruction::Load {
+            dst: MachineOperand::Register(MachineRegister::Virtual(destination)),
+            src: MachineOperand::StackSlot(-8),
+            size: 8,
+        });
+        entry.push(MachineInstruction::Return);
+
+        let mut pass = MoveCoalescingPass::new();
+        assert!(!pass.run_on_function(&mut func).unwrap());
+        assert!(func.blocks[0].instructions.iter().any(|inst| matches!(
+            inst,
+            MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(_)),
+                src: MachineOperand::Register(MachineRegister::Virtual(_)),
+            }
+        )));
     }
 }

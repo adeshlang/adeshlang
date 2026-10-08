@@ -356,9 +356,88 @@ fn test_tail_call_optimization_pass() {
     assert!(changed, "Self-tail-call must be converted to direct branch");
 
     assert!(matches!(
-        func.blocks[0].instructions[0],
-        MachineInstruction::Branch { .. }
+        &func.blocks[0].instructions[0],
+        MachineInstruction::Branch { target } if target == "entry"
     ));
+}
+
+#[test]
+fn test_tail_call_keeps_argument_setup_and_removes_win64_shadow_space() {
+    let mut func = MachineFunction::new("recur");
+    let entry = func.entry_block_mut();
+    entry.push(MachineInstruction::Sub {
+        dst: MachineOperand::phys(4),
+        src: MachineOperand::Immediate(40),
+    });
+    entry.push(MachineInstruction::Move {
+        dst: MachineOperand::phys(1),
+        src: MachineOperand::Immediate(7),
+    });
+    entry.push(MachineInstruction::Call {
+        target: MachineOperand::Symbol("recur".into()),
+        num_args: 1,
+    });
+    entry.push(MachineInstruction::Add {
+        dst: MachineOperand::phys(4),
+        src: MachineOperand::Immediate(40),
+    });
+    entry.push(MachineInstruction::Return);
+
+    let changed = TailCallOptimizationPass::new()
+        .run_on_function(&mut func)
+        .unwrap();
+    assert!(changed);
+    assert!(matches!(
+        func.blocks[0].instructions.last(),
+        Some(MachineInstruction::Branch { target }) if target == "entry"
+    ));
+    assert!(!func.blocks[0].instructions.iter().any(|inst| matches!(
+        inst,
+        MachineInstruction::Sub {
+            dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(4))),
+            ..
+        }
+    )));
+}
+
+#[test]
+fn test_tail_call_rejects_possible_stack_arguments() {
+    let mut func = MachineFunction::new("caller");
+    let entry = func.entry_block_mut();
+    entry.push(MachineInstruction::Call {
+        target: MachineOperand::Symbol("callee".into()),
+        num_args: 5,
+    });
+    entry.push(MachineInstruction::Return);
+    assert!(
+        !TailCallOptimizationPass::new()
+            .run_on_function(&mut func)
+            .unwrap()
+    );
+    assert!(matches!(
+        func.blocks[0].instructions[0],
+        MachineInstruction::Call { .. }
+    ));
+}
+
+#[test]
+fn test_tail_jump_emits_adob_pc_relative_relocation() {
+    let target = TargetDescriptor::from_triple("x86_64-pc-windows-msvc").expect("valid target");
+    let mut backend = X86_64Backend::new(target);
+    let mut module = NativeModule::new("tail_jump_reloc");
+    let mut func = MachineFunction::new("tailer");
+    func.is_exported = true;
+    func.blocks[0].push(MachineInstruction::Custom {
+        name: "tail_jmp".into(),
+        operands: vec![MachineOperand::Symbol("callee".into())],
+    });
+    module.add_function(func);
+
+    let obj = backend.emit_object(&module).expect("encode tail jump");
+    let (_, text) = obj.find_section(".text").expect("text section");
+    assert!(text.relocations.iter().any(|reloc| {
+        reloc.symbol_name == "callee" && reloc.kind == adesh_object::RelocationKind::PcRelative32
+    }));
 }
 
 #[test]

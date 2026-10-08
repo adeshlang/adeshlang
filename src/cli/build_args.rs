@@ -22,7 +22,7 @@ impl BuildArgParser {
     ///
     /// Supported flags:
     /// - `--fast` / `--dev`: Enable fast compilation mode
-    /// - `-O[0-3]` / `--opt-level [0-3]`: Set optimization level
+    /// - `-O[0-3]`, `-Os`, `-Oz` / `--opt-level`: Set optimization level
     /// - `--debug`: Include debug info
     /// - `-o` / `--output`: Specify output file
     /// - `--emit`: Specify output type (exe, lib, obj, shared, asm)
@@ -77,18 +77,22 @@ impl BuildArgParser {
                     config.opt_level = 3;
                     config.fast_compile = false;
                 }
+                "-Os" => {
+                    config.opt_level = 4;
+                    config.fast_compile = false;
+                }
+                "-Oz" => {
+                    config.opt_level = 5;
+                    config.fast_compile = false;
+                }
                 "--opt-level" => {
                     let level_str = parser.next_arg()?;
-                    config.opt_level = level_str
-                        .parse::<u8>()
-                        .map_err(|_| format!("Invalid optimization level: {}", level_str))?;
+                    config.opt_level = parse_opt_level(&level_str)?;
                     config.fast_compile = false;
                 }
                 arg if arg.starts_with("--opt-level=") => {
                     let level_str = &arg["--opt-level=".len()..];
-                    config.opt_level = level_str
-                        .parse::<u8>()
-                        .map_err(|_| format!("Invalid optimization level: {}", level_str))?;
+                    config.opt_level = parse_opt_level(level_str)?;
                     config.fast_compile = false;
                 }
 
@@ -114,14 +118,7 @@ impl BuildArgParser {
                 arg if arg.starts_with("--features=") => {}
 
                 // LTO, PGO, Sanitizer, Hardening
-                "--lto" => {
-                    let next = parser.next_arg();
-                    if let Ok(val) = next {
-                        config.lto = val != "off" && val != "no" && val != "false";
-                    } else {
-                        config.lto = true;
-                    }
-                }
+                "--lto" => config.lto = true,
                 "--enable-lto" => {
                     config.lto = true;
                 }
@@ -138,7 +135,25 @@ impl BuildArgParser {
                 "--pgo" | "--sanitizer" | "--hardening" => {
                     return Err(format!("`{}` is not supported by `adesh build` yet", arg));
                 }
-                arg if arg.starts_with("--pgo=") || arg.starts_with("--sanitizer=") => {
+                arg if arg.starts_with("--pgo=") => {
+                    use adesh_codegen::opt::pgo::{PgoConfig, PgoMode};
+                    let value = &arg["--pgo=".len()..];
+                    let mut pgo = PgoConfig::default();
+                    if value == "generate" {
+                        pgo.mode = PgoMode::Generate;
+                    } else if let Some(path) = value.strip_prefix("use=")
+                        && !path.is_empty()
+                    {
+                        pgo.mode = PgoMode::Use;
+                        pgo.profile_path = Some(PathBuf::from(path));
+                    } else {
+                        return Err(
+                            "PGO mode not supported; use --pgo=generate or --pgo=use=<path>".into(),
+                        );
+                    }
+                    config.pgo = Some(pgo);
+                }
+                arg if arg.starts_with("--sanitizer=") => {
                     let flag = arg.split('=').next().unwrap_or(arg);
                     return Err(format!("`{}` is not supported by `adesh build` yet", flag));
                 }
@@ -285,6 +300,23 @@ impl BuildArgParser {
     }
 }
 
+fn parse_opt_level(level: &str) -> Result<u8, String> {
+    match level.to_ascii_lowercase().as_str() {
+        "os" | "s" => Ok(4),
+        "oz" | "z" => Ok(5),
+        numeric => {
+            let parsed = numeric
+                .parse::<u8>()
+                .map_err(|_| format!("Invalid optimization level: {}", level))?;
+            if parsed <= 3 {
+                Ok(parsed)
+            } else {
+                Err(format!("Invalid optimization level: {}", level))
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,6 +337,28 @@ mod tests {
             assert_eq!(config.opt_level, level);
             assert!(!config.fast_compile);
         }
+    }
+
+    #[test]
+    fn test_parse_size_optimization_levels() {
+        for (flag, expected) in [("-Os", 4), ("-Oz", 5)] {
+            let config =
+                BuildArgParser::parse(vec!["test.adesh".to_string(), flag.to_string()]).unwrap();
+            assert_eq!(config.opt_level, expected);
+        }
+        for (flag, expected) in [("s", 4), ("Os", 4), ("z", 5), ("Oz", 5)] {
+            let config = BuildArgParser::parse(vec![
+                "test.adesh".to_string(),
+                "--opt-level".to_string(),
+                flag.to_string(),
+            ])
+            .unwrap();
+            assert_eq!(config.opt_level, expected);
+        }
+        assert!(
+            BuildArgParser::parse(vec!["test.adesh".to_string(), "--opt-level=9".to_string(),])
+                .is_err()
+        );
     }
 
     #[test]

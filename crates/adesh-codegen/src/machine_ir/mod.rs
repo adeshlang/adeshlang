@@ -998,6 +998,11 @@ impl MachineFunction {
                     MachineInstruction::Return => {
                         is_return = true;
                     }
+                    MachineInstruction::Custom { name, .. } if name == "tail_jmp" => {
+                        // A backend tail transfer terminates the block just
+                        // like Return, even though the target is a symbol.
+                        is_return = true;
+                    }
                     _ => {}
                 }
             }

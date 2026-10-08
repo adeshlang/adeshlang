@@ -243,10 +243,12 @@ impl Linker {
                 && !ctx.config.shared
                 && missing_symbols.contains(&"mainCRTStartup".to_string())
             {
-                let (bytes, relocs, syms) = crate::pe::x86_64::synthesize_windows_x86_64_entry(
-                    &program_entry_symbol,
-                    file_idx,
-                );
+                let (bytes, relocs, syms) =
+                    crate::pe::x86_64::synthesize_windows_x86_64_entry_with_pgo(
+                        &program_entry_symbol,
+                        file_idx,
+                        ctx.resolver.table.contains_key("__pgo_table"),
+                    );
                 let start_off = code_bytes.len() as u64;
                 code_bytes.extend_from_slice(&bytes);
                 for mut r in relocs {

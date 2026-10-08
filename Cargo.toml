@@ -166,6 +166,11 @@ name = "benchmarks"
 harness = false
 path = "benches/benchmarks.rs"
 
+[[bench]]
+name = "native_pipeline"
+harness = false
+path = "benches/native_pipeline.rs"
+
 [profile.dev]
 opt-level = 0
 debug = 1

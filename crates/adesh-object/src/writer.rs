@@ -181,6 +181,7 @@ impl AdobWriter {
                     RelocationKind::TlsLd => 7,
                     RelocationKind::TlsIe => 8,
                     RelocationKind::TlsLe => 9,
+                    RelocationKind::ImageRelative32 => 60,
                     RelocationKind::X86_64_GotPcrel => 10,
                     RelocationKind::X86_64_Plt32 => 11,
                     RelocationKind::X86_64_RexGotPcrelX => 12,

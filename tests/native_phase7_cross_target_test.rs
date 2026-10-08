@@ -60,6 +60,29 @@ fn test_instruction_scheduler_latency_and_hazard_avoidance() {
 }
 
 #[test]
+fn test_instruction_scheduler_preserves_flags_consumer_order() {
+    let mut block = MachineBlock::new(0, "flags");
+    let lhs = MachineOperand::phys(1);
+    block.push(MachineInstruction::Compare {
+        lhs: lhs.clone(),
+        rhs: MachineOperand::Immediate(0),
+    });
+    block.push(MachineInstruction::Move {
+        dst: MachineOperand::phys(2),
+        src: MachineOperand::Immediate(7),
+    });
+    block.push(MachineInstruction::BranchCc {
+        cc: ConditionCode::Equal,
+        target: "taken".into(),
+    });
+
+    let scheduled = BasicBlockScheduler::new().schedule_block(&block);
+    assert!(matches!(scheduled[0], MachineInstruction::Compare { .. }));
+    assert!(matches!(scheduled[1], MachineInstruction::Move { .. }));
+    assert!(matches!(scheduled[2], MachineInstruction::BranchCc { .. }));
+}
+
+#[test]
 fn test_cross_target_backend_matrix() {
     let triples = [
         "x86_64-pc-windows-msvc",

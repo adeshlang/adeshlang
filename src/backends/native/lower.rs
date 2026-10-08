@@ -2768,6 +2768,11 @@ impl<'a> FunctionLoweringContext<'a> {
                 self.lower_expression(expr);
             }
             HirStmt::Return(expr_opt) => {
+                if let Some(expr) = expr_opt.as_ref()
+                    && self.try_lower_tail_call(expr)
+                {
+                    return;
+                }
                 // Evaluate the return expression before cleanup, then retain
                 // its value while emitting the deferred statements.
                 let return_value = expr_opt.as_ref().map(|expr| self.lower_expression(expr));
@@ -3247,6 +3252,72 @@ impl<'a> FunctionLoweringContext<'a> {
                 ));
             }
         }
+    }
+
+    /// Lower a provably ABI-compatible direct local call in return position
+    /// as a tail transfer. This path only accepts integer/pointer scalar
+    /// arguments, an identical integer/pointer return type, no sret, and no
+    /// pending cleanup scopes. Other forms use the ordinary call sequence.
+    fn try_lower_tail_call(&mut self, expr: &HirExpr) -> bool {
+        let HirExpr::Call(callee, args, _) = expr else {
+            return false;
+        };
+        let HirExpr::LoadVar(target) = &**callee else {
+            return false;
+        };
+        if target == &self.func.name
+            || args.len() > 4
+            || self.sret_slot.is_some()
+            || !self.defer_stack.is_empty()
+            || !self.try_stack.is_empty()
+            || self.closure_env_slot.is_some()
+            || !self.module.functions.iter().any(|f| f.name == *target)
+        {
+            return false;
+        }
+        let Some((param_types, return_type)) = self.fn_signatures.get(target) else {
+            return false;
+        };
+        if param_types.len() != args.len() || return_type != &self.func_ret_type {
+            return false;
+        }
+        if !matches!(
+            hir_type_to_abi_type(return_type.as_ref()),
+            AbiType::Integer { .. } | AbiType::Pointer
+        ) {
+            return false;
+        }
+
+        for (arg, param_ty) in args.iter().zip(param_types) {
+            let Some(arg_ty) = self.infer_expr_type(arg) else {
+                return false;
+            };
+            if &arg_ty != param_ty {
+                return false;
+            }
+            let abi_ty = hir_type_to_abi_type(Some(param_ty));
+            if !matches!(abi_ty, AbiType::Integer { .. } | AbiType::Pointer) {
+                return false;
+            }
+        }
+
+        let mut typed_args = Vec::with_capacity(args.len());
+        for arg in args {
+            let value = self.lower_expression(arg);
+            typed_args.push((value, RegisterClass::Gpr));
+        }
+
+        let (moves, _) =
+            resolve_call_arguments(self.call_conv.as_ref(), &typed_args, PhysicalRegister(4))
+                .expect("scalar tail-call argument classification is infallible");
+        for inst in moves {
+            self.emit(inst);
+        }
+        self.emit(MachineInstruction::Custom {
+            name: "tail_jmp".to_string(),
+            operands: vec![MachineOperand::Symbol(target.clone())],
+        });
+        true
     }
 
     pub fn lower_expression(&mut self, expr: &HirExpr) -> VirtualRegister {

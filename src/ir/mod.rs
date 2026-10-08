@@ -4,10 +4,8 @@
 //! - HIR: High-level IR from parsing (legacy, re-exported from parsing module)
 //! - MIR: Memory IR with ownership/borrow analysis (compile-time memory safety)
 //! - VIR: Value IR - backend-neutral SSA form (consumed by all backends)
-//! - Optimizations: VIR optimization passes
 
 pub mod mir;
-pub mod optimizations;
 pub mod parallel;
 pub mod simd;
 pub mod vir;
@@ -23,7 +21,6 @@ pub use crate::parsing::hir::*;
 
 // Export new IR types
 pub use mir::MirModule;
-pub use optimizations::*;
 pub use vir::VirModule;
 
 // SIMD and parallel IR (explicit exports to avoid glob name collisions)

@@ -371,6 +371,9 @@ impl AdobV2 {
                     adesh_object::RelocationKind::TlsLd => RelocationKind::TlsGeneralDynamic,
                     adesh_object::RelocationKind::TlsIe => RelocationKind::TlsInitialExec,
                     adesh_object::RelocationKind::TlsLe => RelocationKind::TlsLocalExec,
+                    adesh_object::RelocationKind::ImageRelative32 => {
+                        RelocationKind::ImageRelative32
+                    }
                     _ => RelocationKind::Absolute64,
                 };
                 relocations.push(Relocation::new(

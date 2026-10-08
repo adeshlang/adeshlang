@@ -1,0 +1,38 @@
+// Data Structures & Algorithms (Bubble Sort & Matrix Traversal)
+
+// 1. Bubble Sort with In-Place Swapping
+let arr = [64, 34, 25, 12, 22, 11, 90];
+let n = len(arr);
+let i = 0;
+
+print("Original Array:", arr);
+
+while (i < n) {
+    let j = 0;
+    while (j < n - i - 1) {
+        if (arr[j] > arr[j + 1]) {
+            let temp = arr[j];
+            arr[j] = arr[j + 1];
+            arr[j + 1] = temp;
+        }
+        j = j + 1;
+    }
+    i = i + 1;
+}
+
+print("Sorted Array:", arr);
+
+// 2. 2D Matrix Traversal & Row Sums
+let matrix = [
+    [1, 2, 3],
+    [4, 5, 6],
+    [7, 8, 9]
+];
+
+for row in matrix {
+    let row_sum = 0;
+    for val in row {
+        row_sum = row_sum + val;
+    }
+    print("Row:", row, "Sum =", row_sum);
+}

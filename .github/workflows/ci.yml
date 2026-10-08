@@ -138,6 +138,8 @@ jobs:
           cargo test --test native_phase2_abi_tls_test
           cargo test --test native_phase2_conformance_test
           cargo test --test native_phase3_fp_e2e_test
+          cargo test --test native_phase4_lto_driver_test
+          cargo test --test native_phase4_pgo_e2e_test
           cargo test --test native_phase4_regalloc_e2e_test
           cargo test --test native_phase5_optimization_e2e_test
           cargo test --test native_phase6_compiler_e2e_test

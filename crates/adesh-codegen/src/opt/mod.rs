@@ -13,7 +13,6 @@ pub mod dominance;
 pub mod frame_opt;
 pub mod gvn;
 pub mod induction;
-pub mod ipo;
 pub mod licm;
 pub mod loop_analysis;
 pub mod loop_opt;
@@ -49,7 +48,6 @@ pub use dominance::DominatorTree;
 pub use frame_opt::StackFrameOptimizationPass;
 pub use gvn::GVNPass;
 pub use induction::InductionVariablePass;
-pub use ipo::{IpoConfig, IpoEngine, IpoReport};
 pub use licm::LICMPass;
 pub use loop_analysis::{LoopInfo, NaturalLoop};
 pub use loop_opt::{LoopOptConfig, LoopOptReport, LoopOptimizer};
@@ -99,6 +97,8 @@ pub struct OptimizationPipeline {
     pub peephole: PeepholeOptimizer,
     pub dce: DeadCodeElimination,
     pub array_opt: ArrayOptimizer,
+    pub scheduler: BasicBlockScheduler,
+    pub vectorize: AutoVectorizePass,
 }
 
 impl OptimizationPipeline {
@@ -128,6 +128,10 @@ impl OptimizationPipeline {
             peephole: PeepholeOptimizer::new(level_u8),
             dce: DeadCodeElimination::new(),
             array_opt: ArrayOptimizer::new(),
+            scheduler: BasicBlockScheduler::new(),
+            vectorize: AutoVectorizePass::new(
+                crate::opt::vector_prep::CpuFeatures::x86_64_baseline(),
+            ),
         }
     }
 
@@ -221,7 +225,7 @@ impl OptimizationPipeline {
             }
 
             // 12. Tail call optimization
-            if self.opt_level.is_aggressive() && self.tail_call.run_on_function(func)? {
+            if self.tail_call.run_on_function(func)? {
                 pass_total += 1;
             }
 
@@ -233,6 +237,13 @@ impl OptimizationPipeline {
 
             // 15. Move coalescing
             if self.opt_level.is_aggressive() && self.coalescing.run_on_function(func)? {
+                pass_total += 1;
+            }
+
+            // 16. Auto-vectorization. This is currently fail-closed and
+            // returns unchanged until packed lane values and loop legality are
+            // modeled in MachineIR.
+            if self.opt_level.is_aggressive() && self.vectorize.run_on_function(func)? {
                 pass_total += 1;
             }
 
@@ -256,10 +267,12 @@ impl OptimizationPipeline {
         }
 
         let mut total = 0;
+        total += MoveCoalescingPass::eliminate_redundant_allocated_moves(func);
         total += self.peephole.optimize_function(func);
         if self.frame_opt.run_on_function(func)? {
             total += 1;
         }
+        total += self.scheduler.schedule_function(func)?;
 
         MachineIRVerifier::verify(func)?;
         Ok(total)

@@ -22,6 +22,7 @@ use crate::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
     NativeModule, PhysicalRegister, RegisterClass,
 };
+use crate::opt::pgo::{PgoConfig, PgoEngine, PgoMode, ProfileData};
 use crate::opt::{OptLevel, OptimizationPipeline};
 use crate::register_alloc::{LinearScanAllocator, RegisterFile};
 use crate::targets::x86_64::encoder::X86_64Encoder;
@@ -600,6 +601,8 @@ fn instruction_writes_flags(inst: &MachineInstruction) -> bool {
             | MachineInstruction::FCvtIntToFloat { .. }
             | MachineInstruction::FCvtFloatToInt { .. }
             | MachineInstruction::ParallelMove { .. }
+            // `pgo_inc` encodes `inc qword [rip+..]`, which writes EFLAGS.
+            | MachineInstruction::Custom { .. }
     )
 }
 
@@ -701,6 +704,10 @@ struct FunctionEncoding {
     enc: X86_64Encoder,
     relocations: Vec<AdobRelocation>,
     branch_fixups: Vec<BranchFixup>,
+    /// PGO counter symbols referenced by `pgo_inc` instrumentation in this
+    /// function (Phase 4, `--pgo=generate`). Collected for `emit_object`,
+    /// which materializes the counter storage and `__pgo_table`.
+    pgo_counters: Vec<String>,
     block_offsets: HashMap<String, usize>,
     used_callee_saved: Vec<u8>,
     callee_slots: HashMap<u8, i32>,
@@ -728,6 +735,7 @@ impl FunctionEncoding {
             enc: X86_64Encoder::new(),
             relocations: Vec::new(),
             branch_fixups: Vec::new(),
+            pgo_counters: Vec::new(),
             block_offsets: HashMap::new(),
             used_callee_saved: layout.used_callee_saved,
             callee_slots: layout.callee_slots,
@@ -765,6 +773,13 @@ impl FunctionEncoding {
     }
 
     fn emit_epilogue(&mut self) {
+        self.emit_frame_teardown();
+        self.enc.ret();
+    }
+
+    /// Restore this function's frame without returning. Used by tail calls
+    /// before emitting a direct `jmp` to the callee.
+    fn emit_frame_teardown(&mut self) {
         let callee_saved = self.used_callee_saved.clone();
         for &reg in &callee_saved {
             let slot = self.callee_slot(reg);
@@ -777,7 +792,6 @@ impl FunctionEncoding {
         }
         self.enc.mov_r64_r64(4, 5); // mov rsp, rbp
         self.enc.pop_reg64(5); // pop rbp
-        self.enc.ret();
     }
 
     fn unsupported(&self, inst: &MachineInstruction, func_name: &str, abi: &str) -> CodegenError {
@@ -2591,6 +2605,55 @@ impl FunctionEncoding {
                 // emitted only at function entry (see ControlFlowIntegrityPass).
                 if name == "endbr64" && operands.is_empty() {
                     self.enc.endbr64();
+                } else if name == "pgo_inc" && operands.len() == 1 {
+                    // PGO block counter: inc qword ptr [rip + counter] with a
+                    // PC32 relocation to the counter's storage in `.pgocnt`
+                    // (emitted by emit_object). Writes EFLAGS; the flags
+                    // tracker treats Custom as flags-clobbering.
+                    if let MachineOperand::Symbol(sym) = &operands[0] {
+                        self.enc.inc_qword_rip_rel(0);
+                        let disp_off = self.enc.len() - 5;
+                        self.relocations.push(AdobRelocation::new(
+                            disp_off as u64,
+                            0,
+                            sym.clone(),
+                            RelocationKind::PcRelative32,
+                            -4,
+                        ));
+                        self.pgo_counters.push(sym.clone());
+                    } else {
+                        return Err(CodegenError::new(
+                            "x86_64",
+                            "pgo_inc requires a Symbol operand (the counter name)",
+                        )
+                        .with_arch("x86_64")
+                        .with_abi(abi)
+                        .with_function(func_name)
+                        .with_instruction("Custom"));
+                    }
+                } else if name == "tail_jmp" && operands.len() == 1 {
+                    let MachineOperand::Symbol(symbol) = &operands[0] else {
+                        return Err(CodegenError::new(
+                            "x86_64",
+                            "tail_jmp requires a direct Symbol operand",
+                        )
+                        .with_arch("x86_64")
+                        .with_abi(abi)
+                        .with_function(func_name)
+                        .with_instruction("Custom"));
+                    };
+                    self.emit_frame_teardown();
+                    let disp_offset = self.enc.len() + 1;
+                    self.enc.jmp_rel32(0);
+                    self.relocations.push(AdobRelocation::new(
+                        disp_offset as u64,
+                        0,
+                        symbol.clone(),
+                        RelocationKind::PcRelative32,
+                        -4,
+                    ));
+                    // Prevent finish() from appending an unreachable epilogue.
+                    self.saw_return = true;
                 } else {
                     return Err(CodegenError::new(
                         "x86_64",
@@ -2697,6 +2760,8 @@ pub struct X86_64Backend {
     target: TargetDescriptor,
     capabilities: TargetCapabilities,
     pub opt_level: OptLevel,
+    /// PGO configuration + optional profile (Phase 4, `--pgo`).
+    pgo: Option<(PgoConfig, Option<ProfileData>)>,
 }
 
 impl X86_64Backend {
@@ -2706,6 +2771,7 @@ impl X86_64Backend {
             target,
             capabilities,
             opt_level: OptLevel::O2,
+            pgo: None,
         }
     }
 
@@ -2716,6 +2782,25 @@ impl X86_64Backend {
 
     pub fn set_opt_level(&mut self, opt_level: OptLevel) {
         self.opt_level = opt_level;
+    }
+
+    pub fn set_pgo(
+        &mut self,
+        config: PgoConfig,
+        profile: Option<ProfileData>,
+    ) -> Result<(), CodegenError> {
+        if config.mode == PgoMode::Generate
+            && self.target.operating_system != OperatingSystem::Windows
+        {
+            return Err(CodegenError::new(
+                self.target.triple_string(),
+                "PGO instrumentation requires the native runtime's `aot_pgo_dump`, \
+                 which is only linked into Windows PE binaries; static ELF PGO \
+                 is not supported yet",
+            ));
+        }
+        self.pgo = Some((config, profile));
+        Ok(())
     }
 
     pub fn calling_convention(&self) -> Box<dyn CallingConvention> {
@@ -2748,7 +2833,7 @@ impl X86_64Backend {
     fn encode_function(
         &self,
         func: &MachineFunction,
-    ) -> Result<(Vec<u8>, Vec<AdobRelocation>), CodegenError> {
+    ) -> Result<(Vec<u8>, Vec<AdobRelocation>, Vec<String>), CodegenError> {
         let mut func_expanded = func.clone();
         Self::expand_parallel_moves(&mut func_expanded)?;
 
@@ -2764,7 +2849,9 @@ impl X86_64Backend {
             }
         }
 
-        Ok(ctx.finish())
+        let pgo_counters = ctx.pgo_counters.clone();
+        let (code, relocs) = ctx.finish();
+        Ok((code, relocs, pgo_counters))
     }
 }
 
@@ -2796,10 +2883,33 @@ impl CodegenBackend for X86_64Backend {
         self.opt_level = opt_level;
     }
 
+    fn set_pgo(
+        &mut self,
+        config: PgoConfig,
+        profile: Option<ProfileData>,
+    ) -> Result<(), CodegenError> {
+        X86_64Backend::set_pgo(self, config, profile)
+    }
+
     fn lower_module(&mut self, module: &NativeModule) -> Result<NativeModule, CodegenError> {
         let mut lowered = module.clone();
         let mut pipeline = OptimizationPipeline::new(self.opt_level);
         pipeline.optimize_module_pre_alloc(&mut lowered)?;
+
+        // PGO (Phase 4): instrument for counter collection (`--pgo=generate`)
+        // or apply profile-guided block layout (`--pgo=use=<path>`). Runs
+        // after the pre-alloc pipeline (so DCE cannot drop instrumentation)
+        // and before register allocation (counters are memory-only and
+        // allocation-safe).
+        if let Some((config, profile)) = &self.pgo {
+            let engine = match profile {
+                Some(p) => PgoEngine::with_profile(config.clone(), p.clone()),
+                None => PgoEngine::new(config.clone()),
+            };
+            for func in &mut lowered.functions {
+                engine.optimize_function(func)?;
+            }
+        }
 
         let reg_file = X86_64RegisterFile::for_os(self.target.operating_system);
         let allocator = LinearScanAllocator::new(&reg_file);
@@ -2824,7 +2934,8 @@ impl CodegenBackend for X86_64Backend {
         &mut self,
         func: &MachineFunction,
     ) -> Result<(Vec<u8>, Vec<AdobRelocation>), CodegenError> {
-        self.encode_function(func)
+        let (code, relocs, _) = self.encode_function(func)?;
+        Ok((code, relocs))
     }
 
     fn emit_object(&mut self, module: &NativeModule) -> Result<AdobObject, CodegenError> {
@@ -2844,10 +2955,12 @@ impl CodegenBackend for X86_64Backend {
         let mut text_bytes: Vec<u8> = Vec::new();
         let mut text_relocations: Vec<AdobRelocation> = Vec::new();
         let mut function_symbols: Vec<AdobSymbol> = Vec::new();
+        let mut pgo_counters: Vec<String> = Vec::new();
 
         for func in &lowered.functions {
             let func_offset = text_bytes.len() as u64;
-            let (code, relocs) = self.encode_function(func)?;
+            let (code, relocs, counters) = self.encode_function(func)?;
+            pgo_counters.extend(counters);
             let func_size = code.len() as u64;
             text_bytes.extend_from_slice(&code);
             for mut reloc in relocs {
@@ -2986,6 +3099,118 @@ impl CodegenBackend for X86_64Backend {
             obj.add_section(data_sec);
         }
 
+        // 4.5 PGO instrumentation support (Phase 4, `--pgo=generate`):
+        //     counter storage, counter-name strings, and a self-describing
+        //     `__pgo_table` of {name_rva, counter_rva} pairs (null-terminated)
+        //     that the runtime's `aot_pgo_dump` walks at process exit.
+        let mut pgo_symbols: Vec<AdobSymbol> = Vec::new();
+        if !pgo_counters.is_empty() {
+            // Dedupe (a counter symbol may be referenced once per block while
+            // being defined once), preserving first-seen order.
+            let mut seen = std::collections::HashSet::new();
+            let counters: Vec<String> = pgo_counters
+                .iter()
+                .filter(|c| seen.insert((*c).clone()))
+                .cloned()
+                .collect();
+
+            // .pgocnt: one zeroed qword of counter storage per counter.
+            let cnt_sec_idx = obj.sections.len() as u32;
+            let mut cnt_bytes = Vec::new();
+            for name in &counters {
+                let off = cnt_bytes.len() as u64;
+                cnt_bytes.extend_from_slice(&0u64.to_le_bytes());
+                pgo_symbols.push(
+                    AdobSymbol::new_defined(
+                        0,
+                        name.clone(),
+                        SymbolKind::Object,
+                        cnt_sec_idx,
+                        off,
+                        8,
+                    )
+                    .with_binding(SymbolBinding::Global),
+                );
+            }
+            let cnt_sec = AdobSection::new(".pgocnt", SectionKind::Data)
+                .with_flags(section_flags::READ | section_flags::WRITE | section_flags::ALLOC)
+                .with_alignment(8)
+                .with_data(cnt_bytes);
+            obj.add_section(cnt_sec);
+
+            // .pgonames: NUL-terminated counter name strings.
+            let names_sec_idx = obj.sections.len() as u32;
+            let mut names_bytes = Vec::new();
+            for (i, name) in counters.iter().enumerate() {
+                let off = names_bytes.len() as u64;
+                names_bytes.extend_from_slice(name.as_bytes());
+                names_bytes.push(0);
+                pgo_symbols.push(
+                    AdobSymbol::new_defined(
+                        0,
+                        format!("__pgo_name_{}", i),
+                        SymbolKind::Object,
+                        names_sec_idx,
+                        off,
+                        name.len() as u64 + 1,
+                    )
+                    .with_binding(SymbolBinding::Local),
+                );
+            }
+            let names_sec = AdobSection::new(".pgonames", SectionKind::Rodata)
+                .with_flags(section_flags::READ | section_flags::ALLOC)
+                .with_alignment(1)
+                .with_data(names_bytes);
+            obj.add_section(names_sec);
+
+            // .pgotab: {name_rva, counter_rva} entries + {0,0} terminator.
+            // ImageRelative32 keeps the table ASLR-safe with no base relocs.
+            let tab_sec_idx = obj.sections.len() as u32;
+            let mut tab_bytes = Vec::new();
+            let mut tab_relocs = Vec::new();
+            for (i, name) in counters.iter().enumerate() {
+                let entry_off = tab_bytes.len() as u64;
+                tab_bytes.extend_from_slice(&[0u8; 8]);
+                tab_relocs.push(AdobRelocation::new(
+                    entry_off,
+                    0,
+                    format!("__pgo_name_{}", i),
+                    RelocationKind::ImageRelative32,
+                    0,
+                ));
+                tab_relocs.push(AdobRelocation::new(
+                    entry_off + 4,
+                    0,
+                    name.clone(),
+                    RelocationKind::ImageRelative32,
+                    0,
+                ));
+            }
+            tab_bytes.extend_from_slice(&[0u8; 8]); // null terminator
+            let mut tab_sec = AdobSection::new(".pgotab", SectionKind::Rodata)
+                .with_flags(section_flags::READ | section_flags::ALLOC)
+                .with_alignment(8)
+                .with_data(tab_bytes);
+            tab_sec.relocations = tab_relocs;
+            obj.add_section(tab_sec);
+
+            pgo_symbols.push(
+                AdobSymbol::new_defined(
+                    0,
+                    "__pgo_table".to_string(),
+                    SymbolKind::Object,
+                    tab_sec_idx,
+                    0,
+                    (counters.len() * 8) as u64,
+                )
+                .with_binding(SymbolBinding::Global),
+            );
+            pgo_symbols.push(
+                AdobSymbol::new_undefined(0, "aot_pgo_dump", SymbolKind::Function)
+                    .with_binding(SymbolBinding::Global),
+            );
+        }
+
         // 5. Symbols: functions first (preserving module order), then string
         //    literals, then TLS variables, then data symbols, then imports.
         for sym in function_symbols {
@@ -2998,6 +3223,9 @@ impl CodegenBackend for X86_64Backend {
             obj.add_symbol(sym);
         }
         for sym in data_symbols {
+            obj.add_symbol(sym);
+        }
+        for sym in pgo_symbols {
             obj.add_symbol(sym);
         }
         for imp in &lowered.imports {
@@ -3017,10 +3245,12 @@ impl CodegenBackend for X86_64Backend {
         // 5. Resolve relocation symbol IDs by name (ids are assigned above).
         let name_to_id: HashMap<String, u32> =
             obj.symbols.iter().map(|s| (s.name.clone(), s.id)).collect();
-        if let Some((_, sec)) = obj.find_section_mut(".text") {
-            for reloc in &mut sec.relocations {
-                if let Some(&id) = name_to_id.get(&reloc.symbol_name) {
-                    reloc.symbol = id;
+        for sec_name in [".text", ".pgotab"] {
+            if let Some((_, sec)) = obj.find_section_mut(sec_name) {
+                for reloc in &mut sec.relocations {
+                    if let Some(&id) = name_to_id.get(&reloc.symbol_name) {
+                        reloc.symbol = id;
+                    }
                 }
             }
         }

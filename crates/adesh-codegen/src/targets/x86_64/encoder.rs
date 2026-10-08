@@ -271,6 +271,19 @@ impl X86_64Encoder {
         self.emit_i32(disp32);
     }
 
+    /// INC qword ptr [RIP + disp32] (REX.W + FF /0, mod=00 rm=101 RIP-relative).
+    /// Writes EFLAGS (all except CF) — callers must treat it as
+    /// flags-clobbering.
+    pub fn inc_qword_rip_rel(&mut self, disp32: i32) {
+        self.emit_u8(0x9C); // PUSHFQ: instrumentation preserves incoming flags
+        self.emit_u8(0xF0); // LOCK: counters are shared by all threads
+        self.emit_u8(0x48); // REX.W
+        self.emit_u8(0xFF);
+        self.emit_modrm(0b00, 0, 5); // /0 = INC, rm=5 RIP-relative
+        self.emit_i32(disp32);
+        self.emit_u8(0x9D); // POPFQ
+    }
+
     /// MOV [base + index*scale + offset], reg64 (89 /r with REX.W)
     pub fn mov_mem_r64(&mut self, base: u8, offset: i32, index: Option<(u8, u8)>, src: u8) {
         let x = index.map(|(r, _)| r).unwrap_or(0);

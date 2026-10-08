@@ -19,6 +19,10 @@ use adesh_codegen::targets::x86_64::X86_64Backend;
 use adesh_object::TargetDescriptor;
 use adesh_object::validator::AdobValidator;
 use adesh_object::writer::AdobWriter;
+use adeshlang::backends::native::lower::lower_hir_module;
+use adeshlang::parsing::hir_lower::ast_to_hir;
+use adeshlang::parsing::lexer::Lexer;
+use adeshlang::parsing::parser::Parser;
 use std::process::Command;
 use tempfile::tempdir;
 
@@ -139,6 +143,42 @@ fn test_c_level_minimal_binary_size() {
     assert!(
         metrics_oz.text_size <= 64,
         "Text section for minimal program should be tiny"
+    );
+}
+
+#[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+fn test_hello_world_binary_size_baseline() {
+    let source = r#"
+fn main(): int {
+    print("Hello, world!");
+    return 0;
+}
+"#;
+    let mut lexer = Lexer::new(source);
+    let tokens = lexer.tokenize().expect("hello-world source should lex");
+    let mut parser = Parser::new(tokens, None);
+    let program = parser
+        .parse_program()
+        .expect("hello-world source should parse");
+    let hir = ast_to_hir(&program, false).expect("hello-world source should lower to HIR");
+    let target = TargetDescriptor::from_triple("x86_64-pc-windows-msvc").expect("target");
+    let module = lower_hir_module(&hir, &target).expect("native lowering");
+
+    let (metrics, exit_code) = compile_link_and_measure(&module, OptLevel::O2, "hello_world_size");
+    assert_eq!(exit_code, 0);
+    println!(
+        "Hello-world PE baseline: {} bytes (ADOB object text {}, rodata {}, data {}, bss {})",
+        metrics.total_file_size,
+        metrics.text_size,
+        metrics.rodata_size,
+        metrics.data_size,
+        metrics.bss_size
+    );
+    assert!(
+        metrics.total_file_size <= 128 * 1024,
+        "hello-world size regression exceeded 128 KiB: {} bytes",
+        metrics.total_file_size
     );
 }
 

@@ -102,12 +102,11 @@ class AdeshCodeController extends TextEditingController {
       final indentMatch = RegExp(r'^\s*').firstMatch(currentLine);
       final baseIndent = indentMatch != null ? indentMatch.group(0) ?? '' : '';
 
-      final isPrevOpenBrace = currentLine.trimRight().endsWith('{') ||
-          currentLine.trimRight().endsWith('(') ||
-          currentLine.trimRight().endsWith('[');
+      final lineCode = currentLine.replaceAll(RegExp(r'//.*$'), '').trimRight();
+      final isPrevOpenBrace = lineCode.endsWith('{') || lineCode.endsWith('[');
 
       final isNextCloseBrace = insertPos < oldText.length &&
-          (oldText[insertPos] == '}' || oldText[insertPos] == ')' || oldText[insertPos] == ']');
+          (oldText[insertPos] == '}' || oldText[insertPos] == ']');
 
       if (isPrevOpenBrace && isNextCloseBrace && oldText[insertPos] == '}') {
         // Expanded block: {\n    |\n}
@@ -147,6 +146,40 @@ class AdeshCodeController extends TextEditingController {
         _internalUpdate = false;
         pushUndoState();
         return;
+      }
+    }
+
+    // 2b. Dedent when user types closing brace `}` or `]` at the start of an indented line
+    if (oldSel.isValid &&
+        oldSel.isCollapsed &&
+        newSel.isValid &&
+        newSel.isCollapsed &&
+        newText.length == oldText.length + 1 &&
+        newSel.baseOffset == oldSel.baseOffset + 1) {
+      final insertPos = oldSel.baseOffset;
+      final insertedChar = newText[insertPos];
+      if (insertedChar == '}' || insertedChar == ']') {
+        final lineStart = insertPos == 0 ? 0 : oldText.lastIndexOf('\n', insertPos - 1) + 1;
+        final prefixOnLine = oldText.substring(lineStart, insertPos);
+        if (prefixOnLine.isNotEmpty && RegExp(r'^\s+$').hasMatch(prefixOnLine)) {
+          final dedentSpaces = prefixOnLine.endsWith(' ' * tabSize)
+              ? tabSize
+              : (prefixOnLine.endsWith('\t') ? 1 : 0);
+          if (dedentSpaces > 0) {
+            final newPrefix = prefixOnLine.substring(0, prefixOnLine.length - dedentSpaces);
+            final modifiedText =
+                '${oldText.substring(0, lineStart)}$newPrefix$insertedChar${oldText.substring(insertPos)}';
+            _internalUpdate = true;
+            super.value = TextEditingValue(
+              text: modifiedText,
+              selection: TextSelection.collapsed(offset: lineStart + newPrefix.length + 1),
+              composing: TextRange.empty,
+            );
+            _internalUpdate = false;
+            pushUndoState();
+            return;
+          }
+        }
       }
     }
 
@@ -343,7 +376,8 @@ class AdeshCodeController extends TextEditingController {
     final indentMatch = RegExp(r'^\s*').firstMatch(currentLine);
     String indent = indentMatch != null ? indentMatch.group(0) ?? '' : '';
 
-    if (currentLine.trimRight().endsWith('{')) {
+    final lineCode = currentLine.replaceAll(RegExp(r'//.*$'), '').trimRight();
+    if (lineCode.endsWith('{') || lineCode.endsWith('[')) {
       indent += ' ' * tabSize;
     }
 

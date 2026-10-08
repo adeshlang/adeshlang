@@ -1,8 +1,9 @@
 // Structs in AdeshLang
 
 struct Point {
-    x: 10,
-    y: 20
+    x: i32,
+    y: i32,
 }
 
-print("Point struct sample");
+let p = Point { x: 10, y: 20 };
+print("Point coordinates: x =", p.x, "y =", p.y);

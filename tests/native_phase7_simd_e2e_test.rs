@@ -74,7 +74,7 @@ fn test_vector_type_system_and_cost_model() {
 }
 
 #[test]
-fn test_auto_vectorize_pass_transformation() {
+fn test_auto_vectorize_prototype_fails_closed() {
     let mut func = MachineFunction::new("vector_loop");
     let _loop_block_id = func.create_block("loop_body");
 
@@ -115,15 +115,18 @@ fn test_auto_vectorize_pass_transformation() {
     let changed = adesh_codegen::opt::pass::MachinePass::run_on_function(&mut vec_pass, &mut func)
         .expect("vectorize run");
     assert!(
-        changed,
-        "AutoVectorizePass should vectorize float arithmetic loop"
+        !changed,
+        "the prototype must not rewrite scalar operations without proving lane legality"
     );
 
     let has_vec_add = func.blocks[1]
         .instructions
         .iter()
         .any(|i| matches!(i, MachineInstruction::VectorAdd { .. }));
-    assert!(has_vec_add, "loop should contain VectorAdd instruction");
+    assert!(
+        !has_vec_add,
+        "scalar arithmetic must remain scalar until vector legality and packing are implemented"
+    );
 }
 
 #[test]

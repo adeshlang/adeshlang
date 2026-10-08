@@ -105,10 +105,24 @@ impl PgoInstrumentationPass {
         }
     }
 
-    /// Instruments a function with profiling counter increments at the start of each block.
+    /// Instruments a function with profiling counter increments at the start
+    /// of each block.
+    ///
+    /// Counter symbols are keyed by block **id** (not layout position), and
+    /// the entry block (`blocks[0]`, the `PgoOptimizationPass` entry
+    /// convention) gets an `__pgo_entry_<fn>_<id>` symbol so the runtime dump
+    /// can report `entry_count` alongside per-block counts.
+    ///
+    /// The encoder preserves EFLAGS around the atomic counter increment,
+    /// including when flags are live across block boundaries.
     pub fn instrument_function(&self, func: &mut MachineFunction) {
-        for (i, block) in func.blocks.iter_mut().enumerate() {
-            let sym = format!("{}_{}_{}", self.counter_symbol_prefix, func.name, i);
+        for (pos, block) in func.blocks.iter_mut().enumerate() {
+            let prefix = if pos == 0 {
+                "__pgo_entry"
+            } else {
+                self.counter_symbol_prefix.as_str()
+            };
+            let sym = format!("{}_{}_{}", prefix, func.name, block.id);
             let counter_inst = MachineInstruction::Custom {
                 name: "pgo_inc".to_string(),
                 operands: vec![MachineOperand::Symbol(sym)],
@@ -163,6 +177,21 @@ impl MachinePass for PgoOptimizationPass {
 
         if func.blocks.len() <= 1 {
             return Ok(false);
+        }
+
+        // Preserve implicit fallthrough edges before changing physical layout.
+        let labels: Vec<_> = func.blocks.iter().map(|b| b.label.clone()).collect();
+        for (i, block) in func.blocks.iter_mut().enumerate() {
+            if i + 1 < labels.len()
+                && !matches!(
+                    block.instructions.last(),
+                    Some(MachineInstruction::Branch { .. } | MachineInstruction::Return)
+                )
+            {
+                block.instructions.push(MachineInstruction::Branch {
+                    target: labels[i + 1].clone(),
+                });
+            }
         }
 
         // Partition blocks into entry block (0), hot blocks, and cold blocks

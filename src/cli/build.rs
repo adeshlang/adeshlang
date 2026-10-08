@@ -63,7 +63,7 @@ pub struct AotBuildConfig {
     pub input: PathBuf,
     /// Output path (optional, auto-inferred if not specified)
     pub output: Option<PathBuf>,
-    /// Optimization level (0-3)
+    /// Optimization level (0-3, 4=Os, 5=Oz)
     pub opt_level: u8,
     /// Output format/type
     pub emit: EmitType,
@@ -113,6 +113,8 @@ pub struct AotBuildConfig {
     pub deterministic: bool,
     /// Enable Link-Time Optimization (whole-program LTO)
     pub lto: bool,
+    /// Native profile generation or consumption.
+    pub pgo: Option<adesh_codegen::opt::pgo::PgoConfig>,
     /// Delegate the final link step to an external LLVM toolchain
     /// (clang + lld/lld-link) instead of the built-in adeshlink engine.
     /// Requires an external LLVM installation; verify with
@@ -150,6 +152,7 @@ impl Default for AotBuildConfig {
             clear_cache: false,
             deterministic: false,
             lto: false,
+            pgo: None,
             external_linker: false,
         }
     }
@@ -512,6 +515,24 @@ pub fn parse_build_args(
 
             // LTO optimization
             "--lto" | "--enable-lto" => config.lto = true,
+            _ if arg.starts_with("--pgo=") => {
+                use adesh_codegen::opt::pgo::{PgoConfig, PgoMode};
+                let value = &arg["--pgo=".len()..];
+                let mut pgo = PgoConfig::default();
+                if value == "generate" {
+                    pgo.mode = PgoMode::Generate;
+                } else if let Some(path) = value.strip_prefix("use=")
+                    && !path.is_empty()
+                {
+                    pgo.mode = PgoMode::Use;
+                    pgo.profile_path = Some(PathBuf::from(path));
+                } else {
+                    return Err(
+                        "PGO mode not supported; use --pgo=generate or --pgo=use=<path>".into(),
+                    );
+                }
+                config.pgo = Some(pgo);
+            }
             "--no-lto" | "--disable-lto" => config.lto = false,
             _ if arg.starts_with("--lto=") => {
                 let mode = &arg[6..];
@@ -768,6 +789,15 @@ pub fn resolve_project_targets(config: &AotBuildConfig) -> Result<Vec<AotBuildCo
 pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
     use crate::backends::cranelift_aot::aot_compile_with_options;
     use std::fs;
+    if config.pgo.is_some()
+        && (config.codegen_backend != "adesh"
+            || !matches!(
+                config.emit,
+                EmitType::Executable | EmitType::Adob | EmitType::Object
+            ))
+    {
+        return Err("PGO requires native adesh codegen and executable or ADOB output".into());
+    }
 
     if config.clear_cache {
         let cache = crate::backends::aot::cache::AotCompilationCache::new(None, true);
@@ -962,6 +992,33 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
 
             let mut backend =
                 create_backend(target.clone()).map_err(|e| format!("Backend error: {}", e))?;
+            let opt = match config.opt_level {
+                0 => adesh_codegen::opt::OptLevel::O0,
+                1 => adesh_codegen::opt::OptLevel::O1,
+                2 => adesh_codegen::opt::OptLevel::O2,
+                3 => adesh_codegen::opt::OptLevel::O3,
+                4 => adesh_codegen::opt::OptLevel::Os,
+                _ => adesh_codegen::opt::OptLevel::Oz,
+            };
+            backend.set_opt_level(opt);
+            let profile = if let Some(pgo) = &config.pgo {
+                let profile = if let Some(path) = &pgo.profile_path {
+                    let json = fs::read_to_string(path)
+                        .map_err(|e| format!("Cannot read PGO profile {}: {e}", path.display()))?;
+                    Some(
+                        adesh_codegen::opt::pgo::ProfileData::from_json(&json)
+                            .map_err(|e| format!("Invalid PGO profile: {e}"))?,
+                    )
+                } else {
+                    None
+                };
+                backend
+                    .set_pgo(pgo.clone(), profile.clone())
+                    .map_err(|e| e.to_string())?;
+                profile
+            } else {
+                None
+            };
             let mod_name = config
                 .input
                 .file_stem()
@@ -972,6 +1029,36 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
                 crate::backends::native::lower_hir_module_with_base(&hir, &target, base_dir)
                     .map_err(|e| e.to_string())?;
             module.name = mod_name.to_string();
+
+            // Phase 4: with --lto, emit via CompilerDriver so the IR-level
+            // LtoEngine (global dead-function elimination + cross-module
+            // inlining) runs before the per-module optimization pipeline.
+            // The linker still applies its section-level GC+ICF+strip on top.
+            let emit_adob_via_driver = |module: &adesh_codegen::machine_ir::NativeModule|
+             -> Result<adesh_object::AdobObject, String> {
+                let spec =
+                    adesh_codegen::target_spec::TargetSpec::for_descriptor(target.clone());
+                let driver_opt = match config.opt_level {
+                    0 => adesh_codegen::opt::OptLevel::O0,
+                    1 => adesh_codegen::opt::OptLevel::O1,
+                    2 => adesh_codegen::opt::OptLevel::O2,
+                    3 => adesh_codegen::opt::OptLevel::O3,
+                    4 => adesh_codegen::opt::OptLevel::Os,
+                    _ => adesh_codegen::opt::OptLevel::Oz,
+                };
+                let mut driver_cfg = adesh_codegen::driver::DriverConfig::new(spec)
+                    .with_opt_level(driver_opt)
+                    .with_lto(true);
+                driver_cfg.pgo = config.pgo.clone().map(|p| (p, profile.clone()));
+                let mut driver = adesh_codegen::driver::CompilerDriver::new(driver_cfg);
+                let objects = driver
+                    .compile_and_emit_adob(vec![module.clone()])
+                    .map_err(|e| format!("LTO driver error: {}", e))?;
+                objects
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| "LTO driver produced no object".to_string())
+            };
 
             if config.emit == EmitType::Assembly {
                 let asm = backend
@@ -1039,23 +1126,31 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
                 fs::write(&output, wasm_bytes)
                     .map_err(|e| format!("Failed to write WASM file: {}", e))
             } else if config.emit == EmitType::Adob || config.emit == EmitType::Object {
-                let lowered = backend
-                    .lower_module(&module)
-                    .map_err(|e| format!("Codegen lower error: {}", e))?;
-                let adob = backend
-                    .emit_object(&lowered)
-                    .map_err(|e| format!("ADOB emit error: {}", e))?;
+                let adob = if config.lto {
+                    emit_adob_via_driver(&module)?
+                } else {
+                    let lowered = backend
+                        .lower_module(&module)
+                        .map_err(|e| format!("Codegen lower error: {}", e))?;
+                    backend
+                        .emit_object(&lowered)
+                        .map_err(|e| format!("ADOB emit error: {}", e))?
+                };
                 let bytes = AdobWriter::write(&adob)
                     .map_err(|e| format!("Failed to encode ADOB: {}", e))?;
                 fs::write(&output, bytes).map_err(|e| format!("Failed to write ADOB file: {}", e))
             } else {
                 // EmitType::Executable (and other executable formats)
-                let lowered = backend
-                    .lower_module(&module)
-                    .map_err(|e| format!("Codegen lower error: {}", e))?;
-                let adob = backend
-                    .emit_object(&lowered)
-                    .map_err(|e| format!("ADOB emit error: {}", e))?;
+                let adob = if config.lto {
+                    emit_adob_via_driver(&module)?
+                } else {
+                    let lowered = backend
+                        .lower_module(&module)
+                        .map_err(|e| format!("Codegen lower error: {}", e))?;
+                    backend
+                        .emit_object(&lowered)
+                        .map_err(|e| format!("ADOB emit error: {}", e))?
+                };
                 let bytes = AdobWriter::write(&adob)
                     .map_err(|e| format!("Failed to encode ADOB: {}", e))?;
 
@@ -1079,7 +1174,9 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
                     0 => adesh_linker::config::OptLevel::O0,
                     1 => adesh_linker::config::OptLevel::O1,
                     2 => adesh_linker::config::OptLevel::O2,
-                    _ => adesh_linker::config::OptLevel::O3,
+                    3 => adesh_linker::config::OptLevel::O3,
+                    4 => adesh_linker::config::OptLevel::Os,
+                    _ => adesh_linker::config::OptLevel::Oz,
                 };
                 link_config.apply_optimization_level(opt_level);
                 if config.lto {
@@ -1305,7 +1402,9 @@ pub fn build_help_message() -> String {
     -O0                     No optimization (fastest compile)
     -O1                     Basic optimization
     -O2                     Standard optimization
-    -O3, --release          Maximum optimization (default)
+    -O3, --release          Maximum speed optimization (default)
+    -Os                     Optimize for smaller code
+    -Oz                     Aggressive size optimization and symbol stripping
     --fast                  Lightning-fast compile (no optimization, dev mode)
 
 {}DEBUG:{}

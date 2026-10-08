@@ -80,6 +80,30 @@ impl SchedNode {
                 | MachineInstruction::AtomicStore { .. }
                 | MachineInstruction::AtomicFetchAdd { .. }
                 | MachineInstruction::AtomicCompareExchange { .. }
+                | MachineInstruction::Custom { .. }
+                | MachineInstruction::TlsAddress { .. }
+                | MachineInstruction::Push { .. }
+                | MachineInstruction::Pop { .. }
+                // EFLAGS are implicit state. Until the scheduler models
+                // individual flag dependencies, preserve order around every
+                // flag writer/reader instead of moving an instruction into a
+                // compare-to-branch window.
+                | MachineInstruction::Add { .. }
+                | MachineInstruction::Sub { .. }
+                | MachineInstruction::Mul { .. }
+                | MachineInstruction::Div { .. }
+                | MachineInstruction::Mod { .. }
+                | MachineInstruction::Neg { .. }
+                | MachineInstruction::And { .. }
+                | MachineInstruction::Or { .. }
+                | MachineInstruction::Xor { .. }
+                | MachineInstruction::Shl { .. }
+                | MachineInstruction::Shr { .. }
+                | MachineInstruction::Sar { .. }
+                | MachineInstruction::Compare { .. }
+                | MachineInstruction::Test { .. }
+                | MachineInstruction::SetCc { .. }
+                | MachineInstruction::FCmp { .. }
         );
 
         match &inst {

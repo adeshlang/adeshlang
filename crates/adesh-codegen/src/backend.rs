@@ -3,6 +3,7 @@
 use crate::error::CodegenError;
 use crate::machine_ir::{MachineFunction, NativeModule};
 use crate::opt::OptLevel;
+use crate::opt::pgo::{PgoConfig, ProfileData};
 use adesh_object::{
     AdobObject, AdobRelocation, TargetCapabilities, TargetDescriptor, TargetFeatures,
 };
@@ -17,6 +18,19 @@ pub trait CodegenBackend: Send + Sync {
 
     /// Set optimization level for the backend.
     fn set_opt_level(&mut self, _opt_level: OptLevel) {}
+
+    /// Configure profile-guided optimization (instrumentation counters or
+    /// profile consumption). Default: unsupported on this backend.
+    fn set_pgo(
+        &mut self,
+        _config: PgoConfig,
+        _profile: Option<ProfileData>,
+    ) -> Result<(), CodegenError> {
+        Err(CodegenError::new(
+            "unknown",
+            "this backend does not support profile-guided optimization",
+        ))
+    }
 
     /// Lower an entire high-level or intermediate module to a NativeModule.
     fn lower_module(&mut self, module: &NativeModule) -> Result<NativeModule, CodegenError>;

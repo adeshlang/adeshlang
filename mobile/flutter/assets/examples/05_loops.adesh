@@ -1,11 +1,20 @@
-// Loops & Iteration
+// Loops & Iteration (While, For-in, Nested Loops)
 
-let i = 1;
+// 1. While Loop
+let count = 1;
 let sum = 0;
-
-while (i <= 10) {
-    sum = sum + i;
-    i = i + 1;
+while (count <= 5) {
+    sum = sum + count;
+    count = count + 1;
 }
+print("Sum 1..5 is:", sum);
 
-print("Sum of numbers 1..10 is:", sum);
+// 2. Nested Loops (Multiplication Table / Matrix)
+let rows = [1, 2, 3];
+let cols = [1, 2, 3];
+
+for r in rows {
+    for c in cols {
+        print(r, "x", c, "=", r * c);
+    }
+}

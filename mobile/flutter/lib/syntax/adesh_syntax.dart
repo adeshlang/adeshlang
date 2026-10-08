@@ -22,12 +22,13 @@ class AdeshSyntax {
   static const Set<String> typesAndBuiltins = {
     'i8', 'i16', 'i32', 'i64', 'i128', 'u8', 'u16', 'u32', 'u64', 'u128',
     'f32', 'f64', 'bool', 'char', 'str', 'String', 'Option', 'Result', 'Vec',
-    'print', 'println', 'eprint', 'eprintln', 'len', 'push', 'pop', 'read_line',
-    'assert', 'clock', 'format'
+    'Array', 'Map', 'Set', 'print', 'println', 'eprint', 'eprintln', 'printf',
+    'len', 'push', 'pop', 'swap', 'sort', 'reverse', 'min', 'max', 'read_line',
+    'input', 'assert', 'assert_eq', 'clock', 'format'
   };
 
   static const Set<String> literals = {
-    'true', 'false', 'null', 'Ok', 'Err', 'Some', 'None'
+    'true', 'false', 'null', 'nil', 'Ok', 'Err', 'Some', 'None'
   };
 
   static TextSpan highlight(String code, TextStyle baseStyle) {

@@ -591,6 +591,7 @@ impl AllocationVerifier {
         used_callee_saved: &HashSet<PhysicalRegister>,
         intervals: &[LiveInterval],
         call_indices: &[usize],
+        preserved_calls: &HashSet<(VirtualRegister, usize)>,
         reg_file: &dyn RegisterFile,
     ) -> Result<(), VerificationError> {
         let reserved_gpr: HashSet<PhysicalRegister> = reg_file
@@ -653,7 +654,7 @@ impl AllocationVerifier {
                 let is_caller_saved = reg_file.caller_saved_for_class(r.class).contains(&p);
                 if is_caller_saved {
                     for &c in call_indices {
-                        if r.covers(c) {
+                        if r.covers(c) && !preserved_calls.contains(&(r.vreg, c)) {
                             return Err(VerificationError::CallerSavedLiveAcrossCall {
                                 reg: p,
                                 vreg: r.vreg,
@@ -1830,8 +1831,30 @@ impl<'a> LinearScanAllocator<'a> {
         &self,
         func: &mut MachineFunction,
     ) -> Result<AllocationResult, VerificationError> {
+        let original = func.clone();
+        match self.allocate_attempt(func, false) {
+            Ok(result) => Ok(result),
+            Err(_) => {
+                *func = original.clone();
+                match self.allocate_attempt(func, true) {
+                    Ok(result) => Ok(result),
+                    Err(error) => {
+                        *func = original;
+                        Err(error)
+                    }
+                }
+            }
+        }
+    }
+
+    fn allocate_attempt(
+        &self,
+        func: &mut MachineFunction,
+        force_spill: bool,
+    ) -> Result<AllocationResult, VerificationError> {
         let liveness = LivenessAnalysis::compute(func);
         let intervals = liveness.build_live_ranges(func);
+        let position_weights = Self::instruction_loop_weights(func, &liveness);
         // The loop below assigns registers on clones; the verifier must see
         // those decisions, not the unassigned originals.
         let mut assigned_intervals: Vec<LiveInterval> = Vec::with_capacity(intervals.len());
@@ -1848,20 +1871,20 @@ impl<'a> LinearScanAllocator<'a> {
         // Call positions are collected once per function and used with a binary
         // search below (they are naturally sorted by instruction index).
         let mut call_indices = Vec::new();
+        let mut call_sites = Vec::new();
         let mut inst_idx = 0;
         for block in &func.blocks {
-            for inst in &block.instructions {
+            for (local_idx, inst) in block.instructions.iter().enumerate() {
                 if matches!(inst, MachineInstruction::Call { .. }) {
                     call_indices.push(inst_idx);
+                    call_sites.push((inst_idx, block.id, local_idx));
                 }
                 inst_idx += 1;
             }
         }
 
-        // Basic-block instruction spans, used for the conservative cross-block
-        // call-clobber rule below.
-        let block_spans: Vec<(usize, usize)> = liveness.block_ranges.values().copied().collect();
-        let has_call = !call_indices.is_empty();
+        let mut preserved_calls: HashSet<(VirtualRegister, usize)> = HashSet::new();
+        let mut preservation_slots: HashMap<VirtualRegister, i32> = HashMap::new();
 
         for mut current in intervals.clone() {
             let class = current.class;
@@ -1885,57 +1908,98 @@ impl<'a> LinearScanAllocator<'a> {
             let used_phys: HashSet<PhysicalRegister> =
                 active.iter().filter_map(|act| act.assigned_reg).collect();
 
-            // A live value that crosses a call must not sit in a caller-saved
-            // register. Instruction positions only tell us about calls that
-            // fall inside the interval's textual span, which is not sound for
-            // discontinuous ranges: a value defined before a call, clobbered by
-            // it, and re-read after a loop back-edge would be reported as
-            // crossing no call. Conservatively treat *any* interval spanning
-            // more than one basic block in a function containing a call as
-            // crossing a call.
-            let covers_call = current.segments.iter().any(|seg| {
-                let idx = call_indices.partition_point(|&c| c < seg.start);
-                idx < call_indices.len() && call_indices[idx] < seg.end
-            });
-            let crosses_call =
-                covers_call || (has_call && Self::spans_multiple_blocks(&current, &block_spans));
+            // Exact instruction-level liveness distinguishes arguments that
+            // die at the call from values that must survive its clobbers.
+            let crossed_calls: Vec<usize> = call_indices
+                .iter()
+                .copied()
+                .filter(|&call_idx| {
+                    liveness
+                        .live_after_inst(call_idx)
+                        .is_some_and(|live| live.contains(&MachineRegister::Virtual(current.vreg)))
+                })
+                .collect();
+            let crosses_call = !crossed_calls.is_empty();
 
-            let chosen_reg = match current.constraint {
-                RegisterConstraint::Fixed(p) => {
-                    if !used_phys.contains(&p) {
-                        Some(p)
-                    } else {
-                        None
+            let call_result_registers: HashSet<PhysicalRegister> = call_sites
+                .iter()
+                .filter(|(call_idx, _, _)| crossed_calls.contains(call_idx))
+                .flat_map(|(_, block_id, local_idx)| {
+                    func.blocks[*block_id as usize].instructions[*local_idx]
+                        .defs()
+                        .into_iter()
+                        .filter_map(|reg| match reg {
+                            MachineRegister::Physical(p) => Some(p),
+                            MachineRegister::Virtual(_) => None,
+                        })
+                })
+                .collect();
+            let can_preserve_in_caller_saved = |reg: PhysicalRegister| {
+                class == RegisterClass::Gpr
+                    && self.reg_file.caller_saved_for_class(class).contains(&reg)
+                    && !call_result_registers.contains(&reg)
+            };
+            let allowed_for_interval = |reg: PhysicalRegister| {
+                let constraint_allows = match current.constraint {
+                    RegisterConstraint::Fixed(fixed) if fixed != reg => false,
+                    RegisterConstraint::DifferentFrom(forbidden) if forbidden == reg => false,
+                    _ => true,
+                };
+                constraint_allows
+                    && (!crosses_call
+                        || callee_set.contains(&reg)
+                        || can_preserve_in_caller_saved(reg))
+            };
+
+            let chosen_reg = if force_spill
+                && !matches!(current.constraint, RegisterConstraint::Fixed(_))
+            {
+                None
+            } else {
+                match current.constraint {
+                    RegisterConstraint::Fixed(p) => {
+                        if !used_phys.contains(&p) && allowed_for_interval(p) {
+                            Some(p)
+                        } else {
+                            None
+                        }
                     }
-                }
-                RegisterConstraint::DifferentFrom(forbidden) => allocatable
-                    .iter()
-                    .copied()
-                    .find(|r| *r != forbidden && !used_phys.contains(r)),
-                _ => {
-                    if crosses_call {
-                        // Across calls, caller-saved registers are clobbered.
-                        // We must select a callee-saved register, or spill.
-                        callee_saved
-                            .iter()
-                            .copied()
-                            .find(|r| !used_phys.contains(r))
-                    } else {
-                        let caller_saved: Vec<PhysicalRegister> = allocatable
-                            .iter()
-                            .copied()
-                            .filter(|r| !callee_set.contains(r))
-                            .collect();
-                        caller_saved
-                            .iter()
-                            .copied()
-                            .find(|r| !used_phys.contains(r))
-                            .or_else(|| {
-                                callee_saved
-                                    .iter()
-                                    .copied()
-                                    .find(|r| !used_phys.contains(r))
-                            })
+                    RegisterConstraint::DifferentFrom(forbidden) => {
+                        allocatable.iter().copied().find(|r| {
+                            *r != forbidden && !used_phys.contains(r) && allowed_for_interval(*r)
+                        })
+                    }
+                    _ => {
+                        if crosses_call {
+                            // Prefer a free callee-saved register. If none exists,
+                            // a caller-saved GPR can be split around the call using
+                            // stack copies, except when the call returns in it.
+                            callee_saved
+                                .iter()
+                                .copied()
+                                .find(|r| !used_phys.contains(r))
+                                .or_else(|| {
+                                    allocatable.iter().copied().find(|r| {
+                                        !used_phys.contains(r) && can_preserve_in_caller_saved(*r)
+                                    })
+                                })
+                        } else {
+                            let caller_saved: Vec<PhysicalRegister> = allocatable
+                                .iter()
+                                .copied()
+                                .filter(|r| !callee_set.contains(r))
+                                .collect();
+                            caller_saved
+                                .iter()
+                                .copied()
+                                .find(|r| !used_phys.contains(r))
+                                .or_else(|| {
+                                    callee_saved
+                                        .iter()
+                                        .copied()
+                                        .find(|r| !used_phys.contains(r))
+                                })
+                        }
                     }
                 }
             };
@@ -1945,23 +2009,152 @@ impl<'a> LinearScanAllocator<'a> {
                 vreg_map.insert(current.vreg, free_reg);
                 if callee_set.contains(&free_reg) {
                     used_callee_saved.insert(free_reg);
+                } else if crosses_call && can_preserve_in_caller_saved(free_reg) {
+                    preservation_slots.entry(current.vreg).or_insert_with(|| {
+                        spill_manager.allocate_slot(class, 8, 8, &current.segments, locals_end)
+                    });
+                    for call_idx in crossed_calls {
+                        preserved_calls.insert((current.vreg, call_idx));
+                    }
                 }
                 assigned_intervals.push(current.clone());
                 Self::insert_active(&mut active, current);
             } else {
-                let size = 8;
-                let align = 8;
-                let slot =
-                    spill_manager.allocate_slot(class, size, align, &current.segments, locals_end);
-                current.spill_slot = Some(slot);
-                spill_map.insert(current.vreg, slot);
-                spill_size_map.insert(current.vreg, size as u8);
-                assigned_intervals.push(current.clone());
-                Self::insert_active(&mut active, current);
+                let current_priority =
+                    Self::spill_priority(&current, current.start(), &position_weights);
+                let current_reg_allowed = |reg: PhysicalRegister| match current.constraint {
+                    RegisterConstraint::Fixed(fixed) => reg == fixed,
+                    RegisterConstraint::DifferentFrom(forbidden) => {
+                        reg != forbidden && allocatable.contains(&reg)
+                    }
+                    RegisterConstraint::Any | RegisterConstraint::SameAs(_) => {
+                        allocatable.contains(&reg)
+                    }
+                };
+                let victim = if force_spill {
+                    None
+                } else {
+                    active
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, active_range)| current.overlaps(active_range))
+                        .filter_map(|(idx, active_range)| {
+                            let reg = active_range.assigned_reg?;
+                            if !current_reg_allowed(reg)
+                                || !allowed_for_interval(reg)
+                                || matches!(active_range.constraint, RegisterConstraint::Fixed(_))
+                            {
+                                return None;
+                            }
+                            let priority = Self::spill_priority(
+                                active_range,
+                                current.start(),
+                                &position_weights,
+                            );
+                            (priority.0 < current_priority.0)
+                                .then_some((idx, priority.0, priority.1))
+                        })
+                        .min_by_key(|(_, score, next_use)| (*score, std::cmp::Reverse(*next_use)))
+                };
+
+                if let Some((victim_idx, _, _)) = victim {
+                    // Spill the lower-cost value and give its register to the
+                    // higher-cost interval. Verification gates the rewritten IR.
+                    let mut evicted = active.remove(victim_idx);
+                    let reg = evicted
+                        .assigned_reg
+                        .take()
+                        .expect("selected victim has a register");
+                    let slot = spill_manager.allocate_slot(
+                        evicted.class,
+                        8,
+                        8,
+                        &evicted.segments,
+                        locals_end,
+                    );
+                    evicted.spill_slot = Some(slot);
+                    vreg_map.remove(&evicted.vreg);
+                    spill_map.insert(evicted.vreg, slot);
+                    spill_size_map.insert(evicted.vreg, 8);
+                    if let Some(assigned) = assigned_intervals
+                        .iter_mut()
+                        .find(|assigned| assigned.vreg == evicted.vreg)
+                    {
+                        assigned.assigned_reg = None;
+                        assigned.spill_slot = Some(slot);
+                    }
+
+                    current.assigned_reg = Some(reg);
+                    vreg_map.insert(current.vreg, reg);
+                    if callee_set.contains(&reg) {
+                        used_callee_saved.insert(reg);
+                    }
+                    assigned_intervals.push(current.clone());
+                    Self::insert_active(&mut active, current);
+                } else {
+                    let slot =
+                        spill_manager.allocate_slot(class, 8, 8, &current.segments, locals_end);
+                    current.spill_slot = Some(slot);
+                    spill_map.insert(current.vreg, slot);
+                    spill_size_map.insert(current.vreg, 8);
+                    assigned_intervals.push(current.clone());
+                    Self::insert_active(&mut active, current);
+                }
             }
         }
 
-        let deepest_offset = spill_map.values().min().copied().unwrap_or(-locals_end);
+        // Keep an up-to-date stack copy after every definition for values
+        // assigned to caller-saved registers across calls. This remains valid
+        // even when argument setup overwrites those registers before a call.
+        if !preservation_slots.is_empty() {
+            let mut global_idx = 0usize;
+            for block in &mut func.blocks {
+                let mut rewritten = Vec::with_capacity(block.instructions.len());
+                for inst in block.instructions.drain(..) {
+                    let is_call = matches!(inst, MachineInstruction::Call { .. });
+                    let defined: Vec<VirtualRegister> = inst
+                        .defs()
+                        .into_iter()
+                        .filter_map(|reg| match reg {
+                            MachineRegister::Virtual(v) if preservation_slots.contains_key(&v) => {
+                                Some(v)
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    rewritten.push(inst);
+                    for vreg in defined {
+                        let slot = preservation_slots[&vreg];
+                        rewritten.push(MachineInstruction::Store {
+                            dst: MachineOperand::StackSlot(slot),
+                            src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
+                            size: 8,
+                        });
+                    }
+                    if is_call {
+                        for &(vreg, call_idx) in &preserved_calls {
+                            if call_idx == global_idx {
+                                let slot = preservation_slots[&vreg];
+                                rewritten.push(MachineInstruction::Load {
+                                    dst: MachineOperand::Register(MachineRegister::Virtual(vreg)),
+                                    src: MachineOperand::StackSlot(slot),
+                                    size: 8,
+                                });
+                            }
+                        }
+                    }
+                    global_idx += 1;
+                }
+                block.instructions = rewritten;
+            }
+        }
+
+        let deepest_offset = spill_map
+            .values()
+            .chain(preservation_slots.values())
+            .min()
+            .copied()
+            .unwrap_or(-locals_end);
         let total_spill_bytes = ((-deepest_offset) - locals_end).max(0) as u32;
         func.stack_size += total_spill_bytes as u64;
 
@@ -1976,6 +2169,7 @@ impl<'a> LinearScanAllocator<'a> {
             &used_callee_saved,
             &assigned_intervals,
             &call_indices,
+            &preserved_calls,
             self.reg_file,
         )?;
 
@@ -1994,28 +2188,74 @@ impl<'a> LinearScanAllocator<'a> {
         active.insert(pos, interval);
     }
 
-    /// True when the interval's textual span touches more than one basic block.
-    ///
-    /// Used for the conservative call-clobber rule: with discontinuous ranges a
-    /// purely positional call test is not sufficient.
-    fn spans_multiple_blocks(interval: &LiveInterval, block_spans: &[(usize, usize)]) -> bool {
-        let mut touched = 0usize;
-        for &(b_start, b_end) in block_spans {
-            if b_start == b_end {
-                continue;
-            }
-            let overlaps = interval
-                .segments
-                .iter()
-                .any(|seg| seg.start < b_end && b_start < seg.end);
-            if overlaps {
-                touched += 1;
-                if touched > 1 {
-                    return true;
+    /// Assign exponential weights to instructions in natural loops. Nested
+    /// loops receive higher weights, capped to keep calculations bounded.
+    fn instruction_loop_weights(func: &MachineFunction, liveness: &LivenessAnalysis) -> Vec<u32> {
+        let dominators = crate::opt::DominatorTree::compute(func);
+        let mut loop_depth: HashMap<u32, u32> = HashMap::new();
+
+        for latch in &func.blocks {
+            for &header in &latch.successors {
+                if !dominators.dominates(header, latch.id) {
+                    continue;
+                }
+                let mut loop_blocks = HashSet::from([header, latch.id]);
+                let mut worklist = vec![latch.id];
+                while let Some(block_id) = worklist.pop() {
+                    if let Some(block) = func.blocks.iter().find(|block| block.id == block_id) {
+                        for &pred in &block.predecessors {
+                            if loop_blocks.insert(pred) && pred != header {
+                                worklist.push(pred);
+                            }
+                        }
+                    }
+                }
+                for block_id in loop_blocks {
+                    let depth = loop_depth.entry(block_id).or_default();
+                    *depth = depth.saturating_add(1).min(4);
                 }
             }
         }
-        false
+
+        let mut weights = vec![1; liveness.total_instructions];
+        for block in &func.blocks {
+            let Some(&(start, end)) = liveness.block_ranges.get(&block.id) else {
+                continue;
+            };
+            let multiplier = 10u32.pow(loop_depth.get(&block.id).copied().unwrap_or(0));
+            for weight in weights.iter_mut().take(end).skip(start) {
+                *weight = multiplier;
+            }
+        }
+        weights
+    }
+
+    /// Approximate spill cost from future-use density, loop frequency, and
+    /// distance. High near-term weighted use protects the interval.
+    fn spill_priority(
+        interval: &LiveInterval,
+        position: usize,
+        position_weights: &[u32],
+    ) -> (u128, usize) {
+        let next_use = interval
+            .use_positions
+            .iter()
+            .copied()
+            .filter(|&use_pos| use_pos >= position)
+            .min()
+            .unwrap_or(usize::MAX);
+        if next_use == usize::MAX {
+            return (0, next_use);
+        }
+        let weighted_uses: u128 = interval
+            .use_positions
+            .iter()
+            .copied()
+            .filter(|&use_pos| use_pos >= position)
+            .map(|use_pos| position_weights.get(use_pos).copied().unwrap_or(1) as u128)
+            .sum();
+        let distance = next_use.saturating_sub(position).max(1) as u128;
+        (weighted_uses.saturating_mul(1_000_000) / distance, next_use)
     }
 }
 
@@ -2135,6 +2375,7 @@ mod tests {
             &HashSet::new(),
             &[r0, r1],
             &[],
+            &HashSet::new(),
             &reg_file,
         )
         .expect_err("two overlapping ranges in one register must be rejected");
@@ -2181,5 +2422,213 @@ mod tests {
         } else {
             assert!(res.spill_map.contains_key(&v0));
         }
+    }
+
+    #[test]
+    fn test_call_boundary_saves_live_value_in_caller_saved_register() {
+        let mut func = MachineFunction::new("test_call_boundary_split");
+        let reg_file = X86_64RegisterFile::sysv();
+        let allocator = LinearScanAllocator::new(&reg_file);
+        let count = reg_file.callee_saved_for_class(RegisterClass::Gpr).len() + 1;
+        let vregs: Vec<_> = (0..count).map(|_| func.alloc_vreg()).collect();
+
+        let entry = func.entry_block_mut();
+        for &vreg in &vregs {
+            entry.push(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(vreg)),
+                src: MachineOperand::Immediate(7),
+            });
+        }
+        entry.push(MachineInstruction::Call {
+            target: MachineOperand::Symbol("dummy_call".to_string()),
+            num_args: 0,
+        });
+        for &vreg in &vregs {
+            entry.push(MachineInstruction::Compare {
+                lhs: MachineOperand::Register(MachineRegister::Virtual(vreg)),
+                rhs: MachineOperand::Immediate(0),
+            });
+        }
+        entry.push(MachineInstruction::Return);
+
+        let allocation = allocator
+            .allocate(&mut func)
+            .expect("call-boundary preservation must pass allocation verification");
+        let caller_saved_value = vregs
+            .iter()
+            .find(|vreg| {
+                allocation.vreg_map.get(vreg).is_some_and(|reg| {
+                    reg_file
+                        .caller_saved_for_class(RegisterClass::Gpr)
+                        .contains(reg)
+                })
+            })
+            .expect("callee-saved pressure should select a caller-saved register");
+        assert!(!allocation.spill_map.contains_key(caller_saved_value));
+
+        let instructions = &func.blocks[0].instructions;
+        let call_pos = instructions
+            .iter()
+            .position(|inst| matches!(inst, MachineInstruction::Call { .. }))
+            .unwrap();
+        assert!(
+            instructions[..call_pos].iter().any(|inst| matches!(
+                inst,
+                MachineInstruction::Store {
+                    dst: MachineOperand::StackSlot(_),
+                    ..
+                }
+            )),
+            "the live value must be saved before the call"
+        );
+        assert!(
+            instructions[call_pos + 1..].iter().any(|inst| matches!(
+                inst,
+                MachineInstruction::Load {
+                    src: MachineOperand::StackSlot(_),
+                    ..
+                }
+            )),
+            "the live value must be restored after the call"
+        );
+    }
+
+    #[test]
+    fn test_value_dying_at_call_does_not_get_preservation_slot() {
+        let mut func = MachineFunction::new("test_call_argument_lifetime");
+        let value = func.alloc_vreg();
+        let entry = func.entry_block_mut();
+        entry.push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(value)),
+            src: MachineOperand::Immediate(7),
+        });
+        entry.push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(1))),
+            src: MachineOperand::Register(MachineRegister::Virtual(value)),
+        });
+        entry.push(MachineInstruction::Call {
+            target: MachineOperand::Symbol("dummy_call".to_string()),
+            num_args: 1,
+        });
+        entry.push(MachineInstruction::Return);
+
+        let reg_file = X86_64RegisterFile::sysv();
+        let allocator = LinearScanAllocator::new(&reg_file);
+        let allocation = allocator
+            .allocate(&mut func)
+            .expect("call argument allocation should pass verification");
+        assert!(
+            reg_file
+                .caller_saved_for_class(RegisterClass::Gpr)
+                .contains(&allocation.vreg_map[&value])
+        );
+        assert!(
+            !func.blocks[0].instructions.iter().any(|inst| matches!(
+                inst,
+                MachineInstruction::Store {
+                    dst: MachineOperand::StackSlot(_),
+                    ..
+                } | MachineInstruction::Load {
+                    src: MachineOperand::StackSlot(_),
+                    ..
+                }
+            )),
+            "a value dead after the call should not get a preservation slot"
+        );
+    }
+
+    #[test]
+    fn test_verifier_failure_retries_with_conservative_spilling() {
+        struct DeliberatelyInvalidRegisterFile;
+
+        impl RegisterFile for DeliberatelyInvalidRegisterFile {
+            fn registers(&self) -> &[PhysicalRegister] {
+                static REGISTERS: [PhysicalRegister; 1] = [PhysicalRegister(0)];
+                &REGISTERS
+            }
+
+            fn allocatable(&self) -> &[PhysicalRegister] {
+                self.registers()
+            }
+
+            fn caller_saved(&self) -> &[PhysicalRegister] {
+                self.registers()
+            }
+
+            fn callee_saved(&self) -> &[PhysicalRegister] {
+                &[]
+            }
+
+            fn reserved(&self) -> &[PhysicalRegister] {
+                self.registers()
+            }
+
+            fn scratch_for_class(
+                &self,
+                class: RegisterClass,
+            ) -> (PhysicalRegister, PhysicalRegister) {
+                match class {
+                    RegisterClass::Gpr => (PhysicalRegister(1), PhysicalRegister(2)),
+                    RegisterClass::Float => (PhysicalRegister::xmm(15), PhysicalRegister::xmm(14)),
+                }
+            }
+        }
+
+        let mut func = MachineFunction::new("test_verified_retry");
+        let value = func.alloc_vreg();
+        let entry = func.entry_block_mut();
+        entry.push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(value)),
+            src: MachineOperand::Immediate(42),
+        });
+        entry.push(MachineInstruction::Add {
+            dst: MachineOperand::Register(MachineRegister::Virtual(value)),
+            src: MachineOperand::Immediate(1),
+        });
+        entry.push(MachineInstruction::Return);
+
+        let allocator = LinearScanAllocator::new(&DeliberatelyInvalidRegisterFile);
+        let allocation = allocator
+            .allocate(&mut func)
+            .expect("the conservative retry should spill after reserved-register rejection");
+        assert!(allocation.vreg_map.is_empty());
+        assert!(allocation.spill_map.contains_key(&value));
+    }
+
+    #[test]
+    fn test_linear_scan_evicts_farther_next_use() {
+        let mut func = MachineFunction::new("test_next_use_eviction");
+        let reg_file = X86_64RegisterFile::sysv();
+        let allocator = LinearScanAllocator::new(&reg_file);
+        let pressure = reg_file.allocatable_for_class(RegisterClass::Gpr).len() + 1;
+        let vregs: Vec<_> = (0..pressure).map(|_| func.alloc_vreg()).collect();
+
+        let entry = func.entry_block_mut();
+        for &vreg in &vregs {
+            entry.push(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(vreg)),
+                src: MachineOperand::Immediate(1),
+            });
+        }
+        // The newest value is used first, so it has the closest next use.
+        for &vreg in vregs.iter().rev() {
+            entry.push(MachineInstruction::Compare {
+                lhs: MachineOperand::Register(MachineRegister::Virtual(vreg)),
+                rhs: MachineOperand::Immediate(0),
+            });
+        }
+        entry.push(MachineInstruction::Return);
+
+        let result = allocator
+            .allocate(&mut func)
+            .expect("eviction and rewritten spills must pass verification");
+        assert!(
+            result.spill_map.contains_key(&vregs[0]),
+            "the farthest-next-use interval should be evicted"
+        );
+        assert!(
+            result.vreg_map.contains_key(vregs.last().unwrap()),
+            "the nearer-next-use interval should keep a register"
+        );
     }
 }
