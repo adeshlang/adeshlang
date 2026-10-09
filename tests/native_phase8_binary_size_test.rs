@@ -176,10 +176,94 @@ fn main(): int {
         metrics.bss_size
     );
     assert!(
-        metrics.total_file_size <= 128 * 1024,
-        "hello-world size regression exceeded 128 KiB: {} bytes",
+        metrics.total_file_size <= 40 * 1024,
+        "hello-world PE exceeded the 40 KiB size target: {} bytes",
         metrics.total_file_size
     );
+}
+
+#[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+fn test_cli_size_optimization_levels_build_compact_executables() {
+    let dir = tempdir().expect("tempdir");
+    let source = dir.path().join("size_flags.adesh");
+    std::fs::write(
+        &source,
+        "fn main(): int { print(\"size modes work — café 😀\"); return 0; }\n",
+    )
+    .expect("write source");
+
+    for level in ["-Os", "-Oz"] {
+        let output = dir.path().join(format!("size_{}.exe", &level[2..]));
+        let status = Command::new(env!("CARGO_BIN_EXE_adesh"))
+            .arg("build")
+            .arg(&source)
+            .arg(level)
+            .arg("-o")
+            .arg(&output)
+            .status()
+            .expect("CLI should start");
+        assert!(status.success(), "CLI build failed for {level}");
+
+        let size = std::fs::metadata(&output)
+            .expect("CLI executable exists")
+            .len();
+        assert!(
+            size <= 40 * 1024,
+            "{level} produced a {size}-byte PE, exceeding the 40 KiB target"
+        );
+
+        let result = Command::new(&output)
+            .output()
+            .expect("CLI-built executable should run");
+        assert_eq!(result.status.code(), Some(0), "{level} exit code");
+        assert_eq!(
+            String::from_utf8(result.stdout)
+                .expect("size-optimized executable should emit UTF-8")
+                .trim(),
+            "size modes work — café 😀",
+            "{level} output"
+        );
+    }
+}
+
+#[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+fn test_cli_build_ignores_unreferenced_weak_runtime_helpers() {
+    let dir = tempdir().expect("tempdir");
+    let source = dir.path().join("weak_helpers.adesh");
+    std::fs::write(
+        &source,
+        "fn main(): int { print(\"Sum \", 1 + 2 + 3); return 0; }\n",
+    )
+    .expect("write source");
+    let output = dir.path().join("weak_helpers.exe");
+
+    let build = Command::new(env!("CARGO_BIN_EXE_adesh"))
+        .arg("build")
+        .arg(&source)
+        .arg("-o")
+        .arg(&output)
+        .output()
+        .expect("CLI should start");
+    assert!(
+        build.status.success(),
+        "CLI build failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&build.stderr);
+    for helper in ["__extendhfsf2", "__truncsfhf2", "__udivti3"] {
+        assert!(
+            !stderr.contains(helper),
+            "unreferenced weak helper `{helper}` should not warn: {stderr}"
+        );
+    }
+
+    let run = Command::new(&output)
+        .output()
+        .expect("built executable should run");
+    assert_eq!(run.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "Sum  6");
 }
 
 #[test]

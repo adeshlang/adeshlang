@@ -6,10 +6,8 @@
 //! raw allocation, wall-clock time, the f64 math dispatcher, and the
 //! abort-with-message helper.
 //!
-//! Also provides a lean console path (`aot_print_cstr`) that writes raw bytes
-//! through the OS instead of Rust's formatting machinery, so programs whose
-//! only runtime interaction is printing a string literal do not pay for the
-//! std formatting code (~90KB of .text in the linked binary).
+//! The print-only native entry points live in `native_output.c`, a separate
+//! archive member so simple programs do not extract this broader Rust runtime.
 
 use std::os::raw::c_char;
 

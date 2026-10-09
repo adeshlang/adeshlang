@@ -181,9 +181,8 @@ incremental = true
 opt-level = 2
 
 [profile.dev.package.adesh-runtime]
-# The runtime is statically linked into native programs. Keep it optimized even
-# in compiler dev builds so hello-world output does not embed unoptimized Rust
-# runtime code.
+# Programs that use the broader Rust-backed native runtime can statically link
+# its code into their output. Keep that code optimized in compiler dev builds.
 opt-level = 2
 
 [profile.release]

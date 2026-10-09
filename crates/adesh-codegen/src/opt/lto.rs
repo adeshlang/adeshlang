@@ -502,7 +502,7 @@ fn remap_operand(
 ///
 /// `ParallelMove` (whose moves use `MoveLocation`, not `MachineOperand`) and
 /// the pure-control-flow instructions have no operands here.
-fn operands_mut(inst: &mut MachineInstruction) -> Vec<&mut MachineOperand> {
+pub(crate) fn operands_mut(inst: &mut MachineInstruction) -> Vec<&mut MachineOperand> {
     match inst {
         MachineInstruction::Move { dst, src }
         | MachineInstruction::Load { dst, src, .. }

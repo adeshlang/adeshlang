@@ -1820,11 +1820,23 @@ impl<'a> SpillRewriter<'a> {
 /// Production Linear Scan Register Allocator.
 pub struct LinearScanAllocator<'a> {
     reg_file: &'a dyn RegisterFile,
+    enable_local_call_splitting: bool,
 }
 
 impl<'a> LinearScanAllocator<'a> {
     pub fn new(reg_file: &'a dyn RegisterFile) -> Self {
-        Self { reg_file }
+        Self::with_local_call_splitting(reg_file, true)
+    }
+
+    /// Construct an allocator with optional local call splitting.
+    ///
+    /// Disabling splitting retains the stack-copy preservation strategy and is
+    /// useful for comparing allocator output on the same input workload.
+    pub fn with_local_call_splitting(reg_file: &'a dyn RegisterFile, enabled: bool) -> Self {
+        Self {
+            reg_file,
+            enable_local_call_splitting: enabled,
+        }
     }
 
     pub fn allocate(
@@ -1852,8 +1864,19 @@ impl<'a> LinearScanAllocator<'a> {
         func: &mut MachineFunction,
         force_spill: bool,
     ) -> Result<AllocationResult, VerificationError> {
+        let initial_liveness = LivenessAnalysis::compute(func);
+        let split_constraints = if self.enable_local_call_splitting {
+            Self::split_local_call_intervals(func, &initial_liveness)
+        } else {
+            HashMap::new()
+        };
         let liveness = LivenessAnalysis::compute(func);
-        let intervals = liveness.build_live_ranges(func);
+        let mut intervals = liveness.build_live_ranges(func);
+        for interval in &mut intervals {
+            if let Some(&constraint) = split_constraints.get(&interval.vreg) {
+                interval.constraint = constraint;
+            }
+        }
         let position_weights = Self::instruction_loop_weights(func, &liveness);
         // The loop below assigns registers on clones; the verifier must see
         // those decisions, not the unassigned originals.
@@ -2188,6 +2211,249 @@ impl<'a> LinearScanAllocator<'a> {
         active.insert(pos, interval);
     }
 
+    /// Split GPR live ranges around zero-argument calls when the call is not in
+    /// a cycle and dominates every use after it. Calls in cycles, values with
+    /// multiple eligible calls, and values used on paths that bypass the call
+    /// retain the stack-copy preservation path below.
+    fn split_local_call_intervals(
+        func: &mut MachineFunction,
+        liveness: &LivenessAnalysis,
+    ) -> HashMap<VirtualRegister, RegisterConstraint> {
+        #[derive(Clone, Copy)]
+        struct SplitEvent {
+            vreg: VirtualRegister,
+            post_call_vreg: VirtualRegister,
+            slot: i32,
+        }
+
+        let locals_end = (func.stack_size as i32 + 7) & !7;
+        let mut slot_manager = SpillSlotManager::new();
+        let mut events: HashMap<(u32, usize), Vec<SplitEvent>> = HashMap::new();
+        let mut constraints = HashMap::new();
+        let mut candidates = Vec::new();
+        let dominators = crate::opt::DominatorTree::compute(func);
+        let successors: HashMap<u32, Vec<u32>> = func
+            .blocks
+            .iter()
+            .map(|block| (block.id, block.successors.clone()))
+            .collect();
+        let mut uses_by_vreg: HashMap<VirtualRegister, HashSet<u32>> = HashMap::new();
+        for block in &func.blocks {
+            for inst in &block.instructions {
+                for register in inst.uses() {
+                    if let MachineRegister::Virtual(vreg) = register {
+                        uses_by_vreg.entry(vreg).or_default().insert(block.id);
+                    }
+                }
+            }
+        }
+
+        let can_reach = |from: u32, to: u32| {
+            let mut worklist = successors.get(&from).cloned().unwrap_or_default();
+            let mut visited = HashSet::new();
+            while let Some(candidate) = worklist.pop() {
+                if candidate == to {
+                    return true;
+                }
+                if visited.insert(candidate) {
+                    worklist.extend(successors.get(&candidate).into_iter().flatten().copied());
+                }
+            }
+            false
+        };
+        let is_in_cycle = |block_id| can_reach(block_id, block_id);
+
+        for block in &func.blocks {
+            let live_in = liveness.live_in.get(&block.id);
+
+            for (local_idx, inst) in block.instructions.iter().enumerate() {
+                let MachineInstruction::Call { num_args: 0, .. } = inst else {
+                    continue;
+                };
+                if is_in_cycle(block.id) {
+                    continue;
+                }
+                let call_idx = liveness.inst_index_map[&(block.id, local_idx)];
+                let Some(live_after) = liveness.live_after_inst(call_idx) else {
+                    continue;
+                };
+
+                let mut crossing: Vec<VirtualRegister> = live_after
+                    .iter()
+                    .filter_map(|reg| match reg {
+                        MachineRegister::Virtual(vreg)
+                            if func.vreg_class(*vreg) == RegisterClass::Gpr
+                                && (live_in.is_some_and(|regs| {
+                                    regs.contains(&MachineRegister::Virtual(*vreg))
+                                }) || block.instructions[..local_idx].iter().any(
+                                    |prior| prior.defs().contains(&MachineRegister::Virtual(*vreg)),
+                                ))
+                                && uses_by_vreg.get(vreg).is_some_and(|use_blocks| {
+                                    use_blocks.iter().all(|use_block| {
+                                        *use_block == block.id
+                                            || dominators.dominates(block.id, *use_block)
+                                            || !can_reach(block.id, *use_block)
+                                    })
+                                }) =>
+                        {
+                            Some(*vreg)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                crossing.sort_unstable();
+                crossing.dedup();
+
+                for vreg in crossing {
+                    candidates.push((block.id, local_idx, call_idx, vreg));
+                }
+            }
+        }
+
+        let mut candidate_counts = HashMap::new();
+        for &(_, _, _, vreg) in &candidates {
+            *candidate_counts.entry(vreg).or_insert(0usize) += 1;
+        }
+        candidates.retain(|(_, _, _, vreg)| candidate_counts[vreg] == 1);
+
+        for (block_id, local_idx, call_idx, vreg) in candidates {
+            let post_call_vreg = func.alloc_vreg();
+            let slot = slot_manager.allocate_slot(
+                RegisterClass::Gpr,
+                8,
+                8,
+                &[LiveSegment::new(call_idx, call_idx + 1)],
+                locals_end,
+            );
+            events
+                .entry((block_id, local_idx))
+                .or_default()
+                .push(SplitEvent {
+                    vreg,
+                    post_call_vreg,
+                    slot,
+                });
+            // A reload immediately following Call must not destroy the ABI
+            // return value before its first use.
+            constraints.insert(
+                post_call_vreg,
+                RegisterConstraint::DifferentFrom(PhysicalRegister::gpr(0)),
+            );
+        }
+
+        if events.is_empty() {
+            return constraints;
+        }
+
+        let mut deepest_slot = -locals_end;
+        for slot in slot_manager.slots() {
+            deepest_slot = deepest_slot.min(slot.offset);
+        }
+        func.stack_size += ((-deepest_slot) - locals_end).max(0) as u64;
+
+        for block in &mut func.blocks {
+            let mut pieces: HashMap<VirtualRegister, VirtualRegister> = HashMap::new();
+            for ((split_block, _), split_events) in &events {
+                if *split_block != block.id && dominators.dominates(*split_block, block.id) {
+                    for event in split_events {
+                        pieces.insert(event.vreg, event.post_call_vreg);
+                    }
+                }
+            }
+            let mut rewritten = Vec::with_capacity(block.instructions.len() + 4);
+            for (local_idx, mut inst) in block.instructions.drain(..).enumerate() {
+                let split_events = events.get(&(block.id, local_idx));
+                if let Some(split_events) = split_events {
+                    for event in split_events {
+                        let current_piece = pieces.get(&event.vreg).copied().unwrap_or(event.vreg);
+                        rewritten.push(MachineInstruction::Store {
+                            dst: MachineOperand::StackSlot(event.slot),
+                            src: MachineOperand::Register(MachineRegister::Virtual(current_piece)),
+                            size: 8,
+                        });
+                    }
+                }
+
+                for operand in crate::opt::lto::operands_mut(&mut inst) {
+                    Self::remap_split_operand(operand, &pieces);
+                }
+                if let MachineInstruction::ParallelMove { moves } = &mut inst {
+                    for movement in moves {
+                        Self::remap_split_location(&mut movement.src, &pieces);
+                        Self::remap_split_location(&mut movement.dst, &pieces);
+                    }
+                }
+                rewritten.push(inst);
+
+                if let Some(split_events) = split_events {
+                    for event in split_events {
+                        rewritten.push(MachineInstruction::Load {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(
+                                event.post_call_vreg,
+                            )),
+                            src: MachineOperand::StackSlot(event.slot),
+                            size: 8,
+                        });
+                        pieces.insert(event.vreg, event.post_call_vreg);
+                    }
+                }
+            }
+            block.instructions = rewritten;
+        }
+
+        constraints
+    }
+
+    fn remap_split_operand(
+        operand: &mut MachineOperand,
+        pieces: &HashMap<VirtualRegister, VirtualRegister>,
+    ) {
+        let remap = |register: &mut MachineRegister| {
+            if let MachineRegister::Virtual(vreg) = *register
+                && let Some(&piece) = pieces.get(&vreg)
+            {
+                *register = MachineRegister::Virtual(piece);
+            }
+        };
+        match operand {
+            MachineOperand::Register(register) => remap(register),
+            MachineOperand::Memory { base, index, .. } => {
+                remap(base);
+                if let Some((register, _)) = index {
+                    remap(register);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn remap_split_location(
+        location: &mut MoveLocation,
+        pieces: &HashMap<VirtualRegister, VirtualRegister>,
+    ) {
+        let remap = |register: &mut MachineRegister| {
+            if let MachineRegister::Virtual(vreg) = *register
+                && let Some(&piece) = pieces.get(&vreg)
+            {
+                *register = MachineRegister::Virtual(piece);
+            }
+        };
+        match location {
+            MoveLocation::VirtualRegister(vreg) => {
+                if let Some(&piece) = pieces.get(vreg) {
+                    *vreg = piece;
+                }
+            }
+            MoveLocation::Memory { base, index, .. } => {
+                remap(base);
+                if let Some((register, _)) = index {
+                    remap(register);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Assign exponential weights to instructions in natural loops. Nested
     /// loops receive higher weights, capped to keep calculations bounded.
     fn instruction_loop_weights(func: &MachineFunction, liveness: &LivenessAnalysis) -> Vec<u32> {
@@ -2386,7 +2652,7 @@ mod tests {
     }
 
     #[test]
-    fn test_caller_saved_across_call_forces_callee_or_spill() {
+    fn test_caller_saved_across_call_uses_local_split() {
         let mut func = MachineFunction::new("test_call_clobber");
         let v0 = func.alloc_vreg();
 
@@ -2411,17 +2677,17 @@ mod tests {
             .allocate(&mut func)
             .expect("allocation must pass verification");
 
-        if let Some(&p) = res.vreg_map.get(&v0) {
-            assert!(
-                reg_file
-                    .callee_saved_for_class(RegisterClass::Gpr)
-                    .contains(&p),
-                "Value live across call must be placed in a callee-saved register"
-            );
-            assert!(res.used_callee_saved.contains(&p));
-        } else {
-            assert!(res.spill_map.contains_key(&v0));
-        }
+        let post_call_piece = res
+            .vreg_map
+            .iter()
+            .find(|(vreg, _)| **vreg != v0)
+            .map(|(_, reg)| *reg)
+            .expect("splitting creates a distinct post-call virtual register");
+        assert_ne!(
+            post_call_piece,
+            PhysicalRegister::gpr(0),
+            "the split value must not overwrite the call's RAX return"
+        );
     }
 
     #[test]
@@ -2644,6 +2910,255 @@ mod tests {
             LinearScanAllocator::spill_priority(&hot, 0, &weights)
                 > LinearScanAllocator::spill_priority(&cold, 0, &weights),
             "dense, loop-weighted future uses should make an interval more expensive to spill"
+        );
+    }
+
+    #[test]
+    fn test_single_block_zero_arg_call_splits_local_live_range() {
+        let mut func = MachineFunction::new("test_local_call_split");
+        let live_value = func.alloc_vreg();
+        let call_result = func.alloc_vreg();
+        let entry = func.entry_block_mut();
+        entry.push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+            src: MachineOperand::Immediate(41),
+        });
+        entry.push(MachineInstruction::Call {
+            target: MachineOperand::Symbol("zero_arg".to_string()),
+            num_args: 0,
+        });
+        entry.push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(call_result)),
+            src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister::gpr(0))),
+        });
+        entry.push(MachineInstruction::Add {
+            dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+            src: MachineOperand::Immediate(1),
+        });
+        entry.push(MachineInstruction::Add {
+            dst: MachineOperand::Register(MachineRegister::Virtual(call_result)),
+            src: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+        });
+        entry.push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister::gpr(0))),
+            src: MachineOperand::Register(MachineRegister::Virtual(call_result)),
+        });
+        entry.push(MachineInstruction::Return);
+
+        let reg_file = X86_64RegisterFile::sysv();
+        let allocator = LinearScanAllocator::new(&reg_file);
+        let result = allocator
+            .allocate(&mut func)
+            .expect("local call split should pass allocation verification");
+
+        assert_eq!(func.vreg_count, 3, "one post-call piece should be created");
+        let call_index = func.blocks[0]
+            .instructions
+            .iter()
+            .position(|inst| matches!(inst, MachineInstruction::Call { .. }))
+            .expect("call remains in the block");
+        assert!(
+            matches!(
+                func.blocks[0].instructions[call_index - 1],
+                MachineInstruction::Store { .. }
+            ),
+            "save should be placed immediately before the zero-argument call"
+        );
+        assert!(
+            matches!(
+                func.blocks[0].instructions[call_index + 1],
+                MachineInstruction::Load { .. }
+            ),
+            "reload should create the post-call piece"
+        );
+        let post_call_piece = VirtualRegister(2);
+        assert!(
+            result.vreg_map.contains_key(&post_call_piece)
+                || result.spill_map.contains_key(&post_call_piece)
+        );
+        assert_ne!(
+            result.vreg_map.get(&post_call_piece),
+            Some(&PhysicalRegister::gpr(0)),
+            "the reload must not overwrite the call's RAX return value"
+        );
+    }
+
+    #[test]
+    fn test_zero_arg_call_split_reaches_dominated_join_uses() {
+        let mut func = MachineFunction::new("test_dominated_call_split");
+        let left_id = func.create_block("left");
+        let right_id = func.create_block("right");
+        let join_id = func.create_block("join");
+        let live_value = func.alloc_vreg();
+
+        {
+            let entry = func.entry_block_mut();
+            entry.push(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+                src: MachineOperand::Immediate(41),
+            });
+            entry.push(MachineInstruction::Call {
+                target: MachineOperand::Symbol("zero_arg".to_string()),
+                num_args: 0,
+            });
+            entry.push(MachineInstruction::BranchCc {
+                cc: crate::machine_ir::ConditionCode::Equal,
+                target: "left".to_string(),
+            });
+            entry.push(MachineInstruction::Branch {
+                target: "right".to_string(),
+            });
+        }
+        func.blocks[left_id as usize].push(MachineInstruction::Branch {
+            target: "join".to_string(),
+        });
+        func.blocks[right_id as usize].push(MachineInstruction::Branch {
+            target: "join".to_string(),
+        });
+        func.blocks[join_id as usize].push(MachineInstruction::Add {
+            dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+            src: MachineOperand::Immediate(1),
+        });
+        func.blocks[join_id as usize].push(MachineInstruction::Return);
+
+        let reg_file = X86_64RegisterFile::sysv();
+        let allocator = LinearScanAllocator::new(&reg_file);
+        let result = allocator
+            .allocate(&mut func)
+            .expect("a call dominating the join use should be safely split");
+
+        let post_call_piece = VirtualRegister(1);
+        assert_eq!(func.vreg_count, 2);
+        assert!(
+            result.vreg_map.contains_key(&post_call_piece)
+                || result.spill_map.contains_key(&post_call_piece)
+        );
+        assert!(
+            func.blocks[join_id as usize]
+                .instructions
+                .iter()
+                .any(|inst| matches!(inst, MachineInstruction::Add { .. }))
+        );
+    }
+
+    #[test]
+    fn test_zero_arg_call_split_falls_back_when_join_bypasses_call() {
+        let mut func = MachineFunction::new("test_non_dominated_call_fallback");
+        let call_path_id = func.create_block("call_path");
+        let bypass_path_id = func.create_block("bypass_path");
+        let join_id = func.create_block("join");
+        let live_value = func.alloc_vreg();
+
+        {
+            let entry = func.entry_block_mut();
+            entry.push(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+                src: MachineOperand::Immediate(41),
+            });
+            entry.push(MachineInstruction::BranchCc {
+                cc: crate::machine_ir::ConditionCode::Equal,
+                target: "call_path".to_string(),
+            });
+            entry.push(MachineInstruction::Branch {
+                target: "bypass_path".to_string(),
+            });
+        }
+        func.blocks[call_path_id as usize].push(MachineInstruction::Call {
+            target: MachineOperand::Symbol("zero_arg".to_string()),
+            num_args: 0,
+        });
+        func.blocks[call_path_id as usize].push(MachineInstruction::Branch {
+            target: "join".to_string(),
+        });
+        func.blocks[bypass_path_id as usize].push(MachineInstruction::Branch {
+            target: "join".to_string(),
+        });
+        func.blocks[join_id as usize].push(MachineInstruction::Add {
+            dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+            src: MachineOperand::Immediate(1),
+        });
+        func.blocks[join_id as usize].push(MachineInstruction::Return);
+
+        let reg_file = X86_64RegisterFile::sysv();
+        let allocator = LinearScanAllocator::new(&reg_file);
+        allocator
+            .allocate(&mut func)
+            .expect("the conservative preservation path should remain valid");
+        assert_eq!(
+            func.vreg_count, 1,
+            "a use reachable by bypassing the call must not receive a split piece"
+        );
+    }
+
+    #[test]
+    fn test_zero_arg_call_in_loop_keeps_verified_fallback() {
+        let mut func = MachineFunction::new("test_loop_call_fallback");
+        let loop_id = func.create_block("loop");
+        let exit_id = func.create_block("exit");
+        let live_value = func.alloc_vreg();
+
+        func.entry_block_mut().push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+            src: MachineOperand::Immediate(41),
+        });
+        func.entry_block_mut().push(MachineInstruction::Branch {
+            target: "loop".to_string(),
+        });
+        func.blocks[loop_id as usize].push(MachineInstruction::Call {
+            target: MachineOperand::Symbol("zero_arg".to_string()),
+            num_args: 0,
+        });
+        func.blocks[loop_id as usize].push(MachineInstruction::Add {
+            dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+            src: MachineOperand::Immediate(1),
+        });
+        func.blocks[loop_id as usize].push(MachineInstruction::BranchCc {
+            cc: crate::machine_ir::ConditionCode::Equal,
+            target: "loop".to_string(),
+        });
+        func.blocks[loop_id as usize].push(MachineInstruction::Branch {
+            target: "exit".to_string(),
+        });
+        func.blocks[exit_id as usize].push(MachineInstruction::Return);
+
+        let reg_file = X86_64RegisterFile::sysv();
+        let allocator = LinearScanAllocator::new(&reg_file);
+        allocator
+            .allocate(&mut func)
+            .expect("the loop call should retain the verified fallback");
+        assert_eq!(
+            func.vreg_count, 1,
+            "cyclic call sites are not split by the bounded allocator"
+        );
+    }
+
+    #[test]
+    fn test_calls_with_arguments_keep_verified_preservation_fallback() {
+        let mut func = MachineFunction::new("test_call_argument_split_fallback");
+        let live_value = func.alloc_vreg();
+        let entry = func.entry_block_mut();
+        entry.push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+            src: MachineOperand::Immediate(41),
+        });
+        entry.push(MachineInstruction::Call {
+            target: MachineOperand::Symbol("one_arg".to_string()),
+            num_args: 1,
+        });
+        entry.push(MachineInstruction::Add {
+            dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+            src: MachineOperand::Immediate(1),
+        });
+        entry.push(MachineInstruction::Return);
+
+        let reg_file = X86_64RegisterFile::sysv();
+        let allocator = LinearScanAllocator::new(&reg_file);
+        allocator
+            .allocate(&mut func)
+            .expect("argument setup must retain the verified fallback");
+        assert_eq!(
+            func.vreg_count, 1,
+            "unsupported argument setup should not create split pieces"
         );
     }
 }

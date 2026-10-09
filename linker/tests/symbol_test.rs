@@ -86,3 +86,28 @@ fn test_duplicate_symbol_error() {
     let err = res.unwrap_err();
     assert_eq!(err.code, adesh_linker::error::ErrorCode::DuplicateSymbol);
 }
+
+#[test]
+fn test_unreferenced_undefined_weak_symbol_is_not_a_link_warning() {
+    let mut resolver = SymbolResolver::new();
+    let target = Target::host();
+    let mut object = ObjectFile::new(PathBuf::from("weak_optional.o"), target.clone(), 0);
+    let mut optional = Symbol::new_undefined("optional_runtime_helper", 0);
+    optional.binding = SymbolBinding::Weak;
+    object.add_symbol(optional);
+
+    let mut objects = vec![object];
+    resolver
+        .resolve(&mut objects, &[])
+        .expect("an undefined weak symbol is ABI-valid");
+
+    assert!(
+        resolver
+            .weak_undefined_symbols
+            .contains("optional_runtime_helper")
+    );
+    assert!(
+        resolver.warnings.is_empty(),
+        "weak declarations without relocations should not produce user-facing warnings"
+    );
+}

@@ -34,9 +34,13 @@ pub struct ResolvedSymbol {
 pub struct SymbolResolver {
     pub table: HashMap<String, ResolvedSymbol>,
     pub undefined: HashSet<String>,
+    /// Undefined weak symbols bound to their ABI-defined zero value. The
+    /// layout stage uses this set to diagnose only symbols actually referenced
+    /// by a retained relocation, not every declaration seen in an object.
+    pub weak_undefined_symbols: HashSet<String>,
     pub policy: UndefinedSymbolPolicy,
-    /// Non-fatal resolution diagnostics (e.g. undefined weak symbols bound to
-    /// NULL). Surfaced by the linker pipeline after resolution.
+    /// Resolver-stage warnings. Weak-undefined diagnostics are deferred to
+    /// relocation processing, where unused declarations can be ignored.
     pub warnings: Vec<String>,
 }
 
@@ -51,6 +55,7 @@ impl SymbolResolver {
         Self {
             table: HashMap::new(),
             undefined: HashSet::new(),
+            weak_undefined_symbols: HashSet::new(),
             policy: UndefinedSymbolPolicy::Error,
             warnings: Vec::new(),
         }
@@ -60,6 +65,7 @@ impl SymbolResolver {
         Self {
             table: HashMap::new(),
             undefined: HashSet::new(),
+            weak_undefined_symbols: HashSet::new(),
             policy,
             warnings: Vec::new(),
         }
@@ -371,6 +377,7 @@ impl SymbolResolver {
                             existing.symbol = sym.clone();
                             existing.defined_in_file_index = obj.file_index;
                             existing.defined_in_sec_index = sym.section_index;
+                            self.weak_undefined_symbols.remove(&sym.name);
                             continue;
                         }
 
@@ -482,8 +489,8 @@ impl SymbolResolver {
     /// This is the ABI-defined value of a weak reference: ELF encodes it as
     /// `SHN_UNDEF` with `STB_WEAK`, COFF as `IMAGE_SYM_CLASS_WEAK_EXTERNAL`
     /// with section number 0. The link must not fail, but the binding is
-    /// reported as a warning unless the caller explicitly selected the
-    /// `WeakUndefined` policy.
+    /// recorded separately so layout can diagnose only retained relocations
+    /// that actually use the weak symbol.
     fn bind_weak_undefined(&mut self, name: &str) {
         if self.table.contains_key(name) {
             return;
@@ -513,11 +520,6 @@ impl SymbolResolver {
                 references: Vec::new(),
             },
         );
-        if self.policy != UndefinedSymbolPolicy::WeakUndefined {
-            self.warnings.push(format!(
-                "undefined weak symbol `{}` resolved to 0 (NULL); a weak reference may be null",
-                name
-            ));
-        }
+        self.weak_undefined_symbols.insert(name.to_string());
     }
 }

@@ -740,11 +740,14 @@ impl LayoutEngine {
             final_symbols.push(final_sym);
         }
 
-        // Symbols the resolver bound without an input section (undefined weak
-        // symbols bound to NULL, synthesized intrinsics/specials) still need an
-        // address so relocations against them resolve instead of falling
-        // through to the undefined-symbol error path.
+        // Synthesized linker symbols without an input section need explicit
+        // addresses. Undefined weak placeholders stay out of this map so the
+        // relocation pass can diagnose only retained references and route
+        // unresolved calls to the trap stub.
         for (sym_name, resolved) in &resolver.table {
+            if resolver.weak_undefined_symbols.contains(sym_name) {
+                continue;
+            }
             if resolved.symbol.is_defined
                 && resolved.symbol.section_index.is_none()
                 && resolved.symbol.sym_type != crate::symbol::SymbolType::Common
@@ -979,7 +982,9 @@ impl LayoutEngine {
                 // `__gnu_`, `R_`, ...), which could swallow a genuine undefined
                 // application symbol and zero-fill or trap-stub it instead of
                 // reporting a link error.
-                let is_weak_or_internal = is_known_internal_stub(&reloc.symbol_name);
+                let is_weak_or_internal =
+                    resolver.weak_undefined_symbols.contains(&reloc.symbol_name)
+                        || is_known_internal_stub(&reloc.symbol_name);
 
                 let place_va = merged.virtual_address + reloc.offset;
 
@@ -1182,4 +1187,60 @@ impl LayoutEngine {
 fn is_known_internal_stub(name: &str) -> bool {
     crate::intrinsics::IntrinsicsEngine::is_intrinsic(name)
         || crate::os_router::OsApiRouter::is_mangled_internal(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::object::ObjectFile;
+    use crate::relocation::{Relocation, RelocationKind};
+    use crate::section::Section;
+    use crate::symbol::{Symbol, SymbolBinding, SymbolType};
+    use crate::target::Target;
+    use std::path::PathBuf;
+
+    #[test]
+    fn referenced_weak_code_symbol_is_diagnosed_during_relocation() {
+        let target = Target::x86_64_windows();
+        let mut object = ObjectFile::new(PathBuf::from("weak_call.obj"), target.clone(), 0);
+        let mut text = Section::new_code(".text", vec![0xE8, 0, 0, 0, 0, 0xC3], 16);
+        text.relocations.push(Relocation::new(
+            1,
+            "optional_call",
+            RelocationKind::PcRelative32,
+            -4,
+        ));
+        object.add_section(text);
+        object.add_symbol(Symbol::new_defined(
+            "main",
+            SymbolBinding::Global,
+            SymbolType::Function,
+            0,
+            0,
+            6,
+            0,
+        ));
+        let mut optional_call = Symbol::new_undefined("optional_call", 0);
+        optional_call.binding = SymbolBinding::Weak;
+        object.add_symbol(optional_call);
+
+        let mut objects = vec![object];
+        let mut resolver = SymbolResolver::new();
+        resolver
+            .resolve_with_target(&mut objects, &[], &target)
+            .expect("weak undefined symbol is permitted");
+        assert!(resolver.warnings.is_empty());
+
+        let mut layout = LayoutEngine::new();
+        layout
+            .layout_and_relocate(&objects, &resolver, &target, "main")
+            .expect("weak call should be routed to the trap stub");
+        assert!(
+            layout
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("optional_call") && warning.contains("trap stub")),
+            "a live unresolved weak call remains diagnosable"
+        );
+    }
 }

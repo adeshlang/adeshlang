@@ -155,6 +155,7 @@ jobs:
           cargo test --test native_phase8_abi_e2e_test
           cargo test --test native_phase8_atomic_e2e_test
           cargo test --test native_phase8_binary_size_test
+          cargo test --test native_output_console_test
           cargo test --test native_phase8_cross_compile_test
           cargo test --test native_phase8_debug_e2e_test
           cargo test --test native_phase8_determinism_test
@@ -169,6 +170,18 @@ jobs:
           cargo test --test native_phase8_unwind_e2e_test
           cargo test --test native_semantics_e2e_test
           cargo test --test native_stack_canary_e2e_test
+
+      - name: Benchmark native pipeline (debug profile)
+        if: matrix.os == 'windows-latest'
+        run: cargo bench -p adeshlang --profile dev --bench native_pipeline -- --sample-size 10 --warm-up-time 0.1 --measurement-time 0.2 --nresamples 100
+
+      - name: Upload native pipeline benchmark report
+        if: always() && matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-pipeline-benchmarks-${{ github.run_number }}
+          path: target/criterion
+          if-no-files-found: warn
 
       - name: Display sccache stats
         shell: bash

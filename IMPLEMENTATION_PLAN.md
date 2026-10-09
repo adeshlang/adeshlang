@@ -346,7 +346,7 @@ Tasks:
 **Acceptance:** benchmark numbers tracked in CI; measurable improvements in spills,
 code size, binary size; every CLI flag does exactly what its help says.
 
-**Progress (2026-10-08):**
+**Progress (2026-10-09):**
 - The orphaned `src/ir/optimizations/` tree and fabricated-counter `opt/ipo.rs`
   were removed. Native `--lto` now routes through `CompilerDriver` and
   `LtoEngine`; the wired path has an individual execution test.
@@ -361,15 +361,16 @@ code size, binary size; every CLI flag does exactly what its help says.
   behavior have focused tests.
 - `BasicBlockScheduler` is wired post-allocation with conservative ordering
   barriers and focused hazard tests.
-- Linear scan now considers exact liveness at call sites and saves eligible
-  caller-saved values across calls, avoiding whole-function callee-save
-  conservatism. Pressure eviction uses future-use density, loop-depth weights,
-  and next-use distance. A single verifier-failure fallback restores the
-  original function and retries with unconstrained virtual registers spilled.
-  The call-preservation implementation currently keeps a stack copy and inserts
-  stores/reloads; it does not yet split allocator intervals at call boundaries.
-  Focused tests cover live-through-call values, values dying at calls, weighted
-  spill priority, farthest-next-use eviction, and fallback verification.
+- Linear scan considers exact instruction liveness at call sites. Pressure
+  eviction uses future-use density, loop-depth weights, and next-use distance.
+  A verifier-failure fallback restores the original function and retries with
+  unconstrained virtual registers spilled. For GPR values crossing zero-argument
+  calls, splitting is now allowed when the call is outside a cycle and
+  dominates every use. Post-call pieces are remapped into dominated successor
+  blocks, including joins; linked Windows tests cover the call result and the
+  preserved value. Calls with arguments, call-bypassing paths, and loop call
+  sites keep the verified stack-copy fallback. This remains bounded CFG-aware
+  splitting, not arbitrary interval splitting.
 - Copy coalescing now checks interference outside the copy position and fails
   closed on unsupported operands. Post-allocation cleanup removes redundant
   physical-register moves and stack-slot self-copies.
@@ -380,39 +381,46 @@ code size, binary size; every CLI flag does exactly what its help says.
 - Added `benches/native_pipeline.rs` for generated modules with 10/100/1K/10K
   functions. It separates parse/HIR, typecheck, native lowering, register
   allocation, encoding, ADOB generation, and linking, plus Windows executable
-  runtime cases at O0-O3. `cargo check -p adeshlang --bench native_pipeline`
-  passes. Criterion measurements and CI tracking are still outstanding because
-  this work is constrained to debug-only checks and no release builds.
-- Rebuilt the debug runtime archive after finding the CLI had linked a stale
-  copy. The fixed-buffer UTF-16 console writer reduced the measured Windows
-  hello-world PE from 123,904 to 112,640 bytes; both CLI `-O2` and `-Oz`
-  builds produced 112,640-byte binaries and printed the expected output.
-  Debug CLI smoke builds also executed successfully at `-O0`, `-O1`, `-O2`,
-  `-O3`, `-Os`, and `-Oz`. `-O0` measured 9,972,224 bytes; the other five
-  levels each measured 112,640 bytes for this hello-world program.
-  Current raw PE section sizes are `.text` 83,968 bytes and `.rodata` 19,968
-  bytes. The archive-member GC-root change passes its focused regression but
-  did not independently reduce the earlier baseline. The <40 KB target remains
-  unmet. The focused return-only PE test remains 2,560 bytes and is not a
-  substitute for the hello-world result.
-- Still pending: true call-boundary interval splitting, measured Criterion
-  baselines and CI tracking, demonstrated allocator spill/instruction-count
-  improvements, automated CLI/runtime tests for `-Os` and `-Oz`, and further
-  runtime/linker size reduction to <40 KB. Phase 4 acceptance is therefore not
-  complete.
+  runtime cases at O0-O3. The debug-profile run completed with 10 samples per
+  case. Stage means, machine-instruction/ADOB sizes, and allocator outputs with
+  splitting enabled versus the stack-copy fallback are recorded in
+  `docs/performance-guide.md` and Criterion JSON artifacts. On the synthetic
+  call-pressure function, splitting removed 50 machine instructions and 50
+  explicit load/store instructions, while using 48 more stack-frame bytes.
+  Windows CI runs the same debug benchmark and uploads `target/criterion`; the
+  workflow artifact itself has not yet been observed from a CI run.
+- The print/abort ABI now has a standalone C implementation, with small Rust
+  ABI wrappers in a separate archive member. Redirected output remains UTF-8;
+  console output converts valid UTF-8 to UTF-16 in bounded chunks. An executed
+  hello-world PE measures 4,096 bytes, down from 112,640 bytes after the prior
+  runtime-writer optimization, meeting the <40 KiB target. The CLI `-Os` and
+  `-Oz` integration regression checks size, execution, and redirected Unicode
+  output. A Windows console-buffer regression directly tests the UTF-16 chunk
+  boundary with a supplementary character.
+  The minimal return-only PE remains a separate 2,560-byte test.
+- Added Linux ELF execution coverage for both `-Os` and `-Oz`, complementing
+  the Windows PE CLI coverage. The Windows-host session can compile-check the
+  Linux test but cannot execute its ELF output; the Ubuntu integration CI step
+  is configured to run it.
+- Linker warning cleanup now tracks undefined weak placeholders separately,
+  excludes unused ones from synthesized stubs, and delays diagnostics until a
+  retained relocation references them. The reported
+  `__extendhfsf2`/`__truncsfhf2`/`__udivti3` warnings no longer appear for the
+  simple print program; an unresolved weak call that is actually referenced
+  still routes to a trap stub and emits a contextual warning.
+- Phase 4 has concrete benchmark and size results, but is not fully closed:
+  general splitting through loop cycles, call-bypassing paths, and
+  argument-bearing calls remains unsupported; the CI artifact path awaits a CI
+  run. Real vectorization remains fail-closed and deferred.
 
-**Recommended next sequence:**
-1. Replace caller-saved stack-copy preservation with true interval splitting
-   around calls, retaining the exact-liveness and verifier regressions.
-2. Add the debug-only allocator regressions and native execution cases to CI;
-   collect spill counts and instruction counts against a recorded baseline.
-3. Run the Criterion suite in an explicitly permitted release/benchmark job and
-   publish its stage timings and O0-O3 runtime results in CI.
-4. Continue the hello-world size investigation from the measured `.text` and
-   `.rodata` footprint, including runtime symbol/dependency and section-retention
-   breakdowns. Keep the <40 KB acceptance target open until an executed PE meets it.
-5. Add automated end-to-end tests for `-Os` and `-Oz`, then verify their behavior
-   across supported target/linker combinations.
+**Remaining acceptance work:**
+1. Extend splitting beyond calls that dominate all later uses, and cover
+   argument-bearing calls only with piece-sensitive allocation and verifier
+   coverage; retain the tested fallback for unsupported cases.
+2. Confirm the benchmark artifact and focused console/size-level regressions in
+   CI.
+3. Extend size-level end-to-end coverage beyond Windows x86-64 and Linux
+   x86-64, then confirm the configured tests run in CI.
 
 Real vectorization stays deferred until lane construction, loop legality, and
 remainder handling have dedicated correctness tests. Continue running only

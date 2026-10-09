@@ -18,10 +18,12 @@
 //! ICF `Safe` vs `All` differentiation is unit-tested in `linker/src/icf.rs`
 //! (`test_icf_safe_vs_all_modes`); it is not exercised by this execution suite.
 
+use adesh_codegen::CodegenBackend;
 use adesh_codegen::machine_ir::{
     MachineFunction, MachineInstruction, MachineOperand, MachineRegister, NativeModule,
     PhysicalRegister,
 };
+use adesh_codegen::opt::OptLevel;
 use adesh_codegen::targets::create_backend;
 use adesh_object::TargetDescriptor;
 use adesh_object::validator::AdobValidator;
@@ -92,6 +94,14 @@ fn execute_elf(path: &Path) -> std::io::Result<std::process::Output> {
 
 /// Compile Adesh source text to a static Linux ELF binary, execute it, and return (stdout, exit_code).
 fn compile_link_and_run_linux(src: &str, test_name: &str) -> (String, i32) {
+    compile_link_and_run_linux_with_opt(src, test_name, None)
+}
+
+fn compile_link_and_run_linux_with_opt(
+    src: &str,
+    test_name: &str,
+    opt_level: Option<OptLevel>,
+) -> (String, i32) {
     let tokens = Lexer::new(src).tokenize().expect("tokenize");
     let mut parser = Parser::new(tokens, None);
     let ast = parser.parse_program().expect("parse");
@@ -101,6 +111,9 @@ fn compile_link_and_run_linux(src: &str, test_name: &str) -> (String, i32) {
     let native_mod = lower_hir_module(&hir, &target).expect("native lowering");
 
     let mut backend = create_backend(target.clone()).expect("backend creation");
+    if let Some(opt_level) = opt_level {
+        backend.set_opt_level(opt_level);
+    }
     let obj = backend.emit_object(&native_mod).expect("ADOB emission");
     AdobValidator::validate(&obj).expect("emitted ADOB must validate");
 
@@ -131,6 +144,19 @@ fn compile_link_and_run_linux(src: &str, test_name: &str) -> (String, i32) {
     let code = out.status.code().unwrap_or(-1);
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
     (stdout, code)
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn test_linux_elf_size_optimization_levels_preserve_exit_code() {
+    for (name, level) in [("os", OptLevel::Os), ("oz", OptLevel::Oz)] {
+        let (_, code) = compile_link_and_run_linux_with_opt(
+            "fn main(): int { let value: int = 40 + 2; return value; }",
+            &format!("test_linux_size_{name}"),
+            Some(level),
+        );
+        assert_eq!(code, 42, "{level:?} must preserve the Linux program result");
+    }
 }
 
 #[test]

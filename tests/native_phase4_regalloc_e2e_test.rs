@@ -15,7 +15,7 @@
 
 use adesh_codegen::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
-    PhysicalRegister, RegisterClass,
+    NativeModule, PhysicalRegister, RegisterClass,
 };
 use adesh_codegen::register_alloc::{
     AllocationVerifier, LinearScanAllocator, LiveSegment, LivenessAnalysis,
@@ -52,6 +52,27 @@ fn lower_link_and_run(hir: &HirModule, test_name: &str) -> i32 {
         .output()
         .expect("execute native binary");
     out.status.code().expect("exit code")
+}
+
+fn link_machine_module_and_run(module: &NativeModule, test_name: &str) -> i32 {
+    let target = TargetDescriptor::from_triple("x86_64-pc-windows-msvc").expect("valid triple");
+    let mut backend = create_backend(target.clone()).expect("backend creation");
+    let obj = backend.emit_object(module).expect("ADOB emission");
+    AdobValidator::validate(&obj).expect("emitted ADOB must validate");
+
+    let bytes = AdobWriter::write(&obj).expect("ADOB encoding");
+    let dir = tempdir().expect("tempdir");
+    let adob_path = dir.path().join(format!("{test_name}.adob"));
+    std::fs::write(&adob_path, bytes).expect("write ADOB file");
+    let exe_path = dir.path().join(format!("{test_name}.exe"));
+    adesh_linker::link(&[&adob_path], &exe_path, Some("x86_64-pc-windows-msvc"))
+        .expect("native link");
+
+    Command::new(&exe_path)
+        .status()
+        .expect("execute native binary")
+        .code()
+        .expect("exit code")
 }
 
 #[test]
@@ -379,6 +400,114 @@ fn test_values_live_across_function_call_e2e() {
     assert_eq!(
         exit_code, 48,
         "Sum of variables live across call % 256 must equal 48"
+    );
+}
+
+#[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+fn test_single_block_call_split_executes_with_call_result() {
+    let mut module = NativeModule::new("phase4_call_split");
+    let mut callee = MachineFunction::new("zero_arg");
+    callee.entry_block_mut().push(MachineInstruction::Move {
+        dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister::gpr(0))),
+        src: MachineOperand::Immediate(1),
+    });
+    callee.entry_block_mut().push(MachineInstruction::Return);
+    module.add_function(callee);
+
+    let mut main = MachineFunction::new("main");
+    main.is_exported = true;
+    let live_value = main.alloc_vreg();
+    let call_result = main.alloc_vreg();
+    let entry = main.entry_block_mut();
+    entry.push(MachineInstruction::Move {
+        dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+        src: MachineOperand::Immediate(41),
+    });
+    entry.push(MachineInstruction::Call {
+        target: MachineOperand::Symbol("zero_arg".to_string()),
+        num_args: 0,
+    });
+    entry.push(MachineInstruction::Move {
+        dst: MachineOperand::Register(MachineRegister::Virtual(call_result)),
+        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister::gpr(0))),
+    });
+    entry.push(MachineInstruction::Add {
+        dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+        src: MachineOperand::Immediate(1),
+    });
+    entry.push(MachineInstruction::Add {
+        dst: MachineOperand::Register(MachineRegister::Virtual(call_result)),
+        src: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+    });
+    entry.push(MachineInstruction::Move {
+        dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister::gpr(0))),
+        src: MachineOperand::Register(MachineRegister::Virtual(call_result)),
+    });
+    entry.push(MachineInstruction::Return);
+    module.add_function(main);
+
+    assert_eq!(
+        link_machine_module_and_run(&module, "phase4_local_call_split"),
+        43,
+        "the live-through-call value and RAX call result must both survive the split"
+    );
+}
+
+#[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+fn test_dominated_cfg_call_split_executes() {
+    let mut module = NativeModule::new("phase4_cfg_call_split");
+    let mut callee = MachineFunction::new("zero_arg");
+    callee.entry_block_mut().push(MachineInstruction::Move {
+        dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister::gpr(0))),
+        src: MachineOperand::Immediate(1),
+    });
+    callee.entry_block_mut().push(MachineInstruction::Return);
+    module.add_function(callee);
+
+    let mut main = MachineFunction::new("main");
+    main.is_exported = true;
+    let after_block = main.create_block("after_call");
+    let live_value = main.alloc_vreg();
+    let call_result = main.alloc_vreg();
+    {
+        let entry = main.entry_block_mut();
+        entry.push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+            src: MachineOperand::Immediate(41),
+        });
+        entry.push(MachineInstruction::Call {
+            target: MachineOperand::Symbol("zero_arg".to_string()),
+            num_args: 0,
+        });
+        entry.push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(call_result)),
+            src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister::gpr(0))),
+        });
+        entry.push(MachineInstruction::Branch {
+            target: "after_call".to_string(),
+        });
+    }
+    main.blocks[after_block as usize].push(MachineInstruction::Add {
+        dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+        src: MachineOperand::Immediate(1),
+    });
+    main.blocks[after_block as usize].push(MachineInstruction::Add {
+        dst: MachineOperand::Register(MachineRegister::Virtual(call_result)),
+        src: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+    });
+    main.blocks[after_block as usize].push(MachineInstruction::Move {
+        dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister::gpr(0))),
+        src: MachineOperand::Register(MachineRegister::Virtual(call_result)),
+    });
+    main.blocks[after_block as usize].push(MachineInstruction::Return);
+    module.add_function(main);
+
+    assert_eq!(
+        link_machine_module_and_run(&module, "phase4_dominated_cfg_call_split"),
+        43,
+        "a call-dominated successor must see the split live value"
     );
 }
 

@@ -222,7 +222,10 @@ impl Linker {
             missing_symbols.push("_start".to_string());
         }
         for (name, resolved) in &ctx.resolver.table {
-            if resolved.symbol.section_index.is_none() && !missing_symbols.contains(name) {
+            if !ctx.resolver.weak_undefined_symbols.contains(name)
+                && resolved.symbol.section_index.is_none()
+                && !missing_symbols.contains(name)
+            {
                 missing_symbols.push(name.clone());
             }
         }

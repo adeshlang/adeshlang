@@ -54,6 +54,61 @@ All placeholder benchmarks replaced with real measurements:
 - Constant folding
 - Full pipeline (lex → parse → lower → safety)
 
+### Native Pipeline Debug Baseline (2026-10-09)
+
+The native benchmark harness measures generated modules with 10, 100, 1,000,
+and 10,000 small functions, plus register-pressure and call-crossing functions.
+The allocator comparison runs the same module with local call splitting enabled
+and disabled (the stack-copy fallback). The timing baseline was collected with
+`cargo bench --profile dev --bench native_pipeline -- --sample-size 10
+--warm-up-time 0.1 --measurement-time 0.2 --nresamples 100`; it is a debug-profile
+scaling baseline, not a release-performance claim. Criterion's full estimates
+and `allocator_metrics/*.json` are retained under
+`target/criterion/native_pipeline` locally and uploaded by the Windows CI
+workflow as a run artifact.
+
+Mean time in milliseconds, measured on Windows x86-64, Rust 1.92.0, Intel Core
+i5-12450H:
+
+| Stage | 10 functions | 100 | 1,000 | 10,000 |
+| --- | ---: | ---: | ---: | ---: |
+| Parse + HIR | 0.39 | 2.32 | 24.46 | 247.96 |
+| Typecheck | 0.44 | 2.93 | 28.85 | 276.75 |
+| Native lowering | 0.19 | 3.82 | 225.58 | 23,996.24 |
+| Register allocation | 5.88 | 16.81 | 139.05 | 2,525.38 |
+| Machine encoding | 0.23 | 1.21 | 12.47 | 141.18 |
+| ADOB codegen | 6.76 | 17.62 | 161.33 | 4,717.74 |
+| Link | 30.11 | 30.68 | 51.58 | 2,362.19 |
+
+On the 10-function allocator workload, enabling local call splitting changed
+the measured output as follows:
+
+| Metric | Split enabled | Stack-copy fallback |
+| --- | ---: | ---: |
+| Machine instructions | 455 | 505 |
+| Explicit load/store instructions | 78 | 128 |
+| Spill slots | 30 | 30 |
+| Spill bytes | 240 | 256 |
+| Stack-frame bytes | 304 | 256 |
+
+The two synthetic pressure functions are included in those totals. Splitting
+removed 50 instructions and 50 explicit load/store instructions, used 16 fewer
+spill bytes, and resulted in a 48-byte larger total frame. This is one bounded
+workload, not a general allocator performance guarantee.
+
+The O2-allocated module contains 101/371/3,071/30,071 machine instructions at
+the four sizes; encoded ADOB files are 1,588/7,978/73,678/748,678 bytes.
+
+Produced-executable runtime at 10 functions was 31.23 ms (O0), 25.17 ms (O1),
+28.78 ms (O2), and 27.03 ms (O3). The benchmark runs each executable as a
+subprocess, so process startup dominates this tiny workload.
+
+The Windows hello-world PE size is now 4,096 bytes, down from 112,640 bytes
+after moving the print/abort ABI into its own small runtime archive member.
+This size target is met by the focused O2 baseline and by the CLI `-Os`/`-Oz`
+execution regression. Size optimization remains independent of the debug
+benchmark profile.
+
 ---
 
 ## Why No GC

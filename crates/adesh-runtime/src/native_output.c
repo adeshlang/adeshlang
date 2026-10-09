@@ -101,6 +101,7 @@ static int write_console_utf8(HANDLE handle, const unsigned char *bytes, size_t 
         size_t count = 0;
         while (cursor < length && count < 256) {
             uint32_t codepoint;
+            const size_t codepoint_start = cursor;
             if (!next_utf8(bytes, length, &cursor, &codepoint)) {
                 return 0;
             }
@@ -110,7 +111,7 @@ static int write_console_utf8(HANDLE handle, const unsigned char *bytes, size_t 
                 if (count == 255) {
                     // Retry this codepoint in the next chunk so its UTF-16
                     // surrogate pair is never split.
-                    cursor -= (codepoint <= 0x10FFFF ? 4 : 0);
+                    cursor = codepoint_start;
                     break;
                 }
                 codepoint -= 0x10000;
@@ -129,7 +130,7 @@ static int write_console_utf8(HANDLE handle, const unsigned char *bytes, size_t 
     return 1;
 }
 
-uint64_t aot_print_cstr(const char *text, int64_t newline) {
+uint64_t adesh_native_print_cstr(const char *text, int64_t newline) {
     const size_t length = c_string_length(text);
     const unsigned char *bytes = (const unsigned char *)text;
     HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -137,12 +138,12 @@ uint64_t aot_print_cstr(const char *text, int64_t newline) {
 
     if (handle != NULL && handle != INVALID_HANDLE_VALUE &&
         GetConsoleMode(handle, &mode)) {
-        if (!valid_utf8(bytes, length) || !write_console_utf8(handle, bytes, length)) {
+        if (valid_utf8(bytes, length)) {
+            write_console_utf8(handle, bytes, length);
+        } else {
             // Invalid UTF-8 retains the raw-byte behavior used for redirected
             // output rather than producing a partial UTF-16 conversion.
-            if (!valid_utf8(bytes, length)) {
-                write_file_all(handle, bytes, length);
-            }
+            write_file_all(handle, bytes, length);
         }
         if (newline != 0) {
             const WCHAR line_feed = L'\n';
@@ -159,8 +160,8 @@ uint64_t aot_print_cstr(const char *text, int64_t newline) {
     return 0;
 }
 
-__declspec(noreturn) void aot_abort_str(const char *message) {
-    aot_print_cstr(message, 1);
+__declspec(noreturn) void adesh_native_abort_str(const char *message) {
+    adesh_native_print_cstr(message, 1);
     ExitProcess(101);
 }
 
@@ -188,7 +189,7 @@ static void write_all(const char *bytes, size_t length) {
     }
 }
 
-uint64_t aot_print_cstr(const char *text, int64_t newline) {
+uint64_t adesh_native_print_cstr(const char *text, int64_t newline) {
     write_all(text, c_string_length(text));
     if (newline != 0) {
         write_all("\n", 1);
@@ -196,8 +197,8 @@ uint64_t aot_print_cstr(const char *text, int64_t newline) {
     return 0;
 }
 
-__attribute__((noreturn)) void aot_abort_str(const char *message) {
-    aot_print_cstr(message, 1);
+__attribute__((noreturn)) void adesh_native_abort_str(const char *message) {
+    adesh_native_print_cstr(message, 1);
     _exit(101);
 }
 #endif
