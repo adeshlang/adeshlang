@@ -246,6 +246,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize};
 
     // Track destructor calls for testing
+    static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
     static DROP_CALLED: AtomicBool = AtomicBool::new(false);
     static DROP_PTR_RECEIVED: AtomicUsize = AtomicUsize::new(0);
     static DROP_SIZE_RECEIVED: AtomicUsize = AtomicUsize::new(0);
@@ -310,6 +311,7 @@ mod tests {
 
     #[test]
     fn test_arc_destructor_called() {
+        let _guard = TEST_MUTEX.lock().unwrap();
         DROP_CALLED.store(false, Ordering::SeqCst);
         unsafe {
             let ptr = arc_alloc_with_drop(32, 8, Some(test_drop_fn));
@@ -327,6 +329,7 @@ mod tests {
 
     #[test]
     fn test_arc_destructor_not_called_on_retain_release() {
+        let _guard = TEST_MUTEX.lock().unwrap();
         DROP_CALLED.store(false, Ordering::SeqCst);
         unsafe {
             let ptr = arc_alloc_with_drop(32, 8, Some(test_drop_fn));
@@ -347,6 +350,7 @@ mod tests {
 
     #[test]
     fn test_arc_set_drop_fn_after_alloc() {
+        let _guard = TEST_MUTEX.lock().unwrap();
         DROP_CALLED.store(false, Ordering::SeqCst);
         unsafe {
             let ptr = arc_alloc(32, 8);

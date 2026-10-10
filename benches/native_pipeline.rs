@@ -3,7 +3,7 @@
 //! Build/check with `cargo check --bench native_pipeline`. CI runs short
 //! measurements with `cargo bench --profile dev --bench native_pipeline` so
 //! benchmark builds do not require the release profile.
-
+#[allow(unused_imports)]
 use adesh_codegen::CodegenBackend;
 use adesh_codegen::machine_ir::{
     MachineFunction, MachineInstruction, MachineOperand, MachineRegister, NativeModule,

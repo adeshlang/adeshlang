@@ -21,6 +21,7 @@ pub fn register(registry: &mut BuiltinRegistry) {
 }
 
 fn builtin_print(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, String> {
+    #[allow(unused_imports)]
     use std::io::BufWriter;
 
     let (values, options) = parse_print_options(&args);
