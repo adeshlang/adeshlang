@@ -171,7 +171,7 @@ impl AdeshSession {
                     return Err("Cancelled".to_string());
                 }
 
-                match interp.run_module(
+                let run_result = match interp.run_module(
                     &run_src,
                     &mut ldr,
                     Some(run_path.to_string_lossy().to_string()),
@@ -181,7 +181,10 @@ impl AdeshSession {
                         Ok(())
                     }
                     Err(e) => Err(e),
-                }
+                };
+                adeshlang::execution::runtime_core::fast_print::flush_fast_buffer();
+                adeshlang::execution::runtime_core::stdio::flush_all();
+                run_result
             });
 
         let exec_res = match res {

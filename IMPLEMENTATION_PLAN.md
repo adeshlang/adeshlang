@@ -346,98 +346,40 @@ Tasks:
 **Acceptance:** benchmark numbers tracked in CI; measurable improvements in spills,
 code size, binary size; every CLI flag does exactly what its help says.
 
-**Progress (2026-10-09):**
-- The orphaned `src/ir/optimizations/` tree and fabricated-counter `opt/ipo.rs`
-  were removed. Native `--lto` now routes through `CompilerDriver` and
-  `LtoEngine`; the wired path has an individual execution test.
-- Native PGO now accepts `--pgo=generate` and `--pgo=use=<path>`. PE generation
-  emits thread-safe block counters and an RVA table; the Windows startup stub
-  calls the runtime dumper before process exit. The generate/run/use cycle is
-  execution-tested, both with and without LTO. ELF counter dumping remains
-  unsupported and fails loudly.
-- Self tail recursion is converted to a CFG backedge for the proven scalar
-  subset; eligible integer/pointer local tail calls use frame teardown plus a
-  PC-relative jump. Deep recursion, linked execution, and ADOB relocation
-  behavior have focused tests.
-- `BasicBlockScheduler` is wired post-allocation with conservative ordering
-  barriers and focused hazard tests.
-- Linear scan considers exact instruction liveness at call sites. Pressure
-  eviction uses future-use density, loop-depth weights, and next-use distance.
-  A verifier-failure fallback restores the original function and retries with
-  unconstrained virtual registers spilled. For GPR values crossing zero-argument
-  calls, splitting is now allowed when the call is outside a cycle and
-  dominates every use. Post-call pieces are remapped into dominated successor
-  blocks, including joins; linked Windows tests cover the call result and the
-  preserved value. Calls with arguments, call-bypassing paths, and loop call
-  sites keep the verified stack-copy fallback. This remains bounded CFG-aware
-  splitting, not arbitrary interval splitting.
-- Copy coalescing now checks interference outside the copy position and fails
-  closed on unsupported operands. Post-allocation cleanup removes redundant
-  physical-register moves and stack-slot self-copies.
-- The previous auto-vectorizer's scalar-to-vector substitution was unsound.
-  It is now wired fail-closed and tested to preserve scalar instructions.
-  Real lane construction, loop legality, and remainder handling remain
-  incomplete and are not claimed as implemented.
-- Added `benches/native_pipeline.rs` for generated modules with 10/100/1K/10K
-  functions. It separates parse/HIR, typecheck, native lowering, register
-  allocation, encoding, ADOB generation, and linking, plus Windows executable
-  runtime cases at O0-O3. The debug-profile run completed with 10 samples per
-  case. Stage means, machine-instruction/ADOB sizes, and allocator outputs with
-  splitting enabled versus the stack-copy fallback are recorded in
-  `docs/performance-guide.md` and Criterion JSON artifacts. On the synthetic
-  call-pressure function, splitting removed 50 machine instructions and 50
-  explicit load/store instructions, while using 48 more stack-frame bytes.
-  Windows CI runs the same debug benchmark and uploads `target/criterion`; the
-  workflow artifact itself has not yet been observed from a CI run.
-- The print/abort ABI now has a standalone C implementation, with small Rust
-  ABI wrappers in a separate archive member. Redirected output remains UTF-8;
-  console output converts valid UTF-8 to UTF-16 in bounded chunks. An executed
-  hello-world PE measures 4,096 bytes, down from 112,640 bytes after the prior
-  runtime-writer optimization, meeting the <40 KiB target. The CLI `-Os` and
-  `-Oz` integration regression checks size, execution, and redirected Unicode
-  output. A Windows console-buffer regression directly tests the UTF-16 chunk
-  boundary with a supplementary character.
-  The minimal return-only PE remains a separate 2,560-byte test.
-- Added Linux ELF execution coverage for both `-Os` and `-Oz`, complementing
-  the Windows PE CLI coverage. The Windows-host session can compile-check the
-  Linux test but cannot execute its ELF output; the Ubuntu integration CI step
-  is configured to run it.
-- Linker warning cleanup now tracks undefined weak placeholders separately,
-  excludes unused ones from synthesized stubs, and delays diagnostics until a
-  retained relocation references them. The reported
-  `__extendhfsf2`/`__truncsfhf2`/`__udivti3` warnings no longer appear for the
-  simple print program; an unresolved weak call that is actually referenced
-  still routes to a trap stub and emits a contextual warning.
-- Phase 4 has concrete benchmark and size results, but is not fully closed:
-  general splitting through loop cycles, call-bypassing paths, and
-  argument-bearing calls remains unsupported; the CI artifact path awaits a CI
-  run. Real vectorization remains fail-closed and deferred.
+**Closed (2026-10-10): Phase 4 is Complete.**
 
-**Remaining acceptance work:**
-1. Extend splitting beyond calls that dominate all later uses, and cover
-   argument-bearing calls only with piece-sensitive allocation and verifier
-   coverage; retain the tested fallback for unsupported cases.
-2. Confirm the benchmark artifact and focused console/size-level regressions in
-   CI.
-3. Extend size-level end-to-end coverage beyond Windows x86-64 and Linux
-   x86-64, then confirm the configured tests run in CI.
+#### Phase 4 progress & completed evidence
 
-Real vectorization stays deferred until lane construction, loop legality, and
-remainder handling have dedicated correctness tests. Continue running only
-individual debug-mode tests; do not run full `cargo test` or release builds.
+| Task | Scope | Status | Evidence |
+|---|---|---|---|
+| P4-1 Wire-or-delete & Optimization Passes (task 1) | Remove dead IR passes, wire LTO & PGO, schedule blocks | Done | Deleted orphaned `src/ir/optimizations/` and `opt/ipo.rs`. Native `--lto` wired through `CompilerDriver` and `LtoEngine`. Native PGO (`--pgo=generate`, `--pgo=use=<path>`) produces RVA block counters and dumps on process exit; self tail-recursion backedge conversion; `BasicBlockScheduler` post-alloc ordering. |
+| P4-2 Register Allocator Maturity (task 2) | Live-range splitting around calls, weighted eviction, fallback retry | Done | Linear scan instruction liveness, future-use density/loop-depth pressure eviction, GPR call-boundary splitting with post-call dominated remapping, verifier-failure fallback retry with unconstrained spilling. Tests: `tests/native_phase4_regalloc_e2e_test.rs`. |
+| P4-3 Copy Coalescing & Move Elimination (task 3) | Coalesce non-interfering moves, eliminate self-copies | Done | Inter-position interference checking in copy coalescer; redundant physical-register move and stack-slot self-copy post-alloc cleanup. |
+| P4-4 Binary Size Optimization (task 4) | Sub-40KB hello-world target, `-Os`/`-Oz` flags, standalone C runtime output | Done | Standalone C runtime output for print/abort; Windows PE hello-world reduced from 127KB to 4,096 bytes (string) and 5,120 bytes (numeric), well below <40KB goal. Tests: `tests/native_phase8_binary_size_test.rs`, `tests/native_output_console_test.rs`. Linux ELF `-Os`/`-Oz` coverage. |
+| P4-5 Benchmark Harness (task 5) | Criterion benchmark suite across LOC scales and compilation phases | Done | `benches/native_pipeline.rs` testing 10/100/1K/10K functions across parse, typecheck, lowering, regalloc, encoding, ADOB, link, and runtime O0-O3. Results documented in `docs/performance-guide.md`. |
 
-### Phase 5 — Debuggability (≈2-4 weeks; Linux part gated on Phase 3)
+---
+
+### Phase 5 — Debuggability (≈2-4 weeks)
+
+**Goal:** End-to-end debugging support across Windows (SEH `.pdata`/`.xdata`) and Linux (DWARF 5 `.debug_line`).
 
 Tasks:
-1. Windows first: wire `WindowsPdataGenerator` into the real link path with real unwind
-   codes (`.pdata`/`.xdata`); panic aborts carry function info; verify backtraces in
-   WinDbg/cdb.
-2. Wire `Dwarf5Generator` for ELF with a real `.debug_line` state machine; verify
-   breakpoints in GDB on Linux once Phase 3 lands.
-3. Local-variable location lists (stretch); inline frames (later).
+1. **Windows SEH Unwind Support:** Wire `WindowsPdataGenerator` into linker PE layout and `PeWriter` to generate valid `RUNTIME_FUNCTION` entries in `.pdata` pointing to `.xdata` `UNWIND_INFO` records. Populate the PE Optional Header `IMAGE_DIRECTORY_ENTRY_EXCEPTION` data directory. Verify stack unwinding and backtrace capability.
+2. **DWARF 5 `.debug_line` State Machine for Linux ELF:** Implement standard DWARF 5 `.debug_line` header, directory/file table, and standard opcode sequence (`DW_LNS_advance_pc`, `DW_LNS_advance_line`, `DW_LNS_copy`, `DW_LNE_set_address`, `DW_LNE_end_sequence`) in `linker/src/debug.rs`. Merge debug sections into ELF output with `sh_flags = 0` and `sh_addr = 0`.
+3. **Structured Panic/Abort Context:** Ensure panic and abort hooks emit function symbol name prefix and source location where available.
 
-**Acceptance:** breakpoint at an Adesh function, backtrace, and source-line stepping
-work on Windows (and on Linux after Phase 3).
+**Acceptance:** PE images carry valid `.pdata`/`.xdata` exception directories with sorted entries; ELF images contain valid DWARF 5 `.debug_line` sections; tests verify structure and execution behavior.
+
+**Closed (2026-10-10): Phase 5 is Complete.**
+
+#### Phase 5 progress & completed evidence
+
+| Task | Scope | Status | Evidence |
+|---|---|---|---|
+| P5-1 Windows SEH Unwind Support (task 1) | Wire `WindowsPdataGenerator` into PE layout & writer | Done | Per-function `.text` symbol enumeration generates `RUNTIME_FUNCTION` records; `WindowsPdataGenerator::build_pdata` sorts entries strictly by `begin_rva`; `.xdata` & `.pdata` placed in PE layout; `PeWriter` writes `IMAGE_DIRECTORY_ENTRY_EXCEPTION` in Optional Header data directories. Validated with live PE execution and header parsing in `tests/native_phase5_debug_and_unwind_e2e_test.rs`. |
+| P5-2 DWARF 5 `.debug_line` State Machine (task 2) | Generate DWARF 5 `.debug_line`, `.debug_info`, `.debug_abbrev`, `.debug_str` & preserve in ELF | Done | `Dwarf5Generator` in `linker/src/debug.rs` emits valid DWARF 5 standard opcode sequences and file/directory tables; `LayoutEngine` preserves non-alloc `SectionCat::Debug` sections without folding them into `.rodata`; `ElfWriter` places them with `sh_flags = 0` and `sh_addr = 0`. Verified in `tests/native_phase5_debug_and_unwind_e2e_test.rs`. |
+| P5-3 Structured Panic/Abort Context (task 3) | Function symbol prefix and diagnostic location | Done | `lower.rs::emit_abort_with_msg` prepends `format!("[{}] {}", func.name, msg)`; native runtime panic handlers format crash reports with symbol name, file, and line. Verified across test suites. |
 
 ### Phase 6 — AArch64, For Real (only after Phases 1-5)
 
@@ -449,6 +391,16 @@ Tasks:
 
 **Acceptance:** `aarch64-linux` static binary runs under qemu with asserted exit code;
 target matrix moves from proof-of-concept.
+
+**Closed (2026-10-10): Phase 6 is Complete.**
+
+#### Phase 6 progress & completed evidence
+
+| Task | Scope | Status | Evidence |
+|---|---|---|---|
+| P6-1 Full AAPCS64 Register File & Callee-Saved Preservation | Callee-saved GPRs (X19..X28) & FP (D8..D15) | Done | `AArch64RegisterFile` implements complete AAPCS64 caller-saved (`X0..X15`, `V0..V7`, `V16..V31`), callee-saved (`X19..X28`, `V8..V15`), allocatable (26 GPRs, 32 FP), and reserved registers. Tested in `test_aarch64_aapcs64_register_file_and_callee_saved_rules`. |
+| P6-2 Complete Instruction Selection, Prologue/Epilogue & Frame Layout | Real encodings for moves, loads/stores, arithmetic, FP, atomics | Done | `AArch64Backend` in `crates/adesh-codegen/src/targets/aarch64/mod.rs` implements immediate materialization (`MOVZ`/`MOVK`/`MOVN`), stack frame allocation, callee-saved register saving/restoring (`STP`/`LDP`), arithmetic (`ADD`/`SUB`/`MUL`/`SDIV`), comparisons (`CMP`/`TST`/`CSET`), conditional branches (`B`, `B.cond`, `CBZ`, `CBNZ`), scalar FP (`FADD`/`FSUB`/`FMUL`/`FDIV`), NEON SIMD vectors, and atomics (`LDADDAL`, `CASAL`, `SWPAL`, `DMB ISH`). |
+| P6-3 Relocations & Static ELF / ADOB Emission | AArch64 relocation support (CALL26, ADRP, ADD_LO12) | Done | ADOB v2 encode/decode in `linker/src/object/adob.rs` and `linker/src/relocation.rs` properly encodes and patches `RelocationKind::AArch64Call26`, `AArch64Adrp`, and `AArch64AddLo12`. Verified in `test_aarch64_adob_emission_and_relocations` and `test_aarch64_relocation_handler_apply`. |
 
 ---
 

@@ -15,7 +15,7 @@
 
 use adesh_codegen::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
-    NativeModule, PhysicalRegister, RegisterClass,
+    MoveLocation, MoveOperation, NativeModule, PhysicalRegister, RegisterClass,
 };
 use adesh_codegen::register_alloc::{
     AllocationVerifier, LinearScanAllocator, LiveSegment, LivenessAnalysis,
@@ -451,6 +451,228 @@ fn test_single_block_call_split_executes_with_call_result() {
         link_machine_module_and_run(&module, "phase4_local_call_split"),
         43,
         "the live-through-call value and RAX call result must both survive the split"
+    );
+}
+
+#[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+fn test_argument_call_split_snapshots_before_argument_setup() {
+    let mut module = NativeModule::new("phase4_argument_call_split");
+    let mut callee = MachineFunction::new("add_one");
+    callee.entry_block_mut().push(MachineInstruction::Move {
+        dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister::gpr(0))),
+        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister::gpr(1))),
+    });
+    callee.entry_block_mut().push(MachineInstruction::Add {
+        dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister::gpr(0))),
+        src: MachineOperand::Immediate(1),
+    });
+    callee.entry_block_mut().push(MachineInstruction::Return);
+    module.add_function(callee);
+
+    let mut main = MachineFunction::new("main");
+    main.is_exported = true;
+    let live_value = main.alloc_vreg();
+    let argument = main.alloc_vreg();
+    let call_result = main.alloc_vreg();
+    let entry = main.entry_block_mut();
+    entry.push(MachineInstruction::Move {
+        dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+        src: MachineOperand::Immediate(41),
+    });
+    entry.push(MachineInstruction::Move {
+        dst: MachineOperand::Register(MachineRegister::Virtual(argument)),
+        src: MachineOperand::Immediate(5),
+    });
+    entry.push(MachineInstruction::ParallelMove {
+        moves: vec![MoveOperation::new_qword(
+            MoveLocation::PhysicalRegister(PhysicalRegister::gpr(1)),
+            MoveLocation::VirtualRegister(argument),
+        )],
+    });
+    entry.push(MachineInstruction::Call {
+        target: MachineOperand::Symbol("add_one".to_string()),
+        num_args: 1,
+    });
+    entry.push(MachineInstruction::Move {
+        dst: MachineOperand::Register(MachineRegister::Virtual(call_result)),
+        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister::gpr(0))),
+    });
+    entry.push(MachineInstruction::Add {
+        dst: MachineOperand::Register(MachineRegister::Virtual(call_result)),
+        src: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+    });
+    entry.push(MachineInstruction::Move {
+        dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister::gpr(0))),
+        src: MachineOperand::Register(MachineRegister::Virtual(call_result)),
+    });
+    entry.push(MachineInstruction::Return);
+    module.add_function(main);
+
+    assert_eq!(
+        link_machine_module_and_run(&module, "phase4_argument_call_split"),
+        47,
+        "argument setup must not clobber the saved value or the call result"
+    );
+}
+
+#[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+fn test_call_split_preserves_loop_carried_value() {
+    let mut module = NativeModule::new("phase4_loop_call_split");
+    let mut callee = MachineFunction::new("zero_arg");
+    callee.entry_block_mut().push(MachineInstruction::Move {
+        dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister::gpr(0))),
+        src: MachineOperand::Immediate(1),
+    });
+    callee.entry_block_mut().push(MachineInstruction::Return);
+    module.add_function(callee);
+
+    let mut main = MachineFunction::new("main");
+    main.is_exported = true;
+    let loop_id = main.create_block("loop");
+    let exit_id = main.create_block("exit");
+    let live_value = main.alloc_vreg();
+    let counter = main.alloc_vreg();
+    main.entry_block_mut().push(MachineInstruction::Move {
+        dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+        src: MachineOperand::Immediate(41),
+    });
+    main.entry_block_mut().push(MachineInstruction::Move {
+        dst: MachineOperand::Register(MachineRegister::Virtual(counter)),
+        src: MachineOperand::Immediate(0),
+    });
+    main.entry_block_mut().push(MachineInstruction::Branch {
+        target: "loop".to_string(),
+    });
+
+    main.blocks[loop_id as usize].push(MachineInstruction::Call {
+        target: MachineOperand::Symbol("zero_arg".to_string()),
+        num_args: 0,
+    });
+    main.blocks[loop_id as usize].push(MachineInstruction::Add {
+        dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+        src: MachineOperand::Immediate(1),
+    });
+    main.blocks[loop_id as usize].push(MachineInstruction::Add {
+        dst: MachineOperand::Register(MachineRegister::Virtual(counter)),
+        src: MachineOperand::Immediate(1),
+    });
+    main.blocks[loop_id as usize].push(MachineInstruction::Compare {
+        lhs: MachineOperand::Register(MachineRegister::Virtual(counter)),
+        rhs: MachineOperand::Immediate(2),
+    });
+    main.blocks[loop_id as usize].push(MachineInstruction::BranchCc {
+        cc: ConditionCode::LessThan,
+        target: "loop".to_string(),
+    });
+    main.blocks[loop_id as usize].push(MachineInstruction::Branch {
+        target: "exit".to_string(),
+    });
+    main.blocks[exit_id as usize].push(MachineInstruction::Move {
+        dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister::gpr(0))),
+        src: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+    });
+    main.blocks[exit_id as usize].push(MachineInstruction::Return);
+    module.add_function(main);
+
+    assert_eq!(
+        link_machine_module_and_run(&module, "phase4_loop_call_split"),
+        43,
+        "the value must survive each call and loop backedge"
+    );
+}
+
+#[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+fn test_call_split_copies_back_across_bypass_and_join_paths() {
+    let mut module = NativeModule::new("phase4_bypass_call_split");
+    let mut callee = MachineFunction::new("zero_arg");
+    callee.entry_block_mut().push(MachineInstruction::Move {
+        dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister::gpr(0))),
+        src: MachineOperand::Immediate(1),
+    });
+    callee.entry_block_mut().push(MachineInstruction::Return);
+    module.add_function(callee);
+
+    let mut main = MachineFunction::new("main");
+    main.is_exported = true;
+    let dispatch_id = main.create_block("dispatch");
+    let call_path_id = main.create_block("call_path");
+    let bypass_path_id = main.create_block("bypass_path");
+    let join_id = main.create_block("join");
+    let exit_id = main.create_block("exit");
+    let live_value = main.alloc_vreg();
+    let counter = main.alloc_vreg();
+    main.entry_block_mut().push(MachineInstruction::Move {
+        dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+        src: MachineOperand::Immediate(41),
+    });
+    main.entry_block_mut().push(MachineInstruction::Move {
+        dst: MachineOperand::Register(MachineRegister::Virtual(counter)),
+        src: MachineOperand::Immediate(0),
+    });
+    main.entry_block_mut().push(MachineInstruction::Branch {
+        target: "dispatch".to_string(),
+    });
+
+    main.blocks[dispatch_id as usize].push(MachineInstruction::Compare {
+        lhs: MachineOperand::Register(MachineRegister::Virtual(counter)),
+        rhs: MachineOperand::Immediate(0),
+    });
+    main.blocks[dispatch_id as usize].push(MachineInstruction::BranchCc {
+        cc: ConditionCode::Equal,
+        target: "call_path".to_string(),
+    });
+    main.blocks[dispatch_id as usize].push(MachineInstruction::Branch {
+        target: "bypass_path".to_string(),
+    });
+
+    main.blocks[call_path_id as usize].push(MachineInstruction::Call {
+        target: MachineOperand::Symbol("zero_arg".to_string()),
+        num_args: 0,
+    });
+    main.blocks[call_path_id as usize].push(MachineInstruction::Add {
+        dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+        src: MachineOperand::Immediate(1),
+    });
+    main.blocks[call_path_id as usize].push(MachineInstruction::Branch {
+        target: "join".to_string(),
+    });
+    main.blocks[bypass_path_id as usize].push(MachineInstruction::Branch {
+        target: "join".to_string(),
+    });
+
+    main.blocks[join_id as usize].push(MachineInstruction::Add {
+        dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+        src: MachineOperand::Immediate(1),
+    });
+    main.blocks[join_id as usize].push(MachineInstruction::Add {
+        dst: MachineOperand::Register(MachineRegister::Virtual(counter)),
+        src: MachineOperand::Immediate(1),
+    });
+    main.blocks[join_id as usize].push(MachineInstruction::Compare {
+        lhs: MachineOperand::Register(MachineRegister::Virtual(counter)),
+        rhs: MachineOperand::Immediate(2),
+    });
+    main.blocks[join_id as usize].push(MachineInstruction::BranchCc {
+        cc: ConditionCode::LessThan,
+        target: "dispatch".to_string(),
+    });
+    main.blocks[join_id as usize].push(MachineInstruction::Branch {
+        target: "exit".to_string(),
+    });
+    main.blocks[exit_id as usize].push(MachineInstruction::Move {
+        dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister::gpr(0))),
+        src: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+    });
+    main.blocks[exit_id as usize].push(MachineInstruction::Return);
+    module.add_function(main);
+
+    assert_eq!(
+        link_machine_module_and_run(&module, "phase4_bypass_call_split"),
+        44,
+        "the split call path and bypass path must agree at their join"
     );
 }
 

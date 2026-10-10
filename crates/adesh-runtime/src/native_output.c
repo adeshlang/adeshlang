@@ -202,3 +202,87 @@ __attribute__((noreturn)) void adesh_native_abort_str(const char *message) {
     _exit(101);
 }
 #endif
+
+static uint64_t print_unsigned_decimal(uint64_t value, int negative, int64_t newline) {
+    char buffer[22];
+    size_t cursor = sizeof(buffer);
+    buffer[--cursor] = '\0';
+    do {
+        buffer[--cursor] = (char)('0' + (value % 10));
+        value /= 10;
+    } while (value != 0);
+    if (negative) {
+        buffer[--cursor] = '-';
+    }
+    return adesh_native_print_cstr(buffer + cursor, newline);
+}
+
+uint64_t aot_print_cstr(const char *text, int64_t newline) {
+    return adesh_native_print_cstr(text, newline);
+}
+
+uint64_t aot_print_i64(int64_t value, int64_t newline) {
+    const int negative = value < 0;
+    const uint64_t magnitude = negative
+        ? (uint64_t)(-(value + 1)) + 1
+        : (uint64_t)value;
+    return print_unsigned_decimal(magnitude, negative, newline);
+}
+
+uint64_t aot_print_u64(uint64_t value, int64_t newline) {
+    return print_unsigned_decimal(value, 0, newline);
+}
+
+uint64_t aot_print_bool(int64_t value, int64_t newline) {
+    return adesh_native_print_cstr(value != 0 ? "true" : "false", newline);
+}
+
+uint64_t aot_print_space(void) {
+    return adesh_native_print_cstr(" ", 0);
+}
+
+uint64_t aot_print_newline(void) {
+    return adesh_native_print_cstr("\n", 0);
+}
+
+#if defined(_WIN32)
+__declspec(noreturn) void adesh_native_panic_at(const char *message, const char *file, uint32_t line) {
+    adesh_native_print_cstr("[Adesh Panic] ", 0);
+    if (file != NULL && file[0] != '\0') {
+        adesh_native_print_cstr(file, 0);
+        adesh_native_print_cstr(":", 0);
+        aot_print_u64((uint64_t)line, 0);
+        adesh_native_print_cstr(" - ", 0);
+    }
+    adesh_native_print_cstr(message, 1);
+    ExitProcess(101);
+}
+
+__declspec(noreturn) void aot_abort_str(const char *message) {
+    adesh_native_abort_str(message);
+}
+
+__declspec(noreturn) void aot_panic_at(const char *message, const char *file, uint32_t line) {
+    adesh_native_panic_at(message, file, line);
+}
+#else
+__attribute__((noreturn)) void adesh_native_panic_at(const char *message, const char *file, uint32_t line) {
+    adesh_native_print_cstr("[Adesh Panic] ", 0);
+    if (file != NULL && file[0] != '\0') {
+        adesh_native_print_cstr(file, 0);
+        adesh_native_print_cstr(":", 0);
+        aot_print_u64((uint64_t)line, 0);
+        adesh_native_print_cstr(" - ", 0);
+    }
+    adesh_native_print_cstr(message, 1);
+    _exit(101);
+}
+
+__attribute__((noreturn)) void aot_abort_str(const char *message) {
+    adesh_native_abort_str(message);
+}
+
+__attribute__((noreturn)) void aot_panic_at(const char *message, const char *file, uint32_t line) {
+    adesh_native_panic_at(message, file, line);
+}
+#endif

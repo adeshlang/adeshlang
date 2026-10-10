@@ -92,6 +92,7 @@ fn supplementary_character_at_console_chunk_boundary_is_not_skipped() {
     let text = CString::new(format!("{}😀Z", "x".repeat(255))).expect("NUL-free test text");
     unsafe {
         adesh_runtime::aot_print_cstr(text.as_ptr(), 0);
+        adesh_runtime::aot_print_i64(i64::MIN, 0);
         assert_eq!(
             SetStdHandle(STD_OUTPUT_HANDLE, original_stdout),
             1,
@@ -134,5 +135,11 @@ fn supplementary_character_at_console_chunk_boundary_is_not_skipped() {
     assert!(
         marker >= 256,
         "the emoji boundary must not be skipped or rewound incorrectly, marker cell: {marker}"
+    );
+    let expected_min = "-9223372036854775808".encode_utf16().collect::<Vec<_>>();
+    assert_eq!(
+        &cells[marker + 1..marker + 1 + expected_min.len()],
+        expected_min.as_slice(),
+        "the compact integer printer must format i64::MIN without overflow"
     );
 }

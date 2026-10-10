@@ -380,7 +380,7 @@ fn eval_const_expr(expr: &HirExpr) -> Option<i64> {
         HirExpr::Literal(HirLiteral::U8(n)) => Some(*n as i64),
         HirExpr::Literal(HirLiteral::BigInt(bi)) => {
             use num_traits::ToPrimitive;
-            Some(bi.to_u64().unwrap_or(0) as i64)
+            bi.to_i64()
         }
         HirExpr::BinaryOp(lhs, op, rhs) => {
             let l = eval_const_expr(lhs)?;
@@ -1193,8 +1193,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 });
             }
             HirLiteral::BigInt(bi) => {
-                use num_traits::ToPrimitive;
-                let val = bi.to_u64().unwrap_or(0) as i64;
+                let val = self.bigint_u64_or_abort(bi);
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                     src: MachineOperand::Immediate(val),
@@ -1721,10 +1720,28 @@ impl<'a> FunctionLoweringContext<'a> {
         )
     }
 
+    fn bigint_u64_or_abort(&mut self, value: &num_bigint::BigInt) -> i64 {
+        use num_traits::ToPrimitive;
+        match value.to_u64() {
+            Some(value) => value as i64,
+            None => {
+                self.emit_abort_with_msg(
+                    "panic: BigInt literal exceeds the native backend's 64-bit range",
+                );
+                0
+            }
+        }
+    }
+
     /// Emit a runtime-abort call with a static message (the message is
     /// placed in .rodata and printed by the runtime before aborting).
     fn emit_abort_with_msg(&mut self, msg: &str) {
-        let msg_idx = self.module.add_string(msg);
+        let full_msg = if !self.func.name.is_empty() {
+            format!("[{}] {}", self.func.name, msg)
+        } else {
+            msg.to_string()
+        };
+        let msg_idx = self.module.add_string(&full_msg);
         let msg_sym = format!("__str_{}", msg_idx);
         let msg_reg = self.func.alloc_vreg();
         self.emit(MachineInstruction::Move {
@@ -2373,9 +2390,8 @@ impl<'a> FunctionLoweringContext<'a> {
                         });
                     }
                     HirLiteral::BigInt(bi) => {
-                        use num_traits::ToPrimitive;
                         let arg_reg = self.func.alloc_vreg();
-                        let val = bi.to_u64().unwrap_or(0) as i64;
+                        let val = self.bigint_u64_or_abort(bi);
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(arg_reg)),
                             src: MachineOperand::Immediate(val),
@@ -3419,8 +3435,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         });
                     }
                     HirLiteral::BigInt(bi) => {
-                        use num_traits::ToPrimitive;
-                        let val = bi.to_u64().unwrap_or(0) as i64;
+                        let val = self.bigint_u64_or_abort(bi);
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Immediate(val),
@@ -5345,6 +5360,69 @@ impl<'a> FunctionLoweringContext<'a> {
                                 });
                                 return out_reg;
                             }
+                        }
+
+                        // Simple literals, booleans, and signed 64-bit
+                        // integers can stay on the compact native-output ABI.
+                        // The generic handle path below pulls in RuntimeValue,
+                        // formatting, and panic support even for a small print.
+                        let can_print_without_handles = args.iter().all(|arg| {
+                            if matches!(arg, HirExpr::Literal(HirLiteral::String(_))) {
+                                return true;
+                            }
+                            matches!(
+                                self.infer_expr_type(arg),
+                                Some(HirType::Int | HirType::Bool | HirType::I64)
+                            )
+                        });
+                        if can_print_without_handles {
+                            let mut printable_args = Vec::with_capacity(args.len());
+                            for arg in args {
+                                if let HirExpr::Literal(HirLiteral::String(text)) = arg {
+                                    let string_index = self.module.add_string(text);
+                                    let string_reg = self.func.alloc_vreg();
+                                    self.emit(MachineInstruction::Move {
+                                        dst: MachineOperand::Register(MachineRegister::Virtual(
+                                            string_reg,
+                                        )),
+                                        src: MachineOperand::Symbol(format!(
+                                            "__str_{string_index}"
+                                        )),
+                                    });
+                                    printable_args.push(("aot_print_cstr", string_reg));
+                                } else {
+                                    let is_bool =
+                                        matches!(self.infer_expr_type(arg), Some(HirType::Bool));
+                                    let value_reg = self.lower_expression(arg);
+                                    printable_args.push((
+                                        if is_bool {
+                                            "aot_print_bool"
+                                        } else {
+                                            "aot_print_i64"
+                                        },
+                                        value_reg,
+                                    ));
+                                }
+                            }
+
+                            let no_newline = self.func.alloc_vreg();
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(no_newline)),
+                                src: MachineOperand::Immediate(0),
+                            });
+                            for (index, (print_fn, value_reg)) in printable_args.iter().enumerate()
+                            {
+                                if index != 0 {
+                                    self.emit_call_with_args("aot_print_space", &[]);
+                                }
+                                self.emit_call_with_args(print_fn, &[*value_reg, no_newline]);
+                            }
+                            self.emit_call_with_args("aot_print_newline", &[]);
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Immediate(0),
+                            });
+                            return out_reg;
                         }
 
                         // General printing with options / multiple arguments

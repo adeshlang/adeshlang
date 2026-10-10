@@ -153,6 +153,9 @@ impl OutputCaptureGuard {
     #[cfg(not(unix))]
     pub fn start() -> Result<Self, String> {
         let lock = CAPTURE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        adeshlang::execution::runtime_core::stdio::flush_all();
+        adeshlang::execution::runtime_core::fast_print::flush_fast_buffer();
+        adeshlang::execution::runtime_core::stdio::start_output_capture();
         Ok(Self { _lock: lock })
     }
 
@@ -186,12 +189,19 @@ impl OutputCaptureGuard {
 
     #[cfg(not(unix))]
     pub fn finish(self) -> (String, String) {
-        (String::new(), String::new())
+        adeshlang::execution::runtime_core::fast_print::flush_fast_buffer();
+        adeshlang::execution::runtime_core::stdio::flush_all();
+        let captured = adeshlang::execution::runtime_core::stdio::finish_output_capture();
+        (captured, String::new())
     }
 }
 
 impl Drop for OutputCaptureGuard {
     fn drop(&mut self) {
+        #[cfg(not(unix))]
+        {
+            let _ = adeshlang::execution::runtime_core::stdio::finish_output_capture();
+        }
         #[cfg(unix)]
         unsafe {
             // Restore stdout and stderr if finish() wasn't called (e.g. on panic)

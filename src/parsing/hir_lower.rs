@@ -1192,6 +1192,68 @@ mod tests {
     }
 
     #[test]
+    fn unsuffixed_integer_literals_preserve_precision_past_f64_range() {
+        let hir = parse_to_hir(
+            "let exact = 9007199254740992; let next = 9007199254740993; \
+             let huge = 1234567890123456789012345678901234567890; \
+             let negative = -9223372036854775807; \
+             let minimum = -9223372036854775808;",
+        )
+        .expect("integer literals should lower");
+
+        let HirStmt::Let {
+            init: Some(HirExpr::Literal(HirLiteral::Int(exact))),
+            ..
+        } = &hir.statements[0]
+        else {
+            panic!("2^53 should remain an exact neutral integer");
+        };
+        assert_eq!(*exact, 9_007_199_254_740_992);
+
+        let HirStmt::Let {
+            init: Some(HirExpr::Literal(HirLiteral::BigInt(next))),
+            ..
+        } = &hir.statements[1]
+        else {
+            panic!("the first inexact f64 integer should remain a BigInt");
+        };
+        assert_eq!(next.to_string(), "9007199254740993");
+
+        let HirStmt::Let {
+            init: Some(HirExpr::Literal(HirLiteral::BigInt(huge))),
+            ..
+        } = &hir.statements[2]
+        else {
+            panic!("large unsuffixed integer should not fall back to f64");
+        };
+        assert_eq!(huge.to_string(), "1234567890123456789012345678901234567890");
+
+        let HirStmt::Let {
+            init: Some(HirExpr::UnaryOp(UnaryOp::Neg, inner)),
+            ..
+        } = &hir.statements[3]
+        else {
+            panic!("negative large integer should retain unary negation");
+        };
+        let HirExpr::Literal(HirLiteral::BigInt(magnitude)) = inner.as_ref() else {
+            panic!("negative large integer magnitude should remain exact");
+        };
+        assert_eq!(magnitude.to_string(), "9223372036854775807");
+
+        let HirStmt::Let {
+            init: Some(HirExpr::UnaryOp(UnaryOp::Neg, inner)),
+            ..
+        } = &hir.statements[4]
+        else {
+            panic!("i64::MIN should retain unary negation");
+        };
+        let HirExpr::Literal(HirLiteral::BigInt(magnitude)) = inner.as_ref() else {
+            panic!("i64::MIN magnitude should remain exact");
+        };
+        assert_eq!(magnitude.to_string(), "9223372036854775808");
+    }
+
+    #[test]
     fn test_function_def() {
         let hir = parse_to_hir("fn add(a, b) { return a + b; }").unwrap();
         assert_eq!(hir.functions.len(), 1);

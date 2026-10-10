@@ -103,11 +103,19 @@ Produced-executable runtime at 10 functions was 31.23 ms (O0), 25.17 ms (O1),
 28.78 ms (O2), and 27.03 ms (O3). The benchmark runs each executable as a
 subprocess, so process startup dominates this tiny workload.
 
-The Windows hello-world PE size is now 4,096 bytes, down from 112,640 bytes
-after moving the print/abort ABI into its own small runtime archive member.
-This size target is met by the focused O2 baseline and by the CLI `-Os`/`-Oz`
-execution regression. Size optimization remains independent of the debug
-benchmark profile.
+On the Windows x86-64 debug CLI, a string-only hello-world PE is 4,096 bytes.
+A numeric multi-argument print (`print("sum= ", 10 + 20 + 30, -2, true)`)
+is 5,120 bytes and prints `sum=  60 -2 true`. Both sizes were measured with
+the default mode and `-Os`/`-Oz`; these small samples currently produce equal
+sizes across those modes. The generated programs link the standalone C output
+ABI directly, while the runtime resolver now recognizes Cargo's hashed
+`adesh_runtime` archives instead of accidentally selecting an older local
+archive.
+
+These measurements are local debug-build observations, not CI results. The
+string-only size does not represent numeric or multi-argument printing. Both
+samples are below the 40 KiB target; Windows CI regressions cover their output
+and size, but the latest changes still need a CI run.
 
 ---
 

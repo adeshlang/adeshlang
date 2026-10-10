@@ -2211,10 +2211,13 @@ impl<'a> LinearScanAllocator<'a> {
         active.insert(pos, interval);
     }
 
-    /// Split GPR live ranges around zero-argument calls when the call is not in
-    /// a cycle and dominates every use after it. Calls in cycles, values with
-    /// multiple eligible calls, and values used on paths that bypass the call
-    /// retain the stack-copy preservation path below.
+    /// Split GPR live ranges around calls with a unique static split point.
+    /// Values are snapshotted at their reaching definitions, reloaded into a
+    /// post-call piece, and copied back on exits from the dominated region
+    /// (including loop backedges). Until edge blocks are supported, candidates
+    /// with mixed inside/outside successors conservatively retain the general
+    /// stack-copy preservation path. Multiple static calls for one value also
+    /// retain that path.
     fn split_local_call_intervals(
         func: &mut MachineFunction,
         liveness: &LivenessAnalysis,
@@ -2226,105 +2229,160 @@ impl<'a> LinearScanAllocator<'a> {
             slot: i32,
         }
 
+        fn reaching_definitions_before(
+            func: &MachineFunction,
+            block_id: u32,
+            instruction_index: usize,
+            vreg: VirtualRegister,
+        ) -> Vec<(u32, usize)> {
+            let mut worklist = vec![(block_id, instruction_index)];
+            let mut visited = HashSet::new();
+            let mut definitions = HashSet::new();
+
+            while let Some((current_block_id, before_index)) = worklist.pop() {
+                if !visited.insert((current_block_id, before_index)) {
+                    continue;
+                }
+                let Some(block) = func.blocks.get(current_block_id as usize) else {
+                    continue;
+                };
+                let found_definition =
+                    (0..before_index.min(block.instructions.len()))
+                        .rev()
+                        .find(|&idx| {
+                            block.instructions[idx]
+                                .defs()
+                                .contains(&MachineRegister::Virtual(vreg))
+                        });
+                if let Some(definition_index) = found_definition {
+                    definitions.insert((current_block_id, definition_index));
+                } else {
+                    worklist.extend(block.predecessors.iter().map(|&predecessor| {
+                        (
+                            predecessor,
+                            func.blocks[predecessor as usize].instructions.len(),
+                        )
+                    }));
+                }
+            }
+
+            let mut definitions: Vec<_> = definitions.into_iter().collect();
+            definitions.sort_unstable();
+            definitions
+        }
+
         let locals_end = (func.stack_size as i32 + 7) & !7;
         let mut slot_manager = SpillSlotManager::new();
         let mut events: HashMap<(u32, usize), Vec<SplitEvent>> = HashMap::new();
+        let mut save_events: HashMap<(u32, usize), Vec<(VirtualRegister, i32)>> = HashMap::new();
         let mut constraints = HashMap::new();
         let mut candidates = Vec::new();
         let dominators = crate::opt::DominatorTree::compute(func);
-        let successors: HashMap<u32, Vec<u32>> = func
-            .blocks
-            .iter()
-            .map(|block| (block.id, block.successors.clone()))
+        let live_segments_by_vreg: HashMap<VirtualRegister, Vec<LiveSegment>> = liveness
+            .build_live_ranges(func)
+            .into_iter()
+            .map(|range| (range.vreg, range.segments))
             .collect();
-        let mut uses_by_vreg: HashMap<VirtualRegister, HashSet<u32>> = HashMap::new();
+        let mut use_sites_by_vreg: HashMap<VirtualRegister, Vec<(u32, usize)>> = HashMap::new();
         for block in &func.blocks {
-            for inst in &block.instructions {
+            for (local_idx, inst) in block.instructions.iter().enumerate() {
                 for register in inst.uses() {
                     if let MachineRegister::Virtual(vreg) = register {
-                        uses_by_vreg.entry(vreg).or_default().insert(block.id);
+                        use_sites_by_vreg
+                            .entry(vreg)
+                            .or_default()
+                            .push((block.id, local_idx));
                     }
                 }
             }
         }
 
-        let can_reach = |from: u32, to: u32| {
-            let mut worklist = successors.get(&from).cloned().unwrap_or_default();
-            let mut visited = HashSet::new();
-            while let Some(candidate) = worklist.pop() {
-                if candidate == to {
-                    return true;
-                }
-                if visited.insert(candidate) {
-                    worklist.extend(successors.get(&candidate).into_iter().flatten().copied());
-                }
-            }
-            false
-        };
-        let is_in_cycle = |block_id| can_reach(block_id, block_id);
-
         for block in &func.blocks {
             let live_in = liveness.live_in.get(&block.id);
 
             for (local_idx, inst) in block.instructions.iter().enumerate() {
-                let MachineInstruction::Call { num_args: 0, .. } = inst else {
+                let MachineInstruction::Call { .. } = inst else {
                     continue;
                 };
-                if is_in_cycle(block.id) {
-                    continue;
-                }
                 let call_idx = liveness.inst_index_map[&(block.id, local_idx)];
                 let Some(live_after) = liveness.live_after_inst(call_idx) else {
                     continue;
                 };
 
-                let mut crossing: Vec<VirtualRegister> = live_after
-                    .iter()
-                    .filter_map(|reg| match reg {
-                        MachineRegister::Virtual(vreg)
-                            if func.vreg_class(*vreg) == RegisterClass::Gpr
-                                && (live_in.is_some_and(|regs| {
-                                    regs.contains(&MachineRegister::Virtual(*vreg))
-                                }) || block.instructions[..local_idx].iter().any(
-                                    |prior| prior.defs().contains(&MachineRegister::Virtual(*vreg)),
-                                ))
-                                && uses_by_vreg.get(vreg).is_some_and(|use_blocks| {
-                                    use_blocks.iter().all(|use_block| {
-                                        *use_block == block.id
-                                            || dominators.dominates(block.id, *use_block)
-                                            || !can_reach(block.id, *use_block)
-                                    })
-                                }) =>
-                        {
-                            Some(*vreg)
-                        }
-                        _ => None,
-                    })
-                    .collect();
-                crossing.sort_unstable();
-                crossing.dedup();
+                let mut crossing = Vec::new();
+                for register in live_after {
+                    let MachineRegister::Virtual(vreg) = register else {
+                        continue;
+                    };
+                    if func.vreg_class(*vreg) != RegisterClass::Gpr
+                        || !(live_in
+                            .is_some_and(|regs| regs.contains(&MachineRegister::Virtual(*vreg)))
+                            || block.instructions[..local_idx].iter().any(|prior| {
+                                prior.defs().contains(&MachineRegister::Virtual(*vreg))
+                            }))
+                    {
+                        continue;
+                    }
 
-                for vreg in crossing {
-                    candidates.push((block.id, local_idx, call_idx, vreg));
+                    let has_dominated_post_call_use =
+                        use_sites_by_vreg.get(vreg).is_some_and(|use_sites| {
+                            use_sites.iter().any(|(use_block, use_idx)| {
+                                if *use_block == block.id {
+                                    *use_idx > local_idx
+                                } else {
+                                    dominators.dominates(block.id, *use_block)
+                                }
+                            })
+                        });
+                    if !has_dominated_post_call_use {
+                        continue;
+                    }
+
+                    let reaching_definitions =
+                        reaching_definitions_before(func, block.id, local_idx, *vreg);
+                    if !reaching_definitions.is_empty() {
+                        crossing.push((*vreg, reaching_definitions));
+                    }
+                }
+                crossing.sort_unstable_by_key(|(vreg, _)| *vreg);
+                crossing.dedup_by_key(|(vreg, _)| *vreg);
+
+                for (vreg, reaching_definitions) in crossing {
+                    candidates.push((block.id, local_idx, vreg, reaching_definitions));
                 }
             }
         }
 
         let mut candidate_counts = HashMap::new();
-        for &(_, _, _, vreg) in &candidates {
-            *candidate_counts.entry(vreg).or_insert(0usize) += 1;
+        for (_, _, vreg, _) in &candidates {
+            *candidate_counts.entry(*vreg).or_insert(0usize) += 1;
         }
-        candidates.retain(|(_, _, _, vreg)| candidate_counts[vreg] == 1);
+        candidates.retain(|(_, _, vreg, _)| candidate_counts[vreg] == 1);
+        candidates.retain(|(split_block, _, _, _)| {
+            func.blocks
+                .iter()
+                .filter(|block| dominators.dominates(*split_block, block.id))
+                .all(|block| {
+                    let has_inside_successor = block.successors.iter().any(|successor| {
+                        *successor != *split_block && dominators.dominates(*split_block, *successor)
+                    });
+                    // Re-entering the split block is a loop snapshot refresh,
+                    // not an external path that requires edge-specific values.
+                    let has_exit_successor = block.successors.iter().any(|successor| {
+                        *successor != *split_block
+                            && !dominators.dominates(*split_block, *successor)
+                    });
+                    !(has_inside_successor && has_exit_successor)
+                })
+        });
 
-        for (block_id, local_idx, call_idx, vreg) in candidates {
+        for (block_id, local_idx, vreg, reaching_definitions) in candidates {
             let post_call_vreg = func.alloc_vreg();
-            let slot = slot_manager.allocate_slot(
-                RegisterClass::Gpr,
-                8,
-                8,
-                &[LiveSegment::new(call_idx, call_idx + 1)],
-                locals_end,
-            );
+            let Some(live_segments) = live_segments_by_vreg.get(&vreg) else {
+                continue;
+            };
+            let slot =
+                slot_manager.allocate_slot(RegisterClass::Gpr, 8, 8, live_segments, locals_end);
             events
                 .entry((block_id, local_idx))
                 .or_default()
@@ -2333,6 +2391,12 @@ impl<'a> LinearScanAllocator<'a> {
                     post_call_vreg,
                     slot,
                 });
+            for definition in reaching_definitions {
+                save_events
+                    .entry(definition)
+                    .or_default()
+                    .push((vreg, slot));
+            }
             // A reload immediately following Call must not destroy the ABI
             // return value before its first use.
             constraints.insert(
@@ -2360,20 +2424,52 @@ impl<'a> LinearScanAllocator<'a> {
                     }
                 }
             }
-            let mut rewritten = Vec::with_capacity(block.instructions.len() + 4);
+            let original_len = block.instructions.len();
+            let mut edge_copybacks = Vec::new();
+            for ((split_block, _), split_events) in &events {
+                let exits_split_region = block.successors.iter().any(|successor| {
+                    *successor == *split_block || !dominators.dominates(*split_block, *successor)
+                });
+                if dominators.dominates(*split_block, block.id) && exits_split_region {
+                    edge_copybacks.extend(split_events.iter().copied());
+                }
+            }
+            let edge_copyback_index = block
+                .instructions
+                .iter()
+                .position(|inst| {
+                    matches!(
+                        inst,
+                        MachineInstruction::Branch { .. }
+                            | MachineInstruction::BranchCc { .. }
+                            | MachineInstruction::Return
+                    )
+                })
+                .unwrap_or(original_len);
+            let mut rewritten = Vec::with_capacity(original_len + 8);
             for (local_idx, mut inst) in block.instructions.drain(..).enumerate() {
-                let split_events = events.get(&(block.id, local_idx));
-                if let Some(split_events) = split_events {
-                    for event in split_events {
-                        let current_piece = pieces.get(&event.vreg).copied().unwrap_or(event.vreg);
+                if local_idx == edge_copyback_index {
+                    for event in &edge_copybacks {
+                        rewritten.push(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(event.vreg)),
+                            src: MachineOperand::Register(MachineRegister::Virtual(
+                                event.post_call_vreg,
+                            )),
+                        });
+                        // Loops can execute the same static call site more
+                        // than once, so refresh its snapshot after copying the
+                        // current piece back to the pre-call virtual register.
                         rewritten.push(MachineInstruction::Store {
                             dst: MachineOperand::StackSlot(event.slot),
-                            src: MachineOperand::Register(MachineRegister::Virtual(current_piece)),
+                            src: MachineOperand::Register(MachineRegister::Virtual(
+                                event.post_call_vreg,
+                            )),
                             size: 8,
                         });
                     }
                 }
 
+                let split_events = events.get(&(block.id, local_idx));
                 for operand in crate::opt::lto::operands_mut(&mut inst) {
                     Self::remap_split_operand(operand, &pieces);
                 }
@@ -2384,6 +2480,17 @@ impl<'a> LinearScanAllocator<'a> {
                     }
                 }
                 rewritten.push(inst);
+
+                if let Some(save_events) = save_events.get(&(block.id, local_idx)) {
+                    for &(vreg, slot) in save_events {
+                        let current_piece = pieces.get(&vreg).copied().unwrap_or(vreg);
+                        rewritten.push(MachineInstruction::Store {
+                            dst: MachineOperand::StackSlot(slot),
+                            src: MachineOperand::Register(MachineRegister::Virtual(current_piece)),
+                            size: 8,
+                        });
+                    }
+                }
 
                 if let Some(split_events) = split_events {
                     for event in split_events {
@@ -2396,6 +2503,23 @@ impl<'a> LinearScanAllocator<'a> {
                         });
                         pieces.insert(event.vreg, event.post_call_vreg);
                     }
+                }
+            }
+            if edge_copyback_index == original_len {
+                for event in &edge_copybacks {
+                    rewritten.push(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(event.vreg)),
+                        src: MachineOperand::Register(MachineRegister::Virtual(
+                            event.post_call_vreg,
+                        )),
+                    });
+                    rewritten.push(MachineInstruction::Store {
+                        dst: MachineOperand::StackSlot(event.slot),
+                        src: MachineOperand::Register(MachineRegister::Virtual(
+                            event.post_call_vreg,
+                        )),
+                        size: 8,
+                    });
                 }
             }
             block.instructions = rewritten;
@@ -2528,7 +2652,9 @@ impl<'a> LinearScanAllocator<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::machine_ir::{MachineFunction, MachineInstruction, MachineOperand};
+    use crate::machine_ir::{
+        MachineFunction, MachineInstruction, MachineOperand, MoveLocation, MoveOperation,
+    };
     use crate::targets::x86_64::X86_64RegisterFile;
 
     #[test]
@@ -2958,11 +3084,10 @@ mod tests {
             .position(|inst| matches!(inst, MachineInstruction::Call { .. }))
             .expect("call remains in the block");
         assert!(
-            matches!(
-                func.blocks[0].instructions[call_index - 1],
-                MachineInstruction::Store { .. }
-            ),
-            "save should be placed immediately before the zero-argument call"
+            func.blocks[0].instructions[..call_index]
+                .iter()
+                .any(|inst| matches!(inst, MachineInstruction::Store { .. })),
+            "the reaching definition should be snapshotted before the call"
         );
         assert!(
             matches!(
@@ -3042,7 +3167,7 @@ mod tests {
     }
 
     #[test]
-    fn test_zero_arg_call_split_falls_back_when_join_bypasses_call() {
+    fn test_call_split_falls_back_when_join_bypasses_call() {
         let mut func = MachineFunction::new("test_non_dominated_call_fallback");
         let call_path_id = func.create_block("call_path");
         let bypass_path_id = func.create_block("bypass_path");
@@ -3091,8 +3216,85 @@ mod tests {
     }
 
     #[test]
-    fn test_zero_arg_call_in_loop_keeps_verified_fallback() {
-        let mut func = MachineFunction::new("test_loop_call_fallback");
+    fn test_call_split_falls_back_for_mixed_inside_and_exit_edges() {
+        let mut func = MachineFunction::new("test_mixed_call_split_exit_edges");
+        let call_path_id = func.create_block("call_path");
+        let mixed_exit_id = func.create_block("mixed_exit");
+        let inside_id = func.create_block("inside");
+        let bypass_id = func.create_block("bypass");
+        let join_id = func.create_block("join");
+        let live_value = func.alloc_vreg();
+
+        {
+            let entry = func.entry_block_mut();
+            entry.push(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+                src: MachineOperand::Immediate(41),
+            });
+            entry.push(MachineInstruction::BranchCc {
+                cc: crate::machine_ir::ConditionCode::Equal,
+                target: "call_path".to_string(),
+            });
+            entry.push(MachineInstruction::Branch {
+                target: "bypass".to_string(),
+            });
+        }
+        func.blocks[call_path_id as usize].push(MachineInstruction::Call {
+            target: MachineOperand::Symbol("zero_arg".to_string()),
+            num_args: 0,
+        });
+        func.blocks[call_path_id as usize].push(MachineInstruction::Branch {
+            target: "mixed_exit".to_string(),
+        });
+        {
+            let mixed_exit = &mut func.blocks[mixed_exit_id as usize];
+            mixed_exit.push(MachineInstruction::BranchCc {
+                cc: crate::machine_ir::ConditionCode::Equal,
+                target: "inside".to_string(),
+            });
+            mixed_exit.push(MachineInstruction::Branch {
+                target: "join".to_string(),
+            });
+        }
+        func.blocks[inside_id as usize].push(MachineInstruction::Add {
+            dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+            src: MachineOperand::Immediate(1),
+        });
+        func.blocks[inside_id as usize].push(MachineInstruction::Branch {
+            target: "join".to_string(),
+        });
+        func.blocks[bypass_id as usize].push(MachineInstruction::Branch {
+            target: "join".to_string(),
+        });
+        func.blocks[join_id as usize].push(MachineInstruction::Add {
+            dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+            src: MachineOperand::Immediate(1),
+        });
+        func.blocks[join_id as usize].push(MachineInstruction::Return);
+
+        let liveness = LivenessAnalysis::compute(&mut func);
+        let constraints = LinearScanAllocator::split_local_call_intervals(&mut func, &liveness);
+
+        assert!(constraints.is_empty());
+        assert_eq!(
+            func.vreg_count, 1,
+            "mixed inside/outside successors must use the conservative spill path"
+        );
+        assert!(
+            func.blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .all(|inst| !matches!(
+                    inst,
+                    MachineInstruction::Load { .. } | MachineInstruction::Store { .. }
+                )),
+            "a rejected split must not add snapshots or copybacks"
+        );
+    }
+
+    #[test]
+    fn test_call_split_copies_back_and_refreshes_loop_snapshot() {
+        let mut func = MachineFunction::new("test_loop_call_split");
         let loop_id = func.create_block("loop");
         let exit_id = func.create_block("exit");
         let live_value = func.alloc_vreg();
@@ -3123,23 +3325,44 @@ mod tests {
 
         let reg_file = X86_64RegisterFile::sysv();
         let allocator = LinearScanAllocator::new(&reg_file);
-        allocator
+        let result = allocator
             .allocate(&mut func)
-            .expect("the loop call should retain the verified fallback");
+            .expect("loop call splitting should preserve the loop-carried value");
         assert_eq!(
-            func.vreg_count, 1,
-            "cyclic call sites are not split by the bounded allocator"
+            func.vreg_count, 2,
+            "a loop call should receive a post-call piece"
+        );
+        assert!(
+            result.vreg_map.contains_key(&VirtualRegister(1))
+                || result.spill_map.contains_key(&VirtualRegister(1))
+        );
+        let loop_instructions = &func.blocks[loop_id as usize].instructions;
+        let call_index = loop_instructions
+            .iter()
+            .position(|inst| matches!(inst, MachineInstruction::Call { .. }))
+            .expect("loop call remains in the block");
+        assert!(
+            loop_instructions[call_index + 1..]
+                .iter()
+                .any(|inst| matches!(inst, MachineInstruction::Store { .. })),
+            "the loop backedge must refresh the call snapshot"
         );
     }
 
     #[test]
-    fn test_calls_with_arguments_keep_verified_preservation_fallback() {
-        let mut func = MachineFunction::new("test_call_argument_split_fallback");
+    fn test_argument_call_split_snapshots_before_argument_moves() {
+        let mut func = MachineFunction::new("test_argument_call_split");
         let live_value = func.alloc_vreg();
         let entry = func.entry_block_mut();
         entry.push(MachineInstruction::Move {
             dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
             src: MachineOperand::Immediate(41),
+        });
+        entry.push(MachineInstruction::ParallelMove {
+            moves: vec![MoveOperation::new_qword(
+                MoveLocation::PhysicalRegister(PhysicalRegister::gpr(7)),
+                MoveLocation::Immediate(5),
+            )],
         });
         entry.push(MachineInstruction::Call {
             target: MachineOperand::Symbol("one_arg".to_string()),
@@ -3153,12 +3376,27 @@ mod tests {
 
         let reg_file = X86_64RegisterFile::sysv();
         let allocator = LinearScanAllocator::new(&reg_file);
-        allocator
+        let result = allocator
             .allocate(&mut func)
-            .expect("argument setup must retain the verified fallback");
+            .expect("argument setup must preserve and split the live value");
         assert_eq!(
-            func.vreg_count, 1,
-            "unsupported argument setup should not create split pieces"
+            func.vreg_count, 2,
+            "an argument-bearing call should receive a post-call piece"
+        );
+        assert!(
+            result.vreg_map.contains_key(&VirtualRegister(1))
+                || result.spill_map.contains_key(&VirtualRegister(1))
+        );
+        let instructions = &func.blocks[0].instructions;
+        let argument_moves = instructions
+            .iter()
+            .position(|inst| matches!(inst, MachineInstruction::ParallelMove { .. }))
+            .expect("argument setup remains in the block");
+        assert!(
+            instructions[..argument_moves]
+                .iter()
+                .any(|inst| matches!(inst, MachineInstruction::Store { .. })),
+            "the snapshot must precede caller-argument register assignments"
         );
     }
 }

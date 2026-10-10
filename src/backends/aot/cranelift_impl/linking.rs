@@ -873,6 +873,46 @@ fn get_linux_dynamic_linker(target_triple: &Triple) -> Result<String, String> {
 static RUNTIME_LIB_CACHE: std::sync::OnceLock<Option<std::path::PathBuf>> =
     std::sync::OnceLock::new();
 
+fn hashed_runtime_libs(deps_dir: &Path, primary_lib_name: &str) -> Vec<std::path::PathBuf> {
+    let primary_path = Path::new(primary_lib_name);
+    let Some(stem) = primary_path.file_stem().and_then(|stem| stem.to_str()) else {
+        return Vec::new();
+    };
+    let prefix = format!("{stem}-");
+    let extension = primary_path.extension();
+    let mut libraries: Vec<_> = std::fs::read_dir(deps_dir)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            let name_matches = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .is_some_and(|stem| stem.starts_with(&prefix));
+            name_matches && path.extension() == extension
+        })
+        .collect();
+    libraries.sort_by_key(|path| {
+        std::cmp::Reverse(
+            path.metadata()
+                .and_then(|metadata| metadata.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+        )
+    });
+    libraries
+}
+
+fn prefer_newer_runtime_libs(libraries: &mut [std::path::PathBuf]) {
+    libraries.sort_by_key(|path| {
+        std::cmp::Reverse(
+            path.metadata()
+                .and_then(|metadata| metadata.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+        )
+    });
+}
+
 /// Compile the runtime C library to an object file
 pub(crate) fn get_static_runtime_lib(target_triple: &Triple) -> Result<std::path::PathBuf, String> {
     if let Some(Some(cached)) = RUNTIME_LIB_CACHE.get() {
@@ -949,12 +989,25 @@ pub(crate) fn get_static_runtime_lib(target_triple: &Triple) -> Result<std::path
                     let trip_prof = target_dir.join(&target_triple_str).join(profile);
                     let trip_deps = trip_prof.join("deps");
 
-                    // 1. Prioritize dedicated standalone runtime crate (ultra-fast, ~150KB)
-                    target_candidates.push(prof_dir.join(primary_lib_name));
-                    target_candidates.push(prof_deps.join(primary_lib_name));
+                    // 1. Prioritize the newest available standalone runtime
+                    // crate artifact. Cargo names dependency archives with a
+                    // hash, so include those as well as stable local copies.
+                    let mut runtime_candidates = vec![
+                        prof_dir.join(primary_lib_name),
+                        prof_deps.join(primary_lib_name),
+                    ];
+                    runtime_candidates.extend(hashed_runtime_libs(&prof_deps, primary_lib_name));
+                    prefer_newer_runtime_libs(&mut runtime_candidates);
+                    target_candidates.extend(runtime_candidates);
                     target_candidates.push(prof_deps.join("libadesh_runtime.rlib"));
-                    target_candidates.push(trip_prof.join(primary_lib_name));
-                    target_candidates.push(trip_deps.join(primary_lib_name));
+                    let mut triple_runtime_candidates = vec![
+                        trip_prof.join(primary_lib_name),
+                        trip_deps.join(primary_lib_name),
+                    ];
+                    triple_runtime_candidates
+                        .extend(hashed_runtime_libs(&trip_deps, primary_lib_name));
+                    prefer_newer_runtime_libs(&mut triple_runtime_candidates);
+                    target_candidates.extend(triple_runtime_candidates);
                     target_candidates.push(trip_deps.join("libadesh_runtime.rlib"));
 
                     // 2. Fallback to compiler staticlib

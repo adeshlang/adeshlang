@@ -45,7 +45,7 @@ impl AssemblyEmitter {
     /// Emit assembly for a single function.
     pub fn emit_function_asm(&self, func: &MachineFunction, s: &mut String) {
         if func.is_exported {
-            s.push_str(&format!(".global {}\n", func.name));
+            s.push_str(&format!(".globl {}\n", func.name));
         }
         s.push_str(&format!("{}:\n", func.name));
 

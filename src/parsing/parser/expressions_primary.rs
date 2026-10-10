@@ -18,6 +18,24 @@ use super::core::Parser;
 use crate::parsing::ast::{Expr, ExprKind, Span, Stmt, StmtKind, TokenKind, Value};
 use crate::parsing::error::LangError;
 
+// IEEE-754 binary64 represents every integer through 2^53 exactly. Larger
+// unsuffixed integer tokens must stay in BigInt form instead of being rounded.
+const MAX_EXACT_F64_INTEGER: u128 = 1u128 << 53;
+
+fn parse_unsuffixed_integer(lexeme: &str) -> Option<num_bigint::BigInt> {
+    let (digits, radix) = if lexeme.starts_with("0x") || lexeme.starts_with("0X") {
+        (&lexeme[2..], 16)
+    } else if lexeme.starts_with("0b") || lexeme.starts_with("0B") {
+        (&lexeme[2..], 2)
+    } else if lexeme.starts_with("0o") || lexeme.starts_with("0O") {
+        (&lexeme[2..], 8)
+    } else {
+        (lexeme, 10)
+    };
+    let digits = digits.replace('_', "");
+    num_bigint::BigInt::parse_bytes(digits.as_bytes(), radix)
+}
+
 /// Helper function to parse integer numeric strings with different bases (hex, binary, octal, decimal).
 /// This is used for typed integer literals (u8, i32, etc.) and BigInt.
 /// Separate from f64 parsing in primary() which handles Number tokens without type suffixes.
@@ -233,7 +251,7 @@ impl Parser {
             let lex = self.prev().lexeme.clone();
             let span = self.previous_span();
 
-            // Preserve precision for integer literals that exceed f64's exact range.
+            // Preserve integer precision whenever binary64 would round the token.
             let is_hex_or_bin_or_oct = lex.starts_with("0x")
                 || lex.starts_with("0X")
                 || lex.starts_with("0b")
@@ -243,31 +261,28 @@ impl Parser {
             let is_integer_lexeme = is_hex_or_bin_or_oct
                 || (!lex.contains('.') && !lex.contains('e') && !lex.contains('E'));
             if is_integer_lexeme {
-                let parsed_u128 = if lex.starts_with("0x") || lex.starts_with("0X") {
-                    u128::from_str_radix(&lex[2..].replace('_', ""), 16).ok()
-                } else if lex.starts_with("0b") || lex.starts_with("0B") {
-                    u128::from_str_radix(&lex[2..].replace('_', ""), 2).ok()
-                } else if lex.starts_with("0o") || lex.starts_with("0O") {
-                    u128::from_str_radix(&lex[2..].replace('_', ""), 8).ok()
-                } else {
-                    lex.replace('_', "").parse::<u128>().ok()
-                };
-
-                if let Some(v) = parsed_u128 {
-                    // Keep unsuffixed integer literals neutral so the type checker can
-                    // fit them to the expected numeric type at the use site.
-                    if v <= i64::MAX as u128 {
+                if let Some(value) = parse_unsuffixed_integer(&lex) {
+                    // Keep small unsuffixed literals neutral so the type checker can
+                    // fit them to an expected numeric type. This conversion is exact
+                    // only through 2^53; larger integers retain arbitrary precision.
+                    if value <= num_bigint::BigInt::from(MAX_EXACT_F64_INTEGER) {
+                        use num_traits::ToPrimitive;
+                        let exact_value = value
+                            .to_u128()
+                            .expect("an integer no larger than 2^53 fits in u128");
                         return Ok(Expr {
-                            kind: ExprKind::Literal(Value::Number(v as f64)),
+                            kind: ExprKind::Literal(Value::Number(exact_value as f64)),
                             span,
                         });
                     }
 
                     return Ok(Expr {
-                        kind: ExprKind::Literal(Value::BigInt(num_bigint::BigInt::from(v))),
+                        kind: ExprKind::Literal(Value::BigInt(value)),
                         span,
                     });
                 }
+
+                return Err(self.format_err(self.prev(), "Invalid integer literal"));
             }
 
             // Handle different numeric literal formats

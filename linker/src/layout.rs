@@ -100,7 +100,7 @@ impl LayoutEngine {
             4,
         );
 
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         enum SectionCat {
             Text,
             Rodata,
@@ -108,7 +108,10 @@ impl LayoutEngine {
             Bss,
             Tls,
             Meta,
+            Debug(String),
         }
+
+        let mut debug_merged_map: HashMap<String, MergedSection> = HashMap::new();
 
         // Map: (file_index, section_index) -> (SectionCat, offset_in_merged)
         let mut sec_placement: HashMap<(usize, usize), (SectionCat, u64)> = HashMap::new();
@@ -161,8 +164,8 @@ impl LayoutEngine {
                 if sec.is_folded {
                     if let Some(ref canon_sym) = sec.folded_into {
                         if let Some(&(cf, cs)) = sym_def_loc.get(canon_sym.as_str()) {
-                            if let Some(&placement) = sec_placement.get(&(cf, cs)) {
-                                sec_placement.insert((f_idx, s_idx), placement);
+                            if let Some(placement) = sec_placement.get(&(cf, cs)) {
+                                sec_placement.insert((f_idx, s_idx), placement.clone());
                             }
                         }
                     }
@@ -188,6 +191,19 @@ impl LayoutEngine {
                 } else if sec.name == ".adesh.meta" || sec.kind == SectionKind::AdeshMeta {
                     let off = meta_merged.append_section(sec, f_idx, s_idx);
                     sec_placement.insert((f_idx, s_idx), (SectionCat::Meta, off));
+                } else if sec.kind == SectionKind::Debug || sec.name.starts_with(".debug") {
+                    let debug_sec = debug_merged_map
+                        .entry(sec.name.clone())
+                        .or_insert_with(|| {
+                            MergedSection::new(
+                                sec.name.clone(),
+                                SectionKind::Debug,
+                                sec.flags,
+                                sec.alignment.max(1),
+                            )
+                        });
+                    let off = debug_sec.append_section(sec, f_idx, s_idx);
+                    sec_placement.insert((f_idx, s_idx), (SectionCat::Debug(sec.name.clone()), off));
                 } else if sec.is_executable() {
                     let off = text_merged.append_section(sec, f_idx, s_idx);
                     sec_placement.insert((f_idx, s_idx), (SectionCat::Text, off));
@@ -492,10 +508,24 @@ impl LayoutEngine {
             cat_to_idx.insert(SectionCat::Tls, merged_list.len());
             merged_list.push(tls_merged);
         }
+        let mut debug_names: Vec<String> = debug_merged_map.keys().cloned().collect();
+        debug_names.sort();
+        for name in debug_names {
+            if let Some(sec) = debug_merged_map.remove(&name) {
+                if sec.size > 0 || !sec.data.is_empty() {
+                    cat_to_idx.insert(SectionCat::Debug(name), merged_list.len());
+                    merged_list.push(sec);
+                }
+            }
+        }
 
         // 2. Assign Virtual Addresses
         let mut current_va = target.image_base + 0x1000; // Start at base + 4KB
         for merged in &mut merged_list {
+            if !merged.is_alloc() {
+                merged.virtual_address = 0;
+                continue;
+            }
             current_va = align_to(current_va, merged.alignment.max(target.page_size));
             merged.virtual_address = current_va;
             current_va += merged.size;
@@ -516,8 +546,95 @@ impl LayoutEngine {
             idata_sec.virtual_address = idata_va;
             idata_sec.data = imp_res.data.clone();
             idata_sec.size = imp_res.data.len() as u64;
+            current_va = idata_va + idata_sec.size;
             merged_list.push(idata_sec);
             pe_imp_result = Some(imp_res);
+        }
+
+        // Synthesize Windows x64 SEH .pdata (RUNTIME_FUNCTION) and .xdata (UNWIND_INFO)
+        if target.format == crate::target::ObjectFormat::Pe
+            && target.arch == crate::target::Arch::X86_64
+        {
+            let has_input_pdata = objects.iter().any(|obj| {
+                obj.sections
+                    .iter()
+                    .any(|sec| sec.name.starts_with(".pdata") && sec.is_live)
+            });
+            if !has_input_pdata {
+                let text_base_va = cat_to_idx
+                    .get(&SectionCat::Text)
+                    .map(|&idx| merged_list[idx].virtual_address)
+                    .unwrap_or(0);
+                let text_size = cat_to_idx
+                    .get(&SectionCat::Text)
+                    .map(|&idx| merged_list[idx].size)
+                    .unwrap_or(0);
+                if text_size > 0 {
+                    let mut pdata_entries = Vec::new();
+                    let text_base_rva = (text_base_va - target.image_base) as u32;
+
+                    let xdata_bytes =
+                        crate::unwind::WindowsPdataGenerator::build_standard_frame_xdata(0, &[]);
+                    let xdata_va = align_to(current_va, target.page_size.max(0x1000));
+                    let xdata_rva = (xdata_va - target.image_base) as u32;
+                    let xdata_size = xdata_bytes.len() as u64;
+
+                    for (f_idx, obj) in objects.iter().enumerate() {
+                        for sym in &obj.symbols {
+                            if sym.is_defined && sym.sym_type == crate::symbol::SymbolType::Function {
+                                if let Some(s_idx) = sym.section_index {
+                                    if let Some((cat, sec_off)) = sec_placement.get(&(f_idx, s_idx)) {
+                                        if *cat == SectionCat::Text {
+                                            let func_start = text_base_rva + (*sec_off + sym.value) as u32;
+                                            let func_len = if sym.size > 0 { sym.size as u32 } else { 16 };
+                                            pdata_entries.push(crate::unwind::PdataEntry {
+                                                begin_rva: func_start,
+                                                end_rva: func_start + func_len,
+                                                unwind_info_rva: xdata_rva,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if pdata_entries.is_empty() {
+                        pdata_entries.push(crate::unwind::PdataEntry {
+                            begin_rva: text_base_rva,
+                            end_rva: text_base_rva + text_size as u32,
+                            unwind_info_rva: xdata_rva,
+                        });
+                    }
+
+                    let pdata_bytes =
+                        crate::unwind::WindowsPdataGenerator::build_pdata(pdata_entries);
+                    let pdata_va = align_to(xdata_va + xdata_size, target.page_size.max(0x1000));
+
+                    let mut xdata_sec = MergedSection::new(
+                        ".xdata",
+                        SectionKind::Rodata,
+                        flags::READ | flags::ALLOC,
+                        8,
+                    );
+                    xdata_sec.virtual_address = xdata_va;
+                    xdata_sec.data = xdata_bytes;
+                    xdata_sec.size = xdata_size;
+
+                    let mut pdata_sec = MergedSection::new(
+                        ".pdata",
+                        SectionKind::Rodata,
+                        flags::READ | flags::ALLOC,
+                        4,
+                    );
+                    pdata_sec.virtual_address = pdata_va;
+                    pdata_sec.data = pdata_bytes;
+                    pdata_sec.size = pdata_sec.data.len() as u64;
+
+                    merged_list.push(xdata_sec);
+                    merged_list.push(pdata_sec);
+                }
+            }
         }
 
         // Final base VA of every input section, keyed (file, section).
@@ -714,10 +831,10 @@ impl LayoutEngine {
                 }
 
                 if let Some(sec_idx) = sym.section_index {
-                    if let Some(&(cat, sec_off)) = sec_placement.get(&(f_idx, sec_idx)) {
-                        if let Some(&m_idx) = cat_to_idx.get(&cat) {
+                    if let Some((cat, sec_off)) = sec_placement.get(&(f_idx, sec_idx)) {
+                        if let Some(&m_idx) = cat_to_idx.get(cat) {
                             let sec_va = merged_list[m_idx].virtual_address;
-                            let sym_va = sec_va + sec_off + sym.value;
+                            let sym_va = sec_va + *sec_off + sym.value;
                             if sym.binding != crate::symbol::SymbolBinding::Local {
                                 symbol_va_map.insert(sym.name.clone(), sym_va);
                             } else {

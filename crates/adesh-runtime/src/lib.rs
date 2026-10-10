@@ -1446,23 +1446,6 @@ fn print_line<T: std::fmt::Display>(value: T, newline: bool) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_print_newline() -> u64 {
-    ffi_guard(0, || {
-        println!();
-        let _ = std::io::stdout().flush();
-        0
-    })
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn aot_print_space() -> u64 {
-    ffi_guard(0, || {
-        print_line(" ", false);
-        0
-    })
-}
-
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_print_i8(value: i8, newline: i64) -> u64 {
     ffi_guard(0, || {
         print_line(value, newline != 0);
@@ -1487,14 +1470,6 @@ pub extern "C" fn aot_print_i32(value: i32, newline: i64) -> u64 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_print_i64(value: i64, newline: i64) -> u64 {
-    ffi_guard(0, || {
-        print_line(value, newline != 0);
-        0
-    })
-}
-
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_print_u8(value: u8, newline: i64) -> u64 {
     ffi_guard(0, || {
         print_line(value, newline != 0);
@@ -1512,14 +1487,6 @@ pub extern "C" fn aot_print_u16(value: u16, newline: i64) -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_print_u32(value: u32, newline: i64) -> u64 {
-    ffi_guard(0, || {
-        print_line(value, newline != 0);
-        0
-    })
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn aot_print_u64(value: u64, newline: i64) -> u64 {
     ffi_guard(0, || {
         print_line(value, newline != 0);
         0
@@ -1554,14 +1521,6 @@ pub extern "C" fn aot_print_str(string_ptr: i64, newline: i64) -> u64 {
                 print_line(s, newline != 0);
             }
         }
-        0
-    })
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn aot_print_bool(value: i64, newline: i64) -> u64 {
-    ffi_guard(0, || {
-        print_line(value != 0, newline != 0);
         0
     })
 }

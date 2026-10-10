@@ -15,8 +15,37 @@ use crate::object::ObjectReader;
 use crate::pe::writer::PeWriter;
 use crate::target::ObjectFormat;
 use crate::wasm::WasmWriter;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
+
+fn hashed_library_candidates(search_dir: &Path, lib_name: &str) -> Vec<PathBuf> {
+    let prefixes = [format!("{lib_name}-"), format!("lib{lib_name}-")];
+    let mut candidates: Vec<_> = std::fs::read_dir(search_dir)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                return false;
+            };
+            let has_hashed_name = prefixes.iter().any(|prefix| name.starts_with(prefix));
+            let is_archive = matches!(
+                path.extension().and_then(|extension| extension.to_str()),
+                Some("lib" | "a")
+            );
+            has_hashed_name && is_archive
+        })
+        .collect();
+    candidates.sort_by_key(|path| {
+        std::cmp::Reverse(
+            path.metadata()
+                .and_then(|metadata| metadata.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+        )
+    });
+    candidates
+}
 
 pub struct Linker;
 
@@ -72,8 +101,16 @@ impl Linker {
         // Ingest library flags (-L / -l) and default search paths
         let mut search_paths = ctx.config.library_search_paths.clone();
         if let Ok(cwd) = std::env::current_dir() {
-            search_paths.push(cwd.join("target").join("debug"));
-            search_paths.push(cwd.join("target").join("release"));
+            let profile_order = if cfg!(debug_assertions) {
+                ["debug", "release"]
+            } else {
+                ["release", "debug"]
+            };
+            for profile in profile_order {
+                let profile_dir = cwd.join("target").join(profile);
+                search_paths.push(profile_dir.join("deps"));
+                search_paths.push(profile_dir);
+            }
             search_paths.push(cwd.join("lib"));
             search_paths.push(cwd.clone());
         }
@@ -97,17 +134,15 @@ impl Linker {
         for lib_name in &requested_libs {
             let mut found = false;
             for search_dir in &search_paths {
-                let lib_path_a = search_dir.join(format!("lib{}.a", lib_name));
-                let lib_path_lib = search_dir.join(format!("{}.lib", lib_name));
-                let target_path = if lib_path_a.exists() {
-                    Some(lib_path_a)
-                } else if lib_path_lib.exists() {
-                    Some(lib_path_lib)
-                } else {
-                    None
-                };
-
-                if let Some(p) = target_path {
+                let mut candidates = vec![
+                    search_dir.join(format!("lib{}.a", lib_name)),
+                    search_dir.join(format!("{}.lib", lib_name)),
+                ];
+                candidates.extend(hashed_library_candidates(search_dir, lib_name));
+                for p in candidates {
+                    if !p.exists() {
+                        continue;
+                    }
                     if let Ok(bytes) = std::fs::read(&p) {
                         if bytes.starts_with(b"!<arch>\n") {
                             if let Ok(archive) = Archive::parse(&bytes, &p) {
@@ -117,6 +152,9 @@ impl Linker {
                             }
                         }
                     }
+                }
+                if found {
+                    break;
                 }
             }
             if !found && ctx.config.libraries.contains(lib_name) {

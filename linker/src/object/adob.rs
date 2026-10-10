@@ -104,6 +104,12 @@ impl AdobV2 {
                     RelocationKind::PcRelative64 => 3,
                     RelocationKind::PltRelative32 => 4,
                     RelocationKind::GotRelative32 => 5,
+                    RelocationKind::TlsGeneralDynamic => 6,
+                    RelocationKind::TlsInitialExec => 8,
+                    RelocationKind::TlsLocalExec => 9,
+                    RelocationKind::AArch64Call26 => 20,
+                    RelocationKind::AArch64Adrp => 21,
+                    RelocationKind::AArch64AddLo12 => 22,
                     _ => 0,
                 };
                 buf.push(r_kind_id);
@@ -244,6 +250,9 @@ impl AdobV2 {
                     7 => RelocationKind::TlsGeneralDynamic,
                     8 => RelocationKind::TlsInitialExec,
                     9 => RelocationKind::TlsLocalExec,
+                    20 => RelocationKind::AArch64Call26,
+                    21 => RelocationKind::AArch64Adrp,
+                    22 => RelocationKind::AArch64AddLo12,
                     _ => RelocationKind::Absolute64,
                 };
 

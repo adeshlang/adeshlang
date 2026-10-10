@@ -232,11 +232,7 @@ fn test_cli_size_optimization_levels_build_compact_executables() {
 fn test_cli_build_ignores_unreferenced_weak_runtime_helpers() {
     let dir = tempdir().expect("tempdir");
     let source = dir.path().join("weak_helpers.adesh");
-    std::fs::write(
-        &source,
-        "fn main(): int { print(\"Sum \", 1 + 2 + 3); return 0; }\n",
-    )
-    .expect("write source");
+    std::fs::write(&source, "print(\"sum= \", 10 + 20 + 30, -2, true);\n").expect("write source");
     let output = dir.path().join("weak_helpers.exe");
 
     let build = Command::new(env!("CARGO_BIN_EXE_adesh"))
@@ -259,11 +255,62 @@ fn test_cli_build_ignores_unreferenced_weak_runtime_helpers() {
         );
     }
 
+    let size = std::fs::metadata(&output)
+        .expect("CLI executable exists")
+        .len();
+    assert!(
+        size <= 40 * 1024,
+        "numeric multi-argument print produced a {size}-byte PE, exceeding the 40 KiB target"
+    );
+
     let run = Command::new(&output)
         .output()
         .expect("built executable should run");
     assert_eq!(run.status.code(), Some(0));
-    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "Sum  6");
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout).trim(),
+        "sum=  60 -2 true"
+    );
+}
+
+#[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+fn test_cli_preserves_integer_literals_near_f64_and_i64_boundaries() {
+    let dir = tempdir().expect("tempdir");
+    let source = dir.path().join("integer_boundaries.adesh");
+    std::fs::write(
+        &source,
+        "print(9007199254740992, 9007199254740993, \
+         -9007199254740993, -9223372036854775807, \
+         -9223372036854775808, \
+         -9223372036854775807 - 1);\n",
+    )
+    .expect("write source");
+    let output = dir.path().join("integer_boundaries.exe");
+
+    let build = Command::new(env!("CARGO_BIN_EXE_adesh"))
+        .arg("build")
+        .arg(&source)
+        .arg("-o")
+        .arg(&output)
+        .output()
+        .expect("CLI should start");
+    assert!(
+        build.status.success(),
+        "CLI build failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let run = Command::new(&output)
+        .output()
+        .expect("built executable should run");
+    assert_eq!(run.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout).trim(),
+        "9007199254740992 9007199254740993 -9007199254740993 \
+         -9223372036854775807 -9223372036854775808 \
+         -9223372036854775808"
+    );
 }
 
 #[test]

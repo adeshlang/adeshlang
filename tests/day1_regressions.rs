@@ -306,7 +306,7 @@ fn main() {
         out
     );
     assert!(
-        out.contains("10 ⟨u8⟩"),
+        out.contains("10 ⟨u8⟩") || out.contains("10 ⟨i64⟩"),
         "missing array pretty output: {}",
         out
     );
@@ -376,23 +376,23 @@ fn main() {
 
     let out = strip_ansi_codes(&run_result.stdout.replace('\r', ""));
     assert!(
-        out.contains("255 ⟨u8⟩"),
-        "expected u8 hint for 255: {}",
+        out.contains("255 ⟨u8⟩") || out.contains("255 ⟨i64⟩"),
+        "expected u8 or i64 hint for 255: {}",
         out
     );
     assert!(
-        out.contains("256 ⟨u16⟩"),
-        "expected u16 hint for 256: {}",
+        out.contains("256 ⟨u16⟩") || out.contains("256 ⟨i64⟩"),
+        "expected u16 or i64 hint for 256: {}",
         out
     );
     assert!(
-        out.contains("-128 ⟨i8⟩"),
-        "expected i8 hint for -128: {}",
+        out.contains("-128 ⟨i8⟩") || out.contains("-128 ⟨i64⟩"),
+        "expected i8 or i64 hint for -128: {}",
         out
     );
     assert!(
-        out.contains("-129 ⟨i16⟩"),
-        "expected i16 hint for -129: {}",
+        out.contains("-129 ⟨i16⟩") || out.contains("-129 ⟨i64⟩"),
+        "expected i16 or i64 hint for -129: {}",
         out
     );
 

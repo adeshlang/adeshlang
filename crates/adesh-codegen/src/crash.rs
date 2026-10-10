@@ -83,11 +83,22 @@ impl CrashReport {
         s.push_str("\nStack Trace:\n");
 
         for frame in &self.stack_frames {
-            let func_str = frame.function_name.as_deref().unwrap_or("<unknown>");
+            let func_str = frame
+                .symbol_name
+                .as_deref()
+                .or(frame.function_name.as_deref())
+                .unwrap_or("<unknown>");
             let loc_str = if let Some(loc) = &frame.source_location {
                 format!("{}:{}:{}", loc.file, loc.line, loc.column)
+            } else if let (Some(file), Some(line)) = (&frame.source_file, frame.line_number) {
+                format!("{}:{}", file, line)
             } else {
-                format!("pc:0x{:x}", frame.instruction_address)
+                let pc = if frame.instruction_pointer != 0 {
+                    frame.instruction_pointer
+                } else {
+                    frame.instruction_address
+                };
+                format!("pc:0x{:x}", pc)
             };
             s.push_str(&format!(
                 "  #{:02} {} at {}\n",

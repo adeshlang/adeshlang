@@ -128,18 +128,15 @@ fn builtin_print(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, S
         output_str.push_str(end);
     }
 
-    // Write to stdout
-    let stdout = std::io::stdout();
-    let mut writer = BufWriter::with_capacity(8192, stdout.lock());
-
     // Check if styling is needed
     let needs_styling =
         color.is_some() || background.is_some() || underline || bold || italic || strikethrough;
 
     if needs_styling {
+        let mut styled_buf = Vec::new();
         // Apply styles (minimal allocation)
         write_styled(
-            &mut writer,
+            &mut styled_buf,
             values,
             sep,
             end,
@@ -150,13 +147,12 @@ fn builtin_print(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, S
             italic,
             strikethrough,
         )?;
+        crate::execution::runtime_core::stdio::write_stdout(&styled_buf);
     } else {
-        writer
-            .write_all(output_str.as_bytes())
-            .map_err(|e| e.to_string())?;
+        crate::execution::runtime_core::stdio::write_stdout(output_str.as_bytes());
     }
 
-    writer.flush().map_err(|e| e.to_string())?;
+    crate::execution::runtime_core::stdio::flush_stdout();
     let _ = std::io::stdout().flush();
     Ok(Value::Null)
 }

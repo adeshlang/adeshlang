@@ -160,6 +160,9 @@ impl ElfWriter {
         let mut rw_sections = Vec::new();
 
         for (idx, sec) in text_sections.iter().enumerate() {
+            if !sec.is_alloc() {
+                continue;
+            }
             if sec.is_executable() || (!sec.is_writable() && sec.kind != SectionKind::Bss) {
                 rx_sections.push(idx);
             } else {
@@ -272,6 +275,22 @@ impl ElfWriter {
             rw_mem_size = current_va - rw_vaddr_start;
         }
 
+        // Non-alloc sections (e.g. .debug_line, .debug_info, .debug_abbrev, .debug_str)
+        for (idx, sec) in text_sections.iter().enumerate() {
+            if !sec.is_alloc() {
+                let aligned_offset = align_to(current_offset, sec.alignment.max(1));
+                if aligned_offset > current_offset {
+                    let pad = (aligned_offset - current_offset) as usize;
+                    output.resize(output.len() + pad, 0);
+                    current_offset = aligned_offset;
+                }
+                sec_offsets[idx] = current_offset;
+                sec_vaddrs[idx] = 0;
+                output.extend_from_slice(&sec.data);
+                current_offset += sec.data.len() as u64;
+            }
+        }
+
         // Authoritative placement when virtual addresses are assigned
         let has_layout_vas = text_sections.iter().any(|s| s.virtual_address != 0);
         if has_layout_vas {
@@ -283,8 +302,13 @@ impl ElfWriter {
             let mut rw_va_min: Option<u64> = None;
             let mut rw_file_end = 0u64;
             let mut rw_mem_end = 0u64;
+            let mut non_alloc_sections = Vec::new();
 
             for (idx, sec) in text_sections.iter().enumerate() {
+                if !sec.is_alloc() {
+                    non_alloc_sections.push(idx);
+                    continue;
+                }
                 if sec.virtual_address < target.image_base {
                     return Err(LinkError::new(
                         ErrorCode::InvalidSection,
@@ -356,6 +380,18 @@ impl ElfWriter {
             rw_vaddr_start = rw_va;
             rw_file_size = rw_file_end.saturating_sub(rw_off);
             rw_mem_size = rw_mem_end.saturating_sub(rw_va);
+
+            // Emit non-alloc sections after loadable segments
+            for idx in non_alloc_sections {
+                let sec = &text_sections[idx];
+                let off = align_to(output.len() as u64, sec.alignment.max(1));
+                if off > output.len() as u64 {
+                    output.resize(off as usize, 0);
+                }
+                sec_offsets[idx] = off;
+                sec_vaddrs[idx] = 0;
+                output.extend_from_slice(&sec.data);
+            }
         }
 
         // 4. Dynamic Linking Syntheses (.dynstr, .dynsym, .hash, .dynamic)
@@ -741,12 +777,12 @@ impl ElfWriter {
                 sh_name: shdr_names[i + 1],
                 sh_type,
                 sh_flags,
-                sh_addr: sec_vaddrs[i],
+                sh_addr: if sec.is_alloc() { sec_vaddrs[i] } else { 0 },
                 sh_offset: sec_offsets[i],
-                sh_size: sec.size,
+                sh_size: sec.size.max(sec.data.len() as u64),
                 sh_link: 0,
                 sh_info: 0,
-                sh_addralign: sec.alignment,
+                sh_addralign: sec.alignment.max(1),
                 sh_entsize: 0,
             });
         }
