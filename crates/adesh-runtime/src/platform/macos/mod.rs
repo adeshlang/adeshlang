@@ -10,7 +10,7 @@ pub fn macos_mach_timebase_info() -> (u32, u32) {
         numer: u32,
         denom: u32,
     }
-    extern "C" {
+    unsafe extern "C" {
         fn mach_timebase_info(info: *mut mach_timebase_info_data_t) -> i32;
     }
     let mut info = mach_timebase_info_data_t { numer: 0, denom: 0 };

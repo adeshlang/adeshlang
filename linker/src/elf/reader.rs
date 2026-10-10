@@ -446,12 +446,22 @@ impl ElfReader {
                         (Arch::X86_64, R_X86_64_32) | (Arch::X86_64, R_X86_64_32S) => {
                             RelocationKind::Absolute32
                         }
+                        (Arch::X86_64, R_X86_64_16) => RelocationKind::Absolute16,
+                        (Arch::X86_64, R_X86_64_8) => RelocationKind::Absolute8,
                         (Arch::X86_64, R_X86_64_PC32) => RelocationKind::PcRelative32,
                         (Arch::X86_64, R_X86_64_PLT32) => RelocationKind::PltRelative32,
-                        (Arch::X86_64, R_X86_64_GOT32) | (Arch::X86_64, R_X86_64_GOTPCREL) => {
-                            RelocationKind::GotRelative32
-                        }
+                        (Arch::X86_64, R_X86_64_GOT32)
+                        | (Arch::X86_64, R_X86_64_GOTPCREL)
+                        | (Arch::X86_64, R_X86_64_GOTPCRELX)
+                        | (Arch::X86_64, R_X86_64_REX_GOTPCRELX) => RelocationKind::GotRelative32,
                         (Arch::X86_64, R_X86_64_PC64) => RelocationKind::PcRelative64,
+                        (Arch::X86_64, R_X86_64_TLSGD) | (Arch::X86_64, R_X86_64_TLSLD) => {
+                            RelocationKind::TlsGeneralDynamic
+                        }
+                        (Arch::X86_64, R_X86_64_GOTTPOFF) => RelocationKind::TlsInitialExec,
+                        (Arch::X86_64, R_X86_64_TPOFF32) | (Arch::X86_64, R_X86_64_DTPOFF32) => {
+                            RelocationKind::TlsLocalExec
+                        }
                         (Arch::AArch64, R_AARCH64_ABS64) => RelocationKind::Absolute64,
                         (Arch::AArch64, R_AARCH64_ABS32) => RelocationKind::Absolute32,
                         (Arch::AArch64, R_AARCH64_CALL26) | (Arch::AArch64, R_AARCH64_JUMP26) => {

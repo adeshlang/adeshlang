@@ -85,8 +85,8 @@ pub fn unix_dlclose(handle: *mut c_void) -> bool {
 /// Query system error code (errno).
 pub fn unix_last_error() -> i32 {
     #[cfg(unix)]
-    unsafe {
-        *libc::__errno_location()
+    {
+        std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
     }
     #[cfg(not(unix))]
     0
