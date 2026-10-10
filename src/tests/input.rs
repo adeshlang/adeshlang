@@ -4,7 +4,10 @@
 //! and wide Unicode support for strings, chars, and escape sequences.
 use adeshlang::{Interpreter, ModuleLoader};
 
+static INPUT_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn run_src(src: &str) -> Interpreter {
+    let _lock = INPUT_TEST_MUTEX.lock().unwrap();
     let mut interp = Interpreter::new();
     let mut loader = ModuleLoader::new(std::path::Path::new("."));
     let _ = interp.run_module(src, &mut loader, Some("<test>".to_string()));

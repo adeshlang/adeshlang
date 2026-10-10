@@ -423,8 +423,11 @@ impl ElfWriter {
             let mut dyn_entries: Vec<Elf64_Dyn> = Vec::new();
 
             // Needed libraries (DT_NEEDED)
-            let default_lib = "libc.so.6".to_string();
-            let mut all_libs = vec![default_lib];
+            let mut all_libs = vec![
+                "libc.so.6".to_string(),
+                "libm.so.6".to_string(),
+                "libgcc_s.so.1".to_string(),
+            ];
             for lib in needed_libs {
                 let name = if lib.ends_with(".so") || lib.contains(".so.") {
                     lib.clone()

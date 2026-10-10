@@ -215,6 +215,10 @@ pub fn get_mock_input() -> Option<String> {
 
 /// Helper to prompt and wait for a single line from stdin
 pub fn read_line_prompt(prompt: &str) -> String {
+    use std::io::IsTerminal;
+    if (!std::io::stdin().is_terminal() && std::env::var_os("CI").is_some()) || cfg!(test) {
+        return String::new();
+    }
     print!("{}", prompt);
     let _ = io::stdout().flush();
     let mut line = String::new();

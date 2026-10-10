@@ -1326,6 +1326,47 @@ impl OsApiRouter {
             "inotify_init1",
             "inotify_add_watch",
             "inotify_rm_watch",
+            // File timestamp & modern Linux syscalls
+            "utimensat",
+            "futimens",
+            "futimes",
+            "utimes",
+            "lutimes",
+            "utime",
+            "statx",
+            "copy_file_range",
+            "getrandom",
+            "getentropy",
+            "memfd_create",
+            "sync_file_range",
+            "fallocate",
+            "posix_fallocate",
+            "splice",
+            "vmsplice",
+            "tee",
+            "name_to_handle_at",
+            "open_by_handle_at",
+            // Unwind & Runtime ABI
+            "_Unwind_Resume",
+            "_Unwind_RaiseException",
+            "_Unwind_DeleteException",
+            "_Unwind_GetGR",
+            "_Unwind_SetGR",
+            "_Unwind_GetIP",
+            "_Unwind_GetIPInfo",
+            "_Unwind_SetIP",
+            "_Unwind_GetLanguageSpecificData",
+            "_Unwind_GetRegionStart",
+            "_Unwind_GetTextRelBase",
+            "_Unwind_GetDataRelBase",
+            "_Unwind_FindEnclosingFunction",
+            "_Unwind_Backtrace",
+            "_Unwind_ForcedUnwind",
+            "__cxa_atexit",
+            "__cxa_finalize",
+            "__cxa_thread_atexit_impl",
+            "__tls_get_addr",
+            "__libc_start_main",
             // Dynamic linking & Error
             "dlopen",
             "dlsym",
@@ -1348,10 +1389,30 @@ impl OsApiRouter {
 
         if POSIX_SET.contains(clean)
             || POSIX_SET.contains(raw)
+            || POSIX_SET.contains(sym)
             || clean.starts_with("pthread_")
             || clean.starts_with("posix_")
             || clean.starts_with("clock_")
             || clean.starts_with("epoll_")
+            || clean.starts_with("timerfd_")
+            || clean.starts_with("eventfd_")
+            || clean.starts_with("signalfd")
+            || clean.starts_with("inotify_")
+            || clean.starts_with("sem_")
+            || clean.starts_with("sched_")
+            || clean.starts_with("utime")
+            || clean.starts_with("futime")
+            || clean.starts_with("lutime")
+            || clean.starts_with("stat")
+            || clean.starts_with("fstat")
+            || clean.starts_with("lstat")
+            || raw.starts_with("_Unwind_")
+            || clean.starts_with("Unwind_")
+            || raw.starts_with("__cxa_")
+            || clean.starts_with("cxa_")
+            || raw.starts_with("__gxx_")
+            || raw.starts_with("__gcc_")
+            || raw.starts_with("__libc_")
         {
             return true;
         }
@@ -1368,21 +1429,34 @@ impl OsApiRouter {
     // ─── Linux / ELF ───────────────────────────────────────────────────────────
 
     fn classify_elf(raw: &str, _target: &Target) -> SymbolRoute {
-        let clean = raw.trim_start_matches('_');
+        let sym_name = raw
+            .strip_prefix("__imp_")
+            .or_else(|| raw.strip_prefix("_imp_"))
+            .unwrap_or(raw);
+        let clean = sym_name.trim_start_matches('_');
 
-        if Self::is_internal(raw) || Self::is_internal(clean) {
+        if Self::is_internal(raw) || Self::is_internal(sym_name) {
             return SymbolRoute::InternalRuntime;
         }
         if crate::intrinsics::IntrinsicsEngine::is_intrinsic(raw)
+            || crate::intrinsics::IntrinsicsEngine::is_intrinsic(sym_name)
             || crate::intrinsics::IntrinsicsEngine::is_intrinsic(clean)
         {
             return SymbolRoute::Intrinsic;
         }
 
-        if Self::is_libc_or_posix_symbol(raw) || Self::is_libc_or_posix_symbol(clean) {
+        if Self::is_libc_or_posix_symbol(raw)
+            || Self::is_libc_or_posix_symbol(sym_name)
+            || Self::is_libc_or_posix_symbol(clean)
+        {
+            let dll = if raw.starts_with("_Unwind_") || sym_name.starts_with("_Unwind_") {
+                "libgcc_s.so.1"
+            } else {
+                "libc.so.6"
+            };
             return SymbolRoute::DllImport {
-                dll: "libc.so.6",
-                name: clean.to_string(),
+                dll,
+                name: sym_name.to_string(),
             };
         }
 
@@ -1392,21 +1466,34 @@ impl OsApiRouter {
     // ─── macOS / Mach-O ────────────────────────────────────────────────────────
 
     fn classify_macho(raw: &str) -> SymbolRoute {
-        let clean = raw.trim_start_matches('_');
+        let sym_name = raw
+            .strip_prefix("__imp_")
+            .or_else(|| raw.strip_prefix("_imp_"))
+            .unwrap_or(raw);
+        let clean = sym_name.trim_start_matches('_');
 
-        if Self::is_internal(raw) || Self::is_internal(clean) {
+        if Self::is_internal(raw) || Self::is_internal(sym_name) {
             return SymbolRoute::InternalRuntime;
         }
         if crate::intrinsics::IntrinsicsEngine::is_intrinsic(raw)
+            || crate::intrinsics::IntrinsicsEngine::is_intrinsic(sym_name)
             || crate::intrinsics::IntrinsicsEngine::is_intrinsic(clean)
         {
             return SymbolRoute::Intrinsic;
         }
 
-        if Self::is_libc_or_posix_symbol(raw) || Self::is_libc_or_posix_symbol(clean) {
+        if Self::is_libc_or_posix_symbol(raw)
+            || Self::is_libc_or_posix_symbol(sym_name)
+            || Self::is_libc_or_posix_symbol(clean)
+        {
+            let name = if sym_name.starts_with('_') {
+                sym_name.to_string()
+            } else {
+                format!("_{}", sym_name)
+            };
             return SymbolRoute::DllImport {
                 dll: "/usr/lib/libSystem.B.dylib",
-                name: format!("_{}", clean),
+                name,
             };
         }
 

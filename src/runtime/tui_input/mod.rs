@@ -42,8 +42,23 @@ pub struct TerminalGuard {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl TerminalGuard {
+    /// Returns true if running in an interactive terminal session (not headless or CI).
+    pub fn is_interactive() -> bool {
+        use std::io::IsTerminal;
+        std::io::stdin().is_terminal()
+            && std::io::stdout().is_terminal()
+            && std::env::var_os("CI").is_none()
+            && !cfg!(test)
+    }
+
     /// Initialize inline raw terminal mode for quick prompts
     pub fn new_inline(height: u16) -> io::Result<Self> {
+        if !Self::is_interactive() {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "non-interactive or headless environment",
+            ));
+        }
         terminal::enable_raw_mode()?;
         let mut stdout = io::stdout();
         execute!(stdout, cursor::Hide)?;
@@ -57,6 +72,12 @@ impl TerminalGuard {
 
     /// Initialize full alternate-screen terminal mode for complex widgets (tables, forms, trees)
     pub fn new_alternate() -> io::Result<Self> {
+        if !Self::is_interactive() {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "non-interactive or headless environment",
+            ));
+        }
         terminal::enable_raw_mode()?;
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen, cursor::Hide)?;
