@@ -192,18 +192,17 @@ impl LayoutEngine {
                     let off = meta_merged.append_section(sec, f_idx, s_idx);
                     sec_placement.insert((f_idx, s_idx), (SectionCat::Meta, off));
                 } else if sec.kind == SectionKind::Debug || sec.name.starts_with(".debug") {
-                    let debug_sec = debug_merged_map
-                        .entry(sec.name.clone())
-                        .or_insert_with(|| {
-                            MergedSection::new(
-                                sec.name.clone(),
-                                SectionKind::Debug,
-                                sec.flags,
-                                sec.alignment.max(1),
-                            )
-                        });
+                    let debug_sec = debug_merged_map.entry(sec.name.clone()).or_insert_with(|| {
+                        MergedSection::new(
+                            sec.name.clone(),
+                            SectionKind::Debug,
+                            sec.flags,
+                            sec.alignment.max(1),
+                        )
+                    });
                     let off = debug_sec.append_section(sec, f_idx, s_idx);
-                    sec_placement.insert((f_idx, s_idx), (SectionCat::Debug(sec.name.clone()), off));
+                    sec_placement
+                        .insert((f_idx, s_idx), (SectionCat::Debug(sec.name.clone()), off));
                 } else if sec.is_executable() {
                     let off = text_merged.append_section(sec, f_idx, s_idx);
                     sec_placement.insert((f_idx, s_idx), (SectionCat::Text, off));
@@ -581,12 +580,16 @@ impl LayoutEngine {
 
                     for (f_idx, obj) in objects.iter().enumerate() {
                         for sym in &obj.symbols {
-                            if sym.is_defined && sym.sym_type == crate::symbol::SymbolType::Function {
+                            if sym.is_defined && sym.sym_type == crate::symbol::SymbolType::Function
+                            {
                                 if let Some(s_idx) = sym.section_index {
-                                    if let Some((cat, sec_off)) = sec_placement.get(&(f_idx, s_idx)) {
+                                    if let Some((cat, sec_off)) = sec_placement.get(&(f_idx, s_idx))
+                                    {
                                         if *cat == SectionCat::Text {
-                                            let func_start = text_base_rva + (*sec_off + sym.value) as u32;
-                                            let func_len = if sym.size > 0 { sym.size as u32 } else { 16 };
+                                            let func_start =
+                                                text_base_rva + (*sec_off + sym.value) as u32;
+                                            let func_len =
+                                                if sym.size > 0 { sym.size as u32 } else { 16 };
                                             pdata_entries.push(crate::unwind::PdataEntry {
                                                 begin_rva: func_start,
                                                 end_rva: func_start + func_len,

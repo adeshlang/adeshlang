@@ -94,8 +94,8 @@ pub enum UnwindOp {
 #[derive(Debug, Clone, Default)]
 pub struct Win64FunctionUnwind {
     pub prolog_size: u8,
-    pub frame_reg: u8,        // 0 if none, 5 for RBP
-    pub frame_reg_offset: u8, // scaled by 16
+    pub frame_reg: u8,              // 0 if none, 5 for RBP
+    pub frame_reg_offset: u8,       // scaled by 16
     pub codes: Vec<(u8, UnwindOp)>, // (prolog_offset, op)
 }
 
@@ -161,7 +161,9 @@ impl WindowsPdataGenerator {
         if frame_size > 0 {
             if frame_size <= 128 && frame_size % 8 == 0 {
                 unwind.prolog_size = 8;
-                unwind.codes.push((8, UnwindOp::AllocSmall(frame_size as u8)));
+                unwind
+                    .codes
+                    .push((8, UnwindOp::AllocSmall(frame_size as u8)));
             } else {
                 unwind.prolog_size = 11;
                 unwind.codes.push((11, UnwindOp::AllocLarge(frame_size)));
@@ -324,7 +326,10 @@ mod tests {
 
     #[test]
     fn test_windows_xdata_standard_frame() {
-        let callee_saved = vec![WindowsPdataGenerator::REG_RBX, WindowsPdataGenerator::REG_R12];
+        let callee_saved = vec![
+            WindowsPdataGenerator::REG_RBX,
+            WindowsPdataGenerator::REG_R12,
+        ];
         let xdata = WindowsPdataGenerator::build_standard_frame_xdata(64, &callee_saved);
 
         assert!(xdata.len() >= 4);
@@ -333,4 +338,3 @@ mod tests {
         assert_eq!(xdata.len() % 4, 0); // 4-byte aligned
     }
 }
-

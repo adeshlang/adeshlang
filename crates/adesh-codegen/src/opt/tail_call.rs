@@ -40,21 +40,18 @@ impl MachinePass for TailCallOptimizationPass {
                 continue;
             }
             let return_start = if len >= 4
-                && is_return_register_copy(&block.instructions[len - 2], 0)
-                && is_return_value_capture(
-                    &block.instructions[len - 3],
-                    &block.instructions[len - 2],
-                    0,
-                ) {
-                len - 3
-            } else if len >= 4
-                && is_return_register_copy(&block.instructions[len - 2], 16)
-                && is_return_value_capture(
-                    &block.instructions[len - 3],
-                    &block.instructions[len - 2],
-                    16,
-                )
-            {
+                && ((is_return_register_copy(&block.instructions[len - 2], 0)
+                    && is_return_value_capture(
+                        &block.instructions[len - 3],
+                        &block.instructions[len - 2],
+                        0,
+                    ))
+                    || (is_return_register_copy(&block.instructions[len - 2], 16)
+                        && is_return_value_capture(
+                            &block.instructions[len - 3],
+                            &block.instructions[len - 2],
+                            16,
+                        ))) {
                 len - 3
             } else {
                 len - 1

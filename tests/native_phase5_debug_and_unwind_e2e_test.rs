@@ -67,10 +67,15 @@ fn test_windows_pdata_and_xdata_generation_and_sorting() {
     assert_eq!(rva_2, 0x3000);
 
     // Verify xdata standard frame
-    let xdata = WindowsPdataGenerator::build_standard_frame_xdata(48, &[WindowsPdataGenerator::REG_RBX]);
+    let xdata =
+        WindowsPdataGenerator::build_standard_frame_xdata(48, &[WindowsPdataGenerator::REG_RBX]);
     assert!(xdata.len() >= 4);
     assert_eq!(xdata[0], 0x01, "UNWIND_INFO Version 1");
-    assert_eq!(xdata[3] & 0x0F, WindowsPdataGenerator::REG_RBP, "Frame register is RBP");
+    assert_eq!(
+        xdata[3] & 0x0F,
+        WindowsPdataGenerator::REG_RBP,
+        "Frame register is RBP"
+    );
     assert_eq!(xdata.len() % 4, 0, "xdata must be 4-byte aligned");
 }
 
@@ -78,12 +83,7 @@ fn test_windows_pdata_and_xdata_generation_and_sorting() {
 fn test_dwarf5_debug_line_state_machine_format() {
     let directories = vec!["/home/user/project", "/home/user/project/src"];
     let files = vec![("main.adesh", 1), ("lib.adesh", 1)];
-    let line_entries = vec![
-        (0x401000, 1),
-        (0x401010, 5),
-        (0x401025, 12),
-        (0x401050, 20),
-    ];
+    let line_entries = vec![(0x401000, 1), (0x401010, 5), (0x401025, 12), (0x401050, 20)];
 
     let sec = Dwarf5Generator::synthesize_debug_line(&directories, &files, line_entries);
     assert_eq!(sec.name, ".debug_line");
@@ -110,7 +110,8 @@ fn test_dwarf5_debug_line_state_machine_format() {
 
 #[test]
 fn test_dwarf5_debug_info_and_abbrev_generation() {
-    let str_sec = Dwarf5Generator::synthesize_debug_str(&["main.adesh", "adeshc 0.3.0", "calculate", "main"]);
+    let str_sec =
+        Dwarf5Generator::synthesize_debug_str(&["main.adesh", "adeshc 0.3.0", "calculate", "main"]);
     assert_eq!(str_sec.name, ".debug_str");
 
     let abbrev_sec = Dwarf5Generator::synthesize_debug_abbrev();
@@ -121,9 +122,8 @@ fn test_dwarf5_debug_info_and_abbrev_generation() {
         (34, 0x401050, 0x30), // main
     ];
 
-    let info_sec = Dwarf5Generator::synthesize_debug_info_with_functions(
-        0, 11, 0x401000, 0x80, 0, &functions,
-    );
+    let info_sec =
+        Dwarf5Generator::synthesize_debug_info_with_functions(0, 11, 0x401000, 0x80, 0, &functions);
     assert_eq!(info_sec.name, ".debug_info");
 
     let version = u16::from_le_bytes([info_sec.data[4], info_sec.data[5]]);
@@ -142,7 +142,7 @@ fn test_elf_with_dwarf5_debug_sections_linking() {
     // .text section with simple exit(42) syscall
     let code = vec![
         0xB8, 0x2A, 0x00, 0x00, 0x00, // mov eax, 42
-        0xC3,                         // ret
+        0xC3, // ret
     ];
     let mut text_sec = Section::new_code(".text", code, 16);
     object.add_symbol(adesh_linker::symbol::Symbol::new_defined(
@@ -265,11 +265,22 @@ fn test_pe_exception_directory_and_execution_e2e() {
     let opt_hdr_off = lfanew + 24;
     let exc_dir_off = opt_hdr_off + 112 + IMAGE_DIRECTORY_ENTRY_EXCEPTION * 8;
     let pdata_rva = u32::from_le_bytes(exe_bytes[exc_dir_off..exc_dir_off + 4].try_into().unwrap());
-    let pdata_size = u32::from_le_bytes(exe_bytes[exc_dir_off + 4..exc_dir_off + 8].try_into().unwrap());
+    let pdata_size = u32::from_le_bytes(
+        exe_bytes[exc_dir_off + 4..exc_dir_off + 8]
+            .try_into()
+            .unwrap(),
+    );
 
     assert!(pdata_rva > 0, "Exception Directory RVA must be non-zero");
-    assert!(pdata_size >= 12, "Exception Directory Size must cover RUNTIME_FUNCTION entries");
-    assert_eq!(pdata_size % 12, 0, "pdata size must be multiple of 12 bytes");
+    assert!(
+        pdata_size >= 12,
+        "Exception Directory Size must cover RUNTIME_FUNCTION entries"
+    );
+    assert_eq!(
+        pdata_size % 12,
+        0,
+        "pdata size must be multiple of 12 bytes"
+    );
 
     // Run executable and assert exit code
     let out = Command::new(&exe_path)

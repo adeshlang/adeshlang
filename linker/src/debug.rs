@@ -371,12 +371,10 @@ mod tests {
         assert!(abbrev_sec.data.len() > 10);
 
         let funcs = vec![(32, 0x1000, 0x80), (48, 0x1080, 0x120)];
-        let info_sec = Dwarf5Generator::synthesize_debug_info_with_functions(
-            0, 16, 0x1000, 0x1A0, 0, &funcs,
-        );
+        let info_sec =
+            Dwarf5Generator::synthesize_debug_info_with_functions(0, 16, 0x1000, 0x1A0, 0, &funcs);
         assert_eq!(info_sec.name, ".debug_info");
         let version = u16::from_le_bytes([info_sec.data[4], info_sec.data[5]]);
         assert_eq!(version, 5);
     }
 }
-

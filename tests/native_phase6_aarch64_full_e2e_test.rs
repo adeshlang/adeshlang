@@ -17,8 +17,8 @@ use adesh_codegen::machine_ir::{
     ConditionCode, MachineBlock, MachineFunction, MachineInstruction, MachineOperand,
     MachineRegister, NativeModule, PhysicalRegister,
 };
-use adesh_codegen::targets::aarch64::{AArch64Backend, AArch64RegisterFile};
 use adesh_codegen::register_alloc::RegisterFile;
+use adesh_codegen::targets::aarch64::{AArch64Backend, AArch64RegisterFile};
 use adesh_linker::arch::AArch64Arch;
 use adesh_linker::elf::writer::ElfWriter;
 use adesh_linker::layout::LayoutEngine;
@@ -98,7 +98,9 @@ fn test_aarch64_immediate_materialization_and_arithmetic() {
 
     b.push(MachineInstruction::Return);
 
-    let code = backend.generate_function(&func).expect("encodes arithmetic");
+    let code = backend
+        .generate_function(&func)
+        .expect("encodes arithmetic");
     assert!(!code.is_empty());
     // Verify 4-byte instruction alignment
     assert_eq!(code.len() % 4, 0);
@@ -190,7 +192,9 @@ fn test_aarch64_control_flow_and_comparison() {
     b2.push(MachineInstruction::Return);
     func.blocks.push(b2);
 
-    let code = backend.generate_function(&func).expect("encodes control flow");
+    let code = backend
+        .generate_function(&func)
+        .expect("encodes control flow");
     assert!(!code.is_empty());
 }
 
@@ -234,7 +238,9 @@ fn test_aarch64_atomics_and_fp_encodings() {
     });
     b.push(MachineInstruction::Return);
 
-    let code = backend.generate_function(&func).expect("encodes atomics and FP");
+    let code = backend
+        .generate_function(&func)
+        .expect("encodes atomics and FP");
     assert!(code.len() >= 32);
 }
 
@@ -272,10 +278,7 @@ fn test_aarch64_adob_emission_and_relocations() {
     let text_sec = &obj.sections[0];
     assert_eq!(text_sec.name, ".text");
     assert!(!text_sec.relocations.is_empty());
-    assert_eq!(
-        text_sec.relocations[0].kind,
-        AdobRelocKind::AArch64_Call26
-    );
+    assert_eq!(text_sec.relocations[0].kind, AdobRelocKind::AArch64_Call26);
 }
 
 #[test]

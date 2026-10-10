@@ -2830,6 +2830,7 @@ impl X86_64Backend {
     }
 
     /// Encode a single (already register-allocated) function.
+    #[allow(clippy::type_complexity)]
     fn encode_function(
         &self,
         func: &MachineFunction,

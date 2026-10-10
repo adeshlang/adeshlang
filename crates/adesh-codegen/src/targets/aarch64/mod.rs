@@ -12,7 +12,8 @@ use crate::machine_ir::{
 use crate::register_alloc::{LinearScanAllocator, RegisterFile};
 use adesh_object::{
     AdobObject, AdobRelocation, AdobSection, AdobSymbol, RelocationKind, SectionKind,
-    SymbolBinding, SymbolKind, SymbolVisibility, TargetCapabilities, TargetDescriptor, section_flags,
+    SymbolBinding, SymbolKind, SymbolVisibility, TargetCapabilities, TargetDescriptor,
+    section_flags,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -358,12 +359,11 @@ impl CodegenBackend for AArch64Backend {
         for block in &func.blocks {
             for inst in &block.instructions {
                 for reg in inst.defs().into_iter().chain(inst.uses().into_iter()) {
-                    if let MachineRegister::Physical(p) = reg {
-                        if (19..=28).contains(&p.0) || (40..=47).contains(&p.0) {
-                            if seen_regs.insert(p.0) {
-                                used_callee_saved.push(p);
-                            }
-                        }
+                    if let MachineRegister::Physical(p) = reg
+                        && ((19..=28).contains(&p.0) || (40..=47).contains(&p.0))
+                        && seen_regs.insert(p.0)
+                    {
+                        used_callee_saved.push(p);
                     }
                 }
             }
@@ -376,8 +376,8 @@ impl CodegenBackend for AArch64Backend {
         // [FP + 0] = Saved FP (X29)
         // [FP + 8] = Saved LR (X30)
         let callee_save_count = used_callee_saved.len();
-        let callee_save_bytes = ((callee_save_count + 1) / 2) * 16; // align to 16
-        let local_bytes = ((func.stack_size as usize + 15) / 16) * 16;
+        let callee_save_bytes = callee_save_count.div_ceil(2) * 16; // align to 16
+        let local_bytes = (func.stack_size as usize).div_ceil(16) * 16;
         let total_alloc = local_bytes + callee_save_bytes;
 
         // Prologue:
@@ -408,7 +408,11 @@ impl CodegenBackend for AArch64Backend {
                 if r1 < 32 && r2 < 32 {
                     // STP Xr1, Xr2, [SP, #imm7*8]
                     let imm7 = ((save_offset / 8) & 0x7F) as u32;
-                    let ins = 0xA9000000u32 | (imm7 << 15) | ((r2 as u32) << 10) | (31 << 5) | (r1 as u32);
+                    let ins = 0xA9000000u32
+                        | (imm7 << 15)
+                        | ((r2 as u32) << 10)
+                        | (31 << 5)
+                        | (r1 as u32);
                     code.extend_from_slice(&ins.to_le_bytes());
                 } else {
                     let d1 = (r1.saturating_sub(32)) as u32;
@@ -455,14 +459,19 @@ impl CodegenBackend for AArch64Backend {
                                 if r1 < 32 && r2 < 32 {
                                     // LDP Xr1, Xr2, [SP, #imm7*8]
                                     let imm7 = ((restore_offset / 8) & 0x7F) as u32;
-                                    let ins = 0xA9400000u32 | (imm7 << 15) | ((r2 as u32) << 10) | (31 << 5) | (r1 as u32);
+                                    let ins = 0xA9400000u32
+                                        | (imm7 << 15)
+                                        | ((r2 as u32) << 10)
+                                        | (31 << 5)
+                                        | (r1 as u32);
                                     code.extend_from_slice(&ins.to_le_bytes());
                                 } else {
                                     let d1 = (r1.saturating_sub(32)) as u32;
                                     let d2 = (r2.saturating_sub(32)) as u32;
                                     // LDP Dr1, Dr2, [SP, #imm7*8]
                                     let imm7 = ((restore_offset / 8) & 0x7F) as u32;
-                                    let ins = 0x69400000u32 | (imm7 << 15) | (d2 << 10) | (31 << 5) | d1;
+                                    let ins =
+                                        0x69400000u32 | (imm7 << 15) | (d2 << 10) | (31 << 5) | d1;
                                     code.extend_from_slice(&ins.to_le_bytes());
                                 }
                             } else {
@@ -470,7 +479,8 @@ impl CodegenBackend for AArch64Backend {
                                 if r1 < 32 {
                                     // LDR Xr1, [SP, #imm12*8]
                                     let imm12 = ((restore_offset / 8) & 0xFFF) as u32;
-                                    let ins = 0xF9400000u32 | (imm12 << 10) | (31 << 5) | (r1 as u32);
+                                    let ins =
+                                        0xF9400000u32 | (imm12 << 10) | (31 << 5) | (r1 as u32);
                                     code.extend_from_slice(&ins.to_le_bytes());
                                 } else {
                                     let d1 = (r1.saturating_sub(32)) as u32;
@@ -522,15 +532,24 @@ impl CodegenBackend for AArch64Backend {
                         let (d, s) = get_regs(dst, src);
                         if let (Some(d_reg), Some(s_reg)) = (d, s) {
                             // ADD Xd, Xd, Xs
-                            let ins = 0x8B000000u32 | ((s_reg as u32) << 16) | ((d_reg as u32) << 5) | (d_reg as u32);
+                            let ins = 0x8B000000u32
+                                | ((s_reg as u32) << 16)
+                                | ((d_reg as u32) << 5)
+                                | (d_reg as u32);
                             code.extend_from_slice(&ins.to_le_bytes());
                         } else if let (Some(d_reg), MachineOperand::Immediate(val)) = (d, src) {
                             if *val >= 0 && *val <= 4095 {
-                                let ins = 0x91000000u32 | ((*val as u32) << 10) | ((d_reg as u32) << 5) | (d_reg as u32);
+                                let ins = 0x91000000u32
+                                    | ((*val as u32) << 10)
+                                    | ((d_reg as u32) << 5)
+                                    | (d_reg as u32);
                                 code.extend_from_slice(&ins.to_le_bytes());
                             } else {
                                 Self::emit_mov_imm64(&mut code, 16, *val as u64); // IP0 = imm
-                                let ins = 0x8B000000u32 | (16 << 16) | ((d_reg as u32) << 5) | (d_reg as u32);
+                                let ins = 0x8B000000u32
+                                    | (16 << 16)
+                                    | ((d_reg as u32) << 5)
+                                    | (d_reg as u32);
                                 code.extend_from_slice(&ins.to_le_bytes());
                             }
                         }
@@ -539,15 +558,24 @@ impl CodegenBackend for AArch64Backend {
                         let (d, s) = get_regs(dst, src);
                         if let (Some(d_reg), Some(s_reg)) = (d, s) {
                             // SUB Xd, Xd, Xs
-                            let ins = 0xCB000000u32 | ((s_reg as u32) << 16) | ((d_reg as u32) << 5) | (d_reg as u32);
+                            let ins = 0xCB000000u32
+                                | ((s_reg as u32) << 16)
+                                | ((d_reg as u32) << 5)
+                                | (d_reg as u32);
                             code.extend_from_slice(&ins.to_le_bytes());
                         } else if let (Some(d_reg), MachineOperand::Immediate(val)) = (d, src) {
                             if *val >= 0 && *val <= 4095 {
-                                let ins = 0xD1000000u32 | ((*val as u32) << 10) | ((d_reg as u32) << 5) | (d_reg as u32);
+                                let ins = 0xD1000000u32
+                                    | ((*val as u32) << 10)
+                                    | ((d_reg as u32) << 5)
+                                    | (d_reg as u32);
                                 code.extend_from_slice(&ins.to_le_bytes());
                             } else {
                                 Self::emit_mov_imm64(&mut code, 16, *val as u64);
-                                let ins = 0xCB000000u32 | (16 << 16) | ((d_reg as u32) << 5) | (d_reg as u32);
+                                let ins = 0xCB000000u32
+                                    | (16 << 16)
+                                    | ((d_reg as u32) << 5)
+                                    | (d_reg as u32);
                                 code.extend_from_slice(&ins.to_le_bytes());
                             }
                         }
@@ -556,7 +584,11 @@ impl CodegenBackend for AArch64Backend {
                         let (d, s) = get_regs(dst, src);
                         if let (Some(d_reg), Some(s_reg)) = (d, s) {
                             // MADD Xd, Xd, Xs, XZR (MUL Xd, Xd, Xs)
-                            let ins = 0x9B007C00u32 | ((s_reg as u32) << 16) | (31 << 10) | ((d_reg as u32) << 5) | (d_reg as u32);
+                            let ins = 0x9B007C00u32
+                                | ((s_reg as u32) << 16)
+                                | (31 << 10)
+                                | ((d_reg as u32) << 5)
+                                | (d_reg as u32);
                             code.extend_from_slice(&ins.to_le_bytes());
                         }
                     }
@@ -564,7 +596,10 @@ impl CodegenBackend for AArch64Backend {
                         let (d, s) = get_regs(dst, src);
                         if let (Some(d_reg), Some(s_reg)) = (d, s) {
                             // SDIV Xd, Xd, Xs
-                            let ins = 0x9AC00C00u32 | ((s_reg as u32) << 16) | ((d_reg as u32) << 5) | (d_reg as u32);
+                            let ins = 0x9AC00C00u32
+                                | ((s_reg as u32) << 16)
+                                | ((d_reg as u32) << 5)
+                                | (d_reg as u32);
                             code.extend_from_slice(&ins.to_le_bytes());
                         }
                     }
@@ -572,7 +607,10 @@ impl CodegenBackend for AArch64Backend {
                         let (d, s) = get_regs(dst, src);
                         if let (Some(d_reg), Some(s_reg)) = (d, s) {
                             // AND Xd, Xd, Xs
-                            let ins = 0x8A000000u32 | ((s_reg as u32) << 16) | ((d_reg as u32) << 5) | (d_reg as u32);
+                            let ins = 0x8A000000u32
+                                | ((s_reg as u32) << 16)
+                                | ((d_reg as u32) << 5)
+                                | (d_reg as u32);
                             code.extend_from_slice(&ins.to_le_bytes());
                         }
                     }
@@ -580,7 +618,10 @@ impl CodegenBackend for AArch64Backend {
                         let (d, s) = get_regs(dst, src);
                         if let (Some(d_reg), Some(s_reg)) = (d, s) {
                             // ORR Xd, Xd, Xs
-                            let ins = 0xAA000000u32 | ((s_reg as u32) << 16) | ((d_reg as u32) << 5) | (d_reg as u32);
+                            let ins = 0xAA000000u32
+                                | ((s_reg as u32) << 16)
+                                | ((d_reg as u32) << 5)
+                                | (d_reg as u32);
                             code.extend_from_slice(&ins.to_le_bytes());
                         }
                     }
@@ -588,7 +629,10 @@ impl CodegenBackend for AArch64Backend {
                         let (d, s) = get_regs(dst, src);
                         if let (Some(d_reg), Some(s_reg)) = (d, s) {
                             // EOR Xd, Xd, Xs
-                            let ins = 0xCA000000u32 | ((s_reg as u32) << 16) | ((d_reg as u32) << 5) | (d_reg as u32);
+                            let ins = 0xCA000000u32
+                                | ((s_reg as u32) << 16)
+                                | ((d_reg as u32) << 5)
+                                | (d_reg as u32);
                             code.extend_from_slice(&ins.to_le_bytes());
                         }
                     }
@@ -596,12 +640,14 @@ impl CodegenBackend for AArch64Backend {
                         let (d, s) = get_regs(lhs, rhs);
                         if let (Some(d_reg), Some(s_reg)) = (d, s) {
                             // SUBS XZR, Xd, Xs (CMP Xd, Xs)
-                            let ins = 0xEB00001Fu32 | ((s_reg as u32) << 16) | ((d_reg as u32) << 5);
+                            let ins =
+                                0xEB00001Fu32 | ((s_reg as u32) << 16) | ((d_reg as u32) << 5);
                             code.extend_from_slice(&ins.to_le_bytes());
                         } else if let (Some(d_reg), MachineOperand::Immediate(val)) = (d, rhs) {
                             if *val >= 0 && *val <= 4095 {
                                 // SUBS XZR, Xd, #imm12 (CMP Xd, #imm12)
-                                let ins = 0xF100001Fu32 | ((*val as u32) << 10) | ((d_reg as u32) << 5);
+                                let ins =
+                                    0xF100001Fu32 | ((*val as u32) << 10) | ((d_reg as u32) << 5);
                                 code.extend_from_slice(&ins.to_le_bytes());
                             } else {
                                 Self::emit_mov_imm64(&mut code, 16, *val as u64);
@@ -639,7 +685,8 @@ impl CodegenBackend for AArch64Backend {
                         }
                     }
                     MachineInstruction::Load { dst, src, .. } => {
-                        if let (Some(d_reg), MachineOperand::StackSlot(slot)) = (get_reg(dst), src) {
+                        if let (Some(d_reg), MachineOperand::StackSlot(slot)) = (get_reg(dst), src)
+                        {
                             // LDR Xd, [SP, #imm12*8]
                             let imm12 = ((*slot as u32) / 8) & 0xFFF;
                             let ins = 0xF9400000u32 | (imm12 << 10) | (31 << 5) | (d_reg as u32);
@@ -647,7 +694,8 @@ impl CodegenBackend for AArch64Backend {
                         }
                     }
                     MachineInstruction::Store { dst, src, .. } => {
-                        if let (MachineOperand::StackSlot(slot), Some(s_reg)) = (dst, get_reg(src)) {
+                        if let (MachineOperand::StackSlot(slot), Some(s_reg)) = (dst, get_reg(src))
+                        {
                             // STR Xs, [SP, #imm12*8]
                             let imm12 = ((*slot as u32) / 8) & 0xFFF;
                             let ins = 0xF9000000u32 | (imm12 << 10) | (31 << 5) | (s_reg as u32);
@@ -777,7 +825,12 @@ impl CodegenBackend for AArch64Backend {
                         // DMB ISH (0xD5033BFF)
                         code.extend_from_slice(&0xD5033BFFu32.to_le_bytes());
                     }
-                    MachineInstruction::AtomicCompareExchange { dst, expected, desired, .. } => {
+                    MachineInstruction::AtomicCompareExchange {
+                        dst,
+                        expected,
+                        desired,
+                        ..
+                    } => {
                         let (d, e) = get_regs(dst, expected);
                         let rd = d.unwrap_or(0) as u32;
                         let re = e.unwrap_or(1) as u32;
@@ -877,16 +930,18 @@ impl CodegenBackend for AArch64Backend {
 
             for block in &func.blocks {
                 for inst in &block.instructions {
-                    if let MachineInstruction::Call { target, .. } = inst {
-                        if let MachineOperand::Symbol(sym) = target {
-                            text_sec.relocations.push(AdobRelocation::new(
-                                func_offset,
-                                0,
-                                sym.clone(),
-                                RelocationKind::AArch64_Call26,
-                                0,
-                            ));
-                        }
+                    if let MachineInstruction::Call {
+                        target: MachineOperand::Symbol(sym),
+                        ..
+                    } = inst
+                    {
+                        text_sec.relocations.push(AdobRelocation::new(
+                            func_offset,
+                            0,
+                            sym.clone(),
+                            RelocationKind::AArch64_Call26,
+                            0,
+                        ));
                     }
                 }
             }

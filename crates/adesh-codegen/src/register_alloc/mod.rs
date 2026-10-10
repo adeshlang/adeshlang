@@ -584,6 +584,7 @@ impl std::fmt::Display for VerificationError {
 pub struct AllocationVerifier;
 
 impl AllocationVerifier {
+    #[allow(clippy::too_many_arguments)]
     pub fn verify(
         func: &MachineFunction,
         vreg_map: &HashMap<VirtualRegister, PhysicalRegister>,

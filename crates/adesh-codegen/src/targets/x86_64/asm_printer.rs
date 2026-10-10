@@ -671,10 +671,10 @@ impl FuncPrinter {
                     self.line("endbr64");
                 } else if name == "tail_jmp" {
                     self.frame_teardown();
-                    if let MachineInstruction::Custom { operands, .. } = inst {
-                        if let Some(MachineOperand::Symbol(target)) = operands.first() {
-                            self.line(&format!("jmp {}", target));
-                        }
+                    if let MachineInstruction::Custom { operands, .. } = inst
+                        && let Some(MachineOperand::Symbol(target)) = operands.first()
+                    {
+                        self.line(&format!("jmp {}", target));
                     }
                 } else {
                     self.comment(&format!(
