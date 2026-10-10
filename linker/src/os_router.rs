@@ -1445,22 +1445,21 @@ impl OsApiRouter {
             return SymbolRoute::Intrinsic;
         }
 
-        if Self::is_libc_or_posix_symbol(raw)
-            || Self::is_libc_or_posix_symbol(sym_name)
-            || Self::is_libc_or_posix_symbol(clean)
-        {
-            let dll = if raw.starts_with("_Unwind_") || sym_name.starts_with("_Unwind_") {
-                "libgcc_s.so.1"
-            } else {
-                "libc.so.6"
-            };
-            return SymbolRoute::DllImport {
-                dll,
-                name: sym_name.to_string(),
-            };
+        // Required Adesh runtime symbols must not be silently treated as dynamic libc imports
+        if Self::is_adesh_runtime_symbol(raw) || Self::is_adesh_runtime_symbol(sym_name) {
+            return SymbolRoute::Undefined;
         }
 
-        SymbolRoute::Undefined
+        // Unmangled C / system library / POSIX symbols dynamically resolve via libc/libgcc on ELF
+        let dll = if raw.starts_with("_Unwind_") || sym_name.starts_with("_Unwind_") {
+            "libgcc_s.so.1"
+        } else {
+            "libc.so.6"
+        };
+        SymbolRoute::DllImport {
+            dll,
+            name: sym_name.to_string(),
+        }
     }
 
     // ─── macOS / Mach-O ────────────────────────────────────────────────────────
@@ -1482,21 +1481,19 @@ impl OsApiRouter {
             return SymbolRoute::Intrinsic;
         }
 
-        if Self::is_libc_or_posix_symbol(raw)
-            || Self::is_libc_or_posix_symbol(sym_name)
-            || Self::is_libc_or_posix_symbol(clean)
-        {
-            let name = if sym_name.starts_with('_') {
-                sym_name.to_string()
-            } else {
-                format!("_{}", sym_name)
-            };
-            return SymbolRoute::DllImport {
-                dll: "/usr/lib/libSystem.B.dylib",
-                name,
-            };
+        // Required Adesh runtime symbols must not be silently treated as dynamic libSystem imports
+        if Self::is_adesh_runtime_symbol(raw) || Self::is_adesh_runtime_symbol(sym_name) {
+            return SymbolRoute::Undefined;
         }
 
-        SymbolRoute::Undefined
+        let name = if sym_name.starts_with('_') {
+            sym_name.to_string()
+        } else {
+            format!("_{}", sym_name)
+        };
+        SymbolRoute::DllImport {
+            dll: "/usr/lib/libSystem.B.dylib",
+            name,
+        }
     }
 }
