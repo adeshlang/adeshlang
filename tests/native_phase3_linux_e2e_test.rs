@@ -18,7 +18,6 @@
 //! ICF `Safe` vs `All` differentiation is unit-tested in `linker/src/icf.rs`
 //! (`test_icf_safe_vs_all_modes`); it is not exercised by this execution suite.
 
-use adesh_codegen::CodegenBackend;
 use adesh_codegen::machine_ir::{
     MachineFunction, MachineInstruction, MachineOperand, MachineRegister, NativeModule,
     PhysicalRegister,

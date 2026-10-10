@@ -888,6 +888,14 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
         return Ok(config.get_output_path());
     }
 
+    // Enforce static type checking and compile-time ownership memory safety checks
+    let input_path_str = config.input.to_string_lossy();
+    crate::types::type_system::check_module_in(&src, Some(&input_path_str))
+        .map_err(|e| format!("Type Error: {}", e))?;
+    let runtime_cfg = crate::toolchain::config::RuntimeConfig::default();
+    crate::cli::parsing::check_ownership_and_parse_in(&src, &runtime_cfg, Some(&input_path_str))
+        .map_err(|e| format!("Ownership/Memory Safety Error: {}", e))?;
+
     let output = config.get_output_path();
     if let Some(parent) = output.parent() {
         if !parent.exists() {

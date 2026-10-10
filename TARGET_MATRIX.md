@@ -8,12 +8,12 @@
 
 | Target Triple | Arch | OS | Object Format | Codegen | Relocations | Linking | Runtime | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| `x86_64-pc-windows-msvc` | x86_64 | Windows | PE/COFF (PE32+) | **Native (integer + scalar SSE2 FP subset)** | ABS64, PC32 (emitted + resolved) | **Native PE (execution-tested)** | **Native Win32** | **Working native pipeline** |
-| `x86_64-unknown-linux-gnu` | x86_64 | Linux | ELF64 | **Native (integer + scalar SSE2 FP subset)** | ABS64, PC32 | **Native ELF (static, execution-tested)** | **Native POSIX** | **Working native pipeline** |
-| `x86_64-unknown-linux-musl` | x86_64 | Linux | ELF64 (static) | **Native (integer + scalar SSE2 FP subset)** | ABS64, PC32 | **Native ELF (static; not separately execution-tested — musl CI job pending)** | **Native POSIX** | **Working native pipeline (glibc-tested)** |
-| `aarch64-unknown-linux-gnu` | AArch64 | Linux | ELF64 | **Proof-of-concept** | CALL26, ADRP (linker side) | **Native ELF (static)** | **Native POSIX** | **Proof-of-concept** |
-| `aarch64-apple-darwin` | AArch64 | macOS | Mach-O 64 | **Proof-of-concept** | BRANCH26 (constant only) | **Native Mach-O (skeletal)** | **Native Darwin** | **Not functional (cannot link libSystem)** |
-| `x86_64-apple-darwin` | x86_64 | macOS | Mach-O 64 | **Native (integer + scalar SSE2 FP subset)** | — | **Native Mach-O (skeletal)** | **Native Darwin** | **Not functional (cannot link libSystem)** |
+| `x86_64-pc-windows-msvc` | x86_64 | Windows | PE/COFF (PE32+) | **Native (integer + scalar SSE2 FP subset)** | ABS64, PC32 (emitted + resolved) | **Native PE (execution-tested)** | **Native Win32** | **Execution-verified** |
+| `x86_64-unknown-linux-gnu` | x86_64 | Linux | ELF64 | **Native (integer + scalar SSE2 FP subset)** | ABS64, PC32, Section-symbols | **Native ELF (static, execution-tested; dynamic import routing)** | **Native POSIX** | **Execution-verified** |
+| `x86_64-unknown-linux-musl` | x86_64 | Linux | ELF64 (static) | **Native (integer + scalar SSE2 FP subset)** | ABS64, PC32 | **Native ELF (static; musl CI job pending)** | **Native POSIX** | **Tested** (glibc execution-verified, musl static emission tested) |
+| `aarch64-unknown-linux-gnu` | AArch64 | Linux | ELF64 | **Implemented (AAPCS64, FP, NEON, Atomics)** | CALL26, ADRP, ADD_LO12 (emitted + resolved) | **Native ELF (static emission tested)** | **Native POSIX** | **Tested** (Codegen & relocation tested; execution pending) |
+| `aarch64-apple-darwin` | AArch64 | macOS | Mach-O 64 | **Implemented (AAPCS64 codegen)** | BRANCH26 (constant only) | **Native Mach-O (libSystem dynamic routing implemented)** | **Native Darwin** | **Implemented** (Structure & dynamic routing tested; runtime execution pending) |
+| `x86_64-apple-darwin` | x86_64 | macOS | Mach-O 64 | **Native (integer + scalar SSE2 FP subset)** | — | **Native Mach-O (libSystem dynamic routing implemented)** | **Native Darwin** | **Implemented** (Structure & dynamic routing tested; runtime execution pending) |
 | `riscv64gc-unknown-linux-gnu` | RISC-V 64 | Linux | ELF64 | **Proof-of-concept** | CALL (linker side) | **Native ELF (static)** | **Native POSIX** | **Proof-of-concept** |
 | `riscv32imac-unknown-none-elf` | RISC-V 32 | Bare-metal | ELF32 | **Proof-of-concept** | — | **Native ELF (static)** | **No-std bare-metal** | **Proof-of-concept** |
 | `wasm32-unknown-wasi` | WASM | WASI | WASM binary | **Native (compiler backend)** | Not applied by linker writer | **Compiler path; linker writer is a stub** | **WASI runtime** | **Works via compiler backend** |

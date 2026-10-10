@@ -11,7 +11,12 @@ use crate::execution::runtime::{Interpreter, ModuleLoader};
 use std::path::PathBuf;
 
 fn ensure_type_check(body: &str, file: Option<&str>) -> Result<(), String> {
-    crate::types::type_system::check_module_in(body, file).map_err(|e| format!("type error: {}", e))
+    crate::types::type_system::check_module_in(body, file)
+        .map_err(|e| format!("type error: {}", e))?;
+    let runtime_cfg = crate::toolchain::config::RuntimeConfig::default();
+    crate::cli::parsing::check_ownership_and_parse_in(body, &runtime_cfg, file)
+        .map_err(|e| format!("ownership/memory safety error: {}", e))?;
+    Ok(())
 }
 
 /// Run program with JIT backend

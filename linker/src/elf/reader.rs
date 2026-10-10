@@ -305,7 +305,7 @@ impl ElfReader {
                 let st_value = u64::from_le_bytes(bytes[off + 8..off + 16].try_into().unwrap());
                 let st_size = u64::from_le_bytes(bytes[off + 16..off + 24].try_into().unwrap());
 
-                let sym_name = get_string(sym_strtab, st_name);
+                let mut sym_name = get_string(sym_strtab, st_name);
                 let bind_raw = st_info >> 4;
                 let type_raw = st_info & 0xF;
 
@@ -334,6 +334,15 @@ impl ElfReader {
                         None
                     };
 
+                // STT_SECTION symbols in ELF typically have st_name == 0. Give
+                // them their section's name so name-based resolution, diagnostics,
+                // and local symbol lookup can match section relocations.
+                if sym_type == SymbolType::Section && sym_name.is_empty() {
+                    if let Some(sec_idx) = mapped_sec_idx {
+                        sym_name = obj.sections[sec_idx].name.clone();
+                    }
+                }
+
                 let sym = Symbol {
                     name: sym_name,
                     binding,
@@ -359,9 +368,7 @@ impl ElfReader {
                 };
 
                 raw_symbols.push(sym.clone());
-                if !sym.name.is_empty() || sym.sym_type == SymbolType::Section {
-                    obj.add_symbol(sym);
-                }
+                obj.add_symbol(sym);
             }
         }
 
@@ -487,9 +494,10 @@ impl ElfReader {
                         _ => RelocationKind::Absolute64,
                     };
 
-                    obj.sections[target_obj_sec]
-                        .relocations
-                        .push(Relocation::new(r_offset, sym_name, kind, r_addend));
+                    let mut reloc_rec = Relocation::new(r_offset, sym_name, kind, r_addend);
+                    reloc_rec.symbol_index = Some(sym_idx);
+                    reloc_rec.file_index = Some(file_index);
+                    obj.sections[target_obj_sec].relocations.push(reloc_rec);
                 }
             }
         }

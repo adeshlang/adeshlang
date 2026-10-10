@@ -144,7 +144,7 @@ fn test_elf_with_dwarf5_debug_sections_linking() {
         0xB8, 0x2A, 0x00, 0x00, 0x00, // mov eax, 42
         0xC3, // ret
     ];
-    let mut text_sec = Section::new_code(".text", code, 16);
+    let text_sec = Section::new_code(".text", code, 16);
     object.add_symbol(adesh_linker::symbol::Symbol::new_defined(
         "main",
         adesh_linker::symbol::SymbolBinding::Global,

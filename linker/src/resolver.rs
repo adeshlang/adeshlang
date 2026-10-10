@@ -139,7 +139,7 @@ impl SymbolResolver {
                                 crate::object::reader::ObjectReader::read_from_memory(
                                     &member.data,
                                     std::path::Path::new(&member.name),
-                                    &crate::target::Target::host(),
+                                    target,
                                     0,
                                 )?
                             };

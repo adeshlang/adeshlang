@@ -111,3 +111,70 @@ fn test_unreferenced_undefined_weak_symbol_is_not_a_link_warning() {
         "weak declarations without relocations should not produce user-facing warnings"
     );
 }
+
+#[test]
+fn test_elf_section_symbol_relocation_resolution() {
+    use adesh_linker::relocation::{Relocation, RelocationKind};
+    use adesh_linker::section::Section;
+
+    let mut resolver = SymbolResolver::new();
+    let target = Target::host();
+    let mut object = ObjectFile::new(PathBuf::from("runtime_bss.o"), target, 0);
+
+    let sec_name = ".bss._RNvNtCs_13adesh_runtime19TRACKED_ALLOCATIONS";
+    let mut code_sec = Section::new_code(".text", vec![0x90; 16], 16);
+    let mut reloc = Relocation::new(0, sec_name, RelocationKind::PcRelative32, -4);
+    reloc.symbol_index = Some(1);
+    reloc.file_index = Some(0);
+    code_sec.relocations.push(reloc);
+    object.add_section(code_sec);
+
+    let bss_sec = Section::new_data(sec_name, vec![0u8; 8], false, 8);
+    object.add_section(bss_sec);
+
+    // Dummy symbol 0 (STN_UNDEF)
+    object.add_symbol(Symbol {
+        name: String::new(),
+        binding: SymbolBinding::Local,
+        visibility: SymbolVisibility::Default,
+        sym_type: SymbolType::Unknown,
+        section_index: None,
+        value: 0,
+        size: 0,
+        is_defined: false,
+        is_imported: false,
+        is_exported: false,
+        file_index: Some(0),
+        alias_of: None,
+        comdat_group: None,
+        version: None,
+    });
+
+    // Symbol 1: section symbol with section name
+    object.add_symbol(Symbol {
+        name: sec_name.to_string(),
+        binding: SymbolBinding::Local,
+        visibility: SymbolVisibility::Default,
+        sym_type: SymbolType::Section,
+        section_index: Some(1),
+        value: 0,
+        size: 8,
+        is_defined: true,
+        is_imported: false,
+        is_exported: false,
+        file_index: Some(0),
+        alias_of: None,
+        comdat_group: None,
+        version: None,
+    });
+
+    let mut objects = vec![object];
+    assert!(
+        resolver.resolve(&mut objects, &[]).is_ok(),
+        "locally defined section symbol must not be marked undefined"
+    );
+    assert!(
+        !resolver.undefined.contains(sec_name),
+        "section symbol should be resolved by local definition"
+    );
+}

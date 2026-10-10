@@ -402,6 +402,27 @@ target matrix moves from proof-of-concept.
 | P6-2 Complete Instruction Selection, Prologue/Epilogue & Frame Layout | Real encodings for moves, loads/stores, arithmetic, FP, atomics | Done | `AArch64Backend` in `crates/adesh-codegen/src/targets/aarch64/mod.rs` implements immediate materialization (`MOVZ`/`MOVK`/`MOVN`), stack frame allocation, callee-saved register saving/restoring (`STP`/`LDP`), arithmetic (`ADD`/`SUB`/`MUL`/`SDIV`), comparisons (`CMP`/`TST`/`CSET`), conditional branches (`B`, `B.cond`, `CBZ`, `CBNZ`), scalar FP (`FADD`/`FSUB`/`FMUL`/`FDIV`), NEON SIMD vectors, and atomics (`LDADDAL`, `CASAL`, `SWPAL`, `DMB ISH`). |
 | P6-3 Relocations & Static ELF / ADOB Emission | AArch64 relocation support (CALL26, ADRP, ADD_LO12) | Done | ADOB v2 encode/decode in `linker/src/object/adob.rs` and `linker/src/relocation.rs` properly encodes and patches `RelocationKind::AArch64Call26`, `AArch64Adrp`, and `AArch64AddLo12`. Verified in `test_aarch64_adob_emission_and_relocations` and `test_aarch64_relocation_handler_apply`. |
 
+### Phase 7 — Native Toolchain Stabilization and Conformance (Post-Phase 6)
+
+Tasks:
+1. Fix Ubuntu AOT runtime linking (resolve section-symbol relocations to section names, preserve 1:1 symbol indexing, pass target triple to archive member parsers, and ensure `adesh-runtime` staticlib is built in CI).
+2. Add dedicated AOT runtime-linking regression tests covering lazy archive member extraction, exact symbol re-stamping, and ELF section relocations.
+3. Stabilize Linux and macOS native linking (dynamic import routing for POSIX/libc symbols such as `libc.so.6`, `libgcc_s.so.1`, and `/usr/lib/libSystem.B.dylib`).
+4. Establish multi-backend language conformance corpus verifying identical behavior across Interpreter, Native JIT (NJIT), and AOT backends.
+5. Reconcile target-support documentation across `CURRENT_STATE.md`, `TARGET_MATRIX.md`, `ARCHITECTURE_GAPS.md`, and `IMPLEMENTATION_PLAN.md` with explicit statuses (*Implemented*, *Tested*, *Execution-verified*).
+
+**Closed (2026-10-10): Phase 7 is Complete.**
+
+#### Phase 7 progress & completed evidence
+
+| Task | Scope | Status | Evidence |
+|---|---|---|---|
+| P7-1 Ubuntu AOT Runtime Linking Fix | ELF section symbol relocations, symbol 0 indexing, target archive parsing, CI runtime build | Done | In `linker/src/elf/reader.rs`, `STT_SECTION` symbols carry section names so relocations against `.bss.*` data-sections resolve without `LNK001`; preserved `STN_UNDEF` symbol 0 for 1:1 VA indexing; populated `symbol_index` and `file_index`. Passed target triple in archive parser in `linker/src/resolver.rs`. Updated `.github/workflows/ci.yml` to compile `-p adesh-runtime`. Verified by running `tests/day1_regressions.rs` (5/5 passed). |
+| P7-2 AOT Runtime Linking Regression Suite | Linker member extraction, symbol stamping, section relocations, diagnostics | Done | Created `linker/tests/aot_runtime_linking_regression_test.rs` and added `test_elf_section_symbol_relocation_resolution` to `linker/tests/symbol_test.rs`. All 4 regression tests passed cleanly. |
+| P7-3 Linux & macOS Native Linking Conformance | Dynamic POSIX/C library routing, static ELF execution headers, Mach-O structural layout | Done | Created `linker/tests/platform_native_linking_conformance_test.rs` asserting dynamic routing of `libc.so.6`, `libgcc_s.so.1`, `/usr/lib/libSystem.B.dylib`, static ELF executable headers, and 64-bit Mach-O structural layout. All 5 tests passed. |
+| P7-4 Multi-Backend Conformance Corpus | Execution parity across Interpreter, NJIT, and AOT backends | Done | Created `tests/native_phase7_conformance_corpus_test.rs` testing arithmetic, conditionals, loops, functions/recursion, and arrays across all three backends. All 5 end-to-end tests passed cleanly with matching output. |
+| P7-5 Target Matrix & Architecture Documentation Reconciliation | Reconcile target statuses (*Implemented*, *Tested*, *Execution-verified*) | Done | Reconciled `TARGET_MATRIX.md`, `CURRENT_STATE.md`, `ARCHITECTURE_GAPS.md`, and `IMPLEMENTATION_PLAN.md` with explicit three-tier taxonomy. |
+
 ---
 
 ## 3. Explicitly Parked (documented honestly, not grown)
