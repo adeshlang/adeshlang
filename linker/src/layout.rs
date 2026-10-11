@@ -41,6 +41,12 @@ pub struct LayoutEngine {
     /// ELF dynamic relocations (`R_X86_64_JUMP_SLOT` / `R_X86_64_RELATIVE`)
     /// recorded while applying static relocations.
     pub elf_dynamic_relocs: Vec<crate::elf::dynamic::ElfDynamicReloc>,
+    /// Mach-O dynamic-linking results consumed by the writer: one entry per
+    /// imported function (index i owns `__la_symbol_ptr` slot i).
+    pub macho_imports: Vec<crate::macho::dynamic::MachOImport>,
+    /// Virtual addresses of 64-bit pointer words baked at link time that
+    /// dyld must rebase when the (always-PIE) image slides.
+    pub macho_rebases: Vec<u64>,
     /// Non-fatal issues encountered while relocating (e.g. weak/internal
     /// symbols that could not be resolved and were routed to a trap stub).
     pub warnings: Vec<String>,
@@ -58,6 +64,8 @@ impl LayoutEngine {
             base_relocs32: Vec::new(),
             elf_got_slots: std::collections::HashMap::new(),
             elf_dynamic_relocs: Vec::new(),
+            macho_imports: Vec::new(),
+            macho_rebases: Vec::new(),
             warnings: Vec::new(),
         }
     }
@@ -381,6 +389,39 @@ impl LayoutEngine {
             elf_imports.dedup();
         }
 
+        // Mach-O links are always dynamic (macOS has no static libSystem):
+        // every symbol the resolver routed to a dylib becomes a lazy-bound
+        // import with one `__la_symbol_ptr` slot. The bind name carries
+        // Mach-O's leading-underscore convention.
+        let mut macho_imports: Vec<crate::macho::dynamic::MachOImport> = Vec::new();
+        if target.format == crate::target::ObjectFormat::MachO {
+            let mut raw: Vec<String> = resolver.dynamic_imports.clone();
+            raw.sort();
+            raw.dedup();
+            for raw_name in raw {
+                let bind_name = match crate::os_router::OsApiRouter::classify(&raw_name, target) {
+                    crate::os_router::SymbolRoute::DllImport { name, .. } => name,
+                    other => {
+                        return Err(LinkError::new(
+                            ErrorCode::InvalidSection,
+                            format!(
+                                "import `{}` was routed to a dynamic library by the resolver \
+                                 but no longer classifies as one ({:?}); the Mach-O bind name \
+                                 cannot be derived",
+                                raw_name, other
+                            ),
+                        ));
+                    }
+                };
+                macho_imports.push(crate::macho::dynamic::MachOImport {
+                    raw_name,
+                    bind_name,
+                    la_slot_va: 0, // assigned when the lazy-pointer section is placed
+                    is_data: false,
+                });
+            }
+        }
+
         // Data-object imports can never be served by a function stub and
         // address-of-imported-data is unsupported (no COPY relocations /
         // GOT-relative loads). Reject before any layout is produced.
@@ -405,6 +446,30 @@ impl LayoutEngine {
                         "imported data symbol(s) are not supported: {} — Adesh links cannot \
                          take the address of C library data objects (no COPY relocations or \
                          GOT-relative loads are emitted yet)",
+                        shown.join(", ")
+                    ),
+                ));
+            }
+        }
+        if target.format == crate::target::ObjectFormat::MachO {
+            // Mach-O's router cannot always tell a data object from a
+            // function by name alone, so references are checked by relocation
+            // shape below (anything but a PC-relative call into an import is
+            // a data reference). Names that classify as intrinsics never get
+            // here (they are synthesized, not imported).
+            let data_imports: Vec<&String> = resolver
+                .dynamic_data_imports
+                .iter()
+                .filter(|name| resolver.table.get(*name).is_some_and(|r| r.symbol.is_imported))
+                .collect();
+            if !data_imports.is_empty() {
+                let shown: Vec<&str> = data_imports.iter().map(|s| s.as_str()).collect();
+                return Err(LinkError::new(
+                    ErrorCode::UnsupportedRelocation,
+                    format!(
+                        "imported data symbol(s) are not supported: {} — Mach-O links bind \
+                         functions through lazy stubs only; taking the address of a C library \
+                         data object is not implemented",
                         shown.join(", ")
                     ),
                 ));
@@ -633,6 +698,33 @@ impl LayoutEngine {
             elf_got_section_index = Some(merged_list.len());
             merged_list.push(got_sec);
         }
+
+        // Mach-O lazy symbol pointers: one 8-byte slot per imported function.
+        // The slots start zeroed; the writer patches each to its
+        // `__stub_helper` entry (the pre-binding target) and dyld overwrites
+        // them lazily on first call. Slot VAs are registered as
+        // `__la_symbol_ptr_<name>` symbols so the proxy stubs synthesized by
+        // the linker can `jmp *[rip + slot]`.
+        let mut macho_la_section_index: Option<usize> = None;
+        if target.format == crate::target::ObjectFormat::MachO && !macho_imports.is_empty() {
+            let la_va = align_to(current_va, 8);
+            let mut la_sec = MergedSection::new(
+                "__la_symbol_ptr",
+                SectionKind::Data,
+                flags::READ | flags::WRITE | flags::ALLOC,
+                8,
+            );
+            la_sec.virtual_address = la_va;
+            la_sec.data = vec![0u8; macho_imports.len() * 8];
+            la_sec.size = la_sec.data.len() as u64;
+            for (idx, import) in macho_imports.iter_mut().enumerate() {
+                import.la_slot_va = la_va + (idx as u64) * 8;
+            }
+            current_va = la_va + la_sec.size;
+            macho_la_section_index = Some(merged_list.len());
+            merged_list.push(la_sec);
+        }
+        let _ = macho_la_section_index;
 
         // Synthesize Windows x64 SEH .pdata (RUNTIME_FUNCTION) and .xdata (UNWIND_INFO)
         if target.format == crate::target::ObjectFormat::Pe
@@ -1063,6 +1155,14 @@ impl LayoutEngine {
             }
         }
 
+        // Map Mach-O lazy-pointer slots so the proxy stubs synthesized for
+        // imports (`jmp *[rip + slot]`) resolve to their slot VA.
+        if target.format == crate::target::ObjectFormat::MachO {
+            for import in &macho_imports {
+                symbol_va_map.insert(format!("__la_symbol_ptr_{}", import.raw_name), import.la_slot_va);
+            }
+        }
+
         // Find Entry Point Virtual Address
         if let Some(&entry_va) = symbol_va_map.get(entry_name) {
             self.entry_va = entry_va;
@@ -1165,6 +1265,15 @@ impl LayoutEngine {
         // 5. Apply Relocations to Merged Sections
         let handler = get_handler(target.arch);
 
+        // Mach-O dynamic-linking bookkeeping: which symbols are imports (for
+        // the relocation-shape check) and which absolute words need a dyld
+        // rebase opcode (PIE).
+        let macho_import_set: std::collections::HashSet<&str> = macho_imports
+            .iter()
+            .map(|imp| imp.raw_name.as_str())
+            .collect();
+        let mut macho_rebases: Vec<u64> = Vec::new();
+
         for merged in &mut merged_list {
             if merged.kind == SectionKind::Bss {
                 if !merged.relocations.is_empty() {
@@ -1266,6 +1375,32 @@ impl LayoutEngine {
                         }
                     }
                 };
+
+                // Mach-O imports are reachable ONLY through their proxy
+                // stub by a PC-relative call/jump. Any other relocation
+                // shape is an address-of-import (or a data load): binding
+                // it to the stub's address would be silent wrong code.
+                if !routed_to_trap
+                    && target.format == crate::target::ObjectFormat::MachO
+                    && macho_import_set.contains(reloc.symbol_name.as_str())
+                {
+                    let is_call = matches!(
+                        reloc.kind,
+                        RelocationKind::PcRelative32 | RelocationKind::PcRelative64
+                    );
+                    if !is_call {
+                        return Err(LinkError::new(
+                            ErrorCode::UnsupportedRelocation,
+                            format!(
+                                "imported symbol `{}` is referenced by a non-call relocation in \
+                                 `{}` — Mach-O imports bind only through lazy call stubs; taking \
+                                 the address of (or loading from) a C library symbol is not \
+                                 implemented",
+                                reloc.symbol_name, merged.name
+                            ),
+                        ));
+                    }
+                }
 
                 // PE image-relative (ADDR32NB -> RVA) and section-relative
                 // (SECREL32) relocations need bases the generic handler does
@@ -1399,6 +1534,39 @@ impl LayoutEngine {
                                 _ => {}
                             }
                         }
+
+                        // Mach-O executables are always PIE (the writer sets
+                        // MH_PIE): every link-time absolute address baked
+                        // into the image must appear in the dyld rebase
+                        // stream. 32-bit absolutes cannot be rebased (the
+                        // stream rewrites pointer words), so they fail the
+                        // link instead of silently breaking under ASLR.
+                        if !routed_to_trap
+                            && target.format == crate::target::ObjectFormat::MachO
+                            && merged.is_alloc()
+                        {
+                            match reloc.kind {
+                                RelocationKind::Absolute64 => {
+                                    macho_rebases.push(place_va);
+                                }
+                                RelocationKind::Absolute32
+                                | RelocationKind::Absolute16
+                                | RelocationKind::Absolute8 => {
+                                    return Err(LinkError::new(
+                                        ErrorCode::UnsupportedRelocation,
+                                        format!(
+                                            "{}-bit absolute relocation against `{}` in `{}` is not \
+                                             representable in a PIE Mach-O image; use a 64-bit \
+                                             pointer or a PC-relative form",
+                                            reloc.kind.size_in_bytes() * 8,
+                                            reloc.symbol_name,
+                                            merged.name
+                                        ),
+                                    ));
+                                }
+                                _ => {}
+                            }
+                        }
                     }
                     Err(e) => {
                         let is_overflow =
@@ -1459,6 +1627,8 @@ impl LayoutEngine {
             }
         }
         self.elf_got_slots = elf_got_map;
+        self.macho_imports = macho_imports;
+        self.macho_rebases = macho_rebases;
 
         self.merged_sections = merged_list;
         self.resolved_symbols = final_symbols;

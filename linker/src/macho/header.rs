@@ -19,6 +19,22 @@ pub const MH_DYLDLINK: u32 = 0x4;
 pub const MH_TWOLEVEL: u32 = 0x80;
 pub const MH_PIE: u32 = 0x200000;
 
+// Section types (low byte of section flags)
+pub const S_REGULAR: u32 = 0x0;
+pub const S_ZEROFILL: u32 = 0x1;
+pub const S_NON_LAZY_SYMBOL_POINTERS: u32 = 0x6;
+pub const S_LAZY_SYMBOL_POINTERS: u32 = 0x7;
+pub const S_SYMBOL_STUBS: u32 = 0x8;
+
+// Section attribute flags (high bits of section flags)
+pub const S_ATTR_SOME_INSTRUCTIONS: u32 = 0x00000400;
+pub const S_ATTR_PURE_INSTRUCTIONS: u32 = 0x80000000;
+
+// nlist type bits
+pub const N_UNDF: u8 = 0x0;
+pub const N_EXT: u8 = 0x01;
+pub const N_SECT: u8 = 0x0E;
+
 // Load commands
 pub const LC_SYMTAB: u32 = 0x02;
 pub const LC_DYSYMTAB: u32 = 0x0B;

@@ -211,6 +211,7 @@ impl Linker {
         // 4.1 Synthesize Compiler Intrinsics, Entry Thunks, and Import Thunks for Unimplemented Symbols
         let is_pe = ctx.config.target.format == ObjectFormat::Pe;
         let is_elf = ctx.config.target.format == ObjectFormat::Elf;
+        let is_macho = ctx.config.target.format == ObjectFormat::MachO;
 
         // Determine actual Adesh program entry symbol
         let program_entry_symbol = if ctx.resolver.table.contains_key("main") {
@@ -391,7 +392,14 @@ impl Linker {
                     && ctx.config.target.arch == crate::target::Arch::X86_64
                     && matches!(route, crate::os_router::SymbolRoute::DllImport { .. });
 
-                let importable = importable_pe || importable_elf;
+                // Mach-O is always dynamic (macOS has no static libSystem):
+                // routed symbols become lazy-bound imports reached through
+                // `__la_symbol_ptr` slots the layout stage reserves.
+                let importable_macho = is_macho
+                    && ctx.config.target.arch == crate::target::Arch::X86_64
+                    && matches!(route, crate::os_router::SymbolRoute::DllImport { .. });
+
+                let importable = importable_pe || importable_elf || importable_macho;
 
                 if !importable && !crate::intrinsics::IntrinsicsEngine::is_intrinsic(name) {
                     if is_pe && crate::os_router::OsApiRouter::is_stubbable_internal(name) {
@@ -442,6 +450,31 @@ impl Linker {
                     let (b, r, _) = crate::elf::x86_64::synthesize_elf_x86_64_plt_stub(
                         raw, file_idx, start_off,
                     );
+                    (b, vec![r])
+                } else if importable_macho {
+                    // Mach-O x86_64 lazy proxy stub:
+                    // jmp qword ptr [__la_symbol_ptr_<name>]
+                    // \xff\x25 <disp32>
+                    // The layout stage registers the slot VA under this
+                    // exact symbol name; the writer patches the slot to
+                    // the stub-helper entry and dyld rewrites it on first
+                    // call.
+                    let raw = name
+                        .strip_prefix("__imp_")
+                        .or_else(|| name.strip_prefix("_imp_"))
+                        .unwrap_or(name);
+                    let b = vec![
+                        0xFF, 0x25, 0x00, 0x00, 0x00, 0x00, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+                        0x90, 0x90, 0x90, 0x90,
+                    ];
+                    let r = crate::relocation::Relocation {
+                        offset: start_off + 2,
+                        symbol_name: format!("__la_symbol_ptr_{}", raw),
+                        symbol_index: None,
+                        file_index: None,
+                        kind: crate::relocation::RelocationKind::PcRelative32,
+                        addend: -4,
+                    };
                     (b, vec![r])
                 } else {
                     // If an unresolved symbol cannot be routed or synthesized, fail cleanly
@@ -819,7 +852,36 @@ impl Linker {
             }
             ObjectFormat::MachO => {
                 let install_name_str = ctx.config.output_path.file_name().and_then(|n| n.to_str());
-                MachOWriter::write_macho(
+
+                // Mach-O images are always dynamically linked metadata-wise:
+                // every executable is PIE (rebasing) and shared libraries
+                // carry an export trie. Imports and rebase targets were
+                // recorded by the layout stage.
+                let macho_exports: Vec<crate::macho::dynamic::MachOExport> = if ctx.config.shared
+                {
+                    emit_symbols
+                        .iter()
+                        .filter(|s| {
+                            s.is_defined
+                                && !s.is_local()
+                                && !s.is_imported
+                                && !s.name.is_empty()
+                                && s.value != 0
+                        })
+                        .map(|s| crate::macho::dynamic::MachOExport {
+                            name: s.name.clone(),
+                            address: s.value,
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                let macho_info = crate::macho::dynamic::MachODynamicInfo {
+                    imports: ctx.layout.macho_imports.clone(),
+                    rebases: ctx.layout.macho_rebases.clone(),
+                    exports: macho_exports,
+                };
+                MachOWriter::write_macho_with_dynamic(
                     &ctx.config.output_path,
                     &ctx.config.target,
                     ctx.layout.entry_va,
@@ -828,6 +890,7 @@ impl Linker {
                     ctx.config.shared,
                     &ctx.config.libraries,
                     install_name_str,
+                    Some(&macho_info),
                 )?;
             }
             ObjectFormat::Wasm => {
