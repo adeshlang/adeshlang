@@ -88,7 +88,7 @@ impl Linker {
             })?;
 
             if bytes.starts_with(b"!<arch>\n") {
-                let archive = Archive::parse(&bytes, path)?;
+                let archive = Archive::parse_with_target(&bytes, path, &ctx.config.target)?;
                 ctx.archives.push(archive);
             } else {
                 let obj =
@@ -145,7 +145,9 @@ impl Linker {
                     }
                     if let Ok(bytes) = std::fs::read(&p) {
                         if bytes.starts_with(b"!<arch>\n") {
-                            if let Ok(archive) = Archive::parse(&bytes, &p) {
+                            if let Ok(archive) =
+                                Archive::parse_with_target(&bytes, &p, &ctx.config.target)
+                            {
                                 ctx.archives.push(archive);
                                 found = true;
                                 break;
@@ -352,9 +354,18 @@ impl Linker {
                     continue;
                 }
 
-                let importable = is_pe
+                let importable_pe = is_pe
                     && ctx.config.target.arch == crate::target::Arch::X86_64
                     && crate::os_router::OsApiRouter::windows_dll_for(name).is_some();
+
+                let importable_elf = is_elf
+                    && ctx.config.target.arch == crate::target::Arch::X86_64
+                    && matches!(
+                        crate::os_router::OsApiRouter::classify(name, &ctx.config.target),
+                        crate::os_router::SymbolRoute::DllImport { .. }
+                    );
+
+                let importable = importable_pe || importable_elf;
 
                 if !importable && !crate::intrinsics::IntrinsicsEngine::is_intrinsic(name) {
                     if is_pe && crate::os_router::OsApiRouter::is_stubbable_internal(name) {
@@ -376,7 +387,7 @@ impl Linker {
                         ),
                         Vec::new(),
                     )
-                } else if importable {
+                } else if importable_pe {
                     // PE x86_64 Import Thunk:
                     // jmp qword ptr [__imp_<name>]
                     // \xff\x25 <disp32> \x90 \x90
@@ -394,6 +405,20 @@ impl Linker {
                         addend: -4,
                     }];
                     (b, r)
+                } else if importable_elf {
+                    // ELF x86_64 PLT Stub:
+                    // jmp qword ptr [__got_<name>]
+                    // \xff\x25 <disp32> ...
+                    let raw = name
+                        .strip_prefix("__imp_")
+                        .or_else(|| name.strip_prefix("_imp_"))
+                        .unwrap_or(name);
+                    let (b, r, _) = crate::elf::x86_64::synthesize_elf_x86_64_plt_stub(
+                        raw,
+                        file_idx,
+                        start_off,
+                    );
+                    (b, vec![r])
                 } else {
                     // If an unresolved symbol cannot be routed or synthesized, fail cleanly
                     return Err(LinkError::undefined_symbol(

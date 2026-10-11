@@ -25,6 +25,14 @@ pub struct Archive {
 
 impl Archive {
     pub fn parse(bytes: &[u8], path: &Path) -> LinkResult<Self> {
+        Self::parse_with_target(bytes, path, &crate::target::Target::host())
+    }
+
+    pub fn parse_with_target(
+        bytes: &[u8],
+        path: &Path,
+        target: &crate::target::Target,
+    ) -> LinkResult<Self> {
         if bytes.len() < 8 || &bytes[0..8] != &AR_MAGIC {
             return Err(LinkError::new(
                 ErrorCode::InvalidArchive,
@@ -148,7 +156,7 @@ impl Archive {
                 if let Ok(obj) = crate::object::reader::ObjectReader::read_from_memory(
                     &m.data,
                     std::path::Path::new(&m.name),
-                    &crate::target::Target::host(),
+                    target,
                     0,
                 ) {
                     for sym in &obj.symbols {
@@ -193,8 +201,13 @@ impl Archive {
         });
     }
 
-    /// Encode the archive into standard GNU AR format bytes.
+    /// Encode the archive into standard GNU AR format bytes using the host target.
     pub fn encode_gnu(&self) -> Vec<u8> {
+        self.encode_gnu_with_target(&crate::target::Target::host())
+    }
+
+    /// Encode the archive into standard GNU AR format bytes for a specific target.
+    pub fn encode_gnu_with_target(&self, target: &crate::target::Target) -> Vec<u8> {
         let mut symbols: Vec<(String, usize)> = Vec::new();
         for (m_idx, m) in self.members.iter().enumerate() {
             let mut add_syms = |obj: &crate::object::ObjectFile| {
@@ -209,7 +222,7 @@ impl Archive {
             } else if let Ok(obj) = crate::object::reader::ObjectReader::read_from_memory(
                 &m.data,
                 Path::new(&m.name),
-                &crate::target::Target::host(),
+                target,
                 0,
             ) {
                 add_syms(&obj);

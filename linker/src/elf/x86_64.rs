@@ -72,6 +72,46 @@ pub fn synthesize_elf_x86_64_entry(
     (code_bytes, relocs, symbols)
 }
 
+/// Synthesize a standard x86-64 ELF PLT stub for an imported dynamic symbol.
+///
+/// x86-64 System V AMD64 ABI PLT stub structure:
+/// `jmp qword ptr [rip + got_offset]`
+/// FF 25 <disp32>
+/// Followed by NOP padding to 16 bytes for instruction cache alignment.
+pub fn synthesize_elf_x86_64_plt_stub(
+    symbol_name: &str,
+    file_index: usize,
+    base_offset: u64,
+) -> (Vec<u8>, Relocation, Symbol) {
+    // 0xFF, 0x25, disp32 (relocation applied against __got_<symbol>)
+    let bytes = vec![0xFF, 0x25, 0x00, 0x00, 0x00, 0x00, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90];
+    let reloc = Relocation {
+        offset: base_offset + 2,
+        symbol_name: format!("__got_{}", symbol_name),
+        symbol_index: None,
+        file_index: None,
+        kind: RelocationKind::PcRelative32,
+        addend: -4,
+    };
+    let sym = Symbol {
+        name: symbol_name.to_string(),
+        binding: SymbolBinding::Global,
+        visibility: crate::symbol::SymbolVisibility::Default,
+        sym_type: SymbolType::Function,
+        section_index: Some(0),
+        value: base_offset,
+        size: 16,
+        is_defined: true,
+        is_imported: false,
+        is_exported: false,
+        file_index: Some(file_index),
+        alias_of: None,
+        comdat_group: None,
+        version: None,
+    };
+    (bytes, reloc, sym)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

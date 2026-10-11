@@ -358,6 +358,17 @@ impl LayoutEngine {
                 .sort_by(|a, b| (&a.dll_name, &a.symbol_name).cmp(&(&b.dll_name, &b.symbol_name)));
         }
 
+        let mut elf_imports = Vec::new();
+        let mut seen_elf_imports = std::collections::HashSet::new();
+        if target.format == crate::target::ObjectFormat::Elf {
+            for (sym_name, resolved) in &resolver.table {
+                if resolved.symbol.is_imported && seen_elf_imports.insert(sym_name.clone()) {
+                    elf_imports.push(sym_name.clone());
+                }
+            }
+            elf_imports.sort();
+        }
+
         let has_explicit_pe_entry = objects.iter().any(|o| {
             o.symbols.iter().any(|s| {
                 s.is_defined && (s.name == "mainCRTStartup" || s.name == "__adesh_windows_start")
@@ -548,6 +559,26 @@ impl LayoutEngine {
             current_va = idata_va + idata_sec.size;
             merged_list.push(idata_sec);
             pe_imp_result = Some(imp_res);
+        }
+
+        let mut elf_got_map = HashMap::new();
+        if target.format == crate::target::ObjectFormat::Elf && !elf_imports.is_empty() {
+            let got_va = align_to(current_va, 8);
+            let mut got_sec = MergedSection::new(
+                ".got",
+                SectionKind::Data,
+                flags::READ | flags::WRITE | flags::ALLOC,
+                8,
+            );
+            got_sec.virtual_address = got_va;
+            // 8 bytes per dynamic symbol pointer slot
+            got_sec.data = vec![0u8; elf_imports.len() * 8];
+            got_sec.size = got_sec.data.len() as u64;
+            for (idx, sym) in elf_imports.iter().enumerate() {
+                elf_got_map.insert(sym.clone(), got_va + (idx as u64 * 8));
+            }
+            current_va = got_va + got_sec.size;
+            merged_list.push(got_sec);
         }
 
         // Synthesize Windows x64 SEH .pdata (RUNTIME_FUNCTION) and .xdata (UNWIND_INFO)
@@ -969,6 +1000,14 @@ impl LayoutEngine {
         if target.format == crate::target::ObjectFormat::Pe {
             symbol_va_map.insert("__ImageBase".to_string(), target.image_base);
             symbol_va_map.insert("___ImageBase".to_string(), target.image_base);
+        }
+
+        // Map ELF GOT symbol slots so PLT stubs and GOTPCREL relocations resolve to their slot VA
+        if target.format == crate::target::ObjectFormat::Elf {
+            for (sym_name, got_slot_va) in &elf_got_map {
+                symbol_va_map.insert(format!("__got_{}", sym_name), *got_slot_va);
+                symbol_va_map.insert(format!("_got_{}", sym_name), *got_slot_va);
+            }
         }
 
         // Find Entry Point Virtual Address

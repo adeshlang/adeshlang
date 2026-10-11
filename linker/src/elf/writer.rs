@@ -460,9 +460,12 @@ impl ElfWriter {
                 });
             }
 
-            // Dynamic symbols (exported global functions and variables)
+            // Dynamic symbols:
+            // 1. Exported global functions and variables (st_shndx = defined section)
+            // 2. Imported dynamic symbols from needed libraries (st_shndx = 0, st_value = 0)
             for sym in symbols {
-                if !sym.name.is_empty() && (sym.is_exported || sym.binding == SymbolBinding::Global)
+                if !sym.name.is_empty()
+                    && (sym.is_exported || sym.is_imported || sym.binding == SymbolBinding::Global)
                 {
                     let st_name = dynstr.len() as u32;
                     dynstr.extend_from_slice(sym.name.as_bytes());
@@ -480,9 +483,9 @@ impl ElfWriter {
                         st_name,
                         st_info,
                         st_other: 0,
-                        st_shndx: if sym.is_defined { 1 } else { 0 },
-                        st_value: sym.value,
-                        st_size: sym.size,
+                        st_shndx: if sym.is_defined && !sym.is_imported { 1 } else { 0 },
+                        st_value: if sym.is_defined && !sym.is_imported { sym.value } else { 0 },
+                        st_size: if sym.is_defined && !sym.is_imported { sym.size } else { 0 },
                     });
                 }
             }

@@ -864,6 +864,17 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
             None
         };
 
+        // 1. Mandatory static type checking
+        let input_path_str = config.input.to_string_lossy();
+        crate::types::type_system::check_module_in(&src, Some(&input_path_str))
+            .map_err(|e| format!("Type Error: {}", e))?;
+
+        // 2. Mandatory ownership, borrowing, lifetime, and escape analysis
+        let runtime_cfg = crate::toolchain::config::RuntimeConfig::default();
+        crate::cli::parsing::check_ownership_and_parse_in(&src, &runtime_cfg, Some(&input_path_str))
+            .map_err(|e| format!("Ownership/Memory Safety Error: {}", e))?;
+
+        // 3. Lowering validation to HIR & LIR
         let mut lexer = Lexer::new(&src);
         let tokens = match lexer.tokenize() {
             Ok(t) => t,

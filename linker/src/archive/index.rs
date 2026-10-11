@@ -10,6 +10,10 @@ pub struct ArchiveIndex {
 
 impl ArchiveIndex {
     pub fn build(archive: &Archive) -> Self {
+        Self::build_with_target(archive, &crate::target::Target::host())
+    }
+
+    pub fn build_with_target(archive: &Archive, target: &crate::target::Target) -> Self {
         let mut index = HashMap::new();
         // In case the archive had an embedded symbol table or we index member symbols directly
         for (m_idx, member) in archive.members.iter().enumerate() {
@@ -17,7 +21,7 @@ impl ArchiveIndex {
             if let Ok(obj) = crate::object::reader::ObjectReader::read_from_memory(
                 &member.data,
                 std::path::Path::new(&member.name),
-                &crate::target::Target::host(),
+                target,
                 0,
             ) {
                 for sym in &obj.symbols {
