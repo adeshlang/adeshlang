@@ -338,12 +338,23 @@ fn load_source_module_impl(
 
     // Parse into AST
     let mut parser = Parser::new(tokens, Some(path.to_string()));
-    let ast = parser
+    let mut ast = parser
         .parse_program()
         .map_err(|e| format!("Failed to parse module '{}': {:?}", path, e))?;
 
+    // Imported modules pass the same mandatory checks as the main module
+    // (decorator phases; compile-time memory safety on the resulting HIR).
+    // RAII is deliberately not applied — the tiered JIT owns cleanup via
+    // its managed handle heap.
+    crate::parsing::decorator_compile::execute_compile_time_phases(&mut ast)
+        .map_err(|e| format!("Decorator phase failed for module '{}': {}", path, e))?;
+
     let hir = ast_to_hir(&ast, false)
         .map_err(|e| format!("Failed to lower module '{}' to HIR: {}", path, e))?;
+    crate::parsing::compile_time_memory_safety::check_memory_safety_compile_time_in(
+        &hir, None,
+    )
+    .map_err(|e| format!("Memory safety failed for module '{}': {}", path, e))?;
 
     let lir =
         hir_to_lir(&hir).map_err(|e| format!("Failed to lower module '{}' to LIR: {}", path, e))?;

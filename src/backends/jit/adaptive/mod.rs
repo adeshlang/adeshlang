@@ -1562,10 +1562,20 @@ pub fn adaptive_jit_run(src: &str) -> Result<RuntimeValue, String> {
     let mut lexer = Lexer::new(src);
     let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
     let mut parser = Parser::new(tokens, None);
-    let ast = parser.parse_program().map_err(|e| e.to_string())?;
+    let mut ast = parser.parse_program().map_err(|e| e.to_string())?;
+
+    // Mandatory checks on the exact program being lowered: decorator
+    // compile-time phases generate code, and compile-time memory safety
+    // validates the exact HIR. The RAII transform is deliberately not
+    // applied — the adaptive JIT runs a managed handle heap whose cleanup
+    // its runtime owns.
+    crate::parsing::decorator_compile::execute_compile_time_phases(&mut ast)?;
 
     // Lower to HIR
     let hir = ast_to_hir(&ast, false)?;
+    crate::parsing::compile_time_memory_safety::check_memory_safety_compile_time_in(
+        &hir, None,
+    )?;
 
     // Choose compilation path — LIR is the default (VIR drops ARC ops)
     let use_vir = std::env::var("ADESH_USE_VIR")

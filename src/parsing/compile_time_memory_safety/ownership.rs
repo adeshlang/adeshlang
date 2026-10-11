@@ -172,6 +172,28 @@ impl super::CompileTimeMemorySafety {
                 // Check if expression uses any moved variables
                 self.check_expr_for_moved_vars(expr)?;
 
+                // A statement-level `free(p)` (lowered to HirExpr::Free)
+                // transitions the freed variable's ownership state. Freeing
+                // an already-freed variable is a double free; the Freed
+                // state also flags any later use as use-after-free.
+                if let HirExpr::Free(target) = expr {
+                    if let HirExpr::LoadVar(freed_name) = target.as_ref() {
+                        let current_location = self.get_source_location(0);
+                        if let Some(node) = self.ownership_graph.get_mut(freed_name) {
+                            if node.state == OwnershipState::Freed {
+                                self.errors.push(CompileTimeMemoryError::DoubleFree {
+                                    variable: freed_name.clone(),
+                                    first_free: node.location.clone(),
+                                    second_free: current_location,
+                                });
+                            } else {
+                                node.state = OwnershipState::Freed;
+                                node.location = current_location;
+                            }
+                        }
+                    }
+                }
+
                 // If this is a function call, passing a non-Copy variable by value moves ownership
                 if let HirExpr::Call(func_expr, args, _) = expr {
                     let is_print = match func_expr.as_ref() {
@@ -203,18 +225,6 @@ impl super::CompileTimeMemorySafety {
                 self.check_expr_for_moved_vars(expr)?;
             }
 
-            HirStmt::If {
-                cond,
-                then_branch,
-                else_branch,
-            } => {
-                self.check_expr_for_moved_vars(cond)?;
-                self.process_stmt_ownership(then_branch, scope_id)?;
-                if let Some(else_stmt) = else_branch {
-                    self.process_stmt_ownership(else_stmt, scope_id)?;
-                }
-            }
-
             HirStmt::While { cond, body } => {
                 self.check_expr_for_moved_vars(cond)?;
                 self.process_stmt_ownership(body, scope_id)?;
@@ -230,8 +240,33 @@ impl super::CompileTimeMemorySafety {
                 catch_block,
                 ..
             } => {
+                // A free performed inside one branch is conditional, not
+                // definite: snapshot the ownership graph so the other paths
+                // are not polluted (prevents false use-after-free and
+                // double-free reports on valid conditional frees).
+                let snapshot = self.ownership_graph.clone();
                 self.process_stmt_ownership(try_block, scope_id)?;
+                self.ownership_graph = snapshot.clone();
                 self.process_stmt_ownership(catch_block, scope_id)?;
+                self.ownership_graph = snapshot;
+            }
+
+            HirStmt::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                self.check_expr_for_moved_vars(cond)?;
+                // Branch-local frees are conditional: restore state after
+                // each branch so only straight-line (must-have-happened)
+                // frees persist.
+                let snapshot = self.ownership_graph.clone();
+                self.process_stmt_ownership(then_branch, scope_id)?;
+                self.ownership_graph = snapshot.clone();
+                if let Some(else_stmt) = else_branch {
+                    self.process_stmt_ownership(else_stmt, scope_id)?;
+                }
+                self.ownership_graph = snapshot;
             }
 
             HirStmt::Block(stmts) => {
@@ -239,6 +274,17 @@ impl super::CompileTimeMemorySafety {
                 for s in stmts {
                     self.process_stmt_ownership(s, scope_id)?;
                 }
+            }
+
+            HirStmt::Region { body, .. } | HirStmt::Defer(body) => {
+                self.process_stmt_ownership(body, scope_id)?;
+            }
+
+            // Unsafe blocks own raw allocations; their contents must be
+            // ownership-analyzed like any other block (frees inside are
+            // real frees).
+            HirStmt::Unsafe(body) => {
+                self.process_stmt_ownership(body, scope_id)?;
             }
 
             HirStmt::LetTuple { names, init, .. } => {
@@ -292,7 +338,7 @@ impl super::CompileTimeMemorySafety {
     ) -> Result<(), Vec<CompileTimeMemoryError>> {
         match expr {
             HirExpr::LoadVar(var_name) => {
-                // Check if this variable has been moved
+                // Check if this variable has been moved or freed
                 if let Some(node) = self.ownership_graph.get(var_name) {
                     if node.state == OwnershipState::Moved {
                         self.errors.push(CompileTimeMemoryError::UseAfterMove {
@@ -301,8 +347,23 @@ impl super::CompileTimeMemorySafety {
                             used_at: self.get_source_location(0),
                             suggestion: crate::parsing::error::ownership_help::avoid_move(var_name),
                         });
+                    } else if node.state == OwnershipState::Freed {
+                        self.errors.push(CompileTimeMemoryError::UseAfterFree {
+                            variable: var_name.clone(),
+                            freed_at: node.location.clone(),
+                            used_at: self.get_source_location(0),
+                        });
                     }
                 }
+            }
+
+            // The direct target of `free(p)` is checked by the statement
+            // handler (which distinguishes double-free from use-after-free);
+            // recursing here would misreport the second free as a use.
+            HirExpr::Free(inner) if matches!(inner.as_ref(), HirExpr::LoadVar(_)) => {}
+
+            HirExpr::Free(target) => {
+                self.check_expr_for_moved_vars(target)?;
             }
 
             HirExpr::BinaryOp(left, _, right) => {
@@ -379,10 +440,6 @@ impl super::CompileTimeMemorySafety {
             }
 
             HirExpr::Deref(target) => {
-                self.check_expr_for_moved_vars(target)?;
-            }
-
-            HirExpr::Free(target) => {
                 self.check_expr_for_moved_vars(target)?;
             }
 

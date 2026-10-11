@@ -6576,6 +6576,36 @@ fn find_module_file(path: &str, base_dir: Option<&Path>) -> Option<PathBuf> {
     None
 }
 
+/// Load an imported module through the same mandatory gates as the main
+/// module: decorator compile-time phases (they generate code), the RAII
+/// transformation (it injects scope-exit cleanup), and compile-time memory
+/// safety on the resulting HIR. Imported modules previously bypassed these
+/// gates entirely, silently compiling without the injected cleanup the main
+/// module receives.
+fn load_imported_module_hir(src: &str, file_path: &Path) -> Result<HirModule, String> {
+    use crate::parsing::hir_lower::ast_to_hir;
+    use crate::parsing::lexer::Lexer;
+    use crate::parsing::parser::Parser;
+
+    let tokens = Lexer::new(src)
+        .tokenize()
+        .map_err(|e| format!("lex failed: {e:?}"))?;
+    let mut parser = Parser::new(tokens, Some(file_path.to_string_lossy().to_string()));
+    let mut ast = parser
+        .parse_program()
+        .map_err(|e| format!("parse failed: {e:?}"))?;
+    crate::parsing::decorator_compile::execute_compile_time_phases(&mut ast)
+        .map_err(|e| format!("decorator phase failed: {e:?}"))?;
+    let ast = crate::memory::raii::transform_ast_with_raii(ast);
+    let hir = ast_to_hir(&ast, false).map_err(|e| format!("HIR lowering failed: {e:?}"))?;
+    crate::parsing::compile_time_memory_safety::check_memory_safety_compile_time_in(
+        &hir,
+        Some(&file_path.to_string_lossy()),
+    )
+    .map_err(|e| format!("memory safety failed: {e:?}"))?;
+    Ok(hir)
+}
+
 fn resolve_hir_module_imports(
     hir: &mut HirModule,
     base_dir: Option<&Path>,
@@ -6607,24 +6637,7 @@ fn resolve_hir_module_imports(
                     if visited.insert(can_path) {
                         let loaded = std::fs::read_to_string(&file_path)
                             .map_err(|e| format!("read failed: {e}"))
-                            .and_then(|src| {
-                                Lexer::new(&src)
-                                    .tokenize()
-                                    .map_err(|e| format!("lex failed: {e:?}"))
-                            })
-                            .and_then(|tokens| {
-                                let mut parser = Parser::new(
-                                    tokens,
-                                    Some(file_path.to_string_lossy().to_string()),
-                                );
-                                parser
-                                    .parse_program()
-                                    .map_err(|e| format!("parse failed: {e:?}"))
-                            })
-                            .and_then(|ast| {
-                                ast_to_hir(&ast, false)
-                                    .map_err(|e| format!("HIR lowering failed: {e:?}"))
-                            });
+                            .and_then(|src| load_imported_module_hir(&src, &file_path));
                         match loaded {
                             Ok(mut imported_hir) => {
                                 resolve_hir_module_imports(
@@ -6664,24 +6677,7 @@ fn resolve_hir_module_imports(
                     if visited.insert(can_path) {
                         let loaded = std::fs::read_to_string(&file_path)
                             .map_err(|e| format!("read failed: {e}"))
-                            .and_then(|src| {
-                                Lexer::new(&src)
-                                    .tokenize()
-                                    .map_err(|e| format!("lex failed: {e:?}"))
-                            })
-                            .and_then(|tokens| {
-                                let mut parser = Parser::new(
-                                    tokens,
-                                    Some(file_path.to_string_lossy().to_string()),
-                                );
-                                parser
-                                    .parse_program()
-                                    .map_err(|e| format!("parse failed: {e:?}"))
-                            })
-                            .and_then(|ast| {
-                                ast_to_hir(&ast, false)
-                                    .map_err(|e| format!("HIR lowering failed: {e:?}"))
-                            });
+                            .and_then(|src| load_imported_module_hir(&src, &file_path));
                         match loaded {
                             Ok(mut imported_hir) => {
                                 resolve_hir_module_imports(

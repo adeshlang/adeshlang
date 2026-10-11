@@ -695,6 +695,24 @@ fn lower_expr(expr: &Expr) -> Result<HirExpr, String> {
                     method_name.clone(),
                     hir_args?,
                 ))
+            } else if let ExprKind::Variable(fn_name) = &callee.kind {
+                // The parser desugars `free(p)` to a `__free(p)` call.
+                // Normalize it to the dedicated HIR node so the memory-safety
+                // analyses (CFG borrow dataflow: double-free, use-after-free,
+                // free-while-borrowed; unsafe-pointer tracking) actually see
+                // frees. `__alloc` stays a call: its argument is a raw byte
+                // size, while the Alloc node means element-count * elem_size.
+                if fn_name == "__free" && args.len() == 1 {
+                    let hir_ptr = lower_expr(&args[0])?;
+                    return Ok(HirExpr::Free(Box::new(hir_ptr)));
+                }
+                let hir_callee = lower_expr(callee)?;
+                let hir_args: Result<Vec<_>, _> = args.iter().map(lower_expr).collect();
+                Ok(HirExpr::Call(
+                    Box::new(hir_callee),
+                    hir_args?,
+                    type_args.clone(),
+                ))
             } else {
                 let hir_callee = lower_expr(callee)?;
                 let hir_args: Result<Vec<_>, _> = args.iter().map(lower_expr).collect();

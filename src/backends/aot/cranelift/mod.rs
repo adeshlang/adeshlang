@@ -605,11 +605,16 @@ impl CraneliftAotCompiler {
         // Pre-process @cImport directives
         ast = helpers::expand_header_imports_aot(ast)?;
 
-        // Mandatory safety gates on the exact program being compiled: the
-        // RAII transformation injects scope-exit cleanup, and compile-time
-        // memory safety validates the resulting HIR. Lowering the raw
-        // (un-RAII'd) AST would compile a program that differs from the one
-        // the mandatory CLI gates validated — silent wrong code.
+        // Mandatory safety gates on the exact program being compiled. This
+        // mirrors the CLI's authoritative gate chain
+        // (`cli::parsing::check_ownership_and_parse_in`): decorator
+        // compile-time phases first (they generate code), then the RAII
+        // transformation (it injects scope-exit cleanup), then HIR
+        // lowering and compile-time memory safety. Compiling the raw
+        // (un-decorated, un-RAII'd) AST would compile a program that
+        // differs from the one the mandatory CLI gates validated —
+        // silent wrong code.
+        crate::parsing::decorator_compile::execute_compile_time_phases(&mut ast)?;
         ast = crate::memory::raii::transform_ast_with_raii(ast);
 
         // Lower to HIR

@@ -1,7 +1,18 @@
 //! Unified Compile-Time Memory Safety Pass
 //!
-//! Centralizes all memory safety validation at HIR level, BEFORE any backend execution.
-//! This ensures consistent safety guarantees across all backends (Interpreter, VM, JIT, AOT, WASM).
+//! **STATUS: not wired into any compile path.** The enforced mandatory
+//! memory-safety gate is
+//! [`compile_time_memory_safety::check_memory_safety_compile_time_in`],
+//! which every backend entry point calls on the exact HIR it compiles.
+//! This module is a parallel, richer analysis (interprocedural, closures,
+//! lifetimes, trait checks) that no production path invokes; its
+//! `validate_memory_safety` entry point is only exercised by unit tests.
+//! Do not assume it runs — until it is either wired in behind the
+//! mandatory gate or removed, treat it as dead code under evaluation.
+//!
+//! The intended design: centralize memory safety validation at HIR level,
+//! BEFORE any backend execution, giving consistent safety guarantees
+//! across all backends (Interpreter, VM, JIT, AOT, WASM).
 //!
 //! # Architecture
 //!

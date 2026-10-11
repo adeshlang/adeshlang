@@ -159,10 +159,17 @@ pub fn run_with_tiered_jit(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Re
 pub fn run_with_native_jit(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Result<(), String> {
     use crate::backends::jit::native::native_jit_run_with_stats;
 
-    // Separate compilation from execution for Native JIT to wrap progress
+    // HONESTY WARNING: this backend has known execution divergences from the
+    // interpreter/native/AOT backends (e.g. array indexing and raw-pointer
+    // programs compute different values or corrupt the heap). It must not
+    // be trusted to compute correct results until those are fixed and it
+    // passes the same execution-verified conformance matrix.
     if !parsed.config.quiet {
         let progress = BuildProgress::new("Compiling with Native JIT...");
         progress.success("Native JIT backend ready");
+        eprintln!(
+            "⚠  --jit-native has known correctness divergences (array indexing, raw pointers) and is not conformance-verified; results may be wrong. Prefer --jit or adesh build."
+        );
     }
 
     let body = super::directives::strip_compile_directive(src);

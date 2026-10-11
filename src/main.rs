@@ -877,15 +877,12 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                 build_config.verbose = parsed.config.verbose;
                 build_config.quiet = parsed.config.quiet;
 
-                adeshlang::cli::build::execute_build(&build_config)
-                    .map(|_| ())
-                    .or_else(|_| {
-                        adeshlang::backends::cranelift_aot::aot_compile_with_options(
-                            &src,
-                            &out_path,
-                            aot_options,
-                        )
-                    })
+                // No backend fallback: if the native adesh pipeline fails
+                // (including safety-gate rejections or link errors), the
+                // failure is honest and must surface. Retrying with a
+                // different backend could compile a program the gates
+                // rejected, or mask the real error.
+                adeshlang::cli::build::execute_build(&build_config).map(|_| ())
             };
 
             match compile_res {
