@@ -64,6 +64,8 @@ cargo build --release "${target_flags[@]}" --bin adesh --bin adl --lib
 # objdump, readobj, size, strip). Bundled so distributions ship the full
 # self-contained native toolchain (no external LLVM/binutils required).
 cargo build --release "${target_flags[@]}" -p adesh-linker --bin adeshlink
+# adesh-runtime: standalone native runtime static library (libadesh_runtime.a)
+cargo build --release "${target_flags[@]}" -p adesh-runtime
 if [[ -f "$root/als/Cargo.toml" ]]; then
   (cd "$root/als" && cargo build --release "${target_flags[@]}" --bin als)
 fi
@@ -99,27 +101,34 @@ editor_bin="$root/editor/target/release/adesh-editor"
 [[ -f "$editor_bin" ]] && cp "$editor_bin" "$stage/bin/"
 
 # Static libraries (.a)
-if [[ -f "$target_dir/libadeshlang.a" ]]; then
-  cp "$target_dir/libadeshlang.a" "$stage/lib/"
-fi
+for lib in libadeshlang.a libadesh_runtime.a; do
+  if [[ -f "$target_dir/$lib" ]]; then
+    cp "$target_dir/$lib" "$stage/lib/"
+  elif [[ -d "$target_dir/deps" ]]; then
+    hashed_lib=$(find "$target_dir/deps" -maxdepth 1 -name "${lib%.a}-*.a" 2>/dev/null | head -n1 || true)
+    [[ -n "$hashed_lib" ]] && cp "$hashed_lib" "$stage/lib/$lib"
+  fi
+done
 
 # Dynamic / shared libraries (.so on Linux, .dylib on macOS)
-if [[ -f "$target_dir/libadeshlang.so" ]]; then
-  cp "$target_dir/libadeshlang.so" "$stage/lib/"
-  cp "$target_dir/libadeshlang.so" "$stage/bin/"
-fi
-if [[ -f "$target_dir/libadeshlang.dylib" ]]; then
-  cp "$target_dir/libadeshlang.dylib" "$stage/lib/"
-  cp "$target_dir/libadeshlang.dylib" "$stage/bin/"
-fi
+for dylib in libadeshlang.so libadesh_runtime.so libadeshlang.dylib libadesh_runtime.dylib; do
+  if [[ -f "$target_dir/$dylib" ]]; then
+    cp "$target_dir/$dylib" "$stage/lib/"
+    cp "$target_dir/$dylib" "$stage/bin/"
+  fi
+done
 
 cp "$root/LICENSE" "$stage/licenses/AdeshLang-LICENSE"
 cp "$root/LICENSE" "$stage/THIRD_PARTY_LICENSES/AdeshLang-LICENSE"
 if [[ -d "$root/THIRD_PARTY_LICENSES" ]]; then
   cp -a "$root/THIRD_PARTY_LICENSES/." "$stage/licenses/"
   cp -a "$root/THIRD_PARTY_LICENSES/." "$stage/THIRD_PARTY_LICENSES/"
+if [[ -d "$root/src/stdlib" ]]; then
+  cp -a "$root/src/stdlib/." "$stage/std/"
 fi
-cp "$root"/src/stdlib/*.adesh "$stage/std/"
+if [[ -d "$root/std" ]]; then
+  cp -a "$root/std/." "$stage/std/"
+fi
 cp "$root/installer/manifests/toolchain-manifest.json" "$stage/config/toolchain-manifest.json"
 printf '%s\n' "$version" > "$stage/VERSION"
 
@@ -230,6 +239,10 @@ tar -C "$root/dist" -cJf "$archive" "$(basename "$archive_stage")"
 echo "Successfully created $archive"
 
 if [[ "$os" == "linux" ]]; then
+  if [[ -f "$root/installer/linux/install.sh" ]]; then
+    cp "$root/installer/linux/install.sh" "$root/dist/install-linux.sh"
+    chmod +x "$root/dist/install-linux.sh"
+  fi
   if command -v dpkg-deb >/dev/null 2>&1; then
     deb_arch="amd64"
     [[ "$arch" == "aarch64" ]] && deb_arch="arm64"
@@ -241,5 +254,10 @@ if [[ "$os" == "linux" ]]; then
     bash "$root/installer/linux/rpm/build-rpm.sh" "$arch" "$version"
   else
     echo "Warning: rpmbuild not found; skipping RPM package build." >&2
+  fi
+elif [[ "$os" == "macos" ]]; then
+  if [[ -f "$root/installer/macos/install.sh" ]]; then
+    cp "$root/installer/macos/install.sh" "$root/dist/install-macos.sh"
+    chmod +x "$root/dist/install-macos.sh"
   fi
 fi

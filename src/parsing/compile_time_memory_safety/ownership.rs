@@ -171,6 +171,32 @@ impl super::CompileTimeMemorySafety {
             HirStmt::Expr(expr) => {
                 // Check if expression uses any moved variables
                 self.check_expr_for_moved_vars(expr)?;
+
+                // If this is a function call, passing a non-Copy variable by value moves ownership
+                if let HirExpr::Call(func_expr, args, _) = expr {
+                    let is_print = match func_expr.as_ref() {
+                        HirExpr::LoadVar(name) => name == "print" || name == "println",
+                        _ => false,
+                    };
+                    if !is_print {
+                        for arg in args {
+                            if let HirExpr::LoadVar(src_name) = arg {
+                                let is_copy = self
+                                    .ownership_graph
+                                    .get(src_name)
+                                    .map(|n| n.is_copy_type)
+                                    .unwrap_or(false);
+                                if !is_copy {
+                                    let loc = self.get_source_location(0);
+                                    if let Some(node) = self.ownership_graph.get_mut(src_name) {
+                                        node.state = OwnershipState::Moved;
+                                        node.location = loc;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             HirStmt::Return(Some(expr)) => {

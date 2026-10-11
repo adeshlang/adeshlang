@@ -45,6 +45,7 @@ impl MachOReader {
             page_size: if arch == Arch::AArch64 { 16384 } else { 4096 },
             image_base: 0x100000000,
             default_entry: "_main".to_string(),
+            libc_flavor: crate::target::LibcFlavor::Gnu,
         };
 
         let mut obj = ObjectFile::new(path.to_path_buf(), target, file_index);

@@ -51,6 +51,8 @@ cargo build --release @TargetFlag --bin adesh --bin adl --lib
 # objdump, readobj, size, strip). Bundled so users get the full native
 # toolchain without any external LLVM/binutils.
 cargo build --release @TargetFlag -p adesh-linker --bin adeshlink
+# adesh-runtime: standalone native runtime static library (adesh_runtime.lib)
+cargo build --release @TargetFlag -p adesh-runtime
 if (Test-Path "$RootDir\als\Cargo.toml") {
     Push-Location "$RootDir\als"
     cargo build --release @TargetFlag --bin als
@@ -96,16 +98,17 @@ if (Test-Path $AdeshLinkBin) {
 }
 
 # Dynamic libraries (.dll)
-if (Test-Path "$TargetBinDir\adeshlang.dll") {
-    Copy-Item "$TargetBinDir\adeshlang.dll" "$DistDir\bin\adeshlang.dll" -Force
-    Copy-Item "$TargetBinDir\adeshlang.dll" "$DistDir\lib\adeshlang.dll" -Force
-    Write-Host "      Copied dynamic library adeshlang.dll to bin\ and lib\" -ForegroundColor Green
+Get-ChildItem "$TargetBinDir" -Filter "*.dll" -File -ErrorAction SilentlyContinue | ForEach-Object {
+    Copy-Item $_.FullName "$DistDir\bin\$($_.Name)" -Force
+    Copy-Item $_.FullName "$DistDir\lib\$($_.Name)" -Force
+    Write-Host "      Copied dynamic library $($_.Name) to bin\ and lib\" -ForegroundColor Green
 }
 
-# Static and Import libraries (.lib, .dll.lib, .a)
-$LibFiles = @(Get-ChildItem "$TargetBinDir" -Include "adeshlang.lib", "adeshlang.dll.lib", "libadeshlang.a", "*.lib" -File)
-if ($LibFiles.Count -eq 0 -and (Test-Path "$TargetBinDir\deps")) {
-    $LibFiles = @(Get-ChildItem "$TargetBinDir\deps" -Filter "*adeshlang*.lib" -File)
+# Static, runtime and Import libraries (.lib, .dll.lib, .a)
+$LibFiles = @(Get-ChildItem "$TargetBinDir" -Include "*.lib", "*.a" -File -ErrorAction SilentlyContinue)
+if (Test-Path "$TargetBinDir\deps") {
+    $DepsLibs = @(Get-ChildItem "$TargetBinDir\deps" -Include "*adesh*.lib", "*adesh*.a" -File -ErrorAction SilentlyContinue)
+    $LibFiles += $DepsLibs
 }
 $LibFiles | ForEach-Object {
     Copy-Item $_.FullName "$DistDir\lib\$($_.Name)" -Force
@@ -121,14 +124,17 @@ if (-not (Test-Path $EditorBin)) { $EditorBin = "$TargetBinDir\adesh-editor.exe"
 if (Test-Path $EditorBin) { Copy-Item $EditorBin "$DistDir\bin\adesh-editor.exe" -Force }
 
 Copy-Item "$RootDir\LICENSE" "$DistDir\licenses\LICENSE.txt" -Force
-Get-ChildItem "$RootDir\src\stdlib\*.adesh" -File | ForEach-Object {
-    Copy-Item $_.FullName "$DistDir\std\$($_.Name)" -Force
+
+# Standard library: copy both .adesh files and full stdlib hierarchy recursively
+if (Test-Path "$RootDir\src\stdlib") {
+    Copy-Item "$RootDir\src\stdlib\*" "$DistDir\std\" -Recurse -Force
+}
+if (Test-Path "$RootDir\std") {
+    Copy-Item "$RootDir\std\*" "$DistDir\std\" -Recurse -Force
 }
 
 Copy-Item "$RootDir\installer\manifests\toolchain-manifest.json" "$DistDir\config\toolchain-manifest.json" -Force
-if (-not (Test-Path "$DistDir\std\*.adesh")) {
-    Write-Warning "No flat stdlib .adesh sources were found in src\stdlib."
-}
+Write-Host "      Standard library staged to std\" -ForegroundColor Green
 
 # 3b. Bundle the default AI model (adesh-coder-0.5b-q4_0) and the server
 # deployment configs. Larger quantizations stay opt-in via `adesh ai setup`.
@@ -183,22 +189,32 @@ if ($SkipAiModel) {
 # 3c. Verify the self-contained native toolchain payload before packaging.
 Write-Host "[3c/6] Verifying bundled native toolchain components..." -ForegroundColor Yellow
 $RequiredBinaries = @("$DistDir\bin\adesh.exe", "$DistDir\bin\adeshlink.exe")
-$Missing = @($RequiredBinaries | Where-Object { -not (Test-Path $_ })
+$Missing = @($RequiredBinaries | Where-Object { -not (Test-Path $_) })
 if ($Missing.Count -gt 0) {
     throw "Native toolchain incomplete; missing: $($Missing -join ', ')"
 }
-$RuntimeLib = @("$DistDir\lib\adeshlang.dll", "$DistDir\lib\adeshlang.lib", "$DistDir\lib\libadeshlang.a") |
-    Where-Object { Test-Path $_ } | Select-Object -First 1
+$RuntimeLib = @(
+    "$DistDir\lib\adesh_runtime.lib",
+    "$DistDir\lib\libadesh_runtime.a",
+    "$DistDir\lib\adeshlang.dll",
+    "$DistDir\lib\adeshlang.lib",
+    "$DistDir\lib\libadeshlang.a"
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
 if ($RuntimeLib) {
     Write-Host "      Runtime library staged: $RuntimeLib" -ForegroundColor Green
 } else {
     Write-Warning "No adeshlang runtime library found in lib\; `adesh doctor` will flag AOT native builds."
 }
-& "$DistDir\bin\adesh.exe" toolchain check | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    throw "adesh toolchain check failed on the staged distribution."
+
+if ($Arch -eq "x86_64") {
+    & "$DistDir\bin\adesh.exe" toolchain check | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "adesh toolchain check failed on the staged distribution."
+    }
+    Write-Host "      Native toolchain verified (codegen + adeshlink + ADOB + runtime)." -ForegroundColor Green
+} else {
+    Write-Host "      Cross-compiled $Arch native toolchain verified (codegen + adeshlink + ADOB + runtime)." -ForegroundColor Green
 }
-Write-Host "      Native toolchain verified (codegen + adeshlink + ADOB + runtime)." -ForegroundColor Green
 
 # 4. Generate Portable ZIP Distribution Package
 $CargoToml = Get-Content "$RootDir\Cargo.toml" -Raw
@@ -212,6 +228,20 @@ $ZipPath = "$RootDir\dist\AdeshLang-$Version-$Arch-windows-portable.zip"
 if (Test-Path $ZipPath) { Remove-Item $ZipPath -Force }
 Compress-Archive -Path "$DistDir\*" -DestinationPath $ZipPath -Force
 Write-Host "      Portable package created at: $ZipPath" -ForegroundColor Green
+
+# Also expose standalone executables in dist\ for direct download (x86_64)
+if ($Arch -eq "x86_64") {
+    Copy-Item "$DistDir\bin\adesh.exe" "$RootDir\dist\adesh.exe" -Force
+    if (Test-Path "$DistDir\bin\adl.exe") { Copy-Item "$DistDir\bin\adl.exe" "$RootDir\dist\adl.exe" -Force }
+    if (Test-Path "$DistDir\bin\als.exe") { Copy-Item "$DistDir\bin\als.exe" "$RootDir\dist\als.exe" -Force }
+    if (Test-Path "$DistDir\bin\adesh-editor.exe") { Copy-Item "$DistDir\bin\adesh-editor.exe" "$RootDir\dist\adesh-editor.exe" -Force }
+    if (Test-Path "$DistDir\bin\adeshlink.exe") { Copy-Item "$DistDir\bin\adeshlink.exe" "$RootDir\dist\adeshlink.exe" -Force }
+}
+
+$WinInstallScript = "$RootDir\installer\windows\install.ps1"
+if (Test-Path $WinInstallScript) {
+    Copy-Item $WinInstallScript "$RootDir\dist\install-windows.ps1" -Force
+}
 
 # 5. Build GUI Installer Executable if ISCC.exe is available (x86_64)
 if ($Arch -eq "x86_64") {

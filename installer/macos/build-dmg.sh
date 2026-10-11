@@ -60,18 +60,26 @@ if [[ -z "$ARCH" ]]; then
         arm64|aarch64) ARCH="arm64" ;;
         x86_64|amd64)  ARCH="x86_64" ;;
         *) echo "error: unsupported architecture: $(uname -m) (pass arm64 or x86_64)" >&2; exit 2 ;;
-    esac
-fi
+case "$ARCH" in
+    arm64|aarch64) ARCH="arm64" ;;
+    x86_64|amd64)  ARCH="x86_64" ;;
+esac
 
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -n1)"
 [[ -n "$VERSION" ]] || VERSION="0.3.0"
 
 DIST_DIR="$ROOT/dist/macos-$ARCH"
 if [[ ! -d "$DIST_DIR/bin" ]]; then
-    echo "error: expected a staged dist directory at $DIST_DIR (bin/ missing)." >&2
-    echo "The macOS release pipeline must produce dist/macos-arm64 and" >&2
-    echo "dist/macos-x86_64 with bin/, std/, config/ and licenses/." >&2
-    exit 1
+    if [[ "$ARCH" == "arm64" && -d "$ROOT/dist/macos-aarch64/bin" ]]; then
+        DIST_DIR="$ROOT/dist/macos-aarch64"
+    elif [[ -d "$ROOT/dist/macos" ]]; then
+        DIST_DIR="$ROOT/dist/macos"
+    else
+        echo "error: expected a staged dist directory at $DIST_DIR (bin/ missing)." >&2
+        echo "The macOS release pipeline must produce dist/macos-arm64 (or dist/macos-aarch64) and" >&2
+        echo "dist/macos-x86_64 with bin/, std/, config/ and licenses/." >&2
+        exit 1
+    fi
 fi
 
 OUT_DIR="$ROOT/dist"
@@ -111,11 +119,12 @@ fi
 if [[ -d "$DIST_DIR/std" ]]; then
     /usr/bin/ditto "$DIST_DIR/std" "$STAGE/std"
 else
-    shopt -s nullglob
-    for f in "$ROOT"/src/stdlib/*.adesh; do
-        cp "$f" "$STAGE/std/"
-    done
-    shopt -u nullglob
+    if [[ -d "$ROOT/src/stdlib" ]]; then
+        /usr/bin/ditto "$ROOT/src/stdlib" "$STAGE/std"
+    fi
+    if [[ -d "$ROOT/std" ]]; then
+        /usr/bin/ditto "$ROOT/std" "$STAGE/std"
+    fi
 fi
 
 if [[ -f "$DIST_DIR/config/toolchain-manifest.json" ]]; then

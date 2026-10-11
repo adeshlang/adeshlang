@@ -146,6 +146,14 @@
       "target_os": "windows",
       "target_arch": "x86_64"
     },
+    "linker_windows_x86_64": {
+      "version": "0.3.0",
+      "size": 5242880,
+      "sha256": "a1b2c3d4e5f67890123456789abcdef0123456789abcdef0123456789abcdef0",
+      "url": "https://github.com/adeshlang/adeshlang/releases/download/v0.3.0/adeshlink.exe",
+      "target_os": "windows",
+      "target_arch": "x86_64"
+    },
     "mobile_android_arm64": {
       "version": "0.3.0",
       "size": 65770019,

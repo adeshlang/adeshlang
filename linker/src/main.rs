@@ -60,6 +60,12 @@ CORE LINKING OPTIONS:
     --format <format>     Override output format: elf, pe, macho, xcoff, wasm, fatbin, qir, adesh
     --shared              Create a shared library / DLL / dylib / .so
     --static              Produce a standalone static executable [default: enabled]
+    --dynamic             Dynamically linked ELF executable: PT_INTERP + dynamic symbol
+                          tables; unresolved libc/POSIX symbols import from the target
+                          C library through PLT/GOT stubs (eager DT_BIND_NOW binding)
+    --pie                 Position-independent executable (ET_DYN + DF_1_PIE +
+                          R_X86_64_RELATIVE relocations); implies --dynamic
+    --no-pie              Disable position-independent output
 
 OPTIMIZATIONS & STRIPPING:
     -O0|-O1|-O2|-O3     Select link-time optimization policy (default: -O2)
@@ -336,8 +342,26 @@ fn main() {
             "--shared" => {
                 config.shared = true;
             }
-            "--static" => {
+            "--static" | "-Bstatic" => {
                 config.static_link = true;
+                config.dynamic = false;
+                config.pie = false;
+            }
+            "--dynamic" | "-Bdynamic" => {
+                // Produce a dynamically linked ELF executable: PT_INTERP,
+                // dynamic symbol/relocation tables, libc imports via PLT/GOT.
+                config.dynamic = true;
+                config.static_link = false;
+            }
+            "--pie" => {
+                // Position-independent executable (ET_DYN + DF_1_PIE +
+                // R_X86_64_RELATIVE relocations).
+                config.pie = true;
+                config.dynamic = true;
+                config.static_link = false;
+            }
+            "--no-pie" => {
+                config.pie = false;
             }
             "-O0" | "--opt=0" => config.apply_optimization_level(OptLevel::O0),
             "-O1" | "--opt=1" => config.apply_optimization_level(OptLevel::O1),

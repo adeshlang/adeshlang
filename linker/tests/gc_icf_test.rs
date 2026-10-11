@@ -167,7 +167,7 @@ fn test_elf_tls_requires_loader_metadata_instead_of_silent_shared_storage() {
     tls.flags |= flags::TLS;
     obj.add_section(tls);
     let error = LayoutEngine::new()
-        .layout_and_relocate(&[obj], &SymbolResolver::new(), &target, "main")
+        .layout_and_relocate(&[obj], &SymbolResolver::new(), &target, "main", false)
         .unwrap_err();
     assert!(error.to_string().contains("TLS input sections"));
 }

@@ -161,6 +161,17 @@ Copy-Item `
     -Recurse `
     -Force
 
+$DistLib = Join-Path $DistDir "lib"
+if (Test-Path -LiteralPath $DistLib) {
+    Copy-Item `
+        -LiteralPath $DistLib `
+        -Destination $SourceDir `
+        -Recurse `
+        -Force
+} else {
+    New-Item -ItemType Directory -Force -Path (Join-Path $SourceDir "lib") | Out-Null
+}
+
 Copy-Item `
     -LiteralPath (Join-Path $DistDir "std") `
     -Destination $SourceDir `
@@ -180,13 +191,13 @@ Copy-Item `
     -Force
 
 if (Test-Path -LiteralPath $AiDir) {
-
     Copy-Item `
         -LiteralPath $AiDir `
         -Destination $SourceDir `
         -Recurse `
         -Force
-
+} else {
+    New-Item -ItemType Directory -Force -Path (Join-Path $SourceDir "ai") | Out-Null
 }
 
 # ==============================================================================
@@ -309,28 +320,10 @@ Write-Host "MSI CREATED SUCCESSFULLY"
 Write-Host "========================================"
 Write-Host "Path: $($MsiInfo.FullName)"
 Write-Host "Size: $($MsiInfo.Length) bytes"
-Write-Host "========================================"Copy-Item (Join-Path $DistDir "bin") $SourceDir -Recurse -Force
-Copy-Item (Join-Path $DistDir "std") $SourceDir -Recurse -Force
-Copy-Item (Join-Path $DistDir "config") $SourceDir -Recurse -Force
-Copy-Item (Join-Path $DistDir "licenses") $SourceDir -Recurse -Force
-if (Test-Path (Join-Path $DistDir "ai")) {
-    Copy-Item (Join-Path $DistDir "ai") $SourceDir -Recurse -Force
-}
+Write-Host "========================================"
 
-$Wix = Get-Command "wix.exe" -ErrorAction SilentlyContinue
-if (-not $Wix) {
-    throw "WiX v5 CLI (wix.exe) was not found on PATH. Install WiX Toolset v5 and retry."
+# Ensure the MSI is available directly in dist\
+$DistRoot = Join-Path $RootDir "dist"
+if (Test-Path -LiteralPath $DistRoot) {
+    Copy-Item -LiteralPath $MsiPath -Destination (Join-Path $DistRoot $MsiInfo.Name) -Force
 }
-$WixArch = if ($Arch -eq "aarch64") { "arm64" } else { "x64" }
-
-Write-Host "Building $MsiPath..."
-# WiX v4/v5 CLI rejects the WiX v3 attached form "-dName=Value"; the define
-# must be passed as a separate "-d" switch followed by "Name=Value".
-& $Wix.Source build (Join-Path $PSScriptRoot "Product.wxs") `
-    "-arch" $WixArch `
-    "-d" "SourceDir=$SourceDir" `
-    "-o" $MsiPath
-if ($LASTEXITCODE -ne 0) {
-    throw "WiX failed to build the MSI (exit code $LASTEXITCODE)."
-}
-Write-Host "MSI created: $MsiPath"

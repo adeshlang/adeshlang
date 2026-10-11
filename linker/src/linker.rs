@@ -270,6 +270,18 @@ impl Linker {
             }
         }
 
+        // ELF dynamic-linking scope: PLT/GOT import stubs are only correct in
+        // a link that actually emits dynamic-linking metadata. In a static
+        // link, a routed libc symbol has no stub target and must fail loudly
+        // rather than silently becoming a broken `jmp [0]` gadget.
+        let elf_dynamic_mode =
+            is_elf && (ctx.config.shared || ctx.config.pie || ctx.config.dynamic);
+        // Data-object imports (e.g. `stdout`) can never be served by a
+        // function stub; address-of-imported-data is unsupported.
+        let mut unsupported_data_imports: Vec<String> = Vec::new();
+        // C library symbols that a static link cannot satisfy.
+        let mut static_libc_imports: Vec<String> = Vec::new();
+
         if !missing_symbols.is_empty() {
             let file_idx = ctx.objects.len();
             let mut synth_obj = crate::object::ObjectFile::new(
@@ -358,10 +370,27 @@ impl Linker {
                     && ctx.config.target.arch == crate::target::Arch::X86_64
                     && crate::os_router::OsApiRouter::windows_dll_for(name).is_some();
 
+                let route = crate::os_router::OsApiRouter::classify(name, &ctx.config.target);
+                if let crate::os_router::SymbolRoute::DllImport { is_data, .. } = &route {
+                    if *is_data {
+                        unsupported_data_imports.push(name.clone());
+                        continue;
+                    }
+                    if is_elf && !elf_dynamic_mode {
+                        // A genuine C library symbol, but this link is static:
+                        // there is no dynamic symbol table to import through.
+                        // Failing here is required: synthesizing the PLT stub
+                        // anyway would emit a call through a zero GOT slot.
+                        static_libc_imports.push(name.clone());
+                        continue;
+                    }
+                }
+
                 let importable_elf = is_elf
+                    && elf_dynamic_mode
                     && ctx.config.target.arch == crate::target::Arch::X86_64
                     && matches!(
-                        crate::os_router::OsApiRouter::classify(name, &ctx.config.target),
+                        route,
                         crate::os_router::SymbolRoute::DllImport { .. }
                     );
 
@@ -454,6 +483,32 @@ impl Linker {
                     version: None,
                 };
                 synth_symbols.push(sym);
+            }
+
+            if !unsupported_data_imports.is_empty() {
+                unsupported_data_imports.sort();
+                return Err(LinkError::new(
+                    ErrorCode::UnsupportedRelocation,
+                    format!(
+                        "imported data symbol(s) are not supported: {} — Adesh links cannot \
+                         take the address of C library data objects (no COPY relocations or \
+                         GOT-relative loads are emitted yet)",
+                        unsupported_data_imports.join(", ")
+                    ),
+                ));
+            }
+
+            if !static_libc_imports.is_empty() {
+                static_libc_imports.sort();
+                return Err(LinkError::new(
+                    ErrorCode::UndefinedSymbol,
+                    format!(
+                        "undefined symbol(s) in static link: {} — these are C library symbols; \
+                         pass --dynamic (or --pie) to import them from the system C library, \
+                         or provide definitions in an input object/archive",
+                        static_libc_imports.join(", ")
+                    ),
+                ));
             }
 
             if !undefined_app_symbols.is_empty() {
@@ -614,6 +669,7 @@ impl Linker {
             &ctx.resolver,
             &ctx.config.target,
             ctx.config.effective_entry(),
+            elf_dynamic_mode,
         )?;
 
         // Surface non-fatal relocation issues (weak/internal symbols that could
@@ -659,12 +715,75 @@ impl Linker {
 
         match ctx.config.target.format {
             ObjectFormat::Elf => {
-                let soname_str = ctx.config.output_path.file_name().and_then(|n| n.to_str());
-                let needed_libs: &[String] = if ctx.config.shared {
-                    &ctx.config.libraries
-                } else {
-                    &[]
+                let mut elf_info = crate::elf::dynamic::ElfLinkInfo {
+                    pie: ctx.config.pie,
+                    imports: {
+                        let mut imports = ctx.resolver.dynamic_imports.clone();
+                        imports.sort();
+                        imports.dedup();
+                        imports
+                            .into_iter()
+                            .filter(|name| !ctx.resolver.dynamic_data_imports.contains(name))
+                            .collect()
+                    },
+                    got_slots: ctx.layout.elf_got_slots.clone(),
+                    dynamic_relocs: ctx.layout.elf_dynamic_relocs.clone(),
+                    interpreter: None,
+                    needed_libs: Vec::new(),
+                    soname: None,
                 };
+
+                if elf_dynamic_mode {
+                    // PT_INTERP: from the requested target triple's libc
+                    // flavor, never from the host.
+                    if !ctx.config.shared {
+                        elf_info.interpreter =
+                            ctx.config.target.elf_interpreter().map(|s| s.to_string());
+                    }
+
+                    // DT_NEEDED: user libraries plus the target C library
+                    // (glibc names libc.so.6; musl's interpreter *is* the C
+                    // library and needs no soname) and libgcc_s for unwind
+                    // imports.
+                    let mut needed: Vec<String> = Vec::new();
+                    for lib in &ctx.config.libraries {
+                        let name = if lib.contains(".so") {
+                            lib.clone()
+                        } else {
+                            format!("lib{}.so.6", lib)
+                        };
+                        if !needed.contains(&name) {
+                            needed.push(name);
+                        }
+                    }
+                    let imports_c_lib = elf_info
+                        .imports
+                        .iter()
+                        .any(|name| !name.starts_with("_Unwind_"));
+                    if imports_c_lib || !ctx.config.shared {
+                        if let Some(libc) = ctx.config.target.libc_soname()
+                            && !needed.iter().any(|n| n == libc)
+                        {
+                            needed.push(libc.to_string());
+                        }
+                    }
+                    if elf_info.imports.iter().any(|name| name.starts_with("_Unwind_"))
+                        && !needed.iter().any(|n| n == "libgcc_s.so.1")
+                    {
+                        needed.push("libgcc_s.so.1".to_string());
+                    }
+                    elf_info.needed_libs = needed;
+
+                    if ctx.config.shared {
+                        elf_info.soname = ctx
+                            .config
+                            .output_path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .map(|s| s.to_string());
+                    }
+                }
+
                 ElfWriter::write_elf(
                     &ctx.config.output_path,
                     &ctx.config.target,
@@ -673,8 +792,11 @@ impl Linker {
                     emit_symbols,
                     build_id_bytes.as_ref().map(|b| &b[..20]),
                     ctx.config.shared,
-                    needed_libs,
-                    soname_str,
+                    if elf_dynamic_mode {
+                        Some(&elf_info)
+                    } else {
+                        None
+                    },
                 )?;
             }
             ObjectFormat::Pe => {

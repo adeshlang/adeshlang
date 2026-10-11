@@ -142,6 +142,7 @@ impl PeReader {
                 0x140000000
             },
             default_entry: "mainCRTStartup".to_string(),
+            libc_flavor: crate::target::LibcFlavor::Gnu,
         };
 
         // COFF does not record an alignment for COMMON (tentative) definitions;

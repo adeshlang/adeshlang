@@ -98,45 +98,97 @@ impl LoopOptimizer {
     }
 
     /// Hoist instructions whose operands are invariant outside the loop.
+    ///
+    /// Soundness mirrors `LICMPass`: a `Move <- Immediate` may be hoisted only
+    /// when it is the *only* definition of its virtual destination inside the
+    /// loop. A destination the loop also mutates in place (for example an
+    /// address computation `Move scaled <- idx; Add scaled += ptr` sharing
+    /// one virtual register) must re-execute every iteration, and physical
+    /// destinations can be clobbered by calls inside the loop.
     fn run_licm(&self, func: &mut MachineFunction) -> usize {
         let mut hoisted = 0;
-        // In CFG with at least 2 blocks (preheader + loop header/body)
         if func.blocks.len() < 2 {
             return 0;
         }
 
-        // Identify instructions in loop body that compute constants or use registers
-        // defined outside the loop body
-        for b_idx in 1..func.blocks.len() {
-            let mut invariants = Vec::new();
-            let mut i = 0;
-            while i < func.blocks[b_idx].instructions.len() {
-                let is_invariant = match &func.blocks[b_idx].instructions[i] {
-                    MachineInstruction::Move { src, .. } => {
-                        matches!(src, MachineOperand::Immediate(_))
-                    }
-                    MachineInstruction::Add { src, .. } | MachineInstruction::Sub { src, .. } => {
-                        matches!(src, MachineOperand::Immediate(_))
-                    }
-                    _ => false,
-                };
+        let dom = crate::opt::dominance::DominatorTree::compute(func);
+        let loop_info = crate::opt::loop_analysis::LoopInfo::analyze(func, &dom);
+        if loop_info.loops.is_empty() {
+            return 0;
+        }
 
-                if is_invariant {
-                    invariants.push(func.blocks[b_idx].instructions.remove(i));
-                    hoisted += 1;
-                } else {
-                    i += 1;
+        for nat_loop in loop_info.loops.values() {
+            let Some(preheader_id) = func
+                .blocks
+                .iter()
+                .find(|b| b.id == nat_loop.header_id)
+                .and_then(|header| {
+                    header
+                        .predecessors
+                        .iter()
+                        .find(|&&p| !nat_loop.block_ids.contains(&p))
+                        .copied()
+                })
+            else {
+                continue;
+            };
+
+            // Count virtual-register definitions inside the loop.
+            let mut def_counts: std::collections::HashMap<VirtualRegister, usize> =
+                std::collections::HashMap::new();
+            for &b_id in &nat_loop.block_ids {
+                if let Some(b) = func.blocks.iter().find(|blk| blk.id == b_id) {
+                    for inst in &b.instructions {
+                        for def in inst.defs() {
+                            if let MachineRegister::Virtual(v) = def {
+                                *def_counts.entry(v).or_insert(0) += 1;
+                            }
+                        }
+                    }
                 }
             }
 
-            // Hoist to block 0 (preheader)
-            for inv_inst in invariants {
-                let insert_pos = if func.blocks[0].instructions.is_empty() {
-                    0
-                } else {
-                    func.blocks[0].instructions.len() - 1
+            for &b_id in &nat_loop.block_ids {
+                let Some(b) = func.blocks.iter_mut().find(|blk| blk.id == b_id) else {
+                    continue;
                 };
-                func.blocks[0].instructions.insert(insert_pos, inv_inst);
+                let mut invariants = Vec::new();
+                let mut retain = Vec::new();
+                for inst in b.instructions.drain(..) {
+                    let is_invariant = match &inst {
+                        MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(d)),
+                            src: MachineOperand::Immediate(_),
+                        } if def_counts.get(d) == Some(&1) => true,
+                        _ => false,
+                    };
+
+                    if is_invariant {
+                        invariants.push(inst);
+                        hoisted += 1;
+                    } else {
+                        retain.push(inst);
+                    }
+                }
+                b.instructions = retain;
+
+                // Hoist into the preheader, before its terminator when it
+                // ends in a branch.
+                if !invariants.is_empty()
+                    && let Some(preheader) =
+                        func.blocks.iter_mut().find(|b| b.id == preheader_id)
+                {
+                    let insert_pos = match preheader.instructions.last() {
+                        Some(MachineInstruction::Branch { .. }
+                        | MachineInstruction::BranchCc { .. }) => {
+                            preheader.instructions.len() - 1
+                        }
+                        _ => preheader.instructions.len(),
+                    };
+                    for (i, inst) in invariants.into_iter().enumerate() {
+                        preheader.instructions.insert(insert_pos + i, inst);
+                    }
+                }
             }
         }
 

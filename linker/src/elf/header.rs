@@ -55,6 +55,7 @@ pub const SHT_NOBITS: u32 = 8;
 pub const SHT_REL: u32 = 9;
 pub const SHT_DYNSYM: u32 = 11;
 pub const SHT_GROUP: u32 = 17;
+pub const SHT_GNU_HASH: u32 = 0x6ffffff6;
 
 // Section group flags
 pub const GRP_COMDAT: u32 = 0x1;
@@ -233,8 +234,18 @@ pub const DT_FLAGS: i64 = 30;
 pub const DT_GNU_HASH: i64 = 0x6ffffef5;
 pub const DT_FLAGS_1: i64 = 0x6ffffffb;
 
+// DF_FLAGS (d_val of DT_FLAGS)
+pub const DF_ORIGIN: u64 = 0x00000001;
+pub const DF_SYMBOLIC: u64 = 0x00000002;
+pub const DF_TEXTREL: u64 = 0x00000004;
+pub const DF_BIND_NOW: u64 = 0x00000008;
+pub const DF_STATIC_TLS: u64 = 0x00000010;
+
 pub const DF_1_NOW: u64 = 0x00000001;
 pub const DF_1_PIE: u64 = 0x08000000;
+
+// Special section indices
+pub const SHN_ABS: u16 = 0xfff1;
 
 // Dynamic Relocations
 pub const R_X86_64_GLOB_DAT: u32 = 6;

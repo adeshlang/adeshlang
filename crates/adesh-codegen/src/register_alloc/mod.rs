@@ -2359,6 +2359,24 @@ impl<'a> LinearScanAllocator<'a> {
             *candidate_counts.entry(*vreg).or_insert(0usize) += 1;
         }
         candidates.retain(|(_, _, vreg, _)| candidate_counts[vreg] == 1);
+        // Edge copybacks are inserted before the first branch-like
+        // instruction of each block in the split region. If the split block
+        // itself branches before the call (for example a `while` loop whose
+        // condition test shares the block with the loop body), that copyback
+        // executes on paths that never reached the call, copying an
+        // undefined post-call piece into the pre-call virtual register and
+        // its snapshot slot. Such candidates must keep the general
+        // stack-copy preservation path instead of the local split.
+        candidates.retain(|(split_block, call_idx, _, _)| {
+            func.blocks[*split_block as usize].instructions[..*call_idx].iter().all(|prior| {
+                !matches!(
+                    prior,
+                    MachineInstruction::Branch { .. }
+                        | MachineInstruction::BranchCc { .. }
+                        | MachineInstruction::Return
+                )
+            })
+        });
         candidates.retain(|(split_block, _, _, _)| {
             func.blocks
                 .iter()
@@ -3347,6 +3365,69 @@ mod tests {
                 .iter()
                 .any(|inst| matches!(inst, MachineInstruction::Store { .. })),
             "the loop backedge must refresh the call snapshot"
+        );
+    }
+
+    #[test]
+    fn test_pre_call_branch_in_split_block_keeps_general_path() {
+        // A `while` loop whose condition test shares the block with the
+        // loop body branches *before* the body's call. Copybacks inserted
+        // before that first branch would copy an undefined post-call piece
+        // into the loop-carried value on the first (and zero) iteration, so
+        // the split must be rejected in favor of the general stack-copy path.
+        let mut func = MachineFunction::new("test_while_call_split_rejected");
+        let loop_id = func.create_block("loop");
+        let exit_id = func.create_block("exit");
+        let live_value = func.alloc_vreg();
+
+        func.entry_block_mut().push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+            src: MachineOperand::Immediate(41),
+        });
+        func.entry_block_mut().push(MachineInstruction::Branch {
+            target: "loop".to_string(),
+        });
+        func.blocks[loop_id as usize].push(MachineInstruction::BranchCc {
+            cc: crate::machine_ir::ConditionCode::Equal,
+            target: "exit".to_string(),
+        });
+        func.blocks[loop_id as usize].push(MachineInstruction::Call {
+            target: MachineOperand::Symbol("zero_arg".to_string()),
+            num_args: 0,
+        });
+        func.blocks[loop_id as usize].push(MachineInstruction::Add {
+            dst: MachineOperand::Register(MachineRegister::Virtual(live_value)),
+            src: MachineOperand::Immediate(1),
+        });
+        func.blocks[loop_id as usize].push(MachineInstruction::Branch {
+            target: "loop".to_string(),
+        });
+        func.blocks[exit_id as usize].push(MachineInstruction::Return);
+
+        let reg_file = X86_64RegisterFile::sysv();
+        let allocator = LinearScanAllocator::new(&reg_file);
+        let result = allocator
+            .allocate(&mut func)
+            .expect("loop carried value must survive the call");
+        assert_eq!(
+            func.vreg_count, 1,
+            "a pre-call branch in the split block must reject the local split"
+        );
+        assert!(
+            result.vreg_map.contains_key(&VirtualRegister(0))
+                || result.spill_map.contains_key(&VirtualRegister(0)),
+            "the loop-carried value keeps the general preservation path"
+        );
+        let loop_instructions = &func.blocks[loop_id as usize].instructions;
+        let branch_cc_index = loop_instructions
+            .iter()
+            .position(|inst| matches!(inst, MachineInstruction::BranchCc { .. }))
+            .expect("the loop condition branch remains");
+        assert!(
+            loop_instructions[..branch_cc_index]
+                .iter()
+                .all(|inst| !matches!(inst, MachineInstruction::Store { .. })),
+            "no copyback store may run before the condition branch on first entry"
         );
     }
 

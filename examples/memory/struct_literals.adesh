@@ -74,9 +74,9 @@ fn test_nested_access() {
     }
 }
 
-// Struct literal with mutation
+// Struct literal with mutation (Adesh variables are mutable by default)
 fn test_struct_mutation() {
-    let mut p = Point {
+    let p = Point {
         x: 1,
         y: 2,
     };

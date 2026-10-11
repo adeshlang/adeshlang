@@ -199,8 +199,8 @@ fn test_linux_elf_control_flow_and_loops() {
     let (_, code) = compile_link_and_run_linux(
         r#"
         fn main(): int {
-            let mut sum = 0;
-            let mut i = 1;
+            let sum = 0;
+            let i = 1;
             while (i <= 10) {
                 sum = sum + i;
                 i = i + 1;

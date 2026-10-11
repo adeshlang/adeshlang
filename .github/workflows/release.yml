@@ -141,7 +141,7 @@ jobs:
           # macOS Intel x86_64
           # --------------------------------------------------------------------
           - platform: macos-x86_64
-            runner: macos-15-intel
+            runner: macos-13
             os: macos
             arch: x86_64
             target: x86_64-apple-darwin
@@ -302,19 +302,13 @@ jobs:
             -Force |
             Out-Null
 
-          $stdlib = Get-ChildItem `
-            -Path (Join-Path $root "src\stdlib") `
-            -Filter "*.adesh" `
-            -File `
-            -ErrorAction SilentlyContinue
-
-          if ($stdlib) {
-            foreach ($file in $stdlib) {
-              Copy-Item `
-                -LiteralPath $file.FullName `
-                -Destination $stdDir `
-                -Force
-            }
+          $srcStd = Join-Path $root "src\stdlib"
+          if (Test-Path -LiteralPath $srcStd) {
+            Copy-Item -Path "$srcStd\*" -Destination $stdDir -Recurse -Force
+          }
+          $rootStd = Join-Path $root "std"
+          if (Test-Path -LiteralPath $rootStd) {
+            Copy-Item -Path "$rootStd\*" -Destination $stdDir -Recurse -Force
           }
 
           # --------------------------------------------------------------------

@@ -25,7 +25,7 @@ fn test_posix_libc_symbol_classification_linux_elf() {
     // Standard output
     for sym in ["puts", "write", "printf", "fputs"] {
         match OsApiRouter::classify(sym, &target) {
-            SymbolRoute::DllImport { dll, name } => {
+            SymbolRoute::DllImport { dll, name, .. } => {
                 assert_eq!(dll, "libc.so.6");
                 assert_eq!(name, sym);
             }
@@ -36,7 +36,7 @@ fn test_posix_libc_symbol_classification_linux_elf() {
     // Memory management
     for sym in ["malloc", "free", "realloc", "calloc", "posix_memalign"] {
         match OsApiRouter::classify(sym, &target) {
-            SymbolRoute::DllImport { dll, name } => {
+            SymbolRoute::DllImport { dll, name, .. } => {
                 assert_eq!(dll, "libc.so.6");
                 assert_eq!(name, sym);
             }
@@ -64,7 +64,7 @@ fn test_posix_libc_symbol_classification_linux_elf() {
         "utimensat",
     ] {
         match OsApiRouter::classify(sym, &target) {
-            SymbolRoute::DllImport { dll, name } => {
+            SymbolRoute::DllImport { dll, name, .. } => {
                 assert_eq!(dll, "libc.so.6");
                 assert_eq!(name, sym);
             }
@@ -106,7 +106,7 @@ fn test_posix_libc_symbol_classification_macos_macho() {
     // Standard output on macOS routes to libSystem with leading underscore
     for sym in ["puts", "write", "printf"] {
         match OsApiRouter::classify(sym, &target) {
-            SymbolRoute::DllImport { dll, name } => {
+            SymbolRoute::DllImport { dll, name, .. } => {
                 assert_eq!(dll, "/usr/lib/libSystem.B.dylib");
                 assert_eq!(name, format!("_{}", sym));
             }
@@ -117,7 +117,7 @@ fn test_posix_libc_symbol_classification_macos_macho() {
     // Memory management
     for sym in ["malloc", "free", "realloc"] {
         match OsApiRouter::classify(sym, &target) {
-            SymbolRoute::DllImport { dll, name } => {
+            SymbolRoute::DllImport { dll, name, .. } => {
                 assert_eq!(dll, "/usr/lib/libSystem.B.dylib");
                 assert_eq!(name, format!("_{}", sym));
             }
@@ -127,7 +127,7 @@ fn test_posix_libc_symbol_classification_macos_macho() {
 
     // macOS error handling
     match OsApiRouter::classify("__error", &target) {
-        SymbolRoute::DllImport { dll, name } => {
+        SymbolRoute::DllImport { dll, name, .. } => {
             assert_eq!(dll, "/usr/lib/libSystem.B.dylib");
             assert_eq!(name, "__error");
         }

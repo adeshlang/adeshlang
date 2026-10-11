@@ -301,6 +301,26 @@ impl TargetTier {
     }
 }
 
+/// C library flavor governing dynamic-linking details (interpreter path,
+/// DT_NEEDED names, TLS variable model). Only meaningful for ELF targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LibcFlavor {
+    /// glibc: `/lib64/ld-linux-*.so`, DT_NEEDED `libc.so.6`.
+    Gnu,
+    /// musl: `/lib/ld-musl-<arch>.so.1`; the interpreter is the C library,
+    /// named `libc.musl-<arch>.so.1` in DT_NEEDED on musl distributions.
+    Musl,
+}
+
+impl LibcFlavor {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LibcFlavor::Gnu => "gnu",
+            LibcFlavor::Musl => "musl",
+        }
+    }
+}
+
 /// Comprehensive Target Model.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Target {
@@ -314,6 +334,10 @@ pub struct Target {
     pub page_size: u64,
     pub image_base: u64,
     pub default_entry: String,
+    /// C library flavor for ELF targets (detected from the triple: `musl`
+    /// vs glibc). Never guessed from the host: a Windows host building a
+    /// Linux target must take the flavor from the requested triple alone.
+    pub libc_flavor: LibcFlavor,
 }
 
 impl Target {
@@ -422,6 +446,15 @@ impl Target {
         let pointer_width = arch.pointer_width();
         let endianness = arch.default_endianness();
 
+        // The C library flavor is a property of the requested target triple,
+        // never of the machine running the linker. `*-*-linux-musl` triples
+        // select musl; every other Linux triple defaults to glibc.
+        let libc_flavor = if os == Os::Linux && lower.contains("musl") {
+            LibcFlavor::Musl
+        } else {
+            LibcFlavor::Gnu
+        };
+
         let page_size = match (arch, os) {
             (Arch::AArch64, Os::MacOS | Os::Ios) => 16384,
             (Arch::AArch64 | Arch::Ppc64 | Arch::Ppc64le, Os::Linux) => 65536,
@@ -466,6 +499,7 @@ impl Target {
             page_size,
             image_base,
             default_entry,
+            libc_flavor,
         })
     }
 
@@ -552,6 +586,53 @@ impl Target {
 
     pub fn is_64_bit(&self) -> bool {
         self.pointer_width == PointerWidth::U64
+    }
+
+    /// PT_INTERP path for a dynamic ELF executable on this target.
+    ///
+    /// Returns `None` when the target has no known dynamic loader; the ELF
+    /// writer must then refuse a dynamic link loudly instead of guessing a
+    /// path (a wrong interpreter path is a runtime crash, not a link error).
+    pub fn elf_interpreter(&self) -> Option<&'static str> {
+        if self.format != ObjectFormat::Elf {
+            return None;
+        }
+        match (self.os, self.arch) {
+            (Os::Linux, Arch::X86_64) => match self.libc_flavor {
+                LibcFlavor::Musl => Some("/lib/ld-musl-x86_64.so.1"),
+                LibcFlavor::Gnu => Some("/lib64/ld-linux-x86-64.so.2"),
+            },
+            (Os::Linux, Arch::AArch64) => match self.libc_flavor {
+                LibcFlavor::Musl => Some("/lib/ld-musl-aarch64.so.1"),
+                LibcFlavor::Gnu => Some("/lib/ld-linux-aarch64.so.1"),
+            },
+            (Os::Linux, Arch::X86) => match self.libc_flavor {
+                LibcFlavor::Musl => Some("/lib/ld-musl-i386.so.1"),
+                LibcFlavor::Gnu => Some("/lib/ld-linux.so.2"),
+            },
+            (Os::FreeBSD, _) => Some("/libexec/ld-elf.so.1"),
+            _ => None,
+        }
+    }
+
+    /// DT_NEEDED soname for the target C library.
+    ///
+    /// glibc links name `libc.so.6`. musl's interpreter is the C library,
+    /// but it is NOT implicitly part of a program's symbol scope: musl-based
+    /// distributions (Alpine and any musl install following its naming)
+    /// carry it as `libc.musl-<arch>.so.1` and every dynamically linked
+    /// program has a DT_NEEDED for it — omitting it produces
+    /// "symbol not found" for every libc import at load time.
+    ///
+    /// Returns `None` for musl architectures whose distro soname is not
+    /// established; the writer then emits no libc DT_NEEDED.
+    pub fn libc_soname(&self) -> Option<&'static str> {
+        match (self.libc_flavor, self.arch) {
+            (LibcFlavor::Gnu, _) => Some("libc.so.6"),
+            (LibcFlavor::Musl, Arch::X86_64) => Some("libc.musl-x86_64.so.1"),
+            (LibcFlavor::Musl, Arch::AArch64) => Some("libc.musl-aarch64.so.1"),
+            (LibcFlavor::Musl, _) => None,
+        }
     }
 
     pub fn triple_string(&self) -> String {

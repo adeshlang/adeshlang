@@ -854,9 +854,6 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
     // Check only - parse and validate without emitting
     if config.check_only {
         use crate::backends::lir_lower::hir_to_lir;
-        use crate::parsing::hir_lower::ast_to_hir;
-        use crate::parsing::lexer::Lexer;
-        use crate::parsing::parser::Parser;
 
         let progress = if !config.quiet {
             Some(BuildProgress::new("Checking"))
@@ -870,26 +867,19 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
             .map_err(|e| format!("Type Error: {}", e))?;
 
         // 2. Mandatory ownership, borrowing, lifetime, and escape analysis
+        // (also applies the RAII transformation and returns the validated HIR)
         let runtime_cfg = crate::toolchain::config::RuntimeConfig::default();
-        crate::cli::parsing::check_ownership_and_parse_in(&src, &runtime_cfg, Some(&input_path_str))
-            .map_err(|e| format!("Ownership/Memory Safety Error: {}", e))?;
+        let (_validated_ast, validated_hir) = crate::cli::parsing::check_ownership_and_parse_in(
+            &src,
+            &runtime_cfg,
+            Some(&input_path_str),
+        )
+        .map_err(|e| format!("Ownership/Memory Safety Error: {}", e))?;
 
-        // 3. Lowering validation to HIR & LIR
-        let mut lexer = Lexer::new(&src);
-        let tokens = match lexer.tokenize() {
-            Ok(t) => t,
-            Err(e) => {
-                if let Some(p) = progress {
-                    p.fail("Check failed");
-                }
-                return Err(e.to_string());
-            }
-        };
-
-        let mut parser = Parser::new(tokens, None);
-        let ast = parser.parse_program().map_err(|e| e.to_string())?;
-        let hir = ast_to_hir(&ast, false)?;
-        let _lir = hir_to_lir(&hir)?;
+        // 3. Lowering validation to LIR — on the exact validated
+        // (RAII-transformed) HIR produced by the gates above, not a re-parse
+        // of the raw source (which would validate a different program).
+        let _lir = hir_to_lir(&validated_hir)?;
 
         if let Some(p) = progress {
             p.success(&format!("{} checked successfully", config.input.display()));
@@ -899,13 +889,23 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
         return Ok(config.get_output_path());
     }
 
-    // Enforce static type checking and compile-time ownership memory safety checks
+    // Enforce static type checking and compile-time ownership memory safety
+    // checks. The ownership pass also applies the RAII transformation to the
+    // AST and returns the *validated* AST and its HIR. Every backend below
+    // MUST compile exactly those artifacts: re-parsing the raw source would
+    // compile an un-RAII'd program that differs from the validated one
+    // (missing injected cleanup, unexecuted decorator phases) — a silent
+    // wrong-code hazard.
     let input_path_str = config.input.to_string_lossy();
     crate::types::type_system::check_module_in(&src, Some(&input_path_str))
         .map_err(|e| format!("Type Error: {}", e))?;
     let runtime_cfg = crate::toolchain::config::RuntimeConfig::default();
-    crate::cli::parsing::check_ownership_and_parse_in(&src, &runtime_cfg, Some(&input_path_str))
-        .map_err(|e| format!("Ownership/Memory Safety Error: {}", e))?;
+    let (_validated_ast, validated_hir) = crate::cli::parsing::check_ownership_and_parse_in(
+        &src,
+        &runtime_cfg,
+        Some(&input_path_str),
+    )
+    .map_err(|e| format!("Ownership/Memory Safety Error: {}", e))?;
 
     let output = config.get_output_path();
     if let Some(parent) = output.parent() {
@@ -1016,18 +1016,15 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
         || config.codegen_backend == "adesh"
     {
         let compile_native = || -> Result<(), String> {
-            use crate::parsing::hir_lower::ast_to_hir;
-            use crate::parsing::lexer::Lexer;
-            use crate::parsing::parser::Parser;
             use adesh_codegen::targets::create_backend;
             use adesh_object::TargetDescriptor;
             use adesh_object::writer::AdobWriter;
 
-            let mut lexer = Lexer::new(&src);
-            let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
-            let mut parser = Parser::new(tokens, None);
-            let ast = parser.parse_program().map_err(|e| e.to_string())?;
-            let hir = ast_to_hir(&ast, false)?;
+            // The mandatory gates (type check + ownership/RAII + compile-time
+            // memory safety) already produced the validated, RAII-transformed
+            // HIR above. Compiling must consume exactly that program;
+            // re-parsing the raw source would lower an un-RAII'd AST.
+            let hir = &validated_hir;
 
             let target = match &config.target {
                 Some(t) => TargetDescriptor::from_triple(t)
@@ -1077,9 +1074,12 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
                 .and_then(|s| s.to_str())
                 .unwrap_or("module");
             let base_dir = config.input.parent();
-            let mut module =
-                crate::backends::native::lower_hir_module_with_base(&hir, &target, base_dir)
-                    .map_err(|e| e.to_string())?;
+            let mut module = crate::backends::native::lower_hir_module_with_base(
+                hir,
+                &target,
+                base_dir,
+            )
+            .map_err(|e| e.to_string())?;
             module.name = mod_name.to_string();
 
             // Phase 4: with --lto, emit via CompilerDriver so the IR-level

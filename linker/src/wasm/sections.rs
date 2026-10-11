@@ -100,6 +100,7 @@ impl WasmReader {
             page_size: 65536,
             image_base: 0,
             default_entry: "_start".to_string(),
+            libc_flavor: crate::target::LibcFlavor::Gnu,
         };
 
         let mut obj = ObjectFile::new(path.to_path_buf(), target, file_index);

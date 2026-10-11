@@ -605,8 +605,18 @@ impl CraneliftAotCompiler {
         // Pre-process @cImport directives
         ast = helpers::expand_header_imports_aot(ast)?;
 
+        // Mandatory safety gates on the exact program being compiled: the
+        // RAII transformation injects scope-exit cleanup, and compile-time
+        // memory safety validates the resulting HIR. Lowering the raw
+        // (un-RAII'd) AST would compile a program that differs from the one
+        // the mandatory CLI gates validated — silent wrong code.
+        ast = crate::memory::raii::transform_ast_with_raii(ast);
+
         // Lower to HIR
         let hir = ast_to_hir(&ast, false)?;
+        crate::parsing::compile_time_memory_safety::check_memory_safety_compile_time_in(
+            &hir, None,
+        )?;
 
         // Lower to LIR directly (bypassing VIR to preserve ARC operations)
         use super::lir_lower::hir_to_lir;
@@ -1385,6 +1395,14 @@ impl CraneliftAotCompiler {
             ctx.user_funcs = shared_ctx.user_funcs.clone();
             ctx.argc_global = shared_ctx.argc_global;
             ctx.argv_global = shared_ctx.argv_global;
+            // Runtime function references declared by
+            // `declare_runtime_functions` must reach the per-function
+            // context too: losing them turns every LIR Alloc/Free into
+            // "malloc not declared" / "free not declared" at compile time.
+            ctx.malloc_func = shared_ctx.malloc_func;
+            ctx.free_func = shared_ctx.free_func;
+            ctx.memcpy_func = shared_ctx.memcpy_func;
+            ctx.heap_guard_func = shared_ctx.heap_guard_func;
 
             // Pre-create all Cranelift blocks for LIR blocks
             for lir_block in &lir_func.blocks {

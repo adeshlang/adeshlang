@@ -42,6 +42,7 @@ DefaultDirName={autopf}\AdeshLang
 DefaultGroupName=AdeshLang Programming Language
 DisableProgramGroupPage=yes
 LicenseFile=..\..\LICENSE
+OutputDir=..\..\dist
 OutputBaseFilename=AdeshLang-0.3.0-x86_64-windows-setup
 Compression=lzma2/ultra64
 SolidCompression=yes
@@ -85,6 +86,7 @@ Source: "..\manifests\toolchain-manifest.json"; DestDir: "{app}\config"; Flags: 
 Name: "{group}\AdeshLang Doctor"; Filename: "{app}\bin\{#MyAppExeName}"; Parameters: "doctor"
 Name: "{group}\AdeshLang TUI Editor"; Filename: "{app}\bin\adesh-editor.exe"; Check: EditorExists
 Name: "{group}\AdeshLang Native Toolchain Check"; Filename: "{app}\bin\{#MyAppExeName}"; Parameters: "toolchain check"
+Name: "{group}\AdeshLang Native Linker"; Filename: "{app}\bin\adeshlink.exe"; Parameters: "--help"; Check: LinkerExists
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 
 [Registry]
@@ -187,6 +189,11 @@ end;
 function EditorExists: Boolean;
 begin
   Result := FileExists(ExpandConstant('{app}\bin\adesh-editor.exe'));
+end;
+
+function LinkerExists: Boolean;
+begin
+  Result := FileExists(ExpandConstant('{app}\bin\adeshlink.exe'));
 end;
 
 function PathHasEntry(PathValue, Entry: String): Boolean;
@@ -508,11 +515,16 @@ begin
   else
     LogMessage('! Native linker CLI   : adeshlink.exe not bundled (builds use the in-process linker)');
 
-  RuntimeLib := ExpandConstant('{app}\lib\adeshlang.dll');
-  if FileExists(RuntimeLib) then
-    LogMessage('✓ Runtime library     : ' + RuntimeLib)
+  if FileExists(ExpandConstant('{app}\lib\adesh_runtime.lib')) then
+    LogMessage('✓ Runtime library     : ' + ExpandConstant('{app}\lib\adesh_runtime.lib'))
+  else if FileExists(ExpandConstant('{app}\lib\adeshlang.lib')) then
+    LogMessage('✓ Runtime library     : ' + ExpandConstant('{app}\lib\adeshlang.lib'))
+  else if FileExists(ExpandConstant('{app}\lib\adeshlang.dll')) then
+    LogMessage('✓ Runtime library     : ' + ExpandConstant('{app}\lib\adeshlang.dll'))
+  else if FileExists(ExpandConstant('{app}\lib\libadesh_runtime.a')) then
+    LogMessage('✓ Runtime library     : ' + ExpandConstant('{app}\lib\libadesh_runtime.a'))
   else
-    LogMessage('! Runtime library     : adeshlang.dll not bundled (AOT native builds may need it)');
+    LogMessage('! Runtime library     : runtime library not bundled (AOT native builds may need it)');
 
   if DirExists(ExpandConstant('{app}\std')) then
     LogMessage('✓ Standard library    : ' + ExpandConstant('{app}\std'))

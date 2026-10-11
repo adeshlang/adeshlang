@@ -15,14 +15,34 @@ if ($Arch -eq "arm64") { $Arch = "aarch64" }
 
 $RootDir = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
 $DistDir = Join-Path $RootDir "dist\windows-$Arch"
+
+$cargoToml = Join-Path $RootDir "Cargo.toml"
+$Version = "0.3.0"
+if (Test-Path -LiteralPath $cargoToml) {
+    $versionLine = Get-Content -LiteralPath $cargoToml | Where-Object { $_ -match '^version\s*=\s*"([^"]+)"' } | Select-Object -First 1
+    if ($versionLine -and $versionLine -match '^version\s*=\s*"([^"]+)"') {
+        $Version = $Matches[1]
+    }
+}
+
 if (-not $MsiPath) {
-    $MsiPath = Join-Path $DistDir "AdeshLang-0.3.0-$Arch-windows.msi"
+    $CandidateMsi = Join-Path $DistDir "AdeshLang-$Version-$Arch-windows.msi"
+    if (Test-Path $CandidateMsi) {
+        $MsiPath = $CandidateMsi
+    } else {
+        $FoundMsi = Get-ChildItem -Path $DistDir, (Join-Path $RootDir "dist") -Filter "AdeshLang-*-$Arch-windows.msi" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($FoundMsi) {
+            $MsiPath = $FoundMsi.FullName
+        } else {
+            $MsiPath = $CandidateMsi
+        }
+    }
 }
 if (-not $OutputDir) {
     $OutputDir = $DistDir
 }
 $OutputDir = [System.IO.Path]::GetFullPath($OutputDir)
-$BundlePath = Join-Path $OutputDir "AdeshLang-0.3.0-$Arch-windows-bootstrapper.exe"
+$BundlePath = Join-Path $OutputDir "AdeshLang-$Version-$Arch-windows-bootstrapper.exe"
 
 if (-not (Test-Path $MsiPath)) {
     throw "MSI not found at $MsiPath. Run installer\windows\msi\build-msi.ps1 first."
@@ -66,3 +86,9 @@ if ($LASTEXITCODE -ne 0) {
     throw "WiX failed to build the Burn bootstrapper (exit code $LASTEXITCODE)."
 }
 Write-Host "Bootstrapper created: $BundlePath"
+
+# Ensure the bootstrapper is available directly in dist\
+$DistRoot = Join-Path $RootDir "dist"
+if (Test-Path -LiteralPath $DistRoot) {
+    Copy-Item -LiteralPath $BundlePath -Destination (Join-Path $DistRoot (Split-Path $BundlePath -Leaf)) -Force
+}

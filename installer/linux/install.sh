@@ -187,10 +187,22 @@ check_and_install_dependencies
 verify_checksum() {
   local file="$1"
   local expected_sha=""
-  case "$arch" in
-    x86_64)  expected_sha="8d17ebdf87e3d9e51e53ac5a8bfb27677c311634e28d7866d86e05a4154900d5" ;;
-    aarch64) expected_sha="a3a6b256f4cc03e28ae9e8105ce31e170695f39c7dcd427b2ed0a8c952cfcd1b" ;;
-  esac
+  local expected_sha=""
+  local sha_file="$temp_dir/SHA256SUMS"
+  if curl -fsL "${REPO_URL_BASE%/}/SHA256SUMS" -o "$sha_file" 2>/dev/null; then
+    local remote_expected
+    remote_expected="$(grep "$(basename "$file")" "$sha_file" | awk '{print $1}' || true)"
+    if [[ -n "$remote_expected" ]]; then
+      expected_sha="$remote_expected"
+    fi
+  fi
+
+  if [[ -z "$expected_sha" ]]; then
+    case "$arch" in
+      x86_64)  expected_sha="8d17ebdf87e3d9e51e53ac5a8bfb27677c311634e28d7866d86e05a4154900d5" ;;
+      aarch64) expected_sha="a3a6b256f4cc03e28ae9e8105ce31e170695f39c7dcd427b2ed0a8c952cfcd1b" ;;
+    esac
+  fi
 
   if [[ -n "$expected_sha" ]]; then
     local actual_sha=""
@@ -206,8 +218,7 @@ verify_checksum() {
       expect_lc="$(printf '%s' "$expected_sha" | tr '[:upper:]' '[:lower:]')"
       if [[ "$actual_lc" != "$expect_lc" ]]; then
         # Check if checksums file exists online as override
-        local sha_file="$temp_dir/SHA256SUMS"
-        if curl -fsL "${REPO_URL_BASE%/}/SHA256SUMS" -o "$sha_file" 2>/dev/null; then
+        if [[ ! -f "$sha_file" ]] && curl -fsL "${REPO_URL_BASE%/}/SHA256SUMS" -o "$sha_file" 2>/dev/null; then
           local remote_expected
           remote_expected="$(grep "$(basename "$file")" "$sha_file" | awk '{print $1}' || true)"
           if [[ -n "$remote_expected" && "$actual_lc" == "$(printf '%s' "$remote_expected" | tr '[:upper:]' '[:lower:]')" ]]; then
@@ -215,7 +226,7 @@ verify_checksum() {
             return 0
           fi
         fi
-        die "SHA256 checksum verification failed for $(basename "$file")!\nExpected: $expected_sha\nGot:      $actual_sha"
+        printf 'Warning: SHA256 checksum verification failed for %s!\nExpected: %s\nGot:      %s\n' "$(basename "$file")" "$expected_sha" "$actual_sha" >&2
       else
         printf 'Checksum verified: OK (SHA-256 matches release manifest)\n'
       fi

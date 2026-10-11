@@ -128,6 +128,18 @@ impl super::CompileTimeMemorySafety {
         match expr {
             HirExpr::Borrow(target_box, is_mut) => {
                 if let HirExpr::LoadVar(var_name) = &**target_box {
+                    // Check if variable has already been moved
+                    if let Some(node) = self.ownership_graph.get(var_name) {
+                        if node.state == crate::parsing::compile_time_memory_safety::state::OwnershipState::Moved {
+                            self.errors.push(CompileTimeMemoryError::UseAfterMove {
+                                variable: var_name.clone(),
+                                moved_at: node.location.clone(),
+                                used_at: self.get_source_location(0),
+                                suggestion: crate::parsing::error::ownership_help::avoid_move(var_name),
+                            });
+                        }
+                    }
+
                     // Check for borrow conflicts
                     if let Some(borrows) = active_borrows.get(var_name) {
                         for existing_borrow in borrows {

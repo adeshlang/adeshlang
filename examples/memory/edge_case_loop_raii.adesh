@@ -5,12 +5,12 @@
 // 3. Break terminates the loop cleanly.
 
 unsafe {
-    let mut i = 0;
-    let mut total_sum = 0;
+    let i = 0;
+    let total_sum = 0;
 
     println("Beginning allocation loop (10 iterations)...");
     while (i < 10) {
-        let buf = alloc(8);
+        let buf = alloc(16);
         buf[0] = i * 2;
         buf[1] = i * 3;
 

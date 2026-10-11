@@ -38,6 +38,15 @@ pub struct SymbolResolver {
     /// layout stage uses this set to diagnose only symbols actually referenced
     /// by a retained relocation, not every declaration seen in an object.
     pub weak_undefined_symbols: HashSet<String>,
+    /// Symbols routed to a system shared library (`DllImport`). These become
+    /// dynamic imports (PLT/GOT + undefined `.dynsym` entries) in dynamic
+    /// links, or a loud link error in static links. The routed name is the
+    /// symbol name as it appears in the input objects (the C name for normal
+    /// ELF inputs).
+    pub dynamic_imports: Vec<String>,
+    /// Routed dynamic imports that are *data objects* (no function stub may
+    /// be synthesized; address-of-imported-data is unsupported).
+    pub dynamic_data_imports: HashSet<String>,
     pub policy: UndefinedSymbolPolicy,
     /// Resolver-stage warnings. Weak-undefined diagnostics are deferred to
     /// relocation processing, where unused declarations can be ignored.
@@ -56,6 +65,8 @@ impl SymbolResolver {
             table: HashMap::new(),
             undefined: HashSet::new(),
             weak_undefined_symbols: HashSet::new(),
+            dynamic_imports: Vec::new(),
+            dynamic_data_imports: HashSet::new(),
             policy: UndefinedSymbolPolicy::Error,
             warnings: Vec::new(),
         }
@@ -66,6 +77,8 @@ impl SymbolResolver {
             table: HashMap::new(),
             undefined: HashSet::new(),
             weak_undefined_symbols: HashSet::new(),
+            dynamic_imports: Vec::new(),
+            dynamic_data_imports: HashSet::new(),
             policy,
             warnings: Vec::new(),
         }
@@ -254,10 +267,24 @@ impl SymbolResolver {
                         },
                     );
                 }
-                SymbolRoute::DllImport { dll, ref name } => {
-                    // System DLL import — mark as imported so Step 9 puts it in the import table
+                SymbolRoute::DllImport {
+                    dll,
+                    ref name,
+                    is_data,
+                } => {
+                    // System shared-library import — mark as imported so the
+                    // emitter puts it in the dynamic import set. Data objects
+                    // are recorded as `Object` so no code stub is ever
+                    // synthesized for them and the layout stage can reject
+                    // absolute (address-of) references loudly.
                     self.undefined.remove(&undef);
                     let sym_name = name.clone();
+                    if !self.dynamic_imports.contains(&undef) {
+                        self.dynamic_imports.push(undef.clone());
+                    }
+                    if is_data {
+                        self.dynamic_data_imports.insert(undef.clone());
+                    }
                     self.table.insert(
                         undef.clone(),
                         ResolvedSymbol {
@@ -265,7 +292,11 @@ impl SymbolResolver {
                                 name: undef.clone(),
                                 binding: SymbolBinding::Global,
                                 visibility: crate::symbol::SymbolVisibility::Default,
-                                sym_type: crate::symbol::SymbolType::Function,
+                                sym_type: if is_data {
+                                    crate::symbol::SymbolType::Object
+                                } else {
+                                    crate::symbol::SymbolType::Function
+                                },
                                 section_index: None,
                                 value: 0,
                                 size: 0,
@@ -282,6 +313,11 @@ impl SymbolResolver {
                             references: Vec::new(),
                         },
                     );
+                    // Data imports have no function stub; nothing else to
+                    // register for them beyond the primary symbol record.
+                    if is_data {
+                        continue;
+                    }
                     // Also store the clean name variant with the DLL tag in the table
                     // so Step 9 can look it up directly
                     let imp_name = format!("__imp_{}", sym_name);

@@ -13,8 +13,8 @@ fn test_valid_operations() {
     let b = &arr;
     print(a, b);  // OK
     
-    // Valid single mutable borrow
-    let mut list = [1, 2, 3];
+    // Valid single mutable borrow (variables are mutable by default)
+    let list = [1, 2, 3];
     let ptr = &mut list;
     ptr.push(4);  // OK
     

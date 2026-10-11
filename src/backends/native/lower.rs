@@ -321,6 +321,18 @@ fn infer_hir_expr_type(expr: &HirExpr) -> Option<HirType> {
                 if matches!(fn_name.as_str(), "u8") {
                     return Some(HirType::U8);
                 }
+                if matches!(fn_name.as_str(), "__alloc") {
+                    // Raw memory: `alloc(n)` yields a pointer to n bytes of
+                    // heap storage indexed in i64 slots (matching `Deref`'s
+                    // 8-byte memory access). This type drives raw-pointer
+                    // indexing below: without it, `buf[i]` would be lowered
+                    // through the runtime's handle-based array ops on a raw
+                    // pointer and corrupt the value store.
+                    return Some(HirType::Array(
+                        Box::new(HirType::I64),
+                        crate::ir::hir::ArrayKind::Raw,
+                    ));
+                }
                 if matches!(
                     fn_name.as_str(),
                     "float"
@@ -1720,6 +1732,51 @@ impl<'a> FunctionLoweringContext<'a> {
         )
     }
 
+    /// True when the expression is raw `alloc()` memory (a pointer, not a
+    /// runtime-managed array handle). Raw memory is indexed with direct
+    /// i64-slot loads/stores; everything else goes through the runtime's
+    /// handle-based array operations.
+    fn is_raw_pointer_expr(&self, expr: &HirExpr) -> bool {
+        matches!(
+            self.infer_expr_type(expr),
+            Some(HirType::Array(
+                _,
+                crate::ir::hir::ArrayKind::Raw
+                    | crate::ir::hir::ArrayKind::FixedRaw(_)
+            ))
+        )
+    }
+
+    /// Emit `base + index * 8` into a fresh register for raw i64-slot memory
+    /// indexing. Uses explicit arithmetic (Mul/Add with register sources,
+    /// the forms the backends' instruction selection supports) instead of a
+    /// scaled-index memory operand so every target backend can lower it.
+    fn emit_raw_index_address(
+        &mut self,
+        base_reg: VirtualRegister,
+        index_reg: VirtualRegister,
+    ) -> VirtualRegister {
+        let scaled_reg = self.func.alloc_vreg();
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(scaled_reg)),
+            src: MachineOperand::Register(MachineRegister::Virtual(index_reg)),
+        });
+        let eight_reg = self.func.alloc_vreg();
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(eight_reg)),
+            src: MachineOperand::Immediate(8),
+        });
+        self.emit(MachineInstruction::Mul {
+            dst: MachineOperand::Register(MachineRegister::Virtual(scaled_reg)),
+            src: MachineOperand::Register(MachineRegister::Virtual(eight_reg)),
+        });
+        self.emit(MachineInstruction::Add {
+            dst: MachineOperand::Register(MachineRegister::Virtual(scaled_reg)),
+            src: MachineOperand::Register(MachineRegister::Virtual(base_reg)),
+        });
+        scaled_reg
+    }
+
     fn bigint_u64_or_abort(&mut self, value: &num_bigint::BigInt) -> i64 {
         use num_traits::ToPrimitive;
         match value.to_u64() {
@@ -2748,10 +2805,34 @@ impl<'a> FunctionLoweringContext<'a> {
                     self.emit_call_with_args("aot_set_field", &[obj_reg, field_handle, val_handle]);
                 }
                 HirExpr::Index(obj_expr, index_expr) => {
-                    let obj_reg = self.lower_expression(obj_expr);
-                    let index_handle = self.lower_to_handle(index_expr);
-                    let val_handle = self.lower_to_handle(value);
-                    self.emit_call_with_args("aot_set_index", &[obj_reg, index_handle, val_handle]);
+                    if self.is_raw_pointer_expr(obj_expr) {
+                        // Raw memory from `alloc()`: `aot_set_index` expects a
+                        // runtime *handle* (an index into the runtime value
+                        // store), so routing a raw pointer through it writes
+                        // through a bogus handle — silent wrong code. Raw
+                        // memory is stored to directly, in i64 slots.
+                        let ptr_reg = self.lower_expression(obj_expr);
+                        let idx_reg = self.lower_expression(index_expr);
+                        let val_reg = self.lower_expression(value);
+                        let addr_reg = self.emit_raw_index_address(ptr_reg, idx_reg);
+                        self.emit(MachineInstruction::Store {
+                            dst: MachineOperand::Memory {
+                                base: MachineRegister::Virtual(addr_reg),
+                                offset: 0,
+                                index: None,
+                            },
+                            src: MachineOperand::Register(MachineRegister::Virtual(val_reg)),
+                            size: 8,
+                        });
+                    } else {
+                        let obj_reg = self.lower_expression(obj_expr);
+                        let index_handle = self.lower_to_handle(index_expr);
+                        let val_handle = self.lower_to_handle(value);
+                        self.emit_call_with_args(
+                            "aot_set_index",
+                            &[obj_reg, index_handle, val_handle],
+                        );
+                    }
                 }
                 HirExpr::Deref(ptr_expr) => {
                     let ptr_reg = self.lower_expression(ptr_expr);
@@ -3854,17 +3935,38 @@ impl<'a> FunctionLoweringContext<'a> {
                 out_reg
             }
             HirExpr::Index(target, index_expr) => {
-                let target_reg = self.lower_expression(target);
-                let index_handle = self.lower_to_handle(index_expr);
+                if self.is_raw_pointer_expr(target) {
+                    // Raw memory from `alloc()`: direct i64-slot load (see the
+                    // matching store path above).
+                    let ptr_reg = self.lower_expression(target);
+                    let idx_reg = self.lower_expression(index_expr);
+                    let addr_reg = self.emit_raw_index_address(ptr_reg, idx_reg);
+                    let out_reg = self.func.alloc_vreg();
+                    self.emit(MachineInstruction::Load {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                        src: MachineOperand::Memory {
+                            base: MachineRegister::Virtual(addr_reg),
+                            offset: 0,
+                            index: None,
+                        },
+                        size: 8,
+                    });
+                    out_reg
+                } else {
+                    let target_reg = self.lower_expression(target);
+                    let index_handle = self.lower_to_handle(index_expr);
 
-                self.emit_call_with_args("aot_get_index", &[target_reg, index_handle]);
+                    self.emit_call_with_args("aot_get_index", &[target_reg, index_handle]);
 
-                let out_reg = self.func.alloc_vreg();
-                self.emit(MachineInstruction::Move {
-                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
-                });
-                out_reg
+                    let out_reg = self.func.alloc_vreg();
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                        src: MachineOperand::Register(MachineRegister::Physical(
+                            PhysicalRegister(0),
+                        )),
+                    });
+                    out_reg
+                }
             }
             HirExpr::SetMember(target, field_name, val_expr) => {
                 let target_reg = self.lower_expression(target);
@@ -5113,6 +5215,47 @@ impl<'a> FunctionLoweringContext<'a> {
                             None
                         };
                         return self.emit_construct_enum(tag, payload_reg);
+                    }
+                    // The parser desugars the `alloc`/`free` unary builtins
+                    // into calls to `__alloc`/`__free`. The native ABI
+                    // runtime (auto-linked `adesh_runtime` archive) exports
+                    // them as `aot_alloc`/`aot_free`; map the names here so
+                    // they resolve at link time instead of failing with an
+                    // undefined reference (or, worse, silently importing a
+                    // wrong symbol from the platform C library).
+                    if fn_name == "__alloc" {
+                        if args.len() != 1 {
+                            self.unsupported(format!(
+                                "`alloc` expects exactly 1 size argument, got {}",
+                                args.len()
+                            ));
+                        }
+                        let size_reg = self.lower_expression(&args[0]);
+                        self.emit_call_with_args("aot_alloc", &[size_reg]);
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Register(MachineRegister::Physical(
+                                PhysicalRegister(0),
+                            )),
+                        });
+                        return out_reg;
+                    }
+                    if fn_name == "__free" {
+                        if args.len() != 1 {
+                            self.unsupported(format!(
+                                "`free` expects exactly 1 pointer argument, got {}",
+                                args.len()
+                            ));
+                        }
+                        let ptr_reg = self.lower_expression(&args[0]);
+                        self.emit_call_with_args("aot_free", &[ptr_reg]);
+                        // `aot_free` returns void; give the expression a
+                        // deterministic (zero) value in case it is used.
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Immediate(0),
+                        });
+                        return out_reg;
                     }
                     if (fn_name == "sizeof" || fn_name == "sizeOf") && !args.is_empty() {
                         let handle = self.lower_to_handle(&args[0]);

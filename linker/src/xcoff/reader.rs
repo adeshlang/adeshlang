@@ -37,6 +37,7 @@ impl XcoffReader {
             page_size: 4096,
             image_base: 0x10000000,
             default_entry: "__start".to_string(),
+            libc_flavor: crate::target::LibcFlavor::Gnu,
         };
 
         let mut obj = ObjectFile::new(path.to_path_buf(), target, file_index);

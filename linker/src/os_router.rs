@@ -29,8 +29,14 @@ fn in_set(table: &HashSet<&'static str>, clean: &str, raw: &str) -> bool {
 /// Where to route an unresolved symbol.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SymbolRoute {
-    /// Symbol lives in a Windows DLL — add to import table.
-    DllImport { dll: &'static str, name: String },
+    /// Symbol lives in a system shared library — add to the import set.
+    /// `is_data` marks data objects (ELF: no function stub may be
+    /// synthesized for them; see `is_libc_data_symbol`).
+    DllImport {
+        dll: &'static str,
+        name: String,
+        is_data: bool,
+    },
     /// Symbol is a compiler intrinsic — emit inline code.
     Intrinsic,
     /// Symbol is an internal Rust/Adesh runtime detail — skip (dead code).
@@ -218,12 +224,14 @@ impl OsApiRouter {
             return SymbolRoute::DllImport {
                 dll,
                 name: name.to_string(),
+                is_data: false,
             };
         }
         if let Some(dll) = Self::windows_dll_for(clean) {
             return SymbolRoute::DllImport {
                 dll,
                 name: clean.to_string(),
+                is_data: false,
             };
         }
 
@@ -1450,7 +1458,28 @@ impl OsApiRouter {
             return SymbolRoute::Undefined;
         }
 
-        // Unmangled C / system library / POSIX symbols dynamically resolve via libc/libgcc on ELF
+        // Only genuine C library / POSIX symbols may be imported from the
+        // system C library. Previously EVERY unknown symbol was routed to
+        // `DllImport { libc.so.6 }`, which silently turned a typo or a
+        // missing module into a runtime loader error (or worse). An
+        // arbitrary undefined name must fail the link.
+        if !Self::is_libc_or_posix_symbol(raw) {
+            return SymbolRoute::Undefined;
+        }
+
+        // Data objects must be recorded as objects: a function stub
+        // synthesizer must never produce code for a symbol whose address
+        // carries data (e.g. `stdout`), and the layout stage must reject
+        // absolute relocations against imported data (no COPY-relocation
+        // support yet).
+        if Self::is_libc_data_symbol(raw) {
+            return SymbolRoute::DllImport {
+                dll: "libc.so.6",
+                name: sym_name.to_string(),
+                is_data: true,
+            };
+        }
+
         let dll = if raw.starts_with("_Unwind_") || sym_name.starts_with("_Unwind_") {
             "libgcc_s.so.1"
         } else {
@@ -1459,7 +1488,23 @@ impl OsApiRouter {
         SymbolRoute::DllImport {
             dll,
             name: sym_name.to_string(),
+            is_data: false,
         }
+    }
+
+    /// True for libc/POSIX *data objects* that may be imported on ELF.
+    /// Address-of-imported-data is not supported in Adesh links yet (no
+    /// COPY relocations, no GOT-indirect loads), so these must be diagnosed
+    /// rather than resolved through a function stub.
+    fn is_libc_data_symbol(sym: &str) -> bool {
+        let raw = sym
+            .strip_prefix("__imp_")
+            .or_else(|| sym.strip_prefix("_imp_"))
+            .unwrap_or(sym);
+        matches!(
+            raw,
+            "stdout" | "stderr" | "stdin" | "environ" | "__environ" | "optarg" | "optind" | "opterr" | "optopt"
+        )
     }
 
     // ─── macOS / Mach-O ────────────────────────────────────────────────────────
@@ -1494,6 +1539,7 @@ impl OsApiRouter {
         SymbolRoute::DllImport {
             dll: "/usr/lib/libSystem.B.dylib",
             name,
+            is_data: false,
         }
     }
 }

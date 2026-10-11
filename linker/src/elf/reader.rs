@@ -76,6 +76,7 @@ impl ElfReader {
             page_size: if arch == Arch::AArch64 { 65536 } else { 4096 },
             image_base: if is_64 { 0x400000 } else { 0x08048000 },
             default_entry: "_start".to_string(),
+            libc_flavor: crate::target::LibcFlavor::Gnu,
         };
 
         let mut obj = ObjectFile::new(path.to_path_buf(), target, file_index);

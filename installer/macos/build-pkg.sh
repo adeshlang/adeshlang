@@ -78,7 +78,10 @@ if [[ -z "$ARCH" ]]; then
         x86_64|amd64)  ARCH="x86_64" ;;
         *) echo "error: unsupported architecture: $(uname -m) (pass arm64 or x86_64)" >&2; exit 2 ;;
     esac
-fi
+case "$ARCH" in
+    arm64|aarch64) ARCH="arm64" ;;
+    x86_64|amd64)  ARCH="x86_64" ;;
+esac
 
 # Version: from the workspace Cargo.toml (like scripts/release/package_unix.sh).
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -n1)"
@@ -86,11 +89,17 @@ VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -n1)"
 
 DIST_DIR="$ROOT/dist/macos-$ARCH"
 if [[ ! -d "$DIST_DIR/bin" ]]; then
-    echo "error: expected a staged dist directory at $DIST_DIR (bin/ missing)." >&2
-    echo "The macOS release pipeline must produce dist/macos-arm64 and" >&2
-    echo "dist/macos-x86_64 with bin/, std/, config/ and licenses/." >&2
-    echo "(See installer/macos/build-dmg.sh for the same staging layout.)" >&2
-    exit 1
+    if [[ "$ARCH" == "arm64" && -d "$ROOT/dist/macos-aarch64/bin" ]]; then
+        DIST_DIR="$ROOT/dist/macos-aarch64"
+    elif [[ -d "$ROOT/dist/macos" ]]; then
+        DIST_DIR="$ROOT/dist/macos"
+    else
+        echo "error: expected a staged dist directory at $DIST_DIR (bin/ missing)." >&2
+        echo "The macOS release pipeline must produce dist/macos-arm64 (or dist/macos-aarch64) and" >&2
+        echo "dist/macos-x86_64 with bin/, std/, config/ and licenses/." >&2
+        echo "(See installer/macos/build-dmg.sh for the same staging layout.)" >&2
+        exit 1
+    fi
 fi
 
 OUT_DIR="$ROOT/dist"
@@ -136,13 +145,14 @@ fi
 if [[ -d "$DIST_DIR/std" ]]; then
     /usr/bin/ditto "$DIST_DIR/std" "$PAYLOAD/std"
 else
-    shopt -s nullglob
-    for f in "$ROOT"/src/stdlib/*.adesh; do
-        cp "$f" "$PAYLOAD/std/"
-    done
-    shopt -u nullglob
+    if [[ -d "$ROOT/src/stdlib" ]]; then
+        /usr/bin/ditto "$ROOT/src/stdlib" "$PAYLOAD/std"
+    fi
+    if [[ -d "$ROOT/std" ]]; then
+        /usr/bin/ditto "$ROOT/std" "$PAYLOAD/std"
+    fi
     if [[ -z "$(ls -A "$PAYLOAD/std")" ]]; then
-        echo "warning: no standard library staged (expected src/stdlib/*.adesh)" >&2
+        echo "warning: no standard library staged (expected stdlib in repo)" >&2
     fi
 fi
 

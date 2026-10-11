@@ -64,6 +64,16 @@ pub struct LinkConfig {
     pub print_icf: bool,
     pub shared: bool,
     pub static_link: bool,
+    /// Produce a dynamic ELF executable: PT_INTERP + dynamic symbol/relocation
+    /// tables, unresolved libc/POSIX symbols imported from the target C
+    /// library via PLT/GOT (`R_X86_64_JUMP_SLOT`), bound eagerly
+    /// (`DT_BIND_NOW`). When false (default), a symbol that would have to be
+    /// imported is a loud link error instead of a silently broken stub.
+    pub dynamic: bool,
+    /// Produce a position-independent ELF executable (`ET_DYN` with
+    /// `DF_1_PIE` and `R_X86_64_RELATIVE` dynamic relocations). Implies
+    /// `dynamic` layout treatment.
+    pub pie: bool,
     pub strip: bool,
     /// Strip non-global (local/file/section) symbols from the emitted symbol
     /// table. Enabled by default for executables: local symbols are not needed
@@ -106,6 +116,8 @@ impl Default for LinkConfig {
             print_icf: false,
             shared: false,
             static_link: true,
+            dynamic: false,
+            pie: false,
             strip: false,
             strip_symbols: true,
             strip_debug: false,
@@ -142,6 +154,15 @@ impl LinkConfig {
         } else {
             &self.target.default_entry
         }
+    }
+
+    /// Whether this link must emit ELF dynamic-linking metadata (dynamic
+    /// symbol table, relocations, `.dynamic`). PIE executables, dynamic
+    /// executables, shared libraries, and any link with required shared
+    /// libraries all need it.
+    pub fn needs_elf_dynamic_tables(&self) -> bool {
+        self.target.format == crate::target::ObjectFormat::Elf
+            && (self.shared || self.pie || self.dynamic)
     }
 
     /// Whether non-global symbols should be omitted from the emitted symbol

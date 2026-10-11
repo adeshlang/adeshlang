@@ -23,7 +23,7 @@ fi
 
 # Known adesh ecosystem executables or shell commands
 case "$1" in
-    adesh|adl|als|adesh-editor|bash|sh|ash|zsh)
+    adesh|adl|als|adesh-editor|adeshlink|bash|sh|ash|zsh)
         exec "$@"
         ;;
     run|repl|doctor|build|check|fmt|lint|test|bench|doc|clean|new|init|info|ai|toolchain)

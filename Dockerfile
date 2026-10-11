@@ -29,6 +29,7 @@ COPY src/ ./src/
 COPY als/ ./als/
 COPY editor/ ./editor/
 COPY crates/ ./crates/
+COPY linker/ ./linker/
 COPY mobile/ ./mobile/
 COPY benches/ ./benches/
 COPY lib/ ./lib/
@@ -40,7 +41,7 @@ COPY THIRD_PARTY_LICENSES/ ./THIRD_PARTY_LICENSES/
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/usr/src/adeshlang/target \
-    cargo build --release --bin adesh --bin adl --bin als --bin adesh-editor --lib && \
+    cargo build --release --bin adesh --bin adl --bin als --bin adesh-editor -p adesh-linker --bin adeshlink -p adesh-runtime --lib && \
     mkdir -p /opt/adeshlang/bin \
              /opt/adeshlang/std \
              /opt/adeshlang/lib \
@@ -52,8 +53,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cp target/release/adl /opt/adeshlang/bin/ && \
     cp target/release/als /opt/adeshlang/bin/ && \
     cp target/release/adesh-editor /opt/adeshlang/bin/ && \
+    cp target/release/adeshlink /opt/adeshlang/bin/ && \
     ( [ -f target/release/libadeshlang.so ] && cp target/release/libadeshlang.so /opt/adeshlang/lib/ || true ) && \
     ( [ -f target/release/libadeshlang.a ] && cp target/release/libadeshlang.a /opt/adeshlang/lib/ || true ) && \
+    ( [ -f target/release/libadesh_runtime.a ] && cp target/release/libadesh_runtime.a /opt/adeshlang/lib/ || true ) && \
     cp -r src/stdlib/* /opt/adeshlang/std/ && \
     ( [ -f installer/manifests/toolchain-manifest.json ] && cp installer/manifests/toolchain-manifest.json /opt/adeshlang/config/ || true ) && \
     cp LICENSE /opt/adeshlang/licenses/ && \
@@ -96,7 +99,8 @@ COPY --from=builder /opt/adeshlang /opt/adeshlang
 RUN ln -sf /opt/adeshlang/bin/adesh /usr/local/bin/adesh && \
     ln -sf /opt/adeshlang/bin/adl /usr/local/bin/adl && \
     ln -sf /opt/adeshlang/bin/als /usr/local/bin/als && \
-    ln -sf /opt/adeshlang/bin/adesh-editor /usr/local/bin/adesh-editor
+    ln -sf /opt/adeshlang/bin/adesh-editor /usr/local/bin/adesh-editor && \
+    ln -sf /opt/adeshlang/bin/adeshlink /usr/local/bin/adeshlink
 
 # Copy entrypoint script
 COPY scripts/docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

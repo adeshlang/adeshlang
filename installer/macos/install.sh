@@ -198,8 +198,15 @@ fi
 
 # --- Install the core payload ------------------------------------------------
 echo "==> Installing core to $INSTALL_DIR"
-run_root /bin/mkdir -p "$INSTALL_DIR/bin" "$INSTALL_DIR/std" "$INSTALL_DIR/config" "$INSTALL_DIR/licenses"
+run_root /bin/mkdir -p "$INSTALL_DIR/bin" "$INSTALL_DIR/lib" "$INSTALL_DIR/std" "$INSTALL_DIR/config" "$INSTALL_DIR/licenses"
 run_root /usr/bin/ditto "$PAYLOAD_DIR/bin" "$INSTALL_DIR/bin"
+
+# Runtime libraries ship at <home>/lib/ (libadeshlang.a, libadesh_runtime.a).
+if [[ -d "$PAYLOAD_DIR/lib" ]]; then
+    run_root /usr/bin/ditto "$PAYLOAD_DIR/lib" "$INSTALL_DIR/lib"
+else
+    echo "warning: the release archive contains no lib/ (runtime libraries);" >&2
+fi
 
 # Standard library ships at <home>/std/ (repo source: src/stdlib/*.adesh).
 if [[ -d "$PAYLOAD_DIR/std" ]]; then

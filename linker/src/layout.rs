@@ -35,6 +35,12 @@ pub struct LayoutEngine {
     /// RVAs of all 32-bit absolute relocations applied. Emitted as
     /// IMAGE_REL_BASED_HIGHLOW entries for 32-bit x86 PE targets.
     pub base_relocs32: Vec<u32>,
+    /// ELF dynamic-linking results consumed by the writer: virtual address of
+    /// each imported symbol's GOT slot.
+    pub elf_got_slots: std::collections::HashMap<String, u64>,
+    /// ELF dynamic relocations (`R_X86_64_JUMP_SLOT` / `R_X86_64_RELATIVE`)
+    /// recorded while applying static relocations.
+    pub elf_dynamic_relocs: Vec<crate::elf::dynamic::ElfDynamicReloc>,
     /// Non-fatal issues encountered while relocating (e.g. weak/internal
     /// symbols that could not be resolved and were routed to a trap stub).
     pub warnings: Vec<String>,
@@ -50,17 +56,24 @@ impl LayoutEngine {
             pe_tls_info: None,
             base_relocs: Vec::new(),
             base_relocs32: Vec::new(),
+            elf_got_slots: std::collections::HashMap::new(),
+            elf_dynamic_relocs: Vec::new(),
             warnings: Vec::new(),
         }
     }
 
     /// Merge sections, assign virtual addresses, resolve symbols, and apply all relocations.
+    ///
+    /// `elf_dynamic` requests ELF dynamic-linking metadata: the layout
+    /// records `R_X86_64_RELATIVE` relocations for absolute pointers (PIE /
+    /// shared libraries) and reserves GOT slots for imported symbols.
     pub fn layout_and_relocate(
         &mut self,
         objects: &[ObjectFile],
         resolver: &SymbolResolver,
         target: &Target,
         entry_name: &str,
+        elf_dynamic: bool,
     ) -> LinkResult<()> {
         // 1. Group input sections by category
         let mut text_merged = MergedSection::new(
@@ -358,15 +371,38 @@ impl LayoutEngine {
                 .sort_by(|a, b| (&a.dll_name, &a.symbol_name).cmp(&(&b.dll_name, &b.symbol_name)));
         }
 
-        let mut elf_imports = Vec::new();
-        let mut seen_elf_imports = std::collections::HashSet::new();
-        if target.format == crate::target::ObjectFormat::Elf {
-            for (sym_name, resolved) in &resolver.table {
-                if resolved.symbol.is_imported && seen_elf_imports.insert(sym_name.clone()) {
-                    elf_imports.push(sym_name.clone());
-                }
-            }
+        let mut elf_imports: Vec<String> = Vec::new();
+        if target.format == crate::target::ObjectFormat::Elf && elf_dynamic {
+            // The resolver records every symbol routed to a system shared
+            // library. Deterministic order: the dynsym, GOT, and PLT layouts
+            // must be identical for identical inputs.
+            elf_imports = resolver.dynamic_imports.clone();
             elf_imports.sort();
+            elf_imports.dedup();
+        }
+
+        // Data-object imports can never be served by a function stub and
+        // address-of-imported-data is unsupported (no COPY relocations /
+        // GOT-relative loads). Reject before any layout is produced.
+        if target.format == crate::target::ObjectFormat::Elf {
+            let mut data_imports: Vec<&String> = resolver
+                .dynamic_data_imports
+                .iter()
+                .filter(|name| elf_dynamic || resolver.table.get(*name).is_some_and(|r| r.symbol.is_imported))
+                .collect();
+            if !data_imports.is_empty() {
+                data_imports.sort();
+                let shown: Vec<&str> = data_imports.iter().map(|s| s.as_str()).collect();
+                return Err(LinkError::new(
+                    ErrorCode::UnsupportedRelocation,
+                    format!(
+                        "imported data symbol(s) are not supported: {} — Adesh links cannot \
+                         take the address of C library data objects (no COPY relocations or \
+                         GOT-relative loads are emitted yet)",
+                        shown.join(", ")
+                    ),
+                ));
+            }
         }
 
         let has_explicit_pe_entry = objects.iter().any(|o| {
@@ -561,9 +597,13 @@ impl LayoutEngine {
             pe_imp_result = Some(imp_res);
         }
 
-        let mut elf_got_map = HashMap::new();
+        let mut elf_got_map: HashMap<String, u64> = HashMap::new();
+        let mut elf_got_section_index: Option<usize> = None;
         if target.format == crate::target::ObjectFormat::Elf && !elf_imports.is_empty() {
-            let got_va = align_to(current_va, 8);
+            // Page-aligned start so `PT_GNU_RELRO` can cover the GOT (and the
+            // dynamic region after it) without also mprotecting preceding
+            // writable user data that shares its final page.
+            let got_va = align_to(current_va, target.page_size.max(8));
             let mut got_sec = MergedSection::new(
                 ".got",
                 SectionKind::Data,
@@ -571,13 +611,20 @@ impl LayoutEngine {
                 8,
             );
             got_sec.virtual_address = got_va;
-            // 8 bytes per dynamic symbol pointer slot
-            got_sec.data = vec![0u8; elf_imports.len() * 8];
+            // x86-64/AArch64 GOT prologue: slot 0 holds &_DYNAMIC (patched by
+            // the writer once the .dynamic address is known); slots 1 and 2
+            // are reserved for the dynamic loader's link-map/resolver pointers
+            // (unused with DT_BIND_NOW, reserved per ABI). One slot per
+            // imported symbol follows.
+            let n_header_slots = 3usize;
+            got_sec.data = vec![0u8; (n_header_slots + elf_imports.len()) * 8];
             got_sec.size = got_sec.data.len() as u64;
             for (idx, sym) in elf_imports.iter().enumerate() {
-                elf_got_map.insert(sym.clone(), got_va + (idx as u64 * 8));
+                let slot_va = got_va + ((n_header_slots + idx) * 8) as u64;
+                elf_got_map.insert(sym.clone(), slot_va);
             }
             current_va = got_va + got_sec.size;
+            elf_got_section_index = Some(merged_list.len());
             merged_list.push(got_sec);
         }
 
@@ -1299,6 +1346,53 @@ impl LayoutEngine {
                                 _ => {}
                             }
                         }
+
+                        // ET_DYN images (PIE executables and shared libraries)
+                        // are mapped at a runtime-chosen base: every absolute
+                        // address baked into the image must carry a dynamic
+                        // `R_X86_64_RELATIVE` relocation so the loader can
+                        // rebase it.
+                        if !routed_to_trap
+                            && elf_dynamic
+                            && target.format == crate::target::ObjectFormat::Elf
+                            && merged.is_alloc()
+                        {
+                            match reloc.kind {
+                                RelocationKind::Absolute64 => {
+                                    let value =
+                                        (sym_va as i64).wrapping_add(reloc.addend) as u64;
+                                    self.elf_dynamic_relocs.push(
+                                        crate::elf::dynamic::ElfDynamicReloc {
+                                            offset: place_va,
+                                            kind: crate::elf::dynamic::ElfDynamicRelocKind::Relative,
+                                            symbol: None,
+                                            addend: value as i64,
+                                        },
+                                    );
+                                }
+                                RelocationKind::Absolute32
+                                | RelocationKind::Absolute16
+                                | RelocationKind::Absolute8 => {
+                                    // A truncated absolute address cannot be
+                                    // rebased by any dynamic relocation
+                                    // (`R_X86_64_RELATIVE` rewrites a full
+                                    // pointer word). Emitting one would be
+                                    // silent wrong code; fail the link.
+                                    return Err(LinkError::new(
+                                        ErrorCode::UnsupportedRelocation,
+                                        format!(
+                                            "{}-bit absolute relocation against `{}` in `{}` is not \
+                                             representable in a position-independent image; use a \
+                                             64-bit pointer or a PC-relative form",
+                                            reloc.kind.size_in_bytes() * 8,
+                                            reloc.symbol_name,
+                                            merged.name
+                                        ),
+                                    ));
+                                }
+                                _ => {}
+                            }
+                        }
                     }
                     Err(e) => {
                         let is_overflow =
@@ -1322,6 +1416,43 @@ impl LayoutEngine {
                 }
             }
         }
+
+        // ELF dynamic import bookkeeping: fill each import's GOT slot with
+        // its PLT-stub address (the file-time initial value; eager
+        // `DT_BIND_NOW` loaders overwrite every slot before execution) and
+        // record one `R_X86_64_JUMP_SLOT` dynamic relocation per slot so the
+        // loader performs that write.
+        if let Some(got_idx) = elf_got_section_index {
+            // Borrow dance: patch the merged .got in place.
+            let (got_base, got_len) = {
+                let got_sec = &merged_list[got_idx];
+                (got_sec.virtual_address, got_sec.data.len())
+            };
+            for (name, slot_va) in &elf_got_map {
+                let stub_va = symbol_va_map.get(name).copied().unwrap_or(0);
+                let off = (*slot_va - got_base) as usize;
+                if off + 8 <= got_len {
+                    let got_sec = &mut merged_list[got_idx];
+                    got_sec.data[off..off + 8].copy_from_slice(&stub_va.to_le_bytes());
+                } else {
+                    return Err(LinkError::new(
+                        ErrorCode::InvalidSection,
+                        format!(
+                            "GOT slot for `{}` at 0x{:x} is outside the .got section",
+                            name, slot_va
+                        ),
+                    ));
+                }
+                self.elf_dynamic_relocs
+                    .push(crate::elf::dynamic::ElfDynamicReloc {
+                        offset: *slot_va,
+                        kind: crate::elf::dynamic::ElfDynamicRelocKind::JumpSlot,
+                        symbol: Some(name.clone()),
+                        addend: 0,
+                    });
+            }
+        }
+        self.elf_got_slots = elf_got_map;
 
         self.merged_sections = merged_list;
         self.resolved_symbols = final_symbols;
@@ -1392,7 +1523,7 @@ mod tests {
 
         let mut layout = LayoutEngine::new();
         layout
-            .layout_and_relocate(&objects, &resolver, &target, "main")
+            .layout_and_relocate(&objects, &resolver, &target, "main", false)
             .expect("weak call should be routed to the trap stub");
         assert!(
             layout

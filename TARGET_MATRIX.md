@@ -9,7 +9,7 @@
 | Target Triple | Arch | OS | Object Format | Codegen | Relocations | Linking | Runtime | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | `x86_64-pc-windows-msvc` | x86_64 | Windows | PE/COFF (PE32+) | **Native (integer + scalar SSE2 FP subset)** | ABS64, PC32 (emitted + resolved) | **Native PE (execution-tested)** | **Native Win32** | **Execution-verified** |
-| `x86_64-unknown-linux-gnu` | x86_64 | Linux | ELF64 | **Native (integer + scalar SSE2 FP subset)** | ABS64, PC32, Section-symbols | **Native ELF (static, execution-tested; dynamic import routing)** | **Native POSIX** | **Execution-verified** |
+| `x86_64-unknown-linux-gnu` | x86_64 | Linux | ELF64 | **Native (integer + scalar SSE2 FP subset)** | ABS64, PC32, Section-symbols | **Native ELF (static, execution-tested; dynamic import routing & PLT/GOT)** | **Native POSIX** | **Execution-verified** |
 | `x86_64-unknown-linux-musl` | x86_64 | Linux | ELF64 (static) | **Native (integer + scalar SSE2 FP subset)** | ABS64, PC32 | **Native ELF (static; musl CI job pending)** | **Native POSIX** | **Tested** (glibc execution-verified, musl static emission tested) |
 | `aarch64-unknown-linux-gnu` | AArch64 | Linux | ELF64 | **Implemented (AAPCS64, FP, NEON, Atomics)** | CALL26, ADRP, ADD_LO12 (emitted + resolved) | **Native ELF (static emission tested)** | **Native POSIX** | **Tested** (Codegen & relocation tested; execution pending) |
 | `aarch64-apple-darwin` | AArch64 | macOS | Mach-O 64 | **Implemented (AAPCS64 codegen)** | BRANCH26 (constant only) | **Native Mach-O (libSystem dynamic routing implemented)** | **Native Darwin** | **Implemented** (Structure & dynamic routing tested; runtime execution pending) |

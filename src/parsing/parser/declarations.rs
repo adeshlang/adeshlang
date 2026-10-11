@@ -475,6 +475,11 @@ impl Parser {
         is_const: bool,
         is_readonly: bool,
     ) -> Result<Stmt, LangError> {
+        // Line of the introducing `let`/`const` keyword. Used to reject
+        // same-line misuse like `let mut i = 0;` — Adesh has no `mut`
+        // keyword, and such input would otherwise silently declare a
+        // variable named `mut` and reparse `i = 0` as a stray assignment.
+        let decl_line = self.previous_span().line;
         // Check for object destructuring: let { x, y } = obj
         if self.check(TokenKind::LeftBrace) {
             self.advance();
@@ -712,6 +717,17 @@ impl Parser {
                 kind: StmtKind::Block(stmts),
                 span: self.previous_span(),
             });
+        }
+
+        // A declaration followed directly by another identifier on the same
+        // line is always a mistake — most commonly Rust-style
+        // `let mut i = 0;`. Fail loudly instead of silently declaring a
+        // variable named `mut` and turning `i = 0` into a stray assignment.
+        if self.check(TokenKind::Identifier) && self.peek().line == decl_line {
+            return Err(self.format_err(
+                self.peek(),
+                "Expected '=' or ';' after declaration: Adesh has no 'mut' keyword (variables are mutable by default); write 'let name = value'",
+            ));
         }
 
         self.matchk(&[TokenKind::Semicolon]);
