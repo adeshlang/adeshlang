@@ -389,10 +389,7 @@ impl Linker {
                 let importable_elf = is_elf
                     && elf_dynamic_mode
                     && ctx.config.target.arch == crate::target::Arch::X86_64
-                    && matches!(
-                        route,
-                        crate::os_router::SymbolRoute::DllImport { .. }
-                    );
+                    && matches!(route, crate::os_router::SymbolRoute::DllImport { .. });
 
                 let importable = importable_pe || importable_elf;
 
@@ -443,9 +440,7 @@ impl Linker {
                         .or_else(|| name.strip_prefix("_imp_"))
                         .unwrap_or(name);
                     let (b, r, _) = crate::elf::x86_64::synthesize_elf_x86_64_plt_stub(
-                        raw,
-                        file_idx,
-                        start_off,
+                        raw, file_idx, start_off,
                     );
                     (b, vec![r])
                 } else {
@@ -767,7 +762,10 @@ impl Linker {
                             needed.push(libc.to_string());
                         }
                     }
-                    if elf_info.imports.iter().any(|name| name.starts_with("_Unwind_"))
+                    if elf_info
+                        .imports
+                        .iter()
+                        .any(|name| name.starts_with("_Unwind_"))
                         && !needed.iter().any(|n| n == "libgcc_s.so.1")
                     {
                         needed.push("libgcc_s.so.1".to_string());

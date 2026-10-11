@@ -155,13 +155,13 @@ impl LoopOptimizer {
                 let mut invariants = Vec::new();
                 let mut retain = Vec::new();
                 for inst in b.instructions.drain(..) {
-                    let is_invariant = match &inst {
+                    let is_invariant = matches!(
+                        &inst,
                         MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(d)),
                             src: MachineOperand::Immediate(_),
-                        } if def_counts.get(d) == Some(&1) => true,
-                        _ => false,
-                    };
+                        } if def_counts.get(d) == Some(&1)
+                    );
 
                     if is_invariant {
                         invariants.push(inst);
@@ -175,14 +175,12 @@ impl LoopOptimizer {
                 // Hoist into the preheader, before its terminator when it
                 // ends in a branch.
                 if !invariants.is_empty()
-                    && let Some(preheader) =
-                        func.blocks.iter_mut().find(|b| b.id == preheader_id)
+                    && let Some(preheader) = func.blocks.iter_mut().find(|b| b.id == preheader_id)
                 {
                     let insert_pos = match preheader.instructions.last() {
-                        Some(MachineInstruction::Branch { .. }
-                        | MachineInstruction::BranchCc { .. }) => {
-                            preheader.instructions.len() - 1
-                        }
+                        Some(
+                            MachineInstruction::Branch { .. } | MachineInstruction::BranchCc { .. },
+                        ) => preheader.instructions.len() - 1,
                         _ => preheader.instructions.len(),
                     };
                     for (i, inst) in invariants.into_iter().enumerate() {

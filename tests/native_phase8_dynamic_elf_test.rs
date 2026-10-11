@@ -72,10 +72,7 @@ fn linux_libc_triple() -> Option<&'static str> {
                     &format!("test -x {interp} && echo yes"),
                 ])
                 .output()
-                .map(|o| {
-                    o.status.success()
-                        && String::from_utf8_lossy(&o.stdout).trim() == "yes"
-                })
+                .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "yes")
                 .unwrap_or(false)
         };
         if probe("/lib64/ld-linux-x86-64.so.2") {
@@ -224,6 +221,7 @@ struct ElfView<'a> {
 }
 
 /// A program header: (p_type, p_offset, p_vaddr, p_filesz, p_memsz, p_flags).
+#[allow(dead_code)]
 struct Phdr {
     p_type: u32,
     p_offset: u64,
@@ -234,6 +232,7 @@ struct Phdr {
 }
 
 /// A section header: (name, sh_type, sh_addr, sh_offset, sh_size, sh_link).
+#[allow(dead_code)]
 struct Shdr {
     name: String,
     sh_type: u32,
@@ -357,25 +356,45 @@ impl<'a> ElfView<'a> {
 const PT_LOAD: u32 = 1;
 const PT_DYNAMIC: u32 = 2;
 const PT_INTERP: u32 = 3;
+#[allow(dead_code)]
 const PT_GNU_RELRO: u32 = 0x6474_e552;
+#[allow(dead_code)]
 const ET_EXEC: u16 = 2;
+#[allow(dead_code)]
 const ET_DYN: u16 = 3;
+#[allow(dead_code)]
 const DT_NEEDED: u64 = 1;
+#[allow(dead_code)]
 const DT_PLTRELSZ: u64 = 2;
+#[allow(dead_code)]
 const DT_STRTAB: u64 = 10;
+#[allow(dead_code)]
 const DT_SYMTAB: u64 = 11;
+#[allow(dead_code)]
 const DT_RELA: u64 = 7;
+#[allow(dead_code)]
 const DT_RELASZ: u64 = 8;
+#[allow(dead_code)]
 const DT_JMPREL: u64 = 23;
+#[allow(dead_code)]
 const DT_SONAME: u64 = 14;
+#[allow(dead_code)]
 const DT_FLAGS: u64 = 30;
+#[allow(dead_code)]
 const DT_FLAGS_1: u64 = 0x6fff_fffb;
+#[allow(dead_code)]
 const DT_GNU_HASH: u64 = 0x6fff_fef5;
+#[allow(dead_code)]
 const DT_HASH: u64 = 4;
+#[allow(dead_code)]
 const DF_BIND_NOW: u64 = 0x8;
+#[allow(dead_code)]
 const DF_1_NOW: u64 = 0x1;
+#[allow(dead_code)]
 const DF_1_PIE: u64 = 0x0800_0000;
+#[allow(dead_code)]
 const R_X86_64_RELATIVE: u32 = 8;
+#[allow(dead_code)]
 const R_X86_64_JUMP_SLOT: u32 = 7;
 
 // ---------------------------------------------------------------------------
@@ -405,9 +424,8 @@ fn build_puts_object(obj_path: PathBuf, target: &Target, use_data_ptr: bool) -> 
     let text_idx = obj.add_section(Section::new_code(".text", text.clone(), 16));
     let msg_str = b"hello from adesh dynamic ELF\n\0";
     let rodata_idx = obj.add_section(Section::new_data(".rodata", msg_str.to_vec(), false, 1));
-    let data_idx = use_data_ptr.then(|| {
-        obj.add_section(Section::new_data(".data", vec![0u8; 8], true, 8))
-    });
+    let data_idx =
+        use_data_ptr.then(|| obj.add_section(Section::new_data(".data", vec![0u8; 8], true, 8)));
 
     obj.add_symbol(Symbol::new_defined(
         "_start",
@@ -505,12 +523,7 @@ fn build_dlopen_driver(obj_path: PathBuf, target: &Target) -> ObjectFile {
 
     let text_idx = obj.add_section(Section::new_code(".text", text.clone(), 16));
     let sym_name = b"add42\0";
-    let rodata_idx = obj.add_section(Section::new_data(
-        ".rodata",
-        sym_name.to_vec(),
-        false,
-        1,
-    ));
+    let rodata_idx = obj.add_section(Section::new_data(".rodata", sym_name.to_vec(), false, 1));
 
     let _start = obj.add_symbol(Symbol::new_defined(
         "_start",
@@ -753,8 +766,7 @@ fn test_dynamic_exec_puts_executes_and_prints() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(
-        stdout,
-        "hello from adesh dynamic ELF\n",
+        stdout, "hello from adesh dynamic ELF\n",
         "puts must print the exact message through the PLT/GOT import"
     );
 }
@@ -848,7 +860,10 @@ fn test_shared_lib_dlopen_dlsym_and_call_executes() {
         so_view.dynsym_names()
     );
     assert!(
-        so_view.dynamic_entries().iter().any(|(t, _)| *t == DT_GNU_HASH),
+        so_view
+            .dynamic_entries()
+            .iter()
+            .any(|(t, _)| *t == DT_GNU_HASH),
         "exported symbols require DT_GNU_HASH for loader symbol lookup"
     );
 
@@ -892,7 +907,8 @@ fn test_shared_lib_dlopen_dlsym_and_call_executes() {
     let output = run_elf(&drv_path, &[&so_arg]).expect("execute dlopen driver");
     let code = output.status.code().unwrap_or(-1);
     assert_eq!(
-        code, 47,
+        code,
+        47,
         "exit code must be add42(5) == 47; 99 = dlopen failed, 98 = dlsym failed\nstdout: {:?}\nstderr: {:?}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)

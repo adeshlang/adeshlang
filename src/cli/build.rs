@@ -1074,12 +1074,9 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
                 .and_then(|s| s.to_str())
                 .unwrap_or("module");
             let base_dir = config.input.parent();
-            let mut module = crate::backends::native::lower_hir_module_with_base(
-                hir,
-                &target,
-                base_dir,
-            )
-            .map_err(|e| e.to_string())?;
+            let mut module =
+                crate::backends::native::lower_hir_module_with_base(hir, &target, base_dir)
+                    .map_err(|e| e.to_string())?;
             module.name = mod_name.to_string();
 
             // Phase 4: with --lto, emit via CompilerDriver so the IR-level

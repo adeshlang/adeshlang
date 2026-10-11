@@ -1573,9 +1573,7 @@ pub fn adaptive_jit_run(src: &str) -> Result<RuntimeValue, String> {
 
     // Lower to HIR
     let hir = ast_to_hir(&ast, false)?;
-    crate::parsing::compile_time_memory_safety::check_memory_safety_compile_time_in(
-        &hir, None,
-    )?;
+    crate::parsing::compile_time_memory_safety::check_memory_safety_compile_time_in(&hir, None)?;
 
     // Choose compilation path — LIR is the default (VIR drops ARC ops)
     let use_vir = std::env::var("ADESH_USE_VIR")

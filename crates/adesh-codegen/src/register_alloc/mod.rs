@@ -2368,14 +2368,16 @@ impl<'a> LinearScanAllocator<'a> {
         // its snapshot slot. Such candidates must keep the general
         // stack-copy preservation path instead of the local split.
         candidates.retain(|(split_block, call_idx, _, _)| {
-            func.blocks[*split_block as usize].instructions[..*call_idx].iter().all(|prior| {
-                !matches!(
-                    prior,
-                    MachineInstruction::Branch { .. }
-                        | MachineInstruction::BranchCc { .. }
-                        | MachineInstruction::Return
-                )
-            })
+            func.blocks[*split_block as usize].instructions[..*call_idx]
+                .iter()
+                .all(|prior| {
+                    !matches!(
+                        prior,
+                        MachineInstruction::Branch { .. }
+                            | MachineInstruction::BranchCc { .. }
+                            | MachineInstruction::Return
+                    )
+                })
         });
         candidates.retain(|(split_block, _, _, _)| {
             func.blocks

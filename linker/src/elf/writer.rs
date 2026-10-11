@@ -90,7 +90,13 @@ fn build_sym(
                 SymbolType::File => STT_FILE,
                 _ => STT_NOTYPE,
             };
-            (bind, st_type, output_section_index(s).unwrap_or(SHN_ABS), s.value, s.size)
+            (
+                bind,
+                st_type,
+                output_section_index(s).unwrap_or(SHN_ABS),
+                s.value,
+                s.size,
+            )
         }
         None => (STB_GLOBAL, STT_NOTYPE, SHN_UNDEF, 0, 0),
     };
@@ -460,9 +466,8 @@ impl ElfWriter {
                     rx_mem_end = rx_mem_end.max(off + mem_len);
                 } else {
                     rw_off_min = Some(rw_off_min.map_or(off, |m| m.min(off)));
-                    rw_va_min = Some(
-                        rw_va_min.map_or(sec.virtual_address, |m| m.min(sec.virtual_address)),
-                    );
+                    rw_va_min =
+                        Some(rw_va_min.map_or(sec.virtual_address, |m| m.min(sec.virtual_address)));
                     rw_file_end = rw_file_end.max(off + file_len);
                     rw_mem_end = rw_mem_end.max(sec.virtual_address + mem_len);
                 }
@@ -642,12 +647,7 @@ impl ElfWriter {
                         .iter()
                         .find(|s| s.name.as_str() == name && s.is_defined)
                     {
-                        let s = build_sym(
-                            name,
-                            Some(sym),
-                            &output_section_index,
-                            &mut dynstr_buf,
-                        );
+                        let s = build_sym(name, Some(sym), &output_section_index, &mut dynstr_buf);
                         encode_sym(&s, &mut dynsym_bytes);
                     } else {
                         return Err(LinkError::new(
@@ -673,7 +673,8 @@ impl ElfWriter {
                             ErrorCode::UnsupportedRelocation,
                             format!(
                                 "dynamic relocation {:?} is not supported on {}",
-                                reloc.kind, target.arch.as_str()
+                                reloc.kind,
+                                target.arch.as_str()
                             ),
                         )
                     })?;
@@ -726,7 +727,9 @@ impl ElfWriter {
             for i in 1..dynsym_count {
                 let base = i * 24;
                 let st_name = u32::from_le_bytes(
-                    dynsym_bytes[base..base + 4].try_into().expect("dynsym entry"),
+                    dynsym_bytes[base..base + 4]
+                        .try_into()
+                        .expect("dynsym entry"),
                 ) as usize;
                 let end = dynstr_buf[st_name..]
                     .iter()
@@ -757,18 +760,42 @@ impl ElfWriter {
 
             let mut dynamic_entries: Vec<Elf64_Dyn> = Vec::new();
             if !rela_dyn_bytes.is_empty() {
-                rela_dyn = place_table(&mut output, &rela_dyn_bytes, 8, target.image_base, &mut cursor);
+                rela_dyn = place_table(
+                    &mut output,
+                    &rela_dyn_bytes,
+                    8,
+                    target.image_base,
+                    &mut cursor,
+                );
             }
             if !rela_plt_bytes.is_empty() {
-                rela_plt = place_table(&mut output, &rela_plt_bytes, 8, target.image_base, &mut cursor);
+                rela_plt = place_table(
+                    &mut output,
+                    &rela_plt_bytes,
+                    8,
+                    target.image_base,
+                    &mut cursor,
+                );
             }
             if dynsym_count > 1 {
-                dynsym = place_table(&mut output, &dynsym_bytes, 8, target.image_base, &mut cursor);
+                dynsym = place_table(
+                    &mut output,
+                    &dynsym_bytes,
+                    8,
+                    target.image_base,
+                    &mut cursor,
+                );
             }
             dynstr = place_table(&mut output, &dynstr_buf, 1, target.image_base, &mut cursor);
             hash = place_table(&mut output, &hash_bytes, 4, target.image_base, &mut cursor);
             if !gnu_hash_bytes.is_empty() {
-                gnu_hash = place_table(&mut output, &gnu_hash_bytes, 4, target.image_base, &mut cursor);
+                gnu_hash = place_table(
+                    &mut output,
+                    &gnu_hash_bytes,
+                    4,
+                    target.image_base,
+                    &mut cursor,
+                );
             }
 
             for str_off in &needed_str_offsets {
@@ -876,7 +903,13 @@ impl ElfWriter {
             for e in &dynamic_entries {
                 encode_dyn(e, &mut dynamic_bytes);
             }
-            dynamic = place_table(&mut output, &dynamic_bytes, 8, target.image_base, &mut cursor);
+            dynamic = place_table(
+                &mut output,
+                &dynamic_bytes,
+                8,
+                target.image_base,
+                &mut cursor,
+            );
 
             // Patch GOT[0] = &_DYNAMIC.
             if let Some(got) = got_sec {
@@ -1114,8 +1147,9 @@ impl ElfWriter {
 
         if let Some(names) = dyn_section_names {
             // .rela.dyn / .rela.plt precede .dynsym in the header table.
-            let dynsym_hdr_index_base =
-                section_headers.len() as u32 + (rela_dyn.size > 0) as u32 + (rela_plt.size > 0) as u32;
+            let dynsym_hdr_index_base = section_headers.len() as u32
+                + (rela_dyn.size > 0) as u32
+                + (rela_plt.size > 0) as u32;
             let dynsym_shndx = dynsym_hdr_index_base;
             let dynstr_shndx = dynsym_shndx + 1;
 

@@ -8,9 +8,6 @@
 use crate::parsing::hir::{
     BinOp, HirExpr, HirFunction, HirLiteral, HirModule, HirPattern, HirStmt, HirType, UnaryOp,
 };
-use crate::parsing::hir_lower::ast_to_hir;
-use crate::parsing::lexer::Lexer;
-use crate::parsing::parser::Parser;
 use adesh_codegen::abi::AbiType;
 use adesh_codegen::calling_convention::{
     ArgumentLocation, CallingConvention, ReturnLocation, SystemVX64CallingConvention,
@@ -1741,8 +1738,7 @@ impl<'a> FunctionLoweringContext<'a> {
             self.infer_expr_type(expr),
             Some(HirType::Array(
                 _,
-                crate::ir::hir::ArrayKind::Raw
-                    | crate::ir::hir::ArrayKind::FixedRaw(_)
+                crate::ir::hir::ArrayKind::Raw | crate::ir::hir::ArrayKind::FixedRaw(_)
             ))
         )
     }
@@ -3961,9 +3957,9 @@ impl<'a> FunctionLoweringContext<'a> {
                     let out_reg = self.func.alloc_vreg();
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                        src: MachineOperand::Register(MachineRegister::Physical(
-                            PhysicalRegister(0),
-                        )),
+                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
+                            0,
+                        ))),
                     });
                     out_reg
                 }

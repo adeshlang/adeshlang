@@ -1503,7 +1503,15 @@ impl OsApiRouter {
             .unwrap_or(sym);
         matches!(
             raw,
-            "stdout" | "stderr" | "stdin" | "environ" | "__environ" | "optarg" | "optind" | "opterr" | "optopt"
+            "stdout"
+                | "stderr"
+                | "stdin"
+                | "environ"
+                | "__environ"
+                | "optarg"
+                | "optind"
+                | "opterr"
+                | "optopt"
         )
     }
 

@@ -192,16 +192,13 @@ mod tests {
         let changed = pass.run_on_function(&mut func).expect("licm runs");
         assert!(changed, "a lone constant Move should be hoisted");
         assert!(
-            func.blocks[0]
-                .instructions
-                .iter()
-                .any(|inst| matches!(
-                    inst,
-                    MachineInstruction::Move {
-                        dst: MachineOperand::Register(MachineRegister::Virtual(d)),
-                        src: MachineOperand::Immediate(16),
-                    } if *d == size
-                )),
+            func.blocks[0].instructions.iter().any(|inst| matches!(
+                inst,
+                MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(d)),
+                    src: MachineOperand::Immediate(16),
+                } if *d == size
+            )),
             "the constant materialization moves to the preheader"
         );
         assert!(

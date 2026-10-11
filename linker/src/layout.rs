@@ -388,7 +388,13 @@ impl LayoutEngine {
             let mut data_imports: Vec<&String> = resolver
                 .dynamic_data_imports
                 .iter()
-                .filter(|name| elf_dynamic || resolver.table.get(*name).is_some_and(|r| r.symbol.is_imported))
+                .filter(|name| {
+                    elf_dynamic
+                        || resolver
+                            .table
+                            .get(*name)
+                            .is_some_and(|r| r.symbol.is_imported)
+                })
                 .collect();
             if !data_imports.is_empty() {
                 data_imports.sort();
@@ -1359,12 +1365,12 @@ impl LayoutEngine {
                         {
                             match reloc.kind {
                                 RelocationKind::Absolute64 => {
-                                    let value =
-                                        (sym_va as i64).wrapping_add(reloc.addend) as u64;
+                                    let value = (sym_va as i64).wrapping_add(reloc.addend) as u64;
                                     self.elf_dynamic_relocs.push(
                                         crate::elf::dynamic::ElfDynamicReloc {
                                             offset: place_va,
-                                            kind: crate::elf::dynamic::ElfDynamicRelocKind::Relative,
+                                            kind:
+                                                crate::elf::dynamic::ElfDynamicRelocKind::Relative,
                                             symbol: None,
                                             addend: value as i64,
                                         },

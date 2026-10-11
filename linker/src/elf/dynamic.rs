@@ -219,12 +219,10 @@ mod tests {
         }
         let bloom_ok = {
             let w = table.bloom[(h / 64) as usize % table.bloom.len()];
-            (w >> (h % 64)) & 1 == 1
-                && {
-                    let w2 =
-                        table.bloom[((h >> table.bloom_shift) / 64) as usize % table.bloom.len()];
-                    (w2 >> ((h >> table.bloom_shift) % 64)) & 1 == 1
-                }
+            (w >> (h % 64)) & 1 == 1 && {
+                let w2 = table.bloom[((h >> table.bloom_shift) / 64) as usize % table.bloom.len()];
+                (w2 >> ((h >> table.bloom_shift) % 64)) & 1 == 1
+            }
         };
         if !bloom_ok {
             return None;
@@ -253,7 +251,9 @@ mod tests {
     #[test]
     fn gnu_hash_table_resolves_every_name() {
         const FIRST_HASHED: u32 = 1;
-        let names = vec!["puts", "printf", "malloc", "free", "memcpy", "strlen", "exit"];
+        let names = vec![
+            "puts", "printf", "malloc", "free", "memcpy", "strlen", "exit",
+        ];
         let table = build_gnu_hash(&names, FIRST_HASHED);
 
         for name in &names {
@@ -325,7 +325,10 @@ mod tests {
                 rel += 1;
             }
         }
-        assert!(visited.iter().all(|&v| v), "some hashed slot is unreachable");
+        assert!(
+            visited.iter().all(|&v| v),
+            "some hashed slot is unreachable"
+        );
     }
 
     #[test]

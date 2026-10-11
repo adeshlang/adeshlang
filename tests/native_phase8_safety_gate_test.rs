@@ -13,7 +13,8 @@
 use adeshlang::toolchain::config::RuntimeConfig;
 
 fn verify_safety_rejection(src: &str, expected_substring: &str) {
-    let type_res = adeshlang::types::type_system::check_module_in(src, Some("adversarial_test.adesh"));
+    let type_res =
+        adeshlang::types::type_system::check_module_in(src, Some("adversarial_test.adesh"));
     let ownership_res = adeshlang::cli::parsing::check_ownership_and_parse_in(
         src,
         &RuntimeConfig::default(),
@@ -24,9 +25,7 @@ fn verify_safety_rejection(src: &str, expected_substring: &str) {
     assert!(
         failed,
         "Safety gate bypassed! Code should have failed compilation:\n{}\nType check: {:?}\nOwnership check: {:?}",
-        src,
-        type_res,
-        ownership_res
+        src, type_res, ownership_res
     );
 
     let mut combined_err = String::new();
@@ -39,7 +38,9 @@ fn verify_safety_rejection(src: &str, expected_substring: &str) {
     }
 
     assert!(
-        combined_err.to_lowercase().contains(&expected_substring.to_lowercase()),
+        combined_err
+            .to_lowercase()
+            .contains(&expected_substring.to_lowercase()),
         "Expected error message containing '{}', but got:\n{}",
         expected_substring,
         combined_err
