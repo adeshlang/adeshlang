@@ -9,7 +9,7 @@
 //! - Direct memory access for specialized types
 //!
 //! ## Code Generation Pattern:
-//! ```
+//! ```text
 //! if (array.element_type == ElementType::Word && array.kind == ArrayKind::Dynamic) {
 //!     // Fast path: specialized i32 access
 //!     let data_ptr = array.data_ptr as *const i32;

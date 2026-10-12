@@ -99,6 +99,13 @@ pub struct CompileTimeMemorySafety {
     current_line: usize,
     current_function: Option<String>,
     stmt_line_map: FastMap<usize, usize>, // stmt index -> line number
+
+    // Names declared by the function currently being borrow-checked
+    // (parameters plus every `let` in its body). Borrows of variables
+    // OUTSIDE this set refer to outer-scope values: such a borrow ends
+    // when the function returns, so a later move of the outer variable
+    // (after the call) is legal and must not be flagged cross-function.
+    current_function_locals: FastSet<String>,
 }
 
 impl CompileTimeMemorySafety {
@@ -139,6 +146,7 @@ impl CompileTimeMemorySafety {
             current_line: 1,
             current_function: None,
             stmt_line_map: FastMap::default(),
+            current_function_locals: FastSet::default(),
         }
     }
 

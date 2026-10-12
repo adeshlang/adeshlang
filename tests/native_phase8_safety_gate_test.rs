@@ -115,3 +115,77 @@ fn test_negative_borrow_after_move() {
     "#;
     verify_safety_rejection(src, "move");
 }
+
+/// Assert a program is ACCEPTED by both safety gates (type check and
+/// ownership/borrow analysis) — false positives are as much a bug as
+/// missed rejections.
+fn verify_safety_acceptance(src: &str) {
+    let type_res =
+        adeshlang::types::type_system::check_module_in(src, Some("acceptance_test.adesh"));
+    assert!(
+        type_res.is_ok(),
+        "Type check false positive:\n{}\nerror: {:?}",
+        src,
+        type_res.err()
+    );
+
+    let ownership_res = adeshlang::cli::parsing::check_ownership_and_parse_in(
+        src,
+        &RuntimeConfig::default(),
+        Some("acceptance_test.adesh"),
+    );
+    assert!(
+        ownership_res.is_ok(),
+        "Ownership/borrow false positive:\n{}\nerror: {:?}",
+        src,
+        ownership_res.err()
+    );
+}
+
+#[test]
+fn test_negative_borrow_of_moved_local_same_function() {
+    let src = r#"
+    fn main() {
+        let x = [1, 2, 3];
+        let y = x;
+        let r = &x; // Borrow of a value moved in the SAME function
+        print(r);
+    }
+    "#;
+    verify_safety_rejection(src, "moved");
+}
+
+#[test]
+fn test_negative_free_while_borrowed() {
+    let src = r#"
+    fn main() {
+        let p = [1, 2, 3];
+        let r = &p;
+        free(p); // Free while borrowed
+        print(r);
+    }
+    "#;
+    verify_safety_rejection(src, "borrowed");
+}
+
+#[test]
+fn test_positive_function_borrows_outer_variable_then_outer_moves() {
+    // Regression for a borrow-checker false positive: a helper function
+    // borrowing an outer-scope variable is fine — the borrow ends when the
+    // helper returns — so a LATER move of the outer variable (after the
+    // call) must be accepted. The module-wide ownership graph records that
+    // later move; consulting it for the helper's borrow rejected valid
+    // programs (examples/tests/scope_drop.adesh).
+    let src = r#"
+    let s = "scope_ok";
+    fn borrower() {
+        let r = &s;
+        print(r);
+    }
+    borrower();
+    let moved = s;
+    print(moved);
+    "#;
+    verify_safety_acceptance(src);
+}
+

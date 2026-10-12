@@ -31,6 +31,18 @@ impl super::CompileTimeMemorySafety {
         // Set function context for better error messages
         self.set_current_function(Some(func.name.clone()));
 
+        // Names declared by this function (params plus every `let` in its
+        // body). A borrow of a variable outside this set refers to an
+        // outer-scope value; the borrow ends when the function returns, so
+        // the module-wide ownership graph (which may record a LATER move of
+        // that outer variable, after the call) must not be consulted for it —
+        // doing so flagged legal programs like a helper borrowing a global
+        // that the top level moves afterwards.
+        let mut locals: crate::utils::collections::FastSet<String> =
+            func.params.iter().map(|(name, _, _)| name.clone()).collect();
+        collect_declared_names(&func.body, &mut locals);
+        self.current_function_locals = locals;
+
         // Track active borrows per variable
         let mut active_borrows: HashMap<String, Vec<BorrowInfo>> = HashMap::new();
 
@@ -39,6 +51,7 @@ impl super::CompileTimeMemorySafety {
             self.check_stmt_borrowing(stmt, &mut active_borrows)?;
         }
 
+        self.current_function_locals.clear();
         self.set_current_function(None);
         Ok(())
     }
@@ -128,15 +141,25 @@ impl super::CompileTimeMemorySafety {
         match expr {
             HirExpr::Borrow(target_box, is_mut) => {
                 if let HirExpr::LoadVar(var_name) = &**target_box {
-                    // Check if variable has already been moved
-                    if let Some(node) = self.ownership_graph.get(var_name) {
-                        if node.state == crate::parsing::compile_time_memory_safety::state::OwnershipState::Moved {
-                            self.errors.push(CompileTimeMemoryError::UseAfterMove {
-                                variable: var_name.clone(),
-                                moved_at: node.location.clone(),
-                                used_at: self.get_source_location(0),
-                                suggestion: crate::parsing::error::ownership_help::avoid_move(var_name),
-                            });
+                    // Check if variable has already been moved — but only
+                    // for variables declared in THIS function. A variable
+                    // from an outer scope is borrowed for the duration of
+                    // the call: the borrow ends when this function returns,
+                    // so a later move of the outer variable (after the
+                    // call) is legal. The module-wide ownership graph
+                    // records that later move, so consulting it here would
+                    // reject valid helper functions.
+                    let is_local = self.current_function_locals.contains(var_name);
+                    if is_local {
+                        if let Some(node) = self.ownership_graph.get(var_name) {
+                            if node.state == crate::parsing::compile_time_memory_safety::state::OwnershipState::Moved {
+                                self.errors.push(CompileTimeMemoryError::UseAfterMove {
+                                    variable: var_name.clone(),
+                                    moved_at: node.location.clone(),
+                                    used_at: self.get_source_location(0),
+                                    suggestion: crate::parsing::error::ownership_help::avoid_move(var_name),
+                                });
+                            }
                         }
                     }
 
@@ -308,5 +331,49 @@ impl super::CompileTimeMemorySafety {
             _ => {}
         }
         Ok(())
+    }
+}
+
+/// Collect every name declared by `let`/`let tuple` statements anywhere in
+/// `body` (recursing into nested blocks and control flow) into `out`.
+/// Used to distinguish a function's own variables from outer-scope names.
+fn collect_declared_names(body: &[HirStmt], out: &mut crate::utils::collections::FastSet<String>) {
+    for stmt in body {
+        match stmt {
+            HirStmt::Let { name, .. } => {
+                out.insert(name.clone());
+            }
+            HirStmt::LetTuple { names, .. } => {
+                for name in names {
+                    out.insert(name.clone());
+                }
+            }
+            HirStmt::Block(stmts) => collect_declared_names(stmts, out),
+            HirStmt::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                collect_declared_names(std::slice::from_ref(then_branch), out);
+                if let Some(else_stmt) = else_branch {
+                    collect_declared_names(std::slice::from_ref(else_stmt), out);
+                }
+            }
+            HirStmt::While { body, .. } | HirStmt::ForIn { body, .. } => {
+                collect_declared_names(std::slice::from_ref(body), out);
+            }
+            HirStmt::TryCatch {
+                try_block,
+                catch_block,
+                ..
+            } => {
+                collect_declared_names(std::slice::from_ref(try_block), out);
+                collect_declared_names(std::slice::from_ref(catch_block), out);
+            }
+            HirStmt::Region { body, .. } | HirStmt::Defer(body) | HirStmt::Unsafe(body) => {
+                collect_declared_names(std::slice::from_ref(body), out);
+            }
+            _ => {}
+        }
     }
 }

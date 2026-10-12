@@ -1403,7 +1403,11 @@ pub extern "C" fn adesh_value_to_string(value: u64) -> *mut std::os::raw::c_char
                 crate::execution::runtime_core::format::fmt(&ast)
             }
         }
-    } else if value > 1000 {
+    } else if value > 0x10000 {
+        // Pointer-sized value that is not a runtime handle: treat as a C
+        // string pointer, like the rest of the bridge. Values at or below
+        // 0x10000 are plain integers — dereferencing them would crash
+        // instead of failing loudly (hardened from a `> 1000` heuristic).
         let c_str = unsafe { std::ffi::CStr::from_ptr(value as *const std::os::raw::c_char) };
         if let Ok(s) = c_str.to_str() {
             s.to_string()
@@ -1414,7 +1418,13 @@ pub extern "C" fn adesh_value_to_string(value: u64) -> *mut std::os::raw::c_char
         value.to_string()
     };
 
-    let c_str = std::ffi::CString::new(s).unwrap();
+    // Embedded NUL bytes cannot go through CString; escape instead of
+    // panicking (an ABI entry point must never panic).
+    let c_str = match std::ffi::CString::new(s.clone()) {
+        Ok(c) => c,
+        Err(_) => std::ffi::CString::new(s.replace('\0', "\\0"))
+            .unwrap_or_else(|_| std::ffi::CString::new("").unwrap()),
+    };
     let bytes = c_str.as_bytes_with_nul();
     unsafe {
         let ptr = libc::malloc(bytes.len()) as *mut std::os::raw::c_char;

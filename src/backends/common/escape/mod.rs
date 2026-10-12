@@ -6,7 +6,7 @@
 //! ## Escape Analysis Strategy:
 //!
 //! ### NoEscape Cases (Stack-Allocatable):
-//! ```
+//! ```adesh
 //! fn process() {
 //!     let temp = [1, 2, 3, 4, 5];  // ← Stack-allocated
 //!     let sum = temp.reduce(|a, b| a + b);
@@ -15,7 +15,7 @@
 //! ```
 //!
 //! ### Escape Cases (Heap-Required):
-//! ```
+//! ```adesh
 //! fn create_array() {
 //!     let arr = [1, 2, 3];
 //!     return arr;  // ← Escapes via return

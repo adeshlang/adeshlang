@@ -3,7 +3,7 @@
 //! This backend lowers VIR (Value IR) to MLIR for GPU acceleration and LLVM code generation.
 //!
 //! Architecture:
-//! ```
+//! ```text
 //! VIR → MLIR Lowering → MLIR Dialects → {LLVM, GPU} → Binary
 //! ```
 //!

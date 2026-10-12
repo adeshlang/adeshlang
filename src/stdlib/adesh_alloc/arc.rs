@@ -59,11 +59,14 @@ impl<T> Arc<T> {
 
     /// Gets the number of weak references
     ///
+    /// Like `std::sync::Arc`, a freshly created Arc reports a weak count
+    /// of 1: the implicit weak reference every strong reference holds.
+    ///
     /// # Examples
     /// ```
     /// use adeshlang::stdlib::adesh_alloc::Arc;
     /// let arc = Arc::new(5);
-    /// assert_eq!(Arc::weak_count(&arc), 0);
+    /// assert_eq!(Arc::weak_count(&arc), 1);
     /// ```
     pub fn weak_count(this: &Self) -> usize {
         this.inner().weak.load(Ordering::Acquire)

@@ -5,7 +5,7 @@
 //! and an optional destructor function pointer.
 //!
 //! Memory Layout:
-//! ```
+//! ```text
 //! [ref_count: usize (8 bytes)][drop_fn: *mut u8 (8 bytes)][object data...]
 //!  ^                          ^                           ^
 //!  header (16 bytes total)                                user pointer (returned to user)
