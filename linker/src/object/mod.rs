@@ -6,7 +6,7 @@ pub mod reader;
 pub mod symbols;
 pub mod writer;
 
-pub use adob::{ADOB_MAGIC, ADOB_VERSION_2, AdobV2};
+pub use adob::{ADOB_MAGIC, ADOB_VERSION_2, ADOB_VERSION_3, AdobV2};
 pub use binary_reader::BinaryReader;
 pub use reader::ObjectReader;
 pub use symbols::ObjectSymbolIndex;

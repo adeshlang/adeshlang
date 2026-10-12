@@ -31,6 +31,10 @@ pub enum ElfDynamicRelocKind {
     /// `R_X86_64_JUMP_SLOT` / `R_AARCH64_JUMP_SLOT`: PLT GOT slot,
     /// `*offset = resolve(symbol)`. Bound eagerly (`DT_BIND_NOW`).
     JumpSlot,
+    /// `R_X86_64_TPOFF64`: TLS initial-exec GOT slot,
+    /// `*offset = tp + offset_of(symbol_in_static_tls_block)`. The dynamic
+    /// loader resolves the thread-pointer-relative offset at startup.
+    Tpoff64,
 }
 
 impl ElfDynamicRelocKind {
@@ -42,10 +46,14 @@ impl ElfDynamicRelocKind {
             crate::target::Arch::X86_64 => match self {
                 ElfDynamicRelocKind::Relative => Some(crate::elf::header::R_X86_64_RELATIVE),
                 ElfDynamicRelocKind::JumpSlot => Some(crate::elf::header::R_X86_64_JUMP_SLOT),
+                ElfDynamicRelocKind::Tpoff64 => Some(crate::elf::header::R_X86_64_TPOFF64),
             },
             crate::target::Arch::AArch64 => match self {
                 ElfDynamicRelocKind::Relative => Some(crate::elf::header::R_AARCH64_RELATIVE),
                 ElfDynamicRelocKind::JumpSlot => Some(crate::elf::header::R_AARCH64_JUMP_SLOT),
+                // AArch64 initial-exec uses R_AARCH64_TLS_TPREL + mrs reads,
+                // a different (not yet implemented) emission path.
+                ElfDynamicRelocKind::Tpoff64 => None,
             },
             _ => None,
         }

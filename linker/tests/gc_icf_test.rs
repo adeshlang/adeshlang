@@ -159,15 +159,38 @@ fn test_optimization_levels_select_portable_passes() {
 }
 
 #[test]
-fn test_elf_tls_requires_loader_metadata_instead_of_silent_shared_storage() {
+fn test_elf_tls_sections_link_into_a_placed_tls_block() {
+    // ELF links with TLS data: the merged .tls block is placed and survives
+    // layout (PT_TLS / .tdata / .tbss emission and execution are verified
+    // end-to-end in the phase 8 TLS execution tests). This guards the
+    // regression this test used to pin: TLS sections were once rejected
+    // loudly because no PT_TLS was emitted; silent shared storage (placing
+    // .tdata bytes in ordinary .data) was never an option.
     let target = Target::x86_64_linux();
     let mut obj = ObjectFile::new(PathBuf::from("tls.o"), target.clone(), 0);
+    obj.add_section(Section::new_code(".text", vec![0xC3], 16));
+    obj.add_symbol(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        1,
+        0,
+    ));
     let mut tls = Section::new_data(".tdata", vec![42], true, 8);
     tls.kind = SectionKind::TData;
     tls.flags |= flags::TLS;
     obj.add_section(tls);
-    let error = LayoutEngine::new()
+    let mut layout = LayoutEngine::new();
+    layout
         .layout_and_relocate(&[obj], &SymbolResolver::new(), &target, "main", false)
-        .unwrap_err();
-    assert!(error.to_string().contains("TLS input sections"));
+        .expect("ELF TLS sections must link into a TLS block");
+    assert!(
+        layout
+            .merged_sections
+            .iter()
+            .any(|sec| sec.kind == SectionKind::TData && sec.size > 0),
+        "the merged TLS block must be placed"
+    );
 }

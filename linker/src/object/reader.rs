@@ -75,6 +75,15 @@ impl ObjectReader {
 
         // 5. Adesh Native Object format: ADOB (Universal vs v2 vs v1)
         if magic == b"ADOB" {
+            // ADOB v3 (the linker's own format with explicit section sizes
+            // and distinct TLS section kinds) is identified by its version
+            // bytes before the universal/native readers are consulted: they
+            // would misparse the extra size field as section data.
+            if bytes.len() >= 6
+                && u16::from_le_bytes([bytes[4], bytes[5]]) == crate::object::ADOB_VERSION_3
+            {
+                return crate::object::AdobV2::decode(bytes, path, default_target, file_index);
+            }
             if let Ok(obj) =
                 crate::object::AdobV2::decode_universal(bytes, path, default_target, file_index)
             {

@@ -253,6 +253,16 @@ impl ElfWriter {
         // 1. Plan headers.
         let ehdr_size = 64usize;
         let phdr_size = 56usize;
+        // PT_TLS (merged .tls section present) and PT_GNU_EH_FRAME
+        // (synthesized .eh_frame_hdr present) add program headers; they
+        // must be counted here because the reserved header space
+        // (`headers_size`) is fixed before any table is written.
+        let has_tls_segment = merged_sections
+            .iter()
+            .any(|sec| sec.kind == SectionKind::TData);
+        let has_eh_frame_hdr = merged_sections
+            .iter()
+            .any(|sec| sec.name == ".eh_frame_hdr");
         let mut phnum = 4usize; // PT_PHDR, PT_LOAD(RX), PT_LOAD(RW), PT_GNU_STACK
         if interp_str.is_some() {
             phnum += 1;
@@ -262,6 +272,12 @@ impl ElfWriter {
         }
         if build_id.is_some() {
             phnum += 1; // PT_NOTE
+        }
+        if has_tls_segment {
+            phnum += 1; // PT_TLS
+        }
+        if has_eh_frame_hdr {
+            phnum += 1; // PT_GNU_EH_FRAME
         }
         let headers_size = ehdr_size + phnum * phdr_size;
         output.resize(headers_size, 0);
@@ -522,6 +538,62 @@ impl ElfWriter {
                 .unwrap_or(target.image_base + headers_size as u64);
         }
 
+        // PT_TLS bounds from the merged .tls section placement (both the
+        // layout-driven path and the fallback pass fill `sec_offsets` /
+        // `sec_vaddrs`). p_filesz covers the initialized image (.tdata);
+        // p_memsz the whole block including zero-fill (.tbss).
+        let tls_phdr_info: Option<(u64, u64, u64, u64, u64)> = merged_sections
+            .iter()
+            .position(|sec| sec.kind == SectionKind::TData)
+            .map(|i| {
+                let sec = &merged_sections[i];
+                let file_len = sec.data.len() as u64;
+                let mem_len = sec.size.max(file_len);
+                (
+                    sec_offsets[i],
+                    sec_vaddrs[i],
+                    file_len,
+                    mem_len,
+                    sec.alignment.max(1),
+                )
+            });
+        // PT_GNU_EH_FRAME bounds from the synthesized .eh_frame_hdr section.
+        let eh_frame_hdr_info: Option<(u64, u64, u64)> = merged_sections
+            .iter()
+            .position(|sec| sec.name == ".eh_frame_hdr")
+            .map(|i| {
+                let sec = &merged_sections[i];
+                (
+                    sec_offsets[i],
+                    sec_vaddrs[i],
+                    sec.data.len() as u64,
+                )
+            });
+
+        // The merged .tls section emits TWO section headers (.tdata +
+        // .tbss) when its block has a zero-fill tail, shifting every later
+        // section's header index by one. Symbol `st_shndx` values must
+        // account for that or every symbol defined after the TLS block
+        // would name a wrong section.
+        let tls_merged_idx = merged_sections
+            .iter()
+            .position(|sec| sec.kind == SectionKind::TData);
+        let tls_shdr_split = tls_merged_idx
+            .map(|i| {
+                let sec = &merged_sections[i];
+                let file_len = sec.data.len() as u64;
+                sec.size.max(file_len) > file_len
+            })
+            .unwrap_or(false);
+        let shndx_for_merged = |idx: usize| -> u16 {
+            let shift = if tls_shdr_split && tls_merged_idx.is_some_and(|t| t < idx) {
+                1
+            } else {
+                0
+            };
+            (idx + 1 + shift) as u16
+        };
+
         // 4. Dynamic-linking tables. Computed in full, then placed.
         let mut rela_dyn = Placement::default();
         let mut rela_plt = Placement::default();
@@ -583,7 +655,7 @@ impl ElfWriter {
                                 && sym.value < sec.virtual_address + sec.size
                         })
                     })
-                    .map(|idx| (idx + 1) as u16)
+                    .map(shndx_for_merged)
             };
 
             let mut export_names: Vec<String> = Vec::new();
@@ -636,6 +708,15 @@ impl ElfWriter {
                 })
                 .unwrap_or_default();
 
+            // TLS block base for STT_TLS dynsym values: the ELF ABI defines a
+            // TLS symbol's `st_value` as its offset *within* the TLS section
+            // (the dynamic loader combines it with the module's TLS block
+            // placement), not a virtual address. Emitting the placed VA would
+            // be silently wrong for every loader-side TLS computation.
+            let tls_section: Option<&MergedSection> = merged_sections
+                .iter()
+                .find(|sec| sec.kind == SectionKind::TData);
+
             if let Some(gnu) = &gnu {
                 for &name_idx in &gnu.order {
                     let name = hashed_strs[name_idx];
@@ -647,7 +728,34 @@ impl ElfWriter {
                         .iter()
                         .find(|s| s.name.as_str() == name && s.is_defined)
                     {
-                        let s = build_sym(name, Some(sym), &output_section_index, &mut dynstr_buf);
+                        let mut s =
+                            build_sym(name, Some(sym), &output_section_index, &mut dynstr_buf);
+                        if sym.sym_type == SymbolType::Tls {
+                            let tls_base = match tls_section {
+                                Some(sec) => sec.virtual_address,
+                                None => {
+                                    return Err(LinkError::new(
+                                        ErrorCode::InvalidSection,
+                                        format!(
+                                            "dynamic TLS symbol `{}` has no TLS section to \
+                                             base its .dynsym value on",
+                                            name
+                                        ),
+                                    ));
+                                }
+                            };
+                            if s.st_value < tls_base {
+                                return Err(LinkError::new(
+                                    ErrorCode::InvalidSection,
+                                    format!(
+                                        "dynamic TLS symbol `{}` value 0x{:x} precedes the \
+                                         TLS block at 0x{:x}",
+                                        name, s.st_value, tls_base
+                                    ),
+                                ));
+                            }
+                            s.st_value -= tls_base;
+                        }
                         encode_sym(&s, &mut dynsym_bytes);
                     } else {
                         return Err(LinkError::new(
@@ -713,6 +821,36 @@ impl ElfWriter {
                                 &mut rela_plt_bytes,
                             );
                             rela_plt_count += 1;
+                        }
+                        ElfDynamicRelocKind::Tpoff64 => {
+                            // TPOFF64 belongs in `.rela.dyn` (startup, not
+                            // lazy PLT resolution). The symbol index must be
+                            // the TLS variable's dynsym entry so the loader
+                            // can compute the variable's offset within its
+                            // module's static TLS block.
+                            let sym_idx = reloc
+                                .symbol
+                                .as_deref()
+                                .and_then(|name| name_to_dynsym_idx.get(name))
+                                .copied()
+                                .ok_or_else(|| {
+                                    LinkError::new(
+                                        ErrorCode::InvalidSection,
+                                        format!(
+                                            "TPOFF64 relocation has no matching dynamic symbol \
+                                             (TLS variable `{}` missing from .dynsym; export it \
+                                             (global binding) so the loader can resolve it)",
+                                            reloc.symbol.clone().unwrap_or_default()
+                                        ),
+                                    )
+                                })?;
+                            encode_rela(
+                                reloc.offset,
+                                ((sym_idx as u64) << 32) | abi_num as u64,
+                                reloc.addend,
+                                &mut rela_dyn_bytes,
+                            );
+                            rela_dyn_count += 1;
                         }
                     }
                 }
@@ -960,6 +1098,19 @@ impl ElfWriter {
             shstrtab.push(0);
             shdr_names.push(name_off);
         }
+        // The merged .tls section is emitted as the conventional pair
+        // `.tdata` (file-backed) + `.tbss` (zero-fill), so both names are
+        // needed beyond the per-section names above.
+        let tls_split_names: Option<(u32, u32)> = merged_sections
+            .iter()
+            .any(|sec| sec.kind == SectionKind::TData)
+            .then(|| {
+                let tdata_off = shstrtab.len() as u32;
+                shstrtab.extend_from_slice(b".tdata\0");
+                let tbss_off = shstrtab.len() as u32;
+                shstrtab.extend_from_slice(b".tbss\0");
+                (tdata_off, tbss_off)
+            });
 
         let interp_shdr_name = interp_str.map(|_| {
             let off = shstrtab.len() as u32;
@@ -1052,7 +1203,7 @@ impl ElfWriter {
                             && sym.value < sec.virtual_address + sec.size
                     })
                 })
-                .map(|idx| (idx + 1) as u16)
+                .map(shndx_for_merged)
         };
 
         for sym in symbols {
@@ -1101,6 +1252,43 @@ impl ElfWriter {
         });
 
         for (i, sec) in merged_sections.iter().enumerate() {
+            // The merged .tls section splits into `.tdata` (PROGBITS, the
+            // initialized image) and, when the block has a zero-fill tail,
+            // `.tbss` (NOBITS). Both carry SHF_TLS so loaders and tools
+            // recognize them as the thread-local template.
+            if sec.kind == SectionKind::TData {
+                let (tdata_name, tbss_name) = tls_split_names
+                    .expect("a TData section requires the .tdata/.tbss names");
+                let file_len = sec.data.len() as u64;
+                let mem_len = sec.size.max(file_len);
+                section_headers.push(Elf64_Shdr {
+                    sh_name: tdata_name,
+                    sh_type: SHT_PROGBITS,
+                    sh_flags: SHF_ALLOC | SHF_WRITE | SHF_TLS,
+                    sh_addr: sec_vaddrs[i],
+                    sh_offset: sec_offsets[i],
+                    sh_size: file_len,
+                    sh_link: 0,
+                    sh_info: 0,
+                    sh_addralign: sec.alignment.max(1),
+                    sh_entsize: 0,
+                });
+                if mem_len > file_len {
+                    section_headers.push(Elf64_Shdr {
+                        sh_name: tbss_name,
+                        sh_type: SHT_NOBITS,
+                        sh_flags: SHF_ALLOC | SHF_WRITE | SHF_TLS,
+                        sh_addr: sec_vaddrs[i] + file_len,
+                        sh_offset: sec_offsets[i] + file_len,
+                        sh_size: mem_len - file_len,
+                        sh_link: 0,
+                        sh_info: 0,
+                        sh_addralign: sec.alignment.max(1),
+                        sh_entsize: 0,
+                    });
+                }
+                continue;
+            }
             let sh_type = match sec.kind {
                 SectionKind::Bss => SHT_NOBITS,
                 SectionKind::Note => SHT_NOTE,
@@ -1384,6 +1572,18 @@ impl ElfWriter {
             p_memsz: rx_mem_size,
             p_align: target.page_size,
         });
+        if let Some((offset, vaddr, size)) = eh_frame_hdr_info {
+            phdrs.push(Elf64_Phdr {
+                p_type: PT_GNU_EH_FRAME,
+                p_flags: PF_R,
+                p_offset: offset,
+                p_vaddr: vaddr,
+                p_paddr: vaddr,
+                p_filesz: size,
+                p_memsz: size,
+                p_align: 4,
+            });
+        }
         phdrs.push(Elf64_Phdr {
             p_type: PT_LOAD,
             p_flags: PF_R | PF_W,
@@ -1394,6 +1594,18 @@ impl ElfWriter {
             p_memsz: rw_mem_size,
             p_align: target.page_size,
         });
+        if let Some((offset, vaddr, filesz, memsz, align)) = tls_phdr_info {
+            phdrs.push(Elf64_Phdr {
+                p_type: PT_TLS,
+                p_flags: PF_R | PF_W,
+                p_offset: offset,
+                p_vaddr: vaddr,
+                p_paddr: vaddr,
+                p_filesz: filesz,
+                p_memsz: memsz,
+                p_align: align,
+            });
+        }
         if is_dynamic {
             phdrs.push(Elf64_Phdr {
                 p_type: PT_DYNAMIC,

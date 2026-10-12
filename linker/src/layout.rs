@@ -129,7 +129,48 @@ impl LayoutEngine {
             Bss,
             Tls,
             Meta,
+            EhFrame,
+            EhFrameHdr,
             Debug(String),
+        }
+
+        /// Collect the functions an `.eh_frame` can honestly describe: every
+        /// defined function symbol placed in a text section whose size is
+        /// known. Returns `(offset_within_merged_text, size)` in
+        /// deterministic object/symbol order.
+        ///
+        /// Both the size-planning pass (before virtual addresses are
+        /// assigned) and the content-fill pass (after) call this with the
+        /// same inputs, so the FDE count and the FDE set always match.
+        fn collect_frame_functions(
+            objects: &[ObjectFile],
+            sec_placement: &HashMap<(usize, usize), (SectionCat, u64)>,
+        ) -> Vec<(u64, u64)> {
+            let mut out = Vec::new();
+            for (f_idx, obj) in objects.iter().enumerate() {
+                for sym in &obj.symbols {
+                    if !sym.is_defined
+                        || sym.sym_type != crate::symbol::SymbolType::Function
+                        || sym.size == 0
+                    {
+                        continue;
+                    }
+                    let Some(s_idx) = sym.section_index else {
+                        continue;
+                    };
+                    let Some((cat, sec_off)) = sec_placement.get(&(f_idx, s_idx)) else {
+                        continue;
+                    };
+                    if *cat != SectionCat::Text {
+                        continue;
+                    }
+                    // Offset of the function inside the merged .text: the
+                    // input section's placement plus the symbol's offset
+                    // within it.
+                    out.push((sec_off + sym.value, sym.size));
+                }
+            }
+            out
         }
 
         let mut debug_merged_map: HashMap<String, MergedSection> = HashMap::new();
@@ -240,20 +281,36 @@ impl LayoutEngine {
             }
         }
 
+        // TLS contribution order: initialized sections (`.tdata`-like) first
+        // in stable lexical order (preserving COFF `.tls$AAA`... ordering
+        // among them), then zero-fill (`.tbss`-like) contributions after.
+        // The file image must be a PREFIX of the block: PT_TLS `p_filesz`
+        // covers exactly the initialized bytes, and the loader zero-fills
+        // from there to `p_memsz`. A purely lexical sort would place
+        // `.tbss` before `.tdata`, materializing the zero-fill as file
+        // bytes ahead of the image (GNU ld concatenates .tdata* then
+        // .tbss* for exactly this reason).
         tls_sections.sort_by(|(left_file, left_sec), (right_file, right_sec)| {
-            objects[*left_file].sections[*left_sec]
-                .name
-                .cmp(&objects[*right_file].sections[*right_sec].name)
+            let left = &objects[*left_file].sections[*left_sec];
+            let right = &objects[*right_file].sections[*right_sec];
+            let left_zero = matches!(left.kind, SectionKind::Bss | SectionKind::TBss)
+                || left.name == ".tbss";
+            let right_zero = matches!(right.kind, SectionKind::Bss | SectionKind::TBss)
+                || right.name == ".tbss";
+            left_zero.cmp(&right_zero).then_with(|| left.name.cmp(&right.name))
         });
         for (f_idx, s_idx) in tls_sections {
             let sec = &objects[f_idx].sections[s_idx];
             let off = tls_merged.append_section(sec, f_idx, s_idx);
             sec_placement.insert((f_idx, s_idx), (SectionCat::Tls, off));
         }
-        if target.format != crate::target::ObjectFormat::Pe && tls_merged.size > 0 {
+        if target.format != crate::target::ObjectFormat::Pe
+            && target.format != crate::target::ObjectFormat::Elf
+            && tls_merged.size > 0
+        {
             // Other output writers do not yet emit their runtime TLS
-            // descriptors (e.g. ELF PT_TLS, Mach-O TLV). Refuse a binary
-            // with thread-local data in an ordinary loadable section rather
+            // descriptors (e.g. Mach-O TLV). Refuse a binary with
+            // thread-local data in an ordinary loadable section rather
             // than pretending it has per-thread storage.
             return Err(LinkError::new(
                 ErrorCode::UnsupportedRelocation,
@@ -594,6 +651,21 @@ impl LayoutEngine {
         let mut merged_list = Vec::new();
         let mut cat_to_idx: HashMap<SectionCat, usize> = HashMap::new();
 
+        // ELF x86-64: synthesize `.eh_frame` + `.eh_frame_hdr` with honest
+        // standard-frame CFI for every function whose address and size are
+        // both known (see `collect_frame_functions`). Functions without a
+        // size get no FDE: fabricating a range would be silent wrong
+        // unwinding. Sizes are address-independent (fixed CIE + fixed-size
+        // FDEs), so the sections are pre-sized here and filled once the
+        // virtual addresses are assigned below.
+        let frame_functions = if target.format == crate::target::ObjectFormat::Elf
+            && target.arch == crate::target::Arch::X86_64
+        {
+            collect_frame_functions(objects, &sec_placement)
+        } else {
+            Vec::new()
+        };
+
         // Order matters for the ELF and Mach-O writers: they map the first
         // group of sections into a read/execute segment and the rest into a
         // read/write segment. Emitting every read-only section before the
@@ -610,6 +682,32 @@ impl LayoutEngine {
         if meta_merged.size > 0 || !meta_merged.data.is_empty() {
             cat_to_idx.insert(SectionCat::Meta, merged_list.len());
             merged_list.push(meta_merged);
+        }
+        if !frame_functions.is_empty() {
+            let fde_count = frame_functions.len();
+            let eh_frame_size = crate::unwind::EhFrameGenerator::eh_frame_size(fde_count);
+            let hdr_size = crate::unwind::EhFrameGenerator::eh_frame_hdr_size(fde_count);
+            let mut eh_frame_sec = MergedSection::new(
+                ".eh_frame",
+                SectionKind::Rodata,
+                flags::READ | flags::ALLOC,
+                4,
+            );
+            eh_frame_sec.data = vec![0u8; eh_frame_size as usize];
+            eh_frame_sec.size = eh_frame_size;
+            cat_to_idx.insert(SectionCat::EhFrame, merged_list.len());
+            merged_list.push(eh_frame_sec);
+
+            let mut hdr_sec = MergedSection::new(
+                ".eh_frame_hdr",
+                SectionKind::Rodata,
+                flags::READ | flags::ALLOC,
+                4,
+            );
+            hdr_sec.data = vec![0u8; hdr_size as usize];
+            hdr_sec.size = hdr_size;
+            cat_to_idx.insert(SectionCat::EhFrameHdr, merged_list.len());
+            merged_list.push(hdr_sec);
         }
         if data_merged.size > 0 || !data_merged.data.is_empty() {
             cat_to_idx.insert(SectionCat::Data, merged_list.len());
@@ -669,8 +767,35 @@ impl LayoutEngine {
         }
 
         let mut elf_got_map: HashMap<String, u64> = HashMap::new();
+        let mut elf_tls_got_map: HashMap<String, u64> = HashMap::new();
         let mut elf_got_section_index: Option<usize> = None;
-        if target.format == crate::target::ObjectFormat::Elf && !elf_imports.is_empty() {
+        // Pre-scan for initial-exec TLS references (R_X86_64_GOTTPOFF): every
+        // referenced TLS variable needs a GOT slot holding the
+        // thread-pointer-relative offset. The slot is filled at link time for
+        // static images and by the dynamic loader (R_X86_64_TPOFF64) for
+        // dynamic ones, so slots are needed in both modes. Deterministic
+        // (BTreeSet) order keeps the GOT layout stable for identical inputs.
+        let elf_tls_ie_names: std::collections::BTreeSet<String> =
+            if target.format == crate::target::ObjectFormat::Elf {
+                let mut names = std::collections::BTreeSet::new();
+                for obj in objects {
+                    for sec in &obj.sections {
+                        for reloc in &sec.relocations {
+                            if reloc.kind == RelocationKind::TlsInitialExec
+                                && !reloc.symbol_name.is_empty()
+                            {
+                                names.insert(reloc.symbol_name.clone());
+                            }
+                        }
+                    }
+                }
+                names
+            } else {
+                std::collections::BTreeSet::new()
+            };
+        if target.format == crate::target::ObjectFormat::Elf
+            && (!elf_imports.is_empty() || !elf_tls_ie_names.is_empty())
+        {
             // Page-aligned start so `PT_GNU_RELRO` can cover the GOT (and the
             // dynamic region after it) without also mprotecting preceding
             // writable user data that shares its final page.
@@ -686,13 +811,21 @@ impl LayoutEngine {
             // the writer once the .dynamic address is known); slots 1 and 2
             // are reserved for the dynamic loader's link-map/resolver pointers
             // (unused with DT_BIND_NOW, reserved per ABI). One slot per
-            // imported symbol follows.
+            // imported symbol and one per initial-exec TLS variable follows.
             let n_header_slots = 3usize;
-            got_sec.data = vec![0u8; (n_header_slots + elf_imports.len()) * 8];
+            got_sec.data = vec![
+                0u8;
+                (n_header_slots + elf_imports.len() + elf_tls_ie_names.len()) * 8
+            ];
             got_sec.size = got_sec.data.len() as u64;
             for (idx, sym) in elf_imports.iter().enumerate() {
                 let slot_va = got_va + ((n_header_slots + idx) * 8) as u64;
                 elf_got_map.insert(sym.clone(), slot_va);
+            }
+            for (idx, name) in elf_tls_ie_names.iter().enumerate() {
+                let slot_va =
+                    got_va + ((n_header_slots + elf_imports.len() + idx) * 8) as u64;
+                elf_tls_got_map.insert(name.clone(), slot_va);
             }
             current_va = got_va + got_sec.size;
             elf_got_section_index = Some(merged_list.len());
@@ -725,6 +858,66 @@ impl LayoutEngine {
             merged_list.push(la_sec);
         }
         let _ = macho_la_section_index;
+
+        // Fill the pre-sized .eh_frame / .eh_frame_hdr sections with the
+        // synthesized standard-frame CFI. The sections were sized before
+        // virtual addresses existed; now that every function's final
+        // address is known, the CIE/FDE bytes and the .eh_frame_hdr binary
+        // search index can be written for real.
+        if !frame_functions.is_empty() {
+            let text_base_va = cat_to_idx
+                .get(&SectionCat::Text)
+                .map(|&idx| merged_list[idx].virtual_address)
+                .unwrap_or(0);
+            let fdes: Vec<(u64, u64)> = frame_functions
+                .iter()
+                .map(|&(off, size)| (text_base_va + off, size))
+                .collect();
+
+            let eh_frame_idx = cat_to_idx
+                .get(&SectionCat::EhFrame)
+                .copied()
+                .expect("frame functions require a pre-sized .eh_frame section");
+            let eh_frame_hdr_idx = cat_to_idx
+                .get(&SectionCat::EhFrameHdr)
+                .copied()
+                .expect("frame functions require a pre-sized .eh_frame_hdr section");
+            let eh_frame_va = merged_list[eh_frame_idx].virtual_address;
+            let hdr_va = merged_list[eh_frame_hdr_idx].virtual_address;
+
+            merged_list[eh_frame_idx].data =
+                crate::unwind::EhFrameGenerator::assemble_eh_frame(eh_frame_va, &fdes);
+
+            // One index entry per FDE: (function initial location, FDE
+            // address). The generator sorts by initial location and encodes
+            // both as data-relative sdata4 values.
+            let entries: Vec<(u64, u64)> = fdes
+                .iter()
+                .enumerate()
+                .map(|(i, &(func_va, _))| {
+                    (
+                        func_va,
+                        eh_frame_va + crate::unwind::EhFrameGenerator::CIE_SIZE
+                            + crate::unwind::EhFrameGenerator::FDE_SIZE * i as u64,
+                    )
+                })
+                .collect();
+            merged_list[eh_frame_hdr_idx].data =
+                crate::unwind::EhFrameHdrGenerator::build(hdr_va, eh_frame_va, entries);
+
+            // Guard the section sizes against drift between the sizing pass
+            // and the fill pass: a mismatch would silently corrupt every
+            // VA-dependent offset recorded above (PT_GNU_EH_FRAME bounds,
+            // data-relative index entries).
+            debug_assert_eq!(
+                merged_list[eh_frame_idx].data.len() as u64,
+                crate::unwind::EhFrameGenerator::eh_frame_size(fdes.len())
+            );
+            debug_assert_eq!(
+                merged_list[eh_frame_hdr_idx].data.len() as u64,
+                crate::unwind::EhFrameGenerator::eh_frame_hdr_size(fdes.len())
+            );
+        }
 
         // Synthesize Windows x64 SEH .pdata (RUNTIME_FUNCTION) and .xdata (UNWIND_INFO)
         if target.format == crate::target::ObjectFormat::Pe
@@ -1261,6 +1454,13 @@ impl LayoutEngine {
         let tls_sec_va = cat_to_idx
             .get(&SectionCat::Tls)
             .map(|idx| merged_list[*idx].virtual_address);
+        // Static TLS block bounds for the thread-pointer-relative math below:
+        // the thread pointer (x86-64 %fs base) addresses the END of the block
+        // by the Adesh/ld.so convention, so a variable at block offset `off`
+        // lives at `%fs:(off - memsz)`.
+        let tls_sec_memsz = cat_to_idx
+            .get(&SectionCat::Tls)
+            .map(|idx| merged_list[*idx].size.max(merged_list[*idx].data.len() as u64));
 
         // 5. Apply Relocations to Merged Sections
         let handler = get_handler(target.arch);
@@ -1461,6 +1661,115 @@ impl LayoutEngine {
                     }
                 }
 
+                // ELF TLS relocations: thread-pointer-relative math the
+                // generic handler does not know. The static TLS block runs
+                // BELOW the thread pointer (x86-64: %fs addresses the block's
+                // end), so a variable at block offset `off` lives at
+                // `%fs:(off - memsz)` — a negative displacement.
+                if target.format == crate::target::ObjectFormat::Elf {
+                    match reloc.kind {
+                        RelocationKind::TlsGeneralDynamic => {
+                            return Err(LinkError::new(
+                                ErrorCode::UnsupportedRelocation,
+                                format!(
+                                    "general-dynamic TLS relocation (R_X86_64_TLSGD) against \
+                                     `{}` in `{}` is not supported: it requires a DTV and \
+                                     __tls_get_addr runtime that the Adesh toolchain does not \
+                                     yet provide; use the local-exec (static) or initial-exec \
+                                     (dynamic) access forms",
+                                    reloc.symbol_name, merged.name
+                                ),
+                            ));
+                        }
+                        RelocationKind::TlsLocalExec => {
+                            let (tls_start, tls_memsz) =
+                                match (tls_sec_va, tls_sec_memsz) {
+                                    (Some(start), Some(size)) => (start, size),
+                                    _ => {
+                                        return Err(LinkError::new(
+                                            ErrorCode::InvalidSection,
+                                            format!(
+                                                "local-exec TLS relocation against `{}` in `{}` \
+                                                 but the link has no TLS section",
+                                                reloc.symbol_name, merged.name
+                                            ),
+                                        ));
+                                    }
+                                };
+                            // The referenced symbol must live inside the TLS
+                            // block; anything else is silent wrong code.
+                            if sym_va < tls_start || sym_va >= tls_start + tls_memsz {
+                                return Err(LinkError::new(
+                                    ErrorCode::InvalidSection,
+                                    format!(
+                                        "local-exec TLS relocation against `{}` resolves to \
+                                         0x{:x}, outside the TLS block 0x{:x}..0x{:x}",
+                                        reloc.symbol_name,
+                                        sym_va,
+                                        tls_start,
+                                        tls_start + tls_memsz
+                                    ),
+                                ));
+                            }
+                            let tp_off =
+                                (sym_va as i64 - tls_start as i64) - tls_memsz as i64;
+                            let val = tp_off.wrapping_add(reloc.addend) as i32;
+                            let off = reloc.offset as usize;
+                            if off + 4 > merged.data.len() {
+                                return Err(LinkError::new(
+                                    crate::error::ErrorCode::RelocationOverflow,
+                                    format!(
+                                        "local-exec TLS relocation at {}+0x{:x} exceeds section size",
+                                        merged.name, reloc.offset
+                                    ),
+                                ));
+                            }
+                            merged.data[off..off + 4].copy_from_slice(&val.to_le_bytes());
+                            continue;
+                        }
+                        RelocationKind::TlsInitialExec => {
+                            // The instruction reads the variable's offset
+                            // through a GOT slot
+                            // (`mov reg, [rip + slot]` then `reg: %fs`), so the
+                            // relocation itself is a PC-relative reference to
+                            // the slot. The slot's content is filled after
+                            // this loop.
+                            let slot_va = match elf_tls_got_map.get(reloc.symbol_name.as_str())
+                            {
+                                Some(&va) => va,
+                                None => {
+                                    return Err(LinkError::new(
+                                        ErrorCode::InvalidSection,
+                                        format!(
+                                            "initial-exec TLS relocation against `{}` in `{}` \
+                                             has no GOT slot",
+                                            reloc.symbol_name, merged.name
+                                        ),
+                                    ));
+                                }
+                            };
+                            let val = (slot_va as i64)
+                                .wrapping_sub(place_va as i64)
+                                .wrapping_sub(4)
+                                .wrapping_add(reloc.addend)
+                                as i32;
+                            let off = reloc.offset as usize;
+                            if off + 4 > merged.data.len() {
+                                return Err(LinkError::new(
+                                    crate::error::ErrorCode::RelocationOverflow,
+                                    format!(
+                                        "initial-exec TLS relocation at {}+0x{:x} exceeds section size",
+                                        merged.name, reloc.offset
+                                    ),
+                                ));
+                            }
+                            merged.data[off..off + 4].copy_from_slice(&val.to_le_bytes());
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
+
                 match handler.apply(reloc, place_va, sym_va, reloc.addend, &mut merged.data) {
                     Ok(()) => {
                         // Record absolute addresses for the PE base relocation
@@ -1624,6 +1933,82 @@ impl LayoutEngine {
                         symbol: Some(name.clone()),
                         addend: 0,
                     });
+            }
+        }
+        // Initial-exec TLS GOT slots: each holds the variable's
+        // thread-pointer-relative offset (`off - memsz`, a negative value —
+        // the static TLS block lies below the thread pointer).
+        //
+        // - Dynamic images leave the slot zeroed and emit an
+        //   `R_X86_64_TPOFF64` dynamic relocation on it; the loader writes
+        //   the real per-thread offset at startup.
+        // - Static images write the link-time value directly (the
+        //   single-threaded image's TLS block is the live one until a
+        //   runtime installs per-thread copies).
+        if !elf_tls_got_map.is_empty() {
+            let (tls_start, tls_memsz) = match (tls_sec_va, tls_sec_memsz) {
+                (Some(start), Some(size)) => (start, size),
+                _ => {
+                    return Err(LinkError::new(
+                        ErrorCode::InvalidSection,
+                        "initial-exec TLS GOT slots exist but the link has no TLS section",
+                    ));
+                }
+            };
+            let got_idx = elf_got_section_index.expect("TLS IE slots require a .got section");
+            let (got_base, got_len) = {
+                let got_sec = &merged_list[got_idx];
+                (got_sec.virtual_address, got_sec.data.len())
+            };
+            for (name, slot_va) in &elf_tls_got_map {
+                let sym_va = match symbol_va_map.get(name).copied() {
+                    Some(va) => va,
+                    None => {
+                        return Err(LinkError::new(
+                            ErrorCode::InvalidSection,
+                            format!(
+                                "initial-exec TLS variable `{}` has no resolved address",
+                                name
+                            ),
+                        ));
+                    }
+                };
+                if sym_va < tls_start || sym_va >= tls_start + tls_memsz {
+                    return Err(LinkError::new(
+                        ErrorCode::InvalidSection,
+                        format!(
+                            "initial-exec TLS variable `{}` resolves to 0x{:x}, outside the \
+                             TLS block 0x{:x}..0x{:x}",
+                            name, sym_va, tls_start, tls_start + tls_memsz
+                        ),
+                    ));
+                }
+                let tp_off = (sym_va as i64 - tls_start as i64) - tls_memsz as i64;
+
+                if elf_dynamic {
+                    // The loader owns the slot at runtime.
+                    self.elf_dynamic_relocs
+                        .push(crate::elf::dynamic::ElfDynamicReloc {
+                            offset: *slot_va,
+                            kind: crate::elf::dynamic::ElfDynamicRelocKind::Tpoff64,
+                            symbol: Some(name.clone()),
+                            addend: 0,
+                        });
+                } else {
+                    let off = (*slot_va - got_base) as usize;
+                    if off + 8 > got_len {
+                        return Err(LinkError::new(
+                            ErrorCode::InvalidSection,
+                            format!(
+                                "GOT slot for TLS variable `{}` at 0x{:x} is outside the .got \
+                                 section",
+                                name, slot_va
+                            ),
+                        ));
+                    }
+                    let got_sec = &mut merged_list[got_idx];
+                    got_sec.data[off..off + 8].copy_from_slice(&(tp_off as u64).to_le_bytes());
+                }
             }
         }
         self.elf_got_slots = elf_got_map;

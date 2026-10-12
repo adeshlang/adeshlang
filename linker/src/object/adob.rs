@@ -13,17 +13,21 @@ use std::path::Path;
 
 pub const ADOB_MAGIC: &[u8; 4] = b"ADOB";
 pub const ADOB_VERSION_2: u16 = 2;
+/// ADOB v3 adds an explicit per-section `size` field (v2 derived size from
+/// the data length, which silently dropped `.tbss`/`.bss` zero-fill tails)
+/// and distinguishes the TLS section kinds (v2 wrote `TBss` as `Custom`).
+pub const ADOB_VERSION_3: u16 = 3;
 
 pub struct AdobV2;
 
 impl AdobV2 {
-    /// Encode ObjectFile to ADOB v2 byte representation.
+    /// Encode ObjectFile to ADOB v3 byte representation.
     pub fn encode(obj: &ObjectFile) -> LinkResult<Vec<u8>> {
         let mut buf = Vec::new();
         // Magic
         buf.extend_from_slice(ADOB_MAGIC);
-        // Version 2
-        buf.extend_from_slice(&ADOB_VERSION_2.to_le_bytes());
+        // Version 3
+        buf.extend_from_slice(&ADOB_VERSION_3.to_le_bytes());
 
         // Target Metadata
         let arch_id: u8 = match obj.target.arch {
@@ -73,13 +77,21 @@ impl AdobV2 {
                 SectionKind::Rodata => 1,
                 SectionKind::Data => 2,
                 SectionKind::Bss => 3,
-                SectionKind::AdeshMeta => 4,
+                // Kind ids 4 (TLS: TData/TBss by data presence) and 7
+                // (AdeshMeta) follow the reader's existing mapping; v2
+                // wrongly wrote `TBss` as `Custom` (5) and `AdeshMeta` as
+                // the TLS id (4).
+                SectionKind::TBss | SectionKind::TData => 4,
+                SectionKind::AdeshMeta => 7,
                 _ => 5,
             };
             buf.push(kind_id);
             buf.extend_from_slice(&sec.flags.to_le_bytes());
             buf.extend_from_slice(&sec.alignment.to_le_bytes());
+            // v3: data length AND the full section size, so `.tbss`/`.bss`
+            // zero-fill extents survive the round-trip.
             buf.extend_from_slice(&(sec.data.len() as u64).to_le_bytes());
+            buf.extend_from_slice(&sec.size.to_le_bytes());
 
             // COMDAT group metadata
             if let Some(ref group) = sec.comdat_group {
@@ -175,12 +187,15 @@ impl AdobV2 {
         }
 
         let version = reader.read_u16_le()?;
-        if version != ADOB_VERSION_2 {
+        if version != ADOB_VERSION_2 && version != ADOB_VERSION_3 {
             return Err(LinkError::new(
                 ErrorCode::InvalidObject,
                 format!("unsupported ADOB version {}", version),
             ));
         }
+        // v2 derived a section's size from its data length (dropping
+        // `.tbss`/`.bss` zero-fill extents); v3 carries the size explicitly.
+        let explicit_section_size = version >= ADOB_VERSION_3;
 
         let _arch_id = reader.read_u8()?;
         let _abi_id = reader.read_u8()?;
@@ -202,6 +217,11 @@ impl AdobV2 {
             let flags = reader.read_u32_le()?;
             let align = reader.read_u64_le()?;
             let data_len = reader.read_u64_le()? as usize;
+            let sec_size = if explicit_section_size {
+                reader.read_u64_le()?
+            } else {
+                data_len as u64
+            };
 
             let has_comdat = reader.read_u8()? != 0;
             let comdat_group = if has_comdat {
@@ -266,7 +286,7 @@ impl AdobV2 {
                 alignment: align,
                 virtual_address: 0,
                 file_offset: 0,
-                size: data_len as u64,
+                size: sec_size,
                 data,
                 relocations,
                 comdat_group,
