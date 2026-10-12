@@ -19,6 +19,7 @@ on:
       - 'rustfmt.toml'
       - 'build.rs'
       - '**.rs'
+      - '.github/workflows/ci.yml'
   pull_request:
     branches:
       - main
@@ -37,6 +38,7 @@ on:
       - 'rustfmt.toml'
       - 'build.rs'
       - '**.rs'
+      - '.github/workflows/ci.yml'
   workflow_dispatch:
 
 # Repository migration: origin is currently ajaytainwala-dev/mylang; keep the
@@ -107,9 +109,46 @@ jobs:
           cargo build --lib --bin adesh
           cargo build -p adesh-runtime
 
-      - name: Test integration suites
+      # Linux: the full integration set, including the suites that link and
+      # EXECUTE real ELF binaries against the host loader (glibc on the
+      # runner): phase 3 static ELFs, phase 8 dynamic linking (real ld.so),
+      # and the phase 8 TLS suite (static local-exec via arch_prctl; dynamic
+      # initial-exec with a TPOFF64 GOT slot resolved by ld.so at startup).
+      # Mach-O structural conformance (macho_dyld_binding_test, in the
+      # adesh-linker crate) runs here too; Mach-O EXECUTION verification
+      # does not exist yet and is tracked as pending in TARGET_MATRIX.md.
+      - name: Test integration suites (Linux, ELF execution)
         if: matrix.os == 'ubuntu-latest'
-        run: cargo test --tests
+        run: |
+          cargo test --tests
+          cargo test --test native_phase3_linux_e2e_test
+          cargo test --test native_phase8_dynamic_elf_test
+          cargo test --test native_phase8_tls_ehframe_test
+
+      # macOS: the same full integration set. Windows PE e2e suites are
+      # `#[cfg(all(target_os = "windows", target_arch = "x86_64"))]`-gated
+      # and compile out; the Linux ELF execution suites detect no Linux
+      # execution environment and SKIP loudly (each prints a SKIP line)
+      # rather than failing. The Mach-O structural conformance suite
+      # (linker/tests/macho_dyld_binding_test.rs) runs on the only host
+      # where Mach-O output is the native object format.
+      - name: Test integration suites (macOS, Mach-O conformance)
+        if: matrix.os == 'macos-latest'
+        run: |
+          cargo test -p adesh-linker --test macho_dyld_binding_test
+          cargo test --tests
+
+      # Windows: the Linux ELF execution suites run through WSL when the
+      # runner provides it (GitHub windows-* images ship WSL/Ubuntu with
+      # glibc); they SKIP loudly when no WSL distro is present instead of
+      # failing the job. Static local-exec, dynamic initial-exec against a
+      # real ld.so, and the phase 3 freestanding ELFs are all covered here.
+      - name: Test Linux ELF execution suites via WSL (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          cargo test --test native_phase3_linux_e2e_test
+          cargo test --test native_phase8_dynamic_elf_test
+          cargo test --test native_phase8_tls_ehframe_test
 
       # The native x86-64 e2e tests that link AND execute a produced Windows PE
       # are gated with `#[cfg(all(target_os = "windows", target_arch = "x86_64"))]`
