@@ -700,6 +700,13 @@ impl NativeJitCompiler {
         format_strings: &mut HashMap<String, cranelift_module::DataId>,
         function_return_types: &HashMap<String, crate::backends::common::lir::LirType>,
     ) -> Result<(), String> {
+        // Managed runtime handles must be unwrapped into raw machine values
+        // before the shared AOT arithmetic/comparison lowering runs: that
+        // lowering operates on raw numbers and would otherwise consume raw
+        // handle bits (silent wrong-code). Non-numeric handles raise a
+        // pending exception that the next `__has_exception` check traps.
+        Self::unwrap_handle_operands(builder, module, value_map, value_types, inst)?;
+
         // Try arithmetic instructions
         if arithmetic::lower_arithmetic_instruction(builder, value_map, value_types, inst)? {
             return Ok(());
@@ -994,9 +1001,15 @@ impl NativeJitCompiler {
                         value_map.insert(*dst, zero);
                     }
                 } else {
-                    // Unknown function - return 0
-                    let zero = builder.ins().iconst(types::I64, 0);
-                    value_map.insert(*dst, zero);
+                    // Unknown function: fail loudly. A silent 0 here masked
+                    // unresolved callees (notably functions imported from
+                    // other modules, which this backend does not yet link).
+                    return Err(format!(
+                        "call to function '{}' cannot be resolved by the native JIT; \
+                         imported modules are not supported by --jit-native \
+                         (use --jit or adesh build)",
+                        func_name
+                    ));
                 }
                 Ok(())
             }
@@ -2793,6 +2806,44 @@ impl NativeJitCompiler {
                         value_types.insert(*dst, AotValueType::Handle);
                     }
                     "set_index" => {
+                        // Pointer fast path: raw pointers index the
+                        // validated shared heap with element semantics,
+                        // mirroring the interpreter and the Cranelift JIT.
+                        // Managed values (arrays/objects) keep the generic
+                        // bridge path below.
+                        if args.len() >= 3
+                            && matches!(value_types.get(&args[0]), Some(AotValueType::Ptr))
+                        {
+                            let ptr = value_map
+                                .get(&args[0])
+                                .copied()
+                                .ok_or_else(|| {
+                                    format!("set_index pointer value {} missing", args[0])
+                                })?;
+                            let idx = value_map
+                                .get(&args[1])
+                                .copied()
+                                .ok_or_else(|| {
+                                    format!("set_index index value {} missing", args[1])
+                                })?;
+                            let val = value_map
+                                .get(&args[2])
+                                .copied()
+                                .ok_or_else(|| {
+                                    format!("set_index value {} missing", args[2])
+                                })?;
+                            let res = Self::call_runtime_fn_3(
+                                builder,
+                                module,
+                                "jit_ptr_set_index",
+                                ptr,
+                                idx,
+                                val,
+                            )?;
+                            value_map.insert(*dst, res);
+                            value_types.insert(*dst, AotValueType::Ptr);
+                            return Ok(());
+                        }
                         let arr = args
                             .get(0)
                             .and_then(|id| value_map.get(id))
@@ -2820,6 +2871,37 @@ impl NativeJitCompiler {
                         value_types.insert(*dst, AotValueType::Handle);
                     }
                     "get_index" | "array_get" => {
+                        // Pointer fast path (see "set_index"): raw pointers
+                        // load elements from the validated shared heap. The
+                        // result is a managed handle so downstream builtins
+                        // keep working in the managed-value world; raw
+                        // arithmetic unwraps it via `jit_unwrap_i64`.
+                        if args.len() >= 2
+                            && matches!(value_types.get(&args[0]), Some(AotValueType::Ptr))
+                        {
+                            let ptr = value_map
+                                .get(&args[0])
+                                .copied()
+                                .ok_or_else(|| {
+                                    format!("get_index pointer value {} missing", args[0])
+                                })?;
+                            let idx = value_map
+                                .get(&args[1])
+                                .copied()
+                                .ok_or_else(|| {
+                                    format!("get_index index value {} missing", args[1])
+                                })?;
+                            let handle = Self::call_runtime_fn_2(
+                                builder,
+                                module,
+                                "jit_ptr_get_index",
+                                ptr,
+                                idx,
+                            )?;
+                            value_map.insert(*dst, handle);
+                            value_types.insert(*dst, AotValueType::Handle);
+                            return Ok(());
+                        }
                         let arr = args
                             .get(0)
                             .and_then(|id| value_map.get(id))
@@ -3307,107 +3389,84 @@ impl NativeJitCompiler {
             }
             // Memory operations
             LirInst::Alloc(dst, size_id) => {
-                // Allocate memory using malloc
-                if let Some(&size_val) = value_map.get(size_id) {
-                    // Get malloc function reference
-                    // let malloc_sig = module.make_signature();
-                    let mut malloc_sig_builder = module.make_signature();
-                    malloc_sig_builder.params.push(AbiParam::new(types::I64));
-                    malloc_sig_builder.returns.push(AbiParam::new(types::I64));
-                    let malloc_func = module
-                        .declare_function("malloc", Linkage::Import, &malloc_sig_builder)
-                        .map_err(|e| format!("Failed to declare malloc: {}", e))?;
-                    let malloc_ref = module.declare_func_in_func(malloc_func, builder.func);
-
-                    // Call malloc
-                    let call_inst = builder.ins().call(malloc_ref, &[size_val]);
-                    let results = builder.inst_results(call_inst);
-                    if !results.is_empty() {
-                        value_map.insert(*dst, results[0]);
-                        value_types.insert(*dst, AotValueType::Ptr);
-                    }
-                } else {
-                    // Size not found, return null
-                    let zero = builder.ins().iconst(types::I64, 0);
-                    value_map.insert(*dst, zero);
-                    value_types.insert(*dst, AotValueType::Ptr);
-                }
+                // Allocate on the validated shared heap (byte elements) —
+                // the same heap the interpreter and the other JIT paths
+                // use — so bounds, double-free and use-after-free
+                // violations are detected loudly instead of corrupting
+                // raw malloc memory.
+                let size_val = *value_map
+                    .get(size_id)
+                    .ok_or_else(|| format!("Alloc size value {} missing", size_id))?;
+                let ptr = Self::call_runtime_fn_1(builder, module, "jit_alloc", size_val)?;
+                value_map.insert(*dst, ptr);
+                value_types.insert(*dst, AotValueType::Ptr);
                 Ok(())
             }
-            LirInst::AllocTyped(dst, size_id, _elem_size) => {
-                // AllocTyped - similar to Alloc for now
-                if let Some(&size_val) = value_map.get(size_id) {
-                    // let malloc_sig_builder = module.make_signature();
-                    let mut malloc_sig = module.make_signature();
-                    malloc_sig.params.push(AbiParam::new(types::I64));
-                    malloc_sig.returns.push(AbiParam::new(types::I64));
-                    let malloc_func = module
-                        .declare_function("malloc", Linkage::Import, &malloc_sig)
-                        .map_err(|e| format!("Failed to declare malloc: {}", e))?;
-                    let malloc_ref = module.declare_func_in_func(malloc_func, builder.func);
-
-                    let call_inst = builder.ins().call(malloc_ref, &[size_val]);
-                    let results = builder.inst_results(call_inst);
-                    if !results.is_empty() {
-                        value_map.insert(*dst, results[0]);
-                        value_types.insert(*dst, AotValueType::Ptr);
-                    }
-                } else {
-                    let zero = builder.ins().iconst(types::I64, 0);
-                    value_map.insert(*dst, zero);
-                    value_types.insert(*dst, AotValueType::Ptr);
+            LirInst::AllocTyped(dst, size_id, elem_size) => {
+                if *elem_size <= 0 {
+                    return Err("AllocTyped requires elem_size > 0".to_string());
                 }
+                let size_val = *value_map
+                    .get(size_id)
+                    .ok_or_else(|| format!("AllocTyped size value {} missing", size_id))?;
+                let elem_val = builder.ins().iconst(types::I64, *elem_size);
+                let ptr = Self::call_runtime_fn_2(
+                    builder,
+                    module,
+                    "jit_alloc_typed",
+                    size_val,
+                    elem_val,
+                )?;
+                value_map.insert(*dst, ptr);
+                value_types.insert(*dst, AotValueType::Ptr);
                 Ok(())
             }
             LirInst::Free(ptr_id) => {
-                // Free memory using free
-                if let Some(&ptr_val) = value_map.get(ptr_id) {
-                    let mut free_sig = module.make_signature();
-                    free_sig.params.push(AbiParam::new(types::I64));
-                    let free_func = module
-                        .declare_function("free", Linkage::Import, &free_sig)
-                        .map_err(|e| format!("Failed to declare free: {}", e))?;
-                    let free_ref = module.declare_func_in_func(free_func, builder.func);
-
-                    builder.ins().call(free_ref, &[ptr_val]);
-                }
+                // Free through the validated heap: double-free and
+                // use-after-free raise loud pending exceptions that the
+                // next `__has_exception` check traps.
+                let ptr_val = *value_map
+                    .get(ptr_id)
+                    .ok_or_else(|| format!("Free pointer value {} missing", ptr_id))?;
+                Self::call_runtime_fn_1(builder, module, "jit_free", ptr_val)?;
                 Ok(())
             }
             LirInst::PtrLoad(dst, ptr_id, index_id) => {
-                // Load from pointer at index
-                if let (Some(&ptr_val), Some(&index_val)) =
-                    (value_map.get(ptr_id), value_map.get(index_id))
-                {
-                    // Calculate offset: ptr + index * 8 (assuming 64-bit values)
-                    let eight = builder.ins().iconst(types::I64, 8);
-                    let offset = builder.ins().imul(index_val, eight);
-                    let addr = builder.ins().iadd(ptr_val, offset);
-
-                    // Load i64 from memory
-                    let loaded = builder.ins().load(types::I64, MemFlags::new(), addr, 0);
-                    value_map.insert(*dst, loaded);
-                    value_types.insert(*dst, AotValueType::I64);
-                } else {
-                    let zero = builder.ins().iconst(types::I64, 0);
-                    value_map.insert(*dst, zero);
-                }
+                // Element-based validated load: address = base + index *
+                // elem_size, with elem_size taken from pointer metadata
+                // (no hardcoded stride, no unchecked raw loads).
+                let ptr_val = *value_map
+                    .get(ptr_id)
+                    .ok_or_else(|| format!("PtrLoad pointer value {} missing", ptr_id))?;
+                let index_val = *value_map
+                    .get(index_id)
+                    .ok_or_else(|| format!("PtrLoad index value {} missing", index_id))?;
+                let loaded =
+                    Self::call_runtime_fn_2(builder, module, "jit_load_typed", ptr_val, index_val)?;
+                value_map.insert(*dst, loaded);
+                value_types.insert(*dst, AotValueType::I64);
                 Ok(())
             }
             LirInst::PtrStore(ptr_id, value_id, index_id) => {
-                // Store to pointer at index
-                if let (Some(&ptr_val), Some(&value_val), Some(&index_val)) = (
-                    value_map.get(ptr_id),
-                    value_map.get(value_id),
-                    value_map.get(index_id),
-                ) {
-                    // Calculate offset: ptr + index * 8
-                    let eight = builder.ins().iconst(types::I64, 8);
-                    let offset = builder.ins().imul(index_val, eight);
-                    let addr = builder.ins().iadd(ptr_val, offset);
-
-                    // Store i64 to memory
-                    builder.ins().store(MemFlags::new(), value_val, addr, 0);
-                }
+                // Element-based validated store; value is stored
+                // little-endian truncated to the pointer's elem_size.
+                let ptr_val = *value_map
+                    .get(ptr_id)
+                    .ok_or_else(|| format!("PtrStore pointer value {} missing", ptr_id))?;
+                let value_val = *value_map
+                    .get(value_id)
+                    .ok_or_else(|| format!("PtrStore value {} missing", value_id))?;
+                let index_val = *value_map
+                    .get(index_id)
+                    .ok_or_else(|| format!("PtrStore index value {} missing", index_id))?;
+                Self::call_runtime_fn_3(
+                    builder,
+                    module,
+                    "jit_store_typed",
+                    ptr_val,
+                    index_val,
+                    value_val,
+                )?;
                 Ok(())
             }
             // Additional constant types
@@ -3482,12 +3541,15 @@ impl NativeJitCompiler {
                 value_types.insert(*dst, AotValueType::I64);
                 Ok(())
             }
-            LirInst::LoadModule(dst, _module_name) => {
-                // Module loading not supported in JIT - return null
-                let zero = builder.ins().iconst(types::I64, 0);
-                value_map.insert(*dst, zero);
-                value_types.insert(*dst, AotValueType::Ptr);
-                Ok(())
+            LirInst::LoadModule(_dst, module_name) => {
+                // Imported modules are not linked into this backend's
+                // compile-time unit; failing loudly beats silently handing
+                // the program a null namespace.
+                return Err(format!(
+                    "import of module '{}' is not supported by --jit-native \
+                     (use --jit or adesh build)",
+                    module_name
+                ));
             }
             LirInst::TailCall(func_name, args) => {
                 // Tail call optimization: compile as call + return.
@@ -3529,20 +3591,13 @@ impl NativeJitCompiler {
                         builder.ins().return_(&[]);
                     }
                 } else {
-                    // Unknown function - return 0
-                    if let Some(ret_param) = builder.func.signature.returns.get(0) {
-                        let ty = ret_param.value_type;
-                        let zero = if ty == types::F64 {
-                            builder.ins().f64const(0.0)
-                        } else if ty == types::F32 {
-                            builder.ins().f32const(0.0)
-                        } else {
-                            builder.ins().iconst(ty, 0)
-                        };
-                        builder.ins().return_(&[zero]);
-                    } else {
-                        builder.ins().return_(&[]);
-                    }
+                    // Unknown function: fail loudly (see LirInst::Call).
+                    return Err(format!(
+                        "tail call to function '{}' cannot be resolved by the native JIT; \
+                         imported modules are not supported by --jit-native \
+                         (use --jit or adesh build)",
+                        func_name
+                    ));
                 }
                 Ok(())
             }
@@ -4241,6 +4296,103 @@ impl NativeJitCompiler {
     // ========================================================================
 
     /// Call a runtime function with no arguments, returns u64
+    /// Unwrap `Handle`-typed operands of raw-number instructions into raw
+    /// machine values via the runtime bridge.
+    ///
+    /// Covers exactly the arithmetic, comparison and conversion
+    /// instructions delegated to the shared AOT lowering, which consumes
+    /// raw numbers. `CmpEqI64`/`CmpNeI64` are intentionally excluded:
+    /// handle equality routes through `jit_str_eq`, which compares the
+    /// underlying runtime values. The unwrap overwrites the operand's
+    /// entry in `value_map`/`value_types` so every later consumer of the
+    /// same ValueId sees the raw value; non-numeric handles raise a loud
+    /// pending exception inside the bridge instead of silently producing
+    /// garbage.
+    fn unwrap_handle_operands(
+        builder: &mut FunctionBuilder,
+        module: &mut JITModule,
+        value_map: &mut HashMap<ValueId, Value>,
+        value_types: &mut HashMap<ValueId, AotValueType>,
+        inst: &LirInst,
+    ) -> Result<(), String> {
+        let mut is_float = false;
+        let mut operands: Vec<&ValueId> = Vec::with_capacity(2);
+        match inst {
+            // Integer-domain binary operations
+            LirInst::AddI64(_, a, b)
+            | LirInst::SubI64(_, a, b)
+            | LirInst::MulI64(_, a, b)
+            | LirInst::DivI64(_, a, b)
+            | LirInst::ModI64(_, a, b)
+            | LirInst::And(_, a, b)
+            | LirInst::Or(_, a, b)
+            | LirInst::BitAnd(_, a, b)
+            | LirInst::BitOr(_, a, b)
+            | LirInst::BitXor(_, a, b)
+            | LirInst::Shl(_, a, b)
+            | LirInst::Shr(_, a, b)
+            | LirInst::CmpLtI64(_, a, b)
+            | LirInst::CmpLeI64(_, a, b)
+            | LirInst::CmpGtI64(_, a, b)
+            | LirInst::CmpGeI64(_, a, b) => {
+                operands.push(a);
+                operands.push(b);
+            }
+            // Float-domain binary operations
+            LirInst::AddF64(_, a, b)
+            | LirInst::SubF64(_, a, b)
+            | LirInst::MulF64(_, a, b)
+            | LirInst::DivF64(_, a, b)
+            | LirInst::CmpLtF64(_, a, b)
+            | LirInst::CmpLeF64(_, a, b)
+            | LirInst::CmpGtF64(_, a, b)
+            | LirInst::CmpGeF64(_, a, b)
+            | LirInst::CmpEqF64(_, a, b)
+            | LirInst::CmpNeF64(_, a, b) => {
+                operands.push(a);
+                operands.push(b);
+                is_float = true;
+            }
+            // Integer-domain unary operations
+            LirInst::NegI64(_, a) | LirInst::Not(_, a) => {
+                operands.push(a);
+            }
+            // Float-domain unary operations and conversions
+            LirInst::NegF64(_, a) | LirInst::F64ToI64(_, a) => {
+                operands.push(a);
+                is_float = true;
+            }
+            LirInst::I64ToF64(_, a) => {
+                operands.push(a);
+            }
+            _ => return Ok(()),
+        }
+
+        for id in operands {
+            if !matches!(value_types.get(id), Some(AotValueType::Handle)) {
+                continue;
+            }
+            let Some(&v) = value_map.get(id) else {
+                continue;
+            };
+            let unwrapped = if is_float {
+                Self::call_runtime_fn_1_ret_f64(builder, module, "jit_unwrap_f64", v)?
+            } else {
+                Self::call_runtime_fn_1(builder, module, "jit_unwrap_i64", v)?
+            };
+            value_map.insert(*id, unwrapped);
+            value_types.insert(
+                *id,
+                if is_float {
+                    AotValueType::F64
+                } else {
+                    AotValueType::Int
+                },
+            );
+        }
+        Ok(())
+    }
+
     fn call_runtime_fn_0(
         builder: &mut FunctionBuilder,
         module: &mut JITModule,
@@ -4271,6 +4423,29 @@ impl NativeJitCompiler {
         sig.call_conv = CallConv::triple_default(module.isa().triple());
         sig.params.push(AbiParam::new(types::I64));
         sig.returns.push(AbiParam::new(types::I64));
+
+        let func_id = module
+            .declare_function(fn_name, Linkage::Import, &sig)
+            .map_err(|e| format!("Failed to declare {}: {}", fn_name, e))?;
+        let func_ref = module.declare_func_in_func(func_id, builder.func);
+
+        let arg0 = Self::to_i64_unsigned(builder, arg0);
+        let call_inst = builder.ins().call(func_ref, &[arg0]);
+        let results = builder.inst_results(call_inst);
+        Ok(results[0])
+    }
+
+    /// Call a runtime function with one u64 argument, returns f64
+    fn call_runtime_fn_1_ret_f64(
+        builder: &mut FunctionBuilder,
+        module: &mut JITModule,
+        fn_name: &str,
+        arg0: Value,
+    ) -> Result<Value, String> {
+        let mut sig = module.make_signature();
+        sig.call_conv = CallConv::triple_default(module.isa().triple());
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::F64));
 
         let func_id = module
             .declare_function(fn_name, Linkage::Import, &sig)

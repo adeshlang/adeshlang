@@ -91,6 +91,21 @@ pub fn native_jit_run_with_stats(source: &str) -> Result<NativeJitProfileStats, 
     // Execute the main function on CPU with high precision measurement
     let exec_time = runtime::execute_native_jit_with_timing(context)?;
 
+    // The shared LIR lowers every builtin call with an `__has_exception`
+    // check whose unhandled path simply returns. If a runtime violation
+    // (out-of-bounds pointer store, double free, non-numeric operand, ...)
+    // left a pending exception behind, surface it loudly instead of
+    // exiting 0 with no output — silent success on an error is wrong-code.
+    let pending = crate::backends::common::builtins::CURRENT_EXCEPTION
+        .with(|exc| exc.borrow().clone());
+    if let Some(err) = pending {
+        let msg = match err {
+            crate::backends::common::builtins::RuntimeValue::String(s) => s,
+            other => format!("{:?}", other),
+        };
+        return Err(format!("unhandled runtime exception: {}", msg));
+    }
+
     Ok(NativeJitProfileStats {
         compile_time,
         exec_time,

@@ -159,16 +159,17 @@ pub fn run_with_tiered_jit(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Re
 pub fn run_with_native_jit(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Result<(), String> {
     use crate::backends::jit::native::native_jit_run_with_stats;
 
-    // HONESTY WARNING: this backend has known execution divergences from the
-    // interpreter/native/AOT backends (e.g. array indexing and raw-pointer
-    // programs compute different values or corrupt the heap). It must not
-    // be trusted to compute correct results until those are fixed and it
-    // passes the same execution-verified conformance matrix.
+    // HONESTY WARNING: raw-pointer and array-indexing divergences were fixed
+    // (validated shared heap, element-based indexing, loud violation errors)
+    // and are covered by execution-verified regression tests, but this
+    // backend still has gaps: imported modules are not linked (calls into
+    // them fail loudly) and it has not passed the full execution
+    // conformance matrix the interpreter/native/AOT backends run.
     if !parsed.config.quiet {
         let progress = BuildProgress::new("Compiling with Native JIT...");
         progress.success("Native JIT backend ready");
         eprintln!(
-            "⚠  --jit-native has known correctness divergences (array indexing, raw pointers) and is not conformance-verified; results may be wrong. Prefer --jit or adesh build."
+            "⚠  --jit-native does not support imported modules (calls into them fail loudly) and is not yet fully conformance-verified; prefer --jit or adesh build."
         );
     }
 

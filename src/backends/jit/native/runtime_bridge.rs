@@ -3135,6 +3135,277 @@ pub extern "C" fn jit_get_index(arr_handle: u64, idx: i64) -> u64 {
     store_value(res)
 }
 
+// ============================================================================
+// Raw pointer bridge (validated shared heap)
+//
+// Raw pointers in this JIT live on the same validated shared heap the
+// interpreter and the other JIT paths use (`backends::unsafe_heap`):
+// allocations are handles with size/elem_size/owner metadata, loads and
+// stores are bounds-checked element accesses, and `free` detects
+// double-free and use-after-free. Pointer indexing must never silently
+// read or write the wrong memory, so every violation raises a pending
+// exception that the next `__has_exception` check turns into a loud trap.
+// ============================================================================
+
+/// Set a pending runtime exception consumed by the next `__has_exception`
+/// check. This is the loud-failure channel for bridge-level violations.
+fn set_bridge_error(msg: String) {
+    crate::backends::common::builtins::CURRENT_EXCEPTION.with(|exc| {
+        *exc.borrow_mut() = Some(RuntimeValue::String(msg));
+    });
+}
+
+/// Allocate raw memory on the validated shared heap (byte elements),
+/// mirroring the interpreter's `alloc`. Returns the heap handle; on
+/// failure raises a pending exception and returns 0.
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_alloc(size: i64) -> u64 {
+    if size < 0 {
+        set_bridge_error("alloc size must be non-negative".to_string());
+        return 0;
+    }
+    match crate::backends::unsafe_heap::alloc_typed(size as usize, 1) {
+        Ok(ptr) => ptr,
+        Err(e) => {
+            set_bridge_error(format!("alloc failed: {}", e));
+            0
+        }
+    }
+}
+
+/// Allocate raw memory with element-size metadata, mirroring the
+/// interpreter's typed allocations. `size` is total bytes.
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_alloc_typed(size: i64, elem_size: i64) -> u64 {
+    if size < 0 {
+        set_bridge_error("alloc size must be non-negative".to_string());
+        return 0;
+    }
+    if elem_size <= 0 {
+        set_bridge_error("alloc element size must be positive".to_string());
+        return 0;
+    }
+    match crate::backends::unsafe_heap::alloc_typed(size as usize, elem_size as usize) {
+        Ok(ptr) => ptr,
+        Err(e) => {
+            set_bridge_error(format!("alloc failed: {}", e));
+            0
+        }
+    }
+}
+
+/// Free a validated-heap pointer. Loudly rejects double-free,
+/// use-after-free and foreign pointers via a pending exception.
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_free(ptr: u64) -> i64 {
+    match crate::backends::unsafe_heap::free(ptr) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_bridge_error(format!("free failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// Element-based typed load for `PtrLoad`: reads `elem_size` bytes at
+/// element `index` (address = base + index * elem_size) and returns them
+/// as a little-endian i64. Mirrors the interpreter's validated semantics.
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_load_typed(ptr: u64, index: i64) -> i64 {
+    match pointer_load_typed(ptr, index) {
+        Ok(v) => v,
+        Err(e) => {
+            set_bridge_error(format!("pointer load failed: {}", e));
+            0
+        }
+    }
+}
+
+/// Element-based typed store for `PtrStore`: stores the low `elem_size`
+/// bytes of `value` (little-endian) at element `index`. Mirrors the
+/// interpreter's validated semantics.
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_store_typed(ptr: u64, index: i64, value: i64) -> i64 {
+    match pointer_store_typed(ptr, index, value) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_bridge_error(format!("pointer store failed: {}", e));
+            -1
+        }
+    }
+}
+
+/// `get_index` fast path for raw pointers: returns a handle wrapping the
+/// loaded element so downstream builtins (print, arithmetic via unwrap)
+/// keep operating in the managed-value world.
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_ptr_get_index(ptr: u64, index: i64) -> u64 {
+    match pointer_load_typed(ptr, index) {
+        Ok(v) => store_value(RuntimeValue::Int(v)),
+        Err(e) => {
+            set_bridge_error(format!("pointer load failed: {}", e));
+            store_value(RuntimeValue::Null)
+        }
+    }
+}
+
+/// `set_index` fast path for raw pointers: `value` may be a managed handle
+/// or a raw integer. Element size comes from pointer metadata, exactly
+/// like the interpreter (byte elements demand 0..255). Returns the pointer
+/// so expression results keep referring to the buffer.
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_ptr_set_index(ptr: u64, index: i64, value: u64) -> u64 {
+    let val = if value >= HANDLE_TAG {
+        unpack_jit_arg(value)
+    } else {
+        RuntimeValue::Int(value as i64)
+    };
+    let val_i64 = match runtime_value_as_i64(&val) {
+        Some(v) => v,
+        None => {
+            set_bridge_error(format!(
+                "pointer store requires a numeric value, got {}",
+                runtime_value_type_name(&val)
+            ));
+            return ptr;
+        }
+    };
+    match pointer_store_typed(ptr, index, val_i64) {
+        Ok(()) => ptr,
+        Err(e) => {
+            set_bridge_error(format!("pointer store failed: {}", e));
+            ptr
+        }
+    }
+}
+
+/// Unwrap a managed handle into a raw i64 for the shared raw-number
+/// lowering (arithmetic, comparisons, conversions). Numeric values and
+/// booleans convert; anything else raises a loud pending exception.
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_unwrap_i64(handle: u64) -> i64 {
+    if handle < HANDLE_TAG {
+        return handle as i64;
+    }
+    let val = get_value(handle).unwrap_or(RuntimeValue::Null);
+    match runtime_value_as_i64(&val) {
+        Some(v) => v,
+        None => {
+            set_bridge_error(format!(
+                "operation requires a numeric value, got {}",
+                runtime_value_type_name(&val)
+            ));
+            0
+        }
+    }
+}
+
+/// Unwrap a managed handle into a raw f64 for float lowering.
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_unwrap_f64(handle: u64) -> f64 {
+    if handle < HANDLE_TAG {
+        return handle as f64;
+    }
+    let val = get_value(handle).unwrap_or(RuntimeValue::Null);
+    match val.as_float() {
+        Some(f) => f,
+        None => {
+            set_bridge_error(format!(
+                "operation requires a numeric value, got {}",
+                runtime_value_type_name(&val)
+            ));
+            0.0
+        }
+    }
+}
+
+/// Best-effort integer view of a runtime value: numeric ints and booleans
+/// convert, everything else is None.
+fn runtime_value_as_i64(v: &RuntimeValue) -> Option<i64> {
+    match v {
+        RuntimeValue::Int(n) => Some(*n),
+        RuntimeValue::I8(n) => Some(*n as i64),
+        RuntimeValue::I16(n) => Some(*n as i64),
+        RuntimeValue::I32(n) => Some(*n as i64),
+        RuntimeValue::I64(n) => Some(*n),
+        RuntimeValue::U8(n) => Some(*n as i64),
+        RuntimeValue::U16(n) => Some(*n as i64),
+        RuntimeValue::U32(n) => Some(*n as i64),
+        RuntimeValue::U64(n) => Some(*n as i64),
+        RuntimeValue::U128(n) => {
+            if *n <= i64::MAX as u128 {
+                Some(*n as i64)
+            } else {
+                None
+            }
+        }
+        RuntimeValue::I128(n) => i64::try_from(*n).ok(),
+        RuntimeValue::Bool(b) => Some(if *b { 1 } else { 0 }),
+        RuntimeValue::Float(f) if f.fract() == 0.0 && f.is_finite() => Some(*f as i64),
+        RuntimeValue::F32(f) if f.fract() == 0.0 && f.is_finite() => Some(*f as i64),
+        _ => None,
+    }
+}
+
+/// Human-readable type name used in loud error messages.
+fn runtime_value_type_name(v: &RuntimeValue) -> &'static str {
+    match v {
+        RuntimeValue::Int(_)
+        | RuntimeValue::I8(_)
+        | RuntimeValue::I16(_)
+        | RuntimeValue::I32(_)
+        | RuntimeValue::I64(_) => "integer",
+        RuntimeValue::U8(_)
+        | RuntimeValue::U16(_)
+        | RuntimeValue::U32(_)
+        | RuntimeValue::U64(_)
+        | RuntimeValue::U128(_) => "unsigned integer",
+        RuntimeValue::Float(_) | RuntimeValue::F32(_) => "float",
+        RuntimeValue::Bool(_) => "boolean",
+        RuntimeValue::String(_) => "string",
+        RuntimeValue::Array(_) | RuntimeValue::RawArray(..) | RuntimeValue::DynArray { .. } => {
+            "array"
+        }
+        RuntimeValue::Object(_) => "object",
+        RuntimeValue::Tuple(_) => "tuple",
+        RuntimeValue::Null => "null",
+        _ => "value",
+    }
+}
+
+/// Validated element load shared by `jit_load_typed` and `jit_ptr_get_index`.
+fn pointer_load_typed(ptr: u64, index: i64) -> Result<i64, String> {
+    if index < 0 {
+        return Err("index must be non-negative".to_string());
+    }
+    let bytes = crate::backends::unsafe_heap::load_typed(ptr, index as usize)?;
+    let mut buf = [0u8; 8];
+    let copy_len = bytes.len().min(8);
+    buf[..copy_len].copy_from_slice(&bytes[..copy_len]);
+    Ok(i64::from_le_bytes(buf))
+}
+
+/// Validated element store shared by `jit_store_typed` and `jit_ptr_set_index`.
+/// Byte elements demand 0..255, wider elements take the low bytes
+/// little-endian — identical to the interpreter's raw-pointer semantics.
+fn pointer_store_typed(ptr: u64, index: i64, value: i64) -> Result<(), String> {
+    if index < 0 {
+        return Err("index must be non-negative".to_string());
+    }
+    let elem_size = crate::backends::unsafe_heap::elem_size_of_ptr(ptr)?;
+    let idx = index as usize;
+    if elem_size == 1 {
+        if !(0..=255).contains(&value) {
+            return Err(format!("value {} out of range for byte element", value));
+        }
+        crate::backends::unsafe_heap::store_u8(ptr, idx, value as u8)
+    } else {
+        let bytes = value.to_le_bytes();
+        let buf = &bytes[..elem_size.min(8)];
+        crate::backends::unsafe_heap::store_typed(ptr, idx, buf)
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_first(arr_handle: u64) -> u64 {
     let arr = unpack_jit_arg(arr_handle);
@@ -3506,6 +3777,16 @@ pub fn get_runtime_symbols() -> Vec<(&'static str, *const u8)> {
         ("jit_array_to_raw", jit_array_to_raw as *const u8),
         ("jit_set_index", jit_set_index as *const u8),
         ("jit_get_index", jit_get_index as *const u8),
+        // Validated raw-pointer bridge (shared unsafe heap)
+        ("jit_alloc", jit_alloc as *const u8),
+        ("jit_alloc_typed", jit_alloc_typed as *const u8),
+        ("jit_free", jit_free as *const u8),
+        ("jit_load_typed", jit_load_typed as *const u8),
+        ("jit_store_typed", jit_store_typed as *const u8),
+        ("jit_ptr_get_index", jit_ptr_get_index as *const u8),
+        ("jit_ptr_set_index", jit_ptr_set_index as *const u8),
+        ("jit_unwrap_i64", jit_unwrap_i64 as *const u8),
+        ("jit_unwrap_f64", jit_unwrap_f64 as *const u8),
         ("jit_first", jit_first as *const u8),
         ("jit_last", jit_last as *const u8),
         ("jit_len", jit_len as *const u8),
