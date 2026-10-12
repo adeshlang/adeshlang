@@ -1,6 +1,6 @@
 # Adesh Native Target Support Matrix
 
-**Generated:** 2026-10-05 (Phase 0 documentation truth-reset revision)
+**Generated:** 2026-10-11 (Phase 8 revision: ELF TLS + eh_frame execution-verified, OS-specific CI)
 **Canonical status source:** `CURRENT_STATE.md` (this file must agree with it)
 **Format:** Multi-Target Platform Matrix
 
@@ -9,8 +9,8 @@
 | Target Triple | Arch | OS | Object Format | Codegen | Relocations | Linking | Runtime | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | `x86_64-pc-windows-msvc` | x86_64 | Windows | PE/COFF (PE32+) | **Native (integer + scalar SSE2 FP subset)** | ABS64, PC32 (emitted + resolved) | **Native PE (execution-tested)** | **Native Win32** | **Execution-verified** |
-| `x86_64-unknown-linux-gnu` | x86_64 | Linux | ELF64 | **Native (integer + scalar SSE2 FP subset)** | ABS64, PC32, Section-symbols | **Native ELF (static, execution-tested; dynamic import routing & PLT/GOT)** | **Native POSIX** | **Execution-verified** |
-| `x86_64-unknown-linux-musl` | x86_64 | Linux | ELF64 (static) | **Native (integer + scalar SSE2 FP subset)** | ABS64, PC32 | **Native ELF (static; musl CI job pending)** | **Native POSIX** | **Tested** (glibc execution-verified, musl static emission tested) |
+| `x86_64-unknown-linux-gnu` | x86_64 | Linux | ELF64 | **Native (integer + scalar SSE2 FP subset)** | ABS64, PC32, Section-symbols, TLS LE/IE | **Native ELF (static, execution-tested; dynamic import routing & PLT/GOT; TLS + eh_frame_hdr)** | **Native POSIX** | **Execution-verified** |
+| `x86_64-unknown-linux-musl` | x86_64 | Linux | ELF64 (static + dynamic) | **Native (integer + scalar SSE2 FP subset)** | ABS64, PC32, TLS LE/IE + TPOFF64 | **Native ELF (static + TLS execution-verified; dynamic initial-exec against real musl `ld.so` verified in WSL)** | **Native POSIX** | **Execution-verified** (static local-exec + dynamic initial-exec TLS binaries executed with asserted exit codes; no dedicated musl CI job — CI runs the same suites against the host glibc loader) |
 | `aarch64-unknown-linux-gnu` | AArch64 | Linux | ELF64 | **Implemented (AAPCS64, FP, NEON, Atomics)** | CALL26, ADRP, ADD_LO12 (emitted + resolved) | **Native ELF (static emission tested)** | **Native POSIX** | **Tested** (Codegen & relocation tested; execution pending) |
 | `aarch64-apple-darwin` | AArch64 | macOS | Mach-O 64 | **Implemented (AAPCS64 codegen)** | BRANCH26 (constant only) | **Native Mach-O (libSystem dynamic routing implemented)** | **Native Darwin** | **Implemented** (Structure & dynamic routing tested; runtime execution pending) |
 | `x86_64-apple-darwin` | x86_64 | macOS | Mach-O 64 | **Native (integer + scalar SSE2 FP subset)** | — | **Native Mach-O (libSystem dynamic routing implemented)** | **Native Darwin** | **Implemented** (Structure & dynamic routing tested; runtime execution pending) |
@@ -32,10 +32,22 @@
   and `x86_64-unknown-linux-gnu` (static ELF executables:
   `tests/native_phase3_linux_e2e_test.rs` executing synthesized `_start`, SysV 6-arg calling convention,
   `.a` GNU `/` symbol table archives, and GC-enabled links — run natively on Linux CI and via WSL
-  on Windows). Dead-section removal itself is unit-tested in `linker/src/gc.rs`; ICF `Safe`/`All`
-  differentiation is unit-tested in `linker/src/icf.rs`. `x86_64-unknown-linux-musl` uses the same
-  static ELF writer but has no execution test yet (no musl CI job).
-  Mach-O and WASM linker outputs remain checked by structure/magic bytes only.
+  on Windows; dynamic ELF binaries executed through the real loader by
+  `tests/native_phase8_dynamic_elf_test.rs`). Dead-section removal itself is unit-tested in
+  `linker/src/gc.rs`; ICF `Safe`/`All` differentiation is unit-tested in `linker/src/icf.rs`.
+  `x86_64-unknown-linux-musl` TLS binaries are executed with asserted exit codes by
+  `tests/native_phase8_tls_ehframe_test.rs` in the WSL-musl development environment: a static
+  local-exec binary installs its thread pointer via `arch_prctl(ARCH_SET_FS)` and accesses its
+  counter at `%fs:(off − memsz)`; a dynamic initial-exec binary is processed by the real musl
+  `ld.so` (PT_TLS copy + thread-pointer setup + `R_X86_64_TPOFF64` on the GOT slot). CI runs the
+  same suites against the host glibc loader on Linux and via WSL on Windows; there is no dedicated
+  musl CI job. `.eh_frame`/`.eh_frame_hdr` and `PT_GNU_EH_FRAME` are verified by independent
+  byte-level decoders in the same test file (no runtime unwinder test yet).
+  Mach-O output is verified beyond structure/magic: `linker/tests/macho_dyld_binding_test.rs`
+  parse-back-decodes `LC_DYLD_INFO_ONLY` bind/rebase streams, the exports trie, the indirect
+  symbol table, and the synthesized stub/GOT/helper chain — but dyld execution on a real macOS
+  host is still pending (no execution test exists). WASM linker output remains checked by
+  structure/magic bytes only.
 * **Native codegen subset:** x86-64 covers 64-bit integer GPR operations,
   scalar SSE2 floating point (add/sub/mul/div in single and double forms,
   `ucomis` comparisons, int↔float conversions), XMM0-13 allocation with

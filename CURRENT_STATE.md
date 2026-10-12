@@ -1,6 +1,6 @@
 # Adesh Native Production Toolchain — Current State
 
-**Generated:** 2026-10-05 (Phase 0 documentation truth-reset revision)
+**Generated:** 2026-10-11 (Phase 8 revision: ELF TLS, eh_frame, ADOB v3, OS-specific CI)
 **Toolchain Version:** 0.3.0
 **Target:** Production-Grade Self-Contained Native Toolchain
 
@@ -10,20 +10,21 @@
 
 | Area | Verified Status |
 | :--- | :--- |
-| ADOB object format (v1.0) | **Implemented** — real binary spec, symmetric writer/reader, strict validator (now enforced on write), round-trip tests. |
+| ADOB object format (v3) | **Implemented** — real binary spec, symmetric writer/reader, strict validator (enforced on write), round-trip tests. v3 adds an explicit per-section size field (v2 derived size from data length, silently dropping `.tbss`/`.bss` zero-fill tails) and distinguishes the TLS section kinds; the reader accepts both v2 and v3 and routes ADOB by version before any other format probe. |
 | Native linker engine | **Implemented, actively maturing** — parse → GC → ICF → resolve → layout → relocate; indexed GNU/COFF archives use lazy member resolution with fallback scanning. |
 | Windows PE generation | **Significantly implemented** — real PE32+ with imports/IAT/TLS/base-reloc/ASLR; tests execute produced binaries, including a real `msvcrt!puts` import. |
 | x86-64 native codegen | **Substantial for its tested subset** — integer GPR operations, scalar SSE2 encodings, XMM allocation, branches/calls, stack arguments, parallel moves, Win64 shadow space, full-width locked atomics, and Win64 TLS access sequences. Vector calling-convention support remains incomplete. |
 | AArch64 codegen | **Implemented & Tested** — Full AAPCS64 register allocation, callee-saved preservation (X19..X28, D8..D15), 64-bit immediate materialization, arithmetic, comparisons/branches, scalar FP, NEON vectors, atomics, and ADOB/ELF object emission. Hardware execution pending. |
 | RISC-V codegen | **Proof-of-concept** — Basic instruction forms (Nop/Return/Add/Sub reg-reg). |
-| ELF generation | **Static executables execution-tested; dynamic POSIX routing & PLT/GOT stubs implemented** — static `ET_EXEC` with native Linux `_start` synthesis (argc/argv/envp + `exit` syscall) runs on Linux CI and WSL with asserted exit codes. Dynamic import routing for external C/POSIX symbols (`libc.so.6`, `libgcc_s.so.1`), PLT/GOT synthesis with PC-relative relocations, and `.dynsym` undefined symbol emission implemented; section-symbol relocations resolved. |
-| Mach-O generation | **Artifact emission & libSystem dynamic routing implemented** — emits 64-bit Mach-O executables (`MH_EXECUTE`, 4GB `__PAGEZERO`, `LC_MAIN`) and dylibs (`MH_DYLIB`, `LC_ID_DYLIB`), with `LC_BUILD_VERSION` (macOS 11.0+), dynamic import routing for `/usr/lib/libSystem.B.dylib`, `LC_LOAD_DYLIB`, `LC_SYMTAB`, and partitioned `LC_DYSYMTAB`. Runtime execution on macOS runner pending. |
+| ELF generation | **Static executables execution-tested; dynamic POSIX routing & PLT/GOT stubs implemented; TLS execution-verified** — static `ET_EXEC` with native Linux `_start` synthesis (argc/argv/envp + `exit` syscall) runs on Linux CI and WSL with asserted exit codes. Dynamic import routing for external C/POSIX symbols (`libc.so.6`, `libgcc_s.so.1`), PLT/GOT synthesis with PC-relative relocations, and `.dynsym` undefined symbol emission implemented; section-symbol relocations resolved. TLS: merged `.tls` block (initialized sections first, zero-fill after), `PT_TLS`, `.tdata` (PROGBITS) / `.tbss` (NOBITS) section-header split, static local-exec relocation (`%fs:(off − memsz)`), and dynamic initial-exec (GOT slot + `R_X86_64_TPOFF64` resolved by the real loader) — **executed against a real musl `ld.so` in WSL with asserted exit codes** (`tests/native_phase8_tls_ehframe_test.rs`). `.eh_frame`/`.eh_frame_hdr` synthesis with `PT_GNU_EH_FRAME` (see DWARF row). General-dynamic TLS access is a loud link error (no DTV/`__tls_get_addr` runtime). |
+| Mach-O generation | **Artifact emission, libSystem routing, and dyld binding structure implemented; execution pending** — emits 64-bit Mach-O executables and dylibs with `LC_LOAD_DYLIB`, `LC_SYMTAB`, partitioned `LC_DYSYMTAB`, and `LC_DYLD_INFO_ONLY` (bind/rebase opcode streams and an exports trie), an indirect symbol table, and synthesized `__stubs`/`__got`/lazy-pointer/helper sections forming a full call → stub → lazy-pointer → binder chain — all **verified by independent parse-back decoders** (`linker/tests/macho_dyld_binding_test.rs`). Chained fixups are not emitted. No macOS execution test exists yet: dyld execution verification is pending, now covered structurally on the macOS CI runner which runs the conformance suite on the only host where Mach-O is native. TLS sections under Mach-O still fail the link loudly (no TLV emission). |
 | WASM | **Compiler backend real** (87KB codegen, data segments, host imports, runs via wasmtime/node); the linker's WASM writer is a single-function stub. |
 | Static libraries | **Implemented** — Target-aware GNU/COFF indexed archives resolve members lazily without host triple leakage; archives without a usable index fall back to scanning. The archive writer emits a real GNU `/` symbol index (big-endian offsets + string pool) and the reader consumes it directly. Thin archives are not supported. |
 | Shared libraries | **Artifact emission & dynamic resolution implemented** — `--shared` produces PE DLLs (with export tables), ELF `.so` (`ET_DYN`) with synthesized `.got` tables and `.dynamic` segments, and Mach-O `.dylib` (`MH_DYLIB`). Dynamic linking resolution tests verified. |
-| TLS generation | **Implemented for Win64 at the codegen level** — PE TLS directory/`_tls_index` synthesis plus real thread-pointer access sequences (`gs:[0x58]` + SECREL relocations), execution-tested via MachineIR (`tests/native_phase2_abi_tls_test.rs`). No Adesh source syntax emits TLS accesses yet; ELF/Mach-O TLS inputs remain a hard error. |
+| TLS generation | **Implemented for Win64 (codegen) and ELF (linker), both execution-verified at their level** — Win64: PE TLS directory/`_tls_index` synthesis plus real thread-pointer access sequences (`gs:[0x58]` + SECREL relocations), execution-tested via MachineIR (`tests/native_phase2_abi_tls_test.rs`). ELF: `PT_TLS` with `.tdata`/`.tbss` split; static local-exec (`%fs:(off − memsz)`, verified by executing a binary that sets the thread pointer via `arch_prctl(ARCH_SET_FS)` and reads/updates its counter through `%fs`) and dynamic initial-exec (GOT slot + `R_X86_64_TPOFF64`, verified against a real musl `ld.so` in WSL) — `tests/native_phase8_tls_ehframe_test.rs`. General-dynamic is rejected loudly; Mach-O TLS remains a hard error (no TLV emission). No Adesh source syntax emits TLS accesses yet — the executed tests drive the linker with hand-built ADOB objects. |
+| Native JIT (`--jit-native`) | **Functional for the tested subset; honest gaps are loud** — raw-pointer and array-indexing semantics divergences versus the interpreter were fixed (the same program now behaves identically); imported modules are rejected with an explicit error at compile time, and the CLI warns that `--jit-native` is not yet fully conformance-verified and recommends `--jit` or `adesh build`. Conformance between `--jit-native` and the interpreter is not yet systematically asserted by a dedicated test suite. |
 | Full ABI aggregates/variadic | **Implemented at the codegen/FFI level** — shared SysV eightbyte + Win64 by-value classifier, sret for large aggregates, struct-by-value (1/2/4/8-byte) in registers and on the stack, Win64 shadow spill and SysV register-save-area/`va_list` variadic helpers; execution-tested via MachineIR/FFI suites. Not yet reachable from Adesh source syntax (no `extern` declarations, variadic functions, or aggregate value types in the front end). |
-| DWARF / CodeView / SEH | **Implemented** — Windows SEH `.pdata`/`.xdata` `UNWIND_INFO` and opcode encoding wired to PE Optional Header exception directory; DWARF 5 `.debug_line` state machine program and compilation unit headers implemented. |
+| DWARF / CodeView / SEH / eh_frame | **Implemented** — Windows SEH `.pdata`/`.xdata` `UNWIND_INFO` and opcode encoding wired to PE Optional Header exception directory; DWARF 5 `.debug_line` state machine program and compilation unit headers implemented; ELF `.eh_frame` (one CIE matching the real emitted prologue `push rbp; mov rbp, rsp`, one FDE per sized function symbol, no FDE for size-0 functions — never fabricated) plus `.eh_frame_hdr` binary-search table and `PT_GNU_EH_FRAME`, decode-verified by an independent byte-level decoder in tests. No runtime unwinder test exists yet: frame data is verified to describe the real code ranges, not yet to unwind a crash. |
 | Link-time optimization (`--lto`) | **Implemented** — `--lto` routes through `CompilerDriver` and `LtoEngine` for cross-module optimization along with aggressive ICF (`IcfMode::All`), recursive section GC, and symbol stripping. |
 | Build time & binary size | **Optimized** — standalone C runtime print/abort; Windows PE hello-world reduced to 4,096 bytes (string) and 5,120 bytes (numeric), well below <40 KB target; `-Os`/`-Oz` flags implemented; Criterion benchmark harness across 10-10K LOC. |
 | Async runtime | **Not implemented** — the runtime crate has no executor/waker/reactor; the HTTP stdlib uses Tokio. The native runtime does have a reusable worker pool for parallel iteration. |
@@ -146,6 +147,55 @@ asserted by a test that runs in CI. Emitting bytes without running them is
 execution test verifies. When behavior changes, update this file in the
 same change set.
 
+## 0.4 Phase 8 Revision (2026-10-11)
+
+Execution-verified changes in this revision:
+
+- **ELF TLS is implemented and executed.** Static local-exec (the binary
+  itself installs the thread pointer via `arch_prctl(ARCH_SET_FS, block
+  end)` and accesses variables at `%fs:(off − memsz)`) executes and exits
+  with the expected counter value; dynamic initial-exec runs against the
+  real musl `ld.so` in WSL, which processes `PT_TLS`, installs the thread
+  pointer, and applies the `R_X86_64_TPOFF64` relocation on the GOT slot
+  (`tests/native_phase8_tls_ehframe_test.rs`, 8/8). Two real bugs were
+  fixed by these tests: the TLS contribution order (a purely lexical sort
+  placed `.tbss` before `.tdata`, materializing the zero-fill as file
+  bytes ahead of the image so `PT_TLS` `p_filesz` covered 24 bytes instead
+  of the 8 initialized ones — initialized sections now come first, matching
+  GNU ld), and the test probe itself (`ARCH_SET_FS` is `0x1002`; `0x1001`
+  is `ARCH_SET_GS`, which set `%GS` and left `%FS` at 0). General-dynamic
+  TLS access and TLS sections under Mach-O fail the link loudly.
+- **`.eh_frame`/`.eh_frame_hdr` emission** with `PT_GNU_EH_FRAME`:
+  synthesized from the codegen's real standard frame, one FDE per sized
+  function, none for size-0 functions, verified by an independent decoder
+  written in the tests (not by re-reading the generator's own output).
+- **ADOB v3**: explicit per-section `size` (v2 lost `.tbss`/`.bss`
+  zero-fill tails through the object round-trip) and correct TLS/meta kind
+  ids; the reader accepts v2 and v3 and probes the ADOB version before
+  any other format heuristic.
+- **Ownership gate scope fix**: the per-function locals map was being
+  dropped across nested scopes, causing false positives; now per-function,
+  with three new adversarial borrow tests.
+- **Runtime ABI hardening** (`d41aa90`): value-to-string conversion
+  hardened against panics and invalid dereferences with a 9-test ABI
+  suite; doctest failures fixed.
+- **JIT-native divergences fixed** (`18d9909`): raw-pointer and
+  array-indexing semantics now match the interpreter; imported modules
+  fail loudly instead of misbehaving.
+- **OS-specific CI jobs** (`.github/workflows/ci.yml`): Linux runs the
+  full integration set including the ELF-execution suites natively
+  (static ELFs, dynamic linking against the host loader, TLS local-exec
+  and initial-exec); macOS runs the Mach-O dyld-binding structural
+  conformance suite plus the full integration set (Windows PE suites
+  compile out; Linux ELF execution suites SKIP loudly there); Windows
+  runs the PE e2e suites plus the Linux ELF execution suites through WSL
+  when present (loud SKIP otherwise). The CI workflow itself now
+  triggers CI on changes.
+- **Language honesty note**: Adesh has no `mut` keyword (variables are
+  mutable by default); the parser rejects `mut` with an explicit
+  re-write hint rather than accepting or ignoring it
+  (`src/parsing/parser/declarations.rs`).
+
 ## 1. Executive Summary
 
 Adesh is transitioning from an external dependency toolchain
@@ -190,12 +240,12 @@ Real, working subsystems:
 | **HIR / MIR** | Production ready | SSA control-flow IR with constant folding, DCE, CSE. |
 | **Native lowering (HIR → Machine IR)** | **Partial; unsupported constructs fail the build** | Focused end-to-end tests cover integers, scalar floats/math, strings, ranges, membership, indexing/mutation, methods, short-circuit values, try/catch, defer, integer `match` (switch lowering), and non-capturing lambdas. Since Phase 1 (2026-10-06), `lower_hir_module` returns structured errors for constructs it cannot compile correctly: module imports, `region` blocks, enum variant patterns, `async fn`/`await`/`spawn`, closures that capture enclosing locals, `instanceof`, and unknown expressions. Not full language coverage; no `examples/` conformance sweep yet (planned for Phase 2). |
 
-### 2.2 Native Object Format (ADOB v1.0)
+### 2.2 Native Object Format (ADOB v3)
 | Component | Status |
 | :--- | :--- |
-| Specification | **Complete** (magic `ADOB`, version 1.0.0, target descriptor, capabilities) |
-| Sections | **Complete** (11 kinds incl. TLS/unwind/debug/custom; `.text`, `.rodata`, `.data`, `.bss`, `.tdata`, `.tbss`) |
-| Symbols & Relocations | **Complete** (~28 relocation kinds; symbol binding/visibility; imports/exports) |
+| Specification | **Complete** (magic `ADOB`; versions v2 and v3 — v3 adds an explicit per-section `size` field and distinguishes the TLS section kinds) |
+| Sections | **Complete** (11 kinds incl. TLS/unwind/debug/custom; `.text`, `.rodata`, `.data`, `.bss`, `.tdata`, `.tbss`; NOBITS-style sections keep their full size through round-trips under v3) |
+| Symbols & Relocations | **Complete** (~28 relocation kinds incl. TLS general-dynamic/initial-exec/local-exec; symbol binding/visibility; imports/exports) |
 | Validation | **Complete and enforced on write** |
 | Inspection CLI | **Complete** (`adesh adob inspect/dump-*/validate`) |
 
@@ -203,8 +253,8 @@ Real, working subsystems:
 | Feature | Status | Notes |
 | :--- | :--- | :--- |
 | **PE/COFF (Windows)** | **Significantly implemented** | PE32+ generator, import tables (IDT/ILT/IAT), base relocations, TLS directory, ASLR/NX flags, entry synthesis, DLL export tables + COFF import libraries for `--shared`, and SEH `.pdata`/`.xdata` exception directory synthesis. Missing: delay imports, Authenticode, and resources. Execution-tested. |
-| **ELF (Linux)** | **Static executables, execution-tested** | ET_EXEC, program headers, symtab, build-id, `_start` synthesis (argc/argv/envp from the initial stack, `exit` syscall 60); no `PT_INTERP`/`PT_DYNAMIC` on executables; non-intrinsic imports are a loud link error, never VA-0. Executed natively on Linux CI and via WSL on Windows with asserted exit codes (`tests/native_phase3_linux_e2e_test.rs`). Dynamic `ET_DYN` emission (`.interp`, `.dynsym`, `PT_GNU_RELRO`, ...) exists but has no GOT/PLT, so shared objects are structure-tested only. |
-| **Mach-O (macOS)** | **Artifact emission only; not functional** | Emits `MH_EXECUTE`/`MH_DYLIB` layouts with `LC_LOAD_DYLIB`, `LC_SYMTAB`, `LC_DYSYMTAB`; no dyld info, chained fixups, bind opcodes, exports trie, or indirect symbol table, so external symbols cannot bind. Only fully-static code could run. No macOS execution test. |
+| **ELF (Linux)** | **Static + TLS executables, execution-tested; dynamic loading verified via real `ld.so`** | ET_EXEC, program headers, symtab, build-id, `_start` synthesis (argc/argv/envp from the initial stack, `exit` syscall 60); non-intrinsic imports are a loud link error, never VA-0. Executed natively on Linux CI and via WSL on Windows with asserted exit codes (`tests/native_phase3_linux_e2e_test.rs`). TLS: merged `.tls` block with `PT_TLS` (initialized image as a prefix, zero-fill tail), `.tdata`/`.tbss` section-header split, local-exec relocation math, initial-exec GOT slot with `R_X86_64_TPOFF64` for dynamic links — executed against a real musl loader in WSL (`tests/native_phase8_tls_ehframe_test.rs`). `.eh_frame`/`.eh_frame_hdr` synthesis with `PT_GNU_EH_FRAME`. General-dynamic TLS is a loud error. Dynamic `ET_DYN` emission (`.interp`, `.dynsym`, `PT_GNU_RELRO`, ...) exists; PIE/dynamic-executable coverage is partial — `tests/native_phase8_dynamic_elf_test.rs` executes dynamic binaries through the real loader. |
+| **Mach-O (macOS)** | **Artifact emission + dyld binding structure; execution pending** | Emits `MH_EXECUTE`/`MH_DYLIB` layouts with `LC_LOAD_DYLIB`, `LC_SYMTAB`, partitioned `LC_DYSYMTAB`, and `LC_DYLD_INFO_ONLY` with bind/rebase opcode streams and an exports trie; synthesizes `__stubs`, `__got`, lazy-pointer and helper sections with the indirect symbol table, forming a full call → stub → lazy-pointer → binder chain — verified by independent parse-back decoders (`linker/tests/macho_dyld_binding_test.rs`). Chained fixups are not emitted; no macOS execution test exists yet, so dyld behavior is unverified. The macOS CI runner executes the conformance suite. TLS sections under Mach-O fail the link loudly (no TLV emission). |
 | **WASM** | **Stub writer** | Single-function emission; no import section (WASI), relocations never applied. Real WASM output comes from the compiler backend (`src/backends/wasm`). |
 | **Section GC & ICF** | **Complete** | Reachability GC (`--gc-sections`) with strong-over-weak authoritative definitions and conservative name-only fallback (unit-tested in `linker/src/gc.rs`); FNV-1a-hashed ICF (`--icf`) where `Safe` mode preserves address-taken functions and `All` folds regardless (unit-tested in `linker/src/icf.rs`). |
 | **Static archives** | **Implemented** | Lazy GNU/COFF indexed member resolution with fallback scanning; the writer emits a GNU `/` symbol index that the reader consumes directly (execution-tested end-to-end on Linux). |
