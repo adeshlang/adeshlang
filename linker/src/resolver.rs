@@ -60,6 +60,18 @@ impl Default for SymbolResolver {
 }
 
 impl SymbolResolver {
+    fn macho_symbol_aliases(name: &str, target: &crate::target::Target) -> Vec<String> {
+        if target.format != crate::target::ObjectFormat::MachO {
+            return vec![name.to_string()];
+        }
+        if let Some(stripped) = name.strip_prefix('_') {
+            if !stripped.is_empty() {
+                return vec![name.to_string(), stripped.to_string()];
+            }
+        }
+        vec![name.to_string(), format!("_{}", name)]
+    }
+
     pub fn new() -> Self {
         Self {
             table: HashMap::new(),
@@ -102,7 +114,7 @@ impl SymbolResolver {
     ) -> LinkResult<()> {
         // 1. Initial pass: Ingest all explicitly provided object files
         for obj in objects.iter() {
-            self.ingest_object(obj)?;
+            self.ingest_object(obj, target)?;
         }
 
         // 2. Archive resolution loop: Extract required members until fixed point
@@ -121,8 +133,21 @@ impl SymbolResolver {
                     }
                     let candidates = ar.symbol_index.get(&undef_sym);
                     let prefixed;
+                    let unprefixed;
                     let candidates = if candidates.is_some() {
                         candidates
+                    } else if target.format == crate::target::ObjectFormat::MachO {
+                        if let Some(stripped) = undef_sym.strip_prefix('_') {
+                            unprefixed = format!("_{}", stripped);
+                            ar.symbol_index
+                                .get(stripped)
+                                .or_else(|| ar.symbol_index.get(&unprefixed))
+                        } else {
+                            prefixed = format!("_{}", undef_sym);
+                            ar.symbol_index
+                                .get(&prefixed)
+                                .or_else(|| ar.symbol_index.get(undef_sym.as_str()))
+                        }
                     } else if target.arch == crate::target::Arch::X86 {
                         // The `_`-prefix equivalence is a 32-bit x86
                         // (COFF/ELF) name-mangling convention only. On 64-bit
@@ -164,7 +189,7 @@ impl SymbolResolver {
                             member_obj.reassign_file_index(objects.len());
                             member_obj.is_archive_member = true;
                             member_obj.archive_name = Some(ar.path.display().to_string());
-                            self.ingest_object(&member_obj)?;
+                            self.ingest_object(&member_obj, target)?;
                             objects.push(member_obj);
                             progress = true;
                         }
@@ -422,14 +447,20 @@ impl SymbolResolver {
         Ok(())
     }
 
-    fn ingest_object(&mut self, obj: &ObjectFile) -> LinkResult<()> {
+    fn ingest_object(&mut self, obj: &ObjectFile, target: &crate::target::Target) -> LinkResult<()> {
         for sym in &obj.symbols {
             if sym.is_local() {
                 continue;
             }
+            let aliases = Self::macho_symbol_aliases(&sym.name, target);
 
             if sym.is_defined {
-                if let Some(existing) = self.table.get_mut(&sym.name) {
+                let existing_key = aliases
+                    .iter()
+                    .find(|k| self.table.contains_key(k.as_str()))
+                    .cloned()
+                    .unwrap_or_else(|| sym.name.clone());
+                if let Some(existing) = self.table.get_mut(&existing_key) {
                     if existing.symbol.is_defined {
                         // A weak-undefined placeholder (bound to NULL earlier)
                         // is not a real definition: a real one replaces it.
@@ -440,7 +471,9 @@ impl SymbolResolver {
                             existing.symbol = sym.clone();
                             existing.defined_in_file_index = obj.file_index;
                             existing.defined_in_sec_index = sym.section_index;
-                            self.weak_undefined_symbols.remove(&sym.name);
+                            for alias in &aliases {
+                                self.weak_undefined_symbols.remove(alias);
+                            }
                             continue;
                         }
 
@@ -495,7 +528,9 @@ impl SymbolResolver {
                         existing.symbol = sym.clone();
                         existing.defined_in_file_index = obj.file_index;
                         existing.defined_in_sec_index = sym.section_index;
-                        self.undefined.remove(&sym.name);
+                        for alias in &aliases {
+                            self.undefined.remove(alias);
+                        }
                     }
                 } else {
                     self.table.insert(
@@ -507,7 +542,19 @@ impl SymbolResolver {
                             references: Vec::new(),
                         },
                     );
-                    self.undefined.remove(&sym.name);
+                    for alias in &aliases {
+                        self.undefined.remove(alias);
+                    }
+                }
+                for alias in aliases {
+                    self.table
+                        .entry(alias)
+                        .or_insert_with(|| ResolvedSymbol {
+                            symbol: sym.clone(),
+                            defined_in_file_index: obj.file_index,
+                            defined_in_sec_index: sym.section_index,
+                            references: Vec::new(),
+                        });
                 }
             } else if sym.binding == SymbolBinding::Weak {
                 // An undefined weak symbol has the ABI-defined value NULL in
@@ -517,7 +564,7 @@ impl SymbolResolver {
                 self.bind_weak_undefined(&sym.name);
             } else {
                 // Undefined symbol reference
-                if !self.table.contains_key(&sym.name) {
+                if !aliases.iter().any(|a| self.table.contains_key(a)) {
                     self.undefined.insert(sym.name.clone());
                 }
             }
@@ -532,7 +579,8 @@ impl SymbolResolver {
             .collect();
         for sec in &obj.sections {
             for r in &sec.relocations {
-                if !self.table.contains_key(&r.symbol_name)
+                let reloc_aliases = Self::macho_symbol_aliases(&r.symbol_name, target);
+                if !reloc_aliases.iter().any(|a| self.table.contains_key(a))
                     && !local_sym_names.contains(r.symbol_name.as_str())
                 {
                     self.undefined.insert(r.symbol_name.clone());
