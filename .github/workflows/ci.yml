@@ -125,13 +125,11 @@ jobs:
           cargo test --test native_phase8_dynamic_elf_test
           cargo test --test native_phase8_tls_ehframe_test
 
-      # macOS: the same full integration set. Windows PE e2e suites are
-      # `#[cfg(all(target_os = "windows", target_arch = "x86_64"))]`-gated
-      # and compile out; the Linux ELF execution suites detect no Linux
-      # execution environment and SKIP loudly (each prints a SKIP line)
-      # rather than failing. The Mach-O structural conformance suite
-      # (linker/tests/macho_dyld_binding_test.rs) runs on the only host
-      # where Mach-O output is the native object format.
+      # macOS: the full integration set. Native JIT tests compile out on
+      # Apple Silicon because Cranelift PLT support is x86-64-only; AOT
+      # coverage remains enabled and exercises the target Mach-O runtime
+      # archive. Windows PE e2e suites are target-gated and Linux ELF
+      # execution suites skip loudly on this host.
       - name: Test integration suites (macOS, Mach-O conformance)
         if: matrix.os == 'macos-latest'
         run: |
