@@ -1,3 +1,4 @@
+use adesh_linker::archive::Archive;
 use adesh_linker::config::LinkConfig;
 use adesh_linker::elf::ElfReader;
 use adesh_linker::layout::LayoutEngine;
@@ -389,6 +390,77 @@ fn test_link_elf_dynamic_executable_with_interp() {
 }
 
 #[test]
+fn test_elf_gnu_math_import_adds_libm_needed() {
+    let dir = tempdir().unwrap();
+    let target = Target::from_triple("x86_64-unknown-linux-gnu").unwrap();
+    let mut obj = ObjectFile::new(dir.path().join("math.o"), target.clone(), 0);
+    let mut text = Section::new_code(".text", vec![0xe8, 0, 0, 0, 0, 0xc3], 16);
+    text.relocations
+        .push(Relocation::new(1, "sin", RelocationKind::PcRelative32, -4));
+    obj.add_section(text);
+    obj.add_symbol(Symbol::new_defined(
+        "call_sin",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        6,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_undefined("sin", 0));
+
+    let obj_path = dir.path().join("math.o");
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+    let out_path = dir.path().join("libmath_import.so");
+    let mut config = LinkConfig::new(out_path.clone(), target);
+    config.shared = true;
+
+    Linker::link(&[obj_path], config).expect("link shared object with sin import");
+    let bytes = std::fs::read(out_path).unwrap();
+    assert!(
+        bytes.windows(b"libm.so.6".len()).any(|w| w == b"libm.so.6"),
+        "GNU ELF math imports must add libm.so.6 to DT_NEEDED"
+    );
+}
+
+#[test]
+fn test_macho_archive_indexes_logical_runtime_names() {
+    let dir = tempdir().unwrap();
+    let target = Target::from_triple("aarch64-apple-darwin").unwrap();
+    let mut obj = ObjectFile::new(dir.path().join("runtime.o"), target.clone(), 0);
+    obj.add_section(Section::new_code(
+        "__text",
+        vec![0xc0, 0x03, 0x5f, 0xd6],
+        16,
+    ));
+    obj.add_symbol(Symbol::new_defined(
+        "_aot_runtime_probe",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        4,
+        0,
+    ));
+    let obj_path = dir.path().join("runtime.o");
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+    let dylib_path = dir.path().join("libruntime.dylib");
+    let mut config = LinkConfig::new(dylib_path.clone(), target.clone());
+    config.shared = true;
+    Linker::link(&[obj_path], config).expect("emit Mach-O archive member probe");
+
+    let mut archive = Archive::new();
+    archive.add_file("runtime.o", std::fs::read(dylib_path).unwrap());
+    let bytes = archive.encode_gnu_with_target(&target);
+    let parsed = Archive::parse_with_target(&bytes, &dir.path().join("runtime.a"), &target)
+        .expect("parse Mach-O member archive");
+    assert!(
+        parsed.symbol_index.contains_key("aot_runtime_probe"),
+        "Mach-O ABI underscore must be normalized for archive lookup"
+    );
+}
+
+#[test]
 fn test_link_macho_dylib_full() {
     let dir = tempdir().unwrap();
     let target = Target::from_triple("aarch64-macos").unwrap();
@@ -434,7 +506,7 @@ fn test_link_macho_dylib_full() {
         read_obj.err()
     );
     let parsed = read_obj.unwrap();
-    assert!(parsed.symbols.iter().any(|s| s.name == "_my_dylib_symbol"));
+    assert!(parsed.symbols.iter().any(|s| s.name == "my_dylib_symbol"));
 }
 
 #[test]
@@ -480,7 +552,7 @@ fn test_link_macho_executable_full_headers() {
     let read_obj = MachOReader::read(&bytes, &out_path, 0);
     assert!(read_obj.is_ok());
     let parsed = read_obj.unwrap();
-    assert!(parsed.symbols.iter().any(|s| s.name == "_main"));
+    assert!(parsed.symbols.iter().any(|s| s.name == "main"));
 }
 
 #[test]

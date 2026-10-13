@@ -178,6 +178,16 @@ impl MachOReader {
                 } else {
                     String::new()
                 };
+                // Mach-O's external symbol table adds one ABI underscore to
+                // every C/global name. Keep linker symbols in their logical
+                // form so portable ADOB references (for example `aot_print`)
+                // resolve against Rust/C static-library members (`_aot_print`).
+                // Local assembler labels are not subject to this convention.
+                let sym_name = if n_type & 0x01 != 0 {
+                    sym_name.strip_prefix('_').unwrap_or(&sym_name).to_string()
+                } else {
+                    sym_name
+                };
 
                 let is_defined = n_sect > 0;
                 let sec_idx = if is_defined && (n_sect as usize) <= obj.sections.len() {

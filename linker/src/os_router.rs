@@ -1043,6 +1043,84 @@ impl OsApiRouter {
         Self::windows_dll_for(sym).map_or(false, |dll| dll == "msvcrt.dll" || dll == "ucrtbase.dll")
     }
 
+    /// Returns true for the standard libm function names supported by the
+    /// cross-platform C-runtime allowlist.
+    pub fn is_libm_symbol(sym: &str) -> bool {
+        let raw = sym
+            .strip_prefix("__imp_")
+            .or_else(|| sym.strip_prefix("_imp_"))
+            .unwrap_or(sym);
+        let clean = raw.trim_start_matches('_');
+        matches!(
+            clean,
+            "sin"
+                | "cos"
+                | "tan"
+                | "asin"
+                | "acos"
+                | "atan"
+                | "atan2"
+                | "sinh"
+                | "cosh"
+                | "tanh"
+                | "asinh"
+                | "acosh"
+                | "atanh"
+                | "exp"
+                | "exp2"
+                | "log"
+                | "log2"
+                | "log10"
+                | "pow"
+                | "sqrt"
+                | "cbrt"
+                | "hypot"
+                | "floor"
+                | "ceil"
+                | "round"
+                | "trunc"
+                | "fabs"
+                | "fmod"
+                | "remainder"
+                | "fmin"
+                | "fmax"
+                | "fma"
+                | "copysign"
+                | "ldexp"
+                | "frexp"
+                | "modf"
+                | "scalbn"
+                | "sinf"
+                | "cosf"
+                | "tanf"
+                | "asinf"
+                | "acosf"
+                | "atanf"
+                | "atan2f"
+                | "sinhf"
+                | "coshf"
+                | "tanhf"
+                | "expf"
+                | "exp2f"
+                | "logf"
+                | "log2f"
+                | "log10f"
+                | "powf"
+                | "sqrtf"
+                | "cbrtf"
+                | "hypotf"
+                | "floorf"
+                | "ceilf"
+                | "roundf"
+                | "truncf"
+                | "fabsf"
+                | "fmodf"
+                | "fminf"
+                | "fmaxf"
+                | "copysignf"
+        )
+    }
+
     /// Returns true if a symbol is a standard C library, math, POSIX, or Linux/Unix runtime symbol.
     pub fn is_libc_or_posix_symbol(sym: &str) -> bool {
         let raw = sym
@@ -1460,7 +1538,7 @@ impl OsApiRouter {
 
     // ─── Linux / ELF ───────────────────────────────────────────────────────────
 
-    fn classify_elf(raw: &str, _target: &Target) -> SymbolRoute {
+    fn classify_elf(raw: &str, target: &Target) -> SymbolRoute {
         let sym_name = raw
             .strip_prefix("__imp_")
             .or_else(|| raw.strip_prefix("_imp_"))
@@ -1506,6 +1584,9 @@ impl OsApiRouter {
 
         let dll = if raw.starts_with("_Unwind_") || sym_name.starts_with("_Unwind_") {
             "libgcc_s.so.1"
+        } else if Self::is_libm_symbol(raw) && target.libc_flavor == crate::target::LibcFlavor::Gnu
+        {
+            "libm.so.6"
         } else {
             "libc.so.6"
         };

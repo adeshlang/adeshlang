@@ -172,6 +172,7 @@ fn main() {
 }
 
 #[test]
+#[cfg(target_arch = "x86_64")]
 fn regression_native_jit_prints_bool_and_numbers() {
     let program = r#"
 fn main() {
@@ -405,16 +406,26 @@ fn regression_print_compact_options_parity_njit_aot() {
     let src_path = PathBuf::from("examples/print/05_combined_options.adesh");
     assert!(src_path.exists(), "example missing: {}", src_path.display());
 
-    let run_njit_args = vec![
-        "run".to_string(),
-        "--njit".to_string(),
-        src_path.to_string_lossy().to_string(),
-        "--quiet".to_string(),
-    ];
-    let njit_result = run_adesh_with_timeout(&run_njit_args, Duration::from_secs(60));
+    let reference_args = if cfg!(target_arch = "x86_64") {
+        vec![
+            "run".to_string(),
+            "--njit".to_string(),
+            src_path.to_string_lossy().to_string(),
+            "--quiet".to_string(),
+        ]
+    } else {
+        // Cranelift's native JIT PLT support is x86-64-only. Keep the AOT
+        // regression active on Apple Silicon and compare it to the interpreter.
+        vec![
+            "run".to_string(),
+            src_path.to_string_lossy().to_string(),
+            "--quiet".to_string(),
+        ]
+    };
+    let njit_result = run_adesh_with_timeout(&reference_args, Duration::from_secs(60));
     assert!(
         njit_result.status.success(),
-        "native jit run failed\nstdout:\n{}\nstderr:\n{}",
+        "reference backend run failed\nstdout:\n{}\nstderr:\n{}",
         njit_result.stdout,
         njit_result.stderr
     );

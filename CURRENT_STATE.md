@@ -193,6 +193,13 @@ Execution-verified changes in this revision:
 - **JIT-native divergences fixed** (`18d9909`): raw-pointer and
   array-indexing semantics now match the interpreter; imported modules
   fail loudly instead of misbehaving.
+- **Cross-platform AOT CI follow-up**: GNU ELF imports now add `libm.so.6`
+  when recognized math functions such as `sin` or `log` are imported; musl
+  continues to use its libc math implementation. Mach-O archive scanning
+  normalizes Darwin's external-symbol underscore so portable `aot_*` names
+  resolve from the Rust runtime static library. Native-JIT tests are gated
+  off on non-x86-64 hosts because Cranelift PLT support is x86-64-only;
+  interpreter and AOT regression coverage remains enabled on Apple Silicon.
 - **OS-specific CI jobs** (`.github/workflows/ci.yml`): Linux runs the
   full integration set including the ELF-execution suites natively
   (static ELFs, dynamic linking against the host loader, TLS local-exec

@@ -924,6 +924,15 @@ impl Linker {
                     {
                         needed.push("libgcc_s.so.1".to_string());
                     }
+                    if ctx.config.target.libc_flavor == crate::target::LibcFlavor::Gnu
+                        && elf_info
+                            .imports
+                            .iter()
+                            .any(|name| crate::os_router::OsApiRouter::is_libm_symbol(name))
+                        && !needed.iter().any(|n| n == "libm.so.6")
+                    {
+                        needed.push("libm.so.6".to_string());
+                    }
                     elf_info.needed_libs = needed;
 
                     if ctx.config.shared {

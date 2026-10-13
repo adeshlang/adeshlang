@@ -17,6 +17,10 @@
 //!
 //! These tests execute the real CLI binary per backend and assert stdout
 //! parity and exit codes — no library-internal shortcuts.
+//!
+//! Cranelift native JIT PLT support is x86-64-only, so these tests do not
+//! compile on Apple Silicon until that backend support is implemented.
+#![cfg(target_arch = "x86_64")]
 
 use std::path::PathBuf;
 use std::process::{Command, Stdio};

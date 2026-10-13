@@ -12,8 +12,8 @@
 | `x86_64-unknown-linux-gnu` | x86_64 | Linux | ELF64 | **Native (integer + scalar SSE2 FP subset)** | ABS64, PC32, GOTPCREL, COPY, TLS LE/IE + GD/LD relaxation | **Native ELF (static and dynamic execution-tested; libc/libgcc imports, local GOT slots, TLS + eh_frame_hdr)** | **Native POSIX** | **Execution-verified** |
 | `x86_64-unknown-linux-musl` | x86_64 | Linux | ELF64 (static + dynamic) | **Native (integer + scalar SSE2 FP subset)** | ABS64, PC32, GOTPCREL, COPY (x86-64), TLS LE/IE + TPOFF64 | **Native ELF (static + TLS execution-verified; dynamic initial-exec against real musl `ld.so` verified in WSL)** | **Native POSIX** | **Execution-verified** (static local-exec + dynamic initial-exec TLS binaries executed with asserted exit codes; no dedicated musl CI job — CI runs the same suites against the host glibc loader) |
 | `aarch64-unknown-linux-gnu` | AArch64 | Linux | ELF64 | **Implemented (AAPCS64, FP, NEON, Atomics)** | CALL26, ADRP, ADD_LO12 (emitted + resolved) | **Native ELF (static emission tested)** | **Native POSIX** | **Tested** (Codegen & relocation tested; execution pending) |
-| `aarch64-apple-darwin` | AArch64 | macOS | Mach-O 64 | **Implemented (AAPCS64 codegen)** | BRANCH26 (constant only) | **Native Mach-O (libSystem dynamic routing implemented)** | **Native Darwin** | **Implemented** (Structure & dynamic routing tested; runtime execution pending) |
-| `x86_64-apple-darwin` | x86_64 | macOS | Mach-O 64 | **Native (integer + scalar SSE2 FP subset)** | — | **Native Mach-O (libSystem dynamic routing implemented)** | **Native Darwin** | **Implemented** (Structure & dynamic routing tested; runtime execution pending) |
+| `aarch64-apple-darwin` | AArch64 | macOS | Mach-O 64 | **Implemented (AAPCS64 codegen)** | BRANCH26 (constant only) | **Native Mach-O (libSystem routing; Rust runtime archive symbol lookup)** | **Native Darwin** | **Implemented** (Structure, runtime archive lookup, and dynamic routing tested; execution pending) |
+| `x86_64-apple-darwin` | x86_64 | macOS | Mach-O 64 | **Native (integer + scalar SSE2 FP subset)** | — | **Native Mach-O (libSystem routing; Rust runtime archive symbol lookup)** | **Native Darwin** | **Implemented** (Structure, runtime archive lookup, and dynamic routing tested; execution pending) |
 | `riscv64gc-unknown-linux-gnu` | RISC-V 64 | Linux | ELF64 | **Proof-of-concept** | CALL (linker side) | **Native ELF (static)** | **Native POSIX** | **Proof-of-concept** |
 | `riscv32imac-unknown-none-elf` | RISC-V 32 | Bare-metal | ELF32 | **Proof-of-concept** | — | **Native ELF (static)** | **No-std bare-metal** | **Proof-of-concept** |
 | `wasm32-unknown-wasi` | WASM | WASI | WASM binary | **Native (compiler backend)** | Not applied by linker writer | **Compiler path; linker writer is a stub** | **WASI runtime** | **Works via compiler backend** |
@@ -48,6 +48,8 @@
   symbol table, and the synthesized stub/GOT/helper chain — but dyld execution on a real macOS
   host is still pending (no execution test exists). WASM linker output remains checked by
   structure/magic bytes only.
+  macOS CI keeps AOT regressions enabled and compiles native-JIT-only tests out on Apple Silicon
+  because Cranelift native JIT PLT support is currently x86-64-only.
 * **Native codegen subset:** x86-64 covers 64-bit integer GPR operations,
   scalar SSE2 floating point (add/sub/mul/div in single and double forms,
   `ucomis` comparisons, int↔float conversions), XMM0-13 allocation with
@@ -72,7 +74,8 @@
   `.dylib` artifacts. ELF x86-64 dynamic imports use PLT/GOT and
   local GOTPCREL slots; libc data imports use COPY relocations, while PIE
   and shared images rebase local GOT addresses with `R_X86_64_RELATIVE`.
-  ELF dynamic executables have been executed in Ubuntu 24.04; shared-library
+  GNU ELF math imports add `libm.so.6` to `DT_NEEDED`; musl uses its libc
+  math implementation. ELF dynamic executables have been executed in Ubuntu 24.04; shared-library
   execution remains unverified. Mach-O dyld structure is tested but execution
   remains unverified. **LTO:** `--lto` maps to section GC + ICF + symbol
   stripping; no cross-module IR optimization is performed.

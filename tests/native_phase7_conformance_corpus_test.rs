@@ -104,11 +104,16 @@ fn assert_backend_conformance(program: &str, test_name: &str, expected_lines: &[
         run_command_with_timeout(&mut interp_cmd, Duration::from_secs(30));
     assert_eq!(interp_code, 0, "Interpreter failed: {}", interp_out);
 
-    // 2. Native JIT: adesh run --njit <file> --quiet
-    let mut njit_cmd = Command::new(&exe);
-    njit_cmd.args(["run", "--njit", &src_file.to_string_lossy(), "--quiet"]);
-    let (njit_out, njit_code) = run_command_with_timeout(&mut njit_cmd, Duration::from_secs(30));
-    assert_eq!(njit_code, 0, "NJIT failed: {}", njit_out);
+    // 2. Native JIT: Cranelift's native JIT PLT support is x86-64-only.
+    let njit_out = if cfg!(target_arch = "x86_64") {
+        let mut njit_cmd = Command::new(&exe);
+        njit_cmd.args(["run", "--njit", &src_file.to_string_lossy(), "--quiet"]);
+        let (out, code) = run_command_with_timeout(&mut njit_cmd, Duration::from_secs(30));
+        assert_eq!(code, 0, "NJIT failed: {}", out);
+        Some(out)
+    } else {
+        None
+    };
 
     // 3. Native AOT: adesh compile-aot <file> <out>
     let exe_name = if cfg!(windows) {
@@ -139,12 +144,14 @@ fn assert_backend_conformance(program: &str, test_name: &str, expected_lines: &[
             expected,
             interp_out
         );
-        assert!(
-            njit_out.contains(expected),
-            "NJIT output missing '{}':\n{}",
-            expected,
-            njit_out
-        );
+        if let Some(njit_out) = &njit_out {
+            assert!(
+                njit_out.contains(expected),
+                "NJIT output missing '{}':\n{}",
+                expected,
+                njit_out
+            );
+        }
         assert!(
             aot_out.contains(expected),
             "AOT output missing '{}':\n{}",

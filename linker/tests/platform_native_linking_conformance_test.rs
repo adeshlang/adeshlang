@@ -97,6 +97,22 @@ fn test_posix_libc_symbol_classification_linux_elf() {
             other
         ),
     }
+
+    for sym in ["sin", "log", "sqrtf"] {
+        match OsApiRouter::classify(sym, &target) {
+            SymbolRoute::DllImport { dll, name, .. } => {
+                assert_eq!(dll, "libm.so.6");
+                assert_eq!(name, sym);
+            }
+            other => panic!("expected libm.so.6 import for {}, got {:?}", sym, other),
+        }
+    }
+
+    let musl = Target::from_triple("x86_64-unknown-linux-musl").unwrap();
+    match OsApiRouter::classify("sin", &musl) {
+        SymbolRoute::DllImport { dll, .. } => assert_eq!(dll, "libc.so.6"),
+        other => panic!("expected musl libc route for sin, got {:?}", other),
+    }
 }
 
 #[test]
