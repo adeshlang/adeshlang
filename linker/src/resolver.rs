@@ -447,7 +447,11 @@ impl SymbolResolver {
         Ok(())
     }
 
-    fn ingest_object(&mut self, obj: &ObjectFile, target: &crate::target::Target) -> LinkResult<()> {
+    fn ingest_object(
+        &mut self,
+        obj: &ObjectFile,
+        target: &crate::target::Target,
+    ) -> LinkResult<()> {
         for sym in &obj.symbols {
             if sym.is_local() {
                 continue;
@@ -547,14 +551,12 @@ impl SymbolResolver {
                     }
                 }
                 for alias in aliases {
-                    self.table
-                        .entry(alias)
-                        .or_insert_with(|| ResolvedSymbol {
-                            symbol: sym.clone(),
-                            defined_in_file_index: obj.file_index,
-                            defined_in_sec_index: sym.section_index,
-                            references: Vec::new(),
-                        });
+                    self.table.entry(alias).or_insert_with(|| ResolvedSymbol {
+                        symbol: sym.clone(),
+                        defined_in_file_index: obj.file_index,
+                        defined_in_sec_index: sym.section_index,
+                        references: Vec::new(),
+                    });
                 }
             } else if sym.binding == SymbolBinding::Weak {
                 // An undefined weak symbol has the ABI-defined value NULL in
