@@ -1219,6 +1219,21 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
                 );
 
                 link_config.shared = matches!(config.emit, EmitType::SharedLib);
+                // ELF executables link against the platform C library
+                // dynamically (glibc or musl `ld.so`), exactly as the Windows
+                // path imports msvcrt/ucrtbase: the bundled Rust `std`
+                // codegen units in the runtime static library reference libc
+                // (`write`, `mmap`, `strnlen`, ...), and only the real loader
+                // provides honest implementations. A fully static ELF is
+                // still produced for freestanding programs that link their
+                // own objects (no runtime library) — see the phase 3 e2e
+                // suite — or when a `--dynamic`-free static link finds no
+                // libc-referencing members at all.
+                if link_config.target.format == adesh_linker::ObjectFormat::Elf
+                    && matches!(config.emit, EmitType::Executable)
+                {
+                    link_config.dynamic = true;
+                }
                 let opt_level = match config.opt_level {
                     0 => adesh_linker::config::OptLevel::O0,
                     1 => adesh_linker::config::OptLevel::O1,

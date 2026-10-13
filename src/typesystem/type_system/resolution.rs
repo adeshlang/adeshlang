@@ -231,6 +231,13 @@ pub(crate) fn resolve_type_name(
                 }
                 Some(Ty::GenericInstance { name, args })
             }
+            Ty::GenericParam(ref name) => {
+                if type_params.contains_key(name) || aliases.contains_key(name) {
+                    Some(resolved)
+                } else {
+                    None
+                }
+            }
             other => Some(other),
         }
     } else {

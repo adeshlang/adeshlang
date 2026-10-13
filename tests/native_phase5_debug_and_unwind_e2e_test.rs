@@ -177,7 +177,7 @@ fn test_elf_with_dwarf5_debug_sections_linking() {
 
     let mut layout = adesh_linker::layout::LayoutEngine::new();
     layout
-        .layout_and_relocate(&objects, &resolver, &target, "main", false)
+        .layout_and_relocate(&objects, &resolver, &target, "main", false, false)
         .expect("layout and relocate");
 
     // Verify debug sections are present in merged sections

@@ -704,7 +704,23 @@ impl Parser {
     pub(super) fn block(&mut self) -> Result<Vec<Stmt>, LangError> {
         let mut s = Vec::new();
         while !self.check(TokenKind::RightBrace) && !self.is_end() {
-            s.extend(self.declaration()?);
+            let prev_pos = self.current;
+            match self.declaration() {
+                Ok(stmts) => s.extend(stmts),
+                Err(err) => {
+                    self.record_error(err);
+                    if self.check(TokenKind::RightBrace) {
+                        break;
+                    }
+                    self.synchronize();
+                    if self.check(TokenKind::RightBrace) {
+                        break;
+                    }
+                    if self.current == prev_pos && !self.is_end() {
+                        self.advance();
+                    }
+                }
+            }
         }
         self.consume(TokenKind::RightBrace, "Expect '}' after block")?;
         Ok(s)

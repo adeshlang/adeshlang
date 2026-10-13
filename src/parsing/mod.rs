@@ -45,3 +45,7 @@ pub mod unified_safety_pass;
 pub mod unsafe_pointer_tracking;
 pub mod unused_warnings;
 pub mod variance;
+
+pub use error::{
+    DiagnosticBag, DiagnosticSeverity, ErrorKind, LangError, RelatedLocation, SourceSpan,
+};

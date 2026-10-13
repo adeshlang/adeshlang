@@ -368,28 +368,55 @@ impl SymbolResolver {
                 return Ok(());
             }
 
-            // Pick first undefined symbol to report
-            let first_undef = self.undefined.iter().next().unwrap();
-            let mut ref_file = "input object";
-            let mut ref_offset = None;
+            // Report every undefined symbol, not an arbitrary first pick.
+            // The undefined set iterates in nondeterministic hash order, so
+            // a first-pick report hides the full repair surface behind
+            // whichever symbol the set yields first and forces one
+            // fix-compile cycle per missing symbol.
+            let mut missing: Vec<String> = self.undefined.iter().cloned().collect();
+            missing.sort();
+            missing.dedup();
+
+            // First referencing relocation per symbol (for the notes).
+            let mut first_ref: std::collections::HashMap<&str, (&str, u64)> =
+                std::collections::HashMap::new();
             for obj in objects.iter() {
+                let obj_name = obj.path.to_str().unwrap_or("input object");
                 for sec in &obj.sections {
                     for r in &sec.relocations {
-                        if r.symbol_name == *first_undef {
-                            ref_file = obj.path.to_str().unwrap_or("input object");
-                            ref_offset = Some(r.offset);
-                            break;
+                        if self.undefined.contains(&r.symbol_name)
+                            && !first_ref.contains_key(r.symbol_name.as_str())
+                        {
+                            first_ref.insert(r.symbol_name.as_str(), (obj_name, r.offset));
                         }
                     }
                 }
             }
 
-            return Err(LinkError::undefined_symbol(
-                first_undef,
-                ref_file,
-                None,
-                ref_offset,
-            ));
+            let first_undef = missing.first().unwrap().clone();
+            let (ref_file, ref_offset) = first_ref
+                .get(first_undef.as_str())
+                .cloned()
+                .unwrap_or(("input object", 0));
+            let mut err =
+                LinkError::undefined_symbol(first_undef, ref_file, None, Some(ref_offset));
+            if missing.len() > 1 {
+                let rest: Vec<String> = missing[1..]
+                    .iter()
+                    .map(|name| match first_ref.get(name.as_str()) {
+                        Some((file, offset)) => {
+                            format!("`{}` (referenced in {} at 0x{:x})", name, file, offset)
+                        }
+                        None => format!("`{}`", name),
+                    })
+                    .collect();
+                err = err.with_note(format!(
+                    "also undefined ({}): {}",
+                    missing.len() - 1,
+                    rest.join(", ")
+                ));
+            }
+            return Err(err);
         }
 
         Ok(())

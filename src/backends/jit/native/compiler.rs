@@ -2814,24 +2814,16 @@ impl NativeJitCompiler {
                         if args.len() >= 3
                             && matches!(value_types.get(&args[0]), Some(AotValueType::Ptr))
                         {
-                            let ptr = value_map
-                                .get(&args[0])
-                                .copied()
-                                .ok_or_else(|| {
-                                    format!("set_index pointer value {} missing", args[0])
-                                })?;
-                            let idx = value_map
-                                .get(&args[1])
-                                .copied()
-                                .ok_or_else(|| {
-                                    format!("set_index index value {} missing", args[1])
-                                })?;
+                            let ptr = value_map.get(&args[0]).copied().ok_or_else(|| {
+                                format!("set_index pointer value {} missing", args[0])
+                            })?;
+                            let idx = value_map.get(&args[1]).copied().ok_or_else(|| {
+                                format!("set_index index value {} missing", args[1])
+                            })?;
                             let val = value_map
                                 .get(&args[2])
                                 .copied()
-                                .ok_or_else(|| {
-                                    format!("set_index value {} missing", args[2])
-                                })?;
+                                .ok_or_else(|| format!("set_index value {} missing", args[2]))?;
                             let res = Self::call_runtime_fn_3(
                                 builder,
                                 module,
@@ -2879,18 +2871,12 @@ impl NativeJitCompiler {
                         if args.len() >= 2
                             && matches!(value_types.get(&args[0]), Some(AotValueType::Ptr))
                         {
-                            let ptr = value_map
-                                .get(&args[0])
-                                .copied()
-                                .ok_or_else(|| {
-                                    format!("get_index pointer value {} missing", args[0])
-                                })?;
-                            let idx = value_map
-                                .get(&args[1])
-                                .copied()
-                                .ok_or_else(|| {
-                                    format!("get_index index value {} missing", args[1])
-                                })?;
+                            let ptr = value_map.get(&args[0]).copied().ok_or_else(|| {
+                                format!("get_index pointer value {} missing", args[0])
+                            })?;
+                            let idx = value_map.get(&args[1]).copied().ok_or_else(|| {
+                                format!("get_index index value {} missing", args[1])
+                            })?;
                             let handle = Self::call_runtime_fn_2(
                                 builder,
                                 module,

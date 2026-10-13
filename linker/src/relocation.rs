@@ -36,6 +36,10 @@ pub enum RelocationKind {
     TlsGeneralDynamic,
     TlsInitialExec,
     TlsLocalExec,
+    /// x86-64 `R_X86_64_DTPOFF32`: module-relative offset within a TLS
+    /// block, produced by `__tls_get_addr` local-dynamic sequences. Only
+    /// valid after the pair's TLSLD call was relaxed to `movq %fs:0,%rax`.
+    TlsDtpOff32,
 
     /// AArch64 26-bit PC-relative branch (BL/B)
     AArch64Call26,
@@ -83,7 +87,8 @@ impl RelocationKind {
             | RelocationKind::WasmMemoryOffset32
             | RelocationKind::TlsGeneralDynamic
             | RelocationKind::TlsInitialExec
-            | RelocationKind::TlsLocalExec => 4,
+            | RelocationKind::TlsLocalExec
+            | RelocationKind::TlsDtpOff32 => 4,
             RelocationKind::Absolute16 => 2,
             RelocationKind::Absolute8 => 1,
         }
@@ -105,6 +110,7 @@ impl RelocationKind {
             RelocationKind::TlsGeneralDynamic => "TLS_GD",
             RelocationKind::TlsInitialExec => "TLS_IE",
             RelocationKind::TlsLocalExec => "TLS_LE",
+            RelocationKind::TlsDtpOff32 => "TLS_DTPOFF32",
             RelocationKind::AArch64Call26 => "AARCH64_CALL26",
             RelocationKind::AArch64Adrp => "AARCH64_ADRP",
             RelocationKind::AArch64AddLo12 => "AARCH64_ADD_LO12",
@@ -405,6 +411,20 @@ impl RelocationHandler for DefaultRelocationHandler {
             | RelocationKind::TlsLocalExec => {
                 let val = ((symbol_va as i64).wrapping_add(addend)) as u32;
                 target_slice.copy_from_slice(&val.to_le_bytes());
+            }
+            RelocationKind::TlsDtpOff32 => {
+                // A DTPOFF32 disp32 is only meaningful inside a relaxed
+                // local-dynamic sequence (base `%rax` = thread pointer);
+                // the layout engine owns that rewrite. Reaching this arm
+                // means a relocation producer bypassed the layout path.
+                return Err(LinkError::new(
+                    ErrorCode::UnsupportedRelocation,
+                    format!(
+                        "TLS module-relative relocation (DTPOFF32) against `{}` must be applied \
+                         by the layout engine (thread-pointer-relative rewrite required)",
+                        reloc.symbol_name
+                    ),
+                ));
             }
         }
 

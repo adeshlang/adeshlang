@@ -1391,6 +1391,30 @@ impl OsApiRouter {
             "syscall",
             "environ",
             "__environ",
+            // glibc-runtime & utility surface referenced by glibc-target
+            // Rust `std` codegen units bundled into runtime static libraries.
+            // These are genuine libc exports (glibc extensions where noted),
+            // so dynamic links import them and static links report them by
+            // name instead of failing on an arbitrary first one.
+            "bcmp",
+            "strnlen",
+            "gai_strerror",
+            "dirfd",
+            "flock",
+            "mkfifo",
+            "realpath",
+            "sendfile64",
+            "gethostname",
+            "getpwuid_r",
+            "setpgid",
+            "setsid",
+            "setgroups",
+            "setenv",
+            "unsetenv",
+            "getauxval",            // glibc
+            "gnu_get_libc_version", // glibc
+            "__res_init",           // glibc
+            "__xpg_strerror_r",     // glibc
         ];
         static POSIX_SET: LazyLock<HashSet<&'static str>> =
             LazyLock::new(|| POSIX_EXACT.iter().copied().collect());

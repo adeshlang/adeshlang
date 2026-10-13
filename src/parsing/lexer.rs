@@ -27,6 +27,7 @@ pub struct Lexer<'a> {
     line: usize,
     /// Optional source file path for clickable diagnostics
     file: Option<String>,
+    pub errors: Vec<LangError>,
 }
 
 impl<'a> Lexer<'a> {
@@ -43,6 +44,7 @@ impl<'a> Lexer<'a> {
             current: start,
             line: 1,
             file: None,
+            errors: Vec::new(),
         }
     }
 
@@ -62,16 +64,39 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn tokenize(&mut self) -> Result<Vec<Token>, LangError> {
+    pub fn tokenize_recovering(&mut self) -> (Vec<Token>, Vec<LangError>) {
         let mut tokens = Vec::new();
+        let mut errors = std::mem::take(&mut self.errors);
+
         while !self.is_end() {
             self.start = self.current;
-            if let Some(tok) = self.scan()? {
-                tokens.push(tok);
+            match self.scan() {
+                Ok(Some(tok)) => {
+                    tokens.push(tok);
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    errors.push(err);
+                    // Guarantee forward progress on error
+                    if self.current == self.start && !self.is_end() {
+                        self.adv();
+                    }
+                }
             }
         }
         tokens.push(self.build_token(TokenKind::Eof, String::new()));
-        Ok(tokens)
+        (tokens, errors)
+    }
+
+    pub fn tokenize(&mut self) -> Result<Vec<Token>, LangError> {
+        let (tokens, errors) = self.tokenize_recovering();
+        if errors.is_empty() {
+            Ok(tokens)
+        } else if errors.len() == 1 {
+            Err(errors.into_iter().next().unwrap())
+        } else {
+            Err(LangError::multiple(errors))
+        }
     }
 
     fn is_end(&self) -> bool {

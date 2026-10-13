@@ -1,9 +1,9 @@
 //! Entry point for type checking and signature collection.
 
 use super::resolution::{resolve_type_name, type_from_name};
-use super::statement_checking::check_stmt_types;
+use super::statement_checking::check_stmt_types_collecting;
 use crate::parsing::ast::*;
-use crate::parsing::error::{ErrorKind, LangError};
+use crate::parsing::error::{DiagnosticBag, ErrorKind, LangError};
 use crate::parsing::lexer::Lexer;
 use crate::parsing::parser::Parser;
 use crate::typesystem::checker::Ty;
@@ -15,14 +15,23 @@ pub fn check_module(src: &str) -> Result<(), LangError> {
 
 /// Type-check a module, attaching `file` to diagnostics for clickable locations.
 pub fn check_module_in(src: &str, file: Option<&str>) -> Result<(), LangError> {
-    // Lex & parse
+    let mut diag_bag = DiagnosticBag::new();
+
+    // Lex & parse with recovery
     let mut lx = Lexer::new(src);
     if let Some(f) = file {
         lx.set_file(f);
     }
-    let toks = lx.tokenize()?;
+    let (toks, lex_errors) = lx.tokenize_recovering();
+    for err in lex_errors {
+        diag_bag.add(err);
+    }
+
     let mut p = Parser::new(toks, file.map(|f| f.to_string()));
-    let prog = p.parse_program()?;
+    let (prog, parse_errors) = p.parse_program_recovering();
+    for err in parse_errors {
+        diag_bag.add(err);
+    }
 
     // collect signatures: map name -> parameter annotation strings (Option<String> per param)
     let mut fns: FastMap<String, Vec<Option<String>>> = FastMap::default();
@@ -58,15 +67,17 @@ pub fn check_module_in(src: &str, file: Option<&str>) -> Result<(), LangError> {
                             req.push((fname.clone(), ft));
                         }
                     } else {
-                        return Err(LangError::new(
-                            ErrorKind::Type,
-                            format!("unknown type '{}' in alias {}", fty, ta.name),
-                            s.span.line,
-                            s.span.col,
-                            s.span.line_text.clone(),
-                        )
-                        .with_file_opt(file.map(|f| f.to_string()))
-                        .with_auto_hints());
+                        diag_bag.add(
+                            LangError::new(
+                                ErrorKind::Type,
+                                format!("unknown type '{}' in alias {}", fty, ta.name),
+                                s.span.line,
+                                s.span.col,
+                                s.span.line_text.clone(),
+                            )
+                            .with_file_opt(file.map(|f| f.to_string()))
+                            .with_auto_hints(),
+                        );
                     }
                 }
                 aliases.insert(
@@ -129,15 +140,17 @@ pub fn check_module_in(src: &str, file: Option<&str>) -> Result<(), LangError> {
             if let Some(ft) = resolved {
                 req.push((fname.clone(), ft));
             } else {
-                return Err(LangError::new(
-                    ErrorKind::Type,
-                    format!("unknown type '{}' in struct {}", fty, sd.name),
-                    span.line,
-                    span.col,
-                    span.line_text.clone(),
-                )
-                .with_file_opt(file.map(|f| f.to_string()))
-                .with_auto_hints());
+                diag_bag.add(
+                    LangError::new(
+                        ErrorKind::Type,
+                        format!("unknown type '{}' in struct {}", fty, sd.name),
+                        span.line,
+                        span.col,
+                        span.line_text.clone(),
+                    )
+                    .with_file_opt(file.map(|f| f.to_string()))
+                    .with_auto_hints(),
+                );
             }
         }
         aliases.insert(
@@ -150,8 +163,9 @@ pub fn check_module_in(src: &str, file: Option<&str>) -> Result<(), LangError> {
     }
 
     let mut env: Vec<FastMap<String, Ty>> = vec![FastMap::default()];
+    let mut stmt_errors = Vec::new();
     for s in &prog {
-        check_stmt_types(
+        check_stmt_types_collecting(
             s,
             &mut env,
             &fns,
@@ -162,40 +176,30 @@ pub fn check_module_in(src: &str, file: Option<&str>) -> Result<(), LangError> {
             &aliases,
             &generic_aliases,
             &empty_type_params,
-        )
-        .map_err(|msg| {
-            let (clean_msg, line, col, line_text) = if let Some(idx) = msg.find("@@span:") {
-                let (m, rest) = msg.split_at(idx);
-                let span_info = &rest["@@span:".len()..];
-                let parts: Vec<&str> = span_info.splitn(3, ':').collect();
-                let l = parts
-                    .get(0)
-                    .and_then(|x| x.parse().ok())
-                    .unwrap_or(s.span.line);
-                let c = parts
-                    .get(1)
-                    .and_then(|x| x.parse().ok())
-                    .unwrap_or(s.span.col);
-                let text = parts
-                    .get(2)
-                    .map(|x| x.to_string())
-                    .unwrap_or_else(|| s.span.line_text.clone());
-                (m.to_string(), l, c, text)
-            } else {
-                (
-                    msg.clone(),
-                    s.span.line,
-                    s.span.col,
-                    s.span.line_text.clone(),
-                )
-            };
-            let code = if clean_msg.contains("await is only valid inside async functions") {
-                "E_ASYNC_CONTEXT"
-            } else if clean_msg.contains("cannot await value of type") {
-                "E_ASYNC_AWAIT_TYPE"
-            } else {
-                "E0308"
-            };
+            &mut stmt_errors,
+        );
+    }
+
+    for msg in stmt_errors {
+        let (clean_msg, line, col, line_text) = if let Some(idx) = msg.find("@@span:") {
+            let (m, rest) = msg.split_at(idx);
+            let span_info = &rest["@@span:".len()..];
+            let parts: Vec<&str> = span_info.splitn(3, ':').collect();
+            let l = parts.get(0).and_then(|x| x.parse().ok()).unwrap_or(1);
+            let c = parts.get(1).and_then(|x| x.parse().ok()).unwrap_or(1);
+            let text = parts.get(2).map(|x| x.to_string()).unwrap_or_default();
+            (m.to_string(), l, c, text)
+        } else {
+            (msg.clone(), 1, 1, String::new())
+        };
+        let code = if clean_msg.contains("await is only valid inside async functions") {
+            "E_ASYNC_CONTEXT"
+        } else if clean_msg.contains("cannot await value of type") {
+            "E_ASYNC_AWAIT_TYPE"
+        } else {
+            "E0308"
+        };
+        diag_bag.add(
             LangError::new(
                 ErrorKind::Type,
                 enhance_type_message(&clean_msg),
@@ -205,8 +209,12 @@ pub fn check_module_in(src: &str, file: Option<&str>) -> Result<(), LangError> {
             )
             .with_file_opt(file.map(|f| f.to_string()))
             .with_auto_hints()
-            .with_code(code)
-        })?;
+            .with_code(code),
+        );
+    }
+
+    if diag_bag.has_errors() {
+        return Err(diag_bag.to_lang_error().unwrap());
     }
 
     Ok(())

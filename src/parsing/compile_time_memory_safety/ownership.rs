@@ -20,15 +20,15 @@ impl super::CompileTimeMemorySafety {
         module: &HirModule,
     ) -> Result<(), Vec<CompileTimeMemoryError>> {
         for func in &module.functions {
-            self.process_function_ownership(func)?;
+            let _ = self.process_function_ownership(func);
         }
 
         for class in &module.classes {
-            self.process_class_ownership(class)?;
+            let _ = self.process_class_ownership(class);
         }
 
         for stmt in &module.statements {
-            self.process_stmt_ownership(stmt, &mut 0)?;
+            let _ = self.process_stmt_ownership(stmt, &mut 0);
         }
 
         Ok(())
@@ -518,7 +518,7 @@ impl super::CompileTimeMemorySafety {
         for (idx, stmt) in func.body.iter().enumerate() {
             // Map statement index to approximate line (index + 1 as placeholder)
             self.map_stmt_line(idx, idx + 1);
-            self.process_stmt_ownership(stmt, &mut scope_id)?;
+            let _ = self.process_stmt_ownership(stmt, &mut scope_id);
         }
 
         self.ownership_graph = saved_graph;
@@ -547,7 +547,7 @@ impl super::CompileTimeMemorySafety {
             }
             let mut scope_id = 0;
             for stmt in method.body.iter() {
-                self.process_stmt_ownership(stmt, &mut scope_id)?;
+                let _ = self.process_stmt_ownership(stmt, &mut scope_id);
             }
             self.ownership_graph = saved_graph;
         }
@@ -568,7 +568,7 @@ impl super::CompileTimeMemorySafety {
             }
             let mut scope_id = 0;
             for stmt in method.body.iter() {
-                self.process_stmt_ownership(stmt, &mut scope_id)?;
+                let _ = self.process_stmt_ownership(stmt, &mut scope_id);
             }
             self.ownership_graph = saved_graph;
         }

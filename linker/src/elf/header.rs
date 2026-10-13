@@ -252,6 +252,9 @@ pub const SHN_ABS: u16 = 0xfff1;
 pub const R_X86_64_GLOB_DAT: u32 = 6;
 pub const R_X86_64_JUMP_SLOT: u32 = 7;
 pub const R_X86_64_RELATIVE: u32 = 8;
+/// Copy relocation: the loader copies the shared library's definition of
+/// the symbol into the executable's `r_offset` slot at startup.
+pub const R_X86_64_COPY: u32 = 5;
 
 pub const R_AARCH64_COPY: u32 = 1024;
 pub const R_AARCH64_GLOB_DAT: u32 = 1025;

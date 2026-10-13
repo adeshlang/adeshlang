@@ -35,6 +35,12 @@ pub enum ElfDynamicRelocKind {
     /// `*offset = tp + offset_of(symbol_in_static_tls_block)`. The dynamic
     /// loader resolves the thread-pointer-relative offset at startup.
     Tpoff64,
+    /// `R_X86_64_COPY`: copy-relocated imported data object. `r_offset`
+    /// names a slot in the executable's own writable image sized for the
+    /// object; the loader copies the C library's definition there at startup,
+    /// so non-PIC direct accesses bind to the copy. The classic mechanism
+    /// every non-PIE glibc executable uses for `environ`.
+    Copy,
 }
 
 impl ElfDynamicRelocKind {
@@ -47,6 +53,7 @@ impl ElfDynamicRelocKind {
                 ElfDynamicRelocKind::Relative => Some(crate::elf::header::R_X86_64_RELATIVE),
                 ElfDynamicRelocKind::JumpSlot => Some(crate::elf::header::R_X86_64_JUMP_SLOT),
                 ElfDynamicRelocKind::Tpoff64 => Some(crate::elf::header::R_X86_64_TPOFF64),
+                ElfDynamicRelocKind::Copy => Some(crate::elf::header::R_X86_64_COPY),
             },
             crate::target::Arch::AArch64 => match self {
                 ElfDynamicRelocKind::Relative => Some(crate::elf::header::R_AARCH64_RELATIVE),
@@ -54,6 +61,10 @@ impl ElfDynamicRelocKind {
                 // AArch64 initial-exec uses R_AARCH64_TLS_TPREL + mrs reads,
                 // a different (not yet implemented) emission path.
                 ElfDynamicRelocKind::Tpoff64 => None,
+                // AArch64 data imports use GOT-relative loads
+                // (R_AARCH64_GLOB_DAT), a different (not yet implemented)
+                // emission path.
+                ElfDynamicRelocKind::Copy => None,
             },
             _ => None,
         }

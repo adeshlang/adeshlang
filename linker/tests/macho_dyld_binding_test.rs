@@ -12,8 +12,8 @@
 //! responsibility; everything verifiable on a byte level is verified here.
 
 use adesh_linker::macho::dynamic::{
-    decode_bind_stream_for_test, decode_export_trie_for_test, decode_rebase_stream_for_test,
     BIND_TYPE_POINTER, REBASE_TYPE_POINTER, REBASE_TYPE_TEXT_ABSOLUTE32,
+    decode_bind_stream_for_test, decode_export_trie_for_test, decode_rebase_stream_for_test,
 };
 use adesh_linker::object::ObjectWriter;
 use adesh_linker::relocation::{Relocation, RelocationKind};
@@ -51,6 +51,7 @@ const S_LAZY_SYMBOL_POINTERS: u32 = 0x7;
 // ─── minimal Mach-O reader used by the assertions ───────────────────────────
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct SectionRecord {
     sectname: String,
     segname: String,
@@ -84,6 +85,7 @@ struct DyldInfo {
 }
 
 #[derive(Debug, Default, Clone)]
+#[allow(dead_code)]
 struct Dysymtab {
     ilocalsym: u32,
     nlocalsym: u32,
@@ -96,6 +98,7 @@ struct Dysymtab {
 }
 
 #[derive(Debug, Default, Clone)]
+#[allow(dead_code)]
 struct Symtab {
     symoff: u32,
     nsyms: u32,
@@ -103,6 +106,7 @@ struct Symtab {
     strsize: u32,
 }
 
+#[allow(dead_code)]
 struct ParsedMachO {
     ncmds: u32,
     sizeofcmds: u32,
@@ -274,16 +278,13 @@ fn read_cstr(buf: &[u8], start: usize) -> String {
 }
 
 /// File offset for a virtual address in `__TEXT` (file offset 0 == vmaddr).
+#[allow(dead_code)]
 fn text_off_to_va(vmaddr: u64, off: u32) -> u64 {
     vmaddr + off as u64
 }
 
 /// Read a Nlist_64 at index `i`, returning (name, n_type, n_sect, n_desc, value).
-fn read_nlist<'a>(
-    bytes: &'a [u8],
-    symtab: &Symtab,
-    index: usize,
-) -> (String, u8, u8, u16, u64) {
+fn read_nlist(bytes: &[u8], symtab: &Symtab, index: usize) -> (String, u8, u8, u16, u64) {
     let base = symtab.symoff as usize + index * 16;
     let n_strx = u32::from_le_bytes(bytes[base..base + 4].try_into().unwrap());
     let n_type = bytes[base + 4];
@@ -375,10 +376,7 @@ fn test_macho_lazy_binding_structure_end_to_end() {
 
     // libSystem must be the first (ordinal 1) LC_LOAD_DYLIB.
     assert!(
-        image
-            .dylibs
-            .iter()
-            .any(|d| d.contains("libSystem")),
+        image.dylibs.iter().any(|d| d.contains("libSystem")),
         "libSystem.B.dylib must be a dependency, got {:?}",
         image.dylibs
     );
@@ -390,7 +388,10 @@ fn test_macho_lazy_binding_structure_end_to_end() {
         S_LAZY_SYMBOL_POINTERS,
         "__la_symbol_ptr must be S_LAZY_SYMBOL_POINTERS"
     );
-    assert_eq!(la.reserved1, 1, "la reserved1 = first indirect index after __got");
+    assert_eq!(
+        la.reserved1, 1,
+        "la reserved1 = first indirect index after __got"
+    );
     assert_eq!(la.size, 8, "one lazy slot for one import");
 
     let got = text_section_of(data, "__got");
@@ -456,19 +457,19 @@ fn test_macho_lazy_binding_structure_end_to_end() {
         &bytes[info.rebase_off as usize..(info.rebase_off + info.rebase_size) as usize];
     let rebases = decode_rebase_stream_for_test(rebase_bytes);
     assert!(
-        rebases
-            .iter()
-            .any(|(seg, off, ty)| *seg == 2 && *ty == REBASE_TYPE_POINTER && {
+        rebases.iter().any(
+            |(seg, off, ty)| *seg == 2 && *ty == REBASE_TYPE_POINTER && {
                 let va = data.vmaddr + off;
                 va == la_slot_va
-            }),
+            }
+        ),
         "lazy slot must be rebased: decoded {:?}",
         rebases
     );
     assert!(
         rebases
             .iter()
-            .any(|(seg, off, ty)| *seg == 1 && *ty == REBASE_TYPE_TEXT_ABSOLUTE32),
+            .any(|(seg, _off, ty)| *seg == 1 && *ty == REBASE_TYPE_TEXT_ABSOLUTE32),
         "helper push immediate must be rebased: decoded {:?}",
         rebases
     );
@@ -541,9 +542,7 @@ fn test_macho_lazy_binding_structure_end_to_end() {
     let stub_off = (stub_va - text_va) as usize;
     assert_eq!(bytes[stub_off], 0xFF, "stub must be FF 25 (jmp [rip+disp])");
     assert_eq!(bytes[stub_off + 1], 0x25);
-    let stub_disp = i32::from_le_bytes(
-        bytes[stub_off + 2..stub_off + 6].try_into().unwrap(),
-    );
+    let stub_disp = i32::from_le_bytes(bytes[stub_off + 2..stub_off + 6].try_into().unwrap());
     let stub_target = (stub_va as i64 + 6 + stub_disp as i64) as u64;
     assert_eq!(stub_target, la_slot_va, "stub must jump through its slot");
 
@@ -552,7 +551,10 @@ fn test_macho_lazy_binding_structure_end_to_end() {
     let helper_entry_va =
         u64::from_le_bytes(bytes[la_file_off..la_file_off + 8].try_into().unwrap());
     let helper_sec = text_section_named(&image, "__stub_helper");
-    assert_eq!(helper_sec.addr, helper_entry_va, "slot must point into __stub_helper head");
+    assert_eq!(
+        helper_sec.addr, helper_entry_va,
+        "slot must point into __stub_helper head"
+    );
 
     // 4. The helper entry pushes the lazy offset of _puts, then jumps to
     //    the binder tail.
@@ -570,14 +572,12 @@ fn test_macho_lazy_binding_structure_end_to_end() {
     //    GOT slot for dyld_stub_binder.
     let tail_off = entry_off + 10;
     assert_eq!(bytes[tail_off], 0x68, "tail pushes helper start");
-    let tail_pushed =
-        u32::from_le_bytes(bytes[tail_off + 1..tail_off + 5].try_into().unwrap());
+    let tail_pushed = u32::from_le_bytes(bytes[tail_off + 1..tail_off + 5].try_into().unwrap());
     assert_eq!(tail_pushed, helper_sec.addr as u32);
     assert_eq!(bytes[tail_off + 5], 0xFF);
     assert_eq!(bytes[tail_off + 6], 0x25);
     let tail_va = text_va + tail_off as u64;
-    let tail_jmp_disp =
-        i32::from_le_bytes(bytes[tail_off + 7..tail_off + 11].try_into().unwrap());
+    let tail_jmp_disp = i32::from_le_bytes(bytes[tail_off + 7..tail_off + 11].try_into().unwrap());
     let got_target = (tail_va as i64 + 5 + 6 + tail_jmp_disp as i64) as u64;
     assert_eq!(got_target, got.addr, "tail must jump through __got[0]");
 
@@ -609,13 +609,18 @@ fn test_macho_pie_absolute_pointer_rebase_without_imports() {
         vec![0x48, 0x8B, 0x05, 0x00, 0x00, 0x00, 0x00, 0xC3],
         16,
     );
-    text.relocations
-        .push(Relocation::new(3, "global_value", RelocationKind::PcRelative32, -4));
+    text.relocations.push(Relocation::new(
+        3,
+        "global_value",
+        RelocationKind::PcRelative32,
+        -4,
+    ));
     obj.add_section(text);
 
     // .data: a pointer to the function (absolute, needs rebasing).
     let mut data_sec = Section::new_data(".data", vec![0u8; 8], true, 8);
-    data_sec.relocations
+    data_sec
+        .relocations
         .push(Relocation::new(0, "main", RelocationKind::Absolute64, 0));
     obj.add_section(data_sec);
 
@@ -640,7 +645,7 @@ fn test_macho_pie_absolute_pointer_rebase_without_imports() {
 
     ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
     let config = LinkConfig::new(out.clone(), target);
-    let res = Linker::link(&[obj_path.clone()], config);
+    let res = Linker::link(std::slice::from_ref(&obj_path), config);
     assert!(res.is_ok(), "link failed: {:?}", res);
 
     let bytes = std::fs::read(&out).unwrap();
@@ -692,10 +697,21 @@ fn test_macho_pie_absolute_pointer_rebase_without_imports() {
     let rebases = decode_rebase_stream_for_test(rebase_bytes);
     assert_eq!(rebases.len(), 1, "decoded {:?}", rebases);
     assert_eq!(rebases[0].2, REBASE_TYPE_POINTER);
-    let data = image.segments.iter().find(|s| s.segname == "__DATA").unwrap();
+    let data = image
+        .segments
+        .iter()
+        .find(|s| s.segname == "__DATA")
+        .unwrap();
     let rebased_va = data.vmaddr + rebases[0].1;
-    let data_sec_record = data_seg.sections.iter().find(|s| s.sectname == ".data").unwrap();
-    assert_eq!(rebased_va, data_sec_record.addr, "rebase must hit the .data pointer");
+    let data_sec_record = data_seg
+        .sections
+        .iter()
+        .find(|s| s.sectname == ".data")
+        .unwrap();
+    assert_eq!(
+        rebased_va, data_sec_record.addr,
+        "rebase must hit the .data pointer"
+    );
 }
 
 /// Taking the address of an import (any non-call relocation against an
@@ -715,12 +731,17 @@ fn test_macho_data_import_reference_rejected_loudly() {
         vec![0x48, 0x8B, 0x05, 0x00, 0x00, 0x00, 0x00, 0xC3],
         16,
     );
-    text.relocations
-        .push(Relocation::new(3, "global_value", RelocationKind::PcRelative32, -4));
+    text.relocations.push(Relocation::new(
+        3,
+        "global_value",
+        RelocationKind::PcRelative32,
+        -4,
+    ));
     obj.add_section(text);
 
     let mut data_sec = Section::new_data(".data", vec![0u8; 8], true, 8);
-    data_sec.relocations
+    data_sec
+        .relocations
         .push(Relocation::new(0, "stdout", RelocationKind::Absolute64, 0));
     obj.add_section(data_sec);
 
@@ -778,12 +799,17 @@ fn test_macho_truncated_absolute_rejected_in_pie() {
         vec![0x48, 0x8B, 0x05, 0x00, 0x00, 0x00, 0x00, 0xC3],
         16,
     );
-    text.relocations
-        .push(Relocation::new(3, "global_value", RelocationKind::PcRelative32, -4));
+    text.relocations.push(Relocation::new(
+        3,
+        "global_value",
+        RelocationKind::PcRelative32,
+        -4,
+    ));
     obj.add_section(text);
 
     let mut data_sec = Section::new_data(".data", vec![0u8; 4], true, 4);
-    data_sec.relocations
+    data_sec
+        .relocations
         .push(Relocation::new(0, "main", RelocationKind::Absolute32, 0));
     obj.add_section(data_sec);
 
@@ -913,10 +939,22 @@ fn test_macho_load_command_layout_consistency() {
 
     // parse_macho already asserts command_total == sizeofcmds and per-command
     // sizes; assert the section table math explicitly here.
-    let text = image.segments.iter().find(|s| s.segname == "__TEXT").unwrap();
-    let data = image.segments.iter().find(|s| s.segname == "__DATA").unwrap();
+    let text = image
+        .segments
+        .iter()
+        .find(|s| s.segname == "__TEXT")
+        .unwrap();
+    let data = image
+        .segments
+        .iter()
+        .find(|s| s.segname == "__DATA")
+        .unwrap();
     assert!(text.sections.iter().any(|s| s.sectname == "__stub_helper"));
-    assert!(data.sections.iter().any(|s| s.sectname == "__la_symbol_ptr"));
+    assert!(
+        data.sections
+            .iter()
+            .any(|s| s.sectname == "__la_symbol_ptr")
+    );
     assert!(data.sections.iter().any(|s| s.sectname == "__got"));
 
     // BSS sections (if any) must be S_ZEROFILL, never S_REGULAR-with-zeroes.
@@ -946,8 +984,7 @@ fn test_macho_load_command_layout_consistency() {
         assert!(size > 0 || off == 0, "blob offsets must be 0 when unused");
         assert!(
             off >= linkedit.fileoff as u32
-                && (off as u64 + size as u64)
-                    <= (linkedit.fileoff + linkedit.filesize),
+                && (off as u64 + size as u64) <= (linkedit.fileoff + linkedit.filesize),
             "dyld blob 0x{:x}+0x{:x} outside __LINKEDIT",
             off,
             size

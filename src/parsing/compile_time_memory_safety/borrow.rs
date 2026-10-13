@@ -18,7 +18,7 @@ impl super::CompileTimeMemorySafety {
         module: &HirModule,
     ) -> Result<(), Vec<CompileTimeMemoryError>> {
         for func in &module.functions {
-            self.check_function_borrowing(func)?;
+            let _ = self.check_function_borrowing(func);
         }
         Ok(())
     }
@@ -38,8 +38,11 @@ impl super::CompileTimeMemorySafety {
         // that outer variable, after the call) must not be consulted for it —
         // doing so flagged legal programs like a helper borrowing a global
         // that the top level moves afterwards.
-        let mut locals: crate::utils::collections::FastSet<String> =
-            func.params.iter().map(|(name, _, _)| name.clone()).collect();
+        let mut locals: crate::utils::collections::FastSet<String> = func
+            .params
+            .iter()
+            .map(|(name, _, _)| name.clone())
+            .collect();
         collect_declared_names(&func.body, &mut locals);
         self.current_function_locals = locals;
 
@@ -48,7 +51,7 @@ impl super::CompileTimeMemorySafety {
 
         for (idx, stmt) in func.body.iter().enumerate() {
             self.set_current_line(idx + 1);
-            self.check_stmt_borrowing(stmt, &mut active_borrows)?;
+            let _ = self.check_stmt_borrowing(stmt, &mut active_borrows);
         }
 
         self.current_function_locals.clear();

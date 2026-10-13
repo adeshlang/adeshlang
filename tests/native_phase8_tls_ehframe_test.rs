@@ -64,11 +64,14 @@ fn linux_libc_triple() -> Option<&'static str> {
     {
         let probe = |interp: &str| {
             Command::new("wsl")
-                .args(["-e", "/bin/sh", "-c", &format!("test -x {interp} && echo yes")])
+                .args([
+                    "-e",
+                    "/bin/sh",
+                    "-c",
+                    &format!("test -x {interp} && echo yes"),
+                ])
                 .output()
-                .map(|o| {
-                    o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "yes"
-                })
+                .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "yes")
                 .unwrap_or(false)
         };
         if probe("/lib64/ld-linux-x86-64.so.2") {
@@ -191,6 +194,7 @@ fn cstr_at(b: &[u8], off: usize) -> String {
     String::from_utf8_lossy(&b[off..end]).into_owned()
 }
 
+#[allow(dead_code)]
 struct Phdr {
     p_type: u32,
     p_offset: u64,
@@ -200,6 +204,7 @@ struct Phdr {
     p_align: u64,
 }
 
+#[allow(dead_code)]
 struct Shdr {
     name: String,
     sh_type: u32,
@@ -679,8 +684,10 @@ fn test_tls_segment_and_tdata_tbss_section_headers() {
     // .tbss: NOBITS, SHF_TLS, starting where .tdata ends.
     let tbss = view.section(".tbss").expect(".tbss section header");
     assert_eq!(tbss.sh_type, SHT_NOBITS);
-    assert_eq!(tbss.sh_flags & (SHF_ALLOC | SHF_WRITE | SHF_TLS),
-        SHF_ALLOC | SHF_WRITE | SHF_TLS);
+    assert_eq!(
+        tbss.sh_flags & (SHF_ALLOC | SHF_WRITE | SHF_TLS),
+        SHF_ALLOC | SHF_WRITE | SHF_TLS
+    );
     assert_eq!(tbss.sh_size, 16);
     assert_eq!(tbss.sh_addr, tdata.sh_addr + tdata.sh_size);
     assert_eq!(tbss.sh_addr, tls.p_vaddr + tls.p_filesz);
@@ -713,7 +720,7 @@ fn test_general_dynamic_tls_fails_loudly() {
     write_object(&obj, &obj_path);
 
     let out_path = dir.join("tls_gd_static");
-    let mut config = LinkConfig::new(out_path, target.clone());
+    let config = LinkConfig::new(out_path, target.clone());
     let res = Linker::link(&[obj_path], config);
     let err = res.expect_err("general-dynamic TLS must fail the link");
     let msg = err.to_string();
@@ -745,7 +752,7 @@ fn test_macho_tls_sections_still_fail_loudly() {
     write_object(&obj, &obj_path);
 
     let out_path = dir.join("tls_macho_out");
-    let mut config = LinkConfig::new(out_path, target.clone());
+    let config = LinkConfig::new(out_path, target.clone());
     let res = Linker::link(&[obj_path], config);
     let err = res.expect_err("Mach-O TLS must fail the link");
     let msg = err.to_string();
@@ -773,8 +780,7 @@ fn decode_eh_frame_hdr(bytes: &[u8], hdr: &Shdr) -> (u8, u64, u64, Vec<(u64, u64
     assert_eq!(table_enc, 0x3b, "table: datarel|sdata4");
     // eh_frame_ptr: sdata4 relative to the position right after itself.
     let ptr_field = base + 4;
-    let eh_frame_ptr =
-        (hdr.sh_addr + 8).wrapping_add(i32_at(bytes, ptr_field) as u64);
+    let eh_frame_ptr = (hdr.sh_addr + 8).wrapping_add(i32_at(bytes, ptr_field) as u64);
     let fde_count = u32_at(bytes, ptr_field + 4) as u64;
     let mut entries = Vec::with_capacity(fde_count as usize);
     let mut off = ptr_field + 8;
@@ -802,7 +808,9 @@ fn test_eh_frame_emitted_and_decodes_to_real_function_ranges() {
 
     // Sections present.
     let eh_frame = view.section(".eh_frame").expect(".eh_frame section");
-    let hdr = view.section(".eh_frame_hdr").expect(".eh_frame_hdr section");
+    let hdr = view
+        .section(".eh_frame_hdr")
+        .expect(".eh_frame_hdr section");
     assert!(eh_frame.sh_size >= 24 + 24 + 24 + 4);
     assert_eq!(eh_frame.sh_size % 4, 0, ".eh_frame must be 4-byte padded");
 
@@ -819,18 +827,14 @@ fn test_eh_frame_emitted_and_decodes_to_real_function_ranges() {
     let (_, eh_frame_ptr, fde_count, entries) = decode_eh_frame_hdr(&bytes, &hdr);
     assert!(fde_count == 2, "one entry per function, got {fde_count}");
     assert!(
-        eh_frame_ptr >= eh_frame.sh_addr
-            && eh_frame_ptr < eh_frame.sh_addr + eh_frame.sh_size,
+        eh_frame_ptr >= eh_frame.sh_addr && eh_frame_ptr < eh_frame.sh_addr + eh_frame.sh_size,
         "eh_frame_ptr 0x{eh_frame_ptr:x} must land inside .eh_frame"
     );
 
     // The text ranges the FDEs must cover: _start at .text + 0 (size 16),
     // fn2 at .text + 16 (size 8).
     let text = view.section(".text").expect(".text section");
-    let mut expected = vec![
-        (text.sh_addr, 16u64),
-        (text.sh_addr + 16, 8u64),
-    ];
+    let mut expected = vec![(text.sh_addr, 16u64), (text.sh_addr + 16, 8u64)];
     expected.sort();
 
     let mut seen = Vec::new();

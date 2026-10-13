@@ -563,11 +563,7 @@ impl ElfWriter {
             .position(|sec| sec.name == ".eh_frame_hdr")
             .map(|i| {
                 let sec = &merged_sections[i];
-                (
-                    sec_offsets[i],
-                    sec_vaddrs[i],
-                    sec.data.len() as u64,
-                )
+                (sec_offsets[i], sec_vaddrs[i], sec.data.len() as u64)
             });
 
         // The merged .tls section emits TWO section headers (.tdata +
@@ -717,12 +713,32 @@ impl ElfWriter {
                 .iter()
                 .find(|sec| sec.kind == SectionKind::TData);
 
+            // COPY-relocated data objects: the loader copies
+            // `MIN(ref->st_size, def->st_size)` bytes of the C library's
+            // definition into the executable's synthesized slot. A
+            // zero-sized NOTYPE reference copies nothing and leaves the
+            // slot null, so these imports must carry the real object size
+            // (pointer width — see the slot synthesis in the link driver).
+            let copy_import_names: HashSet<&str> = elf_info
+                .map(|info| {
+                    info.dynamic_relocs
+                        .iter()
+                        .filter(|r| r.kind == crate::elf::dynamic::ElfDynamicRelocKind::Copy)
+                        .filter_map(|r| r.symbol.as_deref())
+                        .collect()
+                })
+                .unwrap_or_default();
+
             if let Some(gnu) = &gnu {
                 for &name_idx in &gnu.order {
                     let name = hashed_strs[name_idx];
                     if import_set.contains(name) {
                         // Undefined import.
-                        let s = build_sym(name, None, &output_section_index, &mut dynstr_buf);
+                        let mut s = build_sym(name, None, &output_section_index, &mut dynstr_buf);
+                        if copy_import_names.contains(name) {
+                            s.st_info = (STB_GLOBAL << 4) | (STT_OBJECT & 0xF);
+                            s.st_size = 8;
+                        }
                         encode_sym(&s, &mut dynsym_bytes);
                     } else if let Some(sym) = symbols
                         .iter()
@@ -840,6 +856,36 @@ impl ElfWriter {
                                             "TPOFF64 relocation has no matching dynamic symbol \
                                              (TLS variable `{}` missing from .dynsym; export it \
                                              (global binding) so the loader can resolve it)",
+                                            reloc.symbol.clone().unwrap_or_default()
+                                        ),
+                                    )
+                                })?;
+                            encode_rela(
+                                reloc.offset,
+                                ((sym_idx as u64) << 32) | abi_num as u64,
+                                reloc.addend,
+                                &mut rela_dyn_bytes,
+                            );
+                            rela_dyn_count += 1;
+                        }
+                        ElfDynamicRelocKind::Copy => {
+                            // Copy relocations belong in `.rela.dyn`. The
+                            // symbol index must be the imported C library
+                            // data object's dynsym entry; the loader copies
+                            // the library's definition into the `r_offset`
+                            // slot (a writable image location synthesized
+                            // by the link driver for exactly this symbol).
+                            let sym_idx = reloc
+                                .symbol
+                                .as_deref()
+                                .and_then(|name| name_to_dynsym_idx.get(name))
+                                .copied()
+                                .ok_or_else(|| {
+                                    LinkError::new(
+                                        ErrorCode::InvalidSection,
+                                        format!(
+                                            "COPY relocation has no matching dynamic symbol \
+                                             (imported data object `{}` missing from .dynsym)",
                                             reloc.symbol.clone().unwrap_or_default()
                                         ),
                                     )
@@ -1257,8 +1303,8 @@ impl ElfWriter {
             // `.tbss` (NOBITS). Both carry SHF_TLS so loaders and tools
             // recognize them as the thread-local template.
             if sec.kind == SectionKind::TData {
-                let (tdata_name, tbss_name) = tls_split_names
-                    .expect("a TData section requires the .tdata/.tbss names");
+                let (tdata_name, tbss_name) =
+                    tls_split_names.expect("a TData section requires the .tdata/.tbss names");
                 let file_len = sec.data.len() as u64;
                 let mem_len = sec.size.max(file_len);
                 section_headers.push(Elf64_Shdr {

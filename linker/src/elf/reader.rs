@@ -467,9 +467,8 @@ impl ElfReader {
                             RelocationKind::TlsGeneralDynamic
                         }
                         (Arch::X86_64, R_X86_64_GOTTPOFF) => RelocationKind::TlsInitialExec,
-                        (Arch::X86_64, R_X86_64_TPOFF32) | (Arch::X86_64, R_X86_64_DTPOFF32) => {
-                            RelocationKind::TlsLocalExec
-                        }
+                        (Arch::X86_64, R_X86_64_TPOFF32) => RelocationKind::TlsLocalExec,
+                        (Arch::X86_64, R_X86_64_DTPOFF32) => RelocationKind::TlsDtpOff32,
                         (Arch::AArch64, R_AARCH64_ABS64) => RelocationKind::Absolute64,
                         (Arch::AArch64, R_AARCH64_ABS32) => RelocationKind::Absolute32,
                         (Arch::AArch64, R_AARCH64_CALL26) | (Arch::AArch64, R_AARCH64_JUMP26) => {

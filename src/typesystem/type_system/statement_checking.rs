@@ -224,6 +224,18 @@ pub(crate) fn expr_matches_expected_type(expr: &Expr, inferred: &Ty, expected: &
     false
 }
 
+#[inline]
+fn record_stmt_error(errors: &mut Vec<String>, s: &Stmt, err: String) {
+    if err.contains("@@span:") {
+        errors.push(err);
+    } else {
+        errors.push(format!(
+            "{}@@span:{}:{}:{}",
+            err, s.span.line, s.span.col, s.span.line_text
+        ));
+    }
+}
+
 pub(crate) fn check_stmt_types(
     s: &Stmt,
     env: &mut Vec<FastMap<String, Ty>>,
@@ -236,7 +248,8 @@ pub(crate) fn check_stmt_types(
     generic_aliases: &FastMap<String, TypeAliasDecl>,
     type_params: &FastMap<String, Ty>,
 ) -> Result<(), String> {
-    check_stmt_types_inner(
+    let mut errors = Vec::new();
+    check_stmt_types_collecting(
         s,
         env,
         fns,
@@ -247,20 +260,16 @@ pub(crate) fn check_stmt_types(
         aliases,
         generic_aliases,
         type_params,
-    )
-    .map_err(|err| {
-        if err.contains("@@span:") {
-            err
-        } else {
-            format!(
-                "{}@@span:{}:{}:{}",
-                err, s.span.line, s.span.col, s.span.line_text
-            )
-        }
-    })
+        &mut errors,
+    );
+    if let Some(first) = errors.into_iter().next() {
+        Err(first)
+    } else {
+        Ok(())
+    }
 }
 
-fn check_stmt_types_inner(
+pub(crate) fn check_stmt_types_collecting(
     s: &Stmt,
     env: &mut Vec<FastMap<String, Ty>>,
     fns: &FastMap<String, Vec<Option<String>>>,
@@ -271,21 +280,25 @@ fn check_stmt_types_inner(
     aliases: &FastMap<String, Ty>,
     generic_aliases: &FastMap<String, TypeAliasDecl>,
     type_params: &FastMap<String, Ty>,
-) -> Result<(), String> {
+    errors: &mut Vec<String>,
+) {
     match &s.kind {
-        StmtKind::ExprStmt(e) => infer_expr_type(
-            e,
-            env,
-            fns,
-            fns_type_params,
-            fns_ret_types,
-            aliases,
-            generic_aliases,
-            type_params,
-        )
-        .map(|_| ()),
+        StmtKind::ExprStmt(e) => {
+            if let Err(err) = infer_expr_type(
+                e,
+                env,
+                fns,
+                fns_type_params,
+                fns_ret_types,
+                aliases,
+                generic_aliases,
+                type_params,
+            ) {
+                record_stmt_error(errors, s, err);
+            }
+        }
         StmtKind::ShareDeclaration(decl, _) => {
-            let expr_ty = infer_expr_type(
+            match infer_expr_type(
                 &decl.expr,
                 env,
                 fns,
@@ -294,13 +307,20 @@ fn check_stmt_types_inner(
                 aliases,
                 generic_aliases,
                 type_params,
-            )?;
-            let env_idx = env.len() - 1;
-            env[env_idx].insert(decl.name.clone(), expr_ty);
-            Ok(())
+            ) {
+                Ok(expr_ty) => {
+                    let env_idx = env.len() - 1;
+                    env[env_idx].insert(decl.name.clone(), expr_ty);
+                }
+                Err(err) => {
+                    record_stmt_error(errors, s, err);
+                    let env_idx = env.len() - 1;
+                    env[env_idx].insert(decl.name.clone(), Ty::Any);
+                }
+            }
         }
         StmtKind::StrongDeclaration(decl, _) => {
-            let expr_ty = infer_expr_type(
+            match infer_expr_type(
                 &decl.expr,
                 env,
                 fns,
@@ -309,13 +329,20 @@ fn check_stmt_types_inner(
                 aliases,
                 generic_aliases,
                 type_params,
-            )?;
-            let env_idx = env.len() - 1;
-            env[env_idx].insert(decl.name.clone(), expr_ty);
-            Ok(())
+            ) {
+                Ok(expr_ty) => {
+                    let env_idx = env.len() - 1;
+                    env[env_idx].insert(decl.name.clone(), expr_ty);
+                }
+                Err(err) => {
+                    record_stmt_error(errors, s, err);
+                    let env_idx = env.len() - 1;
+                    env[env_idx].insert(decl.name.clone(), Ty::Any);
+                }
+            }
         }
         StmtKind::WeakDeclaration(decl, _) => {
-            let expr_ty = infer_expr_type(
+            match infer_expr_type(
                 &decl.expr,
                 env,
                 fns,
@@ -324,25 +351,32 @@ fn check_stmt_types_inner(
                 aliases,
                 generic_aliases,
                 type_params,
-            )?;
-            let env_idx = env.len() - 1;
-            env[env_idx].insert(decl.name.clone(), expr_ty);
-            Ok(())
+            ) {
+                Ok(expr_ty) => {
+                    let env_idx = env.len() - 1;
+                    env[env_idx].insert(decl.name.clone(), expr_ty);
+                }
+                Err(err) => {
+                    record_stmt_error(errors, s, err);
+                    let env_idx = env.len() - 1;
+                    env[env_idx].insert(decl.name.clone(), Ty::Any);
+                }
+            }
         }
         StmtKind::Let(name, init, type_ann, _export, _is_const, _is_readonly) => {
-            // If a type annotation is present, enforce it.
             let declared = if let Some(tn) = type_ann {
                 if let Some(dt) = resolve_type_name(tn, aliases, generic_aliases, type_params) {
                     Some(dt)
                 } else {
-                    return Err(format!("unknown type '{}' for '{}'", tn, name));
+                    record_stmt_error(errors, s, format!("unknown type '{}' for '{}'", tn, name));
+                    None
                 }
             } else {
                 None
             };
 
             if let Some(e) = init {
-                let inferred = infer_expr_type(
+                match infer_expr_type(
                     e,
                     env,
                     fns,
@@ -351,38 +385,44 @@ fn check_stmt_types_inner(
                     aliases,
                     generic_aliases,
                     type_params,
-                )?;
-                if let Some(d) = declared {
-                    if d != Ty::Any && !expr_matches_expected_type(e, &inferred, &d) {
-                        return Err(format!(
-                            "type mismatch for '{}': declared {}, found {}",
-                            name, d, inferred
-                        ));
+                ) {
+                    Ok(inferred) => {
+                        if let Some(d) = &declared {
+                            if *d != Ty::Any && !expr_matches_expected_type(e, &inferred, d) {
+                                record_stmt_error(
+                                    errors,
+                                    s,
+                                    format!(
+                                        "type mismatch for '{}': declared {}, found {}",
+                                        name, d, inferred
+                                    ),
+                                );
+                            }
+                            if let Some(scope) = env.last_mut() {
+                                scope.insert(name.clone(), d.clone());
+                            }
+                        } else {
+                            if let Some(scope) = env.last_mut() {
+                                scope.insert(name.clone(), inferred);
+                            }
+                        }
                     }
-                    env.last_mut()
-                        .ok_or("Internal error: scope stack empty")?
-                        .insert(name.clone(), d);
-                } else {
-                    env.last_mut()
-                        .ok_or("Internal error: scope stack empty")?
-                        .insert(name.clone(), inferred);
+                    Err(err) => {
+                        record_stmt_error(errors, s, err);
+                        let fallback = declared.unwrap_or(Ty::Any);
+                        if let Some(scope) = env.last_mut() {
+                            scope.insert(name.clone(), fallback);
+                        }
+                    }
                 }
             } else {
-                // no initializer: if declared put declared type, else Null
-                if let Some(d) = declared {
-                    env.last_mut()
-                        .ok_or("Internal error: scope stack empty")?
-                        .insert(name.clone(), d);
-                } else {
-                    env.last_mut()
-                        .ok_or("Internal error: scope stack empty")?
-                        .insert(name.clone(), Ty::Null);
+                let d = declared.unwrap_or(Ty::Null);
+                if let Some(scope) = env.last_mut() {
+                    scope.insert(name.clone(), d);
                 }
             }
-            Ok(())
         }
         StmtKind::Extend(_name, _target, _implements, methods, _export) => {
-            // treat extension methods like class methods for checking
             for m in methods {
                 let mut m_scope = FastMap::default();
                 if m.is_async {
@@ -390,7 +430,6 @@ fn check_stmt_types_inner(
                 } else {
                     m_scope.insert("__in_async__".to_string(), Ty::Void);
                 }
-                // params are (name, default_expr, Option<type_name>)
                 for p in &m.params {
                     let name = p.0.clone();
                     if let Some(tn) = &p.2 {
@@ -399,16 +438,20 @@ fn check_stmt_types_inner(
                         {
                             m_scope.insert(name, tt);
                         } else {
-                            return Err(format!("unknown type '{}' for parameter '{}'", tn, name));
+                            record_stmt_error(
+                                errors,
+                                s,
+                                format!("unknown type '{}' for parameter '{}'", tn, name),
+                            );
+                            m_scope.insert(name, Ty::Any);
                         }
                     } else {
                         m_scope.insert(name, Ty::Any);
                     }
                 }
-                // method-level expected return: none (we don't have ret annotations on methods in this AST site)
                 env.push(m_scope);
                 for st in m.body.iter() {
-                    check_stmt_types(
+                    check_stmt_types_collecting(
                         st,
                         env,
                         fns,
@@ -419,23 +462,21 @@ fn check_stmt_types_inner(
                         aliases,
                         generic_aliases,
                         type_params,
-                    )?;
+                        errors,
+                    );
                 }
                 env.pop();
             }
-            Ok(())
         }
-        StmtKind::Struct(_s, _export) => Ok(()),
-        StmtKind::Enum(_e, _export) => Ok(()),
+        StmtKind::Struct(_s, _export) => {}
+        StmtKind::Enum(_e, _export) => {}
         StmtKind::Interface(i, _export) => {
-            // prepare a local type-parameter scope for the interface
             let mut local_type_params = type_params.clone();
             if !i.type_params.is_empty() {
                 for tp in &i.type_params {
                     local_type_params.insert(tp.clone(), Ty::GenericParam(tp.clone()));
                 }
             }
-            // check interface method bodies (they should be signatures only, but parse allows empty/placeholder)
             for m in &i.methods {
                 let mut m_scope = FastMap::default();
                 for p in &m.params {
@@ -446,7 +487,12 @@ fn check_stmt_types_inner(
                         {
                             m_scope.insert(name, tt);
                         } else {
-                            return Err(format!("unknown type '{}' for parameter '{}'", tn, name));
+                            record_stmt_error(
+                                errors,
+                                s,
+                                format!("unknown type '{}' for parameter '{}'", tn, name),
+                            );
+                            m_scope.insert(name, Ty::Any);
                         }
                     } else {
                         m_scope.insert(name, Ty::Any);
@@ -454,7 +500,7 @@ fn check_stmt_types_inner(
                 }
                 env.push(m_scope);
                 for st in m.body.iter() {
-                    check_stmt_types(
+                    check_stmt_types_collecting(
                         st,
                         env,
                         fns,
@@ -465,22 +511,19 @@ fn check_stmt_types_inner(
                         aliases,
                         generic_aliases,
                         &local_type_params,
-                    )?;
+                        errors,
+                    );
                 }
                 env.pop();
             }
-            Ok(())
         }
         StmtKind::Function(f, _export) => {
-            // compute expected return type for this function (if annotated)
-            // prepare type-parameter scope for this function
             let mut local_type_params = type_params.clone();
             if !f.type_params.is_empty() {
                 for tp in &f.type_params {
                     local_type_params.insert(tp.clone(), Ty::GenericParam(tp.clone()));
                 }
             }
-            // new scope for function parameters & body
             let mut fn_scope = FastMap::default();
             if f.is_async {
                 fn_scope.insert("__in_async__".to_string(), Ty::Bool);
@@ -495,7 +538,12 @@ fn check_stmt_types_inner(
                     {
                         fn_scope.insert(name, tt);
                     } else {
-                        return Err(format!("unknown type '{}' for parameter '{}'", tn, name));
+                        record_stmt_error(
+                            errors,
+                            s,
+                            format!("unknown type '{}' for parameter '{}'", tn, name),
+                        );
+                        fn_scope.insert(name, Ty::Any);
                     }
                 } else {
                     fn_scope.insert(name, Ty::Any);
@@ -508,7 +556,7 @@ fn check_stmt_types_inner(
             };
             env.push(fn_scope);
             for st in f.body.iter() {
-                check_stmt_types(
+                check_stmt_types_collecting(
                     st,
                     env,
                     fns,
@@ -519,16 +567,16 @@ fn check_stmt_types_inner(
                     aliases,
                     generic_aliases,
                     &local_type_params,
-                )?;
+                    errors,
+                );
             }
-            // ensure return across control paths when expected is present
             if let Some(exp) = &expected {
                 if *exp != Ty::Any {
                     let has_ret = f.body.iter().any(stmt_has_return);
                     if !has_ret {
                         if let Some(last) = f.body.as_ref().last() {
                             if let StmtKind::ExprStmt(e) = &last.kind {
-                                let lt = infer_expr_type(
+                                match infer_expr_type(
                                     e,
                                     env,
                                     fns,
@@ -537,38 +585,49 @@ fn check_stmt_types_inner(
                                     aliases,
                                     generic_aliases,
                                     &local_type_params,
-                                )?;
-                                if !is_subtype(&lt, exp) {
-                                    return Err(format!(
-                                        "missing or mismatched return: expected {}, found {}",
-                                        exp, lt
-                                    ));
+                                ) {
+                                    Ok(lt) => {
+                                        if !is_subtype(&lt, exp) {
+                                            record_stmt_error(
+                                                errors,
+                                                s,
+                                                format!(
+                                                    "missing or mismatched return: expected {}, found {}",
+                                                    exp, lt
+                                                ),
+                                            );
+                                        }
+                                    }
+                                    Err(err) => {
+                                        record_stmt_error(errors, s, err);
+                                    }
                                 }
                             } else {
-                                return Err(
-                                    "missing return in function with declared return type".into()
+                                record_stmt_error(
+                                    errors,
+                                    s,
+                                    "missing return in function with declared return type".into(),
                                 );
                             }
                         } else {
-                            return Err(
-                                "missing return in function with declared return type".into()
+                            record_stmt_error(
+                                errors,
+                                s,
+                                "missing return in function with declared return type".into(),
                             );
                         }
                     }
                 }
             }
             env.pop();
-            Ok(())
         }
         StmtKind::Class(c, _export) => {
-            // prepare a local type-parameter scope for the class
             let mut local_type_params = type_params.clone();
             if !c.type_params.is_empty() {
                 for tp in &c.type_params {
                     local_type_params.insert(tp.clone(), Ty::GenericParam(tp.clone()));
                 }
             }
-            // methods checked in their own scope
             for m in &c.methods {
                 let mut method_type_params = local_type_params.clone();
                 if !m.type_params.is_empty() {
@@ -590,13 +649,17 @@ fn check_stmt_types_inner(
                         {
                             m_scope.insert(name, tt);
                         } else {
-                            return Err(format!("unknown type '{}' for parameter '{}'", tn, name));
+                            record_stmt_error(
+                                errors,
+                                s,
+                                format!("unknown type '{}' for parameter '{}'", tn, name),
+                            );
+                            m_scope.insert(name, Ty::Any);
                         }
                     } else {
                         m_scope.insert(name, Ty::Any);
                     }
                 }
-                // method return annotation supported via m.ret_type if present
                 let expected = if let Some(rt_name) = &m.ret_type {
                     resolve_type_name(rt_name, aliases, generic_aliases, &method_type_params)
                 } else {
@@ -604,7 +667,7 @@ fn check_stmt_types_inner(
                 };
                 env.push(m_scope);
                 for st in m.body.iter() {
-                    check_stmt_types(
+                    check_stmt_types_collecting(
                         st,
                         env,
                         fns,
@@ -615,16 +678,16 @@ fn check_stmt_types_inner(
                         aliases,
                         generic_aliases,
                         &method_type_params,
-                    )?;
+                        errors,
+                    );
                 }
                 env.pop();
             }
-            Ok(())
         }
         StmtKind::Block(bs) => {
             env.push(FastMap::default());
             for b in bs {
-                check_stmt_types(
+                check_stmt_types_collecting(
                     b,
                     env,
                     fns,
@@ -635,17 +698,17 @@ fn check_stmt_types_inner(
                     aliases,
                     generic_aliases,
                     type_params,
-                )?;
+                    errors,
+                );
             }
             env.pop();
-            Ok(())
         }
         StmtKind::If {
             cond,
             then_branch,
             else_branch,
         } => {
-            let ct = infer_expr_type(
+            match infer_expr_type(
                 cond,
                 env,
                 fns,
@@ -654,15 +717,24 @@ fn check_stmt_types_inner(
                 aliases,
                 generic_aliases,
                 type_params,
-            )?;
-            if !(ct == Ty::Any || is_subtype(&ct, &Ty::Bool)) {
-                return Err(format!("condition expected Bool, found {}", ct));
+            ) {
+                Ok(ct) => {
+                    if !(ct == Ty::Any || is_subtype(&ct, &Ty::Bool)) {
+                        record_stmt_error(
+                            errors,
+                            s,
+                            format!("condition expected Bool, found {}", ct),
+                        );
+                    }
+                }
+                Err(err) => {
+                    record_stmt_error(errors, s, err);
+                }
             }
 
-            // Flow-sensitive narrowing: create cloned envs for then/else branches
             let mut then_env = env.clone();
             apply_narrowing_to_env(cond, &mut then_env, true);
-            check_stmt_types(
+            check_stmt_types_collecting(
                 then_branch,
                 &mut then_env,
                 fns,
@@ -673,12 +745,13 @@ fn check_stmt_types_inner(
                 aliases,
                 generic_aliases,
                 type_params,
-            )?;
+                errors,
+            );
 
             if let Some(e) = else_branch {
                 let mut else_env = env.clone();
                 apply_narrowing_to_env(cond, &mut else_env, false);
-                check_stmt_types(
+                check_stmt_types_collecting(
                     e,
                     &mut else_env,
                     fns,
@@ -689,12 +762,12 @@ fn check_stmt_types_inner(
                     aliases,
                     generic_aliases,
                     type_params,
-                )?;
+                    errors,
+                );
             }
-            Ok(())
         }
         StmtKind::While { cond, body } => {
-            let ct = infer_expr_type(
+            match infer_expr_type(
                 cond,
                 env,
                 fns,
@@ -703,12 +776,21 @@ fn check_stmt_types_inner(
                 aliases,
                 generic_aliases,
                 type_params,
-            )?;
-            if !(ct == Ty::Any || is_subtype(&ct, &Ty::Bool)) {
-                return Err(format!("while condition expected Bool, found {}", ct));
+            ) {
+                Ok(ct) => {
+                    if !(ct == Ty::Any || is_subtype(&ct, &Ty::Bool)) {
+                        record_stmt_error(
+                            errors,
+                            s,
+                            format!("while condition expected Bool, found {}", ct),
+                        );
+                    }
+                }
+                Err(err) => {
+                    record_stmt_error(errors, s, err);
+                }
             }
-            // body is in-loop
-            check_stmt_types(
+            check_stmt_types_collecting(
                 body,
                 env,
                 fns,
@@ -719,7 +801,8 @@ fn check_stmt_types_inner(
                 aliases,
                 generic_aliases,
                 type_params,
-            )
+                errors,
+            );
         }
         StmtKind::ForIn { name, iter, body } => {
             let it = infer_expr_type(
@@ -731,20 +814,20 @@ fn check_stmt_types_inner(
                 aliases,
                 generic_aliases,
                 type_params,
-            )?;
+            );
             let loop_var_ty = match &it {
-                Ty::Array(elem) => (**elem).clone(),
-                Ty::Ptr(elem) | Ty::PtrOwning(elem) | Ty::PtrShared(elem) | Ty::PtrMut(elem) => {
-                    (**elem).clone()
-                }
-                Ty::Str => Ty::Str,
-                Ty::Map(k, _) => (**k).clone(),
-                Ty::GenericInstance { name: gname, args }
+                Ok(Ty::Array(elem)) => (**elem).clone(),
+                Ok(
+                    Ty::Ptr(elem) | Ty::PtrOwning(elem) | Ty::PtrShared(elem) | Ty::PtrMut(elem),
+                ) => (**elem).clone(),
+                Ok(Ty::Str) => Ty::Str,
+                Ok(Ty::Map(k, _)) => (**k).clone(),
+                Ok(Ty::GenericInstance { name: gname, args })
                     if (gname == "Set" || gname == "set") && !args.is_empty() =>
                 {
                     args[0].clone()
                 }
-                _ => match &iter.kind {
+                Ok(_) => match &iter.kind {
                     ExprKind::Range(_, _, _) => Ty::Int,
                     ExprKind::Call(callee, _, _) => {
                         if let ExprKind::Variable(fname) = &callee.kind {
@@ -755,13 +838,16 @@ fn check_stmt_types_inner(
                     }
                     _ => Ty::Any,
                 },
+                Err(err) => {
+                    record_stmt_error(errors, s, err.clone());
+                    Ty::Any
+                }
             };
             env.push(FastMap::default());
-            env.last_mut()
-                .ok_or("Internal error: scope stack empty")?
-                .insert(name.clone(), loop_var_ty);
-            // body is in-loop
-            check_stmt_types(
+            if let Some(scope) = env.last_mut() {
+                scope.insert(name.clone(), loop_var_ty);
+            }
+            check_stmt_types_collecting(
                 body,
                 env,
                 fns,
@@ -772,27 +858,25 @@ fn check_stmt_types_inner(
                 aliases,
                 generic_aliases,
                 type_params,
-            )?;
+                errors,
+            );
             env.pop();
-            Ok(())
         }
         StmtKind::Break => {
             if !in_loop {
-                return Err("'break' used outside of loop".into());
+                record_stmt_error(errors, s, "'break' used outside of loop".into());
             }
-            Ok(())
         }
         StmtKind::Continue => {
             if !in_loop {
-                return Err("'continue' used outside of loop".into());
+                record_stmt_error(errors, s, "'continue' used outside of loop".into());
             }
-            Ok(())
         }
         StmtKind::Jump(expr) => {
             if !in_loop {
-                return Err("'jump' used outside of loop".into());
+                record_stmt_error(errors, s, "'jump' used outside of loop".into());
             }
-            let jt = infer_expr_type(
+            match infer_expr_type(
                 expr,
                 env,
                 fns,
@@ -801,15 +885,20 @@ fn check_stmt_types_inner(
                 aliases,
                 generic_aliases,
                 type_params,
-            )?;
-            if !is_numeric(&jt) {
-                return Err("'jump' expects numeric expression".into());
+            ) {
+                Ok(jt) => {
+                    if !is_numeric(&jt) {
+                        record_stmt_error(errors, s, "'jump' expects numeric expression".into());
+                    }
+                }
+                Err(err) => {
+                    record_stmt_error(errors, s, err);
+                }
             }
-            Ok(())
         }
         StmtKind::Return(opt) => {
             if let Some(e) = opt {
-                let rt = infer_expr_type(
+                match infer_expr_type(
                     e,
                     env,
                     fns,
@@ -818,29 +907,36 @@ fn check_stmt_types_inner(
                     aliases,
                     generic_aliases,
                     type_params,
-                )?;
-                if let Some(expected) = &expected_ret {
-                    let type_ok = expr_matches_expected_type(e, &rt, expected);
-
-                    if !type_ok && *expected != Ty::Any {
-                        return Err(format!(
-                            "return type mismatch: expected {}, found {}",
-                            expected, rt
-                        ));
+                ) {
+                    Ok(rt) => {
+                        if let Some(expected) = &expected_ret {
+                            let type_ok = expr_matches_expected_type(e, &rt, expected);
+                            if !type_ok && *expected != Ty::Any {
+                                record_stmt_error(
+                                    errors,
+                                    s,
+                                    format!(
+                                        "return type mismatch: expected {}, found {}",
+                                        expected, rt
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        record_stmt_error(errors, s, err);
                     }
                 }
-                Ok(())
             } else {
-                // returning nothing (implicit null)
                 if let Some(expected) = &expected_ret {
                     if *expected != Ty::Any && !is_subtype(&Ty::Null, expected) {
-                        return Err(format!(
-                            "return type mismatch: expected {}, found null",
-                            expected
-                        ));
+                        record_stmt_error(
+                            errors,
+                            s,
+                            format!("return type mismatch: expected {}, found null", expected),
+                        );
                     }
                 }
-                Ok(())
             }
         }
         StmtKind::TryCatch {
@@ -848,7 +944,7 @@ fn check_stmt_types_inner(
             catch_block,
             ..
         } => {
-            check_stmt_types(
+            check_stmt_types_collecting(
                 try_block,
                 env,
                 fns,
@@ -859,8 +955,9 @@ fn check_stmt_types_inner(
                 aliases,
                 generic_aliases,
                 type_params,
-            )?;
-            check_stmt_types(
+                errors,
+            );
+            check_stmt_types_collecting(
                 catch_block,
                 env,
                 fns,
@@ -871,13 +968,13 @@ fn check_stmt_types_inner(
                 aliases,
                 generic_aliases,
                 type_params,
-            )
+                errors,
+            );
         }
         StmtKind::Import { alias, .. } | StmtKind::ImportDefault { alias, .. } => {
             if let Some(scope) = env.last_mut() {
                 scope.insert(alias.clone(), Ty::Any);
             }
-            Ok(())
         }
         StmtKind::ImportNames { names, .. } => {
             if let Some(scope) = env.last_mut() {
@@ -885,23 +982,30 @@ fn check_stmt_types_inner(
                     scope.insert(n.clone(), Ty::Any);
                 }
             }
-            Ok(())
         }
-        StmtKind::ExportDefault(_name) => Ok(()),
-        StmtKind::ExportDefaultFunction(_f) => Ok(()),
-        StmtKind::ExportDefaultClass(_c) => Ok(()),
-        StmtKind::TypeAlias(_, _) => Ok(()),
+        StmtKind::ExportDefault(_name) => {}
+        StmtKind::ExportDefaultFunction(_f) => {}
+        StmtKind::ExportDefaultClass(_c) => {}
+        StmtKind::TypeAlias(_, _) => {}
         StmtKind::LetTuple(names, type_anns, init, _, _, _is_readonly) => {
-            // Init must be present for tuple destructuring
             let init_expr = match init {
                 Some(expr) => expr,
                 None => {
-                    return Err("tuple destructuring requires an initializer".to_string());
+                    record_stmt_error(
+                        errors,
+                        s,
+                        "tuple destructuring requires an initializer".to_string(),
+                    );
+                    if let Some(scope) = env.last_mut() {
+                        for name in names {
+                            scope.insert(name.clone(), Ty::Any);
+                        }
+                    }
+                    return;
                 }
             };
 
-            // Type check the initializer expression
-            let init_type = infer_expr_type(
+            let init_type = match infer_expr_type(
                 init_expr,
                 env,
                 fns,
@@ -910,26 +1014,35 @@ fn check_stmt_types_inner(
                 aliases,
                 generic_aliases,
                 type_params,
-            )?;
+            ) {
+                Ok(ty) => ty,
+                Err(err) => {
+                    record_stmt_error(errors, s, err);
+                    if let Some(scope) = env.last_mut() {
+                        for name in names {
+                            scope.insert(name.clone(), Ty::Any);
+                        }
+                    }
+                    return;
+                }
+            };
 
-            // Verify the initializer is a tuple type with matching arity
             match &init_type {
                 Ty::Tuple(elem_types) => {
                     if elem_types.len() != names.len() {
-                        return Err(format!(
-                            "tuple destructuring: expected {} elements, found {}",
-                            names.len(),
-                            elem_types.len()
-                        ));
+                        record_stmt_error(
+                            errors,
+                            s,
+                            format!(
+                                "tuple destructuring: expected {} elements, found {}",
+                                names.len(),
+                                elem_types.len()
+                            ),
+                        );
                     }
-
-                    // Add variables to scope with their types
                     if let Some(scope) = env.last_mut() {
                         for (i, name) in names.iter().enumerate() {
-                            let elem_ty = &elem_types[i];
-
-                            // Check if type annotation exists and matches
-                            // type_anns is Option<Vec<String>>, so we need to access it properly
+                            let elem_ty = elem_types.get(i).unwrap_or(&Ty::Any);
                             let ann = type_anns.as_ref().and_then(|anns| anns.get(i));
                             if let Some(ann_str) = ann {
                                 if let Some(anno_ty) = resolve_type_name(
@@ -939,27 +1052,34 @@ fn check_stmt_types_inner(
                                     type_params,
                                 ) {
                                     if !is_subtype(elem_ty, &anno_ty) && anno_ty != Ty::Any {
-                                        return Err(format!(
-                                            "tuple element '{}': expected type {}, found {}",
-                                            name, anno_ty, elem_ty
-                                        ));
+                                        record_stmt_error(
+                                            errors,
+                                            s,
+                                            format!(
+                                                "tuple element '{}': expected type {}, found {}",
+                                                name, anno_ty, elem_ty
+                                            ),
+                                        );
                                     }
                                     scope.insert(name.clone(), anno_ty);
                                 } else {
-                                    return Err(format!(
-                                        "unknown type annotation '{}' for '{}'",
-                                        ann_str, name
-                                    ));
+                                    record_stmt_error(
+                                        errors,
+                                        s,
+                                        format!(
+                                            "unknown type annotation '{}' for '{}'",
+                                            ann_str, name
+                                        ),
+                                    );
+                                    scope.insert(name.clone(), elem_ty.clone());
                                 }
                             } else {
-                                // No annotation - use inferred type
                                 scope.insert(name.clone(), elem_ty.clone());
                             }
                         }
                     }
                 }
                 Ty::Array(elem_ty) => {
-                    // Array destructuring - all elements have the same type
                     if let Some(scope) = env.last_mut() {
                         for (i, name) in names.iter().enumerate() {
                             let ann = type_anns.as_ref().and_then(|anns| anns.get(i));
@@ -971,17 +1091,26 @@ fn check_stmt_types_inner(
                                     type_params,
                                 ) {
                                     if !is_subtype(elem_ty, &anno_ty) && anno_ty != Ty::Any {
-                                        return Err(format!(
-                                            "array element '{}': expected type {}, found {}",
-                                            name, anno_ty, elem_ty
-                                        ));
+                                        record_stmt_error(
+                                            errors,
+                                            s,
+                                            format!(
+                                                "array element '{}': expected type {}, found {}",
+                                                name, anno_ty, elem_ty
+                                            ),
+                                        );
                                     }
                                     scope.insert(name.clone(), anno_ty);
                                 } else {
-                                    return Err(format!(
-                                        "unknown type annotation '{}' for '{}'",
-                                        ann_str, name
-                                    ));
+                                    record_stmt_error(
+                                        errors,
+                                        s,
+                                        format!(
+                                            "unknown type annotation '{}' for '{}'",
+                                            ann_str, name
+                                        ),
+                                    );
+                                    scope.insert(name.clone(), (**elem_ty).clone());
                                 }
                             } else {
                                 scope.insert(name.clone(), (**elem_ty).clone());
@@ -990,7 +1119,6 @@ fn check_stmt_types_inner(
                     }
                 }
                 Ty::Any => {
-                    // Allow any for dynamic typing
                     if let Some(scope) = env.last_mut() {
                         for (i, name) in names.iter().enumerate() {
                             let ann = type_anns.as_ref().and_then(|anns| anns.get(i));
@@ -1003,10 +1131,15 @@ fn check_stmt_types_inner(
                                 ) {
                                     scope.insert(name.clone(), anno_ty);
                                 } else {
-                                    return Err(format!(
-                                        "unknown type annotation '{}' for '{}'",
-                                        ann_str, name
-                                    ));
+                                    record_stmt_error(
+                                        errors,
+                                        s,
+                                        format!(
+                                            "unknown type annotation '{}' for '{}'",
+                                            ann_str, name
+                                        ),
+                                    );
+                                    scope.insert(name.clone(), Ty::Any);
                                 }
                             } else {
                                 scope.insert(name.clone(), Ty::Any);
@@ -1015,26 +1148,39 @@ fn check_stmt_types_inner(
                     }
                 }
                 _ => {
-                    return Err(format!(
-                        "cannot destructure non-tuple/array type: {}",
-                        init_type
-                    ));
+                    record_stmt_error(
+                        errors,
+                        s,
+                        format!("cannot destructure non-tuple/array type: {}", init_type),
+                    );
+                    if let Some(scope) = env.last_mut() {
+                        for name in names {
+                            scope.insert(name.clone(), Ty::Any);
+                        }
+                    }
                 }
             }
-
-            Ok(())
         }
         StmtKind::LetObject(bindings, init, _, _, _is_readonly) => {
-            // Init must be present for object destructuring
             let init_expr = match init {
                 Some(expr) => expr,
                 None => {
-                    return Err("object destructuring requires an initializer".to_string());
+                    record_stmt_error(
+                        errors,
+                        s,
+                        "object destructuring requires an initializer".to_string(),
+                    );
+                    if let Some(scope) = env.last_mut() {
+                        for (key, alias) in bindings.iter() {
+                            let var_name = alias.as_ref().unwrap_or(key);
+                            scope.insert(var_name.clone(), Ty::Any);
+                        }
+                    }
+                    return;
                 }
             };
 
-            // Type check the initializer expression
-            let _init_type = infer_expr_type(
+            if let Err(err) = infer_expr_type(
                 init_expr,
                 env,
                 fns,
@@ -1043,24 +1189,21 @@ fn check_stmt_types_inner(
                 aliases,
                 generic_aliases,
                 type_params,
-            )?;
+            ) {
+                record_stmt_error(errors, s, err);
+            }
 
-            // For object types, verify keys exist; otherwise allow Any
-            // Add destructured variables to scope with Any type (we don't track object field types yet)
             if let Some(scope) = env.last_mut() {
                 for (key, alias) in bindings.iter() {
                     let var_name = alias.as_ref().unwrap_or(key);
                     scope.insert(var_name.clone(), Ty::Any);
                 }
             }
-
-            Ok(())
         }
-        // FFI: pass-through (type checking happens at exec time)
-        StmtKind::HeaderImport { .. } => Ok(()),
-        StmtKind::ExternFunction(_) => Ok(()),
-        StmtKind::ExternBlock { .. } => Ok(()),
-        StmtKind::Region { name: _, body } => check_stmt_types(
+        StmtKind::HeaderImport { .. } => {}
+        StmtKind::ExternFunction(_) => {}
+        StmtKind::ExternBlock { .. } => {}
+        StmtKind::Region { name: _, body } => check_stmt_types_collecting(
             body,
             env,
             fns,
@@ -1071,8 +1214,9 @@ fn check_stmt_types_inner(
             aliases,
             generic_aliases,
             type_params,
+            errors,
         ),
-        StmtKind::UnsafeBlock(body) => check_stmt_types(
+        StmtKind::UnsafeBlock(body) => check_stmt_types_collecting(
             body,
             env,
             fns,
@@ -1083,8 +1227,9 @@ fn check_stmt_types_inner(
             aliases,
             generic_aliases,
             type_params,
+            errors,
         ),
-        StmtKind::Defer(body) => check_stmt_types(
+        StmtKind::Defer(body) => check_stmt_types_collecting(
             body,
             env,
             fns,
@@ -1095,11 +1240,8 @@ fn check_stmt_types_inner(
             aliases,
             generic_aliases,
             type_params,
+            errors,
         ),
-        StmtKind::Decorator(_def, _is_export) => {
-            // Decorator definitions don't need type checking here
-            // They will be checked when applied
-            Ok(())
-        }
+        StmtKind::Decorator(_def, _is_export) => {}
     }
 }

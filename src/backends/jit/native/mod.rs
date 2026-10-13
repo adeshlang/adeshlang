@@ -96,8 +96,8 @@ pub fn native_jit_run_with_stats(source: &str) -> Result<NativeJitProfileStats, 
     // (out-of-bounds pointer store, double free, non-numeric operand, ...)
     // left a pending exception behind, surface it loudly instead of
     // exiting 0 with no output — silent success on an error is wrong-code.
-    let pending = crate::backends::common::builtins::CURRENT_EXCEPTION
-        .with(|exc| exc.borrow().clone());
+    let pending =
+        crate::backends::common::builtins::CURRENT_EXCEPTION.with(|exc| exc.borrow().clone());
     if let Some(err) = pending {
         let msg = match err {
             crate::backends::common::builtins::RuntimeValue::String(s) => s,

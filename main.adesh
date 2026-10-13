@@ -1,7 +1,9 @@
 let a = 10;
 let b = 20;
-// if(a==b){
-//     print("true");
-// }else{
-//     print("false");
-// }
+if(a==b){
+    print("true");
+}else{
+    print("false");
+}
+
+print("The value of a is: " + a);

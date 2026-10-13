@@ -2,8 +2,8 @@
 
 use crate::error::{ErrorCode, LinkError, LinkResult};
 use crate::macho::dynamic::{
-    self, BindTarget, LazyBindTarget, MachODynamicInfo, RebaseKind, RebaseTarget,
-    BIND_TYPE_POINTER, DYLD_STUB_BINDER, LIBSYSTEM_ORDINAL,
+    self, BIND_TYPE_POINTER, BindTarget, DYLD_STUB_BINDER, LIBSYSTEM_ORDINAL, LazyBindTarget,
+    MachODynamicInfo, RebaseKind, RebaseTarget,
 };
 use crate::macho::header::*;
 use crate::section::{MergedSection, SectionKind, align_to};
@@ -580,11 +580,7 @@ impl MachOWriter {
                             format!(
                                 "import `{}` lazy slot 0x{:x} does not match the `{}` \
                                  layout (0x{:x} + {}*8)",
-                                imp.raw_name,
-                                imp.la_slot_va,
-                                LA_SYMBOL_PTR_SECTION,
-                                la_va,
-                                i
+                                imp.raw_name, imp.la_slot_va, LA_SYMBOL_PTR_SECTION, la_va, i
                             ),
                         ));
                     }
@@ -642,7 +638,8 @@ impl MachOWriter {
                 stub_helper_file_off as u32,
                 16,
             ));
-            text_filesize = (stub_helper_file_off + stub_helper_bytes.len() as u64).max(text_filesize);
+            text_filesize =
+                (stub_helper_file_off + stub_helper_bytes.len() as u64).max(text_filesize);
             text_vmsize = align_to(
                 stub_helper_va + stub_helper_bytes.len() as u64 - text_vmaddr,
                 target.page_size,
@@ -657,15 +654,12 @@ impl MachOWriter {
             if output.len() < got_file_off as usize + 8 {
                 output.resize(got_file_off as usize + 8, 0);
             }
-            data_sec_records.push((
-                GOT_SECTION.to_string(),
-                got_va,
-                8,
-                got_file_off as u32,
-                8,
-            ));
-            data_filesize = (got_file_off + 8).saturating_sub(data_file_offset_start).max(data_filesize);
-            data_vmsize = align_to(got_va + 8 - data_vmaddr_start, target.page_size).max(data_vmsize);
+            data_sec_records.push((GOT_SECTION.to_string(), got_va, 8, got_file_off as u32, 8));
+            data_filesize = (got_file_off + 8)
+                .saturating_sub(data_file_offset_start)
+                .max(data_filesize);
+            data_vmsize =
+                align_to(got_va + 8 - data_vmaddr_start, target.page_size).max(data_vmsize);
 
             // Patch every lazy slot to its helper entry (the pre-binding
             // target). These are absolute pointers into __TEXT and must be
@@ -744,9 +738,7 @@ impl MachOWriter {
             // Export trie: shared libraries export their global symbols;
             // executables export nothing (dyld accepts an empty trie).
             export_bytes = if is_shared {
-                dynamic::build_export_trie(
-                    &dynamic.map(|d| d.exports.clone()).unwrap_or_default(),
-                )
+                dynamic::build_export_trie(&dynamic.map(|d| d.exports.clone()).unwrap_or_default())
             } else {
                 vec![0, 0]
             };
@@ -963,10 +955,7 @@ impl MachOWriter {
         let flags = if is_shared {
             MH_DYLDLINK | MH_TWOLEVEL | if has_undefineds { 0 } else { MH_NOUNDEFS }
         } else {
-            MH_DYLDLINK
-                | MH_TWOLEVEL
-                | MH_PIE
-                | if has_undefineds { 0 } else { MH_NOUNDEFS }
+            MH_DYLDLINK | MH_TWOLEVEL | MH_PIE | if has_undefineds { 0 } else { MH_NOUNDEFS }
         };
 
         let hdr = MachHeader64 {
@@ -1040,7 +1029,9 @@ impl MachOWriter {
             cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // reloff
             cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // nreloc
             // flags: S_ATTR_SOME_INSTRUCTIONS | S_ATTR_PURE_INSTRUCTIONS
-            cmd_buf.extend_from_slice(&(S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS).to_le_bytes());
+            cmd_buf.extend_from_slice(
+                &(S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS).to_le_bytes(),
+            );
             cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // reserved1
             cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // reserved2
             cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // reserved3

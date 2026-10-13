@@ -282,6 +282,11 @@ impl Linker {
         let mut unsupported_data_imports: Vec<String> = Vec::new();
         // C library symbols that a static link cannot satisfy.
         let mut static_libc_imports: Vec<String> = Vec::new();
+        // Imported C library data objects served by synthesized
+        // `R_X86_64_COPY` slots in dynamic links (declared here: the slots
+        // are created in the synthesis stage below, the relocations are
+        // appended to `ElfLinkInfo` after layout assigns final addresses).
+        let mut copy_import_names: Vec<String> = Vec::new();
 
         if !missing_symbols.is_empty() {
             let file_idx = ctx.objects.len();
@@ -294,6 +299,23 @@ impl Linker {
             let mut code_bytes = Vec::new();
             let mut synth_symbols = Vec::new();
             let mut synth_relocs = Vec::new();
+            // Reserve synth section 0 for the synthesized code. Every
+            // synthesized function symbol (the `_start`/entry stubs and the
+            // runtime intrinsic thunks) refers to section 0 by convention,
+            // so the code section must exist before anything else adds a
+            // section — otherwise those symbols silently point into
+            // whichever section landed at index 0 (e.g. `.bss.copy`).
+            let synth_code_sec_idx = synth_obj.sections.len();
+            synth_obj.add_section(crate::section::Section::new_code(
+                ".text.synth",
+                Vec::new(),
+                16,
+            ));
+            // ELF dynamic links: imported C library data objects get a
+            // synthesized writable slot plus an `R_X86_64_COPY` relocation
+            // (filled in after layout assigns the slot its final address).
+            let mut copy_bss_sec_idx: Option<usize> = None;
+            let mut copy_slot_off: u64 = 0;
 
             if is_pe
                 && !ctx.config.shared
@@ -374,6 +396,55 @@ impl Linker {
                 let route = crate::os_router::OsApiRouter::classify(name, &ctx.config.target);
                 if let crate::os_router::SymbolRoute::DllImport { is_data, .. } = &route {
                     if *is_data {
+                        if is_elf
+                            && elf_dynamic_mode
+                            && ctx.config.target.arch == crate::target::Arch::X86_64
+                        {
+                            // Imported data object in a dynamic link:
+                            // synthesize a writable slot in the executable's
+                            // own image and emit an `R_X86_64_COPY` relocation
+                            // on it — the classic mechanism non-PIE glibc
+                            // executables use for `environ`-style data
+                            // objects. The loader copies the C library's
+                            // definition into the slot at startup, and
+                            // non-PIC direct accesses bind to the copy.
+                            // Slot size: pointer width — every C library
+                            // data object this router classifies
+                            // (`environ`, stdio `FILE*` handles, ...) is a
+                            // single pointer.
+                            let sec_idx = match copy_bss_sec_idx {
+                                Some(idx) => idx,
+                                None => {
+                                    let idx = synth_obj.sections.len();
+                                    synth_obj.add_section(crate::section::Section::new_bss(
+                                        ".bss.copy",
+                                        0,
+                                        8,
+                                    ));
+                                    copy_bss_sec_idx = Some(idx);
+                                    idx
+                                }
+                            };
+                            synth_symbols.push(crate::symbol::Symbol {
+                                name: name.clone(),
+                                binding: crate::symbol::SymbolBinding::Global,
+                                visibility: crate::symbol::SymbolVisibility::Default,
+                                sym_type: crate::symbol::SymbolType::Object,
+                                section_index: Some(sec_idx),
+                                value: copy_slot_off,
+                                size: 8,
+                                is_defined: true,
+                                is_imported: false,
+                                is_exported: false,
+                                file_index: Some(file_idx),
+                                alias_of: None,
+                                comdat_group: None,
+                                version: None,
+                            });
+                            copy_slot_off += 8;
+                            copy_import_names.push(name.clone());
+                            continue;
+                        }
                         unsupported_data_imports.push(name.clone());
                         continue;
                     }
@@ -576,9 +647,12 @@ impl Linker {
                 .with_suggestion(suggestion));
             }
 
-            let mut sec = crate::section::Section::new_code(".text.synth", code_bytes, 16);
-            sec.relocations = synth_relocs;
-            synth_obj.add_section(sec);
+            // Fill the reserved code section (index 0) with the
+            // accumulated synthesized code. Its size follows the data.
+            let code_sec = &mut synth_obj.sections[synth_code_sec_idx];
+            code_sec.data = code_bytes;
+            code_sec.size = code_sec.data.len() as u64;
+            code_sec.relocations = synth_relocs;
 
             if !data_stub_bytes.is_empty() {
                 let stub_sec_idx = synth_obj.sections.len();
@@ -603,6 +677,14 @@ impl Linker {
                         version: None,
                     });
                 }
+            }
+
+            // The synthesized copy-relocation slots own their `.bss.copy`
+            // section's extent: size it to the slots actually allocated.
+            if let Some(idx) = copy_bss_sec_idx
+                && synth_obj.sections.get(idx).is_some()
+            {
+                synth_obj.sections[idx].size = copy_slot_off;
             }
 
             // Add _fltused in .rdata if requested or on PE
@@ -698,6 +780,7 @@ impl Linker {
             &ctx.config.target,
             ctx.config.effective_entry(),
             elf_dynamic_mode,
+            ctx.config.pie || ctx.config.shared,
         )?;
 
         // Surface non-fatal relocation issues (weak/internal symbols that could
@@ -751,7 +834,15 @@ impl Linker {
                         imports.dedup();
                         imports
                             .into_iter()
-                            .filter(|name| !ctx.resolver.dynamic_data_imports.contains(name))
+                            // Copy-relocated data objects stay in .dynsym as
+                            // undefined imports: the loader needs the entry
+                            // to resolve their R_X86_64_COPY relocations
+                            // against the C library. Every other data
+                            // import remains unsupported (loud error above).
+                            .filter(|name| {
+                                copy_import_names.contains(name)
+                                    || !ctx.resolver.dynamic_data_imports.contains(name)
+                            })
                             .collect()
                     },
                     got_slots: ctx.layout.elf_got_slots.clone(),
@@ -760,6 +851,36 @@ impl Linker {
                     needed_libs: Vec::new(),
                     soname: None,
                 };
+
+                // Copy relocations: r_offset is the imported data object's
+                // synthesized slot, whose final address only the layout
+                // engine knows. Resolve it from the final symbol table.
+                for name in &copy_import_names {
+                    let slot_va = ctx
+                        .layout
+                        .resolved_symbols
+                        .iter()
+                        .find(|s| s.is_defined && &s.name == name)
+                        .map(|s| s.value)
+                        .ok_or_else(|| {
+                            LinkError::new(
+                                ErrorCode::InvalidSection,
+                                format!(
+                                    "copy-relocated import `{}` has no synthesized slot in the \
+                                     final image",
+                                    name
+                                ),
+                            )
+                        })?;
+                    elf_info
+                        .dynamic_relocs
+                        .push(crate::elf::dynamic::ElfDynamicReloc {
+                            offset: slot_va,
+                            kind: crate::elf::dynamic::ElfDynamicRelocKind::Copy,
+                            symbol: Some(name.clone()),
+                            addend: 0,
+                        });
+                }
 
                 if elf_dynamic_mode {
                     // PT_INTERP: from the requested target triple's libc
@@ -857,8 +978,7 @@ impl Linker {
                 // every executable is PIE (rebasing) and shared libraries
                 // carry an export trie. Imports and rebase targets were
                 // recorded by the layout stage.
-                let macho_exports: Vec<crate::macho::dynamic::MachOExport> = if ctx.config.shared
-                {
+                let macho_exports: Vec<crate::macho::dynamic::MachOExport> = if ctx.config.shared {
                     emit_symbols
                         .iter()
                         .filter(|s| {

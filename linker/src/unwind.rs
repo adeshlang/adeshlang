@@ -541,8 +541,8 @@ mod tests {
         assert_eq!(4 + cie_len, EhFrameGenerator::CIE_SIZE);
 
         for (idx, &(func_va, func_size)) in functions.iter().enumerate() {
-            let fde_va = section_va + EhFrameGenerator::CIE_SIZE
-                + EhFrameGenerator::FDE_SIZE * idx as u64;
+            let fde_va =
+                section_va + EhFrameGenerator::CIE_SIZE + EhFrameGenerator::FDE_SIZE * idx as u64;
             let off = (fde_va - section_va) as usize;
             let length = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()) as usize;
             assert_eq!(length + 4, EhFrameGenerator::FDE_SIZE as usize);

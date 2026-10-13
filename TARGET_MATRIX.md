@@ -9,8 +9,8 @@
 | Target Triple | Arch | OS | Object Format | Codegen | Relocations | Linking | Runtime | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | `x86_64-pc-windows-msvc` | x86_64 | Windows | PE/COFF (PE32+) | **Native (integer + scalar SSE2 FP subset)** | ABS64, PC32 (emitted + resolved) | **Native PE (execution-tested)** | **Native Win32** | **Execution-verified** |
-| `x86_64-unknown-linux-gnu` | x86_64 | Linux | ELF64 | **Native (integer + scalar SSE2 FP subset)** | ABS64, PC32, Section-symbols, TLS LE/IE | **Native ELF (static, execution-tested; dynamic import routing & PLT/GOT; TLS + eh_frame_hdr)** | **Native POSIX** | **Execution-verified** |
-| `x86_64-unknown-linux-musl` | x86_64 | Linux | ELF64 (static + dynamic) | **Native (integer + scalar SSE2 FP subset)** | ABS64, PC32, TLS LE/IE + TPOFF64 | **Native ELF (static + TLS execution-verified; dynamic initial-exec against real musl `ld.so` verified in WSL)** | **Native POSIX** | **Execution-verified** (static local-exec + dynamic initial-exec TLS binaries executed with asserted exit codes; no dedicated musl CI job — CI runs the same suites against the host glibc loader) |
+| `x86_64-unknown-linux-gnu` | x86_64 | Linux | ELF64 | **Native (integer + scalar SSE2 FP subset)** | ABS64, PC32, GOTPCREL, COPY, TLS LE/IE + GD/LD relaxation | **Native ELF (static and dynamic execution-tested; libc/libgcc imports, local GOT slots, TLS + eh_frame_hdr)** | **Native POSIX** | **Execution-verified** |
+| `x86_64-unknown-linux-musl` | x86_64 | Linux | ELF64 (static + dynamic) | **Native (integer + scalar SSE2 FP subset)** | ABS64, PC32, GOTPCREL, COPY (x86-64), TLS LE/IE + TPOFF64 | **Native ELF (static + TLS execution-verified; dynamic initial-exec against real musl `ld.so` verified in WSL)** | **Native POSIX** | **Execution-verified** (static local-exec + dynamic initial-exec TLS binaries executed with asserted exit codes; no dedicated musl CI job — CI runs the same suites against the host glibc loader) |
 | `aarch64-unknown-linux-gnu` | AArch64 | Linux | ELF64 | **Implemented (AAPCS64, FP, NEON, Atomics)** | CALL26, ADRP, ADD_LO12 (emitted + resolved) | **Native ELF (static emission tested)** | **Native POSIX** | **Tested** (Codegen & relocation tested; execution pending) |
 | `aarch64-apple-darwin` | AArch64 | macOS | Mach-O 64 | **Implemented (AAPCS64 codegen)** | BRANCH26 (constant only) | **Native Mach-O (libSystem dynamic routing implemented)** | **Native Darwin** | **Implemented** (Structure & dynamic routing tested; runtime execution pending) |
 | `x86_64-apple-darwin` | x86_64 | macOS | Mach-O 64 | **Native (integer + scalar SSE2 FP subset)** | — | **Native Mach-O (libSystem dynamic routing implemented)** | **Native Darwin** | **Implemented** (Structure & dynamic routing tested; runtime execution pending) |
@@ -69,9 +69,12 @@
   `--codegen=cranelift`; `--emit-adob` / `--emit-asm` emit intermediate
   artifacts only.
 * **Shared libraries:** `--shared` emits PE DLL / ELF `.so` / Mach-O
-  `.dylib` artifacts (structure-tested only). ELF imports are unresolved
-  (no GOT/PLT) and Mach-O lacks dyld binding info, so neither is
-  execution-verified. **LTO:** `--lto` maps to section GC + ICF + symbol
+  `.dylib` artifacts. ELF x86-64 dynamic imports use PLT/GOT and
+  local GOTPCREL slots; libc data imports use COPY relocations, while PIE
+  and shared images rebase local GOT addresses with `R_X86_64_RELATIVE`.
+  ELF dynamic executables have been executed in Ubuntu 24.04; shared-library
+  execution remains unverified. Mach-O dyld structure is tested but execution
+  remains unverified. **LTO:** `--lto` maps to section GC + ICF + symbol
   stripping; no cross-module IR optimization is performed.
 
 ## Target Discovery & Capability Inspection

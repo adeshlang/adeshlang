@@ -375,11 +375,7 @@ fn test_jit_native_import_fails_loudly_not_silently() {
     let src = std::env::temp_dir().join(format!("{}.adesh", tag));
     let helper = std::env::temp_dir().join(format!("{}_helper.adesh", tag));
 
-    std::fs::write(
-        &helper,
-        "fn helper_value(): int {\n    return 7;\n}\n",
-    )
-    .expect("write helper");
+    std::fs::write(&helper, "fn helper_value(): int {\n    return 7;\n}\n").expect("write helper");
 
     let import_line = format!("import \"{}\";", helper.to_string_lossy());
     let program = format!(

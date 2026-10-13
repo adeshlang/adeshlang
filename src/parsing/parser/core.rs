@@ -16,6 +16,7 @@ pub struct Parser {
     pub(super) allow_struct_literal: bool,
     pub(super) recursion_depth: usize,
     pub(super) max_recursion_depth: usize,
+    pub errors: Vec<LangError>,
 }
 
 impl Parser {
@@ -29,6 +30,19 @@ impl Parser {
             allow_struct_literal: true,
             recursion_depth: 0,
             max_recursion_depth: 32,
+            errors: Vec::new(),
+        }
+    }
+
+    /// Record a recoverable parse error
+    pub(super) fn record_error(&mut self, err: LangError) {
+        // Prevent duplicate errors at the exact same location with the same message
+        if !self
+            .errors
+            .iter()
+            .any(|e| e.line == err.line && e.col == err.col && e.message == err.message)
+        {
+            self.errors.push(err);
         }
     }
 

@@ -184,7 +184,14 @@ fn test_elf_tls_sections_link_into_a_placed_tls_block() {
     obj.add_section(tls);
     let mut layout = LayoutEngine::new();
     layout
-        .layout_and_relocate(&[obj], &SymbolResolver::new(), &target, "main", false)
+        .layout_and_relocate(
+            &[obj],
+            &SymbolResolver::new(),
+            &target,
+            "main",
+            false,
+            false,
+        )
         .expect("ELF TLS sections must link into a TLS block");
     assert!(
         layout

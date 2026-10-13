@@ -171,25 +171,25 @@ impl CompileTimeMemorySafety {
                 .insert(class.name.clone(), class.clone());
         }
 
-        self.build_ownership_graph(module)?;
+        let _ = self.build_ownership_graph(module);
 
         // Phase 2: Validate borrowing rules
-        self.validate_borrowing(module)?;
+        let _ = self.validate_borrowing(module);
 
         // Phase 3: Check lifetimes
-        self.check_lifetimes(module)?;
+        let _ = self.check_lifetimes(module);
 
         // Phase 4: Detect data races (ENHANCED with Send/Sync)
-        self.detect_data_races(module)?;
+        let _ = self.detect_data_races(module);
 
         // Phase 5: Find memory leaks
-        self.detect_memory_leaks(module)?;
+        let _ = self.detect_memory_leaks(module);
 
         // Phase 6: Run CFG-based borrow checker for control flow
-        self.run_cfg_borrow_checker(module)?;
+        let _ = self.run_cfg_borrow_checker(module);
 
         // Phase 7: NEW - Concurrency safety validation
-        self.check_concurrency_safety(module)?;
+        let _ = self.check_concurrency_safety(module);
 
         if self.errors.is_empty() {
             Ok(())

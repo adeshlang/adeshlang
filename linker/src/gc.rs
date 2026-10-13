@@ -58,6 +58,12 @@ impl GarbageCollector {
                     || sec.name.starts_with(".note")
                     || (sec.flags & crate::section::flags::TLS) != 0
                     || sec.name.starts_with(".CRT$")
+                    // COPY-relocation slots are loader-driven: the dynamic
+                    // loader resolves their `.dynsym` import entries and
+                    // `R_X86_64_COPY` relocations at startup, independently
+                    // of any relocation in the program's reachability graph
+                    // (the referencing sections may legitimately be dead).
+                    || sec.name == ".bss.copy"
                 {
                     live_sections.insert((f_idx, s_idx));
                     worklist.push_back((f_idx, s_idx));

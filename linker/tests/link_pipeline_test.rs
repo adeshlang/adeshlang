@@ -1,14 +1,95 @@
 use adesh_linker::config::LinkConfig;
 use adesh_linker::elf::ElfReader;
+use adesh_linker::layout::LayoutEngine;
 use adesh_linker::linker::Linker;
 use adesh_linker::macho::MachOReader;
 use adesh_linker::object::ObjectFile;
 use adesh_linker::object::writer::ObjectWriter;
 use adesh_linker::relocation::{Relocation, RelocationKind};
+use adesh_linker::resolver::SymbolResolver;
 use adesh_linker::section::Section;
 use adesh_linker::symbol::{Symbol, SymbolBinding, SymbolType};
 use adesh_linker::target::Target;
 use tempfile::tempdir;
+
+#[test]
+fn test_elf_local_gotpcrel_uses_slot_and_pie_relative_reloc() {
+    let target = Target::from_triple("x86_64-unknown-linux-gnu").unwrap();
+    let mut obj = ObjectFile::new("got-local.o".into(), target.clone(), 0);
+    let mut text = Section::new_code(".text", vec![0xff, 0x15, 0, 0, 0, 0, 0xc3, 0xc3], 16);
+    // `call *target_fn@GOTPCREL(%rip)`; ELF's field addend is -4.
+    text.relocations.push(Relocation::new(
+        2,
+        "target_fn",
+        RelocationKind::GotRelative32,
+        -4,
+    ));
+    obj.add_section(text);
+    obj.add_symbol(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        7,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_defined(
+        "target_fn",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        7,
+        1,
+        0,
+    ));
+
+    let mut objects = vec![obj];
+    let mut resolver = SymbolResolver::new();
+    resolver
+        .resolve_with_target(&mut objects, &[], &target)
+        .expect("symbol resolution");
+    let mut layout = LayoutEngine::new();
+    layout
+        .layout_and_relocate(&objects, &resolver, &target, "main", true, true)
+        .expect("dynamic PIE layout");
+
+    let slot_va = layout.elf_got_slots["target_fn"];
+    let got = layout
+        .merged_sections
+        .iter()
+        .find(|section| section.name == ".got")
+        .expect("GOT section");
+    let slot_off = (slot_va - got.virtual_address) as usize;
+    let slot_value = u64::from_le_bytes(got.data[slot_off..slot_off + 8].try_into().unwrap());
+    let target_va = layout
+        .resolved_symbols
+        .iter()
+        .find(|symbol| symbol.name == "target_fn")
+        .expect("resolved target symbol")
+        .value;
+    assert_eq!(slot_value, target_va);
+
+    let text = layout
+        .merged_sections
+        .iter()
+        .find(|section| section.name == ".text")
+        .expect("text section");
+    let displacement = i32::from_le_bytes(text.data[2..6].try_into().unwrap()) as i64;
+    assert_eq!(
+        text.virtual_address as i64 + 6 + displacement,
+        slot_va as i64,
+        "GOTPCREL displacement must address the GOT slot, not the function"
+    );
+    assert!(
+        layout.elf_dynamic_relocs.iter().any(|reloc| {
+            reloc.offset == slot_va
+                && reloc.kind == adesh_linker::elf::dynamic::ElfDynamicRelocKind::Relative
+                && reloc.addend == target_va as i64
+        }),
+        "PIE local GOT slot must be rebased by the dynamic loader"
+    );
+}
 
 #[test]
 fn test_link_elf_x86_64_executable() {

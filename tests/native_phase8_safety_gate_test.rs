@@ -188,4 +188,3 @@ fn test_positive_function_borrows_outer_variable_then_outer_moves() {
     "#;
     verify_safety_acceptance(src);
 }
-

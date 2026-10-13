@@ -56,7 +56,7 @@ impl Parser {
         let mut static_properties = Vec::new();
         let mut instance_fields = Vec::new();
 
-        while !self.check(TokenKind::RightBrace) {
+        while !self.check(TokenKind::RightBrace) && !self.is_end() {
             // collect method decorators
             let mut method_decorators: Vec<Expr> = Vec::new();
             while self.matchk(&[TokenKind::At]) {

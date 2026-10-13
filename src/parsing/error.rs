@@ -10,6 +10,23 @@
 use colored::Colorize;
 use std::fmt;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum DiagnosticSeverity {
+    Error,
+    Warning,
+    Info,
+}
+
+impl DiagnosticSeverity {
+    pub fn label(&self) -> &'static str {
+        match self {
+            DiagnosticSeverity::Error => "error",
+            DiagnosticSeverity::Warning => "warning",
+            DiagnosticSeverity::Info => "info",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ErrorKind {
     Lexical,
@@ -23,6 +40,8 @@ pub enum ErrorKind {
     Jit,
     /// Ownership / borrow / memory-safety diagnostics
     Ownership,
+    /// Multiple accumulated diagnostics
+    Multiple(Vec<LangError>),
 }
 
 impl ErrorKind {
@@ -38,6 +57,7 @@ impl ErrorKind {
             ErrorKind::Lowering => "LoweringError",
             ErrorKind::Jit => "JitError",
             ErrorKind::Ownership => "OwnershipError",
+            ErrorKind::Multiple(_) => "MultipleErrors",
         }
     }
 }
@@ -159,6 +179,8 @@ pub struct LangError {
     pub notes: Vec<String>,
     /// Related source locations (moved-here, borrowed-here, …)
     pub related: Vec<RelatedLocation>,
+    /// Diagnostic severity (Error, Warning, Info)
+    pub severity: DiagnosticSeverity,
 }
 
 impl LangError {
@@ -183,7 +205,86 @@ impl LangError {
             code: None,
             notes: Vec::new(),
             related: Vec::new(),
+            severity: DiagnosticSeverity::Error,
         }
+    }
+
+    /// Create a warning diagnostic
+    pub fn warning(
+        kind: ErrorKind,
+        message: impl Into<String>,
+        line: usize,
+        col: usize,
+        line_text: impl Into<String>,
+    ) -> Self {
+        let mut e = Self::new(kind, message.into(), line, col, line_text.into());
+        e.severity = DiagnosticSeverity::Warning;
+        e
+    }
+
+    pub fn with_severity(mut self, severity: DiagnosticSeverity) -> Self {
+        self.severity = severity;
+        self
+    }
+
+    pub fn is_error(&self) -> bool {
+        self.severity == DiagnosticSeverity::Error
+    }
+
+    pub fn is_warning(&self) -> bool {
+        self.severity == DiagnosticSeverity::Warning
+    }
+
+    pub fn is_info(&self) -> bool {
+        self.severity == DiagnosticSeverity::Info
+    }
+
+    /// Construct a composite error representing multiple diagnostics
+    pub fn multiple(errors: Vec<LangError>) -> Self {
+        Self::multiple_with_limit(errors, false, 0)
+    }
+
+    pub fn multiple_with_limit(
+        errors: Vec<LangError>,
+        limit_reached: bool,
+        max_errors: usize,
+    ) -> Self {
+        let first = errors.first();
+        let line = first.map_or(0, |e| e.line);
+        let col = first.map_or(0, |e| e.col);
+        let file = first.and_then(|e| e.file.clone());
+        let count = errors.iter().filter(|e| e.is_error()).count();
+        let msg = if limit_reached {
+            format!(
+                "aborting due to {} previous errors (limit of {} reached)",
+                count, max_errors
+            )
+        } else {
+            format!("compilation aborted with {} error(s)", count)
+        };
+        let mut err = Self {
+            kind: ErrorKind::Multiple(errors),
+            message: msg,
+            line,
+            col,
+            end_line: line,
+            end_col: col,
+            line_text: String::new(),
+            file,
+            hint: None,
+            note: None,
+            code: None,
+            notes: Vec::new(),
+            related: Vec::new(),
+            severity: DiagnosticSeverity::Error,
+        };
+        if limit_reached {
+            err.note = Some(format!(
+                "diagnostic count limit reached ({}); additional errors omitted",
+                max_errors
+            ));
+        }
+        err
     }
 
     /// Create an error with a span
@@ -194,6 +295,7 @@ impl LangError {
         line_text: String,
     ) -> Self {
         Self {
+            severity: DiagnosticSeverity::Error,
             kind,
             message,
             line: span.start_line,
@@ -320,17 +422,54 @@ impl LangError {
 
     /// Format the error with colored output, caret marker, related spans, hints, and notes
     fn format_error(&self) -> String {
+        if let ErrorKind::Multiple(ref errors) = self.kind {
+            let mut result = String::new();
+            for (i, err) in errors.iter().enumerate() {
+                if i > 0 {
+                    result.push('\n');
+                }
+                result.push_str(&err.format_error());
+            }
+            if let Some(note) = &self.note {
+                result.push_str(&format!(
+                    "\n{}{} {}",
+                    "     = ".cyan(),
+                    "note:".cyan().bold(),
+                    note
+                ));
+            }
+            return result;
+        }
+
         let kind_str = self.kind.label();
-        let header = if let Some(code) = &self.code {
-            format!("error[{}]: {}", code, self.message)
-                .red()
-                .bold()
-                .to_string()
-        } else {
-            format!("{}: {}", kind_str, self.message)
-                .red()
-                .bold()
-                .to_string()
+        let header = match self.severity {
+            DiagnosticSeverity::Error => {
+                if let Some(code) = &self.code {
+                    format!("error[{}]: {}", code, self.message)
+                        .red()
+                        .bold()
+                        .to_string()
+                } else {
+                    format!("{}: {}", kind_str, self.message)
+                        .red()
+                        .bold()
+                        .to_string()
+                }
+            }
+            DiagnosticSeverity::Warning => {
+                if let Some(code) = &self.code {
+                    format!("warning[{}]: {}", code, self.message)
+                        .yellow()
+                        .bold()
+                        .to_string()
+                } else {
+                    format!("warning: {}", self.message)
+                        .yellow()
+                        .bold()
+                        .to_string()
+                }
+            }
+            DiagnosticSeverity::Info => format!("info: {}", self.message).cyan().bold().to_string(),
         };
 
         let loc = self.clickable_location();
@@ -494,6 +633,149 @@ impl From<LangError> for String {
 impl From<String> for LangError {
     fn from(msg: String) -> Self {
         LangError::new(ErrorKind::Runtime, msg, 0, 0, String::new())
+    }
+}
+
+/// Central diagnostic collection container supporting error and warning severity,
+/// deduplication, source span preservation, and configurable maximum diagnostic count.
+#[derive(Debug, Clone)]
+pub struct DiagnosticBag {
+    diagnostics: Vec<LangError>,
+    max_errors: usize,
+    error_count: usize,
+    warning_count: usize,
+    has_reached_limit: bool,
+}
+
+impl Default for DiagnosticBag {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DiagnosticBag {
+    pub fn new() -> Self {
+        let max_errors = std::env::var("ADESH_MAX_ERRORS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(50);
+        Self::with_max_errors(max_errors)
+    }
+
+    pub fn with_max_errors(max_errors: usize) -> Self {
+        Self {
+            diagnostics: Vec::new(),
+            max_errors: max_errors.max(1),
+            error_count: 0,
+            warning_count: 0,
+            has_reached_limit: false,
+        }
+    }
+
+    pub fn add(&mut self, diag: LangError) {
+        // Expand any composite Multiple variant into individual diagnostics
+        if let ErrorKind::Multiple(inner) = diag.kind {
+            for e in inner {
+                self.add(e);
+            }
+            return;
+        }
+
+        // Deduplication: prevent duplicate errors at the same source position with the same message
+        if self.diagnostics.iter().any(|d| {
+            d.severity == diag.severity
+                && d.file == diag.file
+                && d.line == diag.line
+                && d.col == diag.col
+                && d.message == diag.message
+        }) {
+            return;
+        }
+
+        if diag.is_error() {
+            if self.error_count >= self.max_errors {
+                self.has_reached_limit = true;
+                return;
+            }
+            self.error_count += 1;
+        } else if diag.is_warning() {
+            self.warning_count += 1;
+        }
+
+        self.diagnostics.push(diag);
+    }
+
+    pub fn extend(&mut self, diags: impl IntoIterator<Item = LangError>) {
+        for d in diags {
+            self.add(d);
+        }
+    }
+
+    pub fn has_errors(&self) -> bool {
+        self.error_count > 0
+    }
+
+    pub fn error_count(&self) -> usize {
+        self.error_count
+    }
+
+    pub fn warning_count(&self) -> usize {
+        self.warning_count
+    }
+
+    pub fn len(&self) -> usize {
+        self.diagnostics.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.diagnostics.is_empty()
+    }
+
+    pub fn diagnostics(&self) -> &[LangError] {
+        &self.diagnostics
+    }
+
+    pub fn into_vec(self) -> Vec<LangError> {
+        self.diagnostics
+    }
+
+    pub fn has_reached_limit(&self) -> bool {
+        self.has_reached_limit
+    }
+
+    pub fn max_errors(&self) -> usize {
+        self.max_errors
+    }
+
+    pub fn render(&self) -> String {
+        let mut out = String::new();
+        for (i, d) in self.diagnostics.iter().enumerate() {
+            if i > 0 {
+                out.push('\n');
+            }
+            out.push_str(&d.to_string());
+        }
+        if self.has_reached_limit {
+            out.push_str(&format!(
+                "\naborting due to {} previous errors (limit of {} reached)\n",
+                self.error_count, self.max_errors
+            ));
+        }
+        out
+    }
+
+    pub fn to_lang_error(self) -> Option<LangError> {
+        if self.diagnostics.is_empty() {
+            None
+        } else if self.diagnostics.len() == 1 && !self.has_reached_limit {
+            Some(self.diagnostics.into_iter().next().unwrap())
+        } else {
+            Some(LangError::multiple_with_limit(
+                self.diagnostics,
+                self.has_reached_limit,
+                self.max_errors,
+            ))
+        }
     }
 }
 

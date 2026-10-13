@@ -16,43 +16,57 @@ use crate::parsing::error::LangError;
 impl Parser {
     /// Parse a complete program (list of statements)
     pub fn parse_program(&mut self) -> Result<Vec<Stmt>, LangError> {
-        let mut s = Vec::new();
-        while !self.is_end() {
-            s.extend(self.declaration()?);
+        let (stmts, errors) = self.parse_program_recovering();
+        if errors.is_empty() {
+            Ok(stmts)
+        } else if errors.len() == 1 {
+            Err(errors.into_iter().next().unwrap())
+        } else {
+            Err(LangError::multiple(errors))
         }
-        Ok(s)
     }
 
     /// Parse a program with error recovery — collects as many statements as possible,
-    /// recording errors instead of aborting. Designed for IDE/LSP use where the source
-    /// may be incomplete or syntactically invalid.
+    /// recording errors instead of aborting. Designed for multi-error diagnostics and IDE/LSP use.
     pub fn parse_program_recovering(&mut self) -> (Vec<Stmt>, Vec<LangError>) {
         let mut statements = Vec::new();
-        let mut errors = Vec::new();
 
         while !self.is_end() {
+            let prev_pos = self.current;
             match self.declaration() {
                 Ok(stmts) => statements.extend(stmts),
                 Err(e) => {
-                    errors.push(e);
+                    self.record_error(e);
                     // Skip to the next likely statement boundary
                     self.synchronize();
+                    // Guarantee forward progress
+                    if self.current == prev_pos && !self.is_end() {
+                        self.advance();
+                    }
                 }
             }
         }
 
+        let errors = std::mem::take(&mut self.errors);
         (statements, errors)
     }
 
     /// Synchronize the parser after an error by skipping tokens until we reach
     /// a likely statement boundary.
-    fn synchronize(&mut self) {
-        // Skip the current token
+    pub(super) fn synchronize(&mut self) {
+        if self.check(TokenKind::RightBrace) {
+            return;
+        }
         self.advance();
 
         while !self.is_end() {
             // Stop at semicolons (statement end)
             if self.prev().kind == TokenKind::Semicolon {
+                return;
+            }
+
+            // Stop before a closing brace (block boundary)
+            if self.check(TokenKind::RightBrace) {
                 return;
             }
 
@@ -67,12 +81,15 @@ impl Parser {
                 | TokenKind::Interface
                 | TokenKind::Type
                 | TokenKind::If
+                | TokenKind::Else
+                | TokenKind::Elif
                 | TokenKind::While
                 | TokenKind::For
                 | TokenKind::Return
                 | TokenKind::Break
                 | TokenKind::Continue
                 | TokenKind::Try
+                | TokenKind::Catch
                 | TokenKind::Import
                 | TokenKind::Export
                 | TokenKind::Extend
@@ -80,8 +97,7 @@ impl Parser {
                 | TokenKind::Test
                 | TokenKind::Region
                 | TokenKind::Unsafe
-                | TokenKind::Defer
-                | TokenKind::RightBrace => return,
+                | TokenKind::Defer => return,
                 _ => {}
             }
 

@@ -18,11 +18,11 @@
 use adeshlang::backends::aot::runtime_bridge::{
     adesh_value_to_string, aot_get_value, aot_store_value, aot_wrap_ptr,
 };
+use adeshlang::backends::common::builtins::RuntimeValue;
 use adeshlang::backends::jit::native::runtime_bridge::{
     jit_alloc, jit_clear_exception, jit_free, jit_has_exception, jit_ptr_get_index,
     jit_ptr_set_index, jit_unwrap_f64, jit_unwrap_i64, jit_wrap_f64, jit_wrap_i64, jit_wrap_str,
 };
-use adeshlang::backends::common::builtins::RuntimeValue;
 
 fn clear_pending_exception() {
     // Exceptions are thread-local; tests run on their own thread.
@@ -39,9 +39,11 @@ unsafe fn take_c_string(ptr: *mut std::os::raw::c_char) -> Option<String> {
     if ptr.is_null() {
         return None;
     }
-    Some(unsafe { std::ffi::CStr::from_ptr(ptr) }
-        .to_string_lossy()
-        .into_owned())
+    Some(
+        unsafe { std::ffi::CStr::from_ptr(ptr) }
+            .to_string_lossy()
+            .into_owned(),
+    )
 }
 
 #[test]
@@ -78,7 +80,10 @@ fn test_aot_value_to_string_embedded_nul_does_not_panic() {
 fn test_aot_wrap_ptr_null_and_small_int_never_dereference() {
     // Null wraps to the null value.
     let null_handle = aot_wrap_ptr(0);
-    assert!(matches!(aot_get_value(null_handle), Some(RuntimeValue::Null)));
+    assert!(matches!(
+        aot_get_value(null_handle),
+        Some(RuntimeValue::Null)
+    ));
 
     // Small ints wrap as integers, not dereferenced.
     let int_handle = aot_wrap_ptr(42);
@@ -142,7 +147,11 @@ fn test_jit_pointer_abi_invalid_pointer_is_loud_not_crashing() {
         Some(RuntimeValue::Null) | None => {}
         other => panic!("expected null result, got {:?}", other),
     }
-    assert_ne!(jit_has_exception(), 0, "invalid pointer must raise an error");
+    assert_ne!(
+        jit_has_exception(),
+        0,
+        "invalid pointer must raise an error"
+    );
     clear_pending_exception();
 
     let ret = jit_free(0xdead_beef);
@@ -207,7 +216,11 @@ fn test_jit_unwrap_numeric_and_loud_non_numeric() {
 
     clear_pending_exception();
     assert_eq!(jit_unwrap_f64(str_handle), 0.0);
-    assert_ne!(jit_has_exception(), 0, "float unwrap of string must be loud");
+    assert_ne!(
+        jit_has_exception(),
+        0,
+        "float unwrap of string must be loud"
+    );
 
     clear_pending_exception();
 }

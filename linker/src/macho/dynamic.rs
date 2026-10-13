@@ -221,8 +221,9 @@ pub fn encode_rebase_opcodes(targets: &[RebaseTarget]) -> Vec<u8> {
             current_type = Some(target.kind.type_imm());
         }
 
-        let fresh_segment =
-            current_seg != Some(target.segment_index) || !have_addr || target.offset != current_addr;
+        let fresh_segment = current_seg != Some(target.segment_index)
+            || !have_addr
+            || target.offset != current_addr;
 
         if fresh_segment {
             out.push(REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB | target.segment_index);
@@ -484,8 +485,10 @@ fn build_subtree(nodes: &mut Vec<TrieNode>, entries: &[(&[u8], u64)]) -> usize {
             lcp = lcp.min(common_prefix_len(group[0].0, suffix));
         }
         let label = group[0].0[..lcp].to_vec();
-        let child_entries: Vec<(&[u8], u64)> =
-            group.iter().map(|(suffix, address)| (&suffix[lcp..], *address)).collect();
+        let child_entries: Vec<(&[u8], u64)> = group
+            .iter()
+            .map(|(suffix, address)| (&suffix[lcp..], *address))
+            .collect();
         let child = build_subtree(nodes, &child_entries);
         nodes[node_id].children.push((label, child));
     }
@@ -518,7 +521,8 @@ fn layout_subtree(
     assigned[idx] = Some(base);
     let node = &nodes[idx];
     let term_size = node_terminal_size(node);
-    let header = uleb128_len(term_size) + term_size as usize + uleb128_len(node.children.len() as u64);
+    let header =
+        uleb128_len(term_size) + term_size as usize + uleb128_len(node.children.len() as u64);
     let fields: usize = node
         .children
         .iter()
@@ -700,12 +704,26 @@ pub fn decode_bind_stream_for_test(bytes: &[u8]) -> Vec<(u8, u64, u8, u8, String
             }
             0x90 => offset += (imm as u64) * 8,
             0xA0 => {
-                result.push((segment, offset, type_imm, ordinal as u8, symbol.clone(), addend));
+                result.push((
+                    segment,
+                    offset,
+                    type_imm,
+                    ordinal as u8,
+                    symbol.clone(),
+                    addend,
+                ));
                 offset += 8;
                 addend = 0;
             }
             0xB0 => {
-                result.push((segment, offset, type_imm, ordinal as u8, symbol.clone(), addend));
+                result.push((
+                    segment,
+                    offset,
+                    type_imm,
+                    ordinal as u8,
+                    symbol.clone(),
+                    addend,
+                ));
                 let delta = read_uleb(bytes, &mut i);
                 offset += delta;
                 addend = 0;
@@ -797,15 +815,7 @@ mod tests {
 
     #[test]
     fn test_uleb128_round_trip() {
-        let values = [
-            0u64,
-            1,
-            127,
-            128,
-            0x1234,
-            u32::MAX as u64,
-            u64::MAX,
-        ];
+        let values = [0u64, 1, 127, 128, 0x1234, u32::MAX as u64, u64::MAX];
         for value in values {
             let mut buf = Vec::new();
             write_uleb128(&mut buf, value);
@@ -878,7 +888,9 @@ mod tests {
         }
         // The run of 4 fits one DO_REBASE_IMM_TIMES chunk.
         assert!(
-            bytes.windows(1).any(|w| w[0] == REBASE_OPCODE_DO_REBASE_IMM_TIMES | 4),
+            bytes
+                .windows(1)
+                .any(|w| w[0] == REBASE_OPCODE_DO_REBASE_IMM_TIMES | 4),
             "expected a 4-count rebase chunk in {:02x?}",
             bytes
         );
@@ -946,8 +958,22 @@ mod tests {
         assert_eq!(
             decoded,
             vec![
-                (1, 0x4008, BIND_TYPE_POINTER, 1, "dyld_stub_binder".to_string(), 0),
-                (2, 0x4020, BIND_TYPE_POINTER, 2, "_data_import".to_string(), -16),
+                (
+                    1,
+                    0x4008,
+                    BIND_TYPE_POINTER,
+                    1,
+                    "dyld_stub_binder".to_string(),
+                    0
+                ),
+                (
+                    2,
+                    0x4020,
+                    BIND_TYPE_POINTER,
+                    2,
+                    "_data_import".to_string(),
+                    -16
+                ),
             ]
         );
         assert_eq!(*bytes.last().unwrap(), BIND_OPCODE_DONE);
@@ -1027,9 +1053,21 @@ mod tests {
         assert_eq!(
             decoded,
             vec![
-                ("_adesh_add".to_string(), EXPORT_SYMBOL_FLAGS_KIND_REGULAR, 0x1234),
-                ("_adesh_add_ten".to_string(), EXPORT_SYMBOL_FLAGS_KIND_REGULAR, 0x1400),
-                ("_adesh_mul".to_string(), EXPORT_SYMBOL_FLAGS_KIND_REGULAR, 0x1300),
+                (
+                    "_adesh_add".to_string(),
+                    EXPORT_SYMBOL_FLAGS_KIND_REGULAR,
+                    0x1234
+                ),
+                (
+                    "_adesh_add_ten".to_string(),
+                    EXPORT_SYMBOL_FLAGS_KIND_REGULAR,
+                    0x1400
+                ),
+                (
+                    "_adesh_mul".to_string(),
+                    EXPORT_SYMBOL_FLAGS_KIND_REGULAR,
+                    0x1300
+                ),
             ]
         );
     }
@@ -1070,7 +1108,6 @@ mod tests {
         assert_eq!(trie, vec![0u8, 0u8]);
         assert!(decode_export_trie_for_test(&trie).is_empty());
     }
-
 
     #[test]
     fn test_export_trie_large_offsets_use_wide_uleb() {
