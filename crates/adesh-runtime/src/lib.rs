@@ -1165,6 +1165,70 @@ pub extern "C" fn aot_set_field(obj_handle: u64, field_handle: u64, val_handle: 
     })
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_set_field_str(
+    obj_handle: u64,
+    field_ptr: *const c_char,
+    val_handle: u64,
+) -> u64 {
+    ffi_guard(0, || {
+        if field_ptr.is_null() {
+            return 0;
+        }
+        let field_name = match unsafe { CStr::from_ptr(field_ptr).to_str() } {
+            Ok(s) => s.to_string(),
+            Err(_) => return 0,
+        };
+        let value = aot_get_value(val_handle).unwrap_or(RuntimeValue::Null);
+
+        match aot_get_value(obj_handle) {
+            Some(RuntimeValue::Object(mut obj)) => {
+                obj.insert(field_name, value);
+                aot_update_value(obj_handle, RuntimeValue::Object(obj));
+                obj_handle
+            }
+            _ => 0,
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_get_field_str(obj_handle: u64, field_ptr: *const c_char) -> u64 {
+    ffi_guard(0, || {
+        if field_ptr.is_null() {
+            return aot_store_value(RuntimeValue::Null);
+        }
+        let field_name = match unsafe { CStr::from_ptr(field_ptr).to_str() } {
+            Ok(s) => s,
+            Err(_) => return aot_store_value(RuntimeValue::Null),
+        };
+
+        let resolved = aot_get_value(obj_handle).unwrap_or(RuntimeValue::Null);
+        match resolved {
+            RuntimeValue::Object(obj) => {
+                let val = obj.get(field_name).cloned().unwrap_or(RuntimeValue::Null);
+                runtime_value_to_raw_or_handle(val)
+            }
+            RuntimeValue::Array(arr) => {
+                let val = match field_name {
+                    "len" | "length" => RuntimeValue::Int(arr.len() as i64),
+                    "capacity" => RuntimeValue::Int(arr.capacity() as i64),
+                    _ => RuntimeValue::Null,
+                };
+                runtime_value_to_raw_or_handle(val)
+            }
+            RuntimeValue::String(s) => {
+                let val = match field_name {
+                    "len" | "length" => RuntimeValue::Int(s.len() as i64),
+                    _ => RuntimeValue::Null,
+                };
+                runtime_value_to_raw_or_handle(val)
+            }
+            _ => aot_store_value(RuntimeValue::Null),
+        }
+    })
+}
+
 pub fn runtime_value_to_raw_or_handle(val: RuntimeValue) -> u64 {
     match val {
         RuntimeValue::Int(i) | RuntimeValue::I64(i) => i as u64,

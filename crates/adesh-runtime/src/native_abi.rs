@@ -188,6 +188,14 @@ pub extern "C" fn aot_free(ptr: *mut core::ffi::c_void) {
     }
 }
 
+/// Release a runtime handle from the global handle table.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_release_handle(handle: u64) {
+    if handle > 0 {
+        crate::aot_remove_value(handle);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -43,6 +43,22 @@ pub fn is_f32_type(ty: Option<&HirType>) -> bool {
     matches!(ty, Some(HirType::F32))
 }
 
+pub fn is_composite_handle_type(ty: Option<&HirType>) -> bool {
+    matches!(
+        ty,
+        Some(HirType::String)
+            | Some(HirType::Array(..))
+            | Some(HirType::Dict(..))
+            | Some(HirType::Set(..))
+            | Some(HirType::Tuple(..))
+            | Some(HirType::Object)
+            | Some(HirType::Class(..))
+            | Some(HirType::Instance(..))
+            | Some(HirType::Shared(..))
+            | Some(HirType::Weak(..))
+    )
+}
+
 pub fn hir_type_to_abi_type(ty: Option<&HirType>) -> AbiType {
     match ty {
         Some(HirType::Float) | Some(HirType::F64) => AbiType::f64(),
@@ -137,18 +153,20 @@ pub struct FunctionLoweringContext<'a> {
     pub is_lambda_body: bool,
     /// Module aliases for imported namespaces.
     pub module_aliases: HashSet<String>,
+    /// Parameter names of the currently lowered function.
+    pub param_names: HashSet<String>,
 }
 
 pub fn default_variant_tags() -> HashMap<String, (i64, bool)> {
     let mut map = HashMap::new();
-    map.insert("None".to_string(), (0, false));
-    map.insert("Some".to_string(), (1, true));
-    map.insert("Option::None".to_string(), (0, false));
-    map.insert("Option::Some".to_string(), (1, true));
-    map.insert("Ok".to_string(), (0, true));
-    map.insert("Err".to_string(), (1, true));
-    map.insert("Result::Ok".to_string(), (0, true));
-    map.insert("Result::Err".to_string(), (1, true));
+    map.insert("None".to_string(), (100, false));
+    map.insert("Some".to_string(), (101, true));
+    map.insert("Option::None".to_string(), (100, false));
+    map.insert("Option::Some".to_string(), (101, true));
+    map.insert("Ok".to_string(), (200, true));
+    map.insert("Err".to_string(), (201, true));
+    map.insert("Result::Ok".to_string(), (200, true));
+    map.insert("Result::Err".to_string(), (201, true));
     map
 }
 
@@ -456,6 +474,7 @@ impl<'a> FunctionLoweringContext<'a> {
             closure_env_slot: None,
             is_lambda_body: false,
             module_aliases: HashSet::new(),
+            param_names: HashSet::new(),
         }
     }
 
@@ -495,6 +514,7 @@ impl<'a> FunctionLoweringContext<'a> {
             closure_env_slot: None,
             is_lambda_body: false,
             module_aliases: HashSet::new(),
+            param_names: HashSet::new(),
         }
     }
 
@@ -1058,10 +1078,20 @@ impl<'a> FunctionLoweringContext<'a> {
         self.var_scopes.push(HashMap::new());
     }
 
-    /// Exit a block scope: drop declarations made inside and restore the
-    /// nearest enclosing binding for shadowed names.
+    /// Exit a block scope: drop declarations made inside, clean up any runtime handles,
+    /// and restore the nearest enclosing binding for shadowed names.
     pub fn pop_var_scope(&mut self) {
         let popped = self.var_scopes.pop().unwrap_or_default();
+        for (name, (slot, ty)) in &popped {
+            if !self.param_names.contains(name) && is_composite_handle_type(ty.as_ref()) {
+                let vreg = self.func.alloc_vreg();
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(vreg)),
+                    src: MachineOperand::StackSlot(*slot),
+                });
+                self.emit_call_with_args("aot_release_handle", &[vreg]);
+            }
+        }
         for (name, _) in popped {
             let restored = self
                 .var_scopes
@@ -1076,6 +1106,30 @@ impl<'a> FunctionLoweringContext<'a> {
                     self.local_vars.remove(&name);
                 }
             }
+        }
+    }
+
+    /// Clean up all composite runtime handles in `self.local_vars`, except optionally
+    /// one variable being transferred (returned) out of the function.
+    pub fn cleanup_all_local_handles(&mut self, except_name: Option<&str>) {
+        let handles: Vec<i32> = self
+            .local_vars
+            .iter()
+            .filter(|(name, (_, ty))| {
+                !self.param_names.contains(*name)
+                    && except_name.map_or(true, |ex| *name != ex)
+                    && is_composite_handle_type(ty.as_ref())
+            })
+            .map(|(_, (slot, _))| *slot)
+            .collect();
+
+        for slot in handles {
+            let vreg = self.func.alloc_vreg();
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(vreg)),
+                src: MachineOperand::StackSlot(slot),
+            });
+            self.emit_call_with_args("aot_release_handle", &[vreg]);
         }
     }
 
@@ -2789,16 +2843,8 @@ impl<'a> FunctionLoweringContext<'a> {
                         dst: MachineOperand::Register(MachineRegister::Virtual(str_reg)),
                         src: MachineOperand::Symbol(sym_name),
                     });
-                    let field_handle = self.func.alloc_vreg();
-                    self.emit_call_with_args("aot_make_string", &[str_reg]);
-                    self.emit(MachineInstruction::Move {
-                        dst: MachineOperand::Register(MachineRegister::Virtual(field_handle)),
-                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
-                            0,
-                        ))),
-                    });
                     let val_handle = self.lower_to_handle(value);
-                    self.emit_call_with_args("aot_set_field", &[obj_reg, field_handle, val_handle]);
+                    self.emit_call_with_args("aot_set_field_str", &[obj_reg, str_reg, val_handle]);
                 }
                 HirExpr::Index(obj_expr, index_expr) => {
                     if self.is_raw_pointer_expr(obj_expr) {
@@ -2870,6 +2916,12 @@ impl<'a> FunctionLoweringContext<'a> {
                 // its value while emitting the deferred statements.
                 let return_value = expr_opt.as_ref().map(|expr| self.lower_expression(expr));
                 self.emit_defers_since(0);
+                let ret_var_name = if let Some(HirExpr::LoadVar(name)) = expr_opt.as_ref() {
+                    Some(name.as_str())
+                } else {
+                    None
+                };
+                self.cleanup_all_local_handles(ret_var_name);
                 if let Some(sret_off) = self.sret_slot {
                     let sret_ptr = self.func.alloc_vreg();
                     self.emit(MachineInstruction::Move {
@@ -3914,14 +3966,8 @@ impl<'a> FunctionLoweringContext<'a> {
                     dst: MachineOperand::Register(MachineRegister::Virtual(str_reg)),
                     src: MachineOperand::Symbol(sym_name),
                 });
-                let field_handle = self.func.alloc_vreg();
-                self.emit_call_with_args("aot_make_string", &[str_reg]);
-                self.emit(MachineInstruction::Move {
-                    dst: MachineOperand::Register(MachineRegister::Virtual(field_handle)),
-                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
-                });
 
-                self.emit_call_with_args("aot_get_field", &[target_reg, field_handle]);
+                self.emit_call_with_args("aot_get_field_str", &[target_reg, str_reg]);
 
                 let out_reg = self.func.alloc_vreg();
                 self.emit(MachineInstruction::Move {
@@ -3973,16 +4019,10 @@ impl<'a> FunctionLoweringContext<'a> {
                     dst: MachineOperand::Register(MachineRegister::Virtual(str_reg)),
                     src: MachineOperand::Symbol(sym_name),
                 });
-                let field_handle = self.func.alloc_vreg();
-                self.emit_call_with_args("aot_make_string", &[str_reg]);
-                self.emit(MachineInstruction::Move {
-                    dst: MachineOperand::Register(MachineRegister::Virtual(field_handle)),
-                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
-                });
 
                 let val_handle = self.lower_to_handle(val_expr);
 
-                self.emit_call_with_args("aot_set_field", &[target_reg, field_handle, val_handle]);
+                self.emit_call_with_args("aot_set_field_str", &[target_reg, str_reg, val_handle]);
 
                 let out_reg = self.func.alloc_vreg();
                 self.emit(MachineInstruction::Move {
@@ -4326,6 +4366,7 @@ impl<'a> FunctionLoweringContext<'a> {
                             }
                         }
                         lambda_ctx.declare_local(p_name, off, p_ty.clone());
+                        lambda_ctx.param_names.insert(p_name.clone());
                     }
                     for stmt in body.iter() {
                         lambda_ctx.lower_statement(stmt);
@@ -5807,9 +5848,21 @@ impl<'a> FunctionLoweringContext<'a> {
                 for arg in args {
                     arg_regs.push(self.lower_expression(arg));
                 }
-                let init_func = format!("{}_init", cls_name);
-                if self.module.functions.iter().any(|f| f.name == init_func) {
-                    self.emit_call_with_args(&init_func, &arg_regs);
+                let ctor_candidates = [
+                    format!("{}_{}", cls_name, "__ctor__"),
+                    format!("{}_constructor", cls_name),
+                    format!("{}_{}", cls_name, cls_name),
+                    format!("{}_init", cls_name),
+                ];
+                let found_ctor = ctor_candidates
+                    .iter()
+                    .find(|c| {
+                        self.module.functions.iter().any(|f| &f.name == *c)
+                            || self.fn_signatures.contains_key(*c)
+                    })
+                    .cloned();
+                if let Some(ref ctor) = found_ctor {
+                    self.emit_call_with_args(ctor, &arg_regs);
                 }
                 obj_handle
             }
@@ -6106,14 +6159,8 @@ impl<'a> FunctionLoweringContext<'a> {
                     dst: MachineOperand::Register(MachineRegister::Virtual(str_reg)),
                     src: MachineOperand::Symbol(sym_name),
                 });
-                let field_handle = self.func.alloc_vreg();
-                self.emit_call_with_args("aot_make_string", &[str_reg]);
-                self.emit(MachineInstruction::Move {
-                    dst: MachineOperand::Register(MachineRegister::Virtual(field_handle)),
-                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
-                });
                 let target_handle = self.lower_to_handle(target);
-                self.emit_call_with_args("aot_get_field", &[target_handle, field_handle]);
+                self.emit_call_with_args("aot_get_field_str", &[target_handle, str_reg]);
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                     src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
@@ -6456,6 +6503,7 @@ fn lower_hir_function_inner(
                 }
             }
             ctx.declare_local(p_name, off, p_ty.clone());
+            ctx.param_names.insert(p_name.clone());
             loc_idx += 1;
         }
 
@@ -6473,6 +6521,7 @@ fn lower_hir_function_inner(
         if !last_is_ret {
             // Falling off the end still runs pending defers.
             ctx.run_defers();
+            ctx.cleanup_all_local_handles(None);
             if let Some(sret_off) = ctx.sret_slot {
                 let sret_ptr = ctx.func.alloc_vreg();
                 ctx.emit(MachineInstruction::Move {
@@ -6802,10 +6851,10 @@ pub fn lower_hir_module_with_base(
     collect_stmt_signatures(&hir.statements, &mut fn_signatures);
 
     let mut variant_tags = default_variant_tags();
-    for e in &hir.enums {
+    for (enum_idx, e) in hir.enums.iter().enumerate() {
         for (i, (var_name, var_type)) in e.variants.iter().enumerate() {
             let has_payload = var_type.is_some();
-            let tag = i as i64;
+            let tag = (enum_idx as i64 + 3) * 1000 + i as i64;
             let qualified = format!("{}::{}", e.name, var_name);
             variant_tags.insert(qualified, (tag, has_payload));
             variant_tags
@@ -6854,6 +6903,7 @@ pub fn lower_hir_module_with_base(
             if !last_is_ret {
                 // Falling off the end still runs pending defers.
                 ctx.run_defers();
+                ctx.cleanup_all_local_handles(None);
                 ctx.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
                     src: MachineOperand::Immediate(0),
