@@ -241,7 +241,7 @@ impl IntrinsicsEngine {
     /// x86_64 native machine code sequences for compiler runtime builtins.
     fn emit_x86_64(name: &str) -> Vec<u8> {
         match name {
-            "memcpy" | "memmove" => {
+            "memcpy" => {
                 // memcpy(rdi = dst, rsi = src, rdx = len) -> rax = dst
                 // mov rax, rdi; mov rcx, rdx; rep movsb; ret
                 vec![
@@ -249,6 +249,27 @@ impl IntrinsicsEngine {
                     0x48, 0x89, 0xd1, // mov rcx, rdx
                     0xf3, 0xa4, // rep movsb
                     0xc3, // ret
+                ]
+            }
+            "memmove" => {
+                // memmove(rdi = dst, rsi = src, rdx = len) -> rax = dst (overlap-safe)
+                vec![
+                    0x48, 0x89, 0xf8, // mov rax, rdi
+                    0x48, 0x85, 0xd2, // test rdx, rdx
+                    0x74, 0x1e, // jz .Ldone
+                    0x48, 0x39, 0xf7, // cmp rsi, rdi
+                    0x74, 0x19, // je .Ldone
+                    0x72, 0x12, // jb .Lforward
+                    0x48, 0x8d, 0x7c, 0x17, 0xff, // lea rdi, [rdi + rdx - 1]
+                    0x48, 0x8d, 0x74, 0x16, 0xff, // lea rsi, [rsi + rdx - 1]
+                    0x48, 0x89, 0xd1, // mov rcx, rdx
+                    0xfd, // std
+                    0xf3, 0xa4, // rep movsb
+                    0xfc, // cld
+                    0xc3, // ret
+                    0x48, 0x89, 0xd1, // .Lforward: mov rcx, rdx
+                    0xf3, 0xa4, // rep movsb
+                    0xc3, // .Ldone: ret
                 ]
             }
             "memset" => {

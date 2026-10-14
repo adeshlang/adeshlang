@@ -1304,6 +1304,9 @@ impl LayoutEngine {
 
         // Add globals from resolver table
         for (sym_name, resolved) in &resolver.table {
+            if sym_name != &resolved.symbol.name {
+                continue;
+            }
             let mut final_sym = resolved.symbol.clone();
             if let Some(&va) = symbol_va_map.get(sym_name) {
                 final_sym.value = va;
