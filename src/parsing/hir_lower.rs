@@ -1312,7 +1312,7 @@ mod tests {
             type_from_annotation("[u8]"),
             HirType::Array(Box::new(HirType::U8), ArrayKind::Dynamic)
         );
-        assert_eq!(type_from_annotation("int"), HirType::Unknown);
+        assert_eq!(type_from_annotation("int"), HirType::Int);
         assert_eq!(type_from_annotation("float"), HirType::Float);
         assert_eq!(type_from_annotation("array<u8>"), HirType::Unknown);
     }
