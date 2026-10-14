@@ -1,0 +1,25 @@
+[package]
+name = "adesh-monitor-tui"
+version = "0.1.0"
+edition = "2024"
+authors = ["AdeshLang Contributors"]
+description = "Interactive terminal user interface (TUI) for Adesh Observatory (ARO)"
+license = "Apache-2.0"
+
+[lib]
+name = "adesh_monitor_tui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "aro-tui"
+path = "src/main.rs"
+
+[dependencies]
+adesh-monitor-protocol = { path = "../adesh-monitor-protocol" }
+adesh-monitor-core = { path = "../adesh-monitor-core" }
+ratatui = "0.30"
+crossterm = "0.27"
+chrono = { version = "0.4" }
+
+[dev-dependencies]
+tempfile = "3"

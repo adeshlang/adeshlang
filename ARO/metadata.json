@@ -1,0 +1,25 @@
+{
+  "name": "ARO",
+  "title": "Adesh Runtime Observatory",
+  "short_name": "ARO",
+  "version": "0.1.0",
+  "description": "Production-grade runtime monitor, desktop application, interactive TUI, and scriptable CLI for the AdeshLang ecosystem.",
+  "ecosystem": "AdeshLang",
+  "crates": [
+    "crates/adesh-monitor-protocol",
+    "crates/adesh-monitor-platform",
+    "crates/adesh-monitor-core",
+    "crates/adesh-monitor-cli",
+    "crates/adesh-monitor-tui",
+    "crates/adesh-monitor-desktop"
+  ],
+  "components": {
+    "core": "adesh-monitor-core",
+    "protocol": "adesh-monitor-protocol",
+    "platform": "adesh-monitor-platform",
+    "cli": "adesh-monitor-cli",
+    "tui": "adesh-monitor-tui",
+    "desktop": "adesh-monitor-desktop"
+  },
+  "status": "active"
+}

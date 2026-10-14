@@ -155,6 +155,14 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
         "crypto" => {
             adeshlang::cli::crypto::execute_crypto_cli(&parsed.program_args);
         }
+        "monitor" | "aro" | "observatory" => {
+            let mut monitor_args = Vec::new();
+            if let Some(ref input) = parsed.input_file {
+                monitor_args.push(input.clone());
+            }
+            monitor_args.extend(parsed.program_args.clone());
+            adeshlang::cli::observatory::execute_monitor_command(&monitor_args);
+        }
         "doctor" => {
             adeshlang::cli::doctor::execute_doctor_command();
         }

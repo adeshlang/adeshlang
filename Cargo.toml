@@ -9,6 +9,12 @@ members = [
     "crates/adesh-object",
     "crates/adesh-codegen",
     "linker",
+    "crates/adesh-monitor-protocol",
+    "crates/adesh-monitor-platform",
+    "crates/adesh-monitor-core",
+    "crates/adesh-monitor-cli",
+    "crates/adesh-monitor-tui",
+    "crates/adesh-monitor-desktop",
 ]
 resolver = "2"
 
@@ -57,6 +63,10 @@ adesh-object = { path = "crates/adesh-object" }
 adesh-codegen = { path = "crates/adesh-codegen" }
 adesh-linker = { path = "linker" }
 adesh-runtime = { path = "crates/adesh-runtime" }
+adesh-monitor-protocol = { path = "crates/adesh-monitor-protocol" }
+adesh-monitor-core = { path = "crates/adesh-monitor-core" }
+adesh-monitor-cli = { path = "crates/adesh-monitor-cli" }
+adesh-monitor-tui = { path = "crates/adesh-monitor-tui" }
 colored = "2.0"
 regex = "1.9"
 num-bigint = "0.4"

@@ -155,6 +155,8 @@ pub struct FunctionLoweringContext<'a> {
     pub module_aliases: HashSet<String>,
     /// Parameter names of the currently lowered function.
     pub param_names: HashSet<String>,
+    /// Identifiers known to hold spawned OS thread handles.
+    pub thread_handles: HashSet<String>,
 }
 
 pub fn default_variant_tags() -> HashMap<String, (i64, bool)> {
@@ -475,6 +477,7 @@ impl<'a> FunctionLoweringContext<'a> {
             is_lambda_body: false,
             module_aliases: HashSet::new(),
             param_names: HashSet::new(),
+            thread_handles: HashSet::new(),
         }
     }
 
@@ -515,6 +518,7 @@ impl<'a> FunctionLoweringContext<'a> {
             is_lambda_body: false,
             module_aliases: HashSet::new(),
             param_names: HashSet::new(),
+            thread_handles: HashSet::new(),
         }
     }
 
@@ -2738,6 +2742,9 @@ impl<'a> FunctionLoweringContext<'a> {
                         src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
                     });
                 }
+                if let Some(HirExpr::Spawn(_)) = init {
+                    self.thread_handles.insert(name.clone());
+                }
                 self.declare_local(name, off, inferred_ty);
             }
             HirStmt::LetTuple { names, init, .. } => {
@@ -2800,6 +2807,11 @@ impl<'a> FunctionLoweringContext<'a> {
             }
             HirStmt::Assign { target, value, .. } => match target {
                 HirExpr::LoadVar(name) => {
+                    if matches!(value, HirExpr::Spawn(_)) {
+                        self.thread_handles.insert(name.clone());
+                    } else {
+                        self.thread_handles.remove(name);
+                    }
                     let val_vreg = self.lower_expression(value);
                     if let Some(&(slot, _)) = self.local_vars.get(name) {
                         self.emit(MachineInstruction::Move {
@@ -6265,6 +6277,14 @@ impl<'a> FunctionLoweringContext<'a> {
                 out_reg
             }
             HirExpr::Await(inner) => {
+                let is_thread_handle = match inner.as_ref() {
+                    HirExpr::LoadVar(name) => self.thread_handles.contains(name),
+                    HirExpr::Spawn(_) => true,
+                    _ => false,
+                };
+                if !is_thread_handle {
+                    self.unsupported("`await` (the native backend has no async runtime)");
+                }
                 let handle_reg = self.lower_expression(inner);
                 self.emit_call_with_args("adesh_thread_join", &[handle_reg]);
                 let out_reg = self.func.alloc_vreg();
@@ -6457,7 +6477,7 @@ fn lower_hir_function_inner(
         return;
     }
     let mut func = MachineFunction::new(&hir_func.name);
-    func.is_exported = true;
+    func.is_exported = hir_func.is_exported || hir_func.name == "main";
 
     {
         let mut ctx = FunctionLoweringContext::with_signatures(

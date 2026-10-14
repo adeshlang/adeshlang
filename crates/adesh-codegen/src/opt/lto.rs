@@ -252,16 +252,42 @@ impl LtoEngine {
     fn eliminate_dead_functions(module: &mut NativeModule) {
         let mut called_functions = HashSet::new();
 
-        // 1. Collect all target symbols from Call instructions
+        // 1. Collect all target symbols from instructions (calls, tail jumps, address-taken)
         for func in &module.functions {
             for block in &func.blocks {
                 for inst in &block.instructions {
-                    if let MachineInstruction::Call {
-                        target: MachineOperand::Symbol(sym),
-                        ..
-                    } = inst
-                    {
-                        called_functions.insert(sym.clone());
+                    match inst {
+                        MachineInstruction::Call {
+                            target: MachineOperand::Symbol(sym),
+                            ..
+                        } => {
+                            called_functions.insert(sym.clone());
+                        }
+                        MachineInstruction::Custom { operands, .. } => {
+                            for op in operands {
+                                if let MachineOperand::Symbol(sym) = op {
+                                    called_functions.insert(sym.clone());
+                                }
+                            }
+                        }
+                        MachineInstruction::Move {
+                            src: MachineOperand::Symbol(sym),
+                            ..
+                        }
+                        | MachineInstruction::Load {
+                            src: MachineOperand::Symbol(sym),
+                            ..
+                        }
+                        | MachineInstruction::Store {
+                            src: MachineOperand::Symbol(sym),
+                            ..
+                        }
+                        | MachineInstruction::Push {
+                            src: MachineOperand::Symbol(sym),
+                        } => {
+                            called_functions.insert(sym.clone());
+                        }
+                        _ => {}
                     }
                 }
             }

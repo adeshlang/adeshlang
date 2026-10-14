@@ -1,0 +1,39 @@
+{
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-cli/schema.json",
+  "productName": "Adesh Observatory",
+  "version": "0.1.0",
+  "identifier": "com.adeshlang.observatory",
+  "build": {
+    "beforeDevCommand": "pnpm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Adesh Runtime Observatory",
+        "width": 1200,
+        "height": 780,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "decorations": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

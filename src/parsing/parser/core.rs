@@ -29,7 +29,7 @@ impl Parser {
             pending_gt: 0,
             allow_struct_literal: true,
             recursion_depth: 0,
-            max_recursion_depth: 32,
+            max_recursion_depth: 16,
             errors: Vec::new(),
         }
     }

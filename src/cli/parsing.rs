@@ -31,7 +31,11 @@ pub fn check_ownership_and_parse_in(
     let clean_src = super::directives::strip_compile_directive(src);
     let file_owned = file.map(|f| f.to_string());
 
-    // Parse source code (with file path for clickable errors)
+    let session_id = std::env::var("ADESH_OBSERVATORY_SESSION").ok();
+    let tele_client = session_id.map(adesh_monitor_core::ipc::TelemetryClient::new);
+
+    // Stage: Lex & Parse
+    let t_parse_start = std::time::Instant::now();
     let mut lexer = Lexer::new(&clean_src);
     if let Some(ref f) = file_owned {
         lexer.set_file(f.clone());
@@ -39,12 +43,37 @@ pub fn check_ownership_and_parse_in(
     let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
     let mut parser = Parser::new(tokens, file_owned.clone());
     let mut ast = parser.parse_program().map_err(|e| e.to_string())?;
+    if let Some(ref tc) = tele_client {
+        tc.emit(adesh_monitor_protocol::EventPayload::CompilerStage(
+            adesh_monitor_protocol::CompilerStageEvent {
+                stage_name: "parse".to_string(),
+                input_file: file_owned.clone(),
+                duration_micros: t_parse_start.elapsed().as_micros() as u64,
+                success: true,
+                error_message: None,
+                metadata: std::collections::HashMap::new(),
+            },
+        ));
+    }
 
     // Execute decorator compile-time phases (typecheck, compile)
     if config.verbose {
         eprintln!("🎨 Executing decorator compile-time phases...");
     }
+    let t_dec_start = std::time::Instant::now();
     execute_compile_time_phases(&mut ast)?;
+    if let Some(ref tc) = tele_client {
+        tc.emit(adesh_monitor_protocol::EventPayload::CompilerStage(
+            adesh_monitor_protocol::CompilerStageEvent {
+                stage_name: "decorator_phases".to_string(),
+                input_file: file_owned.clone(),
+                duration_micros: t_dec_start.elapsed().as_micros() as u64,
+                success: true,
+                error_message: None,
+                metadata: std::collections::HashMap::new(),
+            },
+        ));
+    }
 
     // Enforce embedded-mode heap prohibition at compile-time
     if config.embedded && super::validation::ast_contains_heap_alloc(&ast) {
@@ -58,10 +87,36 @@ pub fn check_ownership_and_parse_in(
     if config.verbose {
         eprintln!("🔄 Applying RAII memory management transformations...");
     }
+    let t_raii_start = std::time::Instant::now();
     ast = crate::memory::raii::transform_ast_with_raii(ast);
+    if let Some(ref tc) = tele_client {
+        tc.emit(adesh_monitor_protocol::EventPayload::CompilerStage(
+            adesh_monitor_protocol::CompilerStageEvent {
+                stage_name: "raii_transformation".to_string(),
+                input_file: file_owned.clone(),
+                duration_micros: t_raii_start.elapsed().as_micros() as u64,
+                success: true,
+                error_message: None,
+                metadata: std::collections::HashMap::new(),
+            },
+        ));
+    }
 
     // Lower to HIR
+    let t_hir_start = std::time::Instant::now();
     let hir = ast_to_hir(&ast, false)?;
+    if let Some(ref tc) = tele_client {
+        tc.emit(adesh_monitor_protocol::EventPayload::CompilerStage(
+            adesh_monitor_protocol::CompilerStageEvent {
+                stage_name: "hir_lower".to_string(),
+                input_file: file_owned.clone(),
+                duration_micros: t_hir_start.elapsed().as_micros() as u64,
+                success: true,
+                error_message: None,
+                metadata: std::collections::HashMap::new(),
+            },
+        ));
+    }
 
     // ============================================
     // COMPILE-TIME MEMORY SAFETY CHECKS
@@ -73,7 +128,20 @@ pub fn check_ownership_and_parse_in(
         eprintln!("🔒 Running comprehensive compile-time memory safety analysis...");
     }
 
+    let t_safety_start = std::time::Instant::now();
     check_memory_safety_compile_time_in(&hir, file)?;
+    if let Some(ref tc) = tele_client {
+        tc.emit(adesh_monitor_protocol::EventPayload::CompilerStage(
+            adesh_monitor_protocol::CompilerStageEvent {
+                stage_name: "compile_time_memory_safety".to_string(),
+                input_file: file_owned.clone(),
+                duration_micros: t_safety_start.elapsed().as_micros() as u64,
+                success: true,
+                error_message: None,
+                metadata: std::collections::HashMap::new(),
+            },
+        ));
+    }
 
     if config.verbose {
         eprintln!("✅ Compile-time memory safety validation passed!");

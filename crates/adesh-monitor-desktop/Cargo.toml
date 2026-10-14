@@ -1,0 +1,16 @@
+[package]
+name = "adesh-monitor-desktop"
+version = "0.1.0"
+edition = "2024"
+authors = ["AdeshLang Contributors"]
+description = "Tauri 2 desktop bridge and host for Adesh Observatory (ARO)"
+license = "Apache-2.0"
+
+[dependencies]
+adesh-monitor-protocol = { path = "../adesh-monitor-protocol" }
+adesh-monitor-core = { path = "../adesh-monitor-core" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+tempfile = "3"

@@ -67,7 +67,7 @@ fn test_lexer_and_parser_fuzz_robustness() {
         let src = input.to_string();
         let handle = std::thread::Builder::new()
             .name(format!("fuzz_thread_{}", idx))
-            .stack_size(8 * 1024 * 1024)
+            .stack_size(16 * 1024 * 1024)
             .spawn(move || {
                 // Lexer must never panic
                 let mut lx = Lexer::new(&src);

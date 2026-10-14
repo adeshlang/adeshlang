@@ -568,11 +568,7 @@ impl CodegenBackend for RiscVBackend {
                 offset,
                 size,
             )
-            .with_binding(if func.is_exported {
-                SymbolBinding::Global
-            } else {
-                SymbolBinding::Local
-            })
+            .with_binding(SymbolBinding::Global)
             .with_visibility(SymbolVisibility::Default);
             obj.add_symbol(sym);
 

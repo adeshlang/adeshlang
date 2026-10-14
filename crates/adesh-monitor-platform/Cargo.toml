@@ -1,0 +1,26 @@
+[package]
+name = "adesh-monitor-platform"
+version = "0.1.0"
+edition = "2024"
+authors = ["AdeshLang Contributors"]
+description = "Cross-platform hardware, process discovery, and metrics provider (Windows, Linux, macOS) for Adesh Observatory (ARO)"
+license = "Apache-2.0"
+
+[dependencies]
+adesh-monitor-protocol = { path = "../adesh-monitor-protocol" }
+chrono = { version = "0.4" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
+    "Win32_System_SystemInformation",
+    "Win32_Security"
+] }
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

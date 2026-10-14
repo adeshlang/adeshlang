@@ -28,6 +28,7 @@ pub mod editor_launcher;
 pub mod ir_utils;
 pub mod memory_stats;
 pub mod native_engine;
+pub mod observatory;
 pub mod parsing;
 pub mod path_utils;
 pub mod ui;
