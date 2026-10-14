@@ -466,6 +466,47 @@ pub type SpinLock = AdeshSpinLock;
 pub type Atomic = AdeshAtomicI64;
 pub use std::sync::atomic::Ordering as AtomicOrdering;
 
+// ============================================================================
+// C ABI Threading Exports for AOT Native Compilation
+// ============================================================================
+
+static THREAD_HANDLES: OnceLock<StdMutex<std::collections::HashMap<u64, JoinHandle<u64>>>> =
+    OnceLock::new();
+static NEXT_THREAD_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn thread_handle_map() -> &'static StdMutex<std::collections::HashMap<u64, JoinHandle<u64>>> {
+    THREAD_HANDLES.get_or_init(|| StdMutex::new(std::collections::HashMap::new()))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn adesh_thread_spawn(func_ptr: usize, arg: u64) -> u64 {
+    let id = NEXT_THREAD_ID.fetch_add(1, Ordering::Relaxed);
+    let handle = std::thread::spawn(move || {
+        let f: extern "C" fn(u64) -> u64 = unsafe { std::mem::transmute(func_ptr) };
+        f(arg)
+    });
+    let mut map = thread_handle_map()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    map.insert(id, handle);
+    id
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn adesh_thread_join(handle_id: u64) -> u64 {
+    let handle = {
+        let mut map = thread_handle_map()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        map.remove(&handle_id)
+    };
+    if let Some(h) = handle {
+        h.join().unwrap_or(0)
+    } else {
+        0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{AdeshThreadPool, Job};

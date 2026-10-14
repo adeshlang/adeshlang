@@ -17,6 +17,8 @@ pub mod panic;
 pub mod platform;
 pub mod plugin;
 pub mod sanitizer_rt;
+pub mod stream_io;
+pub mod sys_io;
 pub mod threading;
 
 pub use abi::*;
@@ -32,6 +34,8 @@ pub use panic::*;
 pub use platform::*;
 pub use plugin::*;
 pub use sanitizer_rt::*;
+pub use stream_io::*;
+pub use sys_io::*;
 pub use threading::*;
 
 use std::collections::BTreeMap;
@@ -444,12 +448,13 @@ impl RuntimeValue {
 
 const N_SHARDS: usize = 16;
 
+pub const HANDLE_TAG: u64 = 0x4000_0000_0000_0000;
 static HANDLE_SHARDS: [StdMutex<BTreeMap<u64, RuntimeValue>>; N_SHARDS] =
     [const { StdMutex::new(BTreeMap::new()) }; N_SHARDS];
 static HANDLE_COUNTER: AtomicU64 = AtomicU64::new(100);
 
 fn shard_index(handle: u64) -> usize {
-    (handle % N_SHARDS as u64) as usize
+    ((handle ^ HANDLE_TAG) % N_SHARDS as u64) as usize
 }
 
 /// Lock the shard owning `handle` without panicking: if another thread
@@ -462,20 +467,28 @@ fn lock_shard(handle: u64) -> std::sync::MutexGuard<'static, BTreeMap<u64, Runti
 }
 
 pub fn aot_store_value(value: RuntimeValue) -> u64 {
-    let handle = HANDLE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let handle = HANDLE_TAG | HANDLE_COUNTER.fetch_add(1, Ordering::Relaxed);
     lock_shard(handle).insert(handle, value);
     handle
 }
 
 pub fn aot_update_value(handle: u64, value: RuntimeValue) {
-    lock_shard(handle).insert(handle, value);
+    if handle >= HANDLE_TAG {
+        lock_shard(handle).insert(handle, value);
+    }
 }
 
 pub fn aot_get_value(handle: u64) -> Option<RuntimeValue> {
+    if handle < HANDLE_TAG {
+        return None;
+    }
     lock_shard(handle).get(&handle).cloned()
 }
 
 pub fn aot_remove_value(handle: u64) -> Option<RuntimeValue> {
+    if handle < HANDLE_TAG {
+        return None;
+    }
     lock_shard(handle).remove(&handle)
 }
 
@@ -1152,7 +1165,7 @@ pub extern "C" fn aot_set_field(obj_handle: u64, field_handle: u64, val_handle: 
             Some(s) => s,
             None => return 0,
         };
-        let value = aot_get_value(val_handle).unwrap_or(RuntimeValue::Null);
+        let value = unpack_aot_arg(val_handle);
 
         match aot_get_value(obj_handle) {
             Some(RuntimeValue::Object(mut obj)) => {
@@ -1179,7 +1192,7 @@ pub extern "C" fn aot_set_field_str(
             Ok(s) => s.to_string(),
             Err(_) => return 0,
         };
-        let value = aot_get_value(val_handle).unwrap_or(RuntimeValue::Null);
+        let value = unpack_aot_arg(val_handle);
 
         match aot_get_value(obj_handle) {
             Some(RuntimeValue::Object(mut obj)) => {
@@ -1904,6 +1917,16 @@ pub extern "C" fn aot_len(handle: u64) -> i64 {
         RuntimeValue::String(s) => s.len() as i64,
         _ => 0,
     }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn len(handle: u64) -> i64 {
+    aot_len(handle)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn length(handle: u64) -> i64 {
+    aot_len(handle)
 }
 
 #[unsafe(no_mangle)]

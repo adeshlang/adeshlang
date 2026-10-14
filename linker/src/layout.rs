@@ -1304,6 +1304,11 @@ impl LayoutEngine {
 
         // Add globals from resolver table
         for (sym_name, resolved) in &resolver.table {
+            // Filter out synthetic alias keys (e.g., `_foo` alias for `foo` in Mach-O)
+            // so each defined symbol is emitted into final_symbols exactly once.
+            if sym_name != &resolved.symbol.name {
+                continue;
+            }
             let mut final_sym = resolved.symbol.clone();
             if let Some(&va) = symbol_va_map.get(sym_name) {
                 final_sym.value = va;

@@ -991,11 +991,7 @@ impl Linker {
                     emit_symbols
                         .iter()
                         .filter(|s| {
-                            s.is_defined
-                                && !s.is_local()
-                                && !s.is_imported
-                                && !s.name.is_empty()
-                                && s.value != 0
+                            s.is_defined && !s.is_local() && !s.is_imported && !s.name.is_empty()
                         })
                         .map(|s| crate::macho::dynamic::MachOExport {
                             name: s.name.clone(),

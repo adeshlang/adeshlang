@@ -21,11 +21,12 @@ thread_local! {
     static AOT_RUNTIME_VALUES: RefCell<FastMap<u64, RuntimeValue>> = RefCell::new(FastMap::default());
 }
 
-// Global counter for generating unique handles
+// Global counter for generating unique handles with tag to prevent pointer collisions
+pub const HANDLE_TAG: u64 = 0x4000_0000_0000_0000;
 static AOT_HANDLE_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 fn aot_next_handle() -> u64 {
-    AOT_HANDLE_COUNTER.fetch_add(1, Ordering::Relaxed)
+    HANDLE_TAG | AOT_HANDLE_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
 pub fn aot_store_value(value: RuntimeValue) -> u64 {
@@ -37,6 +38,9 @@ pub fn aot_store_value(value: RuntimeValue) -> u64 {
 }
 
 pub fn aot_get_value(handle: u64) -> Option<RuntimeValue> {
+    if handle < HANDLE_TAG {
+        return None;
+    }
     AOT_RUNTIME_VALUES.with(|values| values.borrow().get(&handle).cloned())
 }
 
@@ -282,11 +286,16 @@ pub unsafe extern "C" fn aot_make_object(args_ptr: *const u64, arg_count: usize)
             let val_handle = chunk[1];
 
             // Get key string
-            if let Some(RuntimeValue::String(key)) = aot_get_value(key_handle) {
-                // Get value
-                let value = aot_get_value(val_handle).unwrap_or(RuntimeValue::Null);
-                obj.insert(key, value);
-            }
+            let key = match get_string_val(key_handle) {
+                Some(k) => k,
+                None => match aot_get_value(key_handle) {
+                    Some(RuntimeValue::String(k)) => k,
+                    _ => continue,
+                },
+            };
+            // Get value
+            let value = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
+            obj.insert(key, value);
         }
     }
 

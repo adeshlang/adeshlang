@@ -5318,6 +5318,17 @@ impl<'a> FunctionLoweringContext<'a> {
                         });
                         return out_reg;
                     }
+                    if (fn_name == "len" || fn_name == "length") && !args.is_empty() {
+                        let handle = self.lower_to_handle(&args[0]);
+                        self.emit_call_with_args("aot_len", &[handle]);
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Register(MachineRegister::Physical(
+                                PhysicalRegister(0),
+                            )),
+                        });
+                        return out_reg;
+                    }
                     if matches!(
                         fn_name.as_str(),
                         "int"
@@ -6211,16 +6222,57 @@ impl<'a> FunctionLoweringContext<'a> {
             | HirExpr::Move(inner)
             | HirExpr::NonNull(inner)
             | HirExpr::Spread(inner) => self.lower_expression(inner),
-            HirExpr::Await(inner) | HirExpr::Spawn(inner) => {
-                self.unsupported(format!(
-                    "`{}` (the native backend has no async runtime)",
-                    if matches!(expr, HirExpr::Await(_)) {
-                        "await"
+            HirExpr::Spawn(inner) => {
+                let (fn_reg, arg_reg) = if let HirExpr::Call(callee, args, _) = &**inner {
+                    let f = match &**callee {
+                        HirExpr::LoadVar(name) => {
+                            let r = self.func.alloc_vreg();
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(r)),
+                                src: MachineOperand::Symbol(name.clone()),
+                            });
+                            r
+                        }
+                        other => self.lower_expression(other),
+                    };
+                    let a = if let Some(first_arg) = args.first() {
+                        self.lower_expression(first_arg)
                     } else {
-                        "spawn"
-                    }
-                ));
-                self.lower_expression(inner)
+                        let r = self.func.alloc_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(r)),
+                            src: MachineOperand::Immediate(0),
+                        });
+                        r
+                    };
+                    (f, a)
+                } else {
+                    let f = self.lower_expression(inner);
+                    let a = self.func.alloc_vreg();
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(a)),
+                        src: MachineOperand::Immediate(0),
+                    });
+                    (f, a)
+                };
+
+                self.emit_call_with_args("adesh_thread_spawn", &[fn_reg, arg_reg]);
+                let out_reg = self.func.alloc_vreg();
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                });
+                out_reg
+            }
+            HirExpr::Await(inner) => {
+                let handle_reg = self.lower_expression(inner);
+                self.emit_call_with_args("adesh_thread_join", &[handle_reg]);
+                let out_reg = self.func.alloc_vreg();
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                });
+                out_reg
             }
             HirExpr::AssignTuple(names, value) => {
                 if let HirExpr::TupleLiteral(elements) = &**value {
@@ -6531,6 +6583,11 @@ fn lower_hir_function_inner(
                 ctx.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
                     src: MachineOperand::Register(MachineRegister::Virtual(sret_ptr)),
+                });
+            } else {
+                ctx.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                    src: MachineOperand::Immediate(0),
                 });
             }
             ctx.emit(MachineInstruction::Return);

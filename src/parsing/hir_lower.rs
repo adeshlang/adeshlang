@@ -1024,7 +1024,8 @@ fn type_from_annotation(ann: &str) -> HirType {
     let ann_lower = ann.to_ascii_lowercase();
 
     match ann_lower.as_str() {
-        "int" | "number" | "array" => HirType::Unknown,
+        "int" | "number" => HirType::Int,
+        "array" => HirType::Array(Box::new(HirType::Any), ArrayKind::Dynamic),
         "float" => HirType::Float,
         "f32" => HirType::F32,
         "f64" => HirType::F64,

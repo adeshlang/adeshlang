@@ -153,6 +153,12 @@ impl ParsedArgs {
                     config.backend = ExecutionBackend::Safe;
                 }
                 "--bytecode" | "--bc" | "--vm" => {
+                    eprintln!(
+                        "Warning: Bytecode VM backend is deprecated. Native Toolchain and Interpreter are the standard backends."
+                    );
+                    config.backend = ExecutionBackend::Bytecode;
+                }
+                "--experimental-vm" => {
                     config.backend = ExecutionBackend::Bytecode;
                 }
                 "--adaptive" | "--adaptive-jit" | "--ajit" => {

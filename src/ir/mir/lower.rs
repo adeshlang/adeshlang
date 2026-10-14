@@ -385,6 +385,11 @@ fn create_main_entry(
             func: MirOperand::Constant(MirConstant::String("__user_main".to_string())),
             args: vec![],
         });
+        entry_block.terminator = MirTerminator::Return(Some(MirOperand::Copy(MirPlace {
+            local: temp_local,
+            projection: vec![],
+        })));
+        mir_func.return_type = MirType::I64;
     }
 
     mir_func.body.push(entry_block);

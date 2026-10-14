@@ -241,7 +241,7 @@ impl IntrinsicsEngine {
     /// x86_64 native machine code sequences for compiler runtime builtins.
     fn emit_x86_64(name: &str) -> Vec<u8> {
         match name {
-            "memcpy" | "memmove" => {
+            "memcpy" => {
                 // memcpy(rdi = dst, rsi = src, rdx = len) -> rax = dst
                 // mov rax, rdi; mov rcx, rdx; rep movsb; ret
                 vec![
@@ -251,6 +251,30 @@ impl IntrinsicsEngine {
                     0xc3, // ret
                 ]
             }
+            // rdi = dst, rsi = src, rdx = len -> rax = dst (overlap-safe)
+            "memmove" => vec![
+                0x48, 0x89, 0xf8, // mov rax, rdi
+                0x48, 0x85, 0xd2, // test rdx, rdx
+                0x74, 0x33, // jz done
+                0x48, 0x39, 0xf7, // cmp rdi, rsi
+                0x74, 0x2e, // je done
+                0x72, 0x16, // jb forward
+                0x49, 0x89, 0xd1, // mov r9, rdx        ; backward copy
+                0x4d, 0x85, 0xc9, // btest: test r9, r9
+                0x74, 0x24, // jz done
+                0x49, 0xff, 0xc9, // dec r9
+                0x46, 0x0f, 0xb6, 0x14, 0x0e, // movzbl (rsi,r9), r10d
+                0x46, 0x88, 0x14, 0x0f, // mov (rdi,r9), r10b
+                0xeb, 0xed, // jmp btest
+                0x45, 0x31, 0xc9, // forward: xor r9d, r9d
+                0x49, 0x39, 0xd1, // ftest: cmp r9, rdx
+                0x73, 0x0e, // jae done
+                0x46, 0x0f, 0xb6, 0x14, 0x0e, // movzbl (rsi,r9), r10d
+                0x46, 0x88, 0x14, 0x0f, // mov (rdi,r9), r10b
+                0x49, 0xff, 0xc1, // inc r9
+                0xeb, 0xed, // jmp ftest
+                0xc3, // done: ret
+            ],
             "memset" => {
                 // memset(rdi = dst, rsi = val, rdx = len) -> rax = dst
                 // mov r8, rdi; mov rax, rsi; mov rcx, rdx; rep stosb; mov rax, r8; ret

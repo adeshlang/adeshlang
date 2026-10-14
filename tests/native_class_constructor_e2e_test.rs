@@ -25,21 +25,8 @@ fn compile_run_src(src: &str, test_name: &str) -> (String, i32) {
     let mut parser = Parser::new(tokens, None);
     let ast = parser.parse_program().expect("parse");
     let hir = ast_to_hir(&ast, true).expect("ast_to_hir");
-    eprintln!("HIR CLASSES: {:?}", hir.classes);
-    eprintln!("HIR FUNCS: {:?}", hir.functions.iter().map(|f| &f.name).collect::<Vec<_>>());
-
     let target = TargetDescriptor::from_triple("x86_64-pc-windows-msvc").expect("valid triple");
     let native_mod = lower_hir_module(&hir, &target).expect("native lowering");
-    eprintln!("NATIVE FUNCS:");
-    for f in &native_mod.functions {
-        eprintln!("  FUNCTION: {}", f.name);
-        for b in &f.blocks {
-            eprintln!("    BLOCK {}:", b.id);
-            for inst in &b.instructions {
-                eprintln!("      {:?}", inst);
-            }
-        }
-    }
 
     let mut backend = create_backend(target.clone()).expect("backend creation");
     let obj = backend.emit_object(&native_mod).expect("ADOB emission");
@@ -60,6 +47,10 @@ fn compile_run_src(src: &str, test_name: &str) -> (String, i32) {
         .expect("execute native binary");
     let code = out.status.code().unwrap_or(-1);
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    if !stderr.is_empty() {
+        eprintln!("STDERR: {}", stderr);
+    }
     (stdout, code)
 }
 
@@ -83,16 +74,19 @@ fn test_constructor_matching_class_name() {
     "#;
     let (stdout, code) = compile_run_src(src, "test_ctor_class_name");
     eprintln!("STDOUT: '{}', CODE: {}", stdout, code);
-    assert_eq!(code, 42, "Point(15, 27) should initialize x and y summing to 42");
+    assert_eq!(
+        code, 42,
+        "Point(15, 27) should initialize x and y summing to 42"
+    );
 }
 
 #[test]
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-fn test_constructor_named_constructor() {
+fn test_constructor_named_init() {
     let src = r#"
     class Holder {
         val: int;
-        fn constructor(v: int) {
+        fn init(v: int) {
             this.val = v;
         }
     }
@@ -102,7 +96,7 @@ fn test_constructor_named_constructor() {
         return h.val;
     }
     "#;
-    let (_, code) = compile_run_src(src, "test_ctor_constructor");
+    let (_, code) = compile_run_src(src, "test_ctor_init");
     assert_eq!(code, 100, "Holder(100) should initialize val to 100");
 }
 
@@ -129,5 +123,8 @@ fn test_field_mutation_and_handle_scope_cleanup() {
     }
     "#;
     let (_, code) = compile_run_src(src, "test_field_mutation");
-    assert_eq!(code, 15, "Counter count should be mutated to 15 and local handle freed cleanly");
+    assert_eq!(
+        code, 15,
+        "Counter count should be mutated to 15 and local handle freed cleanly"
+    );
 }
