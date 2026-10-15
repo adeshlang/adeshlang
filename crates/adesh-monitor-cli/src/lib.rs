@@ -115,15 +115,23 @@ fn cmd_list(args: &[String]) -> Result<(), String> {
         );
     } else if group_mode {
         // Group sessions by runtime mode
-        let mut grouped: std::collections::BTreeMap<String, Vec<&SessionSummary>> = std::collections::BTreeMap::new();
+        let mut grouped: std::collections::BTreeMap<String, Vec<&SessionSummary>> =
+            std::collections::BTreeMap::new();
         for s in &sessions {
             let key = format!("{:?}", s.execution_mode);
             grouped.entry(key).or_default().push(s);
         }
 
-        println!("Total Sessions: {} (Grouped by Runtime Mode)\n", sessions.len());
+        println!(
+            "Total Sessions: {} (Grouped by Runtime Mode)\n",
+            sessions.len()
+        );
         for (mode_name, group_sessions) in grouped {
-            println!("=== Runtime Group: {} ({} sessions) ===", mode_name, group_sessions.len());
+            println!(
+                "=== Runtime Group: {} ({} sessions) ===",
+                mode_name,
+                group_sessions.len()
+            );
             print_sessions_table(&group_sessions);
             println!();
         }

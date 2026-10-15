@@ -75,10 +75,14 @@ where
                 if let Ok(list) = store.list_sessions(100) {
                     raw_sessions = list;
                 } else {
-                    notice_msg = Some(("Observatory SQLite query error".to_string(), Instant::now()));
+                    notice_msg =
+                        Some(("Observatory SQLite query error".to_string(), Instant::now()));
                 }
             } else {
-                notice_msg = Some(("Observatory storage unreachable".to_string(), Instant::now()));
+                notice_msg = Some((
+                    "Observatory storage unreachable".to_string(),
+                    Instant::now(),
+                ));
             }
 
             // Always sort with newest at top
@@ -219,11 +223,10 @@ where
                 ],
             )
             .header(header)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(format!(" Execution Sessions (Mode: {}) ", current_filter_label)),
-            );
+            .block(Block::default().borders(Borders::ALL).title(format!(
+                " Execution Sessions (Mode: {}) ",
+                current_filter_label
+            )));
             f.render_widget(table, chunks[1]);
 
             // Footer block
@@ -244,7 +247,8 @@ where
                     selected_idx = selected_idx.saturating_sub(1);
                 }
                 KeyCode::Down => {
-                    if !displayed_sessions.is_empty() && selected_idx < displayed_sessions.len() - 1 {
+                    if !displayed_sessions.is_empty() && selected_idx < displayed_sessions.len() - 1
+                    {
                         selected_idx += 1;
                     }
                 }
@@ -264,7 +268,8 @@ where
                     raw_sessions.clear();
                     selected_idx = 0;
                     notice_msg = Some((
-                        "Dashboard history cleared successfully! | 'r' refresh | 'q' quit".to_string(),
+                        "Dashboard history cleared successfully! | 'r' refresh | 'q' quit"
+                            .to_string(),
                         Instant::now(),
                     ));
                     last_fetch = Instant::now();

@@ -1,0 +1,7 @@
+[submodule "docs-website"]
+	path = docs-website
+	url = https://github.com/adeshlang/docs-website.git
+
+[submodule "mcp"]
+	path = mcp
+	url = https://github.com/adeshlang/mcp.git

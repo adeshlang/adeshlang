@@ -117,3 +117,53 @@ fn test_archive_linker_index_is_lazy_and_resolvable() {
         "indexed members should remain unparsed until extracted"
     );
 }
+
+#[test]
+fn test_macho_symdef64_archive_index_parsing() {
+    fn append_raw_member(out: &mut Vec<u8>, name: &str, data: &[u8]) {
+        let mut header = [b' '; 60];
+        header[..name.len()].copy_from_slice(name.as_bytes());
+        let size = data.len().to_string();
+        header[48..48 + size.len()].copy_from_slice(size.as_bytes());
+        header[58..60].copy_from_slice(b"`\n");
+        out.extend_from_slice(&header);
+        out.extend_from_slice(data);
+        if !data.len().is_multiple_of(2) {
+            out.push(b'\n');
+        }
+    }
+
+    let sym_str = b"_aot_render\0";
+    let ran_size = 16u64;
+    let str_size = sym_str.len() as u64;
+
+    let mut symdef_data = Vec::new();
+    symdef_data.extend_from_slice(&ran_size.to_le_bytes());
+    symdef_data.extend_from_slice(&0u64.to_le_bytes()); // strx
+    let member_off = 8 + 60 + 8 + 16 + 8 + str_size;
+    symdef_data.extend_from_slice(&member_off.to_le_bytes()); // member_off
+    symdef_data.extend_from_slice(&str_size.to_le_bytes());
+    symdef_data.extend_from_slice(sym_str);
+
+    let mut bytes = b"!<arch>\n".to_vec();
+    append_raw_member(&mut bytes, "__.SYMDEF 64", &symdef_data);
+
+    let target = Target::aarch64_macos();
+    let mut obj = ObjectFile::new("rt.o".into(), target, 0);
+    obj.add_section(Section::new_code(".text", vec![0xC3], 1));
+    obj.add_symbol(Symbol::new_defined(
+        "aot_render",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        1,
+        0,
+    ));
+    let object_bytes = ObjectWriter::encode(&obj).unwrap();
+    append_raw_member(&mut bytes, "rt.o", &object_bytes);
+
+    let parsed = Archive::parse(&bytes, Path::new("symdef64.a")).unwrap();
+    assert_eq!(parsed.symbol_index.get("_aot_render"), Some(&vec![0]));
+    assert_eq!(parsed.symbol_index.get("aot_render"), Some(&vec![0]));
+}

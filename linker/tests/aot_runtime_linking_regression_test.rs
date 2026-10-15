@@ -8,6 +8,7 @@
 //! 5. Distinguishing required runtime symbols from user application symbols in diagnostics.
 
 use adesh_linker::archive::{Archive, ArchiveMember};
+use adesh_linker::os_router::{OsApiRouter, SymbolRoute};
 use adesh_linker::error::ErrorCode;
 use adesh_linker::object::ObjectFile;
 use adesh_linker::relocation::{Relocation, RelocationKind};
@@ -244,4 +245,59 @@ fn test_archive_member_reassign_file_index_updates_relocations_and_symbols() {
     assert_eq!(member_obj.sections[0].file_index, Some(5));
     assert_eq!(member_obj.sections[0].relocations[0].file_index, Some(5));
     assert_eq!(member_obj.symbols[0].file_index, Some(5));
+}
+
+#[test]
+fn test_macho_system_and_runtime_symbol_resolution() {
+    let target = Target::aarch64_macos();
+    let mut resolver = SymbolResolver::new();
+
+    // App object referencing runtime symbol aot_print and macOS system symbol _NSGetArgc
+    let mut app_obj = ObjectFile::new(PathBuf::from("app.o"), target.clone(), 0);
+    app_obj.add_section(Section::new_code(".text", vec![0xc3; 16], 16));
+    app_obj.add_symbol(Symbol::new_undefined("aot_print", 0));
+    app_obj.add_symbol(Symbol::new_undefined("_NSGetArgc", 0));
+
+    // Archive with Member defining _aot_print (mangled C name in Mach-O)
+    let mut rt_obj = ObjectFile::new(PathBuf::from("rt.o"), target.clone(), 0);
+    rt_obj.add_section(Section::new_code(".text", vec![0xc3; 16], 16));
+    rt_obj.add_symbol(Symbol::new_defined(
+        "_aot_print",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        16,
+        0,
+    ));
+
+    let mut archive = Archive::new();
+    archive.path = PathBuf::from("libadesh_runtime.a");
+    archive.members.push(ArchiveMember {
+        name: "rt.o".to_string(),
+        size: 16,
+        data: Vec::new(),
+        obj: Some(rt_obj),
+    });
+    archive
+        .symbol_index
+        .insert("_aot_print".to_string(), vec![0]);
+    archive
+        .symbol_index
+        .insert("aot_print".to_string(), vec![0]);
+
+    let mut objects = vec![app_obj];
+    let res = resolver.resolve_with_target(&mut objects, &[archive], &target);
+    assert!(res.is_ok(), "resolve_with_target failed for Mach-O: {:?}", res);
+    assert_eq!(objects.len(), 2, "rt.o should be extracted");
+
+    // Check system symbol classification for _NSGetArgc
+    let route = OsApiRouter::classify("_NSGetArgc", &target);
+    assert!(matches!(
+        route,
+        SymbolRoute::DllImport {
+            dll: "/usr/lib/libSystem.B.dylib",
+            ..
+        }
+    ));
 }
