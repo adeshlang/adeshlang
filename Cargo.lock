@@ -115,6 +115,8 @@ dependencies = [
  "adesh-monitor-protocol",
  "chrono",
  "libc",
+ "serde",
+ "serde_json",
  "tempfile",
  "windows-sys 0.52.0",
 ]

@@ -107,6 +107,16 @@ impl MachOWriter {
             }
         }
 
+        #[cfg(target_os = "macos")]
+        {
+            // Apple Silicon (ARM64) and macOS 11+ require every executable to be
+            // signed with at least an ad-hoc code signature to be launched by XNU.
+            let _ = std::process::Command::new("codesign")
+                .args(["-s", "-", "-f"])
+                .arg(path)
+                .output();
+        }
+
         Ok(())
     }
 
@@ -213,7 +223,7 @@ impl MachOWriter {
         let cmd_data_sz = 72 + (data_sections.len() + usize::from(has_stub_sections)) * 80;
         let cmd_linkedit_sz = 72usize;
         let cmd_build_version_sz = 24usize;
-        let dylinker_str = b"/usr/lib/dyld\0\0\0"; // padded to 16 bytes
+        let dylinker_str = b"/usr/lib/dyld\0\0\0\0\0\0\0"; // padded to 20 bytes so 12 + 20 = 32 (8-byte aligned)
         let cmd_dylinker_sz = 12 + dylinker_str.len();
         let cmd_main_sz = if is_shared { 0usize } else { 24usize };
         let cmd_symtab_sz = 24usize;
@@ -375,17 +385,21 @@ impl MachOWriter {
         let mut data_filesize = current_file_offset - data_file_offset_start;
         let mut data_vmsize = align_to(current_vmaddr - data_vmaddr_start, target.page_size);
 
+        let mut text_va_end = current_vmaddr;
+        let mut data_file_end = current_file_offset;
+        let mut data_va_end = current_vmaddr;
+
         // Authoritative placement when virtual addresses are assigned
         let has_layout_vas = merged_sections.iter().any(|s| s.virtual_address != 0);
         if has_layout_vas {
             output.truncate(headers_size);
 
             let mut text_file_end = headers_size as u64;
-            let mut text_va_end = text_vmaddr + headers_size as u64;
+            text_va_end = text_vmaddr + headers_size as u64;
             let mut data_off_min: Option<u64> = None;
             let mut data_va_min: Option<u64> = None;
-            let mut data_file_end = 0u64;
-            let mut data_va_end = 0u64;
+            data_file_end = 0u64;
+            data_va_end = 0u64;
             text_sec_records.clear();
             data_sec_records.clear();
 
@@ -432,7 +446,7 @@ impl MachOWriter {
                     text_sec_records.push((
                         sec.name.clone(),
                         sec.virtual_address,
-                        file_len,
+                        mem_len,
                         off as u32,
                         sec.alignment,
                     ));
@@ -467,13 +481,12 @@ impl MachOWriter {
                 ),
             };
 
-            text_filesize = text_file_end;
             text_vmsize = align_to(text_va_end - text_vmaddr, target.page_size);
+            text_filesize = text_vmsize.min(data_off_start);
             data_file_offset_start = data_off_start;
             data_vmaddr_start = data_va_start;
             data_filesize = data_file_end.saturating_sub(data_off_start);
-            data_vmsize = data_va_end.saturating_sub(data_va_start);
-            current_file_offset = output.len() as u64;
+            data_vmsize = align_to(data_va_end.saturating_sub(data_va_start), target.page_size);
         }
 
         // ── Dynamic-linking synthesis (dyld stubs, GOT, lazy-bind info) ──
@@ -588,18 +601,18 @@ impl MachOWriter {
                 }
             }
 
-            // __stub_helper placement: right after every __TEXT section.
+            // __stub_helper placement: right after the last __TEXT section.
             let entry_size = if target.arch == Arch::AArch64 {
                 12u64
             } else {
                 10u64
             };
-            let stub_helper_va = align_to(text_vmaddr + text_vmsize, 16);
+            let stub_helper_va = align_to(text_va_end, 16);
             let tail_off = (imports.len() as u64) * entry_size;
             let stub_helper_file_off = stub_helper_va - layout_base_va;
 
-            // __got placement: right after every __DATA section.
-            let got_va = align_to(data_vmaddr_start + data_vmsize, 8);
+            // __got placement: right after the last __DATA section.
+            let got_va = align_to(data_va_end, 8);
             let got_file_off = got_va - layout_base_va;
 
             // Build the helper machine code now that every address is known.
@@ -620,7 +633,8 @@ impl MachOWriter {
                     stub_helper_bytes.extend_from_slice(&(lazy_offset as u32).to_le_bytes());
                 }
                 let pc = tail_va;
-                let page_mask = !(target.page_size - 1);
+                // In AArch64 hardware, ADRP always computes the address of a 4KB (12-bit) page.
+                let page_mask = !0xFFFu64;
 
                 let helper_page = stub_helper_va & page_mask;
                 let pc_page = pc & page_mask;
@@ -629,7 +643,7 @@ impl MachOWriter {
                 let immlo = (page_delta & 0x3) as u32;
                 let adrp_x17 = 0x90000011u32 | (immlo << 29) | (immhi << 5);
 
-                let helper_off = (stub_helper_va & (target.page_size - 1)) as u32;
+                let helper_off = (stub_helper_va & 0xFFF) as u32;
                 let add_x17 = 0x91000231u32 | (helper_off << 10);
 
                 let pc_got = tail_va + 8;
@@ -640,9 +654,10 @@ impl MachOWriter {
                 let got_immlo = (got_page_delta & 0x3) as u32;
                 let adrp_x16 = 0x90000010u32 | (got_immlo << 29) | (got_immhi << 5);
 
-                let got_off = (got_va & (target.page_size - 1)) as u32;
+                let got_off = (got_va & 0xFFF) as u32;
                 let pimm = (got_off >> 3) & 0xFFF;
-                let ldr_x16 = 0xF9400200u32 | (pimm << 10);
+                // ldr x16, [x16, #pimm<<3] (Rt = x16 = 0x10)
+                let ldr_x16 = 0xF9400210u32 | (pimm << 10);
 
                 let br_x16 = 0xD61F0200u32;
 
@@ -690,13 +705,9 @@ impl MachOWriter {
                 stub_helper_file_off as u32,
                 16,
             ));
-            text_filesize =
-                (stub_helper_file_off + stub_helper_bytes.len() as u64).max(text_filesize);
-            text_vmsize = align_to(
-                stub_helper_va + stub_helper_bytes.len() as u64 - text_vmaddr,
-                target.page_size,
-            )
-            .max(text_vmsize);
+            text_va_end = text_va_end.max(stub_helper_va + stub_helper_bytes.len() as u64);
+            text_vmsize = align_to(text_va_end - text_vmaddr, target.page_size);
+            text_filesize = text_vmsize.min(data_file_offset_start);
 
             // Write the __got slot (zero: dyld fills it from the non-lazy
             // bind entry before any code runs).
@@ -707,11 +718,11 @@ impl MachOWriter {
                 output.resize(got_file_off as usize + 8, 0);
             }
             data_sec_records.push((GOT_SECTION.to_string(), got_va, 8, got_file_off as u32, 8));
-            data_filesize = (got_file_off + 8)
-                .saturating_sub(data_file_offset_start)
-                .max(data_filesize);
+            data_file_end = data_file_end.max(got_file_off + 8);
+            data_va_end = data_va_end.max(got_va + 8);
+            data_filesize = data_file_end.saturating_sub(data_file_offset_start);
             data_vmsize =
-                align_to(got_va + 8 - data_vmaddr_start, target.page_size).max(data_vmsize);
+                align_to(data_va_end - data_vmaddr_start, target.page_size).max(data_vmsize);
 
             // Patch every lazy slot to its helper entry (the pre-binding
             // target). These are absolute pointers into __TEXT and must be
@@ -799,6 +810,7 @@ impl MachOWriter {
         }
 
         // 5. Layout __LINKEDIT (Symbols, Strings, and Dysymtab)
+        current_file_offset = output.len() as u64;
         let linkedit_file_offset = align_to(current_file_offset, target.page_size);
         let linkedit_vmaddr = data_vmaddr_start + data_vmsize;
 
@@ -1079,13 +1091,22 @@ impl MachOWriter {
             cmd_buf.extend_from_slice(&va.to_le_bytes());
             cmd_buf.extend_from_slice(&sz.to_le_bytes());
             cmd_buf.extend_from_slice(&off.to_le_bytes());
-            cmd_buf.extend_from_slice(&((*align as f64).log2() as u32).to_le_bytes());
+            let align_pow2 = if *align > 1 {
+                (*align as f64).log2().round() as u32
+            } else {
+                0
+            };
+            cmd_buf.extend_from_slice(&align_pow2.to_le_bytes());
             cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // reloff
             cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // nreloc
-            // flags: S_ATTR_SOME_INSTRUCTIONS | S_ATTR_PURE_INSTRUCTIONS
-            cmd_buf.extend_from_slice(
-                &(S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS).to_le_bytes(),
-            );
+            let is_code =
+                name.contains("text") || name == STUB_HELPER_SECTION || name.contains("code");
+            let section_flags = if is_code {
+                S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS
+            } else {
+                S_REGULAR
+            };
+            cmd_buf.extend_from_slice(&section_flags.to_le_bytes());
             cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // reserved1
             cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // reserved2
             cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // reserved3
@@ -1116,7 +1137,12 @@ impl MachOWriter {
             cmd_buf.extend_from_slice(&va.to_le_bytes());
             cmd_buf.extend_from_slice(&sz.to_le_bytes());
             cmd_buf.extend_from_slice(&off.to_le_bytes());
-            cmd_buf.extend_from_slice(&((*align as f64).log2() as u32).to_le_bytes());
+            let align_pow2 = if *align > 1 {
+                (*align as f64).log2().round() as u32
+            } else {
+                0
+            };
+            cmd_buf.extend_from_slice(&align_pow2.to_le_bytes());
             // Section flags carry the dyld section TYPE (low byte) plus the
             // indirect-symbol-table start (reserved1) for pointer sections:
             // dyld uses both to interpret the slots it binds.

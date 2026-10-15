@@ -921,7 +921,14 @@ impl LayoutEngine {
         // the linker can `jmp *[rip + slot]`.
         let mut macho_la_section_index: Option<usize> = None;
         if target.format == crate::target::ObjectFormat::MachO && !macho_imports.is_empty() {
-            let la_va = align_to(current_va, 8);
+            let has_data = merged_list.iter().any(|s| {
+                (s.kind == SectionKind::Data || s.kind == SectionKind::Bss) && s.is_alloc()
+            });
+            let la_va = if has_data {
+                align_to(current_va, 8)
+            } else {
+                align_to(current_va, target.page_size.max(8))
+            };
             let mut la_sec = MergedSection::new(
                 "__la_symbol_ptr",
                 SectionKind::Data,

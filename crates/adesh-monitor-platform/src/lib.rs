@@ -7,6 +7,8 @@ use adesh_monitor_protocol::ProcessMetrics;
 use chrono::Utc;
 use std::time::Instant;
 
+pub mod hardware;
+
 /// Platform capability and hardware report
 #[derive(Debug, Clone)]
 pub struct PlatformCapabilities {

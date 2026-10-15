@@ -13,10 +13,25 @@ export type NavTab =
   | "audit_logs"
   | "settings";
 
+export interface GpuInfo {
+  name: string;
+  vendor?: string | null;
+  vram_bytes?: number | null;
+  driver_version?: string | null;
+  status?: string | null;
+}
+
 export interface HardwareCaps {
   os_name: string;
   arch: string;
+  cpu_name?: string | null;
   logical_cores: number;
+  physical_cores?: number | null;
+  cpu_max_clock_mhz?: number | null;
+  total_memory_bytes?: number | null;
+  available_memory_bytes?: number | null;
+  gpus?: GpuInfo[] | null;
+  gpu_detection_method?: string | null;
   supports_process_cpu: boolean;
   supports_process_memory: boolean;
   supports_disk_io: boolean;
@@ -67,7 +82,14 @@ const initialState: ObservatoryState = {
   hardware: {
     os_name: "Detecting...",
     arch: "...",
+    cpu_name: null,
     logical_cores: 0,
+    physical_cores: null,
+    cpu_max_clock_mhz: null,
+    total_memory_bytes: 0,
+    available_memory_bytes: null,
+    gpus: [],
+    gpu_detection_method: null,
     supports_process_cpu: true,
     supports_process_memory: true,
     supports_disk_io: true,

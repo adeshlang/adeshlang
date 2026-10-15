@@ -34,17 +34,24 @@ fn purge_history() -> Result<(), String> {
 }
 
 #[tauri::command]
-fn get_hardware_info() -> Result<serde_json::Value, String> {
-    let provider = adesh_monitor_platform::create_platform_provider();
-    let caps = provider.query_capabilities();
+async fn get_hardware_info() -> Result<serde_json::Value, String> {
+    let caps = adesh_monitor_platform::create_platform_provider().query_capabilities();
+    let report = adesh_monitor_platform::hardware::detect_hardware();
     Ok(serde_json::json!({
-        "os_name": std::env::consts::OS,
-        "arch": std::env::consts::ARCH,
-        "logical_cores": std::thread::available_parallelism().map(|p| p.get()).unwrap_or(1),
+        "os_name": report.os_name,
+        "arch": report.arch,
+        "cpu_name": report.cpu.name,
+        "logical_cores": report.cpu.logical_cores,
+        "physical_cores": report.cpu.physical_cores,
+        "cpu_max_clock_mhz": report.cpu.max_clock_mhz,
+        "total_memory_bytes": report.total_memory_bytes,
+        "available_memory_bytes": report.available_memory_bytes,
+        "gpus": report.gpus,
+        "gpu_detection_method": report.gpu_detection_method,
         "supports_process_cpu": caps.supports_process_cpu,
         "supports_process_memory": caps.supports_process_memory,
         "supports_disk_io": caps.supports_disk_io,
-        "supports_accelerators": caps.supports_accelerators,
+        "supports_accelerators": !report.gpus.is_empty(),
     }))
 }
 
