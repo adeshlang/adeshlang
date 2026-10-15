@@ -46,7 +46,11 @@ USAGE:
     adesh monitor <COMMAND> [OPTIONS]
 
 COMMANDS:
-    list [--limit <N>] [--json]       List active and recorded execution sessions
+    list [--limit <N>] [--group] [--mode <MODE>] [--json]
+                                      List active and recorded execution sessions
+                                      Options:
+                                        --group, -g     Group sessions by runtime mode
+                                        --mode, -m      Filter sessions (interpreter, jit, etc.)
     show <session-id> [--json]        Show complete session details & telemetry
     trace <session-id> [--json]       Inspect compiler and linker stage timings
     stats [--json]                    Display collector throughput and resource stats
@@ -63,21 +67,29 @@ COMMANDS:
 fn cmd_list(args: &[String]) -> Result<(), String> {
     let mut limit = 50;
     let mut json_mode = false;
+    let mut group_mode = false;
+    let mut mode_filter: Option<String> = None;
 
     let mut i = 0;
     while i < args.len() {
-        if args[i] == "--limit" && i + 1 < args.len() {
+        if (args[i] == "--limit" || args[i] == "-l") && i + 1 < args.len() {
             limit = args[i + 1].parse().unwrap_or(50);
             i += 2;
         } else if args[i] == "--json" {
             json_mode = true;
             i += 1;
+        } else if args[i] == "--group" || args[i] == "-g" {
+            group_mode = true;
+            i += 1;
+        } else if (args[i] == "--mode" || args[i] == "-m") && i + 1 < args.len() {
+            mode_filter = Some(args[i + 1].to_lowercase());
+            i += 2;
         } else {
             i += 1;
         }
     }
 
-    let sessions = match send_collector_rpc(&CollectorRequest::ListSessions { limit }) {
+    let mut sessions = match send_collector_rpc(&CollectorRequest::ListSessions { limit }) {
         Ok(CollectorResponse::SessionsList { sessions }) => sessions,
         _ => {
             let store = HistoryStore::default_store().map_err(|e| e.to_string())?;
@@ -85,32 +97,63 @@ fn cmd_list(args: &[String]) -> Result<(), String> {
         }
     };
 
+    // Filter by mode if requested
+    if let Some(ref m) = mode_filter {
+        sessions.retain(|s| {
+            let s_mode = format!("{:?}", s.execution_mode).to_lowercase();
+            s_mode.contains(m)
+        });
+    }
+
+    // Always sort by newest first (descending start_time)
+    sessions.sort_by(|a, b| b.start_time.cmp(&a.start_time));
+
     if json_mode {
         println!(
             "{}",
             serde_json::to_string_pretty(&sessions).map_err(|e| e.to_string())?
         );
-    } else {
-        println!(
-            "{:<36} {:<8} {:<12} {:<12} {:<10} {:<10} {:<10}",
-            "SESSION ID", "PID", "TOOL", "MODE", "STATUS", "DURATION", "PEAK RSS"
-        );
-        println!("{:-<105}", "");
+    } else if group_mode {
+        // Group sessions by runtime mode
+        let mut grouped: std::collections::BTreeMap<String, Vec<&SessionSummary>> = std::collections::BTreeMap::new();
         for s in &sessions {
-            let dur = s
-                .duration_ms
-                .map(|d| format!("{}ms", d))
-                .unwrap_or_else(|| "running".to_string());
-            let mem_mb = format!("{:.1}MB", s.peak_rss_bytes as f64 / (1024.0 * 1024.0));
-            let mode = format!("{:?}", s.execution_mode);
-            let status = format!("{:?}", s.status);
-            println!(
-                "{:<36} {:<8} {:<12} {:<12} {:<10} {:<10} {:<10}",
-                s.session_id, s.pid, s.tool_name, mode, status, dur, mem_mb
-            );
+            let key = format!("{:?}", s.execution_mode);
+            grouped.entry(key).or_default().push(s);
         }
+
+        println!("Total Sessions: {} (Grouped by Runtime Mode)\n", sessions.len());
+        for (mode_name, group_sessions) in grouped {
+            println!("=== Runtime Group: {} ({} sessions) ===", mode_name, group_sessions.len());
+            print_sessions_table(&group_sessions);
+            println!();
+        }
+    } else {
+        let refs: Vec<&SessionSummary> = sessions.iter().collect();
+        print_sessions_table(&refs);
     }
     Ok(())
+}
+
+fn print_sessions_table(sessions: &[&SessionSummary]) {
+    println!(
+        "{:<36} {:<19} {:<8} {:<12} {:<12} {:<10} {:<10} {:<10}",
+        "SESSION ID", "TIMESTAMP", "PID", "TOOL", "MODE", "STATUS", "DURATION", "PEAK RSS"
+    );
+    println!("{:-<125}", "");
+    for s in sessions {
+        let dur = s
+            .duration_ms
+            .map(|d| format!("{}ms", d))
+            .unwrap_or_else(|| "running".to_string());
+        let mem_mb = format!("{:.1}MB", s.peak_rss_bytes as f64 / (1024.0 * 1024.0));
+        let mode = format!("{:?}", s.execution_mode);
+        let status = format!("{:?}", s.status);
+        let time_str = s.start_time.format("%Y-%m-%d %H:%M:%S").to_string();
+        println!(
+            "{:<36} {:<19} {:<8} {:<12} {:<12} {:<10} {:<10} {:<10}",
+            s.session_id, time_str, s.pid, s.tool_name, mode, status, dur, mem_mb
+        );
+    }
 }
 
 fn cmd_show(args: &[String]) -> Result<(), String> {

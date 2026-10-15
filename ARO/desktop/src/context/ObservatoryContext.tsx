@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useReducer, useEffect, ReactNode } from "react";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { SessionSummary, CollectorStats, SessionDetail, CompilerStageEvent, LinkerStageEvent } from "../types/observatory";
 
 export type NavTab =
@@ -124,10 +125,11 @@ const ObservatoryContext = createContext<ObservatoryContextType | undefined>(und
 export const ObservatoryProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [state, dispatch] = useReducer(observatoryReducer, initialState);
 
+  const isTauriEnv = isTauri() || typeof (window as any).__TAURI_INTERNALS__ !== "undefined";
+
   const refreshNow = async () => {
     try {
-      if ((window as any).__TAURI_INTERNALS__) {
-        const { invoke } = await import("@tauri-apps/api/core");
+      if (isTauriEnv) {
         let sessions: SessionSummary[] = [];
         let stats: CollectorStats | null = null;
         let hardware: HardwareCaps | null = null;
@@ -135,19 +137,19 @@ export const ObservatoryProvider: React.FC<{ children: ReactNode }> = ({ childre
         try {
           sessions = await invoke<SessionSummary[]>("get_sessions", { limit: 200 });
         } catch (e) {
-          console.warn("get_sessions error:", e);
+          console.error("get_sessions error:", e);
         }
 
         try {
           stats = await invoke<CollectorStats>("get_collector_stats");
         } catch (e) {
-          console.warn("get_collector_stats error:", e);
+          console.error("get_collector_stats error:", e);
         }
 
         try {
           hardware = await invoke<HardwareCaps>("get_hardware_info");
         } catch (e) {
-          console.warn("get_hardware_info error:", e);
+          console.error("get_hardware_info error:", e);
         }
 
         dispatch({ type: "SET_SESSIONS", payload: sessions || [] });
@@ -164,6 +166,7 @@ export const ObservatoryProvider: React.FC<{ children: ReactNode }> = ({ childre
         if (state.selectedSessionId) {
           try {
             const detail = await invoke<SessionDetail>("get_session_detail", {
+              session_id: state.selectedSessionId,
               sessionId: state.selectedSessionId,
             });
             if (detail) {
@@ -182,8 +185,7 @@ export const ObservatoryProvider: React.FC<{ children: ReactNode }> = ({ childre
 
   const purgeHistory = async () => {
     try {
-      if ((window as any).__TAURI_INTERNALS__) {
-        const { invoke } = await import("@tauri-apps/api/core");
+      if (isTauriEnv) {
         await invoke("purge_history");
       }
       dispatch({ type: "SET_SESSIONS", payload: [] });
@@ -197,9 +199,11 @@ export const ObservatoryProvider: React.FC<{ children: ReactNode }> = ({ childre
   const selectSessionById = async (sessionId: string) => {
     dispatch({ type: "SELECT_SESSION", payload: sessionId });
     try {
-      if ((window as any).__TAURI_INTERNALS__) {
-        const { invoke } = await import("@tauri-apps/api/core");
-        const detail = await invoke<SessionDetail>("get_session_detail", { sessionId });
+      if (isTauriEnv) {
+        const detail = await invoke<SessionDetail>("get_session_detail", {
+          session_id: sessionId,
+          sessionId,
+        });
         dispatch({ type: "SET_SESSION_DETAIL", payload: detail });
       } else {
         const summary = state.sessions.find((s) => s.session_id === sessionId);

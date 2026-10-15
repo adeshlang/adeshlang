@@ -6,12 +6,21 @@ use adesh_monitor_protocol::*;
 
 #[tauri::command]
 fn get_sessions(limit: Option<usize>) -> Result<Vec<SessionSummary>, String> {
-    desktop_list_sessions(limit.unwrap_or(50))
+    let lim = limit.unwrap_or(50);
+    let sessions = desktop_list_sessions(lim)?;
+    Ok(sessions)
 }
 
 #[tauri::command]
-fn get_session_detail(session_id: String) -> Result<SessionDetail, String> {
-    desktop_get_session_detail(session_id)
+#[allow(non_snake_case)]
+fn get_session_detail(
+    session_id: Option<String>,
+    sessionId: Option<String>,
+) -> Result<SessionDetail, String> {
+    let id = session_id
+        .or(sessionId)
+        .ok_or_else(|| "Session ID parameter missing".to_string())?;
+    desktop_get_session_detail(id)
 }
 
 #[tauri::command]

@@ -50,37 +50,74 @@ where
     <B as Backend>::Error: std::error::Error + 'static,
 {
     let mut last_fetch = Instant::now() - Duration::from_secs(10);
-    let mut sessions: Vec<SessionSummary> = Vec::new();
+    let mut raw_sessions: Vec<SessionSummary> = Vec::new();
     let mut selected_idx = 0;
-    let mut status_msg =
-        "Press 'q' to quit | 'r' to refresh | 'c' to clear history | Up/Down to navigate"
-            .to_string();
+    let mut mode_filter: Option<ExecutionMode> = None;
+    let mut notice_msg: Option<(String, Instant)> = None;
+
+    let filter_modes = [
+        None,
+        Some(ExecutionMode::Interpreter),
+        Some(ExecutionMode::Jit),
+        Some(ExecutionMode::BytecodeVm),
+        Some(ExecutionMode::Linker),
+        Some(ExecutionMode::AotNative),
+    ];
+    let mut filter_mode_idx = 0;
 
     loop {
-        if last_fetch.elapsed() > Duration::from_millis(500) || sessions.is_empty() {
+        if last_fetch.elapsed() > Duration::from_millis(500) || raw_sessions.is_empty() {
             if let Ok(CollectorResponse::SessionsList { sessions: list }) =
                 send_collector_rpc(&CollectorRequest::ListSessions { limit: 100 })
             {
-                sessions = list;
-                status_msg = format!(
-                    "Live IPC Collector | {} sessions | 'r' refresh | 'c' clear | 'q' quit",
-                    sessions.len()
-                );
+                raw_sessions = list;
             } else if let Ok(store) = HistoryStore::default_store() {
                 if let Ok(list) = store.list_sessions(100) {
-                    sessions = list;
-                    status_msg = format!(
-                        "Durable SQLite (~/.adesh/observatory.db) | {} sessions | 'r' refresh | 'c' clear | 'q' quit",
-                        sessions.len()
-                    );
+                    raw_sessions = list;
                 } else {
-                    status_msg = "Observatory SQLite query error".to_string();
+                    notice_msg = Some(("Observatory SQLite query error".to_string(), Instant::now()));
                 }
             } else {
-                status_msg = "Observatory storage unreachable".to_string();
+                notice_msg = Some(("Observatory storage unreachable".to_string(), Instant::now()));
             }
+
+            // Always sort with newest at top
+            raw_sessions.sort_by(|a, b| b.start_time.cmp(&a.start_time));
             last_fetch = Instant::now();
         }
+
+        let displayed_sessions: Vec<&SessionSummary> = raw_sessions
+            .iter()
+            .filter(|s| match mode_filter {
+                Some(m) => s.execution_mode == m,
+                None => true,
+            })
+            .collect();
+
+        let current_filter_label = match mode_filter {
+            Some(m) => format!("{:?}", m),
+            None => "All Modes".to_string(),
+        };
+
+        let footer_text = if let Some((ref msg, time)) = notice_msg {
+            if time.elapsed() < Duration::from_secs(3) {
+                msg.clone()
+            } else {
+                format!(
+                    "Live ARO | {}/{} sessions | Mode: [{}] ('g'/'m' cycle) | 'c' clear | 'r' refresh | 'q' quit",
+                    displayed_sessions.len(),
+                    raw_sessions.len(),
+                    current_filter_label
+                )
+            }
+        } else {
+            format!(
+                "Live ARO | {}/{} sessions | Mode: [{}] ('g'/'m' cycle) | 'c' clear | 'r' refresh | 'q' quit",
+                displayed_sessions.len(),
+                raw_sessions.len(),
+                current_filter_label
+            )
+        };
 
         terminal.draw(|f| {
             let chunks = Layout::default()
@@ -112,6 +149,7 @@ where
             // Sessions table
             let header_cells = [
                 "Session ID",
+                "Timestamp",
                 "Tool",
                 "PID",
                 "Mode",
@@ -129,13 +167,14 @@ where
             });
             let header = Row::new(header_cells).height(1).bottom_margin(1);
 
-            let rows = sessions.iter().enumerate().map(|(idx, s)| {
+            let rows = displayed_sessions.iter().enumerate().map(|(idx, s)| {
                 let is_selected = idx == selected_idx;
                 let dur = s
                     .duration_ms
                     .map(|d| format!("{}ms", d))
                     .unwrap_or_else(|| "running".to_string());
                 let mem = format!("{:.1} MB", s.peak_rss_bytes as f64 / (1024.0 * 1024.0));
+                let time_str = s.start_time.format("%H:%M:%S").to_string();
                 let status_style = match s.status {
                     SessionStatus::Running => Style::default().fg(Color::Green),
                     SessionStatus::Completed => Style::default().fg(Color::Cyan),
@@ -145,6 +184,7 @@ where
 
                 let cells = vec![
                     Cell::from(s.session_id.clone()),
+                    Cell::from(time_str),
                     Cell::from(s.tool_name.clone()),
                     Cell::from(s.pid.to_string()),
                     Cell::from(format!("{:?}", s.execution_mode)),
@@ -170,6 +210,7 @@ where
                 [
                     Constraint::Length(38),
                     Constraint::Length(12),
+                    Constraint::Length(10),
                     Constraint::Length(8),
                     Constraint::Length(14),
                     Constraint::Length(12),
@@ -181,12 +222,12 @@ where
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(" Execution Sessions "),
+                    .title(format!(" Execution Sessions (Mode: {}) ", current_filter_label)),
             );
             f.render_widget(table, chunks[1]);
 
             // Footer block
-            let footer = Paragraph::new(status_msg.clone()).block(
+            let footer = Paragraph::new(footer_text).block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::Gray)),
@@ -203,22 +244,29 @@ where
                     selected_idx = selected_idx.saturating_sub(1);
                 }
                 KeyCode::Down => {
-                    if !sessions.is_empty() && selected_idx < sessions.len() - 1 {
+                    if !displayed_sessions.is_empty() && selected_idx < displayed_sessions.len() - 1 {
                         selected_idx += 1;
                     }
                 }
                 KeyCode::Char('r') => {
                     last_fetch = Instant::now() - Duration::from_secs(10);
                 }
+                KeyCode::Char('g') | KeyCode::Char('m') => {
+                    filter_mode_idx = (filter_mode_idx + 1) % filter_modes.len();
+                    mode_filter = filter_modes[filter_mode_idx];
+                    selected_idx = 0;
+                }
                 KeyCode::Char('c') | KeyCode::Char('x') => {
                     let _ = send_collector_rpc(&CollectorRequest::PurgeHistory);
                     if let Ok(store) = HistoryStore::default_store() {
                         let _ = store.purge_history();
                     }
-                    sessions.clear();
+                    raw_sessions.clear();
                     selected_idx = 0;
-                    status_msg = "Dashboard history cleared successfully! | 'r' refresh | 'q' quit"
-                        .to_string();
+                    notice_msg = Some((
+                        "Dashboard history cleared successfully! | 'r' refresh | 'q' quit".to_string(),
+                        Instant::now(),
+                    ));
                     last_fetch = Instant::now();
                 }
                 _ => {}

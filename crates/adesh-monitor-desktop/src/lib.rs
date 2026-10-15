@@ -49,3 +49,19 @@ pub fn desktop_purge_history() -> Result<(), String> {
     let store = HistoryStore::default_store().map_err(|e| e.to_string())?;
     store.purge_history().map_err(|e| e.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_desktop_list_and_stats() {
+        let path = HistoryStore::default_db_path();
+        println!("DB path: {:?}", path);
+        let store = HistoryStore::default_store().unwrap();
+        let stats = store.get_stats().unwrap();
+        println!("Raw stats in DB: {:?}", stats);
+        let sessions = desktop_list_sessions(10).unwrap();
+        println!("Fetched sessions: {}", sessions.len());
+    }
+}
