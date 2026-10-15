@@ -3,6 +3,7 @@
 //! Production-grade scriptable CLI for Adesh Observatory (ARO).
 
 use adesh_monitor_core::ipc::send_collector_rpc;
+use adesh_monitor_core::storage::HistoryStore;
 use adesh_monitor_platform::create_platform_provider;
 use adesh_monitor_protocol::*;
 
@@ -76,39 +77,40 @@ fn cmd_list(args: &[String]) -> Result<(), String> {
         }
     }
 
-    let resp = send_collector_rpc(&CollectorRequest::ListSessions { limit })?;
-    match resp {
-        CollectorResponse::SessionsList { sessions } => {
-            if json_mode {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&sessions).map_err(|e| e.to_string())?
-                );
-            } else {
-                println!(
-                    "{:<36} {:<8} {:<12} {:<12} {:<10} {:<10} {:<10}",
-                    "SESSION ID", "PID", "TOOL", "MODE", "STATUS", "DURATION", "PEAK RSS"
-                );
-                println!("{:-<105}", "");
-                for s in &sessions {
-                    let dur = s
-                        .duration_ms
-                        .map(|d| format!("{}ms", d))
-                        .unwrap_or_else(|| "running".to_string());
-                    let mem_mb = format!("{:.1}MB", s.peak_rss_bytes as f64 / (1024.0 * 1024.0));
-                    let mode = format!("{:?}", s.execution_mode);
-                    let status = format!("{:?}", s.status);
-                    println!(
-                        "{:<36} {:<8} {:<12} {:<12} {:<10} {:<10} {:<10}",
-                        s.session_id, s.pid, s.tool_name, mode, status, dur, mem_mb
-                    );
-                }
-            }
-            Ok(())
+    let sessions = match send_collector_rpc(&CollectorRequest::ListSessions { limit }) {
+        Ok(CollectorResponse::SessionsList { sessions }) => sessions,
+        _ => {
+            let store = HistoryStore::default_store().map_err(|e| e.to_string())?;
+            store.list_sessions(limit).map_err(|e| e.to_string())?
         }
-        CollectorResponse::Error { message } => Err(message),
-        _ => Err("Unexpected response from collector".to_string()),
+    };
+
+    if json_mode {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&sessions).map_err(|e| e.to_string())?
+        );
+    } else {
+        println!(
+            "{:<36} {:<8} {:<12} {:<12} {:<10} {:<10} {:<10}",
+            "SESSION ID", "PID", "TOOL", "MODE", "STATUS", "DURATION", "PEAK RSS"
+        );
+        println!("{:-<105}", "");
+        for s in &sessions {
+            let dur = s
+                .duration_ms
+                .map(|d| format!("{}ms", d))
+                .unwrap_or_else(|| "running".to_string());
+            let mem_mb = format!("{:.1}MB", s.peak_rss_bytes as f64 / (1024.0 * 1024.0));
+            let mode = format!("{:?}", s.execution_mode);
+            let status = format!("{:?}", s.status);
+            println!(
+                "{:<36} {:<8} {:<12} {:<12} {:<10} {:<10} {:<10}",
+                s.session_id, s.pid, s.tool_name, mode, status, dur, mem_mb
+            );
+        }
     }
+    Ok(())
 }
 
 fn cmd_show(args: &[String]) -> Result<(), String> {
@@ -118,65 +120,72 @@ fn cmd_show(args: &[String]) -> Result<(), String> {
     let session_id = args[0].clone();
     let json_mode = args.iter().any(|a| a == "--json");
 
-    let resp = send_collector_rpc(&CollectorRequest::GetSessionDetail { session_id })?;
-    match resp {
-        CollectorResponse::SessionDetail { session } => {
-            if json_mode {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&session).map_err(|e| e.to_string())?
-                );
-            } else {
-                println!("=== Session Detail: {} ===", session.summary.session_id);
-                println!("Tool:            {}", session.summary.tool_name);
-                println!("PID:             {}", session.summary.pid);
-                println!("Mode:            {:?}", session.summary.execution_mode);
-                println!("Status:          {:?}", session.summary.status);
-                println!("Exit Code:       {:?}", session.summary.exit_code);
-                println!("Working Dir:     {}", session.working_dir);
-                println!(
-                    "Target File:     {}",
-                    session.target_file.as_deref().unwrap_or("none")
-                );
-                println!("Command:         {}", session.summary.command_line);
-                println!("Compiler Stages: {}", session.compiler_stages.len());
-                println!("Linker Stages:   {}", session.linker_stages.len());
-                println!("Metrics Samples: {}", session.metrics_count);
-            }
-            Ok(())
+    let session = match send_collector_rpc(&CollectorRequest::GetSessionDetail {
+        session_id: session_id.clone(),
+    }) {
+        Ok(CollectorResponse::SessionDetail { session }) => *session,
+        _ => {
+            let store = HistoryStore::default_store().map_err(|e| e.to_string())?;
+            store
+                .get_session_detail(&session_id)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("Session {} not found", session_id))?
         }
-        CollectorResponse::Error { message } => Err(message),
-        _ => Err("Unexpected response from collector".to_string()),
+    };
+
+    if json_mode {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&session).map_err(|e| e.to_string())?
+        );
+    } else {
+        println!("=== Session Detail: {} ===", session.summary.session_id);
+        println!("Tool:            {}", session.summary.tool_name);
+        println!("PID:             {}", session.summary.pid);
+        println!("Mode:            {:?}", session.summary.execution_mode);
+        println!("Status:          {:?}", session.summary.status);
+        println!("Exit Code:       {:?}", session.summary.exit_code);
+        println!("Working Dir:     {}", session.working_dir);
+        println!(
+            "Target File:     {}",
+            session.target_file.as_deref().unwrap_or("none")
+        );
+        println!("Command:         {}", session.summary.command_line);
+        println!("Compiler Stages: {}", session.compiler_stages.len());
+        println!("Linker Stages:   {}", session.linker_stages.len());
+        println!("Metrics Samples: {}", session.metrics_count);
     }
+    Ok(())
 }
 
 fn cmd_stats(args: &[String]) -> Result<(), String> {
     let json_mode = args.iter().any(|a| a == "--json");
-    let resp = send_collector_rpc(&CollectorRequest::GetCollectorStats)?;
-    match resp {
-        CollectorResponse::Stats(stats) => {
-            if json_mode {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&stats).map_err(|e| e.to_string())?
-                );
-            } else {
-                println!("=== Adesh Observatory Collector Stats ===");
-                println!("Uptime:           {}s", stats.uptime_secs);
-                println!("Events Ingested:  {}", stats.total_events_ingested);
-                println!("Events Dropped:   {}", stats.total_events_dropped);
-                println!("Active Sessions:  {}", stats.active_sessions_count);
-                println!("Stored Sessions:  {}", stats.stored_sessions_count);
-                println!(
-                    "Database Size:    {:.2} MB",
-                    stats.database_size_bytes as f64 / (1024.0 * 1024.0)
-                );
-            }
-            Ok(())
+    let stats = match send_collector_rpc(&CollectorRequest::GetCollectorStats) {
+        Ok(CollectorResponse::Stats(s)) => s,
+        _ => {
+            let store = HistoryStore::default_store().map_err(|e| e.to_string())?;
+            store.get_stats().map_err(|e| e.to_string())?
         }
-        CollectorResponse::Error { message } => Err(message),
-        _ => Err("Unexpected response".to_string()),
+    };
+
+    if json_mode {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&stats).map_err(|e| e.to_string())?
+        );
+    } else {
+        println!("=== Adesh Observatory Collector Stats ===");
+        println!("Uptime:           {}s", stats.uptime_secs);
+        println!("Events Ingested:  {}", stats.total_events_ingested);
+        println!("Events Dropped:   {}", stats.total_events_dropped);
+        println!("Active Sessions:  {}", stats.active_sessions_count);
+        println!("Stored Sessions:  {}", stats.stored_sessions_count);
+        println!(
+            "Database Size:    {:.2} MB",
+            stats.database_size_bytes as f64 / (1024.0 * 1024.0)
+        );
     }
+    Ok(())
 }
 
 fn cmd_trace(args: &[String]) -> Result<(), String> {
@@ -186,58 +195,67 @@ fn cmd_trace(args: &[String]) -> Result<(), String> {
     let session_id = args[0].clone();
     let json_mode = args.iter().any(|a| a == "--json");
 
-    let resp = send_collector_rpc(&CollectorRequest::GetSessionStages { session_id })?;
-    match resp {
-        CollectorResponse::SessionStages {
-            session_id,
+    let (c_stages, l_stages) = match send_collector_rpc(&CollectorRequest::GetSessionStages {
+        session_id: session_id.clone(),
+    }) {
+        Ok(CollectorResponse::SessionStages {
             compiler_stages,
             linker_stages,
-        } => {
-            if json_mode {
-                let val = serde_json::json!({
-                    "session_id": session_id,
-                    "compiler_stages": compiler_stages,
-                    "linker_stages": linker_stages,
-                });
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&val).map_err(|e| e.to_string())?
-                );
-            } else {
-                println!(
-                    "=== Compilation & Linker Stage Timeline for {} ===",
-                    session_id
-                );
-                if compiler_stages.is_empty() && linker_stages.is_empty() {
-                    println!("No stage events recorded for this session.");
-                }
-                for (idx, cs) in compiler_stages.iter().enumerate() {
-                    let status = if cs.success { "OK" } else { "FAILED" };
-                    println!(
-                        "{:>2}. [Compiler] {:<20} {:>8} µs  [{}]",
-                        idx + 1,
-                        cs.stage_name,
-                        cs.duration_micros,
-                        status
-                    );
-                }
-                for (idx, ls) in linker_stages.iter().enumerate() {
-                    let status = if ls.success { "OK" } else { "FAILED" };
-                    println!(
-                        "{:>2}. [Linker]   {:<20} {:>8} µs  [{}] (Target: {})",
-                        idx + 1,
-                        ls.stage_name,
-                        ls.duration_micros,
-                        status,
-                        ls.target_triple
-                    );
-                }
-            }
-            Ok(())
+            ..
+        }) => (compiler_stages, linker_stages),
+        _ => {
+            let store = HistoryStore::default_store().map_err(|e| e.to_string())?;
+            let cs = store
+                .get_compiler_stages(&session_id)
+                .map_err(|e| e.to_string())?;
+            let ls = store
+                .get_linker_stages(&session_id)
+                .map_err(|e| e.to_string())?;
+            (cs, ls)
         }
-        CollectorResponse::Error { message } => Err(message),
-        _ => Err("Unexpected response".to_string()),
+    };
+
+    if json_mode {
+        let val = serde_json::json!({
+            "session_id": session_id,
+            "compiler_stages": c_stages,
+            "linker_stages": l_stages,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&val).map_err(|e| e.to_string())?
+        );
+    } else {
+        println!(
+            "=== Compilation & Linker Stage Timeline for {} ===",
+            session_id
+        );
+        if c_stages.is_empty() && l_stages.is_empty() {
+            println!("No stage events recorded for this session.");
+        }
+        for (idx, cs) in c_stages.iter().enumerate() {
+            let status = if cs.success { "OK" } else { "FAILED" };
+            println!(
+                "{:>2}. [Compiler] {:<20} {:>8} µs  [{}]",
+                idx + 1,
+                cs.stage_name,
+                cs.duration_micros,
+                status
+            );
+        }
+        for (idx, ls) in l_stages.iter().enumerate() {
+            let status = if ls.success { "OK" } else { "FAILED" };
+            println!(
+                "{:>2}. [Linker]   {:<20} {:>8} µs  [{}] (Target: {})",
+                idx + 1,
+                ls.stage_name,
+                ls.duration_micros,
+                status,
+                ls.target_triple
+            );
+        }
     }
+    Ok(())
 }
 
 fn cmd_export(args: &[String]) -> Result<(), String> {
@@ -261,44 +279,45 @@ fn cmd_export(args: &[String]) -> Result<(), String> {
         }
     }
 
-    let resp = send_collector_rpc(&CollectorRequest::GetSessionDetail {
+    let session = match send_collector_rpc(&CollectorRequest::GetSessionDetail {
         session_id: session_id.clone(),
-    })?;
-    match resp {
-        CollectorResponse::SessionDetail { session } => {
-            let output_str = if format.eq_ignore_ascii_case("csv") {
-                let mut csv = String::new();
-                csv.push_str(
-                    "session_id,tool,pid,mode,status,exit_code,duration_ms,peak_rss_bytes\n",
-                );
-                csv.push_str(&format!(
-                    "{},{},{},{:?},{:?},{:?},{:?},{}\n",
-                    session.summary.session_id,
-                    session.summary.tool_name,
-                    session.summary.pid,
-                    session.summary.execution_mode,
-                    session.summary.status,
-                    session.summary.exit_code,
-                    session.summary.duration_ms,
-                    session.summary.peak_rss_bytes,
-                ));
-                csv
-            } else {
-                serde_json::to_string_pretty(&session).map_err(|e| e.to_string())?
-            };
-
-            if let Some(dest) = out_file {
-                std::fs::write(dest, output_str)
-                    .map_err(|e| format!("Failed to write export: {}", e))?;
-                println!("Exported session {} to {}", session_id, dest);
-            } else {
-                println!("{}", output_str);
-            }
-            Ok(())
+    }) {
+        Ok(CollectorResponse::SessionDetail { session }) => *session,
+        _ => {
+            let store = HistoryStore::default_store().map_err(|e| e.to_string())?;
+            store
+                .get_session_detail(&session_id)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("Session {} not found", session_id))?
         }
-        CollectorResponse::Error { message } => Err(message),
-        _ => Err("Unexpected response".to_string()),
+    };
+
+    let output_str = if format.eq_ignore_ascii_case("csv") {
+        let mut csv = String::new();
+        csv.push_str("session_id,tool,pid,mode,status,exit_code,duration_ms,peak_rss_bytes\n");
+        csv.push_str(&format!(
+            "{},{},{},{:?},{:?},{:?},{:?},{}\n",
+            session.summary.session_id,
+            session.summary.tool_name,
+            session.summary.pid,
+            session.summary.execution_mode,
+            session.summary.status,
+            session.summary.exit_code,
+            session.summary.duration_ms,
+            session.summary.peak_rss_bytes,
+        ));
+        csv
+    } else {
+        serde_json::to_string_pretty(&session).map_err(|e| e.to_string())?
+    };
+
+    if let Some(dest) = out_file {
+        std::fs::write(dest, output_str).map_err(|e| format!("Failed to write export: {}", e))?;
+        println!("Exported session {} to {}", session_id, dest);
+    } else {
+        println!("{}", output_str);
     }
+    Ok(())
 }
 
 fn cmd_doctor(_args: &[String]) -> Result<(), String> {
@@ -354,7 +373,7 @@ fn cmd_doctor(_args: &[String]) -> Result<(), String> {
             );
         }
         Err(_) => {
-            println!("ARO Collector IPC:   OFFLINE / STANDALONE (daemon will start on demand)");
+            println!("ARO Collector IPC:   STANDALONE (direct SQLite WAL active)");
         }
         _ => {}
     }
@@ -369,13 +388,9 @@ fn cmd_version() -> Result<(), String> {
 }
 
 fn cmd_purge() -> Result<(), String> {
-    let resp = send_collector_rpc(&CollectorRequest::PurgeHistory)?;
-    match resp {
-        CollectorResponse::Ok => {
-            println!("Observatory database history purged successfully.");
-            Ok(())
-        }
-        CollectorResponse::Error { message } => Err(message),
-        _ => Err("Unexpected response".to_string()),
-    }
+    let _ = send_collector_rpc(&CollectorRequest::PurgeHistory);
+    let store = HistoryStore::default_store().map_err(|e| e.to_string())?;
+    store.purge_history().map_err(|e| e.to_string())?;
+    println!("Observatory database history purged successfully.");
+    Ok(())
 }

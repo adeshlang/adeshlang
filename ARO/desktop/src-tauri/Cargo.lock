@@ -52,6 +52,7 @@ version = "0.1.0"
 dependencies = [
  "adesh-monitor-core",
  "adesh-monitor-desktop",
+ "adesh-monitor-platform",
  "adesh-monitor-protocol",
  "serde",
  "serde_json",

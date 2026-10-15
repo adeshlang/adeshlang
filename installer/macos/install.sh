@@ -235,7 +235,7 @@ fi
 # --- Link the CLI tools -------------------------------------------------------
 echo "==> Linking CLI tools into $BIN_LINK_DIR"
 run_root /bin/mkdir -p "$BIN_LINK_DIR"
-for tool in adesh adl als adeshlink adesh-editor; do
+for tool in adesh adl als adeshlink adesh-editor aro aro_tui adesh-observatory-desktop; do
     if [[ -x "$INSTALL_DIR/bin/$tool" ]]; then
         run_root /bin/ln -sfn "$INSTALL_DIR/bin/$tool" "$BIN_LINK_DIR/$tool"
         echo "    linked $BIN_LINK_DIR/$tool"
@@ -243,6 +243,15 @@ for tool in adesh adl als adeshlink adesh-editor; do
         echo "    note: $tool not bundled; skipping"
     fi
 done
+
+# --- Desktop Shortcut Placement ------------------------------------------------
+if [[ -x "$INSTALL_DIR/bin/adesh-observatory-desktop" ]]; then
+    DESKTOP_DIR="$HOME/Desktop"
+    if [[ -d "$DESKTOP_DIR" ]]; then
+        /bin/ln -sfn "$INSTALL_DIR/bin/adesh-observatory-desktop" "$DESKTOP_DIR/Adesh Observatory"
+        echo "    placed clickable desktop shortcut at $DESKTOP_DIR/Adesh Observatory"
+    fi
+fi
 
 # --- Shell profile -------------------------------------------------------------
 # The native toolchain is bundled inside the installation, so no

@@ -3,6 +3,7 @@
 //! Interactive Terminal User Interface (TUI) for Adesh Observatory (ARO) using Ratatui & Crossterm.
 
 use adesh_monitor_core::ipc::send_collector_rpc;
+use adesh_monitor_core::storage::HistoryStore;
 use adesh_monitor_protocol::*;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
@@ -48,10 +49,12 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>) -> Result<(), Box<dyn std::er
 where
     <B as Backend>::Error: std::error::Error + 'static,
 {
-    let mut last_fetch = Instant::now();
+    let mut last_fetch = Instant::now() - Duration::from_secs(10);
     let mut sessions: Vec<SessionSummary> = Vec::new();
     let mut selected_idx = 0;
-    let mut status_msg = "Press 'q' to quit | 'r' to refresh | Up/Down to navigate".to_string();
+    let mut status_msg =
+        "Press 'q' to quit | 'r' to refresh | 'c' to clear history | Up/Down to navigate"
+            .to_string();
 
     loop {
         if last_fetch.elapsed() > Duration::from_millis(500) || sessions.is_empty() {
@@ -60,11 +63,21 @@ where
             {
                 sessions = list;
                 status_msg = format!(
-                    "Connected to ARO Collector | {} sessions recorded",
+                    "Live IPC Collector | {} sessions | 'r' refresh | 'c' clear | 'q' quit",
                     sessions.len()
                 );
+            } else if let Ok(store) = HistoryStore::default_store() {
+                if let Ok(list) = store.list_sessions(100) {
+                    sessions = list;
+                    status_msg = format!(
+                        "Durable SQLite (~/.adesh/observatory.db) | {} sessions | 'r' refresh | 'c' clear | 'q' quit",
+                        sessions.len()
+                    );
+                } else {
+                    status_msg = "Observatory SQLite query error".to_string();
+                }
             } else {
-                status_msg = "ARO Collector offline - displaying local state".to_string();
+                status_msg = "Observatory storage unreachable".to_string();
             }
             last_fetch = Instant::now();
         }
@@ -196,6 +209,17 @@ where
                 }
                 KeyCode::Char('r') => {
                     last_fetch = Instant::now() - Duration::from_secs(10);
+                }
+                KeyCode::Char('c') | KeyCode::Char('x') => {
+                    let _ = send_collector_rpc(&CollectorRequest::PurgeHistory);
+                    if let Ok(store) = HistoryStore::default_store() {
+                        let _ = store.purge_history();
+                    }
+                    sessions.clear();
+                    selected_idx = 0;
+                    status_msg = "Dashboard history cleared successfully! | 'r' refresh | 'q' quit"
+                        .to_string();
+                    last_fetch = Instant::now();
                 }
                 _ => {}
             }

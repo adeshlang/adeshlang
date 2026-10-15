@@ -19,6 +19,26 @@ fn get_collector_stats() -> Result<CollectorStats, String> {
     desktop_get_collector_stats()
 }
 
+#[tauri::command]
+fn purge_history() -> Result<(), String> {
+    desktop_purge_history()
+}
+
+#[tauri::command]
+fn get_hardware_info() -> Result<serde_json::Value, String> {
+    let provider = adesh_monitor_platform::create_platform_provider();
+    let caps = provider.query_capabilities();
+    Ok(serde_json::json!({
+        "os_name": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "logical_cores": std::thread::available_parallelism().map(|p| p.get()).unwrap_or(1),
+        "supports_process_cpu": caps.supports_process_cpu,
+        "supports_process_memory": caps.supports_process_memory,
+        "supports_disk_io": caps.supports_disk_io,
+        "supports_accelerators": caps.supports_accelerators,
+    }))
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -26,6 +46,8 @@ fn main() {
             get_sessions,
             get_session_detail,
             get_collector_stats,
+            purge_history,
+            get_hardware_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Adesh Observatory application");

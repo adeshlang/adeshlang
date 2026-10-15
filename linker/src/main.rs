@@ -529,8 +529,33 @@ fn main() {
         i += 1;
     }
 
-    let session_id = std::env::var("ADESH_OBSERVATORY_SESSION").ok();
-    let tele_client = session_id.map(adesh_monitor_core::ipc::TelemetryClient::new);
+    let (session_id, is_new_session) = match std::env::var("ADESH_OBSERVATORY_SESSION") {
+        Ok(id) => (id, false),
+        Err(_) => {
+            let id = format!(
+                "sess-link-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_micros()
+            );
+            (id, true)
+        }
+    };
+    let tele_client = adesh_monitor_core::ipc::TelemetryClient::new(session_id.clone());
+    if is_new_session {
+        tele_client.emit(adesh_monitor_protocol::EventPayload::SessionStart {
+            tool_name: "adeshlink".to_string(),
+            command_args: std::env::args().collect(),
+            working_dir: std::env::current_dir()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| ".".to_string()),
+            parent_pid: None,
+            execution_mode: adesh_monitor_protocol::ExecutionMode::Linker,
+            target_file: Some(config.output_path.to_string_lossy().to_string()),
+        });
+    }
+
     let t_link_start = std::time::Instant::now();
     let input_count = input_paths.len();
     let target_triple = format!("{:?}", config.target);
@@ -541,40 +566,52 @@ fn main() {
         Ok(()) => {
             let dur_micros = t_link_start.elapsed().as_micros() as u64;
             let out_size = std::fs::metadata(&output_path).ok().map(|m| m.len());
-            if let Some(ref tc) = tele_client {
-                tc.emit(adesh_monitor_protocol::EventPayload::LinkerStage(
-                    adesh_monitor_protocol::LinkerStageEvent {
-                        stage_name: "link".to_string(),
-                        target_triple,
-                        output_format: out_format,
-                        input_objects_count: input_count,
-                        symbol_count: 0,
-                        section_count: 0,
-                        output_size_bytes: out_size,
-                        duration_micros: dur_micros,
-                        success: true,
-                        error_message: None,
-                    },
-                ));
+            tele_client.emit(adesh_monitor_protocol::EventPayload::LinkerStage(
+                adesh_monitor_protocol::LinkerStageEvent {
+                    stage_name: "link".to_string(),
+                    target_triple,
+                    output_format: out_format,
+                    input_objects_count: input_count,
+                    symbol_count: 0,
+                    section_count: 0,
+                    output_size_bytes: out_size,
+                    duration_micros: dur_micros,
+                    success: true,
+                    error_message: None,
+                },
+            ));
+            if is_new_session {
+                tele_client.emit(adesh_monitor_protocol::EventPayload::SessionEnd {
+                    exit_code: 0,
+                    duration_micros: dur_micros,
+                    status: adesh_monitor_protocol::SessionStatus::Completed,
+                    error_message: None,
+                });
             }
         }
         Err(e) => {
             let dur_micros = t_link_start.elapsed().as_micros() as u64;
-            if let Some(ref tc) = tele_client {
-                tc.emit(adesh_monitor_protocol::EventPayload::LinkerStage(
-                    adesh_monitor_protocol::LinkerStageEvent {
-                        stage_name: "link".to_string(),
-                        target_triple,
-                        output_format: out_format,
-                        input_objects_count: input_count,
-                        symbol_count: 0,
-                        section_count: 0,
-                        output_size_bytes: None,
-                        duration_micros: dur_micros,
-                        success: false,
-                        error_message: Some(e.to_string()),
-                    },
-                ));
+            tele_client.emit(adesh_monitor_protocol::EventPayload::LinkerStage(
+                adesh_monitor_protocol::LinkerStageEvent {
+                    stage_name: "link".to_string(),
+                    target_triple,
+                    output_format: out_format,
+                    input_objects_count: input_count,
+                    symbol_count: 0,
+                    section_count: 0,
+                    output_size_bytes: None,
+                    duration_micros: dur_micros,
+                    success: false,
+                    error_message: Some(e.to_string()),
+                },
+            ));
+            if is_new_session {
+                tele_client.emit(adesh_monitor_protocol::EventPayload::SessionEnd {
+                    exit_code: 1,
+                    duration_micros: dur_micros,
+                    status: adesh_monitor_protocol::SessionStatus::Failed,
+                    error_message: Some(e.to_string()),
+                });
             }
             eprintln!("{}", e);
             process::exit(1);

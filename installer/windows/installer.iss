@@ -63,13 +63,14 @@ ExtraDiskSpaceRequired=209715200
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
+Name: "desktopicon"; Description: "Create a desktop shortcut for Adesh Observatory"; GroupDescription: "Additional Shortcuts:"
 Name: "fileassoc"; Description: "Associate .adl and .adesh source files with AdeshLang"; Flags: unchecked
 Name: "python"; Description: "Install Python 3.12 (optional; only for AI model training: `adesh ai train` and MLIR source builds)"; Flags: unchecked; Check: ShouldShowPython
 
 [Files]
 ; Core application files — the full self-contained native toolchain is
 ; staged by scripts\release\build_windows_dist.ps1 into dist\windows-x86_64:
-;   bin\  adesh.exe, adl.exe, als.exe, adesh-editor.exe, adeshlink.exe
+;   bin\  adesh.exe, adl.exe, als.exe, adesh-editor.exe, adeshlink.exe, aro.exe, aro_tui.exe, adesh-observatory-desktop.exe
 ;   lib\  adeshlang.dll / adeshlang.lib (runtime library)
 ;   std\  standard library sources
 ;   ai\   bundled AI model + deployment configs
@@ -83,6 +84,9 @@ Source: "..\..\dist\windows-x86_64\ai\*"; DestDir: "{app}\ai"; Flags: ignorevers
 Source: "..\manifests\toolchain-manifest.json"; DestDir: "{app}\config"; Flags: ignoreversion
 
 [Icons]
+Name: "{autodesktop}\Adesh Observatory"; Filename: "{app}\bin\adesh-observatory-desktop.exe"; IconFilename: "{app}\bin\adesh-observatory-desktop.exe"; Tasks: desktopicon; Comment: "Launch Adesh Runtime Observatory Cockpit"
+Name: "{group}\Adesh Observatory Cockpit"; Filename: "{app}\bin\adesh-observatory-desktop.exe"; IconFilename: "{app}\bin\adesh-observatory-desktop.exe"; Comment: "Launch Adesh Runtime Observatory Cockpit"
+Name: "{group}\Adesh Observatory TUI"; Filename: "{app}\bin\aro_tui.exe"; Comment: "Launch Adesh Runtime Observatory Terminal UI"
 Name: "{group}\AdeshLang Doctor"; Filename: "{app}\bin\{#MyAppExeName}"; Parameters: "doctor"
 Name: "{group}\AdeshLang TUI Editor"; Filename: "{app}\bin\adesh-editor.exe"; Check: EditorExists
 Name: "{group}\AdeshLang Native Toolchain Check"; Filename: "{app}\bin\{#MyAppExeName}"; Parameters: "toolchain check"

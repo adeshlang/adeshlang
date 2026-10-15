@@ -44,33 +44,51 @@ The Desktop App is a high-performance, GPU-accelerated cockpit featuring dark-mo
 - **Rust**: 2021/2024 edition with MSVC tools on Windows (or Xcode/GCC on macOS/Linux)
 - **WebView2**: Built into Windows 10/11
 
-### Running the Desktop App:
+### Building & Packaging the Desktop App:
 
-#### A. Running the Pre-compiled Binary Directly (Immediate Launch)
-The native Windows executable is located at:
-```powershell
-.\ARO\desktop\src-tauri\target\debug\adesh-observatory-desktop.exe
-```
-Or start via PowerShell:
-```powershell
-Start-Process ".\ARO\desktop\src-tauri\target\debug\adesh-observatory-desktop.exe"
-```
+You can compile the production release desktop application using `pnpm` and `cargo`:
 
-#### B. Running via pnpm & Vite Development Server
-Navigate to `ARO/desktop`:
 ```powershell
 cd ARO\desktop
 pnpm install
 pnpm run build
+cargo build --release --manifest-path src-tauri/Cargo.toml
 ```
-To run in live development mode:
+
+This runs TypeScript typechecking, compiles and minifies frontend assets with Vite, embeds the official Adesh logo, and builds the optimized Rust native application. The generated binary is located at:
+- **Standalone Release Executable**:
+  `ARO\desktop\src-tauri\target\release\adesh-observatory-desktop.exe`
+
+### Desktop Placement & Installers:
+When installing AdeshLang via the Windows Setup (Inno Setup / WiX), Linux installer (`install-linux.sh` / `.deb` / `.rpm`), or macOS installer (`install-macos.sh` / `.pkg` / `.dmg`), an **Adesh Observatory** desktop shortcut is automatically placed on your Desktop with the official high-resolution Adesh logo, enabling instant one-click launch.
+
+### Responsive UI for All Screen Sizes:
+The Desktop Cockpit adaptively adjusts to any display resolution:
+- **Compact & Laptop Screens**: Sidebar transforms into a slim icon navigation rail, metrics arrange in 1-column or 2-column grids, and table views support smooth horizontal scrolling.
+- **Large & Ultra-wide Displays**: Expands into a multi-column cockpit with full telemetry cards, real-time Recharts duration/RSS visualizer, and stage waterfall views.
+
+### Running the Desktop App:
+
+#### A. Running the Pre-compiled Release Binary
+```powershell
+.\ARO\desktop\src-tauri\target\release\adesh-observatory-desktop.exe
+```
+Or launch detached in background via PowerShell:
+```powershell
+Start-Process ".\ARO\desktop\src-tauri\target\release\adesh-observatory-desktop.exe"
+```
+
+#### B. Live Development Mode (Hot-Reloading)
+Navigate to `ARO/desktop` and launch the Tauri development window:
+```powershell
+cd ARO\desktop
+pnpm tauri dev
+```
+To run only the Vite web dev server:
 ```powershell
 pnpm run dev
 ```
-Open [http://localhost:1420](http://localhost:1420) in your browser, or launch the Tauri window:
-```powershell
-pnpm tauri dev
-```
+Then view at [http://localhost:1420](http://localhost:1420).
 
 ---
 
@@ -89,6 +107,7 @@ adesh monitor tui
 
 ### Keybindings:
 - `r`: Force instant refresh of all sessions and metrics.
+- `c` or `x`: Purge / Clear all recorded sessions and reset dashboard.
 - `q` or `Esc`: Gracefully detach and exit the TUI.
 - `↑` / `↓` / `j` / `k`: Scroll through monitored execution sessions.
 
@@ -142,13 +161,22 @@ aro purge
 
 ---
 
-## 5. Integrating with Your Adesh Programs
+## 5. Automatic Telemetry & Zero Configuration
 
-To record detailed telemetry for any Adesh script, run your program with the session tracking flag:
+Every execution of the Adesh toolchain automatically instruments and records telemetry directly:
 
-```powershell
-$env:ADESH_OBSERVATORY_SESSION = "my-test-session"
-adesh run tests/main.adesh
-```
+- Any `adesh run <file>`, `adesh compile <file>`, `adesh test`, or `adeshlink` execution immediately records compiler stages, execution mode, duration, exit code, and process resources.
+- Telemetry writes to SQLite WAL (`~/.adesh/observatory.db`) with zero overhead (<0.1ms) when offline, or broadcasts over local IPC named pipes / unix sockets when the collector is active.
+- To provide a custom human-readable session ID, optionally specify:
+  ```powershell
+  $env:ADESH_OBSERVATORY_SESSION = "my-custom-benchmark"
+  adesh run tests/test_large_loop.adesh
+  ```
 
-The telemetry will instantly appear across the **Desktop Cockpit**, **TUI**, and **CLI**.
+---
+
+## 6. Dashboard Controls (Desktop App)
+
+- **Refresh Telemetry Button**: Top-right navigation bar button to immediately re-poll telemetry.
+- **Clear Dashboard Button**: Top-right trash icon button (with confirmation modal) to purge all recorded sessions from disk and reset the cockpit.
+- **Microsecond Trace Waterfall**: Click on any session card in Cockpit Overview to view the chronological breakdown of all compiler and linker stages.

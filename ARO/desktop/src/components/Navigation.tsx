@@ -18,7 +18,8 @@ import {
   FileCode,
   Box,
   Compass,
-  BarChart3
+  BarChart3,
+  Trash2,
 } from "lucide-react";
 
 export type NavTab =
@@ -38,6 +39,7 @@ interface NavigationProps {
   activeCount: number;
   ipcStatus: "connected" | "disconnected" | "connecting";
   onRefresh: () => void;
+  onPurgeHistory: () => void;
   searchQuery: string;
   onSearchChange: (q: string) => void;
   filterMode: string;
@@ -50,6 +52,7 @@ export const TopBar: React.FC<NavigationProps> = ({
   activeCount,
   ipcStatus,
   onRefresh,
+  onPurgeHistory,
   searchQuery,
   onSearchChange,
   filterMode,
@@ -58,10 +61,8 @@ export const TopBar: React.FC<NavigationProps> = ({
   return (
     <header className="h-14 border-b border-border/80 bg-slate-950/80 backdrop-blur-md px-4 flex items-center justify-between select-none z-30 sticky top-0">
       <div className="flex items-center space-x-3">
-        <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-sky-500 to-indigo-600 p-[1px] shadow-lg shadow-sky-500/20">
-          <div className="w-full h-full bg-slate-950 rounded-[7px] flex items-center justify-center font-black text-sky-400 text-xs tracking-wider">
-            ARO
-          </div>
+        <div className="w-8 h-8 rounded-lg overflow-hidden shadow-lg shadow-sky-500/20 border border-sky-500/30 flex items-center justify-center bg-slate-900">
+          <img src="/logo.png" alt="Adesh Logo" className="w-7 h-7 object-contain" />
         </div>
         <div>
           <div className="flex items-center space-x-2">
@@ -77,22 +78,22 @@ export const TopBar: React.FC<NavigationProps> = ({
       </div>
 
       {/* Global omni-search & mode filters */}
-      <div className="flex items-center space-x-3 w-1/3">
+      <div className="hidden sm:flex items-center space-x-2 md:space-x-3 w-1/3 max-w-xs md:max-w-md">
         <div className="relative w-full">
           <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Search PID, Session UUID, Tool, Target file, or Stage..."
-            className="w-full pl-9 pr-4 py-1.5 bg-slate-900/90 border border-slate-800 rounded-lg text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all"
+            placeholder="Search PID, Session UUID, Tool..."
+            className="w-full pl-9 pr-3 py-1.5 bg-slate-900/90 border border-slate-800 rounded-lg text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all"
           />
         </div>
 
         <select
           value={filterMode}
           onChange={(e) => onFilterModeChange(e.target.value)}
-          className="bg-slate-900 border border-slate-800 text-xs text-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-sky-500 cursor-pointer"
+          className="hidden md:block bg-slate-900 border border-slate-800 text-xs text-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-sky-500 cursor-pointer"
         >
           <option value="all">All Modes</option>
           <option value="jit">JIT / Native JIT</option>
@@ -104,8 +105,8 @@ export const TopBar: React.FC<NavigationProps> = ({
       </div>
 
       {/* System Status Indicators */}
-      <div className="flex items-center space-x-3">
-        <div className="flex items-center space-x-2 px-2.5 py-1 rounded-md bg-slate-900 border border-slate-800 text-xs">
+      <div className="flex items-center space-x-2 md:space-x-3">
+        <div className="hidden lg:flex items-center space-x-2 px-2.5 py-1 rounded-md bg-slate-900 border border-slate-800 text-xs">
           <Radio
             className={`w-3.5 h-3.5 ${
               ipcStatus === "connected" ? "text-emerald-400 animate-pulse" : "text-amber-400"
@@ -116,15 +117,25 @@ export const TopBar: React.FC<NavigationProps> = ({
 
         <div className="flex items-center space-x-1 px-2.5 py-1 rounded-md bg-sky-500/10 border border-sky-500/20 text-xs text-sky-400">
           <Zap className="w-3.5 h-3.5" />
-          <span className="font-semibold">{activeCount} Active</span>
+          <span className="font-semibold">{activeCount} <span className="hidden sm:inline">Active</span></span>
         </div>
 
         <button
-          onClick={onRefresh}
-          className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition-colors"
-          title="Refresh Telemetry"
+          onClick={onPurgeHistory}
+          className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 hover:text-rose-200 transition-colors text-xs font-medium"
+          title="Clear all sessions and wipe observatory database history"
         >
-          <RefreshCw className="w-4 h-4" />
+          <Trash2 className="w-3.5 h-3.5" />
+          <span className="hidden md:inline">Clear Dashboard</span>
+        </button>
+
+        <button
+          onClick={onRefresh}
+          className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 text-sky-300 hover:text-white transition-colors text-xs font-medium"
+          title="Refresh Telemetry Now"
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+          <span className="hidden md:inline">Refresh</span>
         </button>
       </div>
     </header>
@@ -148,9 +159,9 @@ export const ModernSidebar: React.FC<{
   ];
 
   return (
-    <aside className="w-60 bg-slate-950/70 border-r border-border/80 flex flex-col justify-between select-none">
-      <div className="p-3 space-y-1">
-        <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider px-3 py-2">
+    <aside className="w-14 md:w-56 lg:w-60 bg-slate-950/70 border-r border-border/80 flex flex-col justify-between select-none transition-all duration-200 shrink-0">
+      <div className="p-2 md:p-3 space-y-1">
+        <div className="hidden md:block text-[11px] font-semibold text-slate-400 uppercase tracking-wider px-3 py-2">
           Observability
         </div>
         {navItems.map((item) => {
@@ -160,18 +171,19 @@ export const ModernSidebar: React.FC<{
             <button
               key={item.id}
               onClick={() => onSelectTab(item.id)}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+              title={item.label}
+              className={`w-full flex items-center justify-center md:justify-between px-2 md:px-3 py-2 rounded-lg text-xs font-medium transition-all ${
                 active
                   ? "bg-gradient-to-r from-sky-500/20 to-indigo-500/10 text-sky-300 border border-sky-500/40 shadow-sm"
                   : "text-slate-400 hover:text-slate-200 hover:bg-slate-900/60"
               }`}
             >
               <div className="flex items-center space-x-2.5">
-                <Icon className={`w-4 h-4 ${active ? "text-sky-400" : "text-slate-400"}`} />
-                <span>{item.label}</span>
+                <Icon className={`w-4 h-4 shrink-0 ${active ? "text-sky-400" : "text-slate-400"}`} />
+                <span className="hidden md:inline truncate">{item.label}</span>
               </div>
               {item.badge && (
-                <span className="text-[9px] px-1.5 py-0.2 rounded bg-sky-500/20 text-sky-300 font-mono border border-sky-500/30">
+                <span className="hidden lg:inline text-[9px] px-1.5 py-0.2 rounded bg-sky-500/20 text-sky-300 font-mono border border-sky-500/30">
                   {item.badge}
                 </span>
               )}
@@ -180,7 +192,7 @@ export const ModernSidebar: React.FC<{
         })}
       </div>
 
-      <div className="p-3 border-t border-border/60 bg-slate-900/30">
+      <div className="hidden md:block p-3 border-t border-border/60 bg-slate-900/30">
         <div className="rounded-lg p-2.5 bg-gradient-to-br from-slate-900 to-indigo-950/40 border border-slate-800 text-xs">
           <div className="flex items-center justify-between font-semibold text-slate-200 mb-1">
             <span>Clock Discipline</span>

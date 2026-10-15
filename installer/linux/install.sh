@@ -310,10 +310,48 @@ link_binary() {
 for binary in adesh adl als adeshlink; do
   link_binary "$binary"
 done
-if [[ -x "$install_dir/bin/adesh-editor" ]]; then
-  link_binary adesh-editor
-else
-  printf 'Note: adesh-editor not bundled in this archive; skipping its symlink.\n'
+for opt_bin in adesh-editor aro aro_tui adesh-observatory-desktop; do
+  if [[ -x "$install_dir/bin/$opt_bin" ]]; then
+    link_binary "$opt_bin"
+  fi
+done
+
+# --- Desktop Shortcut & Application Launcher (Linux) ---
+if [[ -x "$install_dir/bin/adesh-observatory-desktop" ]]; then
+  desktop_file_dir="/usr/share/applications"
+  icon_dir="/usr/share/icons/hicolor/512x512/apps"
+  pixmap_dir="/usr/share/pixmaps"
+  if (( ! system_mode )); then
+    desktop_file_dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+    icon_dir="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/512x512/apps"
+    pixmap_dir="${XDG_DATA_HOME:-$HOME/.local/share}/pixmaps"
+  fi
+  mkdir -p "$desktop_file_dir" "$icon_dir" "$pixmap_dir" 2>/dev/null || true
+
+  if [[ -f "$install_dir/share/icons/adesh-observatory.png" ]]; then
+    cp -f "$install_dir/share/icons/adesh-observatory.png" "$icon_dir/adesh-observatory.png" 2>/dev/null || true
+    cp -f "$install_dir/share/icons/adesh-observatory.png" "$pixmap_dir/adesh-observatory.png" 2>/dev/null || true
+  fi
+
+  cat > "$desktop_file_dir/adesh-observatory.desktop" <<DESKTOPEOF
+[Desktop Entry]
+Name=Adesh Observatory
+Comment=Adesh Runtime Observatory Cockpit
+Exec=$link_dir/adesh-observatory-desktop
+Icon=adesh-observatory
+Terminal=false
+Type=Application
+Categories=Development;Profiling;IDE;
+StartupWMClass=adesh-observatory
+DESKTOPEOF
+  chmod 0644 "$desktop_file_dir/adesh-observatory.desktop" 2>/dev/null || true
+
+  if [[ -d "$HOME/Desktop" ]]; then
+    cp -f "$desktop_file_dir/adesh-observatory.desktop" "$HOME/Desktop/adesh-observatory.desktop"
+    chmod +x "$HOME/Desktop/adesh-observatory.desktop" 2>/dev/null || true
+    gio set "$HOME/Desktop/adesh-observatory.desktop" metadata::trusted true 2>/dev/null || true
+    printf 'Placed clickable desktop shortcut at %s/Desktop/adesh-observatory.desktop\n' "$HOME"
+  fi
 fi
 
 # Verify binary compatibility with the local C library

@@ -63,6 +63,21 @@ if (Test-Path "$RootDir\editor\Cargo.toml") {
     cargo build --release @TargetFlag --bin adesh-editor
     Pop-Location
 }
+# adesh-monitor-cli: standalone observatory CLI
+cargo build --release @TargetFlag -p adesh-monitor-cli --bin aro
+# adesh-monitor-tui: standalone observatory TUI
+cargo build --release @TargetFlag -p adesh-monitor-tui --bin aro_tui
+# adesh-observatory-desktop: standalone Tauri desktop application
+if (Test-Path "$RootDir\ARO\desktop") {
+    Push-Location "$RootDir\ARO\desktop"
+    if (Get-Command pnpm -ErrorAction SilentlyContinue) {
+        pnpm run build
+    }
+    Pop-Location
+    Push-Location "$RootDir\ARO\desktop\src-tauri"
+    cargo build --release @TargetFlag --bin adesh-observatory-desktop
+    Pop-Location
+}
 
 # 2. Recreate Staging Directory Structure
 Write-Host "[2/6] Preparing Staging Directory Structure..." -ForegroundColor Yellow
@@ -122,6 +137,24 @@ if (Test-Path $AlsBin) { Copy-Item $AlsBin "$DistDir\bin\als.exe" -Force }
 $EditorBin = if ($Arch -eq "aarch64") { "$RootDir\editor\target\aarch64-pc-windows-msvc\release\adesh-editor.exe" } else { "$RootDir\editor\target\release\adesh-editor.exe" }
 if (-not (Test-Path $EditorBin)) { $EditorBin = "$TargetBinDir\adesh-editor.exe" }
 if (Test-Path $EditorBin) { Copy-Item $EditorBin "$DistDir\bin\adesh-editor.exe" -Force }
+
+# Adesh Runtime Observatory (ARO) suite: CLI, TUI, and Desktop Cockpit
+if (Test-Path "$TargetBinDir\aro.exe") {
+    Copy-Item "$TargetBinDir\aro.exe" "$DistDir\bin\aro.exe" -Force
+    Write-Host "      Copied ARO CLI (aro.exe) to bin\" -ForegroundColor Green
+}
+if (Test-Path "$TargetBinDir\aro_tui.exe") {
+    Copy-Item "$TargetBinDir\aro_tui.exe" "$DistDir\bin\aro_tui.exe" -Force
+    Write-Host "      Copied ARO TUI (aro_tui.exe) to bin\" -ForegroundColor Green
+}
+$AroDesktopBin = "$RootDir\ARO\desktop\src-tauri\target\release\adesh-observatory-desktop.exe"
+if ($Arch -eq "aarch64") {
+    $AroDesktopBin = "$RootDir\ARO\desktop\src-tauri\target\aarch64-pc-windows-msvc\release\adesh-observatory-desktop.exe"
+}
+if (Test-Path $AroDesktopBin) {
+    Copy-Item $AroDesktopBin "$DistDir\bin\adesh-observatory-desktop.exe" -Force
+    Write-Host "      Copied ARO Desktop Cockpit (adesh-observatory-desktop.exe) to bin\" -ForegroundColor Green
+}
 
 Copy-Item "$RootDir\LICENSE" "$DistDir\licenses\LICENSE.txt" -Force
 

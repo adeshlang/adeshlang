@@ -9,6 +9,20 @@ pub struct HistoryStore {
 }
 
 impl HistoryStore {
+    pub fn default_db_path() -> std::path::PathBuf {
+        let base = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let adesh_dir = base.join(".adesh");
+        let _ = std::fs::create_dir_all(&adesh_dir);
+        adesh_dir.join("observatory.db")
+    }
+
+    pub fn default_store() -> Result<Self> {
+        Self::open(Self::default_db_path())
+    }
+
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let conn = Connection::open(path)?;
         let store = Self { conn };
@@ -28,6 +42,7 @@ impl HistoryStore {
             r#"
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
+            PRAGMA busy_timeout = 5000;
 
             CREATE TABLE IF NOT EXISTS sessions (
                 session_id TEXT PRIMARY KEY,
@@ -540,5 +555,98 @@ impl HistoryStore {
             "#,
         )?;
         Ok(())
+    }
+
+    pub fn ingest_envelope(&self, envelope: &TelemetryEnvelope) -> Result<()> {
+        match &envelope.payload {
+            EventPayload::SessionStart {
+                tool_name,
+                command_args,
+                working_dir,
+                parent_pid,
+                execution_mode,
+                target_file,
+            } => {
+                self.record_session_start(
+                    &envelope.session_id,
+                    envelope.pid,
+                    *parent_pid,
+                    tool_name,
+                    command_args,
+                    working_dir,
+                    *execution_mode,
+                    target_file.as_deref(),
+                    envelope.timestamp_utc,
+                )?;
+            }
+            EventPayload::SessionEnd {
+                exit_code,
+                duration_micros,
+                status,
+                error_message,
+            } => {
+                self.record_session_end(
+                    &envelope.session_id,
+                    *exit_code,
+                    *duration_micros,
+                    *status,
+                    error_message.as_deref(),
+                    envelope.timestamp_utc,
+                )?;
+            }
+            EventPayload::MetricsSample(metrics) => {
+                self.record_metric(&envelope.session_id, metrics)?;
+            }
+            EventPayload::CompilerStage(stage) => {
+                self.record_compiler_stage(&envelope.session_id, stage)?;
+            }
+            EventPayload::LinkerStage(stage) => {
+                self.record_linker_stage(&envelope.session_id, stage)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    pub fn get_stats(&self) -> Result<CollectorStats> {
+        let active_count: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE status = 'running'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        let stored_count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+            .unwrap_or(0);
+
+        let stages_count: i64 = self
+            .conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM compiler_stages) + (SELECT COUNT(*) FROM linker_stages)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        let metrics_count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM metrics", [], |r| r.get(0))
+            .unwrap_or(0);
+
+        let db_path = Self::default_db_path();
+        let db_size = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
+
+        Ok(CollectorStats {
+            uptime_secs: 0,
+            total_events_ingested: (stored_count + stages_count + metrics_count) as u64,
+            total_events_dropped: 0,
+            active_sessions_count: active_count as usize,
+            stored_sessions_count: stored_count as usize,
+            database_size_bytes: db_size,
+        })
     }
 }

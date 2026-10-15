@@ -11,7 +11,9 @@ import {
   Terminal,
   TrendingUp,
   AlertTriangle,
-  ArrowUpRight
+  ArrowUpRight,
+  Trash2,
+  RefreshCw,
 } from "lucide-react";
 import {
   AreaChart,
@@ -19,11 +21,11 @@ import {
   ResponsiveContainer,
   XAxis,
   YAxis,
-  Tooltip
+  Tooltip,
 } from "recharts";
 
 export const CockpitOverview: React.FC = () => {
-  const { state, selectSessionById } = useObservatory();
+  const { state, selectSessionById, refreshNow, purgeHistory } = useObservatory();
   const { sessions, stats, searchQuery, filterMode } = state;
 
   // Filter sessions based on search & execution mode
@@ -51,8 +53,42 @@ export const CockpitOverview: React.FC = () => {
 
   return (
     <div className="p-6 space-y-6 overflow-y-auto h-full">
+      {/* Cockpit Header with Action Controls */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-1 border-b border-slate-800/80">
+        <div>
+          <h1 className="text-lg font-bold text-slate-100 tracking-tight flex items-center space-x-2">
+            <span>Observatory Cockpit</span>
+            <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
+              Live SQLite WAL
+            </span>
+          </h1>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Durable telemetry history synchronized at <code className="text-sky-400 font-mono">~/.adesh/observatory.db</code>
+          </p>
+        </div>
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={purgeHistory}
+            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 hover:text-rose-200 transition-colors text-xs font-semibold"
+            title="Clear all recorded sessions from dashboard and database"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Clear Dashboard</span>
+            <span className="sm:hidden">Clear</span>
+          </button>
+          <button
+            onClick={refreshNow}
+            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 text-sky-300 hover:text-white transition-colors text-xs font-semibold"
+            title="Force refresh telemetry from SQLite"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Refresh</span>
+          </button>
+        </div>
+      </div>
+
       {/* Top Banner Metric Tiles */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-sky-950/30 border border-slate-800 p-4 rounded-xl relative overflow-hidden shadow-sm">
           <div className="flex items-center justify-between text-slate-400 mb-2">
             <span className="text-[11px] uppercase tracking-wider font-semibold">Active Tool Processes</span>
@@ -237,8 +273,28 @@ export const CockpitOverview: React.FC = () => {
               ))}
               {filteredSessions.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="text-center py-10 text-slate-500">
-                    No matching sessions. Execute <code className="text-sky-400 font-mono">adesh run &lt;file.adesh&gt;</code> to record live events.
+                  <td colSpan={8} className="text-center py-12 px-6">
+                    <div className="max-w-md mx-auto space-y-3">
+                      <div className="w-10 h-10 rounded-full bg-slate-800 text-sky-400 flex items-center justify-center mx-auto">
+                        <Terminal className="w-5 h-5" />
+                      </div>
+                      <div className="text-sm font-bold text-slate-200">No Executions Recorded Yet</div>
+                      <p className="text-xs text-slate-400 leading-relaxed">
+                        Observatory is actively listening. Run any Adesh program or compilation command in your terminal to view real-time telemetry:
+                      </p>
+                      <div className="p-3 bg-slate-950 rounded-lg border border-slate-800 font-mono text-left text-xs space-y-1.5 text-sky-300">
+                        <div>$ adesh run tests/main.adesh</div>
+                        <div>$ adesh run tests/main.adesh --njit</div>
+                        <div>$ adeshlink main.adob -o app.exe</div>
+                      </div>
+                      <button
+                        onClick={refreshNow}
+                        className="inline-flex items-center space-x-1.5 text-xs text-sky-400 hover:text-sky-300 font-medium pt-1 cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>Check for new sessions</span>
+                      </button>
+                    </div>
                   </td>
                 </tr>
               )}

@@ -116,8 +116,10 @@ fn main() {
     adeshlang::runtime::thread::disarm_watchdog();
     if panicked {
         eprintln!("Error: Main execution thread panicked");
+        adeshlang::cli::observatory::finish_observatory_session(101, Some("Panicked"));
         std::process::exit(101);
     }
+    adeshlang::cli::observatory::finish_observatory_session(0, None);
     // Do not wait for leftover pool/worker OS threads after the program finished.
     std::process::exit(0);
 }
@@ -125,6 +127,25 @@ fn main() {
 fn real_main(parsed: ParsedArgs, args: Vec<String>) {
     // Configure global FFI registry based on CLI flags
     cli_impl::apply_ffi_cli_config(&parsed.config);
+
+    let execution_mode = match parsed.config.backend {
+        ExecutionBackend::Interpreter => adesh_monitor_protocol::ExecutionMode::Interpreter,
+        ExecutionBackend::Bytecode => adesh_monitor_protocol::ExecutionMode::BytecodeVm,
+        ExecutionBackend::Jit => adesh_monitor_protocol::ExecutionMode::Jit,
+        ExecutionBackend::NativeJit => adesh_monitor_protocol::ExecutionMode::Jit,
+        ExecutionBackend::TieredJit => adesh_monitor_protocol::ExecutionMode::TieredJit,
+        ExecutionBackend::AdaptiveJit => adesh_monitor_protocol::ExecutionMode::AdaptiveJit,
+        ExecutionBackend::Aot => adesh_monitor_protocol::ExecutionMode::AotNative,
+        ExecutionBackend::Wasm => adesh_monitor_protocol::ExecutionMode::WebAssembly,
+        _ => adesh_monitor_protocol::ExecutionMode::Interpreter,
+    };
+
+    let _session_guard = adeshlang::cli::observatory::init_observatory_session(
+        &parsed.command,
+        parsed.input_file.as_deref(),
+        &args,
+        execution_mode,
+    );
 
     let mut interp = Interpreter::new();
     match parsed.command.as_str() {
@@ -438,6 +459,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             use std::io::Write;
             std::io::stdout().flush().ok();
             std::io::stderr().flush().ok();
+            adeshlang::cli::observatory::finish_observatory_session(0, None);
             std::process::exit(0);
         }
         "run-interpret" => {

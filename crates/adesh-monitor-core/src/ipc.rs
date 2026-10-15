@@ -5,6 +5,8 @@
 
 use adesh_monitor_protocol::*;
 use std::io::{BufRead, BufReader, Write};
+#[cfg(not(windows))]
+use std::time::Duration;
 
 #[cfg(windows)]
 pub const DEFAULT_IPC_ENDPOINT: &str = r"\\.\pipe\adesh_observatory_ipc";
@@ -13,6 +15,7 @@ pub const DEFAULT_IPC_ENDPOINT: &str = "/tmp/adesh_observatory.sock";
 
 /// Non-blocking telemetry emitter used inside instrumented processes (`adesh`, `adeshlink`, runtimes).
 /// If the collector is offline or not listening, it fails fast and silently (zero performance impact).
+#[derive(Clone)]
 pub struct TelemetryClient {
     session_id: String,
     pid: u32,
@@ -50,7 +53,11 @@ impl TelemetryClient {
             Err(_) => return,
         };
 
-        let _ = send_ipc_payload(&json_line);
+        // If IPC send fails (no active collector daemon listening), fallback to direct SQLite WAL persistence
+        if send_ipc_payload(&json_line).is_err() {
+            let _ = crate::storage::HistoryStore::default_store()
+                .map(|store| store.ingest_envelope(&envelope));
+        }
     }
 }
 

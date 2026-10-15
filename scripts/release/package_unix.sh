@@ -72,9 +72,41 @@ fi
 if [[ -f "$root/editor/Cargo.toml" ]]; then
   (cd "$root/editor" && cargo build --release "${target_flags[@]}" --bin adesh-editor)
 fi
+# adesh-monitor-cli: standalone observatory CLI
+cargo build --release "${target_flags[@]}" -p adesh-monitor-cli --bin aro
+# adesh-monitor-tui: standalone observatory TUI
+cargo build --release "${target_flags[@]}" -p adesh-monitor-tui --bin aro_tui
+# adesh-observatory-desktop: standalone Tauri desktop application
+if [[ -d "$root/ARO/desktop" ]]; then
+  (
+    cd "$root/ARO/desktop"
+    if command -v pnpm >/dev/null 2>&1; then
+      pnpm run build || true
+    fi
+    if [[ -d "$root/ARO/desktop/src-tauri" ]]; then
+      cd "$root/ARO/desktop/src-tauri"
+      cargo build --release "${target_flags[@]}" --bin adesh-observatory-desktop || true
+    fi
+  )
+fi
 
 cp "$target_dir/adesh" "$stage/bin/"
 [[ -f "$target_dir/adl" ]] && cp "$target_dir/adl" "$stage/bin/"
+[[ -f "$target_dir/aro" ]] && cp "$target_dir/aro" "$stage/bin/"
+[[ -f "$target_dir/aro_tui" ]] && cp "$target_dir/aro_tui" "$stage/bin/"
+if [[ -f "$target_dir/adesh-observatory-desktop" ]]; then
+  cp "$target_dir/adesh-observatory-desktop" "$stage/bin/"
+elif [[ -f "$root/ARO/desktop/src-tauri/target/release/adesh-observatory-desktop" ]]; then
+  cp "$root/ARO/desktop/src-tauri/target/release/adesh-observatory-desktop" "$stage/bin/"
+fi
+
+# Stage icons
+mkdir -p "$stage/share/icons"
+if [[ -f "$root/Logo/app-icon-square.png" ]]; then
+  cp "$root/Logo/app-icon-square.png" "$stage/share/icons/adesh-observatory.png"
+elif [[ -f "$root/Logo/Logo.png" ]]; then
+  cp "$root/Logo/Logo.png" "$stage/share/icons/adesh-observatory.png"
+fi
 
 # Native linker CLI: prefer the shared workspace target dir, fall back to a
 # standalone linker/target build.

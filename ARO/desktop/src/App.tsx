@@ -6,7 +6,7 @@ import { StagesTimeline } from "./pages/StagesTimeline";
 import { ShieldCheck, Cpu, HardDrive, Terminal } from "lucide-react";
 
 const MainLayout: React.FC = () => {
-  const { state, dispatch, refreshNow } = useObservatory();
+  const { state, dispatch, refreshNow, purgeHistory } = useObservatory();
   const {
     currentTab,
     sessions,
@@ -28,6 +28,7 @@ const MainLayout: React.FC = () => {
         activeCount={activeCount}
         ipcStatus={ipcStatus}
         onRefresh={refreshNow}
+        onPurgeHistory={purgeHistory}
         searchQuery={searchQuery}
         onSearchChange={(q) => dispatch({ type: "SET_SEARCH_QUERY", payload: q })}
         filterMode={filterMode}

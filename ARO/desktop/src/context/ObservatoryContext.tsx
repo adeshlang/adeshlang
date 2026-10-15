@@ -115,6 +115,7 @@ interface ObservatoryContextType {
   state: ObservatoryState;
   dispatch: React.Dispatch<ObservatoryAction>;
   refreshNow: () => Promise<void>;
+  purgeHistory: () => Promise<void>;
   selectSessionById: (sessionId: string) => Promise<void>;
 }
 
@@ -129,95 +130,67 @@ export const ObservatoryProvider: React.FC<{ children: ReactNode }> = ({ childre
         const { invoke } = await import("@tauri-apps/api/core");
         let sessions: SessionSummary[] = [];
         let stats: CollectorStats | null = null;
+        let hardware: HardwareCaps | null = null;
+
         try {
           sessions = await invoke<SessionSummary[]>("get_sessions", { limit: 200 });
         } catch (e) {
-          console.warn("get_sessions error, falling back:", e);
+          console.warn("get_sessions error:", e);
         }
+
         try {
           stats = await invoke<CollectorStats>("get_collector_stats");
         } catch (e) {
-          console.warn("get_collector_stats error, falling back:", e);
+          console.warn("get_collector_stats error:", e);
         }
-        if (sessions && sessions.length > 0) {
-          dispatch({ type: "SET_SESSIONS", payload: sessions });
+
+        try {
+          hardware = await invoke<HardwareCaps>("get_hardware_info");
+        } catch (e) {
+          console.warn("get_hardware_info error:", e);
         }
+
+        dispatch({ type: "SET_SESSIONS", payload: sessions || [] });
+
         if (stats) {
           dispatch({ type: "SET_STATS", payload: stats });
         }
+        if (hardware) {
+          dispatch({ type: "SET_HARDWARE", payload: hardware });
+        }
         dispatch({ type: "SET_IPC_STATUS", payload: "connected" });
-      } else {
-        // High-fidelity development fixtures when inspected outside Tauri window
-        const demoSessions: SessionSummary[] = [
-          {
-            session_id: "sess-8a3b12f4-e7c9-4b21-9d55-1029384756ab",
-            pid: 14220,
-            tool_name: "adesh",
-            execution_mode: "jit",
-            command_line: "adesh run tests/main.adesh --njit",
-            status: "completed",
-            exit_code: 0,
-            start_time: new Date(Date.now() - 45000).toISOString(),
-            end_time: new Date(Date.now() - 44968).toISOString(),
-            duration_ms: 32,
-            peak_rss_bytes: 38400000,
-            cpu_peak_percent: 18.5,
-          },
-          {
-            session_id: "sess-194fa83c-1120-4df2-bc51-0987654321fe",
-            pid: 29810,
-            tool_name: "adeshlink",
-            execution_mode: "linker",
-            command_line: "adeshlink -o dist/app.exe main.adob --hardened",
-            status: "completed",
-            exit_code: 0,
-            start_time: new Date(Date.now() - 15000).toISOString(),
-            end_time: new Date(Date.now() - 14986).toISOString(),
-            duration_ms: 14,
-            peak_rss_bytes: 24500000,
-            cpu_peak_percent: 25.0,
-          },
-          {
-            session_id: "sess-5510abcd-3344-9876-1122-334455667788",
-            pid: 31044,
-            tool_name: "adesh",
-            execution_mode: "aot_native",
-            command_line: "adesh compile-native app.adesh app.exe",
-            status: "running",
-            start_time: new Date(Date.now() - 1200).toISOString(),
-            peak_rss_bytes: 67200000,
-            cpu_peak_percent: 88.4,
-          },
-        ];
 
-        dispatch({ type: "SET_SESSIONS", payload: demoSessions });
-        dispatch({
-          type: "SET_STATS",
-          payload: {
-            uptime_secs: 420,
-            total_events_ingested: 3892,
-            total_events_dropped: 0,
-            active_sessions_count: 1,
-            stored_sessions_count: demoSessions.length,
-            database_size_bytes: 2457600,
-          },
-        });
-        dispatch({
-          type: "SET_HARDWARE",
-          payload: {
-            os_name: "Windows / Linux / macOS Unified Core",
-            arch: "x86_64 / aarch64",
-            logical_cores: 16,
-            supports_process_cpu: true,
-            supports_process_memory: true,
-            supports_disk_io: true,
-            supports_accelerators: true,
-          },
-        });
+        // If a session is currently selected, refresh its details too
+        if (state.selectedSessionId) {
+          try {
+            const detail = await invoke<SessionDetail>("get_session_detail", {
+              sessionId: state.selectedSessionId,
+            });
+            if (detail) {
+              dispatch({ type: "SET_SESSION_DETAIL", payload: detail });
+            }
+          } catch (_) {}
+        }
+      } else {
+        // Outside Tauri (standalone web inspector)
         dispatch({ type: "SET_IPC_STATUS", payload: "connected" });
       }
     } catch (err) {
       dispatch({ type: "SET_IPC_STATUS", payload: "disconnected" });
+    }
+  };
+
+  const purgeHistory = async () => {
+    try {
+      if ((window as any).__TAURI_INTERNALS__) {
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("purge_history");
+      }
+      dispatch({ type: "SET_SESSIONS", payload: [] });
+      dispatch({ type: "CLEAR_SELECTION" });
+      await refreshNow();
+    } catch (e) {
+      console.error("Failed to purge history:", e);
     }
   };
 
@@ -229,57 +202,19 @@ export const ObservatoryProvider: React.FC<{ children: ReactNode }> = ({ childre
         const detail = await invoke<SessionDetail>("get_session_detail", { sessionId });
         dispatch({ type: "SET_SESSION_DETAIL", payload: detail });
       } else {
-        const summary = state.sessions.find((s) => s.session_id === sessionId) || state.sessions[0];
-        dispatch({
-          type: "SET_SESSION_DETAIL",
-          payload: {
-            summary,
-            working_dir: "D:\\Projects\\AdeshLang",
-            target_file: "tests/main.adesh",
-            compiler_stages: [
-              { stage_name: "lex_and_parse", duration_micros: 340, success: true, metadata: {} },
-              { stage_name: "decorator_phases", duration_micros: 120, success: true, metadata: {} },
-              { stage_name: "raii_transformation", duration_micros: 280, success: true, metadata: {} },
-              { stage_name: "hir_lower", duration_micros: 410, success: true, metadata: {} },
-              { stage_name: "compile_time_memory_safety", duration_micros: 850, success: true, metadata: {} },
-              { stage_name: "cranelift_native_lower", duration_micros: 1840, success: true, metadata: {} },
-            ],
-            linker_stages: [
-              {
-                stage_name: "read_objects",
-                target_triple: "x86_64-windows",
-                output_format: "Pe",
-                input_objects_count: 2,
-                symbol_count: 240,
-                section_count: 6,
-                duration_micros: 180,
-                success: true,
-              },
-              {
-                stage_name: "section_gc",
-                target_triple: "x86_64-windows",
-                output_format: "Pe",
-                input_objects_count: 2,
-                symbol_count: 240,
-                section_count: 6,
-                duration_micros: 240,
-                success: true,
-              },
-              {
-                stage_name: "emit_pe_binary",
-                target_triple: "x86_64-windows",
-                output_format: "Pe",
-                input_objects_count: 2,
-                symbol_count: 140,
-                section_count: 5,
-                output_size_bytes: 94208,
-                duration_micros: 1420,
-                success: true,
-              },
-            ],
-            metrics_count: 28,
-          },
-        });
+        const summary = state.sessions.find((s) => s.session_id === sessionId);
+        if (summary) {
+          dispatch({
+            type: "SET_SESSION_DETAIL",
+            payload: {
+              summary,
+              working_dir: ".",
+              compiler_stages: [],
+              linker_stages: [],
+              metrics_count: 0,
+            },
+          });
+        }
       }
     } catch (err) {
       console.error("Failed to load session detail:", err);
@@ -291,10 +226,12 @@ export const ObservatoryProvider: React.FC<{ children: ReactNode }> = ({ childre
     if (!state.autoRefresh) return;
     const timer = setInterval(refreshNow, state.refreshIntervalMs);
     return () => clearInterval(timer);
-  }, [state.autoRefresh, state.refreshIntervalMs]);
+  }, [state.autoRefresh, state.refreshIntervalMs, state.selectedSessionId]);
 
   return (
-    <ObservatoryContext.Provider value={{ state, dispatch, refreshNow, selectSessionById }}>
+    <ObservatoryContext.Provider
+      value={{ state, dispatch, refreshNow, purgeHistory, selectSessionById }}
+    >
       {children}
     </ObservatoryContext.Provider>
   );
