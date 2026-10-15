@@ -417,12 +417,12 @@ fn build_puts_object(obj_path: PathBuf, target: &Target, use_data_ptr: bool) -> 
     };
     let mut text = head.to_vec();
     text.extend_from_slice(&[0xe8, 0, 0, 0, 0]); // call puts
-    text.extend_from_slice(&[0xb8, 0x3c, 0x00, 0x00, 0x00]); // mov eax, 60
     text.extend_from_slice(&[0x31, 0xff]); // xor edi, edi
-    text.extend_from_slice(&[0x0f, 0x05]); // syscall
+    text.extend_from_slice(&[0xe8, 0, 0, 0, 0]); // call exit
+    text.extend_from_slice(&[0xb8, 0x3c, 0x00, 0x00, 0x00, 0x31, 0xff, 0x0f, 0x05]); // syscall 60 fallback
 
     let text_idx = obj.add_section(Section::new_code(".text", text.clone(), 16));
-    let msg_str = b"hello from adesh dynamic ELF\n\0";
+    let msg_str = b"hello from adesh dynamic ELF\0";
     let rodata_idx = obj.add_section(Section::new_data(".rodata", msg_str.to_vec(), false, 1));
     let data_idx =
         use_data_ptr.then(|| obj.add_section(Section::new_data(".data", vec![0u8; 8], true, 8)));
@@ -457,6 +457,7 @@ fn build_puts_object(obj_path: PathBuf, target: &Target, use_data_ptr: bool) -> 
         ))
     });
     let puts_sym = obj.add_symbol(Symbol::new_undefined("puts", 0));
+    let exit_sym = obj.add_symbol(Symbol::new_undefined("exit", 0));
 
     let mut text_sec = obj.sections[text_idx].clone();
     // lea/mov rip-relative operand at offset 3 -> msg or msgptr.
@@ -473,6 +474,10 @@ fn build_puts_object(obj_path: PathBuf, target: &Target, use_data_ptr: bool) -> 
     r2.symbol_index = Some(puts_sym);
     r2.file_index = Some(0);
     text_sec.relocations.push(r2);
+    let mut r3 = Relocation::new(15, "exit", RelocationKind::PcRelative32, -4);
+    r3.symbol_index = Some(exit_sym);
+    r3.file_index = Some(0);
+    text_sec.relocations.push(r3);
     obj.sections[text_idx] = text_sec;
 
     if let Some(di) = data_idx {
@@ -746,13 +751,21 @@ fn test_dynamic_exec_puts_executes_and_prints() {
         .find(|(t, _)| *t == DT_PLTRELSZ)
         .map(|(_, v)| *v)
         .expect("DT_PLTRELSZ");
-    assert_eq!(pltrelsz, 24, "one JUMP_SLOT relocation expected");
+    assert_eq!(
+        pltrelsz, 48,
+        "two JUMP_SLOT relocations expected (puts, exit)"
+    );
     let _ = jmprel_off;
 
-    // `puts` must be in .dynsym (the loader resolves it from libc).
+    // `puts` and `exit` must be in .dynsym (the loader resolves them from libc).
     assert!(
         view.dynsym_names().iter().any(|n| n == "puts"),
         ".dynsym must contain `puts`, got {:?}",
+        view.dynsym_names()
+    );
+    assert!(
+        view.dynsym_names().iter().any(|n| n == "exit"),
+        ".dynsym must contain `exit`, got {:?}",
         view.dynsym_names()
     );
 

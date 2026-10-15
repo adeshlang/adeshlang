@@ -290,7 +290,8 @@ fn main() {
     let run_result = run_command_with_timeout(&exe_path, &[], Duration::from_secs(20));
     assert!(
         run_result.status.success(),
-        "AOT executable failed\nstdout:\n{}\nstderr:\n{}",
+        "AOT executable failed (status: {:?})\nstdout:\n{}\nstderr:\n{}",
+        run_result.status,
         run_result.stdout,
         run_result.stderr
     );

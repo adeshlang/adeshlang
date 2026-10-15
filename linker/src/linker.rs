@@ -32,7 +32,7 @@ fn hashed_library_candidates(search_dir: &Path, lib_name: &str) -> Vec<PathBuf> 
             let has_hashed_name = prefixes.iter().any(|prefix| name.starts_with(prefix));
             let is_archive = matches!(
                 path.extension().and_then(|extension| extension.to_str()),
-                Some("lib" | "a")
+                Some("lib" | "a" | "rlib")
             );
             has_hashed_name && is_archive
         })
@@ -108,8 +108,8 @@ impl Linker {
             };
             for profile in profile_order {
                 let profile_dir = cwd.join("target").join(profile);
+                search_paths.push(profile_dir.clone());
                 search_paths.push(profile_dir.join("deps"));
-                search_paths.push(profile_dir);
             }
             search_paths.push(cwd.join("lib"));
             search_paths.push(cwd.clone());
@@ -137,6 +137,8 @@ impl Linker {
                 let mut candidates = vec![
                     search_dir.join(format!("lib{}.a", lib_name)),
                     search_dir.join(format!("{}.lib", lib_name)),
+                    search_dir.join(format!("lib{}.rlib", lib_name)),
+                    search_dir.join(format!("{}.rlib", lib_name)),
                 ];
                 candidates.extend(hashed_library_candidates(search_dir, lib_name));
                 for p in candidates {

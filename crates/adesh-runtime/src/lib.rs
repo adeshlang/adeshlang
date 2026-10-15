@@ -43,8 +43,70 @@ use std::ffi::{CStr, CString};
 use std::fmt::Write as FmtWrite;
 use std::io::Write;
 use std::os::raw::c_char;
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+
+// ============================================================================
+// Lightweight Standalone Mutex
+// ============================================================================
+//
+// Standalone AOT binaries linked with `adesh-linker` do not link against the
+// Rust toolchain's `libstd.rlib`. Rust's `std::sync::Mutex` uses internal
+// panic-count tracking (`GLOBAL_PANIC_COUNT`) for lock poisoning which references
+// unexported toolchain symbols on Windows/MSVC. `RuntimeMutex` is a self-contained,
+// poison-free atomic spinlock that relies solely on hardware atomics and works
+// in freestanding and AOT environments.
+
+pub struct RuntimeMutex<T> {
+    locked: AtomicBool,
+    data: std::cell::UnsafeCell<T>,
+}
+
+unsafe impl<T: Send> Sync for RuntimeMutex<T> {}
+unsafe impl<T: Send> Send for RuntimeMutex<T> {}
+
+impl<T> RuntimeMutex<T> {
+    pub const fn new(data: T) -> Self {
+        Self {
+            locked: AtomicBool::new(false),
+            data: std::cell::UnsafeCell::new(data),
+        }
+    }
+
+    pub fn lock(&self) -> RuntimeMutexGuard<'_, T> {
+        while self
+            .locked
+            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            std::hint::spin_loop();
+        }
+        RuntimeMutexGuard { mutex: self }
+    }
+}
+
+pub struct RuntimeMutexGuard<'a, T> {
+    mutex: &'a RuntimeMutex<T>,
+}
+
+impl<'a, T> std::ops::Deref for RuntimeMutexGuard<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        unsafe { &*self.mutex.data.get() }
+    }
+}
+
+impl<'a, T> std::ops::DerefMut for RuntimeMutexGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        unsafe { &mut *self.mutex.data.get() }
+    }
+}
+
+impl<'a, T> Drop for RuntimeMutexGuard<'a, T> {
+    fn drop(&mut self) {
+        self.mutex.locked.store(false, Ordering::Release);
+    }
+}
 
 // ============================================================================
 // Runtime Value Definition
@@ -449,21 +511,17 @@ impl RuntimeValue {
 const N_SHARDS: usize = 16;
 
 pub const HANDLE_TAG: u64 = 0x4000_0000_0000_0000;
-static HANDLE_SHARDS: [StdMutex<BTreeMap<u64, RuntimeValue>>; N_SHARDS] =
-    [const { StdMutex::new(BTreeMap::new()) }; N_SHARDS];
+static HANDLE_SHARDS: [RuntimeMutex<BTreeMap<u64, RuntimeValue>>; N_SHARDS] =
+    [const { RuntimeMutex::new(BTreeMap::new()) }; N_SHARDS];
 static HANDLE_COUNTER: AtomicU64 = AtomicU64::new(100);
 
 fn shard_index(handle: u64) -> usize {
     ((handle ^ HANDLE_TAG) % N_SHARDS as u64) as usize
 }
 
-/// Lock the shard owning `handle` without panicking: if another thread
-/// panicked while holding the lock (poison), recover the inner map instead of
-/// propagating a panic across the C ABI.
-fn lock_shard(handle: u64) -> std::sync::MutexGuard<'static, BTreeMap<u64, RuntimeValue>> {
-    HANDLE_SHARDS[shard_index(handle)]
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+/// Lock the shard owning `handle`.
+fn lock_shard(handle: u64) -> RuntimeMutexGuard<'static, BTreeMap<u64, RuntimeValue>> {
+    HANDLE_SHARDS[shard_index(handle)].lock()
 }
 
 pub fn aot_store_value(value: RuntimeValue) -> u64 {
@@ -529,34 +587,10 @@ fn valid_aot_arg_count(count: usize) -> bool {
 // panic (the process aborts instead — still defined behavior, not UB); the
 // guard matters for dev/test builds.
 
-static QUIET_PANIC_HOOK: std::sync::Once = std::sync::Once::new();
-
-fn ensure_quiet_panic_hook() {
-    QUIET_PANIC_HOOK.call_once(|| {
-        std::panic::set_hook(Box::new(|info| {
-            let message = info
-                .payload()
-                .downcast_ref::<&str>()
-                .copied()
-                .or_else(|| info.payload().downcast_ref::<String>().map(|s| s.as_str()))
-                .unwrap_or("<non-string panic payload>");
-            let location = info
-                .location()
-                .map(|l| format!(" ({}:{})", l.file(), l.line()))
-                .unwrap_or_default();
-            eprintln!(
-                "adesh-runtime: caught panic: {}{}; the operation was skipped safely",
-                message, location
-            );
-        }));
-    });
-}
-
 /// Run `body`, catching any panic so it cannot unwind across the C ABI.
 /// Returns `fallback` if `body` panicked. Success-path behavior is unchanged.
 #[inline]
 fn ffi_guard<T>(fallback: T, body: impl FnOnce() -> T) -> T {
-    ensure_quiet_panic_hook();
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)) {
         Ok(value) => value,
         Err(_panic_payload) => fallback,
@@ -1876,9 +1910,7 @@ pub unsafe extern "C" fn aot_free_range(start: u64, end: u64) -> u64 {
         // One shard lock at a time (never two at once), so this cannot
         // deadlock against the sharded store.
         for shard in HANDLE_SHARDS.iter() {
-            let mut map = shard
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut map = shard.lock();
             let doomed: Vec<u64> = map.range(start..end).map(|(k, _)| *k).collect();
             freed += doomed.len() as u64;
             for key in doomed {
@@ -1894,12 +1926,7 @@ pub unsafe extern "C" fn aot_free_range(start: u64, end: u64) -> u64 {
 pub extern "C" fn aot_live_handles() -> u64 {
     HANDLE_SHARDS
         .iter()
-        .map(|shard| {
-            shard
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .len() as u64
-        })
+        .map(|shard| shard.lock().len() as u64)
         .sum()
 }
 
@@ -2084,18 +2111,17 @@ fn aot_set_index_impl(container_handle: u64, index_handle: u64, val_handle: u64)
 struct ArcControlBlock {
     strong: AtomicI64,
     weak: AtomicI64,
-    // Mutex<Option<..>> lets the last strong drop move the payload out while
+    // RuntimeMutex<Option<..>> lets the last strong drop move the payload out while
     // weak refs still point at the block; a dead block reads back as None.
-    value: StdMutex<Option<RuntimeValue>>,
+    value: RuntimeMutex<Option<RuntimeValue>>,
 }
 
-static ARC_MAP: StdMutex<BTreeMap<u64, Arc<ArcControlBlock>>> = StdMutex::new(BTreeMap::new());
+static ARC_MAP: RuntimeMutex<BTreeMap<u64, Arc<ArcControlBlock>>> =
+    RuntimeMutex::new(BTreeMap::new());
 static ARC_COUNTER: AtomicU64 = AtomicU64::new(1000);
 
-fn get_arc_map() -> std::sync::MutexGuard<'static, BTreeMap<u64, Arc<ArcControlBlock>>> {
-    ARC_MAP
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+fn get_arc_map() -> RuntimeMutexGuard<'static, BTreeMap<u64, Arc<ArcControlBlock>>> {
+    ARC_MAP.lock()
 }
 
 #[unsafe(no_mangle)]
@@ -2104,7 +2130,7 @@ pub extern "C" fn adesh_rt_arc_new(val_handle: u64) -> u64 {
     let block = Arc::new(ArcControlBlock {
         strong: AtomicI64::new(1),
         weak: AtomicI64::new(0),
-        value: StdMutex::new(Some(val)),
+        value: RuntimeMutex::new(Some(val)),
     });
     let id = ARC_COUNTER.fetch_add(1, Ordering::Relaxed);
     get_arc_map().insert(id, block);
@@ -2143,10 +2169,7 @@ pub extern "C" fn adesh_rt_arc_drop(handle: u64) -> u64 {
     // prev == 1: the last strong reference is gone. Move the payload out so
     // weak holders can never observe or resurrect it...
     {
-        let mut value = block
-            .value
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut value = block.value.lock();
         *value = None;
     }
     // ...but keep the (now dead) block in the map while weak refs remain, so
@@ -2161,10 +2184,7 @@ pub extern "C" fn adesh_rt_arc_drop(handle: u64) -> u64 {
 pub extern "C" fn adesh_rt_arc_get(handle: u64) -> u64 {
     let map = get_arc_map();
     let value = map.get(&handle).and_then(|block| {
-        let guard = block
-            .value
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = block.value.lock();
         guard.clone()
     });
     match value {
@@ -2183,10 +2203,7 @@ pub extern "C" fn adesh_rt_arc_set(handle: u64, val_handle: u64) -> u64 {
         return 0;
     }
     let value = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
-    *block
-        .value
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(value);
+    *block.value.lock() = Some(value);
     0
 }
 
@@ -2280,8 +2297,8 @@ struct TrackedAllocation {
     thread_id: std::thread::ThreadId,
 }
 
-static TRACKED_ALLOCATIONS: StdMutex<BTreeMap<usize, TrackedAllocation>> =
-    StdMutex::new(BTreeMap::new());
+static TRACKED_ALLOCATIONS: RuntimeMutex<BTreeMap<usize, TrackedAllocation>> =
+    RuntimeMutex::new(BTreeMap::new());
 static TRACKED_SCOPE_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 thread_local! {
@@ -2289,11 +2306,8 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
-fn lock_tracked_allocations() -> std::sync::MutexGuard<'static, BTreeMap<usize, TrackedAllocation>>
-{
-    TRACKED_ALLOCATIONS
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+fn lock_tracked_allocations() -> RuntimeMutexGuard<'static, BTreeMap<usize, TrackedAllocation>> {
+    TRACKED_ALLOCATIONS.lock()
 }
 
 #[unsafe(no_mangle)]
@@ -3440,13 +3454,11 @@ fn aot_call_method_impl(
 // Input & Type Conversions
 // ============================================================================
 
-static MOCK_INPUT_QUEUE: StdMutex<std::collections::VecDeque<String>> =
-    StdMutex::new(std::collections::VecDeque::new());
+static MOCK_INPUT_QUEUE: RuntimeMutex<std::collections::VecDeque<String>> =
+    RuntimeMutex::new(std::collections::VecDeque::new());
 
-fn get_mock_input_queue() -> std::sync::MutexGuard<'static, std::collections::VecDeque<String>> {
-    MOCK_INPUT_QUEUE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+fn get_mock_input_queue() -> RuntimeMutexGuard<'static, std::collections::VecDeque<String>> {
+    MOCK_INPUT_QUEUE.lock()
 }
 
 #[unsafe(no_mangle)]
@@ -3569,12 +3581,10 @@ mod audit_tests {
 
     // The handle store and ARC map are process-global; tests touching them
     // run under this lock so their exact-count assertions stay deterministic.
-    static TEST_LOCK: StdMutex<()> = StdMutex::new(());
+    static TEST_LOCK: RuntimeMutex<()> = RuntimeMutex::new(());
 
     fn locked<R>(body: impl FnOnce() -> R) -> R {
-        let _guard = TEST_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = TEST_LOCK.lock();
         body()
     }
 

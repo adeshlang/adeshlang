@@ -75,11 +75,55 @@ impl Archive {
                 offset += 1; // 2-byte alignment padding
             }
 
+            let mut member_data = member_data;
+            let mut member_size = size;
+            let name = if name_raw.starts_with('/') && !string_table.is_empty() {
+                // GNU extended filename: /123
+                if let Ok(st_off) = name_raw[1..].parse::<usize>() {
+                    if st_off < string_table.len() {
+                        let end = string_table[st_off..]
+                            .iter()
+                            .position(|&b| b == b'/' || b == 0 || b == b'\n')
+                            .map(|p| st_off + p)
+                            .unwrap_or(string_table.len());
+                        String::from_utf8_lossy(&string_table[st_off..end]).to_string()
+                    } else {
+                        name_raw.to_string()
+                    }
+                } else {
+                    name_raw.to_string()
+                }
+            } else if name_raw.starts_with("#1/") {
+                // BSD extended filename: #1/len
+                if let Ok(len) = name_raw[3..].parse::<usize>() {
+                    if len <= member_data.len() {
+                        let parsed_name = String::from_utf8_lossy(&member_data[0..len])
+                            .trim_matches('\0')
+                            .trim()
+                            .to_string();
+                        member_data = &member_data[len..];
+                        member_size = member_size.saturating_sub(len);
+                        parsed_name
+                    } else {
+                        name_raw.to_string()
+                    }
+                } else {
+                    name_raw.to_string()
+                }
+            } else {
+                name_raw.trim_end_matches('/').to_string()
+            };
+
             if name_raw == "//" {
                 // GNU string table
                 string_table = member_data.to_vec();
-            } else if name_raw == "/"
+            } else if name == "/"
+                || name == "/SYM64/"
+                || name_raw == "/"
                 || name_raw == "/SYM64/"
+                || name == "__.SYMDEF"
+                || name == "__.SYMDEF SORTED"
+                || name.starts_with("__.SYMDEF")
                 || name_raw == "__.SYMDEF"
                 || name_raw == "__.SYMDEF SORTED"
                 || name_raw.starts_with("/ ")
@@ -87,47 +131,12 @@ impl Archive {
                 // Keep archive linker indexes for a cheap symbol scan. The
                 // member payloads are decoded only if the resolver extracts
                 // them, rather than eagerly parsing every object at startup.
-                if name_raw == "/" || name_raw == "/SYM64/" {
-                    archive_symbol_tables.push((name_raw.to_string(), member_data.to_vec()));
-                }
+                archive_symbol_tables.push((name, member_data.to_vec()));
             } else {
-                let name = if name_raw.starts_with('/') && !string_table.is_empty() {
-                    // GNU extended filename: /123
-                    if let Ok(st_off) = name_raw[1..].parse::<usize>() {
-                        if st_off < string_table.len() {
-                            let end = string_table[st_off..]
-                                .iter()
-                                .position(|&b| b == b'/' || b == 0 || b == b'\n')
-                                .map(|p| st_off + p)
-                                .unwrap_or(string_table.len());
-                            String::from_utf8_lossy(&string_table[st_off..end]).to_string()
-                        } else {
-                            name_raw.to_string()
-                        }
-                    } else {
-                        name_raw.to_string()
-                    }
-                } else if name_raw.starts_with("#1/") {
-                    // BSD extended filename: #1/len
-                    if let Ok(len) = name_raw[3..].parse::<usize>() {
-                        if len <= member_data.len() {
-                            String::from_utf8_lossy(&member_data[0..len])
-                                .trim_matches('\0')
-                                .to_string()
-                        } else {
-                            name_raw.to_string()
-                        }
-                    } else {
-                        name_raw.to_string()
-                    }
-                } else {
-                    name_raw.trim_end_matches('/').to_string()
-                };
-
                 member_header_offsets.push((header_offset as u64, members.len()));
                 members.push(ArchiveMember {
                     name,
-                    size,
+                    size: member_size,
                     data: member_data.to_vec(),
                     obj: None,
                 });
@@ -432,6 +441,46 @@ fn parse_archive_symbol_index(
         if candidates.last() != Some(&member_idx) {
             candidates.push(member_idx);
         }
+    }
+
+    // BSD / macOS __.SYMDEF and __.SYMDEF SORTED
+    if table_name == "__.SYMDEF"
+        || table_name == "__.SYMDEF SORTED"
+        || table_name.starts_with("__.SYMDEF")
+    {
+        if let Some(ran_size) = read_u32_le(data, 0).map(|v| v as usize) {
+            let ran_count = ran_size / 8;
+            let str_size_off = 4 + ran_size;
+            if let Some(str_size) = read_u32_le(data, str_size_off).map(|v| v as usize) {
+                let str_start = str_size_off + 4;
+                if str_start + str_size <= data.len() {
+                    let str_tab = &data[str_start..str_start + str_size];
+                    for i in 0..ran_count {
+                        let entry_off = 4 + i * 8;
+                        if let (Some(strx), Some(member_off)) = (
+                            read_u32_le(data, entry_off).map(|v| v as usize),
+                            read_u32_le(data, entry_off + 4).map(u64::from),
+                        ) {
+                            if strx < str_tab.len() {
+                                let end = str_tab[strx..]
+                                    .iter()
+                                    .position(|&b| b == 0)
+                                    .map(|p| strx + p)
+                                    .unwrap_or(str_tab.len());
+                                add_name(
+                                    &str_tab[strx..end],
+                                    member_off,
+                                    offset_to_member,
+                                    symbols,
+                                );
+                            }
+                        }
+                    }
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     if table_name == "/SYM64/" {
