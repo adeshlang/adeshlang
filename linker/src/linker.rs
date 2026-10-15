@@ -468,9 +468,8 @@ impl Linker {
                 // Mach-O is always dynamic (macOS has no static libSystem):
                 // routed symbols become lazy-bound imports reached through
                 // `__la_symbol_ptr` slots the layout stage reserves.
-                let importable_macho = is_macho
-                    && ctx.config.target.arch == crate::target::Arch::X86_64
-                    && matches!(route, crate::os_router::SymbolRoute::DllImport { .. });
+                let importable_macho =
+                    is_macho && matches!(route, crate::os_router::SymbolRoute::DllImport { .. });
 
                 let importable = importable_pe || importable_elf || importable_macho;
 
@@ -525,9 +524,7 @@ impl Linker {
                     );
                     (b, vec![r])
                 } else if importable_macho {
-                    // Mach-O x86_64 lazy proxy stub:
-                    // jmp qword ptr [__la_symbol_ptr_<name>]
-                    // \xff\x25 <disp32>
+                    // Mach-O lazy proxy stub:
                     // The layout stage registers the slot VA under this
                     // exact symbol name; the writer patches the slot to
                     // the stub-helper entry and dyld rewrites it on first
@@ -536,19 +533,37 @@ impl Linker {
                         .strip_prefix("__imp_")
                         .or_else(|| name.strip_prefix("_imp_"))
                         .unwrap_or(name);
-                    let b = vec![
-                        0xFF, 0x25, 0x00, 0x00, 0x00, 0x00, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
-                        0x90, 0x90, 0x90, 0x90,
-                    ];
-                    let r = crate::relocation::Relocation {
-                        offset: start_off + 2,
-                        symbol_name: format!("__la_symbol_ptr_{}", raw),
-                        symbol_index: None,
-                        file_index: None,
-                        kind: crate::relocation::RelocationKind::PcRelative32,
-                        addend: -4,
-                    };
-                    (b, vec![r])
+                    if ctx.config.target.arch == crate::target::Arch::AArch64 {
+                        let b = vec![
+                            0x90, 0x00, 0x00, 0x90, // adrp x16, 0
+                            0x10, 0x02, 0x40, 0xF9, // ldr x16, [x16]
+                            0x00, 0x02, 0x1F, 0xD6, // br x16
+                            0x1F, 0x20, 0x03, 0xD5, // nop
+                        ];
+                        let r = crate::relocation::Relocation {
+                            offset: start_off,
+                            symbol_name: format!("__la_symbol_ptr_{}", raw),
+                            symbol_index: None,
+                            file_index: None,
+                            kind: crate::relocation::RelocationKind::PcRelative32,
+                            addend: 0,
+                        };
+                        (b, vec![r])
+                    } else {
+                        let b = vec![
+                            0xFF, 0x25, 0x00, 0x00, 0x00, 0x00, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+                            0x90, 0x90, 0x90, 0x90,
+                        ];
+                        let r = crate::relocation::Relocation {
+                            offset: start_off + 2,
+                            symbol_name: format!("__la_symbol_ptr_{}", raw),
+                            symbol_index: None,
+                            file_index: None,
+                            kind: crate::relocation::RelocationKind::PcRelative32,
+                            addend: -4,
+                        };
+                        (b, vec![r])
+                    }
                 } else {
                     // If an unresolved symbol cannot be routed or synthesized, fail cleanly
                     return Err(LinkError::undefined_symbol(

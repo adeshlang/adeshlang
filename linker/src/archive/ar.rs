@@ -419,6 +419,11 @@ fn parse_archive_symbol_index(
             data.get(offset..offset + 4)?.try_into().ok()?,
         ))
     }
+    fn read_u64_le(data: &[u8], offset: usize) -> Option<u64> {
+        Some(u64::from_le_bytes(
+            data.get(offset..offset + 8)?.try_into().ok()?,
+        ))
+    }
     fn read_u64_be(data: &[u8], offset: usize) -> Option<u64> {
         Some(u64::from_be_bytes(
             data.get(offset..offset + 8)?.try_into().ok()?,
@@ -433,50 +438,98 @@ fn parse_archive_symbol_index(
         let Some(&member_idx) = offset_to_member.get(&member_offset) else {
             return;
         };
-        let name = String::from_utf8_lossy(name).into_owned();
-        if name.is_empty() {
+        let raw_name = String::from_utf8_lossy(name).into_owned();
+        if raw_name.is_empty() {
             return;
         }
-        let candidates = symbols.entry(name).or_default();
+        let candidates = symbols.entry(raw_name.clone()).or_default();
         if candidates.last() != Some(&member_idx) {
             candidates.push(member_idx);
         }
+        if let Some(stripped) = raw_name.strip_prefix('_') {
+            if !stripped.is_empty() {
+                let stripped_candidates = symbols.entry(stripped.to_string()).or_default();
+                if stripped_candidates.last() != Some(&member_idx) {
+                    stripped_candidates.push(member_idx);
+                }
+            }
+        }
     }
 
-    // BSD / macOS __.SYMDEF and __.SYMDEF SORTED
+    // BSD / macOS __.SYMDEF, __.SYMDEF SORTED, __.SYMDEF 64, __.SYMDEF 64 SORTED
     if table_name == "__.SYMDEF"
         || table_name == "__.SYMDEF SORTED"
+        || table_name == "__.SYMDEF 64"
+        || table_name == "__.SYMDEF 64 SORTED"
+        || table_name == "__.SYMDEF_64"
+        || table_name == "__.SYMDEF_64 SORTED"
         || table_name.starts_with("__.SYMDEF")
     {
-        if let Some(ran_size) = read_u32_le(data, 0).map(|v| v as usize) {
-            let ran_count = ran_size / 8;
-            let str_size_off = 4 + ran_size;
-            if let Some(str_size) = read_u32_le(data, str_size_off).map(|v| v as usize) {
-                let str_start = str_size_off + 4;
-                if str_start + str_size <= data.len() {
-                    let str_tab = &data[str_start..str_start + str_size];
-                    for i in 0..ran_count {
-                        let entry_off = 4 + i * 8;
-                        if let (Some(strx), Some(member_off)) = (
-                            read_u32_le(data, entry_off).map(|v| v as usize),
-                            read_u32_le(data, entry_off + 4).map(u64::from),
-                        ) {
-                            if strx < str_tab.len() {
-                                let end = str_tab[strx..]
-                                    .iter()
-                                    .position(|&b| b == 0)
-                                    .map(|p| strx + p)
-                                    .unwrap_or(str_tab.len());
-                                add_name(
-                                    &str_tab[strx..end],
-                                    member_off,
-                                    offset_to_member,
-                                    symbols,
-                                );
+        let is_64 = table_name.contains("64");
+        if is_64 {
+            if let Some(ran_size) = read_u64_le(data, 0).map(|v| v as usize) {
+                let ran_count = ran_size / 16;
+                let str_size_off = 8 + ran_size;
+                if let Some(str_size) = read_u64_le(data, str_size_off).map(|v| v as usize) {
+                    let str_start = str_size_off + 8;
+                    if str_start + str_size <= data.len() {
+                        let str_tab = &data[str_start..str_start + str_size];
+                        for i in 0..ran_count {
+                            let entry_off = 8 + i * 16;
+                            if let (Some(strx), Some(member_off)) = (
+                                read_u64_le(data, entry_off).map(|v| v as usize),
+                                read_u64_le(data, entry_off + 8),
+                            ) {
+                                if strx < str_tab.len() {
+                                    let end = str_tab[strx..]
+                                        .iter()
+                                        .position(|&b| b == 0)
+                                        .map(|p| strx + p)
+                                        .unwrap_or(str_tab.len());
+                                    add_name(
+                                        &str_tab[strx..end],
+                                        member_off,
+                                        offset_to_member,
+                                        symbols,
+                                    );
+                                }
                             }
                         }
+                        return true;
                     }
-                    return true;
+                }
+            }
+        } else {
+            if let Some(ran_size) = read_u32_le(data, 0).map(|v| v as usize) {
+                let ran_count = ran_size / 8;
+                let str_size_off = 4 + ran_size;
+                if let Some(str_size) = read_u32_le(data, str_size_off).map(|v| v as usize) {
+                    let str_start = str_size_off + 4;
+                    if str_start + str_size <= data.len() {
+                        let str_tab = &data[str_start..str_start + str_size];
+                        for i in 0..ran_count {
+                            let entry_off = 4 + i * 8;
+                            if let (Some(strx), Some(member_off)) = (
+                                read_u32_le(data, entry_off).map(|v| v as usize),
+                                read_u32_le(data, entry_off + 4).map(u64::from),
+                            ) {
+                                if strx < str_tab.len() {
+                                    let end = str_tab[strx..]
+                                        .iter()
+                                        .position(|&b| b == 0)
+                                        .map(|p| strx + p)
+                                        .unwrap_or(str_tab.len());
+                                    add_name(
+                                        &str_tab[strx..end],
+                                        member_off,
+                                        offset_to_member,
+                                        symbols,
+                                    );
+                                }
+                            }
+                        }
+                        return true;
+                    }
                 }
             }
         }

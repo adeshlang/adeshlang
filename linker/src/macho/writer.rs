@@ -165,11 +165,12 @@ impl MachOWriter {
         if let Some(info) = dynamic
             && !info.imports.is_empty()
             && target.arch != Arch::X86_64
+            && target.arch != Arch::AArch64
         {
             return Err(LinkError::new(
                 ErrorCode::InvalidTarget,
                 format!(
-                    "Mach-O dyld binding is only implemented for x86_64; {} imports require \
+                    "Mach-O dyld binding is only implemented for x86_64 and AArch64; {} imports require \
                      stub-helper code this linker cannot synthesize yet",
                     info.imports.len()
                 ),
@@ -588,10 +589,13 @@ impl MachOWriter {
             }
 
             // __stub_helper placement: right after every __TEXT section.
-            // Layout: entry i = `push $lazy_offset_i; jmp tail` (10 bytes),
-            // tail = `push $helper_start; jmp *__got[0]` (11 bytes).
+            let entry_size = if target.arch == Arch::AArch64 {
+                12u64
+            } else {
+                10u64
+            };
             let stub_helper_va = align_to(text_vmaddr + text_vmsize, 16);
-            let tail_off = (imports.len() as u64) * 10;
+            let tail_off = (imports.len() as u64) * entry_size;
             let stub_helper_file_off = stub_helper_va - layout_base_va;
 
             // __got placement: right after every __DATA section.
@@ -599,28 +603,76 @@ impl MachOWriter {
             let got_file_off = got_va - layout_base_va;
 
             // Build the helper machine code now that every address is known.
-            let mut stub_helper_bytes = Vec::with_capacity((imports.len() * 10 + 11) as usize);
+            let mut stub_helper_bytes =
+                Vec::with_capacity((imports.len() * (entry_size as usize) + 20) as usize);
             let tail_va = stub_helper_va + tail_off;
-            for (i, _imp) in imports.iter().enumerate() {
-                let lazy_offset = lazy_entry_offsets[i];
-                // push $lazy_offset  (68 imm32)
+            if target.arch == Arch::AArch64 {
+                for (i, _imp) in imports.iter().enumerate() {
+                    let lazy_offset = lazy_entry_offsets[i];
+                    let entry_va = stub_helper_va + (i as u64) * 12;
+                    let branch_offset_words = ((tail_va as i64 - (entry_va as i64 + 4)) / 4) as i32;
+                    let b_instr = 0x14000000u32 | ((branch_offset_words as u32) & 0x03FFFFFF);
+                    // ldr w16, [pc, #8]
+                    stub_helper_bytes.extend_from_slice(&0x58000040u32.to_le_bytes());
+                    // b tail
+                    stub_helper_bytes.extend_from_slice(&b_instr.to_le_bytes());
+                    // .long lazy_offset
+                    stub_helper_bytes.extend_from_slice(&(lazy_offset as u32).to_le_bytes());
+                }
+                let pc = tail_va;
+                let page_mask = !(target.page_size - 1);
+
+                let helper_page = stub_helper_va & page_mask;
+                let pc_page = pc & page_mask;
+                let page_delta = ((helper_page as i64) - (pc_page as i64)) >> 12;
+                let immhi = ((page_delta >> 2) & 0x7FFFF) as u32;
+                let immlo = (page_delta & 0x3) as u32;
+                let adrp_x17 = 0x90000011u32 | (immlo << 29) | (immhi << 5);
+
+                let helper_off = (stub_helper_va & (target.page_size - 1)) as u32;
+                let add_x17 = 0x91000231u32 | (helper_off << 10);
+
+                let pc_got = tail_va + 8;
+                let pc_got_page = pc_got & page_mask;
+                let got_page = got_va & page_mask;
+                let got_page_delta = ((got_page as i64) - (pc_got_page as i64)) >> 12;
+                let got_immhi = ((got_page_delta >> 2) & 0x7FFFF) as u32;
+                let got_immlo = (got_page_delta & 0x3) as u32;
+                let adrp_x16 = 0x90000010u32 | (got_immlo << 29) | (got_immhi << 5);
+
+                let got_off = (got_va & (target.page_size - 1)) as u32;
+                let pimm = (got_off >> 3) & 0xFFF;
+                let ldr_x16 = 0xF9400200u32 | (pimm << 10);
+
+                let br_x16 = 0xD61F0200u32;
+
+                stub_helper_bytes.extend_from_slice(&adrp_x17.to_le_bytes());
+                stub_helper_bytes.extend_from_slice(&add_x17.to_le_bytes());
+                stub_helper_bytes.extend_from_slice(&adrp_x16.to_le_bytes());
+                stub_helper_bytes.extend_from_slice(&ldr_x16.to_le_bytes());
+                stub_helper_bytes.extend_from_slice(&br_x16.to_le_bytes());
+            } else {
+                for (i, _imp) in imports.iter().enumerate() {
+                    let lazy_offset = lazy_entry_offsets[i];
+                    // push $lazy_offset  (68 imm32)
+                    stub_helper_bytes.extend_from_slice(&[0x68]);
+                    stub_helper_bytes.extend_from_slice(&(lazy_offset as u32).to_le_bytes());
+                    // jmp tail  (E9 rel32)
+                    let entry_va = stub_helper_va + (i as u64) * 10;
+                    let rel = (tail_va as i64 - (entry_va as i64 + 10)) as i32;
+                    stub_helper_bytes.extend_from_slice(&[0xE9]);
+                    stub_helper_bytes.extend_from_slice(&rel.to_le_bytes());
+                }
+                // tail: push $helper_start  (68 imm32) — rebased as
+                // REBASE_TYPE_TEXT_ABSOLUTE32 when the image slides.
                 stub_helper_bytes.extend_from_slice(&[0x68]);
-                stub_helper_bytes.extend_from_slice(&(lazy_offset as u32).to_le_bytes());
-                // jmp tail  (E9 rel32)
-                let entry_va = stub_helper_va + (i as u64) * 10;
-                let rel = (tail_va as i64 - (entry_va as i64 + 10)) as i32;
-                stub_helper_bytes.extend_from_slice(&[0xE9]);
+                stub_helper_bytes.extend_from_slice(&(stub_helper_va as u32).to_le_bytes());
+                // jmp *dyld_stub_binder@GOT(%rip)  (FF 25 rel32)
+                let jmp_place_va = tail_va + 5;
+                let rel = (got_va as i64 - (jmp_place_va as i64 + 6)) as i32;
+                stub_helper_bytes.extend_from_slice(&[0xFF, 0x25]);
                 stub_helper_bytes.extend_from_slice(&rel.to_le_bytes());
             }
-            // tail: push $helper_start  (68 imm32) — rebased as
-            // REBASE_TYPE_TEXT_ABSOLUTE32 when the image slides.
-            stub_helper_bytes.extend_from_slice(&[0x68]);
-            stub_helper_bytes.extend_from_slice(&(stub_helper_va as u32).to_le_bytes());
-            // jmp *dyld_stub_binder@GOT(%rip)  (FF 25 rel32)
-            let jmp_place_va = tail_va + 5;
-            let rel = (got_va as i64 - (jmp_place_va as i64 + 6)) as i32;
-            stub_helper_bytes.extend_from_slice(&[0xFF, 0x25]);
-            stub_helper_bytes.extend_from_slice(&rel.to_le_bytes());
 
             // Write the helper into the file image and grow __TEXT.
             if (stub_helper_file_off as usize) > output.len() {
@@ -667,7 +719,7 @@ impl MachOWriter {
             if let Some(section) = la_section {
                 let la_file_off = section.virtual_address - layout_base_va;
                 for (i, _imp) in imports.iter().enumerate() {
-                    let entry_va = stub_helper_va + (i as u64) * 10;
+                    let entry_va = stub_helper_va + (i as u64) * entry_size;
                     let slot_off = la_file_off + (i as u64) * 8;
                     output[slot_off as usize..slot_off as usize + 8]
                         .copy_from_slice(&entry_va.to_le_bytes());
@@ -675,13 +727,15 @@ impl MachOWriter {
             }
 
             // Rebase stream, part 1: the helper's `push $helper_start`
-            // immediate and every patched lazy slot.
-            let tail_push_imm_va = tail_va + 1;
-            rebase_targets.push(RebaseTarget {
-                segment_index: text_seg_index,
-                offset: tail_push_imm_va - text_vmaddr,
-                kind: RebaseKind::TextAbsolute32,
-            });
+            // immediate (x86_64) and every patched lazy slot.
+            if target.arch == Arch::X86_64 {
+                let tail_push_imm_va = tail_va + 1;
+                rebase_targets.push(RebaseTarget {
+                    segment_index: text_seg_index,
+                    offset: tail_push_imm_va - text_vmaddr,
+                    kind: RebaseKind::TextAbsolute32,
+                });
+            }
             for (i, _imp) in imports.iter().enumerate() {
                 let slot_va = la_va + (i as u64) * 8;
                 rebase_targets.push(RebaseTarget {

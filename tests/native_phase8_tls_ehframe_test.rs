@@ -89,6 +89,7 @@ fn linux_libc_triple() -> Option<&'static str> {
     }
 }
 
+#[allow(dead_code)]
 fn to_wsl_path(path: &Path) -> String {
     let win_path = path.to_string_lossy().replace('\\', "/");
     if let Ok(output) = Command::new("wsl")
