@@ -3,6 +3,7 @@ import { ObservatoryProvider, useObservatory } from "./context/ObservatoryContex
 import { TopBar, ModernSidebar } from "./components/Navigation";
 import { CockpitOverview } from "./pages/CockpitOverview";
 import { StagesTimeline } from "./pages/StagesTimeline";
+import { SecurityRedaction } from "./pages/SecurityRedaction";
 import {
   ShieldCheck,
   Cpu,
@@ -90,6 +91,8 @@ const MainLayout: React.FC = () => {
           )}
 
           {currentTab === "process_explorer" && <CockpitOverview />}
+
+          {currentTab === "audit_logs" && <SecurityRedaction />}
 
           {currentTab === "linker_analytics" && (
             <div className="p-8 space-y-4">

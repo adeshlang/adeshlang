@@ -50,6 +50,17 @@ pub fn desktop_purge_history() -> Result<(), String> {
     store.purge_history().map_err(|e| e.to_string())
 }
 
+pub fn desktop_get_security_report() -> Result<SecurityReport, String> {
+    let store = HistoryStore::default_store().map_err(|e| e.to_string())?;
+    store.security_report(100).map_err(|e| e.to_string())
+}
+
+pub fn desktop_rescan_history() -> Result<SecurityReport, String> {
+    let store = HistoryStore::default_store().map_err(|e| e.to_string())?;
+    store.rescan_history().map_err(|e| e.to_string())?;
+    store.security_report(100).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

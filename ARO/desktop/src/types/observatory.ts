@@ -12,6 +12,8 @@ export interface SessionSummary {
   duration_ms?: number;
   peak_rss_bytes: number;
   cpu_peak_percent: number;
+  /** Secrets masked in command_line before it was persisted */
+  redaction_count?: number;
 }
 
 export interface CompilerStageEvent {
@@ -52,4 +54,38 @@ export interface CollectorStats {
   active_sessions_count: number;
   stored_sessions_count: number;
   database_size_bytes: number;
+}
+
+export interface RedactionRuleInfo {
+  id: string;
+  label: string;
+  description: string;
+  example: string;
+  /** "critical" | "high" | "medium" */
+  severity: string;
+}
+
+export interface AuditEntry {
+  id: number;
+  session_id: string;
+  tool_name: string;
+  command_line: string;
+  rule_id: string;
+  rule_label: string;
+  masked_preview: string;
+  redacted_at: string;
+}
+
+export interface SecurityReport {
+  rules: RedactionRuleInfo[];
+  findings_by_rule: Record<string, number>;
+  redaction_counts: Record<string, number>;
+  total_sessions_scanned: number;
+  sessions_with_redactions: number;
+  total_redactions: number;
+  audit_entries: AuditEntry[];
+  last_rescan?: string | null;
+  rescan_count: number;
+  db_path: string;
+  ingest_redaction_enabled: boolean;
 }

@@ -188,6 +188,68 @@ pub struct SessionSummary {
     pub duration_ms: Option<u64>,
     pub peak_rss_bytes: u64,
     pub cpu_peak_percent: f32,
+    /// Number of secrets masked in `command_line` before it was persisted
+    #[serde(default)]
+    pub redaction_count: u32,
+}
+
+/// Metadata describing a built-in redaction rule (exposed to UI clients)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RedactionRuleInfo {
+    pub id: String,
+    pub label: String,
+    pub description: String,
+    /// Human-readable example of what the rule masks, e.g. `--password=***`
+    pub example: String,
+    /// One of `critical`, `high`, `medium`
+    pub severity: String,
+}
+
+/// A single secret masked by the redaction engine
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RedactionFinding {
+    pub rule_id: String,
+    pub rule_label: String,
+    /// The redacted fragment as stored, e.g. `--password=***`
+    pub masked_preview: String,
+}
+
+/// One row in the redaction audit trail
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AuditEntry {
+    pub id: i64,
+    pub session_id: String,
+    pub tool_name: String,
+    /// Persisted (already masked) command line for the session
+    pub command_line: String,
+    pub rule_id: String,
+    pub rule_label: String,
+    pub masked_preview: String,
+    /// RFC 3339 timestamp of when the secret was masked
+    pub redacted_at: String,
+}
+
+/// Aggregated security posture for the Security & Redaction tab
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SecurityReport {
+    /// All built-in redaction rules with their current match totals
+    pub rules: Vec<RedactionRuleInfo>,
+    /// rule_id -> number of times this rule masked a secret
+    pub findings_by_rule: HashMap<String, u64>,
+    /// session_id -> number of secrets masked in that session
+    pub redaction_counts: HashMap<String, u64>,
+    pub total_sessions_scanned: usize,
+    pub sessions_with_redactions: usize,
+    pub total_redactions: u64,
+    /// Most recent redaction events, newest first
+    pub audit_entries: Vec<AuditEntry>,
+    /// RFC 3339 timestamp of the last manual history rescan
+    pub last_rescan: Option<String>,
+    pub rescan_count: u64,
+    /// Absolute path of the SQLite audit database at rest
+    pub db_path: String,
+    /// True when secrets are masked automatically at ingest time
+    pub ingest_redaction_enabled: bool,
 }
 
 /// Detailed session report

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useReducer, useEffect, ReactNode } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { SessionSummary, CollectorStats, SessionDetail, CompilerStageEvent, LinkerStageEvent } from "../types/observatory";
+import { SessionSummary, CollectorStats, SessionDetail, CompilerStageEvent, LinkerStageEvent, SecurityReport } from "../types/observatory";
 
 export type NavTab =
   | "overview"
@@ -51,6 +51,7 @@ export interface ObservatoryState {
   autoRefresh: boolean;
   refreshIntervalMs: number;
   lastUpdated: Date;
+  securityReport: SecurityReport | null;
 }
 
 type ObservatoryAction =
@@ -65,7 +66,8 @@ type ObservatoryAction =
   | { type: "SET_IPC_STATUS"; payload: "connected" | "disconnected" | "connecting" }
   | { type: "TOGGLE_AUTO_REFRESH" }
   | { type: "SET_REFRESH_INTERVAL"; payload: number }
-  | { type: "CLEAR_SELECTION" };
+  | { type: "CLEAR_SELECTION" }
+  | { type: "SET_SECURITY_REPORT"; payload: SecurityReport };
 
 const initialState: ObservatoryState = {
   currentTab: "overview",
@@ -101,6 +103,7 @@ const initialState: ObservatoryState = {
   autoRefresh: true,
   refreshIntervalMs: 1000,
   lastUpdated: new Date(),
+  securityReport: null,
 };
 
 function observatoryReducer(state: ObservatoryState, action: ObservatoryAction): ObservatoryState {
@@ -129,6 +132,8 @@ function observatoryReducer(state: ObservatoryState, action: ObservatoryAction):
       return { ...state, refreshIntervalMs: action.payload };
     case "CLEAR_SELECTION":
       return { ...state, selectedSessionId: null, selectedDetail: undefined };
+    case "SET_SECURITY_REPORT":
+      return { ...state, securityReport: action.payload };
     default:
       return state;
   }
@@ -140,6 +145,7 @@ interface ObservatoryContextType {
   refreshNow: () => Promise<void>;
   purgeHistory: () => Promise<void>;
   selectSessionById: (sessionId: string) => Promise<void>;
+  rescanHistory: () => Promise<void>;
 }
 
 const ObservatoryContext = createContext<ObservatoryContextType | undefined>(undefined);
@@ -172,6 +178,18 @@ export const ObservatoryProvider: React.FC<{ children: ReactNode }> = ({ childre
           hardware = await invoke<HardwareCaps>("get_hardware_info");
         } catch (e) {
           console.error("get_hardware_info error:", e);
+        }
+
+        // The security report only matters on the Security & Redaction tab
+        if (state.currentTab === "audit_logs") {
+          try {
+            const report = await invoke<SecurityReport>("get_security_report");
+            if (report) {
+              dispatch({ type: "SET_SECURITY_REPORT", payload: report });
+            }
+          } catch (e) {
+            console.error("get_security_report error:", e);
+          }
         }
 
         dispatch({ type: "SET_SESSIONS", payload: sessions || [] });
@@ -218,6 +236,20 @@ export const ObservatoryProvider: React.FC<{ children: ReactNode }> = ({ childre
     }
   };
 
+  const rescanHistory = async () => {
+    try {
+      if (isTauriEnv) {
+        const report = await invoke<SecurityReport>("rescan_history");
+        if (report) {
+          dispatch({ type: "SET_SECURITY_REPORT", payload: report });
+        }
+      }
+      await refreshNow();
+    } catch (e) {
+      console.error("Failed to rescan history:", e);
+    }
+  };
+
   const selectSessionById = async (sessionId: string) => {
     dispatch({ type: "SELECT_SESSION", payload: sessionId });
     try {
@@ -252,11 +284,11 @@ export const ObservatoryProvider: React.FC<{ children: ReactNode }> = ({ childre
     if (!state.autoRefresh) return;
     const timer = setInterval(refreshNow, state.refreshIntervalMs);
     return () => clearInterval(timer);
-  }, [state.autoRefresh, state.refreshIntervalMs, state.selectedSessionId]);
+  }, [state.autoRefresh, state.refreshIntervalMs, state.selectedSessionId, state.currentTab]);
 
   return (
     <ObservatoryContext.Provider
-      value={{ state, dispatch, refreshNow, purgeHistory, selectSessionById }}
+      value={{ state, dispatch, refreshNow, purgeHistory, selectSessionById, rescanHistory }}
     >
       {children}
     </ObservatoryContext.Provider>

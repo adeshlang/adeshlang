@@ -2,7 +2,11 @@
 
 use adesh_monitor_protocol::*;
 use rusqlite::{Connection, Result, params};
+use std::collections::HashMap;
 use std::path::Path;
+
+const AUDIT_META_LAST_RESCAN: &str = "last_rescan";
+const AUDIT_META_RESCAN_COUNT: &str = "rescan_count";
 
 pub struct HistoryStore {
     conn: Connection,
@@ -60,7 +64,23 @@ impl HistoryStore {
                 duration_ms INTEGER,
                 peak_rss_bytes INTEGER DEFAULT 0,
                 cpu_peak_percent REAL DEFAULT 0.0,
-                error_message TEXT
+                error_message TEXT,
+                redaction_count INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS redaction_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                rule_id TEXT NOT NULL,
+                rule_label TEXT NOT NULL,
+                masked_preview TEXT NOT NULL,
+                redacted_at TEXT NOT NULL,
+                FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS security_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS metrics (
@@ -108,8 +128,35 @@ impl HistoryStore {
             CREATE INDEX IF NOT EXISTS idx_metrics_session ON metrics(session_id);
             CREATE INDEX IF NOT EXISTS idx_compiler_stages_session ON compiler_stages(session_id);
             CREATE INDEX IF NOT EXISTS idx_linker_stages_session ON linker_stages(session_id);
+            CREATE INDEX IF NOT EXISTS idx_redaction_events_session ON redaction_events(session_id);
             "#,
         )?;
+        self.migrate_schema()?;
+        Ok(())
+    }
+
+    /// Forward migrations for databases created before a column existed
+    fn migrate_schema(&self) -> Result<()> {
+        let has_column = |name: &str| -> Result<bool> {
+            let mut stmt = self.conn.prepare("PRAGMA table_info(sessions)")?;
+            let mut rows = stmt.query([])?;
+            let mut found = false;
+            while let Some(row) = rows.next()? {
+                let col: String = row.get(1)?;
+                if col == name {
+                    found = true;
+                    break;
+                }
+            }
+            Ok(found)
+        };
+
+        if !has_column("redaction_count")? {
+            self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN redaction_count INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
         Ok(())
     }
 
@@ -126,7 +173,10 @@ impl HistoryStore {
         target_file: Option<&str>,
         start_time: chrono::DateTime<chrono::Utc>,
     ) -> Result<()> {
-        let command_line = command_args.join(" ");
+        // Mask secrets before anything touches disk
+        let outcome = crate::redaction::redact_text(&command_args.join(" "));
+        let command_line = outcome.text;
+        let redaction_count = outcome.findings.len() as i64;
         let mode_str = serde_json::to_string(&execution_mode).unwrap_or_default();
         let mode_trimmed = mode_str.trim_matches('"');
 
@@ -134,10 +184,11 @@ impl HistoryStore {
             r#"
             INSERT INTO sessions (
                 session_id, pid, parent_pid, tool_name, execution_mode,
-                command_line, working_dir, target_file, status, start_time
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                command_line, working_dir, target_file, status, start_time, redaction_count
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
             ON CONFLICT(session_id) DO UPDATE SET
-                status = excluded.status
+                status = excluded.status,
+                redaction_count = excluded.redaction_count
             "#,
             params![
                 session_id,
@@ -149,9 +200,33 @@ impl HistoryStore {
                 working_dir,
                 target_file,
                 "running",
-                start_time.to_rfc3339()
+                start_time.to_rfc3339(),
+                redaction_count
             ],
         )?;
+
+        self.conn.execute(
+            "DELETE FROM redaction_events WHERE session_id = ?1",
+            params![session_id],
+        )?;
+        if !outcome.findings.is_empty() {
+            let mut stmt = self.conn.prepare(
+                r#"
+                INSERT INTO redaction_events (
+                    session_id, rule_id, rule_label, masked_preview, redacted_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5)
+                "#,
+            )?;
+            for finding in &outcome.findings {
+                stmt.execute(params![
+                    session_id,
+                    finding.rule_id,
+                    finding.rule_label,
+                    finding.masked_preview,
+                    start_time.to_rfc3339()
+                ])?;
+            }
+        }
         Ok(())
     }
 
@@ -283,7 +358,7 @@ impl HistoryStore {
             r#"
             SELECT session_id, pid, parent_pid, tool_name, execution_mode,
                    command_line, status, exit_code, start_time, end_time,
-                   duration_ms, peak_rss_bytes, cpu_peak_percent
+                   duration_ms, peak_rss_bytes, cpu_peak_percent, redaction_count
             FROM sessions
             ORDER BY start_time DESC
             LIMIT ?1
@@ -339,6 +414,7 @@ impl HistoryStore {
                 duration_ms: row.get(10)?,
                 peak_rss_bytes: row.get::<_, i64>(11)? as u64,
                 cpu_peak_percent: row.get::<_, f64>(12)? as f32,
+                redaction_count: row.get::<_, i64>(13)?.max(0) as u32,
             })
         })?;
 
@@ -354,7 +430,8 @@ impl HistoryStore {
             r#"
             SELECT session_id, pid, parent_pid, tool_name, execution_mode,
                    command_line, working_dir, target_file, status, exit_code,
-                   start_time, end_time, duration_ms, peak_rss_bytes, cpu_peak_percent
+                   start_time, end_time, duration_ms, peak_rss_bytes, cpu_peak_percent,
+                   redaction_count
             FROM sessions
             WHERE session_id = ?1
             "#,
@@ -410,6 +487,7 @@ impl HistoryStore {
                 duration_ms: row.get(12)?,
                 peak_rss_bytes: row.get::<_, i64>(13)? as u64,
                 cpu_peak_percent: row.get::<_, f64>(14)? as f32,
+                redaction_count: row.get::<_, i64>(15)?.max(0) as u32,
             };
 
             let working_dir: String = row.get(6)?;
@@ -550,11 +628,189 @@ impl HistoryStore {
             DELETE FROM metrics;
             DELETE FROM compiler_stages;
             DELETE FROM linker_stages;
+            DELETE FROM redaction_events;
             DELETE FROM sessions;
+            DELETE FROM security_meta;
             VACUUM;
             "#,
         )?;
         Ok(())
+    }
+
+    /// Aggregate the redaction posture of the whole audit database
+    pub fn security_report(&self, audit_limit: usize) -> Result<SecurityReport> {
+        let count_row = |sql: &str| -> Result<i64> { self.conn.query_row(sql, [], |r| r.get(0)) };
+
+        let total_sessions_scanned = count_row("SELECT COUNT(*) FROM sessions")? as usize;
+        let sessions_with_redactions =
+            count_row("SELECT COUNT(*) FROM sessions WHERE redaction_count > 0")? as usize;
+        let total_redactions = count_row("SELECT COUNT(*) FROM redaction_events")? as u64;
+
+        let mut findings_by_rule = HashMap::new();
+        {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT rule_id, COUNT(*) FROM redaction_events GROUP BY rule_id")?;
+            let rows = stmt.query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?.max(0) as u64))
+            })?;
+            for row in rows {
+                let (rule_id, count) = row?;
+                findings_by_rule.insert(rule_id, count);
+            }
+        }
+
+        let mut redaction_counts = HashMap::new();
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT session_id, redaction_count FROM sessions WHERE redaction_count > 0",
+            )?;
+            let rows = stmt.query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?.max(0) as u64))
+            })?;
+            for row in rows {
+                let (session_id, count) = row?;
+                redaction_counts.insert(session_id, count);
+            }
+        }
+
+        let mut audit_entries = Vec::new();
+        {
+            let mut stmt = self.conn.prepare(
+                r#"
+                SELECT e.id, e.session_id, COALESCE(s.tool_name, ''), COALESCE(s.command_line, ''),
+                       e.rule_id, e.rule_label, e.masked_preview, e.redacted_at
+                FROM redaction_events e
+                LEFT JOIN sessions s ON s.session_id = e.session_id
+                ORDER BY e.id DESC
+                LIMIT ?1
+                "#,
+            )?;
+            let rows = stmt.query_map(params![audit_limit as i64], |row| {
+                Ok(AuditEntry {
+                    id: row.get(0)?,
+                    session_id: row.get(1)?,
+                    tool_name: row.get(2)?,
+                    command_line: row.get(3)?,
+                    rule_id: row.get(4)?,
+                    rule_label: row.get(5)?,
+                    masked_preview: row.get(6)?,
+                    redacted_at: row.get(7)?,
+                })
+            })?;
+            for row in rows {
+                audit_entries.push(row?);
+            }
+        }
+
+        let meta_value = |key: &str| -> Option<String> {
+            self.conn
+                .query_row(
+                    "SELECT value FROM security_meta WHERE key = ?1",
+                    params![key],
+                    |r| r.get::<_, String>(0),
+                )
+                .ok()
+        };
+
+        Ok(SecurityReport {
+            rules: crate::redaction::builtin_rules(),
+            findings_by_rule,
+            redaction_counts,
+            total_sessions_scanned,
+            sessions_with_redactions,
+            total_redactions,
+            audit_entries,
+            last_rescan: meta_value(AUDIT_META_LAST_RESCAN),
+            rescan_count: meta_value(AUDIT_META_RESCAN_COUNT)
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+            db_path: Self::default_db_path().display().to_string(),
+            ingest_redaction_enabled: true,
+        })
+    }
+
+    /// Re-run the redaction engine over every stored command line. This
+    /// protects rows persisted by older builds that wrote secrets verbatim.
+    /// Returns the number of sessions whose command line was updated.
+    pub fn rescan_history(&self) -> Result<u64> {
+        let stored = {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT session_id, command_line FROM sessions")?;
+            let rows =
+                stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row?);
+            }
+            out
+        };
+
+        let mut updated = 0u64;
+        for (session_id, command_line) in stored {
+            let outcome = crate::redaction::redact_text(&command_line);
+            if outcome.text == command_line {
+                continue;
+            }
+            let count = outcome.findings.len() as i64;
+            self.conn.execute(
+                "UPDATE sessions SET command_line = ?1, redaction_count = ?2 WHERE session_id = ?3",
+                params![outcome.text, count, session_id],
+            )?;
+            self.conn.execute(
+                "DELETE FROM redaction_events WHERE session_id = ?1",
+                params![session_id],
+            )?;
+            if !outcome.findings.is_empty() {
+                let mut stmt = self.conn.prepare(
+                    r#"
+                    INSERT INTO redaction_events (
+                        session_id, rule_id, rule_label, masked_preview, redacted_at
+                    ) VALUES (?1, ?2, ?3, ?4, ?5)
+                    "#,
+                )?;
+                let now = chrono::Utc::now().to_rfc3339();
+                for finding in &outcome.findings {
+                    stmt.execute(params![
+                        session_id,
+                        finding.rule_id,
+                        finding.rule_label,
+                        finding.masked_preview,
+                        now
+                    ])?;
+                }
+            }
+            updated += 1;
+        }
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let rescan_count: u64 = self
+            .conn
+            .query_row(
+                "SELECT value FROM security_meta WHERE key = ?1",
+                params![AUDIT_META_RESCAN_COUNT],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
+            + 1;
+        self.conn.execute(
+            r#"
+            INSERT INTO security_meta (key, value) VALUES (?1, ?2)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            "#,
+            params![AUDIT_META_LAST_RESCAN, now],
+        )?;
+        self.conn.execute(
+            r#"
+            INSERT INTO security_meta (key, value) VALUES (?1, ?2)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            "#,
+            params![AUDIT_META_RESCAN_COUNT, rescan_count.to_string()],
+        )?;
+        Ok(updated)
     }
 
     pub fn ingest_envelope(&self, envelope: &TelemetryEnvelope) -> Result<()> {
@@ -648,5 +904,76 @@ impl HistoryStore {
             stored_sessions_count: stored_count as usize,
             database_size_bytes: db_size,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redacts_at_ingest_and_builds_report() {
+        let store = HistoryStore::in_memory().unwrap();
+        store
+            .record_session_start(
+                "s1",
+                1,
+                None,
+                "adesh",
+                &[
+                    "run".to_string(),
+                    "--password=hunter2".to_string(),
+                    "main.adesh".to_string(),
+                ],
+                "D:\\proj",
+                ExecutionMode::Jit,
+                Some("main.adesh"),
+                chrono::Utc::now(),
+            )
+            .unwrap();
+
+        let sessions = store.list_sessions(10).unwrap();
+        assert_eq!(sessions[0].command_line, "run --password=*** main.adesh");
+        assert_eq!(sessions[0].redaction_count, 1);
+
+        let report = store.security_report(10).unwrap();
+        assert_eq!(report.total_sessions_scanned, 1);
+        assert_eq!(report.sessions_with_redactions, 1);
+        assert_eq!(report.total_redactions, 1);
+        assert_eq!(report.audit_entries.len(), 1);
+        assert_eq!(report.audit_entries[0].rule_id, "cred_flags");
+        assert_eq!(report.audit_entries[0].masked_preview, "--password=***");
+        assert!(report.ingest_redaction_enabled);
+        assert_eq!(report.rules.len(), crate::redaction::builtin_rules().len());
+    }
+
+    #[test]
+    fn rescan_masks_legacy_raw_rows() {
+        let store = HistoryStore::in_memory().unwrap();
+        // Simulate a row written by an older build (raw secret at rest)
+        store
+            .conn
+            .execute(
+                "INSERT INTO sessions (
+                    session_id, pid, tool_name, execution_mode, command_line,
+                    working_dir, status, start_time
+                 ) VALUES ('legacy', 42, 'adesh', 'jit', 'build --token=rawsecret', '.', 'completed', '2024-01-01T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+
+        assert_eq!(store.rescan_history().unwrap(), 1);
+
+        let sessions = store.list_sessions(10).unwrap();
+        assert_eq!(sessions[0].command_line, "build --token=***");
+        assert_eq!(sessions[0].redaction_count, 1);
+
+        // Second rescan is a no-op (idempotent over masked text)
+        assert_eq!(store.rescan_history().unwrap(), 0);
+
+        let report = store.security_report(10).unwrap();
+        assert_eq!(report.rescan_count, 2);
+        assert!(report.last_rescan.is_some());
+        assert_eq!(report.total_redactions, 1);
     }
 }

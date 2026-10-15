@@ -1,6 +1,7 @@
 //! Ingest and Collector Service
 
 pub mod ipc;
+pub mod redaction;
 pub mod storage;
 
 use adesh_monitor_platform::create_platform_provider;

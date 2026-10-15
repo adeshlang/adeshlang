@@ -34,6 +34,16 @@ fn purge_history() -> Result<(), String> {
 }
 
 #[tauri::command]
+fn get_security_report() -> Result<SecurityReport, String> {
+    desktop_get_security_report()
+}
+
+#[tauri::command]
+fn rescan_history() -> Result<SecurityReport, String> {
+    desktop_rescan_history()
+}
+
+#[tauri::command]
 async fn get_hardware_info() -> Result<serde_json::Value, String> {
     let caps = adesh_monitor_platform::create_platform_provider().query_capabilities();
     let report = adesh_monitor_platform::hardware::detect_hardware();
@@ -63,6 +73,8 @@ fn main() {
             get_session_detail,
             get_collector_stats,
             purge_history,
+            get_security_report,
+            rescan_history,
             get_hardware_info,
         ])
         .run(tauri::generate_context!())
