@@ -8,9 +8,9 @@
 //! 5. Distinguishing required runtime symbols from user application symbols in diagnostics.
 
 use adesh_linker::archive::{Archive, ArchiveMember};
-use adesh_linker::os_router::{OsApiRouter, SymbolRoute};
 use adesh_linker::error::ErrorCode;
 use adesh_linker::object::ObjectFile;
+use adesh_linker::os_router::{OsApiRouter, SymbolRoute};
 use adesh_linker::relocation::{Relocation, RelocationKind};
 use adesh_linker::resolver::SymbolResolver;
 use adesh_linker::section::Section;
@@ -288,7 +288,11 @@ fn test_macho_system_and_runtime_symbol_resolution() {
 
     let mut objects = vec![app_obj];
     let res = resolver.resolve_with_target(&mut objects, &[archive], &target);
-    assert!(res.is_ok(), "resolve_with_target failed for Mach-O: {:?}", res);
+    assert!(
+        res.is_ok(),
+        "resolve_with_target failed for Mach-O: {:?}",
+        res
+    );
     assert_eq!(objects.len(), 2, "rt.o should be extracted");
 
     // Check system symbol classification for _NSGetArgc
