@@ -1229,7 +1229,8 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
                 // own objects (no runtime library) — see the phase 3 e2e
                 // suite — or when a `--dynamic`-free static link finds no
                 // libc-referencing members at all.
-                if link_config.target.format == adesh_linker::ObjectFormat::Elf
+                if (link_config.target.format == adesh_linker::ObjectFormat::Elf
+                    || link_config.target.format == adesh_linker::ObjectFormat::MachO)
                     && matches!(config.emit, EmitType::Executable)
                 {
                     link_config.dynamic = true;
