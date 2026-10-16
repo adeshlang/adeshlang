@@ -208,6 +208,14 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: 'ARO/desktop/pnpm-lock.yaml'
 
+      - name: Install ARO Desktop dependencies
+        shell: bash
+        run: |
+          if [ -d "ARO/desktop" ]; then
+            cd ARO/desktop
+            pnpm install --frozen-lockfile
+          fi
+
       # ========================================================================
       # AI MODEL CACHE
       # ========================================================================
@@ -229,12 +237,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            C:\ProgramData\chocolatey\cache
             ~/.dotnet/tools
-          key: win-tools-${{ matrix.arch }}-${{ hashFiles('installer/windows/**') }}
+          key: win-tools-v2-${{ matrix.arch }}-${{ hashFiles('installer/windows/**') }}
           restore-keys: |
-            win-tools-${{ matrix.arch }}-
-            win-tools-
+            win-tools-v2-${{ matrix.arch }}-
+            win-tools-v2-
 
       # ========================================================================
       # LINUX PACKAGING & TAURI GUI TOOLS
@@ -496,12 +503,20 @@ jobs:
 
             if (Get-Command dotnet -ErrorAction SilentlyContinue) {
 
-              Write-Host "Installing WiX..."
-
-              dotnet tool install --global wix
-
               $env:PATH = `
                 "$env:USERPROFILE\.dotnet\tools;$env:PATH"
+
+              Write-Host "Ensuring WiX 5.0.2..."
+              $wixCmd = Get-Command wix -ErrorAction SilentlyContinue
+              if ($wixCmd) {
+                $curVer = (& wix --version 2>&1 | Out-String).Trim()
+                if ($curVer -notmatch '^5\.') {
+                  Write-Host "Updating WiX from $curVer to 5.0.2..."
+                  dotnet tool update --global wix --version 5.0.2
+                }
+              } else {
+                dotnet tool install --global wix --version 5.0.2
+              }
 
               $wix = (
                 Get-Command `
@@ -527,6 +542,10 @@ jobs:
 
                     Write-Host `
                       "$script exit code: $LASTEXITCODE"
+
+                    if ($LASTEXITCODE -ne 0) {
+                      throw "$script failed with exit code $LASTEXITCODE."
+                    }
                   }
                 }
               }
