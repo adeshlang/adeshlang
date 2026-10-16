@@ -128,16 +128,29 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
     // Configure global FFI registry based on CLI flags
     cli_impl::apply_ffi_cli_config(&parsed.config);
 
-    let execution_mode = match parsed.config.backend {
-        ExecutionBackend::Interpreter => adesh_monitor_protocol::ExecutionMode::Interpreter,
-        ExecutionBackend::Bytecode => adesh_monitor_protocol::ExecutionMode::BytecodeVm,
-        ExecutionBackend::Jit => adesh_monitor_protocol::ExecutionMode::Jit,
-        ExecutionBackend::NativeJit => adesh_monitor_protocol::ExecutionMode::Jit,
-        ExecutionBackend::TieredJit => adesh_monitor_protocol::ExecutionMode::TieredJit,
-        ExecutionBackend::AdaptiveJit => adesh_monitor_protocol::ExecutionMode::AdaptiveJit,
-        ExecutionBackend::Aot => adesh_monitor_protocol::ExecutionMode::AotNative,
-        ExecutionBackend::Wasm => adesh_monitor_protocol::ExecutionMode::WebAssembly,
-        _ => adesh_monitor_protocol::ExecutionMode::Interpreter,
+    // `build` and the compile commands produce native artifacts even when the
+    // general runtime configuration still has its default (Interpreter)
+    // backend.  Report the operation that is actually being performed, rather
+    // than that unrelated default, to Observatory.
+    let execution_mode = match parsed.command.as_str() {
+        "build" | "compile" | "compile-aot" | "compile-native" => {
+            adesh_monitor_protocol::ExecutionMode::NativeCompiler
+        }
+        "compile-wasm" | "compile-wasm-js" => adesh_monitor_protocol::ExecutionMode::WebAssembly,
+        "run-interpret" => adesh_monitor_protocol::ExecutionMode::Interpreter,
+        "run-jit" => adesh_monitor_protocol::ExecutionMode::Jit,
+        "run-bc" => adesh_monitor_protocol::ExecutionMode::BytecodeVm,
+        _ => match parsed.config.backend {
+            ExecutionBackend::Interpreter => adesh_monitor_protocol::ExecutionMode::Interpreter,
+            ExecutionBackend::Bytecode => adesh_monitor_protocol::ExecutionMode::BytecodeVm,
+            ExecutionBackend::Jit => adesh_monitor_protocol::ExecutionMode::Jit,
+            ExecutionBackend::NativeJit => adesh_monitor_protocol::ExecutionMode::Jit,
+            ExecutionBackend::TieredJit => adesh_monitor_protocol::ExecutionMode::TieredJit,
+            ExecutionBackend::AdaptiveJit => adesh_monitor_protocol::ExecutionMode::AdaptiveJit,
+            ExecutionBackend::Aot => adesh_monitor_protocol::ExecutionMode::AotNative,
+            ExecutionBackend::Wasm => adesh_monitor_protocol::ExecutionMode::WebAssembly,
+            _ => adesh_monitor_protocol::ExecutionMode::Interpreter,
+        },
     };
 
     let _session_guard = adeshlang::cli::observatory::init_observatory_session(

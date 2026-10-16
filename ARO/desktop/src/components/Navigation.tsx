@@ -99,6 +99,7 @@ export const TopBar: React.FC<NavigationProps> = ({
           <option value="jit">JIT / Native JIT</option>
           <option value="interpreter">Interpreter</option>
           <option value="aot_native">AOT Native</option>
+          <option value="native_compiler">Native Compiler</option>
           <option value="linker">adeshlink</option>
           <option value="web_assembly">Wasm</option>
         </select>

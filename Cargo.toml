@@ -64,6 +64,7 @@ adesh-codegen = { path = "crates/adesh-codegen" }
 adesh-linker = { path = "linker" }
 adesh-runtime = { path = "crates/adesh-runtime" }
 adesh-monitor-protocol = { path = "crates/adesh-monitor-protocol" }
+adesh-monitor-platform = { path = "crates/adesh-monitor-platform" }
 adesh-monitor-core = { path = "crates/adesh-monitor-core" }
 adesh-monitor-cli = { path = "crates/adesh-monitor-cli" }
 adesh-monitor-tui = { path = "crates/adesh-monitor-tui" }

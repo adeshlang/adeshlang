@@ -319,6 +319,7 @@ mod linux {
 #[cfg(target_os = "macos")]
 mod macos {
     use super::*;
+    use std::process::Command;
 
     pub struct MacosMetricsProvider {
         last_sample_instant: Option<Instant>,
@@ -335,14 +336,33 @@ mod macos {
     }
 
     impl MetricsProvider for MacosMetricsProvider {
-        fn sample_process(&mut self, _pid: u32, elapsed_micros: u64) -> Option<ProcessMetrics> {
+        fn sample_process(&mut self, pid: u32, elapsed_micros: u64) -> Option<ProcessMetrics> {
+            // `ps` is supplied by every supported macOS release and exposes
+            // per-process RSS, virtual size, thread count and CPU percentage
+            // without requiring entitlement-restricted task_for_pid APIs.
+            let output = Command::new("ps")
+                .args(["-o", "rss=,vsz=,thcount=,%cpu=", "-p", &pid.to_string()])
+                .output()
+                .ok()?;
+            if !output.status.success() {
+                return None;
+            }
+            let values = String::from_utf8_lossy(&output.stdout);
+            let fields = values.split_whitespace().collect::<Vec<_>>();
+            if fields.len() < 4 {
+                return None;
+            }
+            let rss_bytes = fields[0].parse::<u64>().ok()?.saturating_mul(1024);
+            let vms_bytes = fields[1].parse::<u64>().ok()?.saturating_mul(1024);
+            let thread_count = fields[2].parse::<u32>().ok()?;
+            let cpu_percent = fields[3].parse::<f32>().ok().unwrap_or(0.0);
             Some(ProcessMetrics {
-                cpu_percent: 0.0,
-                memory_rss_bytes: 0,
-                memory_peak_rss_bytes: 0,
-                memory_vms_bytes: 0,
-                thread_count: 1,
-                peak_thread_count: 1,
+                cpu_percent,
+                memory_rss_bytes: rss_bytes,
+                memory_peak_rss_bytes: rss_bytes,
+                memory_vms_bytes: vms_bytes,
+                thread_count,
+                peak_thread_count: thread_count,
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
                 cpu_user_ms: 0,

@@ -3,6 +3,8 @@
 
 use adesh_monitor_desktop::*;
 use adesh_monitor_protocol::*;
+use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
+use std::time::Duration;
 
 #[tauri::command]
 fn get_sessions(limit: Option<usize>) -> Result<Vec<SessionSummary>, String> {
@@ -21,6 +23,21 @@ fn get_session_detail(
         .or(sessionId)
         .ok_or_else(|| "Session ID parameter missing".to_string())?;
     desktop_get_session_detail(id)
+}
+
+#[tauri::command]
+fn get_session_metrics(session_id: String, limit: Option<usize>) -> Result<Vec<ProcessMetrics>, String> {
+    let limit = limit.unwrap_or(500);
+    if let Ok(CollectorResponse::SessionMetrics { metrics, .. }) =
+        adesh_monitor_core::ipc::send_collector_rpc(&CollectorRequest::GetSessionMetrics {
+            session_id: session_id.clone(),
+            limit,
+        })
+    {
+        return Ok(metrics);
+    }
+    let store = adesh_monitor_core::storage::HistoryStore::default_store().map_err(|e| e.to_string())?;
+    store.get_metrics(&session_id, limit).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -66,17 +83,37 @@ async fn get_hardware_info() -> Result<serde_json::Value, String> {
 }
 
 fn main() {
+    let capture_lease = adesh_monitor_core::ipc::capture_lease_path();
+    let _ = std::fs::create_dir_all(capture_lease.parent().unwrap_or_else(|| std::path::Path::new(".")));
+    let _ = std::fs::write(&capture_lease, format!("desktop_pid={}", std::process::id()));
+    let lease_running = Arc::new(AtomicBool::new(true));
+    let lease_heartbeat = lease_running.clone();
+    let lease_path = capture_lease.clone();
+    std::thread::spawn(move || {
+        while lease_heartbeat.load(Ordering::Relaxed) {
+            let _ = std::fs::write(&lease_path, format!("desktop_pid={}", std::process::id()));
+            std::thread::sleep(Duration::from_secs(5));
+        }
+    });
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             get_sessions,
             get_session_detail,
+            get_session_metrics,
             get_collector_stats,
             purge_history,
             get_security_report,
             rescan_history,
             get_hardware_info,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Adesh Observatory application");
+        .build(tauri::generate_context!())
+        .expect("error while building Adesh Observatory application")
+        .run(move |_app_handle, event| {
+            if matches!(event, tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }) {
+                lease_running.store(false, Ordering::Relaxed);
+                let _ = std::fs::remove_file(&capture_lease);
+            }
+        });
 }

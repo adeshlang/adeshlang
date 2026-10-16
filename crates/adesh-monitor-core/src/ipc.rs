@@ -5,13 +5,43 @@
 
 use adesh_monitor_protocol::*;
 use std::io::{BufRead, BufReader, Write};
-#[cfg(not(windows))]
-use std::time::Duration;
+#[cfg(not(test))]
+use std::time::{Duration, SystemTime};
 
 #[cfg(windows)]
 pub const DEFAULT_IPC_ENDPOINT: &str = r"\\.\pipe\adesh_observatory_ipc";
 #[cfg(not(windows))]
 pub const DEFAULT_IPC_ENDPOINT: &str = "/tmp/adesh_observatory.sock";
+
+/// The desktop app refreshes this file while it is open. Telemetry producers
+/// consult it before allocating envelopes, opening IPC, or touching SQLite.
+/// A short expiry means an uncleanly terminated desktop process cannot leave
+/// background collection enabled indefinitely.
+pub fn capture_lease_path() -> std::path::PathBuf {
+    crate::storage::HistoryStore::default_db_path()
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("observatory.capture")
+}
+
+pub fn capture_is_active() -> bool {
+    #[cfg(test)]
+    {
+        // Unit tests exercise storage/collector behavior without depending on
+        // a writable desktop profile or a running Tauri process.
+        true
+    }
+    #[cfg(not(test))]
+    std::fs::metadata(capture_lease_path())
+        .and_then(|m| m.modified())
+        .and_then(|modified| {
+            SystemTime::now()
+                .duration_since(modified)
+                .map_err(std::io::Error::other)
+        })
+        .map(|age| age <= Duration::from_secs(15))
+        .unwrap_or(false)
+}
 
 /// Non-blocking telemetry emitter used inside instrumented processes (`adesh`, `adeshlink`, runtimes).
 /// If the collector is offline or not listening, it fails fast and silently (zero performance impact).
@@ -41,6 +71,11 @@ impl TelemetryClient {
 
     /// Try to send an event to the local collector endpoint. Non-blocking with timeout.
     pub fn emit(&self, payload: EventPayload) {
+        // Observatory is opt-in at runtime: when the desktop app is closed no
+        // telemetry allocations, IPC attempts, or SQLite writes occur.
+        if !capture_is_active() {
+            return;
+        }
         let envelope = TelemetryEnvelope::new(
             self.session_id.clone(),
             self.pid,

@@ -139,6 +139,11 @@ impl Collector {
             while running.load(Ordering::SeqCst) {
                 match receiver.recv_timeout(Duration::from_millis(100)) {
                     Ok(envelope) => {
+                        // A collector can outlive the desktop window. Ignore
+                        // queued events once its capture lease has expired.
+                        if !crate::ipc::capture_is_active() {
+                            continue;
+                        }
                         events_ingested.fetch_add(1, Ordering::Relaxed);
                         let store_lock = store.lock();
                         if let Ok(st) = store_lock {
@@ -227,6 +232,14 @@ impl Collector {
             let mut provider = create_platform_provider();
             while running_sampler.load(Ordering::SeqCst) {
                 thread::sleep(interval);
+                // Closing ARO ends sampling for already-running processes as
+                // well; do not leave a background collector polling them.
+                if !crate::ipc::capture_is_active() {
+                    if let Ok(mut active) = active_for_sampler.lock() {
+                        active.clear();
+                    }
+                    continue;
+                }
                 let sessions: Vec<(String, u32, u64)> = if let Ok(act) = active_for_sampler.lock() {
                     act.values()
                         .map(|s| {

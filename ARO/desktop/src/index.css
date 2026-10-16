@@ -61,3 +61,10 @@
 .glow-active {
   animation: glowPulse 3s infinite ease-in-out;
 }
+
+@keyframes splashFade {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+.splash-fade { animation: splashFade 260ms ease-out forwards; animation-delay: 650ms; }

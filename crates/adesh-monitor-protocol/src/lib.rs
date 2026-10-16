@@ -18,6 +18,8 @@ pub enum ExecutionMode {
     Jit,
     TieredJit,
     AdaptiveJit,
+    /// Native compilation performed by `adesh build` / `adesh compile`.
+    NativeCompiler,
     AotNative,
     WebAssembly,
     Linker,

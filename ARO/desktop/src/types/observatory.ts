@@ -3,7 +3,7 @@ export interface SessionSummary {
   pid: number;
   parent_pid?: number;
   tool_name: string;
-  execution_mode: "interpreter" | "bytecode_vm" | "jit" | "tiered_jit" | "adaptive_jit" | "aot_native" | "web_assembly" | "linker" | "unknown";
+  execution_mode: "interpreter" | "bytecode_vm" | "jit" | "tiered_jit" | "adaptive_jit" | "native_compiler" | "aot_native" | "web_assembly" | "linker" | "unknown";
   command_line: string;
   status: "running" | "completed" | "failed" | "terminated";
   exit_code?: number;
@@ -45,6 +45,30 @@ export interface SessionDetail {
   compiler_stages: CompilerStageEvent[];
   linker_stages: LinkerStageEvent[];
   metrics_count: number;
+  runtime_events?: RuntimeEventPayload[];
+  latest_metrics?: ProcessMetrics | null;
+}
+
+export interface ProcessMetrics {
+  cpu_percent: number;
+  memory_rss_bytes: number;
+  memory_peak_rss_bytes: number;
+  memory_vms_bytes: number;
+  thread_count: number;
+  peak_thread_count: number;
+  disk_read_bytes: number;
+  disk_write_bytes: number;
+  cpu_user_ms: number;
+  cpu_sys_ms: number;
+  timestamp_utc: string;
+  elapsed_micros: number;
+}
+
+export interface RuntimeEventPayload {
+  event_name: string;
+  component: string;
+  duration_micros?: number | null;
+  details: Record<string, string>;
 }
 
 export interface CollectorStats {

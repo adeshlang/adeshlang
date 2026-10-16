@@ -117,3 +117,4 @@ ai/llama_cpp_repo/
 /ARO/desktop/node_modules
 /ARO/desktop/target
 /ARO/desktop/src-tauri/target
+/target-workspace-tests

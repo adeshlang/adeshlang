@@ -17,6 +17,8 @@ export const StagesTimeline: React.FC<StagesTimelineProps> = ({ sessionDetail, o
   }
 
   const { summary, compiler_stages, linker_stages } = sessionDetail;
+  const compilerTotal = compiler_stages.reduce((total, stage) => total + stage.duration_micros, 0);
+  const linkerTotal = linker_stages.reduce((total, stage) => total + stage.duration_micros, 0);
 
   return (
     <div className="p-6 space-y-6 overflow-y-auto h-full">
@@ -47,7 +49,7 @@ export const StagesTimeline: React.FC<StagesTimelineProps> = ({ sessionDetail, o
             <Layers className="w-4 h-4 text-primary" />
             <span>Compiler Pipeline Stages</span>
           </h3>
-          <span className="text-xs text-slate-400">{compiler_stages.length} recorded</span>
+          <span className="text-xs text-slate-400">{compiler_stages.length} recorded · {(compilerTotal / 1000).toFixed(2)} ms</span>
         </div>
 
         <div className="space-y-3">
@@ -65,6 +67,12 @@ export const StagesTimeline: React.FC<StagesTimelineProps> = ({ sessionDetail, o
                 <div>
                   <div className="text-xs font-semibold text-slate-200 font-mono">{stage.stage_name}</div>
                   <div className="text-[10px] text-slate-400">{stage.input_file || "in-memory source"}</div>
+                  {stage.error_message && <div className="text-[10px] text-red-300 mt-1">{stage.error_message}</div>}
+                  {Object.keys(stage.metadata || {}).length > 0 && (
+                    <div className="text-[10px] text-slate-500 mt-1 font-mono">
+                      {Object.entries(stage.metadata).map(([key, value]) => `${key}=${value}`).join(" · ")}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -92,7 +100,7 @@ export const StagesTimeline: React.FC<StagesTimelineProps> = ({ sessionDetail, o
             <Cpu className="w-4 h-4 text-indigo-400" />
             <span>Native Linker Pipeline (adeshlink)</span>
           </h3>
-          <span className="text-xs text-slate-400">{linker_stages.length} recorded</span>
+          <span className="text-xs text-slate-400">{linker_stages.length} recorded · {(linkerTotal / 1000).toFixed(2)} ms</span>
         </div>
 
         <div className="space-y-3">
@@ -102,12 +110,13 @@ export const StagesTimeline: React.FC<StagesTimelineProps> = ({ sessionDetail, o
               className="flex items-center justify-between p-3 rounded-lg bg-slate-900/40 border border-border/60"
             >
               <div className="flex items-center space-x-3">
-                <CheckCircle2 className="w-4 h-4 text-indigo-400" />
+                {stage.success ? <CheckCircle2 className="w-4 h-4 text-indigo-400" /> : <XCircle className="w-4 h-4 text-red-400" />}
                 <div>
                   <div className="text-xs font-semibold text-slate-200 font-mono">{stage.stage_name}</div>
                   <div className="text-[10px] text-slate-400">
                     Target: {stage.target_triple} | Format: {stage.output_format}
                   </div>
+                  {!stage.success && stage.error_message && <div className="text-[10px] text-red-300 mt-1">{stage.error_message}</div>}
                 </div>
               </div>
 

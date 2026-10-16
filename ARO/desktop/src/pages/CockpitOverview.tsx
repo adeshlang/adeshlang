@@ -62,6 +62,13 @@ const RUNTIME_METADATA: Record<
     border: "border-teal-500/30",
     icon: Activity,
   },
+  native_compiler: {
+    label: "Adesh Native Compiler",
+    color: "text-emerald-300",
+    badgeBg: "bg-emerald-500/10",
+    border: "border-emerald-500/30",
+    icon: Layers,
+  },
   bytecode_vm: {
     label: "Bytecode VM",
     color: "text-purple-400",

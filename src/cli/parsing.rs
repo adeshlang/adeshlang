@@ -54,6 +54,32 @@ pub fn check_ownership_and_parse_in(
                 metadata: std::collections::HashMap::new(),
             },
         ));
+        // Static source-level inventory complements OS RSS samples. These are
+        // explicitly estimates/counts, not fabricated runtime byte totals.
+        let mut memory_metadata = std::collections::HashMap::new();
+        memory_metadata.insert(
+            "static_source_bytes".to_string(),
+            clean_src.len().to_string(),
+        );
+        memory_metadata.insert(
+            "dynamic_allocation_sites".to_string(),
+            clean_src.matches("alloc(").count().to_string(),
+        );
+        memory_metadata.insert(
+            "borrow_operations".to_string(),
+            clean_src.matches("borrow").count().to_string(),
+        );
+        memory_metadata.insert("raii_transform_applied".to_string(), "true".to_string());
+        tc.emit(adesh_monitor_protocol::EventPayload::CompilerStage(
+            adesh_monitor_protocol::CompilerStageEvent {
+                stage_name: "memory_efficiency_inventory".to_string(),
+                input_file: file_owned.clone(),
+                duration_micros: 0,
+                success: true,
+                error_message: None,
+                metadata: memory_metadata,
+            },
+        ));
     }
 
     // Execute decorator compile-time phases (typecheck, compile)

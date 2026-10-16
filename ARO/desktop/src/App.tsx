@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { ObservatoryProvider, useObservatory } from "./context/ObservatoryContext";
 import { TopBar, ModernSidebar } from "./components/Navigation";
 import { CockpitOverview } from "./pages/CockpitOverview";
@@ -26,6 +26,14 @@ import {
   XCircle,
   Zap,
 } from "lucide-react";
+
+// The analytics views pull in charting code. Load them only when their tab is
+// opened so the always-on cockpit keeps a smaller initial memory footprint.
+const ProcessExplorer = React.lazy(() => import("./pages/ObservabilityViews").then((m) => ({ default: m.ProcessExplorer })));
+const LinkerDiagnostics = React.lazy(() => import("./pages/ObservabilityViews").then((m) => ({ default: m.LinkerDiagnostics })));
+const FlameTelemetry = React.lazy(() => import("./pages/ObservabilityViews").then((m) => ({ default: m.FlameTelemetry })));
+const BenchmarkRegressions = React.lazy(() => import("./pages/ObservabilityViews").then((m) => ({ default: m.BenchmarkRegressions })));
+const analyticsFallback = <div className="p-8 text-xs text-slate-400">Loading observability view…</div>;
 
 const formatBytes = (bytes?: number | null): string => {
   if (!bytes || bytes <= 0) return "—";
@@ -90,51 +98,15 @@ const MainLayout: React.FC = () => {
             />
           )}
 
-          {currentTab === "process_explorer" && <CockpitOverview />}
+          {currentTab === "process_explorer" && <React.Suspense fallback={analyticsFallback}><ProcessExplorer /></React.Suspense>}
 
           {currentTab === "audit_logs" && <SecurityRedaction />}
 
-          {currentTab === "linker_analytics" && (
-            <div className="p-8 space-y-4">
-              <h2 className="text-base font-bold text-slate-100 flex items-center space-x-2">
-                <Terminal className="w-4 h-4 text-sky-400" />
-                <span>Linker Diagnostics (`adeshlink`)</span>
-              </h2>
-              <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl space-y-3 text-xs">
-                <p className="text-slate-300">
-                  Direct PE/COFF, ELF, and Mach-O inspection. Zero external dependencies on LLVM or MSVC.
-                </p>
-                <div className="grid grid-cols-3 gap-3 pt-2 font-mono">
-                  <div className="p-3 bg-slate-950 rounded border border-slate-800">
-                    <div className="text-[10px] text-slate-500 uppercase">PE Relocations</div>
-                    <div className="text-base text-sky-400 font-bold">Safe Folding</div>
-                  </div>
-                  <div className="p-3 bg-slate-950 rounded border border-slate-800">
-                    <div className="text-[10px] text-slate-500 uppercase">Section GC</div>
-                    <div className="text-base text-emerald-400 font-bold">Enabled</div>
-                  </div>
-                  <div className="p-3 bg-slate-950 rounded border border-slate-800">
-                    <div className="text-[10px] text-slate-500 uppercase">ICF Fold Deduplication</div>
-                    <div className="text-base text-indigo-400 font-bold">Active</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+          {currentTab === "linker_analytics" && <React.Suspense fallback={analyticsFallback}><LinkerDiagnostics /></React.Suspense>}
 
-          {currentTab === "flame_graph" && (
-            <div className="p-8 space-y-4">
-              <h2 className="text-base font-bold text-slate-100">Live CPU & Allocation Flame Visualization</h2>
-              <div className="bg-slate-900 border border-slate-800 p-8 rounded-xl text-center space-y-3">
-                <p className="text-xs text-slate-400">
-                  Folded stack sampling active. Allocator snapshots captured via non-blocking ring buffer.
-                </p>
-                <div className="w-full h-40 bg-slate-950 rounded-lg border border-slate-800 flex items-center justify-center font-mono text-xs text-sky-400">
-                  [ Monitored Function Stacks: main -&gt; eval -&gt; parse_program -&gt; check_memory_safety ]
-                </div>
-              </div>
-            </div>
-          )}
+          {currentTab === "flame_graph" && <React.Suspense fallback={analyticsFallback}><FlameTelemetry /></React.Suspense>}
+
+          {currentTab === "benchmarks" && <React.Suspense fallback={analyticsFallback}><BenchmarkRegressions /></React.Suspense>}
 
           {currentTab === "hardware_caps" && (
             <div className="p-6 space-y-6 overflow-y-auto h-full">
@@ -767,9 +739,34 @@ const MainLayout: React.FC = () => {
 export const App: React.FC = () => {
   return (
     <ObservatoryProvider>
-      <MainLayout />
+      <SplashGate />
     </ObservatoryProvider>
   );
 };
+
+const SplashGate: React.FC = () => {
+  const { state } = useObservatory();
+  const [visible, setVisible] = useState(true);
+  useEffect(() => {
+    // Show branding long enough to avoid a blank native window, but never
+    // block access when the collector is offline.
+    const minimum = window.setTimeout(() => setVisible(false), 900);
+    if (state.ipcStatus === "connected") setVisible(false);
+    return () => window.clearTimeout(minimum);
+  }, [state.ipcStatus]);
+  return <>{visible && <SplashScreen status={state.ipcStatus} />}<MainLayout /></>;
+};
+
+const SplashScreen: React.FC<{ status: string }> = ({ status }) => (
+  <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950 splash-fade">
+    <div className="text-center space-y-5">
+      <div className="mx-auto h-16 w-16 rounded-2xl border border-sky-400/40 bg-sky-500/10 p-2 shadow-[0_0_45px_rgba(56,189,248,0.22)]">
+        <img src="/logo.png" alt="Adesh Observatory" className="h-full w-full object-contain" />
+      </div>
+      <div><div className="text-xl font-bold tracking-tight text-slate-100">Adesh Runtime Observatory</div><p className="mt-1 text-xs text-slate-400">Starting native telemetry and diagnostics</p></div>
+      <div className="flex items-center justify-center gap-2 text-xs text-sky-300"><span className="h-2 w-2 animate-pulse rounded-full bg-sky-400" />{status === "connected" ? "Collector ready" : "Initializing collector"}</div>
+    </div>
+  </div>
+);
 
 export default App;

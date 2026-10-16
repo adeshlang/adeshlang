@@ -25,6 +25,14 @@ pub fn finish_observatory_session(exit_code: i32, error_message: Option<&str>) {
     if let Ok(mut lock) = ACTIVE_SESSION.lock() {
         if let Some((client, start_instant)) = lock.take() {
             let dur = start_instant.elapsed().as_micros() as u64;
+            // Short compiler invocations often finish before the collector's
+            // periodic sampler fires. Capture one final process snapshot so
+            // CPU/RSS diagnostics are never silently reported as zero.
+            if let Some(metrics) = adesh_monitor_platform::create_platform_provider()
+                .sample_process(std::process::id(), dur)
+            {
+                client.emit(EventPayload::MetricsSample(metrics));
+            }
             client.emit(EventPayload::SessionEnd {
                 exit_code,
                 duration_micros: dur,

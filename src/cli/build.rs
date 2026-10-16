@@ -1256,7 +1256,35 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
                     link_config.libraries.push(lib.clone());
                 }
 
+                let target_triple = format!("{:?}", link_config.target);
+                let output_format = format!("{:?}", link_config.target.format);
+                let link_started = std::time::Instant::now();
                 let link_res = adesh_linker::Linker::link(&[temp_adob.clone()], link_config);
+                if let Ok(session_id) = std::env::var("ADESH_OBSERVATORY_SESSION") {
+                    let success = link_res.is_ok();
+                    let error_message = link_res.as_ref().err().map(ToString::to_string);
+                    let output_size_bytes = if success {
+                        fs::metadata(&output).ok().map(|metadata| metadata.len())
+                    } else {
+                        None
+                    };
+                    adesh_monitor_core::ipc::TelemetryClient::new(session_id).emit(
+                        adesh_monitor_protocol::EventPayload::LinkerStage(
+                            adesh_monitor_protocol::LinkerStageEvent {
+                                stage_name: "native_link".to_string(),
+                                target_triple,
+                                output_format,
+                                input_objects_count: 1,
+                                symbol_count: 0,
+                                section_count: 0,
+                                output_size_bytes,
+                                duration_micros: link_started.elapsed().as_micros() as u64,
+                                success,
+                                error_message,
+                            },
+                        ),
+                    );
+                }
                 let _ = fs::remove_file(&temp_adob);
                 link_res.map_err(|e| format!("Native link error: {}", e))
             }
@@ -1268,6 +1296,38 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
 
     match compile_result {
         Ok(()) => {
+            // Every native build route (Cranelift, ADOB/adesh codegen, and
+            // external/native linker paths) converges here. Emit an artifact
+            // diagnostic so ARO never depends on a particular internal linker
+            // implementation to render useful data.
+            if !matches!(
+                config.emit,
+                EmitType::Wasm | EmitType::Adob | EmitType::Assembly
+            ) {
+                if let Ok(session_id) = std::env::var("ADESH_OBSERVATORY_SESSION") {
+                    let output_size_bytes =
+                        fs::metadata(&output).ok().map(|metadata| metadata.len());
+                    adesh_monitor_core::ipc::TelemetryClient::new(session_id).emit(
+                        adesh_monitor_protocol::EventPayload::LinkerStage(
+                            adesh_monitor_protocol::LinkerStageEvent {
+                                stage_name: "native_artifact_ready".to_string(),
+                                target_triple: config
+                                    .target
+                                    .clone()
+                                    .unwrap_or_else(|| std::env::consts::ARCH.to_string()),
+                                output_format: format!("{:?}", config.emit),
+                                input_objects_count: 1,
+                                symbol_count: 0,
+                                section_count: 0,
+                                output_size_bytes,
+                                duration_micros: start_time.elapsed().as_micros() as u64,
+                                success: true,
+                                error_message: None,
+                            },
+                        ),
+                    );
+                }
+            }
             let elapsed = start_time.elapsed();
             let time_str = if elapsed.as_millis() < 1000 {
                 format!("{}ms", elapsed.as_millis())

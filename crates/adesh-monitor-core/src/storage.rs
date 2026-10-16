@@ -8,6 +8,27 @@ use std::path::Path;
 const AUDIT_META_LAST_RESCAN: &str = "last_rescan";
 const AUDIT_META_RESCAN_COUNT: &str = "rescan_count";
 
+/// Older CLI binaries can report their default interpreter backend for a build
+/// command. The invocation itself is authoritative: builds/compiles use the
+/// native compiler, ADOB codegen and the platform linker.
+fn effective_execution_mode(mode: ExecutionMode, command_args: &[String]) -> ExecutionMode {
+    if mode != ExecutionMode::Interpreter {
+        return mode;
+    }
+    let command = command_args.iter().map(String::as_str).collect::<Vec<_>>();
+    if command
+        .windows(2)
+        .any(|pair| pair[0] == "build" && pair[1] == "run")
+        || command
+            .iter()
+            .any(|arg| matches!(*arg, "build" | "compile" | "compile-aot" | "compile-native"))
+    {
+        ExecutionMode::NativeCompiler
+    } else {
+        mode
+    }
+}
+
 pub struct HistoryStore {
     conn: Connection,
 }
@@ -177,6 +198,7 @@ impl HistoryStore {
         let outcome = crate::redaction::redact_text(&command_args.join(" "));
         let command_line = outcome.text;
         let redaction_count = outcome.findings.len() as i64;
+        let execution_mode = effective_execution_mode(execution_mode, command_args);
         let mode_str = serde_json::to_string(&execution_mode).unwrap_or_default();
         let mode_trimmed = mode_str.trim_matches('"');
 
@@ -373,6 +395,7 @@ impl HistoryStore {
                 "jit" => ExecutionMode::Jit,
                 "tiered_jit" => ExecutionMode::TieredJit,
                 "adaptive_jit" => ExecutionMode::AdaptiveJit,
+                "native_compiler" => ExecutionMode::NativeCompiler,
                 "aot_native" => ExecutionMode::AotNative,
                 "web_assembly" => ExecutionMode::WebAssembly,
                 "linker" => ExecutionMode::Linker,
@@ -400,13 +423,19 @@ impl HistoryStore {
                     .ok()
             });
 
+            let command_line: String = row.get(5)?;
+            let command_args = command_line
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let mode = effective_execution_mode(mode, &command_args);
             Ok(SessionSummary {
                 session_id: row.get(0)?,
                 pid: row.get(1)?,
                 parent_pid: row.get(2)?,
                 tool_name: row.get(3)?,
                 execution_mode: mode,
-                command_line: row.get(5)?,
+                command_line,
                 status,
                 exit_code: row.get(7)?,
                 start_time,
@@ -446,6 +475,7 @@ impl HistoryStore {
                 "jit" => ExecutionMode::Jit,
                 "tiered_jit" => ExecutionMode::TieredJit,
                 "adaptive_jit" => ExecutionMode::AdaptiveJit,
+                "native_compiler" => ExecutionMode::NativeCompiler,
                 "aot_native" => ExecutionMode::AotNative,
                 "web_assembly" => ExecutionMode::WebAssembly,
                 "linker" => ExecutionMode::Linker,
@@ -473,13 +503,19 @@ impl HistoryStore {
                     .ok()
             });
 
+            let command_line: String = row.get(5)?;
+            let command_args = command_line
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let mode = effective_execution_mode(mode, &command_args);
             let summary = SessionSummary {
                 session_id: row.get(0)?,
                 pid: row.get(1)?,
                 parent_pid: row.get(2)?,
                 tool_name: row.get(3)?,
                 execution_mode: mode,
-                command_line: row.get(5)?,
+                command_line,
                 status,
                 exit_code: row.get(9)?,
                 start_time,

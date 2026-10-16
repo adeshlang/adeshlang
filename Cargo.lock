@@ -181,6 +181,7 @@ dependencies = [
  "adesh-linker",
  "adesh-monitor-cli",
  "adesh-monitor-core",
+ "adesh-monitor-platform",
  "adesh-monitor-protocol",
  "adesh-monitor-tui",
  "adesh-object",
