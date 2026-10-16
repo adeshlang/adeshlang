@@ -1,9 +1,11 @@
-let a = 10;
-let b = 20;
-if(a==b){
-    print("true");
-}else{
-    print("false");
+export fn tests(a:int):int {
+    let a = 10;
+    let b = 20;
+    if ((a == b)) {
+        print("true");
+    } else {
+        print("false");
+    }
+    print("The value of a is: " + a);
+    return 10;
 }
-
-print("The value of a is: " + a);

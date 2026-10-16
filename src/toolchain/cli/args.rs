@@ -995,12 +995,15 @@ Built with strong type inference, memory safety, and zero-cost abstractions
     {green}adesh{reset} <COMMAND> [OPTIONS] <FILE> [-- <ARGS>...]
     {green}adesh{reset} run {blue}-e{reset} "<code>"
     {green}adesh{reset} editor [FILE|DIR]
+    {green}adesh{reset} monitor [SUBCOMMAND]
 
 {bold}COMMANDS:{reset}
     {green}run{reset} <file>            Run a program (default: interpreter)
     {green}run{reset} {blue}-e{reset} "<code>"     Directly evaluate and run inline code string {yellow}⭐ NEW!{reset}
     {green}build{reset} <file>          Build native executable or ADOB object {yellow}⭐ NEW!{reset}
     {green}adob{reset} <subcommand>      Inspect, validate, and dump ADOB object binaries {yellow}⭐ NEW!{reset}
+    {green}monitor{reset} [subcommand]   Adesh Runtime Observatory (ARO) live telemetry & metrics {yellow}⭐ NEW!{reset}
+    {green}aro{reset} [subcommand]       Alias for monitor command {yellow}⭐ NEW!{reset}
     {green}toolchain{reset} <subcommand> Manage toolchains and external toolchain components {yellow}⭐ NEW!{reset}
     {green}test{reset} [file] [filter]   Run unit and integration tests (Cargo-like test runner) {yellow}⭐ NEW!{reset}
     {green}editor{reset} [file|dir]     Launch cross-platform TUI code editor (Adesh Editor) {yellow}⭐ NEW!{reset}
@@ -1023,6 +1026,33 @@ Built with strong type inference, memory safety, and zero-cost abstractions
     {green}target{reset} [list|info]    Show cross-compilation targets
     {green}gpu-check{reset} [-v] [--json] [--external-linker] Check GPU devices & toolchain
     {green}clean{reset}                 Remove build artifacts
+
+{bold}ADESH RUNTIME OBSERVATORY (ARO / MONITOR):{reset} {yellow}⭐ NEW!{reset}
+    {green}adesh monitor{reset}                Launch interactive Terminal UI dashboard (Ratatui TUI)
+    {green}adesh monitor tui{reset}            Launch interactive TUI dashboard (alias)
+    {green}adesh monitor list{reset} [options]  List active and recorded execution sessions
+    {green}adesh monitor show{reset} <id>       Display comprehensive session details & telemetry metrics
+    {green}adesh monitor trace{reset} <id>      Inspect compiler and linker stage durations & spans
+    {green}adesh monitor stats{reset}           Show collector event throughput and process resource stats
+    {green}adesh monitor export{reset} <id>     Export session reports to JSON or CSV format
+    {green}adesh monitor doctor{reset}          Inspect OS platform metrics provider, IPC, and SQLite storage
+    {green}adesh monitor purge{reset}           Purge local monitoring database history
+    {green}adesh monitor version{reset}         Display observatory protocol and schema version
+
+    {dim}OPTIONS FOR 'list':{reset}
+      {blue}--limit{reset}, {blue}-l{reset} <N>      Maximum number of sessions to list (default: 50)
+      {blue}--group{reset}, {blue}-g{reset}          Group sessions by execution mode
+      {blue}--mode{reset}, {blue}-m{reset} <mode>    Filter by mode (interpreter, jit, nativecompiler, etc.)
+      {blue}--json{reset}                 Output machine-readable JSON
+
+    {dim}OPTIONS FOR 'export':{reset}
+      {blue}--format{reset} <json|csv>    Report format (default: json)
+      {blue}--out{reset} <file>           Output file destination (default: stdout)
+
+    {dim}ARO CAPTURE & DESKTOP COCKPIT:{reset}
+      • Instrumented CLI and linker stages emit non-blocking telemetry via local IPC
+      • Interactive GUI Cockpit available via the desktop application ({dim}ARO/desktop{reset})
+      • Telemetry capture respects {dim}ADESH_OBSERVATORY_DISABLED=1{reset}
 
 {bold}ADESH EDITOR (TUI IDE):{reset} {yellow}⭐ NEW!{reset}
     {green}adesh editor{reset}                 Launch TUI editor with an empty workspace
@@ -1377,6 +1407,16 @@ Built with strong type inference, memory safety, and zero-cost abstractions
     {green}adesh editor{reset}                          {dim}# Launch interactive TUI code editor{reset}
     {green}adesh editor{reset} main.adesh                   {dim}# Open file in editor{reset}
     {green}adesh editor{reset} ./my_project                 {dim}# Open directory workspace in editor{reset}
+    
+    {dim}# Adesh Runtime Observatory (ARO){reset}
+    {green}adesh monitor{reset}                               {dim}# Launch interactive TUI monitor dashboard{reset}
+    {green}adesh monitor list{reset}                          {dim}# List recent execution sessions{reset}
+    {green}adesh monitor list{reset} {blue}--group --limit 20{reset}        {dim}# Group sessions by execution mode{reset}
+    {green}adesh monitor show{reset} sess-1234                 {dim}# Inspect details & metrics of a specific session{reset}
+    {green}adesh monitor trace{reset} sess-1234                {dim}# View compiler/linker stage timing breakdown{reset}
+    {green}adesh monitor stats{reset}                         {dim}# Show collector throughput and diagnostics{reset}
+    {green}adesh monitor doctor{reset}                        {dim}# Verify telemetry subsystems and storage health{reset}
+    {green}adesh monitor export{reset} sess-1234 {blue}--out{reset} rep.json  {dim}# Export session report to file{reset}
     
     {dim}# Basic execution{reset}
     {green}adesh run{reset} program.adesh                    {dim}# Run with interpreter{reset}

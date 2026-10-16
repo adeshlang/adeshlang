@@ -559,7 +559,6 @@ mod macos_impl {
             .and_then(|s| s.parse().ok())
             .unwrap_or_else(logical_cores);
         let max_clock_mhz = sysctl("hw.cpufrequency")
-            .ok()
             .and_then(|s| s.parse::<u64>().ok())
             .filter(|hz| *hz > 0)
             .map(|hz| (hz / 1_000_000) as u32);
@@ -597,13 +596,17 @@ pub fn system_memory() -> (u64, Option<u64>) {
 
 #[cfg(target_os = "linux")]
 pub fn system_memory() -> (u64, Option<u64>) {
-    let page = libc::sysconf(libc::_SC_PAGESIZE);
+    let (page, total, avail) = unsafe {
+        (
+            libc::sysconf(libc::_SC_PAGESIZE),
+            libc::sysconf(libc::_SC_PHYS_PAGES),
+            libc::sysconf(libc::_SC_AVPHYS_PAGES),
+        )
+    };
     if page <= 0 {
         return (0, None);
     }
     let page = page as u64;
-    let total = libc::sysconf(libc::_SC_PHYS_PAGES);
-    let avail = libc::sysconf(libc::_SC_AVPHYS_PAGES);
     let total_bytes = if total > 0 { total as u64 * page } else { 0 };
     let avail_bytes = if avail > 0 {
         Some(avail as u64 * page)
@@ -615,17 +618,19 @@ pub fn system_memory() -> (u64, Option<u64>) {
 
 #[cfg(target_os = "macos")]
 pub fn system_memory() -> (u64, Option<u64>) {
-    unsafe fn sysctl_u64(name: &str) -> Option<u64> {
+    fn sysctl_u64(name: &str) -> Option<u64> {
         let cname = std::ffi::CString::new(name).ok()?;
         let mut val: u64 = 0;
         let mut len = std::mem::size_of::<u64>();
-        let rc = libc::sysctlbyname(
-            cname.as_ptr(),
-            &mut val as *mut u64 as *mut libc::c_void,
-            &mut len,
-            std::ptr::null_mut(),
-            0,
-        );
+        let rc = unsafe {
+            libc::sysctlbyname(
+                cname.as_ptr(),
+                &mut val as *mut u64 as *mut libc::c_void,
+                &mut len,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
         if rc == 0 && val > 0 { Some(val) } else { None }
     }
 

@@ -14,6 +14,9 @@ use adeshlang::execution::runtime::Interpreter;
  *
  * Supported commands (see `adesh --help` for full details):
  *  - adesh run <file.adesh>
+ *  - adesh build <file.adesh>
+ *  - adesh monitor [subcommand]
+ *  - adesh aro [subcommand]
  *  - adesh repl
  *  - adesh editor [file|dir]
  *  - adesh init <dir>

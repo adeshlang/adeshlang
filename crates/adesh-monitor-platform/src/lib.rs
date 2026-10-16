@@ -322,7 +322,9 @@ mod macos {
     use std::process::Command;
 
     pub struct MacosMetricsProvider {
+        #[allow(dead_code)]
         last_sample_instant: Option<Instant>,
+        #[allow(dead_code)]
         last_total_time_ns: u64,
     }
 
