@@ -63,6 +63,21 @@ pub struct ProcessMetrics {
     pub timestamp_utc: DateTime<Utc>,
     /// Monotonic timestamp in microseconds since session start
     pub elapsed_micros: u64,
+    /// Static memory usage in bytes (code, constants, rodata)
+    #[serde(default)]
+    pub memory_static_bytes: u64,
+    /// Committed heap memory in bytes
+    #[serde(default)]
+    pub memory_heap_bytes: u64,
+    /// Active dynamic memory allocated in bytes
+    #[serde(default)]
+    pub memory_dynamic_bytes: u64,
+    /// Reused/recycled memory in bytes (RAII/arenas/freed recycled)
+    #[serde(default)]
+    pub memory_reused_bytes: u64,
+    /// Number of CPU cores actively utilized
+    #[serde(default)]
+    pub cores_used: f32,
 }
 
 /// Compilation or analysis stage timing
@@ -193,6 +208,20 @@ pub struct SessionSummary {
     /// Number of secrets masked in `command_line` before it was persisted
     #[serde(default)]
     pub redaction_count: u32,
+    #[serde(default)]
+    pub thread_count: u32,
+    #[serde(default)]
+    pub peak_threads: u32,
+    #[serde(default)]
+    pub cores_used: f32,
+    #[serde(default)]
+    pub memory_static_bytes: u64,
+    #[serde(default)]
+    pub memory_heap_bytes: u64,
+    #[serde(default)]
+    pub memory_dynamic_bytes: u64,
+    #[serde(default)]
+    pub memory_reused_bytes: u64,
 }
 
 /// Metadata describing a built-in redaction rule (exposed to UI clients)

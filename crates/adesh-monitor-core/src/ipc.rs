@@ -5,10 +5,6 @@
 
 use adesh_monitor_protocol::*;
 use std::io::{BufRead, BufReader, Write};
-#[cfg(any(not(windows), not(test)))]
-use std::time::Duration;
-#[cfg(not(test))]
-use std::time::SystemTime;
 
 #[cfg(windows)]
 pub const DEFAULT_IPC_ENDPOINT: &str = r"\\.\pipe\adesh_observatory_ipc";
@@ -27,22 +23,16 @@ pub fn capture_lease_path() -> std::path::PathBuf {
 }
 
 pub fn capture_is_active() -> bool {
-    #[cfg(test)]
-    {
-        // Unit tests exercise storage/collector behavior without depending on
-        // a writable desktop profile or a running Tauri process.
-        true
-    }
-    #[cfg(not(test))]
-    std::fs::metadata(capture_lease_path())
-        .and_then(|m| m.modified())
-        .and_then(|modified| {
-            SystemTime::now()
-                .duration_since(modified)
-                .map_err(std::io::Error::other)
-        })
-        .map(|age| age <= Duration::from_secs(15))
+    // Allow opting out of telemetry via environment variable
+    if std::env::var("ADESH_NO_OBSERVATORY")
+        .map(|v| v == "1" || v == "true")
         .unwrap_or(false)
+    {
+        return false;
+    }
+    // Telemetry capture is active so that adesh build / run commands are reliably
+    // logged to the durable SQLite history for ARO inspection.
+    true
 }
 
 /// Non-blocking telemetry emitter used inside instrumented processes (`adesh`, `adeshlink`, runtimes).

@@ -71,6 +71,9 @@ cargo build --release @TargetFlag -p adesh-monitor-tui --bin aro_tui
 if (Test-Path "$RootDir\ARO\desktop") {
     Push-Location "$RootDir\ARO\desktop"
     if (Get-Command pnpm -ErrorAction SilentlyContinue) {
+        if (-not (Test-Path "node_modules")) {
+            pnpm install --frozen-lockfile
+        }
         pnpm run build
     }
     Pop-Location
@@ -145,7 +148,8 @@ if (Test-Path "$TargetBinDir\aro.exe") {
 }
 if (Test-Path "$TargetBinDir\aro_tui.exe") {
     Copy-Item "$TargetBinDir\aro_tui.exe" "$DistDir\bin\aro_tui.exe" -Force
-    Write-Host "      Copied ARO TUI (aro_tui.exe) to bin\" -ForegroundColor Green
+    Copy-Item "$TargetBinDir\aro_tui.exe" "$DistDir\bin\aro-tui.exe" -Force
+    Write-Host "      Copied ARO TUI (aro_tui.exe / aro-tui.exe) to bin\" -ForegroundColor Green
 }
 $AroDesktopBin = "$RootDir\ARO\desktop\src-tauri\target\release\adesh-observatory-desktop.exe"
 if ($Arch -eq "aarch64") {

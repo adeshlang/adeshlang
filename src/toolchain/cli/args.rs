@@ -66,9 +66,24 @@ impl ParsedArgs {
         let mut collecting_program_args = false;
         let mut positional_args: Vec<String> = Vec::new();
 
+        let is_monitor_cmd = args
+            .get(1)
+            .map(|s| matches!(s.as_str(), "monitor" | "aro" | "observatory"))
+            .unwrap_or(false);
+
         let mut i = 1; // Skip program name
         while i < args.len() {
             let arg = &args[i];
+
+            if is_monitor_cmd && i > 1 {
+                if positional_args.len() < 2 && !arg.starts_with('-') {
+                    positional_args.push(arg.clone());
+                } else {
+                    program_args.push(arg.clone());
+                }
+                i += 1;
+                continue;
+            }
 
             // If we hit "--", start collecting program args
             if arg == "--" {
@@ -818,6 +833,18 @@ impl ParsedArgs {
                     }
                     program_args.extend(positional_args[2..].iter().cloned());
                 }
+            }
+        } else if matches!(command.as_str(), "monitor" | "aro" | "observatory") {
+            // Forward subcommands and flags for `adesh monitor [subcmd...]`
+            if positional_args.len() >= 2 {
+                input_file = Some(positional_args[1].clone());
+                program_args.extend(positional_args[2..].iter().cloned());
+            }
+        } else if command == "build" && positional_args.get(1).map(String::as_str) == Some("run") {
+            // `adesh build run [file] [args...]`
+            if positional_args.len() >= 3 {
+                input_file = Some(positional_args[2].clone());
+                program_args.extend(positional_args[3..].iter().cloned());
             }
         } else {
             if positional_args.len() >= 2 {

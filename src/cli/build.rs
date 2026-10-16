@@ -1258,6 +1258,8 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
 
                 let target_triple = format!("{:?}", link_config.target);
                 let output_format = format!("{:?}", link_config.target.format);
+                let sym_count = adob.symbols.len();
+                let sec_count = adob.sections.len();
                 let link_started = std::time::Instant::now();
                 let link_res = adesh_linker::Linker::link(&[temp_adob.clone()], link_config);
                 if let Ok(session_id) = std::env::var("ADESH_OBSERVATORY_SESSION") {
@@ -1275,8 +1277,8 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
                                 target_triple,
                                 output_format,
                                 input_objects_count: 1,
-                                symbol_count: 0,
-                                section_count: 0,
+                                symbol_count: sym_count,
+                                section_count: sec_count,
                                 output_size_bytes,
                                 duration_micros: link_started.elapsed().as_micros() as u64,
                                 success,

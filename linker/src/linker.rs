@@ -1123,7 +1123,37 @@ impl Linker {
             }
         }
 
-        let elapsed = start_time.elapsed().as_millis();
+        let elapsed_micros = start_time.elapsed().as_micros() as u64;
+        let elapsed = (elapsed_micros / 1000) as u128;
+
+        // Emit real Linker Diagnostics telemetry to ARO Observatory
+        if let Ok(session_id) = std::env::var("ADESH_OBSERVATORY_SESSION") {
+            let output_size_bytes = std::fs::metadata(&ctx.config.output_path)
+                .ok()
+                .map(|m| m.len());
+            let target_triple = ctx.config.target.to_string();
+            let output_format = format!("{:?}", ctx.config.target.format);
+            let input_objects_count = ctx.objects.len();
+            let symbol_count = emit_symbols.len();
+            let section_count = ctx.layout.merged_sections.len();
+
+            adesh_monitor_core::ipc::TelemetryClient::new(session_id).emit(
+                adesh_monitor_protocol::EventPayload::LinkerStage(
+                    adesh_monitor_protocol::LinkerStageEvent {
+                        stage_name: "link_executable".to_string(),
+                        target_triple,
+                        output_format,
+                        input_objects_count,
+                        symbol_count,
+                        section_count,
+                        output_size_bytes,
+                        duration_micros: elapsed_micros,
+                        success: true,
+                        error_message: None,
+                    },
+                ),
+            );
+        }
 
         // 10. Write Link Map if requested
         if let Some(ref map_p) = ctx.config.map_file {

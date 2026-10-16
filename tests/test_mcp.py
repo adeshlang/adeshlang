@@ -34,6 +34,20 @@ class TestAdeshLangMCP(unittest.TestCase):
         self.assertIn("adesh_format", tool_names)
         self.assertIn("adesh_doctor", tool_names)
         self.assertIn("adesh_gpu_check", tool_names)
+        self.assertIn("adesh_bench", tool_names)
+        self.assertIn("adesh_lint", tool_names)
+        self.assertIn("adesh_link", tool_names)
+        self.assertIn("adesh_self_test", tool_names)
+
+        # Check observatory (ARO) tools
+        self.assertIn("adesh_monitor_list", tool_names)
+        self.assertIn("adesh_monitor_show", tool_names)
+        self.assertIn("adesh_monitor_trace", tool_names)
+        self.assertIn("adesh_monitor_stats", tool_names)
+        self.assertIn("adesh_monitor_export", tool_names)
+        self.assertIn("adesh_monitor_doctor", tool_names)
+        self.assertIn("adesh_monitor_purge", tool_names)
+        self.assertIn("adesh_monitor_version", tool_names)
 
         # Check key adl tools
         self.assertIn("adl_new", tool_names)
@@ -43,12 +57,13 @@ class TestAdeshLangMCP(unittest.TestCase):
         self.assertIn("adl_test", tool_names)
         self.assertIn("adl_doctor", tool_names)
         self.assertIn("adl_graph", tool_names)
+        self.assertIn("adl_bins", tool_names)
 
         # Check file helpers
         self.assertIn("create_file", tool_names)
         self.assertIn("read_file", tool_names)
 
-        self.assertGreaterEqual(len(tools), 50)
+        self.assertGreaterEqual(len(tools), 60)
 
     def test_registered_resources(self):
         resources = asyncio.run(self.server.list_resources())
@@ -57,6 +72,7 @@ class TestAdeshLangMCP(unittest.TestCase):
         self.assertIn("adesh://docs/language-reference", uris)
         self.assertIn("adesh://docs/cli-reference", uris)
         self.assertIn("adesh://docs/stdlib", uris)
+        self.assertIn("adesh://docs/observatory", uris)
         self.assertIn("adesh://templates/manifest", uris)
 
     def test_registered_prompts(self):
@@ -66,10 +82,11 @@ class TestAdeshLangMCP(unittest.TestCase):
         self.assertIn("create_adesh_project", prompt_names)
         self.assertIn("debug_adesh_code", prompt_names)
         self.assertIn("optimize_performance", prompt_names)
+        self.assertIn("analyze_execution_session", prompt_names)
 
     def test_tool_execution_doctor(self):
         with patch(
-            "adesh_mcp.tools.run_cli_command",
+            "adesh_mcp.tools_adesh.run_cli_command",
             return_value={"success": True, "exit_code": 0, "stdout": "", "stderr": ""},
         ):
             result = asyncio.run(self.server.call_tool("adesh_doctor", {}))

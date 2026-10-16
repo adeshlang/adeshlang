@@ -297,7 +297,7 @@ fn link_with_lld_link(
         cmd.arg("/INCREMENTAL");
         cmd.arg("/OPT:NOREF,NOICF");
         if options.debug_info {
-            cmd.arg("/DEBUG:FASTLINK");
+            cmd.arg("/DEBUG");
         } else {
             cmd.arg("/DEBUG:NONE");
         }

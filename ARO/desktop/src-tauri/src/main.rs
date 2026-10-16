@@ -26,18 +26,26 @@ fn get_session_detail(
 }
 
 #[tauri::command]
-fn get_session_metrics(session_id: String, limit: Option<usize>) -> Result<Vec<ProcessMetrics>, String> {
+#[allow(non_snake_case)]
+fn get_session_metrics(
+    session_id: Option<String>,
+    sessionId: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<ProcessMetrics>, String> {
+    let id = session_id
+        .or(sessionId)
+        .ok_or_else(|| "Session ID parameter missing".to_string())?;
     let limit = limit.unwrap_or(500);
     if let Ok(CollectorResponse::SessionMetrics { metrics, .. }) =
         adesh_monitor_core::ipc::send_collector_rpc(&CollectorRequest::GetSessionMetrics {
-            session_id: session_id.clone(),
+            session_id: id.clone(),
             limit,
         })
     {
         return Ok(metrics);
     }
     let store = adesh_monitor_core::storage::HistoryStore::default_store().map_err(|e| e.to_string())?;
-    store.get_metrics(&session_id, limit).map_err(|e| e.to_string())
+    store.get_metrics(&id, limit).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

@@ -14,6 +14,10 @@ path = "src/lib.rs"
 name = "aro-tui"
 path = "src/main.rs"
 
+[[bin]]
+name = "aro_tui"
+path = "src/bin/aro_tui.rs"
+
 [dependencies]
 adesh-monitor-protocol = { path = "../adesh-monitor-protocol" }
 adesh-monitor-core = { path = "../adesh-monitor-core" }

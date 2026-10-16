@@ -224,7 +224,11 @@ if (-not $Wix) {
 
 }
 
-Write-Host "WiX executable: $($Wix.Source)"
+$WixVer = (& $Wix.Source --version 2>&1 | Out-String).Trim()
+Write-Host "WiX executable: $($Wix.Source) (v$WixVer)"
+if ($WixVer -match '^[7-9]\.') {
+    Write-Warning "WiX v$WixVer detected. WiX v7 requires the OSMF EULA or fee. Consider installing WiX v5 via 'dotnet tool install --global wix --version 5.0.2'."
+}
 
 # ==============================================================================
 # ARCHITECTURE

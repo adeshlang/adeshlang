@@ -117,7 +117,7 @@ function observatoryReducer(state: ObservatoryState, action: ObservatoryAction):
     case "SET_SESSIONS":
       return { ...state, sessions: action.payload, lastUpdated: new Date() };
     case "SELECT_SESSION":
-      return { ...state, selectedSessionId: action.payload, currentTab: "stage_timeline" };
+      return { ...state, selectedSessionId: action.payload };
     case "SET_SELECTED_SESSION":
       return { ...state, selectedSessionId: action.payload };
     case "SET_SESSION_DETAIL":

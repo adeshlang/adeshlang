@@ -12,6 +12,11 @@ use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
+/// Stack size for parallel test worker threads. The interpreter evaluates test
+/// bodies recursively, so worker threads need a stack far larger than the
+/// platform default to avoid STATUS_STACK_OVERFLOW on deeply nested programs.
+const TEST_THREAD_STACK_SIZE: usize = 64 * 1024 * 1024;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum TestStatus {
     Pass,
@@ -422,6 +427,7 @@ pub fn run_tests<E: BackendTestExecutor>(
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
+            .stack_size(TEST_THREAD_STACK_SIZE)
             .build();
 
         all_results = if let Ok(tp) = pool {

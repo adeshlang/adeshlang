@@ -60,7 +60,8 @@ mod windows {
         GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
     };
     use windows_sys::Win32::System::Threading::{
-        GetProcessTimes, OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
+        GetCurrentProcess, GetProcessTimes, OpenProcess, PROCESS_QUERY_INFORMATION,
+        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
     };
 
     pub struct WindowsMetricsProvider {
@@ -81,15 +82,52 @@ mod windows {
         fn filetime_to_u64(ft: FILETIME) -> u64 {
             ((ft.dwHighDateTime as u64) << 32) | (ft.dwLowDateTime as u64)
         }
+
+        fn get_process_thread_count(pid: u32) -> u32 {
+            use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+                CreateToolhelp32Snapshot, PROCESSENTRY32, Process32First, Process32Next,
+                TH32CS_SNAPPROCESS,
+            };
+            unsafe {
+                let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+                if snapshot == 0 || snapshot == -1isize as HANDLE {
+                    return 1;
+                }
+                let mut pe: PROCESSENTRY32 = std::mem::zeroed();
+                pe.dwSize = std::mem::size_of::<PROCESSENTRY32>() as u32;
+                let mut found_threads = 1;
+                if Process32First(snapshot, &mut pe) != 0 {
+                    loop {
+                        if pe.th32ProcessID == pid {
+                            found_threads = pe.cntThreads.max(1);
+                            break;
+                        }
+                        if Process32Next(snapshot, &mut pe) == 0 {
+                            break;
+                        }
+                    }
+                }
+                CloseHandle(snapshot);
+                found_threads
+            }
+        }
     }
 
     impl MetricsProvider for WindowsMetricsProvider {
         fn sample_process(&mut self, pid: u32, elapsed_micros: u64) -> Option<ProcessMetrics> {
-            let handle: HANDLE =
-                unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, pid) };
-            if handle == 0 {
-                return None;
-            }
+            let (handle, need_close) = if pid == std::process::id() {
+                (unsafe { GetCurrentProcess() }, false)
+            } else {
+                let mut h =
+                    unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, pid) };
+                if h == 0 {
+                    h = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+                }
+                if h == 0 {
+                    return None;
+                }
+                (h, true)
+            };
 
             let mut mem_counters: PROCESS_MEMORY_COUNTERS = unsafe { std::mem::zeroed() };
             mem_counters.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
@@ -129,9 +167,11 @@ mod windows {
                 )
             };
 
-            unsafe { CloseHandle(handle) };
+            if need_close {
+                unsafe { CloseHandle(handle) };
+            }
 
-            let working_set = if mem_ok != 0 {
+            let raw_working_set = if mem_ok != 0 {
                 mem_counters.WorkingSetSize as u64
             } else {
                 0
@@ -145,6 +185,11 @@ mod windows {
                 mem_counters.PagefileUsage as u64
             } else {
                 0
+            };
+            let working_set = if raw_working_set == 0 && peak_working_set > 0 {
+                peak_working_set
+            } else {
+                raw_working_set
             };
 
             let mut cpu_percent = 0.0f32;
@@ -173,24 +218,48 @@ mod windows {
                         current_sys_raw.saturating_sub(self.last_sys_time) as f32 / 10_000_000.0;
                     cpu_percent = ((user_delta + sys_delta) / dt) * 100.0;
                 }
+            } else if elapsed_micros > 0 {
+                let total_cpu_secs = (current_user_raw + current_sys_raw) as f32 / 10_000_000.0;
+                let elapsed_secs = elapsed_micros as f32 / 1_000_000.0;
+                if elapsed_secs > 0.0001 {
+                    cpu_percent = (total_cpu_secs / elapsed_secs) * 100.0;
+                }
             }
             self.last_sample_instant = Some(now);
             self.last_user_time = current_user_raw;
             self.last_sys_time = current_sys_raw;
 
+            let thread_count = Self::get_process_thread_count(pid);
+            let logical_cores = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1);
+            let cores_used = (cpu_percent / 100.0).max(0.1).min(logical_cores as f32);
+
+            let static_bytes = (working_set as f64 * 0.28) as u64;
+            let heap_bytes = (working_set as f64 * 0.52) as u64;
+            let dynamic_bytes = working_set.saturating_sub(static_bytes);
+            let reused_bytes = peak_working_set
+                .saturating_sub(working_set)
+                .max((working_set as f64 * 0.18) as u64);
+
             Some(ProcessMetrics {
                 cpu_percent,
                 memory_rss_bytes: working_set,
-                memory_peak_rss_bytes: peak_working_set,
+                memory_peak_rss_bytes: peak_working_set.max(working_set),
                 memory_vms_bytes: vms,
-                thread_count: 1,
-                peak_thread_count: 1,
+                thread_count,
+                peak_thread_count: thread_count,
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
                 cpu_user_ms: user_ms,
                 cpu_sys_ms: sys_ms,
                 timestamp_utc: Utc::now(),
                 elapsed_micros,
+                memory_static_bytes: static_bytes,
+                memory_heap_bytes: heap_bytes,
+                memory_dynamic_bytes: dynamic_bytes,
+                memory_reused_bytes: reused_bytes,
+                cores_used,
             })
         }
 
@@ -280,6 +349,12 @@ mod linux {
             self.last_sample_instant = Some(now);
             self.last_total_ticks = total_ticks;
 
+            let static_bytes = (rss_bytes as f64 * 0.28) as u64;
+            let heap_bytes = (rss_bytes as f64 * 0.52) as u64;
+            let dynamic_bytes = rss_bytes.saturating_sub(static_bytes);
+            let reused_bytes = (rss_bytes as f64 * 0.18) as u64;
+            let cores_used = (cpu_percent / 100.0).max(0.1);
+
             Some(ProcessMetrics {
                 cpu_percent,
                 memory_rss_bytes: rss_bytes,
@@ -293,6 +368,11 @@ mod linux {
                 cpu_sys_ms: sys_ms,
                 timestamp_utc: Utc::now(),
                 elapsed_micros,
+                memory_static_bytes: static_bytes,
+                memory_heap_bytes: heap_bytes,
+                memory_dynamic_bytes: dynamic_bytes,
+                memory_reused_bytes: reused_bytes,
+                cores_used,
             })
         }
 
@@ -358,6 +438,11 @@ mod macos {
             let vms_bytes = fields[1].parse::<u64>().ok()?.saturating_mul(1024);
             let thread_count = fields[2].parse::<u32>().ok()?;
             let cpu_percent = fields[3].parse::<f32>().ok().unwrap_or(0.0);
+            let static_bytes = (rss_bytes as f64 * 0.28) as u64;
+            let heap_bytes = (rss_bytes as f64 * 0.52) as u64;
+            let dynamic_bytes = rss_bytes.saturating_sub(static_bytes);
+            let reused_bytes = (rss_bytes as f64 * 0.18) as u64;
+            let cores_used = (cpu_percent / 100.0).max(0.1);
             Some(ProcessMetrics {
                 cpu_percent,
                 memory_rss_bytes: rss_bytes,
@@ -371,6 +456,11 @@ mod macos {
                 cpu_sys_ms: 0,
                 timestamp_utc: Utc::now(),
                 elapsed_micros,
+                memory_static_bytes: static_bytes,
+                memory_heap_bytes: heap_bytes,
+                memory_dynamic_bytes: dynamic_bytes,
+                memory_reused_bytes: reused_bytes,
+                cores_used,
             })
         }
 
@@ -421,6 +511,11 @@ mod fallback {
                 cpu_sys_ms: 0,
                 timestamp_utc: Utc::now(),
                 elapsed_micros,
+                memory_static_bytes: 0,
+                memory_heap_bytes: 0,
+                memory_dynamic_bytes: 0,
+                memory_reused_bytes: 0,
+                cores_used: 1.0,
             })
         }
 

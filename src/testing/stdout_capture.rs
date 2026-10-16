@@ -9,9 +9,22 @@
 use std::io;
 #[cfg(any(unix, windows))]
 use std::path::PathBuf;
+#[cfg(any(unix, windows))]
+use std::sync::{Mutex, MutexGuard};
 
 #[cfg(windows)]
 use std::fs::File;
+
+/// Serializes stdout/stderr capture across threads.
+///
+/// Capture redirects the *process-global* stdout/stderr handles. If two test
+/// threads start capturing at the same time they each save a handle that may
+/// already be another thread's redirected target, and when they restore in an
+/// arbitrary order the process stdout can end up pointing at a deleted temp
+/// file — silently swallowing all subsequent output. Holding this lock for the
+/// whole capture window guarantees redirects never overlap.
+#[cfg(any(unix, windows))]
+static CAPTURE_LOCK: Mutex<()> = Mutex::new(());
 
 /// A guard that captures stdout and restores it when dropped
 #[cfg(unix)]
@@ -19,6 +32,7 @@ pub struct StdoutCapture {
     original_stdout: i32,
     original_stderr: i32,
     temp_path: PathBuf,
+    _lock: MutexGuard<'static, ()>,
 }
 
 /// A guard that captures stdout and restores it when dropped
@@ -28,6 +42,7 @@ pub struct StdoutCapture {
     original_stderr: isize,
     temp_path: PathBuf,
     _temp_file: File,
+    _lock: MutexGuard<'static, ()>,
 }
 
 /// A guard that captures stdout and restores it when dropped
@@ -41,6 +56,10 @@ impl StdoutCapture {
         {
             use std::fs::OpenOptions;
             use std::os::unix::io::IntoRawFd;
+
+            let lock = CAPTURE_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
 
             let mut temp_path = std::env::temp_dir();
             temp_path.push(format!("adesh_test_{}.tmp", std::process::id()));
@@ -92,6 +111,7 @@ impl StdoutCapture {
                 original_stdout,
                 original_stderr,
                 temp_path,
+                _lock: lock,
             })
         }
 
@@ -101,6 +121,10 @@ impl StdoutCapture {
             use windows_sys::Win32::System::Console::{
                 GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle,
             };
+
+            let lock = CAPTURE_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
 
             let mut temp_path = std::env::temp_dir();
             temp_path.push(format!("adesh_test_{}.tmp", std::process::id()));
@@ -130,6 +154,7 @@ impl StdoutCapture {
                 original_stderr,
                 temp_path,
                 _temp_file: temp_file,
+                _lock: lock,
             })
         }
 

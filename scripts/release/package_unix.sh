@@ -81,6 +81,9 @@ if [[ -d "$root/ARO/desktop" ]]; then
   (
     cd "$root/ARO/desktop"
     if command -v pnpm >/dev/null 2>&1; then
+      if [[ ! -d "node_modules" ]]; then
+        pnpm install --frozen-lockfile || pnpm install || true
+      fi
       pnpm run build || true
     fi
     if [[ -d "$root/ARO/desktop/src-tauri" ]]; then
@@ -93,7 +96,10 @@ fi
 cp "$target_dir/adesh" "$stage/bin/"
 [[ -f "$target_dir/adl" ]] && cp "$target_dir/adl" "$stage/bin/"
 [[ -f "$target_dir/aro" ]] && cp "$target_dir/aro" "$stage/bin/"
-[[ -f "$target_dir/aro_tui" ]] && cp "$target_dir/aro_tui" "$stage/bin/"
+if [[ -f "$target_dir/aro_tui" ]]; then
+  cp "$target_dir/aro_tui" "$stage/bin/"
+  cp "$target_dir/aro_tui" "$stage/bin/aro-tui"
+fi
 if [[ -f "$target_dir/adesh-observatory-desktop" ]]; then
   cp "$target_dir/adesh-observatory-desktop" "$stage/bin/"
 elif [[ -f "$root/ARO/desktop/src-tauri/target/release/adesh-observatory-desktop" ]]; then

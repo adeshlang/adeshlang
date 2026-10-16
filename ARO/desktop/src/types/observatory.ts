@@ -14,6 +14,13 @@ export interface SessionSummary {
   cpu_peak_percent: number;
   /** Secrets masked in command_line before it was persisted */
   redaction_count?: number;
+  thread_count?: number;
+  peak_threads?: number;
+  cores_used?: number;
+  memory_static_bytes?: number;
+  memory_heap_bytes?: number;
+  memory_dynamic_bytes?: number;
+  memory_reused_bytes?: number;
 }
 
 export interface CompilerStageEvent {
@@ -62,6 +69,11 @@ export interface ProcessMetrics {
   cpu_sys_ms: number;
   timestamp_utc: string;
   elapsed_micros: number;
+  memory_static_bytes?: number;
+  memory_heap_bytes?: number;
+  memory_dynamic_bytes?: number;
+  memory_reused_bytes?: number;
+  cores_used?: number;
 }
 
 export interface RuntimeEventPayload {

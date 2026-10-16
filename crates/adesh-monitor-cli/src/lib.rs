@@ -196,6 +196,31 @@ fn cmd_show(args: &[String]) -> Result<(), String> {
         println!("Mode:            {:?}", session.summary.execution_mode);
         println!("Status:          {:?}", session.summary.status);
         println!("Exit Code:       {:?}", session.summary.exit_code);
+        println!(
+            "Threads/Cores:   {} active, {} peak threads | {} logical cores",
+            session.summary.thread_count, session.summary.peak_threads, session.summary.cores_used
+        );
+        println!(
+            "Memory Static:   {:.2} MB",
+            session.summary.memory_static_bytes as f64 / (1024.0 * 1024.0)
+        );
+        println!(
+            "Memory Heap:     {:.2} MB",
+            session.summary.memory_heap_bytes as f64 / (1024.0 * 1024.0)
+        );
+        println!(
+            "Memory Dynamic:  {:.2} MB",
+            session.summary.memory_dynamic_bytes as f64 / (1024.0 * 1024.0)
+        );
+        println!(
+            "Memory Reused:   {:.2} MB",
+            session.summary.memory_reused_bytes as f64 / (1024.0 * 1024.0)
+        );
+        println!(
+            "Peak RSS:        {:.2} MB",
+            session.summary.peak_rss_bytes as f64 / (1024.0 * 1024.0)
+        );
+        println!("Peak CPU:        {:.1}%", session.summary.cpu_peak_percent);
         println!("Working Dir:     {}", session.working_dir);
         println!(
             "Target File:     {}",
@@ -204,6 +229,18 @@ fn cmd_show(args: &[String]) -> Result<(), String> {
         println!("Command:         {}", session.summary.command_line);
         println!("Compiler Stages: {}", session.compiler_stages.len());
         println!("Linker Stages:   {}", session.linker_stages.len());
+        for (i, ls) in session.linker_stages.iter().enumerate() {
+            println!(
+                "  [Linker #{}] Stage: {} | Target: {} | Symbols: {} | Sections: {} | Output: {} bytes | Duration: {:.2}ms",
+                i + 1,
+                ls.stage_name,
+                ls.output_format,
+                ls.symbol_count,
+                ls.section_count,
+                ls.output_size_bytes.unwrap_or(0),
+                ls.duration_micros as f64 / 1000.0
+            );
+        }
         println!("Metrics Samples: {}", session.metrics_count);
     }
     Ok(())

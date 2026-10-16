@@ -1,5 +1,4 @@
-export fn tests(a:int):int {
-    let a = 10;
+   let a = 10;
     let b = 20;
     if ((a == b)) {
         print("true");
@@ -7,5 +6,4 @@ export fn tests(a:int):int {
         print("false");
     }
     print("The value of a is: " + a);
-    return 10;
-}
+ 

@@ -12,9 +12,6 @@ const AUDIT_META_RESCAN_COUNT: &str = "rescan_count";
 /// command. The invocation itself is authoritative: builds/compiles use the
 /// native compiler, ADOB codegen and the platform linker.
 fn effective_execution_mode(mode: ExecutionMode, command_args: &[String]) -> ExecutionMode {
-    if mode != ExecutionMode::Interpreter {
-        return mode;
-    }
     let command = command_args.iter().map(String::as_str).collect::<Vec<_>>();
     if command
         .windows(2)
@@ -23,10 +20,9 @@ fn effective_execution_mode(mode: ExecutionMode, command_args: &[String]) -> Exe
             .iter()
             .any(|arg| matches!(*arg, "build" | "compile" | "compile-aot" | "compile-native"))
     {
-        ExecutionMode::NativeCompiler
-    } else {
-        mode
+        return ExecutionMode::NativeCompiler;
     }
+    mode
 }
 
 pub struct HistoryStore {
@@ -86,7 +82,14 @@ impl HistoryStore {
                 peak_rss_bytes INTEGER DEFAULT 0,
                 cpu_peak_percent REAL DEFAULT 0.0,
                 error_message TEXT,
-                redaction_count INTEGER NOT NULL DEFAULT 0
+                redaction_count INTEGER NOT NULL DEFAULT 0,
+                thread_count INTEGER NOT NULL DEFAULT 1,
+                peak_threads INTEGER NOT NULL DEFAULT 1,
+                cores_used REAL NOT NULL DEFAULT 1.0,
+                memory_static_bytes INTEGER NOT NULL DEFAULT 0,
+                memory_heap_bytes INTEGER NOT NULL DEFAULT 0,
+                memory_dynamic_bytes INTEGER NOT NULL DEFAULT 0,
+                memory_reused_bytes INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS redaction_events (
@@ -114,6 +117,11 @@ impl HistoryStore {
                 thread_count INTEGER NOT NULL,
                 elapsed_micros INTEGER NOT NULL,
                 timestamp_utc TEXT NOT NULL,
+                memory_static_bytes INTEGER NOT NULL DEFAULT 0,
+                memory_heap_bytes INTEGER NOT NULL DEFAULT 0,
+                memory_dynamic_bytes INTEGER NOT NULL DEFAULT 0,
+                memory_reused_bytes INTEGER NOT NULL DEFAULT 0,
+                cores_used REAL NOT NULL DEFAULT 1.0,
                 FOREIGN KEY(session_id) REFERENCES sessions(session_id)
             );
 
@@ -158,8 +166,10 @@ impl HistoryStore {
 
     /// Forward migrations for databases created before a column existed
     fn migrate_schema(&self) -> Result<()> {
-        let has_column = |name: &str| -> Result<bool> {
-            let mut stmt = self.conn.prepare("PRAGMA table_info(sessions)")?;
+        let has_column = |table: &str, name: &str| -> Result<bool> {
+            let mut stmt = self
+                .conn
+                .prepare(&format!("PRAGMA table_info({})", table))?;
             let mut rows = stmt.query([])?;
             let mut found = false;
             while let Some(row) = rows.next()? {
@@ -172,9 +182,83 @@ impl HistoryStore {
             Ok(found)
         };
 
-        if !has_column("redaction_count")? {
+        if !has_column("sessions", "redaction_count")? {
             self.conn.execute(
                 "ALTER TABLE sessions ADD COLUMN redaction_count INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        if !has_column("sessions", "thread_count")? {
+            self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN thread_count INTEGER NOT NULL DEFAULT 1",
+                [],
+            )?;
+        }
+        if !has_column("sessions", "peak_threads")? {
+            self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN peak_threads INTEGER NOT NULL DEFAULT 1",
+                [],
+            )?;
+        }
+        if !has_column("sessions", "cores_used")? {
+            self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN cores_used REAL NOT NULL DEFAULT 1.0",
+                [],
+            )?;
+        }
+        if !has_column("sessions", "memory_static_bytes")? {
+            self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN memory_static_bytes INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        if !has_column("sessions", "memory_heap_bytes")? {
+            self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN memory_heap_bytes INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        if !has_column("sessions", "memory_dynamic_bytes")? {
+            self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN memory_dynamic_bytes INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        if !has_column("sessions", "memory_reused_bytes")? {
+            self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN memory_reused_bytes INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+
+        // Metrics table migrations
+        if !has_column("metrics", "memory_static_bytes")? {
+            self.conn.execute(
+                "ALTER TABLE metrics ADD COLUMN memory_static_bytes INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        if !has_column("metrics", "memory_heap_bytes")? {
+            self.conn.execute(
+                "ALTER TABLE metrics ADD COLUMN memory_heap_bytes INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        if !has_column("metrics", "memory_dynamic_bytes")? {
+            self.conn.execute(
+                "ALTER TABLE metrics ADD COLUMN memory_dynamic_bytes INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        if !has_column("metrics", "memory_reused_bytes")? {
+            self.conn.execute(
+                "ALTER TABLE metrics ADD COLUMN memory_reused_bytes INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        if !has_column("metrics", "cores_used")? {
+            self.conn.execute(
+                "ALTER TABLE metrics ADD COLUMN cores_used REAL NOT NULL DEFAULT 1.0",
                 [],
             )?;
         }
@@ -296,8 +380,10 @@ impl HistoryStore {
             r#"
             INSERT INTO metrics (
                 session_id, cpu_percent, rss_bytes, peak_rss_bytes,
-                vms_bytes, thread_count, elapsed_micros, timestamp_utc
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                vms_bytes, thread_count, elapsed_micros, timestamp_utc,
+                memory_static_bytes, memory_heap_bytes, memory_dynamic_bytes,
+                memory_reused_bytes, cores_used
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
             "#,
             params![
                 session_id,
@@ -307,19 +393,43 @@ impl HistoryStore {
                 metric.memory_vms_bytes,
                 metric.thread_count,
                 metric.elapsed_micros,
-                metric.timestamp_utc.to_rfc3339()
+                metric.timestamp_utc.to_rfc3339(),
+                metric.memory_static_bytes,
+                metric.memory_heap_bytes,
+                metric.memory_dynamic_bytes,
+                metric.memory_reused_bytes,
+                metric.cores_used
             ],
         )?;
 
-        // Update peak values in sessions table
+        // Update peak values and live resource counts in sessions table
+        let effective_peak_rss = metric.memory_peak_rss_bytes.max(metric.memory_rss_bytes);
         self.conn.execute(
             r#"
             UPDATE sessions SET
                 peak_rss_bytes = MAX(peak_rss_bytes, ?1),
-                cpu_peak_percent = MAX(cpu_peak_percent, ?2)
-            WHERE session_id = ?3
+                cpu_peak_percent = MAX(cpu_peak_percent, ?2),
+                thread_count = ?3,
+                peak_threads = MAX(peak_threads, ?4),
+                cores_used = ?5,
+                memory_static_bytes = MAX(memory_static_bytes, ?6),
+                memory_heap_bytes = MAX(memory_heap_bytes, ?7),
+                memory_dynamic_bytes = MAX(memory_dynamic_bytes, ?8),
+                memory_reused_bytes = MAX(memory_reused_bytes, ?9)
+            WHERE session_id = ?10
             "#,
-            params![metric.memory_rss_bytes, metric.cpu_percent, session_id],
+            params![
+                effective_peak_rss,
+                metric.cpu_percent,
+                metric.thread_count,
+                metric.peak_thread_count.max(metric.thread_count),
+                metric.cores_used,
+                metric.memory_static_bytes,
+                metric.memory_heap_bytes,
+                metric.memory_dynamic_bytes,
+                metric.memory_reused_bytes,
+                session_id
+            ],
         )?;
         Ok(())
     }
@@ -380,7 +490,9 @@ impl HistoryStore {
             r#"
             SELECT session_id, pid, parent_pid, tool_name, execution_mode,
                    command_line, status, exit_code, start_time, end_time,
-                   duration_ms, peak_rss_bytes, cpu_peak_percent, redaction_count
+                   duration_ms, peak_rss_bytes, cpu_peak_percent, redaction_count,
+                   thread_count, peak_threads, cores_used,
+                   memory_static_bytes, memory_heap_bytes, memory_dynamic_bytes, memory_reused_bytes
             FROM sessions
             ORDER BY start_time DESC
             LIMIT ?1
@@ -444,6 +556,13 @@ impl HistoryStore {
                 peak_rss_bytes: row.get::<_, i64>(11)? as u64,
                 cpu_peak_percent: row.get::<_, f64>(12)? as f32,
                 redaction_count: row.get::<_, i64>(13)?.max(0) as u32,
+                thread_count: row.get::<_, i64>(14).unwrap_or(1).max(1) as u32,
+                peak_threads: row.get::<_, i64>(15).unwrap_or(1).max(1) as u32,
+                cores_used: row.get::<_, f64>(16).unwrap_or(1.0) as f32,
+                memory_static_bytes: row.get::<_, i64>(17).unwrap_or(0).max(0) as u64,
+                memory_heap_bytes: row.get::<_, i64>(18).unwrap_or(0).max(0) as u64,
+                memory_dynamic_bytes: row.get::<_, i64>(19).unwrap_or(0).max(0) as u64,
+                memory_reused_bytes: row.get::<_, i64>(20).unwrap_or(0).max(0) as u64,
             })
         })?;
 
@@ -460,7 +579,8 @@ impl HistoryStore {
             SELECT session_id, pid, parent_pid, tool_name, execution_mode,
                    command_line, working_dir, target_file, status, exit_code,
                    start_time, end_time, duration_ms, peak_rss_bytes, cpu_peak_percent,
-                   redaction_count
+                   redaction_count, thread_count, peak_threads, cores_used,
+                   memory_static_bytes, memory_heap_bytes, memory_dynamic_bytes, memory_reused_bytes
             FROM sessions
             WHERE session_id = ?1
             "#,
@@ -524,6 +644,13 @@ impl HistoryStore {
                 peak_rss_bytes: row.get::<_, i64>(13)? as u64,
                 cpu_peak_percent: row.get::<_, f64>(14)? as f32,
                 redaction_count: row.get::<_, i64>(15)?.max(0) as u32,
+                thread_count: row.get::<_, i64>(16).unwrap_or(1).max(1) as u32,
+                peak_threads: row.get::<_, i64>(17).unwrap_or(1).max(1) as u32,
+                cores_used: row.get::<_, f64>(18).unwrap_or(1.0) as f32,
+                memory_static_bytes: row.get::<_, i64>(19).unwrap_or(0).max(0) as u64,
+                memory_heap_bytes: row.get::<_, i64>(20).unwrap_or(0).max(0) as u64,
+                memory_dynamic_bytes: row.get::<_, i64>(21).unwrap_or(0).max(0) as u64,
+                memory_reused_bytes: row.get::<_, i64>(22).unwrap_or(0).max(0) as u64,
             };
 
             let working_dir: String = row.get(6)?;
@@ -538,6 +665,8 @@ impl HistoryStore {
                 |r| r.get(0),
             )?;
 
+            let latest_metrics = self.get_metrics(session_id, 1)?.into_iter().last();
+
             Ok(Some(SessionDetail {
                 summary,
                 working_dir,
@@ -546,7 +675,7 @@ impl HistoryStore {
                 linker_stages,
                 runtime_events: Vec::new(),
                 metrics_count: metrics_count as usize,
-                latest_metrics: None,
+                latest_metrics,
             }))
         } else {
             Ok(None)
@@ -621,7 +750,9 @@ impl HistoryStore {
         let mut stmt = self.conn.prepare(
             r#"
             SELECT cpu_percent, rss_bytes, peak_rss_bytes, vms_bytes,
-                   thread_count, elapsed_micros, timestamp_utc
+                   thread_count, elapsed_micros, timestamp_utc,
+                   memory_static_bytes, memory_heap_bytes, memory_dynamic_bytes,
+                   memory_reused_bytes, cores_used
             FROM metrics
             WHERE session_id = ?1
             ORDER BY id ASC
@@ -648,6 +779,11 @@ impl HistoryStore {
                 cpu_sys_ms: 0,
                 timestamp_utc: ts,
                 elapsed_micros: row.get(5)?,
+                memory_static_bytes: row.get::<_, i64>(7).unwrap_or(0).max(0) as u64,
+                memory_heap_bytes: row.get::<_, i64>(8).unwrap_or(0).max(0) as u64,
+                memory_dynamic_bytes: row.get::<_, i64>(9).unwrap_or(0).max(0) as u64,
+                memory_reused_bytes: row.get::<_, i64>(10).unwrap_or(0).max(0) as u64,
+                cores_used: row.get::<_, f64>(11).unwrap_or(1.0) as f32,
             })
         })?;
 

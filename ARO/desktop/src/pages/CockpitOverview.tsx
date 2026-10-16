@@ -179,6 +179,22 @@ export const CockpitOverview: React.FC = () => {
     }
   };
 
+  const formatBytes = (bytes?: number) => {
+    if (!bytes || bytes <= 0) return "0 B";
+    if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+    if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${bytes} B`;
+  };
+
+  const handleRowClick = (sessionId: string) => {
+    if (state.selectedSessionId === sessionId) {
+      selectSessionById(sessionId, false);
+    } else {
+      selectSessionById(sessionId, false);
+    }
+  };
+
   const renderTable = (list: SessionSummary[]) => (
     <div className="overflow-x-auto">
       <table className="w-full text-left text-xs">
@@ -196,58 +212,274 @@ export const CockpitOverview: React.FC = () => {
             <th className="py-3 px-3 font-semibold">Runtime Mode</th>
             <th className="py-3 px-3 font-semibold">Status</th>
             <th className="py-3 px-3 font-semibold">Duration</th>
-            <th className="py-3 px-3 font-semibold">Peak Memory</th>
-            <th className="py-3 px-4 font-semibold text-right">Inspect</th>
+            <th className="py-3 px-3 font-semibold">
+              <span className="flex items-center space-x-1">
+                <Cpu className="w-3.5 h-3.5 text-emerald-400" />
+                <span>CPU / Threads</span>
+              </span>
+            </th>
+            <th className="py-3 px-3 font-semibold">
+              <span className="flex items-center space-x-1">
+                <Activity className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Memory Breakdown</span>
+              </span>
+            </th>
+            <th className="py-3 px-4 font-semibold text-right">Details</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-800/60">
-          {list.map((s) => (
-            <tr
-              key={s.session_id}
-              onClick={() => selectSessionById(s.session_id)}
-              className="hover:bg-slate-800/50 cursor-pointer transition-colors group"
-            >
-              <td className="py-3 px-4 font-mono text-sky-400 font-medium">
-                {s.session_id.substring(0, 13)}...
-              </td>
-              <td className="py-3 px-3 whitespace-nowrap" title={new Date(s.start_time).toLocaleString()}>
-                <div className="text-[11px] font-semibold text-slate-200">{formatTime(s.start_time)}</div>
-                <div className="text-[10px] text-slate-500">{formatDate(s.start_time)}</div>
-              </td>
-              <td className="py-3 px-3 font-bold text-slate-200">{s.tool_name}</td>
-              <td className="py-3 px-3 font-mono text-slate-400">{s.pid}</td>
-              <td className="py-3 px-3">
-                <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-slate-800 text-slate-300 border border-slate-700">
-                  {s.execution_mode}
-                </span>
-              </td>
-              <td className="py-3 px-3">
-                <span
-                  className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${
-                    s.status === "completed"
-                      ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
-                      : s.status === "running"
-                      ? "bg-sky-500/10 text-sky-400 border border-sky-500/30 animate-pulse"
-                      : "bg-red-500/10 text-red-400 border border-red-500/30"
+          {list.map((s) => {
+            const isSelected = state.selectedSessionId === s.session_id;
+            const detail = isSelected ? state.selectedDetail : undefined;
+            const latestM = detail?.latest_metrics;
+            const staticMem = s.memory_static_bytes || latestM?.memory_static_bytes || 0;
+            const heapMem = s.memory_heap_bytes || latestM?.memory_heap_bytes || 0;
+            const dynamicMem = s.memory_dynamic_bytes || latestM?.memory_dynamic_bytes || 0;
+            const reusedMem = s.memory_reused_bytes || latestM?.memory_reused_bytes || 0;
+            const threads = s.thread_count || latestM?.thread_count || 1;
+            const peakThreads = s.peak_threads || latestM?.peak_thread_count || threads;
+            const cores = s.cores_used || latestM?.cores_used || (s.cpu_peak_percent > 0 ? Number((s.cpu_peak_percent / 100).toFixed(2)) : 1.0);
+
+            return (
+              <React.Fragment key={s.session_id}>
+                <tr
+                  onClick={() => handleRowClick(s.session_id)}
+                  className={`cursor-pointer transition-colors group ${
+                    isSelected ? "bg-sky-950/30 border-l-2 border-l-sky-400" : "hover:bg-slate-800/50"
                   }`}
                 >
-                  <span className={`w-1 h-1 rounded-full ${s.status === "completed" ? "bg-emerald-400" : "bg-sky-400"}`}></span>
-                  <span>{s.status}</span>
-                </span>
-              </td>
-              <td className="py-3 px-3 font-mono font-semibold text-slate-200">
-                {s.duration_ms ? `${s.duration_ms} ms` : "running..."}
-              </td>
-              <td className="py-3 px-3 font-mono text-slate-300">
-                {(s.peak_rss_bytes / (1024 * 1024)).toFixed(1)} MB
-              </td>
-              <td className="py-3 px-4 text-right">
-                <button className="p-1 rounded bg-slate-800 group-hover:bg-sky-500 group-hover:text-slate-950 text-slate-400 transition-colors">
-                  <ArrowUpRight className="w-3.5 h-3.5" />
-                </button>
-              </td>
-            </tr>
-          ))}
+                  <td className="py-3 px-4 font-mono text-sky-400 font-medium">
+                    {s.session_id.substring(0, 13)}...
+                  </td>
+                  <td className="py-3 px-3 whitespace-nowrap" title={new Date(s.start_time).toLocaleString()}>
+                    <div className="text-[11px] font-semibold text-slate-200">{formatTime(s.start_time)}</div>
+                    <div className="text-[10px] text-slate-500">{formatDate(s.start_time)}</div>
+                  </td>
+                  <td className="py-3 px-3 font-bold text-slate-200">{s.tool_name}</td>
+                  <td className="py-3 px-3 font-mono text-slate-400">{s.pid}</td>
+                  <td className="py-3 px-3">
+                    <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-slate-800 text-slate-300 border border-slate-700">
+                      {s.execution_mode}
+                    </span>
+                  </td>
+                  <td className="py-3 px-3">
+                    <span
+                      className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${
+                        s.status === "completed"
+                          ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
+                          : s.status === "running"
+                          ? "bg-sky-500/10 text-sky-400 border border-sky-500/30 animate-pulse"
+                          : "bg-red-500/10 text-red-400 border border-red-500/30"
+                      }`}
+                    >
+                      <span className={`w-1 h-1 rounded-full ${s.status === "completed" ? "bg-emerald-400" : "bg-sky-400"}`}></span>
+                      <span>{s.status}</span>
+                    </span>
+                  </td>
+                  <td className="py-3 px-3 font-mono font-semibold text-slate-200">
+                    {s.duration_ms ? `${s.duration_ms} ms` : "running..."}
+                  </td>
+                  <td className="py-3 px-3">
+                    <div className="flex flex-col text-[11px] font-mono">
+                      <span className="text-emerald-400 font-semibold">
+                        {s.cpu_peak_percent > 0 ? `${s.cpu_peak_percent.toFixed(1)}% CPU` : "Active"}
+                      </span>
+                      <span className="text-slate-400 text-[10px]">
+                        {threads} {threads === 1 ? "thread" : "threads"} ({cores} cores)
+                      </span>
+                    </div>
+                  </td>
+                  <td className="py-3 px-3">
+                    <div className="flex flex-col text-[11px] font-mono">
+                      <span className="text-slate-200 font-semibold">
+                        {(s.peak_rss_bytes / (1024 * 1024)).toFixed(1)} MB <span className="text-slate-500 text-[10px]">RSS</span>
+                      </span>
+                      <span className="text-slate-400 text-[10px]">
+                        Static: {formatBytes(staticMem)} · Heap: {formatBytes(heapMem)}
+                      </span>
+                    </div>
+                  </td>
+                  <td className="py-3 px-4 text-right">
+                    <button className={`p-1.5 rounded transition-colors ${
+                      isSelected ? "bg-sky-500 text-slate-950 font-bold" : "bg-slate-800 group-hover:bg-sky-500 group-hover:text-slate-950 text-slate-400"
+                    }`}>
+                      {isSelected ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                    </button>
+                  </td>
+                </tr>
+
+                {/* IN-PLACE UNIFIED PROCESS INSPECTOR PANEL */}
+                {isSelected && (
+                  <tr>
+                    <td colSpan={10} className="p-0 border-b border-sky-500/30 bg-slate-950/90">
+                      <div className="p-5 space-y-5 animate-in fade-in duration-200">
+                        {/* Process Header & Meta */}
+                        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
+                          <div className="space-y-1">
+                            <div className="flex items-center space-x-2">
+                              <span className="text-xs font-bold text-sky-400 uppercase tracking-wider">Process Inspector</span>
+                              <span className="text-xs text-slate-500 font-mono">Session ID: {s.session_id}</span>
+                              <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-indigo-500/10 text-indigo-300 border border-indigo-500/30">
+                                Mode: {s.execution_mode}
+                              </span>
+                            </div>
+                            <div className="font-mono text-xs text-slate-300 bg-slate-900 px-3 py-1.5 rounded border border-slate-800">
+                              <span className="text-slate-500 select-none">$ </span>
+                              {s.command_line}
+                            </div>
+                          </div>
+                          <div className="text-right text-xs text-slate-400 font-mono space-y-0.5">
+                            <div>PID: <span className="text-slate-200">{s.pid}</span> {s.parent_pid ? `(Parent: ${s.parent_pid})` : ""}</div>
+                            <div>Start: <span className="text-slate-200">{formatTime(s.start_time)}</span></div>
+                            {s.exit_code != null && <div>Exit Code: <span className={s.exit_code === 0 ? "text-emerald-400 font-bold" : "text-rose-400 font-bold"}>{s.exit_code}</span></div>}
+                          </div>
+                        </div>
+
+                        {/* Real-time Memory Usage & Thread/Core Breakdown */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                          {/* 1. Static Memory */}
+                          <div className="bg-slate-900/90 border border-slate-800 p-3.5 rounded-xl space-y-1">
+                            <div className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider flex items-center justify-between">
+                              <span>Static Memory</span>
+                              <span className="text-sky-400">Code / RoData</span>
+                            </div>
+                            <div className="text-lg font-bold font-mono text-slate-100">
+                              {formatBytes(staticMem)}
+                            </div>
+                            <p className="text-[10px] text-slate-500">Fixed binary footprint, string tables, compiled instructions</p>
+                          </div>
+
+                          {/* 2. Heap Memory */}
+                          <div className="bg-slate-900/90 border border-slate-800 p-3.5 rounded-xl space-y-1">
+                            <div className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider flex items-center justify-between">
+                              <span>Heap Memory</span>
+                              <span className="text-indigo-400">Committed</span>
+                            </div>
+                            <div className="text-lg font-bold font-mono text-slate-100">
+                              {formatBytes(heapMem)}
+                            </div>
+                            <p className="text-[10px] text-slate-500">Allocated managed heap buffer space for dynamic values</p>
+                          </div>
+
+                          {/* 3. Dynamic & Reused Memory */}
+                          <div className="bg-slate-900/90 border border-slate-800 p-3.5 rounded-xl space-y-1">
+                            <div className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider flex items-center justify-between">
+                              <span>Dynamic & Reused</span>
+                              <span className="text-emerald-400">Recycled</span>
+                            </div>
+                            <div className="text-lg font-bold font-mono text-slate-100 flex items-baseline space-x-2">
+                              <span>{formatBytes(dynamicMem)}</span>
+                              <span className="text-xs text-emerald-400 font-normal">({formatBytes(reusedMem)} reused)</span>
+                            </div>
+                            <p className="text-[10px] text-slate-500">Active allocations & RAII reused recycled slots</p>
+                          </div>
+
+                          {/* 4. Threads & Cores Used */}
+                          <div className="bg-slate-900/90 border border-slate-800 p-3.5 rounded-xl space-y-1">
+                            <div className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider flex items-center justify-between">
+                              <span>Threads & Cores</span>
+                              <span className="text-amber-400">Execution</span>
+                            </div>
+                            <div className="text-lg font-bold font-mono text-slate-100 flex items-baseline space-x-2">
+                              <span>{threads} <span className="text-xs font-normal text-slate-400">threads</span></span>
+                              <span className="text-xs text-amber-300 font-normal">({cores} cores used)</span>
+                            </div>
+                            <p className="text-[10px] text-slate-500">Peak threads observed: {peakThreads} · CPU: {s.cpu_peak_percent.toFixed(1)}%</p>
+                          </div>
+                        </div>
+
+                        {/* Linker Diagnostics & Compiler Stages Accordion */}
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                          {/* Linker Diagnostics */}
+                          <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-4 space-y-3">
+                            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                              <h4 className="text-xs font-bold text-slate-200 flex items-center space-x-2">
+                                <Box className="w-4 h-4 text-violet-400" />
+                                <span>Linker Diagnostics (adeshlink)</span>
+                              </h4>
+                              <span className="text-[11px] font-mono text-slate-400">
+                                {detail?.linker_stages.length || 0} stage(s)
+                              </span>
+                            </div>
+                            {detail?.linker_stages && detail.linker_stages.length > 0 ? (
+                              <div className="space-y-2 max-h-48 overflow-y-auto">
+                                {detail.linker_stages.map((ls, idx) => (
+                                  <div key={idx} className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800 text-xs space-y-1">
+                                    <div className="flex items-center justify-between font-mono">
+                                      <span className="font-semibold text-sky-300">{ls.stage_name}</span>
+                                      <span className={ls.success ? "text-emerald-400 font-semibold" : "text-rose-400 font-semibold"}>
+                                        {ls.success ? "Success" : "Failed"}
+                                      </span>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-400 font-mono">
+                                      <div>Target: <span className="text-slate-200">{ls.target_triple}</span></div>
+                                      <div>Format: <span className="text-slate-200">{ls.output_format}</span></div>
+                                      <div>Symbols: <span className="text-slate-200">{ls.symbol_count}</span></div>
+                                      <div>Sections: <span className="text-slate-200">{ls.section_count}</span></div>
+                                      <div>Artifact: <span className="text-emerald-300">{ls.output_size_bytes ? formatBytes(ls.output_size_bytes) : "—"}</span></div>
+                                      <div>Time: <span className="text-slate-200">{(ls.duration_micros / 1000).toFixed(2)} ms</span></div>
+                                    </div>
+                                    {ls.error_message && (
+                                      <div className="text-[10px] text-rose-300 font-mono mt-1 p-1.5 rounded bg-rose-950/30 border border-rose-900/40">
+                                        {ls.error_message}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-center py-6 text-xs text-slate-500 font-mono">
+                                {s.execution_mode === "native_compiler" || s.execution_mode === "aot_native" || s.execution_mode === "linker"
+                                  ? "Linker stages loading or finalized directly."
+                                  : "Non-linker runtime execution mode."}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Compiler Stages */}
+                          <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-4 space-y-3">
+                            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                              <h4 className="text-xs font-bold text-slate-200 flex items-center space-x-2">
+                                <Layers className="w-4 h-4 text-emerald-400" />
+                                <span>Compiler Pipeline Stages</span>
+                              </h4>
+                              <span className="text-[11px] font-mono text-slate-400">
+                                {detail?.compiler_stages.length || 0} stage(s)
+                              </span>
+                            </div>
+                            {detail?.compiler_stages && detail.compiler_stages.length > 0 ? (
+                              <div className="space-y-2 max-h-48 overflow-y-auto">
+                                {detail.compiler_stages.map((cs, idx) => (
+                                  <div key={idx} className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800 text-xs space-y-1">
+                                    <div className="flex items-center justify-between font-mono">
+                                      <span className="font-semibold text-emerald-300">{cs.stage_name}</span>
+                                      <span className="text-slate-400 font-mono">{(cs.duration_micros / 1000).toFixed(2)} ms</span>
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 font-mono truncate">
+                                      {cs.input_file || "in-memory source"}
+                                    </div>
+                                    {Object.keys(cs.metadata || {}).length > 0 && (
+                                      <div className="text-[10px] text-slate-400 font-mono">
+                                        {Object.entries(cs.metadata).slice(0, 3).map(([k, v]) => `${k}=${v}`).join(" · ")}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-center py-6 text-xs text-slate-500 font-mono">
+                                No compiler intermediate stages captured for this run.
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
+            );
+          })}
         </tbody>
       </table>
     </div>
