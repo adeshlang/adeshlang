@@ -55,6 +55,7 @@ dependencies = [
  "adesh-monitor-core",
  "adesh-monitor-protocol",
  "adesh-object",
+ "sha2",
  "tempfile",
 ]
 

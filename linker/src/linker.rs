@@ -250,7 +250,11 @@ impl Linker {
             }
             missing_symbols.push("mainCRTStartup".to_string());
         } else if is_elf && !ctx.config.shared && !ctx.resolver.table.contains_key("_start") {
-            if ctx.config.target.arch != crate::target::Arch::X86_64 {
+            let supported = matches!(
+                ctx.config.target.arch,
+                crate::target::Arch::X86_64 | crate::target::Arch::AArch64
+            );
+            if !supported {
                 return Err(LinkError::new(
                     ErrorCode::InvalidTarget,
                     format!(
@@ -259,7 +263,7 @@ impl Linker {
                     ),
                 )
                 .with_suggestion(
-                    "Provide a `_start` definition in an input object: the linker only synthesizes the x86_64 Linux startup stub.",
+                    "Provide a `_start` definition in an input object: the linker only synthesizes x86_64 and AArch64 Linux startup stubs.",
                 ));
             }
             missing_symbols.push("_start".to_string());
@@ -343,10 +347,18 @@ impl Linker {
                 && !ctx.config.shared
                 && missing_symbols.contains(&"_start".to_string())
             {
-                let (bytes, relocs, syms) = crate::elf::x86_64::synthesize_elf_x86_64_entry(
-                    &program_entry_symbol,
-                    file_idx,
-                );
+                let (bytes, relocs, syms) =
+                    if ctx.config.target.arch == crate::target::Arch::AArch64 {
+                        crate::elf::aarch64::synthesize_elf_aarch64_entry(
+                            &program_entry_symbol,
+                            file_idx,
+                        )
+                    } else {
+                        crate::elf::x86_64::synthesize_elf_x86_64_entry(
+                            &program_entry_symbol,
+                            file_idx,
+                        )
+                    };
                 let start_off = code_bytes.len() as u64;
                 code_bytes.extend_from_slice(&bytes);
                 for mut r in relocs {
@@ -358,6 +370,7 @@ impl Linker {
                     synth_symbols.push(s);
                 }
             }
+
 
             // Undefined symbols that are neither importable nor synthesizable.
             // Collected so one link reports every missing symbol at once.
@@ -462,7 +475,10 @@ impl Linker {
 
                 let importable_elf = is_elf
                     && elf_dynamic_mode
-                    && ctx.config.target.arch == crate::target::Arch::X86_64
+                    && matches!(
+                        ctx.config.target.arch,
+                        crate::target::Arch::X86_64 | crate::target::Arch::AArch64
+                    )
                     && matches!(route, crate::os_router::SymbolRoute::DllImport { .. });
 
                 // Mach-O is always dynamic (macOS has no static libSystem):
@@ -519,10 +535,17 @@ impl Linker {
                         .strip_prefix("__imp_")
                         .or_else(|| name.strip_prefix("_imp_"))
                         .unwrap_or(name);
-                    let (b, r, _) = crate::elf::x86_64::synthesize_elf_x86_64_plt_stub(
-                        raw, file_idx, start_off,
-                    );
-                    (b, vec![r])
+                    if ctx.config.target.arch == crate::target::Arch::AArch64 {
+                        let (b, r, _) = crate::elf::aarch64::synthesize_elf_aarch64_plt_stub(
+                            raw, file_idx, start_off,
+                        );
+                        (b, vec![r])
+                    } else {
+                        let (b, r, _) = crate::elf::x86_64::synthesize_elf_x86_64_plt_stub(
+                            raw, file_idx, start_off,
+                        );
+                        (b, vec![r])
+                    }
                 } else if importable_macho {
                     // Mach-O lazy proxy stub:
                     // The layout stage registers the slot VA under this

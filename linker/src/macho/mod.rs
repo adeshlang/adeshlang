@@ -1,5 +1,6 @@
 //! Mach-O 64-bit subsystem.
 
+pub mod codesign;
 pub mod dynamic;
 pub mod header;
 pub mod reader;

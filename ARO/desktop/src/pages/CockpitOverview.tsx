@@ -20,6 +20,7 @@ import {
   ChevronDown,
   ChevronRight,
   Box,
+  X,
 } from "lucide-react";
 import {
   AreaChart,
@@ -107,7 +108,7 @@ const RUNTIME_METADATA: Record<
 };
 
 export const CockpitOverview: React.FC = () => {
-  const { state, selectSessionById, refreshNow, purgeHistory } = useObservatory();
+  const { state, selectSessionById, clearSelection, refreshNow, purgeHistory } = useObservatory();
   const { sessions, stats, searchQuery, filterMode } = state;
 
   const [groupByRuntime, setGroupByRuntime] = useState<boolean>(true);
@@ -189,7 +190,7 @@ export const CockpitOverview: React.FC = () => {
 
   const handleRowClick = (sessionId: string) => {
     if (state.selectedSessionId === sessionId) {
-      selectSessionById(sessionId, false);
+      clearSelection();
     } else {
       selectSessionById(sessionId, false);
     }
@@ -300,9 +301,18 @@ export const CockpitOverview: React.FC = () => {
                     </div>
                   </td>
                   <td className="py-3 px-4 text-right">
-                    <button className={`p-1.5 rounded transition-colors ${
-                      isSelected ? "bg-sky-500 text-slate-950 font-bold" : "bg-slate-800 group-hover:bg-sky-500 group-hover:text-slate-950 text-slate-400"
-                    }`}>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleRowClick(s.session_id);
+                      }}
+                      className={`p-1.5 rounded transition-colors ${
+                        isSelected ? "bg-sky-500 text-slate-950 font-bold" : "bg-slate-800 group-hover:bg-sky-500 group-hover:text-slate-950 text-slate-400"
+                      }`}
+                      title={isSelected ? "Collapse session details" : "Expand session details"}
+                      aria-label={isSelected ? "Collapse session details" : "Expand session details"}
+                    >
                       {isSelected ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                     </button>
                   </td>
@@ -328,10 +338,25 @@ export const CockpitOverview: React.FC = () => {
                               {s.command_line}
                             </div>
                           </div>
-                          <div className="text-right text-xs text-slate-400 font-mono space-y-0.5">
-                            <div>PID: <span className="text-slate-200">{s.pid}</span> {s.parent_pid ? `(Parent: ${s.parent_pid})` : ""}</div>
-                            <div>Start: <span className="text-slate-200">{formatTime(s.start_time)}</span></div>
-                            {s.exit_code != null && <div>Exit Code: <span className={s.exit_code === 0 ? "text-emerald-400 font-bold" : "text-rose-400 font-bold"}>{s.exit_code}</span></div>}
+                          <div className="flex items-center gap-3">
+                            <div className="text-right text-xs text-slate-400 font-mono space-y-0.5">
+                              <div>PID: <span className="text-slate-200">{s.pid}</span> {s.parent_pid ? `(Parent: ${s.parent_pid})` : ""}</div>
+                              <div>Start: <span className="text-slate-200">{formatTime(s.start_time)}</span></div>
+                              {s.exit_code != null && <div>Exit Code: <span className={s.exit_code === 0 ? "text-emerald-400 font-bold" : "text-rose-400 font-bold"}>{s.exit_code}</span></div>}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                clearSelection();
+                              }}
+                              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors flex items-center space-x-1.5 text-xs font-semibold shrink-0 cursor-pointer shadow-sm"
+                              title="Collapse opened session panel"
+                              aria-label="Collapse session panel"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                              <span>Collapse</span>
+                            </button>
                           </div>
                         </div>
 
@@ -472,6 +497,22 @@ export const CockpitOverview: React.FC = () => {
                               </div>
                             )}
                           </div>
+                        </div>
+
+                        {/* Footer Collapse Bar */}
+                        <div className="flex justify-end pt-3 border-t border-slate-800/80">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              clearSelection();
+                            }}
+                            className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700/80 text-xs font-medium flex items-center space-x-1.5 transition-colors cursor-pointer"
+                            title="Collapse opened session panel"
+                          >
+                            <ChevronDown className="w-3.5 h-3.5 rotate-180" />
+                            <span>Collapse Session</span>
+                          </button>
                         </div>
                       </div>
                     </td>

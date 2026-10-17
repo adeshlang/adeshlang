@@ -31,7 +31,7 @@ fn describe_size(size: Size) {
 
 fn main() {
     print("╔══════════════════════════════════════════╗");
-    print("║  AdeshLang - Advanced Types Demo          ║");
+    print("║  AdeshLang - Advanced Types Demo         ║");
     print("║  Struct construction and field access    ║");
     print("╚══════════════════════════════════════════╝");
     print("");

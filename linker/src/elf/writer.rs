@@ -455,7 +455,15 @@ impl ElfWriter {
                         ),
                     ));
                 }
-                let off = sec.virtual_address - target.image_base;
+                let off = sec.virtual_address.checked_sub(target.image_base).ok_or_else(|| {
+                    LinkError::new(
+                        ErrorCode::InvalidSection,
+                        format!(
+                            "section `{}` virtual address 0x{:x} underflows image base 0x{:x}",
+                            sec.name, sec.virtual_address, target.image_base
+                        ),
+                    )
+                })?;
                 sec_vaddrs[idx] = sec.virtual_address;
                 sec_offsets[idx] = off;
 
@@ -469,8 +477,24 @@ impl ElfWriter {
                 let mem_len = sec.size.max(sec.data.len() as u64);
 
                 if file_len > 0 {
-                    let start = off as usize;
-                    let end = start + file_len as usize;
+                    let start = usize::try_from(off).map_err(|_| {
+                        LinkError::new(
+                            ErrorCode::InvalidSection,
+                            format!("section `{}` offset 0x{:x} exceeds address space", sec.name, off),
+                        )
+                    })?;
+                    let len = usize::try_from(file_len).map_err(|_| {
+                        LinkError::new(
+                            ErrorCode::InvalidSection,
+                            format!("section `{}` length 0x{:x} exceeds address space", sec.name, file_len),
+                        )
+                    })?;
+                    let end = start.checked_add(len).ok_or_else(|| {
+                        LinkError::new(
+                            ErrorCode::InvalidSection,
+                            format!("section `{}` offset overflow (0x{:x} + 0x{:x})", sec.name, start, len),
+                        )
+                    })?;
                     if output.len() < end {
                         output.resize(end, 0);
                     }

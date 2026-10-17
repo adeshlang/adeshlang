@@ -85,7 +85,7 @@ impl MachOWriter {
         install_name: Option<&str>,
         dynamic: Option<&MachODynamicInfo>,
     ) -> LinkResult<()> {
-        let bytes = Self::encode_macho_with_dynamic(
+        let mut bytes = Self::encode_macho_with_dynamic(
             target,
             entry_va,
             merged_sections,
@@ -95,7 +95,23 @@ impl MachOWriter {
             install_name,
             dynamic,
         )?;
-        fs::write(path, bytes)?;
+
+        // Apple Silicon (ARM64) and macOS 11+ require every executable to be
+        // signed with at least an ad-hoc code signature to be launched by XNU.
+        // Apply our built-in pure-Rust signer instead of shelling out to the
+        // external `codesign` tool, enabling cross-compilation.
+        if !is_shared && (target.arch == crate::target::Arch::AArch64) {
+            let ident = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("a.out");
+            // Best-effort: if we cannot insert the signature (e.g. no free
+            // header space), still write the binary without one rather than
+            // failing the link.
+            let _ = crate::macho::codesign::apply_to_macho_bytes(&mut bytes, ident);
+        }
+
+        fs::write(path, &bytes)?;
 
         #[cfg(unix)]
         {
@@ -105,16 +121,6 @@ impl MachOWriter {
                 perms.set_mode(0o755);
                 let _ = fs::set_permissions(path, perms);
             }
-        }
-
-        #[cfg(target_os = "macos")]
-        {
-            // Apple Silicon (ARM64) and macOS 11+ require every executable to be
-            // signed with at least an ad-hoc code signature to be launched by XNU.
-            let _ = std::process::Command::new("codesign")
-                .args(["-s", "-", "-f"])
-                .arg(path)
-                .output();
         }
 
         Ok(())
@@ -423,7 +429,15 @@ impl MachOWriter {
                         ),
                     ));
                 }
-                let off = sec.virtual_address - base_va;
+                let off = sec.virtual_address.checked_sub(base_va).ok_or_else(|| {
+                    LinkError::new(
+                        ErrorCode::InvalidSection,
+                        format!(
+                            "section `{}` virtual address 0x{:x} underflows base 0x{:x}",
+                            sec.name, sec.virtual_address, base_va
+                        ),
+                    )
+                })?;
                 let file_len = if sec.kind == SectionKind::Bss {
                     0
                 } else {
@@ -432,8 +446,24 @@ impl MachOWriter {
                 let mem_len = sec.size.max(sec.data.len() as u64);
 
                 if file_len > 0 {
-                    let start = off as usize;
-                    let end = start + file_len as usize;
+                    let start = usize::try_from(off).map_err(|_| {
+                        LinkError::new(
+                            ErrorCode::InvalidSection,
+                            format!("section `{}` offset 0x{:x} exceeds address space", sec.name, off),
+                        )
+                    })?;
+                    let len = usize::try_from(file_len).map_err(|_| {
+                        LinkError::new(
+                            ErrorCode::InvalidSection,
+                            format!("section `{}` length 0x{:x} exceeds address space", sec.name, file_len),
+                        )
+                    })?;
+                    let end = start.checked_add(len).ok_or_else(|| {
+                        LinkError::new(
+                            ErrorCode::InvalidSection,
+                            format!("section `{}` offset overflow (0x{:x} + 0x{:x})", sec.name, start, len),
+                        )
+                    })?;
                     if output.len() < end {
                         output.resize(end, 0);
                     }
@@ -613,7 +643,11 @@ impl MachOWriter {
 
             // __got placement: right after the last __DATA section.
             let got_va = align_to(data_va_end, 8);
-            let got_file_off = got_va - layout_base_va;
+            // File offset: the GOT must be in the file, so base it on actual
+            // file-backed data end rather than data_va_end. Using data_va_end
+            // would materialize BSS bytes into the file when BSS lies between
+            // the last file-backed section and data_va_end in VA space.
+            let got_file_off = align_to(data_file_end, 8);
 
             // Build the helper machine code now that every address is known.
             let mut stub_helper_bytes =

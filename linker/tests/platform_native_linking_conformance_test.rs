@@ -268,3 +268,82 @@ fn test_macho_64bit_executable_structural_conformance() {
     let filetype = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
     assert_eq!(filetype, 2, "filetype must be MH_EXECUTE (2)");
 }
+
+#[test]
+fn test_static_linux_elf_aarch64_executable_generation() {
+    let dir = tempdir().unwrap();
+    let out_elf = dir.path().join("aarch64_elf_bin");
+
+    let target = Target::from_triple("aarch64-linux").unwrap();
+    let obj_path = dir.path().join("main_aarch64.o");
+    let mut obj = ObjectFile::new(obj_path.clone(), target.clone(), 0);
+
+    // mov w0, #0; ret
+    obj.add_section(Section::new_code(".text", vec![0x00, 0x00, 0x80, 0x52, 0xc0, 0x03, 0x5f, 0xd6], 16));
+    obj.add_symbol(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        8,
+        0,
+    ));
+
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    let mut link_config = LinkConfig::new(out_elf.clone(), target);
+    link_config.shared = false;
+
+    let res = Linker::link(&[obj_path], link_config);
+    assert!(res.is_ok(), "linking static AArch64 Linux ELF failed: {:?}", res);
+
+    let bytes = std::fs::read(&out_elf).expect("failed to read generated AArch64 ELF");
+    assert!(bytes.len() >= 64, "ELF header too small");
+    assert_eq!(&bytes[0..4], b"\x7fELF", "invalid ELF magic");
+    assert_eq!(bytes[4], 2, "must be 64-bit ELF (ELFCLASS64)");
+    assert_eq!(bytes[5], 1, "must be little-endian (ELFDATA2LSB)");
+
+    let e_machine = u16::from_le_bytes(bytes[18..20].try_into().unwrap());
+    assert_eq!(e_machine, 0xb7, "e_machine must be EM_AARCH64 (0xb7 = 183)");
+}
+
+#[test]
+fn test_macho_aarch64_executable_structural_conformance() {
+    let dir = tempdir().unwrap();
+    let out_macho = dir.path().join("test_macho_arm64");
+
+    let target = Target::from_triple("aarch64-darwin").unwrap();
+    let obj_path = dir.path().join("main_arm64.o");
+    let mut obj = ObjectFile::new(obj_path.clone(), target.clone(), 0);
+
+    // ret (0xD65F03C0)
+    obj.add_section(Section::new_code(".text", vec![0xc0, 0x03, 0x5f, 0xd6], 16));
+    obj.add_symbol(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        4,
+        0,
+    ));
+
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    let link_config = LinkConfig::new(out_macho.clone(), target);
+    let res = Linker::link(&[obj_path], link_config);
+    assert!(res.is_ok(), "linking Mach-O AArch64 failed: {:?}", res);
+
+    let bytes = std::fs::read(&out_macho).expect("failed to read generated Mach-O AArch64");
+    assert!(bytes.len() >= 32, "Mach-O header too small");
+
+    let magic = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
+    assert_eq!(magic, 0xfeedfacf, "must have MH_MAGIC_64");
+
+    let cputype = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+    assert_eq!(cputype, 0x0100000C, "cputype must be CPU_TYPE_ARM64");
+
+    let filetype = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
+    assert_eq!(filetype, 2, "filetype must be MH_EXECUTE (2)");
+}

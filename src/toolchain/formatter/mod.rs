@@ -455,6 +455,8 @@ impl Formatter {
                 self.output.push_str(";\n");
             }
             StmtKind::Block(stmts) => {
+                let indent = self.indent();
+                self.output.push_str(&indent);
                 self.output.push_str("{\n");
                 self.indent_level += 1;
                 for stmt in stmts {

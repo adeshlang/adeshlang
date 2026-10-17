@@ -3,6 +3,7 @@
 use crate::error::{ErrorCode, LinkError, LinkResult};
 use crate::macho::header::*;
 use crate::object::ObjectFile;
+use crate::relocation::{Relocation, RelocationKind};
 use crate::section::{Section, SectionKind, flags};
 use crate::symbol::{Symbol, SymbolBinding, SymbolType, SymbolVisibility};
 use crate::target::{Arch, Endianness, ObjectFormat, Os, PointerWidth, Target};
@@ -57,6 +58,7 @@ impl MachOReader {
         let mut nsyms = 0usize;
         let mut stroff = 0usize;
         let mut strsize = 0usize;
+        let mut pending_relocs: Vec<(usize, usize, usize)> = Vec::new();
 
         for _ in 0..ncmds {
             if offset + 8 > bytes.len() {
@@ -108,6 +110,17 @@ impl MachOReader {
                             Vec::new()
                         };
 
+                    let reloff = if sect_off + 64 <= bytes.len() {
+                        u32::from_le_bytes(bytes[sect_off + 56..sect_off + 60].try_into().unwrap()) as usize
+                    } else {
+                        0
+                    };
+                    let nreloc = if sect_off + 64 <= bytes.len() {
+                        u32::from_le_bytes(bytes[sect_off + 60..sect_off + 64].try_into().unwrap()) as usize
+                    } else {
+                        0
+                    };
+
                     let sec = Section {
                         name,
                         kind,
@@ -136,7 +149,11 @@ impl MachOReader {
                         folded_into: None,
                     };
 
+                    let sec_idx = obj.sections.len();
                     obj.add_section(sec);
+                    if reloff > 0 && nreloc > 0 {
+                        pending_relocs.push((sec_idx, reloff, nreloc));
+                    }
                     sect_off += 80;
                 }
             } else if cmd == LC_SYMTAB && offset + 24 <= bytes.len() {
@@ -222,6 +239,74 @@ impl MachOReader {
                 if !sym.name.is_empty() {
                     obj.add_symbol(sym);
                 }
+            }
+        }
+
+        // Parse section relocations (relocation_info: 8 bytes each)
+        for (sec_idx, reloff, nreloc) in pending_relocs {
+            if sec_idx >= obj.sections.len() {
+                continue;
+            }
+            for r_i in 0..nreloc {
+                let r_off = reloff + r_i * 8;
+                if r_off + 8 > bytes.len() {
+                    break;
+                }
+                let r_address = u32::from_le_bytes(bytes[r_off..r_off + 4].try_into().unwrap());
+                let r_word1 = u32::from_le_bytes(bytes[r_off + 4..r_off + 8].try_into().unwrap());
+
+                // Mach-O relocation_info bitfields (little-endian):
+                // r_symbolnum: 24 bits
+                // r_pcrel: 1 bit (bit 24)
+                // r_length: 2 bits (bits 25..26)
+                // r_extern: 1 bit (bit 27)
+                // r_type: 4 bits (bits 28..31)
+                let r_symbolnum = (r_word1 & 0x00FF_FFFF) as usize;
+                let r_pcrel = ((r_word1 >> 24) & 1) != 0;
+                let r_length = (r_word1 >> 25) & 3;
+                let r_extern = ((r_word1 >> 27) & 1) != 0;
+                let r_type = ((r_word1 >> 28) & 0xF) as u8;
+
+                let sym_name = if r_extern {
+                    if r_symbolnum < obj.symbols.len() {
+                        obj.symbols[r_symbolnum].name.clone()
+                    } else {
+                        String::new()
+                    }
+                } else if r_symbolnum > 0 && r_symbolnum <= obj.sections.len() {
+                    obj.sections[r_symbolnum - 1].name.clone()
+                } else {
+                    String::new()
+                };
+
+                let kind = match (arch, r_type, r_pcrel, r_length) {
+                    (Arch::AArch64, 1, true, _) => RelocationKind::AArch64Call26,      // ARM64_RELOC_BRANCH26
+                    (Arch::AArch64, 2, true, _) => RelocationKind::AArch64Adrp,          // ARM64_RELOC_PAGE21
+                    (Arch::AArch64, 3, false, _) => RelocationKind::AArch64AddLo12,     // ARM64_RELOC_PAGEOFF12
+                    (Arch::AArch64, 4, true, _) => RelocationKind::AArch64Adrp,          // ARM64_RELOC_GOT_LOAD_PAGE21
+                    (Arch::AArch64, 5, false, _) => RelocationKind::AArch64AddLo12,     // ARM64_RELOC_GOT_LOAD_PAGEOFF12
+                    (Arch::X86_64, 1, true, 2) => RelocationKind::PcRelative32,         // X86_64_RELOC_SIGNED
+                    (Arch::X86_64, 2, true, 2) => RelocationKind::PltRelative32,        // X86_64_RELOC_BRANCH
+                    (Arch::X86_64, 4, true, 2) => RelocationKind::GotRelative32,        // X86_64_RELOC_GOT_LOAD
+                    (Arch::X86_64, 0, false, 3) => RelocationKind::Absolute64,         // X86_64_RELOC_UNSIGNED (len 3 = 8 bytes)
+                    (Arch::X86_64, 0, false, 2) => RelocationKind::Absolute32,         // X86_64_RELOC_UNSIGNED (len 2 = 4 bytes)
+                    _ => {
+                        if r_pcrel {
+                            RelocationKind::PcRelative32
+                        } else if r_length == 3 {
+                            RelocationKind::Absolute64
+                        } else {
+                            RelocationKind::Absolute32
+                        }
+                    }
+                };
+
+                let mut reloc = Relocation::new(r_address as u64, sym_name, kind, 0);
+                reloc.file_index = Some(file_index);
+                if r_extern {
+                    reloc.symbol_index = Some(r_symbolnum);
+                }
+                obj.sections[sec_idx].relocations.push(reloc);
             }
         }
 

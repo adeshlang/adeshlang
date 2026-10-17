@@ -153,6 +153,7 @@ interface ObservatoryContextType {
   refreshNow: () => Promise<void>;
   purgeHistory: () => Promise<void>;
   selectSessionById: (sessionId: string, navigate?: boolean) => Promise<void>;
+  clearSelection: () => void;
   rescanHistory: () => Promise<void>;
 }
 
@@ -300,6 +301,10 @@ export const ObservatoryProvider: React.FC<{ children: ReactNode }> = ({ childre
     }
   };
 
+  const clearSelection = () => {
+    dispatch({ type: "CLEAR_SELECTION" });
+  };
+
   useEffect(() => {
     refreshNow();
     if (!state.autoRefresh) return;
@@ -309,7 +314,7 @@ export const ObservatoryProvider: React.FC<{ children: ReactNode }> = ({ childre
 
   return (
     <ObservatoryContext.Provider
-      value={{ state, dispatch, refreshNow, purgeHistory, selectSessionById, rescanHistory }}
+      value={{ state, dispatch, refreshNow, purgeHistory, selectSessionById, clearSelection, rescanHistory }}
     >
       {children}
     </ObservatoryContext.Provider>

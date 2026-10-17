@@ -403,7 +403,44 @@ impl AdobV2 {
                     adesh_object::RelocationKind::ImageRelative32 => {
                         RelocationKind::ImageRelative32
                     }
-                    _ => RelocationKind::Absolute64,
+                    // x86_64 arch-specific
+                    adesh_object::RelocationKind::X86_64_GotPcrel => RelocationKind::GotRelative32,
+                    adesh_object::RelocationKind::X86_64_Plt32 => RelocationKind::PltRelative32,
+                    adesh_object::RelocationKind::X86_64_RexGotPcrelX => {
+                        RelocationKind::GotRelative32
+                    }
+                    // AArch64 arch-specific
+                    adesh_object::RelocationKind::AArch64_Call26 => RelocationKind::AArch64Call26,
+                    adesh_object::RelocationKind::AArch64_AdrPage21 => RelocationKind::AArch64Adrp,
+                    adesh_object::RelocationKind::AArch64_AddAbsLo12 => {
+                        RelocationKind::AArch64AddLo12
+                    }
+                    adesh_object::RelocationKind::AArch64_LdSt64Lo12 => {
+                        RelocationKind::AArch64AddLo12
+                    }
+                    // RISC-V arch-specific
+                    adesh_object::RelocationKind::RiscV_Call => RelocationKind::RiscvCall,
+                    adesh_object::RelocationKind::RiscV_PcrelHi20 => RelocationKind::RiscvHi20,
+                    adesh_object::RelocationKind::RiscV_PcrelLo12I => RelocationKind::RiscvLo12I,
+                    adesh_object::RelocationKind::RiscV_PcrelLo12S => RelocationKind::RiscvLo12I,
+                    adesh_object::RelocationKind::RiscV_RvcBranch => RelocationKind::RiscvBranch,
+                    adesh_object::RelocationKind::RiscV_RvcJump => RelocationKind::RiscvCall,
+                    // WebAssembly arch-specific
+                    adesh_object::RelocationKind::WasmFunctionIndex => {
+                        RelocationKind::WasmFunctionIndex
+                    }
+                    adesh_object::RelocationKind::WasmTableIndex => {
+                        RelocationKind::WasmFunctionIndex
+                    }
+                    adesh_object::RelocationKind::WasmGlobalIndex => {
+                        RelocationKind::WasmGlobalIndex
+                    }
+                    adesh_object::RelocationKind::WasmTypeIndex => RelocationKind::WasmTypeIndex,
+                    adesh_object::RelocationKind::WasmMemoryAddress => {
+                        RelocationKind::WasmMemoryOffset32
+                    }
+                    // Custom / unknown: best-effort absolute
+                    adesh_object::RelocationKind::Custom(_v) => RelocationKind::Absolute64,
                 };
                 relocations.push(Relocation::new(
                     r.offset,

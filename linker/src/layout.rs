@@ -584,8 +584,13 @@ impl LayoutEngine {
 
         let has_main = objects
             .iter()
-            .any(|o| o.symbols.iter().any(|s| s.is_defined && s.name == "main"))
-            || resolver.table.contains_key("main");
+            .any(|o| {
+                o.symbols
+                    .iter()
+                    .any(|s| s.is_defined && (s.name == "main" || s.name == "_main"))
+            })
+            || resolver.table.contains_key("main")
+            || resolver.table.contains_key("_main");
 
         let pe_thunks_start_off =
             if target.format == crate::target::ObjectFormat::Pe && !pe_imports.is_empty() {
@@ -1461,6 +1466,8 @@ impl LayoutEngine {
         } else if let Some(&start_va) = symbol_va_map.get("_start") {
             self.entry_va = start_va;
         } else if let Some(&main_va) = symbol_va_map.get("main") {
+            self.entry_va = main_va;
+        } else if let Some(&main_va) = symbol_va_map.get("_main") {
             self.entry_va = main_va;
         } else if let Some(first_text) = merged_list.iter().find(|s| s.is_executable()) {
             self.entry_va = first_text.virtual_address;
