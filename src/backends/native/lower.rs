@@ -385,13 +385,22 @@ fn infer_hir_expr_type(expr: &HirExpr) -> Option<HirType> {
                 }
                 if matches!(
                     fn_name.as_str(),
-                    "str" | "string" | "String" | "typeof" | "type" | "typeOf" | "input"
+                    "str"
+                        | "string"
+                        | "String"
+                        | "typeof"
+                        | "type"
+                        | "typeOf"
+                        | "input"
+                        | "concat"
+                        | "str_concat"
                 ) {
                     return Some(HirType::String);
                 }
             }
             None
         }
+        HirExpr::Format(..) => Some(HirType::String),
         _ => None,
     }
 }
@@ -5395,6 +5404,56 @@ impl<'a> FunctionLoweringContext<'a> {
                         });
                         return out_reg;
                     }
+                    if fn_name == "concat" || fn_name == "str_concat" {
+                        if args.is_empty() {
+                            let str_idx = self.module.add_string("");
+                            let sym_name = format!("__str_{}", str_idx);
+                            let str_reg = self.func.alloc_vreg();
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(str_reg)),
+                                src: MachineOperand::Symbol(sym_name),
+                            });
+                            self.emit_call_with_args("aot_make_string", &[str_reg]);
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Physical(
+                                    PhysicalRegister(0),
+                                )),
+                            });
+                            return out_reg;
+                        } else if args.len() == 1 {
+                            let h = self.lower_to_handle(&args[0]);
+                            self.emit_call_with_args("aot_to_string", &[h]);
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Physical(
+                                    PhysicalRegister(0),
+                                )),
+                            });
+                            return out_reg;
+                        } else {
+                            let mut cur_h = self.lower_to_handle(&args[0]);
+                            for arg in &args[1..] {
+                                let next_h = self.lower_to_handle(arg);
+                                self.emit_call_with_args("aot_string_concat", &[cur_h, next_h]);
+                                let next_cur = self.func.alloc_vreg();
+                                self.emit(MachineInstruction::Move {
+                                    dst: MachineOperand::Register(MachineRegister::Virtual(
+                                        next_cur,
+                                    )),
+                                    src: MachineOperand::Register(MachineRegister::Physical(
+                                        PhysicalRegister(0),
+                                    )),
+                                });
+                                cur_h = next_cur;
+                            }
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(cur_h)),
+                            });
+                            return out_reg;
+                        }
+                    }
                     if matches!(fn_name.as_str(), "bool" | "Boolean") && !args.is_empty() {
                         let handle = self.lower_to_handle(&args[0]);
                         self.emit_call_with_args("aot_to_bool", &[handle]);
@@ -6204,10 +6263,17 @@ impl<'a> FunctionLoweringContext<'a> {
 
                 out_reg
             }
-            HirExpr::Format(inner, _) => {
+            HirExpr::Format(inner, spec) => {
                 let h = self.lower_to_handle(inner);
                 let out_reg = self.func.alloc_vreg();
-                self.emit_call_with_args("aot_to_string", &[h]);
+                let spec_idx = self.module.add_string(spec);
+                let sym_name = format!("__str_{}", spec_idx);
+                let spec_reg = self.func.alloc_vreg();
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(spec_reg)),
+                    src: MachineOperand::Symbol(sym_name),
+                });
+                self.emit_call_with_args("aot_format_value", &[h, spec_reg]);
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                     src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),

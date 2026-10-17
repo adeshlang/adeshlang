@@ -117,6 +117,159 @@ pub extern "C" fn aot_string_concat(a_handle: u64, b_handle: u64) -> u64 {
     aot_store_value(RuntimeValue::String(a + &b))
 }
 
+/// Format a value with a format specifier for AOT native code.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_format_value(handle: u64, spec_ptr: *const core::ffi::c_char) -> u64 {
+    let spec = if spec_ptr.is_null() {
+        ""
+    } else {
+        unsafe { core::ffi::CStr::from_ptr(spec_ptr) }
+            .to_str()
+            .unwrap_or("")
+    };
+    let val = crate::aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
+    let formatted = apply_runtime_format_aot(&val, spec);
+    aot_store_value(RuntimeValue::String(formatted))
+}
+
+fn apply_runtime_format_aot(v: &RuntimeValue, spec: &str) -> String {
+    let base_value = v.as_string();
+    let spec = spec.trim();
+    if spec.is_empty() {
+        return base_value;
+    }
+
+    let mut fill_char = ' ';
+    let mut align: Option<char> = None;
+    let mut sign_plus = false;
+    let mut width: Option<usize> = None;
+    let mut format_type: Option<String> = None;
+
+    let chars: Vec<char> = spec.chars().collect();
+    let mut i = 0;
+
+    if chars.len() >= 2 && (chars[1] == '<' || chars[1] == '^' || chars[1] == '>') {
+        fill_char = chars[0];
+        align = Some(chars[1]);
+        i = 2;
+    } else if !chars.is_empty() && (chars[0] == '<' || chars[0] == '^' || chars[0] == '>') {
+        align = Some(chars[0]);
+        i = 1;
+    }
+
+    if i < chars.len() && chars[i] == '+' {
+        sign_plus = true;
+        i += 1;
+    }
+
+    if i < chars.len() && chars[i] == '0' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit() {
+        fill_char = '0';
+        if align.is_none() {
+            align = Some('>');
+        }
+        i += 1;
+    }
+
+    let mut width_str = String::new();
+    while i < chars.len() && chars[i].is_ascii_digit() {
+        width_str.push(chars[i]);
+        i += 1;
+    }
+    if !width_str.is_empty() {
+        width = width_str.parse().ok();
+    }
+
+    if i < chars.len() {
+        format_type = Some(chars[i..].iter().collect::<String>());
+    }
+
+    let mut result = if let Some(ref ftype) = format_type {
+        match ftype.as_str() {
+            "hex" | "x" => {
+                if let Some(n) = v.as_i64() {
+                    format!("{:x}", n)
+                } else {
+                    base_value
+                }
+            }
+            "HEX" | "X" | "upper_hex" => {
+                if let Some(n) = v.as_i64() {
+                    format!("{:X}", n)
+                } else {
+                    base_value
+                }
+            }
+            "oct" | "o" => {
+                if let Some(n) = v.as_i64() {
+                    format!("{:o}", n)
+                } else {
+                    base_value
+                }
+            }
+            "bin" | "b" => {
+                if let Some(n) = v.as_i64() {
+                    format!("{:b}", n)
+                } else {
+                    base_value
+                }
+            }
+            "sci" | "exp" | "e" => {
+                if let Some(f) = v.as_f64() {
+                    format!("{:e}", f)
+                } else {
+                    base_value
+                }
+            }
+            "perc" | "%" => {
+                if let Some(f) = v.as_f64() {
+                    format!("{:.1}%", f * 100.0)
+                } else {
+                    base_value
+                }
+            }
+            _ => base_value,
+        }
+    } else {
+        base_value
+    };
+
+    if sign_plus {
+        if let Some(f) = v.as_f64() {
+            if f > 0.0 && !result.starts_with('+') {
+                result = format!("+{}", result);
+            }
+        }
+    }
+
+    if let Some(w) = width {
+        let current_len = result.chars().count();
+        if current_len < w {
+            let pad_len = w - current_len;
+            let alignment = align.unwrap_or('<');
+            match alignment {
+                '<' => {
+                    let pad: String = std::iter::repeat(fill_char).take(pad_len).collect();
+                    result.push_str(&pad);
+                }
+                '>' => {
+                    let pad: String = std::iter::repeat(fill_char).take(pad_len).collect();
+                    result = format!("{}{}", pad, result);
+                }
+                '^' => {
+                    let left_pad_len = pad_len / 2;
+                    let right_pad_len = pad_len - left_pad_len;
+                    let l_pad: String = std::iter::repeat(fill_char).take(left_pad_len).collect();
+                    let r_pad: String = std::iter::repeat(fill_char).take(right_pad_len).collect();
+                    result = format!("{}{}{}", l_pad, result, r_pad);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    result
+}
+
 /// Materialize `start..end` (inclusive == 0) or `start..=end` (inclusive
 /// != 0) as an array of integers, matching the interpreter/Cranelift backend
 /// range semantics. Descending ranges count down.

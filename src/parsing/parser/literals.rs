@@ -121,7 +121,24 @@ impl Parser {
                 kind: ExprKind::Literal(Value::Str(String::new())),
                 span,
             }),
-            1 => Ok(parts.remove(0)),
+            1 => {
+                let part = parts.remove(0);
+                if matches!(part.kind, ExprKind::Literal(Value::Str(_))) {
+                    Ok(part)
+                } else {
+                    Ok(Expr {
+                        kind: ExprKind::Call(
+                            Box::new(Expr {
+                                kind: ExprKind::Variable("concat".to_string()),
+                                span: span.clone(),
+                            }),
+                            vec![part],
+                            vec![],
+                        ),
+                        span,
+                    })
+                }
+            }
             _ => Ok(Expr {
                 kind: ExprKind::Call(
                     Box::new(Expr {

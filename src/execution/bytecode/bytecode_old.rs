@@ -1038,8 +1038,26 @@ fn emit_expr(e: &Expr, ctx: &mut EmitCtx) -> Result<(), String> {
                     }
                     return Ok(());
                 }
+                if name == "concat" {
+                    let idx = ctx.add_const_str("".to_string());
+                    ctx.emit_u8(OpCode::LoadConst as u8);
+                    ctx.emit_u32(idx);
+                    for a in args {
+                        emit_expr(a, ctx)?;
+                        ctx.emit_u8(OpCode::Add as u8);
+                    }
+                    return Ok(());
+                }
             }
             Err(format!("unsupported call in emitter: {:?}", callee))
+        }
+        ExprKind::Format(inner, _spec) => {
+            let idx = ctx.add_const_str("".to_string());
+            ctx.emit_u8(OpCode::LoadConst as u8);
+            ctx.emit_u32(idx);
+            emit_expr(inner, ctx)?;
+            ctx.emit_u8(OpCode::Add as u8);
+            Ok(())
         }
         other => Err(format!("unsupported expr in emitter: {:?}", other)),
     }
@@ -2375,6 +2393,8 @@ fn emit_expr_v2(e: &Expr, ctx: &mut REmit) -> Result<u32, LangError> {
                     "argHas",
                     "argsIndexOf",
                     "argsJoin",
+                    "concat",
+                    "format",
                     "type",
                     "typeof",
                     "sizeof",
@@ -2699,6 +2719,24 @@ fn emit_expr_v2(e: &Expr, ctx: &mut REmit) -> Result<u32, LangError> {
             ctx.emit_u32(rd);
             ctx.emit_u32(fn_start_pos as u32);
             ctx.emit_u32(0); // 0 captures for now
+            Ok(rd)
+        }
+        ExprKind::Format(inner, spec) => {
+            let inner_reg = emit_expr_v2(inner, ctx)?;
+            let spec_kidx = ctx.add_const_str(spec.clone());
+            let spec_reg = ctx.reg();
+            ctx.emit_u8(ROp::LoadConst as u8);
+            ctx.emit_u32(spec_reg);
+            ctx.emit_u32(spec_kidx);
+
+            let rd = ctx.reg();
+            let name_idx = ctx.add_const_str("format".to_string());
+            ctx.emit_u8(ROp::CallBuiltin as u8);
+            ctx.emit_u32(rd);
+            ctx.emit_u32(name_idx);
+            ctx.emit_u32(2);
+            ctx.emit_u32(inner_reg);
+            ctx.emit_u32(spec_reg);
             Ok(rd)
         }
         _ => Err(LangError::new(

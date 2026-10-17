@@ -101,10 +101,7 @@ impl MachOWriter {
         // Apply our built-in pure-Rust signer instead of shelling out to the
         // external `codesign` tool, enabling cross-compilation.
         if !is_shared && (target.arch == crate::target::Arch::AArch64) {
-            let ident = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("a.out");
+            let ident = path.file_name().and_then(|n| n.to_str()).unwrap_or("a.out");
             // Best-effort: if we cannot insert the signature (e.g. no free
             // header space), still write the binary without one rather than
             // failing the link.
@@ -449,19 +446,28 @@ impl MachOWriter {
                     let start = usize::try_from(off).map_err(|_| {
                         LinkError::new(
                             ErrorCode::InvalidSection,
-                            format!("section `{}` offset 0x{:x} exceeds address space", sec.name, off),
+                            format!(
+                                "section `{}` offset 0x{:x} exceeds address space",
+                                sec.name, off
+                            ),
                         )
                     })?;
                     let len = usize::try_from(file_len).map_err(|_| {
                         LinkError::new(
                             ErrorCode::InvalidSection,
-                            format!("section `{}` length 0x{:x} exceeds address space", sec.name, file_len),
+                            format!(
+                                "section `{}` length 0x{:x} exceeds address space",
+                                sec.name, file_len
+                            ),
                         )
                     })?;
                     let end = start.checked_add(len).ok_or_else(|| {
                         LinkError::new(
                             ErrorCode::InvalidSection,
-                            format!("section `{}` offset overflow (0x{:x} + 0x{:x})", sec.name, start, len),
+                            format!(
+                                "section `{}` offset overflow (0x{:x} + 0x{:x})",
+                                sec.name, start, len
+                            ),
                         )
                     })?;
                     if output.len() < end {

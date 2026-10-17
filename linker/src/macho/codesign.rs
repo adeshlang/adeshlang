@@ -180,8 +180,11 @@ pub fn apply_to_macho_bytes(bytes: &mut Vec<u8>, identifier: &str) -> Result<(),
     let ncmds_off = 16usize;
     let sizeofcmds_off = 20usize;
     let mut ncmds = u32::from_le_bytes(bytes[ncmds_off..ncmds_off + 4].try_into().unwrap());
-    let mut sizeofcmds =
-        u32::from_le_bytes(bytes[sizeofcmds_off..sizeofcmds_off + 4].try_into().unwrap());
+    let mut sizeofcmds = u32::from_le_bytes(
+        bytes[sizeofcmds_off..sizeofcmds_off + 4]
+            .try_into()
+            .unwrap(),
+    );
 
     // Scan load commands for an existing LC_CODE_SIGNATURE.
     let cmd_area_start = 32usize;

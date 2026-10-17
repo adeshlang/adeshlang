@@ -2722,9 +2722,22 @@ fn get_string_val_typed(val: u64, type_tag: i64) -> String {
     }
 }
 
+/// jit_to_string_typed(val, type_tag) - Convert a value with type tag to string handle
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_to_string_typed(val: u64, type_tag: i64) -> u64 {
+    let s = get_string_val_typed(val, type_tag);
+    store_value(RuntimeValue::String(s))
+}
+
 /// jit_format_value(value, spec) - Format a value with a format specifier (for template literals with format specs)
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_format_value(value: u64, spec: u64) -> u64 {
+    jit_format_value_typed(value, 0, spec)
+}
+
+/// jit_format_value_typed(value, val_type, spec) - Format a value with type tag
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_format_value_typed(value: u64, val_type: i64, spec: u64) -> u64 {
     use crate::execution::runtime_core::format::apply_format_spec;
     use crate::parsing::ast::Value;
 
@@ -2735,13 +2748,30 @@ pub extern "C" fn jit_format_value(value: u64, spec: u64) -> u64 {
         String::new()
     };
 
-    // Convert the value to a Value enum
-    let val = if let Some(rv) = get_value(value) {
-        runtime_value_to_ast_value(&rv)
-    } else if let Some(s) = get_string_val(value) {
-        Value::Str(s)
-    } else {
-        Value::Number(value as f64)
+    let val = match val_type {
+        1 => Value::Number(f64::from_bits(value)),
+        2 => {
+            if let Some(s) = get_string_val(value) {
+                Value::Str(s)
+            } else {
+                Value::Str(String::new())
+            }
+        }
+        3 => Value::Bool(value != 0),
+        4 => {
+            if let Some(rv) = get_value(value) {
+                runtime_value_to_ast_value(&rv)
+            } else {
+                Value::Number(value as f64)
+            }
+        }
+        _ => {
+            if let Some(rv) = get_value(value) {
+                runtime_value_to_ast_value(&rv)
+            } else {
+                Value::I64(value as i64)
+            }
+        }
     };
 
     // Apply format spec
@@ -3746,7 +3776,12 @@ pub fn get_runtime_symbols() -> Vec<(&'static str, *const u8)> {
         ("jit_args_index_of", jit_args_index_of as *const u8),
         ("jit_str_eq", jit_str_eq as *const u8),
         ("jit_str_concat_typed", jit_str_concat_typed as *const u8),
+        ("jit_to_string_typed", jit_to_string_typed as *const u8),
         ("jit_format_value", jit_format_value as *const u8),
+        (
+            "jit_format_value_typed",
+            jit_format_value_typed as *const u8,
+        ),
         // Command-line argument functions
         ("jit_argc", jit_argc as *const u8),
         ("jit_argv", jit_argv as *const u8),

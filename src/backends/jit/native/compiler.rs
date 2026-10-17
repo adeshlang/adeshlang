@@ -2514,63 +2514,62 @@ impl NativeJitCompiler {
                         // String concatenation for template literals
                         // Pass type tags so the runtime knows how to interpret each value
                         // Type tags: 0=int, 1=float, 2=string/ptr, 3=bool, 4=handle
-                        if args.len() >= 2 {
-                            let left_id = args[0];
-                            let right_id = args[1];
-                            let left_val = value_map.get(&left_id).copied();
-                            let right_val = value_map.get(&right_id).copied();
+                        let type_tag = |t: &AotValueType| -> i64 {
+                            match t {
+                                AotValueType::F64 | AotValueType::F32 | AotValueType::Float => 1,
+                                AotValueType::String | AotValueType::Ptr => 2,
+                                AotValueType::Bool => 3,
+                                AotValueType::Handle => 4,
+                                _ => 0, // int/unknown
+                            }
+                        };
 
-                            if let (Some(left), Some(right)) = (left_val, right_val) {
-                                // Determine type tags
-                                let left_type = value_types
-                                    .get(&left_id)
+                        if args.is_empty() {
+                            // Empty string
+                            let zero = builder.ins().iconst(types::I64, 0);
+                            let tag_str = builder.ins().iconst(types::I64, 2);
+                            let mut sig = module.make_signature();
+                            sig.params.push(AbiParam::new(types::I64));
+                            sig.params.push(AbiParam::new(types::I64));
+                            sig.returns.push(AbiParam::new(types::I64));
+                            let func_id = module
+                                .declare_function(
+                                    "jit_to_string_typed",
+                                    cranelift_module::Linkage::Import,
+                                    &sig,
+                                )
+                                .map_err(|e| {
+                                    format!("Failed to declare jit_to_string_typed: {}", e)
+                                })?;
+                            let func_ref = module.declare_func_in_func(func_id, builder.func);
+                            let call = builder.ins().call(func_ref, &[zero, tag_str]);
+                            let res = builder.inst_results(call)[0];
+                            value_map.insert(*dst, res);
+                            value_types.insert(*dst, AotValueType::Handle);
+                        } else if args.len() == 1 {
+                            let arg_id = args[0];
+                            if let Some(arg_val) = value_map.get(&arg_id).copied() {
+                                let arg_type = value_types
+                                    .get(&arg_id)
                                     .cloned()
                                     .unwrap_or(AotValueType::Int);
-                                let right_type = value_types
-                                    .get(&right_id)
-                                    .cloned()
-                                    .unwrap_or(AotValueType::Int);
-
-                                let type_tag = |t: &AotValueType| -> i64 {
-                                    match t {
-                                        AotValueType::F64
-                                        | AotValueType::F32
-                                        | AotValueType::Float => 1,
-                                        AotValueType::String | AotValueType::Ptr => 2,
-                                        AotValueType::Bool => 3,
-                                        AotValueType::Handle => 4,
-                                        _ => 0, // int/unknown
-                                    }
-                                };
-
-                                let left_tag =
-                                    builder.ins().iconst(types::I64, type_tag(&left_type));
-                                let right_tag =
-                                    builder.ins().iconst(types::I64, type_tag(&right_type));
-
-                                // Call jit_str_concat_typed(left, left_tag, right, right_tag) -> handle
+                                let tag_val = builder.ins().iconst(types::I64, type_tag(&arg_type));
                                 let mut sig = module.make_signature();
-                                sig.params.push(AbiParam::new(types::I64)); // left value
-                                sig.params.push(AbiParam::new(types::I64)); // left type tag
-                                sig.params.push(AbiParam::new(types::I64)); // right value
-                                sig.params.push(AbiParam::new(types::I64)); // right type tag
-                                sig.returns.push(AbiParam::new(types::I64)); // result handle
-
+                                sig.params.push(AbiParam::new(types::I64));
+                                sig.params.push(AbiParam::new(types::I64));
+                                sig.returns.push(AbiParam::new(types::I64));
                                 let func_id = module
                                     .declare_function(
-                                        "jit_str_concat_typed",
+                                        "jit_to_string_typed",
                                         cranelift_module::Linkage::Import,
                                         &sig,
                                     )
                                     .map_err(|e| {
-                                        format!("Failed to declare jit_str_concat_typed: {}", e)
+                                        format!("Failed to declare jit_to_string_typed: {}", e)
                                     })?;
                                 let func_ref = module.declare_func_in_func(func_id, builder.func);
-                                let call = builder
-                                    .ins()
-                                    .call(func_ref, &[left, left_tag, right, right_tag]);
+                                let call = builder.ins().call(func_ref, &[arg_val, tag_val]);
                                 let res = builder.inst_results(call)[0];
-
                                 value_map.insert(*dst, res);
                                 value_types.insert(*dst, AotValueType::Handle);
                             } else {
@@ -2578,24 +2577,110 @@ impl NativeJitCompiler {
                                 value_map.insert(*dst, zero);
                             }
                         } else {
-                            let zero = builder.ins().iconst(types::I64, 0);
-                            value_map.insert(*dst, zero);
+                            // Multiple arguments: chain pairwise
+                            let mut cur_val = value_map.get(&args[0]).copied();
+                            let mut cur_tag = type_tag(
+                                &value_types
+                                    .get(&args[0])
+                                    .cloned()
+                                    .unwrap_or(AotValueType::Int),
+                            );
+
+                            let mut sig = module.make_signature();
+                            sig.params.push(AbiParam::new(types::I64)); // left value
+                            sig.params.push(AbiParam::new(types::I64)); // left type tag
+                            sig.params.push(AbiParam::new(types::I64)); // right value
+                            sig.params.push(AbiParam::new(types::I64)); // right type tag
+                            sig.returns.push(AbiParam::new(types::I64)); // result handle
+
+                            let func_id = module
+                                .declare_function(
+                                    "jit_str_concat_typed",
+                                    cranelift_module::Linkage::Import,
+                                    &sig,
+                                )
+                                .map_err(|e| {
+                                    format!("Failed to declare jit_str_concat_typed: {}", e)
+                                })?;
+                            let func_ref = module.declare_func_in_func(func_id, builder.func);
+
+                            let mut success = true;
+                            if let Some(mut acc_val) = cur_val {
+                                for next_id in &args[1..] {
+                                    if let Some(next_val) = value_map.get(next_id).copied() {
+                                        let next_type = value_types
+                                            .get(next_id)
+                                            .cloned()
+                                            .unwrap_or(AotValueType::Int);
+                                        let next_tag = type_tag(&next_type);
+
+                                        let l_tag = builder.ins().iconst(types::I64, cur_tag);
+                                        let r_tag = builder.ins().iconst(types::I64, next_tag);
+                                        let call = builder
+                                            .ins()
+                                            .call(func_ref, &[acc_val, l_tag, next_val, r_tag]);
+                                        acc_val = builder.inst_results(call)[0];
+                                        cur_tag = 4; // Subsequent intermediate results are handles
+                                    } else {
+                                        success = false;
+                                        break;
+                                    }
+                                }
+                                if success {
+                                    value_map.insert(*dst, acc_val);
+                                    value_types.insert(*dst, AotValueType::Handle);
+                                } else {
+                                    let zero = builder.ins().iconst(types::I64, 0);
+                                    value_map.insert(*dst, zero);
+                                }
+                            } else {
+                                let zero = builder.ins().iconst(types::I64, 0);
+                                value_map.insert(*dst, zero);
+                            }
                         }
                     }
                     "format" => {
                         // Format value with format spec (for template literals like ${val:spec})
                         if args.len() >= 2 {
-                            let value_val = args.get(0).and_then(|id| value_map.get(id)).copied();
-                            let spec_val = args.get(1).and_then(|id| value_map.get(id)).copied();
+                            let value_id = args[0];
+                            let spec_id = args[1];
+                            let value_val = value_map.get(&value_id).copied();
+                            let spec_val = value_map.get(&spec_id).copied();
 
                             if let (Some(val), Some(spec)) = (value_val, spec_val) {
-                                let res = Self::call_runtime_fn_2(
-                                    builder,
-                                    module,
-                                    "jit_format_value",
-                                    val,
-                                    spec,
-                                )?;
+                                let val_type = value_types
+                                    .get(&value_id)
+                                    .cloned()
+                                    .unwrap_or(AotValueType::Int);
+                                let type_tag = match &val_type {
+                                    AotValueType::F64 | AotValueType::F32 | AotValueType::Float => {
+                                        1
+                                    }
+                                    AotValueType::String | AotValueType::Ptr => 2,
+                                    AotValueType::Bool => 3,
+                                    AotValueType::Handle => 4,
+                                    _ => 0,
+                                };
+                                let tag_val = builder.ins().iconst(types::I64, type_tag);
+
+                                let mut sig = module.make_signature();
+                                sig.params.push(AbiParam::new(types::I64)); // value
+                                sig.params.push(AbiParam::new(types::I64)); // type tag
+                                sig.params.push(AbiParam::new(types::I64)); // spec (ptr/handle)
+                                sig.returns.push(AbiParam::new(types::I64)); // result handle
+
+                                let func_id = module
+                                    .declare_function(
+                                        "jit_format_value_typed",
+                                        cranelift_module::Linkage::Import,
+                                        &sig,
+                                    )
+                                    .map_err(|e| {
+                                        format!("Failed to declare jit_format_value_typed: {}", e)
+                                    })?;
+                                let func_ref = module.declare_func_in_func(func_id, builder.func);
+                                let call = builder.ins().call(func_ref, &[val, tag_val, spec]);
+                                let res = builder.inst_results(call)[0];
                                 value_map.insert(*dst, res);
                                 value_types.insert(*dst, AotValueType::Handle);
                             } else {

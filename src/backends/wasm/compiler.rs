@@ -236,8 +236,36 @@ fn gen_expr_f64(
                 _ => Err("unsupported unary op in wasm MVP".into()),
             }
         }
+        ExprKind::Format(..) => {
+            if let Some(s) = format_static_val_for_wasm_env(e, ctx.var_values) {
+                let off = ctx
+                    .strings
+                    .iter()
+                    .find(|(x, _)| x == &s)
+                    .map(|(_, o)| *o)
+                    .unwrap_or(1024) as f64;
+                out.push(0x44);
+                out.extend(&off.to_bits().to_le_bytes());
+                Ok(Some("string".into()))
+            } else {
+                Err("unsupported dynamic format in wasm MVP".into())
+            }
+        }
         ExprKind::Call(callee, args, _) => {
             if let ExprKind::Variable(name) = &callee.kind {
+                if name == "concat" || name == "str_concat" {
+                    if let Some(s) = format_static_val_for_wasm_env(e, ctx.var_values) {
+                        let off = ctx
+                            .strings
+                            .iter()
+                            .find(|(x, _)| x == &s)
+                            .map(|(_, o)| *o)
+                            .unwrap_or(1024) as f64;
+                        out.push(0x44);
+                        out.extend(&off.to_bits().to_le_bytes());
+                        return Ok(Some("string".into()));
+                    }
+                }
                 if let Some((fidx, params, ret_type)) = ctx.funcs.get(name) {
                     for (i, a) in args.iter().enumerate() {
                         gen_expr_f64(a, out, ctx)?;
@@ -404,8 +432,36 @@ fn gen_expr_i32(
                 Err("unknown i32 variable".into())
             }
         }
+        ExprKind::Format(..) => {
+            if let Some(s) = format_static_val_for_wasm_env(e, ctx.var_values) {
+                let off = ctx
+                    .strings
+                    .iter()
+                    .find(|(x, _)| x == &s)
+                    .map(|(_, o)| *o)
+                    .unwrap_or(1024) as i32;
+                out.push(0x41);
+                write_i32_leb(off, out);
+                Ok(Some("string".into()))
+            } else {
+                Err("unsupported dynamic format in wasm MVP".into())
+            }
+        }
         ExprKind::Call(callee, args, _) => {
             if let ExprKind::Variable(name) = &callee.kind {
+                if name == "concat" || name == "str_concat" {
+                    if let Some(s) = format_static_val_for_wasm_env(e, ctx.var_values) {
+                        let off = ctx
+                            .strings
+                            .iter()
+                            .find(|(x, _)| x == &s)
+                            .map(|(_, o)| *o)
+                            .unwrap_or(1024) as i32;
+                        out.push(0x41);
+                        write_i32_leb(off, out);
+                        return Ok(Some("string".into()));
+                    }
+                }
                 if let Some((fidx, params, ret_type)) = ctx.funcs.get(name) {
                     for (i, a) in args.iter().enumerate() {
                         gen_expr_i32(a, out, ctx)?;
@@ -696,39 +752,60 @@ fn add_wasm_string(st: &str, strings: &mut Vec<(String, u32)>, cur_off: &mut u32
 }
 
 fn format_static_val_for_wasm(e: &Expr) -> Option<String> {
+    format_static_val_for_wasm_env(e, &FastMap::default())
+}
+
+fn format_static_val_for_wasm_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<String> {
     match &e.kind {
+        ExprKind::Variable(name) => {
+            let val = var_values.get(name)?;
+            match val {
+                Value::Str(s) => Some(s.clone()),
+                other => Some(crate::execution::runtime_core::format::fmt(other)),
+            }
+        }
         ExprKind::Array(elems) => {
             let mut parts = Vec::new();
             for el in elems {
-                if let Some(s) = format_static_val_for_wasm(el) {
-                    parts.push(s);
-                } else {
-                    return None;
-                }
+                parts.push(format_static_val_for_wasm_env(el, var_values)?);
             }
             Some(format!("[{}]", parts.join(", ")))
         }
         ExprKind::Tuple(elems) => {
             let mut parts = Vec::new();
             for el in elems {
-                if let Some(s) = format_static_val_for_wasm(el) {
-                    parts.push(s);
-                } else {
-                    return None;
-                }
+                parts.push(format_static_val_for_wasm_env(el, var_values)?);
             }
             Some(format!("({})", parts.join(", ")))
         }
         ExprKind::Object(entries) => {
             let mut parts = Vec::new();
             for (k, v) in entries {
-                if let Some(s) = format_static_val_for_wasm(v) {
-                    parts.push(format!("{}: {}", k, s));
-                } else {
-                    return None;
-                }
+                parts.push(format!(
+                    "{}: {}",
+                    k,
+                    format_static_val_for_wasm_env(v, var_values)?
+                ));
             }
             Some(format!("{{{}}}", parts.join(", ")))
+        }
+        ExprKind::Call(callee, args, _) => {
+            if let ExprKind::Variable(name) = &callee.kind {
+                if name == "concat" || name == "str_concat" {
+                    let mut s = String::new();
+                    for a in args {
+                        s.push_str(&format_static_val_for_wasm_env(a, var_values)?);
+                    }
+                    return Some(s);
+                }
+            }
+            None
+        }
+        ExprKind::Format(inner, spec) => {
+            let val = expr_to_value_env(inner, var_values)?;
+            Some(crate::execution::runtime_core::format::apply_format_spec(
+                &val, spec,
+            ))
         }
         ExprKind::Literal(Value::Str(s)) => Some(s.clone()),
         ExprKind::Literal(Value::Number(n)) => Some(format!("{:.1}", n)),
@@ -744,28 +821,56 @@ fn format_static_val_for_wasm(e: &Expr) -> Option<String> {
 }
 
 fn expr_to_value(e: &Expr) -> Option<Value> {
+    expr_to_value_env(e, &FastMap::default())
+}
+
+fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Value> {
     match &e.kind {
         ExprKind::Literal(v) => Some(v.clone()),
+        ExprKind::Variable(name) => var_values.get(name).cloned(),
         ExprKind::Array(elems) => {
             let mut arr = Vec::new();
             for el in elems {
-                arr.push(expr_to_value(el)?);
+                arr.push(expr_to_value_env(el, var_values)?);
             }
             Some(Value::Array(arr))
         }
         ExprKind::Tuple(elems) => {
             let mut tup = Vec::new();
             for el in elems {
-                tup.push(expr_to_value(el)?);
+                tup.push(expr_to_value_env(el, var_values)?);
             }
             Some(Value::Tuple(tup))
         }
         ExprKind::Object(entries) => {
             let mut map = FastMap::default();
             for (k, v) in entries {
-                map.insert(k.clone(), expr_to_value(v)?);
+                map.insert(k.clone(), expr_to_value_env(v, var_values)?);
             }
             Some(Value::Object(map.into()))
+        }
+        ExprKind::Call(callee, args, _) => {
+            if let ExprKind::Variable(name) = &callee.kind {
+                if name == "concat" {
+                    let mut s = String::new();
+                    for a in args {
+                        let val = expr_to_value_env(a, var_values)?;
+                        match val {
+                            Value::Str(part) => s.push_str(&part),
+                            other => {
+                                s.push_str(&crate::execution::runtime_core::format::fmt(&other))
+                            }
+                        }
+                    }
+                    return Some(Value::Str(s));
+                }
+            }
+            None
+        }
+        ExprKind::Format(inner, spec) => {
+            let val = expr_to_value_env(inner, var_values)?;
+            let formatted = crate::execution::runtime_core::format::apply_format_spec(&val, spec);
+            Some(Value::Str(formatted))
         }
         _ => None,
     }
@@ -806,9 +911,19 @@ fn format_print_arg(
     pretty_opt: Option<&crate::execution::runtime_core::pretty_print::PrettyPrintOptions>,
     var_values: &FastMap<String, Value>,
 ) -> Option<String> {
+    if let ExprKind::Call(callee, _, _) = &arg.kind {
+        if let ExprKind::Variable(name) = &callee.kind {
+            if name == "concat" {
+                return format_static_val_for_wasm_env(arg, var_values);
+            }
+        }
+    }
+    if let ExprKind::Format(..) = &arg.kind {
+        return format_static_val_for_wasm_env(arg, var_values);
+    }
     let val = match &arg.kind {
         ExprKind::Variable(vname) => var_values.get(vname).cloned(),
-        _ => expr_to_value(arg),
+        _ => expr_to_value_env(arg, var_values),
     }?;
 
     if let Some(opts) = pretty_opt {
@@ -818,7 +933,7 @@ fn format_print_arg(
     } else {
         match &val {
             Value::Str(_) => None,
-            _ => format_static_val_for_wasm(arg),
+            _ => format_static_val_for_wasm_env(arg, var_values),
         }
     }
 }
@@ -891,6 +1006,11 @@ fn collect_all_wasm_strings_expr(
                 collect_all_wasm_strings_expr(arg, strings, cur_off, var_values);
             }
             if let ExprKind::Variable(name) = &callee.kind {
+                if name == "concat" {
+                    if let Some(fmt) = format_static_val_for_wasm_env(e, var_values) {
+                        add_wasm_string(&fmt, strings, cur_off);
+                    }
+                }
                 if name == "print" || name == "println" {
                     let mut pretty_opt = None;
                     let mut non_opt_args = Vec::new();
@@ -930,6 +1050,12 @@ fn collect_all_wasm_strings_expr(
                         }
                     }
                 }
+            }
+        }
+        ExprKind::Format(inner, _spec) => {
+            collect_all_wasm_strings_expr(inner, strings, cur_off, var_values);
+            if let Some(fmt) = format_static_val_for_wasm_env(e, var_values) {
+                add_wasm_string(&fmt, strings, cur_off);
             }
         }
         ExprKind::Binary(l, _, r) => {
@@ -1694,7 +1820,7 @@ pub fn compile_to_file(src: &str, out: &Path) -> Result<(), LangError> {
     let mut var_values: FastMap<String, Value> = FastMap::default();
     for s in &prog {
         if let StmtKind::Let(name, Some(init), ..) = &s.kind {
-            if let Some(val) = expr_to_value(init) {
+            if let Some(val) = expr_to_value_env(init, &var_values) {
                 var_values.insert(name.clone(), val);
             }
         }
@@ -1741,7 +1867,7 @@ pub fn compile_to_file(src: &str, out: &Path) -> Result<(), LangError> {
                 if let Some((_, off)) = strings.iter().find(|(x, _)| x == st) {
                     str_vars.insert(name.clone(), (*off, st.len() as u32));
                 }
-            } else if let Some(fmt) = format_static_val_for_wasm(init) {
+            } else if let Some(fmt) = format_static_val_for_wasm_env(init, &var_values) {
                 if let Some((_, off)) = strings.iter().find(|(x, _)| x == &fmt) {
                     complex_vars.insert(name.clone(), (*off, fmt.len() as u32));
                 }

@@ -582,14 +582,11 @@ impl LayoutEngine {
         }) || resolver.table.contains_key("mainCRTStartup")
             || resolver.table.contains_key("__adesh_windows_start");
 
-        let has_main = objects
-            .iter()
-            .any(|o| {
-                o.symbols
-                    .iter()
-                    .any(|s| s.is_defined && (s.name == "main" || s.name == "_main"))
-            })
-            || resolver.table.contains_key("main")
+        let has_main = objects.iter().any(|o| {
+            o.symbols
+                .iter()
+                .any(|s| s.is_defined && (s.name == "main" || s.name == "_main"))
+        }) || resolver.table.contains_key("main")
             || resolver.table.contains_key("_main");
 
         let pe_thunks_start_off =

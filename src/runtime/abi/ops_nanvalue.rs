@@ -65,19 +65,61 @@ fn as_bigint_nan(v: &NanValue) -> Result<BigInt, RuntimeError> {
     }
 }
 
+#[inline]
+fn nanvalue_to_string_repr(v: &NanValue) -> String {
+    if v.is_null() {
+        "null".to_string()
+    } else if v.is_bool() {
+        if v.as_bool().unwrap_or(false) {
+            "true".to_string()
+        } else {
+            "false".to_string()
+        }
+    } else if v.is_char() {
+        v.as_char().unwrap_or('\0').to_string()
+    } else if v.is_double() {
+        let f = v.as_f64().unwrap_or(0.0);
+        if f.fract() == 0.0 && f.abs() < 1e16 {
+            (f as i64).to_string()
+        } else {
+            f.to_string()
+        }
+    } else if v.is_int48() {
+        v.as_i48().unwrap_or(0).to_string()
+    } else if v.is_pointer() {
+        if let Some(arc) = v.as_heap() {
+            match &*arc {
+                HeapValue::String(s) => s.clone(),
+                HeapValue::BigInt(b) => b.to_string(),
+                _ => "[object]".to_string(),
+            }
+        } else {
+            "[pointer]".to_string()
+        }
+    } else {
+        String::new()
+    }
+}
+
 /// Add two NanValues
 #[inline(always)]
 pub fn abi_add_nan(left: &NanValue, right: &NanValue) -> Result<NanValue, RuntimeError> {
-    // String concatenation
-    if left.is_pointer() && right.is_pointer() {
-        if let (Some(l_arc), Some(r_arc)) = (left.as_heap(), right.as_heap()) {
-            if let (HeapValue::String(l_str), HeapValue::String(r_str)) = (&*l_arc, &*r_arc) {
-                return Ok(NanValue::from_heap(HeapValue::String(format!(
-                    "{}{}",
-                    l_str, r_str
-                ))));
-            }
-        }
+    // String concatenation (if either operand is a String)
+    let left_is_str = left.is_pointer()
+        && left
+            .as_heap()
+            .map_or(false, |h| matches!(&*h, HeapValue::String(_)));
+    let right_is_str = right.is_pointer()
+        && right
+            .as_heap()
+            .map_or(false, |h| matches!(&*h, HeapValue::String(_)));
+    if left_is_str || right_is_str {
+        let l_str = nanvalue_to_string_repr(left);
+        let r_str = nanvalue_to_string_repr(right);
+        return Ok(NanValue::from_heap(HeapValue::String(format!(
+            "{}{}",
+            l_str, r_str
+        ))));
     }
 
     // Array concatenation

@@ -462,6 +462,22 @@ impl RuntimeValue {
         }
     }
 
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            RuntimeValue::Float(f) | RuntimeValue::F64(f) => Some(*f),
+            RuntimeValue::F32(f) => Some(*f as f64),
+            RuntimeValue::Int(i) | RuntimeValue::I64(i) => Some(*i as f64),
+            RuntimeValue::I32(i) => Some(*i as f64),
+            RuntimeValue::I16(i) => Some(*i as f64),
+            RuntimeValue::I8(i) => Some(*i as f64),
+            RuntimeValue::U64(u) => Some(*u as f64),
+            RuntimeValue::U32(u) => Some(*u as f64),
+            RuntimeValue::U16(u) => Some(*u as f64),
+            RuntimeValue::U8(u) => Some(*u as f64),
+            _ => None,
+        }
+    }
+
     pub fn as_fn_ptr(&self) -> Option<usize> {
         match self {
             RuntimeValue::Function(ptr) => Some(*ptr),

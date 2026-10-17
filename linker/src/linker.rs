@@ -347,18 +347,16 @@ impl Linker {
                 && !ctx.config.shared
                 && missing_symbols.contains(&"_start".to_string())
             {
-                let (bytes, relocs, syms) =
-                    if ctx.config.target.arch == crate::target::Arch::AArch64 {
-                        crate::elf::aarch64::synthesize_elf_aarch64_entry(
-                            &program_entry_symbol,
-                            file_idx,
-                        )
-                    } else {
-                        crate::elf::x86_64::synthesize_elf_x86_64_entry(
-                            &program_entry_symbol,
-                            file_idx,
-                        )
-                    };
+                let (bytes, relocs, syms) = if ctx.config.target.arch
+                    == crate::target::Arch::AArch64
+                {
+                    crate::elf::aarch64::synthesize_elf_aarch64_entry(
+                        &program_entry_symbol,
+                        file_idx,
+                    )
+                } else {
+                    crate::elf::x86_64::synthesize_elf_x86_64_entry(&program_entry_symbol, file_idx)
+                };
                 let start_off = code_bytes.len() as u64;
                 code_bytes.extend_from_slice(&bytes);
                 for mut r in relocs {
@@ -370,7 +368,6 @@ impl Linker {
                     synth_symbols.push(s);
                 }
             }
-
 
             // Undefined symbols that are neither importable nor synthesizable.
             // Collected so one link reports every missing symbol at once.

@@ -1,0 +1,10 @@
+print(`${1 + 2} is the result of adding 1 and 2.`);
+let a = 10;
+let b = 20;
+print(`The sum of ${a} and ${b} is ${a + b}.`);
+
+fn getGreeting(name) {
+    return `Hello, ${name}!`;
+}
+
+print(`${getGreeting("Alice")}`); // Returns "Hello, Alice!"

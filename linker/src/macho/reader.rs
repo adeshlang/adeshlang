@@ -111,12 +111,14 @@ impl MachOReader {
                         };
 
                     let reloff = if sect_off + 64 <= bytes.len() {
-                        u32::from_le_bytes(bytes[sect_off + 56..sect_off + 60].try_into().unwrap()) as usize
+                        u32::from_le_bytes(bytes[sect_off + 56..sect_off + 60].try_into().unwrap())
+                            as usize
                     } else {
                         0
                     };
                     let nreloc = if sect_off + 64 <= bytes.len() {
-                        u32::from_le_bytes(bytes[sect_off + 60..sect_off + 64].try_into().unwrap()) as usize
+                        u32::from_le_bytes(bytes[sect_off + 60..sect_off + 64].try_into().unwrap())
+                            as usize
                     } else {
                         0
                     };
@@ -280,16 +282,16 @@ impl MachOReader {
                 };
 
                 let kind = match (arch, r_type, r_pcrel, r_length) {
-                    (Arch::AArch64, 1, true, _) => RelocationKind::AArch64Call26,      // ARM64_RELOC_BRANCH26
-                    (Arch::AArch64, 2, true, _) => RelocationKind::AArch64Adrp,          // ARM64_RELOC_PAGE21
-                    (Arch::AArch64, 3, false, _) => RelocationKind::AArch64AddLo12,     // ARM64_RELOC_PAGEOFF12
-                    (Arch::AArch64, 4, true, _) => RelocationKind::AArch64Adrp,          // ARM64_RELOC_GOT_LOAD_PAGE21
-                    (Arch::AArch64, 5, false, _) => RelocationKind::AArch64AddLo12,     // ARM64_RELOC_GOT_LOAD_PAGEOFF12
-                    (Arch::X86_64, 1, true, 2) => RelocationKind::PcRelative32,         // X86_64_RELOC_SIGNED
-                    (Arch::X86_64, 2, true, 2) => RelocationKind::PltRelative32,        // X86_64_RELOC_BRANCH
-                    (Arch::X86_64, 4, true, 2) => RelocationKind::GotRelative32,        // X86_64_RELOC_GOT_LOAD
-                    (Arch::X86_64, 0, false, 3) => RelocationKind::Absolute64,         // X86_64_RELOC_UNSIGNED (len 3 = 8 bytes)
-                    (Arch::X86_64, 0, false, 2) => RelocationKind::Absolute32,         // X86_64_RELOC_UNSIGNED (len 2 = 4 bytes)
+                    (Arch::AArch64, 1, true, _) => RelocationKind::AArch64Call26, // ARM64_RELOC_BRANCH26
+                    (Arch::AArch64, 2, true, _) => RelocationKind::AArch64Adrp, // ARM64_RELOC_PAGE21
+                    (Arch::AArch64, 3, false, _) => RelocationKind::AArch64AddLo12, // ARM64_RELOC_PAGEOFF12
+                    (Arch::AArch64, 4, true, _) => RelocationKind::AArch64Adrp, // ARM64_RELOC_GOT_LOAD_PAGE21
+                    (Arch::AArch64, 5, false, _) => RelocationKind::AArch64AddLo12, // ARM64_RELOC_GOT_LOAD_PAGEOFF12
+                    (Arch::X86_64, 1, true, 2) => RelocationKind::PcRelative32, // X86_64_RELOC_SIGNED
+                    (Arch::X86_64, 2, true, 2) => RelocationKind::PltRelative32, // X86_64_RELOC_BRANCH
+                    (Arch::X86_64, 4, true, 2) => RelocationKind::GotRelative32, // X86_64_RELOC_GOT_LOAD
+                    (Arch::X86_64, 0, false, 3) => RelocationKind::Absolute64, // X86_64_RELOC_UNSIGNED (len 3 = 8 bytes)
+                    (Arch::X86_64, 0, false, 2) => RelocationKind::Absolute32, // X86_64_RELOC_UNSIGNED (len 2 = 4 bytes)
                     _ => {
                         if r_pcrel {
                             RelocationKind::PcRelative32

@@ -1795,6 +1795,21 @@ pub extern "C" fn aot_string_concat(left_handle: u64, right_handle: u64) -> u64 
     aot_store_value(RuntimeValue::String(format!("{}{}", l_str, r_str)))
 }
 
+/// AOT value formatting bridge
+pub extern "C" fn aot_format_value(handle: u64, spec_ptr: *const std::os::raw::c_char) -> u64 {
+    let spec = if spec_ptr.is_null() {
+        ""
+    } else {
+        unsafe { std::ffi::CStr::from_ptr(spec_ptr) }
+            .to_str()
+            .unwrap_or("")
+    };
+    let val = unpack_aot_arg(handle);
+    let ast = runtime_value_to_ast_value(&val);
+    let formatted = crate::execution::runtime_core::format::apply_format_spec(&ast, spec);
+    aot_store_value(RuntimeValue::String(formatted))
+}
+
 /// AOT range creation bridge (start..end or start...end)
 pub extern "C" fn aot_make_range(start_handle: u64, end_handle: u64, inclusive: i64) -> u64 {
     let s_val = match unpack_aot_arg(start_handle) {

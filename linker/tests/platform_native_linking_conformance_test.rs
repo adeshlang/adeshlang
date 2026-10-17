@@ -279,7 +279,11 @@ fn test_static_linux_elf_aarch64_executable_generation() {
     let mut obj = ObjectFile::new(obj_path.clone(), target.clone(), 0);
 
     // mov w0, #0; ret
-    obj.add_section(Section::new_code(".text", vec![0x00, 0x00, 0x80, 0x52, 0xc0, 0x03, 0x5f, 0xd6], 16));
+    obj.add_section(Section::new_code(
+        ".text",
+        vec![0x00, 0x00, 0x80, 0x52, 0xc0, 0x03, 0x5f, 0xd6],
+        16,
+    ));
     obj.add_symbol(Symbol::new_defined(
         "main",
         SymbolBinding::Global,
@@ -296,7 +300,11 @@ fn test_static_linux_elf_aarch64_executable_generation() {
     link_config.shared = false;
 
     let res = Linker::link(&[obj_path], link_config);
-    assert!(res.is_ok(), "linking static AArch64 Linux ELF failed: {:?}", res);
+    assert!(
+        res.is_ok(),
+        "linking static AArch64 Linux ELF failed: {:?}",
+        res
+    );
 
     let bytes = std::fs::read(&out_elf).expect("failed to read generated AArch64 ELF");
     assert!(bytes.len() >= 64, "ELF header too small");
