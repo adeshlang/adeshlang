@@ -4217,7 +4217,12 @@ impl<'a> FunctionLoweringContext<'a> {
                     let target_reg = self.lower_expression(target);
                     let mut arg_regs = vec![target_reg];
                     for arg in args {
-                        arg_regs.push(self.lower_expression(arg));
+                        let r = if matches!(self.infer_expr_type(arg), Some(HirType::String)) {
+                            self.lower_to_handle(arg)
+                        } else {
+                            self.lower_expression(arg)
+                        };
+                        arg_regs.push(r);
                     }
                     self.emit_call_with_args(method_name, &arg_regs);
                     self.emit(MachineInstruction::Move {
@@ -5790,7 +5795,11 @@ impl<'a> FunctionLoweringContext<'a> {
                     arg_regs.push(sret_ptr_reg);
                 }
                 for arg in args {
-                    let r = self.lower_expression(arg);
+                    let r = if matches!(self.infer_expr_type(arg), Some(HirType::String)) {
+                        self.lower_to_handle(arg)
+                    } else {
+                        self.lower_expression(arg)
+                    };
                     arg_regs.push(r);
                 }
 
@@ -5928,7 +5937,12 @@ impl<'a> FunctionLoweringContext<'a> {
                 });
                 let mut arg_regs = vec![obj_handle];
                 for arg in args {
-                    arg_regs.push(self.lower_expression(arg));
+                    let r = if matches!(self.infer_expr_type(arg), Some(HirType::String)) {
+                        self.lower_to_handle(arg)
+                    } else {
+                        self.lower_expression(arg)
+                    };
+                    arg_regs.push(r);
                 }
                 let ctor_candidates = [
                     format!("{}_{}", cls_name, "__ctor__"),

@@ -171,6 +171,10 @@ fn main() {
     let hex_val = 255;
     let hex_msg = `Hex: ${hex_val:hex}`;
     print(hex_msg);
+    print(`${getGreeting("Alice")}`);
+}
+fn getGreeting(name) {
+    return `Hello, ${name}!`;
 }
 "#;
     let tokens = Lexer::new(src).tokenize().expect("tokenize");
@@ -202,4 +206,5 @@ fn main() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("Sum: 10 + 20 = 30"), "stdout: {}", stdout);
     assert!(stdout.contains("Hex: ff"), "stdout: {}", stdout);
+    assert!(stdout.contains("Hello, Alice!"), "stdout: {}", stdout);
 }

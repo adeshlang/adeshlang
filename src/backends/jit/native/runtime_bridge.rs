@@ -1721,6 +1721,15 @@ pub extern "C" fn jit_print_space() -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_print_i64(value: i64, newline: i64) -> u64 {
     use std::io::Write;
+    let unsigned = value as u64;
+    if unsigned >= HANDLE_TAG && get_value(unsigned).is_some() {
+        jit_print_value(unsigned, 0);
+        if newline != 0 {
+            println!();
+        }
+        let _ = std::io::stdout().flush();
+        return 0;
+    }
     if newline != 0 {
         println!("{}", value);
     } else {
@@ -1735,6 +1744,14 @@ pub extern "C" fn jit_print_i64(value: i64, newline: i64) -> u64 {
 pub extern "C" fn jit_print_u64(value: i64, newline: i64) -> u64 {
     use std::io::Write;
     let unsigned = value as u64;
+    if unsigned >= HANDLE_TAG && get_value(unsigned).is_some() {
+        jit_print_value(unsigned, 0);
+        if newline != 0 {
+            println!();
+        }
+        let _ = std::io::stdout().flush();
+        return 0;
+    }
     if newline != 0 {
         println!("{}", unsigned);
     } else {
@@ -2683,6 +2700,9 @@ pub extern "C" fn jit_str_concat_typed(a: u64, a_type: i64, b: u64, b_type: i64)
 
 /// Helper to get string value based on type tag
 fn get_string_val_typed(val: u64, type_tag: i64) -> String {
+    if let Some(s) = get_string_val(val) {
+        return s;
+    }
     match type_tag {
         1 => {
             // Float
@@ -2717,6 +2737,11 @@ fn get_string_val_typed(val: u64, type_tag: i64) -> String {
         }
         _ => {
             // Int (0) or default
+            if val >= HANDLE_TAG {
+                if let Some(v) = get_value(val) {
+                    return value_to_simple_string(&v);
+                }
+            }
             format!("{}", val as i64)
         }
     }
@@ -2840,7 +2865,7 @@ fn value_to_simple_string(rv: &RuntimeValue) -> String {
         RuntimeValue::Int(i) => format!("{}", i),
         RuntimeValue::Float(f) => format!("{}", f),
         RuntimeValue::Char(c) => format!("{}", c),
-        RuntimeValue::String(s) => format!("\"{}\"", s),
+        RuntimeValue::String(s) => s.clone(),
         RuntimeValue::Bool(b) => format!("{}", b),
         RuntimeValue::Null => "null".to_string(),
         RuntimeValue::Array(_) => "[...]".to_string(),

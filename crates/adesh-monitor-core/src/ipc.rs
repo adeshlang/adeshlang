@@ -5,6 +5,8 @@
 
 use adesh_monitor_protocol::*;
 use std::io::{BufRead, BufReader, Write};
+#[cfg(not(windows))]
+use std::time::Duration;
 
 #[cfg(windows)]
 pub const DEFAULT_IPC_ENDPOINT: &str = r"\\.\pipe\adesh_observatory_ipc";
