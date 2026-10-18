@@ -223,7 +223,11 @@ impl RelocationHandler for DefaultRelocationHandler {
             }
             RelocationKind::Absolute32 => {
                 let val = (symbol_va as i64).wrapping_add(addend);
-                if !(0..=u32::MAX as i64).contains(&val) {
+                let upper = (val as u64) >> 32;
+                if upper == 0 || upper == 1 || (val >= i32::MIN as i64 && val <= i32::MAX as i64) {
+                    let val32 = val as u32;
+                    target_slice.copy_from_slice(&val32.to_le_bytes());
+                } else {
                     return Err(LinkError::relocation_overflow(
                         reloc.kind.name(),
                         &reloc.symbol_name,
@@ -234,7 +238,6 @@ impl RelocationHandler for DefaultRelocationHandler {
                         Some(reloc.offset),
                     ));
                 }
-                target_slice.copy_from_slice(&(val as u32).to_le_bytes());
             }
             RelocationKind::Absolute16 => {
                 let val = (symbol_va as i64).wrapping_add(addend);

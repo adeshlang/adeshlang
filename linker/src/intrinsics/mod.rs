@@ -134,7 +134,7 @@ impl IntrinsicsEngine {
             Arch::X86_64 if target.format == crate::target::ObjectFormat::Pe => {
                 Self::emit_x86_64_msabi(name)
             }
-            Arch::X86_64 => Self::emit_x86_64(name),
+            Arch::X86_64 => Self::emit_x86_64(name, target),
             Arch::AArch64 => Self::emit_aarch64(name),
             Arch::Riscv64 => Self::emit_riscv64(name),
             _ => {
@@ -150,7 +150,7 @@ impl IntrinsicsEngine {
         match name {
             "__chkstk" | "___chkstk_ms" => return Self::emit_chkstk_x86_64(),
             "memcpy" | "memmove" | "memset" | "memcmp" => {}
-            _ => return Self::emit_x86_64(name),
+            _ => return Self::emit_x86_64(name, &Target::x86_64_windows()),
         }
         // Bytes below were assembled with GNU as from reviewed source and
         // verified with llvm-objdump (see .adesh_cache/msabi_intrinsics.s).
@@ -239,7 +239,7 @@ impl IntrinsicsEngine {
     }
 
     /// x86_64 native machine code sequences for compiler runtime builtins.
-    fn emit_x86_64(name: &str) -> Vec<u8> {
+    fn emit_x86_64(name: &str, target: &Target) -> Vec<u8> {
         match name {
             "memcpy" => {
                 // memcpy(rdi = dst, rsi = src, rdx = len) -> rax = dst
@@ -310,6 +310,101 @@ impl IntrinsicsEngine {
                 // Stack smashing detected -> ud2 (illegal instruction / trap)
                 vec![0x0f, 0x0b] // ud2
             }
+            name if name.contains("rust_alloc_zeroed") => {
+                if target.os == crate::target::Os::Linux {
+                    // sys_mmap(addr = 0, size = rdi, prot = READ|WRITE, flags = PRIVATE|ANON, fd = -1, off = 0)
+                    vec![
+                        0x48, 0x89, 0xf6, // mov rsi, rdi
+                        0x48, 0x31, 0xff, // xor rdi, rdi
+                        0x48, 0xc7, 0xc2, 0x03, 0x00, 0x00, 0x00, // mov rdx, 3
+                        0x49, 0xc7, 0xc2, 0x22, 0x00, 0x00, 0x00, // mov r10, 0x22
+                        0x49, 0xc7, 0xc0, 0xff, 0xff, 0xff, 0xff, // mov r8, -1
+                        0x49, 0x31, 0xc9, // xor r9, r9
+                        0x48, 0xc7, 0xc0, 0x09, 0x00, 0x00, 0x00, // mov rax, 9
+                        0x0f, 0x05, // syscall
+                        0xc3, // ret
+                    ]
+                } else {
+                    vec![0xc3]
+                }
+            }
+            name if name.contains("rust_realloc") => {
+                if target.os == crate::target::Os::Linux {
+                    vec![
+                        0x55, // push rbp
+                        0x48, 0x89, 0xe5, // mov rbp, rsp
+                        0x41, 0x54, // push r12
+                        0x41, 0x55, // push r13
+                        0x41, 0x56, // push r14
+                        0x48, 0x89, 0xfd, // mov rbp, rdi (old_ptr)
+                        0x49, 0x89, 0xf4, // mov r12, rsi (old_size)
+                        0x49, 0x89, 0xcd, // mov r13, rcx (new_size)
+                        // alloc new_size (r13)
+                        0x4c, 0x89, 0xee, // mov rsi, r13
+                        0x48, 0x31, 0xff, // xor rdi, rdi
+                        0x48, 0xc7, 0xc2, 0x03, 0x00, 0x00, 0x00, // mov rdx, 3
+                        0x49, 0xc7, 0xc2, 0x22, 0x00, 0x00, 0x00, // mov r10, 0x22
+                        0x49, 0xc7, 0xc0, 0xff, 0xff, 0xff, 0xff, // mov r8, -1
+                        0x49, 0x31, 0xc9, // xor r9, r9
+                        0x48, 0xc7, 0xc0, 0x09, 0x00, 0x00, 0x00, // mov rax, 9 (sys_mmap)
+                        0x0f, 0x05, // syscall
+                        0x49, 0x89, 0xc6, // mov r14, rax (new_ptr)
+                        // memcpy(new_ptr = r14, old_ptr = rbp, min(old_size, new_size))
+                        0x4c, 0x89, 0xf7, // mov rdi, r14
+                        0x48, 0x89, 0xee, // mov rsi, rbp
+                        0x4c, 0x89, 0xe2, // mov rdx, r12
+                        0x4c, 0x39, 0xea, // cmp rdx, r13
+                        0x76, 0x03, // jbe +3
+                        0x4c, 0x89, 0xea, // mov rdx, r13
+                        0x48, 0x89, 0xd1, // mov rcx, rdx
+                        0xf3, 0xa4, // rep movsb
+                        // munmap(old_ptr = rbp, old_size = r12)
+                        0x48, 0x89, 0xef, // mov rdi, rbp
+                        0x4c, 0x89, 0xe6, // mov rsi, r12
+                        0x48, 0xc7, 0xc0, 0x0b, 0x00, 0x00, 0x00, // mov rax, 11 (sys_munmap)
+                        0x0f, 0x05, // syscall
+                        0x4c, 0x89, 0xf0, // mov rax, r14
+                        0x41, 0x5e, // pop r14
+                        0x41, 0x5d, // pop r13
+                        0x41, 0x5c, // pop r12
+                        0x5d, // pop rbp
+                        0xc3, // ret
+                    ]
+                } else {
+                    vec![0xc3]
+                }
+            }
+            name if name.contains("rust_dealloc") => {
+                if target.os == crate::target::Os::Linux {
+                    // sys_munmap(ptr = rdi, size = rsi)
+                    vec![
+                        0x48, 0xc7, 0xc0, 0x0b, 0x00, 0x00, 0x00, // mov rax, 11
+                        0x0f, 0x05, // syscall
+                        0xc3, // ret
+                    ]
+                } else {
+                    vec![0xc3]
+                }
+            }
+            name if name.contains("rust_alloc") => {
+                if target.os == crate::target::Os::Linux {
+                    // sys_mmap(addr = 0, size = rdi, prot = READ|WRITE, flags = PRIVATE|ANON, fd = -1, off = 0)
+                    vec![
+                        0x48, 0x89, 0xf6, // mov rsi, rdi
+                        0x48, 0x31, 0xff, // xor rdi, rdi
+                        0x48, 0xc7, 0xc2, 0x03, 0x00, 0x00, 0x00, // mov rdx, 3
+                        0x49, 0xc7, 0xc2, 0x22, 0x00, 0x00, 0x00, // mov r10, 0x22
+                        0x49, 0xc7, 0xc0, 0xff, 0xff, 0xff, 0xff, // mov r8, -1
+                        0x49, 0x31, 0xc9, // xor r9, r9
+                        0x48, 0xc7, 0xc0, 0x09, 0x00, 0x00, 0x00, // mov rax, 9
+                        0x0f, 0x05, // syscall
+                        0xc3, // ret
+                    ]
+                } else {
+                    vec![0xc3]
+                }
+            }
+            name if name.contains("___rust_no_alloc_shim") => vec![0x00],
             "__multi3" => {
                 // 128-bit multiply: (rdi:rsi) * (rdx:rcx) -> rdx:rax
                 // Optimized 64x64->128 multiply using mul instruction

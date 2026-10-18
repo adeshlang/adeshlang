@@ -281,15 +281,25 @@ impl MachOReader {
                     String::new()
                 };
 
+                if (arch == Arch::X86_64 && r_type == 5) || (arch == Arch::AArch64 && r_type == 1) {
+                    // SUBTRACTOR relocation in Mach-O section-difference pairs.
+                    // The difference between section offsets is pre-calculated in the
+                    // section payload by the compiler and invariant under PIE sliding.
+                    continue;
+                }
+
                 let kind = match (arch, r_type, r_pcrel, r_length) {
-                    (Arch::AArch64, 1, true, _) => RelocationKind::AArch64Call26, // ARM64_RELOC_BRANCH26
-                    (Arch::AArch64, 2, true, _) => RelocationKind::AArch64Adrp, // ARM64_RELOC_PAGE21
-                    (Arch::AArch64, 3, false, _) => RelocationKind::AArch64AddLo12, // ARM64_RELOC_PAGEOFF12
-                    (Arch::AArch64, 4, true, _) => RelocationKind::AArch64Adrp, // ARM64_RELOC_GOT_LOAD_PAGE21
-                    (Arch::AArch64, 5, false, _) => RelocationKind::AArch64AddLo12, // ARM64_RELOC_GOT_LOAD_PAGEOFF12
+                    (Arch::AArch64, 2, true, _) => RelocationKind::AArch64Call26, // ARM64_RELOC_BRANCH26
+                    (Arch::AArch64, 3, true, _) => RelocationKind::AArch64Adrp, // ARM64_RELOC_PAGE21
+                    (Arch::AArch64, 4, false, _) => RelocationKind::AArch64AddLo12, // ARM64_RELOC_PAGEOFF12
+                    (Arch::AArch64, 5, true, _) => RelocationKind::AArch64Adrp, // ARM64_RELOC_GOT_LOAD_PAGE21
+                    (Arch::AArch64, 6, false, _) => RelocationKind::AArch64AddLo12, // ARM64_RELOC_GOT_LOAD_PAGEOFF12
+                    (Arch::AArch64, 0, false, 3) => RelocationKind::Absolute64, // ARM64_RELOC_UNSIGNED (len 3 = 8 bytes)
+                    (Arch::AArch64, 0, false, 2) => RelocationKind::Absolute32, // ARM64_RELOC_UNSIGNED (len 2 = 4 bytes)
                     (Arch::X86_64, 1, true, 2) => RelocationKind::PcRelative32, // X86_64_RELOC_SIGNED
                     (Arch::X86_64, 2, true, 2) => RelocationKind::PltRelative32, // X86_64_RELOC_BRANCH
-                    (Arch::X86_64, 4, true, 2) => RelocationKind::GotRelative32, // X86_64_RELOC_GOT_LOAD
+                    (Arch::X86_64, 3, true, 2) => RelocationKind::GotRelative32, // X86_64_RELOC_GOT_LOAD
+                    (Arch::X86_64, 4, true, 2) => RelocationKind::GotRelative32, // X86_64_RELOC_GOT
                     (Arch::X86_64, 0, false, 3) => RelocationKind::Absolute64, // X86_64_RELOC_UNSIGNED (len 3 = 8 bytes)
                     (Arch::X86_64, 0, false, 2) => RelocationKind::Absolute32, // X86_64_RELOC_UNSIGNED (len 2 = 4 bytes)
                     _ => {

@@ -487,7 +487,7 @@ impl Linker {
                 let importable = importable_pe || importable_elf || importable_macho;
 
                 if !importable && !crate::intrinsics::IntrinsicsEngine::is_intrinsic(name) {
-                    if is_pe && crate::os_router::OsApiRouter::is_stubbable_internal(name) {
+                    if crate::os_router::OsApiRouter::is_stubbable_internal(name) {
                         let off = data_stub_bytes.len() as u64;
                         data_stub_bytes.extend_from_slice(&[0u8; 8]);
                         data_stub_syms.push((name.clone(), off));

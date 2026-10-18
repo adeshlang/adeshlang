@@ -67,6 +67,9 @@ impl OsApiRouter {
     /// Returns true if this symbol is an internal Rust/Adesh runtime detail
     /// that should never appear in a DLL import table.
     pub fn is_internal(name: &str) -> bool {
+        if Self::is_adesh_runtime_symbol(name) {
+            return false;
+        }
         // Rust mangled symbols: legacy (_ZN... / ZN...) and v0 RFC 2603 (_R... / R_...)
         if name.starts_with("_ZN")
             || name.starts_with("ZN")
