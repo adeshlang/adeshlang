@@ -105,7 +105,10 @@ impl MachOWriter {
             crate::macho::codesign::apply_to_macho_bytes(&mut bytes, ident).map_err(|e| {
                 LinkError::new(
                     ErrorCode::SecurityViolation,
-                    format!("failed to ad-hoc code sign Mach-O executable for AArch64: {}", e),
+                    format!(
+                        "failed to ad-hoc code sign Mach-O executable for AArch64: {}",
+                        e
+                    ),
                 )
             })?;
         }
