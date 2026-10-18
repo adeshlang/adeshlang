@@ -1526,6 +1526,10 @@ impl OsApiRouter {
             || raw.starts_with("__gxx_")
             || raw.starts_with("__gcc_")
             || raw.starts_with("__libc_")
+            || raw.starts_with("_NSGet")
+            || clean.starts_with("NSGet")
+            || raw.starts_with("_dyld_")
+            || clean.starts_with("dyld_")
         {
             return true;
         }
@@ -1547,6 +1551,10 @@ impl OsApiRouter {
             .or_else(|| raw.strip_prefix("_imp_"))
             .unwrap_or(raw);
         let clean = sym_name.trim_start_matches('_');
+
+        if raw.is_empty() || sym_name.is_empty() || clean.is_empty() {
+            return SymbolRoute::Undefined;
+        }
 
         if Self::is_internal(raw) || Self::is_internal(sym_name) {
             return SymbolRoute::InternalRuntime;
@@ -1644,6 +1652,11 @@ impl OsApiRouter {
 
         // Required Adesh runtime symbols must not be silently treated as dynamic libSystem imports
         if Self::is_adesh_runtime_symbol(raw) || Self::is_adesh_runtime_symbol(sym_name) {
+            return SymbolRoute::Undefined;
+        }
+
+        // Only genuine C library / POSIX symbols may be imported from libSystem.
+        if !Self::is_libc_or_posix_symbol(raw) && !Self::is_libc_or_posix_symbol(sym_name) {
             return SymbolRoute::Undefined;
         }
 
