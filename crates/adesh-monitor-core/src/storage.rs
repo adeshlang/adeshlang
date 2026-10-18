@@ -352,6 +352,7 @@ impl HistoryStore {
             SessionStatus::Terminated => "terminated",
         };
         let duration_ms = duration_micros / 1000;
+        let redacted_error = error_message.map(|msg| crate::redaction::redact_text(msg).text);
 
         self.conn.execute(
             r#"
@@ -368,7 +369,7 @@ impl HistoryStore {
                 exit_code,
                 duration_ms,
                 end_time.to_rfc3339(),
-                error_message,
+                redacted_error,
                 session_id
             ],
         )?;
@@ -440,6 +441,10 @@ impl HistoryStore {
         stage: &CompilerStageEvent,
     ) -> Result<()> {
         let meta_json = serde_json::to_string(&stage.metadata).unwrap_or_else(|_| "{}".to_string());
+        let redacted_error = stage
+            .error_message
+            .as_deref()
+            .map(|msg| crate::redaction::redact_text(msg).text);
         self.conn.execute(
             r#"
             INSERT INTO compiler_stages (
@@ -452,7 +457,7 @@ impl HistoryStore {
                 stage.input_file,
                 stage.duration_micros,
                 if stage.success { 1 } else { 0 },
-                stage.error_message,
+                redacted_error,
                 meta_json
             ],
         )?;
@@ -460,6 +465,10 @@ impl HistoryStore {
     }
 
     pub fn record_linker_stage(&self, session_id: &str, stage: &LinkerStageEvent) -> Result<()> {
+        let redacted_error = stage
+            .error_message
+            .as_deref()
+            .map(|msg| crate::redaction::redact_text(msg).text);
         self.conn.execute(
             r#"
             INSERT INTO linker_stages (
@@ -479,7 +488,7 @@ impl HistoryStore {
                 stage.output_size_bytes.map(|b| b as i64),
                 stage.duration_micros,
                 if stage.success { 1 } else { 0 },
-                stage.error_message
+                redacted_error
             ],
         )?;
         Ok(())

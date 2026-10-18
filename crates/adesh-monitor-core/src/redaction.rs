@@ -28,32 +28,34 @@ static RULES: LazyLock<Vec<RuleDef>> = LazyLock::new(|| {
             info: RedactionRuleInfo {
                 id: "cred_flags".into(),
                 label: "Credential CLI Flags".into(),
-                description: "Masks --password / --token / --secret style command line flags".into(),
+                description: "Masks --password / --token / --secret style command line flags (quoted or unquoted)".into(),
                 example: "--password=***".into(),
                 severity: "critical".into(),
             },
             regex: Regex::new(
-                r#"(?i)(--?(?:password|passwd|pwd|token|api[-_]?key|apikey|secret|client[-_]?secret|access[-_]?key|private[-_]?key|credential)s?)([= \t]+)([^\s'"]+)"#,
+                r#"(?i)(--?(?:password|passwd|pwd|token|api[-_]?key|apikey|secret|client[-_]?secret|access[-_]?key|private[-_]?key|credential)s?[= \t]+)("[^"\r\n]*"|'[^'\r\n]*'|[^\s'"]+)"#,
             )
             .expect("cred_flags regex"),
-            value_group: 3,
-            template: "$1$2***",
+            value_group: 2,
+            template: "$1***",
         },
         RuleDef {
             info: RedactionRuleInfo {
                 id: "env_secrets".into(),
                 label: "Secret Environment Assignments".into(),
-                description: "Masks TOKEN= / SECRET= / PASSWORD= style environment variable assignments".into(),
+                description: "Masks TOKEN= / SECRET= / PASSWORD= style environment variable assignments (quoted or unquoted)".into(),
                 example: "GITHUB_TOKEN=***".into(),
                 severity: "critical".into(),
             },
             regex: Regex::new(
-                r#"(?i)((?:[A-Za-z0-9_]*(?:secret|token|password|passwd|apikey|api_key|private_key|access_key|credential|auth_key)[A-Za-z0-9_]*)[ \t]*=[ \t]*)([^\s'"]+)"#,
+                r#"(?i)((?:[A-Za-z0-9_]*(?:secret|token|password|passwd|apikey|api_key|private_key|access_key|credential|auth_key)[A-Za-z0-9_]*)[ \t]*=[ \t]*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s'"]+)"#,
             )
             .expect("env_secrets regex"),
             value_group: 2,
             template: "$1***",
         },
+
+
         RuleDef {
             info: RedactionRuleInfo {
                 id: "bearer".into(),
@@ -62,7 +64,7 @@ static RULES: LazyLock<Vec<RuleDef>> = LazyLock::new(|| {
                 example: "Bearer ***".into(),
                 severity: "high".into(),
             },
-            regex: Regex::new(r"(?i)(\bbearer[ \t]+)([A-Za-z0-9\-._~+/]+=*)")
+            regex: Regex::new(r"(?i)(\b(?:bearer|basic)[ \t]+)([A-Za-z0-9\-._~+/]+=*)")
                 .expect("bearer regex"),
             value_group: 2,
             template: "$1***",
@@ -90,6 +92,19 @@ static RULES: LazyLock<Vec<RuleDef>> = LazyLock::new(|| {
             },
             regex: Regex::new(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b")
                 .expect("jwt regex"),
+            value_group: 0,
+            template: "***",
+        },
+        RuleDef {
+            info: RedactionRuleInfo {
+                id: "generic_api_key".into(),
+                label: "Generic Service API Keys".into(),
+                description: "Masks OpenAI, Anthropic, Stripe, and Google API keys".into(),
+                example: "sk-***".into(),
+                severity: "critical".into(),
+            },
+            regex: Regex::new(r"\b(?:sk-[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z-_]{35})\b")
+                .expect("generic_api_key regex"),
             value_group: 0,
             template: "***",
         },
@@ -134,12 +149,12 @@ static RULES: LazyLock<Vec<RuleDef>> = LazyLock::new(|| {
             info: RedactionRuleInfo {
                 id: "private_key".into(),
                 label: "PEM Private Key Blocks".into(),
-                description: "Masks PEM/OpenSSH private key headers captured in arguments".into(),
+                description: "Masks multiline PEM/OpenSSH private key material or headers".into(),
                 example: "-----BEGIN *** PRIVATE KEY-----".into(),
                 severity: "critical".into(),
             },
             regex: Regex::new(
-                r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----",
+                r"(?s)-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----.*?-----END (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----|-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----",
             )
             .expect("private_key regex"),
             value_group: 0,
@@ -154,7 +169,7 @@ pub fn builtin_rules() -> Vec<RedactionRuleInfo> {
 }
 
 fn is_already_masked(value: &str) -> bool {
-    let v = value.trim();
+    let v = value.trim().trim_matches(|c| c == '"' || c == '\'').trim();
     (!v.is_empty() && v.chars().all(|c| c == '*')) || v == "<redacted>"
 }
 
@@ -258,5 +273,36 @@ mod tests {
         let out = redact_text("adesh build main.adesh --release");
         assert_eq!(out.text, "adesh build main.adesh --release");
         assert!(out.findings.is_empty());
+    }
+
+    #[test]
+    fn masks_quoted_credential_flags_and_env() {
+        let out = redact_text("adesh compile --password=\"secret 123\" --token='foo_bar_token'");
+        assert!(out.text.contains("--password=***"), "{}", out.text);
+        assert!(out.text.contains("--token=***"), "{}", out.text);
+        assert!(!out.text.contains("secret 123"));
+
+        let env_out = redact_text("API_KEY=\"super_secret_api_key\" adesh run");
+        assert!(env_out.text.contains("API_KEY=***"), "{}", env_out.text);
+        assert!(!env_out.text.contains("super_secret_api_key"));
+    }
+
+    #[test]
+    fn masks_generic_api_keys_and_basic_auth() {
+        let out = redact_text(
+            "error communicating with sk-1234567890abcdef1234567890 and Basic dXNlcjpwYXNzd29yZA==",
+        );
+        assert!(!out.text.contains("sk-1234567890abcdef1234567890"));
+        assert!(out.text.contains("Basic ***"), "{}", out.text);
+    }
+
+    #[test]
+    fn masks_multiline_private_key_blocks() {
+        let multiline = "Header\n-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0...\n...more...\n-----END RSA PRIVATE KEY-----\nFooter";
+        let out = redact_text(multiline);
+        assert!(!out.text.contains("MIIEowIBAAKCAQEA0"), "{}", out.text);
+        assert!(out.text.contains("***"), "{}", out.text);
+        assert!(out.text.contains("Header"));
+        assert!(out.text.contains("Footer"));
     }
 }

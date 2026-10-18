@@ -13,10 +13,28 @@ pub const DEFAULT_IPC_ENDPOINT: &str = r"\\.\pipe\adesh_observatory_ipc";
 #[cfg(not(windows))]
 pub const DEFAULT_IPC_ENDPOINT: &str = "/tmp/adesh_observatory.sock";
 
-/// The desktop app refreshes this file while it is open. Telemetry producers
+/// Default lease expiration timeout in seconds.
+/// The desktop or collector process refreshes its lease every 5s; 15s allows for transient lag.
+pub const LEASE_EXPIRY_SECS: u64 = 15;
+
+/// State of an observatory capture lease on disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeaseState {
+    /// Active lease held by a currently running desktop or collector process.
+    Active { pid: u32 },
+    /// No lease file exists.
+    Missing,
+    /// Lease file exists but its timestamp / modification time has expired.
+    Expired,
+    /// Lease file content is empty or cannot be parsed.
+    Malformed,
+    /// Lease file points to a PID that is no longer running (abnormal process termination).
+    StaleDeadPid { pid: u32 },
+}
+
+/// The desktop app or CLI collector refreshes this file while active. Telemetry producers
 /// consult it before allocating envelopes, opening IPC, or touching SQLite.
-/// A short expiry means an uncleanly terminated desktop process cannot leave
-/// background collection enabled indefinitely.
+/// A short expiry means an uncleanly terminated process cannot leave background collection enabled indefinitely.
 pub fn capture_lease_path() -> std::path::PathBuf {
     crate::storage::HistoryStore::default_db_path()
         .parent()
@@ -24,17 +42,165 @@ pub fn capture_lease_path() -> std::path::PathBuf {
         .join("observatory.capture")
 }
 
-pub fn capture_is_active() -> bool {
-    // Allow opting out of telemetry via environment variable
-    if std::env::var("ADESH_NO_OBSERVATORY")
-        .map(|v| v == "1" || v == "true")
+/// Inspect the liveness of a process by PID across platforms without external tools.
+#[cfg(windows)]
+pub fn is_pid_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle == 0 {
+            return false;
+        }
+        let mut exit_code: u32 = 0;
+        let ok = GetExitCodeProcess(handle, &mut exit_code);
+        CloseHandle(handle);
+        ok != 0 && exit_code == 259 // STILL_ACTIVE (0x103)
+    }
+}
+
+#[cfg(not(windows))]
+pub fn is_pid_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
+/// Inspect and validate a capture lease file on disk.
+/// Automatically cleans up stale or malformed lease files when safe to do so.
+pub fn inspect_lease_file(path: &std::path::Path) -> LeaseState {
+    let meta = match std::fs::metadata(path) {
+        Ok(m) => m,
+        Err(_) => return LeaseState::Missing,
+    };
+
+    // Check modification time expiration
+    if let Ok(mod_time) = meta.modified()
+        && let Ok(elapsed) = std::time::SystemTime::now().duration_since(mod_time)
+        && elapsed.as_secs() > LEASE_EXPIRY_SECS
+    {
+        let _ = std::fs::remove_file(path);
+        return LeaseState::Expired;
+    }
+
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return LeaseState::Malformed,
+    };
+
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        let _ = std::fs::remove_file(path);
+        return LeaseState::Malformed;
+    }
+
+    let mut parsed_pid = None;
+    for line in trimmed.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("desktop_pid=") {
+            if let Ok(p) = rest.trim().parse::<u32>() {
+                parsed_pid = Some(p);
+                break;
+            }
+        } else if let Some(rest) = line.strip_prefix("pid=") {
+            if let Ok(p) = rest.trim().parse::<u32>() {
+                parsed_pid = Some(p);
+                break;
+            }
+        } else if let Ok(p) = line.parse::<u32>() {
+            parsed_pid = Some(p);
+            break;
+        }
+    }
+
+    let owner_pid = match parsed_pid {
+        Some(p) => p,
+        None => {
+            let _ = std::fs::remove_file(path);
+            return LeaseState::Malformed;
+        }
+    };
+
+    if !is_pid_alive(owner_pid) {
+        let _ = std::fs::remove_file(path);
+        return LeaseState::StaleDeadPid { pid: owner_pid };
+    }
+
+    LeaseState::Active { pid: owner_pid }
+}
+
+/// Create or atomically refresh a capture lease for the current process or designated PID.
+pub fn create_capture_lease(pid: u32) -> std::io::Result<()> {
+    let path = capture_lease_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    std::fs::write(
+        &path,
+        format!("desktop_pid={}\nupdated_at={}\n", pid, epoch),
+    )
+}
+
+/// Renew an existing capture lease, updating its heartbeat on disk.
+pub fn renew_capture_lease(pid: u32) -> std::io::Result<()> {
+    create_capture_lease(pid)
+}
+
+/// Explicitly release and remove the capture lease file.
+pub fn release_capture_lease() -> std::io::Result<()> {
+    let path = capture_lease_path();
+    if path.exists() {
+        std::fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
+/// Determine whether observatory telemetry capture is active.
+///
+/// Priority order:
+/// 1. `ADESH_NO_OBSERVATORY` environment variable disables telemetry unconditionally.
+/// 2. `ADESH_OBSERVATORY_CAPTURE` or `ADESH_CAPTURE_ALL` forces telemetry active (e.g. for CI/headless tests).
+/// 3. Validated on-disk capture lease (checked for expiry and process liveness).
+pub fn capture_is_active_with_env<F>(mut get_env: F) -> bool
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    // 1. Opt-out takes highest precedence
+    if get_env("ADESH_NO_OBSERVATORY")
+        .map(|v| v == "1" || v == "true" || v == "yes")
         .unwrap_or(false)
     {
         return false;
     }
-    // Telemetry capture is active so that adesh build / run commands are reliably
-    // logged to the durable SQLite history for ARO inspection.
-    true
+
+    // 2. Explicit opt-in / test overrides
+    if get_env("ADESH_OBSERVATORY_CAPTURE")
+        .or_else(|| get_env("ADESH_CAPTURE_ALL"))
+        .map(|v| v == "1" || v == "true" || v == "always")
+        .unwrap_or(false)
+    {
+        return true;
+    }
+
+    // 3. Genuine lease validation
+    matches!(
+        inspect_lease_file(&capture_lease_path()),
+        LeaseState::Active { .. }
+    )
+}
+
+pub fn capture_is_active() -> bool {
+    capture_is_active_with_env(|k| std::env::var(k).ok())
 }
 
 /// Non-blocking telemetry emitter used inside instrumented processes (`adesh`, `adeshlink`, runtimes).
@@ -165,5 +331,81 @@ pub fn send_collector_rpc(req: &CollectorRequest) -> Result<CollectorResponse, S
         let mut line = String::new();
         reader.read_line(&mut line).map_err(|e| e.to_string())?;
         serde_json::from_str(&line).map_err(|e| format!("Invalid collector response: {}", e))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_pid_alive_current_process() {
+        assert!(is_pid_alive(std::process::id()));
+        assert!(!is_pid_alive(0));
+        assert!(!is_pid_alive(999_999_999));
+    }
+
+    #[test]
+    fn test_inspect_lease_missing() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("missing.capture");
+        assert_eq!(inspect_lease_file(&path), LeaseState::Missing);
+    }
+
+    #[test]
+    fn test_inspect_lease_active() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("active.capture");
+        let my_pid = std::process::id();
+        std::fs::write(&path, format!("desktop_pid={}\n", my_pid)).unwrap();
+        assert_eq!(
+            inspect_lease_file(&path),
+            LeaseState::Active { pid: my_pid }
+        );
+    }
+
+    #[test]
+    fn test_inspect_lease_malformed_and_cleanup() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("malformed.capture");
+        std::fs::write(&path, "not_a_valid_pid_content").unwrap();
+        assert_eq!(inspect_lease_file(&path), LeaseState::Malformed);
+        assert!(!path.exists(), "malformed lease file should be cleaned up");
+    }
+
+    #[test]
+    fn test_inspect_lease_dead_pid_stale_recovery() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("dead.capture");
+        let dead_pid = 999_999_999;
+        std::fs::write(&path, format!("desktop_pid={}\n", dead_pid)).unwrap();
+        assert_eq!(
+            inspect_lease_file(&path),
+            LeaseState::StaleDeadPid { pid: dead_pid }
+        );
+        assert!(
+            !path.exists(),
+            "stale lease file with dead PID should be cleaned up"
+        );
+    }
+
+    #[test]
+    fn test_capture_is_active_opt_out_precedence() {
+        let active = capture_is_active_with_env(|k| match k {
+            "ADESH_NO_OBSERVATORY" => Some("1".to_string()),
+            "ADESH_OBSERVATORY_CAPTURE" => Some("1".to_string()),
+            _ => None,
+        });
+        assert!(!active);
+    }
+
+    #[test]
+    fn test_capture_is_active_explicit_opt_in() {
+        let active = capture_is_active_with_env(|k| match k {
+            "ADESH_NO_OBSERVATORY" => None,
+            "ADESH_OBSERVATORY_CAPTURE" => Some("1".to_string()),
+            _ => None,
+        });
+        assert!(active);
     }
 }

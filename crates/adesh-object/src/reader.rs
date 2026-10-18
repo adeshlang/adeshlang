@@ -16,6 +16,18 @@ use crate::target::{
     TargetFeature, TargetFeatures, TpuArchitecture,
 };
 
+pub const MAX_SECTIONS: usize = 65_536;
+pub const MAX_SYMBOLS: usize = 1_000_000;
+pub const MAX_RELOCATIONS: usize = 1_000_000;
+pub const MAX_IMPORTS: usize = 1_000_000;
+pub const MAX_EXPORTS: usize = 1_000_000;
+pub const MAX_EXTENSIONS: usize = 65_536;
+pub const MAX_MEMORY_REGIONS: usize = 65_536;
+pub const MAX_FEATURES: usize = 65_536;
+pub const MAX_STRING_LEN: usize = 64 * 1024 * 1024; // 64 MB
+pub const MAX_SECTION_DATA: usize = 512 * 1024 * 1024; // 512 MB
+pub const MAX_PAYLOAD_LEN: usize = 64 * 1024 * 1024; // 64 MB
+
 pub struct AdobReader<'a> {
     data: &'a [u8],
     offset: usize,
@@ -29,6 +41,10 @@ impl<'a> AdobReader<'a> {
     pub fn read_object(data: &'a [u8]) -> AdobResult<AdobObject> {
         let mut reader = Self::new(data);
         reader.parse()
+    }
+
+    fn remaining_bytes(&self) -> usize {
+        self.data.len().saturating_sub(self.offset)
     }
 
     fn ensure_bytes(&self, count: usize) -> AdobResult<()> {
@@ -90,6 +106,16 @@ impl<'a> AdobReader<'a> {
 
     fn read_string(&mut self) -> AdobResult<String> {
         let len = self.read_u32_le()? as usize;
+        if len > MAX_STRING_LEN {
+            return Err(AdobError::new(
+                AdobErrorCode::InvalidMetadata,
+                format!(
+                    "String length {} exceeds maximum allowed length of {} bytes at offset 0x{:X}",
+                    len, MAX_STRING_LEN, self.offset
+                ),
+            )
+            .with_offset(self.offset));
+        }
         let bytes = self.read_bytes(len)?;
         String::from_utf8(bytes.to_vec()).map_err(|e| {
             AdobError::new(
@@ -234,6 +260,16 @@ impl<'a> AdobReader<'a> {
         };
 
         let feature_count = self.read_u32_le()? as usize;
+        if feature_count > MAX_FEATURES {
+            return Err(AdobError::new(
+                AdobErrorCode::InvalidMetadata,
+                format!(
+                    "Feature count {} exceeds MAX_FEATURES ({})",
+                    feature_count, MAX_FEATURES
+                ),
+            )
+            .with_offset(self.offset));
+        }
         let mut features = TargetFeatures::new();
         for _ in 0..feature_count {
             let f_name = self.read_string()?;
@@ -262,6 +298,67 @@ impl<'a> AdobReader<'a> {
         let mr_count = self.read_u32_le()? as usize;
         let ext_count = self.read_u32_le()? as usize;
 
+        if sec_count > MAX_SECTIONS {
+            return Err(AdobError::new(
+                AdobErrorCode::InvalidSection,
+                format!(
+                    "Section count {} exceeds MAX_SECTIONS ({})",
+                    sec_count, MAX_SECTIONS
+                ),
+            )
+            .with_offset(self.offset));
+        }
+        if sym_count > MAX_SYMBOLS {
+            return Err(AdobError::new(
+                AdobErrorCode::InvalidSymbol,
+                format!(
+                    "Symbol count {} exceeds MAX_SYMBOLS ({})",
+                    sym_count, MAX_SYMBOLS
+                ),
+            )
+            .with_offset(self.offset));
+        }
+        if imp_count > MAX_IMPORTS {
+            return Err(AdobError::new(
+                AdobErrorCode::InvalidMetadata,
+                format!(
+                    "Import count {} exceeds MAX_IMPORTS ({})",
+                    imp_count, MAX_IMPORTS
+                ),
+            )
+            .with_offset(self.offset));
+        }
+        if exp_count > MAX_EXPORTS {
+            return Err(AdobError::new(
+                AdobErrorCode::InvalidMetadata,
+                format!(
+                    "Export count {} exceeds MAX_EXPORTS ({})",
+                    exp_count, MAX_EXPORTS
+                ),
+            )
+            .with_offset(self.offset));
+        }
+        if mr_count > MAX_MEMORY_REGIONS {
+            return Err(AdobError::new(
+                AdobErrorCode::InvalidMetadata,
+                format!(
+                    "Memory region count {} exceeds MAX_MEMORY_REGIONS ({})",
+                    mr_count, MAX_MEMORY_REGIONS
+                ),
+            )
+            .with_offset(self.offset));
+        }
+        if ext_count > MAX_EXTENSIONS {
+            return Err(AdobError::new(
+                AdobErrorCode::CorruptExtension,
+                format!(
+                    "Extension count {} exceeds MAX_EXTENSIONS ({})",
+                    ext_count, MAX_EXTENSIONS
+                ),
+            )
+            .with_offset(self.offset));
+        }
+
         let header = AdobHeader {
             magic: *ADOB_MAGIC,
             version_major: major,
@@ -278,6 +375,21 @@ impl<'a> AdobReader<'a> {
 
         let mut obj = AdobObject::new(target);
         obj.header = header;
+
+        // Preallocate with capacity bounded by input size to prevent OOM
+        let remaining = self.remaining_bytes();
+        let safe_sec_cap = sec_count.min(remaining / 16);
+        obj.sections.reserve(safe_sec_cap);
+        let safe_sym_cap = sym_count.min(remaining / 16);
+        obj.symbols.reserve(safe_sym_cap);
+        let safe_imp_cap = imp_count.min(remaining / 4);
+        obj.imports.reserve(safe_imp_cap);
+        let safe_exp_cap = exp_count.min(remaining / 4);
+        obj.exports.reserve(safe_exp_cap);
+        let safe_mr_cap = mr_count.min(remaining / 16);
+        obj.memory_regions.reserve(safe_mr_cap);
+        let safe_ext_cap = ext_count.min(remaining / 24);
+        obj.extensions.extensions.reserve(safe_ext_cap);
 
         // 4. Read Sections
         for _ in 0..sec_count {
@@ -302,10 +414,34 @@ impl<'a> AdobReader<'a> {
             let memory_region = self.read_opt_string()?;
 
             let data_len = self.read_u64_le()? as usize;
+            if data_len > MAX_SECTION_DATA {
+                return Err(AdobError::new(
+                    AdobErrorCode::InvalidSection,
+                    format!(
+                        "Section `{}` data length {} exceeds MAX_SECTION_DATA ({})",
+                        name, data_len, MAX_SECTION_DATA
+                    ),
+                )
+                .with_section(&name)
+                .with_offset(self.offset));
+            }
             let data_bytes = self.read_bytes(data_len)?.to_vec();
 
             let reloc_count = self.read_u32_le()? as usize;
-            let mut relocations = Vec::with_capacity(reloc_count);
+            if reloc_count > MAX_RELOCATIONS {
+                return Err(AdobError::new(
+                    AdobErrorCode::InvalidRelocation,
+                    format!(
+                        "Section `{}` relocation count {} exceeds MAX_RELOCATIONS ({})",
+                        name, reloc_count, MAX_RELOCATIONS
+                    ),
+                )
+                .with_section(&name)
+                .with_offset(self.offset));
+            }
+            // Ensure we don't allocate more than remaining bytes can reasonably hold
+            let safe_reloc_cap = reloc_count.min(self.remaining_bytes() / 20);
+            let mut relocations = Vec::with_capacity(safe_reloc_cap);
             for _ in 0..reloc_count {
                 let r_offset = self.read_u64_le()?;
                 let r_symbol = self.read_u32_le()?;
@@ -471,6 +607,16 @@ impl<'a> AdobReader<'a> {
             let ext_minor = self.read_u16_le()?;
             let ext_tag = self.read_string()?;
             let payload_len = self.read_u32_le()? as usize;
+            if payload_len > MAX_PAYLOAD_LEN {
+                return Err(AdobError::new(
+                    AdobErrorCode::CorruptExtension,
+                    format!(
+                        "Extension `{}` payload length {} exceeds MAX_PAYLOAD_LEN ({})",
+                        ext_tag, payload_len, MAX_PAYLOAD_LEN
+                    ),
+                )
+                .with_offset(self.offset));
+            }
             let payload = self.read_bytes(payload_len)?.to_vec();
             obj.extensions.push(AdobExtension::new(
                 uuid,

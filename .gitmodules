@@ -4,4 +4,4 @@
 
 [submodule "mcp"]
 	path = mcp
-	url = https://github.com/adeshlang/mcp.git
+	url = https://github.com/adeshlang/adesh-mcp.git

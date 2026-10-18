@@ -134,14 +134,18 @@ impl Collector {
         let active_sessions = self.active_sessions.clone();
         let events_ingested = self.events_ingested.clone();
 
+        let is_in_memory = self.config.db_path.is_none();
+        let is_in_memory_sampler = is_in_memory;
+
         // Background worker: Ingest queue & persist to SQLite
         thread::spawn(move || {
             while running.load(Ordering::SeqCst) {
                 match receiver.recv_timeout(Duration::from_millis(100)) {
                     Ok(envelope) => {
-                        // A collector can outlive the desktop window. Ignore
+                        // A persistent collector outliving the desktop window ignores
                         // queued events once its capture lease has expired.
-                        if !crate::ipc::capture_is_active() {
+                        // In-memory collectors (used in unit/integration tests) always process events.
+                        if !is_in_memory && !crate::ipc::capture_is_active() {
                             continue;
                         }
                         events_ingested.fetch_add(1, Ordering::Relaxed);
@@ -234,7 +238,7 @@ impl Collector {
                 thread::sleep(interval);
                 // Closing ARO ends sampling for already-running processes as
                 // well; do not leave a background collector polling them.
-                if !crate::ipc::capture_is_active() {
+                if !is_in_memory_sampler && !crate::ipc::capture_is_active() {
                     if let Ok(mut active) = active_for_sampler.lock() {
                         active.clear();
                     }

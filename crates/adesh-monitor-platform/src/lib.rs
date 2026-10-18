@@ -68,6 +68,7 @@ mod windows {
         last_sample_instant: Option<Instant>,
         last_user_time: u64,
         last_sys_time: u64,
+        peak_threads: std::collections::HashMap<u32, u32>,
     }
 
     impl WindowsMetricsProvider {
@@ -76,6 +77,7 @@ mod windows {
                 last_sample_instant: None,
                 last_user_time: 0,
                 last_sys_time: 0,
+                peak_threads: std::collections::HashMap::new(),
             }
         }
 
@@ -167,6 +169,25 @@ mod windows {
                 )
             };
 
+            let mut io_counters: windows_sys::Win32::System::Threading::IO_COUNTERS =
+                unsafe { std::mem::zeroed() };
+            let io_ok = unsafe {
+                windows_sys::Win32::System::Threading::GetProcessIoCounters(
+                    handle,
+                    &mut io_counters,
+                )
+            };
+            let disk_read_bytes = if io_ok != 0 {
+                io_counters.ReadTransferCount
+            } else {
+                0
+            };
+            let disk_write_bytes = if io_ok != 0 {
+                io_counters.WriteTransferCount
+            } else {
+                0
+            };
+
             if need_close {
                 unsafe { CloseHandle(handle) };
             }
@@ -230,17 +251,22 @@ mod windows {
             self.last_sys_time = current_sys_raw;
 
             let thread_count = Self::get_process_thread_count(pid);
+            let peak_thread_count = {
+                let entry = self.peak_threads.entry(pid).or_insert(thread_count);
+                *entry = (*entry).max(thread_count);
+                *entry
+            };
             let logical_cores = std::thread::available_parallelism()
                 .map(|n| n.get())
                 .unwrap_or(1);
             let cores_used = (cpu_percent / 100.0).max(0.1).min(logical_cores as f32);
 
-            let static_bytes = (working_set as f64 * 0.28) as u64;
-            let heap_bytes = (working_set as f64 * 0.52) as u64;
-            let dynamic_bytes = working_set.saturating_sub(static_bytes);
-            let reused_bytes = peak_working_set
-                .saturating_sub(working_set)
-                .max((working_set as f64 * 0.18) as u64);
+            // Allocator breakdown metrics are not inferred from OS RSS heuristics.
+            // 0 indicates uninstrumented/unavailable at the OS level.
+            let static_bytes = 0u64;
+            let heap_bytes = 0u64;
+            let dynamic_bytes = 0u64;
+            let reused_bytes = 0u64;
 
             Some(ProcessMetrics {
                 cpu_percent,
@@ -248,9 +274,9 @@ mod windows {
                 memory_peak_rss_bytes: peak_working_set.max(working_set),
                 memory_vms_bytes: vms,
                 thread_count,
-                peak_thread_count: thread_count,
-                disk_read_bytes: 0,
-                disk_write_bytes: 0,
+                peak_thread_count,
+                disk_read_bytes,
+                disk_write_bytes,
                 cpu_user_ms: user_ms,
                 cpu_sys_ms: sys_ms,
                 timestamp_utc: Utc::now(),
@@ -270,19 +296,16 @@ mod windows {
                 logical_cores: std::thread::available_parallelism()
                     .map(|n| n.get())
                     .unwrap_or(1),
-                total_memory_bytes: 0,
+                total_memory_bytes: crate::hardware::system_memory().0,
                 supports_process_cpu: true,
                 supports_process_memory: true,
-                supports_disk_io: false,
+                supports_disk_io: true,
                 supports_accelerators: false,
             }
         }
     }
 }
 
-// ============================================================================
-// LINUX IMPLEMENTATION (/proc filesystem)
-// ============================================================================
 #[cfg(target_os = "linux")]
 mod linux {
     use super::*;
@@ -293,6 +316,7 @@ mod linux {
         last_total_ticks: u64,
         clock_ticks_per_sec: u64,
         page_size_bytes: u64,
+        peak_threads: std::collections::HashMap<u32, u32>,
     }
 
     impl LinuxMetricsProvider {
@@ -308,6 +332,7 @@ mod linux {
                 } else {
                     4096
                 },
+                peak_threads: std::collections::HashMap::new(),
             }
         }
     }
@@ -349,21 +374,69 @@ mod linux {
             self.last_sample_instant = Some(now);
             self.last_total_ticks = total_ticks;
 
-            let static_bytes = (rss_bytes as f64 * 0.28) as u64;
-            let heap_bytes = (rss_bytes as f64 * 0.52) as u64;
-            let dynamic_bytes = rss_bytes.saturating_sub(static_bytes);
-            let reused_bytes = (rss_bytes as f64 * 0.18) as u64;
+            // Query genuine disk I/O from /proc/[pid]/io if available
+            let (disk_read_bytes, disk_write_bytes) =
+                if let Ok(io_str) = fs::read_to_string(format!("/proc/{}/io", pid)) {
+                    let mut r = 0u64;
+                    let mut w = 0u64;
+                    for line in io_str.lines() {
+                        if let Some(val) = line.strip_prefix("read_bytes:") {
+                            r = val.trim().parse().unwrap_or(0);
+                        } else if let Some(val) = line.strip_prefix("write_bytes:") {
+                            w = val.trim().parse().unwrap_or(0);
+                        }
+                    }
+                    (r, w)
+                } else {
+                    (0, 0)
+                };
+
+            // Query genuine peak RSS (VmHWM) from /proc/[pid]/status if available
+            let peak_rss_bytes =
+                if let Ok(status_str) = fs::read_to_string(format!("/proc/{}/status", pid)) {
+                    let mut peak = rss_bytes;
+                    for line in status_str.lines() {
+                        if let Some(val) = line.strip_prefix("VmHWM:") {
+                            let kb: u64 = val
+                                .trim()
+                                .trim_end_matches("kB")
+                                .trim()
+                                .parse()
+                                .unwrap_or(0);
+                            if kb > 0 {
+                                peak = kb * 1024;
+                            }
+                            break;
+                        }
+                    }
+                    peak.max(rss_bytes)
+                } else {
+                    rss_bytes
+                };
+
+            let peak_thread_count = {
+                let entry = self.peak_threads.entry(pid).or_insert(num_threads);
+                *entry = (*entry).max(num_threads);
+                *entry
+            };
+
+            // Allocator breakdown metrics are not inferred from OS RSS heuristics.
+            // 0 indicates uninstrumented/unavailable at the OS level.
+            let static_bytes = 0u64;
+            let heap_bytes = 0u64;
+            let dynamic_bytes = 0u64;
+            let reused_bytes = 0u64;
             let cores_used = (cpu_percent / 100.0).max(0.1);
 
             Some(ProcessMetrics {
                 cpu_percent,
                 memory_rss_bytes: rss_bytes,
-                memory_peak_rss_bytes: rss_bytes,
+                memory_peak_rss_bytes: peak_rss_bytes,
                 memory_vms_bytes: vsize_bytes,
                 thread_count: num_threads,
-                peak_thread_count: num_threads,
-                disk_read_bytes: 0,
-                disk_write_bytes: 0,
+                peak_thread_count,
+                disk_read_bytes,
+                disk_write_bytes,
                 cpu_user_ms: user_ms,
                 cpu_sys_ms: sys_ms,
                 timestamp_utc: Utc::now(),
@@ -383,7 +456,7 @@ mod linux {
                 logical_cores: std::thread::available_parallelism()
                     .map(|n| n.get())
                     .unwrap_or(1),
-                total_memory_bytes: 0,
+                total_memory_bytes: crate::hardware::system_memory().0,
                 supports_process_cpu: true,
                 supports_process_memory: true,
                 supports_disk_io: true,
@@ -406,6 +479,7 @@ mod macos {
         last_sample_instant: Option<Instant>,
         #[allow(dead_code)]
         last_total_time_ns: u64,
+        peak_threads: std::collections::HashMap<u32, u32>,
     }
 
     impl MacosMetricsProvider {
@@ -413,15 +487,13 @@ mod macos {
             Self {
                 last_sample_instant: None,
                 last_total_time_ns: 0,
+                peak_threads: std::collections::HashMap::new(),
             }
         }
     }
 
     impl MetricsProvider for MacosMetricsProvider {
         fn sample_process(&mut self, pid: u32, elapsed_micros: u64) -> Option<ProcessMetrics> {
-            // `ps` is supplied by every supported macOS release and exposes
-            // per-process RSS, virtual size, thread count and CPU percentage
-            // without requiring entitlement-restricted task_for_pid APIs.
             let output = Command::new("ps")
                 .args(["-o", "rss=,vsz=,thcount=,%cpu=", "-p", &pid.to_string()])
                 .output()
@@ -438,18 +510,28 @@ mod macos {
             let vms_bytes = fields[1].parse::<u64>().ok()?.saturating_mul(1024);
             let thread_count = fields[2].parse::<u32>().ok()?;
             let cpu_percent = fields[3].parse::<f32>().ok().unwrap_or(0.0);
-            let static_bytes = (rss_bytes as f64 * 0.28) as u64;
-            let heap_bytes = (rss_bytes as f64 * 0.52) as u64;
-            let dynamic_bytes = rss_bytes.saturating_sub(static_bytes);
-            let reused_bytes = (rss_bytes as f64 * 0.18) as u64;
+
+            let peak_thread_count = {
+                let entry = self.peak_threads.entry(pid).or_insert(thread_count);
+                *entry = (*entry).max(thread_count);
+                *entry
+            };
+
+            // Allocator breakdown metrics are not inferred from OS RSS heuristics.
+            // 0 indicates uninstrumented/unavailable at the OS level.
+            let static_bytes = 0u64;
+            let heap_bytes = 0u64;
+            let dynamic_bytes = 0u64;
+            let reused_bytes = 0u64;
             let cores_used = (cpu_percent / 100.0).max(0.1);
+
             Some(ProcessMetrics {
                 cpu_percent,
                 memory_rss_bytes: rss_bytes,
                 memory_peak_rss_bytes: rss_bytes,
                 memory_vms_bytes: vms_bytes,
                 thread_count,
-                peak_thread_count: thread_count,
+                peak_thread_count,
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
                 cpu_user_ms: 0,
@@ -471,7 +553,7 @@ mod macos {
                 logical_cores: std::thread::available_parallelism()
                     .map(|n| n.get())
                     .unwrap_or(1),
-                total_memory_bytes: 0,
+                total_memory_bytes: crate::hardware::system_memory().0,
                 supports_process_cpu: true,
                 supports_process_memory: true,
                 supports_disk_io: false,
@@ -526,7 +608,7 @@ mod fallback {
                 logical_cores: std::thread::available_parallelism()
                     .map(|n| n.get())
                     .unwrap_or(1),
-                total_memory_bytes: 0,
+                total_memory_bytes: crate::hardware::system_memory().0,
                 supports_process_cpu: false,
                 supports_process_memory: false,
                 supports_disk_io: false,
@@ -546,7 +628,35 @@ mod tests {
         let current_pid = std::process::id();
         let sample = provider.sample_process(current_pid, 500);
         assert!(sample.is_some());
+        let sample = sample.unwrap();
+        assert!(sample.memory_peak_rss_bytes >= sample.memory_rss_bytes);
+        assert!(sample.peak_thread_count >= sample.thread_count);
+        // Ensure no fabricated percentage heuristics were generated
+        assert_eq!(sample.memory_static_bytes, 0);
+        assert_eq!(sample.memory_heap_bytes, 0);
+        assert_eq!(sample.memory_dynamic_bytes, 0);
+        assert_eq!(sample.memory_reused_bytes, 0);
+
         let caps = provider.query_capabilities();
         assert!(caps.logical_cores >= 1);
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+        assert!(
+            caps.total_memory_bytes > 0,
+            "total_memory_bytes must be queried from OS"
+        );
+        #[cfg(any(windows, target_os = "linux"))]
+        assert!(
+            caps.supports_disk_io,
+            "disk I/O must be supported on Windows and Linux"
+        );
+    }
+
+    #[test]
+    fn test_peak_thread_count_tracking() {
+        let mut provider = create_platform_provider();
+        let current_pid = std::process::id();
+        let s1 = provider.sample_process(current_pid, 100).unwrap();
+        let s2 = provider.sample_process(current_pid, 200).unwrap();
+        assert!(s2.peak_thread_count >= s1.peak_thread_count);
     }
 }

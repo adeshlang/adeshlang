@@ -482,7 +482,7 @@ impl CallingConvention for SystemVX64CallingConvention {
     }
 }
 
-/// AAPCS64 (ARM 64-bit ABI - X0-X7).
+/// AAPCS64 (ARM 64-bit ABI - X0-X7, V0-V7).
 pub struct Aapcs64CallingConvention;
 
 const AAPCS64_ARGS: [PhysicalRegister; 8] = [
@@ -496,7 +496,51 @@ const AAPCS64_ARGS: [PhysicalRegister; 8] = [
     PhysicalRegister(7),
 ];
 
+const AAPCS64_FP_ARGS: [PhysicalRegister; 8] = [
+    PhysicalRegister(32), // V0
+    PhysicalRegister(33), // V1
+    PhysicalRegister(34), // V2
+    PhysicalRegister(35), // V3
+    PhysicalRegister(36), // V4
+    PhysicalRegister(37), // V5
+    PhysicalRegister(38), // V6
+    PhysicalRegister(39), // V7
+];
+
 const AAPCS64_RETS: [PhysicalRegister; 2] = [PhysicalRegister(0), PhysicalRegister(1)];
+const AAPCS64_FP_RETS: [PhysicalRegister; 2] = [PhysicalRegister(32), PhysicalRegister(33)];
+
+const AAPCS64_CALLER_SAVED: [PhysicalRegister; 16] = [
+    PhysicalRegister(0),
+    PhysicalRegister(1),
+    PhysicalRegister(2),
+    PhysicalRegister(3),
+    PhysicalRegister(4),
+    PhysicalRegister(5),
+    PhysicalRegister(6),
+    PhysicalRegister(7),
+    PhysicalRegister(8),
+    PhysicalRegister(9),
+    PhysicalRegister(10),
+    PhysicalRegister(11),
+    PhysicalRegister(12),
+    PhysicalRegister(13),
+    PhysicalRegister(14),
+    PhysicalRegister(15),
+];
+
+const AAPCS64_CALLEE_SAVED: [PhysicalRegister; 10] = [
+    PhysicalRegister(19),
+    PhysicalRegister(20),
+    PhysicalRegister(21),
+    PhysicalRegister(22),
+    PhysicalRegister(23),
+    PhysicalRegister(24),
+    PhysicalRegister(25),
+    PhysicalRegister(26),
+    PhysicalRegister(27),
+    PhysicalRegister(28),
+];
 
 impl CallingConvention for Aapcs64CallingConvention {
     fn name(&self) -> &'static str {
@@ -505,14 +549,20 @@ impl CallingConvention for Aapcs64CallingConvention {
     fn arg_registers(&self) -> &[PhysicalRegister] {
         &AAPCS64_ARGS
     }
+    fn fp_arg_registers(&self) -> &[PhysicalRegister] {
+        &AAPCS64_FP_ARGS
+    }
     fn return_registers(&self) -> &[PhysicalRegister] {
         &AAPCS64_RETS
     }
+    fn fp_return_registers(&self) -> &[PhysicalRegister] {
+        &AAPCS64_FP_RETS
+    }
     fn caller_saved_registers(&self) -> &[PhysicalRegister] {
-        &AAPCS64_ARGS
+        &AAPCS64_CALLER_SAVED
     }
     fn callee_saved_registers(&self) -> &[PhysicalRegister] {
-        &[]
+        &AAPCS64_CALLEE_SAVED
     }
     fn stack_alignment(&self) -> u32 {
         16

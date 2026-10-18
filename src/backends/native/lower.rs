@@ -10,15 +10,15 @@ use crate::parsing::hir::{
 };
 use adesh_codegen::abi::AbiType;
 use adesh_codegen::calling_convention::{
-    ArgumentLocation, CallingConvention, ReturnLocation, SystemVX64CallingConvention,
-    WindowsX64CallingConvention, resolve_call_arguments,
+    Aapcs64CallingConvention, ArgumentLocation, CallingConvention, ReturnLocation,
+    SystemVX64CallingConvention, WindowsX64CallingConvention, resolve_call_arguments,
 };
 use adesh_codegen::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
     NativeModule, PhysicalRegister, RegisterClass, VirtualRegister,
 };
 use adesh_codegen::opt::{SwitchCase, SwitchLowering};
-use adesh_object::{OperatingSystem, TargetDescriptor};
+use adesh_object::{Architecture, OperatingSystem, TargetDescriptor};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -457,9 +457,12 @@ impl<'a> FunctionLoweringContext<'a> {
         module: &'a mut NativeModule,
         target: &'a TargetDescriptor,
     ) -> Self {
-        let call_conv: Box<dyn CallingConvention> = match target.operating_system {
-            OperatingSystem::Windows => Box::new(WindowsX64CallingConvention),
-            _ => Box::new(SystemVX64CallingConvention),
+        let call_conv: Box<dyn CallingConvention> = match target.architecture {
+            Architecture::AArch64 => Box::new(Aapcs64CallingConvention),
+            _ => match target.operating_system {
+                OperatingSystem::Windows => Box::new(WindowsX64CallingConvention),
+                _ => Box::new(SystemVX64CallingConvention),
+            },
         };
 
         Self {
@@ -498,9 +501,12 @@ impl<'a> FunctionLoweringContext<'a> {
         fn_signatures: HashMap<String, (Vec<HirType>, Option<HirType>)>,
         variant_tags: HashMap<String, (i64, bool)>,
     ) -> Self {
-        let call_conv: Box<dyn CallingConvention> = match target.operating_system {
-            OperatingSystem::Windows => Box::new(WindowsX64CallingConvention),
-            _ => Box::new(SystemVX64CallingConvention),
+        let call_conv: Box<dyn CallingConvention> = match target.architecture {
+            Architecture::AArch64 => Box::new(Aapcs64CallingConvention),
+            _ => match target.operating_system {
+                OperatingSystem::Windows => Box::new(WindowsX64CallingConvention),
+                _ => Box::new(SystemVX64CallingConvention),
+            },
         };
 
         Self {
