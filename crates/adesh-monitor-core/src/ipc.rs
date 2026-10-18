@@ -69,7 +69,15 @@ pub fn is_pid_alive(pid: u32) -> bool {
     if pid == 0 {
         return false;
     }
-    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+    unsafe {
+        let ret = libc::kill(pid as libc::pid_t, 0);
+        if ret == 0 {
+            true
+        } else {
+            let err = std::io::Error::last_os_error();
+            err.raw_os_error() == Some(libc::EPERM)
+        }
+    }
 }
 
 /// Inspect and validate a capture lease file on disk.
@@ -145,10 +153,11 @@ pub fn create_capture_lease(pid: u32) -> std::io::Result<()> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    std::fs::write(
-        &path,
-        format!("desktop_pid={}\nupdated_at={}\n", pid, epoch),
-    )
+    let tmp_path = path.with_extension(format!("tmp.{}.{}", pid, std::process::id()));
+    let content = format!("desktop_pid={}\nupdated_at={}\n", pid, epoch);
+    std::fs::write(&tmp_path, content.as_bytes())?;
+    std::fs::rename(&tmp_path, &path)?;
+    Ok(())
 }
 
 /// Renew an existing capture lease, updating its heartbeat on disk.
@@ -407,5 +416,54 @@ mod tests {
             _ => None,
         });
         assert!(active);
+    }
+
+    #[test]
+    fn test_atomic_lease_creation_and_renewal() {
+        let my_pid = std::process::id();
+        let res = create_capture_lease(my_pid);
+        assert!(res.is_ok());
+        let path = capture_lease_path();
+        assert!(path.exists());
+        let res2 = renew_capture_lease(my_pid);
+        assert!(res2.is_ok());
+        let state = inspect_lease_file(&path);
+        assert_eq!(state, LeaseState::Active { pid: my_pid });
+        let _ = release_capture_lease();
+    }
+
+    #[test]
+    fn test_inspect_lease_expired() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("expired.capture");
+        let my_pid = std::process::id();
+        std::fs::write(&path, format!("desktop_pid={}\n", my_pid)).unwrap();
+        // Set modification time to 30 seconds ago
+        let old_time = std::time::SystemTime::now() - std::time::Duration::from_secs(30);
+        let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_modified(old_time).unwrap();
+        drop(file);
+        assert_eq!(inspect_lease_file(&path), LeaseState::Expired);
+        assert!(!path.exists(), "expired lease file should be cleaned up");
+    }
+
+    #[test]
+    fn test_concurrent_lease_renewals() {
+        let my_pid = std::process::id();
+        let mut handles = Vec::new();
+        for _ in 0..10 {
+            handles.push(std::thread::spawn(move || {
+                let _ = renew_capture_lease(my_pid);
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        let path = capture_lease_path();
+        assert_eq!(
+            inspect_lease_file(&path),
+            LeaseState::Active { pid: my_pid }
+        );
+        let _ = release_capture_lease();
     }
 }

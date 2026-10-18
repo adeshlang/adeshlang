@@ -30,14 +30,15 @@ This document provides an evidence-based accounting of verified capabilities acr
   - `crates/adesh-monitor-core/src/storage.rs`
   - `crates/adesh-monitor-platform/src/lib.rs`
 - **Implemented Fixes & Guarantees:**
-  - Replaced hardcoded `true` in `capture_is_active()` with genuine lease validation inspecting lease file timestamp, state, and process liveness (`is_pid_alive` via Windows `OpenProcess` and Unix `kill(0)`).
+  - Replaced hardcoded `true` in `capture_is_active()` with genuine lease validation inspecting lease file timestamp, state, and process liveness (`is_pid_alive` via Windows `OpenProcess` and Unix `kill(0)` with `EPERM` handling for accessible processes).
+  - Implemented atomic capture lease creation and renewal (`create_capture_lease`) using temporary file creation and atomic OS rename (`std::fs::rename`) to prevent concurrent file truncation or partial read race conditions.
   - Stale lease recovery automatically cleans up dead PID leases and leases expired past the 15-second heartbeat window.
   - Eliminated fabricated memory breakdown heuristics (`0.28 * rss`, `0.52 * rss`, `0.18 * rss`). Allocator breakdowns return honest zero until explicit Adesh runtime allocator instrumentation is active.
   - Real OS metrics queried on Windows: `GetProcessIoCounters` for disk I/O, `GlobalMemoryStatusEx` for total physical memory, and maintained high-water marks for peak thread counts.
   - Comprehensive PII and credential redaction: multiline PEM private key blocks, OpenAI `sk-` / Google `AIza` keys, quoted CLI parameters (`--password="secret"`), and quoted environment variables.
   - SQLite storage redacts all compiler/linker error payloads before persisting to disk.
 - **Tests That Prove Behavior:**
-  - `crates/adesh-monitor-core/src/ipc.rs`: `test_lease_lifecycle_active_and_expiry`, `test_lease_stale_pid_recovery`, `test_env_overrides`.
+  - `crates/adesh-monitor-core/src/ipc.rs`: `test_atomic_lease_creation_and_renewal`, `test_inspect_lease_expired`, `test_concurrent_lease_renewals`, `test_inspect_lease_dead_pid_stale_recovery`, `test_env_overrides`.
   - `crates/adesh-monitor-core/src/redaction.rs`: 8 unit tests verifying PEM blocks, bearer tokens, API keys, and idempotency.
   - `crates/adesh-monitor-platform/src/lib.rs`: `test_honest_memory_metrics`, `test_peak_threads_high_watermark`, `test_total_memory_nonzero`.
 
@@ -70,6 +71,8 @@ This document provides an evidence-based accounting of verified capabilities acr
 - **Implemented Fixes & Guarantees:**
   - Direct native PE32+ generation with zero external toolchain dependencies (no MSVC `link.exe` or LLVM `lld-link` needed).
   - Automated synthetic `mainCRTStartup` entry point, standard `.pdata` function tables, and import directories for `kernel32.dll` and `msvcrt.dll`.
+  - Complete AArch64 ELF PLT stub relocation synthesis: emits all three required AAPCS64 relocations (`AArch64Adrp` at +0, `AArch64AddLo12` at +4, `AArch64AddLo12` at +8) against GOT entries.
+  - Mach-O ad-hoc code signature error propagation: `MachOWriter` explicitly surfaces codesign errors as `LinkError::SecurityViolation` instead of silently suppressing signature insertion failures.
   - Small code model virtual address layout ensuring `PC32` relocations resolve without displacement overflow.
 - **Tests That Prove Behavior:**
   - `linker/tests/integration_tests.rs`: `test_generate_and_execute_pe_zero_deps` (links and executes standalone executable returning code 42), `test_pe_import_msvcrt_puts` (links against MSVCRT `puts` and executes with output capture).

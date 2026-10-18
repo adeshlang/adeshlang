@@ -536,7 +536,7 @@ impl Linker {
                         let (b, r, _) = crate::elf::aarch64::synthesize_elf_aarch64_plt_stub(
                             raw, file_idx, start_off,
                         );
-                        (b, vec![r])
+                        (b, r)
                     } else {
                         let (b, r, _) = crate::elf::x86_64::synthesize_elf_x86_64_plt_stub(
                             raw, file_idx, start_off,
