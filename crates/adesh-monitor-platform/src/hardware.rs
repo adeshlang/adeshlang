@@ -383,7 +383,7 @@ mod linux_impl {
         let out = run_capture("lspci", &["-k", "-s", slot], Duration::from_secs(2))?;
         for line in out.lines() {
             if let Some(v) = line.strip_prefix("Kernel driver in use:") {
-                return non_empty(v.to_string());
+                return non_empty(v);
             }
         }
         None

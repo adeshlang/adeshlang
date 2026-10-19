@@ -820,6 +820,7 @@ fn format_static_val_for_wasm_env(e: &Expr, var_values: &FastMap<String, Value>)
     }
 }
 
+#[allow(dead_code)]
 fn expr_to_value(e: &Expr) -> Option<Value> {
     expr_to_value_env(e, &FastMap::default())
 }

@@ -110,6 +110,14 @@ impl Linker {
                 let profile_dir = cwd.join("target").join(profile);
                 search_paths.push(profile_dir.clone());
                 search_paths.push(profile_dir.join("deps"));
+                if let Ok(entries) = std::fs::read_dir(profile_dir.join("build")) {
+                    for entry in entries.flatten() {
+                        let out_dir = entry.path().join("out");
+                        if out_dir.exists() {
+                            search_paths.push(out_dir);
+                        }
+                    }
+                }
             }
             search_paths.push(cwd.join("lib"));
             search_paths.push(cwd.clone());
@@ -487,7 +495,7 @@ impl Linker {
                 let importable = importable_pe || importable_elf || importable_macho;
 
                 if !importable && !crate::intrinsics::IntrinsicsEngine::is_intrinsic(name) {
-                    if is_pe && crate::os_router::OsApiRouter::is_stubbable_internal(name) {
+                    if crate::os_router::OsApiRouter::is_stubbable_internal(name) {
                         let off = data_stub_bytes.len() as u64;
                         data_stub_bytes.extend_from_slice(&[0u8; 8]);
                         data_stub_syms.push((name.clone(), off));
@@ -536,7 +544,7 @@ impl Linker {
                         let (b, r, _) = crate::elf::aarch64::synthesize_elf_aarch64_plt_stub(
                             raw, file_idx, start_off,
                         );
-                        (b, vec![r])
+                        (b, r)
                     } else {
                         let (b, r, _) = crate::elf::x86_64::synthesize_elf_x86_64_plt_stub(
                             raw, file_idx, start_off,

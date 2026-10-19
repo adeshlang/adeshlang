@@ -102,10 +102,15 @@ impl MachOWriter {
         // external `codesign` tool, enabling cross-compilation.
         if !is_shared && (target.arch == crate::target::Arch::AArch64) {
             let ident = path.file_name().and_then(|n| n.to_str()).unwrap_or("a.out");
-            // Best-effort: if we cannot insert the signature (e.g. no free
-            // header space), still write the binary without one rather than
-            // failing the link.
-            let _ = crate::macho::codesign::apply_to_macho_bytes(&mut bytes, ident);
+            crate::macho::codesign::apply_to_macho_bytes(&mut bytes, ident).map_err(|e| {
+                LinkError::new(
+                    ErrorCode::SecurityViolation,
+                    format!(
+                        "failed to ad-hoc code sign Mach-O executable for AArch64: {}",
+                        e
+                    ),
+                )
+            })?;
         }
 
         fs::write(path, &bytes)?;

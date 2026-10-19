@@ -30,6 +30,57 @@ fn test_x86_64_pc32_relocation() {
 }
 
 #[test]
+fn test_absolute32_bounds_and_overflow() {
+    let handler = get_handler(Arch::X86_64);
+    let mut image = vec![0u8; 8];
+
+    // Valid u32 max
+    let reloc = Relocation::new(0, "u32_max", RelocationKind::Absolute32, 0);
+    assert!(
+        handler
+            .apply(&reloc, 0x1000, u32::MAX as u64, 0, &mut image)
+            .is_ok()
+    );
+    assert_eq!(
+        u32::from_le_bytes(image[0..4].try_into().unwrap()),
+        u32::MAX
+    );
+
+    // Valid signed negative i32 min (-0x8000_0000)
+    let reloc = Relocation::new(0, "i32_min", RelocationKind::Absolute32, i32::MIN as i64);
+    assert!(
+        handler
+            .apply(&reloc, 0x1000, 0, i32::MIN as i64, &mut image)
+            .is_ok()
+    );
+    assert_eq!(
+        i32::from_le_bytes(image[0..4].try_into().unwrap()),
+        i32::MIN
+    );
+
+    // Overflow above u32::MAX (0x1_0000_0000)
+    let reloc = Relocation::new(0, "overflow_hi", RelocationKind::Absolute32, 0);
+    assert!(
+        handler
+            .apply(&reloc, 0x1000, 0x1_0000_0000, 0, &mut image)
+            .is_err()
+    );
+
+    // Underflow below i32::MIN (-0x8000_0001)
+    let reloc = Relocation::new(
+        0,
+        "underflow_lo",
+        RelocationKind::Absolute32,
+        i32::MIN as i64 - 1,
+    );
+    assert!(
+        handler
+            .apply(&reloc, 0x1000, 0, i32::MIN as i64 - 1, &mut image)
+            .is_err()
+    );
+}
+
+#[test]
 fn test_aarch64_call26_relocation() {
     let handler = get_handler(Arch::AArch64);
     let mut image = vec![0x00, 0x00, 0x00, 0x94]; // BL opcode with 0 imm

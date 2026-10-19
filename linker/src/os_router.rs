@@ -67,6 +67,9 @@ impl OsApiRouter {
     /// Returns true if this symbol is an internal Rust/Adesh runtime detail
     /// that should never appear in a DLL import table.
     pub fn is_internal(name: &str) -> bool {
+        if Self::is_adesh_runtime_symbol(name) {
+            return false;
+        }
         // Rust mangled symbols: legacy (_ZN... / ZN...) and v0 RFC 2603 (_R... / R_...)
         if name.starts_with("_ZN")
             || name.starts_with("ZN")
@@ -1131,7 +1134,11 @@ impl OsApiRouter {
         if clean.is_empty() || Self::is_internal(raw) || Self::is_internal(clean) {
             return false;
         }
-        if Self::is_libc_symbol(sym) || Self::is_libc_symbol(clean) {
+        if Self::is_libc_symbol(sym)
+            || Self::is_libc_symbol(clean)
+            || Self::is_libc_data_symbol(sym)
+            || Self::is_libc_data_symbol(clean)
+        {
             return true;
         }
 
@@ -1523,6 +1530,10 @@ impl OsApiRouter {
             || raw.starts_with("__gxx_")
             || raw.starts_with("__gcc_")
             || raw.starts_with("__libc_")
+            || raw.starts_with("_NSGet")
+            || clean.starts_with("NSGet")
+            || raw.starts_with("_dyld_")
+            || clean.starts_with("dyld_")
         {
             return true;
         }
@@ -1544,6 +1555,10 @@ impl OsApiRouter {
             .or_else(|| raw.strip_prefix("_imp_"))
             .unwrap_or(raw);
         let clean = sym_name.trim_start_matches('_');
+
+        if raw.is_empty() || sym_name.is_empty() || clean.is_empty() {
+            return SymbolRoute::Undefined;
+        }
 
         if Self::is_internal(raw) || Self::is_internal(sym_name) {
             return SymbolRoute::InternalRuntime;
@@ -1641,6 +1656,11 @@ impl OsApiRouter {
 
         // Required Adesh runtime symbols must not be silently treated as dynamic libSystem imports
         if Self::is_adesh_runtime_symbol(raw) || Self::is_adesh_runtime_symbol(sym_name) {
+            return SymbolRoute::Undefined;
+        }
+
+        // Only genuine C library / POSIX symbols may be imported from libSystem.
+        if !Self::is_libc_or_posix_symbol(raw) && !Self::is_libc_or_posix_symbol(sym_name) {
             return SymbolRoute::Undefined;
         }
 

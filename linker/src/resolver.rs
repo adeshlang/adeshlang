@@ -59,6 +59,28 @@ impl Default for SymbolResolver {
     }
 }
 
+fn find_rust_mangled_candidate<'a>(
+    undef_sym: &str,
+    index: &'a HashMap<String, Vec<usize>>,
+) -> Option<(String, &'a Vec<usize>)> {
+    if !undef_sym.starts_with("_ZN") && !undef_sym.starts_with("_R") {
+        return None;
+    }
+    // Demangle / extract base symbol signature
+    let base_name = if let Some(pos) = undef_sym.find("17h") {
+        &undef_sym[..pos]
+    } else {
+        undef_sym
+    };
+
+    for (k, v) in index {
+        if k.starts_with(base_name) {
+            return Some((k.clone(), v));
+        }
+    }
+    None
+}
+
 impl SymbolResolver {
     fn macho_symbol_aliases(name: &str, target: &crate::target::Target) -> Vec<String> {
         if target.format != crate::target::ObjectFormat::MachO {
@@ -134,6 +156,7 @@ impl SymbolResolver {
                     let candidates = ar.symbol_index.get(&undef_sym);
                     let prefixed;
                     let unprefixed;
+                    let mut matched_key: Option<String> = None;
                     let candidates = if candidates.is_some() {
                         candidates
                     } else if target.format == crate::target::ObjectFormat::MachO {
@@ -149,15 +172,22 @@ impl SymbolResolver {
                                 .or_else(|| ar.symbol_index.get(undef_sym.as_str()))
                         }
                     } else if target.arch == crate::target::Arch::X86 {
-                        // The `_`-prefix equivalence is a 32-bit x86
-                        // (COFF/ELF) name-mangling convention only. On 64-bit
-                        // targets `_foo` and `foo` are distinct symbols and
-                        // aliasing them binds the wrong definition.
                         let stripped = undef_sym.strip_prefix('_').unwrap_or(&undef_sym);
                         prefixed = format!("_{}", undef_sym);
                         ar.symbol_index
                             .get(stripped)
                             .or_else(|| ar.symbol_index.get(&prefixed))
+                    } else {
+                        None
+                    };
+
+                    let candidates = if candidates.is_some() {
+                        candidates
+                    } else if let Some((key, c)) =
+                        find_rust_mangled_candidate(&undef_sym, &ar.symbol_index)
+                    {
+                        matched_key = Some(key);
+                        Some(c)
                     } else {
                         None
                     };
@@ -190,6 +220,12 @@ impl SymbolResolver {
                             member_obj.is_archive_member = true;
                             member_obj.archive_name = Some(ar.path.display().to_string());
                             self.ingest_object(&member_obj, target)?;
+                            if let Some(ref key) = matched_key {
+                                if let Some(resolved) = self.table.get(key).cloned() {
+                                    self.table.insert(undef_sym.clone(), resolved);
+                                    self.undefined.remove(&undef_sym);
+                                }
+                            }
                             objects.push(member_obj);
                             progress = true;
                         }
@@ -209,32 +245,8 @@ impl SymbolResolver {
 
             match route {
                 SymbolRoute::InternalRuntime => {
-                    // Dead Rust/Adesh internal — remove from undefined, register weak zero stub
-                    self.undefined.remove(&undef);
-                    self.table.insert(
-                        undef.clone(),
-                        ResolvedSymbol {
-                            symbol: Symbol {
-                                name: undef,
-                                binding: SymbolBinding::Weak,
-                                visibility: crate::symbol::SymbolVisibility::Hidden,
-                                sym_type: crate::symbol::SymbolType::Function,
-                                section_index: None,
-                                value: 0,
-                                size: 0,
-                                is_defined: true,
-                                is_imported: false,
-                                is_exported: false,
-                                file_index: Some(0),
-                                alias_of: None,
-                                comdat_group: None,
-                                version: None,
-                            },
-                            defined_in_file_index: 0,
-                            defined_in_sec_index: None,
-                            references: Vec::new(),
-                        },
-                    );
+                    // Dead Rust/Adesh internal — bind as weak undefined (NULL)
+                    self.bind_weak_undefined(&undef);
                 }
                 SymbolRoute::Intrinsic => {
                     // Will be code-generated in Step 4.1 of linker.rs

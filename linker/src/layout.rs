@@ -2345,20 +2345,25 @@ impl LayoutEngine {
                         ));
                     }
                 };
-                if sym_va < tls_start || sym_va >= tls_start + tls_memsz {
-                    return Err(LinkError::new(
-                        ErrorCode::InvalidSection,
-                        format!(
-                            "initial-exec TLS variable `{}` resolves to 0x{:x}, outside the \
-                             TLS block 0x{:x}..0x{:x}",
-                            name,
-                            sym_va,
-                            tls_start,
-                            tls_start + tls_memsz
-                        ),
-                    ));
-                }
-                let tp_off = (sym_va as i64 - tls_start as i64) - tls_memsz as i64;
+                let is_weak_undef = resolver.weak_undefined_symbols.contains(name);
+                let tp_off = if is_weak_undef {
+                    0i64
+                } else {
+                    if sym_va < tls_start || sym_va >= tls_start + tls_memsz {
+                        return Err(LinkError::new(
+                            ErrorCode::InvalidSection,
+                            format!(
+                                "initial-exec TLS variable `{}` resolves to 0x{:x}, outside the \
+                                 TLS block 0x{:x}..0x{:x}",
+                                name,
+                                sym_va,
+                                tls_start,
+                                tls_start + tls_memsz
+                            ),
+                        ));
+                    }
+                    (sym_va as i64 - tls_start as i64) - tls_memsz as i64
+                };
 
                 if elf_dynamic {
                     // The loader owns the slot at runtime.

@@ -71,10 +71,6 @@ impl IntrinsicsEngine {
             || name.starts_with("__popcount")
             || name.starts_with("__parity")
             || name.starts_with("__bswap")
-            || name.starts_with("__rust")
-            || name.starts_with("___rust")
-            || name.starts_with("rust_")
-            || name.starts_with("_rust_")
             || name.starts_with("adesh_")
             || name.starts_with("__adesh_")
         // Plain libc functions (strlen, malloc, sqrt, ...) are deliberately not
