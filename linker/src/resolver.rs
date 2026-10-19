@@ -131,6 +131,15 @@ impl SymbolResolver {
                     if !self.undefined.contains(&undef_sym) {
                         continue;
                     }
+                    if undef_sym.contains("rust_alloc") {
+                        eprintln!("DEBUG_LINK: undef_sym={}", undef_sym);
+                        eprintln!("DEBUG_LINK: exact_get={:?}", ar.symbol_index.get(&undef_sym));
+                        for (k, v) in &ar.symbol_index {
+                            if k.contains("rust_alloc") {
+                                eprintln!("DEBUG_LINK: ar_key={} val={:?}", k, v);
+                            }
+                        }
+                    }
                     let candidates = ar.symbol_index.get(&undef_sym);
                     let prefixed;
                     let unprefixed;

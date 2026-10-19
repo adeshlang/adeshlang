@@ -110,6 +110,14 @@ impl Linker {
                 let profile_dir = cwd.join("target").join(profile);
                 search_paths.push(profile_dir.clone());
                 search_paths.push(profile_dir.join("deps"));
+                if let Ok(entries) = std::fs::read_dir(profile_dir.join("build")) {
+                    for entry in entries.flatten() {
+                        let out_dir = entry.path().join("out");
+                        if out_dir.exists() {
+                            search_paths.push(out_dir);
+                        }
+                    }
+                }
             }
             search_paths.push(cwd.join("lib"));
             search_paths.push(cwd.clone());
