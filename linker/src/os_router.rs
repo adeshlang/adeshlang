@@ -1134,7 +1134,11 @@ impl OsApiRouter {
         if clean.is_empty() || Self::is_internal(raw) || Self::is_internal(clean) {
             return false;
         }
-        if Self::is_libc_symbol(sym) || Self::is_libc_symbol(clean) {
+        if Self::is_libc_symbol(sym)
+            || Self::is_libc_symbol(clean)
+            || Self::is_libc_data_symbol(sym)
+            || Self::is_libc_data_symbol(clean)
+        {
             return true;
         }
 
