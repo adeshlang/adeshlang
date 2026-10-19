@@ -245,3 +245,42 @@ pub fn apply_to_macho_bytes(bytes: &mut Vec<u8>, identifier: &str) -> Result<(),
     bytes.extend_from_slice(&sig_blob);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_apply_to_macho_bytes_invalid_magic_fails() {
+        let mut truncated = vec![0u8; 16];
+        assert!(apply_to_macho_bytes(&mut truncated, "test").is_err());
+
+        let mut invalid_magic = vec![0u8; 32];
+        invalid_magic[0..4].copy_from_slice(&0x12345678u32.to_le_bytes());
+        let res = apply_to_macho_bytes(&mut invalid_magic, "test");
+        assert!(res.is_err());
+        assert!(res.unwrap_err().contains("unexpected Mach-O magic"));
+    }
+
+    #[test]
+    fn test_apply_to_macho_bytes_nonzero_padding_fails() {
+        let mut bad_header = vec![0u8; 64];
+        // MH_MAGIC_64
+        bad_header[0..4].copy_from_slice(&0xFEEDFACFu32.to_le_bytes());
+        // ncmds = 1, sizeofcmds = 16
+        bad_header[16..20].copy_from_slice(&1u32.to_le_bytes());
+        bad_header[20..24].copy_from_slice(&16u32.to_le_bytes());
+        // Load command at offset 32: cmd = 1, cmdsize = 16
+        bad_header[32..36].copy_from_slice(&1u32.to_le_bytes());
+        bad_header[36..40].copy_from_slice(&16u32.to_le_bytes());
+        // Non-zero padding at free_start (32 + 16 = 48)
+        bad_header[48] = 0xFF;
+
+        let res = apply_to_macho_bytes(&mut bad_header, "test");
+        assert!(res.is_err());
+        assert!(
+            res.unwrap_err()
+                .contains("header padding after load commands is non-zero")
+        );
+    }
+}

@@ -478,6 +478,9 @@ impl ElfReader {
                         (Arch::AArch64, R_AARCH64_ADD_ABS_LO12_NC) => {
                             RelocationKind::AArch64AddLo12
                         }
+                        (Arch::AArch64, R_AARCH64_LD64_GOT_LO12_NC) => {
+                            RelocationKind::AArch64LdSt64Lo12
+                        }
                         (Arch::Riscv64 | Arch::Riscv32, R_RISCV_64) => RelocationKind::Absolute64,
                         (Arch::Riscv64 | Arch::Riscv32, R_RISCV_32) => RelocationKind::Absolute32,
                         (Arch::Riscv64 | Arch::Riscv32, R_RISCV_CALL)

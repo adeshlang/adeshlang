@@ -249,7 +249,8 @@ impl MachOReader {
             if sec_idx >= obj.sections.len() {
                 continue;
             }
-            for r_i in 0..nreloc {
+            let mut r_i = 0;
+            while r_i < nreloc {
                 let r_off = reloff + r_i * 8;
                 if r_off + 8 > bytes.len() {
                     break;
@@ -269,6 +270,62 @@ impl MachOReader {
                 let r_extern = ((r_word1 >> 27) & 1) != 0;
                 let r_type = ((r_word1 >> 28) & 0xF) as u8;
 
+                let is_subtractor =
+                    (arch == Arch::X86_64 && r_type == 5) || (arch == Arch::AArch64 && r_type == 1);
+
+                if is_subtractor {
+                    if r_i + 1 >= nreloc {
+                        return Err(LinkError::new(
+                            ErrorCode::InvalidObject,
+                            format!(
+                                "malformed Mach-O relocation pair in section `{}`: SUBTRACTOR at address 0x{:x} has no paired relocation",
+                                obj.sections[sec_idx].name, r_address
+                            ),
+                        ));
+                    }
+                    let r_off2 = reloff + (r_i + 1) * 8;
+                    if r_off2 + 8 > bytes.len() {
+                        return Err(LinkError::new(
+                            ErrorCode::InvalidObject,
+                            format!(
+                                "truncated Mach-O relocation pair in section `{}` at offset 0x{:x}",
+                                obj.sections[sec_idx].name, r_off2
+                            ),
+                        ));
+                    }
+                    let r_address2 =
+                        u32::from_le_bytes(bytes[r_off2..r_off2 + 4].try_into().unwrap());
+                    let r_word1_2 =
+                        u32::from_le_bytes(bytes[r_off2 + 4..r_off2 + 8].try_into().unwrap());
+                    let r_pcrel2 = ((r_word1_2 >> 24) & 1) != 0;
+                    let r_length2 = (r_word1_2 >> 25) & 3;
+                    let r_type2 = ((r_word1_2 >> 28) & 0xF) as u8;
+
+                    if r_address2 != r_address
+                        || r_type2 != 0
+                        || r_pcrel2 != false
+                        || r_length2 != r_length
+                    {
+                        return Err(LinkError::new(
+                            ErrorCode::InvalidObject,
+                            format!(
+                                "malformed Mach-O relocation pair in section `{}`: SUBTRACTOR at address 0x{:x} (type {}, len {}) paired with invalid relocation at address 0x{:x} (type {}, len {})",
+                                obj.sections[sec_idx].name,
+                                r_address,
+                                r_type,
+                                r_length,
+                                r_address2,
+                                r_type2,
+                                r_length2
+                            ),
+                        ));
+                    }
+
+                    // Pair is validated; section payload pre-calculated relative offsets remain valid
+                    r_i += 2;
+                    continue;
+                }
+
                 let sym_name = if r_extern {
                     if r_symbolnum < obj.symbols.len() {
                         obj.symbols[r_symbolnum].name.clone()
@@ -280,13 +337,6 @@ impl MachOReader {
                 } else {
                     String::new()
                 };
-
-                if (arch == Arch::X86_64 && r_type == 5) || (arch == Arch::AArch64 && r_type == 1) {
-                    // SUBTRACTOR relocation in Mach-O section-difference pairs.
-                    // The difference between section offsets is pre-calculated in the
-                    // section payload by the compiler and invariant under PIE sliding.
-                    continue;
-                }
 
                 let kind = match (arch, r_type, r_pcrel, r_length) {
                     (Arch::AArch64, 2, true, _) => RelocationKind::AArch64Call26, // ARM64_RELOC_BRANCH26
@@ -319,6 +369,7 @@ impl MachOReader {
                     reloc.symbol_index = Some(r_symbolnum);
                 }
                 obj.sections[sec_idx].relocations.push(reloc);
+                r_i += 1;
             }
         }
 

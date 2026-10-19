@@ -122,6 +122,7 @@ impl AdobV2 {
                     RelocationKind::AArch64Call26 => 20,
                     RelocationKind::AArch64Adrp => 21,
                     RelocationKind::AArch64AddLo12 => 22,
+                    RelocationKind::AArch64LdSt64Lo12 => 23,
                     _ => 0,
                 };
                 buf.push(r_kind_id);
@@ -273,6 +274,7 @@ impl AdobV2 {
                     20 => RelocationKind::AArch64Call26,
                     21 => RelocationKind::AArch64Adrp,
                     22 => RelocationKind::AArch64AddLo12,
+                    23 => RelocationKind::AArch64LdSt64Lo12,
                     _ => RelocationKind::Absolute64,
                 };
 
@@ -416,7 +418,7 @@ impl AdobV2 {
                         RelocationKind::AArch64AddLo12
                     }
                     adesh_object::RelocationKind::AArch64_LdSt64Lo12 => {
-                        RelocationKind::AArch64AddLo12
+                        RelocationKind::AArch64LdSt64Lo12
                     }
                     // RISC-V arch-specific
                     adesh_object::RelocationKind::RiscV_Call => RelocationKind::RiscvCall,

@@ -2345,7 +2345,7 @@ impl LayoutEngine {
                         ));
                     }
                 };
-                let is_weak_undef = resolver.weak_undefined_symbols.contains(name) || sym_va == 0;
+                let is_weak_undef = resolver.weak_undefined_symbols.contains(name);
                 let tp_off = if is_weak_undef {
                     0i64
                 } else {

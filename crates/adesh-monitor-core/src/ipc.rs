@@ -153,7 +153,14 @@ pub fn create_capture_lease(pid: u32) -> std::io::Result<()> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let tmp_path = path.with_extension(format!("tmp.{}.{}", pid, std::process::id()));
+    static LEASE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let counter_val = LEASE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp_path = path.with_extension(format!(
+        "tmp.{}.{}.{}",
+        pid,
+        std::process::id(),
+        counter_val
+    ));
     let content = format!("desktop_pid={}\nupdated_at={}\n", pid, epoch);
     std::fs::write(&tmp_path, content.as_bytes())?;
     std::fs::rename(&tmp_path, &path)?;

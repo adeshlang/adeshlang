@@ -47,6 +47,8 @@ pub enum RelocationKind {
     AArch64Adrp,
     /// AArch64 Add immediate 12-bit (ADD)
     AArch64AddLo12,
+    /// AArch64 64-bit Load/Store scaled immediate 12-bit (LDR xT, [xN, #off])
+    AArch64LdSt64Lo12,
 
     /// RISC-V 32-bit PC-relative call (AUIPC + JALR)
     RiscvCall,
@@ -77,6 +79,7 @@ impl RelocationKind {
             | RelocationKind::AArch64Call26
             | RelocationKind::AArch64Adrp
             | RelocationKind::AArch64AddLo12
+            | RelocationKind::AArch64LdSt64Lo12
             | RelocationKind::RiscvCall
             | RelocationKind::RiscvBranch
             | RelocationKind::RiscvHi20
@@ -114,6 +117,7 @@ impl RelocationKind {
             RelocationKind::AArch64Call26 => "AARCH64_CALL26",
             RelocationKind::AArch64Adrp => "AARCH64_ADRP",
             RelocationKind::AArch64AddLo12 => "AARCH64_ADD_LO12",
+            RelocationKind::AArch64LdSt64Lo12 => "AARCH64_LDST64_LO12",
             RelocationKind::RiscvCall => "RISCV_CALL",
             RelocationKind::RiscvBranch => "RISCV_BRANCH",
             RelocationKind::RiscvHi20 => "RISCV_HI20",
@@ -222,9 +226,21 @@ impl RelocationHandler for DefaultRelocationHandler {
                 target_slice.copy_from_slice(&val.to_le_bytes());
             }
             RelocationKind::Absolute32 => {
-                let val = (symbol_va as i64).wrapping_add(addend);
-                let upper = (val as u64) >> 32;
-                if upper == 0 || upper == 1 || (val >= i32::MIN as i64 && val <= i32::MAX as i64) {
+                let val = match (symbol_va as i64).checked_add(addend) {
+                    Some(v) => v,
+                    None => {
+                        return Err(LinkError::relocation_overflow(
+                            reloc.kind.name(),
+                            &reloc.symbol_name,
+                            i64::MAX,
+                            i32::MIN as i64,
+                            u32::MAX as i64,
+                            None,
+                            Some(reloc.offset),
+                        ));
+                    }
+                };
+                if val >= i32::MIN as i64 && val <= u32::MAX as i64 {
                     let val32 = val as u32;
                     target_slice.copy_from_slice(&val32.to_le_bytes());
                 } else {
@@ -232,7 +248,7 @@ impl RelocationHandler for DefaultRelocationHandler {
                         reloc.kind.name(),
                         &reloc.symbol_name,
                         val,
-                        0,
+                        i32::MIN as i64,
                         u32::MAX as i64,
                         None,
                         Some(reloc.offset),
@@ -240,34 +256,62 @@ impl RelocationHandler for DefaultRelocationHandler {
                 }
             }
             RelocationKind::Absolute16 => {
-                let val = (symbol_va as i64).wrapping_add(addend);
-                if !(0..=u16::MAX as i64).contains(&val) {
+                let val = match (symbol_va as i64).checked_add(addend) {
+                    Some(v) => v,
+                    None => {
+                        return Err(LinkError::relocation_overflow(
+                            reloc.kind.name(),
+                            &reloc.symbol_name,
+                            i64::MAX,
+                            i16::MIN as i64,
+                            u16::MAX as i64,
+                            None,
+                            Some(reloc.offset),
+                        ));
+                    }
+                };
+                if val >= i16::MIN as i64 && val <= u16::MAX as i64 {
+                    target_slice.copy_from_slice(&(val as u16).to_le_bytes());
+                } else {
                     return Err(LinkError::relocation_overflow(
                         reloc.kind.name(),
                         &reloc.symbol_name,
                         val,
-                        0,
+                        i16::MIN as i64,
                         u16::MAX as i64,
                         None,
                         Some(reloc.offset),
                     ));
                 }
-                target_slice.copy_from_slice(&(val as u16).to_le_bytes());
             }
             RelocationKind::Absolute8 => {
-                let val = (symbol_va as i64).wrapping_add(addend);
-                if !(0..=u8::MAX as i64).contains(&val) {
+                let val = match (symbol_va as i64).checked_add(addend) {
+                    Some(v) => v,
+                    None => {
+                        return Err(LinkError::relocation_overflow(
+                            reloc.kind.name(),
+                            &reloc.symbol_name,
+                            i64::MAX,
+                            i8::MIN as i64,
+                            u8::MAX as i64,
+                            None,
+                            Some(reloc.offset),
+                        ));
+                    }
+                };
+                if val >= i8::MIN as i64 && val <= u8::MAX as i64 {
+                    target_slice[0] = val as u8;
+                } else {
                     return Err(LinkError::relocation_overflow(
                         reloc.kind.name(),
                         &reloc.symbol_name,
                         val,
-                        0,
+                        i8::MIN as i64,
                         u8::MAX as i64,
                         None,
                         Some(reloc.offset),
                     ));
                 }
-                target_slice[0] = val as u8;
             }
             RelocationKind::PcRelative32
             | RelocationKind::PltRelative32
@@ -352,6 +396,22 @@ impl RelocationHandler for DefaultRelocationHandler {
             }
             RelocationKind::AArch64AddLo12 => {
                 let imm12 = (((symbol_va as i64 + addend) & 0xFFF) as u32) << 10;
+                let mut insn = u32::from_le_bytes(target_slice.try_into().unwrap());
+                insn = (insn & !(0xFFF << 10)) | imm12;
+                target_slice.copy_from_slice(&insn.to_le_bytes());
+            }
+            RelocationKind::AArch64LdSt64Lo12 => {
+                let pageoff = (symbol_va as i64 + addend) & 0xFFF;
+                if (pageoff & 0x7) != 0 {
+                    return Err(LinkError::new(
+                        ErrorCode::RelocationOverflow,
+                        format!(
+                            "AArch64 LDST64_LO12 target offset 0x{:x} is not 8-byte aligned",
+                            pageoff
+                        ),
+                    ));
+                }
+                let imm12 = ((pageoff >> 3) as u32) << 10;
                 let mut insn = u32::from_le_bytes(target_slice.try_into().unwrap());
                 insn = (insn & !(0xFFF << 10)) | imm12;
                 target_slice.copy_from_slice(&insn.to_le_bytes());

@@ -116,7 +116,7 @@ pub fn synthesize_elf_aarch64_plt_stub(
             symbol_name: got_sym.clone(),
             symbol_index: None,
             file_index: None,
-            kind: RelocationKind::AArch64AddLo12,
+            kind: RelocationKind::AArch64LdSt64Lo12,
             addend: 0,
         },
         Relocation {
@@ -187,9 +187,41 @@ mod tests {
         assert_eq!(relocs[0].kind, RelocationKind::AArch64Adrp);
         assert_eq!(relocs[0].offset, 0);
         assert_eq!(relocs[0].symbol_name, "__got_printf");
-        assert_eq!(relocs[1].kind, RelocationKind::AArch64AddLo12);
+        assert_eq!(relocs[1].kind, RelocationKind::AArch64LdSt64Lo12);
         assert_eq!(relocs[1].offset, 4);
         assert_eq!(relocs[2].kind, RelocationKind::AArch64AddLo12);
         assert_eq!(relocs[2].offset, 8);
+    }
+
+    #[test]
+    fn test_elf_aarch64_plt_relocation_patching() {
+        use crate::relocation::{DefaultRelocationHandler, RelocationHandler};
+
+        let (mut bytes, relocs, _sym) = synthesize_elf_aarch64_plt_stub("foo", 0, 0);
+
+        // Place PLT stub at 0x1000, GOT slot at 0x2018
+        let handler = DefaultRelocationHandler;
+        let place_va = 0x1000;
+        let got_slot_va = 0x2018;
+
+        for reloc in &relocs {
+            handler
+                .apply(reloc, place_va + reloc.offset, got_slot_va, 0, &mut bytes)
+                .unwrap();
+        }
+
+        // 1. ADRP (offset 0): page_offset = (0x2000 - 0x1000) >> 12 = 1
+        let adrp_insn = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
+        // immlo = (1 & 3) << 29 = 1 << 29 = 0x20000000
+        // immhi = ((1 >> 2) & 0x7ffff) << 5 = 0
+        assert_eq!(adrp_insn & ((3 << 29) | (0x7ffff << 5)), 1 << 29);
+
+        // 2. LDR (offset 4): pageoff = 0x18, scaled by 8 = 3. Imm12 field at bits [21:10] = 3 << 10 = 0xC00
+        let ldr_insn = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+        assert_eq!((ldr_insn >> 10) & 0xFFF, 3);
+
+        // 3. ADD (offset 8): pageoff = 0x18. Imm12 field at bits [21:10] = 0x18 = 24
+        let add_insn = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
+        assert_eq!((add_insn >> 10) & 0xFFF, 24);
     }
 }
