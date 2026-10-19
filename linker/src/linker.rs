@@ -140,33 +140,45 @@ impl Linker {
         }
 
         for lib_name in &requested_libs {
-            let mut found = false;
+            let mut all_candidates = Vec::new();
             for search_dir in &search_paths {
-                let mut candidates = vec![
+                let unhashed = [
                     search_dir.join(format!("lib{}.a", lib_name)),
                     search_dir.join(format!("{}.lib", lib_name)),
                     search_dir.join(format!("lib{}.rlib", lib_name)),
                     search_dir.join(format!("{}.rlib", lib_name)),
                 ];
-                candidates.extend(hashed_library_candidates(search_dir, lib_name));
-                for p in candidates {
-                    if !p.exists() {
-                        continue;
-                    }
-                    if let Ok(bytes) = std::fs::read(&p) {
-                        if bytes.starts_with(b"!<arch>\n") {
-                            if let Ok(archive) =
-                                Archive::parse_with_target(&bytes, &p, &ctx.config.target)
-                            {
-                                ctx.archives.push(archive);
-                                found = true;
-                                break;
-                            }
-                        }
+                for p in unhashed {
+                    if p.exists() {
+                        all_candidates.push(p);
                     }
                 }
-                if found {
-                    break;
+                all_candidates.extend(hashed_library_candidates(search_dir, lib_name));
+            }
+            all_candidates.sort_by_key(|path| {
+                let is_rlib = path.extension().and_then(|e| e.to_str()) == Some("rlib");
+                (
+                    is_rlib,
+                    std::cmp::Reverse(
+                        path.metadata()
+                            .and_then(|metadata| metadata.modified())
+                            .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+                    ),
+                )
+            });
+
+            let mut found = false;
+            for p in all_candidates {
+                if let Ok(bytes) = std::fs::read(&p) {
+                    if bytes.starts_with(b"!<arch>\n") {
+                        if let Ok(archive) =
+                            Archive::parse_with_target(&bytes, &p, &ctx.config.target)
+                        {
+                            ctx.archives.push(archive);
+                            found = true;
+                            break;
+                        }
+                    }
                 }
             }
             if !found && ctx.config.libraries.contains(lib_name) {
@@ -260,7 +272,10 @@ impl Linker {
         } else if is_elf && !ctx.config.shared && !ctx.resolver.table.contains_key("_start") {
             let supported = matches!(
                 ctx.config.target.arch,
-                crate::target::Arch::X86_64 | crate::target::Arch::AArch64
+                crate::target::Arch::X86_64
+                    | crate::target::Arch::AArch64
+                    | crate::target::Arch::Riscv64
+                    | crate::target::Arch::Riscv32
             );
             if !supported {
                 return Err(LinkError::new(
@@ -271,7 +286,7 @@ impl Linker {
                     ),
                 )
                 .with_suggestion(
-                    "Provide a `_start` definition in an input object: the linker only synthesizes x86_64 and AArch64 Linux startup stubs.",
+                    "Provide a `_start` definition in an input object: the linker only synthesizes x86_64, AArch64, and RISC-V Linux startup stubs.",
                 ));
             }
             missing_symbols.push("_start".to_string());
@@ -355,15 +370,23 @@ impl Linker {
                 && !ctx.config.shared
                 && missing_symbols.contains(&"_start".to_string())
             {
-                let (bytes, relocs, syms) = if ctx.config.target.arch
-                    == crate::target::Arch::AArch64
-                {
-                    crate::elf::aarch64::synthesize_elf_aarch64_entry(
+                let (bytes, relocs, syms) = match ctx.config.target.arch {
+                    crate::target::Arch::AArch64 => {
+                        crate::elf::aarch64::synthesize_elf_aarch64_entry(
+                            &program_entry_symbol,
+                            file_idx,
+                        )
+                    }
+                    crate::target::Arch::Riscv64 | crate::target::Arch::Riscv32 => {
+                        crate::elf::riscv64::synthesize_elf_riscv64_entry(
+                            &program_entry_symbol,
+                            file_idx,
+                        )
+                    }
+                    _ => crate::elf::x86_64::synthesize_elf_x86_64_entry(
                         &program_entry_symbol,
                         file_idx,
-                    )
-                } else {
-                    crate::elf::x86_64::synthesize_elf_x86_64_entry(&program_entry_symbol, file_idx)
+                    ),
                 };
                 let start_off = code_bytes.len() as u64;
                 code_bytes.extend_from_slice(&bytes);
@@ -405,6 +428,8 @@ impl Linker {
                     // Image base is defined by the layout engine at its real
                     // virtual address.
                     || name == "__ImageBase"
+                    // MSVC C++ RTTI type_info vftable: data symbol in .rdata, never an import thunk
+                    || name == "??_7type_info@@6B@"
                 {
                     continue;
                 }
@@ -542,6 +567,13 @@ impl Linker {
                         .unwrap_or(name);
                     if ctx.config.target.arch == crate::target::Arch::AArch64 {
                         let (b, r, _) = crate::elf::aarch64::synthesize_elf_aarch64_plt_stub(
+                            raw, file_idx, start_off,
+                        );
+                        (b, r)
+                    } else if ctx.config.target.arch == crate::target::Arch::Riscv64
+                        || ctx.config.target.arch == crate::target::Arch::Riscv32
+                    {
+                        let (b, r, _) = crate::elf::riscv64::synthesize_elf_riscv64_plt_stub(
                             raw, file_idx, start_off,
                         );
                         (b, r)
@@ -759,6 +791,33 @@ impl Linker {
                     version: None,
                 };
                 synth_symbols.push(flt_sym);
+            }
+
+            // Add ??_7type_info@@6B@ in .rdata if requested or missing on PE
+            if is_pe
+                && (missing_symbols.iter().any(|s| s == "??_7type_info@@6B@")
+                    || ctx.resolver.table.contains_key("??_7type_info@@6B@"))
+            {
+                let ti_sec_idx = synth_obj.sections.len();
+                let ti_sec = crate::section::Section::new_data(".rdata", vec![0u8; 16], false, 8);
+                synth_obj.add_section(ti_sec);
+                let ti_sym = crate::symbol::Symbol {
+                    name: "??_7type_info@@6B@".to_string(),
+                    binding: crate::symbol::SymbolBinding::Global,
+                    visibility: crate::symbol::SymbolVisibility::Default,
+                    sym_type: crate::symbol::SymbolType::Object,
+                    section_index: Some(ti_sec_idx),
+                    value: 0,
+                    size: 16,
+                    is_defined: true,
+                    is_imported: false,
+                    is_exported: false,
+                    file_index: Some(file_idx),
+                    alias_of: None,
+                    comdat_group: None,
+                    version: None,
+                };
+                synth_symbols.push(ti_sym);
             }
 
             for sym in synth_symbols {

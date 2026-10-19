@@ -93,6 +93,24 @@ fn main() {
         return;
     }
 
+    // Handle --explain
+    if let Some(ref code) = parsed.explain_code {
+        if code.eq_ignore_ascii_case("list") {
+            println!("{}", adeshlang::diagnostics::list_diagnostics());
+            return;
+        }
+        match adeshlang::diagnostics::explain_code(code) {
+            Ok(explanation) => {
+                println!("{}", explanation);
+                return;
+            }
+            Err(err) => {
+                eprintln!("{}", err);
+                std::process::exit(1);
+            }
+        }
+    }
+
     // Apply color settings
     if parsed.config.io.no_color {
         control::set_override(false);
@@ -102,6 +120,41 @@ fn main() {
     if args.iter().any(|a| a == "--no-color") {
         control::set_override(false);
     }
+
+    // Configure Adesh-owned panic handler with ADESH_BACKTRACE / --debug-backtrace control
+    let show_backtrace = parsed.debug_backtrace
+        || std::env::var("ADESH_BACKTRACE")
+            .map(|v| v == "1" || v == "full")
+            .unwrap_or(false);
+    std::panic::set_hook(Box::new(move |info| {
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "unknown location".to_string());
+        let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
+            *s
+        } else if let Some(s) = info.payload().downcast_ref::<String>() {
+            s.as_str()
+        } else {
+            "unexpected failure"
+        };
+
+        eprintln!(
+            "\x1b[1;31merror: internal compiler error\x1b[0m: Adesh encountered an unexpected failure"
+        );
+        eprintln!("  --> {}", location);
+        eprintln!("   = note: {}", payload);
+        if show_backtrace {
+            eprintln!(
+                "   = backtrace:\n{:?}",
+                std::backtrace::Backtrace::capture()
+            );
+        } else {
+            eprintln!(
+                "   = note: run with `ADESH_BACKTRACE=1` or `adesh --debug-backtrace` to display a backtrace"
+            );
+        }
+    }));
 
     adeshlang::runtime::thread::boot_cli_watchdog(parsed.config.run_timeout);
 
@@ -118,7 +171,7 @@ fn main() {
     let panicked = handle.join().is_err();
     adeshlang::runtime::thread::disarm_watchdog();
     if panicked {
-        eprintln!("Error: Main execution thread panicked");
+        eprintln!("error: internal compiler error: Adesh encountered an unexpected failure");
         adeshlang::cli::observatory::finish_observatory_session(101, Some("Panicked"));
         std::process::exit(101);
     }
@@ -611,7 +664,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                 &body,
                 Some(&in_path.to_string_lossy()),
             ) {
-                eprintln!("Type Error: {}", e);
+                eprintln!("{}", e);
                 std::process::exit(1);
             }
             // Enforce ownership checks
@@ -620,7 +673,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                 &parsed.config,
                 Some(&in_path.to_string_lossy()),
             ) {
-                eprintln!("Ownership Error: {}", e);
+                eprintln!("{}", e);
                 std::process::exit(1);
             }
             match adeshlang::execution::bytecode::compile_to_file_v2(&body, &out_path) {
@@ -650,7 +703,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                 &body,
                 Some(&in_path.to_string_lossy()),
             ) {
-                eprintln!("Type Error: {}", e);
+                eprintln!("{}", e);
                 std::process::exit(1);
             }
             // Enforce ownership checks
@@ -659,7 +712,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                 &parsed.config,
                 Some(&in_path.to_string_lossy()),
             ) {
-                eprintln!("Ownership Error: {}", e);
+                eprintln!("{}", e);
                 std::process::exit(1);
             }
             match adeshlang::backends::wasm::compile_to_file(&body, &out_path) {
@@ -693,7 +746,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                 &src,
                 Some(&in_path.to_string_lossy()),
             ) {
-                eprintln!("Type Error: {}", e);
+                eprintln!("{}", e);
                 std::process::exit(1);
             }
             // Enforce ownership checks
@@ -702,7 +755,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                 &parsed.config,
                 Some(&in_path.to_string_lossy()),
             ) {
-                eprintln!("Ownership Error: {}", e);
+                eprintln!("{}", e);
                 std::process::exit(1);
             }
             let mut build_config = adeshlang::cli::build::AotBuildConfig::new(in_path);
@@ -736,7 +789,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                 &src,
                 Some(&in_path.to_string_lossy()),
             ) {
-                eprintln!("Type Error: {}", e);
+                eprintln!("{}", e);
                 std::process::exit(1);
             }
 
@@ -746,7 +799,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                 &parsed.config,
                 Some(&in_path.to_string_lossy()),
             ) {
-                eprintln!("Ownership Error: {}", e);
+                eprintln!("{}", e);
                 std::process::exit(1);
             }
 

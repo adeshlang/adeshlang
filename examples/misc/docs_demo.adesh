@@ -1,13 +1,19 @@
-import "../utils/util_demo.ind" as u;
+import "../utils/util_demo.adesh" as u;
 
 /**
- * Increment by one
+ * Increment a value by one.
+ *
+ * A small, predictable building block for counters and sequence numbers.
+ * See also {@link add} for adding two values.
+ *
+ * - Accepts a numeric input.
+ * - Returns a new value without modifying the input.
  * @param {number} x input value
  * @returns {number} x + 1
  * @example
  * inc(4) // 5
  */
-fn inc(x) { return x + 1; }
+fn inc(x: number): number { return x + 1; }
 
 /**
  * Greeter class
@@ -15,6 +21,7 @@ fn inc(x) { return x + 1; }
  * @example
  * let g = new Greeter("Anita");
  * g.say();
+ * @since 0.3.0
  */
 class Greeter {
   fn init(name) { this.name = name; }
@@ -22,16 +29,28 @@ class Greeter {
 }
 
 /**
- * Add via imported util
+ * Add two values using the imported utility module.
+ *
+ * | Input | Result |
+ * | --- | --- |
+ * | `2, 3` | `5` |
+ * | `-1, 1` | `0` |
  * @param {number} a
  * @param {number} b
  * @returns {number}
+ * @example
+ * ```adesh
+ * let total = add(10, 20);
+ * print(total); // 30
+ * ```
+ * @see {@link utilAdd}
  */
 fn add(a, b) { return u.utilAdd(a, b); }
 
 /**
  * Library version constant
  * @type {string}
+ * @note Use this value when reporting compatibility issues.
  */
 export const VERSION = "1.0.0";
 

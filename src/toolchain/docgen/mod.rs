@@ -1,230 +1,316 @@
-//! Doc Generator (HTML)
-//!
-//! Walks Adesh source files, collects doc-comments adjacent to declarations,
-//! and renders a single-page HTML document with navigation and basic styling.
-//! Also follows relative imports to traverse a small program graph.
-use crate::parsing::ast::TokenKind;
-use crate::parsing::lexer::Lexer;
+//! Offline API documentation, collected from declaration-adjacent `/** ... */` comments.
+mod markup;
+mod render;
+
+use crate::parsing::{
+    ast::TokenKind,
+    lexer::{Lexer, Token},
+};
+use serde::Serialize;
 use std::{
     collections::HashSet,
     fs,
     path::{Path, PathBuf},
 };
 
-#[derive(Clone)]
+#[derive(Debug, Serialize)]
 struct ItemDoc {
+    id: String,
     kind: String,
     name: String,
     doc: String,
     file: String,
-}
-
-fn parse_jsdoc(doc: &str) -> String {
-    doc.to_string()
-}
-
-fn collect_docs_from_file(path: &Path) -> Result<(Vec<ItemDoc>, Vec<String>), String> {
-    let src = fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let mut lx = Lexer::new(&src);
-    let toks = lx.tokenize().map_err(|e| e.to_string())?;
-    let mut out: Vec<ItemDoc> = Vec::new();
-    let mut imports: Vec<String> = Vec::new();
-    let mut i = 0usize;
-    let file = path.to_string_lossy().to_string();
-    while i < toks.len() {
-        let tk = &toks[i];
-        match tk.kind {
-            TokenKind::DocComment => {
-                let doc = parse_jsdoc(&tk.lexeme);
-                let mut j = i + 1;
-                while j < toks.len()
-                    && matches!(toks[j].kind, TokenKind::Semicolon | TokenKind::DocComment)
-                {
-                    j += 1;
-                }
-                if j < toks.len() {
-                    let mut k = j;
-                    if matches!(toks[k].kind, TokenKind::Export) {
-                        k += 1;
-                        if k < toks.len() && matches!(toks[k].kind, TokenKind::Default) {
-                            k += 1;
-                        }
-                    }
-                    match toks[k].kind {
-                        TokenKind::Fn => {
-                            if k + 1 < toks.len()
-                                && matches!(toks[k + 1].kind, TokenKind::Identifier)
-                            {
-                                let name = toks[k + 1].lexeme.clone();
-                                out.push(ItemDoc {
-                                    kind: "function".into(),
-                                    name,
-                                    doc: doc.clone(),
-                                    file: file.clone(),
-                                });
-                            }
-                        }
-                        TokenKind::Class => {
-                            if k + 1 < toks.len()
-                                && matches!(toks[k + 1].kind, TokenKind::Identifier)
-                            {
-                                let name = toks[k + 1].lexeme.clone();
-                                out.push(ItemDoc {
-                                    kind: "class".into(),
-                                    name,
-                                    doc: doc.clone(),
-                                    file: file.clone(),
-                                });
-                            }
-                        }
-                        TokenKind::Struct => {
-                            if k + 1 < toks.len()
-                                && matches!(toks[k + 1].kind, TokenKind::Identifier)
-                            {
-                                let name = toks[k + 1].lexeme.clone();
-                                out.push(ItemDoc {
-                                    kind: "struct".into(),
-                                    name,
-                                    doc: doc.clone(),
-                                    file: file.clone(),
-                                });
-                            }
-                        }
-                        TokenKind::Enum => {
-                            if k + 1 < toks.len()
-                                && matches!(toks[k + 1].kind, TokenKind::Identifier)
-                            {
-                                let name = toks[k + 1].lexeme.clone();
-                                out.push(ItemDoc {
-                                    kind: "enum".into(),
-                                    name,
-                                    doc: doc.clone(),
-                                    file: file.clone(),
-                                });
-                            }
-                        }
-                        TokenKind::Let | TokenKind::Const => {
-                            if k + 1 < toks.len()
-                                && matches!(toks[k + 1].kind, TokenKind::Identifier)
-                            {
-                                let name = toks[k + 1].lexeme.clone();
-                                out.push(ItemDoc {
-                                    kind: "variable".into(),
-                                    name,
-                                    doc: doc.clone(),
-                                    file: file.clone(),
-                                });
-                            }
-                        }
-                        TokenKind::Interface => {
-                            if k + 1 < toks.len()
-                                && matches!(toks[k + 1].kind, TokenKind::Identifier)
-                            {
-                                let name = toks[k + 1].lexeme.clone();
-                                out.push(ItemDoc {
-                                    kind: "interface".into(),
-                                    name,
-                                    doc: doc.clone(),
-                                    file: file.clone(),
-                                });
-                            }
-                        }
-                        TokenKind::Type => {
-                            if k + 1 < toks.len()
-                                && matches!(toks[k + 1].kind, TokenKind::Identifier)
-                            {
-                                let name = toks[k + 1].lexeme.clone();
-                                out.push(ItemDoc {
-                                    kind: "type".into(),
-                                    name,
-                                    doc: doc.clone(),
-                                    file: file.clone(),
-                                });
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                i = j;
-                continue;
-            }
-            TokenKind::Import => {
-                let j = i + 1;
-                if j < toks.len() && matches!(toks[j].kind, TokenKind::String) {
-                    imports.push(toks[j].lexeme.clone());
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    Ok((out, imports))
-}
-
-fn write_assets(out_dir: &Path) -> Result<(), String> {
-    let css = r#"body{font-family:system-ui,Segoe UI,Arial;margin:0;background:#0b0c10;color:#c5c8c6}header{padding:16px;background:#1f2833;color:#66fcf1;font-weight:600}main{display:flex}nav{width:280px;border-right:1px solid #222;padding:12px}nav a{display:block;color:#c5c8c6;text-decoration:none;padding:6px;border-radius:4px}nav a:hover{background:#1f2833}section{flex:1;padding:16px}h2{color:#66fcf1;margin:0 0 8px}pre{background:#1f2833;padding:12px;border-radius:6px;overflow:auto}code{color:#c5c8c6} .kind{font-size:12px;color:#aaa;margin-left:8px}"#;
-    let js = r#"document.querySelectorAll('nav a').forEach(a=>{a.addEventListener('click',e=>{e.preventDefault();const id=a.getAttribute('href').substring(1);document.querySelectorAll('section article').forEach(el=>el.style.display='none');const el=document.getElementById(id);if(el) el.style.display='block';});});"#;
-    fs::create_dir_all(out_dir).map_err(|e| e.to_string())?;
-    fs::write(out_dir.join("style.css"), css).map_err(|e| e.to_string())?;
-    fs::write(out_dir.join("app.js"), js).map_err(|e| e.to_string())?;
-    Ok(())
+    line: usize,
+    signature: String,
+    source: String,
+    exported: bool,
 }
 
 fn escape(s: &str) -> String {
-    let mut o = String::new();
-    for ch in s.chars() {
-        match ch {
-            '&' => o.push_str("&amp;"),
-            '<' => o.push_str("&lt;"),
-            '>' => o.push_str("&gt;"),
-            '"' => o.push_str("&quot;"),
-            '\'' => o.push_str("&#39;"),
-            _ => o.push(ch),
-        }
-    }
-    o
+    s.chars()
+        .map(|c| match c {
+            '&' => "&amp;".into(),
+            '<' => "&lt;".into(),
+            '>' => "&gt;".into(),
+            '"' => "&quot;".into(),
+            '\'' => "&#39;".into(),
+            _ => c.to_string(),
+        })
+        .collect()
 }
 
-fn render_html(items: &[ItemDoc]) -> String {
-    let mut nav = String::new();
-    let mut body = String::new();
-    for (idx, it) in items.iter().enumerate() {
-        let id = format!("doc{}", idx);
-        nav.push_str(&format!("<a href=\"#{id}\">{}</a>", escape(&it.name)));
-        body.push_str(&format!("<article id=\"{id}\" style=\"display:{}\"><h2>{} <span class=\"kind\">{}</span></h2><pre><code>{}</code></pre><p><em>{}</em></p></article>", if idx==0 {"block"} else {"none"}, escape(&it.name), escape(&it.kind), escape(&it.doc), escape(&it.file)));
-    }
+fn item_id(file: &str, kind: &str, name: &str, line: usize) -> String {
+    // Unlike a sequence number, this remains stable when unrelated files are added.
+    let key = format!("{file}:{kind}:{name}:{line}");
+    let hash = key.bytes().fold(0xcbf29ce484222325u64, |h, b| {
+        (h ^ b as u64).wrapping_mul(0x100000001b3)
+    });
     format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Docs</title><link rel=\"stylesheet\" href=\"style.css\"></head><body><header>AdeshLang Docs</header><main><nav>{}</nav><section>{}</section></main><script src=\"app.js\"></script></body></html>",
-        nav, body
+        "{}-{hash:016x}",
+        name.chars()
+            .map(|c| if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            })
+            .collect::<String>()
     )
 }
 
-pub fn generate_docs(entry: &Path, out_dir: &Path) -> Result<(), String> {
-    let mut pending: Vec<PathBuf> = Vec::new();
-    let mut seen: HashSet<PathBuf> = HashSet::new();
-    pending.push(entry.to_path_buf());
-    let mut items: Vec<ItemDoc> = Vec::new();
-    while let Some(p) = pending.pop() {
-        if !seen.insert(p.clone()) {
+fn declaration_kind(kind: TokenKind) -> Option<&'static str> {
+    Some(match kind {
+        TokenKind::Fn => "function",
+        TokenKind::Class => "class",
+        TokenKind::Struct => "struct",
+        TokenKind::Enum => "enum",
+        TokenKind::Interface => "interface",
+        TokenKind::Type => "type",
+        TokenKind::Const => "constant",
+        TokenKind::Let => "variable",
+        _ => return None,
+    })
+}
+
+fn modifier(kind: TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::Export
+            | TokenKind::Default
+            | TokenKind::Async
+            | TokenKind::Public
+            | TokenKind::Private
+            | TokenKind::Protected
+            | TokenKind::Static
+            | TokenKind::Abstract
+            | TokenKind::Sealed
+            | TokenKind::Readonly
+    )
+}
+
+fn offset(token: &Token, lines: &[usize], len: usize) -> usize {
+    lines
+        .get(token.line.saturating_sub(1))
+        .copied()
+        .unwrap_or(len)
+        .saturating_add(token.col.saturating_sub(1))
+        .min(len)
+}
+
+fn declaration_source(
+    src: &str,
+    tokens: &[Token],
+    start: usize,
+    decl: usize,
+    lines: &[usize],
+) -> (String, String) {
+    let begin = offset(&tokens[start], lines, src.len());
+    let mut signature_end = None;
+    let mut end = begin;
+    let (mut parens, mut brackets, mut braces) = (0usize, 0usize, 0usize);
+    let body = matches!(
+        tokens[decl].kind,
+        TokenKind::Fn
+            | TokenKind::Class
+            | TokenKind::Struct
+            | TokenKind::Enum
+            | TokenKind::Interface
+    );
+    for (index, token) in tokens[decl..].iter().enumerate() {
+        let pos = offset(token, lines, src.len());
+        if token.kind == TokenKind::Eof {
+            break;
+        }
+        // Type aliases may omit their final semicolon. Never let a signature
+        // absorb the next declaration (or its documentation).
+        if index > 0
+            && parens == 0
+            && brackets == 0
+            && braces == 0
+            && (token.kind == TokenKind::DocComment
+                || declaration_kind(token.kind).is_some()
+                || modifier(token.kind))
+        {
+            break;
+        }
+        if body && token.kind == TokenKind::LeftBrace && parens == 0 && brackets == 0 && braces == 0
+        {
+            signature_end = Some(pos);
+        }
+        match token.kind {
+            TokenKind::LeftParen => parens += 1,
+            TokenKind::RightParen => parens = parens.saturating_sub(1),
+            TokenKind::LeftBracket => brackets += 1,
+            TokenKind::RightBracket => brackets = brackets.saturating_sub(1),
+            TokenKind::LeftBrace => braces += 1,
+            TokenKind::RightBrace => braces = braces.saturating_sub(1),
+            _ => {}
+        }
+        // The lexer normalizes string lexemes. Use the next token's offset for
+        // interior text, and only fixed-width delimiters for the final boundary.
+        end = (pos + token.lexeme.len()).min(src.len());
+        if parens == 0
+            && brackets == 0
+            && braces == 0
+            && (token.kind == TokenKind::Semicolon || (body && token.kind == TokenKind::RightBrace))
+        {
+            break;
+        }
+    }
+    let source = src.get(begin..end).unwrap_or("").trim().to_string();
+    let signature = src
+        .get(begin..signature_end.unwrap_or(end))
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    (signature, source)
+}
+
+fn collect_docs_from_file(path: &Path, file: &str) -> Result<(Vec<ItemDoc>, Vec<String>), String> {
+    let src = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let tokens = Lexer::new(&src)
+        .tokenize()
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut lines = vec![0];
+    lines.extend(src.match_indices('\n').map(|(i, _)| i + 1));
+    let (mut items, mut imports) = (Vec::new(), Vec::new());
+    let mut i = 0;
+    while i < tokens.len() {
+        if tokens[i].kind == TokenKind::Import {
+            // Both `import "..." as x` and `import { x } from "..."`.
+            for token in &tokens[i + 1..] {
+                if matches!(token.kind, TokenKind::Semicolon | TokenKind::Eof) {
+                    break;
+                }
+                if token.kind == TokenKind::String {
+                    imports.push(token.lexeme.trim_matches(['"', '\'']).to_string());
+                    break;
+                }
+            }
+        }
+        if tokens[i].kind != TokenKind::DocComment {
+            i += 1;
             continue;
         }
-        let (docs, imps) = collect_docs_from_file(&p)?;
-        items.extend(docs);
-        let base = p.parent().unwrap_or(Path::new("."));
-        for imp in imps {
-            let path = base.join(imp);
-            let pp = if path.extension().is_some() {
-                path
-            } else {
-                path.with_extension("ind")
-            };
-            if pp.exists() {
-                pending.push(pp);
+        let mut comments = vec![tokens[i].lexeme.clone()];
+        let mut start = i + 1;
+        while start < tokens.len()
+            && matches!(
+                tokens[start].kind,
+                TokenKind::DocComment | TokenKind::Semicolon
+            )
+        {
+            if tokens[start].kind == TokenKind::DocComment {
+                comments.push(tokens[start].lexeme.clone());
+            }
+            start += 1;
+        }
+        let mut decl = start;
+        while decl < tokens.len() && modifier(tokens[decl].kind) {
+            decl += 1;
+        }
+        if let (Some(token), Some(name)) = (tokens.get(decl), tokens.get(decl + 1)) {
+            if let Some(kind) = declaration_kind(token.kind) {
+                if name.kind == TokenKind::Identifier {
+                    let (signature, source) =
+                        declaration_source(&src, &tokens, start, decl, &lines);
+                    items.push(ItemDoc {
+                        id: item_id(file, kind, &name.lexeme, token.line),
+                        kind: kind.into(),
+                        name: name.lexeme.clone(),
+                        doc: comments.join("\n"),
+                        file: file.into(),
+                        line: token.line,
+                        signature,
+                        source,
+                        exported: tokens[start..decl]
+                            .iter()
+                            .any(|t| t.kind == TokenKind::Export || t.kind == TokenKind::Public),
+                    });
+                }
+            }
+        }
+        i = start;
+    }
+    Ok((items, imports))
+}
+
+fn resolve_import(base: &Path, import: &str) -> Option<PathBuf> {
+    let path = base.join(import);
+    if path.is_file() {
+        return Some(path);
+    }
+    if path.extension().is_none() {
+        for extension in ["adesh", "ind"] {
+            let candidate = path.with_extension(extension);
+            if candidate.is_file() {
+                return Some(candidate);
             }
         }
     }
-    write_assets(out_dir)?;
-    let html = render_html(&items);
-    fs::write(out_dir.join("index.html"), html).map_err(|e| e.to_string())?;
+    None
+}
+
+fn relative_file(path: &Path, root: &Path) -> String {
+    if let Ok(relative) = path.strip_prefix(root) {
+        return relative.to_string_lossy().replace('\\', "/");
+    }
+    // Preserve paths for sibling imports without leaking the machine's absolute path.
+    let mut ancestor = root;
+    let mut prefix = String::new();
+    while let Some(parent) = ancestor.parent() {
+        prefix.push_str("../");
+        if let Ok(relative) = path.strip_prefix(parent) {
+            return format!("{prefix}{}", relative.to_string_lossy().replace('\\', "/"));
+        }
+        ancestor = parent;
+    }
+    path.file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
+}
+
+pub fn generate_docs(entry: &Path, out_dir: &Path) -> Result<(), String> {
+    let entry = fs::canonicalize(entry).map_err(|e| format!("{}: {e}", entry.display()))?;
+    let root = entry.parent().unwrap_or(Path::new("."));
+    let mut pending = vec![entry.clone()];
+    let mut seen = HashSet::new();
+    let mut items = Vec::new();
+    let mut files = Vec::new();
+    while let Some(path) = pending.pop() {
+        let path = fs::canonicalize(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        if !seen.insert(path.clone()) {
+            continue;
+        }
+        let file = relative_file(&path, root);
+        let (docs, imports) = collect_docs_from_file(&path, &file)?;
+        files.push(file);
+        items.extend(docs);
+        for import in imports {
+            if let Some(imported) = resolve_import(path.parent().unwrap_or(root), &import) {
+                pending.push(imported);
+            }
+        }
+    }
+    files.sort();
+    items.sort_by(|a, b| (&a.file, a.line, &a.name).cmp(&(&b.file, b.line, &b.name)));
+    let project = entry.file_stem().unwrap_or_default().to_string_lossy();
+    let html = render::html(&project, &items, &files);
+    // Serialize before writing any output. JSON is an external asset, never executable HTML.
+    let index = serde_json::to_string_pretty(&items).map_err(|e| e.to_string())?;
+    fs::create_dir_all(out_dir).map_err(|e| e.to_string())?;
+    for (name, content) in [
+        ("index.html", html.as_str()),
+        ("style.css", include_str!("style.css")),
+        ("app.js", include_str!("app.js")),
+        ("search-index.json", index.as_str()),
+        ("logo.svg", include_str!("../../../Logo/Logo.svg")),
+    ] {
+        fs::write(out_dir.join(name), content)
+            .map_err(|e| format!("{}: {e}", out_dir.join(name).display()))?;
+    }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

@@ -77,15 +77,8 @@ impl AdeshSession {
         let parsed_args = ParsedArgs {
             command: "check".to_string(),
             input_file: Some(path_str.to_string()),
-            output_file: None,
             config: self.config.clone(),
-            program_args: Vec::new(),
-            show_help: false,
-            show_version: false,
-            toolchain_preference: None,
-            env_json: false,
-            env_shell: false,
-            eval_code: None,
+            ..Default::default()
         };
 
         if let Err(e) = adeshlang::cli::parsing::check_ownership_and_parse_in(

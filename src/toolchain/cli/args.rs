@@ -31,6 +31,30 @@ pub struct ParsedArgs {
     pub env_shell: bool,
     /// Inline code string to evaluate directly (-e / --eval)
     pub eval_code: Option<String>,
+    /// Diagnostic code to explain (--explain <CODE>)
+    pub explain_code: Option<String>,
+    /// Developer debug backtrace flag (--debug-backtrace)
+    pub debug_backtrace: bool,
+}
+
+impl Default for ParsedArgs {
+    fn default() -> Self {
+        Self {
+            command: String::new(),
+            input_file: None,
+            output_file: None,
+            config: RuntimeConfig::new(),
+            program_args: Vec::new(),
+            show_help: false,
+            show_version: false,
+            toolchain_preference: None,
+            env_json: false,
+            env_shell: false,
+            eval_code: None,
+            explain_code: None,
+            debug_backtrace: false,
+        }
+    }
 }
 
 impl ParsedArgs {
@@ -49,6 +73,8 @@ impl ParsedArgs {
                 env_json: false,
                 env_shell: false,
                 eval_code: None,
+                explain_code: None,
+                debug_backtrace: false,
             });
         }
 
@@ -57,6 +83,8 @@ impl ParsedArgs {
         let mut input_file: Option<String> = None;
         let mut output_file: Option<String> = None;
         let mut eval_code: Option<String> = None;
+        let mut explain_code: Option<String> = None;
+        let mut debug_backtrace = false;
         let mut program_args: Vec<String> = Vec::new();
         let mut show_help = false;
         let mut show_version = false;
@@ -105,6 +133,20 @@ impl ParsedArgs {
                 }
                 "--version" | "-v" => {
                     show_version = true;
+                }
+                "--debug-backtrace" => {
+                    debug_backtrace = true;
+                }
+                "--explain" => {
+                    if i + 1 < args.len() {
+                        explain_code = Some(args[i + 1].clone());
+                        i += 1;
+                    } else {
+                        explain_code = Some("list".to_string());
+                    }
+                }
+                _ if arg.starts_with("--explain=") => {
+                    explain_code = Some(arg["--explain=".len()..].to_string());
                 }
                 "-e" | "--eval" => {
                     if i + 1 < args.len() {
@@ -952,6 +994,8 @@ impl ParsedArgs {
             env_json,
             env_shell,
             eval_code,
+            explain_code,
+            debug_backtrace,
         })
     }
 }
@@ -1419,6 +1463,11 @@ Built with strong type inference, memory safety, and zero-cost abstractions
     {blue}--memo{reset}, {blue}--memoize{reset}     Enable memoization for pure functions
     {blue}--fast-recursion{reset}      Full recursion optimizations (TCO + memoization)
     {blue}--no-recursion-opt{reset}    Disable all recursion optimizations
+
+{bold}DIAGNOSTICS & DEBUGGING:{reset}
+    {blue}--explain{reset} [code]          Explain diagnostic code (e.g. E0308, AD0001) or list all
+    {blue}--debug-backtrace{reset}        Show internal compiler traceback on internal errors
+    {blue}--json{reset}                   Emit machine-readable JSON output for tools and IDEs
 
 {bold}OTHER:{reset}
     {blue}--profile{reset}             Enable profiling/timing output

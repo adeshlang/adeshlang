@@ -119,16 +119,31 @@ pub const R_AARCH64_LD64_GOT_LO12_NC: u32 = 286;
 pub const R_AARCH64_JUMP26: u32 = 282;
 pub const R_AARCH64_CALL26: u32 = 283;
 
+// RISC-V ELF Header Flags (e_flags)
+pub const EF_RISCV_RVC: u32 = 0x0001;
+pub const EF_RISCV_FLOAT_ABI_SOFT: u32 = 0x0000;
+pub const EF_RISCV_FLOAT_ABI_SINGLE: u32 = 0x0002;
+pub const EF_RISCV_FLOAT_ABI_DOUBLE: u32 = 0x0004;
+pub const EF_RISCV_FLOAT_ABI_QUAD: u32 = 0x0006;
+pub const EF_RISCV_RVE: u32 = 0x0008;
+pub const EF_RISCV_TSO: u32 = 0x0010;
+
 // RISC-V Relocations
 pub const R_RISCV_NONE: u32 = 0;
 pub const R_RISCV_32: u32 = 1;
 pub const R_RISCV_64: u32 = 2;
 pub const R_RISCV_BRANCH: u32 = 16;
+pub const R_RISCV_JAL: u32 = 17;
 pub const R_RISCV_CALL: u32 = 18;
 pub const R_RISCV_CALL_PLT: u32 = 19;
 pub const R_RISCV_GOT_HI20: u32 = 20;
+pub const R_RISCV_PCREL_HI20: u32 = 23;
+pub const R_RISCV_PCREL_LO12_I: u32 = 24;
+pub const R_RISCV_PCREL_LO12_S: u32 = 25;
 pub const R_RISCV_HI20: u32 = 26;
 pub const R_RISCV_LO12_I: u32 = 27;
+pub const R_RISCV_LO12_S: u32 = 28;
+pub const R_RISCV_RELAX: u32 = 51;
 
 /// 64-bit ELF File Header.
 #[derive(Debug, Clone, Copy)]

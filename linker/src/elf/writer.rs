@@ -1586,6 +1586,11 @@ impl ElfWriter {
 
         let e_type = if is_shared || is_pie { ET_DYN } else { ET_EXEC };
 
+        let e_flags = match target.arch {
+            Arch::Riscv64 | Arch::Riscv32 => EF_RISCV_RVC | EF_RISCV_FLOAT_ABI_DOUBLE,
+            _ => 0,
+        };
+
         let ehdr = Elf64_Ehdr {
             e_ident,
             e_type,
@@ -1594,7 +1599,7 @@ impl ElfWriter {
             e_entry: entry_va,
             e_phoff: ehdr_size as u64,
             e_shoff: shoff,
-            e_flags: 0,
+            e_flags,
             e_ehsize: ehdr_size as u16,
             e_phentsize: phdr_size as u16,
             e_phnum: phnum as u16,

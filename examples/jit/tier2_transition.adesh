@@ -13,7 +13,7 @@
 // - Type-stable vs polymorphic call sites
 //
 // Run with: adesh run examples/jit/tier2_transition.adesh --jit --verbose
-// Debug mode: RUST_LOG=debug adesh run examples/jit/tier2_transition.adesh --jit
+// Debug mode: ADESH_LOG=debug adesh run examples/jit/tier2_transition.adesh --jit
 // =============================================================================
 
 print("=== JIT Tier-2 Transition Demo ===\n");

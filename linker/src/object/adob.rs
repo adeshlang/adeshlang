@@ -422,11 +422,15 @@ impl AdobV2 {
                     }
                     // RISC-V arch-specific
                     adesh_object::RelocationKind::RiscV_Call => RelocationKind::RiscvCall,
-                    adesh_object::RelocationKind::RiscV_PcrelHi20 => RelocationKind::RiscvHi20,
-                    adesh_object::RelocationKind::RiscV_PcrelLo12I => RelocationKind::RiscvLo12I,
-                    adesh_object::RelocationKind::RiscV_PcrelLo12S => RelocationKind::RiscvLo12I,
+                    adesh_object::RelocationKind::RiscV_PcrelHi20 => RelocationKind::RiscvPcrelHi20,
+                    adesh_object::RelocationKind::RiscV_PcrelLo12I => {
+                        RelocationKind::RiscvPcrelLo12I
+                    }
+                    adesh_object::RelocationKind::RiscV_PcrelLo12S => {
+                        RelocationKind::RiscvPcrelLo12S
+                    }
                     adesh_object::RelocationKind::RiscV_RvcBranch => RelocationKind::RiscvBranch,
-                    adesh_object::RelocationKind::RiscV_RvcJump => RelocationKind::RiscvCall,
+                    adesh_object::RelocationKind::RiscV_RvcJump => RelocationKind::RiscvJal,
                     // WebAssembly arch-specific
                     adesh_object::RelocationKind::WasmFunctionIndex => {
                         RelocationKind::WasmFunctionIndex

@@ -28,8 +28,8 @@ pub fn arg_to_string(raw: u64) -> String {
             _ => return v.as_string(),
         }
     }
-    // Speculative check: if raw is above lower 64K, check if it points to valid C-string
-    if raw > 0x10000 {
+    // Speculative check: if raw is above lower 64K and not a runtime handle, check if it points to valid C-string
+    if raw > 0x10000 && raw < crate::HANDLE_TAG {
         let ptr = raw as *const c_char;
         if let Ok(cstr) = unsafe { CStr::from_ptr(ptr) }.to_str() {
             return cstr.to_string();
@@ -115,7 +115,7 @@ pub fn extract_bytes_from_arg(raw: u64) -> Vec<u8> {
             _ => {}
         }
     }
-    if raw > 0x10000 {
+    if raw > 0x10000 && raw < crate::HANDLE_TAG {
         let ptr = raw as *const c_char;
         if let Ok(cstr) = unsafe { CStr::from_ptr(ptr) }.to_str() {
             return cstr.as_bytes().to_vec();

@@ -610,6 +610,10 @@ impl Target {
                 LibcFlavor::Musl => Some("/lib/ld-musl-i386.so.1"),
                 LibcFlavor::Gnu => Some("/lib/ld-linux.so.2"),
             },
+            (Os::Linux, Arch::Riscv64) => match self.libc_flavor {
+                LibcFlavor::Musl => Some("/lib/ld-musl-riscv64.so.1"),
+                LibcFlavor::Gnu => Some("/lib/ld-linux-riscv64-lp64d.so.1"),
+            },
             (Os::FreeBSD, _) => Some("/libexec/ld-elf.so.1"),
             _ => None,
         }
@@ -631,6 +635,7 @@ impl Target {
             (LibcFlavor::Gnu, _) => Some("libc.so.6"),
             (LibcFlavor::Musl, Arch::X86_64) => Some("libc.musl-x86_64.so.1"),
             (LibcFlavor::Musl, Arch::AArch64) => Some("libc.musl-aarch64.so.1"),
+            (LibcFlavor::Musl, Arch::Riscv64) => Some("libc.musl-riscv64.so.1"),
             (LibcFlavor::Musl, _) => None,
         }
     }

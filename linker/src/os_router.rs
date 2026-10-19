@@ -80,6 +80,10 @@ impl OsApiRouter {
         }
         // MSVC mangled (starts with ??)
         if name.starts_with("??") {
+            // ??_7type_info@@6B@ is synthesized as an .rdata vtable on PE, not dead internal
+            if name == "??_7type_info@@6B@" {
+                return false;
+            }
             return true;
         }
         // Rust/adesh internal prefixes and compiler alloc shims
@@ -176,6 +180,11 @@ impl OsApiRouter {
             .or_else(|| raw.strip_prefix("_imp_"))
             .unwrap_or(raw);
         let clean = name.trim_start_matches('_');
+
+        // ── 0. MSVC RTTI type_info vftable: synthesized in .rdata on PE ──────
+        if name == "??_7type_info@@6B@" || raw == "??_7type_info@@6B@" {
+            return SymbolRoute::LinkerSynthesized;
+        }
 
         // ── 1. Internal / dead-code symbols — never become imports ──────────
         if Self::is_internal(raw) || Self::is_internal(name) || Self::is_internal(clean) {

@@ -317,6 +317,69 @@ fn test_static_linux_elf_aarch64_executable_generation() {
 }
 
 #[test]
+fn test_static_linux_elf_riscv64_executable_generation() {
+    let dir = tempdir().unwrap();
+    let out_elf = dir.path().join("riscv64_elf_bin");
+
+    let target = Target::from_triple("riscv64-linux").unwrap();
+    let obj_path = dir.path().join("main_riscv64.o");
+    let mut obj = ObjectFile::new(obj_path.clone(), target.clone(), 0);
+
+    // li a0, 0 (0x00000513); ret (0x00008067)
+    obj.add_section(Section::new_code(
+        ".text",
+        vec![0x13, 0x05, 0x00, 0x00, 0x67, 0x80, 0x00, 0x00],
+        16,
+    ));
+    obj.add_symbol(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        8,
+        0,
+    ));
+
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    let mut link_config = LinkConfig::new(out_elf.clone(), target);
+    link_config.shared = false;
+
+    let res = Linker::link(&[obj_path], link_config);
+    assert!(
+        res.is_ok(),
+        "linking static RISC-V 64 Linux ELF failed: {:?}",
+        res
+    );
+
+    let bytes = std::fs::read(&out_elf).expect("failed to read generated RISC-V 64 ELF");
+    assert!(bytes.len() >= 64, "ELF header too small");
+    assert_eq!(&bytes[0..4], b"\x7fELF", "invalid ELF magic");
+    assert_eq!(bytes[4], 2, "must be 64-bit ELF (ELFCLASS64)");
+    assert_eq!(bytes[5], 1, "must be little-endian (ELFDATA2LSB)");
+    assert_eq!(bytes[7], 3, "must be ELFOSABI_LINUX (3)");
+
+    let e_type = u16::from_le_bytes(bytes[16..18].try_into().unwrap());
+    assert_eq!(e_type, 2, "must be ET_EXEC (2)");
+
+    let e_machine = u16::from_le_bytes(bytes[18..20].try_into().unwrap());
+    assert_eq!(e_machine, 243, "e_machine must be EM_RISCV (243 = 0xF3)");
+
+    let e_flags = u32::from_le_bytes(bytes[48..52].try_into().unwrap());
+    assert_eq!(
+        e_flags, 0x0005,
+        "e_flags must be EF_RISCV_RVC | EF_RISCV_FLOAT_ABI_DOUBLE (0x0005)"
+    );
+
+    let e_entry = u64::from_le_bytes(bytes[24..32].try_into().unwrap());
+    assert!(
+        e_entry >= 0x400000,
+        "entry VA must be placed in execution address space"
+    );
+}
+
+#[test]
 fn test_macho_aarch64_executable_structural_conformance() {
     let dir = tempdir().unwrap();
     let out_macho = dir.path().join("test_macho_arm64");

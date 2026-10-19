@@ -89,3 +89,163 @@ fn test_riscv64_full_instruction_selection_and_encoding() {
     assert_eq!(obj.sections[0].name, ".text");
     assert!(obj.sections[0].data.len() >= 48);
 }
+
+#[test]
+fn test_riscv64_immediate_shifts_bitwise_and_branches() {
+    let target = TargetDescriptor::from_triple("riscv64gc-unknown-linux-gnu").expect("triple");
+    let mut backend = RiscVBackend::new(target);
+
+    let mut module = NativeModule::new("test_riscv64_logic");
+    let mut func = MachineFunction::new("logic_and_branches");
+    func.is_exported = true;
+
+    let v0 = func.alloc_vreg();
+    let v1 = func.alloc_vreg();
+    let v2 = func.alloc_vreg();
+
+    let entry = func.entry_block_mut();
+    // 64-bit immediate loading (> 32 bits)
+    entry.push(MachineInstruction::Move {
+        dst: MachineOperand::Register(MachineRegister::Virtual(v0)),
+        src: MachineOperand::Immediate(0x1234_5678_9ABC_DEF0),
+    });
+    // Shift left, logical right, arithmetic right
+    entry.push(MachineInstruction::Shl {
+        dst: MachineOperand::Register(MachineRegister::Virtual(v0)),
+        src: MachineOperand::Immediate(4),
+    });
+    entry.push(MachineInstruction::Shr {
+        dst: MachineOperand::Register(MachineRegister::Virtual(v0)),
+        src: MachineOperand::Immediate(2),
+    });
+    entry.push(MachineInstruction::Sar {
+        dst: MachineOperand::Register(MachineRegister::Virtual(v0)),
+        src: MachineOperand::Immediate(1),
+    });
+    // Bitwise NOT, AND, OR, XOR
+    entry.push(MachineInstruction::Not {
+        dst: MachineOperand::Register(MachineRegister::Virtual(v0)),
+    });
+    entry.push(MachineInstruction::And {
+        dst: MachineOperand::Register(MachineRegister::Virtual(v0)),
+        src: MachineOperand::Immediate(0xFFF),
+    });
+    // Comparison and SetCc
+    entry.push(MachineInstruction::Compare {
+        lhs: MachineOperand::Register(MachineRegister::Virtual(v0)),
+        rhs: MachineOperand::Immediate(100),
+    });
+    entry.push(MachineInstruction::SetCc {
+        dst: MachineOperand::Register(MachineRegister::Virtual(v1)),
+        cc: ConditionCode::LessThan,
+    });
+    // BranchCc to target label
+    entry.push(MachineInstruction::BranchCc {
+        cc: ConditionCode::Equal,
+        target: "exit_block".to_string(),
+    });
+
+    let mut exit_block = adesh_codegen::machine_ir::MachineBlock::new(1, "exit_block");
+    exit_block.push(MachineInstruction::Return);
+    func.blocks.push(exit_block);
+
+    module.add_function(func);
+
+    let lowered = backend.lower_module(&module).expect("lowering succeeds");
+    let obj = backend.emit_object(&lowered).expect("ADOB object emission");
+
+    AdobValidator::validate(&obj).expect("ADOB object must validate");
+    assert_eq!(obj.symbols[0].name, "logic_and_branches");
+    assert!(obj.sections[0].data.len() >= 64);
+}
+
+#[test]
+fn test_riscv64_cross_function_calls_and_static_elf_linking() {
+    use adesh_object::relocation::RelocationKind;
+    use adesh_object::writer::AdobWriter;
+    use tempfile::tempdir;
+
+    let target = TargetDescriptor::from_triple("riscv64gc-unknown-linux-gnu").expect("triple");
+    let mut backend = RiscVBackend::new(target);
+
+    let mut module = NativeModule::new("test_riscv64_linking");
+
+    // Callee function: callee_add(a0, a1) -> a0
+    let mut callee = MachineFunction::new("callee_add");
+    let c_block = callee.entry_block_mut();
+    c_block.push(MachineInstruction::Add {
+        dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(10))), // a0
+        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(11))), // a1
+    });
+    c_block.push(MachineInstruction::Return);
+    module.add_function(callee);
+
+    // Main entry function: calls callee_add, then returns
+    let mut main_func = MachineFunction::new("main");
+    main_func.is_exported = true;
+    let m_block = main_func.entry_block_mut();
+    m_block.push(MachineInstruction::Move {
+        dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(10))), // a0 = 20
+        src: MachineOperand::Immediate(20),
+    });
+    m_block.push(MachineInstruction::Move {
+        dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(11))), // a1 = 22
+        src: MachineOperand::Immediate(22),
+    });
+    m_block.push(MachineInstruction::Call {
+        target: MachineOperand::Symbol("callee_add".to_string()),
+        num_args: 2,
+    });
+    m_block.push(MachineInstruction::Return);
+    module.add_function(main_func);
+
+    let lowered = backend.lower_module(&module).expect("lowered");
+    let obj = backend.emit_object(&lowered).expect("ADOB object emission");
+
+    AdobValidator::validate(&obj).expect("ADOB must validate");
+
+    // Verify relocation was emitted for callee_add
+    let (_idx, text_sec) = obj.find_section(".text").expect("text section exists");
+    assert!(
+        text_sec
+            .relocations
+            .iter()
+            .any(|r| r.symbol_name == "callee_add" && r.kind == RelocationKind::RiscV_Call),
+        "must emit RiscV_Call relocation for callee_add"
+    );
+
+    // Now link into static ELF64 executable!
+    let dir = tempdir().expect("tempdir");
+    let adob_path = dir.path().join("main_riscv64.adob");
+    let elf_path = dir.path().join("riscv64_program");
+
+    let bytes = AdobWriter::write(&obj).expect("write ADOB");
+    std::fs::write(&adob_path, bytes).expect("write file");
+
+    let link_res = adesh_linker::link(
+        &[&adob_path],
+        &elf_path,
+        Some("riscv64gc-unknown-linux-gnu"),
+    );
+    assert!(
+        link_res.is_ok(),
+        "linking RISC-V 64 static executable failed: {:?}",
+        link_res
+    );
+
+    let elf_bytes = std::fs::read(&elf_path).expect("read ELF binary");
+    assert!(elf_bytes.len() >= 64);
+    assert_eq!(&elf_bytes[0..4], b"\x7fELF");
+    assert_eq!(elf_bytes[4], 2, "ELFCLASS64");
+    assert_eq!(elf_bytes[5], 1, "ELFDATA2LSB");
+    assert_eq!(elf_bytes[7], 3, "ELFOSABI_LINUX");
+
+    let e_machine = u16::from_le_bytes(elf_bytes[18..20].try_into().unwrap());
+    assert_eq!(e_machine, 243, "EM_RISCV");
+
+    let e_flags = u32::from_le_bytes(elf_bytes[48..52].try_into().unwrap());
+    assert_eq!(e_flags, 0x0005, "EF_RISCV_RVC | EF_RISCV_FLOAT_ABI_DOUBLE");
+
+    let e_entry = u64::from_le_bytes(elf_bytes[24..32].try_into().unwrap());
+    assert!(e_entry >= 0x400000, "entry VA in user execution space");
+}

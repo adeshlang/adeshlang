@@ -115,6 +115,7 @@
 pub mod backends;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cli;
+pub mod diagnostics;
 // pub mod core; // removed: no core module present
 pub mod ecosystem;
 pub mod execution;

@@ -6,6 +6,7 @@ pub mod header;
 pub mod notes;
 pub mod reader;
 pub mod reloc;
+pub mod riscv64;
 pub mod writer;
 pub mod x86_64;
 

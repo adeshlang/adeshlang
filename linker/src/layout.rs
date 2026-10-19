@@ -1654,7 +1654,15 @@ impl LayoutEngine {
                                     (tva, true)
                                 }
                                 _ => {
-                                    if warned_syms.insert(reloc.symbol_name.clone(), ()).is_none() {
+                                    // Benign internal metadata symbols like MSVC type_info vftable (??_7type_info@@6B@)
+                                    // resolve to NULL in data sections by design and must not emit a warning.
+                                    let is_benign_rtti = reloc.symbol_name == "??_7type_info@@6B@"
+                                        || reloc.symbol_name.starts_with("??_7type_info");
+                                    if !is_benign_rtti
+                                        && warned_syms
+                                            .insert(reloc.symbol_name.clone(), ())
+                                            .is_none()
+                                    {
                                         reloc_warnings.push(format!(
                                             "unresolved weak/internal symbol `{}` (referenced from {}+0x{:x}) resolved to NULL",
                                             reloc.symbol_name, merged.name, reloc.offset
@@ -2472,6 +2480,56 @@ mod tests {
                 .iter()
                 .any(|warning| warning.contains("optional_call") && warning.contains("trap stub")),
             "a live unresolved weak call remains diagnosable"
+        );
+    }
+
+    #[test]
+    fn type_info_symbol_does_not_emit_unresolved_weak_warning() {
+        let target = Target::x86_64_windows();
+        let mut object = ObjectFile::new(PathBuf::from("type_info_test.obj"), target.clone(), 0);
+        let text = Section::new_code(".text", vec![0xC3], 16);
+        object.add_section(text);
+        object.add_symbol(Symbol::new_defined(
+            "main",
+            SymbolBinding::Global,
+            SymbolType::Function,
+            0,
+            0,
+            1,
+            0,
+        ));
+
+        let mut data = Section::new_data(".data", vec![0u8; 16], true, 8);
+        data.relocations.push(Relocation::new(
+            0,
+            "??_7type_info@@6B@",
+            RelocationKind::Absolute64,
+            0,
+        ));
+        object.add_section(data);
+
+        let mut type_info_sym = Symbol::new_undefined("??_7type_info@@6B@", 0);
+        type_info_sym.binding = SymbolBinding::Weak;
+        object.add_symbol(type_info_sym);
+
+        let mut objects = vec![object];
+        let mut resolver = SymbolResolver::new();
+        resolver
+            .resolve_with_target(&mut objects, &[], &target)
+            .expect("resolution succeeds");
+
+        let mut layout = LayoutEngine::new();
+        layout
+            .layout_and_relocate(&objects, &resolver, &target, "main", false, false)
+            .expect("layout succeeds");
+
+        assert!(
+            !layout
+                .warnings
+                .iter()
+                .any(|w| w.contains("??_7type_info@@6B@")),
+            "??_7type_info@@6B@ must not emit an unresolved weak warning, got: {:?}",
+            layout.warnings
         );
     }
 }

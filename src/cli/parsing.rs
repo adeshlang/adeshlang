@@ -103,10 +103,18 @@ pub fn check_ownership_and_parse_in(
 
     // Enforce embedded-mode heap prohibition at compile-time
     if config.embedded && super::validation::ast_contains_heap_alloc(&ast) {
-        return Err(
-            "Embedded mode forbids heap allocation via alloc(); use stack/arena/region instead."
-                .to_string(),
-        );
+        let err = crate::parsing::error::LangError::located(
+            crate::parsing::error::ErrorKind::Ownership,
+            "embedded mode forbids heap allocation via alloc(); use stack/arena/region instead",
+            file_owned,
+            1,
+            1,
+            "",
+        )
+        .with_code("AD0004")
+        .with_help("use stack buffers or region arena allocation instead of alloc()")
+        .with_explain_hint();
+        return Err(err.to_string());
     }
 
     // Apply RAII transformation for automatic memory cleanup

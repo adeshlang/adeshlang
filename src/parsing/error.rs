@@ -348,6 +348,22 @@ impl LangError {
         self
     }
 
+    /// Automatically attach the canonical explain hint if an error code is present:
+    /// `help: run `adesh --explain <CODE>` for more information`
+    pub fn with_explain_hint(mut self) -> Self {
+        if let Some(code) = &self.code {
+            let explain = format!("run `adesh --explain {}` for more information", code);
+            if let Some(ref h) = self.hint {
+                if !h.contains(&explain) {
+                    self.hint = Some(format!("{}\n     = help: {}", h, explain));
+                }
+            } else {
+                self.hint = Some(explain);
+            }
+        }
+        self
+    }
+
     pub fn push_note(mut self, note: impl Into<String>) -> Self {
         self.notes.push(note.into());
         self
@@ -610,7 +626,87 @@ impl LangError {
             ));
         }
 
+        if let Some(code) = &self.code {
+            let explain = format!("run `adesh --explain {}` for more information", code);
+            let already_included = self.hint.as_deref().map_or(false, |h| h.contains(&explain));
+            if !already_included {
+                result.push_str(&format!(
+                    "\n{}{} {}",
+                    "     = ".cyan(),
+                    "help:".cyan().bold(),
+                    explain
+                ));
+            }
+        }
+
         result
+    }
+
+    /// Convert `LangError` into canonical structured `crate::diagnostics::Diagnostic`
+    pub fn to_diagnostic(&self) -> crate::diagnostics::Diagnostic {
+        let phase = match self.kind {
+            ErrorKind::Lexical => crate::diagnostics::DiagnosticPhase::Lexer,
+            ErrorKind::Parse => crate::diagnostics::DiagnosticPhase::Parser,
+            ErrorKind::Type => crate::diagnostics::DiagnosticPhase::TypeCheck,
+            ErrorKind::Ownership => crate::diagnostics::DiagnosticPhase::Ownership,
+            ErrorKind::Compile | ErrorKind::Lowering => {
+                crate::diagnostics::DiagnosticPhase::Lowering
+            }
+            ErrorKind::Runtime | ErrorKind::Jit => crate::diagnostics::DiagnosticPhase::Runtime,
+            _ => crate::diagnostics::DiagnosticPhase::Cli,
+        };
+
+        let severity = match self.severity {
+            DiagnosticSeverity::Error => crate::diagnostics::DiagnosticSeverity::Error,
+            DiagnosticSeverity::Warning => crate::diagnostics::DiagnosticSeverity::Warning,
+            DiagnosticSeverity::Info => crate::diagnostics::DiagnosticSeverity::Info,
+        };
+
+        let primary_span = if self.line > 0 || !self.line_text.is_empty() {
+            Some(crate::diagnostics::Span::new(
+                self.line,
+                self.col,
+                self.end_line,
+                self.end_col,
+                self.line_text.clone(),
+            ))
+        } else {
+            None
+        };
+
+        let mut labels = Vec::new();
+        for rel in &self.related {
+            labels.push(crate::diagnostics::Label::secondary(
+                rel.file.clone(),
+                rel.line,
+                rel.col,
+                rel.line_text.clone(),
+                rel.label.clone(),
+            ));
+        }
+
+        let mut notes = self.notes.clone();
+        if let Some(n) = &self.note {
+            notes.insert(0, n.clone());
+        }
+
+        let mut helps = Vec::new();
+        if let Some(h) = &self.hint {
+            helps.push(h.clone());
+        }
+
+        crate::diagnostics::Diagnostic {
+            code: self.code.clone(),
+            severity,
+            phase,
+            message: self.message.clone(),
+            file: self.file.clone(),
+            primary_span,
+            labels,
+            notes,
+            helps,
+            suggestions: Vec::new(),
+        }
     }
 }
 

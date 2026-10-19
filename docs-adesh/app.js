@@ -1,0 +1,1 @@
+document.querySelectorAll('nav a').forEach(a=>{a.addEventListener('click',e=>{e.preventDefault();const id=a.getAttribute('href').substring(1);document.querySelectorAll('section article').forEach(el=>el.style.display='none');const el=document.getElementById(id);if(el) el.style.display='block';});});

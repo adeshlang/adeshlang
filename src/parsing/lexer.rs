@@ -183,6 +183,7 @@ impl<'a> Lexer<'a> {
             col,
             line_text,
         )
+        .with_code("AD0001")
         .with_auto_hints();
         if let Some(f) = &self.file {
             err = err.with_file(f.clone());

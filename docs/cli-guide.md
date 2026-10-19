@@ -576,10 +576,65 @@ adesh docs main.adesh ./project-docs
 ```
 
 **Features:**
-- Extracts comments and docstrings
-- Generates API documentation
-- Creates cross-referenced HTML
-- Includes type signatures
+- Extracts declaration-adjacent `/** ... */` doc comments for functions, classes,
+  structs, enums, interfaces, types, constants, and variables, including documented
+  members inside classes.
+- Follows existing local imports, including extensionless `.adesh` and legacy
+  `.ind` modules. Canonical paths prevent duplicate modules and import cycles.
+- Generates a responsive, AdeshLang-branded reference with light/dark themes,
+  module navigation, an on-page symbol index, and shareable symbol links.
+- Searches names, descriptions, signatures, and examples, with kind and module
+  filters. Press `/` or `Ctrl+K` (`Cmd+K` on macOS) to search.
+- Shows syntax-colored signatures, examples, and expandable declaration source,
+  with copy buttons.
+- Renders safe Markdown: paragraphs, headings, emphasis, inline code, fenced code,
+  flat lists, block quotes, tables, and HTTP(S), email, and fragment links.
+- Formats `@param`, `@property`, `@returns`, `@throws`, `@type`, `@example`,
+  `@deprecated`, `@warning`, `@note`, `@since`, and `@see` tags. Other tags remain
+  visible as labeled sections.
+- Resolves `{@link Symbol}` and exact inline-code symbol names to documented
+  declarations when the name is unambiguous.
+- Works offline by opening `index.html` directly. No CDN, server, or downloaded
+  fonts are needed. All documentation stays readable without JavaScript.
+- Includes keyboard navigation, reduced-motion support, print styles, and a
+  machine-readable `search-index.json`.
+
+**Writing API comments:**
+````adesh
+/**
+ * Add **two** numbers. See {@link Main} for the entry point.
+ *
+ * @param {number} a First operand.
+ * @param {number} b Second operand.
+ * @returns {number} The sum.
+ * @example
+ * ```adesh
+ * let total = add(2, 3);
+ * print(total); // 5
+ * ```
+ * @since 0.3.0
+ */
+export fn add(a: number, b: number): number {
+    return a + b;
+}
+````
+
+**Generated files:** `index.html`, `style.css`, `app.js`, `logo.svg`, and
+`search-index.json`. Copy the whole output directory when sharing or hosting the
+site. Generation replaces these five files; other output-directory files are
+left untouched.
+
+Only declarations with doc comments appear in the reference. Imports that do not
+resolve to local files (for example built-in modules) are skipped. The generator
+is a documentation scanner, not a type checker or example runner. Raw HTML is
+escaped rather than executed; Markdown links accept only HTTP(S), email, and
+fragment destinations. Symbol links are deterministic for the same file, name,
+kind, and declaration line, but change when that declaration moves to a new line.
+
+For a complete local example:
+```bash
+adesh docs examples/misc/docs_demo.adesh ./project-docs
+```
 
 ---
 

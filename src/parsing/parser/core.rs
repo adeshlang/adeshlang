@@ -250,6 +250,7 @@ impl Parser {
             token.col,
             token.line_text.clone(),
         )
+        .with_code("AD0002")
         .with_auto_hints();
         if let Some(m) = &self.module {
             e = e.with_file(m.clone());

@@ -192,10 +192,10 @@ pub fn check_module_in(src: &str, file: Option<&str>) -> Result<(), LangError> {
         } else {
             (msg.clone(), 1, 1, String::new())
         };
-        let code = if clean_msg.contains("await is only valid inside async functions") {
-            "E_ASYNC_CONTEXT"
-        } else if clean_msg.contains("cannot await value of type") {
-            "E_ASYNC_AWAIT_TYPE"
+        let code = if clean_msg.contains("await is only valid inside async functions")
+            || clean_msg.contains("cannot await value of type")
+        {
+            "AD0003"
         } else {
             "E0308"
         };

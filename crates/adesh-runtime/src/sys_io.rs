@@ -105,16 +105,31 @@ pub extern "C" fn sys_read(fd: i64, buf_ptr: u64, count: usize) -> i64 {
         return 0;
     }
 
+    let write_back = |temp_buf: &[u8], n: usize| {
+        if let Some(mut val) = aot_get_value(buf_ptr) {
+            if let RuntimeValue::Array(ref mut arr) = val {
+                for i in 0..n {
+                    if i < arr.len() {
+                        arr[i] = RuntimeValue::U8(temp_buf[i]);
+                    } else {
+                        arr.push(RuntimeValue::U8(temp_buf[i]));
+                    }
+                }
+                crate::aot_update_value(buf_ptr, val);
+            }
+        } else if buf_ptr > 0x10000 && buf_ptr < crate::HANDLE_TAG {
+            unsafe {
+                std::ptr::copy_nonoverlapping(temp_buf.as_ptr(), buf_ptr as *mut u8, n);
+            }
+        }
+    };
+
     if fd == 0 {
         // stdin
         let mut temp_buf = vec![0u8; count];
         match std::io::stdin().read(&mut temp_buf) {
             Ok(n) => {
-                if buf_ptr > 0x10000 {
-                    unsafe {
-                        std::ptr::copy_nonoverlapping(temp_buf.as_ptr(), buf_ptr as *mut u8, n);
-                    }
-                }
+                write_back(&temp_buf, n);
                 n as i64
             }
             Err(_) => -1,
@@ -136,11 +151,7 @@ pub extern "C" fn sys_read(fd: i64, buf_ptr: u64, count: usize) -> i64 {
 
             match read_res {
                 Ok(n) => {
-                    if buf_ptr > 0x10000 {
-                        unsafe {
-                            std::ptr::copy_nonoverlapping(temp_buf.as_ptr(), buf_ptr as *mut u8, n);
-                        }
-                    }
+                    write_back(&temp_buf, n);
                     n as i64
                 }
                 Err(_) => -1,
@@ -154,7 +165,9 @@ pub extern "C" fn sys_read(fd: i64, buf_ptr: u64, count: usize) -> i64 {
 /// `sys_write(fd: i64, buf_ptr: u64, count: usize) -> i64`
 #[unsafe(no_mangle)]
 pub extern "C" fn sys_write(fd: i64, buf_ptr: u64, count: usize) -> i64 {
-    let bytes: Vec<u8> = if buf_ptr > 0x10000 && count > 0 {
+    let bytes: Vec<u8> = if aot_get_value(buf_ptr).is_some() {
+        extract_bytes_from_arg(buf_ptr)
+    } else if buf_ptr > 0x10000 && buf_ptr < crate::HANDLE_TAG && count > 0 {
         unsafe { std::slice::from_raw_parts(buf_ptr as *const u8, count).to_vec() }
     } else {
         extract_bytes_from_arg(buf_ptr)
