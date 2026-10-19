@@ -147,14 +147,6 @@ impl SymbolResolver {
         while progress && !self.undefined.is_empty() {
             progress = false;
             for (ar_idx, ar) in archives.iter().enumerate() {
-                    if ar_idx == 0 {
-                        eprintln!("DEBUG_LINK: ar_path={:?} sym_count={}", ar.path, ar.symbol_index.len());
-                        for k in ar.symbol_index.keys() {
-                            if k.contains("rust_alloc") || k.contains("print") {
-                                eprintln!("  AR_SYM: {}", k);
-                            }
-                        }
-                    }
                 let mut current_undef: Vec<String> = self.undefined.iter().cloned().collect();
                 current_undef.sort();
                 for undef_sym in current_undef {
@@ -191,7 +183,9 @@ impl SymbolResolver {
 
                     let candidates = if candidates.is_some() {
                         candidates
-                    } else if let Some((key, c)) = find_rust_mangled_candidate(&undef_sym, &ar.symbol_index) {
+                    } else if let Some((key, c)) =
+                        find_rust_mangled_candidate(&undef_sym, &ar.symbol_index)
+                    {
                         matched_key = Some(key);
                         Some(c)
                     } else {
