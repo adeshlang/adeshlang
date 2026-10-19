@@ -59,6 +59,28 @@ impl Default for SymbolResolver {
     }
 }
 
+fn find_rust_mangled_candidate<'a>(
+    undef_sym: &str,
+    index: &'a HashMap<String, Vec<usize>>,
+) -> Option<(String, &'a Vec<usize>)> {
+    if !undef_sym.starts_with("_ZN") && !undef_sym.starts_with("_R") {
+        return None;
+    }
+    // Demangle / extract base symbol signature
+    let base_name = if let Some(pos) = undef_sym.find("17h") {
+        &undef_sym[..pos]
+    } else {
+        undef_sym
+    };
+
+    for (k, v) in index {
+        if k.starts_with(base_name) {
+            return Some((k.clone(), v));
+        }
+    }
+    None
+}
+
 impl SymbolResolver {
     fn macho_symbol_aliases(name: &str, target: &crate::target::Target) -> Vec<String> {
         if target.format != crate::target::ObjectFormat::MachO {
@@ -125,6 +147,14 @@ impl SymbolResolver {
         while progress && !self.undefined.is_empty() {
             progress = false;
             for (ar_idx, ar) in archives.iter().enumerate() {
+                    if ar_idx == 0 {
+                        eprintln!("DEBUG_LINK: ar_path={:?} sym_count={}", ar.path, ar.symbol_index.len());
+                        for k in ar.symbol_index.keys() {
+                            if k.contains("rust_alloc") || k.contains("print") {
+                                eprintln!("  AR_SYM: {}", k);
+                            }
+                        }
+                    }
                 let mut current_undef: Vec<String> = self.undefined.iter().cloned().collect();
                 current_undef.sort();
                 for undef_sym in current_undef {
@@ -134,6 +164,7 @@ impl SymbolResolver {
                     let candidates = ar.symbol_index.get(&undef_sym);
                     let prefixed;
                     let unprefixed;
+                    let mut matched_key: Option<String> = None;
                     let candidates = if candidates.is_some() {
                         candidates
                     } else if target.format == crate::target::ObjectFormat::MachO {
@@ -149,15 +180,20 @@ impl SymbolResolver {
                                 .or_else(|| ar.symbol_index.get(undef_sym.as_str()))
                         }
                     } else if target.arch == crate::target::Arch::X86 {
-                        // The `_`-prefix equivalence is a 32-bit x86
-                        // (COFF/ELF) name-mangling convention only. On 64-bit
-                        // targets `_foo` and `foo` are distinct symbols and
-                        // aliasing them binds the wrong definition.
                         let stripped = undef_sym.strip_prefix('_').unwrap_or(&undef_sym);
                         prefixed = format!("_{}", undef_sym);
                         ar.symbol_index
                             .get(stripped)
                             .or_else(|| ar.symbol_index.get(&prefixed))
+                    } else {
+                        None
+                    };
+
+                    let candidates = if candidates.is_some() {
+                        candidates
+                    } else if let Some((key, c)) = find_rust_mangled_candidate(&undef_sym, &ar.symbol_index) {
+                        matched_key = Some(key);
+                        Some(c)
                     } else {
                         None
                     };
@@ -190,6 +226,12 @@ impl SymbolResolver {
                             member_obj.is_archive_member = true;
                             member_obj.archive_name = Some(ar.path.display().to_string());
                             self.ingest_object(&member_obj, target)?;
+                            if let Some(ref key) = matched_key {
+                                if let Some(resolved) = self.table.get(key).cloned() {
+                                    self.table.insert(undef_sym.clone(), resolved);
+                                    self.undefined.remove(&undef_sym);
+                                }
+                            }
                             objects.push(member_obj);
                             progress = true;
                         }
