@@ -2578,7 +2578,7 @@ impl NativeJitCompiler {
                             }
                         } else {
                             // Multiple arguments: chain pairwise
-                            let mut cur_val = value_map.get(&args[0]).copied();
+                            let cur_val = value_map.get(&args[0]).copied();
                             let mut cur_tag = type_tag(
                                 &value_types
                                     .get(&args[0])
