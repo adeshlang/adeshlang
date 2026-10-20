@@ -45,7 +45,6 @@ impl SourceMap {
             Err(idx) => idx.saturating_sub(1),
         };
         let line_start = self.line_starts[line_idx];
-        let col_byte_offset = clamped.saturating_sub(line_start);
 
         // UTF-8 character column count
         let line_sub = &self.source[line_start..clamped];

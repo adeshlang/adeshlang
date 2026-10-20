@@ -101,7 +101,7 @@ fn test_riscv64_immediate_shifts_bitwise_and_branches() {
 
     let v0 = func.alloc_vreg();
     let v1 = func.alloc_vreg();
-    let v2 = func.alloc_vreg();
+    let _v2 = func.alloc_vreg();
 
     let entry = func.entry_block_mut();
     // 64-bit immediate loading (> 32 bits)
