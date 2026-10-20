@@ -729,7 +729,11 @@ fn apply_runtime_format(value: &RuntimeValue, spec: &str) -> String {
 
 /// Apply type-specific formatting for RuntimeValue
 #[allow(dead_code)]
-fn apply_runtime_type_format(value: &RuntimeValue, ftype: &str, precision: Option<usize>) -> String {
+fn apply_runtime_type_format(
+    value: &RuntimeValue,
+    ftype: &str,
+    precision: Option<usize>,
+) -> String {
     let ftype = ftype.trim();
 
     // currency(CODE)
@@ -750,7 +754,8 @@ fn apply_runtime_type_format(value: &RuntimeValue, ftype: &str, precision: Optio
     }
 
     // percent
-    if ftype == "%" || ftype == "percent" || (ftype.starts_with("percent(") && ftype.ends_with(')')) {
+    if ftype == "%" || ftype == "percent" || (ftype.starts_with("percent(") && ftype.ends_with(')'))
+    {
         let prec = if ftype.starts_with("percent(") {
             ftype[8..ftype.len() - 1].parse::<usize>().unwrap_or(2)
         } else {
@@ -813,7 +818,10 @@ fn apply_runtime_type_format(value: &RuntimeValue, ftype: &str, precision: Optio
             None => value.as_string(),
         },
         "," => match value.as_float() {
-            Some(n) => format_with_commas_runtime(n, precision.unwrap_or(if n.fract() == 0.0 { 0 } else { 2 })),
+            Some(n) => format_with_commas_runtime(
+                n,
+                precision.unwrap_or(if n.fract() == 0.0 { 0 } else { 2 }),
+            ),
             None => value.as_string(),
         },
         "?" | "debug" => format!("{:?}", value),

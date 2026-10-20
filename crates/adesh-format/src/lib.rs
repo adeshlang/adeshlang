@@ -41,9 +41,8 @@
 //! - `${x:,}` / `${x:_}` — grouping separators
 
 use num_bigint::BigInt;
-use num_traits::{Num, ToPrimitive};
+use num_traits::ToPrimitive;
 use serde_json::Value as JsonValue;
-use std::fmt::Write;
 use unicode_width::UnicodeWidthStr;
 
 /// Error returned when a format specification is invalid or cannot be applied.
@@ -54,7 +53,9 @@ pub struct FormatError {
 
 impl FormatError {
     pub fn new(message: impl Into<String>) -> Self {
-        Self { message: message.into() }
+        Self {
+            message: message.into(),
+        }
     }
 }
 
@@ -152,9 +153,11 @@ impl FormatSpec {
             if prec_str.is_empty() {
                 return Err(FormatError::new("expected digits after '.'"));
             }
-            precision = Some(prec_str.parse::<usize>().map_err(|e| {
-                FormatError::new(format!("invalid precision: {e}"))
-            })?);
+            precision = Some(
+                prec_str
+                    .parse::<usize>()
+                    .map_err(|e| FormatError::new(format!("invalid precision: {e}")))?,
+            );
         } else if idx < chars.len() && chars[idx] == '(' {
             // Parenthesized precision can be standalone, e.g. "(4)", or
             // follow a type name, e.g. "float(2)". Both are valid.
@@ -169,11 +172,15 @@ impl FormatSpec {
             }
             idx += 1;
             if prec_str.is_empty() {
-                return Err(FormatError::new("expected digits inside precision parentheses"));
+                return Err(FormatError::new(
+                    "expected digits inside precision parentheses",
+                ));
             }
-            precision = Some(prec_str.parse::<usize>().map_err(|e| {
-                FormatError::new(format!("invalid precision: {e}"))
-            })?);
+            precision = Some(
+                prec_str
+                    .parse::<usize>()
+                    .map_err(|e| FormatError::new(format!("invalid precision: {e}")))?,
+            );
         }
 
         // --- grouping separator ---
@@ -204,21 +211,23 @@ impl FormatSpec {
         }
 
         // If the entire spec was just a grouping separator ("," or "_") with no
-// other formatting, treat it as a type spec rather than a grouping modifier.
-if type_spec.is_empty()
-    && grouping != '\0'
-    && width.is_none()
-    && align == '\0'
-    && sign == '\0'
-    && precision.is_none()
-    && !zero_pad
-{
-    final_type_spec = grouping.to_string();
-    grouping = '\0';
-}
+        // other formatting, treat it as a type spec rather than a grouping modifier.
+        if type_spec.is_empty()
+            && grouping != '\0'
+            && width.is_none()
+            && align == '\0'
+            && sign == '\0'
+            && precision.is_none()
+            && !zero_pad
+        {
+            final_type_spec = grouping.to_string();
+            grouping = '\0';
+        }
         for c in final_type_spec.chars() {
             if c.is_ascii_whitespace() {
-                return Err(FormatError::new(format!("unexpected whitespace in type spec: '{c}'")));
+                return Err(FormatError::new(format!(
+                    "unexpected whitespace in type spec: '{c}'"
+                )));
             }
         }
 
@@ -338,15 +347,15 @@ impl FormatValue {
         match ts {
             "" | "s" => Ok(self.default_string()),
             "int" => {
-                let n = self.to_i128().ok_or_else(|| {
-                    FormatError::new(format!("cannot convert {:?} to int", self))
-                })?;
+                let n = self
+                    .to_i128()
+                    .ok_or_else(|| FormatError::new(format!("cannot convert {:?} to int", self)))?;
                 Ok(format_int(n, spec))
             }
             "d" => {
-                let n = self.to_i128().ok_or_else(|| {
-                    FormatError::new(format!("cannot convert {:?} to int", self))
-                })?;
+                let n = self
+                    .to_i128()
+                    .ok_or_else(|| FormatError::new(format!("cannot convert {:?} to int", self)))?;
                 Ok(format_int(n, spec))
             }
             "float" => {
@@ -363,9 +372,9 @@ impl FormatValue {
                 Ok(format_int_base(n, 2, false, spec))
             }
             "hex" => {
-                let n = self.to_i128().ok_or_else(|| {
-                    FormatError::new(format!("cannot convert {:?} to hex", self))
-                })?;
+                let n = self
+                    .to_i128()
+                    .ok_or_else(|| FormatError::new(format!("cannot convert {:?} to hex", self)))?;
                 Ok(format_int_base(n, 16, false, spec))
             }
             "HEX" => {
@@ -499,7 +508,11 @@ fn apply_formatting(s: &str, spec: &FormatSpec) -> String {
                 }
                 '>' | '\0' => {
                     // Zero-pad inserts after sign, before digits
-                    if spec.zero_pad && (result.starts_with('-') || result.starts_with('+') || result.starts_with(' ')) {
+                    if spec.zero_pad
+                        && (result.starts_with('-')
+                            || result.starts_with('+')
+                            || result.starts_with(' '))
+                    {
                         let sign = result.remove(0);
                         result = format!("{}{}{}", sign, pad_char.to_string().repeat(pad), result);
                     } else {
@@ -518,11 +531,7 @@ fn apply_formatting(s: &str, spec: &FormatSpec) -> String {
 fn format_int(n: i128, spec: &FormatSpec) -> String {
     let mag = n.abs();
     let s = format_int_digits(mag as u128, spec.grouping);
-    if n < 0 {
-        format!("-{s}")
-    } else {
-        s
-    }
+    if n < 0 { format!("-{s}") } else { s }
 }
 
 /// Format integer digits with optional grouping separator.
@@ -543,10 +552,8 @@ fn format_int_digits(n: u128, grouping: char) -> String {
 }
 
 /// Format an integer in a given base (2, 8, 16).
-fn format_int_base(n: i128, base: u32, uppercase: bool, spec: &FormatSpec) -> String {
-    let sign = if n < 0 { "-" } else { "" };
-    let mag = n.abs();
-    let s = format!("{:x}", mag); // placeholder, replaced below
+fn format_int_base(n: i128, base: u32, uppercase: bool, _spec: &FormatSpec) -> String {
+    let mag = n.unsigned_abs();
     let s = if base == 16 {
         if uppercase {
             format!("{:X}", mag)
@@ -560,29 +567,20 @@ fn format_int_base(n: i128, base: u32, uppercase: bool, spec: &FormatSpec) -> St
     } else {
         mag.to_string()
     };
-    if n < 0 {
-        format!("-{s}")
-    } else {
-        s
-    }
+    if n < 0 { format!("-{s}") } else { s }
 }
 
 /// Format a float with fixed precision.
-fn format_float(f: f64, precision: usize, spec: &FormatSpec) -> String {
+fn format_float(f: f64, precision: usize, _spec: &FormatSpec) -> String {
     let mag = f.abs();
     let rounded = (mag * 10f64.powi(precision as i32)).round() / 10f64.powi(precision as i32);
     let s = format!("{:.precision$}", rounded, precision = precision);
-    if f < 0.0 {
-        format!("-{s}")
-    } else {
-        s
-    }
+    if f < 0.0 { format!("-{s}") } else { s }
 }
 
 /// Format in scientific notation.
-fn format_scientific(f: f64, precision: usize, uppercase: bool, spec: &FormatSpec) -> String {
+fn format_scientific(f: f64, precision: usize, uppercase: bool, _spec: &FormatSpec) -> String {
     let e_char = if uppercase { 'E' } else { 'e' };
-    let sign = if f < 0.0 { "-" } else { "" };
     let mag = f.abs();
 
     // Compute exponent: normalize to m in [1, 10)
@@ -602,15 +600,11 @@ fn format_scientific(f: f64, precision: usize, uppercase: bool, spec: &FormatSpe
     };
 
     let body = format!("{mantissa_str}{e_char}{exp_str}");
-    if f < 0.0 {
-        format!("-{body}")
-    } else {
-        body
-    }
+    if f < 0.0 { format!("-{body}") } else { body }
 }
 
 /// Format as percentage.
-fn format_percent(f: f64, precision: usize, spec: &FormatSpec) -> String {
+fn format_percent(f: f64, precision: usize, _spec: &FormatSpec) -> String {
     let mag = f.abs();
     let rounded = (mag * 10f64.powi(precision as i32)).round() / 10f64.powi(precision as i32);
     let s = format!("{:.precision$}", rounded, precision = precision);
@@ -719,11 +713,14 @@ fn format_json(v: &FormatValue) -> String {
             serde_json::Number::from_f64(*n).unwrap_or(serde_json::Number::from(0)),
         ))
         .unwrap_or_else(|_| n.to_string()),
-        FormatValue::Bool(b) => serde_json::to_string(&JsonValue::Bool(*b))
-            .unwrap_or_else(|_| b.to_string()),
+        FormatValue::Bool(b) => {
+            serde_json::to_string(&JsonValue::Bool(*b)).unwrap_or_else(|_| b.to_string())
+        }
         FormatValue::Null => "null".to_string(),
-        FormatValue::Int(i) => serde_json::to_string(&JsonValue::from(i64::try_from(*i).unwrap_or(0)))
-            .unwrap_or_else(|_| i.to_string()),
+        FormatValue::Int(i) => {
+            serde_json::to_string(&JsonValue::from(i64::try_from(*i).unwrap_or(0)))
+                .unwrap_or_else(|_| i.to_string())
+        }
         FormatValue::BigInt(bi) => bi.to_string(),
         FormatValue::UInt(u) => u.to_string(),
         FormatValue::Array(items) => {
@@ -733,7 +730,13 @@ fn format_json(v: &FormatValue) -> String {
         FormatValue::Object(entries) => {
             let parts: Vec<String> = entries
                 .iter()
-                .map(|(k, v)| format!("{}: {}", serde_json::to_string(k).unwrap_or_default(), format_json(v)))
+                .map(|(k, v)| {
+                    format!(
+                        "{}: {}",
+                        serde_json::to_string(k).unwrap_or_default(),
+                        format_json(v)
+                    )
+                })
                 .collect();
             format!("{{{}}}", parts.join(", "))
         }
@@ -743,8 +746,9 @@ fn format_json(v: &FormatValue) -> String {
         }
         FormatValue::Char(c) => serde_json::to_string(&JsonValue::String(c.to_string()))
             .unwrap_or_else(|_| c.to_string()),
-        FormatValue::Other(s) => serde_json::to_string(&JsonValue::String(s.clone()))
-            .unwrap_or_else(|_| s.clone()),
+        FormatValue::Other(s) => {
+            serde_json::to_string(&JsonValue::String(s.clone())).unwrap_or_else(|_| s.clone())
+        }
     }
 }
 
@@ -885,7 +889,7 @@ mod tests {
     #[test]
     fn parse_invalid() {
         assert!(FormatSpec::parse(".").is_err());
-        assert!(FormatSpec::parse("(2").is_err());  // missing closing paren
+        assert!(FormatSpec::parse("(2").is_err()); // missing closing paren
         assert!(FormatSpec::parse("(2x)").is_err()); // non-digit before closing paren
     }
 
@@ -1077,7 +1081,6 @@ mod tests {
 
     #[test]
     fn format_error_propagates() {
-        let v = FormatValue::Int(42);
         let spec = FormatSpec::parse(".").unwrap_err();
         assert_eq!(spec.message, "expected digits after '.'");
     }

@@ -85,6 +85,20 @@ fn trap_shift_overflow(builder: &mut FunctionBuilder, count: Value, width: u32) 
         .trapnz(overflow, cranelift_codegen::ir::TrapCode::IntegerOverflow);
 }
 
+/// Helper to convert integer or float values to f64 for float IR instructions
+fn to_f64(builder: &mut FunctionBuilder, val: Value) -> Value {
+    let ty = builder.func.dfg.value_type(val);
+    if ty == types::F64 {
+        val
+    } else if ty == types::F32 {
+        builder.ins().fpromote(types::F64, val)
+    } else if ty.is_int() {
+        builder.ins().fcvt_from_sint(types::F64, val)
+    } else {
+        val
+    }
+}
+
 /// Lower arithmetic instructions to Cranelift IR
 ///
 /// # Arguments
@@ -203,7 +217,9 @@ pub fn lower_arithmetic_instruction(
                 .get(b)
                 .copied()
                 .ok_or_else(|| format!("Value {} not found", b))?;
-            let v = builder.ins().fadd(va, vb);
+            let fa = to_f64(builder, va);
+            let fb = to_f64(builder, vb);
+            let v = builder.ins().fadd(fa, fb);
             value_map.insert(*dst, v);
             value_types.insert(*dst, AotValueType::F64);
             Ok(true)
@@ -218,7 +234,9 @@ pub fn lower_arithmetic_instruction(
                 .get(b)
                 .copied()
                 .ok_or_else(|| format!("Value {} not found", b))?;
-            let v = builder.ins().fsub(va, vb);
+            let fa = to_f64(builder, va);
+            let fb = to_f64(builder, vb);
+            let v = builder.ins().fsub(fa, fb);
             value_map.insert(*dst, v);
             value_types.insert(*dst, AotValueType::F64);
             Ok(true)
@@ -233,7 +251,9 @@ pub fn lower_arithmetic_instruction(
                 .get(b)
                 .copied()
                 .ok_or_else(|| format!("Value {} not found", b))?;
-            let v = builder.ins().fmul(va, vb);
+            let fa = to_f64(builder, va);
+            let fb = to_f64(builder, vb);
+            let v = builder.ins().fmul(fa, fb);
             value_map.insert(*dst, v);
             value_types.insert(*dst, AotValueType::F64);
             Ok(true)
@@ -248,7 +268,9 @@ pub fn lower_arithmetic_instruction(
                 .get(b)
                 .copied()
                 .ok_or_else(|| format!("Value {} not found", b))?;
-            let v = builder.ins().fdiv(va, vb);
+            let fa = to_f64(builder, va);
+            let fb = to_f64(builder, vb);
+            let v = builder.ins().fdiv(fa, fb);
             value_map.insert(*dst, v);
             value_types.insert(*dst, AotValueType::F64);
             Ok(true)
@@ -259,7 +281,8 @@ pub fn lower_arithmetic_instruction(
                 .get(src)
                 .copied()
                 .ok_or_else(|| format!("Value {} not found", src))?;
-            let v = builder.ins().fneg(vs);
+            let fs = to_f64(builder, vs);
+            let v = builder.ins().fneg(fs);
             value_map.insert(*dst, v);
             value_types.insert(*dst, AotValueType::F64);
             Ok(true)

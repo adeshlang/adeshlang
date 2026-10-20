@@ -21,9 +21,9 @@ pub mod stream_io;
 pub mod sys_io;
 pub mod threading;
 
-pub use adesh_format as formatting;
 pub use abi::*;
 pub use abi_v1::*;
+pub use adesh_format as formatting;
 pub use allocator::*;
 pub use allocator_v2::{AlignedAllocator, AllocStats, Allocator, BumpAllocator};
 pub use async_rt::*;

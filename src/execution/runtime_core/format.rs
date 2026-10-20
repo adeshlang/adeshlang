@@ -349,11 +349,7 @@ pub fn apply_format_spec(v: &Value, spec: &str) -> String {
             i += 1;
         }
         if start != i {
-            precision = chars[start..i]
-                .iter()
-                .collect::<String>()
-                .parse()
-                .ok();
+            precision = chars[start..i].iter().collect::<String>().parse().ok();
         }
     }
 
@@ -370,7 +366,11 @@ pub fn apply_format_spec(v: &Value, spec: &str) -> String {
     };
 
     // Apply sign for positive numbers
-    if sign_plus && is_nonnegative_numeric(v) && !result.starts_with('-') && !result.starts_with('+') {
+    if sign_plus
+        && is_nonnegative_numeric(v)
+        && !result.starts_with('-')
+        && !result.starts_with('+')
+    {
         if result.starts_with(|c: char| c.is_ascii_digit()) {
             result = format!("+{}", result);
         } else if let Some(pos) = result.find(|c: char| c.is_ascii_digit()) {
@@ -464,7 +464,6 @@ fn apply_type_format(v: &Value, ftype: &str, _precision: Option<usize>) -> Strin
                     if is_nonnegative_numeric(v) {
                         if !result.starts_with('-') && !result.starts_with('+') {
                             result.insert(0, '+');
-
                         }
                     }
                     return result;
@@ -539,7 +538,6 @@ fn format_with_commas(n: f64, decimal_places: usize) -> String {
             } else {
                 vec![c]
             }
-
         })
         .collect::<Vec<_>>()
         .into_iter()

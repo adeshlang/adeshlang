@@ -1,0 +1,11 @@
+let amount = 1234.5;
+
+print(`USD: ${amount:currency(USD)}`);
+print(`EUR: ${amount:currency(EUR)}`);
+print(`GBP: ${amount:currency(GBP)}`);
+print(`JPY: ${amount:currency(JPY)}`);
+print(`INR: ${amount:currency(INR)}`);
+print(`CAD: ${amount:currency(CAD)}`);
+print(`AUD: ${amount:currency(AUD)}`);
+print(`CHF: ${amount:currency(CHF)}`);
+print(`CNY: ${amount:currency(CNY)}`);

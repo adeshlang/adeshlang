@@ -1,0 +1,10 @@
+let pi = 3.14159265;
+let num = 42;
+let big = 1234567.89;
+
+print(`Pi (2 dec): ${pi:.2f}`);
+print(`Pi (4 dec): ${pi:.4f}`);
+print(`Padded int: ${num:05d}`);
+print(`Signed pos: ${num:+d}`);
+print(`Signed neg: ${-num:+d}`);
+print(`Grouping:   ${big:,.2f}`);
