@@ -238,9 +238,7 @@ impl MachOReader {
                     version: None,
                 };
 
-                if !sym.name.is_empty() {
-                    obj.add_symbol(sym);
-                }
+                obj.add_symbol(sym);
             }
         }
 
