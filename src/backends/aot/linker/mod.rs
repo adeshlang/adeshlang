@@ -282,11 +282,7 @@ impl LinkerDriver {
 
     /// macOS linking with proper shared library rules
     fn link_macos(&self, obj_path: &Path, runtime_obj: &Path, output: &Path) -> Result<(), String> {
-        // Try ld first, then fall back to clang
-        if self.try_ld_link(obj_path, runtime_obj, output).is_ok() {
-            return Ok(());
-        }
-
+        // On macOS, use native clang driver directly with frameworks and system libs
         self.try_gcc_clang_link(obj_path, runtime_obj, output)
     }
 
@@ -436,8 +432,12 @@ impl LinkerDriver {
             // Add debug info if requested
             if self.config.debug_info {
                 cmd.arg("-g");
-            } else {
-                // Strip symbols and debug info for smaller output
+            } else if !matches!(
+                self.config.target_triple.operating_system,
+                target_lexicon::OperatingSystem::MacOSX { .. }
+                    | target_lexicon::OperatingSystem::Darwin
+            ) {
+                // Strip symbols and debug info for smaller output (-s is unsupported on macOS clang)
                 cmd.arg("-s");
             }
 
@@ -497,7 +497,10 @@ impl LinkerDriver {
                     }
                     target_lexicon::OperatingSystem::MacOSX { .. }
                     | target_lexicon::OperatingSystem::Darwin => {
-                        cmd.arg("-lSystem");
+                        cmd.arg("-lSystem").arg("-lresolv");
+                        cmd.arg("-framework").arg("CoreFoundation");
+                        cmd.arg("-framework").arg("Security");
+                        cmd.arg("-framework").arg("SystemConfiguration");
                     }
                     target_lexicon::OperatingSystem::Windows => {
                         cmd.arg("-lkernel32");
