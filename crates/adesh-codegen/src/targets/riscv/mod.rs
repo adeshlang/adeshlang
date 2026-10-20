@@ -244,6 +244,86 @@ impl RiscVBackend {
         }
     }
 
+    /// Emit store relative to SP at offset `off` for register `reg`.
+    fn emit_store_sp(code: &mut Vec<u8>, reg: u8, off: i32, size: u8) {
+        let base_reg = if (-2048..=2047).contains(&off) {
+            (2u32, off) // sp
+        } else {
+            Self::emit_li64(code, 6, off as i64); // t1 = off
+            let add_ins = 0x00000033u32 | (2 << 20) | (6 << 15) | (6 << 7); // add t1, t1, sp
+            code.extend_from_slice(&add_ins.to_le_bytes());
+            (6u32, 0)
+        };
+
+        let imm = (base_reg.1 as u32) & 0xFFF;
+        let imm_hi = (imm >> 5) & 0x7F;
+        let imm_lo = imm & 0x1F;
+
+        if reg >= 32 {
+            let fs = (reg - 32) as u32;
+            let funct3 = if size == 4 { 2u32 } else { 3u32 };
+            let ins = (imm_hi << 25)
+                | (fs << 20)
+                | (base_reg.0 << 15)
+                | (funct3 << 12)
+                | (imm_lo << 7)
+                | 0x27;
+            code.extend_from_slice(&ins.to_le_bytes());
+        } else {
+            let rs2 = reg as u32;
+            let funct3 = match size {
+                1 => 0x0, // sb
+                2 => 0x1, // sh
+                4 => 0x2, // sw
+                _ => 0x3, // sd
+            };
+            let ins = (imm_hi << 25)
+                | (rs2 << 20)
+                | (base_reg.0 << 15)
+                | (funct3 << 12)
+                | (imm_lo << 7)
+                | 0x23;
+            code.extend_from_slice(&ins.to_le_bytes());
+        }
+    }
+
+    /// Emit load relative to SP at offset `off` into register `reg`.
+    fn emit_load_sp(code: &mut Vec<u8>, reg: u8, off: i32, size: u8) {
+        let base_reg = if (-2048..=2047).contains(&off) {
+            (2u32, off) // sp
+        } else {
+            Self::emit_li64(code, 6, off as i64); // t1 = off
+            let add_ins = 0x00000033u32 | (2 << 20) | (6 << 15) | (6 << 7); // add t1, t1, sp
+            code.extend_from_slice(&add_ins.to_le_bytes());
+            (6u32, 0)
+        };
+
+        let imm12 = (base_reg.1 as u32) & 0xFFF;
+        if reg >= 32 {
+            let fd = (reg - 32) as u32;
+            if size == 4 {
+                // flw fd, off(base)
+                let ins = 0x00002007u32 | (imm12 << 20) | (base_reg.0 << 15) | (fd << 7);
+                code.extend_from_slice(&ins.to_le_bytes());
+            } else {
+                // fld fd, off(base)
+                let ins = 0x00003007u32 | (imm12 << 20) | (base_reg.0 << 15) | (fd << 7);
+                code.extend_from_slice(&ins.to_le_bytes());
+            }
+        } else {
+            let rd = reg as u32;
+            let funct3 = match size {
+                1 => 0x0, // lb
+                2 => 0x1, // lh
+                4 => 0x2, // lw
+                _ => 0x3, // ld
+            };
+            let ins =
+                0x00000003u32 | (imm12 << 20) | (base_reg.0 << 15) | (funct3 << 12) | (rd << 7);
+            code.extend_from_slice(&ins.to_le_bytes());
+        }
+    }
+
     /// Emit 64-bit immediate loading into register `rd`.
     fn emit_li64(code: &mut Vec<u8>, rd: u8, imm: i64) {
         if (-2048..=2047).contains(&imm) {
@@ -350,15 +430,78 @@ impl RiscVBackend {
         let mut branch_fixups: Vec<(usize, String, bool, ConditionCode, u32, u32)> = Vec::new();
         let mut call_relocs: Vec<(usize, String)> = Vec::new();
 
-        // Standard 16-byte aligned LP64D frame:
-        // addi sp, sp, -16
-        // sd   ra, 8(sp)
-        // sd   s0, 0(sp)
-        // addi s0, sp, 16
-        code.extend_from_slice(&0xFF010113u32.to_le_bytes()); // addi sp, sp, -16
-        code.extend_from_slice(&0x00113423u32.to_le_bytes()); // sd ra, 8(sp)
-        code.extend_from_slice(&0x00813023u32.to_le_bytes()); // sd s0, 0(sp)
-        code.extend_from_slice(&0x01010413u32.to_le_bytes()); // addi s0, sp, 16
+        // Find modified callee-saved registers in function body
+        let mut used_callee_gprs: Vec<u8> = Vec::new();
+        let mut used_callee_fprs: Vec<u8> = Vec::new();
+
+        for block in &func.blocks {
+            for inst in &block.instructions {
+                for def in inst.defs() {
+                    if let Some(p) = def.physical() {
+                        if RISCV_CALLEE_SAVED_GPR.contains(&p)
+                            && p.0 != 8
+                            && !used_callee_gprs.contains(&p.0)
+                        {
+                            used_callee_gprs.push(p.0);
+                        } else if p.0 >= 32 && p.0 < 64 {
+                            let callee_fp = [40u8, 41, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59];
+                            if callee_fp.contains(&p.0) && !used_callee_fprs.contains(&p.0) {
+                                used_callee_fprs.push(p.0);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        used_callee_gprs.sort_unstable();
+        used_callee_fprs.sort_unstable();
+
+        // Calculate dynamic stack frame size
+        // Fixed saves: ra (8), s0/fp (8) = 16 bytes
+        let callee_save_bytes = (used_callee_gprs.len() + used_callee_fprs.len()) * 8;
+        let unaligned_frame = 16 + callee_save_bytes + (func.stack_size as usize);
+        let frame_size = (unaligned_frame + 15) & !15;
+
+        // Emit Prologue:
+        // Adjust SP
+        if (-(frame_size as i64)) >= -2048 {
+            let imm12 = (-(frame_size as i32) as u32) & 0xFFF;
+            let addi_sp = 0x00010113u32 | (imm12 << 20); // addi sp, sp, -frame_size
+            code.extend_from_slice(&addi_sp.to_le_bytes());
+        } else {
+            Self::emit_li64(&mut code, 6, -(frame_size as i64)); // t1 = -frame_size
+            let add_sp = 0x00010133u32 | (6 << 20) | (2 << 15) | (2 << 7); // add sp, sp, t1
+            code.extend_from_slice(&add_sp.to_le_bytes());
+        }
+
+        // Save RA and S0 at top of frame
+        let ra_off = frame_size as i32 - 8;
+        let s0_off = frame_size as i32 - 16;
+
+        Self::emit_store_sp(&mut code, 1, ra_off, 8); // sd ra, ra_off(sp)
+        Self::emit_store_sp(&mut code, 8, s0_off, 8); // sd s0, s0_off(sp)
+
+        // Save additional callee-saved GPRs and FPRs
+        let mut save_off = frame_size as i32 - 24;
+        for &gpr in &used_callee_gprs {
+            Self::emit_store_sp(&mut code, gpr, save_off, 8);
+            save_off -= 8;
+        }
+        for &fpr in &used_callee_fprs {
+            Self::emit_store_sp(&mut code, fpr, save_off, 8);
+            save_off -= 8;
+        }
+
+        // Set frame pointer s0 = sp + frame_size
+        if (frame_size as i64) <= 2047 {
+            let imm12 = (frame_size as u32) & 0xFFF;
+            let addi_s0 = 0x00010413u32 | (imm12 << 20); // addi s0, sp, frame_size
+            code.extend_from_slice(&addi_s0.to_le_bytes());
+        } else {
+            Self::emit_li64(&mut code, 6, frame_size as i64);
+            let add_s0 = 0x00010433u32 | (6 << 20) | (2 << 15) | (8 << 7); // add s0, sp, t1
+            code.extend_from_slice(&add_s0.to_le_bytes());
+        }
 
         // Track last comparison registers (rs1, rs2) for SetCc and BranchCc
         let mut last_cmp_regs: (u32, u32) = (10, 0); // default a0, zero
@@ -373,11 +516,33 @@ impl RiscVBackend {
                         code.extend_from_slice(&0x00000013u32.to_le_bytes());
                     }
                     MachineInstruction::Return => {
-                        // ld s0, 0(sp); ld ra, 8(sp); addi sp, sp, 16; ret (jalr x0, 0(ra))
-                        code.extend_from_slice(&0x00013403u32.to_le_bytes()); // ld s0, 0(sp)
-                        code.extend_from_slice(&0x00813083u32.to_le_bytes()); // ld ra, 8(sp)
-                        code.extend_from_slice(&0x01010113u32.to_le_bytes()); // addi sp, sp, 16
-                        code.extend_from_slice(&0x00008067u32.to_le_bytes()); // jalr x0, 0(ra)
+                        // Restore callee-saved FPRs and GPRs
+                        let mut rest_off = frame_size as i32 - 24;
+                        for &gpr in &used_callee_gprs {
+                            Self::emit_load_sp(&mut code, gpr, rest_off, 8);
+                            rest_off -= 8;
+                        }
+                        for &fpr in &used_callee_fprs {
+                            Self::emit_load_sp(&mut code, fpr, rest_off, 8);
+                            rest_off -= 8;
+                        }
+
+                        // Restore RA and S0
+                        Self::emit_load_sp(&mut code, 1, ra_off, 8); // ld ra, ra_off(sp)
+                        Self::emit_load_sp(&mut code, 8, s0_off, 8); // ld s0, s0_off(sp)
+
+                        // Deallocate frame
+                        if (frame_size as i64) <= 2047 {
+                            let imm12 = (frame_size as u32) & 0xFFF;
+                            let addi_sp = 0x00010113u32 | (imm12 << 20); // addi sp, sp, frame_size
+                            code.extend_from_slice(&addi_sp.to_le_bytes());
+                        } else {
+                            Self::emit_li64(&mut code, 6, frame_size as i64); // t1 = frame_size
+                            let add_sp = 0x00010133u32 | (6 << 20) | (2 << 15) | (2 << 7); // add sp, sp, t1
+                            code.extend_from_slice(&add_sp.to_le_bytes());
+                        }
+                        // ret: jalr x0, 0(ra)
+                        code.extend_from_slice(&0x00008067u32.to_le_bytes());
                     }
                     MachineInstruction::Move { dst, src } => {
                         let (d, s) = get_regs(dst, src);
@@ -1022,44 +1187,83 @@ impl RiscVBackend {
                         // FENCE iorw, iorw
                         code.extend_from_slice(&0x0FF0000Fu32.to_le_bytes());
                     }
-                    MachineInstruction::AtomicFetchAdd { dst, src, .. } => {
-                        let (d, s) = get_regs(dst, src);
-                        let rd = (d.unwrap_or(10)) as u32;
-                        let rs2 = (s.unwrap_or(11)) as u32;
-                        // AMOADD.D rd, rs2, (rs1=sp=2)
-                        let ins = 0x0000302Fu32 | (rs2 << 20) | (2 << 15) | (rd << 7);
+                    MachineInstruction::AtomicFetchAdd { dst, src, size } => {
+                        let base_reg = match dst {
+                            MachineOperand::Memory { base, .. } => {
+                                get_reg(&MachineOperand::Register(*base)).unwrap_or(2) as u32
+                            }
+                            _ => 2u32, // sp
+                        };
+                        let rd = get_reg(dst).unwrap_or(10) as u32;
+                        let rs2 = get_reg(src).unwrap_or(11) as u32;
+                        let funct3 = if *size == 4 { 0x2u32 } else { 0x3u32 };
+                        // AMOADD.W/D rd, rs2, (rs1)
+                        let ins = 0x0000002Fu32
+                            | (rs2 << 20)
+                            | (base_reg << 15)
+                            | (funct3 << 12)
+                            | (rd << 7);
                         code.extend_from_slice(&ins.to_le_bytes());
                     }
-                    MachineInstruction::AtomicExchange { dst, src, .. } => {
-                        let (d, s) = get_regs(dst, src);
-                        let rd = (d.unwrap_or(10)) as u32;
-                        let rs2 = (s.unwrap_or(11)) as u32;
-                        // AMOSWAP.D rd, rs2, (rs1=sp=2)
-                        let ins = 0x0800302Fu32 | (rs2 << 20) | (2 << 15) | (rd << 7);
+                    MachineInstruction::AtomicExchange { dst, src, size } => {
+                        let base_reg = match dst {
+                            MachineOperand::Memory { base, .. } => {
+                                get_reg(&MachineOperand::Register(*base)).unwrap_or(2) as u32
+                            }
+                            _ => 2u32, // sp
+                        };
+                        let rd = get_reg(dst).unwrap_or(10) as u32;
+                        let rs2 = get_reg(src).unwrap_or(11) as u32;
+                        let funct3 = if *size == 4 { 0x2u32 } else { 0x3u32 };
+                        // AMOSWAP.W/D rd, rs2, (rs1)
+                        let ins = 0x0800002Fu32
+                            | (rs2 << 20)
+                            | (base_reg << 15)
+                            | (funct3 << 12)
+                            | (rd << 7);
                         code.extend_from_slice(&ins.to_le_bytes());
                     }
                     MachineInstruction::AtomicCompareExchange {
                         dst,
                         expected,
                         desired,
-                        ..
+                        size,
                     } => {
-                        let rd = get_reg(dst).unwrap_or(10) as u32;
+                        let base_reg = match dst {
+                            MachineOperand::Memory { base, .. } => {
+                                get_reg(&MachineOperand::Register(*base)).unwrap_or(2) as u32
+                            }
+                            _ => 2u32, // sp
+                        };
+                        let rd = 6u32; // scratch t1
                         let re = get_reg(expected).unwrap_or(11) as u32;
                         let rdes = get_reg(desired).unwrap_or(12) as u32;
-                        // LR.D rd, (sp=2)
-                        let lr = 0x1000302Fu32 | (2 << 15) | (rd << 7);
+                        let funct3 = if *size == 4 { 0x2u32 } else { 0x3u32 };
+
+                        // LR.W/D rd (t1), (rs1)
+                        let lr = 0x1000002Fu32 | (base_reg << 15) | (funct3 << 12) | (rd << 7);
                         code.extend_from_slice(&lr.to_le_bytes());
-                        // BNE rd, re, +12 (skip store)
+                        // BNE rd, re, +12 (skip store if loaded value rd != expected re)
                         let bne = Self::encode_branch(ConditionCode::NotEqual, rd, re, 12);
                         code.extend_from_slice(&bne.to_le_bytes());
-                        // SC.D t0(5), rdes, (sp=2)
-                        let sc = 0x1800302Fu32 | (rdes << 20) | (2 << 15) | (5 << 7);
+                        // SC.W/D t0(5), rdes, (rs1)
+                        let sc = 0x1800002Fu32
+                            | (rdes << 20)
+                            | (base_reg << 15)
+                            | (funct3 << 12)
+                            | (5 << 7);
                         code.extend_from_slice(&sc.to_le_bytes());
                     }
-                    _ => {
-                        // NOP fallback
-                        code.extend_from_slice(&0x00000013u32.to_le_bytes());
+                    unsupported => {
+                        return Err(CodegenError::new(
+                            self.target.triple_string(),
+                            format!(
+                                "unsupported machine instruction {:?} for RISC-V target",
+                                unsupported
+                            ),
+                        )
+                        .with_arch("riscv64")
+                        .with_function(func.name.clone()));
                     }
                 }
             }
@@ -1067,9 +1271,28 @@ impl RiscVBackend {
 
         // Epilogue if missing
         if code.len() < 16 || code[code.len() - 4..] != 0x00008067u32.to_le_bytes() {
-            code.extend_from_slice(&0x00013403u32.to_le_bytes()); // ld s0, 0(sp)
-            code.extend_from_slice(&0x00813083u32.to_le_bytes()); // ld ra, 8(sp)
-            code.extend_from_slice(&0x01010113u32.to_le_bytes()); // addi sp, sp, 16
+            let mut rest_off = frame_size as i32 - 24;
+            for &gpr in &used_callee_gprs {
+                Self::emit_load_sp(&mut code, gpr, rest_off, 8);
+                rest_off -= 8;
+            }
+            for &fpr in &used_callee_fprs {
+                Self::emit_load_sp(&mut code, fpr, rest_off, 8);
+                rest_off -= 8;
+            }
+
+            Self::emit_load_sp(&mut code, 1, ra_off, 8);
+            Self::emit_load_sp(&mut code, 8, s0_off, 8);
+
+            if (frame_size as i64) <= 2047 {
+                let imm12 = (frame_size as u32) & 0xFFF;
+                let addi_sp = 0x00010113u32 | (imm12 << 20);
+                code.extend_from_slice(&addi_sp.to_le_bytes());
+            } else {
+                Self::emit_li64(&mut code, 6, frame_size as i64);
+                let add_sp = 0x00010133u32 | (6 << 20) | (2 << 15) | (2 << 7);
+                code.extend_from_slice(&add_sp.to_le_bytes());
+            }
             code.extend_from_slice(&0x00008067u32.to_le_bytes()); // ret
         }
 

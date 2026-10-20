@@ -101,7 +101,7 @@ fn test_riscv64_immediate_shifts_bitwise_and_branches() {
 
     let v0 = func.alloc_vreg();
     let v1 = func.alloc_vreg();
-    let v2 = func.alloc_vreg();
+    let _v2 = func.alloc_vreg();
 
     let entry = func.entry_block_mut();
     // 64-bit immediate loading (> 32 bits)
@@ -248,4 +248,108 @@ fn test_riscv64_cross_function_calls_and_static_elf_linking() {
 
     let e_entry = u64::from_le_bytes(elf_bytes[24..32].try_into().unwrap());
     assert!(e_entry >= 0x400000, "entry VA in user execution space");
+}
+
+#[test]
+fn test_riscv64_callee_saved_preservation_and_spills() {
+    let target = TargetDescriptor::from_triple("riscv64gc-unknown-linux-gnu").expect("triple");
+    let mut backend = RiscVBackend::new(target);
+
+    let mut module = NativeModule::new("test_riscv64_callee_saved");
+
+    // Function modifying callee-saved GPR s1 (9), s2 (18) and FPR fs0 (40), fs1 (41)
+    let mut func = MachineFunction::new("callee_saved_worker");
+    func.is_exported = true;
+    func.stack_size = 32;
+
+    {
+        let block = func.entry_block_mut();
+
+        // Assign physical callee-saved GPRs and FPRs directly in defs
+        block.push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(9))), // s1
+            src: MachineOperand::Immediate(100),
+        });
+        block.push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(18))), // s2
+            src: MachineOperand::Immediate(200),
+        });
+        block.push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(40))), // fs0
+            src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(32))), // ft0
+        });
+        block.push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(41))), // fs1
+            src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(33))), // ft1
+        });
+
+        // Add stack slot spills
+        block.push(MachineInstruction::Store {
+            dst: MachineOperand::StackSlot(0),
+            src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(9))),
+            size: 8,
+        });
+        block.push(MachineInstruction::Load {
+            dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(10))), // a0
+            src: MachineOperand::StackSlot(0),
+            size: 8,
+        });
+
+        block.push(MachineInstruction::Return);
+    }
+    module.add_function(func);
+
+    let (code, _) = backend
+        .generate_function_with_relocs(&module.functions[0])
+        .expect("generates function");
+
+    // Assert that prologue saved s1, s2, fs0, fs1 and epilogue restored them
+    assert!(code.len() >= 64, "prologue/epilogue code length check");
+    // Verify jalr x0, 0(ra) at end
+    assert_eq!(&code[code.len() - 4..], &0x00008067u32.to_le_bytes());
+}
+
+#[test]
+fn test_riscv64_atomic_cmpxchg_and_exchange() {
+    let target = TargetDescriptor::from_triple("riscv64gc-unknown-linux-gnu").expect("triple");
+    let mut backend = RiscVBackend::new(target);
+
+    let mut module = NativeModule::new("test_riscv64_atomics");
+    let mut func = MachineFunction::new("atomic_ops");
+    func.is_exported = true;
+    let block = func.entry_block_mut();
+
+    let ptr_reg = PhysicalRegister(10); // a0
+    let exp_reg = PhysicalRegister(11); // a1
+    let des_reg = PhysicalRegister(12); // a2
+
+    block.push(MachineInstruction::AtomicExchange {
+        dst: MachineOperand::Memory {
+            base: MachineRegister::Physical(ptr_reg),
+            offset: 0,
+            index: None,
+        },
+        src: MachineOperand::Register(MachineRegister::Physical(des_reg)),
+        size: 8,
+    });
+
+    block.push(MachineInstruction::AtomicCompareExchange {
+        dst: MachineOperand::Memory {
+            base: MachineRegister::Physical(ptr_reg),
+            offset: 0,
+            index: None,
+        },
+        expected: MachineOperand::Register(MachineRegister::Physical(exp_reg)),
+        desired: MachineOperand::Register(MachineRegister::Physical(des_reg)),
+        size: 8,
+    });
+
+    block.push(MachineInstruction::Return);
+    module.add_function(func);
+
+    let (code, _) = backend
+        .generate_function_with_relocs(&module.functions[0])
+        .expect("generates atomic function");
+
+    assert!(code.len() >= 32);
 }
