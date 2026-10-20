@@ -590,7 +590,6 @@ pub(super) fn runtime_format(args: &[RuntimeValue]) -> RuntimeValue {
 
 /// Apply a format specifier to a RuntimeValue
 #[allow(dead_code)]
-#[allow(dead_code)]
 fn apply_runtime_format(value: &RuntimeValue, spec: &str) -> String {
     let base_value = value.as_string();
     let spec = spec.trim();
@@ -603,7 +602,9 @@ fn apply_runtime_format(value: &RuntimeValue, spec: &str) -> String {
     let mut fill_char = ' ';
     let mut align: Option<char> = None;
     let mut sign_plus = false;
+    let mut sign_space = false;
     let mut width: Option<usize> = None;
+    let mut precision: Option<usize> = None;
     let mut format_type: Option<String> = None;
 
     let chars: Vec<char> = spec.chars().collect();
@@ -622,6 +623,9 @@ fn apply_runtime_format(value: &RuntimeValue, spec: &str) -> String {
     // Check for sign
     if i < chars.len() && chars[i] == '+' {
         sign_plus = true;
+        i += 1;
+    } else if i < chars.len() && chars[i] == ' ' {
+        sign_space = true;
         i += 1;
     }
 
@@ -644,6 +648,22 @@ fn apply_runtime_format(value: &RuntimeValue, spec: &str) -> String {
         width = width_str.parse().ok();
     }
 
+    // Check for precision: .N or .Nf
+    if i < chars.len() && chars[i] == '.' {
+        i += 1;
+        let mut prec_str = String::new();
+        while i < chars.len() && chars[i].is_ascii_digit() {
+            prec_str.push(chars[i]);
+            i += 1;
+        }
+        if !prec_str.is_empty() {
+            precision = prec_str.parse().ok();
+        }
+        if i < chars.len() && chars[i] == 'f' {
+            i += 1;
+        }
+    }
+
     // Parse type specifier (rest of the string)
     if i < chars.len() {
         format_type = Some(chars[i..].iter().collect::<String>());
@@ -651,28 +671,41 @@ fn apply_runtime_format(value: &RuntimeValue, spec: &str) -> String {
 
     // Apply format type first
     let mut result = if let Some(ref ftype) = format_type {
-        apply_runtime_type_format(value, ftype)
+        apply_runtime_type_format(value, ftype, precision)
+    } else if let Some(prec) = precision {
+        if let Some(n) = value.as_float() {
+            format!("{:.prec$}", n, prec = prec)
+        } else {
+            base_value
+        }
     } else {
         base_value
     };
 
     // Apply sign for positive numbers
-    if sign_plus {
-        if let RuntimeValue::Int(n) = value {
-            if *n >= 0 && !result.starts_with('-') && !result.starts_with('+') {
-                result = format!("+{}", result);
-            }
-        } else if let RuntimeValue::Float(n) = value {
-            if *n >= 0.0 && !result.starts_with('-') && !result.starts_with('+') {
-                result = format!("+{}", result);
+    if let Some(n) = value.as_float() {
+        if n >= 0.0 && !result.starts_with('-') && !result.starts_with('+') {
+            if sign_plus {
+                if let Some(pos) = result.find(|c: char| c.is_ascii_digit()) {
+                    result.insert(pos, '+');
+                } else {
+                    result = format!("+{}", result);
+                }
+            } else if sign_space {
+                if let Some(pos) = result.find(|c: char| c.is_ascii_digit()) {
+                    result.insert(pos, ' ');
+                } else {
+                    result = format!(" {}", result);
+                }
             }
         }
     }
 
-    // Apply width and alignment
+    // Apply width and alignment using character count for Unicode safety
     if let Some(w) = width {
-        if result.len() < w {
-            let padding = w - result.len();
+        let char_count = result.chars().count();
+        if char_count < w {
+            let padding = w - char_count;
             result = match align {
                 Some('<') => format!("{}{}", result, fill_char.to_string().repeat(padding)),
                 Some('^') => {
@@ -696,18 +729,17 @@ fn apply_runtime_format(value: &RuntimeValue, spec: &str) -> String {
 
 /// Apply type-specific formatting for RuntimeValue
 #[allow(dead_code)]
-#[allow(dead_code)]
-fn apply_runtime_type_format(value: &RuntimeValue, ftype: &str) -> String {
+fn apply_runtime_type_format(value: &RuntimeValue, ftype: &str, precision: Option<usize>) -> String {
     let ftype = ftype.trim();
 
     // currency(CODE)
-    if ftype.starts_with("currency(") && ftype.ends_with(")") {
+    if ftype.starts_with("currency(") && ftype.ends_with(')') {
         let code = &ftype[9..ftype.len() - 1];
         return format_runtime_currency(value, code);
     }
 
     // float(N)
-    if ftype.starts_with("float(") && ftype.ends_with(")") {
+    if ftype.starts_with("float(") && ftype.ends_with(')') {
         let prec_str = &ftype[6..ftype.len() - 1];
         if let Ok(prec) = prec_str.parse::<usize>() {
             if let Some(n) = value.as_float() {
@@ -717,47 +749,92 @@ fn apply_runtime_type_format(value: &RuntimeValue, ftype: &str) -> String {
         return value.as_string();
     }
 
+    // percent
+    if ftype == "%" || ftype == "percent" || (ftype.starts_with("percent(") && ftype.ends_with(')')) {
+        let prec = if ftype.starts_with("percent(") {
+            ftype[8..ftype.len() - 1].parse::<usize>().unwrap_or(2)
+        } else {
+            precision.unwrap_or(2)
+        };
+        if let Some(n) = value.as_float() {
+            return format!("{:.prec$}%", n * 100.0, prec = prec);
+        }
+    }
+
+    // exponential
+    if ftype == "e" || ftype == "exp" {
+        let prec = precision.unwrap_or(6);
+        if let Some(n) = value.as_float() {
+            return format!("{:.prec$e}", n, prec = prec);
+        }
+    }
+    if ftype == "E" || ftype == "EXP" {
+        let prec = precision.unwrap_or(6);
+        if let Some(n) = value.as_float() {
+            return format!("{:.prec$E}", n, prec = prec);
+        }
+    }
+
     match ftype {
-        "int" => match value {
-            RuntimeValue::Float(n) => format!("{}", *n as i64),
-            RuntimeValue::Int(n) => format!("{}", n),
-            _ => value.as_string(),
+        "int" | "d" | "i" => match value.as_int() {
+            Some(n) => format!("{}", n),
+            None => value.as_string(),
         },
-        "bin" => match value {
-            RuntimeValue::Int(n) => format!("{:b}", n),
-            RuntimeValue::Float(n) => format!("{:b}", *n as i64),
-            _ => value.as_string(),
+        "bin" | "b" => match value.as_int() {
+            Some(n) => format!("{:b}", n),
+            None => value.as_string(),
         },
-        "hex" => match value {
-            RuntimeValue::Int(n) => format!("{:x}", n),
-            RuntimeValue::Float(n) => format!("{:x}", *n as i64),
-            _ => value.as_string(),
+        "#bin" | "#b" => match value.as_int() {
+            Some(n) => format!("0b{:b}", n),
+            None => value.as_string(),
         },
-        "HEX" => match value {
-            RuntimeValue::Int(n) => format!("{:X}", n),
-            RuntimeValue::Float(n) => format!("{:X}", *n as i64),
-            _ => value.as_string(),
+        "hex" | "x" => match value.as_int() {
+            Some(n) => format!("{:x}", n),
+            None => value.as_string(),
         },
-        "oct" => match value {
-            RuntimeValue::Int(n) => format!("{:o}", n),
-            RuntimeValue::Float(n) => format!("{:o}", *n as i64),
-            _ => value.as_string(),
+        "#hex" | "#x" => match value.as_int() {
+            Some(n) => format!("0x{:x}", n),
+            None => value.as_string(),
         },
+        "HEX" | "X" => match value.as_int() {
+            Some(n) => format!("{:X}", n),
+            None => value.as_string(),
+        },
+        "#HEX" | "#X" => match value.as_int() {
+            Some(n) => format!("0X{:X}", n),
+            None => value.as_string(),
+        },
+        "oct" | "o" => match value.as_int() {
+            Some(n) => format!("{:o}", n),
+            None => value.as_string(),
+        },
+        "#oct" | "#o" => match value.as_int() {
+            Some(n) => format!("0o{:o}", n),
+            None => value.as_string(),
+        },
+        "," => match value.as_float() {
+            Some(n) => format_with_commas_runtime(n, precision.unwrap_or(if n.fract() == 0.0 { 0 } else { 2 })),
+            None => value.as_string(),
+        },
+        "?" | "debug" => format!("{:?}", value),
         _ => {
             // +currency(CODE)
             if ftype.starts_with('+') {
                 let rest = &ftype[1..];
-                if rest.starts_with("currency(") && rest.ends_with(")") {
+                if rest.starts_with("currency(") && rest.ends_with(')') {
                     let code = &rest[9..rest.len() - 1];
-                    let mut result = format_runtime_currency(value, code);
+                    let result = format_runtime_currency(value, code);
                     if let Some(n) = value.as_float() {
                         if n >= 0.0 && !result.starts_with('-') && !result.starts_with('+') {
-                            if let Some(pos) = result.find(|c: char| c.is_ascii_digit()) {
-                                result.insert(pos, '+');
-                            }
+                            return format!("+{}", result);
                         }
                     }
                     return result;
+                }
+            }
+            if let Some(prec) = precision {
+                if let Some(n) = value.as_float() {
+                    return format!("{:.prec$}", n, prec = prec);
                 }
             }
             value.as_string()
@@ -767,12 +844,10 @@ fn apply_runtime_type_format(value: &RuntimeValue, ftype: &str) -> String {
 
 /// Format a RuntimeValue as currency with the given currency code
 #[allow(dead_code)]
-#[allow(dead_code)]
 fn format_runtime_currency(value: &RuntimeValue, code: &str) -> String {
-    let n = match value {
-        RuntimeValue::Int(i) => *i as f64,
-        RuntimeValue::Float(f) => *f,
-        _ => return value.as_string(),
+    let n = match value.as_float() {
+        Some(f) => f,
+        None => return value.as_string(),
     };
 
     let (symbol, decimal_places) = match code.to_uppercase().as_str() {
@@ -780,6 +855,7 @@ fn format_runtime_currency(value: &RuntimeValue, code: &str) -> String {
         "EUR" => ("€", 2),
         "GBP" => ("£", 2),
         "JPY" => ("¥", 0),
+        "INR" => ("₹", 2),
         "CNY" => ("¥", 2),
         "KRW" => ("₩", 0),
         "RUB" => ("₽", 2),
@@ -791,8 +867,14 @@ fn format_runtime_currency(value: &RuntimeValue, code: &str) -> String {
         _ => ("", 2),
     };
 
-    let formatted_number = format_with_commas_runtime(n, decimal_places);
-    format!("{}{}", symbol, formatted_number)
+    let is_negative = n < 0.0;
+    let abs_n = n.abs();
+    let formatted_number = format_with_commas_runtime(abs_n, decimal_places);
+    if is_negative {
+        format!("-{}{}", symbol, formatted_number)
+    } else {
+        format!("{}{}", symbol, formatted_number)
+    }
 }
 
 /// Format a number with comma separators for thousands

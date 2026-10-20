@@ -119,6 +119,21 @@ print(`[${amt:^16currency(EUR)}]`);     // [   €1,234.50   ]
 
 ### Fill Character
 
+### Common presentation types
+
+Adesh also supports familiar presentation forms from Python, Rust, Go, and
+printf-style APIs:
+
+```adesh
+print(`${255:x}`);       // ff
+print(`${255:X}`);       // FF
+print(`${10:b}`);        // 1010
+print(`${10:o}`);        // 12
+print(`${0.125:%}`);     // 12.5%
+print(`${1234.5:e}`);    // scientific notation
+print(`${"café":^12}`);  // Unicode-aware centered text
+```
+
 You can specify a custom fill character before the alignment specifier:
 
 ```adesh
@@ -148,6 +163,7 @@ adesh run examples/formatting/align_width.adesh
 adesh run examples/formatting/types.adesh
 adesh run examples/formatting/expressions.adesh
 adesh run examples/formatting/currency_variants.adesh
+adesh run examples/formatting/comprehensive.adesh
 ```
 
 ## Notes
@@ -155,4 +171,7 @@ adesh run examples/formatting/currency_variants.adesh
 - Template strings must use backticks (`` ` ``), not regular quotes
 - Regular strings (`"..."` or `'...'`) do not support interpolation
 - Format specifiers are optional - `${expr}` works without a colon
-- All formatting features work with both the interpreter and JIT backends
+- The language-level contract is documented in
+  [`docs-adesh/FORMATTING_SPEC.md`](../../docs-adesh/FORMATTING_SPEC.md).
+- Interpreter, VM, JIT, AOT, native, and WASM paths must use the same
+  formatting conformance corpus; backend-specific output differences are bugs.

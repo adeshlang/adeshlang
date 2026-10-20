@@ -1,3 +1,0 @@
-print("Hello from VIR path!");
-print(42);
-print("Sum:", 10 + 20);

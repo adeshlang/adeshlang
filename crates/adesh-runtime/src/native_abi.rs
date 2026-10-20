@@ -185,6 +185,10 @@ fn apply_runtime_format_aot(v: &RuntimeValue, spec: &str) -> String {
 
     let mut result = if let Some(ref ftype) = format_type {
         match ftype.as_str() {
+            "int" | "d" => v
+                .as_i64()
+                .map(|n| n.to_string())
+                .unwrap_or(base_value),
             "hex" | "x" => {
                 if let Some(n) = v.as_i64() {
                     format!("{:x}", n)
@@ -227,8 +231,20 @@ fn apply_runtime_format_aot(v: &RuntimeValue, spec: &str) -> String {
                     base_value
                 }
             }
+            _ if ftype.starts_with("float(") && ftype.ends_with(')') => {
+                let precision = ftype[6..ftype.len() - 1].parse::<usize>();
+                match (precision, v.as_f64()) {
+                    (Ok(precision), Some(value)) => format!("{value:.precision$}"),
+                    _ => base_value,
+                }
+            }
+            _ if ftype.starts_with("currency(") && ftype.ends_with(')') => {
+                let code = &ftype[9..ftype.len() - 1];
+                format_runtime_currency(v.as_f64(), code).unwrap_or(base_value)
+            }
             _ => base_value,
         }
+
     } else {
         base_value
     };
@@ -268,6 +284,55 @@ fn apply_runtime_format_aot(v: &RuntimeValue, spec: &str) -> String {
     }
 
     result
+}
+
+fn format_runtime_currency(value: Option<f64>, code: &str) -> Option<String> {
+    let value = value?;
+    let (symbol, decimals) = match code.to_ascii_uppercase().as_str() {
+        "USD" => ("$", 2),
+        "EUR" => ("€", 2),
+        "GBP" => ("£", 2),
+        "INR" => ("₹", 2),
+        "CNY" | "JPY" => ("¥", if code.eq_ignore_ascii_case("JPY") { 0 } else { 2 }),
+        "KRW" => ("₩", 0),
+        "RUB" => ("₽", 2),
+        "BRL" => ("R$", 2),
+        "CAD" => ("C$", 2),
+        "AUD" => ("A$", 2),
+        "CHF" => ("CHF ", 2),
+        "MXN" => ("MX$", 2),
+        _ => return None,
+    };
+    let negative = value.is_sign_negative();
+    let absolute = value.abs();
+    let rendered = format!("{absolute:.decimals$}");
+    let (integer, fraction) = rendered
+        .split_once('.')
+        .map_or((rendered.as_str(), None), |(integer, fraction)| {
+            (integer, Some(fraction))
+        });
+    let grouped = integer
+        .chars()
+        .rev()
+        .enumerate()
+        .flat_map(|(index, ch)| {
+            if index > 0 && index % 3 == 0 {
+                vec![',', ch]
+            } else {
+                vec![ch]
+            }
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>();
+    let number = fraction.map_or(grouped.clone(), |fraction| format!("{grouped}.{fraction}"));
+    Some(format!(
+        "{}{}{}",
+        if negative { "-" } else { "" },
+        symbol,
+        number
+    ))
 }
 
 /// Materialize `start..end` (inclusive == 0) or `start..=end` (inclusive

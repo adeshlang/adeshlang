@@ -1,4 +1,5 @@
 use crate::parsing::ast::Value;
+use unicode_width::UnicodeWidthStr;
 
 /// Format a value with a depth limit to prevent stack overflow on deeply nested structures.
 /// When max_depth is reached, nested values are abbreviated as <...>
@@ -298,7 +299,7 @@ pub fn apply_format_spec(v: &Value, spec: &str) -> String {
     let mut align: Option<char> = None;
     let mut sign_plus = false;
     let mut width: Option<usize> = None;
-    let precision: Option<usize> = None;
+    let mut precision: Option<usize> = None;
     let mut format_type: Option<String> = None;
 
     let chars: Vec<char> = spec.chars().collect();
@@ -340,6 +341,22 @@ pub fn apply_format_spec(v: &Value, spec: &str) -> String {
         width = width_str.parse().ok();
     }
 
+    // Parse precision before the presentation type.
+    if i < chars.len() && chars[i] == '.' {
+        i += 1;
+        let start = i;
+        while i < chars.len() && chars[i].is_ascii_digit() {
+            i += 1;
+        }
+        if start != i {
+            precision = chars[start..i]
+                .iter()
+                .collect::<String>()
+                .parse()
+                .ok();
+        }
+    }
+
     // Parse type specifier (rest of the string)
     if i < chars.len() {
         format_type = Some(chars[i..].iter().collect::<String>());
@@ -353,18 +370,19 @@ pub fn apply_format_spec(v: &Value, spec: &str) -> String {
     };
 
     // Apply sign for positive numbers
-    if sign_plus {
-        if let Value::Number(n) = v {
-            if *n >= 0.0 && !result.starts_with('-') && !result.starts_with('+') {
-                result = format!("+{}", result);
-            }
+    if sign_plus && is_nonnegative_numeric(v) && !result.starts_with('-') && !result.starts_with('+') {
+        if result.starts_with(|c: char| c.is_ascii_digit()) {
+            result = format!("+{}", result);
+        } else if let Some(pos) = result.find(|c: char| c.is_ascii_digit()) {
+            result.insert(pos, '+');
         }
     }
 
     // Apply width and alignment
     if let Some(w) = width {
-        if result.len() < w {
-            let padding = w - result.len();
+        let display_width = UnicodeWidthStr::width(result.as_str());
+        if display_width < w {
+            let padding = w - display_width;
             result = match align {
                 Some('<') => format!("{}{}", result, fill_char.to_string().repeat(padding)),
                 Some('^') => {
@@ -400,7 +418,7 @@ fn apply_type_format(v: &Value, ftype: &str, _precision: Option<usize>) -> Strin
     if ftype.starts_with("float(") && ftype.ends_with(")") {
         let prec_str = &ftype[6..ftype.len() - 1];
         if let Ok(prec) = prec_str.parse::<usize>() {
-            if let Value::Number(n) = v {
+            if let Some(n) = numeric_as_f64(v) {
                 return format!("{:.prec$}", n, prec = prec);
             }
         }
@@ -409,26 +427,33 @@ fn apply_type_format(v: &Value, ftype: &str, _precision: Option<usize>) -> Strin
 
     // Handle simple type specifiers
     match ftype {
-        "int" => match v {
-            Value::Number(n) => format!("{}", *n as i64),
-            _ => fmt(v),
-        },
-        "bin" => match v {
-            Value::Number(n) => format!("{:b}", *n as i64),
-            _ => fmt(v),
-        },
-        "hex" => match v {
-            Value::Number(n) => format!("{:x}", *n as i64),
-            _ => fmt(v),
-        },
-        "HEX" => match v {
-            Value::Number(n) => format!("{:X}", *n as i64),
-            _ => fmt(v),
-        },
-        "oct" => match v {
-            Value::Number(n) => format!("{:o}", *n as i64),
-            _ => fmt(v),
-        },
+        "int" | "d" => numeric_as_i128(v)
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| fmt(v)),
+        "bin" | "b" => numeric_as_i128(v)
+            .map(|n| format!("{:b}", n))
+            .unwrap_or_else(|| fmt(v)),
+        "hex" | "x" => numeric_as_i128(v)
+            .map(|n| format!("{:x}", n))
+            .unwrap_or_else(|| fmt(v)),
+        "HEX" | "X" => numeric_as_i128(v)
+            .map(|n| format!("{:X}", n))
+            .unwrap_or_else(|| fmt(v)),
+        "oct" | "o" => numeric_as_i128(v)
+            .map(|n| format!("{:o}", n))
+            .unwrap_or_else(|| fmt(v)),
+        "e" | "sci" => numeric_as_f64(v)
+            .map(|n| format!("{:e}", n))
+            .unwrap_or_else(|| fmt(v)),
+        "E" => numeric_as_f64(v)
+            .map(|n| format!("{:E}", n))
+            .unwrap_or_else(|| fmt(v)),
+        "%" | "percent" => numeric_as_f64(v)
+            .map(|n| format!("{:.1}%", n * 100.0))
+            .unwrap_or_else(|| fmt(v)),
+        "upper" | "uppercase" => fmt(v).to_uppercase(),
+        "lower" | "lowercase" => fmt(v).to_lowercase(),
+        "quoted" | "debug" => format!("{:?}", fmt(v)),
         _ => {
             // Check if this is a combined format like "+currency(INR)"
             if ftype.starts_with("+") {
@@ -436,12 +461,10 @@ fn apply_type_format(v: &Value, ftype: &str, _precision: Option<usize>) -> Strin
                 if rest.starts_with("currency(") && rest.ends_with(")") {
                     let code = &rest[9..rest.len() - 1];
                     let mut result = format_currency(v, code);
-                    if let Value::Number(n) = v {
-                        if *n >= 0.0 && !result.starts_with('-') && !result.starts_with('+') {
-                            // Find where the number starts and insert +
-                            if let Some(pos) = result.find(|c: char| c.is_ascii_digit()) {
-                                result.insert(pos, '+');
-                            }
+                    if is_nonnegative_numeric(v) {
+                        if !result.starts_with('-') && !result.starts_with('+') {
+                            result.insert(0, '+');
+
                         }
                     }
                     return result;
@@ -454,9 +477,9 @@ fn apply_type_format(v: &Value, ftype: &str, _precision: Option<usize>) -> Strin
 
 /// Format a value as currency with the given currency code
 fn format_currency(v: &Value, code: &str) -> String {
-    let n = match v {
-        Value::Number(n) => *n,
-        _ => return fmt(v),
+    let n = match numeric_as_f64(v) {
+        Some(n) => n,
+        None => return fmt(v),
     };
 
     let (symbol, decimal_places, use_comma) = match code.to_uppercase().as_str() {
@@ -516,6 +539,7 @@ fn format_with_commas(n: f64, decimal_places: usize) -> String {
             } else {
                 vec![c]
             }
+
         })
         .collect::<Vec<_>>()
         .into_iter()
@@ -531,5 +555,73 @@ fn format_with_commas(n: f64, decimal_places: usize) -> String {
         format!("-{}", result)
     } else {
         result
+    }
+}
+
+fn numeric_as_f64(v: &Value) -> Option<f64> {
+    match v {
+        Value::Number(n) => Some(*n),
+        Value::F32(n) => Some(*n as f64),
+        Value::F64(n) => Some(*n),
+        Value::U8(n) => Some(*n as f64),
+        Value::U16(n) => Some(*n as f64),
+        Value::U32(n) => Some(*n as f64),
+        Value::U64(n) => Some(*n as f64),
+        Value::U128(n) => Some(*n as f64),
+        Value::I8(n) => Some(*n as f64),
+        Value::I16(n) => Some(*n as f64),
+        Value::I32(n) => Some(*n as f64),
+        Value::I64(n) => Some(*n as f64),
+        Value::I128(n) => Some(*n as f64),
+        _ => None,
+    }
+}
+
+fn numeric_as_i128(v: &Value) -> Option<i128> {
+    match v {
+        Value::Number(n) => Some(*n as i128),
+        Value::F32(n) => Some(*n as i128),
+        Value::F64(n) => Some(*n as i128),
+        Value::U8(n) => Some(*n as i128),
+        Value::U16(n) => Some(*n as i128),
+        Value::U32(n) => Some(*n as i128),
+        Value::U64(n) => Some(*n as i128),
+        Value::U128(n) => Some(*n as i128),
+        Value::I8(n) => Some(*n as i128),
+        Value::I16(n) => Some(*n as i128),
+        Value::I32(n) => Some(*n as i128),
+        Value::I64(n) => Some(*n as i128),
+        Value::I128(n) => Some(*n),
+        _ => None,
+    }
+}
+
+fn is_nonnegative_numeric(v: &Value) -> bool {
+    numeric_as_f64(v).is_some_and(|n| n >= 0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_format_spec;
+    use crate::parsing::ast::Value;
+
+    #[test]
+    fn formats_fixed_width_numbers() {
+        assert_eq!(apply_format_spec(&Value::U32(255), "hex"), "ff");
+        assert_eq!(apply_format_spec(&Value::I64(10), "08"), "00000010");
+        assert_eq!(apply_format_spec(&Value::F32(3.14), "float(1)"), "3.1");
+    }
+
+    #[test]
+    fn formats_unicode_by_display_width() {
+        assert_eq!(apply_format_spec(&Value::Str("₹".into()), "<4"), "₹   ");
+    }
+
+    #[test]
+    fn combines_sign_currency_and_alignment() {
+        assert_eq!(
+            apply_format_spec(&Value::U64(1234), ">12+currency(INR)"),
+            "  +₹1,234.00"
+        );
     }
 }

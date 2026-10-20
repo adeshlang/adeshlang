@@ -1,0 +1,18 @@
+[package]
+name = "adesh-format"
+version = "0.3.0"
+edition = "2024"
+authors = ["Ajay Tainwala"]
+description = "Portable string formatting engine for AdeshLang, shared across interpreter, VM, JIT, AOT, and WASM backends."
+
+[lints]
+workspace = true
+
+[dependencies]
+num-bigint = "0.4"
+num-traits = "0.2"
+serde_json = "1.0"
+unicode-width = "0.1"
+
+[dev-dependencies]
+assert_cmd = "2.0"

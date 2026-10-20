@@ -1,5 +1,4 @@
 // Unicode printing demo
-#hello
 print("Hello, 世界 🌍");
 print("Emoji: 😀 😎 🚀");
 print("Hindi: नमस्ते भारत");

@@ -1,0 +1,17 @@
+// A practical formatting tour: messages, tables, diagnostics, metrics, and finance.
+let user = "Ada";
+let id = 42;
+let score = 0.875;
+let price = 1234567.8;
+let flags = 10;
+
+print(`Welcome, ${user}!`);
+print(`Request ${id:08} completed`);
+print(`Score: ${score:.1%}`);
+print(`Price: ${price:currency(USD)}`);
+print(`Price in India: ${price:>18currency(INR)}`);
+print(`Flags: ${flags:08bin}`);
+print(`Hex diagnostic: 0x${255:HEX}`);
+print(`[${"name":<12}] [${"value":>10}]`);
+print(`[${user:^12}] [${score:>10.2}]`);
+print(`Quoted input: ${"line\nvalue":quoted}`);

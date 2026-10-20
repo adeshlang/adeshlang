@@ -6,6 +6,7 @@ members = [
     "mobile/bridge",
     "crates/adesh-wasm",
     "crates/adesh-runtime",
+    "crates/adesh-format",
     "crates/adesh-object",
     "crates/adesh-codegen",
     "linker",
