@@ -318,7 +318,8 @@ impl RiscVBackend {
                 4 => 0x2, // lw
                 _ => 0x3, // ld
             };
-            let ins = 0x00000003u32 | (imm12 << 20) | (base_reg.0 << 15) | (funct3 << 12) | (rd << 7);
+            let ins =
+                0x00000003u32 | (imm12 << 20) | (base_reg.0 << 15) | (funct3 << 12) | (rd << 7);
             code.extend_from_slice(&ins.to_le_bytes());
         }
     }
@@ -437,7 +438,10 @@ impl RiscVBackend {
             for inst in &block.instructions {
                 for def in inst.defs() {
                     if let Some(p) = def.physical() {
-                        if RISCV_CALLEE_SAVED_GPR.contains(&p) && p.0 != 8 && !used_callee_gprs.contains(&p.0) {
+                        if RISCV_CALLEE_SAVED_GPR.contains(&p)
+                            && p.0 != 8
+                            && !used_callee_gprs.contains(&p.0)
+                        {
                             used_callee_gprs.push(p.0);
                         } else if p.0 >= 32 && p.0 < 64 {
                             let callee_fp = [40u8, 41, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59];
@@ -524,8 +528,8 @@ impl RiscVBackend {
                         }
 
                         // Restore RA and S0
-                        Self::emit_load_sp(&mut code, 1, ra_off, 8);  // ld ra, ra_off(sp)
-                        Self::emit_load_sp(&mut code, 8, s0_off, 8);  // ld s0, s0_off(sp)
+                        Self::emit_load_sp(&mut code, 1, ra_off, 8); // ld ra, ra_off(sp)
+                        Self::emit_load_sp(&mut code, 8, s0_off, 8); // ld s0, s0_off(sp)
 
                         // Deallocate frame
                         if (frame_size as i64) <= 2047 {
@@ -1185,26 +1189,38 @@ impl RiscVBackend {
                     }
                     MachineInstruction::AtomicFetchAdd { dst, src, size } => {
                         let base_reg = match dst {
-                            MachineOperand::Memory { base, .. } => get_reg(&MachineOperand::Register(*base)).unwrap_or(2) as u32,
+                            MachineOperand::Memory { base, .. } => {
+                                get_reg(&MachineOperand::Register(*base)).unwrap_or(2) as u32
+                            }
                             _ => 2u32, // sp
                         };
                         let rd = get_reg(dst).unwrap_or(10) as u32;
                         let rs2 = get_reg(src).unwrap_or(11) as u32;
                         let funct3 = if *size == 4 { 0x2u32 } else { 0x3u32 };
                         // AMOADD.W/D rd, rs2, (rs1)
-                        let ins = 0x0000002Fu32 | (rs2 << 20) | (base_reg << 15) | (funct3 << 12) | (rd << 7);
+                        let ins = 0x0000002Fu32
+                            | (rs2 << 20)
+                            | (base_reg << 15)
+                            | (funct3 << 12)
+                            | (rd << 7);
                         code.extend_from_slice(&ins.to_le_bytes());
                     }
                     MachineInstruction::AtomicExchange { dst, src, size } => {
                         let base_reg = match dst {
-                            MachineOperand::Memory { base, .. } => get_reg(&MachineOperand::Register(*base)).unwrap_or(2) as u32,
+                            MachineOperand::Memory { base, .. } => {
+                                get_reg(&MachineOperand::Register(*base)).unwrap_or(2) as u32
+                            }
                             _ => 2u32, // sp
                         };
                         let rd = get_reg(dst).unwrap_or(10) as u32;
                         let rs2 = get_reg(src).unwrap_or(11) as u32;
                         let funct3 = if *size == 4 { 0x2u32 } else { 0x3u32 };
                         // AMOSWAP.W/D rd, rs2, (rs1)
-                        let ins = 0x0800002Fu32 | (rs2 << 20) | (base_reg << 15) | (funct3 << 12) | (rd << 7);
+                        let ins = 0x0800002Fu32
+                            | (rs2 << 20)
+                            | (base_reg << 15)
+                            | (funct3 << 12)
+                            | (rd << 7);
                         code.extend_from_slice(&ins.to_le_bytes());
                     }
                     MachineInstruction::AtomicCompareExchange {
@@ -1214,7 +1230,9 @@ impl RiscVBackend {
                         size,
                     } => {
                         let base_reg = match dst {
-                            MachineOperand::Memory { base, .. } => get_reg(&MachineOperand::Register(*base)).unwrap_or(2) as u32,
+                            MachineOperand::Memory { base, .. } => {
+                                get_reg(&MachineOperand::Register(*base)).unwrap_or(2) as u32
+                            }
                             _ => 2u32, // sp
                         };
                         let rd = 6u32; // scratch t1
@@ -1229,7 +1247,11 @@ impl RiscVBackend {
                         let bne = Self::encode_branch(ConditionCode::NotEqual, rd, re, 12);
                         code.extend_from_slice(&bne.to_le_bytes());
                         // SC.W/D t0(5), rdes, (rs1)
-                        let sc = 0x1800002Fu32 | (rdes << 20) | (base_reg << 15) | (funct3 << 12) | (5 << 7);
+                        let sc = 0x1800002Fu32
+                            | (rdes << 20)
+                            | (base_reg << 15)
+                            | (funct3 << 12)
+                            | (5 << 7);
                         code.extend_from_slice(&sc.to_le_bytes());
                     }
                     unsupported => {
