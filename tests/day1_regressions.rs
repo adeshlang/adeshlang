@@ -12,10 +12,16 @@ struct CmdResult {
 
 fn resolve_adesh_exe() -> PathBuf {
     if let Ok(exe) = std::env::var("CARGO_BIN_EXE_adesh") {
-        return PathBuf::from(exe);
+        let p = PathBuf::from(&exe);
+        if p.exists() {
+            return p;
+        }
     }
     if let Ok(exe) = std::env::var("CARGO_BIN_EXE_adeshlang") {
-        return PathBuf::from(exe);
+        let p = PathBuf::from(&exe);
+        if p.exists() {
+            return p;
+        }
     }
 
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -29,12 +35,27 @@ fn resolve_adesh_exe() -> PathBuf {
     if candidate.exists() {
         return candidate;
     }
-    if cfg!(windows) {
-        path.push("adeshlang.exe");
-    } else {
-        path.push("adeshlang");
+
+    let deps_dir = path.join("deps");
+    if deps_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&deps_dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if let Some(file_name) = p.file_name().and_then(|f| f.to_str()) {
+                    let is_match = if cfg!(windows) {
+                        file_name.starts_with("adesh-") && file_name.ends_with(".exe")
+                    } else {
+                        file_name.starts_with("adesh-") && !file_name.contains('.')
+                    };
+                    if is_match && p.is_file() {
+                        return p;
+                    }
+                }
+            }
+        }
     }
-    path
+
+    candidate
 }
 
 fn unique_temp_file(prefix: &str) -> PathBuf {

@@ -135,12 +135,12 @@ fn runtime_value_to_format_value(v: &RuntimeValue) -> adesh_format::FormatValue 
         RuntimeValue::F32(f) => adesh_format::FormatValue::Number(*f as f64),
         RuntimeValue::Char(c) => adesh_format::FormatValue::Char(*c),
         RuntimeValue::String(s) => adesh_format::FormatValue::Str(s.clone()),
-        RuntimeValue::Array(arr) => {
-            adesh_format::FormatValue::Array(arr.iter().map(runtime_value_to_format_value).collect())
-        }
-        RuntimeValue::Tuple(tup) => {
-            adesh_format::FormatValue::Tuple(tup.iter().map(runtime_value_to_format_value).collect())
-        }
+        RuntimeValue::Array(arr) => adesh_format::FormatValue::Array(
+            arr.iter().map(runtime_value_to_format_value).collect(),
+        ),
+        RuntimeValue::Tuple(tup) => adesh_format::FormatValue::Tuple(
+            tup.iter().map(runtime_value_to_format_value).collect(),
+        ),
         RuntimeValue::Object(map) => adesh_format::FormatValue::Object(
             map.iter()
                 .map(|(k, val)| (k.clone(), runtime_value_to_format_value(val)))
@@ -150,7 +150,28 @@ fn runtime_value_to_format_value(v: &RuntimeValue) -> adesh_format::FormatValue 
     }
 }
 
+fn get_runtime_value_or_cstr(handle: u64) -> RuntimeValue {
+    if let Some(val) = crate::aot_get_value(handle) {
+        val
+    } else if handle > 0x10000 {
+        unsafe {
+            let ptr = handle as *const core::ffi::c_char;
+            if !ptr.is_null() {
+                if let Ok(s) = core::ffi::CStr::from_ptr(ptr).to_str() {
+                    return RuntimeValue::String(s.to_string());
+                }
+            }
+        }
+        unpack_aot_arg(handle)
+    } else {
+        unpack_aot_arg(handle)
+    }
+}
+
 fn apply_runtime_format_aot(v: &RuntimeValue, spec: &str) -> String {
+    if spec.is_empty() {
+        return v.as_string();
+    }
     let fv = runtime_value_to_format_value(v);
     adesh_format::format_value(&fv, spec).unwrap_or_else(|_| {
         adesh_format::FormatSpec::parse(spec)
@@ -170,7 +191,7 @@ pub extern "C" fn aot_format_value(handle: u64, spec_ptr: *const core::ffi::c_ch
             .to_str()
             .unwrap_or("")
     };
-    let val = crate::aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
+    let val = get_runtime_value_or_cstr(handle);
     let formatted = apply_runtime_format_aot(&val, spec);
     aot_store_value(RuntimeValue::String(formatted))
 }
@@ -187,7 +208,7 @@ pub extern "C" fn aot_format_value_str(
             .to_str()
             .unwrap_or("")
     };
-    let val = crate::aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
+    let val = get_runtime_value_or_cstr(handle);
     let formatted = apply_runtime_format_aot(&val, spec);
     let c_str = match std::ffi::CString::new(formatted.clone()) {
         Ok(c) => c,
@@ -198,7 +219,11 @@ pub extern "C" fn aot_format_value_str(
     unsafe {
         let ptr = libc::malloc(bytes.len()) as *mut core::ffi::c_char;
         if !ptr.is_null() {
-            std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const core::ffi::c_char, ptr, bytes.len());
+            std::ptr::copy_nonoverlapping(
+                bytes.as_ptr() as *const core::ffi::c_char,
+                ptr,
+                bytes.len(),
+            );
         }
         ptr
     }
@@ -211,7 +236,9 @@ pub extern "C" fn aot_make_error(msg_handle_or_ptr: u64) -> u64 {
             if let Some(RuntimeValue::String(s)) = crate::aot_get_value(msg_handle_or_ptr) {
                 Some(s)
             } else if msg_handle_or_ptr > 0x10000 {
-                let c_str = unsafe { core::ffi::CStr::from_ptr(msg_handle_or_ptr as *const core::ffi::c_char) };
+                let c_str = unsafe {
+                    core::ffi::CStr::from_ptr(msg_handle_or_ptr as *const core::ffi::c_char)
+                };
                 c_str.to_str().ok().map(|s| s.to_string())
             } else {
                 None
@@ -219,7 +246,10 @@ pub extern "C" fn aot_make_error(msg_handle_or_ptr: u64) -> u64 {
         })
         .unwrap_or_else(|| "Error".to_string());
     let mut map = std::collections::BTreeMap::new();
-    map.insert("__class__".to_string(), RuntimeValue::String("Error".to_string()));
+    map.insert(
+        "__class__".to_string(),
+        RuntimeValue::String("Error".to_string()),
+    );
     map.insert("message".to_string(), RuntimeValue::String(msg));
     aot_store_value(RuntimeValue::Object(map))
 }

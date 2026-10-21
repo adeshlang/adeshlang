@@ -169,9 +169,9 @@ use conversion::{
 
 // Import control flow and exception handling builtin functions for registration
 use control::{
-    runtime_assert, runtime_assert_eq, runtime_assert_ne,
-    runtime_check_executor_exception, runtime_clear_exception, runtime_error, runtime_extend_class,
-    runtime_get_exception, runtime_has_exception, runtime_is_null, runtime_nonnull, runtime_throw,
+    runtime_assert, runtime_assert_eq, runtime_assert_ne, runtime_check_executor_exception,
+    runtime_clear_exception, runtime_error, runtime_extend_class, runtime_get_exception,
+    runtime_has_exception, runtime_is_null, runtime_nonnull, runtime_throw,
 };
 
 /// Function pointer type for runtime builtins

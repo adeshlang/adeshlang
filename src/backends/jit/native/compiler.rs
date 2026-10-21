@@ -2826,30 +2826,18 @@ impl NativeJitCompiler {
                             let l_val = value_map.get(&l_id).copied();
                             let r_val = value_map.get(&r_id).copied();
                             if let (Some(lv), Some(rv)) = (l_val, r_val) {
-                                let l_type = value_types
-                                    .get(&l_id)
-                                    .cloned()
-                                    .unwrap_or(AotValueType::Int);
-                                let r_type = value_types
-                                    .get(&r_id)
-                                    .cloned()
-                                    .unwrap_or(AotValueType::Int);
+                                let l_type =
+                                    value_types.get(&l_id).cloned().unwrap_or(AotValueType::Int);
+                                let r_type =
+                                    value_types.get(&r_id).cloned().unwrap_or(AotValueType::Int);
 
-                                let (l_arg, l_tag) =
-                                    Self::encode_typed_arg(builder, lv, &l_type);
-                                let (r_arg, r_tag) =
-                                    Self::encode_typed_arg(builder, rv, &r_type);
+                                let (l_arg, l_tag) = Self::encode_typed_arg(builder, lv, &l_type);
+                                let (r_arg, r_tag) = Self::encode_typed_arg(builder, rv, &r_type);
 
                                 let l_tag_val = builder.ins().iconst(types::I64, l_tag);
                                 let r_tag_val = builder.ins().iconst(types::I64, r_tag);
                                 let res = Self::call_runtime_fn_4(
-                                    builder,
-                                    module,
-                                    fn_name,
-                                    l_arg,
-                                    l_tag_val,
-                                    r_arg,
-                                    r_tag_val,
+                                    builder, module, fn_name, l_arg, l_tag_val, r_arg, r_tag_val,
                                 )?;
                                 value_map.insert(*dst, res);
                                 value_types.insert(*dst, AotValueType::Handle);
