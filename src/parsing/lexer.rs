@@ -1087,6 +1087,94 @@ fn is_ident_continue(c: char) -> bool {
 
 // ✅ Export both Token and Lexer publicly for use in parser/runtime
 
+/// Extract all identifier names referenced inside `${...}` interpolations
+/// of a template literal string.
+///
+/// The lexer emits the entire template literal as a single `TokenKind::Template`
+/// token and does not tokenize the `${...}` interpolation contents as separate
+/// `Identifier` tokens. This function scans a template string for `${...}`
+/// patterns, tokenizes each interpolation expression, and collects the identifier
+/// names referenced inside. Used by IDE tooling (e.g. the ALS unused-variable
+/// check) to determine whether a variable is referenced inside a template literal.
+pub fn extract_identifiers_from_template(template: &str) -> Vec<String> {
+    let mut identifiers = Vec::new();
+    let chars: Vec<char> = template.chars().collect();
+    let mut i = 0usize;
+    while i < chars.len() {
+        if chars[i] == '$' && i + 1 < chars.len() && chars[i + 1] == '{' {
+            i += 2;
+            let start = i;
+            let mut depth = 1i32;
+            while i < chars.len() {
+                match chars[i] {
+                    '{' => {
+                        depth += 1;
+                        i += 1;
+                    }
+                    '}' => {
+                        depth -= 1;
+                        i += 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    '"' | '\'' => {
+                        let quote = chars[i];
+                        i += 1;
+                        while i < chars.len() {
+                            if chars[i] == '\\' {
+                                i += 2;
+                                continue;
+                            }
+                            if chars[i] == quote {
+                                i += 1;
+                                break;
+                            }
+                            i += 1;
+                        }
+                    }
+                    '/' => {
+                        if i + 1 < chars.len() && chars[i + 1] == '/' {
+                            i += 2;
+                            while i < chars.len() && chars[i] != '\n' {
+                                i += 1;
+                            }
+                        } else if i + 1 < chars.len() && chars[i + 1] == '*' {
+                            i += 2;
+                            while i + 1 < chars.len() {
+                                if chars[i] == '*' && chars[i + 1] == '/' {
+                                    i += 2;
+                                    break;
+                                }
+                                i += 1;
+                            }
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    _ => {
+                        i += 1;
+                    }
+                }
+            }
+            if depth == 0 {
+                let inner: String = chars[start..(i - 1)].iter().collect();
+                let mut lx = Lexer::new(&inner);
+                if let Ok(toks) = lx.tokenize() {
+                    for tok in toks {
+                        if tok.kind == TokenKind::Identifier {
+                            identifiers.push(tok.lexeme.clone());
+                        }
+                    }
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+    identifiers
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1124,6 +1212,25 @@ mod tests {
         assert!(toks.iter().any(|t| matches!(t.kind, TokenKind::AndAnd)));
         assert!(toks.iter().any(|t| matches!(t.kind, TokenKind::OrOr)));
         assert!(toks.iter().any(|t| matches!(t.kind, TokenKind::PipeEqual)));
+    }
+
+    #[test]
+    fn extract_identifiers_from_template_test() {
+        let ids = extract_identifiers_from_template("`Hello ${name} world`");
+        assert!(ids.contains(&"name".to_string()));
+
+        let ids = extract_identifiers_from_template("`${a} + ${b}`");
+        assert!(ids.contains(&"a".to_string()));
+        assert!(ids.contains(&"b".to_string()));
+
+        let ids = extract_identifiers_from_template("`no interpolation here`");
+        assert!(ids.is_empty());
+
+        let ids = extract_identifiers_from_template("`${user.name}`");
+        // Member access: user is an identifier, name is also an identifier (field access via .)
+        // but the expression `user.name` tokenizes `user` and `name` as identifiers
+        assert!(ids.contains(&"user".to_string()));
+        assert!(ids.contains(&"name".to_string()));
     }
 
     #[test]

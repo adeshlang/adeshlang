@@ -9,7 +9,8 @@
 
 use crate::analysis::{analyze, error_to_diagnostic, AnalysisResult};
 use crate::document::Document;
-use adeshlang::parsing::ast::{Stmt, StmtKind};
+use adeshlang::parsing::ast::{Stmt, StmtKind, TokenKind};
+use adeshlang::parsing::lexer::extract_identifiers_from_template;
 use adeshlang::semantics::SemanticIndex;
 use adeshlang::typesystem::type_system::check_module_in;
 use lsp_types::{
@@ -111,6 +112,31 @@ fn error_to_diagnostic_semantic(
 }
 
 /// Check for unused variables using the semantic index.
+/// Count all occurrences of an identifier name across tokens, including
+/// inside `${...}` interpolations of `TokenKind::Template` tokens.
+///
+/// The lexer emits an entire template literal as a single `Template` token
+/// and does not tokenize the `${...}` interpolation contents as separate
+/// `Identifier` tokens. Without this, variables referenced only inside
+/// template literals would be incorrectly flagged as unused.
+fn count_name_occurrences(tokens: &[adeshlang::parsing::lexer::Token], name: &str) -> usize {
+    let mut count = 0usize;
+    for tok in tokens {
+        match tok.kind {
+            TokenKind::Identifier if tok.lexeme == name => count += 1,
+            TokenKind::Template => {
+                for id in extract_identifiers_from_template(&tok.lexeme) {
+                    if id == name {
+                        count += 1;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    count
+}
+
 fn check_unused_variables_semantic(index: &SemanticIndex, _doc: &Document) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
@@ -121,17 +147,11 @@ fn check_unused_variables_semantic(index: &SemanticIndex, _doc: &Document) -> Ve
             continue;
         }
 
-        // Count occurrences in tokens
-        let occurrences: Vec<_> = index
-            .tokens
-            .iter()
-            .filter(|t| {
-                t.kind == adeshlang::parsing::ast::TokenKind::Identifier && t.lexeme == sym.name
-            })
-            .collect();
+        // Count occurrences in tokens (including template interpolations)
+        let occurrences = count_name_occurrences(&index.tokens, &sym.name);
 
         // If only the declaration exists (1 occurrence), it's unused
-        if occurrences.len() <= 1 && sym.line > 0 {
+        if occurrences <= 1 && sym.line > 0 {
             let start = Position {
                 line: (sym.line.saturating_sub(1)) as u32,
                 character: (sym.col.saturating_sub(1)) as u32,
@@ -269,15 +289,10 @@ fn check_unused_variables(result: &AnalysisResult, _doc: &Document) -> Vec<Diagn
             continue;
         }
 
-        let occurrences: Vec<_> = result
-            .tokens
-            .iter()
-            .filter(|t| {
-                t.kind == adeshlang::parsing::ast::TokenKind::Identifier && t.lexeme == sym.name
-            })
-            .collect();
+        // Count occurrences in tokens (including template interpolations)
+        let occurrences = count_name_occurrences(&result.tokens, &sym.name);
 
-        if occurrences.len() <= 1 && sym.line > 0 {
+        if occurrences <= 1 && sym.line > 0 {
             let start = Position {
                 line: (sym.line.saturating_sub(1)) as u32,
                 character: (sym.col.saturating_sub(1)) as u32,
