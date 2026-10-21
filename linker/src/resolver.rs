@@ -465,7 +465,7 @@ impl SymbolResolver {
         target: &crate::target::Target,
     ) -> LinkResult<()> {
         for sym in &obj.symbols {
-            if sym.is_local() {
+            if sym.is_local() || sym.name.is_empty() {
                 continue;
             }
             let aliases = Self::macho_symbol_aliases(&sym.name, target);
@@ -593,6 +593,9 @@ impl SymbolResolver {
             .collect();
         for sec in &obj.sections {
             for r in &sec.relocations {
+                if r.symbol_name.is_empty() {
+                    continue;
+                }
                 let reloc_aliases = Self::macho_symbol_aliases(&r.symbol_name, target);
                 if !reloc_aliases.iter().any(|a| self.table.contains_key(a))
                     && !local_sym_names.contains(r.symbol_name.as_str())
