@@ -1,0 +1,110 @@
+// examples/all_in_one.adesh
+// Master All-in-One AdeshLang Language Feature Demonstration and Verification Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=================================================");
+print("   AdeshLang Master All-In-One Feature Suite");
+print("=================================================");
+
+// 1. Core Syntax, Variables & Operators
+let a = 15;
+let b = 4;
+adesh_assert(a + b == 19, "Addition");
+adesh_assert(a - b == 11, "Subtraction");
+adesh_assert(a * b == 60, "Multiplication");
+adesh_assert(a / b == 3, "Division");
+adesh_assert(a % b == 3, "Modulo");
+
+// 2. Control Flow & Conditionals
+fn grade(score) {
+    if (score >= 90) { return "A"; }
+    else if (score >= 80) { return "B"; }
+    else { return "C"; }
+}
+adesh_assert(grade(95) == "A", "If branch");
+adesh_assert(grade(85) == "B", "Else-if branch");
+adesh_assert(grade(70) == "C", "Else branch");
+
+// 3. Loops & Range Iteration
+let loop_sum = 0;
+for i in 1..5 {
+    loop_sum = loop_sum + i;
+}
+adesh_assert(loop_sum == 10, "Range loop summation");
+
+// 4. Arrays & Methods
+let nums = [10, 20, 30, 40];
+nums.push(50);
+adesh_assert(nums.len() == 5, "Array push and length");
+
+nums.extend([60, 70]);
+adesh_assert(nums.len() == 7 && nums[6] == 70, "Array extend");
+
+// 5. Objects & Object-Oriented Programming
+class User {
+    User(name, role) {
+        this.name = name;
+        this.role = role;
+    }
+
+    fn describe() {
+        return this.name + " (" + this.role + ")";
+    }
+}
+
+let u = new User("Alice", "Admin");
+adesh_assert(u.describe() == "Alice (Admin)", "OOP Class constructor & method");
+
+// 6. Automatic Reference Counting (ARC)
+share shared_node = { key: "root", val: 100 };
+adesh_assert(shared_node.strong_count() == 1, "ARC initial strong_count");
+
+// 7. Defer Statements
+let defer_ran = false;
+fn test_defer() {
+    defer {
+        defer_ran = true;
+    }
+    return 100;
+}
+let res = test_defer();
+adesh_assert(res == 100 && defer_ran == true, "Defer cleanup execution");
+
+// 8. Nullish Coalescing & Optional Chaining
+let null_item = null;
+let item_val = null_item ?? 99;
+adesh_assert(item_val == 99, "Nullish coalescing fallback");
+
+let nested_obj = { info: { code: 200 } };
+adesh_assert(nested_obj?.info?.code == 200, "Optional chaining access");
+
+// 9. Unsafe Memory & Pointer Operations
+unsafe {
+    let ptr = alloc(16);
+    ptr[0] = 777;
+    adesh_assert(ptr[0] == 777, "Unsafe memory allocation & pointer indexing");
+    free(ptr);
+}
+
+// 10. String Formatting & Template Literals
+let formatted = `${"System"}: ${100:05d}`;
+adesh_assert(formatted == "System: 00100", "Template literal format specifier");
+
+print("\n=================================================");
+print("  Master Feature Suite Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+print("=================================================");
+assert(FAIL_COUNT == 0);

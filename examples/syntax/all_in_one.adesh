@@ -1,0 +1,61 @@
+// examples/syntax/all_in_one.adesh
+// All-in-One Syntax Feature Demonstration and Assertion Test Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=== Syntax All-In-One Feature Suite ===");
+
+// 1. Operators & Binary Arithmetic
+let a = 10;
+let b = 3;
+adesh_assert(a + b == 13, "Addition");
+adesh_assert(a - b == 7, "Subtraction");
+adesh_assert(a * b == 30, "Multiplication");
+adesh_assert(a / b == 3, "Integer division");
+adesh_assert(a % b == 1, "Modulo");
+
+// 2. Nullish Coalescing (??)
+let null_val = null;
+let default_val = null_val ?? 42;
+let set_val = 100;
+let kept_val = set_val ?? 200;
+adesh_assert(default_val == 42, "Nullish coalescing uses fallback on null");
+adesh_assert(kept_val == 100, "Nullish coalescing keeps non-null value");
+
+// 3. Optional Chaining (?.)
+let obj = { x: 10, y: { z: 99 } };
+let opt1 = obj?.x;
+let opt2 = obj?.y?.z;
+let opt_null = null;
+let opt3 = opt_null?.a;
+adesh_assert(opt1 == 10, "Optional chaining accesses property");
+adesh_assert(opt2 == 99, "Optional chaining accesses nested property");
+adesh_assert(opt3 == null, "Optional chaining returns null on null target");
+
+// 4. Spread Operator (...)
+let arr1 = [1, 2];
+let arr2 = [...arr1, 3, 4];
+adesh_assert(arr2.len() == 4, "Array spread length");
+adesh_assert(arr2[0] == 1 && arr2[2] == 3, "Array spread elements");
+
+// 5. Template Literals & Formatting
+let name = "Adesh";
+let score = 98.5;
+let msg = `${name} scored ${score:.1f}`;
+adesh_assert(msg == "Adesh scored 98.5", "Template literal formatting");
+
+print("\nSyntax All-In-One Test Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+assert(FAIL_COUNT == 0);

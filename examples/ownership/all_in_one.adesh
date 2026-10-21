@@ -1,0 +1,34 @@
+// examples/ownership/all_in_one.adesh
+// All-in-One Ownership Feature Demonstration and Test Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=== Ownership All-In-One Feature Suite ===");
+
+// Value Ownership & Assignment
+let data = [10, 20, 30];
+let moved_data = data;
+adesh_assert(moved_data.len() == 3, "Moved value length");
+
+fn consume_and_return(val) {
+    return val;
+}
+
+let result = consume_and_return(moved_data);
+adesh_assert(result[0] == 10, "Function ownership transfer");
+
+print("\nOwnership All-In-One Test Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+assert(FAIL_COUNT == 0);

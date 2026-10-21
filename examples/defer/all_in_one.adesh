@@ -1,0 +1,40 @@
+// examples/defer/all_in_one.adesh
+// All-in-One Defer Feature Demonstration and Test Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=== Defer All-In-One Feature Suite ===");
+
+let trace = [];
+
+fn test_defer_order() {
+    defer {
+        trace.push("defer 1");
+    }
+    defer {
+        trace.push("defer 2");
+    }
+    trace.push("body");
+}
+
+test_defer_order();
+adesh_assert(trace.len() == 3, "Defer statements executed");
+adesh_assert(trace[0] == "body", "Body executed first");
+adesh_assert(trace[1] == "defer 2", "LIFO defer 2 executed second");
+adesh_assert(trace[2] == "defer 1", "LIFO defer 1 executed last");
+
+print("\nDefer All-In-One Test Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+assert(FAIL_COUNT == 0);

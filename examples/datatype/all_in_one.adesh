@@ -1,0 +1,44 @@
+// examples/datatype/all_in_one.adesh
+// All-in-One Datatype Feature Demonstration and Test Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=== Datatype All-In-One Feature Suite ===");
+
+// 1. Numbers
+let int_num = 42;
+let float_num = 3.14159;
+adesh_assert(int_num == 42 && float_num > 3.14, "Numbers initialization");
+
+// 2. Strings
+let str = "AdeshLang";
+adesh_assert(str.len() == 9, "String length");
+
+// 3. Arrays
+let arr = [10, 20, 30];
+arr.push(40);
+adesh_assert(arr.len() == 4 && arr[3] == 40, "Array mutation");
+
+// 4. Tuples
+let tup = (1, "two", 3.0);
+adesh_assert(tup[1] == "two", "Tuple indexing");
+
+// 5. Dictionaries / Objects
+let dict = { key1: "val1", key2: 100 };
+adesh_assert(dict.key1 == "val1" && dict.key2 == 100, "Dictionary fields");
+
+print("\nDatatype All-In-One Test Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+assert(FAIL_COUNT == 0);

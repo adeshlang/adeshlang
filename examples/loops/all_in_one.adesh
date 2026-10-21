@@ -1,0 +1,53 @@
+// examples/loops/all_in_one.adesh
+// All-in-One Loops Feature Demonstration and Test Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=== Loops All-In-One Feature Suite ===");
+
+// 1. While Loop
+let i = 0;
+let sum_while = 0;
+while (i < 5) {
+    sum_while = sum_while + i;
+    i = i + 1;
+}
+adesh_assert(sum_while == 10, "While loop summation");
+
+// 2. For Range Loop
+let sum_for = 0;
+for n in 1..5 {
+    sum_for = sum_for + n;
+}
+adesh_assert(sum_for == 10, "For-in range loop summation");
+
+// 3. Loop with Break and Continue
+let filtered_sum = 0;
+let j = 0;
+while (j < 10) {
+    j = j + 1;
+    if (j % 2 == 0) {
+        continue;
+    }
+    if (j > 7) {
+        break;
+    }
+    filtered_sum = filtered_sum + j;
+}
+adesh_assert(filtered_sum == 1 + 3 + 5 + 7, "Loop with break and continue");
+
+print("\nLoops All-In-One Test Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+assert(FAIL_COUNT == 0);

@@ -1,0 +1,45 @@
+// examples/arc/all_in_one.adesh
+// All-in-One ARC (Automatic Reference Counting) Feature Demonstration and Test Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=== ARC All-In-One Feature Suite ===");
+
+// 1. Initial Share & Counts
+share node = { id: 101, title: "ARC Node" };
+adesh_assert(node.strong_count() == 1, "Initial strong_count is 1");
+adesh_assert(node.weak_count() == 0, "Initial weak_count is 0");
+
+// 2. Strong Reference
+{
+    strong s_ref = node;
+    adesh_assert(node.strong_count() == 2, "strong_count is 2 with strong ref");
+}
+adesh_assert(node.strong_count() == 1, "strong_count reverts to 1 after scope exit");
+
+// 3. Weak Reference & Upgrade
+weak w_ref = node;
+adesh_assert(node.weak_count() == 1, "weak_count is 1");
+adesh_assert(w_ref.is_alive() == true, "w_ref.is_alive() is true");
+
+let up = w_ref.upgrade();
+adesh_assert(up != null, "upgrade() returns non-null when target is alive");
+if (up != null) {
+    adesh_assert(up.id == 101, "upgraded object access");
+}
+
+print("\nARC All-In-One Test Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+assert(FAIL_COUNT == 0);

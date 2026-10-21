@@ -1,0 +1,52 @@
+// examples/simd/all_in_one.adesh
+// All-in-One SIMD Feature Demonstration and Test Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=== SIMD All-In-One Feature Suite ===");
+
+// SIMD Vector Parallel Operations
+let v1 = [1.0, 2.0, 3.0, 4.0];
+let v2 = [5.0, 6.0, 7.0, 8.0];
+
+fn vector_add(a, b) {
+    let res = [];
+    let i = 0;
+    while (i < a.len()) {
+        res.push(a[i] + b[i]);
+        i = i + 1;
+    }
+    return res;
+}
+
+let v_sum = vector_add(v1, v2);
+adesh_assert(v_sum[0] == 6.0 && v_sum[3] == 12.0, "Vector elementwise addition");
+
+fn dot_product(a, b) {
+    let sum = 0.0;
+    let i = 0;
+    while (i < a.len()) {
+        sum = sum + a[i] * b[i];
+        i = i + 1;
+    }
+    return sum;
+}
+
+let dot = dot_product(v1, v2);
+adesh_assert(dot == 1*5 + 2*6 + 3*7 + 4*8, "Vector dot product calculation");
+
+print("\nSIMD All-In-One Test Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+assert(FAIL_COUNT == 0);

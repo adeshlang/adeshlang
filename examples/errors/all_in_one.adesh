@@ -1,0 +1,38 @@
+// examples/errors/all_in_one.adesh
+// All-in-One Error Handling Feature Demonstration and Test Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=== Error Handling All-In-One Feature Suite ===");
+
+let err = Error("Operation failed");
+adesh_assert(err != null, "Error creation");
+
+fn safe_divide(a, b) {
+    if (b == 0) {
+        return Error("Division by zero");
+    }
+    return a / b;
+}
+
+let ok_res = safe_divide(10, 2);
+adesh_assert(ok_res == 5, "Safe division success");
+
+let err_res = safe_divide(10, 0);
+adesh_assert(err_res != null, "Safe division error handling");
+
+print("\nError Handling All-In-One Test Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+assert(FAIL_COUNT == 0);

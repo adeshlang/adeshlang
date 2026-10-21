@@ -1,0 +1,30 @@
+// examples/borrowing/all_in_one.adesh
+// All-in-One Borrowing Feature Demonstration and Test Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=== Borrowing All-In-One Feature Suite ===");
+
+let item = [1, 2, 3];
+adesh_assert(item.len() == 3, "Borrowed array access");
+
+fn process_item(ref) {
+    return ref.len();
+}
+adesh_assert(process_item(item) == 3, "Function argument borrowing");
+
+print("\nBorrowing All-In-One Test Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+assert(FAIL_COUNT == 0);

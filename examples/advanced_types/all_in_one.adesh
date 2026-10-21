@@ -1,0 +1,44 @@
+// examples/advanced_types/all_in_one.adesh
+// All-in-One Advanced Types Feature Demonstration and Test Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=== Advanced Types All-In-One Feature Suite ===");
+
+// 1. Option Type Simulation
+fn Some(val) {
+    return { is_some: true, val: val };
+}
+fn None() {
+    return { is_some: false, val: null };
+}
+
+let opt = Some("Data");
+adesh_assert(opt.is_some == true && opt.val == "Data", "Option Some type");
+
+// 2. Result Type Simulation
+fn Ok(val) {
+    return { is_ok: true, val: val, err: null };
+}
+fn Err(err) {
+    return { is_ok: false, val: null, err: err };
+}
+
+let res = Ok(200);
+adesh_assert(res.is_ok == true && res.val == 200, "Result Ok type");
+
+print("\nAdvanced Types All-In-One Test Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+assert(FAIL_COUNT == 0);

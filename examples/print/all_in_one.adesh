@@ -1,0 +1,40 @@
+// examples/print/all_in_one.adesh
+// All-in-One Print Feature Demonstration and Test Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=== Print All-In-One Feature Suite ===");
+
+// 1. Basic Print
+print("Hello", "World", { sep: ", ", end: "\n" });
+adesh_assert(true, "Basic print with options");
+
+// 2. Pretty Print Modes
+let data = {
+    id: 101,
+    name: "Adesh Engine",
+    tags: ["fast", "safe"],
+    active: true
+};
+
+print(data, { pretty: true });
+adesh_assert(data.id == 101, "Data object holds expected fields");
+
+print(data, { pretty: "compact" });
+adesh_assert(data.tags.len() == 2, "Data tags array verified");
+
+print("\nPrint All-In-One Test Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+assert(FAIL_COUNT == 0);

@@ -1,0 +1,38 @@
+// examples/data_structures/all_in_one.adesh
+// All-in-One Data Structures Feature Demonstration and Test Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=== Data Structures All-In-One Feature Suite ===");
+
+// 1. Stack Simulation
+let stack = [];
+stack.push(10);
+stack.push(20);
+let top = stack.pop();
+adesh_assert(top == 20 && stack.len() == 1, "Stack LIFO pop");
+
+// 2. Map / Dictionary
+let map = { x: 100, y: 200 };
+adesh_assert(map.x == 100 && map.y == 200, "Map lookup");
+
+// 3. Array / List
+let list = [1, 2, 3];
+list.push(4);
+adesh_assert(list.len() == 4, "List length after push");
+
+print("\nData Structures All-In-One Test Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+assert(FAIL_COUNT == 0);

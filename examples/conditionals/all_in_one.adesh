@@ -1,0 +1,39 @@
+// examples/conditionals/all_in_one.adesh
+// All-in-One Conditionals Feature Demonstration and Test Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=== Conditionals All-In-One Feature Suite ===");
+
+fn classify_score(score) {
+    if (score >= 90) {
+        return "A";
+    } else if (score >= 80) {
+        return "B";
+    } else if (score >= 70) {
+        return "C";
+    } else {
+        return "F";
+    }
+}
+
+adesh_assert(classify_score(95) == "A", "If branch execution");
+adesh_assert(classify_score(85) == "B", "Else-if first branch");
+adesh_assert(classify_score(72) == "C", "Else-if second branch");
+adesh_assert(classify_score(50) == "F", "Else fallback branch");
+
+print("\nConditionals All-In-One Test Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+assert(FAIL_COUNT == 0);

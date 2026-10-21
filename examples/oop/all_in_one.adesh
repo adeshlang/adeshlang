@@ -1,0 +1,54 @@
+// examples/oop/all_in_one.adesh
+// All-in-One Object-Oriented Programming Demonstration and Test Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=== OOP All-In-One Feature Suite ===");
+
+// 1. Basic Class Definition
+class Animal {
+    Animal(name) {
+        this.name = name;
+    }
+
+    fn speak() {
+        return this.name + " makes a noise";
+    }
+}
+
+let a = new Animal("Generic Animal");
+adesh_assert(a.name == "Generic Animal", "Animal constructor name");
+adesh_assert(a.speak() == "Generic Animal makes a noise", "Animal speak method");
+
+// 2. Class Inheritance
+class Dog extends Animal {
+    Dog(name, breed) {
+        this.name = name;
+        this.breed = breed;
+    }
+
+    fn speak() {
+        return this.name + " barks";
+    }
+}
+
+let d = new Dog("Buddy", "Golden Retriever");
+adesh_assert(d.name == "Buddy", "Inherited name property");
+adesh_assert(d.breed == "Golden Retriever", "Dog breed property");
+adesh_assert(d.speak() == "Buddy barks", "Overridden method speak");
+
+print("\nOOP All-In-One Test Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+assert(FAIL_COUNT == 0);

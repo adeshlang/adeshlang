@@ -1,0 +1,46 @@
+// examples/showcase/all_in_one.adesh
+// All-in-One Showcase Feature Demonstration and Test Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=== Showcase All-In-One Feature Suite ===");
+
+// Defer & Cleanups
+let cleanup_ran = false;
+fn test_defer() {
+    defer {
+        cleanup_ran = true;
+    }
+    return 42;
+}
+
+let ret = test_defer();
+adesh_assert(ret == 42, "Defer function return value");
+adesh_assert(cleanup_ran == true, "Defer cleanup executed on return");
+
+// OOP & Data Types
+class Calculator {
+    Calculator() {}
+    fn square(x) {
+        return x * x;
+    }
+}
+
+let calc = new Calculator();
+adesh_assert(calc.square(9) == 81, "Class method invocation");
+
+print("\nShowcase All-In-One Test Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+assert(FAIL_COUNT == 0);
