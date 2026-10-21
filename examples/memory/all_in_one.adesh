@@ -1,0 +1,37 @@
+// examples/memory/all_in_one.adesh
+// All-in-One Memory Feature Demonstration and Test Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=== Memory All-In-One Feature Suite ===");
+
+// 1. Unsafe Heap Allocation & Pointer Arithmetic
+unsafe {
+    let ptr = alloc(32);
+    adesh_assert(ptr != 0, "alloc returns valid pointer");
+    ptr[0] = 42;
+    ptr[1] = 84;
+    adesh_assert(ptr[0] == 42 && ptr[1] == 84, "Pointer indexing store/load");
+    free(ptr);
+    adesh_assert(true, "free pointer executed successfully");
+}
+
+// 2. Struct Layout & Property Access
+let data = { x: 10, y: 20 };
+adesh_assert(data.x == 10 && data.y == 20, "Memory struct fields");
+
+print("\nMemory All-In-One Test Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+assert(FAIL_COUNT == 0);

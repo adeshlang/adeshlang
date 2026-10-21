@@ -1836,7 +1836,11 @@ pub extern "C" fn aot_string_concat_cstr(left: u64, right: u64) -> *mut std::os:
             s
         } else if val > 0x10000 {
             let c_str = unsafe { std::ffi::CStr::from_ptr(val as *const std::os::raw::c_char) };
-            c_str.to_str().ok().map(|s| s.to_string()).unwrap_or_else(|| val.to_string())
+            c_str
+                .to_str()
+                .ok()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| val.to_string())
         } else {
             val.to_string()
         }
@@ -1853,7 +1857,11 @@ pub extern "C" fn aot_string_concat_cstr(left: u64, right: u64) -> *mut std::os:
     unsafe {
         let ptr = libc::malloc(bytes.len()) as *mut std::os::raw::c_char;
         if !ptr.is_null() {
-            std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const std::os::raw::c_char, ptr, bytes.len());
+            std::ptr::copy_nonoverlapping(
+                bytes.as_ptr() as *const std::os::raw::c_char,
+                ptr,
+                bytes.len(),
+            );
         }
         ptr
     }
@@ -1867,7 +1875,11 @@ pub extern "C" fn adesh_int_to_string(n: i64) -> *mut std::os::raw::c_char {
     unsafe {
         let ptr = libc::malloc(bytes.len()) as *mut std::os::raw::c_char;
         if !ptr.is_null() {
-            std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const std::os::raw::c_char, ptr, bytes.len());
+            std::ptr::copy_nonoverlapping(
+                bytes.as_ptr() as *const std::os::raw::c_char,
+                ptr,
+                bytes.len(),
+            );
         }
         ptr
     }
@@ -1881,7 +1893,11 @@ pub extern "C" fn adesh_double_to_string(f: f64) -> *mut std::os::raw::c_char {
     unsafe {
         let ptr = libc::malloc(bytes.len()) as *mut std::os::raw::c_char;
         if !ptr.is_null() {
-            std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const std::os::raw::c_char, ptr, bytes.len());
+            std::ptr::copy_nonoverlapping(
+                bytes.as_ptr() as *const std::os::raw::c_char,
+                ptr,
+                bytes.len(),
+            );
         }
         ptr
     }
@@ -1897,22 +1913,24 @@ pub unsafe extern "C" fn adesh_array_to_string(
     let mut parts = Vec::new();
     if !ptr.is_null() && len > 0 && elem_size > 0 {
         for i in 0..len {
-            let elem_ptr = ptr.offset((i * elem_size) as isize);
-            if is_float != 0 {
-                if elem_size == 4 {
-                    let val = *(elem_ptr as *const f32);
-                    parts.push(val.to_string());
+            unsafe {
+                let elem_ptr = ptr.offset((i * elem_size) as isize);
+                if is_float != 0 {
+                    if elem_size == 4 {
+                        let val = *(elem_ptr as *const f32);
+                        parts.push(val.to_string());
+                    } else {
+                        let val = *(elem_ptr as *const f64);
+                        parts.push(val.to_string());
+                    }
                 } else {
-                    let val = *(elem_ptr as *const f64);
-                    parts.push(val.to_string());
-                }
-            } else {
-                match elem_size {
-                    1 => parts.push((*(elem_ptr as *const i8)).to_string()),
-                    2 => parts.push((*(elem_ptr as *const i16)).to_string()),
-                    4 => parts.push((*(elem_ptr as *const i32)).to_string()),
-                    8 => parts.push((*(elem_ptr as *const i64)).to_string()),
-                    _ => parts.push("?".to_string()),
+                    match elem_size {
+                        1 => parts.push((*(elem_ptr as *const i8)).to_string()),
+                        2 => parts.push((*(elem_ptr as *const i16)).to_string()),
+                        4 => parts.push((*(elem_ptr as *const i32)).to_string()),
+                        8 => parts.push((*(elem_ptr as *const i64)).to_string()),
+                        _ => parts.push("?".to_string()),
+                    }
                 }
             }
         }
@@ -1920,11 +1938,17 @@ pub unsafe extern "C" fn adesh_array_to_string(
     let res = format!("[{}]", parts.join(", "));
     let c_str = std::ffi::CString::new(res).unwrap();
     let bytes = c_str.as_bytes_with_nul();
-    let out = libc::malloc(bytes.len()) as *mut std::os::raw::c_char;
-    if !out.is_null() {
-        std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const std::os::raw::c_char, out, bytes.len());
+    unsafe {
+        let out = libc::malloc(bytes.len()) as *mut std::os::raw::c_char;
+        if !out.is_null() {
+            std::ptr::copy_nonoverlapping(
+                bytes.as_ptr() as *const std::os::raw::c_char,
+                out,
+                bytes.len(),
+            );
+        }
+        out
     }
-    out
 }
 
 /// AOT range creation bridge (start..end or start...end)

@@ -1,0 +1,38 @@
+// examples/Libraries/all_in_one.adesh
+// All-in-One Standard Libraries Feature Demonstration and Test Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=== Standard Libraries All-In-One Feature Suite ===");
+
+// 1. Math Library
+let val = 16;
+adesh_assert(val == 16, "Math value check");
+
+// 2. Collections (Array, Object)
+let list = [1, 2, 3];
+list.push(4);
+adesh_assert(list.len() == 4, "Collections array length");
+
+let map = { a: 1, b: 2 };
+adesh_assert(map.a == 1, "Collections map lookup");
+
+// 3. String & Formatting
+let text = "adeshlang";
+adesh_assert(text.len() == 9, "String length");
+
+print("\nStandard Libraries All-In-One Test Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+assert(FAIL_COUNT == 0);

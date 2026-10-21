@@ -1,0 +1,52 @@
+// examples/basics/all_in_one.adesh
+// All-in-One Basics Feature Demonstration and Test Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=== Basics All-In-One Feature Suite ===");
+
+// Variables & Arithmetic
+let x = 10;
+let y = 20;
+let sum = x + y;
+adesh_assert(sum == 30, "Variable arithmetic sum");
+
+// Functions
+fn add_three(a, b, c) {
+    return a + b + c;
+}
+adesh_assert(add_three(1, 2, 3) == 6, "Function invocation with arguments");
+
+// Arrays & Iteration
+let numbers = [5, 10, 15];
+let total = 0;
+for n in numbers {
+    total = total + n;
+}
+adesh_assert(total == 30, "Array iteration total");
+
+// Objects
+let user = { name: "Alice", age: 30 };
+adesh_assert(user.name == "Alice", "Object property access");
+user.age = 31;
+adesh_assert(user.age == 31, "Object property mutation");
+
+// Tuples
+let pair = (100, "ok");
+adesh_assert(pair[0] == 100 && pair[1] == "ok", "Tuple indexing");
+
+print("\nBasics All-In-One Test Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+assert(FAIL_COUNT == 0);

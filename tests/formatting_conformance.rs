@@ -177,7 +177,10 @@ print(`Val: ${val:05d}`);
 fn test_native_jit_formatting_conformance() {
     let src = r#"
 let val = 255;
+let flt = 12.3456;
 print(`Hex: ${val:HEX}`);
+print(`Flt: ${flt:.2f}`);
+print(`Curr: ${1000:currency(USD)}`);
 "#;
     let res = adeshlang::backends::jit::native::native_jit_run(src);
     assert!(res.is_ok(), "Native JIT formatting failed: {:?}", res);
@@ -187,7 +190,11 @@ print(`Hex: ${val:HEX}`);
 fn test_wasm_formatting_conformance() {
     let src = r#"
 let val = 123.45;
+let hex = 255;
+let bin = 10;
 print(`Val: ${val:currency(USD)}`);
+print(`Hex: ${hex:HEX}`);
+print(`Bin: ${bin:bin}`);
 "#;
     let dir = tempdir().expect("tempdir");
     let text_path = dir.path().join("test_wasm_format.wasm");

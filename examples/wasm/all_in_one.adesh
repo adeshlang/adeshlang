@@ -1,0 +1,36 @@
+// examples/wasm/all_in_one.adesh
+// All-in-One WASM Feature Demonstration and Test Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=== WASM All-In-One Feature Suite ===");
+
+fn add(a, b) {
+    return a + b;
+}
+
+fn factorial(n) {
+    if (n <= 1) {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+adesh_assert(add(10, 20) == 30, "WASM numeric addition");
+adesh_assert(factorial(5) == 120, "WASM recursive factorial");
+
+print("\nWASM All-In-One Test Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+assert(FAIL_COUNT == 0);

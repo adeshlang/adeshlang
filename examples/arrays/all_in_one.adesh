@@ -1,0 +1,43 @@
+// examples/arrays/all_in_one.adesh
+// All-in-One Array Feature Demonstration and Test Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=== Array All-In-One Feature Suite ===");
+
+// 1. Array Construction & Basic Indexing
+let arr = [10, 20, 30, 40, 50];
+adesh_assert(arr.len() == 5, "Array length");
+adesh_assert(arr[0] == 10 && arr[4] == 50, "Array bounds access");
+
+// 2. Array Mutation Methods (push, pop, extend)
+arr.push(60);
+adesh_assert(arr.len() == 6 && arr[5] == 60, "Array push");
+
+let popped = arr.pop();
+adesh_assert(popped == 60 && arr.len() == 5, "Array pop");
+
+arr.extend([60, 70]);
+adesh_assert(arr.len() == 7 && arr[6] == 70, "Array extend");
+
+// 3. Search and Inspection Methods (count, indexOf, includes)
+let nums = [3, 1, 2, 3, 2, 3];
+adesh_assert(nums.count(3) == 3, "Array count");
+adesh_assert(nums.indexOf(2) == 2, "Array indexOf");
+adesh_assert(nums.includes(3) == true, "Array includes");
+
+print("\nArray All-In-One Test Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+assert(FAIL_COUNT == 0);

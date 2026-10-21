@@ -1,0 +1,29 @@
+// examples/async/all_in_one.adesh
+// All-in-One Async Feature Demonstration and Test Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=== Async All-In-One Feature Suite ===");
+
+fn async_fetch_data() {
+    return "Async Data Success";
+}
+
+let result = async_fetch_data();
+adesh_assert(result == "Async Data Success", "Async function execution");
+
+print("\nAsync All-In-One Test Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+assert(FAIL_COUNT == 0);

@@ -2044,7 +2044,13 @@ impl<'a> FunctionLoweringContext<'a> {
                 | HirType::U32
                 | HirType::U64,
             ) => Some("aot_make_i64"),
-            _ => None,
+            _ => {
+                if self.func.vreg_class(vreg) == RegisterClass::Float {
+                    Some("aot_make_f64")
+                } else {
+                    None
+                }
+            }
         };
         let out = self.func.alloc_vreg();
         if let Some(f) = make_fn {
@@ -5369,7 +5375,10 @@ impl<'a> FunctionLoweringContext<'a> {
                             });
                             zero_reg
                         };
-                        self.emit_call_with_args("aot_assert_eq", &[l_handle, r_handle, msg_handle]);
+                        self.emit_call_with_args(
+                            "aot_assert_eq",
+                            &[l_handle, r_handle, msg_handle],
+                        );
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Immediate(0),
@@ -5389,7 +5398,10 @@ impl<'a> FunctionLoweringContext<'a> {
                             });
                             zero_reg
                         };
-                        self.emit_call_with_args("aot_assert_ne", &[l_handle, r_handle, msg_handle]);
+                        self.emit_call_with_args(
+                            "aot_assert_ne",
+                            &[l_handle, r_handle, msg_handle],
+                        );
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Immediate(0),
@@ -5705,19 +5717,36 @@ impl<'a> FunctionLoweringContext<'a> {
                             }
                         }
 
-                        // Simple literals, booleans, and signed 64-bit
-                        // integers can stay on the compact native-output ABI.
-                        // The generic handle path below pulls in RuntimeValue,
-                        // formatting, and panic support even for a small print.
-                        let can_print_without_handles = args.iter().all(|arg| {
-                            if matches!(arg, HirExpr::Literal(HirLiteral::String(_))) {
-                                return true;
-                            }
-                            matches!(
-                                self.infer_expr_type(arg),
-                                Some(HirType::Int | HirType::Bool | HirType::I64)
-                            )
-                        });
+                        // Simple literals, booleans, numbers, strings, and scalars
+                        // stay on the compact native-output ABI without heap/handle overhead.
+                        let has_opts = matches!(args.last(), Some(HirExpr::ObjectLiteral(_)));
+                        let can_print_without_handles = !has_opts
+                            && args.iter().all(|arg| {
+                                if matches!(arg, HirExpr::Literal(HirLiteral::String(_))) {
+                                    return true;
+                                }
+                                matches!(
+                                    self.infer_expr_type(arg),
+                                    Some(
+                                        HirType::Int
+                                            | HirType::I64
+                                            | HirType::I32
+                                            | HirType::I16
+                                            | HirType::I8
+                                            | HirType::U64
+                                            | HirType::U32
+                                            | HirType::U16
+                                            | HirType::U8
+                                            | HirType::Float
+                                            | HirType::F64
+                                            | HirType::F32
+                                            | HirType::Bool
+                                            | HirType::Char
+                                            | HirType::String
+                                            | HirType::Null
+                                    )
+                                )
+                            });
                         if can_print_without_handles {
                             let mut printable_args = Vec::with_capacity(args.len());
                             for arg in args {
@@ -5734,17 +5763,23 @@ impl<'a> FunctionLoweringContext<'a> {
                                     });
                                     printable_args.push(("aot_print_cstr", string_reg));
                                 } else {
-                                    let is_bool =
-                                        matches!(self.infer_expr_type(arg), Some(HirType::Bool));
+                                    let ty = self.infer_expr_type(arg);
                                     let value_reg = self.lower_expression(arg);
-                                    printable_args.push((
-                                        if is_bool {
-                                            "aot_print_bool"
-                                        } else {
-                                            "aot_print_i64"
-                                        },
-                                        value_reg,
-                                    ));
+                                    let print_fn = match ty {
+                                        Some(HirType::Bool) => "aot_print_bool",
+                                        Some(HirType::Float | HirType::F64) => "aot_print_f64",
+                                        Some(HirType::F32) => "aot_print_f32",
+                                        Some(
+                                            HirType::U64
+                                            | HirType::U32
+                                            | HirType::U16
+                                            | HirType::U8,
+                                        ) => "aot_print_u64",
+                                        Some(HirType::Null) => "aot_print_null",
+                                        Some(HirType::String) => "aot_print_cstr",
+                                        _ => "aot_print_i64",
+                                    };
+                                    printable_args.push((print_fn, value_reg));
                                 }
                             }
 
@@ -5758,7 +5793,11 @@ impl<'a> FunctionLoweringContext<'a> {
                                 if index != 0 {
                                     self.emit_call_with_args("aot_print_space", &[]);
                                 }
-                                self.emit_call_with_args(print_fn, &[*value_reg, no_newline]);
+                                if *print_fn == "aot_print_null" {
+                                    self.emit_call_with_args(print_fn, &[no_newline]);
+                                } else {
+                                    self.emit_call_with_args(print_fn, &[*value_reg, no_newline]);
+                                }
                             }
                             self.emit_call_with_args("aot_print_newline", &[]);
                             self.emit(MachineInstruction::Move {
@@ -5918,13 +5957,6 @@ impl<'a> FunctionLoweringContext<'a> {
             }
             HirExpr::Match(target, arms) => {
                 let target_reg = self.lower_expression(target);
-                let target_slot = self.alloc_stack_slot(8);
-                let target_off = -(target_slot + 8);
-                self.emit(MachineInstruction::Move {
-                    dst: MachineOperand::StackSlot(target_off),
-                    src: MachineOperand::Register(MachineRegister::Virtual(target_reg)),
-                });
-
                 let match_end_lbl = self.fresh_label("match_end");
                 let out_reg = self.func.alloc_vreg();
 

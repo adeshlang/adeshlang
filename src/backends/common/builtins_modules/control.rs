@@ -99,7 +99,9 @@ pub(super) fn runtime_clear_exception(_args: &[RuntimeValue]) -> RuntimeValue {
 pub(super) fn runtime_assert(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
         CURRENT_EXCEPTION.with(|exc| {
-            *exc.borrow_mut() = Some(RuntimeValue::String("assert() requires at least 1 argument".to_string()));
+            *exc.borrow_mut() = Some(RuntimeValue::String(
+                "assert() requires at least 1 argument".to_string(),
+            ));
         });
         return RuntimeValue::Null;
     }
@@ -121,7 +123,9 @@ pub(super) fn runtime_assert(args: &[RuntimeValue]) -> RuntimeValue {
 pub(super) fn runtime_assert_eq(args: &[RuntimeValue]) -> RuntimeValue {
     if args.len() != 2 {
         CURRENT_EXCEPTION.with(|exc| {
-            *exc.borrow_mut() = Some(RuntimeValue::String("assert_eq() requires exactly 2 arguments".to_string()));
+            *exc.borrow_mut() = Some(RuntimeValue::String(
+                "assert_eq() requires exactly 2 arguments".to_string(),
+            ));
         });
         return RuntimeValue::Null;
     }
@@ -154,7 +158,9 @@ pub(super) fn runtime_assert_eq(args: &[RuntimeValue]) -> RuntimeValue {
 pub(super) fn runtime_assert_ne(args: &[RuntimeValue]) -> RuntimeValue {
     if args.len() != 2 {
         CURRENT_EXCEPTION.with(|exc| {
-            *exc.borrow_mut() = Some(RuntimeValue::String("assert_ne() requires exactly 2 arguments".to_string()));
+            *exc.borrow_mut() = Some(RuntimeValue::String(
+                "assert_ne() requires exactly 2 arguments".to_string(),
+            ));
         });
         return RuntimeValue::Null;
     }

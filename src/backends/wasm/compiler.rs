@@ -151,6 +151,14 @@ fn gen_expr_f64(
                 write_u32_leb(*idx, out);
                 out.push(0xB7);
                 Ok(None)
+            } else if let Some((off, _len)) = ctx
+                .str_vars
+                .get(name)
+                .or_else(|| ctx.complex_vars.get(name))
+            {
+                out.push(0x44);
+                out.extend(&(*off as f64).to_bits().to_le_bytes());
+                Ok(Some("string".into()))
             } else {
                 if let Some((fidx, _, ret_type)) = ctx.funcs.get(name) {
                     if let Some(rt) = ret_type {
@@ -164,7 +172,7 @@ fn gen_expr_f64(
                         Err("call to void function in expression".into())
                     }
                 } else {
-                    Err("unknown numeric variable".into())
+                    Err(format!("unknown variable in f64 expr: {}", name))
                 }
             }
         }
@@ -803,6 +811,12 @@ fn format_static_val_for_wasm(e: &Expr) -> Option<String> {
 
 fn format_static_val_for_wasm_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<String> {
     match &e.kind {
+        ExprKind::Grouping(inner) => format_static_val_for_wasm_env(inner, var_values),
+        ExprKind::Cast(inner, _) => format_static_val_for_wasm_env(inner, var_values),
+        ExprKind::Binary(..) | ExprKind::Unary(..) => {
+            let val = expr_to_value_env(e, var_values)?;
+            Some(crate::execution::runtime_core::format::fmt(&val))
+        }
         ExprKind::Variable(name) => {
             let val = var_values.get(name)?;
             match val {
@@ -877,14 +891,7 @@ fn format_static_val_for_wasm_env(e: &Expr, var_values: &FastMap<String, Value>)
             ))
         }
         ExprKind::Literal(Value::Str(s)) => Some(s.clone()),
-        ExprKind::Literal(Value::Number(n)) => Some(format!("{:.1}", n)),
-        ExprKind::Literal(Value::F64(n)) => Some(format!("{}", n)),
-        ExprKind::Literal(Value::I64(n)) => Some(format!("{}", n)),
-        ExprKind::Literal(Value::I32(n)) => Some(format!("{}", n)),
-        ExprKind::Literal(Value::U32(n)) => Some(format!("{}", n)),
-        ExprKind::Literal(Value::U8(n)) => Some(format!("{}", n)),
-        ExprKind::Literal(Value::Bool(b)) => Some((if *b { "true" } else { "false" }).to_string()),
-        ExprKind::Literal(Value::Null) => Some("null".to_string()),
+        ExprKind::Literal(v) => Some(crate::execution::runtime_core::format::fmt(v)),
         _ => None,
     }
 }
@@ -898,6 +905,61 @@ fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Va
     match &e.kind {
         ExprKind::Literal(v) => Some(v.clone()),
         ExprKind::Variable(name) => var_values.get(name).cloned(),
+        ExprKind::Grouping(inner) => expr_to_value_env(inner, var_values),
+        ExprKind::Cast(inner, _) => expr_to_value_env(inner, var_values),
+        ExprKind::Unary(op, inner) => {
+            let val = expr_to_value_env(inner, var_values)?;
+            match op {
+                TokenKind::Minus => match val {
+                    Value::Number(n) => Some(Value::Number(-n)),
+                    Value::F64(n) => Some(Value::F64(-n)),
+                    Value::I64(n) => Some(Value::I64(-n)),
+                    Value::I32(n) => Some(Value::I32(-n)),
+                    _ => val.as_f64().map(|n| Value::Number(-n)),
+                },
+                TokenKind::Bang => match val {
+                    Value::Bool(b) => Some(Value::Bool(!b)),
+                    _ => None,
+                },
+                _ => None,
+            }
+        }
+        ExprKind::Binary(l, op, r) => {
+            let lv = expr_to_value_env(l, var_values)?;
+            let rv = expr_to_value_env(r, var_values)?;
+            match op {
+                TokenKind::Plus => match (&lv, &rv) {
+                    (Value::Str(s1), Value::Str(s2)) => Some(Value::Str(format!("{}{}", s1, s2))),
+                    (Value::Str(s1), _) => Some(Value::Str(format!(
+                        "{}{}",
+                        s1,
+                        crate::execution::runtime_core::format::fmt(&rv)
+                    ))),
+                    (_, Value::Str(s2)) => Some(Value::Str(format!(
+                        "{}{}",
+                        crate::execution::runtime_core::format::fmt(&lv),
+                        s2
+                    ))),
+                    _ => match (lv.as_f64(), rv.as_f64()) {
+                        (Some(n1), Some(n2)) => Some(Value::Number(n1 + n2)),
+                        _ => None,
+                    },
+                },
+                TokenKind::Minus => match (lv.as_f64(), rv.as_f64()) {
+                    (Some(n1), Some(n2)) => Some(Value::Number(n1 - n2)),
+                    _ => None,
+                },
+                TokenKind::Star => match (lv.as_f64(), rv.as_f64()) {
+                    (Some(n1), Some(n2)) => Some(Value::Number(n1 * n2)),
+                    _ => None,
+                },
+                TokenKind::Slash => match (lv.as_f64(), rv.as_f64()) {
+                    (Some(n1), Some(n2)) => Some(Value::Number(n1 / n2)),
+                    _ => None,
+                },
+                _ => None,
+            }
+        }
         ExprKind::Array(elems) => {
             let mut arr = Vec::new();
             for el in elems {
@@ -921,7 +983,7 @@ fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Va
         }
         ExprKind::Call(callee, args, _) => {
             if let ExprKind::Variable(name) = &callee.kind {
-                if name == "concat" {
+                if name == "concat" || name == "str_concat" {
                     let mut s = String::new();
                     for a in args {
                         let val = expr_to_value_env(a, var_values)?;
@@ -2360,6 +2422,27 @@ mod tests {
         let tmp = std::env::temp_dir().join("wasm-opt-chain.wasm");
         let _result = compile_to_file(src, &tmp);
         // May not fully work due to WASM limitations, but should parse
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn wasm_formatting_expressions_compile() {
+        let src = r#"
+            let val = 123.456;
+            let formatted_num = `${val:.2f}`;
+            let formatted_hex = `${255:hex}`;
+            let formatted_curr = `${1000:currency(USD)}`;
+            print(formatted_num);
+            print(formatted_hex);
+            print(formatted_curr);
+        "#;
+        let tmp = std::env::temp_dir().join("wasm-formatting-expr.wasm");
+        let result = compile_to_file(src, &tmp);
+        assert!(
+            result.is_ok(),
+            "WASM compile failed for formatting expressions: {:?}",
+            result.err()
+        );
         let _ = std::fs::remove_file(&tmp);
     }
 }

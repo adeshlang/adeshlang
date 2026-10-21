@@ -1,0 +1,38 @@
+// examples/enum/all_in_one.adesh
+// All-in-One Enum Feature Demonstration and Test Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=== Enum All-In-One Feature Suite ===");
+
+// Basic Enums & Variants
+let status = { __tag: "Active", value: 1 };
+adesh_assert(status.__tag == "Active", "Enum variant tag");
+
+fn describe_status(s) {
+    if (s.__tag == "Active") {
+        return "System is running";
+    } else if (s.__tag == "Inactive") {
+        return "System is stopped";
+    } else {
+        return "Unknown";
+    }
+}
+
+adesh_assert(describe_status(status) == "System is running", "Enum variant handling");
+
+print("\nEnum All-In-One Test Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+assert(FAIL_COUNT == 0);

@@ -108,8 +108,21 @@ impl OsApiRouter {
         {
             return true;
         }
-        // Linker-generated or object-file private symbols
-        if name.starts_with('$') || name.starts_with('.') || name.starts_with("__func__") {
+        // Linker-generated, Mach-O section, or object-file private symbols
+        if name.starts_with('$')
+            || name.starts_with('.')
+            || name.starts_with("__func__")
+            || name.starts_with("__apple_")
+            || name.starts_with("__debug_")
+            || name.starts_with("__eh_frame")
+            || name.starts_with("__literal")
+            || name.starts_with("__text")
+            || name.starts_with("__data")
+            || name.starts_with("__cstring")
+            || name.starts_with("__cmdline")
+            || name.starts_with("_tlv_")
+            || name.starts_with("__tlv_")
+        {
             return true;
         }
         false
@@ -1539,6 +1552,19 @@ impl OsApiRouter {
             || clean.starts_with("NSGet")
             || raw.starts_with("_dyld_")
             || clean.starts_with("dyld_")
+            || clean.starts_with("dispatch_")
+            || clean.starts_with("mach_")
+            || clean.starts_with("copyfile")
+            || clean.starts_with("fcopyfile")
+            || clean.starts_with("fclonefile")
+            || clean.starts_with("CCRandom")
+            || clean.starts_with("CC_")
+            || clean.starts_with("sysctl")
+            || clean.contains("$DARWIN_")
+            || matches!(
+                clean,
+                "bzero" | "confstr" | "getpeereid" | "fsetattrlist" | "setattrlist" | "strerror_r"
+            )
         {
             return true;
         }
@@ -1648,6 +1674,10 @@ impl OsApiRouter {
             .or_else(|| raw.strip_prefix("_imp_"))
             .unwrap_or(raw);
         let clean = sym_name.trim_start_matches('_');
+
+        if raw.is_empty() || sym_name.is_empty() || clean.is_empty() {
+            return SymbolRoute::Undefined;
+        }
 
         if Self::is_internal(raw) || Self::is_internal(sym_name) {
             return SymbolRoute::InternalRuntime;

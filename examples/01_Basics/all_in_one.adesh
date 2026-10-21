@@ -1,0 +1,44 @@
+// examples/01_Basics/all_in_one.adesh
+// All-in-One 01_Basics Feature Demonstration and Test Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=== 01_Basics All-In-One Feature Suite ===");
+
+// Variables
+let count = 100;
+count = count + 50;
+adesh_assert(count == 150, "Variable re-assignment");
+
+// Loops
+let i = 0;
+let loop_sum = 0;
+while (i < 5) {
+    loop_sum = loop_sum + i;
+    i = i + 1;
+}
+adesh_assert(loop_sum == 10, "While loop summation");
+
+// Pattern / Conditionals
+let status = "active";
+let is_ok = false;
+if (status == "active") {
+    is_ok = true;
+}
+adesh_assert(is_ok == true, "Conditional branch execution");
+
+print("\n01_Basics All-In-One Test Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+assert(FAIL_COUNT == 0);

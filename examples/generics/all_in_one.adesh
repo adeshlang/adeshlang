@@ -1,0 +1,36 @@
+// examples/generics/all_in_one.adesh
+// All-in-One Generics Feature Demonstration and Test Suite
+
+let PASS_COUNT = 0;
+let FAIL_COUNT = 0;
+
+fn adesh_assert(cond, msg) {
+    if (cond) {
+        print("  ✓ PASS:", msg);
+        PASS_COUNT = PASS_COUNT + 1;
+    } else {
+        print("  ✗ FAIL:", msg);
+        FAIL_COUNT = FAIL_COUNT + 1;
+    }
+}
+
+print("=== Generics All-In-One Feature Suite ===");
+
+fn identity(val) {
+    return val;
+}
+
+adesh_assert(identity(42) == 42, "Generic identity integer");
+adesh_assert(identity("Adesh") == "Adesh", "Generic identity string");
+
+fn make_pair(first, second) {
+    return (first, second);
+}
+
+let p1 = make_pair("key", 100);
+adesh_assert(p1[0] == "key" && p1[1] == 100, "Generic tuple pair");
+
+print("\nGenerics All-In-One Test Summary:");
+print("  Passed:", PASS_COUNT);
+print("  Failed:", FAIL_COUNT);
+assert(FAIL_COUNT == 0);
