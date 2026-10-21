@@ -765,7 +765,26 @@ impl NativeJitCompiler {
             LirInst::ConstI64(dst, val) => {
                 let v = builder.ins().iconst(types::I64, *val);
                 value_map.insert(*dst, v);
-                value_types.insert(*dst, AotValueType::I64);
+                let ty = if *val >= 0 {
+                    if *val <= u8::MAX as i64 {
+                        AotValueType::U8
+                    } else if *val <= u16::MAX as i64 {
+                        AotValueType::U16
+                    } else if *val <= u32::MAX as i64 {
+                        AotValueType::U32
+                    } else {
+                        AotValueType::U64
+                    }
+                } else if *val >= i8::MIN as i64 {
+                    AotValueType::I8
+                } else if *val >= i16::MIN as i64 {
+                    AotValueType::I16
+                } else if *val >= i32::MIN as i64 {
+                    AotValueType::I32
+                } else {
+                    AotValueType::I64
+                };
+                value_types.insert(*dst, ty);
                 return Ok(());
             }
             LirInst::ConstI32(dst, val) => {

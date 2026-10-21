@@ -131,8 +131,27 @@ pub(super) fn lower_expr(
             let val = func.alloc_value();
             match lit {
                 HirLiteral::Int(n) => {
+                    let ty = if *n >= 0 {
+                        if *n <= u8::MAX as i64 {
+                            LirType::U8
+                        } else if *n <= u16::MAX as i64 {
+                            LirType::U16
+                        } else if *n <= u32::MAX as i64 {
+                            LirType::U32
+                        } else {
+                            LirType::U64
+                        }
+                    } else if *n >= i8::MIN as i64 {
+                        LirType::I8
+                    } else if *n >= i16::MIN as i64 {
+                        LirType::I16
+                    } else if *n >= i32::MIN as i64 {
+                        LirType::I32
+                    } else {
+                        LirType::I64
+                    };
                     func.push_to_block(ctx.current_block, LirInst::ConstI64(val, *n));
-                    ctx.value_types.insert(val, LirType::I64);
+                    ctx.value_types.insert(val, ty);
                 }
                 HirLiteral::Float(n) => {
                     func.push_to_block(ctx.current_block, LirInst::ConstF64(val, *n));

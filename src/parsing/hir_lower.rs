@@ -3,6 +3,8 @@
 //! This module provides the `ast_to_hir` function that transforms
 //! the AST into HIR representation.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::ast::{ClassDecl, Expr, ExprKind, Function, Pattern, Stmt, StmtKind, TokenKind, Value};
@@ -11,12 +13,36 @@ use super::hir::{
     HirPattern, HirStmt, HirType, UnaryOp,
 };
 
+thread_local! {
+    static KNOWN_STRUCTS: RefCell<HashMap<String, Vec<(String, String)>>> = RefCell::new(HashMap::new());
+}
+
+fn collect_struct_decls(stmts: &[Stmt], map: &mut HashMap<String, Vec<(String, String)>>) {
+    for stmt in stmts {
+        match &stmt.kind {
+            StmtKind::Struct(decl, _) => {
+                map.insert(decl.name.clone(), decl.fields.clone());
+            }
+            StmtKind::Block(inner) => {
+                collect_struct_decls(inner, map);
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Transform an AST program into an HIR module
 ///
 /// # Parameters
 /// * `stmts` - The AST statements to transform
 /// * `include_tests` - Whether to include test functions (false for production builds)
 pub fn ast_to_hir(stmts: &[Stmt], include_tests: bool) -> Result<HirModule, String> {
+    let mut structs = HashMap::new();
+    collect_struct_decls(stmts, &mut structs);
+    KNOWN_STRUCTS.with(|cell| {
+        *cell.borrow_mut() = structs;
+    });
+
     let mut module = HirModule::new();
 
     for stmt in stmts {
@@ -833,6 +859,32 @@ fn lower_expr(expr: &Expr) -> Result<HirExpr, String> {
                 // Dynamic class instantiation is limited in JIT
                 "__dynamic_class__".to_string()
             };
+
+            let struct_fields_opt =
+                KNOWN_STRUCTS.with(|cell| cell.borrow().get(&class_name).cloned());
+            if let Some(struct_fields) = struct_fields_opt {
+                if args.len() == 1 {
+                    if let ExprKind::Object(kvs) = &args[0].kind {
+                        let hir_fields: Result<Vec<_>, _> = kvs
+                            .iter()
+                            .map(|(k, v)| lower_expr(v).map(|hv| (k.clone(), hv)))
+                            .collect();
+                        return Ok(HirExpr::StructLiteral(class_name, hir_fields?));
+                    }
+                }
+                let hir_args: Result<Vec<_>, _> = args.iter().map(lower_expr).collect();
+                let hir_args = hir_args?;
+                let mut hir_fields = Vec::with_capacity(hir_args.len());
+                for (i, arg_expr) in hir_args.into_iter().enumerate() {
+                    let field_name = struct_fields
+                        .get(i)
+                        .map(|(fname, _)| fname.clone())
+                        .unwrap_or_else(|| format!("field_{}", i));
+                    hir_fields.push((field_name, arg_expr));
+                }
+                return Ok(HirExpr::StructLiteral(class_name, hir_fields));
+            }
+
             let hir_args: Result<Vec<_>, _> = args.iter().map(lower_expr).collect();
             Ok(HirExpr::NewInstance(class_name, hir_args?))
         }

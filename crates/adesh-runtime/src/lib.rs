@@ -358,7 +358,28 @@ impl RuntimeValue {
         match self {
             RuntimeValue::Null => "null",
             RuntimeValue::Bool(_) => "bool",
-            RuntimeValue::Int(_) | RuntimeValue::I64(_) => "i64",
+            RuntimeValue::Int(n) => {
+                if *n >= 0 {
+                    if *n <= u8::MAX as i64 {
+                        "u8"
+                    } else if *n <= u16::MAX as i64 {
+                        "u16"
+                    } else if *n <= u32::MAX as i64 {
+                        "u32"
+                    } else {
+                        "u64"
+                    }
+                } else if *n >= i8::MIN as i64 {
+                    "i8"
+                } else if *n >= i16::MIN as i64 {
+                    "i16"
+                } else if *n >= i32::MIN as i64 {
+                    "i32"
+                } else {
+                    "i64"
+                }
+            }
+            RuntimeValue::I64(_) => "i64",
             RuntimeValue::I32(_) => "i32",
             RuntimeValue::I16(_) => "i16",
             RuntimeValue::I8(_) => "i8",
@@ -397,8 +418,28 @@ impl RuntimeValue {
             | RuntimeValue::I32(_)
             | RuntimeValue::F32(_)
             | RuntimeValue::Char(_) => 4,
-            RuntimeValue::Int(_)
-            | RuntimeValue::Float(_)
+            RuntimeValue::Int(n) => {
+                if *n >= 0 {
+                    if *n <= u8::MAX as i64 {
+                        1
+                    } else if *n <= u16::MAX as i64 {
+                        2
+                    } else if *n <= u32::MAX as i64 {
+                        4
+                    } else {
+                        8
+                    }
+                } else if *n >= i8::MIN as i64 {
+                    1
+                } else if *n >= i16::MIN as i64 {
+                    2
+                } else if *n >= i32::MIN as i64 {
+                    4
+                } else {
+                    8
+                }
+            }
+            RuntimeValue::Float(_)
             | RuntimeValue::U64(_)
             | RuntimeValue::I64(_)
             | RuntimeValue::F64(_)
@@ -2664,10 +2705,33 @@ pub extern "C" fn aot_throw_exception(val_handle: u64) -> i64 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_typeof(handle: u64) -> u64 {
+pub extern "C" fn aot_typeof(handle: u64) -> *const c_char {
     let val = aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
-    let type_name = val.type_name();
-    aot_store_value(RuntimeValue::String(type_name.to_string()))
+    match val.type_name() {
+        "u8" => b"u8\0".as_ptr() as *const c_char,
+        "u16" => b"u16\0".as_ptr() as *const c_char,
+        "u32" => b"u32\0".as_ptr() as *const c_char,
+        "u64" => b"u64\0".as_ptr() as *const c_char,
+        "u128" => b"u128\0".as_ptr() as *const c_char,
+        "i8" => b"i8\0".as_ptr() as *const c_char,
+        "i16" => b"i16\0".as_ptr() as *const c_char,
+        "i32" => b"i32\0".as_ptr() as *const c_char,
+        "i64" => b"i64\0".as_ptr() as *const c_char,
+        "i128" => b"i128\0".as_ptr() as *const c_char,
+        "f32" => b"f32\0".as_ptr() as *const c_char,
+        "f64" => b"f64\0".as_ptr() as *const c_char,
+        "bool" => b"bool\0".as_ptr() as *const c_char,
+        "char" => b"char\0".as_ptr() as *const c_char,
+        "string" => b"string\0".as_ptr() as *const c_char,
+        "array" => b"array\0".as_ptr() as *const c_char,
+        "tuple" => b"tuple\0".as_ptr() as *const c_char,
+        "set" => b"set\0".as_ptr() as *const c_char,
+        "object" => b"object\0".as_ptr() as *const c_char,
+        "struct" => b"struct\0".as_ptr() as *const c_char,
+        "function" => b"function\0".as_ptr() as *const c_char,
+        "null" => b"null\0".as_ptr() as *const c_char,
+        _ => b"unknown\0".as_ptr() as *const c_char,
+    }
 }
 
 #[unsafe(no_mangle)]

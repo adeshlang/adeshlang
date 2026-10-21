@@ -227,6 +227,9 @@ impl ParsedArgs {
                 "--aot" | "--aot-native" | "--compile" => {
                     config.backend = ExecutionBackend::Aot;
                 }
+                "--wasm" => {
+                    config.backend = ExecutionBackend::Wasm;
+                }
                 #[cfg(debug_assertions)]
                 "--gpu" => {
                     config.backend = ExecutionBackend::Gpu;
@@ -472,15 +475,14 @@ impl ParsedArgs {
                         return Err("--import requires a header path".to_string());
                     }
                 }
-                "--wasm" => {
-                    if command == "run" && (i + 1 >= args.len() || args[i + 1].starts_with("-")) {
-                        config.backend = ExecutionBackend::Wasm;
-                    } else if i + 1 < args.len() && !args[i + 1].starts_with("-") {
+                "--wasm-module" => {
+                    if i + 1 < args.len() && !args[i + 1].starts_with("-") {
                         config.wasm_modules.push(args[i + 1].clone());
                         i += 1;
-                    } else {
-                        config.backend = ExecutionBackend::Wasm;
                     }
+                }
+                "--wasm" => {
+                    config.backend = ExecutionBackend::Wasm;
                 }
                 "--memory" | "--mem" => {
                     config.show_memory = true;

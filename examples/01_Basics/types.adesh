@@ -1,0 +1,3 @@
+let a:int = 20
+print(a);
+print("Type Of a:", typeof(a), "Size Of a:", sizeof(a));

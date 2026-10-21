@@ -40,13 +40,13 @@ print("person2.isStudent = ", person2.isStudent);
 
 print("=== Multiple Instances ===");
 
-let person3 = Person {
+let _person3 = Person {
     name: "Charlie",
     age: 22,
     isStudent: true,
 };
 
-let person4 = Person {
+let _person4 = Person {
     name: "Diana",
     age: 19,
     isStudent: true,
@@ -57,4 +57,4 @@ print("person3.name: Charlie, age: 22");
 print("person4.name: Diana, age: 19");
 
 print("=== All Basic Struct Examples Passed ===");
-print(typeof person1.age);
+print(typeof person1.age, sizeof(person1.age));

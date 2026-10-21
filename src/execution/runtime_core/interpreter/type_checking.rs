@@ -661,18 +661,34 @@ pub(in crate::execution::runtime_core) fn coerce_to_fixed_width(
                 }
             }
             "int" => {
-                if let Some(x) = bi.to_i8() {
-                    Ok(Some(I8(x)))
-                } else if let Some(x) = bi.to_i16() {
-                    Ok(Some(I16(x)))
-                } else if let Some(x) = bi.to_i32() {
-                    Ok(Some(I32(x)))
-                } else if let Some(x) = bi.to_i64() {
-                    Ok(Some(I64(x)))
-                } else if let Some(x) = bi.to_i128() {
-                    Ok(Some(I128(x)))
+                if *bi >= num_bigint::BigInt::from(0u8) {
+                    if let Some(x) = bi.to_u8() {
+                        Ok(Some(U8(x)))
+                    } else if let Some(x) = bi.to_u16() {
+                        Ok(Some(U16(x)))
+                    } else if let Some(x) = bi.to_u32() {
+                        Ok(Some(U32(x)))
+                    } else if let Some(x) = bi.to_u64() {
+                        Ok(Some(U64(x)))
+                    } else if let Some(x) = bi.to_u128() {
+                        Ok(Some(U128(x)))
+                    } else {
+                        Ok(Some(BigInt(bi.clone())))
+                    }
                 } else {
-                    Ok(Some(BigInt(bi.clone())))
+                    if let Some(x) = bi.to_i8() {
+                        Ok(Some(I8(x)))
+                    } else if let Some(x) = bi.to_i16() {
+                        Ok(Some(I16(x)))
+                    } else if let Some(x) = bi.to_i32() {
+                        Ok(Some(I32(x)))
+                    } else if let Some(x) = bi.to_i64() {
+                        Ok(Some(I64(x)))
+                    } else if let Some(x) = bi.to_i128() {
+                        Ok(Some(I128(x)))
+                    } else {
+                        Ok(Some(BigInt(bi.clone())))
+                    }
                 }
             }
             _ => Ok(None),
@@ -905,22 +921,33 @@ pub(in crate::execution::runtime_core) fn coerce_to_fixed_width(
         },
         "int" => match num_val {
             IntegerOrFloat::Unsigned(x) => {
-                if x <= i8::MAX as u128 {
-                    Ok(Some(I8(x as i8)))
-                } else if x <= i16::MAX as u128 {
-                    Ok(Some(I16(x as i16)))
-                } else if x <= i32::MAX as u128 {
-                    Ok(Some(I32(x as i32)))
-                } else if x <= i64::MAX as u128 {
-                    Ok(Some(I64(x as i64)))
-                } else if x <= i128::MAX as u128 {
-                    Ok(Some(I128(x as i128)))
+                if x <= u8::MAX as u128 {
+                    Ok(Some(U8(x as u8)))
+                } else if x <= u16::MAX as u128 {
+                    Ok(Some(U16(x as u16)))
+                } else if x <= u32::MAX as u128 {
+                    Ok(Some(U32(x as u32)))
+                } else if x <= u64::MAX as u128 {
+                    Ok(Some(U64(x as u64)))
                 } else {
                     Ok(Some(U128(x)))
                 }
             }
             IntegerOrFloat::Signed(x) => {
-                if x >= i8::MIN as i128 && x <= i8::MAX as i128 {
+                if x >= 0 {
+                    let u = x as u128;
+                    if u <= u8::MAX as u128 {
+                        Ok(Some(U8(u as u8)))
+                    } else if u <= u16::MAX as u128 {
+                        Ok(Some(U16(u as u16)))
+                    } else if u <= u32::MAX as u128 {
+                        Ok(Some(U32(u as u32)))
+                    } else if u <= u64::MAX as u128 {
+                        Ok(Some(U64(u as u64)))
+                    } else {
+                        Ok(Some(U128(u)))
+                    }
+                } else if x >= i8::MIN as i128 && x <= i8::MAX as i128 {
                     Ok(Some(I8(x as i8)))
                 } else if x >= i16::MIN as i128 && x <= i16::MAX as i128 {
                     Ok(Some(I16(x as i16)))
@@ -933,17 +960,32 @@ pub(in crate::execution::runtime_core) fn coerce_to_fixed_width(
                 }
             }
             IntegerOrFloat::Float(f) if f.fract().abs() < 1e-12 => {
-                let x = f as i128;
-                if x >= i8::MIN as i128 && x <= i8::MAX as i128 {
-                    Ok(Some(I8(x as i8)))
-                } else if x >= i16::MIN as i128 && x <= i16::MAX as i128 {
-                    Ok(Some(I16(x as i16)))
-                } else if x >= i32::MIN as i128 && x <= i32::MAX as i128 {
-                    Ok(Some(I32(x as i32)))
-                } else if x >= i64::MIN as i128 && x <= i64::MAX as i128 {
-                    Ok(Some(I64(x as i64)))
+                if f >= 0.0 {
+                    let u = f as u128;
+                    if u <= u8::MAX as u128 {
+                        Ok(Some(U8(u as u8)))
+                    } else if u <= u16::MAX as u128 {
+                        Ok(Some(U16(u as u16)))
+                    } else if u <= u32::MAX as u128 {
+                        Ok(Some(U32(u as u32)))
+                    } else if u <= u64::MAX as u128 {
+                        Ok(Some(U64(u as u64)))
+                    } else {
+                        Ok(Some(U128(u)))
+                    }
                 } else {
-                    Ok(Some(I128(x)))
+                    let x = f as i128;
+                    if x >= i8::MIN as i128 && x <= i8::MAX as i128 {
+                        Ok(Some(I8(x as i8)))
+                    } else if x >= i16::MIN as i128 && x <= i16::MAX as i128 {
+                        Ok(Some(I16(x as i16)))
+                    } else if x >= i32::MIN as i128 && x <= i32::MAX as i128 {
+                        Ok(Some(I32(x as i32)))
+                    } else if x >= i64::MIN as i128 && x <= i64::MAX as i128 {
+                        Ok(Some(I64(x as i64)))
+                    } else {
+                        Ok(Some(I128(x)))
+                    }
                 }
             }
             IntegerOrFloat::Float(f) => Err(format!("int requires an integer, got {}", f)),

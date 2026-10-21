@@ -157,14 +157,12 @@ pub(crate) fn expr_matches_expected_type(expr: &Expr, inferred: &Ty, expected: &
         }
     }
 
-    if is_compatible(inferred, expected, &is_concrete_int, &is_ptr) {
-        return true;
+    if let Some(fits) = literal_numeric_fits_expected(expr, expected) {
+        return fits;
     }
 
-    if let Some(fits) = literal_numeric_fits_expected(expr, expected) {
-        if fits {
-            return true;
-        }
+    if is_compatible(inferred, expected, &is_concrete_int, &is_ptr) {
+        return true;
     }
 
     if *inferred == Ty::Int {
