@@ -8,8 +8,30 @@ use adeshlang::execution::bytecode::{compile_to_file, compile_to_file_v2};
 use adeshlang::execution::runtime::{Interpreter, ModuleLoader};
 use adeshlang::execution::vm::run_file_with_writer;
 use std::fs;
+use std::path::PathBuf;
 use std::thread;
 use tempfile::tempdir;
+
+fn resolve_adesh_exe() -> PathBuf {
+    if let Ok(exe) = std::env::var("CARGO_BIN_EXE_adesh") {
+        return PathBuf::from(exe);
+    }
+    if let Ok(exe) = std::env::var("CARGO_BIN_EXE_adeshlang") {
+        return PathBuf::from(exe);
+    }
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.push("target");
+    path.push("debug");
+    let candidate = if cfg!(windows) {
+        path.join("adesh.exe")
+    } else {
+        path.join("adesh")
+    };
+    if candidate.exists() {
+        return candidate;
+    }
+    path
+}
 
 #[test]
 fn test_format_spec_parse_direct() {
@@ -47,35 +69,70 @@ fn test_format_value_render_direct() {
 #[test]
 fn test_formatting_examples_interpreter() {
     let examples = [
-        ("examples/formatting/basic.adesh", "USD: $19.90"),
-        ("examples/formatting/numbers.adesh", "Padded int: 00042"),
-        ("examples/formatting/radix_bits.adesh", "Hex upper:  FF"),
-        ("examples/formatting/currency_all.adesh", "GBP: £1,234.50"),
-        ("examples/formatting/report_table.adesh", "Active"),
+        (
+            "examples/formatting/basic.adesh",
+            "USD: $19.90\nEUR: €42.75\nJPY: ¥1,000\nINR: ₹123,456.78\n",
+        ),
+        (
+            "examples/formatting/numbers.adesh",
+            "Pi (2 dec): 3.14\nPi (4 dec): 3.1416\nPadded int: 00042\nSigned pos: +42\nSigned neg: -42\nGrouping:   1,234,567.89\n",
+        ),
+        (
+            "examples/formatting/radix_bits.adesh",
+            "Hex lower:  ff\nHex upper:  FF\nHex prefix: 0xff\nBinary:     11111111\nBin prefix: 0b11111111\nOctal:      377\nOct prefix: 0o377\n",
+        ),
+        (
+            "examples/formatting/currency_all.adesh",
+            "USD: $1,234.50\nEUR: €1,234.50\nGBP: £1,234.50\nJPY: ¥1,235\nINR: ₹1,234.50\nCAD: C$1,234.50\nAUD: A$1,234.50\nCHF: CHF1,234.50\nCNY: ¥1,234.50\n",
+        ),
+        (
+            "examples/formatting/report_table.adesh",
+            "Name       |      Revenue |   Status  \n---------- | ------------ | ----------\nAlice      |      1234.56 |   Active  \nBob        |        78.90 |  Pending  \nCharlie    |     98765.43 |   Active  \n",
+        ),
         (
             "examples/formatting/text_unicode.adesh",
-            "Filled: '**adesh***'",
+            "Left:   'adesh     '\nRight:  '     adesh'\nCenter: '  adesh   '\nFilled: '**adesh***'\nUpper:  'ADESH'\nLower:  'adesh'\n",
         ),
-        ("examples/formatting/runtime_values.adesh", "Bool:   true"),
+        (
+            "examples/formatting/runtime_values.adesh",
+            "Bool:   true\nInt:    100\nFloat:  3.14\nString: hello\n",
+        ),
     ];
 
-    for (path, _expected) in examples {
+    for (path, expected) in examples {
         let path_str = path.to_string();
         let content =
             fs::read_to_string(path).unwrap_or_else(|e| panic!("Failed to read {}: {}", path, e));
 
-        let handle = thread::Builder::new()
-            .stack_size(32 * 1024 * 1024)
-            .spawn(move || {
-                let dir = tempdir().expect("tempdir");
-                let mut interp = Interpreter::new();
-                let mut loader = ModuleLoader::new(dir.path());
-                interp.run_module(&content, &mut loader, Some(path_str))
-            })
-            .expect("spawn thread");
+        let _path_buf = std::path::PathBuf::from(path);
+        let exe = resolve_adesh_exe();
+        if exe.exists() {
+            let output = std::process::Command::new(&exe)
+                .args(["run", "--quiet", path])
+                .output()
+                .expect("execute adesh");
+            assert!(
+                output.status.success(),
+                "Execution failed for {}: {}",
+                path,
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let stdout_str = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+            assert_eq!(stdout_str, expected, "Output mismatch for example {}", path);
+        } else {
+            let handle = thread::Builder::new()
+                .stack_size(32 * 1024 * 1024)
+                .spawn(move || {
+                    let dir = tempdir().expect("tempdir");
+                    let mut interp = Interpreter::new();
+                    let mut loader = ModuleLoader::new(dir.path());
+                    interp.run_module(&content, &mut loader, Some(path_str))
+                })
+                .expect("spawn thread");
 
-        let res = handle.join().expect("join thread");
-        assert!(res.is_ok(), "Execution failed for {}: {:?}", path, res);
+            let res = handle.join().expect("join thread");
+            assert!(res.is_ok(), "Execution failed for {}: {:?}", path, res);
+        }
     }
 }
 
