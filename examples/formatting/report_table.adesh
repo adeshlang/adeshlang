@@ -1,0 +1,13 @@
+let name1 = "Alice";
+let name2 = "Bob";
+let name3 = "Charlie";
+
+let val1 = 1234.56;
+let val2 = 78.9;
+let val3 = 98765.43;
+
+print(`${"Name":<10} | ${"Revenue":>12} | ${"Status":^10}`);
+print(`${"-":->10} | ${"-":->12} | ${"-":->10}`);
+print(`${name1:<10} | ${val1:>12.2f} | ${"Active":^10}`);
+print(`${name2:<10} | ${val2:>12.2f} | ${"Pending":^10}`);
+print(`${name3:<10} | ${val3:>12.2f} | ${"Active":^10}`);

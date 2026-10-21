@@ -524,6 +524,41 @@ pub(super) fn execute_v1(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                     break;
                 }
             }
+            Some(OpCode::Format) => {
+                let spec_v = stack.pop().ok_or("stack underflow for Format spec")?;
+                let val_v = stack.pop().ok_or("stack underflow for Format value")?;
+                let spec_str = match spec_v {
+                    VMValue::Str(s) => s,
+                    _ => String::new(),
+                };
+                let fmt_val = match val_v {
+                    VMValue::Number(n) => adesh_format::FormatValue::Number(n),
+                    VMValue::Str(s) => adesh_format::FormatValue::Str(s),
+                    VMValue::Bool(b) => adesh_format::FormatValue::Bool(b),
+                    VMValue::Null => adesh_format::FormatValue::Null,
+                    VMValue::BigInt(bi) => adesh_format::FormatValue::BigInt(bi),
+                    VMValue::U64(u) => adesh_format::FormatValue::UInt(u as u128),
+                    VMValue::Array(arr) => {
+                        let items = arr
+                            .into_iter()
+                            .map(|item| match item {
+                                VMValue::Number(n) => adesh_format::FormatValue::Number(n),
+                                VMValue::Str(s) => adesh_format::FormatValue::Str(s),
+                                VMValue::Bool(b) => adesh_format::FormatValue::Bool(b),
+                                _ => adesh_format::FormatValue::Null,
+                            })
+                            .collect();
+                        adesh_format::FormatValue::Array(items)
+                    }
+                    _ => adesh_format::FormatValue::Null,
+                };
+                let spec = adesh_format::FormatSpec::parse(&spec_str)
+                    .map_err(|e| format!("format spec error: {}", e))?;
+                let formatted = fmt_val
+                    .render(&spec)
+                    .map_err(|e| format!("format render error: {}", e))?;
+                stack.push(VMValue::Str(formatted));
+            }
             Some(OpCode::StoreGlobal) => {
                 let operand = u32::from_le_bytes(data[pc..pc + 4].try_into().unwrap()) as usize;
                 pc += 4;

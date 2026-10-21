@@ -34,9 +34,6 @@ path = "src/main.rs"
 name = "adl"
 path = "src/bin/adl.rs"
 
-[[example]]
-name = "adl_package_demo"
-path = "examples/adl_package_demo.rs"
 
 [workspace.lints.clippy]
 all = "allow"
@@ -60,6 +57,7 @@ allow_internal_network = []
 print-bench = []
 
 [dependencies]
+adesh-format = { path = "crates/adesh-format" }
 adesh-object = { path = "crates/adesh-object" }
 adesh-codegen = { path = "crates/adesh-codegen" }
 adesh-linker = { path = "linker" }
@@ -166,6 +164,7 @@ libffi = "5.2"
 getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
+adesh-format = { path = "crates/adesh-format" }
 tempfile = "3"
 # Benchmarking framework
 criterion = { version = "0.5", features = ["html_reports"] }

@@ -185,10 +185,7 @@ fn apply_runtime_format_aot(v: &RuntimeValue, spec: &str) -> String {
 
     let mut result = if let Some(ref ftype) = format_type {
         match ftype.as_str() {
-            "int" | "d" => v
-                .as_i64()
-                .map(|n| n.to_string())
-                .unwrap_or(base_value),
+            "int" | "d" => v.as_i64().map(|n| n.to_string()).unwrap_or(base_value),
             "hex" | "x" => {
                 if let Some(n) = v.as_i64() {
                     format!("{:x}", n)
@@ -244,7 +241,6 @@ fn apply_runtime_format_aot(v: &RuntimeValue, spec: &str) -> String {
             }
             _ => base_value,
         }
-
     } else {
         base_value
     };
@@ -293,7 +289,14 @@ fn format_runtime_currency(value: Option<f64>, code: &str) -> Option<String> {
         "EUR" => ("€", 2),
         "GBP" => ("£", 2),
         "INR" => ("₹", 2),
-        "CNY" | "JPY" => ("¥", if code.eq_ignore_ascii_case("JPY") { 0 } else { 2 }),
+        "CNY" | "JPY" => (
+            "¥",
+            if code.eq_ignore_ascii_case("JPY") {
+                0
+            } else {
+                2
+            },
+        ),
         "KRW" => ("₩", 0),
         "RUB" => ("₽", 2),
         "BRL" => ("R$", 2),

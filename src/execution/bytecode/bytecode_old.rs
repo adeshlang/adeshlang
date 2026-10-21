@@ -74,6 +74,7 @@ pub enum OpCode {
     CmpGE = 23,
     CmpEQ = 24,
     CmpNE = 25,
+    Format = 26,
     Halt = 255,
 }
 
@@ -105,6 +106,7 @@ impl OpCode {
             23 => Some(OpCode::CmpGE),
             24 => Some(OpCode::CmpEQ),
             25 => Some(OpCode::CmpNE),
+            26 => Some(OpCode::Format),
             255 => Some(OpCode::Halt),
             _ => None,
         }
@@ -394,6 +396,7 @@ fn disassemble_file_internal(path: &Path, out_path: Option<&Path>) -> Result<(),
                     OpCode::CmpGE => output.push_str(&format!("  {:04} CMP_GE\n", pc - 1)),
                     OpCode::CmpEQ => output.push_str(&format!("  {:04} CMP_EQ\n", pc - 1)),
                     OpCode::CmpNE => output.push_str(&format!("  {:04} CMP_NE\n", pc - 1)),
+                    OpCode::Format => output.push_str(&format!("  {:04} FORMAT\n", pc - 1)),
                 }
             } else {
                 output.push_str(&format!("  {:04} UNKNOWN_OPCODE {}\n", pc - 1, op));
@@ -1051,12 +1054,12 @@ fn emit_expr(e: &Expr, ctx: &mut EmitCtx) -> Result<(), String> {
             }
             Err(format!("unsupported call in emitter: {:?}", callee))
         }
-        ExprKind::Format(inner, _spec) => {
-            let idx = ctx.add_const_str("".to_string());
-            ctx.emit_u8(OpCode::LoadConst as u8);
-            ctx.emit_u32(idx);
+        ExprKind::Format(inner, spec) => {
             emit_expr(inner, ctx)?;
-            ctx.emit_u8(OpCode::Add as u8);
+            let spec_idx = ctx.add_const_str(spec.clone());
+            ctx.emit_u8(OpCode::LoadConst as u8);
+            ctx.emit_u32(spec_idx);
+            ctx.emit_u8(OpCode::Format as u8);
             Ok(())
         }
         other => Err(format!("unsupported expr in emitter: {:?}", other)),

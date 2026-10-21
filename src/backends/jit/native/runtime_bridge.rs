@@ -2700,23 +2700,19 @@ pub extern "C" fn jit_str_concat_typed(a: u64, a_type: i64, b: u64, b_type: i64)
 
 /// Helper to get string value based on type tag
 fn get_string_val_typed(val: u64, type_tag: i64) -> String {
-    if let Some(s) = get_string_val(val) {
-        return s;
-    }
     match type_tag {
         1 => {
-            // Float
-            // Floats are passed as u64 bits
+            // Float (passed as IEEE-754 f64 bits)
             let f = f64::from_bits(val);
-            format!("{}", f)
+            if f.fract() == 0.0 && f.abs() < 1e15 {
+                format!("{}", f as i64)
+            } else {
+                format!("{}", f)
+            }
         }
         2 => {
             // String/Ptr
-            if let Some(s) = get_string_val(val) {
-                s
-            } else {
-                "".to_string()
-            }
+            get_string_val(val).unwrap_or_default()
         }
         3 => {
             // Bool
@@ -2730,13 +2726,14 @@ fn get_string_val_typed(val: u64, type_tag: i64) -> String {
             // Handle
             if let Some(v) = get_value(val) {
                 value_to_simple_string(&v)
+            } else if let Some(s) = get_string_val(val) {
+                s
             } else {
-                // If handle not found, might be a bug or stale handle, show as such
                 format!("<handle:{}>", val)
             }
         }
         _ => {
-            // Int (0) or default
+            // Int (0) or untagged default
             if val >= HANDLE_TAG {
                 if let Some(v) = get_value(val) {
                     return value_to_simple_string(&v);

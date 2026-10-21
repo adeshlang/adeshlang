@@ -1,0 +1,8 @@
+let str = "adesh";
+
+print(`Left:   '${str:<10}'`);
+print(`Right:  '${str:>10}'`);
+print(`Center: '${str:^10}'`);
+print(`Filled: '${str:*^10}'`);
+print(`Upper:  '${str:upper}'`);
+print(`Lower:  '${str:lower}'`);

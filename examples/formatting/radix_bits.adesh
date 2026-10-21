@@ -1,0 +1,9 @@
+let val = 255;
+
+print(`Hex lower:  ${val:x}`);
+print(`Hex upper:  ${val:X}`);
+print(`Hex prefix: ${val:#x}`);
+print(`Binary:     ${val:b}`);
+print(`Bin prefix: ${val:#b}`);
+print(`Octal:      ${val:o}`);
+print(`Oct prefix: ${val:#o}`);

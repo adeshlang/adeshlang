@@ -193,6 +193,7 @@ name = "adeshlang"
 version = "0.3.0"
 dependencies = [
  "adesh-codegen",
+ "adesh-format",
  "adesh-linker",
  "adesh-monitor-cli",
  "adesh-monitor-core",

@@ -1,5 +1,4 @@
 use crate::parsing::ast::Value;
-use unicode_width::UnicodeWidthStr;
 
 /// Format a value with a depth limit to prevent stack overflow on deeply nested structures.
 /// When max_depth is reached, nested values are abbreviated as <...>
@@ -286,318 +285,53 @@ pub fn fmt(v: &Value) -> String {
 /// - `oct` - Format as octal
 /// - `currency(CODE)` - Format as currency with given code (USD, EUR, INR, etc.)
 /// - Combinations like `>12+currency(INR)` or `0>12currency(USD)`
+/// Apply a format specifier to a value via unified `adesh_format` engine.
 pub fn apply_format_spec(v: &Value, spec: &str) -> String {
-    let base_value = fmt(v);
-    let spec = spec.trim();
-
-    if spec.is_empty() {
-        return base_value;
-    }
-
-    // Parse format spec components
-    let mut fill_char = ' ';
-    let mut align: Option<char> = None;
-    let mut sign_plus = false;
-    let mut width: Option<usize> = None;
-    let mut precision: Option<usize> = None;
-    let mut format_type: Option<String> = None;
-
-    let chars: Vec<char> = spec.chars().collect();
-    let mut i = 0;
-
-    // Check for fill character followed by alignment
-    if chars.len() >= 2 && (chars[1] == '<' || chars[1] == '^' || chars[1] == '>') {
-        fill_char = chars[0];
-        align = Some(chars[1]);
-        i = 2;
-    } else if !chars.is_empty() && (chars[0] == '<' || chars[0] == '^' || chars[0] == '>') {
-        align = Some(chars[0]);
-        i = 1;
-    }
-
-    // Check for sign
-    if i < chars.len() && chars[i] == '+' {
-        sign_plus = true;
-        i += 1;
-    }
-
-    // Check for zero-padding (0 followed by digits)
-    if i < chars.len() && chars[i] == '0' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit() {
-        // Zero-padding: set fill_char to '0' and default to right-align
-        fill_char = '0';
-        if align.is_none() {
-            align = Some('>');
-        }
-        i += 1;
-    }
-
-    // Parse width (digits)
-    let mut width_str = String::new();
-    while i < chars.len() && chars[i].is_ascii_digit() {
-        width_str.push(chars[i]);
-        i += 1;
-    }
-    if !width_str.is_empty() {
-        width = width_str.parse().ok();
-    }
-
-    // Parse precision before the presentation type.
-    if i < chars.len() && chars[i] == '.' {
-        i += 1;
-        let start = i;
-        while i < chars.len() && chars[i].is_ascii_digit() {
-            i += 1;
-        }
-        if start != i {
-            precision = chars[start..i]
-                .iter()
-                .collect::<String>()
-                .parse()
-                .ok();
-        }
-    }
-
-    // Parse type specifier (rest of the string)
-    if i < chars.len() {
-        format_type = Some(chars[i..].iter().collect::<String>());
-    }
-
-    // Apply format type first
-    let mut result = if let Some(ref ftype) = format_type {
-        apply_type_format(v, ftype, precision)
-    } else {
-        base_value
-    };
-
-    // Apply sign for positive numbers
-    if sign_plus && is_nonnegative_numeric(v) && !result.starts_with('-') && !result.starts_with('+') {
-        if result.starts_with(|c: char| c.is_ascii_digit()) {
-            result = format!("+{}", result);
-        } else if let Some(pos) = result.find(|c: char| c.is_ascii_digit()) {
-            result.insert(pos, '+');
-        }
-    }
-
-    // Apply width and alignment
-    if let Some(w) = width {
-        let display_width = UnicodeWidthStr::width(result.as_str());
-        if display_width < w {
-            let padding = w - display_width;
-            result = match align {
-                Some('<') => format!("{}{}", result, fill_char.to_string().repeat(padding)),
-                Some('^') => {
-                    let left = padding / 2;
-                    let right = padding - left;
-                    format!(
-                        "{}{}{}",
-                        fill_char.to_string().repeat(left),
-                        result,
-                        fill_char.to_string().repeat(right)
-                    )
-                }
-                Some('>') | None => format!("{}{}", fill_char.to_string().repeat(padding), result),
-                _ => result,
-            };
-        }
-    }
-
-    result
+    let fmt_val = ast_value_to_format_value(v);
+    adesh_format::format_value(&fmt_val, spec).unwrap_or_else(|_| fmt(v))
 }
 
-/// Apply type-specific formatting
-fn apply_type_format(v: &Value, ftype: &str, _precision: Option<usize>) -> String {
-    let ftype = ftype.trim();
-
-    // Handle currency format: currency(CODE)
-    if ftype.starts_with("currency(") && ftype.ends_with(")") {
-        let code = &ftype[9..ftype.len() - 1];
-        return format_currency(v, code);
-    }
-
-    // Handle float format: float(N)
-    if ftype.starts_with("float(") && ftype.ends_with(")") {
-        let prec_str = &ftype[6..ftype.len() - 1];
-        if let Ok(prec) = prec_str.parse::<usize>() {
-            if let Some(n) = numeric_as_f64(v) {
-                return format!("{:.prec$}", n, prec = prec);
-            }
-        }
-        return fmt(v);
-    }
-
-    // Handle simple type specifiers
-    match ftype {
-        "int" | "d" => numeric_as_i128(v)
-            .map(|n| n.to_string())
-            .unwrap_or_else(|| fmt(v)),
-        "bin" | "b" => numeric_as_i128(v)
-            .map(|n| format!("{:b}", n))
-            .unwrap_or_else(|| fmt(v)),
-        "hex" | "x" => numeric_as_i128(v)
-            .map(|n| format!("{:x}", n))
-            .unwrap_or_else(|| fmt(v)),
-        "HEX" | "X" => numeric_as_i128(v)
-            .map(|n| format!("{:X}", n))
-            .unwrap_or_else(|| fmt(v)),
-        "oct" | "o" => numeric_as_i128(v)
-            .map(|n| format!("{:o}", n))
-            .unwrap_or_else(|| fmt(v)),
-        "e" | "sci" => numeric_as_f64(v)
-            .map(|n| format!("{:e}", n))
-            .unwrap_or_else(|| fmt(v)),
-        "E" => numeric_as_f64(v)
-            .map(|n| format!("{:E}", n))
-            .unwrap_or_else(|| fmt(v)),
-        "%" | "percent" => numeric_as_f64(v)
-            .map(|n| format!("{:.1}%", n * 100.0))
-            .unwrap_or_else(|| fmt(v)),
-        "upper" | "uppercase" => fmt(v).to_uppercase(),
-        "lower" | "lowercase" => fmt(v).to_lowercase(),
-        "quoted" | "debug" => format!("{:?}", fmt(v)),
-        _ => {
-            // Check if this is a combined format like "+currency(INR)"
-            if ftype.starts_with("+") {
-                let rest = &ftype[1..];
-                if rest.starts_with("currency(") && rest.ends_with(")") {
-                    let code = &rest[9..rest.len() - 1];
-                    let mut result = format_currency(v, code);
-                    if is_nonnegative_numeric(v) {
-                        if !result.starts_with('-') && !result.starts_with('+') {
-                            result.insert(0, '+');
-
-                        }
-                    }
-                    return result;
-                }
-            }
-            fmt(v)
-        }
-    }
-}
-
-/// Format a value as currency with the given currency code
-fn format_currency(v: &Value, code: &str) -> String {
-    let n = match numeric_as_f64(v) {
-        Some(n) => n,
-        None => return fmt(v),
-    };
-
-    let (symbol, decimal_places, use_comma) = match code.to_uppercase().as_str() {
-        "USD" => ("$", 2, true),
-        "EUR" => ("€", 2, true),
-        "GBP" => ("£", 2, true),
-        "JPY" => ("¥", 0, true),
-        "INR" => ("₹", 2, true),
-        "CNY" => ("¥", 2, true),
-        "KRW" => ("₩", 0, true),
-        "RUB" => ("₽", 2, true),
-        "BRL" => ("R$", 2, true),
-        "CAD" => ("C$", 2, true),
-        "AUD" => ("A$", 2, true),
-        "CHF" => ("CHF ", 2, true),
-        "MXN" => ("MX$", 2, true),
-        _ => ("", 2, true), // Generic format
-    };
-
-    let formatted_number = if use_comma {
-        format_with_commas(n, decimal_places)
-    } else {
-        if decimal_places > 0 {
-            format!("{:.prec$}", n, prec = decimal_places)
-        } else {
-            format!("{}", n as i64)
-        }
-    };
-
-    format!("{}{}", symbol, formatted_number)
-}
-
-/// Format a number with comma separators for thousands
-fn format_with_commas(n: f64, decimal_places: usize) -> String {
-    let is_negative = n < 0.0;
-    let n = n.abs();
-
-    let (int_part, frac_part) = if decimal_places > 0 {
-        let formatted = format!("{:.prec$}", n, prec = decimal_places);
-        let parts: Vec<&str> = formatted.split('.').collect();
-        (
-            parts[0].to_string(),
-            Some(parts.get(1).unwrap_or(&"").to_string()),
-        )
-    } else {
-        (format!("{}", n as i64), None)
-    };
-
-    // Add commas to integer part
-    let int_with_commas: String = int_part
-        .chars()
-        .rev()
-        .enumerate()
-        .flat_map(|(i, c)| {
-            if i > 0 && i % 3 == 0 {
-                vec![',', c]
-            } else {
-                vec![c]
-            }
-
-        })
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-
-    let result = match frac_part {
-        Some(frac) => format!("{}.{}", int_with_commas, frac),
-        None => int_with_commas,
-    };
-
-    if is_negative {
-        format!("-{}", result)
-    } else {
-        result
-    }
-}
-
-fn numeric_as_f64(v: &Value) -> Option<f64> {
+pub fn ast_value_to_format_value(v: &Value) -> adesh_format::FormatValue {
+    use adesh_format::FormatValue;
     match v {
-        Value::Number(n) => Some(*n),
-        Value::F32(n) => Some(*n as f64),
-        Value::F64(n) => Some(*n),
-        Value::U8(n) => Some(*n as f64),
-        Value::U16(n) => Some(*n as f64),
-        Value::U32(n) => Some(*n as f64),
-        Value::U64(n) => Some(*n as f64),
-        Value::U128(n) => Some(*n as f64),
-        Value::I8(n) => Some(*n as f64),
-        Value::I16(n) => Some(*n as f64),
-        Value::I32(n) => Some(*n as f64),
-        Value::I64(n) => Some(*n as f64),
-        Value::I128(n) => Some(*n as f64),
-        _ => None,
+        Value::Str(s) => FormatValue::Str(s.clone()),
+        Value::Char(c) => FormatValue::Char(*c),
+        Value::Bool(b) => FormatValue::Bool(*b),
+        Value::Null => FormatValue::Null,
+        Value::Number(n) => FormatValue::Number(*n),
+        Value::BigInt(bi) => FormatValue::BigInt(bi.clone()),
+        Value::I8(n) => FormatValue::Int(*n as i128),
+        Value::I16(n) => FormatValue::Int(*n as i128),
+        Value::I32(n) => FormatValue::Int(*n as i128),
+        Value::I64(n) => FormatValue::Int(*n as i128),
+        Value::I128(n) => FormatValue::Int(*n),
+        Value::U8(n) => FormatValue::UInt(*n as u128),
+        Value::U16(n) => FormatValue::UInt(*n as u128),
+        Value::U32(n) => FormatValue::UInt(*n as u128),
+        Value::U64(n) => FormatValue::UInt(*n as u128),
+        Value::U128(n) => FormatValue::UInt(*n),
+        Value::F32(n) => FormatValue::Number(*n as f64),
+        Value::F64(n) => FormatValue::Number(*n),
+        Value::Ref(inner, _) => ast_value_to_format_value(inner),
+        Value::Array(items) => {
+            FormatValue::Array(items.iter().map(ast_value_to_format_value).collect())
+        }
+        Value::RawArray(_, items) => {
+            FormatValue::Array(items.iter().map(ast_value_to_format_value).collect())
+        }
+        Value::DynArray(da) => {
+            FormatValue::Array(da.data.iter().map(ast_value_to_format_value).collect())
+        }
+        Value::Tuple(items) => {
+            FormatValue::Tuple(items.iter().map(ast_value_to_format_value).collect())
+        }
+        Value::Object(m) => FormatValue::Object(
+            m.iter()
+                .map(|(k, val)| (k.clone(), ast_value_to_format_value(val)))
+                .collect(),
+        ),
+        _ => FormatValue::Other(fmt(v)),
     }
-}
-
-fn numeric_as_i128(v: &Value) -> Option<i128> {
-    match v {
-        Value::Number(n) => Some(*n as i128),
-        Value::F32(n) => Some(*n as i128),
-        Value::F64(n) => Some(*n as i128),
-        Value::U8(n) => Some(*n as i128),
-        Value::U16(n) => Some(*n as i128),
-        Value::U32(n) => Some(*n as i128),
-        Value::U64(n) => Some(*n as i128),
-        Value::U128(n) => Some(*n as i128),
-        Value::I8(n) => Some(*n as i128),
-        Value::I16(n) => Some(*n as i128),
-        Value::I32(n) => Some(*n as i128),
-        Value::I64(n) => Some(*n as i128),
-        Value::I128(n) => Some(*n),
-        _ => None,
-    }
-}
-
-fn is_nonnegative_numeric(v: &Value) -> bool {
-    numeric_as_f64(v).is_some_and(|n| n >= 0.0)
 }
 
 #[cfg(test)]
