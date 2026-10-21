@@ -60,7 +60,7 @@ pub fn native_jit_run_with_stats(source: &str) -> Result<NativeJitProfileStats, 
     // its runtime bridge owns.
     crate::parsing::decorator_compile::execute_compile_time_phases(&mut ast)?;
 
-    let hir = ast_to_hir(&ast, false)?;
+    let hir = ast_to_hir(&ast, true)?;
     crate::parsing::compile_time_memory_safety::check_memory_safety_compile_time_in(&hir, None)?;
 
     // Choose compilation path

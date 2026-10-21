@@ -5326,6 +5326,76 @@ impl<'a> FunctionLoweringContext<'a> {
                         });
                         return out_reg;
                     }
+                    if (fn_name == "Error" || fn_name == "error") && !args.is_empty() {
+                        let msg_handle = self.lower_to_handle(&args[0]);
+                        self.emit_call_with_args("aot_make_error", &[msg_handle]);
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Register(MachineRegister::Physical(
+                                PhysicalRegister(0),
+                            )),
+                        });
+                        return out_reg;
+                    }
+                    if fn_name == "assert" && !args.is_empty() {
+                        let cond_handle = self.lower_to_handle(&args[0]);
+                        let msg_handle = if args.len() > 1 {
+                            self.lower_to_handle(&args[1])
+                        } else {
+                            let zero_reg = self.func.alloc_vreg();
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(zero_reg)),
+                                src: MachineOperand::Immediate(0),
+                            });
+                            zero_reg
+                        };
+                        self.emit_call_with_args("aot_assert", &[cond_handle, msg_handle]);
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Immediate(0),
+                        });
+                        return out_reg;
+                    }
+                    if fn_name == "assert_eq" && args.len() >= 2 {
+                        let l_handle = self.lower_to_handle(&args[0]);
+                        let r_handle = self.lower_to_handle(&args[1]);
+                        let msg_handle = if args.len() > 2 {
+                            self.lower_to_handle(&args[2])
+                        } else {
+                            let zero_reg = self.func.alloc_vreg();
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(zero_reg)),
+                                src: MachineOperand::Immediate(0),
+                            });
+                            zero_reg
+                        };
+                        self.emit_call_with_args("aot_assert_eq", &[l_handle, r_handle, msg_handle]);
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Immediate(0),
+                        });
+                        return out_reg;
+                    }
+                    if fn_name == "assert_ne" && args.len() >= 2 {
+                        let l_handle = self.lower_to_handle(&args[0]);
+                        let r_handle = self.lower_to_handle(&args[1]);
+                        let msg_handle = if args.len() > 2 {
+                            self.lower_to_handle(&args[2])
+                        } else {
+                            let zero_reg = self.func.alloc_vreg();
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(zero_reg)),
+                                src: MachineOperand::Immediate(0),
+                            });
+                            zero_reg
+                        };
+                        self.emit_call_with_args("aot_assert_ne", &[l_handle, r_handle, msg_handle]);
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Immediate(0),
+                        });
+                        return out_reg;
+                    }
                     if (fn_name == "sizeof" || fn_name == "sizeOf") && !args.is_empty() {
                         let handle = self.lower_to_handle(&args[0]);
                         self.emit_call_with_args("aot_sizeof", &[handle]);
@@ -6805,7 +6875,7 @@ fn load_imported_module_hir(src: &str, file_path: &Path) -> Result<HirModule, St
     crate::parsing::decorator_compile::execute_compile_time_phases(&mut ast)
         .map_err(|e| format!("decorator phase failed: {e:?}"))?;
     let ast = crate::memory::raii::transform_ast_with_raii(ast);
-    let hir = ast_to_hir(&ast, false).map_err(|e| format!("HIR lowering failed: {e:?}"))?;
+    let hir = ast_to_hir(&ast, true).map_err(|e| format!("HIR lowering failed: {e:?}"))?;
     crate::parsing::compile_time_memory_safety::check_memory_safety_compile_time_in(
         &hir,
         Some(&file_path.to_string_lossy()),

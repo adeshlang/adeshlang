@@ -618,7 +618,7 @@ impl CraneliftAotCompiler {
         ast = crate::memory::raii::transform_ast_with_raii(ast);
 
         // Lower to HIR
-        let hir = ast_to_hir(&ast, false)?;
+        let hir = ast_to_hir(&ast, true)?;
         crate::parsing::compile_time_memory_safety::check_memory_safety_compile_time_in(
             &hir, None,
         )?;

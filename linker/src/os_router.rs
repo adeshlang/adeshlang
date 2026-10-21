@@ -942,7 +942,6 @@ impl OsApiRouter {
                 "log10",
                 "pow",
                 "sqrt",
-                "cbrt",
                 "hypot",
                 "floor",
                 "ceil",
@@ -976,7 +975,6 @@ impl OsApiRouter {
                 "log10f",
                 "powf",
                 "sqrtf",
-                "cbrtf",
                 "hypotf",
                 "floorf",
                 "ceilf",
@@ -1085,7 +1083,6 @@ impl OsApiRouter {
                 | "log10"
                 | "pow"
                 | "sqrt"
-                | "cbrt"
                 | "hypot"
                 | "floor"
                 | "ceil"
@@ -1119,7 +1116,6 @@ impl OsApiRouter {
                 | "log10f"
                 | "powf"
                 | "sqrtf"
-                | "cbrtf"
                 | "hypotf"
                 | "floorf"
                 | "ceilf"

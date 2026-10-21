@@ -169,6 +169,7 @@ use conversion::{
 
 // Import control flow and exception handling builtin functions for registration
 use control::{
+    runtime_assert, runtime_assert_eq, runtime_assert_ne,
     runtime_check_executor_exception, runtime_clear_exception, runtime_error, runtime_extend_class,
     runtime_get_exception, runtime_has_exception, runtime_is_null, runtime_nonnull, runtime_throw,
 };
@@ -767,6 +768,11 @@ impl BuiltinRegistry {
         // Error constructors
         self.register("error", runtime_error);
         self.register("Error", runtime_error);
+
+        // Assertions / testing
+        self.register("assert", runtime_assert);
+        self.register("assert_eq", runtime_assert_eq);
+        self.register("assert_ne", runtime_assert_ne);
 
         // DateTime
         self.register("Date", runtime_new_class);

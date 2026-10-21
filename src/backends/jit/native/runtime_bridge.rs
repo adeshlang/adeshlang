@@ -4,7 +4,7 @@
 //! with the Rust runtime for complex operations like creating and printing
 //! arrays, objects, and other composite data structures.
 
-use crate::backends::common::builtins::RuntimeValue;
+use crate::backends::common::builtins::{CURRENT_EXCEPTION, RuntimeValue};
 use crate::utils::collections::FastMap;
 use std::cell::RefCell;
 use std::ffi::CStr;
@@ -2209,6 +2209,8 @@ pub extern "C" fn jit_object_has_key(obj_handle: u64, field_handle: u64) -> i64 
 pub extern "C" fn jit_new_class(class_handle: u64) -> u64 {
     let class_val = if let Some(v) = get_value(class_handle) {
         v
+    } else if let Some(s) = get_string_val(class_handle) {
+        RuntimeValue::String(s)
     } else {
         return 0;
     };
@@ -2217,6 +2219,37 @@ pub extern "C" fn jit_new_class(class_handle: u64) -> u64 {
     let mut map = FastMap::default();
     map.insert("__class__".to_string(), class_val);
     store_value(RuntimeValue::Object(map))
+}
+
+/// Set constructor argument on a newly instantiated class
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_new_class_arg(inst_handle: u64, idx: i64, val: u64, tag: i64) -> u64 {
+    let arg_rv = match tag {
+        1 => RuntimeValue::Float(f64::from_bits(val)),
+        2 => {
+            let s = get_string_val(val).unwrap_or_default();
+            RuntimeValue::String(s)
+        }
+        3 => RuntimeValue::Bool(val != 0),
+        4 => {
+            if let Some(rv) = get_value(val) {
+                rv
+            } else {
+                RuntimeValue::Int(val as i64)
+            }
+        }
+        _ => RuntimeValue::Int(val as i64),
+    };
+
+    if let Some(RuntimeValue::Object(mut map)) = remove_value(inst_handle) {
+        map.insert(format!("arg{}", idx), arg_rv.clone());
+        if idx == 0 {
+            map.insert("message".to_string(), arg_rv);
+        }
+        store_value(RuntimeValue::Object(map))
+    } else {
+        inst_handle
+    }
 }
 
 /// Look up a method address for an object
@@ -2822,6 +2855,38 @@ fn runtime_value_to_ast_value(rv: &RuntimeValue) -> crate::parsing::ast::Value {
             Value::Set(values)
         }
         RuntimeValue::Object(obj) => {
+            if let Some(class_val) = obj.get("__class__").or_else(|| obj.get("__class")) {
+                let class_name = match class_val {
+                    RuntimeValue::String(s) => s.clone(),
+                    RuntimeValue::Object(class_obj) => class_obj
+                        .get("name")
+                        .and_then(|v| match v {
+                            RuntimeValue::String(s) => Some(s.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| "Object".to_string()),
+                    _ => "Object".to_string(),
+                };
+
+                if class_name == "UserError"
+                    || class_name == "Error"
+                    || class_name.ends_with("Error")
+                {
+                    let msg = obj
+                        .get("message")
+                        .or_else(|| obj.get("arg0"))
+                        .or_else(|| obj.get("name"))
+                        .map(|v| match v {
+                            RuntimeValue::String(s) => s.clone(),
+                            other => format!("{:?}", other),
+                        })
+                        .unwrap_or_else(|| class_name.clone());
+                    return Value::Str(msg);
+                } else {
+                    return Value::Str(format!("<{} instance>", class_name));
+                }
+            }
+
             let mut map = FastMap::default();
             for (k, v) in obj.iter() {
                 map.insert(k.clone(), runtime_value_to_ast_value(v));
@@ -2856,37 +2921,123 @@ fn runtime_value_to_ast_value(rv: &RuntimeValue) -> crate::parsing::ast::Value {
     }
 }
 
-/// Helper to convert RuntimeValue to simple string representation
+/// Helper to convert RuntimeValue to simple string representation using unified formatting authority
 fn value_to_simple_string(rv: &RuntimeValue) -> String {
-    match rv {
-        RuntimeValue::Int(i) => format!("{}", i),
-        RuntimeValue::Float(f) => format!("{}", f),
-        RuntimeValue::Char(c) => format!("{}", c),
-        RuntimeValue::String(s) => s.clone(),
-        RuntimeValue::Bool(b) => format!("{}", b),
-        RuntimeValue::Null => "null".to_string(),
-        RuntimeValue::Array(_) => "[...]".to_string(),
-        RuntimeValue::Set(_) => "{...}".to_string(),
-        RuntimeValue::Object(_) => "{...}".to_string(),
-        RuntimeValue::Tuple(_) => "(...".to_string(),
-        RuntimeValue::BigInt(bi) => bi.to_string(),
-        RuntimeValue::Promise(id) => format!("Promise({})", id),
-        RuntimeValue::Function(f) => format!("Function({})", f.name),
-        RuntimeValue::RawArray(_, _) | RuntimeValue::DynArray { .. } => "[...]".to_string(),
-        // Fixed-width types
-        RuntimeValue::U8(n) => format!("{}", n),
-        RuntimeValue::U16(n) => format!("{}", n),
-        RuntimeValue::U32(n) => format!("{}", n),
-        RuntimeValue::U64(n) => format!("{}", n),
-        RuntimeValue::U128(n) => format!("{}", n),
-        RuntimeValue::I8(n) => format!("{}", n),
-        RuntimeValue::I16(n) => format!("{}", n),
-        RuntimeValue::I32(n) => format!("{}", n),
-        RuntimeValue::I64(n) => format!("{}", n),
-        RuntimeValue::I128(n) => format!("{}", n),
-        RuntimeValue::F32(n) => format!("{}", n),
-        RuntimeValue::F64(n) => format!("{}", n),
+    let ast_val = runtime_value_to_ast_value(rv);
+    crate::execution::runtime_core::format::fmt(&ast_val)
+}
+
+/// Assert that condition is true, setting CURRENT_EXCEPTION on failure
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_assert(cond_val: u64, cond_tag: i64, msg_val: u64, msg_tag: i64) -> u64 {
+    let passed = match cond_tag {
+        3 => cond_val != 0,
+        0 => (cond_val as i64) != 0,
+        1 => f64::from_bits(cond_val) != 0.0,
+        _ => {
+            let s = get_string_val_typed(cond_val, cond_tag);
+            !s.is_empty() && s != "false"
+        }
+    };
+    if !passed {
+        let msg = if msg_val != 0 {
+            get_string_val_typed(msg_val, msg_tag)
+        } else {
+            "condition is false".to_string()
+        };
+        let err_msg = format!("Test failed: Assertion failed: {}", msg);
+        CURRENT_EXCEPTION.with(|exc| {
+            *exc.borrow_mut() = Some(RuntimeValue::String(err_msg));
+        });
     }
+    store_value(RuntimeValue::Null)
+}
+
+/// Assert that left == right, setting CURRENT_EXCEPTION on failure
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_assert_eq(l_val: u64, l_tag: i64, r_val: u64, r_tag: i64) -> u64 {
+    let eq = match (l_tag, r_tag) {
+        (1, 1) => {
+            let lf = f64::from_bits(l_val);
+            let rf = f64::from_bits(r_val);
+            (lf - rf).abs() < f64::EPSILON
+        }
+        (1, 0) => {
+            let lf = f64::from_bits(l_val);
+            (lf - (r_val as i64 as f64)).abs() < f64::EPSILON
+        }
+        (0, 1) => {
+            let rf = f64::from_bits(r_val);
+            ((l_val as i64 as f64) - rf).abs() < f64::EPSILON
+        }
+        (2, 2) => {
+            let ls = get_string_val(l_val).unwrap_or_default();
+            let rs = get_string_val(r_val).unwrap_or_default();
+            ls == rs
+        }
+        (3, 3) => (l_val != 0) == (r_val != 0),
+        (0, 0) => (l_val as i64) == (r_val as i64),
+        _ => {
+            let ls = get_string_val_typed(l_val, l_tag);
+            let rs = get_string_val_typed(r_val, r_tag);
+            ls == rs
+        }
+    };
+    if !eq {
+        let left_str = get_string_val_typed(l_val, l_tag);
+        let right_str = get_string_val_typed(r_val, r_tag);
+        let msg = format!(
+            "Test failed: Assertion failed: left != right\n  left: {}\n right: {}",
+            left_str, right_str
+        );
+        CURRENT_EXCEPTION.with(|exc| {
+            *exc.borrow_mut() = Some(RuntimeValue::String(msg));
+        });
+    }
+    store_value(RuntimeValue::Null)
+}
+
+/// Assert that left != right, setting CURRENT_EXCEPTION on failure
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_assert_ne(l_val: u64, l_tag: i64, r_val: u64, r_tag: i64) -> u64 {
+    let eq = match (l_tag, r_tag) {
+        (1, 1) => {
+            let lf = f64::from_bits(l_val);
+            let rf = f64::from_bits(r_val);
+            (lf - rf).abs() < f64::EPSILON
+        }
+        (1, 0) => {
+            let lf = f64::from_bits(l_val);
+            (lf - (r_val as i64 as f64)).abs() < f64::EPSILON
+        }
+        (0, 1) => {
+            let rf = f64::from_bits(r_val);
+            ((l_val as i64 as f64) - rf).abs() < f64::EPSILON
+        }
+        (2, 2) => {
+            let ls = get_string_val(l_val).unwrap_or_default();
+            let rs = get_string_val(r_val).unwrap_or_default();
+            ls == rs
+        }
+        (3, 3) => (l_val != 0) == (r_val != 0),
+        (0, 0) => (l_val as i64) == (r_val as i64),
+        _ => {
+            let ls = get_string_val_typed(l_val, l_tag);
+            let rs = get_string_val_typed(r_val, r_tag);
+            ls == rs
+        }
+    };
+    if eq {
+        let left_str = get_string_val_typed(l_val, l_tag);
+        let msg = format!(
+            "Test failed: Assertion failed: left == right (expected not equal)\n  both values: {}",
+            left_str
+        );
+        CURRENT_EXCEPTION.with(|exc| {
+            *exc.borrow_mut() = Some(RuntimeValue::String(msg));
+        });
+    }
+    store_value(RuntimeValue::Null)
 }
 
 /// jit_str_eq(a, b) - Check string equality (handles vs pointers)
@@ -3789,6 +3940,7 @@ pub fn get_runtime_symbols() -> Vec<(&'static str, *const u8)> {
         ("jit_set_field", jit_set_field as *const u8),
         ("jit_get_field", jit_get_field as *const u8),
         ("jit_new_class", jit_new_class as *const u8),
+        ("jit_new_class_arg", jit_new_class_arg as *const u8),
         ("jit_get_method", jit_get_method as *const u8),
         ("jit_parse_args", jit_parse_args as *const u8),
         ("jit_arg_get", jit_arg_get as *const u8),
@@ -3804,6 +3956,9 @@ pub fn get_runtime_symbols() -> Vec<(&'static str, *const u8)> {
             "jit_format_value_typed",
             jit_format_value_typed as *const u8,
         ),
+        ("jit_assert", jit_assert as *const u8),
+        ("jit_assert_eq", jit_assert_eq as *const u8),
+        ("jit_assert_ne", jit_assert_ne as *const u8),
         // Command-line argument functions
         ("jit_argc", jit_argc as *const u8),
         ("jit_argv", jit_argv as *const u8),

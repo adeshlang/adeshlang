@@ -95,6 +95,93 @@ pub(super) fn runtime_clear_exception(_args: &[RuntimeValue]) -> RuntimeValue {
     RuntimeValue::Null
 }
 
+#[allow(dead_code)]
+pub(super) fn runtime_assert(args: &[RuntimeValue]) -> RuntimeValue {
+    if args.is_empty() {
+        CURRENT_EXCEPTION.with(|exc| {
+            *exc.borrow_mut() = Some(RuntimeValue::String("assert() requires at least 1 argument".to_string()));
+        });
+        return RuntimeValue::Null;
+    }
+    let condition = args[0].as_bool().unwrap_or(false);
+    if !condition {
+        let message = if args.len() >= 2 {
+            args[1].as_string()
+        } else {
+            "Assertion failed: condition is false".to_string()
+        };
+        CURRENT_EXCEPTION.with(|exc| {
+            *exc.borrow_mut() = Some(RuntimeValue::String(format!("Test failed: {}", message)));
+        });
+    }
+    RuntimeValue::Null
+}
+
+#[allow(dead_code)]
+pub(super) fn runtime_assert_eq(args: &[RuntimeValue]) -> RuntimeValue {
+    if args.len() != 2 {
+        CURRENT_EXCEPTION.with(|exc| {
+            *exc.borrow_mut() = Some(RuntimeValue::String("assert_eq() requires exactly 2 arguments".to_string()));
+        });
+        return RuntimeValue::Null;
+    }
+    let eq = match (&args[0], &args[1]) {
+        (RuntimeValue::Int(a), RuntimeValue::Int(b)) => a == b,
+        (RuntimeValue::Float(a), RuntimeValue::Float(b)) => (a - b).abs() < f64::EPSILON,
+        (RuntimeValue::Int(a), RuntimeValue::Float(b)) => (*a as f64 - b).abs() < f64::EPSILON,
+        (RuntimeValue::Float(a), RuntimeValue::Int(b)) => (a - *b as f64).abs() < f64::EPSILON,
+        (RuntimeValue::Bool(a), RuntimeValue::Bool(b)) => a == b,
+        (RuntimeValue::String(a), RuntimeValue::String(b)) => a == b,
+        (RuntimeValue::Char(a), RuntimeValue::Char(b)) => a == b,
+        (RuntimeValue::Null, RuntimeValue::Null) => true,
+        (a, b) => a == b,
+    };
+    if !eq {
+        let left = format!("{:?}", args[0]);
+        let right = format!("{:?}", args[1]);
+        let message = format!(
+            "Test failed: Assertion failed: left != right\n  left: {}\n right: {}",
+            left, right
+        );
+        CURRENT_EXCEPTION.with(|exc| {
+            *exc.borrow_mut() = Some(RuntimeValue::String(message));
+        });
+    }
+    RuntimeValue::Null
+}
+
+#[allow(dead_code)]
+pub(super) fn runtime_assert_ne(args: &[RuntimeValue]) -> RuntimeValue {
+    if args.len() != 2 {
+        CURRENT_EXCEPTION.with(|exc| {
+            *exc.borrow_mut() = Some(RuntimeValue::String("assert_ne() requires exactly 2 arguments".to_string()));
+        });
+        return RuntimeValue::Null;
+    }
+    let eq = match (&args[0], &args[1]) {
+        (RuntimeValue::Int(a), RuntimeValue::Int(b)) => a == b,
+        (RuntimeValue::Float(a), RuntimeValue::Float(b)) => (a - b).abs() < f64::EPSILON,
+        (RuntimeValue::Int(a), RuntimeValue::Float(b)) => (*a as f64 - b).abs() < f64::EPSILON,
+        (RuntimeValue::Float(a), RuntimeValue::Int(b)) => (a - *b as f64).abs() < f64::EPSILON,
+        (RuntimeValue::Bool(a), RuntimeValue::Bool(b)) => a == b,
+        (RuntimeValue::String(a), RuntimeValue::String(b)) => a == b,
+        (RuntimeValue::Char(a), RuntimeValue::Char(b)) => a == b,
+        (RuntimeValue::Null, RuntimeValue::Null) => true,
+        (a, b) => a == b,
+    };
+    if eq {
+        let left = format!("{:?}", args[0]);
+        let message = format!(
+            "Test failed: Assertion failed: left == right (expected not equal)\n  both values: {}",
+            left
+        );
+        CURRENT_EXCEPTION.with(|exc| {
+            *exc.borrow_mut() = Some(RuntimeValue::String(message));
+        });
+    }
+    RuntimeValue::Null
+}
+
 /// Create a user-defined error object
 #[inline]
 #[allow(dead_code)]

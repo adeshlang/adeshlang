@@ -1,0 +1,346 @@
+// ==============================================================================
+// AdeshLang String Formatting - All-In-One Showcase & Test Suite
+// ==============================================================================
+//
+// This comprehensive example showcases all template string formatting features
+// in AdeshLang, including use cases from all examples and the documentation:
+//  - Basic interpolation, multiple variables, runtime values
+//  - Alignment (left, center, right), width, and custom fill padding
+//  - Number signs, integer & float precision, grouping, scientific & percent
+//  - Radix & bit representations (binary, hex, octal with & without prefixes)
+//  - Full currency support across all 13 world currencies & compound specifiers
+//  - Text manipulation (:upper, :lower, :quoted) and Unicode-aware display widths
+//  - Arithmetic & nested expressions in interpolations
+//  - Error and object string formatting
+//  - Practical reporting table generation
+//
+// Dual execution support:
+//  1. Direct run:  adesh run examples/formatting/all_in_one.adesh
+//  2. Test runner: adesh test examples/formatting/all_in_one.adesh
+// ==============================================================================
+
+class CustomReportItem {
+    fn init(name, value) {
+        this.name = name;
+        this.value = value;
+    }
+}
+
+class DemoError {
+    fn init(msg) {
+        this.message = msg;
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Native Adesh Test Suite (executed by `adesh test`)
+// ──────────────────────────────────────────────────────────────────────────────
+
+test fn test_basic_and_runtime_types() {
+    let name = "World";
+    assert_eq(`Hello, ${name}!`, "Hello, World!");
+
+    let b = true;
+    let i = 100;
+    let f = 3.14;
+    let s = "hello";
+    assert_eq(`Bool: ${b}`, "Bool: true");
+    assert_eq(`Int: ${i}`, "Int: 100");
+    assert_eq(`Float: ${f}`, "Float: 3.14");
+    assert_eq(`String: ${s}`, "String: hello");
+
+    // Multiple interpolations
+    let user = "Ajay";
+    let age = 22;
+    assert_eq(`Name: ${user}, Age: ${age}`, "Name: Ajay, Age: 22");
+
+    let who = "C";
+    assert_eq(`Path: A B ${who}`, "Path: A B C");
+}
+
+test fn test_alignment_width_and_padding() {
+    let left_msg = "left";
+    let center_msg = "center";
+    let right_msg = "right";
+
+    // Standard alignments
+    assert_eq(`[${left_msg:<10}]`, "[left      ]");
+    assert_eq(`[${center_msg:^10}]`, "[  center  ]");
+    assert_eq(`[${right_msg:>10}]`, "[     right]");
+
+    // Zero-padding
+    let num = 1234;
+    assert_eq(`[${num:08}]`, "[00001234]");
+    assert_eq(`[${num:0>8}]`, "[00001234]");
+    assert_eq(`[${42:05d}]`, "[00042]");
+
+    // Custom fill characters
+    let n = 42;
+    assert_eq(`[${n:_^10}]`, "[____42____]");
+    assert_eq(`[${n:*^10}]`, "[****42****]");
+    assert_eq(`${"-":->10}`, "----------");
+
+    // Number sign formatting
+    let pos = 10;
+    let neg = -42;
+    assert_eq(`${pos:+}`, "+10");
+    assert_eq(`${pos:+d}`, "+10");
+    assert_eq(`${neg:+d}`, "-42");
+}
+
+test fn test_numbers_floats_and_scientific() {
+    let pi = 3.14159265;
+    assert_eq(`Pi: ${pi:float(2)}`, "Pi: 3.14");
+    assert_eq(`Pi: ${pi:.2f}`, "Pi: 3.14");
+    assert_eq(`Pi: ${pi:.4f}`, "Pi: 3.1416");
+
+    let score = 0.875;
+    assert_eq(`Score: ${score:.1%}`, "Score: 87.5%");
+    assert_eq(`Percent: ${0.125:%}`, "Percent: 12.5%");
+
+    let big = 1234567.89;
+    assert_eq(`Grouping: ${big:,.2f}`, "Grouping: 1,234,567.89");
+
+    let val = 1234.5;
+    assert_eq(`Sci lower: ${val:e}`, "Sci lower: 1.234e3");
+    assert_eq(`Sci upper: ${val:E}`, "Sci upper: 1.234E3");
+
+    let int_num = 42;
+    assert_eq(`Int d: ${int_num:d}`, "Int d: 42");
+    assert_eq(`Int spec: ${int_num:int}`, "Int spec: 42");
+}
+
+test fn test_radix_and_bit_specifiers() {
+    let val = 255;
+    assert_eq(`${val:hex}`, "ff");
+    assert_eq(`${val:x}`, "ff");
+    assert_eq(`${val:HEX}`, "FF");
+    assert_eq(`${val:X}`, "FF");
+    assert_eq(`${val:#x}`, "0xff");
+
+    let n = 10;
+    assert_eq(`${n:bin}`, "1010");
+    assert_eq(`${n:b}`, "1010");
+    assert_eq(`${n:#b}`, "0b1010");
+
+    assert_eq(`${n:oct}`, "12");
+    assert_eq(`${n:o}`, "12");
+    assert_eq(`${n:#o}`, "0o12");
+
+    let flags = 10;
+    assert_eq(`${flags:08bin}`, "00001010");
+}
+
+test fn test_all_currencies_and_compounds() {
+    let amt = 1234.5;
+
+    // All 13 supported currencies
+    assert_eq(`USD: ${amt:currency(USD)}`, "USD: $1,234.50");
+    assert_eq(`EUR: ${amt:currency(EUR)}`, "EUR: €1,234.50");
+    assert_eq(`GBP: ${amt:currency(GBP)}`, "GBP: £1,234.50");
+    assert_eq(`JPY: ${amt:currency(JPY)}`, "JPY: ¥1,235");
+    assert_eq(`INR: ${amt:currency(INR)}`, "INR: ₹1,234.50");
+    assert_eq(`CAD: ${amt:currency(CAD)}`, "CAD: C$1,234.50");
+    assert_eq(`AUD: ${amt:currency(AUD)}`, "AUD: A$1,234.50");
+    assert_eq(`CHF: ${amt:currency(CHF)}`, "CHF: CHF1,234.50");
+    assert_eq(`CNY: ${amt:currency(CNY)}`, "CNY: ¥1,234.50");
+    assert_eq(`KRW: ${amt:currency(KRW)}`, "KRW: ₩1,235");
+    assert_eq(`RUB: ${amt:currency(RUB)}`, "RUB: ₽1,234.50");
+    assert_eq(`BRL: ${amt:currency(BRL)}`, "BRL: R$1,234.50");
+    assert_eq(`MXN: ${amt:currency(MXN)}`, "MXN: MX$1,234.50");
+
+    // Combined alignment, width, sign, and currency
+    assert_eq(`[${amt:>14+currency(USD)}]`, "[    +$1,234.50]");
+    assert_eq(`[${amt:>18currency(INR)}]`, "[         ₹1,234.50]");
+    assert_eq(`[${amt:0>12currency(USD)}]`, "[000$1,234.50]");
+    assert_eq(`[${amt:^16currency(EUR)}]`, "[   €1,234.50    ]");
+
+    // Negative currency
+    let neg = -987.65;
+    assert_eq(`[${neg:>12currency(INR)}]`, "[    -₹987.65]");
+}
+
+test fn test_text_and_unicode_width() {
+    let str = "adesh";
+    assert_eq(`'${str:<10}'`, "'adesh     '");
+    assert_eq(`'${str:>10}'`, "'     adesh'");
+    assert_eq(`'${str:^10}'`, "'  adesh   '");
+    assert_eq(`'${str:*^10}'`, "'**adesh***'");
+
+    assert_eq(`'${str:upper}'`, "'ADESH'");
+    assert_eq(`'${"HELLO":lower}'`, "'hello'");
+
+    let multiline = "line\nvalue";
+    assert_eq(`${multiline:quoted}`, "\"line\\nvalue\"");
+
+    // Unicode-aware alignment
+    assert_eq(`[${"café":^8}]`, "[  café  ]");
+    assert_eq(`[${"₹":<4}]`, "[₹   ]");
+}
+
+test fn test_expressions_and_nesting() {
+    let a = 12;
+    let b = 3;
+    assert_eq(`Sum = ${a + b}`, "Sum = 15");
+    assert_eq(`Result: ${(a + b) * 2}`, "Result: 30");
+    assert_eq(`Spec combo: ${((a * 10) + b):int}`, "Spec combo: 123");
+
+    let pi = 3.14159;
+    let r = 5;
+    assert_eq(`Area = ${pi * r * r:.2f}`, "Area = 78.54");
+}
+
+test fn test_error_and_object_formatting() {
+    // Built-in Error interpolation
+    try {
+        throw Error("Operation failed");
+    } catch(e) {
+        assert_eq(`Caught: ${e}`, "Caught: Operation failed");
+    }
+
+    // Custom class instance interpolation
+    try {
+        throw new DemoError("Custom exception");
+    } catch(e) {
+        assert_eq(`Custom: ${e}`, "Custom: Custom exception");
+    }
+
+    let inline_err = Error("Inline error");
+    assert_eq(`Inline: ${inline_err}`, "Inline: Inline error");
+}
+
+test fn test_table_report_generation() {
+    let name1 = "Alice";
+    let rev1 = 1234.56;
+    let status1 = "Active";
+
+    let header = `${"Name":<10} | ${"Revenue":>12} | ${"Status":^10}`;
+    let divider = `${"-":->10}-+-${"-":->12}-+-${"-":->10}`;
+    let row1 = `${name1:<10} | ${rev1:>12.2f} | ${status1:^10}`;
+
+    assert_eq(header, "Name       |      Revenue |   Status  ");
+    assert_eq(divider, "-----------+--------------+-----------");
+    assert_eq(row1, "Alice      |      1234.56 |   Active  ");
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Test Runner Function (called when run directly via `adesh run`)
+// ──────────────────────────────────────────────────────────────────────────────
+
+export fn run_all_tests() {
+    test_basic_and_runtime_types();
+    test_alignment_width_and_padding();
+    test_numbers_floats_and_scientific();
+    test_radix_and_bit_specifiers();
+    test_all_currencies_and_compounds();
+    test_text_and_unicode_width();
+    test_expressions_and_nesting();
+    test_error_and_object_formatting();
+    test_table_report_generation();
+    return 9;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Main Entry Point (Demonstrations + In-script Test Verification)
+// ──────────────────────────────────────────────────────────────────────────────
+
+fn main() {
+    print("================================================================================");
+    print("                AdeshLang String Formatting: All-In-One Tour                   ");
+    print("================================================================================");
+
+    // 1. Basic & Runtime Values
+    print("\n--- 1. Basic Interpolation & Runtime Values ---");
+    let user = "Ada";
+    let score = 0.875;
+    let price = 1234567.8;
+    let flags = 10;
+    print(`Welcome, ${user}!`);
+    print(`Runtime values: bool=${true}, int=${100}, float=${3.14}, str=${"adesh"}`);
+
+    // 2. Alignment & Padding
+    print("\n--- 2. Alignment, Width & Custom Fill ---");
+    print(`Left align:   [${"left":<20}]`);
+    print(`Center align: [${"center":^20}]`);
+    print(`Right align:  [${"right":>20}]`);
+    print(`Zero padded:  [${42:08}]`);
+    print(`Underscore:   [${42:_^20}]`);
+    print(`Asterisk:     [${"title":*^20}]`);
+    print(`Plus sign:    ${10:+} vs ${-10:+}`);
+
+    // 3. Numbers, Floats & Precision
+    print("\n--- 3. Numbers, Floats & Precision ---");
+    let pi = 3.14159265;
+    print(`Pi (2 dec):     ${pi:float(2)}`);
+    print(`Pi (.4f):       ${pi:.4f}`);
+    print(`Percentage:     ${score:.1%}`);
+    print(`Grouped number: ${price:,.2f}`);
+    print(`Scientific:     ${1234.5:e} / ${1234.5:E}`);
+
+    // 4. Radix & Bits
+    print("\n--- 4. Radix & Bit Representation ---");
+    let val = 255;
+    print(`Hex lower/upper: ${val:hex} / ${val:HEX}`);
+    print(`Hex prefixed:    ${val:#x}`);
+    print(`Binary prefixed: ${10:#b}`);
+    print(`Octal prefixed:  ${10:#o}`);
+    print(`Padded flags:    ${flags:08bin}`);
+
+    // 5. Currency Formatting
+    print("\n--- 5. Currency Formatting (Global Currencies & Compounds) ---");
+    let sample_amt = 1234.5;
+    print(`USD: ${sample_amt:currency(USD)}`);
+    print(`EUR: ${sample_amt:currency(EUR)}`);
+    print(`GBP: ${sample_amt:currency(GBP)}`);
+    print(`JPY: ${sample_amt:currency(JPY)}`);
+    print(`INR: ${sample_amt:currency(INR)}`);
+    print(`CAD: ${sample_amt:currency(CAD)}`);
+    print(`AUD: ${sample_amt:currency(AUD)}`);
+    print(`CHF: ${sample_amt:currency(CHF)}`);
+    print(`CNY: ${sample_amt:currency(CNY)}`);
+    print(`KRW: ${sample_amt:currency(KRW)}`);
+    print(`RUB: ${sample_amt:currency(RUB)}`);
+    print(`BRL: ${sample_amt:currency(BRL)}`);
+    print(`MXN: ${sample_amt:currency(MXN)}`);
+    print(`Compound spec:   [${sample_amt:>18currency(INR)}]`);
+    print(`Signed compound: [${sample_amt:>14+currency(USD)}]`);
+    print(`Negative curr:   [${-987.65:>12currency(INR)}]`);
+
+    // 6. Text & Unicode
+    print("\n--- 6. Text Formatting & Unicode Display Width ---");
+    print(`Upper/Lower:  ${"hello":upper} / ${"WORLD":lower}`);
+    print(`Quoted text:  ${"multiline\nitem":quoted}`);
+    print(`Unicode-safe: [${"café":^12}]`);
+    print(`Rupee symbol: [${"₹":<6}]`);
+
+    // 7. Expressions
+    print("\n--- 7. Expressions & Nesting ---");
+    let a, b = 12, 3;
+    print(`Arithmetic:  ${a} + ${b} = ${a + b}`);
+    print(`Nested calc: ${(a + b) * 2}`);
+    print(`Nested spec: ${((a * 10) + b):int}`);
+
+    // 8. Errors & Objects
+    print("\n--- 8. Error and Object Interpolation ---");
+    try {
+        throw Error("Disk failure");
+    } catch(e) {
+        print(`Caught Error: ${e}`);
+    }
+    let report_item = new CustomReportItem("Memory", "Healthy");
+    print(`Object instance: ${report_item}`);
+
+    // 9. Formatted Report Table
+    print("\n--- 9. Practical Report Table ---");
+    print(`${"Product":<12} | ${"Category":<14} | ${"Price":>12} | ${"Stock":^8}`);
+    print(`${"-":->12}-+-${"-":->14}-+-${"-":->12}-+-${"-":->8}`);
+    print(`${"Laptop":<12} | ${"Electronics":<14} | ${1299.99:>12currency(USD)} | ${45:^8}`);
+    print(`${"Monitor":<12} | ${"Electronics":<14} | ${349.50:>12currency(USD)} | ${120:^8}`);
+    print(`${"Desk Chair":<12} | ${"Furniture":<14} | ${185.00:>12currency(USD)} | ${18:^8}`);
+
+    // Run verification
+    print("\n--- Running In-Script Verification Tests ---");
+    let total_passed = run_all_tests();
+    print(`✓ All ${total_passed} test suites verified successfully!`);
+    print("================================================================================");
+}

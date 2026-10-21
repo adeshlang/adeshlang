@@ -158,11 +158,25 @@ print(`Formatted: ${((a * 10) + b):int}`); // Formatted: 123
 Run the example files in this folder:
 
 ```bash
+# All-in-one comprehensive showcase and test suite (runs directly or via test runner)
+adesh run examples/formatting/all_in_one.adesh
+adesh test examples/formatting/all_in_one.adesh
+
+# Individual focused examples
 adesh run examples/formatting/basic.adesh
 adesh run examples/formatting/align_width.adesh
 adesh run examples/formatting/types.adesh
+adesh run examples/formatting/numbers.adesh
+adesh run examples/formatting/radix_bits.adesh
+adesh run examples/formatting/text_unicode.adesh
+adesh run examples/formatting/report_table.adesh
 adesh run examples/formatting/expressions.adesh
+adesh run examples/formatting/nested_expressions.adesh
+adesh run examples/formatting/pos_named_mix.adesh
+adesh run examples/formatting/currency_all.adesh
 adesh run examples/formatting/currency_variants.adesh
+adesh run examples/formatting/currency_width_sign.adesh
+adesh run examples/formatting/errors.adesh
 adesh run examples/formatting/comprehensive.adesh
 ```
 

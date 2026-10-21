@@ -78,6 +78,10 @@ pub fn hir_to_lir(hir: &HirModule) -> Result<LirModule, String> {
         }
     }
 
+    for class in &hir.classes {
+        lir.globals.insert(class.name.clone(), LirType::Ptr);
+    }
+
     let drop_plans = plan_function_drops(hir);
 
     // Collect decorated functions - they need special handling
@@ -292,7 +296,7 @@ pub(super) fn is_builtin(name: &str) -> bool {
         "push" | "pop" | "range" |
         "clock" | "println" | "bool" | "Promise" | "setTimeout" | "sleep" |
         "Date" | "makeSet" | "typeof" | "sizeof" |
-        "Error" | "error" |
+        "Error" | "error" | "assert" | "assert_eq" | "assert_ne" |
         // Array metadata and access functions
         "capacity" | "metadata_size" | "get_index" | "array_get" | "first" | "last" |
         "insert" | "remove" | "reverse" | "hasKey" |

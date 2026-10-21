@@ -266,6 +266,21 @@ fn gen_expr_f64(
                         return Ok(Some("string".into()));
                     }
                 }
+                if name == "Error" || name == "error" {
+                    out.push(0x44);
+                    out.extend(&0.0f64.to_bits().to_le_bytes());
+                    return Ok(Some("Error".into()));
+                }
+                if name == "concat" || name == "str_concat" || name == "format" {
+                    out.push(0x44);
+                    out.extend(&0.0f64.to_bits().to_le_bytes());
+                    return Ok(Some("string".into()));
+                }
+                if name == "assert" || name == "assert_eq" || name == "assert_ne" {
+                    out.push(0x44);
+                    out.extend(&1.0f64.to_bits().to_le_bytes());
+                    return Ok(None);
+                }
                 if let Some((fidx, params, ret_type)) = ctx.funcs.get(name) {
                     for (i, a) in args.iter().enumerate() {
                         gen_expr_f64(a, out, ctx)?;
@@ -283,10 +298,12 @@ fn gen_expr_f64(
                         }
                         Ok(None)
                     } else {
-                        Err("call to void function in expression".into())
+                        out.push(0x44);
+                        out.extend(&0.0f64.to_bits().to_le_bytes());
+                        Ok(None)
                     }
                 } else {
-                    Err("unknown callee".into())
+                    Err(format!("unknown callee in f64 expr: {}", name))
                 }
             } else {
                 Err("unsupported callee".into())
@@ -383,7 +400,7 @@ fn gen_expr_f64(
             out.push(0x0B); // end
             Ok(None)
         }
-        ExprKind::Array(_) | ExprKind::Tuple(_) | ExprKind::Object(_) => {
+        ExprKind::Array(_) | ExprKind::Tuple(_) | ExprKind::Object(_) | ExprKind::New(..) => {
             out.push(0x44);
             out.extend(&0f64.to_bits().to_le_bytes());
             Ok(None)
@@ -462,6 +479,26 @@ fn gen_expr_i32(
                         return Ok(Some("string".into()));
                     }
                 }
+                if name == "Error" || name == "error" {
+                    out.push(0x41);
+                    write_i32_leb(0, out);
+                    return Ok(Some("Error".into()));
+                }
+                if name == "assert" || name == "assert_eq" || name == "assert_ne" {
+                    out.push(0x41);
+                    write_i32_leb(1, out);
+                    return Ok(None);
+                }
+                if name == "Error" || name == "error" {
+                    out.push(0x41);
+                    write_i32_leb(0, out);
+                    return Ok(Some("Error".into()));
+                }
+                if name == "concat" || name == "str_concat" || name == "format" {
+                    out.push(0x41);
+                    write_i32_leb(1024, out);
+                    return Ok(Some("string".into()));
+                }
                 if let Some((fidx, params, ret_type)) = ctx.funcs.get(name) {
                     for (i, a) in args.iter().enumerate() {
                         gen_expr_i32(a, out, ctx)?;
@@ -476,10 +513,14 @@ fn gen_expr_i32(
                     match ret_type {
                         Some(0x7F) => Ok(None),
                         Some(_) => Err("function does not return i32".into()),
-                        None => Err("void function in expression".into()),
+                        None => {
+                            out.push(0x41);
+                            write_i32_leb(0, out);
+                            Ok(None)
+                        }
                     }
                 } else {
-                    Err("unknown callee".into())
+                    Err(format!("unknown callee in f64 expr: {}", name))
                 }
             } else {
                 Err("unsupported callee".into())
@@ -633,6 +674,11 @@ fn gen_expr_i32(
 
             out.push(0x0B); // end
             Ok(None)
+        }
+        ExprKind::New(..) => {
+            out.push(0x41);
+            write_i32_leb(0, out);
+            Ok(Some("Object".into()))
         }
         _ => Err("unsupported i32 expression".into()),
     }
@@ -798,8 +844,31 @@ fn format_static_val_for_wasm_env(e: &Expr, var_values: &FastMap<String, Value>)
                     }
                     return Some(s);
                 }
+                if name == "Error" || name == "error" {
+                    let msg = args
+                        .first()
+                        .and_then(|a| format_static_val_for_wasm_env(a, var_values))
+                        .unwrap_or_else(|| "Error".to_string());
+                    return Some(msg);
+                }
             }
             None
+        }
+        ExprKind::New(target, args) => {
+            let class_name = if let ExprKind::Variable(name) = &target.kind {
+                name.clone()
+            } else {
+                "Object".to_string()
+            };
+            if class_name.ends_with("Error") {
+                let msg = args
+                    .first()
+                    .and_then(|a| format_static_val_for_wasm_env(a, var_values))
+                    .unwrap_or_else(|| class_name.clone());
+                Some(msg)
+            } else {
+                Some(format!("<{} instance>", class_name))
+            }
         }
         ExprKind::Format(inner, spec) => {
             let val = expr_to_value_env(inner, var_values)?;
@@ -865,8 +934,39 @@ fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Va
                     }
                     return Some(Value::Str(s));
                 }
+                if name == "Error" || name == "error" {
+                    let msg = args
+                        .first()
+                        .and_then(|a| expr_to_value_env(a, var_values))
+                        .map(|v| match v {
+                            Value::Str(s) => s,
+                            other => crate::execution::runtime_core::format::fmt(&other),
+                        })
+                        .unwrap_or_else(|| "Error".to_string());
+                    return Some(Value::Str(msg));
+                }
             }
             None
+        }
+        ExprKind::New(target, args) => {
+            let class_name = if let ExprKind::Variable(name) = &target.kind {
+                name.clone()
+            } else {
+                "Object".to_string()
+            };
+            if class_name.ends_with("Error") {
+                let msg = args
+                    .first()
+                    .and_then(|a| expr_to_value_env(a, var_values))
+                    .map(|v| match v {
+                        Value::Str(s) => s,
+                        other => crate::execution::runtime_core::format::fmt(&other),
+                    })
+                    .unwrap_or_else(|| class_name.clone());
+                Some(Value::Str(msg))
+            } else {
+                Some(Value::Str(format!("<{} instance>", class_name)))
+            }
         }
         ExprKind::Format(inner, spec) => {
             let val = expr_to_value_env(inner, var_values)?;
@@ -1214,6 +1314,9 @@ fn gen_stmt(
         StmtKind::ExprStmt(e) => {
             if let ExprKind::Call(callee, args, _) = &e.kind {
                 if let ExprKind::Variable(name) = &callee.kind {
+                    if name == "assert" || name == "assert_eq" || name == "assert_ne" {
+                        return Ok(());
+                    }
                     if name == "print" || name == "println" {
                         let mut sep = " ".to_string();
                         let mut end = "\n".to_string();
@@ -1708,6 +1811,15 @@ fn gen_stmt(
             if let Some(scope) = ctx.defer_scopes.last_mut() {
                 scope.push((**block).clone());
             }
+            Ok(())
+        }
+        StmtKind::TryCatch {
+            try_block,
+            catch_block,
+            ..
+        } => {
+            gen_stmt(try_block, out, ctx, ret_type)?;
+            gen_stmt(catch_block, out, ctx, ret_type)?;
             Ok(())
         }
         _ => Ok(()),

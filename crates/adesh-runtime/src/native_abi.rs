@@ -117,6 +117,49 @@ pub extern "C" fn aot_string_concat(a_handle: u64, b_handle: u64) -> u64 {
     aot_store_value(RuntimeValue::String(a + &b))
 }
 
+fn runtime_value_to_format_value(v: &RuntimeValue) -> adesh_format::FormatValue {
+    match v {
+        RuntimeValue::Null => adesh_format::FormatValue::Null,
+        RuntimeValue::Bool(b) => adesh_format::FormatValue::Bool(*b),
+        RuntimeValue::Int(n) | RuntimeValue::I64(n) => adesh_format::FormatValue::Int(*n as i128),
+        RuntimeValue::I32(n) => adesh_format::FormatValue::Int(*n as i128),
+        RuntimeValue::I16(n) => adesh_format::FormatValue::Int(*n as i128),
+        RuntimeValue::I8(n) => adesh_format::FormatValue::Int(*n as i128),
+        RuntimeValue::I128(n) => adesh_format::FormatValue::Int(*n),
+        RuntimeValue::U64(n) => adesh_format::FormatValue::UInt(*n as u128),
+        RuntimeValue::U32(n) => adesh_format::FormatValue::UInt(*n as u128),
+        RuntimeValue::U16(n) => adesh_format::FormatValue::UInt(*n as u128),
+        RuntimeValue::U8(n) => adesh_format::FormatValue::UInt(*n as u128),
+        RuntimeValue::U128(n) => adesh_format::FormatValue::UInt(*n),
+        RuntimeValue::Float(f) | RuntimeValue::F64(f) => adesh_format::FormatValue::Number(*f),
+        RuntimeValue::F32(f) => adesh_format::FormatValue::Number(*f as f64),
+        RuntimeValue::Char(c) => adesh_format::FormatValue::Char(*c),
+        RuntimeValue::String(s) => adesh_format::FormatValue::Str(s.clone()),
+        RuntimeValue::Array(arr) => {
+            adesh_format::FormatValue::Array(arr.iter().map(runtime_value_to_format_value).collect())
+        }
+        RuntimeValue::Tuple(tup) => {
+            adesh_format::FormatValue::Tuple(tup.iter().map(runtime_value_to_format_value).collect())
+        }
+        RuntimeValue::Object(map) => adesh_format::FormatValue::Object(
+            map.iter()
+                .map(|(k, val)| (k.clone(), runtime_value_to_format_value(val)))
+                .collect(),
+        ),
+        other => adesh_format::FormatValue::Other(other.as_string()),
+    }
+}
+
+fn apply_runtime_format_aot(v: &RuntimeValue, spec: &str) -> String {
+    let fv = runtime_value_to_format_value(v);
+    adesh_format::format_value(&fv, spec).unwrap_or_else(|_| {
+        adesh_format::FormatSpec::parse(spec)
+            .ok()
+            .and_then(|parsed| fv.render(&parsed).ok())
+            .unwrap_or_else(|| v.as_string())
+    })
+}
+
 /// Format a value with a format specifier for AOT native code.
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_format_value(handle: u64, spec_ptr: *const core::ffi::c_char) -> u64 {
@@ -132,210 +175,142 @@ pub extern "C" fn aot_format_value(handle: u64, spec_ptr: *const core::ffi::c_ch
     aot_store_value(RuntimeValue::String(formatted))
 }
 
-fn apply_runtime_format_aot(v: &RuntimeValue, spec: &str) -> String {
-    let base_value = v.as_string();
-    let spec = spec.trim();
-    if spec.is_empty() {
-        return base_value;
-    }
-
-    let mut fill_char = ' ';
-    let mut align: Option<char> = None;
-    let mut sign_plus = false;
-    let mut width: Option<usize> = None;
-    let mut format_type: Option<String> = None;
-
-    let chars: Vec<char> = spec.chars().collect();
-    let mut i = 0;
-
-    if chars.len() >= 2 && (chars[1] == '<' || chars[1] == '^' || chars[1] == '>') {
-        fill_char = chars[0];
-        align = Some(chars[1]);
-        i = 2;
-    } else if !chars.is_empty() && (chars[0] == '<' || chars[0] == '^' || chars[0] == '>') {
-        align = Some(chars[0]);
-        i = 1;
-    }
-
-    if i < chars.len() && chars[i] == '+' {
-        sign_plus = true;
-        i += 1;
-    }
-
-    if i < chars.len() && chars[i] == '0' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit() {
-        fill_char = '0';
-        if align.is_none() {
-            align = Some('>');
-        }
-        i += 1;
-    }
-
-    let mut width_str = String::new();
-    while i < chars.len() && chars[i].is_ascii_digit() {
-        width_str.push(chars[i]);
-        i += 1;
-    }
-    if !width_str.is_empty() {
-        width = width_str.parse().ok();
-    }
-
-    if i < chars.len() {
-        format_type = Some(chars[i..].iter().collect::<String>());
-    }
-
-    let mut result = if let Some(ref ftype) = format_type {
-        match ftype.as_str() {
-            "int" | "d" => v.as_i64().map(|n| n.to_string()).unwrap_or(base_value),
-            "hex" | "x" => {
-                if let Some(n) = v.as_i64() {
-                    format!("{:x}", n)
-                } else {
-                    base_value
-                }
-            }
-            "HEX" | "X" | "upper_hex" => {
-                if let Some(n) = v.as_i64() {
-                    format!("{:X}", n)
-                } else {
-                    base_value
-                }
-            }
-            "oct" | "o" => {
-                if let Some(n) = v.as_i64() {
-                    format!("{:o}", n)
-                } else {
-                    base_value
-                }
-            }
-            "bin" | "b" => {
-                if let Some(n) = v.as_i64() {
-                    format!("{:b}", n)
-                } else {
-                    base_value
-                }
-            }
-            "sci" | "exp" | "e" => {
-                if let Some(f) = v.as_f64() {
-                    format!("{:e}", f)
-                } else {
-                    base_value
-                }
-            }
-            "perc" | "%" => {
-                if let Some(f) = v.as_f64() {
-                    format!("{:.1}%", f * 100.0)
-                } else {
-                    base_value
-                }
-            }
-            _ if ftype.starts_with("float(") && ftype.ends_with(')') => {
-                let precision = ftype[6..ftype.len() - 1].parse::<usize>();
-                match (precision, v.as_f64()) {
-                    (Ok(precision), Some(value)) => format!("{value:.precision$}"),
-                    _ => base_value,
-                }
-            }
-            _ if ftype.starts_with("currency(") && ftype.ends_with(')') => {
-                let code = &ftype[9..ftype.len() - 1];
-                format_runtime_currency(v.as_f64(), code).unwrap_or(base_value)
-            }
-            _ => base_value,
-        }
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_format_value_str(
+    handle: u64,
+    spec_ptr: *const core::ffi::c_char,
+) -> *mut core::ffi::c_char {
+    let spec = if spec_ptr.is_null() {
+        ""
     } else {
-        base_value
+        unsafe { core::ffi::CStr::from_ptr(spec_ptr) }
+            .to_str()
+            .unwrap_or("")
     };
-
-    if sign_plus {
-        if let Some(f) = v.as_f64() {
-            if f > 0.0 && !result.starts_with('+') {
-                result = format!("+{}", result);
-            }
+    let val = crate::aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
+    let formatted = apply_runtime_format_aot(&val, spec);
+    let c_str = match std::ffi::CString::new(formatted.clone()) {
+        Ok(c) => c,
+        Err(_) => std::ffi::CString::new(formatted.replace('\0', "\\0"))
+            .unwrap_or_else(|_| std::ffi::CString::new("").unwrap()),
+    };
+    let bytes = c_str.as_bytes_with_nul();
+    unsafe {
+        let ptr = libc::malloc(bytes.len()) as *mut core::ffi::c_char;
+        if !ptr.is_null() {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const core::ffi::c_char, ptr, bytes.len());
         }
+        ptr
     }
-
-    if let Some(w) = width {
-        let current_len = result.chars().count();
-        if current_len < w {
-            let pad_len = w - current_len;
-            let alignment = align.unwrap_or('<');
-            match alignment {
-                '<' => {
-                    let pad: String = std::iter::repeat(fill_char).take(pad_len).collect();
-                    result.push_str(&pad);
-                }
-                '>' => {
-                    let pad: String = std::iter::repeat(fill_char).take(pad_len).collect();
-                    result = format!("{}{}", pad, result);
-                }
-                '^' => {
-                    let left_pad_len = pad_len / 2;
-                    let right_pad_len = pad_len - left_pad_len;
-                    let l_pad: String = std::iter::repeat(fill_char).take(left_pad_len).collect();
-                    let r_pad: String = std::iter::repeat(fill_char).take(right_pad_len).collect();
-                    result = format!("{}{}{}", l_pad, result, r_pad);
-                }
-                _ => {}
-            }
-        }
-    }
-
-    result
 }
 
-fn format_runtime_currency(value: Option<f64>, code: &str) -> Option<String> {
-    let value = value?;
-    let (symbol, decimals) = match code.to_ascii_uppercase().as_str() {
-        "USD" => ("$", 2),
-        "EUR" => ("€", 2),
-        "GBP" => ("£", 2),
-        "INR" => ("₹", 2),
-        "CNY" | "JPY" => (
-            "¥",
-            if code.eq_ignore_ascii_case("JPY") {
-                0
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_make_error(msg_handle_or_ptr: u64) -> u64 {
+    let msg = get_string_val(msg_handle_or_ptr)
+        .or_else(|| {
+            if let Some(RuntimeValue::String(s)) = crate::aot_get_value(msg_handle_or_ptr) {
+                Some(s)
+            } else if msg_handle_or_ptr > 0x10000 {
+                let c_str = unsafe { core::ffi::CStr::from_ptr(msg_handle_or_ptr as *const core::ffi::c_char) };
+                c_str.to_str().ok().map(|s| s.to_string())
             } else {
-                2
-            },
-        ),
-        "KRW" => ("₩", 0),
-        "RUB" => ("₽", 2),
-        "BRL" => ("R$", 2),
-        "CAD" => ("C$", 2),
-        "AUD" => ("A$", 2),
-        "CHF" => ("CHF ", 2),
-        "MXN" => ("MX$", 2),
-        _ => return None,
-    };
-    let negative = value.is_sign_negative();
-    let absolute = value.abs();
-    let rendered = format!("{absolute:.decimals$}");
-    let (integer, fraction) = rendered
-        .split_once('.')
-        .map_or((rendered.as_str(), None), |(integer, fraction)| {
-            (integer, Some(fraction))
-        });
-    let grouped = integer
-        .chars()
-        .rev()
-        .enumerate()
-        .flat_map(|(index, ch)| {
-            if index > 0 && index % 3 == 0 {
-                vec![',', ch]
-            } else {
-                vec![ch]
+                None
             }
         })
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<String>();
-    let number = fraction.map_or(grouped.clone(), |fraction| format!("{grouped}.{fraction}"));
-    Some(format!(
-        "{}{}{}",
-        if negative { "-" } else { "" },
-        symbol,
-        number
-    ))
+        .unwrap_or_else(|| "Error".to_string());
+    let mut map = std::collections::BTreeMap::new();
+    map.insert("__class__".to_string(), RuntimeValue::String("Error".to_string()));
+    map.insert("message".to_string(), RuntimeValue::String(msg));
+    aot_store_value(RuntimeValue::Object(map))
+}
+
+fn aot_rt_val_to_bool(rv: &RuntimeValue) -> bool {
+    match rv {
+        RuntimeValue::Bool(b) => *b,
+        RuntimeValue::Int(n) | RuntimeValue::I64(n) => *n != 0,
+        RuntimeValue::I32(n) => *n != 0,
+        RuntimeValue::I16(n) => *n != 0,
+        RuntimeValue::I8(n) => *n != 0,
+        RuntimeValue::U64(n) => *n != 0,
+        RuntimeValue::U32(n) => *n != 0,
+        RuntimeValue::U16(n) => *n != 0,
+        RuntimeValue::U8(n) => *n != 0,
+        RuntimeValue::Float(f) | RuntimeValue::F64(f) => *f != 0.0,
+        RuntimeValue::F32(f) => *f != 0.0,
+        RuntimeValue::String(s) => !s.is_empty(),
+        RuntimeValue::Null => false,
+        _ => true,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_assert(cond_handle: u64, msg_handle: u64) -> i64 {
+    let cond = crate::aot_get_value(cond_handle).unwrap_or_else(|| unpack_aot_arg(cond_handle));
+    if !aot_rt_val_to_bool(&cond) {
+        let msg = if msg_handle != 0 {
+            let m = crate::aot_get_value(msg_handle).unwrap_or_else(|| unpack_aot_arg(msg_handle));
+            m.as_string()
+        } else {
+            "condition is false".to_string()
+        };
+        eprintln!("Assertion failed: {}", msg);
+        std::process::exit(1);
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_assert_eq(left_handle: u64, right_handle: u64, msg_handle: u64) -> i64 {
+    let left = crate::aot_get_value(left_handle).unwrap_or_else(|| unpack_aot_arg(left_handle));
+    let right = crate::aot_get_value(right_handle).unwrap_or_else(|| unpack_aot_arg(right_handle));
+    if left != right {
+        let str_l = left.as_string();
+        let str_r = right.as_string();
+        let custom_msg = if msg_handle != 0 {
+            let m = crate::aot_get_value(msg_handle).unwrap_or_else(|| unpack_aot_arg(msg_handle));
+            format!(": {}", m.as_string())
+        } else {
+            String::new()
+        };
+        eprintln!(
+            "Assertion failed: left == right{}\n  left: {}\n right: {}",
+            custom_msg, str_l, str_r
+        );
+        std::process::exit(1);
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn cbrt(x: f64) -> f64 {
+    x.cbrt()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn cbrtf(x: f32) -> f32 {
+    x.cbrt()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_assert_ne(left_handle: u64, right_handle: u64, msg_handle: u64) -> i64 {
+    let left = crate::aot_get_value(left_handle).unwrap_or_else(|| unpack_aot_arg(left_handle));
+    let right = crate::aot_get_value(right_handle).unwrap_or_else(|| unpack_aot_arg(right_handle));
+    if left == right {
+        let str_l = left.as_string();
+        let str_r = right.as_string();
+        let custom_msg = if msg_handle != 0 {
+            let m = crate::aot_get_value(msg_handle).unwrap_or_else(|| unpack_aot_arg(msg_handle));
+            format!(": {}", m.as_string())
+        } else {
+            String::new()
+        };
+        eprintln!(
+            "Assertion failed: left != right{}\n  left: {}\n right: {}",
+            custom_msg, str_l, str_r
+        );
+        std::process::exit(1);
+    }
+    0
 }
 
 /// Materialize `start..end` (inclusive == 0) or `start..=end` (inclusive

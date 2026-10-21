@@ -5143,8 +5143,17 @@ pub(crate) fn handle_call_builtin(
         }
         "format" => {
             // format(value, spec) -> string pointer
-            // Minimal implementation: convert value to string, ignore spec for now
-            if !args.is_empty() {
+            let ctors = RuntimeValueConstructors::declare(module, builder)?;
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64)); // val_handle
+            sig.params.push(AbiParam::new(types::I64)); // spec_ptr
+            sig.returns.push(AbiParam::new(types::I64)); // *mut c_char
+            let func_id = module
+                .declare_function("aot_format_value_str", Linkage::Import, &sig)
+                .map_err(|e| format!("Failed to declare aot_format_value_str: {}", e))?;
+            let func_ref = module.declare_func_in_func(func_id, builder.func);
+
+            let val_handle = if !args.is_empty() {
                 let val_id = args[0];
                 let val = ctx
                     .value_map
@@ -5156,138 +5165,244 @@ pub(crate) fn handle_call_builtin(
                     .get(&val_id)
                     .cloned()
                     .unwrap_or(AotValueType::Int);
-
-                let str_ptr = match val_type {
-                    AotValueType::String => val,
-                    AotValueType::Float | AotValueType::F64 => {
-                        // Call adesh_double_to_string(double)
-                        let mut sig = module.make_signature();
-                        sig.params.push(AbiParam::new(types::F64));
-                        sig.returns.push(AbiParam::new(types::I64));
-                        let func = module
-                            .declare_function("adesh_double_to_string", Linkage::Import, &sig)
-                            .expect("Failed to declare adesh_double_to_string");
-                        let func_ref = module.declare_func_in_func(func, builder.func);
-                        let f64v = builder.ins().bitcast(types::F64, MemFlags::new(), val);
-                        let call = builder.ins().call(func_ref, &[f64v]);
-                        builder.inst_results(call)[0]
-                    }
-                    AotValueType::F32 => {
-                        let mut sig = module.make_signature();
-                        sig.params.push(AbiParam::new(types::F64));
-                        sig.returns.push(AbiParam::new(types::I64));
-                        let func = module
-                            .declare_function("adesh_double_to_string", Linkage::Import, &sig)
-                            .expect("Failed to declare adesh_double_to_string");
-                        let func_ref = module.declare_func_in_func(func, builder.func);
-                        let f64v = builder.ins().fpromote(types::F64, val);
-                        let call = builder.ins().call(func_ref, &[f64v]);
-                        builder.inst_results(call)[0]
-                    }
-                    AotValueType::Bool => {
-                        // Select "true"/"false" strings
-                        if let (Some(&true_id), Some(&false_id)) =
-                            (ctx.string_data.get("true"), ctx.string_data.get("false"))
-                        {
-                            let true_gv = module.declare_data_in_func(true_id, builder.func);
-                            let false_gv = module.declare_data_in_func(false_id, builder.func);
-                            let true_ptr = builder.ins().global_value(types::I64, true_gv);
-                            let false_ptr = builder.ins().global_value(types::I64, false_gv);
-                            let val_i64 = builder.ins().uextend(types::I64, val);
-                            let zero = builder.ins().iconst(types::I64, 0);
-                            let is_true = builder.ins().icmp(IntCC::NotEqual, val_i64, zero);
-                            builder.ins().select(is_true, true_ptr, false_ptr)
-                        } else {
-                            // Fallback: "0"/"1" via int to string
-                            let mut sig = module.make_signature();
-                            sig.params.push(AbiParam::new(types::I64));
-                            sig.returns.push(AbiParam::new(types::I64));
-                            let func = module
-                                .declare_function("adesh_int_to_string", Linkage::Import, &sig)
-                                .expect("Failed to declare adesh_int_to_string");
-                            let func_ref = module.declare_func_in_func(func, builder.func);
-                            let vi64 = builder.ins().uextend(types::I64, val);
-                            let call = builder.ins().call(func_ref, &[vi64]);
-                            builder.inst_results(call)[0]
-                        }
-                    }
-                    AotValueType::Int
-                    | AotValueType::I64
-                    | AotValueType::I32
-                    | AotValueType::I16
-                    | AotValueType::I8
-                    | AotValueType::U64
-                    | AotValueType::U32
-                    | AotValueType::U16
-                    | AotValueType::U8
-                    | AotValueType::I128
-                    | AotValueType::U128 => {
-                        let mut sig = module.make_signature();
-                        sig.params.push(AbiParam::new(types::I64));
-                        sig.returns.push(AbiParam::new(types::I64));
-                        let func = module
-                            .declare_function("adesh_int_to_string", Linkage::Import, &sig)
-                            .expect("Failed to declare adesh_int_to_string");
-                        let func_ref = module.declare_func_in_func(func, builder.func);
-                        let vi64 = if builder.func.dfg.value_type(val).bits() < 64 {
-                            builder.ins().uextend(types::I64, val)
-                        } else {
-                            val
-                        };
-                        let call = builder.ins().call(func_ref, &[vi64]);
-                        builder.inst_results(call)[0]
-                    }
-                    AotValueType::Array(ref elem_type, arr_len) => {
-                        // Call adesh_array_to_string(ptr, len, elem_size, is_float)
-                        let mut sig = module.make_signature();
-                        sig.params.push(AbiParam::new(types::I64));
-                        sig.params.push(AbiParam::new(types::I64));
-                        sig.params.push(AbiParam::new(types::I64));
-                        sig.params.push(AbiParam::new(types::I8));
-                        sig.returns.push(AbiParam::new(types::I64));
-                        let func = module
-                            .declare_function("adesh_array_to_string", Linkage::Import, &sig)
-                            .expect("Failed to declare adesh_array_to_string");
-                        let func_ref = module.declare_func_in_func(func, builder.func);
-                        let len_v = builder.ins().iconst(types::I64, arr_len as i64);
-                        let elem_sz = match **elem_type {
-                            AotValueType::U8 | AotValueType::I8 | AotValueType::Bool => 1,
-                            AotValueType::U16 | AotValueType::I16 => 2,
-                            AotValueType::U32 | AotValueType::I32 | AotValueType::F32 => 4,
-                            AotValueType::U64
-                            | AotValueType::I64
-                            | AotValueType::F64
-                            | AotValueType::Int
-                            | AotValueType::Float
-                            | AotValueType::Ptr => 8,
-                            AotValueType::U128 | AotValueType::I128 => 16,
-                            _ => 8,
-                        };
-                        let es_v = builder.ins().iconst(types::I64, elem_sz as i64);
-                        let is_float = matches!(
-                            **elem_type,
-                            AotValueType::F32 | AotValueType::F64 | AotValueType::Float
-                        );
-                        let isf_v = builder
-                            .ins()
-                            .iconst(types::I8, if is_float { 1 } else { 0 });
-                        let call = builder.ins().call(func_ref, &[val, len_v, es_v, isf_v]);
-                        builder.inst_results(call)[0]
-                    }
-                    _ => {
-                        // Fallback: empty string
-                        let zero = builder.ins().iconst(types::I64, 0);
-                        zero
-                    }
-                };
-
-                ctx.value_map.insert(*dst, str_ptr);
-                ctx.value_types.insert(*dst, AotValueType::String);
+                convert_val_to_handle(ctx, builder, module, &val_id, val, &val_type, &ctors)?
             } else {
-                let v = builder.ins().iconst(types::I64, 0);
-                ctx.value_map.insert(*dst, v);
-                ctx.value_types.insert(*dst, AotValueType::String);
-            }
+                builder.ins().iconst(types::I64, 0)
+            };
+
+            let spec_ptr = if args.len() >= 2 {
+                let spec_id = args[1];
+                let spec_val = ctx
+                    .value_map
+                    .get(&spec_id)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                if builder.func.dfg.value_type(spec_val) == types::I64 {
+                    spec_val
+                } else if builder.func.dfg.value_type(spec_val).is_int() {
+                    builder.ins().uextend(types::I64, spec_val)
+                } else {
+                    builder.ins().iconst(types::I64, 0)
+                }
+            } else {
+                builder.ins().iconst(types::I64, 0)
+            };
+
+            let call = builder.ins().call(func_ref, &[val_handle, spec_ptr]);
+            let str_ptr = builder.inst_results(call)[0];
+            ctx.value_map.insert(*dst, str_ptr);
+            ctx.value_types.insert(*dst, AotValueType::String);
+        }
+        "assert" => {
+            let ctors = RuntimeValueConstructors::declare(module, builder)?;
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            sig.params.push(AbiParam::new(types::I64));
+            sig.returns.push(AbiParam::new(types::I64));
+            let func_id = module
+                .declare_function("aot_assert", Linkage::Import, &sig)
+                .map_err(|e| format!("Failed to declare aot_assert: {}", e))?;
+            let func_ref = module.declare_func_in_func(func_id, builder.func);
+
+            let cond_h = if !args.is_empty() {
+                let arg_id = args[0];
+                let val = ctx
+                    .value_map
+                    .get(&arg_id)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                let ty = ctx
+                    .value_types
+                    .get(&arg_id)
+                    .cloned()
+                    .unwrap_or(AotValueType::Bool);
+                convert_val_to_handle(ctx, builder, module, &arg_id, val, &ty, &ctors)?
+            } else {
+                builder.ins().iconst(types::I64, 0)
+            };
+            let msg_h = if args.len() >= 2 {
+                let arg_id = args[1];
+                let val = ctx
+                    .value_map
+                    .get(&arg_id)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                let ty = ctx
+                    .value_types
+                    .get(&arg_id)
+                    .cloned()
+                    .unwrap_or(AotValueType::String);
+                convert_val_to_handle(ctx, builder, module, &arg_id, val, &ty, &ctors)?
+            } else {
+                builder.ins().iconst(types::I64, 0)
+            };
+
+            builder.ins().call(func_ref, &[cond_h, msg_h]);
+            let zero = builder.ins().iconst(types::I64, 0);
+            ctx.value_map.insert(*dst, zero);
+        }
+        "assert_eq" => {
+            let ctors = RuntimeValueConstructors::declare(module, builder)?;
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            sig.params.push(AbiParam::new(types::I64));
+            sig.params.push(AbiParam::new(types::I64));
+            sig.returns.push(AbiParam::new(types::I64));
+            let func_id = module
+                .declare_function("aot_assert_eq", Linkage::Import, &sig)
+                .map_err(|e| format!("Failed to declare aot_assert_eq: {}", e))?;
+            let func_ref = module.declare_func_in_func(func_id, builder.func);
+
+            let l_h = if !args.is_empty() {
+                let arg_id = args[0];
+                let val = ctx
+                    .value_map
+                    .get(&arg_id)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                let ty = ctx
+                    .value_types
+                    .get(&arg_id)
+                    .cloned()
+                    .unwrap_or(AotValueType::Int);
+                convert_val_to_handle(ctx, builder, module, &arg_id, val, &ty, &ctors)?
+            } else {
+                builder.ins().iconst(types::I64, 0)
+            };
+            let r_h = if args.len() >= 2 {
+                let arg_id = args[1];
+                let val = ctx
+                    .value_map
+                    .get(&arg_id)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                let ty = ctx
+                    .value_types
+                    .get(&arg_id)
+                    .cloned()
+                    .unwrap_or(AotValueType::Int);
+                convert_val_to_handle(ctx, builder, module, &arg_id, val, &ty, &ctors)?
+            } else {
+                builder.ins().iconst(types::I64, 0)
+            };
+            let msg_h = if args.len() >= 3 {
+                let arg_id = args[2];
+                let val = ctx
+                    .value_map
+                    .get(&arg_id)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                let ty = ctx
+                    .value_types
+                    .get(&arg_id)
+                    .cloned()
+                    .unwrap_or(AotValueType::String);
+                convert_val_to_handle(ctx, builder, module, &arg_id, val, &ty, &ctors)?
+            } else {
+                builder.ins().iconst(types::I64, 0)
+            };
+
+            builder.ins().call(func_ref, &[l_h, r_h, msg_h]);
+            let zero = builder.ins().iconst(types::I64, 0);
+            ctx.value_map.insert(*dst, zero);
+        }
+        "assert_ne" => {
+            let ctors = RuntimeValueConstructors::declare(module, builder)?;
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            sig.params.push(AbiParam::new(types::I64));
+            sig.params.push(AbiParam::new(types::I64));
+            sig.returns.push(AbiParam::new(types::I64));
+            let func_id = module
+                .declare_function("aot_assert_ne", Linkage::Import, &sig)
+                .map_err(|e| format!("Failed to declare aot_assert_ne: {}", e))?;
+            let func_ref = module.declare_func_in_func(func_id, builder.func);
+
+            let l_h = if !args.is_empty() {
+                let arg_id = args[0];
+                let val = ctx
+                    .value_map
+                    .get(&arg_id)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                let ty = ctx
+                    .value_types
+                    .get(&arg_id)
+                    .cloned()
+                    .unwrap_or(AotValueType::Int);
+                convert_val_to_handle(ctx, builder, module, &arg_id, val, &ty, &ctors)?
+            } else {
+                builder.ins().iconst(types::I64, 0)
+            };
+            let r_h = if args.len() >= 2 {
+                let arg_id = args[1];
+                let val = ctx
+                    .value_map
+                    .get(&arg_id)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                let ty = ctx
+                    .value_types
+                    .get(&arg_id)
+                    .cloned()
+                    .unwrap_or(AotValueType::Int);
+                convert_val_to_handle(ctx, builder, module, &arg_id, val, &ty, &ctors)?
+            } else {
+                builder.ins().iconst(types::I64, 0)
+            };
+            let msg_h = if args.len() >= 3 {
+                let arg_id = args[2];
+                let val = ctx
+                    .value_map
+                    .get(&arg_id)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                let ty = ctx
+                    .value_types
+                    .get(&arg_id)
+                    .cloned()
+                    .unwrap_or(AotValueType::String);
+                convert_val_to_handle(ctx, builder, module, &arg_id, val, &ty, &ctors)?
+            } else {
+                builder.ins().iconst(types::I64, 0)
+            };
+
+            builder.ins().call(func_ref, &[l_h, r_h, msg_h]);
+            let zero = builder.ins().iconst(types::I64, 0);
+            ctx.value_map.insert(*dst, zero);
+        }
+        "Error" | "error" => {
+            let ctors = RuntimeValueConstructors::declare(module, builder)?;
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            sig.returns.push(AbiParam::new(types::I64));
+            let func_id = module
+                .declare_function("aot_make_error", Linkage::Import, &sig)
+                .map_err(|e| format!("Failed to declare aot_make_error: {}", e))?;
+            let func_ref = module.declare_func_in_func(func_id, builder.func);
+
+            let msg_h = if !args.is_empty() {
+                let arg_id = args[0];
+                let val = ctx
+                    .value_map
+                    .get(&arg_id)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                let ty = ctx
+                    .value_types
+                    .get(&arg_id)
+                    .cloned()
+                    .unwrap_or(AotValueType::String);
+                convert_val_to_handle(ctx, builder, module, &arg_id, val, &ty, &ctors)?
+            } else {
+                builder.ins().iconst(types::I64, 0)
+            };
+
+            let call = builder.ins().call(func_ref, &[msg_h]);
+            let err_obj = builder.inst_results(call)[0];
+            ctx.value_map.insert(*dst, err_obj);
+            ctx.value_types.insert(*dst, AotValueType::Handle);
+            ctx.runtime_handle_values.insert(*dst);
         }
         "str_concat" | "concat" => {
             // str_concat(left, right) -> string (concatenate two values as strings)
@@ -5305,9 +5420,25 @@ pub(crate) fn handle_call_builtin(
                     .copied()
                     .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
 
+                let to_i64 = |builder: &mut FunctionBuilder, v: Value| -> Value {
+                    let vt = builder.func.dfg.value_type(v);
+                    if vt == types::I64 {
+                        v
+                    } else if vt.is_int() {
+                        builder.ins().uextend(types::I64, v)
+                    } else if vt == types::F64 {
+                        builder.ins().bitcast(types::I64, MemFlags::new(), v)
+                    } else if vt == types::F32 {
+                        let f64v = builder.ins().fpromote(types::F64, v);
+                        builder.ins().bitcast(types::I64, MemFlags::new(), f64v)
+                    } else {
+                        builder.ins().iconst(types::I64, 0)
+                    }
+                };
+
                 // Ensure both arguments are converted to strings first
                 let left_str = if let Some(AotValueType::String) = ctx.value_types.get(&left_id) {
-                    left_val
+                    to_i64(builder, left_val)
                 } else {
                     // Call value_to_string(val) for non-string types
                     let mut sig = module.make_signature();
@@ -5317,12 +5448,13 @@ pub(crate) fn handle_call_builtin(
                         .declare_function("adesh_value_to_string", Linkage::Import, &sig)
                         .expect("Failed to declare adesh_value_to_string");
                     let func_ref = module.declare_func_in_func(func, builder.func);
-                    let call = builder.ins().call(func_ref, &[left_val]);
+                    let vi64 = to_i64(builder, left_val);
+                    let call = builder.ins().call(func_ref, &[vi64]);
                     builder.inst_results(call)[0]
                 };
 
                 let right_str = if let Some(AotValueType::String) = ctx.value_types.get(&right_id) {
-                    right_val
+                    to_i64(builder, right_val)
                 } else {
                     // Call value_to_string(val) for non-string types
                     let mut sig = module.make_signature();
@@ -5332,18 +5464,19 @@ pub(crate) fn handle_call_builtin(
                         .declare_function("adesh_value_to_string", Linkage::Import, &sig)
                         .expect("Failed to declare adesh_value_to_string");
                     let func_ref = module.declare_func_in_func(func, builder.func);
-                    let call = builder.ins().call(func_ref, &[right_val]);
+                    let vi64 = to_i64(builder, right_val);
+                    let call = builder.ins().call(func_ref, &[vi64]);
                     builder.inst_results(call)[0]
                 };
 
-                // Call string concat: adesh_str_concat(left_ptr, right_ptr)
+                // Call string concat: aot_string_concat_cstr(left_ptr, right_ptr)
                 let mut sig = module.make_signature();
                 sig.params.push(AbiParam::new(types::I64));
                 sig.params.push(AbiParam::new(types::I64));
                 sig.returns.push(AbiParam::new(types::I64));
                 let func = module
-                    .declare_function("adesh_str_concat", Linkage::Import, &sig)
-                    .expect("Failed to declare adesh_str_concat");
+                    .declare_function("aot_string_concat_cstr", Linkage::Import, &sig)
+                    .expect("Failed to declare aot_string_concat_cstr");
                 let func_ref = module.declare_func_in_func(func, builder.func);
                 let call = builder.ins().call(func_ref, &[left_str, right_str]);
                 let result = builder.inst_results(call)[0];

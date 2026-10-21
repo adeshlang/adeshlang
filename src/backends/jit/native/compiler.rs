@@ -1969,9 +1969,30 @@ impl NativeJitCompiler {
                     "__new_class" => {
                         if args.len() >= 1 {
                             if let Some(&cls) = value_map.get(&args[0]) {
-                                let result =
+                                let mut instance =
                                     Self::call_runtime_fn_1(builder, module, "jit_new_class", cls)?;
-                                value_map.insert(*dst, result);
+                                for (i, &arg_id) in args.iter().skip(1).enumerate() {
+                                    if let Some(&val) = value_map.get(&arg_id) {
+                                        let val_type = value_types
+                                            .get(&arg_id)
+                                            .cloned()
+                                            .unwrap_or(AotValueType::Int);
+                                        let (arg_val, tag) =
+                                            Self::encode_typed_arg(builder, val, &val_type);
+                                        let tag_val = builder.ins().iconst(types::I64, tag);
+                                        let idx_val = builder.ins().iconst(types::I64, i as i64);
+                                        instance = Self::call_runtime_fn_4(
+                                            builder,
+                                            module,
+                                            "jit_new_class_arg",
+                                            instance,
+                                            idx_val,
+                                            arg_val,
+                                            tag_val,
+                                        )?;
+                                    }
+                                }
+                                value_map.insert(*dst, instance);
                                 value_types.insert(*dst, AotValueType::Handle);
                             } else {
                                 let zero = builder.ins().iconst(types::I64, 0);
@@ -2713,33 +2734,8 @@ impl NativeJitCompiler {
                                     .get(&value_id)
                                     .cloned()
                                     .unwrap_or(AotValueType::Int);
-                                let val_ty = builder.func.dfg.value_type(val);
-                                let (val_arg, type_tag) = if val_ty == types::F64
-                                    || val_ty == types::F32
-                                    || matches!(
-                                        val_type,
-                                        AotValueType::F64 | AotValueType::F32 | AotValueType::Float
-                                    ) {
-                                    let f64_val = Self::to_f64(builder, val);
-                                    let slot = builder.create_sized_stack_slot(StackSlotData::new(
-                                        StackSlotKind::ExplicitSlot,
-                                        8,
-                                        8,
-                                    ));
-                                    builder.ins().stack_store(f64_val, slot, 0);
-                                    let i64_val = builder.ins().stack_load(types::I64, slot, 0);
-                                    (i64_val, 1i64)
-                                } else if val_type == AotValueType::String
-                                    || val_type == AotValueType::Ptr
-                                {
-                                    (Self::to_i64_unsigned(builder, val), 2i64)
-                                } else if val_type == AotValueType::Bool {
-                                    (Self::to_i64_unsigned(builder, val), 3i64)
-                                } else if val_type == AotValueType::Handle {
-                                    (Self::to_i64_unsigned(builder, val), 4i64)
-                                } else {
-                                    (Self::to_i64_unsigned(builder, val), 0i64)
-                                };
+                                let (val_arg, type_tag) =
+                                    Self::encode_typed_arg(builder, val, &val_type);
                                 let tag_val = builder.ins().iconst(types::I64, type_tag);
 
                                 let mut sig = module.make_signature();
@@ -2760,6 +2756,101 @@ impl NativeJitCompiler {
                                 let func_ref = module.declare_func_in_func(func_id, builder.func);
                                 let call = builder.ins().call(func_ref, &[val_arg, tag_val, spec]);
                                 let res = builder.inst_results(call)[0];
+                                value_map.insert(*dst, res);
+                                value_types.insert(*dst, AotValueType::Handle);
+                            } else {
+                                let zero = builder.ins().iconst(types::I64, 0);
+                                value_map.insert(*dst, zero);
+                            }
+                        } else {
+                            let zero = builder.ins().iconst(types::I64, 0);
+                            value_map.insert(*dst, zero);
+                        }
+                    }
+                    "assert" => {
+                        if !args.is_empty() {
+                            let cond_id = args[0];
+                            if let Some(c_val) = value_map.get(&cond_id).copied() {
+                                let cond_type = value_types
+                                    .get(&cond_id)
+                                    .cloned()
+                                    .unwrap_or(AotValueType::Bool);
+                                let (c_arg, c_tag) =
+                                    Self::encode_typed_arg(builder, c_val, &cond_type);
+                                let (m_arg, m_tag) = if args.len() > 1 {
+                                    let msg_id = args[1];
+                                    if let Some(mv) = value_map.get(&msg_id).copied() {
+                                        let msg_type = value_types
+                                            .get(&msg_id)
+                                            .cloned()
+                                            .unwrap_or(AotValueType::String);
+                                        Self::encode_typed_arg(builder, mv, &msg_type)
+                                    } else {
+                                        (builder.ins().iconst(types::I64, 0), 0i64)
+                                    }
+                                } else {
+                                    (builder.ins().iconst(types::I64, 0), 0i64)
+                                };
+
+                                let c_tag_val = builder.ins().iconst(types::I64, c_tag);
+                                let m_tag_val = builder.ins().iconst(types::I64, m_tag);
+                                let res = Self::call_runtime_fn_4(
+                                    builder,
+                                    module,
+                                    "jit_assert",
+                                    c_arg,
+                                    c_tag_val,
+                                    m_arg,
+                                    m_tag_val,
+                                )?;
+                                value_map.insert(*dst, res);
+                                value_types.insert(*dst, AotValueType::Handle);
+                            } else {
+                                let zero = builder.ins().iconst(types::I64, 0);
+                                value_map.insert(*dst, zero);
+                            }
+                        } else {
+                            let zero = builder.ins().iconst(types::I64, 0);
+                            value_map.insert(*dst, zero);
+                        }
+                    }
+                    "assert_eq" | "assert_ne" => {
+                        let fn_name = if builtin_name == "assert_eq" {
+                            "jit_assert_eq"
+                        } else {
+                            "jit_assert_ne"
+                        };
+                        if args.len() >= 2 {
+                            let l_id = args[0];
+                            let r_id = args[1];
+                            let l_val = value_map.get(&l_id).copied();
+                            let r_val = value_map.get(&r_id).copied();
+                            if let (Some(lv), Some(rv)) = (l_val, r_val) {
+                                let l_type = value_types
+                                    .get(&l_id)
+                                    .cloned()
+                                    .unwrap_or(AotValueType::Int);
+                                let r_type = value_types
+                                    .get(&r_id)
+                                    .cloned()
+                                    .unwrap_or(AotValueType::Int);
+
+                                let (l_arg, l_tag) =
+                                    Self::encode_typed_arg(builder, lv, &l_type);
+                                let (r_arg, r_tag) =
+                                    Self::encode_typed_arg(builder, rv, &r_type);
+
+                                let l_tag_val = builder.ins().iconst(types::I64, l_tag);
+                                let r_tag_val = builder.ins().iconst(types::I64, r_tag);
+                                let res = Self::call_runtime_fn_4(
+                                    builder,
+                                    module,
+                                    fn_name,
+                                    l_arg,
+                                    l_tag_val,
+                                    r_arg,
+                                    r_tag_val,
+                                )?;
                                 value_map.insert(*dst, res);
                                 value_types.insert(*dst, AotValueType::Handle);
                             } else {
@@ -4903,6 +4994,71 @@ impl NativeJitCompiler {
         let call_inst = builder.ins().call(func_ref, &[arg0, arg1, arg2]);
         let results = builder.inst_results(call_inst);
         Ok(results[0])
+    }
+
+    /// Call a runtime function with 4 u64 arguments, returns u64
+    fn call_runtime_fn_4(
+        builder: &mut FunctionBuilder,
+        module: &mut JITModule,
+        fn_name: &str,
+        arg0: Value,
+        arg1: Value,
+        arg2: Value,
+        arg3: Value,
+    ) -> Result<Value, String> {
+        let mut sig = module.make_signature();
+        sig.call_conv = CallConv::triple_default(module.isa().triple());
+        for _ in 0..4 {
+            sig.params.push(AbiParam::new(types::I64));
+        }
+        sig.returns.push(AbiParam::new(types::I64));
+
+        let func_id = module
+            .declare_function(fn_name, Linkage::Import, &sig)
+            .map_err(|e| format!("Failed to declare {}: {}", fn_name, e))?;
+        let func_ref = module.declare_func_in_func(func_id, builder.func);
+
+        let a0 = Self::to_i64_unsigned(builder, arg0);
+        let a1 = Self::to_i64_unsigned(builder, arg1);
+        let a2 = Self::to_i64_unsigned(builder, arg2);
+        let a3 = Self::to_i64_unsigned(builder, arg3);
+        let call_inst = builder.ins().call(func_ref, &[a0, a1, a2, a3]);
+        let results = builder.inst_results(call_inst);
+        Ok(results[0])
+    }
+
+    /// Encode a value for typed runtime calls (passes float bits directly as i64)
+    fn encode_typed_arg(
+        builder: &mut FunctionBuilder,
+        val: Value,
+        val_type: &AotValueType,
+    ) -> (Value, i64) {
+        let val_ty = builder.func.dfg.value_type(val);
+        if val_ty == types::F64
+            || val_ty == types::F32
+            || matches!(
+                val_type,
+                AotValueType::F64 | AotValueType::F32 | AotValueType::Float
+            )
+        {
+            let f64_val = Self::to_f64(builder, val);
+            let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                8,
+                8,
+            ));
+            builder.ins().stack_store(f64_val, slot, 0);
+            let i64_val = builder.ins().stack_load(types::I64, slot, 0);
+            (i64_val, 1i64)
+        } else if *val_type == AotValueType::String || *val_type == AotValueType::Ptr {
+            (Self::to_i64_unsigned(builder, val), 2i64)
+        } else if *val_type == AotValueType::Bool {
+            (Self::to_i64_unsigned(builder, val), 3i64)
+        } else if *val_type == AotValueType::Handle {
+            (Self::to_i64_unsigned(builder, val), 4i64)
+        } else {
+            (Self::to_i64_unsigned(builder, val), 0i64)
+        }
     }
 
     /// Call a runtime function with 7 u64 arguments, returns u64

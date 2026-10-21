@@ -136,9 +136,9 @@ pub fn check_ownership_and_parse_in(
         ));
     }
 
-    // Lower to HIR
+    // Lower to HIR (include tests so test functions called by user code or test runners are retained)
     let t_hir_start = std::time::Instant::now();
-    let hir = ast_to_hir(&ast, false)?;
+    let hir = ast_to_hir(&ast, true)?;
     if let Some(ref tc) = tele_client {
         tc.emit(adesh_monitor_protocol::EventPayload::CompilerStage(
             adesh_monitor_protocol::CompilerStageEvent {

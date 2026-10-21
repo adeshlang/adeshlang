@@ -20,7 +20,7 @@ pub fn generate_aot_header(src: &str, output_path: &Path) -> Result<(), String> 
     let mut parser = Parser::new(tokens, None);
     let ast = parser.parse_program().map_err(|e| e.to_string())?;
 
-    let hir = ast_to_hir(&ast, false)?;
+    let hir = ast_to_hir(&ast, true)?;
 
     // Run ownership and borrow checking
     let config = RuntimeConfig::default();
