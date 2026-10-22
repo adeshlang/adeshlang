@@ -352,6 +352,27 @@ impl AdobV2 {
             obj.add_symbol(sym);
         }
 
+        // ADOB relocations carry their target as a name string only. Record
+        // the matching symbol-table index on each relocation so the layout
+        // engine can resolve locals precisely by index (immune to duplicate
+        // names) and diagnostics can name the definition that was expected.
+        let mut name_to_sym_idx: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::with_capacity(obj.symbols.len());
+        for (i, sym) in obj.symbols.iter().enumerate() {
+            if !sym.name.is_empty() {
+                name_to_sym_idx.entry(sym.name.as_str()).or_insert(i);
+            }
+        }
+        for sec in obj.sections.iter_mut() {
+            for reloc in sec.relocations.iter_mut() {
+                if reloc.symbol_index.is_none() && !reloc.symbol_name.is_empty() {
+                    if let Some(&idx) = name_to_sym_idx.get(reloc.symbol_name.as_str()) {
+                        reloc.symbol_index = Some(idx);
+                    }
+                }
+            }
+        }
+
         obj.validate()?;
         Ok(obj)
     }

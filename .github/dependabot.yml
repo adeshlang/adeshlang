@@ -1,0 +1,19 @@
+version: 2
+updates:
+  # ARO desktop (Tauri) Rust dependencies.
+  #
+  # glib is pinned to the 0.18.x stack transitively by Tauri 2.x
+  # (tauri -> muda / tao / tauri-runtime-wry / wry -> gtk 0.18).
+  # GHSA-wrw7-89jp-8q8g (unsound VariantStrIter::impl_get) is only fixed
+  # in glib 0.20.0, which is not reachable anywhere in the Tauri 2
+  # dependency graph — Dependabot therefore fails with "unknown error"
+  # when it tries to bump it. Ignore versions below 0.20 until Tauri 3
+  # (gtk4) ships; the affected GVariant string-iterator API is not used
+  # by the ARO desktop app.
+  - package-ecosystem: "cargo"
+    directory: "/ARO/desktop/src-tauri"
+    schedule:
+      interval: "weekly"
+    ignore:
+      - dependency-name: "glib"
+        versions: ["< 0.20"]

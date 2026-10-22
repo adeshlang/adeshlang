@@ -69,13 +69,38 @@ fn update_value(handle: u64, value: RuntimeValue) {
     }
 }
 
+pub fn runtime_value_to_raw_or_handle(val: RuntimeValue) -> u64 {
+    match val {
+        RuntimeValue::Int(i) | RuntimeValue::I64(i) => i as u64,
+        RuntimeValue::I32(i) => i as i64 as u64,
+        RuntimeValue::I16(i) => i as i64 as u64,
+        RuntimeValue::I8(i) => i as i64 as u64,
+        RuntimeValue::U64(u) => u,
+        RuntimeValue::U32(u) => u as u64,
+        RuntimeValue::U16(u) => u as u64,
+        RuntimeValue::U8(u) => u as u64,
+        RuntimeValue::Bool(b) => {
+            if b {
+                1
+            } else {
+                0
+            }
+        }
+        RuntimeValue::Char(c) => c as u64,
+        RuntimeValue::Float(f) | RuntimeValue::F64(f) => f.to_bits(),
+        RuntimeValue::F32(f) => f.to_bits() as u64,
+        _ => store_value(val),
+    }
+}
+
 /// Helper to get a string from either a handle (dynamic) or a pointer (const)
 fn get_string_val(handle_or_ptr: u64) -> Option<String> {
     if handle_or_ptr >= HANDLE_TAG {
         if let Some(RuntimeValue::String(s)) = get_value(handle_or_ptr) {
             return Some(s);
         }
-    } else if handle_or_ptr > 0x10000 {
+        return None;
+    } else if handle_or_ptr > 0x10000 && handle_or_ptr < HANDLE_TAG {
         // Assume pointer
         unsafe {
             let ptr = handle_or_ptr as *const c_char;
@@ -234,6 +259,10 @@ pub extern "C" fn jit_wrap_str(ptr: i64) -> u64 {
     if ptr == 0 {
         return store_value(RuntimeValue::String(String::new()));
     }
+    let u_ptr = ptr as u64;
+    if u_ptr >= HANDLE_TAG {
+        return u_ptr;
+    }
     unsafe {
         let c_ptr = ptr as *const c_char;
         if let Ok(s) = std::ffi::CStr::from_ptr(c_ptr).to_str() {
@@ -378,14 +407,10 @@ pub extern "C" fn jit_array_push_f32(arr_handle: u64, value: f64) -> u64 {
     push_elem_to_array(arr_handle, RuntimeValue::F32(value as f32))
 }
 
-/// Push a string value to an array (takes a C string pointer)
+/// Push a string value to an array (takes a C string pointer or handle)
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jit_array_push_str(arr_handle: u64, value: *const c_char) -> u64 {
-    let s = if value.is_null() {
-        String::new()
-    } else {
-        unsafe { CStr::from_ptr(value).to_string_lossy().into_owned() }
-    };
+    let s = get_string_val(value as usize as u64).unwrap_or_default();
     push_elem_to_array(arr_handle, RuntimeValue::String(s))
 }
 
@@ -411,7 +436,13 @@ pub extern "C" fn jit_array_push_null(arr_handle: u64) -> u64 {
 /// Push a nested value (another handle) to an array
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_array_push_handle(arr_handle: u64, value_handle: u64) -> u64 {
-    let nested_value = get_value(value_handle).unwrap_or(RuntimeValue::Null);
+    let nested_value = if let Some(val) = get_value(value_handle) {
+        val
+    } else if let Some(s) = get_string_val(value_handle) {
+        RuntimeValue::String(s)
+    } else {
+        RuntimeValue::Null
+    };
     push_elem_to_array(arr_handle, nested_value)
 }
 
@@ -568,11 +599,7 @@ pub extern "C" fn jit_tuple_push_float(tuple_handle: u64, value: f64) -> u64 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jit_tuple_push_str(tuple_handle: u64, value: *const c_char) -> u64 {
-    let s = if value.is_null() {
-        String::new()
-    } else {
-        unsafe { CStr::from_ptr(value).to_string_lossy().into_owned() }
-    };
+    let s = get_string_val(value as usize as u64).unwrap_or_default();
 
     if let Some(RuntimeValue::Tuple(mut tup)) = remove_value(tuple_handle) {
         tup.push(RuntimeValue::String(s));
@@ -604,7 +631,13 @@ pub extern "C" fn jit_tuple_push_null(tuple_handle: u64) -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_tuple_push_handle(tuple_handle: u64, value_handle: u64) -> u64 {
-    let nested_value = get_value(value_handle).unwrap_or(RuntimeValue::Null);
+    let nested_value = if let Some(val) = get_value(value_handle) {
+        val
+    } else if let Some(s) = get_string_val(value_handle) {
+        RuntimeValue::String(s)
+    } else {
+        RuntimeValue::Null
+    };
 
     if let Some(RuntimeValue::Tuple(mut tup)) = remove_value(tuple_handle) {
         tup.push(nested_value);
@@ -621,17 +654,8 @@ pub unsafe extern "C" fn jit_object_set_str(
     field: *const c_char,
     value: *const c_char,
 ) -> u64 {
-    let field_name = if field.is_null() {
-        String::new()
-    } else {
-        unsafe { CStr::from_ptr(field).to_string_lossy().into_owned() }
-    };
-
-    let field_value = if value.is_null() {
-        String::new()
-    } else {
-        unsafe { CStr::from_ptr(value).to_string_lossy().into_owned() }
-    };
+    let field_name = get_string_val(field as usize as u64).unwrap_or_default();
+    let field_value = get_string_val(value as usize as u64).unwrap_or_default();
 
     if let Some(RuntimeValue::Object(mut obj)) = remove_value(obj_handle) {
         obj.insert(field_name, RuntimeValue::String(field_value));
@@ -648,11 +672,7 @@ pub unsafe extern "C" fn jit_object_set_int(
     field: *const c_char,
     value: i64,
 ) -> u64 {
-    let field_name = if field.is_null() {
-        String::new()
-    } else {
-        unsafe { CStr::from_ptr(field).to_string_lossy().into_owned() }
-    };
+    let field_name = get_string_val(field as usize as u64).unwrap_or_default();
 
     if let Some(RuntimeValue::Object(mut obj)) = remove_value(obj_handle) {
         obj.insert(field_name, RuntimeValue::Int(value));
@@ -669,11 +689,7 @@ pub unsafe extern "C" fn jit_object_set_float(
     field: *const c_char,
     value: f64,
 ) -> u64 {
-    let field_name = if field.is_null() {
-        String::new()
-    } else {
-        unsafe { CStr::from_ptr(field).to_string_lossy().into_owned() }
-    };
+    let field_name = get_string_val(field as usize as u64).unwrap_or_default();
 
     if let Some(RuntimeValue::Object(mut obj)) = remove_value(obj_handle) {
         obj.insert(field_name, RuntimeValue::Float(value));
@@ -690,11 +706,7 @@ pub unsafe extern "C" fn jit_object_set_bool(
     field: *const c_char,
     value: i64,
 ) -> u64 {
-    let field_name = if field.is_null() {
-        String::new()
-    } else {
-        unsafe { CStr::from_ptr(field).to_string_lossy().into_owned() }
-    };
+    let field_name = get_string_val(field as usize as u64).unwrap_or_default();
 
     if let Some(RuntimeValue::Object(mut obj)) = remove_value(obj_handle) {
         obj.insert(field_name, RuntimeValue::Bool(value != 0));
@@ -711,13 +723,15 @@ pub unsafe extern "C" fn jit_object_set_handle(
     field: *const c_char,
     value_handle: u64,
 ) -> u64 {
-    let field_name = if field.is_null() {
-        String::new()
-    } else {
-        unsafe { CStr::from_ptr(field).to_string_lossy().into_owned() }
-    };
+    let field_name = get_string_val(field as usize as u64).unwrap_or_default();
 
-    let nested_value = get_value(value_handle).unwrap_or(RuntimeValue::Null);
+    let nested_value = if let Some(val) = get_value(value_handle) {
+        val
+    } else if let Some(s) = get_string_val(value_handle) {
+        RuntimeValue::String(s)
+    } else {
+        RuntimeValue::Null
+    };
 
     if let Some(RuntimeValue::Object(mut obj)) = remove_value(obj_handle) {
         obj.insert(field_name, nested_value);
@@ -2064,7 +2078,7 @@ pub extern "C" fn jit_get_field(obj_handle: u64, field_handle: u64) -> u64 {
             match rv {
                 RuntimeValue::Object(obj) => {
                     let value = obj.get(&field).cloned().unwrap_or(RuntimeValue::Null);
-                    return store_value(value);
+                    return runtime_value_to_raw_or_handle(value);
                 }
                 _ => return store_value(RuntimeValue::Null),
             }
@@ -2075,7 +2089,7 @@ pub extern "C" fn jit_get_field(obj_handle: u64, field_handle: u64) -> u64 {
         Some(RuntimeValue::U64(handle)) => jit_get_field(handle, field_handle),
         Some(RuntimeValue::Object(obj)) => {
             let value = obj.get(&field).cloned().unwrap_or(RuntimeValue::Null);
-            store_value(value)
+            runtime_value_to_raw_or_handle(value)
         }
         Some(RuntimeValue::Array(arr)) => {
             if let Ok(idx) = field.parse::<usize>() {
@@ -2977,6 +2991,20 @@ pub extern "C" fn jit_assert_eq(l_val: u64, l_tag: i64, r_val: u64, r_tag: i64) 
         }
         (3, 3) => (l_val != 0) == (r_val != 0),
         (0, 0) => (l_val as i64) == (r_val as i64),
+        (4, 0) => {
+            if let Some(v) = get_value(l_val) {
+                v.as_int() == Some(r_val as i64)
+            } else {
+                (l_val as i64) == (r_val as i64)
+            }
+        }
+        (0, 4) => {
+            if let Some(v) = get_value(r_val) {
+                v.as_int() == Some(l_val as i64)
+            } else {
+                (l_val as i64) == (r_val as i64)
+            }
+        }
         _ => {
             let ls = get_string_val_typed(l_val, l_tag);
             let rs = get_string_val_typed(r_val, r_tag);
@@ -3021,6 +3049,20 @@ pub extern "C" fn jit_assert_ne(l_val: u64, l_tag: i64, r_val: u64, r_tag: i64) 
         }
         (3, 3) => (l_val != 0) == (r_val != 0),
         (0, 0) => (l_val as i64) == (r_val as i64),
+        (4, 0) => {
+            if let Some(v) = get_value(l_val) {
+                v.as_int() == Some(r_val as i64)
+            } else {
+                (l_val as i64) == (r_val as i64)
+            }
+        }
+        (0, 4) => {
+            if let Some(v) = get_value(r_val) {
+                v.as_int() == Some(l_val as i64)
+            } else {
+                (l_val as i64) == (r_val as i64)
+            }
+        }
         _ => {
             let ls = get_string_val_typed(l_val, l_tag);
             let rs = get_string_val_typed(r_val, r_tag);
@@ -3746,7 +3788,18 @@ pub extern "C" fn jit_call_method(
     ) {
         update_value(obj_handle, res.clone());
     }
-    store_value(res)
+    match res {
+        RuntimeValue::Bool(b) => {
+            if b {
+                1
+            } else {
+                0
+            }
+        }
+        RuntimeValue::Int(i) => i as u64,
+        RuntimeValue::Null => 0,
+        other => store_value(other),
+    }
 }
 
 #[unsafe(no_mangle)]

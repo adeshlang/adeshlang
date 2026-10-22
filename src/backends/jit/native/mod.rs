@@ -83,6 +83,9 @@ pub fn native_jit_run_with_stats(source: &str) -> Result<NativeJitProfileStats, 
         super::super::lir_lower::hir_to_lir(&hir)?
     };
 
+    // Ensure clean exception state before executing
+    crate::backends::common::builtins::CURRENT_EXCEPTION.with(|exc| *exc.borrow_mut() = None);
+
     // Compile to native code
     let mut compiler = NativeJitCompiler::new()?;
     let context = compiler.compile_module(&lir_module)?;
@@ -97,7 +100,7 @@ pub fn native_jit_run_with_stats(source: &str) -> Result<NativeJitProfileStats, 
     // left a pending exception behind, surface it loudly instead of
     // exiting 0 with no output — silent success on an error is wrong-code.
     let pending =
-        crate::backends::common::builtins::CURRENT_EXCEPTION.with(|exc| exc.borrow().clone());
+        crate::backends::common::builtins::CURRENT_EXCEPTION.with(|exc| exc.borrow_mut().take());
     if let Some(err) = pending {
         let msg = match err {
             crate::backends::common::builtins::RuntimeValue::String(s) => s,

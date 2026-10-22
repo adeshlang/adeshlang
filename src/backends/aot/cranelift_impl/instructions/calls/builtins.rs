@@ -1198,8 +1198,8 @@ pub(crate) fn handle_call_builtin(
                 sig.returns.push(AbiParam::new(types::I64));
 
                 let call_method_id = module
-                    .declare_function("aot_call_method", Linkage::Import, &sig)
-                    .map_err(|e| format!("Failed to declare aot_call_method: {}", e))?;
+                    .declare_function("aot_call_method_varargs", Linkage::Import, &sig)
+                    .map_err(|e| format!("Failed to declare aot_call_method_varargs: {}", e))?;
                 let call_method_ref = module.declare_func_in_func(call_method_id, builder.func);
 
                 let obj_id = args[0];
@@ -1828,6 +1828,25 @@ pub(crate) fn handle_call_builtin(
             if !args.is_empty() {
                 let arg_id = args[0];
                 let val_type = ctx.value_types.get(&arg_id);
+
+                if matches!(val_type, Some(AotValueType::Handle))
+                    || ctx.runtime_handle_values.contains(&arg_id)
+                {
+                    if let Some(&arg_val) = ctx.value_map.get(&arg_id) {
+                        let mut typeof_sig = module.make_signature();
+                        typeof_sig.params.push(AbiParam::new(types::I64));
+                        typeof_sig.returns.push(AbiParam::new(types::I64));
+                        let typeof_func = module
+                            .declare_function("aot_typeof", Linkage::Import, &typeof_sig)
+                            .map_err(|e| format!("Failed to declare aot_typeof: {}", e))?;
+                        let typeof_ref = module.declare_func_in_func(typeof_func, builder.func);
+                        let call = builder.ins().call(typeof_ref, &[arg_val]);
+                        let type_ptr = builder.inst_results(call)[0];
+                        ctx.value_map.insert(*dst, type_ptr);
+                        ctx.value_types.insert(*dst, AotValueType::String);
+                        return Ok(());
+                    }
+                }
 
                 if ctx.object_properties.contains_key(&arg_id) {
                     let type_data_id = ctx
@@ -5131,9 +5150,80 @@ pub(crate) fn handle_call_builtin(
                     .ins()
                     .call(get_field_ref, &[obj_handle, field_handle]);
                 let result = builder.inst_results(call)[0];
-                ctx.value_map.insert(*dst, result);
-                ctx.value_types.insert(*dst, AotValueType::Handle);
-                ctx.runtime_handle_values.insert(*dst);
+                let mut field_ty = AotValueType::Handle;
+                if let Some(field_name) = ctx.const_strings.get(&field_id) {
+                    if let Some(props) = ctx.object_properties.get(&obj_id) {
+                        if let Some((_, prop_ty)) = props.get(field_name) {
+                            field_ty = prop_ty.clone();
+                        }
+                    }
+                    if field_ty == AotValueType::Handle {
+                        crate::parsing::hir_lower::KNOWN_STRUCTS.with(|cell| {
+                            let structs = cell.borrow();
+                            for fields in structs.values() {
+                                if let Some((_, ty_str)) =
+                                    fields.iter().find(|(name, _)| name == field_name)
+                                {
+                                    let ty_lower = ty_str.to_ascii_lowercase();
+                                    field_ty = match ty_lower.as_str() {
+                                        "f64" | "float" => AotValueType::F64,
+                                        "f32" => AotValueType::F32,
+                                        "bool" => AotValueType::Bool,
+                                        "i32" => AotValueType::I32,
+                                        "i16" => AotValueType::I16,
+                                        "i8" => AotValueType::I8,
+                                        "u32" => AotValueType::U32,
+                                        "u16" => AotValueType::U16,
+                                        "u8" => AotValueType::U8,
+                                        "string" => AotValueType::String,
+                                        _ => AotValueType::Handle,
+                                    };
+                                    break;
+                                }
+                            }
+                        });
+                    }
+                }
+
+                match field_ty {
+                    AotValueType::F64 | AotValueType::Float => {
+                        let f_val = builder.ins().bitcast(types::F64, MemFlags::new(), result);
+                        ctx.value_map.insert(*dst, f_val);
+                        ctx.value_types.insert(*dst, AotValueType::F64);
+                    }
+                    AotValueType::F32 => {
+                        let f_val = builder.ins().bitcast(types::F32, MemFlags::new(), result);
+                        let f64_val = builder.ins().fpromote(types::F64, f_val);
+                        ctx.value_map.insert(*dst, f64_val);
+                        ctx.value_types.insert(*dst, AotValueType::F64);
+                    }
+                    AotValueType::Bool => {
+                        ctx.value_map.insert(*dst, result);
+                        ctx.value_types.insert(*dst, AotValueType::Bool);
+                    }
+                    AotValueType::I32
+                    | AotValueType::I16
+                    | AotValueType::I8
+                    | AotValueType::U32
+                    | AotValueType::U16
+                    | AotValueType::U8
+                    | AotValueType::I64
+                    | AotValueType::U64
+                    | AotValueType::Int => {
+                        ctx.value_map.insert(*dst, result);
+                        ctx.value_types.insert(*dst, AotValueType::Int);
+                    }
+                    AotValueType::String => {
+                        ctx.value_map.insert(*dst, result);
+                        ctx.value_types.insert(*dst, AotValueType::String);
+                        ctx.runtime_handle_values.insert(*dst);
+                    }
+                    _ => {
+                        ctx.value_map.insert(*dst, result);
+                        ctx.value_types.insert(*dst, AotValueType::Handle);
+                        ctx.runtime_handle_values.insert(*dst);
+                    }
+                }
             } else {
                 let v = builder.ins().iconst(types::I64, 0);
                 ctx.value_map.insert(*dst, v);

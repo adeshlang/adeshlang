@@ -14,7 +14,7 @@ use super::hir::{
 };
 
 thread_local! {
-    static KNOWN_STRUCTS: RefCell<HashMap<String, Vec<(String, String)>>> = RefCell::new(HashMap::new());
+    pub(crate) static KNOWN_STRUCTS: RefCell<HashMap<String, Vec<(String, String)>>> = RefCell::new(HashMap::new());
 }
 
 fn collect_struct_decls(stmts: &[Stmt], map: &mut HashMap<String, Vec<(String, String)>>) {

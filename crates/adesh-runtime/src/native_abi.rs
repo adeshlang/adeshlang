@@ -117,6 +117,45 @@ pub extern "C" fn aot_string_concat(a_handle: u64, b_handle: u64) -> u64 {
     aot_store_value(RuntimeValue::String(a + &b))
 }
 
+/// Concatenate two string pointers / handles and return a null-terminated C string pointer.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_string_concat_cstr(left: u64, right: u64) -> *mut std::os::raw::c_char {
+    let extract_str = |val: u64| -> String {
+        if val >= crate::HANDLE_TAG {
+            value_as_string(val)
+        } else if val > 0x10000 {
+            let c_str = unsafe { std::ffi::CStr::from_ptr(val as *const std::os::raw::c_char) };
+            c_str
+                .to_str()
+                .ok()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| val.to_string())
+        } else {
+            val.to_string()
+        }
+    };
+    let left_str = extract_str(left);
+    let right_str = extract_str(right);
+    let combined = format!("{}{}", left_str, right_str);
+    let c_str = match std::ffi::CString::new(combined.clone()) {
+        Ok(c) => c,
+        Err(_) => std::ffi::CString::new(combined.replace('\0', "\\0"))
+            .unwrap_or_else(|_| std::ffi::CString::new("").unwrap()),
+    };
+    let bytes = c_str.as_bytes_with_nul();
+    unsafe {
+        let ptr = libc::malloc(bytes.len()) as *mut std::os::raw::c_char;
+        if !ptr.is_null() {
+            std::ptr::copy_nonoverlapping(
+                bytes.as_ptr() as *const std::os::raw::c_char,
+                ptr,
+                bytes.len(),
+            );
+        }
+        ptr
+    }
+}
+
 fn runtime_value_to_format_value(v: &RuntimeValue) -> adesh_format::FormatValue {
     match v {
         RuntimeValue::Null => adesh_format::FormatValue::Null,
@@ -341,6 +380,16 @@ pub extern "C" fn aot_assert_ne(left_handle: u64, right_handle: u64, msg_handle:
         std::process::exit(1);
     }
     0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_value_eq(left_handle: u64, right_handle: u64) -> i64 {
+    if left_handle == right_handle {
+        return 1;
+    }
+    let left = crate::aot_get_value(left_handle).unwrap_or_else(|| unpack_aot_arg(left_handle));
+    let right = crate::aot_get_value(right_handle).unwrap_or_else(|| unpack_aot_arg(right_handle));
+    if left == right { 1 } else { 0 }
 }
 
 /// Materialize `start..end` (inclusive == 0) or `start..=end` (inclusive

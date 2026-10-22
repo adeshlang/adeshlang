@@ -136,9 +136,9 @@ export test fn test_array_of_structs_search() {
     ];
     assert_eq(find_course(courses, "PHYS301"), 1);
     assert_eq(find_course(courses, "HIST101"), -1);
-    let none: [Course] = [];
-    assert_eq(find_course(none, "CS101"), -1);
-    assert_eq(total_credits(none), 0);
+    let nones: [Course] = [];
+    assert_eq(find_course(nones, "CS101"), -1);
+    assert_eq(total_credits(nones), 0);
 }
 
 export test fn test_struct_inventory_totals() {

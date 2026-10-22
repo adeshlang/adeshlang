@@ -17,6 +17,10 @@ pub(super) fn numeric_literal_fits_expected(n: f64, expected: &Ty) -> bool {
     let is_integral = n.fract() == 0.0;
 
     match expected {
+        // An untyped/undetermined target accepts any literal: the general
+        // compatibility check would accept it (`*exp == Ty::Any`), so the
+        // literal fast-path must not reject it first.
+        Ty::Any | Ty::Unknown => true,
         Ty::F32 => {
             // Accept unsuffixed float literals for f32 when finite and representable in f32 range.
             // (Precision narrowing is allowed by design for literal assignment.)
@@ -64,6 +68,9 @@ pub(super) fn stmt_has_return(stmt: &Stmt) -> bool {
 
 fn bigint_literal_fits_expected(n: &BigInt, expected: &Ty) -> bool {
     match expected {
+        // Untyped/undetermined targets accept any literal (see
+        // `numeric_literal_fits_expected`).
+        Ty::Any | Ty::Unknown => true,
         Ty::F32 | Ty::F64Ty | Ty::Float => n.to_f64().is_some_and(|value| value.is_finite()),
         Ty::Int => true,
         Ty::U8 => n.to_u8().is_some(),

@@ -1051,12 +1051,23 @@ pub fn render_multi_backend_report(
             let display_name = r.name.replace("__", "::");
             let _ = writeln!(out, "  {red}✗{reset} {bold}{}{reset}", display_name);
             for (backend_name, msg) in errs {
-                let first_line = msg.lines().next().unwrap_or(msg).trim();
-                let _ = writeln!(
-                    out,
-                    "    {dim}[{}]{reset} {red}{}{reset}",
-                    backend_name, first_line
-                );
+                let mut printed_header = false;
+                for line in msg.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() || trimmed == "ERROR:" {
+                        continue;
+                    }
+                    if !printed_header {
+                        let _ = writeln!(
+                            out,
+                            "    {dim}[{}]{reset} {red}{}{reset}",
+                            backend_name, trimmed
+                        );
+                        printed_header = true;
+                    } else {
+                        let _ = writeln!(out, "        {dim}{}{reset}", trimmed);
+                    }
+                }
             }
         }
     }

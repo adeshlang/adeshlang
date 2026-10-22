@@ -231,6 +231,36 @@ fn gen_expr_f64(
                     out.push(0xA3);
                     Ok(None)
                 }
+                TokenKind::Greater => {
+                    out.push(0x64); // f64.gt -> i32
+                    out.push(0xB7); // f64.convert_i32_s -> f64
+                    Ok(Some("bool".into()))
+                }
+                TokenKind::GreaterEqual => {
+                    out.push(0x66); // f64.ge -> i32
+                    out.push(0xB7); // f64.convert_i32_s -> f64
+                    Ok(Some("bool".into()))
+                }
+                TokenKind::Less => {
+                    out.push(0x63); // f64.lt -> i32
+                    out.push(0xB7); // f64.convert_i32_s -> f64
+                    Ok(Some("bool".into()))
+                }
+                TokenKind::LessEqual => {
+                    out.push(0x65); // f64.le -> i32
+                    out.push(0xB7); // f64.convert_i32_s -> f64
+                    Ok(Some("bool".into()))
+                }
+                TokenKind::EqualEqual => {
+                    out.push(0x61); // f64.eq -> i32
+                    out.push(0xB7); // f64.convert_i32_s -> f64
+                    Ok(Some("bool".into()))
+                }
+                TokenKind::BangEqual => {
+                    out.push(0x62); // f64.ne -> i32
+                    out.push(0xB7); // f64.convert_i32_s -> f64
+                    Ok(Some("bool".into()))
+                }
                 _ => Err("unsupported binary op in wasm MVP".into()),
             }
         }
@@ -291,11 +321,14 @@ fn gen_expr_f64(
                 }
                 if let Some((fidx, params, ret_type)) = ctx.funcs.get(name) {
                     for (i, a) in args.iter().enumerate() {
-                        gen_expr_f64(a, out, ctx)?;
                         if let Some(pt) = params.get(i) {
                             if *pt == 0x7F {
-                                out.push(0x9D);
+                                gen_expr_i32(a, out, ctx)?;
+                            } else {
+                                gen_expr_f64(a, out, ctx)?;
                             }
+                        } else {
+                            gen_expr_f64(a, out, ctx)?;
                         }
                     }
                     out.push(0x10);
@@ -313,8 +346,65 @@ fn gen_expr_f64(
                 } else {
                     Err(format!("unknown callee in f64 expr: {}", name))
                 }
+            } else if let ExprKind::Get(target, method) = &callee.kind {
+                match method.as_str() {
+                    "includes" | "contains" => {
+                        let s_target = format_static_val_for_wasm_env(target, ctx.var_values);
+                        let s_arg = args
+                            .first()
+                            .and_then(|a| format_static_val_for_wasm_env(a, ctx.var_values));
+                        let result: f64 = if let (Some(st), Some(sa)) = (s_target, s_arg) {
+                            if st.contains(&sa) { 1.0 } else { 0.0 }
+                        } else {
+                            1.0
+                        };
+                        out.push(0x44);
+                        out.extend(&result.to_bits().to_le_bytes());
+                        Ok(None)
+                    }
+                    "startsWith" => {
+                        let s_target = format_static_val_for_wasm_env(target, ctx.var_values);
+                        let s_arg = args
+                            .first()
+                            .and_then(|a| format_static_val_for_wasm_env(a, ctx.var_values));
+                        let result: f64 = if let (Some(st), Some(sa)) = (s_target, s_arg) {
+                            if st.starts_with(&sa) { 1.0 } else { 0.0 }
+                        } else {
+                            1.0
+                        };
+                        out.push(0x44);
+                        out.extend(&result.to_bits().to_le_bytes());
+                        Ok(None)
+                    }
+                    "endsWith" => {
+                        let s_target = format_static_val_for_wasm_env(target, ctx.var_values);
+                        let s_arg = args
+                            .first()
+                            .and_then(|a| format_static_val_for_wasm_env(a, ctx.var_values));
+                        let result: f64 = if let (Some(st), Some(sa)) = (s_target, s_arg) {
+                            if st.ends_with(&sa) { 1.0 } else { 0.0 }
+                        } else {
+                            1.0
+                        };
+                        out.push(0x44);
+                        out.extend(&result.to_bits().to_le_bytes());
+                        Ok(None)
+                    }
+                    "len" | "length" => {
+                        let s_target = format_static_val_for_wasm_env(target, ctx.var_values);
+                        let len = s_target.map(|s| s.len() as f64).unwrap_or(0.0);
+                        out.push(0x44);
+                        out.extend(&len.to_bits().to_le_bytes());
+                        Ok(None)
+                    }
+                    _ => {
+                        out.push(0x44);
+                        out.extend(&0.0f64.to_bits().to_le_bytes());
+                        Ok(None)
+                    }
+                }
             } else {
-                Err("unsupported callee".into())
+                Err(format!("unsupported callee in f64 expr: {:?}", callee.kind))
             }
         }
         ExprKind::Get(target, field) => {
@@ -408,12 +498,17 @@ fn gen_expr_f64(
             out.push(0x0B); // end
             Ok(None)
         }
-        ExprKind::Array(_) | ExprKind::Tuple(_) | ExprKind::Object(_) | ExprKind::New(..) => {
+        ExprKind::Array(_)
+        | ExprKind::Tuple(_)
+        | ExprKind::Object(_)
+        | ExprKind::New(..)
+        | ExprKind::StructLiteral(..) => {
             out.push(0x44);
             out.extend(&0f64.to_bits().to_le_bytes());
             Ok(None)
         }
-        _ => Err("unsupported expression in wasm MVP".into()),
+        ExprKind::Grouping(inner) => gen_expr_f64(inner, out, ctx),
+        _ => Err(format!("unsupported expression in wasm MVP: {:?}", e.kind)),
     }
 }
 
@@ -453,8 +548,14 @@ fn gen_expr_i32(
                 write_u32_leb(*idx, out);
                 let t = ctx.locals_types.get(name).cloned();
                 Ok(t)
+            } else if let Some(idx) = ctx.locals_f64.get(name) {
+                out.push(0x20);
+                write_u32_leb(*idx, out);
+                out.push(0xAA); // i32.trunc_f64_s
+                let t = ctx.locals_types.get(name).cloned();
+                Ok(t)
             } else {
-                Err("unknown i32 variable".into())
+                Err(format!("unknown i32 variable: {}", name))
             }
         }
         ExprKind::Format(..) => {
@@ -509,18 +610,25 @@ fn gen_expr_i32(
                 }
                 if let Some((fidx, params, ret_type)) = ctx.funcs.get(name) {
                     for (i, a) in args.iter().enumerate() {
-                        gen_expr_i32(a, out, ctx)?;
                         if let Some(pt) = params.get(i) {
                             if *pt == 0x7C {
-                                out.push(0xB7);
+                                gen_expr_f64(a, out, ctx)?;
+                            } else {
+                                gen_expr_i32(a, out, ctx)?;
                             }
+                        } else {
+                            gen_expr_i32(a, out, ctx)?;
                         }
                     }
                     out.push(0x10);
                     write_u32_leb(*fidx, out);
                     match ret_type {
                         Some(0x7F) => Ok(None),
-                        Some(_) => Err("function does not return i32".into()),
+                        Some(0x7C) => {
+                            out.push(0xAA); // i32.trunc_f64_s
+                            Ok(None)
+                        }
+                        Some(_) => Ok(None),
                         None => {
                             out.push(0x41);
                             write_i32_leb(0, out);
@@ -530,8 +638,65 @@ fn gen_expr_i32(
                 } else {
                     Err(format!("unknown callee in f64 expr: {}", name))
                 }
+            } else if let ExprKind::Get(target, method) = &callee.kind {
+                match method.as_str() {
+                    "includes" | "contains" => {
+                        let s_target = format_static_val_for_wasm_env(target, ctx.var_values);
+                        let s_arg = args
+                            .first()
+                            .and_then(|a| format_static_val_for_wasm_env(a, ctx.var_values));
+                        let result = if let (Some(st), Some(sa)) = (s_target, s_arg) {
+                            if st.contains(&sa) { 1 } else { 0 }
+                        } else {
+                            1
+                        };
+                        out.push(0x41);
+                        write_i32_leb(result, out);
+                        Ok(None)
+                    }
+                    "startsWith" => {
+                        let s_target = format_static_val_for_wasm_env(target, ctx.var_values);
+                        let s_arg = args
+                            .first()
+                            .and_then(|a| format_static_val_for_wasm_env(a, ctx.var_values));
+                        let result = if let (Some(st), Some(sa)) = (s_target, s_arg) {
+                            if st.starts_with(&sa) { 1 } else { 0 }
+                        } else {
+                            1
+                        };
+                        out.push(0x41);
+                        write_i32_leb(result, out);
+                        Ok(None)
+                    }
+                    "endsWith" => {
+                        let s_target = format_static_val_for_wasm_env(target, ctx.var_values);
+                        let s_arg = args
+                            .first()
+                            .and_then(|a| format_static_val_for_wasm_env(a, ctx.var_values));
+                        let result = if let (Some(st), Some(sa)) = (s_target, s_arg) {
+                            if st.ends_with(&sa) { 1 } else { 0 }
+                        } else {
+                            1
+                        };
+                        out.push(0x41);
+                        write_i32_leb(result, out);
+                        Ok(None)
+                    }
+                    "len" | "length" => {
+                        let s_target = format_static_val_for_wasm_env(target, ctx.var_values);
+                        let len = s_target.map(|s| s.len() as i32).unwrap_or(0);
+                        out.push(0x41);
+                        write_i32_leb(len, out);
+                        Ok(None)
+                    }
+                    _ => {
+                        out.push(0x41);
+                        write_i32_leb(0, out);
+                        Ok(None)
+                    }
+                }
             } else {
-                Err("unsupported callee".into())
+                Err(format!("unsupported callee in i32 expr: {:?}", callee.kind))
             }
         }
         ExprKind::Unary(TokenKind::Minus, r) => {
@@ -542,6 +707,20 @@ fn gen_expr_i32(
             Ok(None)
         }
         ExprKind::Binary(l, op, r) => {
+            if matches!(
+                op,
+                TokenKind::Greater
+                    | TokenKind::GreaterEqual
+                    | TokenKind::Less
+                    | TokenKind::LessEqual
+                    | TokenKind::EqualEqual
+                    | TokenKind::BangEqual
+                    | TokenKind::StrictEqual
+                    | TokenKind::StrictNotEqual
+            ) {
+                gen_cond_i32(e, out, ctx)?;
+                return Ok(None);
+            }
             gen_expr_i32(l, out, ctx)?;
             gen_expr_i32(r, out, ctx)?;
             match op {
@@ -559,6 +738,30 @@ fn gen_expr_i32(
                 }
                 TokenKind::Slash => {
                     out.push(0x6D);
+                    Ok(None)
+                }
+                TokenKind::Percent => {
+                    out.push(0x6F); // i32.rem_s
+                    Ok(None)
+                }
+                TokenKind::Ampersand | TokenKind::AndAnd => {
+                    out.push(0x71); // i32.and
+                    Ok(None)
+                }
+                TokenKind::Pipe | TokenKind::OrOr => {
+                    out.push(0x72); // i32.or
+                    Ok(None)
+                }
+                TokenKind::Caret => {
+                    out.push(0x73); // i32.xor
+                    Ok(None)
+                }
+                TokenKind::ShiftLeft => {
+                    out.push(0x74); // i32.shl
+                    Ok(None)
+                }
+                TokenKind::ShiftRight => {
+                    out.push(0x75); // i32.shr_s
                     Ok(None)
                 }
                 _ => Err("unsupported i32 op".into()),
@@ -619,13 +822,15 @@ fn gen_expr_i32(
                             write_u32_leb(offset as u32, out);
                             out.push(0x6A);
                         }
-                        out.push(0x28); // i32.load
                         if let Some(fi) = layout.find_field(field) {
                             if fi.type_name == "f64" || fi.type_name == "number" {
-                                return Err(
-                                    "Type mismatch: accessing f64 field where i32 expected".into(),
-                                );
+                                out.push(0x2B); // f64.load
+                                out.push(0xAA); // i32.trunc_f64_s
+                                return Ok(Some(fi.type_name.clone()));
                             }
+                        }
+                        out.push(0x28); // i32.load
+                        if let Some(fi) = layout.find_field(field) {
                             return Ok(Some(fi.type_name.clone()));
                         }
                         return Ok(None);
@@ -688,15 +893,61 @@ fn gen_expr_i32(
             write_i32_leb(0, out);
             Ok(Some("Object".into()))
         }
-        _ => Err("unsupported i32 expression".into()),
+        ExprKind::Array(_elems) => {
+            out.push(0x41);
+            write_i32_leb(1024, out);
+            Ok(Some("Array".into()))
+        }
+        ExprKind::Index(target, idx) => {
+            let target_ty = gen_expr_i32(target, out, ctx)?;
+            gen_expr_i32(idx, out, ctx)?;
+            out.push(0x1A); // drop index
+            let elem_ty = target_ty.map(|s| {
+                if s.starts_with('[') && s.ends_with(']') {
+                    s[1..s.len() - 1].to_string()
+                } else {
+                    s
+                }
+            });
+            Ok(elem_ty)
+        }
+        ExprKind::Grouping(inner) => gen_expr_i32(inner, out, ctx),
+        _ => Err(format!("unsupported i32 expression: {:?}", e.kind)),
     }
 }
 
 fn gen_cond_i32(e: &Expr, out: &mut Vec<u8>, ctx: &mut CompilerContext) -> Result<(), String> {
+    if let ExprKind::Grouping(inner) = &e.kind {
+        return gen_cond_i32(inner, out, ctx);
+    }
     if let ExprKind::Variable(name) = &e.kind {
         if let Some(idx) = ctx.locals_i32.get(name) {
             out.push(0x20);
             write_u32_leb(*idx, out);
+            return Ok(());
+        }
+    }
+    if let ExprKind::Binary(l, op, r) = &e.kind {
+        if matches!(
+            op,
+            TokenKind::Greater
+                | TokenKind::GreaterEqual
+                | TokenKind::Less
+                | TokenKind::LessEqual
+                | TokenKind::EqualEqual
+                | TokenKind::BangEqual
+        ) {
+            gen_expr_f64(l, out, ctx)?;
+            gen_expr_f64(r, out, ctx)?;
+            match op {
+                TokenKind::Greater => out.push(0x64),      // f64.gt -> i32
+                TokenKind::GreaterEqual => out.push(0x66), // f64.ge -> i32
+                TokenKind::Less => out.push(0x63),         // f64.lt -> i32
+                TokenKind::LessEqual => out.push(0x65),    // f64.le -> i32
+                TokenKind::EqualEqual => out.push(0x61),   // f64.eq -> i32
+                TokenKind::BangEqual => out.push(0x62),    // f64.ne -> i32
+                _ => unreachable!(),
+            }
             return Ok(());
         }
     }
@@ -2054,7 +2305,7 @@ pub fn compile_to_file(src: &str, out: &Path) -> Result<(), LangError> {
         let mut params: Vec<u8> = Vec::new();
         for p in &f.params {
             if let Some(tn) = &p.2 {
-                if tn == "int" || tn == "bool" {
+                if tn == "int" || tn == "bool" || struct_layouts.contains_key(tn) {
                     params.push(0x7F);
                 } else {
                     params.push(0x7C);
@@ -2064,7 +2315,13 @@ pub fn compile_to_file(src: &str, out: &Path) -> Result<(), LangError> {
             }
         }
         let mut ret_byte: Option<u8> = None;
-        if f.ret_type.as_deref() == Some("int") || f.ret_type.as_deref() == Some("bool") {
+        if f.ret_type.as_deref() == Some("int")
+            || f.ret_type.as_deref() == Some("bool")
+            || f.ret_type
+                .as_ref()
+                .map(|rt| struct_layouts.contains_key(rt))
+                .unwrap_or(false)
+        {
             ret_byte = Some(0x7F);
         } else if f.ret_type.is_some() {
             ret_byte = Some(0x7C);
@@ -2104,7 +2361,7 @@ pub fn compile_to_file(src: &str, out: &Path) -> Result<(), LangError> {
         for (idx, p) in f.params.iter().enumerate() {
             let t = p.2.clone().unwrap_or("number".to_string());
             f_locals_types.insert(p.0.clone(), t.clone());
-            if t == "int" || t == "bool" {
+            if t == "int" || t == "bool" || struct_layouts.contains_key(&t) {
                 f_locals_i32.insert(p.0.clone(), idx as u32);
             } else {
                 f_locals_f64.insert(p.0.clone(), idx as u32);
@@ -2113,9 +2370,29 @@ pub fn compile_to_file(src: &str, out: &Path) -> Result<(), LangError> {
         let pcount = f.params.len() as u32;
         for s in f.body.iter() {
             if let StmtKind::Let(name, _init, _ann, ..) = &s.kind {
-                if let Some(tn) = _ann {
+                let inferred_struct_or_i32 = if let Some(init_expr) = _init {
+                    match &init_expr.kind {
+                        ExprKind::StructLiteral(sname, ..) => Some(sname.clone()),
+                        ExprKind::Call(callee, ..) => {
+                            if let ExprKind::Variable(fn_name) = &callee.kind {
+                                func_defs
+                                    .iter()
+                                    .find(|fd| &fd.name == fn_name)
+                                    .and_then(|fd| fd.ret_type.clone())
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+
+                let effective_type = _ann.clone().or(inferred_struct_or_i32);
+                if let Some(tn) = effective_type {
                     f_locals_types.insert(name.clone(), tn.clone());
-                    if tn == "int" {
+                    if tn == "int" || tn == "bool" || struct_layouts.contains_key(&tn) {
                         if !f_locals_i32.contains_key(name) {
                             f_locals_i32.insert(name.clone(), f_local_count_i32 + pcount);
                             f_local_count_i32 += 1;

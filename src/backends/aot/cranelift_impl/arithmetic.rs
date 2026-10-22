@@ -132,6 +132,21 @@ fn to_f64_typed(
 /// * `Ok(true)` - Instruction was an arithmetic operation and was successfully handled
 /// * `Ok(false)` - Instruction is not an arithmetic operation
 /// * `Err(String)` - An error occurred during lowering
+fn ensure_i64(builder: &mut FunctionBuilder, val: Value) -> Value {
+    let ty = builder.func.dfg.value_type(val);
+    if ty == types::I64 {
+        val
+    } else if ty.is_int() {
+        if ty.bits() < 64 {
+            builder.ins().sextend(types::I64, val)
+        } else {
+            builder.ins().ireduce(types::I64, val)
+        }
+    } else {
+        val
+    }
+}
+
 pub fn lower_arithmetic_instruction(
     builder: &mut FunctionBuilder,
     value_map: &mut HashMap<ValueId, Value>,
@@ -149,6 +164,8 @@ pub fn lower_arithmetic_instruction(
                 .get(b)
                 .copied()
                 .ok_or_else(|| format!("Value {} not found", b))?;
+            let va = ensure_i64(builder, va);
+            let vb = ensure_i64(builder, vb);
             let v = builder.ins().iadd(va, vb);
             value_map.insert(*dst, v);
             value_types.insert(*dst, AotValueType::I64);
@@ -164,6 +181,8 @@ pub fn lower_arithmetic_instruction(
                 .get(b)
                 .copied()
                 .ok_or_else(|| format!("Value {} not found", b))?;
+            let va = ensure_i64(builder, va);
+            let vb = ensure_i64(builder, vb);
             let v = builder.ins().isub(va, vb);
             value_map.insert(*dst, v);
             value_types.insert(*dst, AotValueType::I64);
@@ -179,6 +198,8 @@ pub fn lower_arithmetic_instruction(
                 .get(b)
                 .copied()
                 .ok_or_else(|| format!("Value {} not found", b))?;
+            let va = ensure_i64(builder, va);
+            let vb = ensure_i64(builder, vb);
             let v = builder.ins().imul(va, vb);
             value_map.insert(*dst, v);
             value_types.insert(*dst, AotValueType::I64);
@@ -194,6 +215,8 @@ pub fn lower_arithmetic_instruction(
                 .get(b)
                 .copied()
                 .ok_or_else(|| format!("Value {} not found", b))?;
+            let va = ensure_i64(builder, va);
+            let vb = ensure_i64(builder, vb);
             let v = builder.ins().sdiv(va, vb);
             value_map.insert(*dst, v);
             value_types.insert(*dst, AotValueType::I64);
@@ -209,6 +232,8 @@ pub fn lower_arithmetic_instruction(
                 .get(b)
                 .copied()
                 .ok_or_else(|| format!("Value {} not found", b))?;
+            let va = ensure_i64(builder, va);
+            let vb = ensure_i64(builder, vb);
             let v = builder.ins().srem(va, vb);
             value_map.insert(*dst, v);
             value_types.insert(*dst, AotValueType::I64);

@@ -334,6 +334,9 @@ impl BackendTestExecutor for InterpreterTestExecutor {
             std::env::set_var("ADESH_CURRENT_FILE", &self.file_path);
         }
 
+        // Clean exception state before running test on current thread
+        crate::backends::common::builtins::CURRENT_EXCEPTION.with(|exc| *exc.borrow_mut() = None);
+
         // Start stdout capture for in-process backends
         let _capture_guard = crate::testing::stdout_capture::StdoutCapture::start().ok();
 

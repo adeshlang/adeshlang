@@ -537,7 +537,7 @@ impl NativeJitCompiler {
                     crate::backends::common::lir::LirType::F32 => AotValueType::F32,
                     crate::backends::common::lir::LirType::F64 => AotValueType::F64,
                     crate::backends::common::lir::LirType::Bool => AotValueType::Bool,
-                    crate::backends::common::lir::LirType::Ptr => AotValueType::String, // Ptr params are typically strings
+                    crate::backends::common::lir::LirType::Ptr => AotValueType::Handle, // Ptr params are objects/strings/pointers
                     _ => AotValueType::Int,
                 };
                 // Store in value_map using the variable's mapped value ID from var_map
@@ -742,7 +742,8 @@ impl NativeJitCompiler {
             }
         }
 
-        if comparisons::lower_comparison_instruction(builder, value_map, value_types, inst)? {
+        if comparisons::lower_comparison_instruction(module, builder, value_map, value_types, inst)?
+        {
             return Ok(());
         }
 
@@ -1009,7 +1010,7 @@ impl NativeJitCompiler {
                             crate::backends::common::lir::LirType::F32 => AotValueType::F32,
                             crate::backends::common::lir::LirType::F64 => AotValueType::F64,
                             crate::backends::common::lir::LirType::Bool => AotValueType::Bool,
-                            crate::backends::common::lir::LirType::Ptr => AotValueType::String,
+                            crate::backends::common::lir::LirType::Ptr => AotValueType::Handle,
                             crate::backends::common::lir::LirType::Void => AotValueType::Int,
                             _ => AotValueType::Int,
                         };
@@ -1329,7 +1330,31 @@ impl NativeJitCompiler {
                                     field_ptr,
                                 )?;
                                 value_map.insert(*dst, value_handle);
-                                value_types.insert(*dst, AotValueType::Handle);
+
+                                let mut field_ty = AotValueType::Handle;
+                                if let Some(field_name) = const_strings.get(&field_id) {
+                                    crate::parsing::hir_lower::KNOWN_STRUCTS.with(|cell| {
+                                        let structs = cell.borrow();
+                                        for fields in structs.values() {
+                                            if let Some((_, ty_str)) =
+                                                fields.iter().find(|(name, _)| name == field_name)
+                                            {
+                                                let ty_lower = ty_str.to_ascii_lowercase();
+                                                field_ty = match ty_lower.as_str() {
+                                                    "f64" | "float" => AotValueType::F64,
+                                                    "f32" => AotValueType::F32,
+                                                    "bool" => AotValueType::Bool,
+                                                    "i32" | "i16" | "i8" | "u32" | "u16" | "u8"
+                                                    | "i64" | "u64" | "int" => AotValueType::Int,
+                                                    "string" => AotValueType::String,
+                                                    _ => AotValueType::Handle,
+                                                };
+                                                break;
+                                            }
+                                        }
+                                    });
+                                }
+                                value_types.insert(*dst, field_ty);
                             } else {
                                 let zero = builder.ins().iconst(types::I64, 0);
                                 value_map.insert(*dst, zero);
@@ -2027,7 +2052,10 @@ impl NativeJitCompiler {
                         if !args.is_empty() {
                             let arg_id = args[0];
 
-                            if let Some(AotValueType::Handle) = value_types.get(&arg_id) {
+                            if matches!(
+                                value_types.get(&arg_id),
+                                Some(AotValueType::Handle) | Some(AotValueType::Ptr)
+                            ) {
                                 if let Some(&h) = value_map.get(&arg_id) {
                                     let ptr =
                                         Self::call_runtime_fn_1(builder, module, "jit_typeof", h)?;

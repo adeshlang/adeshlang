@@ -1,0 +1,2 @@
+import "utils.adesh" as utl;
+print(utl.sum(5, 10));

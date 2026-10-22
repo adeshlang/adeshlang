@@ -72,14 +72,14 @@ pub(crate) fn lower_control_flow_instruction(
                 // Convert return value to expected type if needed
                 if actual_ty == expected_ty {
                     rv
+                } else if expected_ty.is_int() && actual_ty.is_int() {
+                    if actual_ty.bits() > expected_ty.bits() {
+                        builder.ins().ireduce(expected_ty, rv)
+                    } else {
+                        builder.ins().sextend(expected_ty, rv)
+                    }
                 } else {
                     match (expected_ty, actual_ty) {
-                        (types::I64, t) if t.is_int() && t.bits() < 64 => {
-                            builder.ins().uextend(types::I64, rv)
-                        }
-                        (types::I8, t) if t.is_int() && t.bits() > 8 => {
-                            builder.ins().ireduce(types::I8, rv)
-                        }
                         (types::F64, t) if t.is_int() => {
                             builder.ins().fcvt_from_sint(types::F64, rv)
                         }

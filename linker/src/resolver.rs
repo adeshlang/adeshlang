@@ -241,6 +241,15 @@ impl SymbolResolver {
         for undef in remaining_undef {
             use crate::os_router::{OsApiRouter, SymbolRoute};
 
+            // An undefined symbol with an empty name carries no identity: no
+            // other object can ever define it, so it must not fail the link.
+            // Bind it to the weak-undefined NULL value (the layout engine
+            // routes code references to a trap stub, data references to 0).
+            if undef.is_empty() {
+                self.bind_weak_undefined(&undef);
+                continue;
+            }
+
             let route = OsApiRouter::classify(&undef, target);
 
             match route {

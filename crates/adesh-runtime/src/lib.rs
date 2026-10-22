@@ -612,7 +612,7 @@ pub fn aot_remove_value(handle: u64) -> Option<RuntimeValue> {
 /// explicitly accept `*const c_char`; guessing that an arbitrary integer is a
 /// pointer can dereference invalid addresses.
 pub fn get_string_val(handle: u64) -> Option<String> {
-    match aot_get_value(handle)? {
+    match unpack_aot_arg(handle) {
         RuntimeValue::String(s) => Some(s),
         _ => None,
     }
@@ -621,6 +621,19 @@ pub fn get_string_val(handle: u64) -> Option<String> {
 pub fn unpack_aot_arg(raw: u64) -> RuntimeValue {
     if let Some(v) = aot_get_value(raw) {
         return v;
+    }
+    if raw > 0x10000 && raw < HANDLE_TAG {
+        unsafe {
+            let ptr = raw as *const std::os::raw::c_char;
+            if let Ok(s) = std::ffi::CStr::from_ptr(ptr).to_str() {
+                if !s.is_empty()
+                    && s.chars()
+                        .all(|c| !c.is_control() || c == '\n' || c == '\t' || c == '\r')
+                {
+                    return RuntimeValue::String(s.to_string());
+                }
+            }
+        }
     }
     RuntimeValue::Int(raw as i64)
 }
@@ -1352,6 +1365,8 @@ pub fn runtime_value_to_raw_or_handle(val: RuntimeValue) -> u64 {
             }
         }
         RuntimeValue::Char(c) => c as u64,
+        RuntimeValue::Float(f) | RuntimeValue::F64(f) => f.to_bits(),
+        RuntimeValue::F32(f) => f.to_bits() as u64,
         _ => aot_store_value(val),
     }
 }
@@ -1512,15 +1527,13 @@ pub extern "C" fn aot_make_i64(value: i64) -> u64 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_make_f32(value_bits: u64) -> u64 {
-    let f = f32::from_bits(value_bits as u32);
-    aot_store_value(RuntimeValue::F32(f))
+pub extern "C" fn aot_make_f32(value: f64) -> u64 {
+    aot_store_value(RuntimeValue::F32(value as f32))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_make_f64(value_bits: u64) -> u64 {
-    let f = f64::from_bits(value_bits);
-    aot_store_value(RuntimeValue::Float(f))
+pub extern "C" fn aot_make_f64(value: f64) -> u64 {
+    aot_store_value(RuntimeValue::Float(value))
 }
 
 #[unsafe(no_mangle)]
@@ -1994,12 +2007,37 @@ pub extern "C" fn aot_live_handles() -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_len(handle: u64) -> i64 {
+    if handle < HANDLE_TAG && handle > 0x10000 {
+        unsafe {
+            let p_len = *(handle as *const i64);
+            if p_len >= 0 && p_len < 1_000_000 {
+                return p_len;
+            }
+            let p_len32 = *(handle as *const i32);
+            if p_len32 >= 0 && p_len32 < 1_000_000 {
+                return p_len32 as i64;
+            }
+        }
+    }
     let val = aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
     match val {
         RuntimeValue::Array(v) => v.len() as i64,
         RuntimeValue::Tuple(v) => v.len() as i64,
         RuntimeValue::Set(v) => v.len() as i64,
         RuntimeValue::String(s) => s.len() as i64,
+        RuntimeValue::Int(p) | RuntimeValue::I64(p) if p > 0x10000 && (p as u64) < HANDLE_TAG => {
+            unsafe {
+                let p_len = *(p as *const i64);
+                if p_len >= 0 && p_len < 1_000_000 {
+                    return p_len;
+                }
+                let p_len32 = *(p as *const i32);
+                if p_len32 >= 0 && p_len32 < 1_000_000 {
+                    return p_len32 as i64;
+                }
+            }
+            0
+        }
         _ => 0,
     }
 }
@@ -2065,12 +2103,54 @@ pub unsafe extern "C" fn aot_get_index(container_handle: u64, index_handle: u64)
 }
 
 fn aot_get_index_impl(container_handle: u64, index_handle: u64) -> u64 {
-    let container =
-        aot_get_value(container_handle).unwrap_or_else(|| unpack_aot_arg(container_handle));
     let idx_val = aot_get_value(index_handle).unwrap_or_else(|| unpack_aot_arg(index_handle));
     let index = idx_val.as_usize().unwrap_or(0);
 
+    if container_handle < HANDLE_TAG && container_handle > 0x10000 {
+        unsafe {
+            let p_len = *(container_handle as *const i64);
+            let (len, data_offset) = if p_len >= 0 && p_len < 1_000_000 {
+                (p_len as usize, 24u64)
+            } else {
+                let p_len32 = *(container_handle as *const i32);
+                if p_len32 >= 0 && p_len32 < 1_000_000 {
+                    (p_len32 as usize, 16u64)
+                } else {
+                    (0, 24u64)
+                }
+            };
+            if index < len {
+                let elem_ptr = (container_handle + data_offset + (index as u64 * 8)) as *const u64;
+                return *elem_ptr;
+            } else {
+                return aot_store_value(RuntimeValue::Null);
+            }
+        }
+    }
+
+    let container =
+        aot_get_value(container_handle).unwrap_or_else(|| unpack_aot_arg(container_handle));
+
     match container {
+        RuntimeValue::Int(p) | RuntimeValue::I64(p) if p > 0x10000 && (p as u64) < HANDLE_TAG => unsafe {
+            let p_len = *(p as *const i64);
+            let (len, data_offset) = if p_len >= 0 && p_len < 1_000_000 {
+                (p_len as usize, 24u64)
+            } else {
+                let p_len32 = *(p as *const i32);
+                if p_len32 >= 0 && p_len32 < 1_000_000 {
+                    (p_len32 as usize, 16u64)
+                } else {
+                    (0, 24u64)
+                }
+            };
+            if index < len {
+                let elem_ptr = (p as u64 + data_offset + (index as u64 * 8)) as *const u64;
+                *elem_ptr
+            } else {
+                aot_store_value(RuntimeValue::Null)
+            }
+        },
         RuntimeValue::Array(arr) => {
             if index < arr.len() {
                 runtime_value_to_raw_or_handle(arr[index].clone())
@@ -2893,7 +2973,26 @@ pub unsafe extern "C" fn aot_call_method(
     // byte slicing, transmuted callback calls). The known paths are made
     // total inside the impl; the guard is the belt-and-braces backstop.
     ffi_guard(0, || {
-        aot_call_method_impl(target_handle, method_name_handle, args_ptr, args_count)
+        let h = aot_call_method_impl(target_handle, method_name_handle, args_ptr, args_count);
+        unsafe { aot_unbox(h) }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aot_call_method_varargs(
+    target_handle: u64,
+    method_name_handle: u64,
+    a0: u64,
+    a1: u64,
+    a2: u64,
+    a3: u64,
+    argc: u64,
+) -> u64 {
+    ffi_guard(0, || {
+        let args = [a0, a1, a2, a3];
+        let count = (argc as usize).min(4);
+        let h = aot_call_method_impl(target_handle, method_name_handle, args.as_ptr(), count);
+        unsafe { aot_unbox(h) }
     })
 }
 
@@ -2918,6 +3017,52 @@ fn aot_call_method_impl(
         .collect();
 
     let target_val = aot_get_value(target_handle).unwrap_or_else(|| unpack_aot_arg(target_handle));
+
+    let ptr_candidate = if target_handle < HANDLE_TAG && target_handle > 0x10000 {
+        Some(target_handle)
+    } else {
+        match target_val {
+            RuntimeValue::Int(p) | RuntimeValue::I64(p)
+                if p > 0x10000 && (p as u64) < HANDLE_TAG =>
+            {
+                Some(p as u64)
+            }
+            _ => None,
+        }
+    };
+    if let Some(p) = ptr_candidate {
+        if method_name == "len" || method_name == "length" {
+            unsafe {
+                let p_len = *(p as *const i64);
+                if p_len >= 0 && p_len < 1_000_000 {
+                    return aot_store_value(RuntimeValue::Int(p_len));
+                }
+                let p_len32 = *(p as *const i32);
+                if p_len32 >= 0 && p_len32 < 1_000_000 {
+                    return aot_store_value(RuntimeValue::Int(p_len32 as i64));
+                }
+            }
+        } else if method_name == "get" {
+            let idx = args.first().and_then(|i| i.as_usize()).unwrap_or(0);
+            unsafe {
+                let p_len = *(p as *const i64);
+                let (len, data_offset) = if p_len >= 0 && p_len < 1_000_000 {
+                    (p_len as usize, 24u64)
+                } else {
+                    let p_len32 = *(p as *const i32);
+                    if p_len32 >= 0 && p_len32 < 1_000_000 {
+                        (p_len32 as usize, 16u64)
+                    } else {
+                        (0, 24u64)
+                    }
+                };
+                if idx < len {
+                    let elem_ptr = (p + data_offset + (idx as u64 * 8)) as *const u64;
+                    return *elem_ptr;
+                }
+            }
+        }
+    }
 
     match target_val {
         RuntimeValue::VecDeque(mut deque) => match method_name.as_str() {

@@ -1828,46 +1828,6 @@ pub extern "C" fn aot_string_concat(left_handle: u64, right_handle: u64) -> u64 
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_string_concat_cstr(left: u64, right: u64) -> *mut std::os::raw::c_char {
-    let extract_str = |val: u64| -> String {
-        if let Some(s) = get_string_val(val) {
-            s
-        } else if let Some(RuntimeValue::String(s)) = aot_get_value(val) {
-            s
-        } else if val > 0x10000 {
-            let c_str = unsafe { std::ffi::CStr::from_ptr(val as *const std::os::raw::c_char) };
-            c_str
-                .to_str()
-                .ok()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| val.to_string())
-        } else {
-            val.to_string()
-        }
-    };
-    let left_str = extract_str(left);
-    let right_str = extract_str(right);
-    let combined = format!("{}{}", left_str, right_str);
-    let c_str = match std::ffi::CString::new(combined.clone()) {
-        Ok(c) => c,
-        Err(_) => std::ffi::CString::new(combined.replace('\0', "\\0"))
-            .unwrap_or_else(|_| std::ffi::CString::new("").unwrap()),
-    };
-    let bytes = c_str.as_bytes_with_nul();
-    unsafe {
-        let ptr = libc::malloc(bytes.len()) as *mut std::os::raw::c_char;
-        if !ptr.is_null() {
-            std::ptr::copy_nonoverlapping(
-                bytes.as_ptr() as *const std::os::raw::c_char,
-                ptr,
-                bytes.len(),
-            );
-        }
-        ptr
-    }
-}
-
-#[unsafe(no_mangle)]
 pub extern "C" fn adesh_int_to_string(n: i64) -> *mut std::os::raw::c_char {
     let s = n.to_string();
     let c_str = std::ffi::CString::new(s).unwrap();

@@ -9,7 +9,7 @@ struct User {
 let badUser = User {
     username: "alice123",
     email: "alice@example.com",
-    age: 2800,
+    age: 28,
 };
 
-print(badUser.age);
+print(sizeof(badUser.age), typeof(badUser.age));

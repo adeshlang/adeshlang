@@ -49,6 +49,8 @@ pub(super) struct FunctionCompileContext {
     pub(super) next_array_offset: usize,
     /// User-defined functions
     pub(super) user_funcs: HashMap<String, FuncId>,
+    /// User-defined function return types
+    pub(super) user_func_return_types: HashMap<String, crate::backends::common::lir::LirType>,
     /// Track object literals for print options (ValueId -> properties)
     pub(super) object_properties: HashMap<ValueId, HashMap<String, (ValueId, AotValueType)>>,
     /// Track constant strings by ValueId for option extraction
@@ -100,6 +102,7 @@ impl FunctionCompileContext {
             array_offset: None,
             next_array_offset: 0,
             user_funcs: HashMap::new(),
+            user_func_return_types: HashMap::new(),
             object_properties: HashMap::new(),
             const_strings: HashMap::new(),
             const_bools: HashMap::new(),

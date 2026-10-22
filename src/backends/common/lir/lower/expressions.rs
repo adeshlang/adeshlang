@@ -272,6 +272,13 @@ pub(super) fn lower_expr(
                 .get(&left_val)
                 .copied()
                 .unwrap_or(LirType::I64);
+            let right_type = ctx
+                .value_types
+                .get(&right_val)
+                .copied()
+                .unwrap_or(LirType::I64);
+            let is_float = matches!(left_type, LirType::F32 | LirType::F64)
+                || matches!(right_type, LirType::F32 | LirType::F64);
 
             let inst = match op {
                 BinOp::Add => {
@@ -300,32 +307,38 @@ pub(super) fn lower_expr(
                         return Ok(result);
                     }
 
-                    let inst = match left_type {
-                        LirType::F32 | LirType::F64 => LirInst::AddF64(result, left_val, right_val),
-                        _ => LirInst::AddI64(result, left_val, right_val),
+                    let inst = if is_float {
+                        LirInst::AddF64(result, left_val, right_val)
+                    } else {
+                        LirInst::AddI64(result, left_val, right_val)
                     };
                     func.push_to_block(ctx.current_block, inst.clone());
-                    ctx.value_types.insert(result, left_type);
+                    ctx.value_types
+                        .insert(result, if is_float { LirType::F64 } else { left_type });
                     return Ok(result);
                 }
                 BinOp::Sub => {
-                    let inst = match left_type {
-                        LirType::F32 | LirType::F64 => LirInst::SubF64(result, left_val, right_val),
-                        _ => LirInst::SubI64(result, left_val, right_val),
+                    let inst = if is_float {
+                        LirInst::SubF64(result, left_val, right_val)
+                    } else {
+                        LirInst::SubI64(result, left_val, right_val)
                     };
                     func.push_to_block(ctx.current_block, inst.clone());
                     // Track the result type
-                    ctx.value_types.insert(result, left_type);
+                    ctx.value_types
+                        .insert(result, if is_float { LirType::F64 } else { left_type });
                     return Ok(result);
                 }
                 BinOp::Mul => {
-                    let inst = match left_type {
-                        LirType::F32 | LirType::F64 => LirInst::MulF64(result, left_val, right_val),
-                        _ => LirInst::MulI64(result, left_val, right_val),
+                    let inst = if is_float {
+                        LirInst::MulF64(result, left_val, right_val)
+                    } else {
+                        LirInst::MulI64(result, left_val, right_val)
                     };
                     func.push_to_block(ctx.current_block, inst.clone());
                     // Track the result type
-                    ctx.value_types.insert(result, left_type);
+                    ctx.value_types
+                        .insert(result, if is_float { LirType::F64 } else { left_type });
                     return Ok(result);
                 }
                 BinOp::Div => {
@@ -357,66 +370,60 @@ pub(super) fn lower_expr(
                     return Ok(result);
                 }
                 BinOp::Lt => {
-                    let inst = match left_type {
-                        LirType::F32 | LirType::F64 => {
-                            LirInst::CmpLtF64(result, left_val, right_val)
-                        }
-                        _ => LirInst::CmpLtI64(result, left_val, right_val),
+                    let inst = if is_float {
+                        LirInst::CmpLtF64(result, left_val, right_val)
+                    } else {
+                        LirInst::CmpLtI64(result, left_val, right_val)
                     };
                     func.push_to_block(ctx.current_block, inst);
                     ctx.value_types.insert(result, LirType::Bool);
                     return Ok(result);
                 }
                 BinOp::Le => {
-                    let inst = match left_type {
-                        LirType::F32 | LirType::F64 => {
-                            LirInst::CmpLeF64(result, left_val, right_val)
-                        }
-                        _ => LirInst::CmpLeI64(result, left_val, right_val),
+                    let inst = if is_float {
+                        LirInst::CmpLeF64(result, left_val, right_val)
+                    } else {
+                        LirInst::CmpLeI64(result, left_val, right_val)
                     };
                     func.push_to_block(ctx.current_block, inst);
                     ctx.value_types.insert(result, LirType::Bool);
                     return Ok(result);
                 }
                 BinOp::Gt => {
-                    let inst = match left_type {
-                        LirType::F32 | LirType::F64 => {
-                            LirInst::CmpGtF64(result, left_val, right_val)
-                        }
-                        _ => LirInst::CmpGtI64(result, left_val, right_val),
+                    let inst = if is_float {
+                        LirInst::CmpGtF64(result, left_val, right_val)
+                    } else {
+                        LirInst::CmpGtI64(result, left_val, right_val)
                     };
                     func.push_to_block(ctx.current_block, inst);
                     ctx.value_types.insert(result, LirType::Bool);
                     return Ok(result);
                 }
                 BinOp::Ge => {
-                    let inst = match left_type {
-                        LirType::F32 | LirType::F64 => {
-                            LirInst::CmpGeF64(result, left_val, right_val)
-                        }
-                        _ => LirInst::CmpGeI64(result, left_val, right_val),
+                    let inst = if is_float {
+                        LirInst::CmpGeF64(result, left_val, right_val)
+                    } else {
+                        LirInst::CmpGeI64(result, left_val, right_val)
                     };
                     func.push_to_block(ctx.current_block, inst);
                     ctx.value_types.insert(result, LirType::Bool);
                     return Ok(result);
                 }
                 BinOp::Eq => {
-                    let inst = match left_type {
-                        LirType::F32 | LirType::F64 => {
-                            LirInst::CmpEqF64(result, left_val, right_val)
-                        }
-                        _ => LirInst::CmpEqI64(result, left_val, right_val),
+                    let inst = if is_float {
+                        LirInst::CmpEqF64(result, left_val, right_val)
+                    } else {
+                        LirInst::CmpEqI64(result, left_val, right_val)
                     };
                     func.push_to_block(ctx.current_block, inst);
                     ctx.value_types.insert(result, LirType::Bool);
                     return Ok(result);
                 }
                 BinOp::Ne => {
-                    let inst = match left_type {
-                        LirType::F32 | LirType::F64 => {
-                            LirInst::CmpNeF64(result, left_val, right_val)
-                        }
-                        _ => LirInst::CmpNeI64(result, left_val, right_val),
+                    let inst = if is_float {
+                        LirInst::CmpNeF64(result, left_val, right_val)
+                    } else {
+                        LirInst::CmpNeI64(result, left_val, right_val)
                     };
                     func.push_to_block(ctx.current_block, inst);
                     ctx.value_types.insert(result, LirType::Bool);
@@ -1096,6 +1103,32 @@ pub(super) fn lower_expr(
                 ctx.current_block,
                 LirInst::CallBuiltin(result, "get_field".to_string(), vec![target_val, field_val]),
             );
+
+            // Infer and track field type if known from struct definitions
+            crate::parsing::hir_lower::KNOWN_STRUCTS.with(|cell| {
+                let structs = cell.borrow();
+                for fields in structs.values() {
+                    if let Some((_, ty_str)) = fields.iter().find(|(name, _)| name == field) {
+                        let ty_lower = ty_str.to_ascii_lowercase();
+                        let lir_ty = match ty_lower.as_str() {
+                            "f64" | "float" => LirType::F64,
+                            "f32" => LirType::F32,
+                            "bool" => LirType::Bool,
+                            "i32" => LirType::I32,
+                            "i16" => LirType::I16,
+                            "i8" => LirType::I8,
+                            "u32" => LirType::U32,
+                            "u16" => LirType::U16,
+                            "u8" => LirType::U8,
+                            "string" => LirType::Ptr,
+                            _ => LirType::I64,
+                        };
+                        ctx.value_types.insert(result, lir_ty);
+                        break;
+                    }
+                }
+            });
+
             Ok(result)
         }
 

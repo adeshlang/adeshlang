@@ -1811,13 +1811,87 @@ fn emit_stmt_v2(s: &Stmt, ctx: &mut REmit) -> Result<(), LangError> {
 
                 Ok(())
             } else {
-                Err(LangError::new(
-                    ErrorKind::Type,
-                    "VM v2 only supports range for-loops".into(),
-                    0,
-                    0,
-                    "".into(),
-                ))
+                // Collection for-loop: for (name in collection) body
+                let r_coll = emit_expr_v2(iter, ctx)?;
+                let k_len = ctx.add_const_str("len".to_string());
+                let r_len = ctx.reg();
+                ctx.emit_u8(ROp::CallMethod as u8);
+                ctx.emit_u32(r_len);
+                ctx.emit_u32(r_coll);
+                ctx.emit_u32(k_len);
+                ctx.emit_u32(0); // 0 args
+
+                let k_zero = ctx.add_const_num(0.0);
+                let r_curr = ctx.reg();
+                ctx.emit_u8(ROp::LoadConst as u8);
+                ctx.emit_u32(r_curr);
+                ctx.emit_u32(k_zero);
+
+                let k_one = ctx.add_const_num(1.0);
+                let r_one = ctx.reg();
+                ctx.emit_u8(ROp::LoadConst as u8);
+                ctx.emit_u32(r_one);
+                ctx.emit_u32(k_one);
+
+                let loop_start_pos = ctx.code.len();
+
+                // Condition check: r_curr < r_len
+                let r_cond = ctx.reg();
+                ctx.emit_u8(ROp::CmpLT as u8);
+                ctx.emit_u32(r_cond);
+                ctx.emit_u32(r_curr);
+                ctx.emit_u32(r_len);
+
+                // JumpIfFalse to END
+                ctx.emit_u8(ROp::JumpIfFalse as u8);
+                ctx.emit_u32(r_cond);
+                let jfalse_rel_pos = ctx.code.len();
+                ctx.emit_u32(0);
+                let jfalse_after_pos = ctx.code.len();
+
+                // Get element at r_curr: r_elem = r_coll[r_curr]
+                let r_elem = ctx.reg();
+                ctx.emit_u8(ROp::GetIndex as u8);
+                ctx.emit_u32(r_elem);
+                ctx.emit_u32(r_coll);
+                ctx.emit_u32(r_curr);
+
+                // Scope handling: save old locals, insert name -> r_elem
+                let old_locals = ctx.locals.clone();
+                if ctx.locals.is_none() {
+                    ctx.locals = Some(std::collections::HashMap::new());
+                }
+                if let Some(lm) = &mut ctx.locals {
+                    lm.insert(name.clone(), r_elem);
+                }
+
+                // Body — push defer scope for loop body
+                ctx.push_defer_scope();
+                let saved_depth = ctx.defer_scopes.len() - 1;
+                ctx.loop_defer_depths.push(saved_depth);
+                emit_stmt_v2(body, ctx)?;
+                ctx.emit_scope_defers()?;
+                ctx.loop_defer_depths.pop();
+
+                // Increment: r_curr += 1
+                ctx.emit_u8(ROp::Add as u8);
+                ctx.emit_u32(r_curr);
+                ctx.emit_u32(r_curr);
+                ctx.emit_u32(r_one);
+
+                // Loop back
+                ctx.emit_u8(ROp::JumpAbs as u8);
+                ctx.emit_u32(loop_start_pos as u32);
+
+                // Patch exit
+                let end_pos = ctx.code.len();
+                let rel_skip = (end_pos - jfalse_after_pos) as u32;
+                ctx.patch_u32_at(jfalse_rel_pos, rel_skip);
+
+                // Restore locals
+                ctx.locals = old_locals;
+
+                Ok(())
             }
         }
         StmtKind::Return(opt) => {
@@ -2245,6 +2319,22 @@ fn emit_expr_v2(e: &Expr, ctx: &mut REmit) -> Result<u32, LangError> {
                         "".into(),
                     ))
                 }
+            } else if let ExprKind::Get(obj, field) = &target.kind {
+                let obj_reg = emit_expr_v2(obj, ctx)?;
+                let field_kidx = ctx.add_const_str(field.clone());
+                ctx.emit_u8(ROp::SetField as u8);
+                ctx.emit_u32(obj_reg);
+                ctx.emit_u32(field_kidx);
+                ctx.emit_u32(rr);
+                Ok(rr)
+            } else if let ExprKind::Index(arr, idx) = &target.kind {
+                let arr_reg = emit_expr_v2(arr, ctx)?;
+                let idx_reg = emit_expr_v2(idx, ctx)?;
+                ctx.emit_u8(ROp::SetIndex as u8);
+                ctx.emit_u32(arr_reg);
+                ctx.emit_u32(idx_reg);
+                ctx.emit_u32(rr);
+                Ok(rr)
             } else {
                 Err(LangError::new(
                     ErrorKind::Type,
@@ -2402,6 +2492,9 @@ fn emit_expr_v2(e: &Expr, ctx: &mut REmit) -> Result<u32, LangError> {
                     "typeof",
                     "sizeof",
                     "hasKey",
+                    "assert",
+                    "assert_eq",
+                    "assert_ne",
                     "len",
                     "capacity",
                     "metadata_size",

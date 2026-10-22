@@ -242,6 +242,59 @@ impl MachOReader {
             }
         }
 
+        // Anonymous (empty-named) symbols do occur in Mach-O objects emitted
+        // by the Rust toolchain (and other LLVM-based producers) for private
+        // labels and unwind placeholders. A relocation that names its target
+        // by an empty string can never resolve, and previously surfaced as
+        // `LNK001: undefined reference to \`\`` (an empty symbol name) on the
+        // macOS AOT pipeline. Rewrite every empty-named symbol to a unique
+        // synthetic name so relocation references stay index-aligned AND
+        // resolve by name:
+        //
+        // - Defined anonymous symbols become file-unique locals; their
+        //   relocations resolve through the local-symbol maps.
+        // - Undefined anonymous symbols are meaningless as imports (no other
+        //   object can resolve a name that was never emitted), so they are
+        //   marked weak: the resolver binds them to NULL per the weak-undef
+        //   ABI rule instead of failing the whole link.
+        for (i, sym) in obj.symbols.iter_mut().enumerate() {
+            if sym.name.is_empty() {
+                if sym.is_defined {
+                    sym.name = format!("__macho_anon_{file_index}_{i}");
+                } else {
+                    sym.name = format!("__macho_anon_undef_{file_index}_{i}");
+                    sym.binding = SymbolBinding::Weak;
+                }
+            }
+        }
+
+        // Non-extern ("section-based") Mach-O relocations reference a section
+        // by its 1-based number, not by a symbol. Register one defined local
+        // symbol per section so such references resolve to the section base.
+        // The names are unique per (file, section) because the same object can
+        // contain repeated section names (e.g. two `__const` sections). These
+        // are appended after the real symbol table, so `r_symbolnum` indices
+        // of extern relocations remain valid.
+        for s in 0..obj.sections.len() {
+            let sec_sym = Symbol {
+                name: format!("__macho_sec_{file_index}_{s}"),
+                binding: SymbolBinding::Local,
+                visibility: SymbolVisibility::Default,
+                sym_type: SymbolType::Object,
+                section_index: Some(s),
+                value: 0,
+                size: obj.sections[s].size,
+                is_defined: true,
+                is_imported: false,
+                is_exported: false,
+                file_index: Some(file_index),
+                alias_of: None,
+                comdat_group: None,
+                version: None,
+            };
+            obj.add_symbol(sec_sym);
+        }
+
         // Parse section relocations (relocation_info: 8 bytes each)
         for (sec_idx, reloff, nreloc) in pending_relocs {
             if sec_idx >= obj.sections.len() {
@@ -324,16 +377,42 @@ impl MachOReader {
                     continue;
                 }
 
+                // Extern relocations name their target by symbol-table index.
+                // Resolve through the index first (immune to duplicate names),
+                // and reject out-of-range indices loudly: silently emitting an
+                // empty symbol name produces an unexplainable LNK001 later.
                 let sym_name = if r_extern {
                     if r_symbolnum < obj.symbols.len() {
                         obj.symbols[r_symbolnum].name.clone()
                     } else {
-                        String::new()
+                        return Err(LinkError::new(
+                            ErrorCode::InvalidObject,
+                            format!(
+                                "malformed Mach-O object `{}`: extern relocation in section `{}` at address 0x{:x} references symbol index {} but the symbol table has only {} entries",
+                                path.display(),
+                                obj.sections[sec_idx].name,
+                                r_address,
+                                r_symbolnum,
+                                obj.symbols.len()
+                            ),
+                        ));
                     }
                 } else if r_symbolnum > 0 && r_symbolnum <= obj.sections.len() {
-                    obj.sections[r_symbolnum - 1].name.clone()
+                    // Section-based relocation: target the synthetic
+                    // per-section local symbol registered above.
+                    format!("__macho_sec_{file_index}_{}", r_symbolnum - 1)
                 } else {
-                    String::new()
+                    return Err(LinkError::new(
+                        ErrorCode::InvalidObject,
+                        format!(
+                            "malformed Mach-O object `{}`: non-extern relocation in section `{}` at address 0x{:x} references invalid section number {} (object has {} sections)",
+                            path.display(),
+                            obj.sections[sec_idx].name,
+                            r_address,
+                            r_symbolnum,
+                            obj.sections.len()
+                        ),
+                    ));
                 };
 
                 let kind = match (arch, r_type, r_pcrel, r_length) {
@@ -379,5 +458,146 @@ impl MachOReader {
 
         obj.validate()?;
         Ok(obj)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a minimal x86_64 Mach-O relocatable object containing the
+    /// pathological shapes that occur in real rustc-produced runtime members:
+    ///
+    /// - a defined local symbol with an EMPTY name (anonymous label),
+    /// - an undefined symbol with an EMPTY name,
+    /// - an extern relocation against the empty-named defined symbol,
+    /// - an extern relocation against the empty-named undefined symbol,
+    /// - a non-extern section-based relocation (target = the section).
+    ///
+    /// Regression for the macOS AOT failure `LNK001: undefined reference to \`\``.
+    fn build_anonymous_symbol_object() -> Vec<u8> {
+        let mut b = Vec::new();
+        // Mach-O 64 header
+        b.extend_from_slice(&0xfeedfacfu32.to_le_bytes()); // magic
+        b.extend_from_slice(&0x0100_0007u32.to_le_bytes()); // cputype x86_64
+        b.extend_from_slice(&3u32.to_le_bytes()); // cpusubtype
+        b.extend_from_slice(&1u32.to_le_bytes()); // filetype MH_OBJECT
+        b.extend_from_slice(&2u32.to_le_bytes()); // ncmds
+        b.extend_from_slice(&176u32.to_le_bytes()); // sizeofcmds
+        b.extend_from_slice(&0u32.to_le_bytes()); // flags
+        b.extend_from_slice(&0u32.to_le_bytes()); // reserved
+
+        // LC_SEGMENT_64 with one __text section
+        let seg_start = b.len() as u32;
+        b.extend_from_slice(&0x19u32.to_le_bytes()); // LC_SEGMENT_64
+        b.extend_from_slice(&152u32.to_le_bytes()); // cmdsize (72 + 80)
+        let mut segname = [0u8; 16];
+        segname[..6].copy_from_slice(b"__TEXT");
+        b.extend_from_slice(&segname);
+        b.extend_from_slice(&0u64.to_le_bytes()); // vmaddr
+        b.extend_from_slice(&208u64.to_le_bytes()); // vmsize
+        b.extend_from_slice(&208u64.to_le_bytes()); // fileoff
+        b.extend_from_slice(&16u64.to_le_bytes()); // filesize
+        b.extend_from_slice(&7u32.to_le_bytes()); // maxprot
+        b.extend_from_slice(&5u32.to_le_bytes()); // initprot
+        b.extend_from_slice(&1u32.to_le_bytes()); // nsects
+        b.extend_from_slice(&0u32.to_le_bytes()); // flags
+        let sect_start = b.len();
+        let mut sectname = [0u8; 16];
+        sectname[..6].copy_from_slice(b"__text");
+        b.extend_from_slice(&sectname);
+        b.extend_from_slice(&segname); // segname
+        b.extend_from_slice(&0u64.to_le_bytes()); // addr
+        b.extend_from_slice(&16u64.to_le_bytes()); // size
+        b.extend_from_slice(&208u32.to_le_bytes()); // offset (file offset of code)
+        b.extend_from_slice(&4u32.to_le_bytes()); // align (log2 = 4)
+        b.extend_from_slice(&224u32.to_le_bytes()); // reloff
+        b.extend_from_slice(&3u32.to_le_bytes()); // nreloc
+        b.extend_from_slice(&0u32.to_le_bytes()); // flags
+        b.extend_from_slice(&[0u8; 12]); // reserved1..3
+        assert_eq!(b.len() - sect_start, 80);
+        assert_eq!(b.len() as u32 - seg_start, 152);
+
+        // LC_SYMTAB
+        b.extend_from_slice(&0x2u32.to_le_bytes());
+        b.extend_from_slice(&24u32.to_le_bytes());
+        b.extend_from_slice(&248u32.to_le_bytes()); // symoff
+        b.extend_from_slice(&3u32.to_le_bytes()); // nsyms
+        b.extend_from_slice(&296u32.to_le_bytes()); // stroff
+        b.extend_from_slice(&7u32.to_le_bytes()); // strsize
+
+        // __text payload: 16 bytes
+        assert_eq!(b.len(), 208);
+        b.extend_from_slice(&[0x90u8; 16]);
+
+        // Relocations: 3 * 8 bytes at offset 224
+        assert_eq!(b.len(), 224);
+        // A: extern -> sym 0 (defined anonymous), pcrel, len 2 (32-bit), type 0
+        b.extend_from_slice(&0u32.to_le_bytes()); // r_address
+        b.extend_from_slice(&0x0A00_0000u32.to_le_bytes());
+        // B: extern -> sym 1 (undefined anonymous)
+        b.extend_from_slice(&4u32.to_le_bytes());
+        b.extend_from_slice(&0x0A00_0001u32.to_le_bytes());
+        // C: non-extern, section 1, abs64 (len 3), type 0
+        b.extend_from_slice(&8u32.to_le_bytes());
+        b.extend_from_slice(&0x6000_0001u32.to_le_bytes());
+
+        // Symbol table: 3 * 16 bytes at offset 248
+        assert_eq!(b.len(), 248);
+        // sym 0: defined local, empty name, section 1
+        b.extend_from_slice(&0u32.to_le_bytes()); // n_strx = 0 -> empty name
+        b.extend_from_slice(&[0x0E, 0x01]); // N_SECT, n_sect 1
+        b.extend_from_slice(&0u16.to_le_bytes()); // n_desc
+        b.extend_from_slice(&0u64.to_le_bytes()); // n_value
+        // sym 1: undefined, empty name
+        b.extend_from_slice(&0u32.to_le_bytes());
+        b.extend_from_slice(&[0x00, 0x00]); // N_UNDF, section 0
+        b.extend_from_slice(&0u16.to_le_bytes());
+        b.extend_from_slice(&0u64.to_le_bytes());
+        // sym 2: extern global `_main`, defined in section 1
+        b.extend_from_slice(&1u32.to_le_bytes()); // n_strx -> "_main"
+        b.extend_from_slice(&[0x0F, 0x01]); // N_SECT | N_EXT
+        b.extend_from_slice(&0u16.to_le_bytes());
+        b.extend_from_slice(&0u64.to_le_bytes());
+
+        // String table: "\0_main\0" = 7 bytes at offset 296
+        assert_eq!(b.len(), 296);
+        b.extend_from_slice(&[0, b'_', b'm', b'a', b'i', b'n', 0]);
+        b
+    }
+
+    #[test]
+    fn test_anonymous_symbols_get_resolvable_names() {
+        let bytes = build_anonymous_symbol_object();
+        let obj = MachOReader::read(&bytes, std::path::Path::new("anon.o"), 0)
+            .expect("anonymous-symbol object must parse");
+
+        // No symbol may keep an empty name; indices are preserved.
+        assert_eq!(obj.symbols.len(), 3 + 1); // 3 real + 1 synthetic section symbol
+        assert!(
+            obj.symbols.iter().all(|s| !s.name.is_empty()),
+            "every symbol must carry a resolvable name"
+        );
+        // The defined anonymous symbol was renamed, still local+defined.
+        assert_eq!(obj.symbols[0].name, "__macho_anon_0_0");
+        assert!(obj.symbols[0].is_defined);
+        // The undefined anonymous symbol was renamed and marked weak so the
+        // resolver binds it to NULL instead of failing the link.
+        assert_eq!(obj.symbols[1].name, "__macho_anon_undef_0_1");
+        assert!(!obj.symbols[1].is_defined);
+        assert_eq!(obj.symbols[1].binding, SymbolBinding::Weak);
+        // The C-ABI underscore is still stripped for real extern names.
+        assert_eq!(obj.symbols[2].name, "main");
+
+        // No relocation may carry an empty symbol name.
+        let text_relocs = &obj.sections[0].relocations;
+        assert_eq!(text_relocs.len(), 3);
+        assert_eq!(text_relocs[0].symbol_name, "__macho_anon_0_0");
+        assert_eq!(text_relocs[0].symbol_index, Some(0));
+        assert_eq!(text_relocs[1].symbol_name, "__macho_anon_undef_0_1");
+        assert_eq!(text_relocs[1].symbol_index, Some(1));
+        // Section-based relocation resolves to the synthetic section symbol.
+        assert_eq!(text_relocs[2].symbol_name, "__macho_sec_0_0");
+        assert!(text_relocs[2].symbol_index.is_none());
     }
 }

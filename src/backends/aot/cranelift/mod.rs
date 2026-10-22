@@ -139,6 +139,8 @@ pub struct FunctionCompileContext {
     pub next_array_offset: usize,
     /// User-defined functions
     pub user_funcs: HashMap<String, FuncId>,
+    /// User-defined function return types
+    pub user_func_return_types: HashMap<String, crate::backends::common::lir::LirType>,
     /// Track object literals for print options (ValueId -> properties)
     pub object_properties: HashMap<ValueId, HashMap<String, (ValueId, AotValueType)>>,
     /// Track constant strings by ValueId for option extraction
@@ -189,6 +191,7 @@ impl FunctionCompileContext {
             array_offset: None,
             next_array_offset: 0,
             user_funcs: HashMap::new(),
+            user_func_return_types: HashMap::new(),
             object_properties: HashMap::new(),
             const_strings: HashMap::new(),
             const_bools: HashMap::new(),
@@ -383,6 +386,8 @@ impl CraneliftAotCompiler {
             }
             let func_id = self.declare_user_function(&mut obj_module, func, &target_triple)?;
             ctx.user_funcs.insert(func.name.clone(), func_id);
+            ctx.user_func_return_types
+                .insert(func.name.clone(), func.ret_type);
         }
 
         // Second pass: compile all functions
@@ -1398,6 +1403,7 @@ impl CraneliftAotCompiler {
             ctx.puts_func = shared_ctx.puts_func;
             ctx.string_data = shared_ctx.string_data.clone();
             ctx.user_funcs = shared_ctx.user_funcs.clone();
+            ctx.user_func_return_types = shared_ctx.user_func_return_types.clone();
             ctx.argc_global = shared_ctx.argc_global;
             ctx.argv_global = shared_ctx.argv_global;
             // Runtime function references declared by
@@ -1495,7 +1501,8 @@ impl CraneliftAotCompiler {
                         LirType::Ptr => AotValueType::Ptr,
                         LirType::Void => AotValueType::Int,
                     };
-                    ctx.value_types.insert(i as ValueId, aot_type);
+                    ctx.value_types.insert(i as ValueId, aot_type.clone());
+                    ctx.var_types.insert(param_name.clone(), aot_type);
                 }
             }
 
@@ -1636,6 +1643,7 @@ impl CraneliftAotCompiler {
 
         // Try to handle comparison instructions
         match comparisons::lower_comparison_instruction(
+            module,
             builder,
             &mut ctx.value_map,
             &mut ctx.value_types,

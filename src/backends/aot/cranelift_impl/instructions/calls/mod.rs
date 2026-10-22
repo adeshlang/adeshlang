@@ -133,9 +133,31 @@ pub(crate) fn handle_call(
         };
         if let Some(res) = result {
             ctx.value_map.insert(*dst, res);
+            let ret_ty = ctx
+                .user_func_return_types
+                .get(func_name)
+                .copied()
+                .unwrap_or(crate::backends::common::lir::LirType::I64);
+            let aot_val_ty = match ret_ty {
+                crate::backends::common::lir::LirType::Bool => AotValueType::Bool,
+                crate::backends::common::lir::LirType::F64 => AotValueType::F64,
+                crate::backends::common::lir::LirType::F32 => AotValueType::F32,
+                crate::backends::common::lir::LirType::I8 => AotValueType::I8,
+                crate::backends::common::lir::LirType::I16 => AotValueType::I16,
+                crate::backends::common::lir::LirType::I32 => AotValueType::I32,
+                crate::backends::common::lir::LirType::I64 => AotValueType::I64,
+                crate::backends::common::lir::LirType::U8 => AotValueType::U8,
+                crate::backends::common::lir::LirType::U16 => AotValueType::U16,
+                crate::backends::common::lir::LirType::U32 => AotValueType::U32,
+                crate::backends::common::lir::LirType::U64 => AotValueType::U64,
+                crate::backends::common::lir::LirType::Ptr => AotValueType::Handle,
+                _ => AotValueType::Int,
+            };
+            ctx.value_types.insert(*dst, aot_val_ty);
         } else {
             let zero = builder.ins().iconst(types::I64, 0);
             ctx.value_map.insert(*dst, zero);
+            ctx.value_types.insert(*dst, AotValueType::Int);
         }
     } else {
         // Unknown function - return 0
