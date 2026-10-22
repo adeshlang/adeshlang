@@ -312,6 +312,7 @@ impl MachOReader {
                 continue;
             }
             let mut r_i = 0;
+            let mut pending_addend: Option<i64> = None;
             while r_i < nreloc {
                 let r_off = reloff + r_i * 8;
                 if r_off + 8 > bytes.len() {
@@ -331,6 +332,20 @@ impl MachOReader {
                 let r_length = (r_word1 >> 25) & 3;
                 let r_extern = ((r_word1 >> 27) & 1) != 0;
                 let r_type = ((r_word1 >> 28) & 0xF) as u8;
+
+                // Handle ARM64_RELOC_ADDEND (type 10 on AArch64): r_symbolnum carries a 24-bit addend
+                // for the following relocation entry rather than a symbol index or section number.
+                if arch == Arch::AArch64 && r_type == 10 {
+                    let addend_24 = (r_word1 & 0x00FF_FFFF) as i32;
+                    let addend = if (addend_24 & 0x0080_0000) != 0 {
+                        (addend_24 | !0x00FF_FFFF) as i64
+                    } else {
+                        addend_24 as i64
+                    };
+                    pending_addend = Some(addend);
+                    r_i += 1;
+                    continue;
+                }
 
                 let is_subtractor =
                     (arch == Arch::X86_64 && r_type == 5) || (arch == Arch::AArch64 && r_type == 1);
@@ -426,32 +441,37 @@ impl MachOReader {
                     ));
                 };
 
-                let kind = match (arch, r_type, r_pcrel, r_length) {
-                    (Arch::AArch64, 2, true, _) => RelocationKind::AArch64Call26, // ARM64_RELOC_BRANCH26
-                    (Arch::AArch64, 3, true, _) => RelocationKind::AArch64Adrp, // ARM64_RELOC_PAGE21
-                    (Arch::AArch64, 4, false, _) => RelocationKind::AArch64AddLo12, // ARM64_RELOC_PAGEOFF12
-                    (Arch::AArch64, 5, true, _) => RelocationKind::AArch64Adrp, // ARM64_RELOC_GOT_LOAD_PAGE21
-                    (Arch::AArch64, 6, false, _) => RelocationKind::AArch64AddLo12, // ARM64_RELOC_GOT_LOAD_PAGEOFF12
-                    (Arch::AArch64, 0, false, 3) => RelocationKind::Absolute64, // ARM64_RELOC_UNSIGNED (len 3 = 8 bytes)
-                    (Arch::AArch64, 0, false, 2) => RelocationKind::Absolute32, // ARM64_RELOC_UNSIGNED (len 2 = 4 bytes)
-                    (Arch::X86_64, 1, true, 2) => RelocationKind::PcRelative32, // X86_64_RELOC_SIGNED
-                    (Arch::X86_64, 2, true, 2) => RelocationKind::PltRelative32, // X86_64_RELOC_BRANCH
-                    (Arch::X86_64, 3, true, 2) => RelocationKind::GotRelative32, // X86_64_RELOC_GOT_LOAD
-                    (Arch::X86_64, 4, true, 2) => RelocationKind::GotRelative32, // X86_64_RELOC_GOT
-                    (Arch::X86_64, 0, false, 3) => RelocationKind::Absolute64, // X86_64_RELOC_UNSIGNED (len 3 = 8 bytes)
-                    (Arch::X86_64, 0, false, 2) => RelocationKind::Absolute32, // X86_64_RELOC_UNSIGNED (len 2 = 4 bytes)
+                let (kind, extra_addend) = match (arch, r_type, r_pcrel, r_length) {
+                    (Arch::AArch64, 2, true, _) => (RelocationKind::AArch64Call26, 0), // ARM64_RELOC_BRANCH26
+                    (Arch::AArch64, 3, true, _) => (RelocationKind::AArch64Adrp, 0), // ARM64_RELOC_PAGE21
+                    (Arch::AArch64, 4, false, _) => (RelocationKind::AArch64AddLo12, 0), // ARM64_RELOC_PAGEOFF12
+                    (Arch::AArch64, 5, true, _) => (RelocationKind::AArch64Adrp, 0), // ARM64_RELOC_GOT_LOAD_PAGE21
+                    (Arch::AArch64, 6, false, _) => (RelocationKind::AArch64AddLo12, 0), // ARM64_RELOC_GOT_LOAD_PAGEOFF12
+                    (Arch::AArch64, 0, false, 3) => (RelocationKind::Absolute64, 0), // ARM64_RELOC_UNSIGNED (len 3 = 8 bytes)
+                    (Arch::AArch64, 0, false, 2) => (RelocationKind::Absolute32, 0), // ARM64_RELOC_UNSIGNED (len 2 = 4 bytes)
+                    (Arch::X86_64, 1, true, 2) => (RelocationKind::PcRelative32, 0), // X86_64_RELOC_SIGNED
+                    (Arch::X86_64, 2, true, 2) => (RelocationKind::PltRelative32, 0), // X86_64_RELOC_BRANCH
+                    (Arch::X86_64, 3, true, 2) => (RelocationKind::GotRelative32, 0), // X86_64_RELOC_GOT_LOAD
+                    (Arch::X86_64, 4, true, 2) => (RelocationKind::GotRelative32, 0), // X86_64_RELOC_GOT
+                    (Arch::X86_64, 6, true, 2) => (RelocationKind::PcRelative32, -1), // X86_64_RELOC_SIGNED_1
+                    (Arch::X86_64, 7, true, 2) => (RelocationKind::PcRelative32, -2), // X86_64_RELOC_SIGNED_2
+                    (Arch::X86_64, 8, true, 2) => (RelocationKind::PcRelative32, -4), // X86_64_RELOC_SIGNED_4
+                    (Arch::X86_64, 0, false, 3) => (RelocationKind::Absolute64, 0), // X86_64_RELOC_UNSIGNED (len 3 = 8 bytes)
+                    (Arch::X86_64, 0, false, 2) => (RelocationKind::Absolute32, 0), // X86_64_RELOC_UNSIGNED (len 2 = 4 bytes)
                     _ => {
-                        if r_pcrel {
+                        let k = if r_pcrel {
                             RelocationKind::PcRelative32
                         } else if r_length == 3 {
                             RelocationKind::Absolute64
                         } else {
                             RelocationKind::Absolute32
-                        }
+                        };
+                        (k, 0)
                     }
                 };
 
-                let mut reloc = Relocation::new(r_address as u64, sym_name, kind, 0);
+                let reloc_addend = pending_addend.take().unwrap_or(0) + extra_addend;
+                let mut reloc = Relocation::new(r_address as u64, sym_name, kind, reloc_addend);
                 reloc.file_index = Some(file_index);
                 if r_extern {
                     reloc.symbol_index = Some(r_symbolnum);
