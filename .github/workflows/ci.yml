@@ -99,7 +99,6 @@ jobs:
 
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --all-features
-        continue-on-error: true
 
       - name: Test library
         run: cargo test --lib

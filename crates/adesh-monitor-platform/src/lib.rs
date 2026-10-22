@@ -86,13 +86,14 @@ mod windows {
         }
 
         fn get_process_thread_count(pid: u32) -> u32 {
+            use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
             use windows_sys::Win32::System::Diagnostics::ToolHelp::{
                 CreateToolhelp32Snapshot, PROCESSENTRY32, Process32First, Process32Next,
                 TH32CS_SNAPPROCESS,
             };
             unsafe {
                 let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-                if snapshot == 0 || snapshot == -1isize as HANDLE {
+                if snapshot.is_null() || snapshot == INVALID_HANDLE_VALUE {
                     return 1;
                 }
                 let mut pe: PROCESSENTRY32 = std::mem::zeroed();
@@ -122,10 +123,10 @@ mod windows {
             } else {
                 let mut h =
                     unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, pid) };
-                if h == 0 {
+                if h.is_null() {
                     h = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
                 }
-                if h == 0 {
+                if h.is_null() {
                     return None;
                 }
                 (h, true)
