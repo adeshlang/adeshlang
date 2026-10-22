@@ -58,11 +58,11 @@ fn test_absolute32_bounds_and_overflow() {
         i32::MIN
     );
 
-    // Overflow above u32::MAX (0x1_0000_0000)
+    // Overflow above Mach-O 64-bit image range (0x2_0000_0000)
     let reloc = Relocation::new(0, "overflow_hi", RelocationKind::Absolute32, 0);
     assert!(
         handler
-            .apply(&reloc, 0x1000, 0x1_0000_0000, 0, &mut image)
+            .apply(&reloc, 0x1000, 0x2_0000_0000, 0, &mut image)
             .is_err()
     );
 

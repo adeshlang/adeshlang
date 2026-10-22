@@ -211,6 +211,17 @@ impl MachOReader {
                 let is_defined = n_sect > 0;
                 let sec_idx = if is_defined && (n_sect as usize) <= obj.sections.len() {
                     Some((n_sect as usize) - 1)
+                } else if is_defined {
+                    return Err(LinkError::new(
+                        ErrorCode::InvalidObject,
+                        format!(
+                            "malformed Mach-O object `{}`: symbol `{}` references section index {} but object has only {} sections",
+                            path.display(),
+                            sym_name,
+                            n_sect,
+                            obj.sections.len()
+                        ),
+                    ));
                 } else {
                     None
                 };
@@ -301,6 +312,7 @@ impl MachOReader {
                 continue;
             }
             let mut r_i = 0;
+            let mut pending_addend: Option<i64> = None;
             while r_i < nreloc {
                 let r_off = reloff + r_i * 8;
                 if r_off + 8 > bytes.len() {
@@ -320,6 +332,20 @@ impl MachOReader {
                 let r_length = (r_word1 >> 25) & 3;
                 let r_extern = ((r_word1 >> 27) & 1) != 0;
                 let r_type = ((r_word1 >> 28) & 0xF) as u8;
+
+                // Handle ARM64_RELOC_ADDEND (type 10 on AArch64): r_symbolnum carries a 24-bit addend
+                // for the following relocation entry rather than a symbol index or section number.
+                if arch == Arch::AArch64 && r_type == 10 {
+                    let addend_24 = (r_word1 & 0x00FF_FFFF) as i32;
+                    let addend = if (addend_24 & 0x0080_0000) != 0 {
+                        (addend_24 | !0x00FF_FFFF) as i64
+                    } else {
+                        addend_24 as i64
+                    };
+                    pending_addend = Some(addend);
+                    r_i += 1;
+                    continue;
+                }
 
                 let is_subtractor =
                     (arch == Arch::X86_64 && r_type == 5) || (arch == Arch::AArch64 && r_type == 1);
@@ -415,32 +441,37 @@ impl MachOReader {
                     ));
                 };
 
-                let kind = match (arch, r_type, r_pcrel, r_length) {
-                    (Arch::AArch64, 2, true, _) => RelocationKind::AArch64Call26, // ARM64_RELOC_BRANCH26
-                    (Arch::AArch64, 3, true, _) => RelocationKind::AArch64Adrp, // ARM64_RELOC_PAGE21
-                    (Arch::AArch64, 4, false, _) => RelocationKind::AArch64AddLo12, // ARM64_RELOC_PAGEOFF12
-                    (Arch::AArch64, 5, true, _) => RelocationKind::AArch64Adrp, // ARM64_RELOC_GOT_LOAD_PAGE21
-                    (Arch::AArch64, 6, false, _) => RelocationKind::AArch64AddLo12, // ARM64_RELOC_GOT_LOAD_PAGEOFF12
-                    (Arch::AArch64, 0, false, 3) => RelocationKind::Absolute64, // ARM64_RELOC_UNSIGNED (len 3 = 8 bytes)
-                    (Arch::AArch64, 0, false, 2) => RelocationKind::Absolute32, // ARM64_RELOC_UNSIGNED (len 2 = 4 bytes)
-                    (Arch::X86_64, 1, true, 2) => RelocationKind::PcRelative32, // X86_64_RELOC_SIGNED
-                    (Arch::X86_64, 2, true, 2) => RelocationKind::PltRelative32, // X86_64_RELOC_BRANCH
-                    (Arch::X86_64, 3, true, 2) => RelocationKind::GotRelative32, // X86_64_RELOC_GOT_LOAD
-                    (Arch::X86_64, 4, true, 2) => RelocationKind::GotRelative32, // X86_64_RELOC_GOT
-                    (Arch::X86_64, 0, false, 3) => RelocationKind::Absolute64, // X86_64_RELOC_UNSIGNED (len 3 = 8 bytes)
-                    (Arch::X86_64, 0, false, 2) => RelocationKind::Absolute32, // X86_64_RELOC_UNSIGNED (len 2 = 4 bytes)
+                let (kind, extra_addend) = match (arch, r_type, r_pcrel, r_length) {
+                    (Arch::AArch64, 2, true, _) => (RelocationKind::AArch64Call26, 0), // ARM64_RELOC_BRANCH26
+                    (Arch::AArch64, 3, true, _) => (RelocationKind::AArch64Adrp, 0), // ARM64_RELOC_PAGE21
+                    (Arch::AArch64, 4, false, _) => (RelocationKind::AArch64AddLo12, 0), // ARM64_RELOC_PAGEOFF12
+                    (Arch::AArch64, 5, true, _) => (RelocationKind::AArch64Adrp, 0), // ARM64_RELOC_GOT_LOAD_PAGE21
+                    (Arch::AArch64, 6, false, _) => (RelocationKind::AArch64AddLo12, 0), // ARM64_RELOC_GOT_LOAD_PAGEOFF12
+                    (Arch::AArch64, 0, false, 3) => (RelocationKind::Absolute64, 0), // ARM64_RELOC_UNSIGNED (len 3 = 8 bytes)
+                    (Arch::AArch64, 0, false, 2) => (RelocationKind::Absolute32, 0), // ARM64_RELOC_UNSIGNED (len 2 = 4 bytes)
+                    (Arch::X86_64, 1, true, 2) => (RelocationKind::PcRelative32, 0), // X86_64_RELOC_SIGNED
+                    (Arch::X86_64, 2, true, 2) => (RelocationKind::PltRelative32, 0), // X86_64_RELOC_BRANCH
+                    (Arch::X86_64, 3, true, 2) => (RelocationKind::GotRelative32, 0), // X86_64_RELOC_GOT_LOAD
+                    (Arch::X86_64, 4, true, 2) => (RelocationKind::GotRelative32, 0), // X86_64_RELOC_GOT
+                    (Arch::X86_64, 6, true, 2) => (RelocationKind::PcRelative32, -1), // X86_64_RELOC_SIGNED_1
+                    (Arch::X86_64, 7, true, 2) => (RelocationKind::PcRelative32, -2), // X86_64_RELOC_SIGNED_2
+                    (Arch::X86_64, 8, true, 2) => (RelocationKind::PcRelative32, -4), // X86_64_RELOC_SIGNED_4
+                    (Arch::X86_64, 0, false, 3) => (RelocationKind::Absolute64, 0), // X86_64_RELOC_UNSIGNED (len 3 = 8 bytes)
+                    (Arch::X86_64, 0, false, 2) => (RelocationKind::Absolute32, 0), // X86_64_RELOC_UNSIGNED (len 2 = 4 bytes)
                     _ => {
-                        if r_pcrel {
+                        let k = if r_pcrel {
                             RelocationKind::PcRelative32
                         } else if r_length == 3 {
                             RelocationKind::Absolute64
                         } else {
                             RelocationKind::Absolute32
-                        }
+                        };
+                        (k, 0)
                     }
                 };
 
-                let mut reloc = Relocation::new(r_address as u64, sym_name, kind, 0);
+                let reloc_addend = pending_addend.take().unwrap_or(0) + extra_addend;
+                let mut reloc = Relocation::new(r_address as u64, sym_name, kind, reloc_addend);
                 reloc.file_index = Some(file_index);
                 if r_extern {
                     reloc.symbol_index = Some(r_symbolnum);
@@ -599,5 +630,66 @@ mod tests {
         // Section-based relocation resolves to the synthetic section symbol.
         assert_eq!(text_relocs[2].symbol_name, "__macho_sec_0_0");
         assert!(text_relocs[2].symbol_index.is_none());
+    }
+
+    #[test]
+    fn test_invalid_section_index_in_relocation_returns_lnk006() {
+        let mut bytes = build_anonymous_symbol_object();
+        // Modify relocation 2 (non-extern, offset 240) to reference section 548 instead of 1.
+        // Reloc 2 is at offset 224 + 2*8 = 240.
+        // Address: bytes 240..244; r_word1: bytes 244..248.
+        // r_word1 was 0x6000_0001 (r_symbolnum = 1). Set r_symbolnum = 548 (0x224).
+        let r_word1 = (0x6000_0000u32) | 548u32;
+        bytes[244..248].copy_from_slice(&r_word1.to_le_bytes());
+
+        let err = MachOReader::read(&bytes, std::path::Path::new("bad_sec.o"), 0)
+            .expect_err("Mach-O with section 548 relocation must fail validation");
+
+        assert_eq!(err.code, ErrorCode::InvalidObject);
+        assert_eq!(err.code.as_str(), "LNK006");
+        assert!(
+            err.message
+                .contains("references invalid section number 548"),
+            "Error message should mention section 548: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_invalid_symbol_index_in_extern_relocation_returns_lnk006() {
+        let mut bytes = build_anonymous_symbol_object();
+        // Modify relocation 0 (extern, offset 224) to reference symbol 99 instead of 0.
+        let r_word1 = (0x0A00_0000u32) | 99u32;
+        bytes[228..232].copy_from_slice(&r_word1.to_le_bytes());
+
+        let err = MachOReader::read(&bytes, std::path::Path::new("bad_sym.o"), 0)
+            .expect_err("Mach-O with symbol 99 relocation must fail validation");
+
+        assert_eq!(err.code, ErrorCode::InvalidObject);
+        assert_eq!(err.code.as_str(), "LNK006");
+        assert!(
+            err.message.contains("references symbol index 99"),
+            "Error message should mention symbol 99: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_symbol_referencing_out_of_range_section_returns_lnk006() {
+        let mut bytes = build_anonymous_symbol_object();
+        // Modify symbol 2 (offset 248 + 2*16 = 280) to reference section 200 instead of 1.
+        // Symbol struct: n_strx (4), n_type (1), n_sect (1) at offset 280+5 = 285.
+        bytes[285] = 200;
+
+        let err = MachOReader::read(&bytes, std::path::Path::new("bad_sym_sec.o"), 0)
+            .expect_err("Mach-O symbol referencing section 200 must fail validation");
+
+        assert_eq!(err.code, ErrorCode::InvalidObject);
+        assert_eq!(err.code.as_str(), "LNK006");
+        assert!(
+            err.message.contains("references section index 200"),
+            "Error message should mention section index 200: {}",
+            err.message
+        );
     }
 }

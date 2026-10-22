@@ -1710,7 +1710,14 @@ impl LayoutEngine {
                 {
                     let is_call = matches!(
                         reloc.kind,
-                        RelocationKind::PcRelative32 | RelocationKind::PcRelative64
+                        RelocationKind::PcRelative32
+                            | RelocationKind::PcRelative64
+                            | RelocationKind::PltRelative32
+                            | RelocationKind::GotRelative32
+                            | RelocationKind::AArch64Call26
+                            | RelocationKind::AArch64Adrp
+                            | RelocationKind::AArch64AddLo12
+                            | RelocationKind::AArch64LdSt64Lo12
                     );
                     if !is_call {
                         return Err(LinkError::new(

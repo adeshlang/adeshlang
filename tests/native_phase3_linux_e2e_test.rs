@@ -91,8 +91,8 @@ fn execute_elf(path: &Path) -> std::io::Result<std::process::Output> {
     }
 }
 
-/// Compile Adesh source text to a static Linux ELF binary, execute it, and return (stdout, exit_code).
-fn compile_link_and_run_linux(src: &str, test_name: &str) -> (String, i32) {
+/// Compile Adesh source text to a static Linux ELF binary, execute it, and return (stdout, exit_code, elf_path).
+fn compile_link_and_run_linux(src: &str, test_name: &str) -> (String, i32, std::path::PathBuf) {
     compile_link_and_run_linux_with_opt(src, test_name, None)
 }
 
@@ -100,7 +100,7 @@ fn compile_link_and_run_linux_with_opt(
     src: &str,
     test_name: &str,
     opt_level: Option<OptLevel>,
-) -> (String, i32) {
+) -> (String, i32, std::path::PathBuf) {
     let tokens = Lexer::new(src).tokenize().expect("tokenize");
     let mut parser = Parser::new(tokens, None);
     let ast = parser.parse_program().expect("parse");
@@ -123,10 +123,14 @@ fn compile_link_and_run_linux_with_opt(
         .join("linux_tests");
     std::fs::create_dir_all(&test_dir).expect("create test_dir");
 
-    let adob_path = test_dir.join(format!("{test_name}.adob"));
+    static TEST_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let count = TEST_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let unique_name = format!("{test_name}_{}_{}", std::process::id(), count);
+
+    let adob_path = test_dir.join(format!("{unique_name}.adob"));
     std::fs::write(&adob_path, bytes).expect("write ADOB file");
 
-    let elf_path = test_dir.join(format!("{test_name}.elf"));
+    let elf_path = test_dir.join(format!("{unique_name}.elf"));
     adesh_linker::link(&[&adob_path], &elf_path, Some("x86_64-unknown-linux-gnu"))
         .expect("native ELF link");
     assert!(elf_path.exists(), "linked ELF binary must exist");
@@ -142,14 +146,14 @@ fn compile_link_and_run_linux_with_opt(
     let out = execute_elf(&elf_path).expect("execute ELF binary");
     let code = out.status.code().unwrap_or(-1);
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-    (stdout, code)
+    (stdout, code, elf_path)
 }
 
 #[test]
 #[cfg(target_os = "linux")]
 fn test_linux_elf_size_optimization_levels_preserve_exit_code() {
     for (name, level) in [("os", OptLevel::Os), ("oz", OptLevel::Oz)] {
-        let (_, code) = compile_link_and_run_linux_with_opt(
+        let (_, code, _) = compile_link_and_run_linux_with_opt(
             "fn main(): int { let value: int = 40 + 2; return value; }",
             &format!("test_linux_size_{name}"),
             Some(level),
@@ -160,7 +164,7 @@ fn test_linux_elf_size_optimization_levels_preserve_exit_code() {
 
 #[test]
 fn test_linux_elf_start_synthesis_and_exit_code() {
-    let (_, code) = compile_link_and_run_linux(
+    let (_, code, _) = compile_link_and_run_linux(
         r#"
         fn main(): int {
             return 42;
@@ -173,7 +177,7 @@ fn test_linux_elf_start_synthesis_and_exit_code() {
 
 #[test]
 fn test_linux_elf_arithmetic_and_functions() {
-    let (_, code) = compile_link_and_run_linux(
+    let (_, code, _) = compile_link_and_run_linux(
         r#"
         fn add(a: int, b: int): int {
             return a + b;
@@ -196,7 +200,7 @@ fn test_linux_elf_arithmetic_and_functions() {
 
 #[test]
 fn test_linux_elf_control_flow_and_loops() {
-    let (_, code) = compile_link_and_run_linux(
+    let (_, code, _) = compile_link_and_run_linux(
         r#"
         fn main(): int {
             let sum = 0;
@@ -215,7 +219,7 @@ fn test_linux_elf_control_flow_and_loops() {
 
 #[test]
 fn test_linux_elf_match_and_branches() {
-    let (_, code) = compile_link_and_run_linux(
+    let (_, code, _) = compile_link_and_run_linux(
         r#"
         fn classify(n: int): int {
             let res = match n {
@@ -348,7 +352,7 @@ fn test_linux_elf_six_args_sysv_abi() {
 fn test_linux_elf_static_binary_segments_and_headers() {
     // Build its own binary: tests in one binary run in parallel, so this test
     // must not depend on a sibling test's output file.
-    let (_, code) = compile_link_and_run_linux(
+    let (_, code, elf_path) = compile_link_and_run_linux(
         r#"
 fn main(): int {
     return 42;
@@ -357,12 +361,6 @@ fn main(): int {
         "test_linux_static_headers",
     );
     assert_eq!(code, 42);
-
-    let test_dir = std::env::current_dir()
-        .unwrap()
-        .join("target")
-        .join("linux_tests");
-    let elf_path = test_dir.join("test_linux_static_headers.elf");
     assert!(elf_path.exists());
 
     let bytes = std::fs::read(&elf_path).expect("read elf");

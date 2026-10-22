@@ -351,7 +351,7 @@ impl HistoryStore {
             SessionStatus::Failed => "failed",
             SessionStatus::Terminated => "terminated",
         };
-        let duration_ms = duration_micros / 1000;
+        let duration_ms = (duration_micros / 1000) as i64;
         let redacted_error = error_message.map(|msg| crate::redaction::redact_text(msg).text);
 
         self.conn.execute(
@@ -389,22 +389,22 @@ impl HistoryStore {
             params![
                 session_id,
                 metric.cpu_percent,
-                metric.memory_rss_bytes,
-                metric.memory_peak_rss_bytes,
-                metric.memory_vms_bytes,
-                metric.thread_count,
-                metric.elapsed_micros,
+                metric.memory_rss_bytes as i64,
+                metric.memory_peak_rss_bytes as i64,
+                metric.memory_vms_bytes as i64,
+                metric.thread_count as i64,
+                metric.elapsed_micros as i64,
                 metric.timestamp_utc.to_rfc3339(),
-                metric.memory_static_bytes,
-                metric.memory_heap_bytes,
-                metric.memory_dynamic_bytes,
-                metric.memory_reused_bytes,
+                metric.memory_static_bytes as i64,
+                metric.memory_heap_bytes as i64,
+                metric.memory_dynamic_bytes as i64,
+                metric.memory_reused_bytes as i64,
                 metric.cores_used
             ],
         )?;
 
         // Update peak values and live resource counts in sessions table
-        let effective_peak_rss = metric.memory_peak_rss_bytes.max(metric.memory_rss_bytes);
+        let effective_peak_rss = metric.memory_peak_rss_bytes.max(metric.memory_rss_bytes) as i64;
         self.conn.execute(
             r#"
             UPDATE sessions SET
@@ -422,13 +422,13 @@ impl HistoryStore {
             params![
                 effective_peak_rss,
                 metric.cpu_percent,
-                metric.thread_count,
-                metric.peak_thread_count.max(metric.thread_count),
+                metric.thread_count as i64,
+                metric.peak_thread_count.max(metric.thread_count) as i64,
                 metric.cores_used,
-                metric.memory_static_bytes,
-                metric.memory_heap_bytes,
-                metric.memory_dynamic_bytes,
-                metric.memory_reused_bytes,
+                metric.memory_static_bytes as i64,
+                metric.memory_heap_bytes as i64,
+                metric.memory_dynamic_bytes as i64,
+                metric.memory_reused_bytes as i64,
                 session_id
             ],
         )?;
@@ -455,7 +455,7 @@ impl HistoryStore {
                 session_id,
                 stage.stage_name,
                 stage.input_file,
-                stage.duration_micros,
+                stage.duration_micros as i64,
                 if stage.success { 1 } else { 0 },
                 redacted_error,
                 meta_json
@@ -486,7 +486,7 @@ impl HistoryStore {
                 stage.symbol_count as i64,
                 stage.section_count as i64,
                 stage.output_size_bytes.map(|b| b as i64),
-                stage.duration_micros,
+                stage.duration_micros as i64,
                 if stage.success { 1 } else { 0 },
                 redacted_error
             ],
@@ -550,6 +550,7 @@ impl HistoryStore {
                 .map(str::to_owned)
                 .collect::<Vec<_>>();
             let mode = effective_execution_mode(mode, &command_args);
+            let duration_ms: Option<i64> = row.get(10)?;
             Ok(SessionSummary {
                 session_id: row.get(0)?,
                 pid: row.get(1)?,
@@ -561,7 +562,7 @@ impl HistoryStore {
                 exit_code: row.get(7)?,
                 start_time,
                 end_time,
-                duration_ms: row.get(10)?,
+                duration_ms: duration_ms.map(|d| d as u64),
                 peak_rss_bytes: row.get::<_, i64>(11)? as u64,
                 cpu_peak_percent: row.get::<_, f64>(12)? as f32,
                 redaction_count: row.get::<_, i64>(13)?.max(0) as u32,
@@ -638,6 +639,7 @@ impl HistoryStore {
                 .map(str::to_owned)
                 .collect::<Vec<_>>();
             let mode = effective_execution_mode(mode, &command_args);
+            let duration_ms: Option<i64> = row.get(12)?;
             let summary = SessionSummary {
                 session_id: row.get(0)?,
                 pid: row.get(1)?,
@@ -649,7 +651,7 @@ impl HistoryStore {
                 exit_code: row.get(9)?,
                 start_time,
                 end_time,
-                duration_ms: row.get(12)?,
+                duration_ms: duration_ms.map(|d| d as u64),
                 peak_rss_bytes: row.get::<_, i64>(13)? as u64,
                 cpu_peak_percent: row.get::<_, f64>(14)? as f32,
                 redaction_count: row.get::<_, i64>(15)?.max(0) as u32,
@@ -707,7 +709,7 @@ impl HistoryStore {
             Ok(CompilerStageEvent {
                 stage_name: row.get(0)?,
                 input_file: row.get(1)?,
-                duration_micros: row.get(2)?,
+                duration_micros: row.get::<_, i64>(2)? as u64,
                 success: row.get::<_, i32>(3)? != 0,
                 error_message: row.get(4)?,
                 metadata: meta,
@@ -742,7 +744,7 @@ impl HistoryStore {
                 symbol_count: row.get::<_, i64>(4)? as usize,
                 section_count: row.get::<_, i64>(5)? as usize,
                 output_size_bytes: row.get::<_, Option<i64>>(6)?.map(|b| b as u64),
-                duration_micros: row.get(7)?,
+                duration_micros: row.get::<_, i64>(7)? as u64,
                 success: row.get::<_, i32>(8)? != 0,
                 error_message: row.get(9)?,
             })
@@ -787,7 +789,7 @@ impl HistoryStore {
                 cpu_user_ms: 0,
                 cpu_sys_ms: 0,
                 timestamp_utc: ts,
-                elapsed_micros: row.get(5)?,
+                elapsed_micros: row.get::<_, i64>(5)? as u64,
                 memory_static_bytes: row.get::<_, i64>(7).unwrap_or(0).max(0) as u64,
                 memory_heap_bytes: row.get::<_, i64>(8).unwrap_or(0).max(0) as u64,
                 memory_dynamic_bytes: row.get::<_, i64>(9).unwrap_or(0).max(0) as u64,

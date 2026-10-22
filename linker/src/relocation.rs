@@ -260,7 +260,10 @@ impl RelocationHandler for DefaultRelocationHandler {
                         ));
                     }
                 };
-                if val >= i32::MIN as i64 && val <= u32::MAX as i64 {
+                // Valid 32-bit value range: signed i32 / unsigned u32, or 64-bit addresses in 0x1_0000_0000..=0x1_FFFF_FFFF (Mach-O 64-bit image base 0x100000000)
+                if (val >= i32::MIN as i64 && val <= u32::MAX as i64)
+                    || (val >= 0x1_0000_0000 && val <= 0x1_FFFF_FFFF)
+                {
                     let val32 = val as u32;
                     target_slice.copy_from_slice(&val32.to_le_bytes());
                 } else {
