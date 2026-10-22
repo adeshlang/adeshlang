@@ -457,7 +457,7 @@ impl MachOReader {
                     (Arch::X86_64, 7, true, 2) => (RelocationKind::PcRelative32, -2), // X86_64_RELOC_SIGNED_2
                     (Arch::X86_64, 8, true, 2) => (RelocationKind::PcRelative32, -4), // X86_64_RELOC_SIGNED_4
                     (Arch::X86_64, 0, false, 3) => (RelocationKind::Absolute64, 0), // X86_64_RELOC_UNSIGNED (len 3 = 8 bytes)
-                    (Arch::X86_64, 0, false, 2) => (RelocationKind::Absolute32, 0), // X86_64_RELOC_UNSIGNED (len 2 = 4 bytes)
+                    (Arch::X86_64, 0, false, 2) => (RelocationKind::Absolute64, 0), // Mach-O 64-bit non-extern relocations with r_length=2 on x86_64 carry a 64-bit virtual address (target_va) in the section payload; mapping as Absolute64 prevents false ABS32 overflow (0x100000000+ VAs)
                     _ => {
                         let k = if r_pcrel {
                             RelocationKind::PcRelative32
