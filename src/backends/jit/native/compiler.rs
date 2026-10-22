@@ -36,6 +36,12 @@ pub struct NativeJitCompiler {
     global_vars: HashMap<String, cranelift_module::DataId>,
     /// Global variable types
     global_types: HashMap<String, crate::backends::common::lir::LirType>,
+    /// Globals pre-bound from imported modules (name -> exported `Value`), made
+    /// available to the compiled `main` natively.
+    prebound_globals: HashMap<String, crate::parsing::ast::Value>,
+    /// Leaked pointers to the pre-bound `Value`s, kept alive for the duration
+    /// of the program.
+    prebound_globals_ptrs: Vec<*mut crate::parsing::ast::Value>,
     /// Cached extra string data IDs (format strings, ANSI codes, etc.)
     format_strings: HashMap<String, cranelift_module::DataId>,
     /// Map of function name -> return type (for correct call result typing)
@@ -170,9 +176,17 @@ impl NativeJitCompiler {
             string_pool: Vec::new(),
             global_vars: HashMap::new(),
             global_types: HashMap::new(),
+            prebound_globals: HashMap::new(),
+            prebound_globals_ptrs: Vec::new(),
             format_strings: HashMap::new(),
             function_return_types: HashMap::new(),
         })
+    }
+
+    /// Register a global that was imported from another module, so the
+    /// compiled `main` can reference it natively.
+    pub fn bind_prebound_global(&mut self, name: String, value: crate::parsing::ast::Value) {
+        self.prebound_globals.insert(name, value);
     }
 
     /// Compile a LIR module to native code
@@ -324,6 +338,34 @@ impl NativeJitCompiler {
                 .map_err(|e| format!("Failed to define global data {}: {}", name, e))?;
 
             self.global_vars.insert(name.clone(), data_id);
+        }
+
+        // Declare and initialize globals pre-bound from imported modules so the
+        // compiled `main` can reference them natively. Each is stored as a
+        // pointer to a leaked `Value`.
+        for (name, value) in &self.prebound_globals {
+            if self.global_vars.contains_key(name) {
+                continue;
+            }
+            let data_name = format!("__global_{}", name);
+            let size = 8usize.max(1);
+            let mut data_desc = DataDescription::new();
+            let leaked: *mut crate::parsing::ast::Value = Box::into_raw(Box::new(value.clone()));
+            let init_bytes = leaked as u64 as usize;
+            data_desc.define(vec![init_bytes as u8; size].into_boxed_slice());
+            data_desc.set_align(8);
+
+            let data_id = self
+                .module
+                .declare_data(&data_name, Linkage::Local, true, false)
+                .map_err(|e| format!("Failed to declare imported global data {}: {}", name, e))?;
+
+            self.module
+                .define_data(data_id, &data_desc)
+                .map_err(|e| format!("Failed to define imported global data {}: {}", name, e))?;
+
+            self.global_vars.insert(name.clone(), data_id);
+            self.prebound_globals_ptrs.push(leaked);
         }
 
         Ok(())

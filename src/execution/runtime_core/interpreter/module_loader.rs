@@ -23,4 +23,9 @@ impl ModuleLoader {
             cache: HashMap::default(),
         }
     }
+
+    /// Get the cached exported object for a module path, if it has been loaded.
+    pub fn get_cached(&self, path: &str) -> Option<&Value> {
+        self.cache.get(path)
+    }
 }

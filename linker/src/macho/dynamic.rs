@@ -78,6 +78,12 @@ pub const BIND_SYMBOL_FLAGS_WEAK_IMPORT: u8 = 0x1;
 pub const DYLD_STUB_BINDER: &str = "dyld_stub_binder";
 pub const LIBSYSTEM_ORDINAL: u8 = 1;
 
+/// dyld's thread-local-variable bootstrap accessor. Each
+/// `S_THREAD_LOCAL_VARIABLES` descriptor's `thunk` field is bound to it; the
+/// address only exists once the image is loaded, so it is a data bind and not
+/// a call — it owns no `__la_symbol_ptr` slot and no lazy stub.
+pub const TLV_BOOTSTRAP: &str = "__tlv_bootstrap";
+
 // ─── export trie flags ─────────────────────────────────────────────────────
 
 pub const EXPORT_SYMBOL_FLAGS_KIND_MASK: u64 = 0x03;
@@ -109,6 +115,18 @@ pub struct MachOExport {
     pub address: u64,
 }
 
+/// A non-lazy data bind the layout stage produced but the writer cannot
+/// synthesize itself: `(virtual address of the pointer slot, bind symbol,
+/// addend)`. Today this is exactly the TLV descriptor thunk fields that point
+/// at `__tlv_bootstrap`; the slot lives in `__DATA`, so the writer maps the VA
+/// to `(segment_index, offset)` when it emits the bind stream.
+#[derive(Debug, Clone)]
+pub struct MachODataBind {
+    pub va: u64,
+    pub symbol: String,
+    pub addend: i64,
+}
+
 /// Everything the Mach-O writer needs to emit `LC_DYLD_INFO_ONLY` and the
 /// indirect symbol table. Assembled by the linker from layout results.
 #[derive(Debug, Clone, Default)]
@@ -119,6 +137,10 @@ pub struct MachODynamicInfo {
     /// Virtual addresses of 64-bit pointer words baked at link time that the
     /// loader must rebase when the image slides (PIE). Sorted by the writer.
     pub rebases: Vec<u64>,
+    /// Non-lazy data binds recorded by the layout stage (TLV descriptor
+    /// thunks). Merged with the writer's own `dyld_stub_binder` GOT bind when
+    /// the bind stream is encoded.
+    pub binds: Vec<MachODataBind>,
     /// Exports of a shared library (empty for executables).
     pub exports: Vec<MachOExport>,
 }

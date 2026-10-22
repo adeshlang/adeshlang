@@ -47,6 +47,9 @@ pub struct LayoutEngine {
     /// Virtual addresses of 64-bit pointer words baked at link time that
     /// dyld must rebase when the (always-PIE) image slides.
     pub macho_rebases: Vec<u64>,
+    /// Pointer-sized slots the Mach-O writer must add to the dyld bind stream
+    /// (TLV descriptor thunks bound to dyld's `__tlv_bootstrap`).
+    pub macho_binds: Vec<crate::macho::dynamic::MachODataBind>,
     /// Non-fatal issues encountered while relocating (e.g. weak/internal
     /// symbols that could not be resolved and were routed to a trap stub).
     pub warnings: Vec<String>,
@@ -66,6 +69,7 @@ impl LayoutEngine {
             elf_dynamic_relocs: Vec::new(),
             macho_imports: Vec::new(),
             macho_rebases: Vec::new(),
+            macho_binds: Vec::new(),
             warnings: Vec::new(),
         }
     }
@@ -125,6 +129,15 @@ impl LayoutEngine {
             flags::READ | flags::ALLOC,
             4,
         );
+        // Mach-O `__DATA,__thread_vars`: the table of 24-byte TLV descriptors
+        // the static linker rewrites. Kept separate from the TLS block because
+        // its bytes are link-time descriptors, not per-thread storage.
+        let mut tlv_merged = MergedSection::new(
+            "__thread_vars",
+            SectionKind::Data,
+            flags::READ | flags::WRITE | flags::ALLOC | flags::TLV_TABLE,
+            8,
+        );
 
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         enum SectionCat {
@@ -133,6 +146,7 @@ impl LayoutEngine {
             Data,
             Bss,
             Tls,
+            TlvVars,
             Meta,
             EhFrame,
             EhFrameHdr,
@@ -239,7 +253,13 @@ impl LayoutEngine {
                     continue;
                 }
 
-                if matches!(sec.kind, SectionKind::TData | SectionKind::TBss)
+                if sec.flags & crate::section::flags::TLV_TABLE != 0 {
+                    // Mach-O `S_THREAD_LOCAL_VARIABLES`: a table of linker-
+                    // rewritten descriptors. It is read/write *image* data, not
+                    // per-thread storage, so it must stay out of the TLS block.
+                    let off = tlv_merged.append_section(sec, f_idx, s_idx);
+                    sec_placement.insert((f_idx, s_idx), (SectionCat::TlvVars, off));
+                } else if matches!(sec.kind, SectionKind::TData | SectionKind::TBss)
                     || (sec.flags & crate::section::flags::TLS != 0)
                     || sec.name.starts_with(".tls")
                 {
@@ -341,12 +361,13 @@ impl LayoutEngine {
         }
         if target.format != crate::target::ObjectFormat::Pe
             && target.format != crate::target::ObjectFormat::Elf
+            && target.format != crate::target::ObjectFormat::MachO
             && tls_merged.size > 0
         {
-            // Other output writers do not yet emit their runtime TLS
-            // descriptors (e.g. Mach-O TLV). Refuse a binary with
-            // thread-local data in an ordinary loadable section rather
-            // than pretending it has per-thread storage.
+            // Writers other than PE, ELF and Mach-O do not yet emit their
+            // runtime TLS descriptors. Refuse a binary with thread-local data
+            // in an ordinary loadable section rather than pretending it has
+            // per-thread storage.
             return Err(LinkError::new(
                 ErrorCode::UnsupportedRelocation,
                 format!(
@@ -756,6 +777,13 @@ impl LayoutEngine {
         if data_merged.size > 0 || !data_merged.data.is_empty() {
             cat_to_idx.insert(SectionCat::Data, merged_list.len());
             merged_list.push(data_merged);
+        }
+        // The TLV descriptor table is ordinary writable image data whose bytes
+        // the linker rewrites, so it belongs with the other data sections and
+        // before the zero-fill groups.
+        if tlv_merged.size > 0 || !tlv_merged.data.is_empty() {
+            cat_to_idx.insert(SectionCat::TlvVars, merged_list.len());
+            merged_list.push(tlv_merged);
         }
         if bss_merged.size > 0 || !bss_merged.data.is_empty() {
             cat_to_idx.insert(SectionCat::Bss, merged_list.len());
@@ -1576,6 +1604,7 @@ impl LayoutEngine {
             .map(|imp| imp.raw_name.as_str())
             .collect();
         let mut macho_rebases: Vec<u64> = Vec::new();
+        let mut macho_binds: Vec<crate::macho::dynamic::MachODataBind> = Vec::new();
 
         for merged in &mut merged_list {
             if merged.kind == SectionKind::Bss {
@@ -1699,6 +1728,52 @@ impl LayoutEngine {
                         }
                     }
                 };
+
+                // Mach-O TLV descriptors (`__DATA,__thread_vars`): the 24-byte
+                // records are `(thunk, key, offset)` and the static linker
+                // rewrites the two relocated fields. Neither is an ordinary
+                // absolute address:
+                //   thunk  — dyld's bootstrap accessor lives in libSystem,
+                //              whose load address is unknown here, so the word
+                //              is zeroed and recorded in the bind stream.
+                //   offset — the variable's offset within the per-thread block
+                //              (`_tlv_get_addr() + offset`), so it is a
+                //              constant that survives ASLR and must be written
+                //              without a rebase entry.
+                if target.format == crate::target::ObjectFormat::MachO
+                    && merged.flags & crate::section::flags::TLV_TABLE != 0
+                    && reloc.kind == RelocationKind::Absolute64
+                {
+                    let off = reloc.offset as usize;
+                    if off + 8 > merged.data.len() {
+                        return Err(LinkError::new(
+                            ErrorCode::RelocationOverflow,
+                            format!(
+                                "TLV descriptor relocation at {}+0x{:x} exceeds section size",
+                                merged.name, reloc.offset
+                            ),
+                        ));
+                    }
+                    if reloc.symbol_name.trim_start_matches('_') == "tlv_bootstrap" {
+                        merged.data[off..off + 8].copy_from_slice(&0u64.to_le_bytes());
+                        macho_binds.push(crate::macho::dynamic::MachODataBind {
+                            va: place_va,
+                            symbol: crate::macho::dynamic::TLV_BOOTSTRAP.to_string(),
+                            addend: reloc.addend,
+                        });
+                        continue;
+                    }
+                    if let (Some(tls_base), Some(tls_memsz)) = (tls_sec_va, tls_sec_memsz)
+                        && sym_va >= tls_base
+                        && sym_va < tls_base + tls_memsz
+                    {
+                        let val = (sym_va as i64)
+                            .wrapping_add(reloc.addend)
+                            .wrapping_sub(tls_base as i64) as u64;
+                        merged.data[off..off + 8].copy_from_slice(&val.to_le_bytes());
+                        continue;
+                    }
+                }
 
                 // Mach-O imports are reachable ONLY through their proxy
                 // stub by a PC-relative call/jump. Any other relocation
@@ -2409,6 +2484,7 @@ impl LayoutEngine {
         self.elf_got_slots = elf_got_map;
         self.macho_imports = macho_imports;
         self.macho_rebases = macho_rebases;
+        self.macho_binds = macho_binds;
 
         self.merged_sections = merged_list;
         self.resolved_symbols = final_symbols;

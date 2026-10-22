@@ -2,6 +2,7 @@
 
 use crate::error::{ErrorCode, LinkError, LinkResult};
 use crate::macho::header::*;
+use crate::macho::reloc::*;
 use crate::object::ObjectFile;
 use crate::relocation::{Relocation, RelocationKind};
 use crate::section::{Section, SectionKind, flags};
@@ -90,25 +91,50 @@ impl MachOReader {
                         u32::from_le_bytes(bytes[sect_off + 48..sect_off + 52].try_into().unwrap())
                             as usize;
                     let align = 1u64 << bytes[sect_off + 52];
+                    let sect_flags =
+                        u32::from_le_bytes(bytes[sect_off + 64..sect_off + 68].try_into().unwrap());
 
-                    let kind = if name.contains("text") {
-                        SectionKind::Text
-                    } else if name.contains("data") {
-                        SectionKind::Data
-                    } else if name.contains("bss") {
-                        SectionKind::Bss
-                    } else if name.contains("adesh") {
-                        SectionKind::AdeshMeta
-                    } else {
-                        SectionKind::Rodata
+                    // Mach-O carries the semantics that matter in the section
+                    // TYPE (low byte), not the name: `__thread_bss` and
+                    // `.bss` are the same kind of storage, and a thread-local
+                    // descriptor table is only recognisable by its type. Name
+                    // matching is left as the fallback for typeless sections.
+                    let sect_type = sect_flags & SECTION_TYPE;
+                    let kind = match sect_type {
+                        S_THREAD_LOCAL_REGULAR => SectionKind::TData,
+                        S_THREAD_LOCAL_ZEROFILL => SectionKind::TBss,
+                        S_THREAD_LOCAL_VARIABLES => SectionKind::Data,
+                        _ => {
+                            if name.contains("text") {
+                                SectionKind::Text
+                            } else if name.contains("data") {
+                                SectionKind::Data
+                            } else if name.contains("bss") {
+                                SectionKind::Bss
+                            } else if name.contains("adesh") {
+                                SectionKind::AdeshMeta
+                            } else {
+                                SectionKind::Rodata
+                            }
+                        }
                     };
+                    let is_thread_local = matches!(
+                        sect_type,
+                        S_THREAD_LOCAL_REGULAR | S_THREAD_LOCAL_ZEROFILL | S_THREAD_LOCAL_VARIABLES
+                    );
+                    // Thread-local sections hold pointers and 8-byte-aligned
+                    // variables. Assembler alignment for a `.section
+                    // __DATA,__thread_vars` directive can be reported as 1,
+                    // which would emit unaligned TLV descriptors.
+                    let align = if is_thread_local { align.max(8) } else { align };
 
-                    let data =
-                        if kind != SectionKind::Bss && file_off + (size as usize) <= bytes.len() {
-                            bytes[file_off..file_off + (size as usize)].to_vec()
-                        } else {
-                            Vec::new()
-                        };
+                    let data = if !matches!(kind, SectionKind::Bss | SectionKind::TBss)
+                        && file_off + (size as usize) <= bytes.len()
+                    {
+                        bytes[file_off..file_off + (size as usize)].to_vec()
+                    } else {
+                        Vec::new()
+                    };
 
                     let reloff = if sect_off + 64 <= bytes.len() {
                         u32::from_le_bytes(bytes[sect_off + 56..sect_off + 60].try_into().unwrap())
@@ -123,21 +149,34 @@ impl MachOReader {
                         0
                     };
 
+                    let mut sec_flags = flags::READ | flags::ALLOC;
+                    if kind == SectionKind::Text {
+                        sec_flags |= flags::EXEC;
+                    }
+                    if matches!(
+                        kind,
+                        SectionKind::Data
+                            | SectionKind::Bss
+                            | SectionKind::TData
+                            | SectionKind::TBss
+                    ) {
+                        sec_flags |= flags::WRITE;
+                    }
+                    // The descriptor table is thread-related but is NOT part
+                    // of the per-thread block: it is ordinary (writable) image
+                    // data that dyld rewrites at load.
+                    match sect_type {
+                        S_THREAD_LOCAL_REGULAR | S_THREAD_LOCAL_ZEROFILL => {
+                            sec_flags |= flags::TLS;
+                        }
+                        S_THREAD_LOCAL_VARIABLES => sec_flags |= flags::TLV_TABLE,
+                        _ => {}
+                    }
+
                     let sec = Section {
                         name,
                         kind,
-                        flags: flags::READ
-                            | flags::ALLOC
-                            | if kind == SectionKind::Text {
-                                flags::EXEC
-                            } else {
-                                0
-                            }
-                            | if kind == SectionKind::Data || kind == SectionKind::Bss {
-                                flags::WRITE
-                            } else {
-                                0
-                            },
+                        flags: sec_flags,
                         alignment: align,
                         virtual_address: addr,
                         file_offset: file_off as u64,
@@ -232,13 +271,27 @@ impl MachOReader {
                     SymbolBinding::Local
                 };
 
+                // A defined Mach-O symbol's `n_value` is an address in the
+                // object's unified section-address space, not an offset inside
+                // its section. Every other reader here reports section-relative
+                // offsets and the layout stage computes
+                // `section_va + offset_in_merged + symbol.value`, so convert.
+                // (`__text` of a relocatable object is addressed from 0, which
+                // is why the difference is usually invisible — but not for
+                // `__thread_bss`/`__thread_vars`, where it silently points
+                // every TLV descriptor at the wrong variable.)
+                let sym_value = match sec_idx {
+                    Some(idx) => n_value.wrapping_sub(obj.sections[idx].virtual_address),
+                    None => n_value,
+                };
+
                 let sym = Symbol {
                     name: sym_name,
                     binding,
                     visibility: SymbolVisibility::Default,
                     sym_type: SymbolType::Function,
                     section_index: sec_idx,
-                    value: n_value,
+                    value: sym_value,
                     size: 0,
                     is_defined,
                     is_imported: !is_defined,
@@ -331,11 +384,11 @@ impl MachOReader {
                 let r_pcrel = ((r_word1 >> 24) & 1) != 0;
                 let r_length = (r_word1 >> 25) & 3;
                 let r_extern = ((r_word1 >> 27) & 1) != 0;
-                let r_type = ((r_word1 >> 28) & 0xF) as u8;
+                let r_type = (r_word1 >> 28) & 0xF;
 
                 // Handle ARM64_RELOC_ADDEND (type 10 on AArch64): r_symbolnum carries a 24-bit addend
                 // for the following relocation entry rather than a symbol index or section number.
-                if arch == Arch::AArch64 && r_type == 10 {
+                if arch == Arch::AArch64 && r_type == ARM64_RELOC_ADDEND {
                     let addend_24 = (r_word1 & 0x00FF_FFFF) as i32;
                     let addend = if (addend_24 & 0x0080_0000) != 0 {
                         (addend_24 | !0x00FF_FFFF) as i64
@@ -347,8 +400,8 @@ impl MachOReader {
                     continue;
                 }
 
-                let is_subtractor =
-                    (arch == Arch::X86_64 && r_type == 5) || (arch == Arch::AArch64 && r_type == 1);
+                let is_subtractor = (arch == Arch::X86_64 && r_type == X86_64_RELOC_SUBTRACTOR)
+                    || (arch == Arch::AArch64 && r_type == ARM64_RELOC_SUBTRACTOR);
 
                 if is_subtractor {
                     if r_i + 1 >= nreloc {
@@ -376,7 +429,7 @@ impl MachOReader {
                         u32::from_le_bytes(bytes[r_off2 + 4..r_off2 + 8].try_into().unwrap());
                     let r_pcrel2 = ((r_word1_2 >> 24) & 1) != 0;
                     let r_length2 = (r_word1_2 >> 25) & 3;
-                    let r_type2 = ((r_word1_2 >> 28) & 0xF) as u8;
+                    let r_type2 = (r_word1_2 >> 28) & 0xF;
 
                     if r_address2 != r_address
                         || r_type2 != 0
@@ -447,6 +500,16 @@ impl MachOReader {
                     (Arch::AArch64, 4, false, _) => (RelocationKind::AArch64AddLo12, 0), // ARM64_RELOC_PAGEOFF12
                     (Arch::AArch64, 5, true, _) => (RelocationKind::AArch64Adrp, 0), // ARM64_RELOC_GOT_LOAD_PAGE21
                     (Arch::AArch64, 6, false, _) => (RelocationKind::AArch64AddLo12, 0), // ARM64_RELOC_GOT_LOAD_PAGEOFF12
+                    // Thread-local access pair: `adrp xN, desc@TLVPPAGE` +
+                    // `ldr xN, [xN, desc@TLVPPAGEOFF]`. The linker resolves
+                    // both against the descriptor and rewrites the load into
+                    // an `add`, so the register ends up holding the descriptor
+                    // address rather than `*descriptor`.
+                    (Arch::AArch64, 8, true, _) => (RelocationKind::AArch64Adrp, 0), // ARM64_RELOC_TLVP_LOAD_PAGE21
+                    (Arch::AArch64, 9, false, _) => (RelocationKind::AArch64TlvDescriptorLo12, 0), // ARM64_RELOC_TLVP_LOAD_PAGEOFF12
+                    // `movq desc@TLV(%rip), %rdi` + `call *(%rdi)`: same shape
+                    // on x86-64, resolved by rewriting the load into a `leaq`.
+                    (Arch::X86_64, 9, true, 2) => (RelocationKind::X86_64TlvDescriptorRel32, 0), // X86_64_RELOC_TLV
                     (Arch::AArch64, 0, false, 3) => (RelocationKind::Absolute64, 0), // ARM64_RELOC_UNSIGNED (len 3 = 8 bytes)
                     (Arch::AArch64, 0, false, 2) => (RelocationKind::Absolute32, 0), // ARM64_RELOC_UNSIGNED (len 2 = 4 bytes)
                     (Arch::X86_64, 1, true, 2) => (RelocationKind::PcRelative32, 0), // X86_64_RELOC_SIGNED

@@ -20,11 +20,16 @@ pub const MH_TWOLEVEL: u32 = 0x80;
 pub const MH_PIE: u32 = 0x200000;
 
 // Section types (low byte of section flags)
+pub const SECTION_TYPE: u32 = 0xFF;
 pub const S_REGULAR: u32 = 0x0;
 pub const S_ZEROFILL: u32 = 0x1;
 pub const S_NON_LAZY_SYMBOL_POINTERS: u32 = 0x6;
 pub const S_LAZY_SYMBOL_POINTERS: u32 = 0x7;
 pub const S_SYMBOL_STUBS: u32 = 0x8;
+pub const S_THREAD_LOCAL_REGULAR: u32 = 0x11;
+pub const S_THREAD_LOCAL_ZEROFILL: u32 = 0x12;
+pub const S_THREAD_LOCAL_VARIABLES: u32 = 0x13;
+pub const S_THREAD_LOCAL_VARIABLE_POINTERS: u32 = 0x14;
 
 // Section attribute flags (high bits of section flags)
 pub const S_ATTR_SOME_INSTRUCTIONS: u32 = 0x00000400;

@@ -1,0 +1,5 @@
+import "./math.adesh" as math;
+
+print("add(2, 3) = " + math.add(2, 3));
+print("mul(4, 5) = " + math.mul(4, 5));
+print("PI = " + math.PI);

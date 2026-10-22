@@ -123,6 +123,8 @@ impl AdobV2 {
                     RelocationKind::AArch64Adrp => 21,
                     RelocationKind::AArch64AddLo12 => 22,
                     RelocationKind::AArch64LdSt64Lo12 => 23,
+                    RelocationKind::AArch64TlvDescriptorLo12 => 24,
+                    RelocationKind::X86_64TlvDescriptorRel32 => 25,
                     _ => 0,
                 };
                 buf.push(r_kind_id);
@@ -275,6 +277,8 @@ impl AdobV2 {
                     21 => RelocationKind::AArch64Adrp,
                     22 => RelocationKind::AArch64AddLo12,
                     23 => RelocationKind::AArch64LdSt64Lo12,
+                    24 => RelocationKind::AArch64TlvDescriptorLo12,
+                    25 => RelocationKind::X86_64TlvDescriptorRel32,
                     _ => RelocationKind::Absolute64,
                 };
 

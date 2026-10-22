@@ -127,7 +127,10 @@ fn parse_macho(bytes: &[u8]) -> ParsedMachO {
     let magic = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
     assert_eq!(magic, 0xFEEDFACF, "not a 64-bit Mach-O image");
     let cputype = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
-    assert_eq!(cputype, 0x01000007, "not an x86_64 image");
+    assert!(
+        matches!(cputype, 0x01000007 | 0x0100000C),
+        "not an x86_64 or arm64 image"
+    );
 
     let filetype = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
     let ncmds = u32::from_le_bytes(bytes[16..20].try_into().unwrap());
@@ -1009,4 +1012,172 @@ fn text_section_named<'a>(image: &'a ParsedMachO, name: &str) -> &'a SectionReco
         .flat_map(|s| s.sections.iter())
         .find(|s| s.sectname == name)
         .unwrap_or_else(|| panic!("section {} missing", name))
+}
+/// arm64 thread-local access: `adrp x0, desc@TLVPPAGE` +
+/// `ldr x0, [x0, desc@TLVPPAGEOFF]` + `ret`, plus the 24-byte descriptor
+/// in `__thread_vars` and the variable's storage in `__thread_bss`.
+fn object_arm64_tlv() -> ObjectFile {
+    let dir = tempdir().unwrap();
+    let obj_path = dir.path().join("main.o");
+    let target = Target::from_triple("aarch64-darwin").unwrap();
+    let mut obj = ObjectFile::new(obj_path, target, 0);
+
+    let mut text = Section::new_code(
+        ".text",
+        vec![
+            0x00, 0x00, 0x00, 0x90, // adrp x0, #imm
+            0x00, 0x00, 0x40, 0xF9, // ldr x0, [x0]  (rewritten to `add` by the linker)
+            0xC0, 0x03, 0x5F, 0xD6, // ret
+        ],
+        16,
+    );
+    text.relocations
+        .push(Relocation::new(0, "_DESC", RelocationKind::AArch64Adrp, 0));
+    text.relocations.push(Relocation::new(
+        4,
+        "_DESC",
+        RelocationKind::AArch64TlvDescriptorLo12,
+        0,
+    ));
+    obj.add_section(text);
+
+    let mut tlv = Section::new_data("__thread_vars", vec![0u8; 24], true, 8);
+    tlv.flags |= adesh_linker::section::flags::TLV_TABLE;
+    tlv.relocations.push(Relocation::new(
+        0,
+        "__tlv_bootstrap",
+        RelocationKind::Absolute64,
+        0,
+    ));
+    tlv.relocations.push(Relocation::new(
+        16,
+        "_VAR$tlv$init",
+        RelocationKind::Absolute64,
+        0,
+    ));
+    obj.add_section(tlv);
+
+    let mut tbss = Section::new_bss("__thread_bss", 8, 8);
+    tbss.kind = adesh_linker::section::SectionKind::TBss;
+    tbss.flags |= adesh_linker::section::flags::TLS;
+    obj.add_section(tbss);
+
+    obj.add_symbol(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        12,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_defined(
+        "_VAR$tlv$init",
+        SymbolBinding::Global,
+        SymbolType::Tls,
+        2,
+        0,
+        8,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_defined(
+        "_DESC",
+        SymbolBinding::Global,
+        SymbolType::Object,
+        1,
+        0,
+        24,
+        0,
+    ));
+    obj
+}
+
+/// Mach-O TLV support end to end: descriptor table and TLS block emitted
+/// with the section types dyld looks for, the accessor rewritten from `ldr`
+/// to `add`, the descriptor `offset` relative to the TLS block, and the
+/// bootstrap thunk expressed as a load-time bind (libSystem's address is
+/// unknowable at link time, so a rebase cannot express it).
+#[test]
+fn test_macho_arm64_thread_local_variables() {
+    let dir = tempdir().unwrap();
+    let out = dir.path().join("prog");
+    let target = Target::from_triple("aarch64-darwin").unwrap();
+    let obj_path = dir.path().join("main.o");
+    let obj = object_arm64_tlv();
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    let config = LinkConfig::new(out.clone(), target);
+    Linker::link(&[obj_path], config).expect("TLV link");
+
+    let bytes = std::fs::read(&out).unwrap();
+    let image = parse_macho(&bytes);
+
+    let data = image
+        .segments
+        .iter()
+        .find(|s| s.segname == "__DATA")
+        .expect("__DATA");
+    let vars = text_section_of(data, "__thread_vars");
+    let tbss = text_section_of(data, "__thread_bss");
+    assert_eq!(
+        vars.flags & 0xFF,
+        0x13,
+        "__thread_vars must be S_THREAD_LOCAL_VARIABLES"
+    );
+    assert_eq!(
+        tbss.flags & 0xFF,
+        0x12,
+        "__thread_bss must be S_THREAD_LOCAL_ZEROFILL"
+    );
+
+    // Descriptor: thunk zeroed (bound at load time), key zero, and `offset`
+    // measured from the start of the per-thread block.
+    let (thunk, key, offset) = unsafe {
+        let p = bytes.as_ptr().add(vars.offset as usize);
+        (
+            std::ptr::read_unaligned(p as *const u64),
+            std::ptr::read_unaligned(p.add(8) as *const u64),
+            std::ptr::read_unaligned(p.add(16) as *const u64),
+        )
+    };
+    assert_eq!((thunk, key), (0, 0), "thunk and key are link-time unknowns");
+    assert_eq!(
+        offset, 0,
+        "the only TLS variable sits at the start of the thread block"
+    );
+
+    // `ldr` → `add`: same register pair, unscaled page offset of the descriptor.
+    let text = text_section_named(&image, ".text");
+    let access = u32::from_le_bytes(
+        bytes[text.offset as usize + 4..text.offset as usize + 8]
+            .try_into()
+            .unwrap(),
+    );
+    let desc_va = vars.addr;
+    assert_eq!(
+        access,
+        0x9100_0000 | (((desc_va & 0xFFF) as u32) << 10),
+        "accessor must become `add x0, x0, #0x{:x}`",
+        desc_va & 0xFFF
+    );
+    assert_eq!(
+        access & 0xFFC0_0000,
+        0x9100_0000,
+        "the rewritten instruction must be a 64-bit `add` immediate"
+    );
+
+    // Bootstrap thunk bound at load time from libSystem (ordinal 1).
+    let info = image.dyld_info.expect("LC_DYLD_INFO_ONLY");
+    let bind = decode_bind_stream_for_test(
+        &bytes[info.bind_off as usize..(info.bind_off + info.bind_size) as usize],
+    );
+    assert!(
+        bind.iter()
+            .any(|(seg, off, kind, ordinal, sym, _)| *seg == 2
+                && *sym == "__tlv_bootstrap"
+                && *kind == BIND_TYPE_POINTER
+                && *ordinal == 1
+                && *off == desc_va - data.vmaddr),
+        "bind stream must bind __tlv_bootstrap into the descriptor thunk, got {bind:?}"
+    );
 }

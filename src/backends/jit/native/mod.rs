@@ -36,11 +36,14 @@ pub struct NativeJitProfileStats {
 
 /// Run a program using the Native JIT compiler
 pub fn native_jit_run(source: &str) -> Result<(), String> {
-    native_jit_run_with_stats(source).map(|_| ())
+    native_jit_run_with_stats(source, Default::default()).map(|_| ())
 }
 
 /// Run a program using the Native JIT compiler and return profile statistics
-pub fn native_jit_run_with_stats(source: &str) -> Result<NativeJitProfileStats, String> {
+pub fn native_jit_run_with_stats(
+    source: &str,
+    prebound_globals: std::collections::HashMap<String, crate::parsing::ast::Value>,
+) -> Result<NativeJitProfileStats, String> {
     let compile_start = std::time::Instant::now();
 
     // Parse source to HIR
@@ -88,6 +91,9 @@ pub fn native_jit_run_with_stats(source: &str) -> Result<NativeJitProfileStats, 
 
     // Compile to native code
     let mut compiler = NativeJitCompiler::new()?;
+    for (name, value) in &prebound_globals {
+        compiler.bind_prebound_global(name.clone(), value.clone());
+    }
     let context = compiler.compile_module(&lir_module)?;
     let compile_time = compile_start.elapsed();
 

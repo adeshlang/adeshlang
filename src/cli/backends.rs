@@ -3,12 +3,117 @@
 //! This module provides execution functions for different backends
 //! (JIT, Adaptive JIT, Tiered JIT, Bytecode VM, Interpreter).
 
+#[allow(unused_imports)]
 use crate::ProgramMemoryStats;
 use crate::backends::jit::JitMemoryStats;
 use crate::cli::ParsedArgs;
 use crate::cli::ui::BuildProgress;
 use crate::execution::runtime::{Interpreter, ModuleLoader};
+use crate::execution::runtime_core::interpreter_impl::utilities::resolve_path;
+#[allow(unused_imports)]
+use crate::parsing::ast::{StmtKind, Value};
+use crate::parsing::lexer::Lexer;
+use crate::parsing::parser::Parser;
+#[allow(unused_imports)]
+use rustc_hash::FxHashMap as HashMap;
+use std::path::Path;
 use std::path::PathBuf;
+
+/// Native module loader shared by the njit, vm, aot and wasm runtimes.
+///
+/// Each of these runtimes executes its *main* module natively, but when the
+/// source imports other modules it must resolve those modules, execute them to
+/// collect their exports, and bind those exports into the runtime's global
+/// environment before running main. This helper performs the resolution and
+/// export-collection part natively (without delegating the whole program to the
+/// interpreter).
+pub fn load_import_exports(
+    src: &str,
+    root_dir: &Path,
+) -> Result<std::collections::HashMap<String, Value>, String> {
+    use crate::parsing::ast::StmtKind;
+    let lex = match Lexer::new(src).tokenize() {
+        Ok(tokens) => tokens,
+        Err(e) => return Err(format!("import lex error: {}", e)),
+    };
+    let mut parser = Parser::new(lex, None);
+    let program = match parser.parse_program() {
+        Ok(program) => program,
+        Err(e) => return Err(format!("import parse error: {}", e)),
+    };
+
+    let mut exports: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+
+    for stmt in &program {
+        let (path, alias, names) = match &stmt.kind {
+            StmtKind::Import { path, alias } => (path.clone(), alias.clone(), None),
+            StmtKind::ImportDefault { path, alias } => (path.clone(), alias.clone(), None),
+            StmtKind::ImportNames { path, names } => {
+                (path.clone(), String::new(), Some(names.clone()))
+            }
+            _ => continue,
+        };
+
+        let full = resolve_path(&path, &root_dir.to_string_lossy());
+        let module_src = match std::fs::read_to_string(&full) {
+            Ok(s) => s,
+            Err(e) => {
+                return Err(format!(
+                    "cannot read imported module '{}' (resolved '{}'): {}",
+                    path, full, e
+                ));
+            }
+        };
+
+        let mut interp = Interpreter::new();
+        let mut loader = ModuleLoader::new(root_dir);
+        match interp.run_module(&module_src, &mut loader, Some(full.clone())) {
+            Ok(()) => {}
+            Err(e) => return Err(format!("failed to load imported module '{}': {}", path, e)),
+        }
+
+        let module_exports = match loader.get_cached(&full) {
+            Some(Value::Object(map)) => map
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect::<Vec<_>>(),
+            Some(_) => {
+                return Err(format!(
+                    "imported module '{}' did not export an object",
+                    path
+                ));
+            }
+            None => return Err(format!("imported module '{}' produced no exports", path)),
+        };
+
+        match names {
+            Some(names) => {
+                for name in names {
+                    match module_exports.iter().find(|(k, _)| *k == name) {
+                        Some((_, v)) => exports.insert(name.clone(), v.clone()),
+                        None => {
+                            return Err(format!(
+                                "imported module '{}' does not export '{}'",
+                                path, name
+                            ));
+                        }
+                    };
+                }
+            }
+            None => {
+                let mut obj: rustc_hash::FxHashMap<String, Value> =
+                    rustc_hash::FxHashMap::default();
+                for (k, v) in &module_exports {
+                    exports.insert(format!("{}::{}", alias, k), v.clone());
+                    obj.insert(k.clone(), v.clone());
+                }
+                exports.insert(alias.clone(), Value::Object(std::sync::Arc::new(obj)));
+            }
+        }
+    }
+
+    Ok(exports)
+}
 
 fn ensure_type_check(body: &str, file: Option<&str>) -> Result<(), String> {
     crate::types::type_system::check_module_in(body, file)
@@ -176,6 +281,15 @@ pub fn run_with_native_jit(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Re
     let body = super::directives::strip_compile_directive(src);
     ensure_type_check(&body, Some(&path.to_string_lossy()))?;
 
+    // Resolve imports natively and bind their exports as globals so the
+    // compiled `main` can reference them. This keeps the njit backend
+    // self-contained for the import/export feature.
+    let root_dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let prebound_globals = match load_import_exports(&body, root_dir) {
+        Ok(imports) => imports,
+        Err(e) => return Err(format!("njit import error: {}", e)),
+    };
+
     // Set program args for native JIT runtime
     crate::execution::runtime::set_program_args(
         parsed.program_args.clone(),
@@ -189,7 +303,7 @@ pub fn run_with_native_jit(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Re
         }
     }
 
-    match native_jit_run_with_stats(&body) {
+    match native_jit_run_with_stats(&body, prebound_globals) {
         Ok(stats) => {
             if parsed.config.profile {
                 eprintln!("\n⚡ Native JIT Compilation: {:?}", stats.compile_time);

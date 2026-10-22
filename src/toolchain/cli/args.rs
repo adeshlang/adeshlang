@@ -481,6 +481,7 @@ impl ParsedArgs {
                         i += 1;
                     }
                 }
+                #[allow(unreachable_patterns)]
                 "--wasm" => {
                     config.backend = ExecutionBackend::Wasm;
                 }

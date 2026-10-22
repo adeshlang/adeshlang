@@ -27,6 +27,27 @@ pub const GOT_SECTION: &str = "__got";
 /// code (one push+jmp entry per import plus the binder tail).
 pub const STUB_HELPER_SECTION: &str = "__stub_helper";
 
+/// Mach-O names of the thread-local sections the layout stage produces. The
+/// merged TLS template (`.tls`) is split into the file-backed image and the
+/// zero-fill tail, exactly as ld64 and lld emit them.
+pub const TLV_VARS_SECTION: &str = "__thread_vars";
+pub const THREAD_DATA_SECTION: &str = "__thread_data";
+pub const THREAD_BSS_SECTION: &str = "__thread_bss";
+
+/// Number of `section_64` records a merged section contributes to `__DATA`.
+/// The TLS template becomes `__thread_data` (the file-backed per-thread
+/// image) and/or `__thread_bss` (the zero-filled tail); either half can be
+/// empty, so the count is what the header sizing and the emission loop must
+/// agree on.
+fn data_section_records(sec: &MergedSection) -> usize {
+    if sec.flags & crate::section::flags::TLS == 0 {
+        return 1;
+    }
+    let file_image = sec.data.len() as u64;
+    let block = sec.size.max(file_image);
+    usize::from(file_image > 0) + usize::from(block > file_image)
+}
+
 pub struct MachOWriter;
 
 impl MachOWriter {
@@ -228,7 +249,11 @@ impl MachOWriter {
         // 2. Load Commands Size Calculation
         let cmd_pagezero_sz = if is_shared { 0usize } else { 72usize };
         let cmd_text_sz = 72 + (text_sections.len() + usize::from(has_stub_sections)) * 80;
-        let cmd_data_sz = 72 + (data_sections.len() + usize::from(has_stub_sections)) * 80;
+        // The TLS template expands into `__thread_data` + `__thread_bss`, so
+        // the `__DATA` section count is the per-section record total, not the
+        // merged-section count.
+        let data_record_count: usize = data_sections.iter().map(data_section_records).sum();
+        let cmd_data_sz = 72 + (data_record_count + usize::from(has_stub_sections)) * 80;
         let cmd_linkedit_sz = 72usize;
         let cmd_build_version_sz = 24usize;
         let dylinker_str = b"/usr/lib/dyld\0\0\0\0\0\0\0"; // padded to 20 bytes so 12 + 20 = 32 (8-byte aligned)
@@ -494,17 +519,58 @@ impl MachOWriter {
                     text_file_end = text_file_end.max(off + file_len);
                     text_va_end = text_va_end.max(sec.virtual_address + mem_len);
                 } else {
-                    data_sec_records.push((
-                        sec.name.clone(),
-                        sec.virtual_address,
-                        mem_len,
-                        if sec.kind == SectionKind::Bss {
-                            0
-                        } else {
-                            off as u32
-                        },
-                        sec.alignment,
-                    ));
+                    let is_tlv = sec.flags & crate::section::flags::TLV_TABLE != 0;
+                    let is_tls = sec.flags & crate::section::flags::TLS != 0;
+                    if is_tlv {
+                        // The descriptor table is one file-backed section.
+                        data_sec_records.push((
+                            TLV_VARS_SECTION.to_string(),
+                            sec.virtual_address,
+                            mem_len,
+                            off as u32,
+                            sec.alignment,
+                        ));
+                    } else if is_tls {
+                        // Split the merged template into the file-backed image
+                        // (`__thread_data`) and the zero-filled tail
+                        // (`__thread_bss`), matching how the loader sizes the
+                        // per-thread block. Either half may be empty.
+                        let file_image = sec.data.len() as u64;
+                        let mut idx = 0usize;
+                        if file_image > 0 {
+                            data_sec_records.push((
+                                THREAD_DATA_SECTION.to_string(),
+                                sec.virtual_address,
+                                file_image,
+                                off as u32,
+                                sec.alignment,
+                            ));
+                            idx += 1;
+                        }
+                        if mem_len > file_image {
+                            data_sec_records.push((
+                                THREAD_BSS_SECTION.to_string(),
+                                sec.virtual_address + file_image,
+                                mem_len - file_image,
+                                0,
+                                sec.alignment,
+                            ));
+                            idx += 1;
+                        }
+                        debug_assert_eq!(idx, data_section_records(sec));
+                    } else {
+                        data_sec_records.push((
+                            sec.name.clone(),
+                            sec.virtual_address,
+                            mem_len,
+                            if sec.kind == SectionKind::Bss {
+                                0
+                            } else {
+                                off as u32
+                            },
+                            sec.alignment,
+                        ));
+                    }
                     data_off_min = Some(data_off_min.map_or(off, |m| m.min(off)));
                     data_va_min = Some(
                         data_va_min.map_or(sec.virtual_address, |m| m.min(sec.virtual_address)),
@@ -609,6 +675,7 @@ impl MachOWriter {
             (Vec::new(), Vec::new())
         };
 
+        let mut nonlazy_binds: Vec<BindTarget> = Vec::new();
         if has_stub_sections {
             let (la_va, la_len) = match la_section {
                 Some(sec) => (sec.virtual_address, sec.data.len() as u64),
@@ -803,14 +870,45 @@ impl MachOWriter {
 
             // Non-lazy binds: dyld_stub_binder's GOT slot (data imports are
             // rejected by the layout stage; this slot is the writer's own).
-            bind_bytes = dynamic::encode_bind_opcodes(&[BindTarget {
+            nonlazy_binds.push(BindTarget {
                 segment_index: data_seg_index,
                 offset: got_va - data_vmaddr_start,
                 bind_type: BIND_TYPE_POINTER,
                 ordinal: LIBSYSTEM_ORDINAL,
                 symbol: DYLD_STUB_BINDER.to_string(),
                 addend: 0,
-            }]);
+            });
+        }
+
+        // Layout-recorded data binds (TLV descriptor thunks bound to
+        // `__tlv_bootstrap`). These live in `__DATA` and must be emitted even
+        // when there are no function imports to synthesize stubs for.
+        if has_dynamic {
+            if let Some(info) = dynamic {
+                for b in &info.binds {
+                    if b.va < data_vmaddr_start || b.va >= data_vmaddr_start + data_vmsize {
+                        return Err(LinkError::new(
+                            ErrorCode::InvalidSection,
+                            format!(
+                                "cannot bind address 0x{:x} (`{}`): a data bind target must live \
+                                 in the `__DATA` segment",
+                                b.va, b.symbol
+                            ),
+                        ));
+                    }
+                    nonlazy_binds.push(BindTarget {
+                        segment_index: data_seg_index,
+                        offset: b.va - data_vmaddr_start,
+                        bind_type: BIND_TYPE_POINTER,
+                        ordinal: LIBSYSTEM_ORDINAL,
+                        symbol: b.symbol.clone(),
+                        addend: b.addend,
+                    });
+                }
+            }
+        }
+        if !nonlazy_binds.is_empty() {
+            bind_bytes = dynamic::encode_bind_opcodes(&nonlazy_binds);
         }
 
         // Rebase stream, part 2 (with or without imports): every link-time
@@ -1198,6 +1296,12 @@ impl MachOWriter {
                 (S_NON_LAZY_SYMBOL_POINTERS, 0u32)
             } else if *name == LA_SYMBOL_PTR_SECTION {
                 (S_LAZY_SYMBOL_POINTERS, 1u32)
+            } else if *name == TLV_VARS_SECTION {
+                (S_THREAD_LOCAL_VARIABLES, 0u32)
+            } else if *name == THREAD_DATA_SECTION {
+                (S_THREAD_LOCAL_REGULAR, 0u32)
+            } else if *name == THREAD_BSS_SECTION {
+                (S_THREAD_LOCAL_ZEROFILL, 0u32)
             } else if is_bss {
                 (S_ZEROFILL, 0u32)
             } else {

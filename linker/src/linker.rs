@@ -1108,6 +1108,7 @@ impl Linker {
                 let macho_info = crate::macho::dynamic::MachODynamicInfo {
                     imports: ctx.layout.macho_imports.clone(),
                     rebases: ctx.layout.macho_rebases.clone(),
+                    binds: ctx.layout.macho_binds.clone(),
                     exports: macho_exports,
                 };
                 MachOWriter::write_macho_with_dynamic(

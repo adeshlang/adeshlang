@@ -101,7 +101,7 @@ impl InterpreterTestExecutor {
 
         let res = panic::catch_unwind(panic::AssertUnwindSafe(|| {
             use crate::backends::jit::native::native_jit_run_with_stats;
-            native_jit_run_with_stats(&driver_src)
+            native_jit_run_with_stats(&driver_src, Default::default())
         }));
 
         match res {

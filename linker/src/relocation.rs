@@ -49,6 +49,17 @@ pub enum RelocationKind {
     AArch64AddLo12,
     /// AArch64 64-bit Load/Store scaled immediate 12-bit (LDR xT, [xN, #off])
     AArch64LdSt64Lo12,
+    /// AArch64 Mach-O TLV descriptor address, low 12 bits. Same value as
+    /// `AArch64AddLo12`, but the instruction it patches is a load
+    /// (`ldr xN, [xN, #imm]`) that the linker must convert into an `add`:
+    /// thread-local accessors reach the descriptor through its *address*, and
+    /// the descriptor's first field is the binding thunk.
+    AArch64TlvDescriptorLo12,
+    /// x86-64 Mach-O TLV descriptor address as a 32-bit RIP-relative
+    /// displacement. Same value as `PcRelative32`, and the preceding
+    /// `movq` opcode is rewritten to `leaq` for the same reason as the
+    /// AArch64 form above.
+    X86_64TlvDescriptorRel32,
 
     /// RISC-V 32-bit PC-relative call (AUIPC + JALR)
     RiscvCall,
@@ -90,6 +101,8 @@ impl RelocationKind {
             | RelocationKind::AArch64Adrp
             | RelocationKind::AArch64AddLo12
             | RelocationKind::AArch64LdSt64Lo12
+            | RelocationKind::AArch64TlvDescriptorLo12
+            | RelocationKind::X86_64TlvDescriptorRel32
             | RelocationKind::RiscvCall
             | RelocationKind::RiscvJal
             | RelocationKind::RiscvBranch
@@ -133,6 +146,8 @@ impl RelocationKind {
             RelocationKind::AArch64Adrp => "AARCH64_ADRP",
             RelocationKind::AArch64AddLo12 => "AARCH64_ADD_LO12",
             RelocationKind::AArch64LdSt64Lo12 => "AARCH64_LDST64_LO12",
+            RelocationKind::AArch64TlvDescriptorLo12 => "AARCH64_TLV_DESC_LO12",
+            RelocationKind::X86_64TlvDescriptorRel32 => "X86_64_TLV_DESC_REL32",
             RelocationKind::RiscvCall => "RISCV_CALL",
             RelocationKind::RiscvJal => "RISCV_JAL",
             RelocationKind::RiscvBranch => "RISCV_BRANCH",
@@ -438,6 +453,83 @@ impl RelocationHandler for DefaultRelocationHandler {
                 let mut insn = u32::from_le_bytes(target_slice.try_into().unwrap());
                 insn = (insn & !(0xFFF << 10)) | imm12;
                 target_slice.copy_from_slice(&insn.to_le_bytes());
+            }
+            RelocationKind::AArch64TlvDescriptorLo12 => {
+                // Mach-O `ARM64_RELOC_TLVP_LOAD_PAGEOFF12`. The instruction
+                // the relocation carries is a load of the descriptor through
+                // the page base (`ldr xT, [xN, #imm]`); the thread-local
+                // accessor must instead take the descriptor's *address*, so
+                // the linker rewrites the LDR into an ADD with the unscaled
+                // page offset. Keeping Rt/Rn (bits 9:0) preserves the register
+                // the compiler chose. Matches ld64 and lld.
+                let pageoff = (((symbol_va as i64 + addend) & 0xFFF) as u32) << 10;
+                let insn = u32::from_le_bytes(target_slice.try_into().unwrap());
+                // Must be a 64-bit LDR immediate (unsigned offset): bits 31:22
+                // are 0b1111100101 = 0x3E5, so the opcode field masked off is
+                // 0xF940_0000. Anything else means the codegen did not emit the
+                // accessor this relocation describes.
+                if insn & 0xFFC0_0000 != 0xF940_0000 {
+                    return Err(LinkError::new(
+                        ErrorCode::UnsupportedRelocation,
+                        format!(
+                            "{} against `{}` at 0x{:x} does not patch a 64-bit `ldr` (found 0x{:08x})",
+                            reloc.kind.name(),
+                            reloc.symbol_name,
+                            reloc.offset,
+                            insn
+                        ),
+                    ));
+                }
+                let add_insn = 0x9100_0000 | pageoff | (insn & 0x3FF);
+                target_slice.copy_from_slice(&add_insn.to_le_bytes());
+            }
+            RelocationKind::X86_64TlvDescriptorRel32 => {
+                // Mach-O `X86_64_RELOC_TLV`. Like `PcRelative32`, but the RIP
+                // base is the *end* of the whole instruction, not the start of
+                // the displaced field, so subtract `place + 4`.
+                let val = (symbol_va as i64)
+                    .wrapping_add(addend)
+                    .wrapping_sub(place_va as i64 + 4);
+                if val < i32::MIN as i64 || val > i32::MAX as i64 {
+                    return Err(LinkError::relocation_overflow(
+                        reloc.kind.name(),
+                        &reloc.symbol_name,
+                        val,
+                        i32::MIN as i64,
+                        i32::MAX as i64,
+                        None,
+                        Some(reloc.offset),
+                    ));
+                }
+                let val32 = val as i32 as u32;
+                target_slice.copy_from_slice(&val32.to_le_bytes());
+                // The `movq` opcode byte (`0x8B`) sits two bytes before the
+                // displacement (`48 8B 3D disp32`). The accessor must load the
+                // descriptor's address, so rewrite `movq`→`leaq` (`0x8D`).
+                if offset < 2 {
+                    return Err(LinkError::new(
+                        ErrorCode::RelocationOverflow,
+                        format!(
+                            "{} against `{}` at 0x{:x} is below the instruction start",
+                            reloc.kind.name(),
+                            reloc.symbol_name,
+                            reloc.offset
+                        ),
+                    ));
+                }
+                if image[offset - 2] != 0x8B {
+                    return Err(LinkError::new(
+                        ErrorCode::UnsupportedRelocation,
+                        format!(
+                            "{} against `{}` at 0x{:x} does not patch a `movq` (found 0x{:02x})",
+                            reloc.kind.name(),
+                            reloc.symbol_name,
+                            reloc.offset,
+                            image[offset - 2]
+                        ),
+                    ));
+                }
+                image[offset - 2] = 0x8D;
             }
             RelocationKind::RiscvCall => {
                 let val = (symbol_va as i64)

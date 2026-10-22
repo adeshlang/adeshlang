@@ -34,6 +34,11 @@ pub mod flags {
     pub const STRINGS: u32 = 1 << 6;
     pub const COMDAT: u32 = 1 << 7;
     pub const DISCARD: u32 = 1 << 8;
+    /// Mach-O `S_THREAD_LOCAL_VARIABLES`: the section is a table of 24-byte
+    /// TLV descriptors `(thunk, key, offset)` that the *static* linker
+    /// rewrites. It is thread-related but must not join the TLS block, whose
+    /// bytes are the per-thread template.
+    pub const TLV_TABLE: u32 = 1 << 9;
 }
 
 /// Unified representation of an input or intermediate object section.
