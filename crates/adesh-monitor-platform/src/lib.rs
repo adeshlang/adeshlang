@@ -55,7 +55,7 @@ pub fn create_platform_provider() -> Box<dyn MetricsProvider> {
 #[cfg(windows)]
 mod windows {
     use super::*;
-    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, HANDLE};
+    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
     use windows_sys::Win32::System::ProcessStatus::{
         GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
     };
