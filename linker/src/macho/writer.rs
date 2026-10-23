@@ -798,6 +798,16 @@ impl MachOWriter {
                 output.resize(end, 0);
             }
             output[stub_helper_file_off as usize..end].copy_from_slice(&stub_helper_bytes);
+            let stub_helper_end_va = stub_helper_va + stub_helper_bytes.len() as u64;
+            if stub_helper_end_va > data_vmaddr_start {
+                return Err(LinkError::new(
+                    ErrorCode::InvalidSection,
+                    format!(
+                        "__stub_helper end 0x{:x} exceeds __DATA start 0x{:x}",
+                        stub_helper_end_va, data_vmaddr_start
+                    ),
+                ));
+            }
             text_sec_records.push((
                 STUB_HELPER_SECTION.to_string(),
                 stub_helper_va,
@@ -805,8 +815,7 @@ impl MachOWriter {
                 stub_helper_file_off as u32,
                 16,
             ));
-            text_va_end = text_va_end.max(stub_helper_va + stub_helper_bytes.len() as u64);
-            text_vmsize = align_to(text_va_end - text_vmaddr, target.page_size);
+            text_vmsize = data_vmaddr_start - text_vmaddr;
             text_filesize = text_vmsize.min(data_file_offset_start);
 
             // Write the __got slot (zero: dyld fills it from the non-lazy
