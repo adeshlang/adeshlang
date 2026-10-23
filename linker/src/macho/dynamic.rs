@@ -25,13 +25,13 @@
 
 pub const REBASE_OPCODE_DONE: u8 = 0x00;
 pub const REBASE_OPCODE_SET_TYPE_IMM: u8 = 0x10;
-pub const REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB: u8 = 0x30;
-pub const REBASE_OPCODE_DO_REBASE_IMM_TIMES: u8 = 0x40;
-pub const REBASE_OPCODE_ADD_ADDR_ULEB: u8 = 0x50;
-pub const REBASE_OPCODE_ADD_ADDR_IMM_SCALED: u8 = 0x60;
-pub const REBASE_OPCODE_DO_REBASE_ULEB_TIMES: u8 = 0x80;
-pub const REBASE_OPCODE_DO_REBASE_ADD_ADDR_ULEB: u8 = 0x90;
-pub const REBASE_OPCODE_DO_REBASE_ULEB_TIMES_SKIPPING_ULEB: u8 = 0xC0;
+pub const REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB: u8 = 0x20;
+pub const REBASE_OPCODE_ADD_ADDR_ULEB: u8 = 0x30;
+pub const REBASE_OPCODE_ADD_ADDR_IMM_SCALED: u8 = 0x40;
+pub const REBASE_OPCODE_DO_REBASE_IMM_TIMES: u8 = 0x50;
+pub const REBASE_OPCODE_DO_REBASE_ULEB_TIMES: u8 = 0x60;
+pub const REBASE_OPCODE_DO_REBASE_ADD_ADDR_ULEB: u8 = 0x70;
+pub const REBASE_OPCODE_DO_REBASE_ULEB_TIMES_SKIPPING_ULEB: u8 = 0x80;
 
 /// Fixup applied to a location. `Pointer` rewrites a full 64-bit word;
 /// `TextAbsolute32` rewrites a 32-bit immediate embedded in TEXT (the stub
@@ -610,42 +610,43 @@ pub fn decode_rebase_stream_for_test(bytes: &[u8]) -> Vec<(u8, u64, u8)> {
         let opcode = op & 0xF0;
         i += 1;
         match opcode {
-            0x00 => break, // DONE
-            0x10 => type_imm = imm,
-            0x30 => {
+            REBASE_OPCODE_DONE => break,
+            REBASE_OPCODE_SET_TYPE_IMM => type_imm = imm,
+            REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB => {
                 segment = imm;
                 offset = read_uleb(bytes, &mut i);
             }
-            0x40 => {
+            REBASE_OPCODE_ADD_ADDR_ULEB => {
+                let delta = read_uleb(bytes, &mut i);
+                offset += delta;
+            }
+            REBASE_OPCODE_ADD_ADDR_IMM_SCALED => {
+                offset += (imm as u64) * 8;
+            }
+            REBASE_OPCODE_DO_REBASE_IMM_TIMES => {
                 for _ in 0..imm {
                     result.push((segment, offset, type_imm));
                     offset += pointer_size_for_rebase(type_imm);
                 }
             }
-            0x50 => {
-                let delta = read_uleb(bytes, &mut i);
-                offset += delta;
-            }
-            0x60 => offset += (imm as u64) * 8,
-            0x80 => {
+            REBASE_OPCODE_DO_REBASE_ULEB_TIMES => {
                 let times = read_uleb(bytes, &mut i);
                 for _ in 0..times {
                     result.push((segment, offset, type_imm));
                     offset += pointer_size_for_rebase(type_imm);
                 }
             }
-            0x90 => {
+            REBASE_OPCODE_DO_REBASE_ADD_ADDR_ULEB => {
                 result.push((segment, offset, type_imm));
                 let delta = read_uleb(bytes, &mut i);
-                offset += delta;
+                offset += delta + pointer_size_for_rebase(type_imm);
             }
-            0xC0 => {
+            REBASE_OPCODE_DO_REBASE_ULEB_TIMES_SKIPPING_ULEB => {
                 let times = read_uleb(bytes, &mut i);
                 let skip = read_uleb(bytes, &mut i);
                 for _ in 0..times {
-                    offset += skip;
                     result.push((segment, offset, type_imm));
-                    offset += pointer_size_for_rebase(type_imm);
+                    offset += skip + pointer_size_for_rebase(type_imm);
                 }
             }
             _ => panic!("unknown rebase opcode 0x{:02x}", op),
@@ -974,6 +975,34 @@ mod tests {
     fn test_rebase_stream_empty_is_done() {
         let bytes = encode_rebase_opcodes(&[]);
         assert_eq!(bytes, vec![REBASE_OPCODE_DONE]);
+    }
+
+    #[test]
+    fn test_rebase_opcodes_spec_conformance() {
+        // Assert opcode values match official mach-o/loader.h values
+        assert_eq!(REBASE_OPCODE_DONE, 0x00);
+        assert_eq!(REBASE_OPCODE_SET_TYPE_IMM, 0x10);
+        assert_eq!(REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB, 0x20);
+        assert_eq!(REBASE_OPCODE_ADD_ADDR_ULEB, 0x30);
+        assert_eq!(REBASE_OPCODE_ADD_ADDR_IMM_SCALED, 0x40);
+        assert_eq!(REBASE_OPCODE_DO_REBASE_IMM_TIMES, 0x50);
+        assert_eq!(REBASE_OPCODE_DO_REBASE_ULEB_TIMES, 0x60);
+        assert_eq!(REBASE_OPCODE_DO_REBASE_ADD_ADDR_ULEB, 0x70);
+        assert_eq!(REBASE_OPCODE_DO_REBASE_ULEB_TIMES_SKIPPING_ULEB, 0x80);
+
+        let targets = vec![RebaseTarget {
+            segment_index: 2,
+            offset: 0x40,
+            kind: RebaseKind::Pointer,
+        }];
+        let bytes = encode_rebase_opcodes(&targets);
+        // Expected stream:
+        // 1. SET_TYPE_IMM | 1 (REBASE_TYPE_POINTER) = 0x11
+        // 2. SET_SEGMENT_AND_OFFSET_ULEB | 2 = 0x22
+        // 3. uleb128(0x40) = 0x40
+        // 4. DO_REBASE_IMM_TIMES | 1 = 0x51
+        // 5. REBASE_OPCODE_DONE = 0x00
+        assert_eq!(bytes, vec![0x11, 0x22, 0x40, 0x51, 0x00]);
     }
 
     #[test]
