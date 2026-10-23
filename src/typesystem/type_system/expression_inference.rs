@@ -1652,7 +1652,24 @@ pub(crate) fn infer_expr_type(
                                 type_params,
                             )?;
                         }
-                        return Ok(Ty::Void);
+                        // An imported namespace (or an untyped receiver) may
+                        // export a value-returning function named `add`.
+                        // Collection method names alone do not imply void.
+                        let receiver = infer_expr_type(
+                            obj,
+                            env,
+                            fns,
+                            fns_type_params,
+                            fns_ret_types,
+                            aliases,
+                            generic_aliases,
+                            type_params,
+                        )?;
+                        return Ok(if matches!(receiver, Ty::Any | Ty::Unknown) {
+                            Ty::Any
+                        } else {
+                            Ty::Void
+                        });
                     }
 
                     if key == "remove" || key == "delete" {

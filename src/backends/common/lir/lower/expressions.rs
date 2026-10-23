@@ -833,22 +833,38 @@ pub(super) fn lower_expr(
                         let arg_vals: Result<Vec<_>, _> =
                             args.iter().map(|a| lower_expr(lir, func, ctx, a)).collect();
                         let arg_vals = arg_vals?;
-                        let method_val = func.alloc_value();
-                        func.push_to_block(
-                            ctx.current_block,
-                            LirInst::ConstString(method_val, method.clone()),
-                        );
-                        let mut call_method_args = vec![target_val, method_val];
-                        call_method_args.extend(arg_vals);
-                        func.push_to_block(
-                            ctx.current_block,
-                            LirInst::CallBuiltin(
-                                result,
-                                "__call_method".to_string(),
-                                call_method_args,
-                            ),
-                        );
-                        insert_exception_check(func, ctx);
+
+                        // If this is a namespaced call on an imported module alias
+                        // (e.g. `math.add(2, 3)` where `math` was imported), lower it to
+                        // a direct native call to the merged imported function. Imported
+                        // modules are compiled into the same module as `main`, so the
+                        // function name resolves directly with no interpreter fallback.
+                        let is_module_call = matches!(target.as_ref(), HirExpr::LoadVar(name)
+                            if lir.imports.contains_key(name));
+                        if is_module_call {
+                            func.push_to_block(
+                                ctx.current_block,
+                                LirInst::Call(result, method.clone(), arg_vals),
+                            );
+                            insert_exception_check(func, ctx);
+                        } else {
+                            let method_val = func.alloc_value();
+                            func.push_to_block(
+                                ctx.current_block,
+                                LirInst::ConstString(method_val, method.clone()),
+                            );
+                            let mut call_method_args = vec![target_val, method_val];
+                            call_method_args.extend(arg_vals);
+                            func.push_to_block(
+                                ctx.current_block,
+                                LirInst::CallBuiltin(
+                                    result,
+                                    "__call_method".to_string(),
+                                    call_method_args,
+                                ),
+                            );
+                            insert_exception_check(func, ctx);
+                        }
                     }
                 }
             } else {

@@ -1,0 +1,8 @@
+import "./math.adesh" as math;
+
+fn main() {
+    // Only `math.add` is used; `math.mul` and `math.PI` must be tree-shaken.
+    let r = math.add(2, 3);
+    if (r != 5) { throw "add failed: " + string(r); }
+    return 0;
+}

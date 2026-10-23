@@ -1282,92 +1282,28 @@ pub(super) fn lower_stmt(
 
         // Handle imports - load module and bind to alias
         HirStmt::Import { path, alias } => {
-            // Register import in module for resolution
+            // Register import in module for resolution (used to lower `alias.method(..)`
+            // to a direct call of the merged imported function). The namespace object
+            // itself is bound as a prebound global by the backend, so no LoadModule
+            // instruction is emitted here.
             lir.imports.insert(alias.clone(), path.clone());
-
-            // Generate LoadModule instruction to create namespace object
-            let module_val = func.alloc_value();
-            func.push_to_block(
-                ctx.current_block,
-                LirInst::LoadModule(module_val, alias.clone()),
-            );
-            func.push_to_block(
-                ctx.current_block,
-                LirInst::StoreVar(alias.clone(), module_val),
-            );
-            func.set_var(alias.clone(), module_val);
             emit_drops_for_location(func, ctx, drop_plan, loc);
             Ok(())
         }
 
         HirStmt::ImportDefault { path, alias } => {
-            // For default imports, load module and extract default export
             lir.imports.insert(alias.clone(), path.clone());
-
-            let module_val = func.alloc_value();
-            func.push_to_block(
-                ctx.current_block,
-                LirInst::LoadModule(module_val, alias.clone()),
-            );
-
-            // Get the default export
-            let default_key = func.alloc_value();
-            func.push_to_block(
-                ctx.current_block,
-                LirInst::ConstString(default_key, "__default".to_string()),
-            );
-            let default_val = func.alloc_value();
-            func.push_to_block(
-                ctx.current_block,
-                LirInst::CallBuiltin(
-                    default_val,
-                    "get_field".to_string(),
-                    vec![module_val, default_key],
-                ),
-            );
-
-            func.push_to_block(
-                ctx.current_block,
-                LirInst::StoreVar(alias.clone(), default_val),
-            );
-            func.set_var(alias.clone(), default_val);
             emit_drops_for_location(func, ctx, drop_plan, loc);
             Ok(())
         }
 
         HirStmt::ImportNames { path, names } => {
-            // For named imports, load module and extract each named export
+            // For named imports, register each name so it resolves to the merged
+            // imported function. The namespace object is bound as a prebound global.
             let temp_alias = format!("__import_{}", path.replace(['/', '\\', '.'], "_"));
             lir.imports.insert(temp_alias.clone(), path.clone());
-
-            let module_val = func.alloc_value();
-            func.push_to_block(
-                ctx.current_block,
-                LirInst::LoadModule(module_val, temp_alias.clone()),
-            );
-
-            // Extract each named export
             for name in names {
-                let name_key = func.alloc_value();
-                func.push_to_block(
-                    ctx.current_block,
-                    LirInst::ConstString(name_key, name.clone()),
-                );
-                let export_val = func.alloc_value();
-                func.push_to_block(
-                    ctx.current_block,
-                    LirInst::CallBuiltin(
-                        export_val,
-                        "get_field".to_string(),
-                        vec![module_val, name_key],
-                    ),
-                );
-
-                func.push_to_block(
-                    ctx.current_block,
-                    LirInst::StoreVar(name.clone(), export_val),
-                );
-                func.set_var(name.clone(), export_val);
+                lir.imports.insert(name.clone(), path.clone());
             }
             emit_drops_for_location(func, ctx, drop_plan, loc);
             Ok(())

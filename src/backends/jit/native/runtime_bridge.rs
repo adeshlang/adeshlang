@@ -33,7 +33,7 @@ fn next_handle() -> u64 {
     HANDLE_TAG | HANDLE_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
-fn store_value(value: RuntimeValue) -> u64 {
+pub fn store_value(value: RuntimeValue) -> u64 {
     let handle = next_handle();
     RUNTIME_VALUES.with(|values| {
         values.borrow_mut().insert(handle, value);
@@ -3158,7 +3158,7 @@ pub extern "C" fn jit_runtime_input_generic(
     store_value(res)
 }
 
-fn ast_value_to_runtime_value(v: &crate::parsing::ast::Value) -> RuntimeValue {
+pub fn ast_value_to_runtime_value(v: &crate::parsing::ast::Value) -> RuntimeValue {
     use crate::parsing::ast::Value;
     match v {
         Value::Number(n) => RuntimeValue::Float(*n),

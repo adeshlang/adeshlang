@@ -34,6 +34,31 @@ use adeshlang::parsing::parser::Parser;
 use std::path::Path;
 use std::process::Command;
 
+/// ELF execution needs a Linux host or a working WSL. GitHub's Windows
+/// runners provide neither, so these end-to-end runs are skipped instead of
+/// reporting the "exit code" of a failed `wsl` invocation.
+fn can_execute_elf() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        true
+    }
+    #[cfg(target_os = "windows")]
+    {
+        static PROBE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *PROBE.get_or_init(|| {
+            Command::new("wsl")
+                .args(["-e", "/bin/true"])
+                .output()
+                .map(|output| output.status.success())
+                .unwrap_or(false)
+        })
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        false
+    }
+}
+
 fn phys(id: u8) -> MachineOperand {
     MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(id)))
 }
@@ -164,6 +189,10 @@ fn test_linux_elf_size_optimization_levels_preserve_exit_code() {
 
 #[test]
 fn test_linux_elf_start_synthesis_and_exit_code() {
+    if !can_execute_elf() {
+        eprintln!("ELF execution is unavailable on this host (needs Linux or WSL): skipping");
+        return;
+    }
     let (_, code, _) = compile_link_and_run_linux(
         r#"
         fn main(): int {
@@ -177,6 +206,10 @@ fn test_linux_elf_start_synthesis_and_exit_code() {
 
 #[test]
 fn test_linux_elf_arithmetic_and_functions() {
+    if !can_execute_elf() {
+        eprintln!("ELF execution is unavailable on this host (needs Linux or WSL): skipping");
+        return;
+    }
     let (_, code, _) = compile_link_and_run_linux(
         r#"
         fn add(a: int, b: int): int {
@@ -200,6 +233,10 @@ fn test_linux_elf_arithmetic_and_functions() {
 
 #[test]
 fn test_linux_elf_control_flow_and_loops() {
+    if !can_execute_elf() {
+        eprintln!("ELF execution is unavailable on this host (needs Linux or WSL): skipping");
+        return;
+    }
     let (_, code, _) = compile_link_and_run_linux(
         r#"
         fn main(): int {
@@ -219,6 +256,10 @@ fn test_linux_elf_control_flow_and_loops() {
 
 #[test]
 fn test_linux_elf_match_and_branches() {
+    if !can_execute_elf() {
+        eprintln!("ELF execution is unavailable on this host (needs Linux or WSL): skipping");
+        return;
+    }
     let (_, code, _) = compile_link_and_run_linux(
         r#"
         fn classify(n: int): int {
@@ -244,6 +285,10 @@ fn test_linux_elf_match_and_branches() {
 
 #[test]
 fn test_linux_elf_six_args_sysv_abi() {
+    if !can_execute_elf() {
+        eprintln!("ELF execution is unavailable on this host (needs Linux or WSL): skipping");
+        return;
+    }
     // SysV AMD64 ABI passes first 6 args in RDI, RSI, RDX, RCX, R8, R9.
     let target = TargetDescriptor::from_triple("x86_64-unknown-linux-gnu").expect("valid triple");
     let mut backend = create_backend(target.clone()).expect("backend creation");
@@ -350,6 +395,10 @@ fn test_linux_elf_six_args_sysv_abi() {
 
 #[test]
 fn test_linux_elf_static_binary_segments_and_headers() {
+    if !can_execute_elf() {
+        eprintln!("ELF execution is unavailable on this host (needs Linux or WSL): skipping");
+        return;
+    }
     // Build its own binary: tests in one binary run in parallel, so this test
     // must not depend on a sibling test's output file.
     let (_, code, elf_path) = compile_link_and_run_linux(
@@ -389,6 +438,10 @@ fn main(): int {
 
 #[test]
 fn test_linux_elf_archive_symbol_index_resolution() {
+    if !can_execute_elf() {
+        eprintln!("ELF execution is unavailable on this host (needs Linux or WSL): skipping");
+        return;
+    }
     let target = TargetDescriptor::from_triple("x86_64-unknown-linux-gnu").expect("valid triple");
     let mut backend = create_backend(target.clone()).expect("backend creation");
 
@@ -476,6 +529,10 @@ fn test_linux_elf_archive_symbol_index_resolution() {
 
 #[test]
 fn test_linux_elf_gc_dead_code_elimination() {
+    if !can_execute_elf() {
+        eprintln!("ELF execution is unavailable on this host (needs Linux or WSL): skipping");
+        return;
+    }
     let target = TargetDescriptor::from_triple("x86_64-unknown-linux-gnu").expect("valid triple");
     let mut backend = create_backend(target.clone()).expect("backend creation");
 

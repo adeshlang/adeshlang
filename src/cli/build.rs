@@ -4,7 +4,7 @@
 //! It routes to the same AOT pipeline as `compile-aot` but with a more
 //! user-friendly interface and automatic output inference.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::cli::ui::{BuildProgress, colors};
 
@@ -869,7 +869,7 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
         // 2. Mandatory ownership, borrowing, lifetime, and escape analysis
         // (also applies the RAII transformation and returns the validated HIR)
         let runtime_cfg = crate::toolchain::config::RuntimeConfig::default();
-        let (_validated_ast, validated_hir) = crate::cli::parsing::check_ownership_and_parse_in(
+        let (validated_ast, _validated_hir) = crate::cli::parsing::check_ownership_and_parse_in(
             &src,
             &runtime_cfg,
             Some(&input_path_str),
@@ -879,6 +879,11 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
         // 3. Lowering validation to LIR — on the exact validated
         // (RAII-transformed) HIR produced by the gates above, not a re-parse
         // of the raw source (which would validate a different program).
+        let linked_ast = crate::cli::static_imports::link_ast(
+            validated_ast,
+            config.input.parent().unwrap_or_else(|| Path::new(".")),
+        )?;
+        let validated_hir = crate::parsing::hir_lower::ast_to_hir(&linked_ast, true)?;
         let _lir = hir_to_lir(&validated_hir)?;
 
         if let Some(p) = progress {
@@ -900,12 +905,19 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
     crate::types::type_system::check_module_in(&src, Some(&input_path_str))
         .map_err(|e| format!("Type Error: {}", e))?;
     let runtime_cfg = crate::toolchain::config::RuntimeConfig::default();
-    let (_validated_ast, validated_hir) = crate::cli::parsing::check_ownership_and_parse_in(
+    let (validated_ast, _validated_hir) = crate::cli::parsing::check_ownership_and_parse_in(
         &src,
         &runtime_cfg,
         Some(&input_path_str),
     )
     .map_err(|e| format!("Ownership/Memory Safety Error: {}", e))?;
+
+    // Link the exact gated AST. Namespace calls become direct, module-unique
+    // symbols and scalar constants become expressions before backend lowering.
+    let root_dir = config.input.parent().unwrap_or_else(|| Path::new("."));
+    let linked_ast = crate::cli::static_imports::link_ast(validated_ast, root_dir)
+        .map_err(|e| format!("aot import error: {e}"))?;
+    let validated_hir = crate::parsing::hir_lower::ast_to_hir(&linked_ast, true)?;
 
     let output = config.get_output_path();
     if let Some(parent) = output.parent() {
@@ -1010,7 +1022,10 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
         }
     }
 
-    let compile_result = if config.emit == EmitType::Adob
+    let compile_result = if is_wasm {
+        crate::backends::wasm::compiler::compile_ast_to_file(linked_ast, &output)
+            .map_err(|e| e.to_string())
+    } else if config.emit == EmitType::Adob
         || config.emit == EmitType::Assembly
         || is_wasm
         || config.codegen_backend == "adesh"
@@ -1261,7 +1276,16 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
                 let sym_count = adob.symbols.len();
                 let sec_count = adob.sections.len();
                 let link_started = std::time::Instant::now();
-                let link_res = adesh_linker::Linker::link(&[temp_adob.clone()], link_config);
+                let triple = match config.target.as_deref() {
+                    Some(triple) => triple
+                        .parse::<target_lexicon::Triple>()
+                        .map_err(|e| format!("invalid runtime target: {e}"))?,
+                    None => target_lexicon::Triple::host(),
+                };
+                let runtime =
+                    crate::backends::aot::cranelift_impl::linking::get_static_runtime_lib(&triple)?;
+                let link_res =
+                    adesh_linker::Linker::link(&[temp_adob.clone(), runtime], link_config);
                 if let Ok(session_id) = std::env::var("ADESH_OBSERVATORY_SESSION") {
                     let success = link_res.is_ok();
                     let error_message = link_res.as_ref().err().map(ToString::to_string);

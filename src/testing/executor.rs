@@ -10,7 +10,7 @@
 //!   - Bytecode VM        : in-process compilation & VM execution
 //!   - Adaptive / Tiered  : in-process optimization pipeline execution
 //!   - AOT                : in-process Cranelift AOT compilation & native execution
-//!   - WASM               : in-process WebAssembly compilation & validation
+//!   - WASM               : WebAssembly compilation & execution through Node.js
 //!   - GPU                : in-process MLIR GPU compilation pipeline
 
 use super::{BackendExecutionResult, BackendTestExecutor, TestInfo, TestRunOptions, TestStatus};
@@ -101,7 +101,12 @@ impl InterpreterTestExecutor {
 
         let res = panic::catch_unwind(panic::AssertUnwindSafe(|| {
             use crate::backends::jit::native::native_jit_run_with_stats;
-            native_jit_run_with_stats(&driver_src, Default::default())
+            let path = Path::new(&self.file_path);
+            native_jit_run_with_stats(
+                &driver_src,
+                path.parent().unwrap_or_else(|| Path::new(".")),
+                Default::default(),
+            )
         }));
 
         match res {
@@ -232,41 +237,15 @@ impl InterpreterTestExecutor {
 
     /// Execute test function with WebAssembly backend.
     fn run_test_wasm(&self, test_name: &str) -> Result<Duration, String> {
-        use std::process::Command;
-
-        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let start = Instant::now();
         let driver_src = self.build_driver_source(test_name);
-        let tmp_dir = std::env::temp_dir();
-        let wasm_name = format!(
-            "adesh_wasm_test_{}_{}_{}.wasm",
-            sanitize_name(test_name),
-            std::process::id(),
-            count
-        );
-        let wasm_path = tmp_dir.join(&wasm_name);
-
-        crate::backends::wasm::compile_to_file(&driver_src, &wasm_path)
-            .map_err(|e| format!("WASM compile error: {}", e))?;
-
-        // Try executing with wasmtime if installed
-        let wasm_res = Command::new("wasmtime").arg(&wasm_path).output();
-
-        let _ = std::fs::remove_file(&wasm_path);
-
-        match wasm_res {
-            Ok(output) => {
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    return Err(format!("WASM execution failed: {}", stderr.trim()));
-                }
-            }
-            Err(_) => {
-                // Standalone wasmtime CLI not present on host — wasm bytecode compiled cleanly
-            }
-        }
-
+        let mut args = crate::cli::ParsedArgs::default();
+        args.config.quiet = true;
+        crate::cli::backends::run_with_wasm(
+            &std::path::PathBuf::from(&self.file_path),
+            &driver_src,
+            &args,
+        )?;
         Ok(start.elapsed())
     }
 

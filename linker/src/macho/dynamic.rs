@@ -65,9 +65,10 @@ pub const BIND_OPCODE_SET_TYPE_IMM: u8 = 0x50;
 pub const BIND_OPCODE_SET_ADDEND_SLEB: u8 = 0x60;
 pub const BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB: u8 = 0x70;
 pub const BIND_OPCODE_ADD_ADDR_ULEB: u8 = 0x80;
-pub const BIND_OPCODE_ADD_ADDR_IMM_SCALED: u8 = 0x90;
-pub const BIND_OPCODE_DO_BIND: u8 = 0xA0;
+pub const BIND_OPCODE_DO_BIND: u8 = 0x90;
+pub const BIND_OPCODE_DO_BIND_ADD_ADDR_IMM_SCALED: u8 = 0xA0;
 pub const BIND_OPCODE_DO_BIND_ADD_ADDR_ULEB: u8 = 0xB0;
+pub const BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB: u8 = 0xC0;
 
 pub const BIND_TYPE_POINTER: u8 = 1;
 
@@ -370,20 +371,27 @@ pub fn encode_lazy_bind_opcodes(targets: &[LazyBindTarget]) -> (Vec<u8>, Vec<u64
     let mut offsets = Vec::with_capacity(targets.len());
     for target in targets {
         offsets.push(out.len() as u64);
-        // Lazy entries bind pointers: SET_TYPE is implied by the section
-        // (S_LAZY_SYMBOL_POINTERS), but dyld's parser requires the type
-        // state; make every entry self-contained like non-lazy entries.
-        encode_bind_entry(
-            &mut out,
-            target.segment_index,
-            target.offset,
-            BIND_TYPE_POINTER,
-            target.ordinal,
-            &target.symbol,
-            0,
-        );
+        // dyld's lazy-bind walker accepts only SET_SEGMENT_AND_OFFSET_ULEB,
+        // the two dylib-ordinal opcodes, SET_SYMBOL_TRAILING_FLAGS_IMM,
+        // DO_BIND and DONE. Anything else — including SET_TYPE_IMM, which
+        // non-lazy streams use — is a hard "bad lazy bind opcode" error at
+        // launch, because the fixup kind is implied by
+        // S_LAZY_SYMBOL_POINTERS. Entry i binds __la_symbol_ptr slot i and
+        // the stub helper jumps to offsets[i].
+        out.push(BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB | target.segment_index);
+        write_uleb128(&mut out, target.offset);
+        if target.ordinal > 0 && target.ordinal < 16 {
+            out.push(BIND_OPCODE_SET_DYLIB_ORDINAL_IMM | target.ordinal);
+        } else {
+            out.push(BIND_OPCODE_SET_DYLIB_ORDINAL_ULEB);
+            write_uleb128(&mut out, target.ordinal as u64);
+        }
+        out.push(BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM);
+        out.extend_from_slice(target.symbol.as_bytes());
+        out.push(0);
+        out.push(BIND_OPCODE_DO_BIND);
+        out.push(BIND_OPCODE_DONE);
     }
-    out.push(BIND_OPCODE_DONE);
     (out, offsets)
 }
 
@@ -660,7 +668,9 @@ pub fn decode_bind_stream_for_test(bytes: &[u8]) -> Vec<(u8, u64, u8, u8, String
     let mut result = Vec::new();
     let mut segment = 0u8;
     let mut offset = 0u64;
-    let mut type_imm = 0u8;
+    // dyld enters a bind stream with the fixup kind defaulted to POINTER;
+    // lazy streams never state a type and still bind pointers.
+    let mut type_imm = BIND_TYPE_POINTER;
     let mut ordinal: i64 = 0;
     let mut addend: i64 = 0;
     let mut symbol = String::new();
@@ -724,8 +734,7 @@ pub fn decode_bind_stream_for_test(bytes: &[u8]) -> Vec<(u8, u64, u8, u8, String
                 let delta = read_uleb(bytes, &mut i);
                 offset += delta;
             }
-            0x90 => offset += (imm as u64) * 8,
-            0xA0 => {
+            0x90 => {
                 result.push((
                     segment,
                     offset,
@@ -735,6 +744,18 @@ pub fn decode_bind_stream_for_test(bytes: &[u8]) -> Vec<(u8, u64, u8, u8, String
                     addend,
                 ));
                 offset += 8;
+                addend = 0;
+            }
+            0xA0 => {
+                result.push((
+                    segment,
+                    offset,
+                    type_imm,
+                    ordinal as u8,
+                    symbol.clone(),
+                    addend,
+                ));
+                offset += (imm as u64) * 8;
                 addend = 0;
             }
             0xB0 => {

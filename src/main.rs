@@ -715,7 +715,13 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                 eprintln!("{}", e);
                 std::process::exit(1);
             }
-            match adeshlang::backends::wasm::compile_to_file(&body, &out_path) {
+            match adeshlang::backends::wasm::compile_to_file_with_base(
+                &body,
+                &out_path,
+                in_path
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new(".")),
+            ) {
                 Ok(()) => {
                     println!("Wrote wasm to {}", out_path.display());
                     let mut js_path = out_path.clone();
@@ -1055,7 +1061,13 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                 eprintln!("Ownership Error: {}", e);
                 std::process::exit(1);
             }
-            match adeshlang::backends::wasm::compile_to_file(&body, &wasm_out) {
+            match adeshlang::backends::wasm::compile_to_file_with_base(
+                &body,
+                &wasm_out,
+                in_path
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new(".")),
+            ) {
                 Ok(()) => {
                     if let Err(e) = adeshlang::backends::wasm::write_js_loader(&wasm_out, &js_out) {
                         eprintln!("write js loader error: {}", e);

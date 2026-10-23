@@ -19,6 +19,76 @@ pub enum EntityKind {
     Class,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parsing::{lexer::Lexer, parser::Parser};
+
+    fn warnings(src: &str) -> Vec<String> {
+        let tokens = Lexer::new(src).tokenize().expect("lex warning fixture");
+        let ast = Parser::new(tokens, None)
+            .parse_program()
+            .expect("parse warning fixture");
+        let mut pass = UnusedWarningPass::new(src);
+        pass.analyze_ast(&ast);
+        pass.warnings.into_iter().map(|(msg, _, _)| msg).collect()
+    }
+
+    #[test]
+    fn exported_declarations_do_not_require_local_uses() {
+        assert!(
+            warnings(
+                "export const PI = 3.14;
+             export let count = 0;
+             export fn add(a, b) { return a + b; }
+             export class Counter {}"
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn default_export_marks_local_binding_used() {
+        assert!(warnings("const value = 42; export default value;").is_empty());
+    }
+
+    #[test]
+    fn exports_preserve_warnings_inside_their_bodies() {
+        let actual =
+            warnings("export fn public_api(unused_arg) { let unused_local = 1; return 0; }");
+        assert!(actual.contains(&"unused parameter `unused_arg`".to_string()));
+        assert!(actual.contains(&"unused variable `unused_local`".to_string()));
+        assert_eq!(actual.len(), 2);
+    }
+
+    #[test]
+    fn private_declarations_still_warn() {
+        let actual = warnings(
+            "const private_value = 1;
+             fn private_function() { return 0; }
+             class PrivateClass {}",
+        );
+        assert!(actual.contains(&"unused variable `private_value`".to_string()));
+        assert!(actual.contains(&"unused function `private_function`".to_string()));
+        assert!(actual.contains(&"unused class `PrivateClass`".to_string()));
+        assert_eq!(actual.len(), 3);
+    }
+
+    #[test]
+    fn exported_initializer_still_counts_as_a_use() {
+        assert!(warnings("const seed = 41; export const answer = seed + 1;").is_empty());
+    }
+
+    #[test]
+    fn default_exported_function_body_is_checked() {
+        let actual =
+            warnings("export default fn api(unused_arg) { let unused_local = 1; return 0; }");
+        assert!(actual.contains(&"unused parameter `unused_arg`".to_string()));
+        assert!(actual.contains(&"unused variable `unused_local`".to_string()));
+        assert_eq!(actual.len(), 2);
+    }
+}
+
 impl EntityKind {
     pub fn description(&self) -> &'static str {
         match self {
@@ -243,40 +313,58 @@ impl<'a> UnusedWarningPass<'a> {
         let col = stmt.span.col;
 
         match &stmt.kind {
-            StmtKind::Let(name, init, _, _, _, _) => {
+            StmtKind::Let(name, init, _, is_export, _, _) => {
                 if let Some(expr) = init {
                     self.scan_expr(expr);
                 }
                 self.declare(name.clone(), EntityKind::Variable, line, col);
+                if *is_export {
+                    self.mark_used(name);
+                }
             }
-            StmtKind::LetTuple(names, _, init, _, _, _) => {
+            StmtKind::LetTuple(names, _, init, is_export, _, _) => {
                 if let Some(expr) = init {
                     self.scan_expr(expr);
                 }
                 for name in names {
                     self.declare(name.clone(), EntityKind::Variable, line, col);
+                    if *is_export {
+                        self.mark_used(name);
+                    }
                 }
             }
-            StmtKind::LetObject(pairs, init, _, _, _) => {
+            StmtKind::LetObject(pairs, init, is_export, _, _) => {
                 if let Some(expr) = init {
                     self.scan_expr(expr);
                 }
                 for (key, alias) in pairs {
                     let target_name = alias.as_ref().unwrap_or(key);
                     self.declare(target_name.clone(), EntityKind::Variable, line, col);
+                    if *is_export {
+                        self.mark_used(target_name);
+                    }
                 }
             }
-            StmtKind::ShareDeclaration(decl, _) => {
+            StmtKind::ShareDeclaration(decl, is_export) => {
                 self.scan_expr(&decl.expr);
                 self.declare(decl.name.clone(), EntityKind::Variable, line, col);
+                if *is_export {
+                    self.mark_used(&decl.name);
+                }
             }
-            StmtKind::StrongDeclaration(decl, _) => {
+            StmtKind::StrongDeclaration(decl, is_export) => {
                 self.scan_expr(&decl.expr);
                 self.declare(decl.name.clone(), EntityKind::Variable, line, col);
+                if *is_export {
+                    self.mark_used(&decl.name);
+                }
             }
-            StmtKind::WeakDeclaration(decl, _) => {
+            StmtKind::WeakDeclaration(decl, is_export) => {
                 self.scan_expr(&decl.expr);
                 self.declare(decl.name.clone(), EntityKind::Variable, line, col);
+                if *is_export {
+                    self.mark_used(&decl.name);
+                }
             }
             StmtKind::ExprStmt(expr) => {
                 self.scan_expr(expr);
@@ -315,8 +403,8 @@ impl<'a> UnusedWarningPass<'a> {
                 }
                 self.pop_scope();
             }
-            StmtKind::Function(func, is_export) => {
-                if !is_export && func.name != "main" {
+            StmtKind::Function(func, _) | StmtKind::ExportDefaultFunction(func) => {
+                if matches!(&stmt.kind, StmtKind::Function(_, false)) && func.name != "main" {
                     self.declare(func.name.clone(), EntityKind::Function, line, col);
                 }
                 self.push_scope();
@@ -333,8 +421,8 @@ impl<'a> UnusedWarningPass<'a> {
                 }
                 self.pop_scope();
             }
-            StmtKind::Class(class, _) => {
-                if class.name != "Main" {
+            StmtKind::Class(class, _) | StmtKind::ExportDefaultClass(class) => {
+                if matches!(&stmt.kind, StmtKind::Class(_, false)) && class.name != "Main" {
                     self.declare(class.name.clone(), EntityKind::Class, line, col);
                 }
                 for method in &class.methods {
@@ -353,6 +441,7 @@ impl<'a> UnusedWarningPass<'a> {
                     self.pop_scope();
                 }
             }
+            StmtKind::ExportDefault(name) => self.mark_used(name),
             StmtKind::Import { path, alias } | StmtKind::ImportDefault { path, alias } => {
                 if path == "JSON" || path == "std:JSON" || path == "json" || path == "std:json" {
                     self.warnings.push((

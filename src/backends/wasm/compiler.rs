@@ -1,8 +1,6 @@
 use super::encoder::*;
 use crate::parsing::ast::{Expr, ExprKind, Stmt, StmtKind, TokenKind, Value};
 use crate::parsing::error::{ErrorKind, LangError};
-use crate::parsing::lexer::Lexer;
-use crate::parsing::parser::Parser;
 use crate::types::field_layout::FieldLayout;
 use crate::types::visibility::Visibility;
 use crate::utils::collections::FastMap;
@@ -2140,6 +2138,10 @@ fn gen_stmt(
 }
 
 pub fn compile_to_file(src: &str, out: &Path) -> Result<(), LangError> {
+    compile_to_file_with_base(src, out, Path::new("."))
+}
+
+pub fn compile_to_file_with_base(src: &str, out: &Path, base: &Path) -> Result<(), LangError> {
     let body_src = if src
         .lines()
         .next()
@@ -2151,14 +2153,14 @@ pub fn compile_to_file(src: &str, out: &Path) -> Result<(), LangError> {
         src.to_string()
     };
 
-    let mut lx = Lexer::new(&body_src);
-    let toks = lx
-        .tokenize()
-        .map_err(|e| LangError::new(ErrorKind::Lexical, e.to_string(), 0, 0, "".into()))?;
-    let mut p = Parser::new(toks, None);
-    let prog = p
-        .parse_program()
-        .map_err(|e| LangError::new(ErrorKind::Parse, e.to_string(), 0, 0, "".into()))?;
+    let (prog, _) = crate::cli::parsing::check_ownership_and_parse(&body_src, &Default::default())
+        .map_err(|e| LangError::new(ErrorKind::User, e, 0, 0, "".into()))?;
+    let prog = crate::cli::static_imports::link_ast(prog, base)
+        .map_err(|e| LangError::new(ErrorKind::User, e, 0, 0, "".into()))?;
+    compile_ast_to_file(prog, out)
+}
+
+pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), LangError> {
     let prog = crate::parsing::ast_optimizer::optimize_program(&prog);
 
     let mut struct_layouts: FastMap<String, FieldLayout> = FastMap::default();
@@ -2222,7 +2224,11 @@ pub fn compile_to_file(src: &str, out: &Path) -> Result<(), LangError> {
     let mut func_defs: Vec<crate::parsing::ast::Function> = Vec::new();
     for s in &prog {
         if let StmtKind::Function(f, _) = &s.kind {
-            func_defs.push(f.clone());
+            let mut f = f.clone();
+            if f.ret_type.is_none() && f.body.iter().any(has_value_return) {
+                f.ret_type = Some("number".into());
+            }
+            func_defs.push(f);
         }
     }
 
@@ -2240,6 +2246,33 @@ pub fn compile_to_file(src: &str, out: &Path) -> Result<(), LangError> {
     }
 
     let mut funcs_index_map: FastMap<String, (u32, Vec<u8>, Option<u8>)> = FastMap::default();
+    // Declare every signature before compiling any body. Imported private
+    // helpers and recursive calls can refer to a later function.
+    for (i, f) in func_defs.iter().enumerate() {
+        let params = f
+            .params
+            .iter()
+            .map(|p| match p.2.as_deref() {
+                Some("int" | "bool") => 0x7F,
+                Some(ty) if struct_layouts.contains_key(ty) => 0x7F,
+                _ => 0x7C,
+            })
+            .collect();
+        let ret = match f.ret_type.as_deref() {
+            Some("int" | "bool") => Some(0x7F),
+            Some(ty) if struct_layouts.contains_key(ty) => Some(0x7F),
+            Some(_) => Some(0x7C),
+            None if f.body.last().is_some_and(|s| {
+                matches!(&s.kind,
+                StmtKind::ExprStmt(e) if is_numeric_expr(e, &funcs_index_map))
+            }) =>
+            {
+                Some(0x7C)
+            }
+            None => None,
+        };
+        funcs_index_map.insert(f.name.clone(), (5 + i as u32, params, ret));
+    }
     let mut function_section_types: Vec<u32> = Vec::new();
     let mut code_funcs: Vec<(u32, u32, Vec<u8>)> = Vec::new();
 
@@ -2442,7 +2475,10 @@ pub fn compile_to_file(src: &str, out: &Path) -> Result<(), LangError> {
         f_locals_f64.insert("__scratch_f64".to_string(), f_local_count_f64 + pcount);
         f_local_count_f64 += 1;
         for val in f_locals_f64.values_mut() {
-            *val += f_local_count_i32;
+            // Parameter indices precede all locals, irrespective of type.
+            if *val >= pcount {
+                *val += f_local_count_i32;
+            }
         }
 
         let mut ctx = CompilerContext {
@@ -2541,6 +2577,31 @@ pub fn compile_to_file(src: &str, out: &Path) -> Result<(), LangError> {
     f.write_all(&bytes)
         .map_err(|e| LangError::new(ErrorKind::Io, e.to_string(), 0, 0, "".into()))?;
     Ok(())
+}
+
+fn has_value_return(stmt: &Stmt) -> bool {
+    match &stmt.kind {
+        StmtKind::Return(Some(_)) => true,
+        StmtKind::Block(body) => body.iter().any(has_value_return),
+        StmtKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            has_value_return(then_branch)
+                || else_branch.as_ref().is_some_and(|s| has_value_return(s))
+        }
+        StmtKind::While { body, .. }
+        | StmtKind::ForIn { body, .. }
+        | StmtKind::UnsafeBlock(body)
+        | StmtKind::Region { body, .. } => has_value_return(body),
+        StmtKind::TryCatch {
+            try_block,
+            catch_block,
+            ..
+        } => has_value_return(try_block) || has_value_return(catch_block),
+        _ => false,
+    }
 }
 
 fn is_numeric_expr(e: &Expr, _funcs: &FastMap<String, (u32, Vec<u8>, Option<u8>)>) -> bool {

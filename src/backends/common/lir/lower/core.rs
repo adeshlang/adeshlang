@@ -290,7 +290,7 @@ pub(super) fn is_builtin(name: &str) -> bool {
     }
     matches!(
         name,
-        "print" | "len" | "input" | "type" | "str" | "int" | "float" |
+        "print" | "len" | "input" | "type" | "str" | "string" | "int" | "float" |
         "concat" |
         "abs" | "sqrt" | "pow" | "min" | "max" | "floor" | "ceil" |
         "push" | "pop" | "range" |

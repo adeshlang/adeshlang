@@ -1395,6 +1395,19 @@ impl REmit {
 
 /// Minimal register lowering for: let, literals, a+b, print
 pub fn compile_to_file_v2(src: &str, out: &Path) -> Result<(), LangError> {
+    compile_to_file_v2_with_globals(src, out, &[])
+}
+
+/// Compile `src` to bytecode at `out`, additionally registering `globals` (name,
+/// placeholder value) as module-level globals so imported namespaces bound by the
+/// backend are defined in the bytecode module. The actual namespace object values
+/// require the VM's object/global support to be extended; this registers the names
+/// so imported modules resolve natively with no interpreter fallback.
+pub fn compile_to_file_v2_with_globals(
+    src: &str,
+    out: &Path,
+    globals: &[(String, crate::parsing::ast::Value)],
+) -> Result<(), LangError> {
     let mut lx = Lexer::new(src);
     let toks = lx.tokenize()?;
     let mut p = Parser::new(toks, None);
@@ -1402,6 +1415,9 @@ pub fn compile_to_file_v2(src: &str, out: &Path) -> Result<(), LangError> {
     let mut ctx = REmit::new();
 
     // First pass: collect globals
+    for (name, _) in globals {
+        ctx.add_global(name.clone());
+    }
     for s in &prog {
         if let StmtKind::Let(name, _init, _ann, _exp, _cst, _readonly) = &s.kind {
             ctx.add_global(name.clone());

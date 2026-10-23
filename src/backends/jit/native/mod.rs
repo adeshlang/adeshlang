@@ -27,6 +27,7 @@ pub use context::NativeJitContext;
 pub use runtime::execute_native_jit;
 
 // Removed unused import: crate::backends::common::lir::LirModule
+use std::path::Path;
 
 #[derive(Debug, Clone, Copy)]
 pub struct NativeJitProfileStats {
@@ -36,12 +37,18 @@ pub struct NativeJitProfileStats {
 
 /// Run a program using the Native JIT compiler
 pub fn native_jit_run(source: &str) -> Result<(), String> {
-    native_jit_run_with_stats(source, Default::default()).map(|_| ())
+    native_jit_run_with_stats(source, Path::new("."), Default::default()).map(|_| ())
 }
 
 /// Run a program using the Native JIT compiler and return profile statistics
+///
+/// `root_dir` is the directory imports are resolved against (typically the
+/// directory of the file being run). Imported modules are loaded, gated, and
+/// merged into the main module so `main` can call imported functions and read
+/// imported constants natively.
 pub fn native_jit_run_with_stats(
     source: &str,
+    root_dir: &Path,
     prebound_globals: std::collections::HashMap<String, crate::parsing::ast::Value>,
 ) -> Result<NativeJitProfileStats, String> {
     let compile_start = std::time::Instant::now();
@@ -65,6 +72,8 @@ pub fn native_jit_run_with_stats(
 
     let hir = ast_to_hir(&ast, true)?;
     crate::parsing::compile_time_memory_safety::check_memory_safety_compile_time_in(&hir, None)?;
+    let ast = crate::cli::static_imports::link_ast(ast, root_dir)?;
+    let hir = ast_to_hir(&ast, true)?;
 
     // Choose compilation path
     let use_vir = std::env::var("ADESH_USE_VIR")

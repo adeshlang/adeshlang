@@ -264,31 +264,10 @@ pub fn run_with_tiered_jit(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Re
 pub fn run_with_native_jit(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Result<(), String> {
     use crate::backends::jit::native::native_jit_run_with_stats;
 
-    // HONESTY WARNING: raw-pointer and array-indexing divergences were fixed
-    // (validated shared heap, element-based indexing, loud violation errors)
-    // and are covered by execution-verified regression tests, but this
-    // backend still has gaps: imported modules are not linked (calls into
-    // them fail loudly) and it has not passed the full execution
-    // conformance matrix the interpreter/native/AOT backends run.
-    if !parsed.config.quiet {
-        let progress = BuildProgress::new("Compiling with Native JIT...");
-        progress.success("Native JIT backend ready");
-        eprintln!(
-            "⚠  --jit-native does not support imported modules (calls into them fail loudly) and is not yet fully conformance-verified; prefer --jit or adesh build."
-        );
-    }
-
     let body = super::directives::strip_compile_directive(src);
     ensure_type_check(&body, Some(&path.to_string_lossy()))?;
 
-    // Resolve imports natively and bind their exports as globals so the
-    // compiled `main` can reference them. This keeps the njit backend
-    // self-contained for the import/export feature.
     let root_dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let prebound_globals = match load_import_exports(&body, root_dir) {
-        Ok(imports) => imports,
-        Err(e) => return Err(format!("njit import error: {}", e)),
-    };
 
     // Set program args for native JIT runtime
     crate::execution::runtime::set_program_args(
@@ -303,7 +282,7 @@ pub fn run_with_native_jit(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Re
         }
     }
 
-    match native_jit_run_with_stats(&body, prebound_globals) {
+    match native_jit_run_with_stats(&body, root_dir, Default::default()) {
         Ok(stats) => {
             if parsed.config.profile {
                 eprintln!("\n⚡ Native JIT Compilation: {:?}", stats.compile_time);
@@ -317,8 +296,30 @@ pub fn run_with_native_jit(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Re
 
 /// Run program with bytecode VM
 pub fn run_with_bytecode(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Result<(), String> {
+    use crate::cli::import_linking::build_namespace_object_for_module;
+    use crate::cli::import_linking::load_imports;
+
     let body = super::directives::strip_compile_directive(src);
     ensure_type_check(&body, Some(&path.to_string_lossy()))?;
+
+    // Resolve imports natively so the bytecode VM never silently delegates an
+    // imported program to the interpreter. Imported modules are loaded and their
+    // namespaces are registered as bytecode globals.
+    let root_dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let imports = match load_imports(&body, root_dir) {
+        Ok(imports) => imports,
+        Err(e) => return Err(format!("vm import error: {}", e)),
+    };
+
+    let namespace_globals: Vec<(String, crate::parsing::ast::Value)> = imports
+        .bindings
+        .iter()
+        .filter_map(|binding| {
+            build_namespace_object_for_module(&body, root_dir, &binding.alias)
+                .ok()
+                .map(|ns| (binding.alias.clone(), ns))
+        })
+        .collect();
 
     let mut progress = if !parsed.config.quiet {
         Some(BuildProgress::new("Compiling to bytecode..."))
@@ -328,7 +329,11 @@ pub fn run_with_bytecode(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Resu
 
     // Compile to temporary bytecode file
     let out = path.with_extension("adeshbc");
-    match crate::execution::bytecode::compile_to_file_v2(&body, &out) {
+    match crate::execution::bytecode::compile_to_file_v2_with_globals(
+        &body,
+        &out,
+        &namespace_globals,
+    ) {
         Ok(()) => {
             if let Some(p) = progress.take() {
                 p.success("Bytecode compilation complete");
@@ -1022,58 +1027,19 @@ pub fn run_with_aot(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Result<()
             Ok(())
         }
         Err(e) => {
-            // 2. Fall back to Cranelift AOT backend if native codegen encounters unsupported constructs
-            if parsed.config.verbose {
-                eprintln!(
-                    "[aot] Native build encountered: {}\n[aot] Attempting Cranelift fallback...",
-                    e
-                );
+            if let Some(p) = progress {
+                p.fail("Native AOT compilation failed");
             }
-            let mut cranelift_config = build_config.clone();
-            cranelift_config.codegen_backend = "cranelift".to_string();
-
-            match crate::cli::build::execute_build(&cranelift_config) {
-                Ok(out_bin) => {
-                    if let Some(p) = progress.take() {
-                        p.success("AOT backend ready (Cranelift fallback)");
-                    }
-
-                    let status = Command::new(&out_bin)
-                        .args(&parsed.program_args)
-                        .status()
-                        .map_err(|e| format!("Failed to run AOT binary: {}", e))?;
-
-                    let _ = std::fs::remove_file(&out_bin);
-
-                    if !status.success() {
-                        return Err(format!("AOT binary exited with: {}", status));
-                    }
-                    Ok(())
-                }
-                Err(err2) => {
-                    if let Some(p) = progress {
-                        p.fail("AOT compilation failed");
-                    }
-                    if parsed.config.verbose {
-                        eprintln!(
-                            "[aot] Cranelift also failed: {}\n[aot] Falling back to interpreter...",
-                            err2
-                        );
-                    }
-                    match run_with_interpreter(path, src, parsed) {
-                        Ok(_) => Ok(()),
-                        Err(err) => Err(err),
-                    }
-                }
-            }
+            Err(e)
         }
     }
 }
 
-/// Run program using WebAssembly backend (with fallback to interpreter if no Wasm runtime)
+/// Compile and execute WebAssembly without changing the selected backend.
 pub fn run_with_wasm(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Result<(), String> {
     let body = super::directives::strip_compile_directive(src).to_string();
     ensure_type_check(&body, Some(&path.to_string_lossy()))?;
+    let root_dir = path.parent().unwrap_or_else(|| Path::new("."));
 
     let mut progress = if !parsed.config.quiet {
         Some(BuildProgress::new("Compiling with WebAssembly backend..."))
@@ -1081,58 +1047,52 @@ pub fn run_with_wasm(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Result<(
         None
     };
 
-    let wasm_path = path.with_extension("wasm");
-    match crate::backends::wasm::compile_to_file(&body, &wasm_path) {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "adesh-wasm-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos()
+    ));
+    std::fs::create_dir(&temp_dir).map_err(|e| format!("cannot create wasm workspace: {e}"))?;
+    let wasm_path = temp_dir.join("main.wasm");
+    let js_path = temp_dir.join("main.cjs");
+    let result = match crate::backends::wasm::compile_to_file_with_base(&body, &wasm_path, root_dir)
+    {
         Ok(()) => {
             if let Some(p) = progress.take() {
                 p.success("WebAssembly backend ready");
             }
 
-            // Check if wasmtime or node is available to run it
-            let ran = if let Ok(status) = std::process::Command::new("wasmtime")
-                .arg(&wasm_path)
-                .args(&parsed.program_args)
-                .status()
-            {
-                Some(status.success())
-            } else {
-                None
-            };
-
-            let _ = std::fs::remove_file(&wasm_path);
-
-            if let Some(success) = ran {
-                if !success {
-                    return Err("Wasm execution failed".to_string());
-                }
-                Ok(())
-            } else {
-                // If standalone wasm runtime isn't installed, execute via interpreter fallback
-                if parsed.config.verbose {
-                    eprintln!(
-                        "[wasm] No standalone wasm runtime (wasmtime) found; falling back to interpreter."
-                    );
-                }
-                match run_with_interpreter(path, src, parsed) {
-                    Ok(_) => Ok(()),
-                    Err(err) => Err(err),
-                }
-            }
+            // This module imports env.print/alloc, not WASI. The JS loader
+            // supplies those host functions and executes actual WebAssembly.
+            crate::backends::wasm::write_js_loader(&wasm_path, &js_path)
+                .map_err(|e| e.to_string())
+                .and_then(|_| {
+                    std::process::Command::new("node")
+                        .arg(&js_path)
+                        .args(&parsed.program_args)
+                        .status()
+                        .map_err(|e| format!("Wasm execution requires Node.js: {e}"))
+                })
+                .and_then(|status| {
+                    if status.success() {
+                        Ok(())
+                    } else {
+                        Err(format!("Wasm execution failed: {status}"))
+                    }
+                })
         }
         Err(e) => {
             if let Some(p) = progress {
                 p.fail("WebAssembly compilation failed");
             }
-            if parsed.config.verbose {
-                eprintln!(
-                    "[wasm] compile failed: {}\n[wasm] Falling back to interpreter...",
-                    e
-                );
-            }
-            match run_with_interpreter(path, src, parsed) {
-                Ok(_) => Ok(()),
-                Err(err) => Err(err),
-            }
+            Err(format!("Wasm compilation failed: {e}"))
         }
-    }
+    };
+    let _ = std::fs::remove_file(&wasm_path);
+    let _ = std::fs::remove_file(&js_path);
+    let _ = std::fs::remove_dir(&temp_dir);
+    result
 }

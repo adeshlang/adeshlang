@@ -732,7 +732,10 @@ fn test_general_dynamic_tls_fails_loudly() {
 }
 
 #[test]
-fn test_macho_tls_sections_still_fail_loudly() {
+fn test_macho_tls_sections_become_thread_local_variables() {
+    // Mach-O has no GOT-based TLS model: the linker lowers TLS input
+    // sections to the dyld TLV ABI (`__thread_data`/`__thread_bss` plus a
+    // `__thread_vars` descriptor table), so this links instead of failing.
     let target = Target::from_triple("x86_64-apple-darwin").expect("triple");
     let dir = test_dir();
 
@@ -753,13 +756,47 @@ fn test_macho_tls_sections_still_fail_loudly() {
     write_object(&obj, &obj_path);
 
     let out_path = dir.join("tls_macho_out");
-    let config = LinkConfig::new(out_path, target.clone());
-    let res = Linker::link(&[obj_path], config);
-    let err = res.expect_err("Mach-O TLS must fail the link");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("TLS input sections"),
-        "the error must name the unsupported TLS input sections, got: {msg}"
+    let config = LinkConfig::new(out_path.clone(), target.clone());
+    Linker::link(&[obj_path], config).expect("Mach-O TLS links via the TLV ABI");
+
+    let bytes = std::fs::read(&out_path).expect("output");
+    assert_eq!(
+        u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
+        0xFEEDFACF,
+        "must be a 64-bit Mach-O"
+    );
+
+    let mut sections = Vec::new();
+    let ncmds = u32::from_le_bytes(bytes[16..20].try_into().unwrap()) as usize;
+    let mut off = 32usize;
+    for _ in 0..ncmds {
+        let cmd = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
+        let cmdsize = u32::from_le_bytes(bytes[off + 4..off + 8].try_into().unwrap()) as usize;
+        if cmd == 0x19 {
+            let nsects = u32::from_le_bytes(bytes[off + 64..off + 68].try_into().unwrap()) as usize;
+            for k in 0..nsects {
+                let so = off + 72 + k * 80;
+                let name = String::from_utf8_lossy(&bytes[so..so + 16])
+                    .trim_end_matches('\0')
+                    .to_string();
+                let flags = u32::from_le_bytes(bytes[so + 64..so + 68].try_into().unwrap());
+                sections.push((name, flags & 0xFF));
+            }
+        }
+        off += cmdsize;
+    }
+
+    const S_THREAD_LOCAL_REGULAR: u32 = 0x11;
+    let types: Vec<&str> = sections
+        .iter()
+        .filter(|(_, t)| *t == S_THREAD_LOCAL_REGULAR)
+        .map(|(n, _)| n.as_str())
+        .collect();
+    assert_eq!(
+        types,
+        vec!["__thread_data"],
+        "TLS input sections must be emitted as S_THREAD_LOCAL_REGULAR, got {:?}",
+        sections
     );
 }
 

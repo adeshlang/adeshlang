@@ -25,12 +25,14 @@ pub mod commands;
 pub mod config;
 pub mod directives;
 pub mod editor_launcher;
+pub mod import_linking;
 pub mod ir_utils;
 pub mod memory_stats;
 pub mod native_engine;
 pub mod observatory;
 pub mod parsing;
 pub mod path_utils;
+pub mod static_imports;
 pub mod ui;
 pub mod validation;
 

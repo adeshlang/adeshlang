@@ -3,6 +3,14 @@ mod tests {
     use crate::types::type_system::check_module;
 
     #[test]
+    fn imported_add_is_not_assumed_to_be_a_void_collection_method() {
+        let result = check_module(
+            "import \"./math.adesh\" as m; fn wrapped(a, b) { return m.add(a, b) + 1; }",
+        );
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
     fn annotated_let_mismatch() {
         let src = r#"
         let bad:int = 3.14;

@@ -1,0 +1,15 @@
+import "./math.adesh" as math;
+
+fn main() {
+    let r1 = math.add(2, 3);
+    let r2 = math.mul(4, 5);
+    let r3 = math.PI;
+    if (r1 != 5) { throw "add failed: " + string(r1); }
+    if (r2 != 20) { throw "mul failed: " + string(r2); }
+    if ((r3 - 3.14).abs() > 0.001) { throw "PI failed: " + string(r3); }
+    print(r1);
+    print(r2);
+    print(r3);
+    print("All tests passed!");
+    return 0;
+}

@@ -439,6 +439,28 @@ fn test_macho_lazy_binding_structure_end_to_end() {
         la_slot_va
     );
 
+    // dyld's lazy walker whitelists opcodes: a SET_TYPE_IMM (0x50) anywhere
+    // in this stream aborts the process at launch with
+    // `dyld: bad lazy bind opcode 0x50`. Pin the exact byte sequence.
+    assert_eq!(
+        lazy_bytes.to_vec(),
+        vec![
+            0x72,                             // SET_SEGMENT_AND_OFFSET_ULEB __DATA
+            (la_slot_va - data.vmaddr) as u8, // slot offset within the segment
+            0x11,                             // SET_DYLIB_ORDINAL_IMM libSystem
+            0x40,                             // SET_SYMBOL_TRAILING_FLAGS_IMM
+            b'_',
+            b'p',
+            b'u',
+            b't',
+            b's',
+            0x00, // "_puts" 
+            0x90, // DO_BIND
+            0x00, // DONE
+        ],
+        "lazy stream must be segment/offset, ordinal, symbol, DO_BIND, DONE"
+    );
+
     // Bind stream: dyld_stub_binder into the GOT slot.
     let bind_bytes = &bytes[info.bind_off as usize..(info.bind_off + info.bind_size) as usize];
     let bind = decode_bind_stream_for_test(bind_bytes);

@@ -1,0 +1,7 @@
+import "./default_fn.adesh" as d;
+
+fn main() {
+    let r = d(2, 3);
+    if (r != 5) { throw "default fn add failed: " + string(r); }
+    return 0;
+}

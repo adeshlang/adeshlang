@@ -39,9 +39,6 @@ pub struct NativeJitCompiler {
     /// Globals pre-bound from imported modules (name -> exported `Value`), made
     /// available to the compiled `main` natively.
     prebound_globals: HashMap<String, crate::parsing::ast::Value>,
-    /// Leaked pointers to the pre-bound `Value`s, kept alive for the duration
-    /// of the program.
-    prebound_globals_ptrs: Vec<*mut crate::parsing::ast::Value>,
     /// Cached extra string data IDs (format strings, ANSI codes, etc.)
     format_strings: HashMap<String, cranelift_module::DataId>,
     /// Map of function name -> return type (for correct call result typing)
@@ -177,7 +174,6 @@ impl NativeJitCompiler {
             global_vars: HashMap::new(),
             global_types: HashMap::new(),
             prebound_globals: HashMap::new(),
-            prebound_globals_ptrs: Vec::new(),
             format_strings: HashMap::new(),
             function_return_types: HashMap::new(),
         })
@@ -342,17 +338,19 @@ impl NativeJitCompiler {
 
         // Declare and initialize globals pre-bound from imported modules so the
         // compiled `main` can reference them natively. Each is stored as a
-        // pointer to a leaked `Value`.
+        // `RuntimeValue` handle (u64) produced by `store_value`, so that the
+        // compiled code can pass it directly to runtime builtins such as
+        // `jit_get_field` / `jit_call_method` instead of a raw `ast::Value`
+        // pointer (which those builtins cannot interpret).
         for (name, value) in &self.prebound_globals {
             if self.global_vars.contains_key(name) {
                 continue;
             }
             let data_name = format!("__global_{}", name);
-            let size = 8usize.max(1);
             let mut data_desc = DataDescription::new();
-            let leaked: *mut crate::parsing::ast::Value = Box::into_raw(Box::new(value.clone()));
-            let init_bytes = leaked as u64 as usize;
-            data_desc.define(vec![init_bytes as u8; size].into_boxed_slice());
+            let runtime_val = super::runtime_bridge::ast_value_to_runtime_value(value);
+            let handle = super::runtime_bridge::store_value(runtime_val);
+            data_desc.define(handle.to_le_bytes().to_vec().into_boxed_slice());
             data_desc.set_align(8);
 
             let data_id = self
@@ -365,7 +363,6 @@ impl NativeJitCompiler {
                 .map_err(|e| format!("Failed to define imported global data {}: {}", name, e))?;
 
             self.global_vars.insert(name.clone(), data_id);
-            self.prebound_globals_ptrs.push(leaked);
         }
 
         Ok(())
@@ -1063,13 +1060,9 @@ impl NativeJitCompiler {
                         value_map.insert(*dst, zero);
                     }
                 } else {
-                    // Unknown function: fail loudly. A silent 0 here masked
-                    // unresolved callees (notably functions imported from
-                    // other modules, which this backend does not yet link).
+                    // Never substitute a silent zero for an unresolved call.
                     return Err(format!(
-                        "call to function '{}' cannot be resolved by the native JIT; \
-                         imported modules are not supported by --jit-native \
-                         (use --jit or adesh build)",
+                        "call to function '{}' cannot be resolved by the native JIT",
                         func_name
                     ));
                 }
@@ -3911,9 +3904,7 @@ impl NativeJitCompiler {
                 } else {
                     // Unknown function: fail loudly (see LirInst::Call).
                     return Err(format!(
-                        "tail call to function '{}' cannot be resolved by the native JIT; \
-                         imported modules are not supported by --jit-native \
-                         (use --jit or adesh build)",
+                        "tail call to function '{}' cannot be resolved by the native JIT",
                         func_name
                     ));
                 }
