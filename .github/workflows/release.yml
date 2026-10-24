@@ -156,7 +156,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          submodules: recursive
 
       # ========================================================================
       # RUST
@@ -1092,6 +1091,11 @@ jobs:
       # UPDATE DOCUMENTATION WEBSITE RELEASES & CHECKSUMS
       # ========================================================================
 
+      - name: Checkout docs-website submodule
+        continue-on-error: true
+        run: |
+          git submodule update --init docs-website
+
       - name: Update documentation website releases & checksums
         continue-on-error: true
         env:
@@ -1109,4 +1113,5 @@ jobs:
             git push origin HEAD:${{ github.ref_name || 'main' }} || git push
             echo "Successfully updated and pushed release documentation."
           fi
+
 
