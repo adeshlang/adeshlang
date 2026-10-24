@@ -2,6 +2,6 @@
 	path = docs-website
 	url = https://github.com/adeshlang/docs-website.git
 
-[submodule "mcp"]
+[submodule "adesh-mcp"]
 	path = mcp
 	url = https://github.com/adeshlang/adesh-mcp.git

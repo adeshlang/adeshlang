@@ -4,16 +4,16 @@
 //! `x86_64-darwin`, and verify the produced image by *parsing it back*:
 //! load commands, `LC_DYLD_INFO_ONLY` streams (decoded with the reference
 //! decoders from `macho::dynamic`), the indirect symbol table, the
-//! synthesized stub/GOT/helper sections, and the full call → stub →
-//! lazy-pointer → helper → binder machine-code chain.
+//! synthesized stub/`__got` sections, and the full call → stub → `__got`
+//! machine-code chain.
 //!
 //! What these tests CANNOT do: execute the binary under dyld (that needs a
 //! macOS host). Execution verification is the CI macOS job's
 //! responsibility; everything verifiable on a byte level is verified here.
 
 use adesh_linker::macho::dynamic::{
-    BIND_TYPE_POINTER, REBASE_TYPE_POINTER, REBASE_TYPE_TEXT_ABSOLUTE32,
-    decode_bind_stream_for_test, decode_export_trie_for_test, decode_rebase_stream_for_test,
+    BIND_TYPE_POINTER, REBASE_TYPE_POINTER, decode_bind_stream_for_test,
+    decode_export_trie_for_test, decode_rebase_stream_for_test,
 };
 use adesh_linker::object::ObjectWriter;
 use adesh_linker::relocation::{Relocation, RelocationKind};
@@ -46,7 +46,6 @@ const N_UNDF: u8 = 0x00;
 
 const S_ZEROFILL: u32 = 0x1;
 const S_NON_LAZY_SYMBOL_POINTERS: u32 = 0x6;
-const S_LAZY_SYMBOL_POINTERS: u32 = 0x7;
 
 // ─── minimal Mach-O reader used by the assertions ───────────────────────────
 
@@ -69,6 +68,7 @@ struct SegmentRecord {
     vmsize: u64,
     fileoff: u64,
     filesize: u64,
+    maxprot: u32,
     sections: Vec<SectionRecord>,
 }
 
@@ -175,6 +175,7 @@ fn parse_macho(bytes: &[u8]) -> ParsedMachO {
                 let vmsize = u64::from_le_bytes(body[32..40].try_into().unwrap());
                 let fileoff = u64::from_le_bytes(body[40..48].try_into().unwrap());
                 let filesize = u64::from_le_bytes(body[48..56].try_into().unwrap());
+                let maxprot = u32::from_le_bytes(body[56..60].try_into().unwrap());
                 let nsects = u32::from_le_bytes(body[64..68].try_into().unwrap());
                 assert_eq!(
                     cmdsize,
@@ -201,6 +202,7 @@ fn parse_macho(bytes: &[u8]) -> ParsedMachO {
                     vmsize,
                     fileoff,
                     filesize,
+                    maxprot,
                     sections,
                 });
             }
@@ -333,11 +335,15 @@ fn object_calling_puts() -> ObjectFile {
 
 // ─── tests ─────────────────────────────────────────────────────────────────
 
-/// End-to-end lazy-binding structure: call site → proxy stub → lazy
-/// pointer → stub helper → binder, with every dyld stream and table
-/// consistent.
+/// End-to-end eager binding: call site → proxy stub → `__got` slot, with
+/// every dyld stream and table consistent.
+///
+/// Function imports are bound eagerly (non-lazy). dyld writes the resolved
+/// address into the import's `__got` slot while loading the image, so there
+/// is no `__la_symbol_ptr`, no `__stub_helper`, and no lazy bind stream: the
+/// stub only loads and branches through an already-final pointer.
 #[test]
-fn test_macho_lazy_binding_structure_end_to_end() {
+fn test_macho_eager_binding_structure_end_to_end() {
     let dir = tempdir().unwrap();
     let out = dir.path().join("prog");
     let target = Target::from_triple("x86_64-darwin").unwrap();
@@ -384,84 +390,38 @@ fn test_macho_lazy_binding_structure_end_to_end() {
         image.dylibs
     );
 
-    // Dynamic sections exist with dyld-visible types and metadata.
-    let la = text_section_of(data, "__la_symbol_ptr");
-    assert_eq!(
-        la.flags & 0xFF,
-        S_LAZY_SYMBOL_POINTERS,
-        "__la_symbol_ptr must be S_LAZY_SYMBOL_POINTERS"
-    );
-    assert_eq!(
-        la.reserved1, 1,
-        "la reserved1 = first indirect index after __got"
-    );
-    assert_eq!(la.size, 8, "one lazy slot for one import");
-
+    // `__got` is the only dyld pointer section and it is non-lazy: every
+    // import owns one slot that dyld binds at load.
     let got = text_section_of(data, "__got");
     assert_eq!(
         got.flags & 0xFF,
         S_NON_LAZY_SYMBOL_POINTERS,
         "__got must be S_NON_LAZY_SYMBOL_POINTERS"
     );
-    assert_eq!(got.reserved1, 0);
-    assert_eq!(got.size, 8, "one GOT slot (dyld_stub_binder)");
+    assert_eq!(got.reserved1, 0, "__got owns indirect indices from 0");
+    assert_eq!(got.size, 8, "one GOT slot for one import");
 
-    let helper = text_section_named(&image, "__stub_helper");
-    assert!(helper.size >= 21, "helper needs entries + tail");
+    assert!(
+        data.sections
+            .iter()
+            .all(|s| s.sectname != "__la_symbol_ptr"),
+        "__la_symbol_ptr must not exist: imports are bound eagerly"
+    );
+    assert!(
+        text.sections.iter().all(|s| s.sectname != "__stub_helper"),
+        "__stub_helper must not exist: imports are bound eagerly"
+    );
 
-    // LC_DYLD_INFO_ONLY with real content.
+    // LC_DYLD_INFO_ONLY with real content, but no lazy stream.
     let info = image
         .dyld_info
         .clone()
         .expect("LC_DYLD_INFO_ONLY required for a dyld-bound image");
-    assert!(info.rebase_size > 0);
-    assert!(info.bind_size > 0);
-    assert!(info.lazy_size > 0);
+    assert_eq!(info.lazy_size, 0, "there must be no lazy bind stream");
+    assert!(info.bind_size > 0, "imports must have eager binds");
 
-    // Segment indexes for the streams: __TEXT=1, __DATA=2 (PAGEZERO is 0).
-    let la_slot_va = la.addr;
-
-    // Lazy stream: exactly one self-contained entry binding `_puts` into
-    // the lazy slot, from libSystem (ordinal 1).
-    let lazy_bytes = &bytes[info.lazy_off as usize..(info.lazy_off + info.lazy_size) as usize];
-    let lazy = decode_bind_stream_for_test(lazy_bytes);
-    assert_eq!(
-        lazy,
-        vec![(
-            2,
-            la_slot_va - data.vmaddr,
-            BIND_TYPE_POINTER,
-            1,
-            "_puts".to_string(),
-            0
-        )],
-        "lazy stream must bind _puts at slot 0x{:x}",
-        la_slot_va
-    );
-
-    // dyld's lazy walker whitelists opcodes: a SET_TYPE_IMM (0x50) anywhere
-    // in this stream aborts the process at launch with
-    // `dyld: bad lazy bind opcode 0x50`. Pin the exact byte sequence.
-    assert_eq!(
-        lazy_bytes.to_vec(),
-        vec![
-            0x72,                             // SET_SEGMENT_AND_OFFSET_ULEB __DATA
-            (la_slot_va - data.vmaddr) as u8, // slot offset within the segment
-            0x11,                             // SET_DYLIB_ORDINAL_IMM libSystem
-            0x40,                             // SET_SYMBOL_TRAILING_FLAGS_IMM
-            b'_',
-            b'p',
-            b'u',
-            b't',
-            b's',
-            0x00, // "_puts" 
-            0x90, // DO_BIND
-            0x00, // DONE
-        ],
-        "lazy stream must be segment/offset, ordinal, symbol, DO_BIND, DONE"
-    );
-
-    // Bind stream: dyld_stub_binder into the GOT slot.
+    // Bind stream: exactly one entry, filling `__got` with `_puts` from
+    // libSystem (ordinal 1). This binding is what makes the stub callable.
     let bind_bytes = &bytes[info.bind_off as usize..(info.bind_off + info.bind_size) as usize];
     let bind = decode_bind_stream_for_test(bind_bytes);
     assert_eq!(
@@ -471,37 +431,15 @@ fn test_macho_lazy_binding_structure_end_to_end() {
             got.addr - data.vmaddr,
             BIND_TYPE_POINTER,
             1,
-            "dyld_stub_binder".to_string(),
+            "_puts".to_string(),
             0
-        )]
+        )],
+        "bind stream must fill __got slot 0x{:x} with _puts",
+        got.addr
     );
 
-    // Rebase stream: the lazy slot (initial value is an absolute pointer
-    // into __TEXT) and the helper's `push $helper_start` immediate.
-    let rebase_bytes =
-        &bytes[info.rebase_off as usize..(info.rebase_off + info.rebase_size) as usize];
-    let rebases = decode_rebase_stream_for_test(rebase_bytes);
-    assert!(
-        rebases.iter().any(
-            |(seg, off, ty)| *seg == 2 && *ty == REBASE_TYPE_POINTER && {
-                let va = data.vmaddr + off;
-                va == la_slot_va
-            }
-        ),
-        "lazy slot must be rebased: decoded {:?}",
-        rebases
-    );
-    assert!(
-        rebases
-            .iter()
-            .any(|(seg, _off, ty)| *seg == 1 && *ty == REBASE_TYPE_TEXT_ABSOLUTE32),
-        "helper push immediate must be rebased: decoded {:?}",
-        rebases
-    );
-
-    // Symbol table: `_puts` and `dyld_stub_binder` undefined with libSystem
-    // ordinal in n_desc; the proxy stub symbol `puts` must NOT appear as a
-    // defined export.
+    // Symbol table: `_puts` undefined with libSystem's ordinal in n_desc;
+    // the proxy stub symbol `puts` must NOT appear as a defined export.
     let symtab = image.symtab.clone().expect("LC_SYMTAB required");
     let dysym = image.dysymtab.clone().expect("LC_DYSYMTAB required");
     let mut symbols = Vec::new();
@@ -512,21 +450,22 @@ fn test_macho_lazy_binding_structure_end_to_end() {
     let puts = by_name("_puts").expect("_puts undefined symtab entry");
     assert_eq!(puts.1, N_UNDF | N_EXT);
     assert_eq!(puts.3, 0x0100, "two-level ordinal 1 in n_desc");
-    let binder = by_name("dyld_stub_binder").expect("dyld_stub_binder entry");
-    assert_eq!(binder.1, N_UNDF | N_EXT);
-    assert_eq!(binder.3, 0x0100);
+    assert!(
+        by_name("dyld_stub_binder").is_none(),
+        "eager binding has no dyld_stub_binder anchor"
+    );
     assert!(
         by_name("puts").is_none(),
         "the proxy stub must not leak as a defined `puts`"
     );
 
     // Defined exports in range and undefined count consistent.
-    assert_eq!(dysym.nundefsym, 2);
+    assert_eq!(dysym.nundefsym, 1);
     let _ = dysym.iextdefsym;
 
-    // Indirect symbol table: [dyld_stub_binder, _puts].
-    assert_eq!(dysym.nindirectsyms, 2);
-    let indirect: Vec<u32> = (0..2)
+    // Indirect symbol table: one entry for the single `__got` slot.
+    assert_eq!(dysym.nindirectsyms, 1);
+    let indirect: Vec<u32> = (0..1)
         .map(|i| {
             u32::from_le_bytes(
                 bytes[dysym.indirectsymoff as usize + i * 4
@@ -536,15 +475,11 @@ fn test_macho_lazy_binding_structure_end_to_end() {
             )
         })
         .collect();
-    let binder_index = symbols
-        .iter()
-        .position(|(name, ..)| name == "dyld_stub_binder")
-        .unwrap();
     let puts_index = symbols
         .iter()
         .position(|(name, ..)| name == "_puts")
         .unwrap();
-    assert_eq!(indirect, vec![binder_index as u32, puts_index as u32]);
+    assert_eq!(indirect, vec![puts_index as u32]);
 
     // ── machine-code chain ──
     // 1. The call in main targets the proxy stub.
@@ -569,53 +504,163 @@ fn test_macho_lazy_binding_structure_end_to_end() {
     assert_eq!(bytes[stub_off + 1], 0x25);
     let stub_disp = i32::from_le_bytes(bytes[stub_off + 2..stub_off + 6].try_into().unwrap());
     let stub_target = (stub_va as i64 + 6 + stub_disp as i64) as u64;
-    assert_eq!(stub_target, la_slot_va, "stub must jump through its slot");
-
-    // 3. The slot's initial value is the symbol's stub-helper entry.
-    let la_file_off = la.offset as usize;
-    let helper_entry_va =
-        u64::from_le_bytes(bytes[la_file_off..la_file_off + 8].try_into().unwrap());
-    let helper_sec = text_section_named(&image, "__stub_helper");
     assert_eq!(
-        helper_sec.addr, helper_entry_va,
-        "slot must point into __stub_helper head"
+        stub_target, got.addr,
+        "stub must branch through its __got slot"
     );
 
-    // 4. The helper entry pushes the lazy offset of _puts, then jumps to
-    //    the binder tail.
-    let entry_off = (helper_entry_va - text_va) as usize;
-    assert_eq!(bytes[entry_off], 0x68, "entry pushes its lazy offset");
-    let pushed = u32::from_le_bytes(bytes[entry_off + 1..entry_off + 5].try_into().unwrap());
-    // The lazy stream is exactly one entry, so _puts's entry starts at 0.
-    assert_eq!(
-        pushed, 0,
-        "first import's lazy-bind offset is 0 for the single-entry stream"
-    );
-    assert_eq!(bytes[entry_off + 5], 0xE9, "entry jumps to the tail");
-
-    // 5. The tail pushes the helper start (rebased) and jumps through the
-    //    GOT slot for dyld_stub_binder.
-    let tail_off = entry_off + 10;
-    assert_eq!(bytes[tail_off], 0x68, "tail pushes helper start");
-    let tail_pushed = u32::from_le_bytes(bytes[tail_off + 1..tail_off + 5].try_into().unwrap());
-    assert_eq!(tail_pushed, helper_sec.addr as u32);
-    assert_eq!(bytes[tail_off + 5], 0xFF);
-    assert_eq!(bytes[tail_off + 6], 0x25);
-    let tail_va = text_va + tail_off as u64;
-    let tail_jmp_disp = i32::from_le_bytes(bytes[tail_off + 7..tail_off + 11].try_into().unwrap());
-    let got_target = (tail_va as i64 + 5 + 6 + tail_jmp_disp as i64) as u64;
-    assert_eq!(got_target, got.addr, "tail must jump through __got[0]");
-
-    // The GOT slot starts zeroed (dyld binds it before any lazy call runs).
+    // 3. The slot starts zeroed; dyld writes the resolved address there
+    //    before any code runs.
     let got_file_off = got.offset as usize;
     assert_eq!(
         u64::from_le_bytes(bytes[got_file_off..got_file_off + 8].try_into().unwrap()),
         0,
-        "dyld_stub_binder slot must be zero pre-bind"
+        "__got slot must be zero pre-bind"
     );
 
     // __LINKEDIT covers everything after __DATA.
     assert!(linkedit.fileoff > data.fileoff);
+}
+
+/// arm64 eager binding: the proxy stub must be a real
+/// `adrp x16, page(slot)` / `ldr x16, [x16, #slot&0xfff]` / `br x16`
+/// sequence. macOS CI runs on arm64, so a wrong encodable here is a
+/// launch-time crash, not a test-only detail.
+#[test]
+fn test_macho_arm64_eager_binding_stub() {
+    let dir = tempdir().unwrap();
+    let out = dir.path().join("prog");
+    let target = Target::from_triple("aarch64-darwin").unwrap();
+    let obj_path = dir.path().join("main.o");
+
+    let mut obj = ObjectFile::new(obj_path.clone(), target.clone(), 0);
+    let mut text = Section::new_code(
+        ".text",
+        vec![0x00, 0x00, 0x00, 0x94, 0xC0, 0x03, 0x5F, 0xD6], // bl _puts; ret
+        16,
+    );
+    text.relocations
+        .push(Relocation::new(0, "puts", RelocationKind::AArch64Call26, 0));
+    obj.add_section(text);
+    obj.add_symbol(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        8,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_undefined("puts", 0));
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    let config = LinkConfig::new(out.clone(), target);
+    let res = Linker::link(&[obj_path], config);
+    assert!(res.is_ok(), "link failed: {:?}", res);
+
+    let bytes = std::fs::read(&out).unwrap();
+    let image = parse_macho(&bytes);
+    let text_seg = image
+        .segments
+        .iter()
+        .find(|s| s.segname == "__TEXT")
+        .unwrap();
+    let data_seg = image
+        .segments
+        .iter()
+        .find(|s| s.segname == "__DATA")
+        .unwrap();
+
+    let got = text_section_of(data_seg, "__got");
+    assert_eq!(got.flags & 0xFF, S_NON_LAZY_SYMBOL_POINTERS);
+    assert_eq!(got.size, 8, "one slot for one import");
+    assert!(
+        text_seg
+            .sections
+            .iter()
+            .all(|s| s.sectname != "__stub_helper"),
+        "eager binding needs no stub helper"
+    );
+
+    let info = image.dyld_info.clone().expect("LC_DYLD_INFO_ONLY required");
+    assert_eq!(info.lazy_size, 0, "there must be no lazy bind stream");
+    let bind_bytes = &bytes[info.bind_off as usize..(info.bind_off + info.bind_size) as usize];
+    assert_eq!(
+        decode_bind_stream_for_test(bind_bytes),
+        vec![(
+            2,
+            got.addr - data_seg.vmaddr,
+            BIND_TYPE_POINTER,
+            1,
+            "_puts".to_string(),
+            0
+        )]
+    );
+
+    // 1. `bl` at .text[0] must land on the proxy stub.
+    let main_text = text_seg
+        .sections
+        .iter()
+        .find(|s| s.sectname == ".text")
+        .expect(".text section");
+    let bl = u32::from_le_bytes(
+        bytes[main_text.offset as usize..main_text.offset as usize + 4]
+            .try_into()
+            .unwrap(),
+    );
+    assert_eq!(bl & 0xFC00_0000, 0x9400_0000, "call must be a BL");
+    let imm26 = bl & 0x03FF_FFFF;
+    let offset = (((imm26 << 6) as i32) >> 6) as i64 * 4;
+    let stub_va = (main_text.addr as i64 + offset) as u64;
+
+    // 2. Decode the stub body.
+    let stub_off = (stub_va - text_seg.vmaddr) as usize;
+    let word = |i: usize| {
+        u32::from_le_bytes(
+            bytes[stub_off + i * 4..stub_off + i * 4 + 4]
+                .try_into()
+                .unwrap(),
+        )
+    };
+    let adrp = word(0);
+    assert_eq!(
+        adrp & 0x9F00_001F,
+        0x9000_0010,
+        "stub must start with ADRP x16 (got 0x{:08x})",
+        adrp
+    );
+    let ldr = word(1);
+    assert_eq!(
+        ldr & 0xFFC0_0000,
+        0xF940_0000,
+        "second instruction must be LDR x16 (got 0x{:08x})",
+        ldr
+    );
+    assert_eq!(ldr & 0x1F, 16, "LDR must target x16");
+    assert_eq!(word(2), 0xD61F_0200, "stub must end with BR x16");
+
+    // ADRP + LDR must resolve to the `__got` slot the bind stream fills.
+    let adrp_imm = (((adrp >> 5) & 0x7FFFF) << 2) | ((adrp >> 29) & 0x3);
+    let adrp_imm = (((adrp_imm << 11) as i32) >> 11) as i64;
+    let page = (stub_va & !0xFFF) as i64 + (adrp_imm << 12);
+    assert_eq!(
+        page as u64,
+        got.addr & !0xFFF,
+        "ADRP page must be the slot's page"
+    );
+    let imm12 = (ldr >> 10) & 0xFFF;
+    assert_eq!(
+        (page as u64) + (imm12 as u64) * 8,
+        got.addr,
+        "LDR offset must select the slot"
+    );
+
+    // 3. The slot is zero pre-bind: dyld writes the resolved `_puts`.
+    let got_file_off = got.offset as usize;
+    assert_eq!(
+        u64::from_le_bytes(bytes[got_file_off..got_file_off + 8].try_into().unwrap()),
+        0
+    );
 }
 
 /// PIE data pointers are rebased even when the link has no imports (no
@@ -974,13 +1019,19 @@ fn test_macho_load_command_layout_consistency() {
         .iter()
         .find(|s| s.segname == "__DATA")
         .unwrap();
-    assert!(text.sections.iter().any(|s| s.sectname == "__stub_helper"));
+    let got = text_section_of(data, "__got");
+    assert_eq!(got.flags & 0xFF, S_NON_LAZY_SYMBOL_POINTERS);
     assert!(
-        data.sections
-            .iter()
-            .any(|s| s.sectname == "__la_symbol_ptr")
+        !text.sections.iter().any(|s| s.sectname == "__stub_helper"),
+        "eager binding needs no stub helper"
     );
-    assert!(data.sections.iter().any(|s| s.sectname == "__got"));
+    assert!(
+        !data
+            .sections
+            .iter()
+            .any(|s| s.sectname == "__la_symbol_ptr"),
+        "eager binding needs no lazy pointer section"
+    );
 
     // BSS sections (if any) must be S_ZEROFILL, never S_REGULAR-with-zeroes.
     for seg in &image.segments {
@@ -1006,7 +1057,10 @@ fn test_macho_load_command_layout_consistency() {
         (info.lazy_off, info.lazy_size),
         (info.export_off, info.export_size),
     ] {
-        assert!(size > 0 || off == 0, "blob offsets must be 0 when unused");
+        if size == 0 {
+            assert_eq!(off, 0, "unused dyld blobs must have offset 0");
+            continue;
+        }
         assert!(
             off >= linkedit.fileoff as u32
                 && (off as u64 + size as u64) <= (linkedit.fileoff + linkedit.filesize),
@@ -1202,4 +1256,179 @@ fn test_macho_arm64_thread_local_variables() {
                 && *off == desc_va - data.vmaddr),
         "bind stream must bind __tlv_bootstrap into the descriptor thunk, got {bind:?}"
     );
+}
+
+/// Read-only data that holds a link-time absolute pointer must not share the
+/// `__TEXT` segment: `__TEXT` is mapped `r-x` with `maxprot r-x`, so when dyld
+/// applies the PIE slide it cannot get write access to the slot, the kernel
+/// faults, and the process dies with SIGBUS before `main`. The macOS CI AOT
+/// failures were exactly this: 34 rebase slots landed inside `__TEXT,__rodata`.
+///
+/// ld64 and lld put such data in `__DATA_CONST`, which is `rw-` only while
+/// dyld fixes the image up. This test pins the segment assignment and the
+/// general invariant that every fixup target sits in a writable-maxprot
+/// segment.
+#[test]
+fn test_macho_pointer_bearing_rodata_goes_to_data_const() {
+    let dir = tempdir().unwrap();
+    let out = dir.path().join("prog");
+    let target = Target::from_triple("aarch64-darwin").unwrap();
+    let obj_path = dir.path().join("main.o");
+
+    let mut obj = ObjectFile::new(obj_path.clone(), target.clone(), 0);
+    // adrp x0, _VTABLE; ldr x0, [x0]; bl puts; ret
+    //
+    // The reference to the table is what keeps it through GC, exactly like
+    // real code taking the address of a vtable.
+    let mut text = Section::new_code(
+        ".text",
+        vec![
+            0x00, 0x00, 0x00, 0x90, // adrp x0, #imm
+            0x00, 0x00, 0x40, 0xF9, // ldr x0, [x0, #imm]
+            0x00, 0x00, 0x00, 0x94, // bl puts
+            0xC0, 0x03, 0x5F, 0xD6, // ret
+        ],
+        16,
+    );
+    text.relocations.push(Relocation::new(
+        0,
+        "_VTABLE",
+        RelocationKind::AArch64Adrp,
+        0,
+    ));
+    text.relocations.push(Relocation::new(
+        4,
+        "_VTABLE",
+        RelocationKind::AArch64AddLo12,
+        0,
+    ));
+    text.relocations
+        .push(Relocation::new(8, "puts", RelocationKind::AArch64Call26, 0));
+    obj.add_section(text);
+
+    // A vtable: two absolute pointers into the image, the classic reason a
+    // read-only section needs rebase fixups.
+    let mut rodata = Section::new_data(".rodata", vec![0u8; 16], false, 8);
+    rodata
+        .relocations
+        .push(Relocation::new(0, "main", RelocationKind::Absolute64, 0));
+    rodata
+        .relocations
+        .push(Relocation::new(8, "main", RelocationKind::Absolute64, 4));
+    obj.add_section(rodata);
+
+    obj.add_symbol(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        16,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_defined(
+        "_VTABLE",
+        SymbolBinding::Global,
+        SymbolType::Object,
+        1,
+        0,
+        16,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_undefined("puts", 0));
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    let config = LinkConfig::new(out.clone(), target);
+    Linker::link(&[obj_path], config).expect("link with pointer-bearing rodata");
+
+    let bytes = std::fs::read(&out).unwrap();
+    let image = parse_macho(&bytes);
+
+    // __PAGEZERO, __TEXT, __DATA_CONST, __DATA, __LINKEDIT.
+    let names: Vec<&str> = image.segments.iter().map(|s| s.segname.as_str()).collect();
+    assert_eq!(
+        names,
+        vec![
+            "__PAGEZERO",
+            "__TEXT",
+            "__DATA_CONST",
+            "__DATA",
+            "__LINKEDIT"
+        ],
+        "a dyld image with fixups must carry __DATA_CONST"
+    );
+    let data_const = &image.segments[2];
+    assert_eq!(
+        data_const.maxprot, 3,
+        "__DATA_CONST must be writable so dyld can apply its fixups"
+    );
+
+    // The rodata lives there, at the address the code was relocated against,
+    // and __TEXT kept only executable content.
+    let rodata_sec = text_section_of(data_const, ".rodata");
+    assert!(
+        rodata_sec.addr >= data_const.vmaddr
+            && rodata_sec.addr + rodata_sec.size <= data_const.vmaddr + data_const.vmsize,
+        ".rodata must sit inside __DATA_CONST"
+    );
+    let text = &image.segments[1];
+    assert_eq!(text.maxprot, 5, "__TEXT stays r-x");
+    assert!(
+        text.sections.iter().all(|s| s.sectname != ".rodata"),
+        "__TEXT must not hold the pointer table"
+    );
+    assert!(
+        text.sections.iter().any(|s| s.sectname == ".text"),
+        "__TEXT must still hold the code"
+    );
+
+    // Segment indexes follow the LC_SEGMENT_64 order.
+    let dc_index = 2u8;
+    let rebase = image.dyld_info.expect("LC_DYLD_INFO_ONLY");
+    let stream = decode_rebase_stream_for_test(
+        &bytes[rebase.rebase_off as usize..(rebase.rebase_off + rebase.rebase_size) as usize],
+    );
+    assert!(
+        stream
+            .iter()
+            .any(|(seg, off, _)| *seg == dc_index && *off == 0),
+        "the first vtable slot must be rebased inside __DATA_CONST, got {stream:?}"
+    );
+    assert!(
+        stream
+            .iter()
+            .any(|(seg, off, _)| *seg == dc_index && *off == 8),
+        "the second vtable slot must be rebased inside __DATA_CONST, got {stream:?}"
+    );
+
+    // The invariant that matters: no fixup may ever target a segment dyld
+    // cannot write.
+    for (seg, off, _) in &stream {
+        let segment = &image.segments[*seg as usize];
+        assert_eq!(
+            segment.maxprot & 2,
+            2,
+            "rebase target 0x{:x} is in `{}`, which dyld cannot write",
+            segment.vmaddr + off,
+            segment.segname
+        );
+    }
+
+    // The pointers themselves are still the link-time addresses: moving the
+    // section between segments must not disturb the relocation results.
+    let main_va = image
+        .segments
+        .iter()
+        .find(|s| s.segname == "__TEXT")
+        .unwrap()
+        .sections
+        .iter()
+        .find(|s| s.sectname == ".text")
+        .unwrap()
+        .addr;
+    let slot = rodata_sec.offset as usize;
+    let first = u64::from_le_bytes(bytes[slot..slot + 8].try_into().unwrap());
+    let second = u64::from_le_bytes(bytes[slot + 8..slot + 16].try_into().unwrap());
+    assert_eq!(first, main_va, "vtable slot 0 holds `main`");
+    assert_eq!(second, main_va + 4, "vtable slot 1 holds `main`+4");
 }

@@ -42,7 +42,7 @@ pub struct LayoutEngine {
     /// recorded while applying static relocations.
     pub elf_dynamic_relocs: Vec<crate::elf::dynamic::ElfDynamicReloc>,
     /// Mach-O dynamic-linking results consumed by the writer: one entry per
-    /// imported function (index i owns `__la_symbol_ptr` slot i).
+    /// imported function (index i owns `__got` slot i).
     pub macho_imports: Vec<crate::macho::dynamic::MachOImport>,
     /// Virtual addresses of 64-bit pointer words baked at link time that
     /// dyld must rebase when the (always-PIE) image slides.
@@ -503,9 +503,9 @@ impl LayoutEngine {
         }
 
         // Mach-O links are always dynamic (macOS has no static libSystem):
-        // every symbol the resolver routed to a dylib becomes a lazy-bound
-        // import with one `__la_symbol_ptr` slot. The bind name carries
-        // Mach-O's leading-underscore convention.
+        // every symbol the resolver routed to a dylib becomes an eagerly
+        // bound import with one `__got` slot. The bind name carries Mach-O's
+        // leading-underscore convention.
         let mut macho_imports: Vec<crate::macho::dynamic::MachOImport> = Vec::new();
         if target.format == crate::target::ObjectFormat::MachO {
             let mut raw: Vec<String> = resolver.dynamic_imports.clone();
@@ -529,7 +529,7 @@ impl LayoutEngine {
                 macho_imports.push(crate::macho::dynamic::MachOImport {
                     raw_name,
                     bind_name,
-                    la_slot_va: 0, // assigned when the lazy-pointer section is placed
+                    got_slot_va: 0, // assigned when the `__got` section is placed
                     is_data: false,
                 });
             }
@@ -943,12 +943,11 @@ impl LayoutEngine {
             merged_list.push(got_sec);
         }
 
-        // Mach-O lazy symbol pointers: one 8-byte slot per imported function.
-        // The slots start zeroed; the writer patches each to its
-        // `__stub_helper` entry (the pre-binding target) and dyld overwrites
-        // them lazily on first call. Slot VAs are registered as
-        // `__la_symbol_ptr_<name>` symbols so the proxy stubs synthesized by
-        // the linker can `jmp *[rip + slot]`.
+        // Mach-O import pointers: one 8-byte slot per imported function,
+        // bound eagerly by dyld at load. Slot VAs are registered as
+        // `__got_<name>` symbols so the proxy stubs synthesized by the linker
+        // can load through them. The section is writable, so it lands in
+        // `__DATA`, which dyld is allowed to write while binding.
         let mut macho_la_section_index: Option<usize> = None;
         if target.format == crate::target::ObjectFormat::MachO && !macho_imports.is_empty() {
             let has_data = merged_list.iter().any(|s| {
@@ -960,7 +959,7 @@ impl LayoutEngine {
                 align_to(current_va, target.page_size.max(8))
             };
             let mut la_sec = MergedSection::new(
-                "__la_symbol_ptr",
+                "__got",
                 SectionKind::Data,
                 flags::READ | flags::WRITE | flags::ALLOC,
                 8,
@@ -969,7 +968,7 @@ impl LayoutEngine {
             la_sec.data = vec![0u8; macho_imports.len() * 8];
             la_sec.size = la_sec.data.len() as u64;
             for (idx, import) in macho_imports.iter_mut().enumerate() {
-                import.la_slot_va = la_va + (idx as u64) * 8;
+                import.got_slot_va = la_va + (idx as u64) * 8;
             }
             current_va = la_va + la_sec.size;
             macho_la_section_index = Some(merged_list.len());
@@ -1472,14 +1471,12 @@ impl LayoutEngine {
             }
         }
 
-        // Map Mach-O lazy-pointer slots so the proxy stubs synthesized for
-        // imports (`jmp *[rip + slot]`) resolve to their slot VA.
+        // Map Mach-O import slots so the proxy stubs synthesized for imports
+        // (`adrp`/`ldr`/`br` on arm64, `jmp *[rip + slot]` on x86_64) resolve
+        // to the slot VA.
         if target.format == crate::target::ObjectFormat::MachO {
             for import in &macho_imports {
-                symbol_va_map.insert(
-                    format!("__la_symbol_ptr_{}", import.raw_name),
-                    import.la_slot_va,
-                );
+                symbol_va_map.insert(format!("__got_{}", import.raw_name), import.got_slot_va);
             }
         }
 

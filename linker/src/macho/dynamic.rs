@@ -1,5 +1,5 @@
 //! dyld dynamic-linking machinery for Mach-O 64: compressed rebasing,
-//! binding, lazy binding, and the export trie (`LC_DYLD_INFO_ONLY`).
+//! binding, and the export trie (`LC_DYLD_INFO_ONLY`).
 //!
 //! These encoders implement the opaque byte formats dyld actually parses at
 //! load time (see `mach-o/loader.h` and dyld's `ImageLoaderMachOCompressed`).
@@ -7,19 +7,23 @@
 //! below so the byte streams are validated by re-reading them, not by
 //! trusting the writer.
 //!
-//! x86_64 lazy-binding flow implemented by the writer on top of these
-//! encoders:
+//! Function imports are bound **eagerly**: dyld resolves every import while
+//! loading the image and writes the real function address into the import's
+//! `__got` slot. The proxy stub the linker synthesizes for the call site
+//! loads that slot and branches through it, so no code runs on the import
+//! path after load:
 //!
 //! ```text
-//! call site ──call──▶ proxy stub ──jmp *la_slot──▶ __stub_helper entry_i
-//!                                                    │ push lazy_offset_i
-//!                                                    ▼
-//!                                              push image_slide_marker
-//!                                              jmp *dyld_stub_binder@GOT
+//! call site ──bl──▶ proxy stub ──load __got slot──▶ real function
+//!                                    ▲
+//!                                    └── written by dyld at load
 //! ```
-//! `dyld_stub_binder` reads the pushed lazy offset, resolves the symbol,
-//! patches `__la_symbol_ptr[i]`, and jumps to the real function so the
-//! original call proceeds transparently.
+//!
+//! Lazy binding (`__la_symbol_ptr` + `__stub_helper` + `dyld_stub_binder`)
+//! is deliberately not used: it depends on a trampoline ABI that differs per
+//! architecture and is easy to get subtly wrong, while eager binds are the
+//! same mechanism that `LC_DYLD_CHAINED_FIXUPS` images use for function
+//! pointers.
 
 // ─── dyld rebase opcodes (mach-o/loader.h) ─────────────────────────────────
 
@@ -74,15 +78,14 @@ pub const BIND_TYPE_POINTER: u8 = 1;
 
 pub const BIND_SYMBOL_FLAGS_WEAK_IMPORT: u8 = 0x1;
 
-/// `dyld_stub_binder` is exported by libSystem; ordinal 1 is the first
-/// `LC_LOAD_DYLIB` (libSystem is always emitted first by the writer).
-pub const DYLD_STUB_BINDER: &str = "dyld_stub_binder";
+/// `LIBSYSTEM_ORDINAL` is the two-level-namespace ordinal of the first
+/// `LC_LOAD_DYLIB`: the writer always emits libSystem first.
 pub const LIBSYSTEM_ORDINAL: u8 = 1;
 
 /// dyld's thread-local-variable bootstrap accessor. Each
 /// `S_THREAD_LOCAL_VARIABLES` descriptor's `thunk` field is bound to it; the
 /// address only exists once the image is loaded, so it is a data bind and not
-/// a call — it owns no `__la_symbol_ptr` slot and no lazy stub.
+/// a call — it owns no `__got` slot and no stub.
 pub const TLV_BOOTSTRAP: &str = "__tlv_bootstrap";
 
 // ─── export trie flags ─────────────────────────────────────────────────────
@@ -102,8 +105,8 @@ pub struct MachOImport {
     /// Name dyld binds against: the Mach-O symbol with leading underscore
     /// (e.g. `_puts`).
     pub bind_name: String,
-    /// Virtual address of this import's `__la_symbol_ptr` slot.
-    pub la_slot_va: u64,
+    /// Virtual address of this import's `__got` slot.
+    pub got_slot_va: u64,
     /// Data-object imports are rejected loudly by the layout stage, so this
     /// is always `false` today; kept for future GOT-based data binding.
     pub is_data: bool,
@@ -132,15 +135,14 @@ pub struct MachODataBind {
 /// indirect symbol table. Assembled by the linker from layout results.
 #[derive(Debug, Clone, Default)]
 pub struct MachODynamicInfo {
-    /// Function imports, sorted by `raw_name`; index i owns
-    /// `__la_symbol_ptr` slot i.
+    /// Function imports, sorted by `raw_name`; index i owns `__got` slot i.
     pub imports: Vec<MachOImport>,
     /// Virtual addresses of 64-bit pointer words baked at link time that the
     /// loader must rebase when the image slides (PIE). Sorted by the writer.
     pub rebases: Vec<u64>,
     /// Non-lazy data binds recorded by the layout stage (TLV descriptor
-    /// thunks). Merged with the writer's own `dyld_stub_binder` GOT bind when
-    /// the bind stream is encoded.
+    /// thunks). The writer appends one bind per function import, then encodes
+    /// the whole stream.
     pub binds: Vec<MachODataBind>,
     /// Exports of a shared library (empty for executables).
     pub exports: Vec<MachOExport>,
@@ -164,15 +166,6 @@ pub struct BindTarget {
     pub ordinal: u8,
     pub symbol: String,
     pub addend: i64,
-}
-
-/// One lazy-bind entry (one per `__la_symbol_ptr` slot).
-#[derive(Debug, Clone)]
-pub struct LazyBindTarget {
-    pub segment_index: u8,
-    pub offset: u64,
-    pub ordinal: u8,
-    pub symbol: String,
 }
 
 // ─── LEB128 ─────────────────────────────────────────────────────────────────
@@ -359,40 +352,6 @@ fn encode_bind_entry(
         write_sleb128(out, addend);
     }
     out.push(BIND_OPCODE_DO_BIND);
-}
-
-/// Encode lazy-bind entries and return the byte offset of each entry within
-/// the stream. The stub helper pushes entry i's offset so
-/// `dyld_stub_binder` can resume parsing exactly there.
-///
-/// Entry i must correspond to `__la_symbol_ptr` slot i.
-pub fn encode_lazy_bind_opcodes(targets: &[LazyBindTarget]) -> (Vec<u8>, Vec<u64>) {
-    let mut out = Vec::new();
-    let mut offsets = Vec::with_capacity(targets.len());
-    for target in targets {
-        offsets.push(out.len() as u64);
-        // dyld's lazy-bind walker accepts only SET_SEGMENT_AND_OFFSET_ULEB,
-        // the two dylib-ordinal opcodes, SET_SYMBOL_TRAILING_FLAGS_IMM,
-        // DO_BIND and DONE. Anything else — including SET_TYPE_IMM, which
-        // non-lazy streams use — is a hard "bad lazy bind opcode" error at
-        // launch, because the fixup kind is implied by
-        // S_LAZY_SYMBOL_POINTERS. Entry i binds __la_symbol_ptr slot i and
-        // the stub helper jumps to offsets[i].
-        out.push(BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB | target.segment_index);
-        write_uleb128(&mut out, target.offset);
-        if target.ordinal > 0 && target.ordinal < 16 {
-            out.push(BIND_OPCODE_SET_DYLIB_ORDINAL_IMM | target.ordinal);
-        } else {
-            out.push(BIND_OPCODE_SET_DYLIB_ORDINAL_ULEB);
-            write_uleb128(&mut out, target.ordinal as u64);
-        }
-        out.push(BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM);
-        out.extend_from_slice(target.symbol.as_bytes());
-        out.push(0);
-        out.push(BIND_OPCODE_DO_BIND);
-        out.push(BIND_OPCODE_DONE);
-    }
-    (out, offsets)
 }
 
 // ─── export trie ───────────────────────────────────────────────────────────
@@ -669,8 +628,8 @@ pub fn decode_bind_stream_for_test(bytes: &[u8]) -> Vec<(u8, u64, u8, u8, String
     let mut result = Vec::new();
     let mut segment = 0u8;
     let mut offset = 0u64;
-    // dyld enters a bind stream with the fixup kind defaulted to POINTER;
-    // lazy streams never state a type and still bind pointers.
+    // dyld enters a bind stream with the fixup kind defaulted to POINTER; a
+    // stream may omit SET_TYPE_IMM and still bind pointers.
     let mut type_imm = BIND_TYPE_POINTER;
     let mut ordinal: i64 = 0;
     let mut addend: i64 = 0;
@@ -1013,7 +972,7 @@ mod tests {
                 offset: 0x4008,
                 bind_type: BIND_TYPE_POINTER,
                 ordinal: 1,
-                symbol: "dyld_stub_binder".to_string(),
+                symbol: "_puts".to_string(),
                 addend: 0,
             },
             BindTarget {
@@ -1030,14 +989,7 @@ mod tests {
         assert_eq!(
             decoded,
             vec![
-                (
-                    1,
-                    0x4008,
-                    BIND_TYPE_POINTER,
-                    1,
-                    "dyld_stub_binder".to_string(),
-                    0
-                ),
+                (1, 0x4008, BIND_TYPE_POINTER, 1, "_puts".to_string(), 0),
                 (
                     2,
                     0x4020,
@@ -1052,54 +1004,50 @@ mod tests {
     }
 
     #[test]
-    fn test_lazy_bind_entries_are_self_contained_and_offset_addressable() {
+    fn test_bind_entries_are_self_contained() {
         let targets = vec![
-            LazyBindTarget {
+            BindTarget {
                 segment_index: 1,
                 offset: 0x5000,
+                bind_type: BIND_TYPE_POINTER,
                 ordinal: 1,
                 symbol: "_puts".to_string(),
+                addend: 0,
             },
-            LazyBindTarget {
+            BindTarget {
                 segment_index: 1,
                 offset: 0x5008,
+                bind_type: BIND_TYPE_POINTER,
                 ordinal: 1,
                 symbol: "_malloc".to_string(),
+                addend: 0,
             },
-            LazyBindTarget {
+            BindTarget {
                 segment_index: 1,
                 offset: 0x5010,
+                bind_type: BIND_TYPE_POINTER,
                 ordinal: 1,
                 symbol: "_memcpy".to_string(),
+                addend: 0,
             },
         ];
-        let (bytes, offsets) = encode_lazy_bind_opcodes(&targets);
-        assert_eq!(offsets[0], 0);
-        // Every entry must decode standalone from its own byte span (the
-        // exact parse dyld_stub_binder performs from a pushed offset — it
-        // needs entry i complete without any earlier-entry state).
-        for (i, target) in targets.iter().enumerate() {
-            let span_start = offsets[i] as usize;
-            let span_end = offsets
-                .get(i + 1)
-                .map(|next| *next as usize)
-                .unwrap_or(bytes.len() - 1); // exclude the trailing DONE
-            let entry = decode_bind_stream_for_test(&bytes[span_start..span_end]);
-            assert_eq!(
-                entry,
-                vec![(
-                    target.segment_index,
-                    target.offset,
-                    BIND_TYPE_POINTER,
-                    target.ordinal,
-                    target.symbol.clone(),
-                    0
-                )],
-                "lazy entry {} must be self-contained within bytes 0x{:x}..0x{:x}",
-                i,
-                span_start,
-                span_end
-            );
+        let bytes = encode_bind_opcodes(&targets);
+        // Every entry must carry its own ordinal, type, address and symbol so
+        // a decoder can start at any entry boundary.
+        let mut spans = Vec::new();
+        for target in &targets {
+            spans.push((target.segment_index, target.offset, target.symbol.clone()));
+        }
+        let decoded = decode_bind_stream_for_test(&bytes);
+        assert_eq!(decoded.len(), targets.len());
+        for (i, (segment, offset, type_imm, ordinal, symbol, addend)) in decoded.iter().enumerate()
+        {
+            assert_eq!(*segment, spans[i].0);
+            assert_eq!(*offset, spans[i].1);
+            assert_eq!(*type_imm, BIND_TYPE_POINTER);
+            assert_eq!(*ordinal, 1);
+            assert_eq!(*symbol, spans[i].2);
+            assert_eq!(*addend, 0);
         }
         assert_eq!(*bytes.last().unwrap(), BIND_OPCODE_DONE);
     }

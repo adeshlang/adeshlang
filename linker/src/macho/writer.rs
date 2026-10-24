@@ -2,8 +2,8 @@
 
 use crate::error::{ErrorCode, LinkError, LinkResult};
 use crate::macho::dynamic::{
-    self, BIND_TYPE_POINTER, BindTarget, DYLD_STUB_BINDER, LIBSYSTEM_ORDINAL, LazyBindTarget,
-    MachODynamicInfo, RebaseKind, RebaseTarget,
+    self, BIND_TYPE_POINTER, BindTarget, LIBSYSTEM_ORDINAL, MachODynamicInfo, RebaseKind,
+    RebaseTarget,
 };
 use crate::macho::header::*;
 use crate::section::{MergedSection, SectionKind, align_to};
@@ -13,19 +13,15 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-/// Name of the synthesized section holding one lazy pointer per imported
-/// function. Created by the layout stage; slot VAs are registered as
-/// `__la_symbol_ptr_<symbol>` so the linker-synthesized proxy stubs can
-/// `jmp *[rip+slot]`.
-pub const LA_SYMBOL_PTR_SECTION: &str = "__la_symbol_ptr";
-
-/// Name of the writer-synthesized section holding `dyld_stub_binder`'s
-/// non-lazy GOT slot (consumed by the stub helper tail).
+/// Name of the section holding one pointer slot per imported function.
+/// Created by the layout stage; slot VAs are registered as
+/// `__got_<symbol>` so the linker-synthesized proxy stubs can load through
+/// them. dyld binds every slot eagerly while loading the image.
 pub const GOT_SECTION: &str = "__got";
 
-/// Name of the writer-synthesized section holding the lazy-binding helper
-/// code (one push+jmp entry per import plus the binder tail).
-pub const STUB_HELPER_SECTION: &str = "__stub_helper";
+/// Segment for read-only data that still contains addresses dyld must write at
+/// load time. See [`Placement::DataConst`].
+pub const DATA_CONST_SEGMENT: &str = "__DATA_CONST";
 
 /// Mach-O names of the thread-local sections the layout stage produces. The
 /// merged TLS template (`.tls`) is split into the file-backed image and the
@@ -46,6 +42,112 @@ fn data_section_records(sec: &MergedSection) -> usize {
     let file_image = sec.data.len() as u64;
     let block = sec.size.max(file_image);
     usize::from(file_image > 0) + usize::from(block > file_image)
+}
+
+/// Which Mach-O segment a merged section is emitted into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Placement {
+    /// `r-x`, and `maxprot` is also `r-x`: dyld can never write here.
+    Text,
+    /// `rw-` while dyld applies its fixups, read-only afterwards: every
+    /// non-executable, non-thread-local read-only section of a dyld image.
+    DataConst,
+    /// `rw-`, mutable data plus everything the loader special-cases (TLS).
+    Data,
+}
+
+/// The segment a merged section is emitted into, decided with one rule that
+/// the placement loop, the `section_64` emission and the symbol `n_sect`
+/// numbering all share — if they disagreed the section table and the symbol
+/// table would describe different layouts.
+///
+/// Why read-only data needs its own segment: `__TEXT` is mapped `r-x` with
+/// `maxprot r-x`, so when dyld tries to apply the PIE slide it cannot get
+/// write access to the page. The kernel faults and the process dies with
+/// SIGBUS before `main` runs. ld64 and lld therefore keep only executable
+/// code in `__TEXT` and put the rest of the read-only image in `__DATA_CONST`
+/// (`rw-`): writable while dyld applies its fixups, re-protected read-only by
+/// dyld afterwards.
+///
+/// The split is by section properties rather than per-section relocation
+/// inspection because the layout stage emits every read-only group before the
+/// writable ones, so each segment still owns a single contiguous VA range.
+fn placement_of(sec: &MergedSection, rodata_in_data_const: bool) -> Placement {
+    if sec.is_executable() {
+        return Placement::Text;
+    }
+    if rodata_in_data_const
+        && !sec.is_writable()
+        && sec.kind != SectionKind::Bss
+        // TLS blocks and the TLV descriptor table are fixed up and read by the
+        // thread loader, which looks them up in `__DATA`.
+        && sec.flags & crate::section::flags::TLS == 0
+        && sec.flags & crate::section::flags::TLV_TABLE == 0
+    {
+        return Placement::DataConst;
+    }
+    // Without a `__DATA_CONST` segment the read-only groups have to share
+    // `__TEXT` (a non-dyld image has no fixups to apply), which is what the
+    // two-segment layout of a static object does.
+    if !rodata_in_data_const && !sec.is_writable() && sec.kind != SectionKind::Bss {
+        return Placement::Text;
+    }
+    Placement::Data
+}
+
+/// The dyld section type and indirect-symbol-table start (`reserved1`) a
+/// synthesized pointer section carries, shared by `__DATA` and
+/// `__DATA_CONST`: dyld reads both to decide how to interpret each slot.
+fn dyld_pointer_section(name: &str) -> Option<(u32, u32)> {
+    match name {
+        GOT_SECTION => Some((S_NON_LAZY_SYMBOL_POINTERS, 0)),
+        TLV_VARS_SECTION => Some((S_THREAD_LOCAL_VARIABLES, 0)),
+        THREAD_DATA_SECTION => Some((S_THREAD_LOCAL_REGULAR, 0)),
+        THREAD_BSS_SECTION => Some((S_THREAD_LOCAL_ZEROFILL, 0)),
+        _ => None,
+    }
+}
+
+/// Append one `section_64` record of a data segment to the load-command buffer.
+///
+/// The flags carry the dyld section type (low byte) and, for a pointer
+/// section, the indirect-symbol-table start in `reserved1`: dyld reads both to
+/// decide how to interpret the slots it binds.
+fn push_data_section_record(
+    cmd_buf: &mut Vec<u8>,
+    seg_name: &[u8; 16],
+    name: &str,
+    va: u64,
+    sz: u64,
+    off: u32,
+    align: u64,
+    is_bss: bool,
+) {
+    let mut sname = [0u8; 16];
+    let name_bytes = name.as_bytes();
+    sname[0..name_bytes.len().min(16)].copy_from_slice(&name_bytes[0..name_bytes.len().min(16)]);
+    cmd_buf.extend_from_slice(&sname);
+    cmd_buf.extend_from_slice(seg_name);
+    cmd_buf.extend_from_slice(&va.to_le_bytes());
+    cmd_buf.extend_from_slice(&sz.to_le_bytes());
+    cmd_buf.extend_from_slice(&off.to_le_bytes());
+    let align_pow2 = if align > 1 {
+        (align as f64).log2().round() as u32
+    } else {
+        0
+    };
+    cmd_buf.extend_from_slice(&align_pow2.to_le_bytes());
+    cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // reloff
+    cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // nreloc
+    let (section_flags, reserved1) = match dyld_pointer_section(name) {
+        Some(typed) => typed,
+        None if is_bss => (S_ZEROFILL, 0u32),
+        None => (S_REGULAR, 0u32),
+    };
+    cmd_buf.extend_from_slice(&section_flags.to_le_bytes());
+    cmd_buf.extend_from_slice(&reserved1.to_le_bytes());
+    cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // reserved2
+    cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // reserved3
 }
 
 pub struct MachOWriter;
@@ -210,33 +312,47 @@ impl MachOWriter {
 
         let mut output = Vec::new();
 
-        // 1. Partition merged sections into __TEXT and __DATA
+        // 1. Partition merged sections into __TEXT, __DATA_CONST and __DATA
+        //
+        // The `__DATA_CONST` split needs final section addresses to keep each
+        // segment a contiguous VA range, so it only applies when the layout
+        // stage assigned them. A dynamic link without them is rejected below,
+        // which makes the two conditions equivalent for every image produced.
+        let has_layout_vas = merged_sections.iter().any(|s| s.virtual_address != 0);
+        let rodata_in_data_const = dynamic.is_some() && has_layout_vas;
+
         let mut text_sections = Vec::new();
+        let mut data_const_sections = Vec::new();
         let mut data_sections = Vec::new();
 
         for sec in merged_sections {
-            if sec.is_executable() || (!sec.is_writable() && sec.kind != SectionKind::Bss) {
-                text_sections.push(sec.clone());
-            } else {
-                data_sections.push(sec.clone());
+            match placement_of(sec, rodata_in_data_const) {
+                Placement::Text => text_sections.push(sec.clone()),
+                Placement::DataConst => data_const_sections.push(sec.clone()),
+                Placement::Data => data_sections.push(sec.clone()),
             }
         }
+        let has_data_const = !data_const_sections.is_empty();
 
         // Dynamic images carry `LC_DYLD_INFO_ONLY` (rebasing is meaningful
-        // even with no imports); the stub-helper and GOT sections exist only
-        // when there are imports to bind.
+        // even with no imports); the `__got` section exists only when there
+        // are imports to bind.
         let has_dynamic = dynamic.is_some();
         let imports = dynamic.map(|d| d.imports.as_slice()).unwrap_or(&[]);
-        let has_stub_sections = has_dynamic && !imports.is_empty();
 
         // 2. Load Commands Size Calculation
         let cmd_pagezero_sz = if is_shared { 0usize } else { 72usize };
-        let cmd_text_sz = 72 + (text_sections.len() + usize::from(has_stub_sections)) * 80;
+        let cmd_text_sz = 72 + text_sections.len() * 80;
+        let cmd_data_const_sz = if has_data_const {
+            72 + data_const_sections.len() * 80
+        } else {
+            0
+        };
         // The TLS template expands into `__thread_data` + `__thread_bss`, so
         // the `__DATA` section count is the per-section record total, not the
         // merged-section count.
         let data_record_count: usize = data_sections.iter().map(data_section_records).sum();
-        let cmd_data_sz = 72 + (data_record_count + usize::from(has_stub_sections)) * 80;
+        let cmd_data_sz = 72 + data_record_count * 80;
         let cmd_linkedit_sz = 72usize;
         let cmd_build_version_sz = 24usize;
         let dylinker_str = b"/usr/lib/dyld\0\0\0\0\0\0\0"; // padded to 20 bytes so 12 + 20 = 32 (8-byte aligned)
@@ -295,6 +411,9 @@ impl MachOWriter {
             ncmds += 1; // LC_SEGMENT_64 (__PAGEZERO)
         }
         ncmds += 1; // LC_SEGMENT_64 (__TEXT)
+        if has_data_const {
+            ncmds += 1; // LC_SEGMENT_64 (__DATA_CONST)
+        }
         ncmds += 1; // LC_SEGMENT_64 (__DATA)
         ncmds += 1; // LC_SEGMENT_64 (__LINKEDIT)
         ncmds += 1; // LC_BUILD_VERSION
@@ -316,6 +435,7 @@ impl MachOWriter {
 
         let sizeofcmds = (cmd_pagezero_sz
             + cmd_text_sz
+            + cmd_data_const_sz
             + cmd_data_sz
             + cmd_linkedit_sz
             + cmd_build_version_sz
@@ -338,6 +458,14 @@ impl MachOWriter {
         let mut current_vmaddr = text_vmaddr + current_file_offset;
 
         let mut text_sec_records = Vec::new();
+        // Read-only sections that carry dyld fixups; empty unless this is a
+        // dynamic link (see `placement_of`), and a dynamic link always takes
+        // the authoritative placement path below.
+        let mut data_const_sec_records: Vec<(String, u64, u64, u32, u64)> = Vec::new();
+        let mut data_const_file_offset_start = 0u64;
+        let mut data_const_vmaddr_start = 0u64;
+        let mut data_const_filesize = 0u64;
+        let mut data_const_vmsize = 0u64;
         for sec in &text_sections {
             let aligned_off = align_to(current_file_offset, sec.alignment);
             let aligned_va = align_to(current_vmaddr, sec.alignment);
@@ -406,23 +534,24 @@ impl MachOWriter {
         let mut data_filesize = current_file_offset - data_file_offset_start;
         let mut data_vmsize = align_to(current_vmaddr - data_vmaddr_start, target.page_size);
 
-        let mut text_va_end = current_vmaddr;
-        let mut data_file_end = current_file_offset;
-        let mut data_va_end = current_vmaddr;
-
         // Authoritative placement when virtual addresses are assigned
         let has_layout_vas = merged_sections.iter().any(|s| s.virtual_address != 0);
         if has_layout_vas {
             output.truncate(headers_size);
 
             let mut text_file_end = headers_size as u64;
-            text_va_end = text_vmaddr + headers_size as u64;
+            let mut text_va_end = text_vmaddr + headers_size as u64;
             let mut data_off_min: Option<u64> = None;
             let mut data_va_min: Option<u64> = None;
-            data_file_end = 0u64;
-            data_va_end = 0u64;
+            let mut data_const_off_min: Option<u64> = None;
+            let mut data_const_va_min: Option<u64> = None;
+            let mut data_const_file_end = 0u64;
+            let mut data_const_va_end = 0u64;
+            let mut data_file_end = 0u64;
+            let mut data_va_end = 0u64;
             text_sec_records.clear();
             data_sec_records.clear();
+            data_const_sec_records.clear();
 
             let base_va = if is_shared
                 && merged_sections
@@ -494,9 +623,8 @@ impl MachOWriter {
                     output[start..end].copy_from_slice(&sec.data);
                 }
 
-                let is_text =
-                    sec.is_executable() || (!sec.is_writable() && sec.kind != SectionKind::Bss);
-                if is_text {
+                let placement = placement_of(sec, rodata_in_data_const);
+                if placement == Placement::Text {
                     text_sec_records.push((
                         sec.name.clone(),
                         sec.virtual_address,
@@ -506,6 +634,21 @@ impl MachOWriter {
                     ));
                     text_file_end = text_file_end.max(off + file_len);
                     text_va_end = text_va_end.max(sec.virtual_address + mem_len);
+                } else if placement == Placement::DataConst {
+                    data_const_sec_records.push((
+                        sec.name.clone(),
+                        sec.virtual_address,
+                        mem_len,
+                        off as u32,
+                        sec.alignment,
+                    ));
+                    data_const_off_min = Some(data_const_off_min.map_or(off, |m| m.min(off)));
+                    data_const_va_min = Some(
+                        data_const_va_min
+                            .map_or(sec.virtual_address, |m| m.min(sec.virtual_address)),
+                    );
+                    data_const_file_end = data_const_file_end.max(off + file_len);
+                    data_const_va_end = data_const_va_end.max(sec.virtual_address + mem_len);
                 } else {
                     let is_tlv = sec.flags & crate::section::flags::TLV_TABLE != 0;
                     let is_tls = sec.flags & crate::section::flags::TLS != 0;
@@ -568,34 +711,44 @@ impl MachOWriter {
                 }
             }
 
+            if has_data_const {
+                let off = data_const_off_min.unwrap_or(0);
+                let va = data_const_va_min.unwrap_or(0);
+                data_const_file_offset_start = off;
+                data_const_vmaddr_start = va;
+                data_const_filesize = data_const_file_end.saturating_sub(off);
+                data_const_vmsize =
+                    align_to(data_const_va_end.saturating_sub(va), target.page_size);
+            }
+
             let (data_off_start, data_va_start) = match (data_off_min, data_va_min) {
                 (Some(off), Some(va)) => (off, va),
                 _ => (
-                    align_to(text_file_end, target.page_size),
-                    align_to(text_va_end, target.page_size),
+                    align_to(text_file_end.max(data_const_file_end), target.page_size),
+                    align_to(text_va_end.max(data_const_va_end), target.page_size),
                 ),
             };
 
             text_vmsize = align_to(text_va_end - text_vmaddr, target.page_size);
-            text_filesize = text_vmsize.min(data_off_start);
+            text_filesize = text_vmsize.min(data_const_file_offset_start.max(data_off_start));
             data_file_offset_start = data_off_start;
             data_vmaddr_start = data_va_start;
             data_filesize = data_file_end.saturating_sub(data_off_start);
             data_vmsize = align_to(data_va_end.saturating_sub(data_va_start), target.page_size);
         }
 
-        // ── Dynamic-linking synthesis (dyld stubs, GOT, lazy-bind info) ──
+        // ── Dynamic-linking fixup synthesis ──
         //
-        // Everything below extends the already-placed segments: the stub
-        // helper goes at the end of __TEXT, the `__got` slot at the end of
-        // __DATA, and each `__la_symbol_ptr` slot (created by the layout
-        // stage) is patched to point at its helper entry.
+        // The layout stage reserved one `__got` slot per imported function.
+        // `nonlazy_binds` (built below) asks dyld to write every import's
+        // real address into its slot while loading the image, so the
+        // synthesized proxy stubs never do any work of their own.
         let mut dyld_rebase_off = 0u32;
         let mut dyld_rebase_size = 0u32;
         let mut dyld_bind_off = 0u32;
         let mut dyld_bind_size = 0u32;
-        let mut dyld_lazy_off = 0u32;
-        let mut dyld_lazy_size = 0u32;
+        let dyld_lazy_off = 0u32;
+        let dyld_lazy_size = 0u32;
         let mut dyld_export_off = 0u32;
         let mut dyld_export_size = 0u32;
         let mut rebase_bytes: Vec<u8> = Vec::new();
@@ -605,14 +758,16 @@ impl MachOWriter {
         let mut indirect_symbols: Vec<u32> = Vec::new();
 
         // Segment indexes dyld uses in rebase/bind streams: LC_SEGMENT_64
-        // commands in order. Executables put __PAGEZERO first.
+        // commands in order. Executables put __PAGEZERO first, and
+        // __DATA_CONST only counts when it actually exists.
         let text_seg_index: u8 = if is_shared { 0 } else { 1 };
-        let data_seg_index: u8 = text_seg_index + 1;
+        let data_const_seg_index: u8 = text_seg_index + 1;
+        let data_seg_index: u8 = text_seg_index + 1 + u8::from(has_data_const);
 
-        // (base VA of the file offset mapping — records use off = va - base)
-        let layout_base_va = text_vmaddr;
-
-        let la_section: Option<&MergedSection> = if has_dynamic {
+        // The layout stage reserves one `__got` slot per imported function;
+        // the proxy stubs the linker synthesizes resolve `__got_<name>` to
+        // those slots. Verify the handshake before binding any of them.
+        let got_section: Option<&MergedSection> = if has_dynamic {
             if !has_layout_vas {
                 return Err(LinkError::new(
                     ErrorCode::InvalidSection,
@@ -620,10 +775,7 @@ impl MachOWriter {
                      addresses (the linker must run the layout stage)",
                 ));
             }
-            match merged_sections
-                .iter()
-                .find(|s| s.name == LA_SYMBOL_PTR_SECTION)
-            {
+            match merged_sections.iter().find(|s| s.name == GOT_SECTION) {
                 Some(section) => Some(section),
                 None if imports.is_empty() => None,
                 None => {
@@ -633,7 +785,7 @@ impl MachOWriter {
                             "dynamic Mach-O link has {} imports but the layout stage did not \
                              create the `{}` section",
                             imports.len(),
-                            LA_SYMBOL_PTR_SECTION
+                            GOT_SECTION
                         ),
                     ));
                 }
@@ -642,260 +794,89 @@ impl MachOWriter {
             None
         };
 
-        // Reserve the lazy-bind stream first: the helper entries embed each
-        // import's byte offset into this stream so `dyld_stub_binder` can
-        // resume parsing exactly there.
-        let (lazy_bind_bytes, lazy_entry_offsets) = if has_dynamic {
-            let targets: Vec<LazyBindTarget> = imports
-                .iter()
-                .map(|imp| {
-                    let slot_in_seg = imp.la_slot_va - data_vmaddr_start;
-                    LazyBindTarget {
-                        segment_index: data_seg_index,
-                        offset: slot_in_seg,
-                        ordinal: LIBSYSTEM_ORDINAL,
-                        symbol: imp.bind_name.clone(),
-                    }
-                })
-                .collect();
-            dynamic::encode_lazy_bind_opcodes(&targets)
-        } else {
-            (Vec::new(), Vec::new())
-        };
-
-        let mut nonlazy_binds: Vec<BindTarget> = Vec::new();
-        if has_stub_sections {
-            let (la_va, la_len) = match la_section {
-                Some(sec) => (sec.virtual_address, sec.data.len() as u64),
-                None => (0, 0),
-            };
-            if !imports.is_empty() {
-                let expected_len = (imports.len() * 8) as u64;
-                if la_len != expected_len {
-                    return Err(LinkError::new(
-                        ErrorCode::InvalidSection,
-                        format!(
-                            "`{}` section is {} bytes but {} imports need {} bytes",
-                            LA_SYMBOL_PTR_SECTION,
-                            la_len,
-                            imports.len(),
-                            expected_len
-                        ),
-                    ));
-                }
-                for (i, imp) in imports.iter().enumerate() {
-                    if imp.la_slot_va != la_va + (i as u64) * 8 {
-                        return Err(LinkError::new(
-                            ErrorCode::InvalidSection,
-                            format!(
-                                "import `{}` lazy slot 0x{:x} does not match the `{}` \
-                                 layout (0x{:x} + {}*8)",
-                                imp.raw_name, imp.la_slot_va, LA_SYMBOL_PTR_SECTION, la_va, i
-                            ),
-                        ));
-                    }
-                }
-            }
-
-            // __stub_helper placement: right after the last __TEXT section.
-            let entry_size = if target.arch == Arch::AArch64 {
-                12u64
-            } else {
-                10u64
-            };
-            let stub_helper_va = align_to(text_va_end, 16);
-            let tail_off = (imports.len() as u64) * entry_size;
-            let stub_helper_file_off = stub_helper_va - layout_base_va;
-
-            // __got placement: right after the last __DATA section.
-            let got_va = align_to(data_va_end, 8);
-            // File offset: the GOT must be in the file, so base it on actual
-            // file-backed data end rather than data_va_end. Using data_va_end
-            // would materialize BSS bytes into the file when BSS lies between
-            // the last file-backed section and data_va_end in VA space.
-            let got_file_off = align_to(data_file_end, 8);
-
-            // Build the helper machine code now that every address is known.
-            let mut stub_helper_bytes =
-                Vec::with_capacity((imports.len() * (entry_size as usize) + 20) as usize);
-            let tail_va = stub_helper_va + tail_off;
-            if target.arch == Arch::AArch64 {
-                for (i, _imp) in imports.iter().enumerate() {
-                    let lazy_offset = lazy_entry_offsets[i];
-                    let entry_va = stub_helper_va + (i as u64) * 12;
-                    let branch_offset_words = ((tail_va as i64 - (entry_va as i64 + 4)) / 4) as i32;
-                    let b_instr = 0x14000000u32 | ((branch_offset_words as u32) & 0x03FFFFFF);
-                    // ldr w16, [pc, #8]
-                    stub_helper_bytes.extend_from_slice(&0x58000040u32.to_le_bytes());
-                    // b tail
-                    stub_helper_bytes.extend_from_slice(&b_instr.to_le_bytes());
-                    // .long lazy_offset
-                    stub_helper_bytes.extend_from_slice(&(lazy_offset as u32).to_le_bytes());
-                }
-                let pc = tail_va;
-                // In AArch64 hardware, ADRP always computes the address of a 4KB (12-bit) page.
-                let page_mask = !0xFFFu64;
-
-                let helper_page = stub_helper_va & page_mask;
-                let pc_page = pc & page_mask;
-                let page_delta = ((helper_page as i64) - (pc_page as i64)) >> 12;
-                let immhi = ((page_delta >> 2) & 0x7FFFF) as u32;
-                let immlo = (page_delta & 0x3) as u32;
-                let adrp_x17 = 0x90000011u32 | (immlo << 29) | (immhi << 5);
-
-                let helper_off = (stub_helper_va & 0xFFF) as u32;
-                let add_x17 = 0x91000231u32 | (helper_off << 10);
-
-                let pc_got = tail_va + 8;
-                let pc_got_page = pc_got & page_mask;
-                let got_page = got_va & page_mask;
-                let got_page_delta = ((got_page as i64) - (pc_got_page as i64)) >> 12;
-                let got_immhi = ((got_page_delta >> 2) & 0x7FFFF) as u32;
-                let got_immlo = (got_page_delta & 0x3) as u32;
-                let adrp_x16 = 0x90000010u32 | (got_immlo << 29) | (got_immhi << 5);
-
-                let got_off = (got_va & 0xFFF) as u32;
-                let pimm = (got_off >> 3) & 0xFFF;
-                // ldr x16, [x16, #pimm<<3] (Rt = x16 = 0x10)
-                let ldr_x16 = 0xF9400210u32 | (pimm << 10);
-
-                let br_x16 = 0xD61F0200u32;
-
-                stub_helper_bytes.extend_from_slice(&adrp_x17.to_le_bytes());
-                stub_helper_bytes.extend_from_slice(&add_x17.to_le_bytes());
-                stub_helper_bytes.extend_from_slice(&adrp_x16.to_le_bytes());
-                stub_helper_bytes.extend_from_slice(&ldr_x16.to_le_bytes());
-                stub_helper_bytes.extend_from_slice(&br_x16.to_le_bytes());
-            } else {
-                for (i, _imp) in imports.iter().enumerate() {
-                    let lazy_offset = lazy_entry_offsets[i];
-                    // push $lazy_offset  (68 imm32)
-                    stub_helper_bytes.extend_from_slice(&[0x68]);
-                    stub_helper_bytes.extend_from_slice(&(lazy_offset as u32).to_le_bytes());
-                    // jmp tail  (E9 rel32)
-                    let entry_va = stub_helper_va + (i as u64) * 10;
-                    let rel = (tail_va as i64 - (entry_va as i64 + 10)) as i32;
-                    stub_helper_bytes.extend_from_slice(&[0xE9]);
-                    stub_helper_bytes.extend_from_slice(&rel.to_le_bytes());
-                }
-                // tail: push $helper_start  (68 imm32) — rebased as
-                // REBASE_TYPE_TEXT_ABSOLUTE32 when the image slides.
-                stub_helper_bytes.extend_from_slice(&[0x68]);
-                stub_helper_bytes.extend_from_slice(&(stub_helper_va as u32).to_le_bytes());
-                // jmp *dyld_stub_binder@GOT(%rip)  (FF 25 rel32)
-                let jmp_place_va = tail_va + 5;
-                let rel = (got_va as i64 - (jmp_place_va as i64 + 6)) as i32;
-                stub_helper_bytes.extend_from_slice(&[0xFF, 0x25]);
-                stub_helper_bytes.extend_from_slice(&rel.to_le_bytes());
-            }
-
-            // Write the helper into the file image and grow __TEXT.
-            if (stub_helper_file_off as usize) > output.len() {
-                output.resize(stub_helper_file_off as usize, 0);
-            }
-            let end = stub_helper_file_off as usize + stub_helper_bytes.len();
-            if output.len() < end {
-                output.resize(end, 0);
-            }
-            output[stub_helper_file_off as usize..end].copy_from_slice(&stub_helper_bytes);
-            let stub_helper_end_va = stub_helper_va + stub_helper_bytes.len() as u64;
-            if stub_helper_end_va > data_vmaddr_start {
+        if let Some(section) = got_section {
+            let expected_len = (imports.len() * 8) as u64;
+            if section.data.len() as u64 != expected_len {
                 return Err(LinkError::new(
                     ErrorCode::InvalidSection,
                     format!(
-                        "__stub_helper end 0x{:x} exceeds __DATA start 0x{:x}",
-                        stub_helper_end_va, data_vmaddr_start
+                        "`{}` section is {} bytes but {} imports need {} bytes",
+                        GOT_SECTION,
+                        section.data.len(),
+                        imports.len(),
+                        expected_len
                     ),
                 ));
             }
-            text_sec_records.push((
-                STUB_HELPER_SECTION.to_string(),
-                stub_helper_va,
-                stub_helper_bytes.len() as u64,
-                stub_helper_file_off as u32,
-                16,
-            ));
-            text_vmsize = data_vmaddr_start - text_vmaddr;
-            text_filesize = text_vmsize.min(data_file_offset_start);
-
-            // Write the __got slot (zero: dyld fills it from the non-lazy
-            // bind entry before any code runs).
-            if (got_file_off as usize) > output.len() {
-                output.resize(got_file_off as usize, 0);
-            }
-            if output.len() < got_file_off as usize + 8 {
-                output.resize(got_file_off as usize + 8, 0);
-            }
-            data_sec_records.push((GOT_SECTION.to_string(), got_va, 8, got_file_off as u32, 8));
-            data_file_end = data_file_end.max(got_file_off + 8);
-            data_va_end = data_va_end.max(got_va + 8);
-            data_filesize = data_file_end.saturating_sub(data_file_offset_start);
-            data_vmsize =
-                align_to(data_va_end - data_vmaddr_start, target.page_size).max(data_vmsize);
-
-            // Patch every lazy slot to its helper entry (the pre-binding
-            // target). These are absolute pointers into __TEXT and must be
-            // rebased for PIE.
-            if let Some(section) = la_section {
-                let la_file_off = section.virtual_address - layout_base_va;
-                for (i, _imp) in imports.iter().enumerate() {
-                    let entry_va = stub_helper_va + (i as u64) * entry_size;
-                    let slot_off = la_file_off + (i as u64) * 8;
-                    output[slot_off as usize..slot_off as usize + 8]
-                        .copy_from_slice(&entry_va.to_le_bytes());
+            for (i, imp) in imports.iter().enumerate() {
+                let expected = section.virtual_address + (i as u64) * 8;
+                if imp.got_slot_va != expected {
+                    return Err(LinkError::new(
+                        ErrorCode::InvalidSection,
+                        format!(
+                            "import `{}` got slot 0x{:x} does not match the `{}` layout \
+                             (0x{:x} + {}*8)",
+                            imp.raw_name, imp.got_slot_va, GOT_SECTION, section.virtual_address, i
+                        ),
+                    ));
                 }
             }
-
-            // Rebase stream, part 1: the helper's `push $helper_start`
-            // immediate (x86_64) and every patched lazy slot.
-            if target.arch == Arch::X86_64 {
-                let tail_push_imm_va = tail_va + 1;
-                rebase_targets.push(RebaseTarget {
-                    segment_index: text_seg_index,
-                    offset: tail_push_imm_va - text_vmaddr,
-                    kind: RebaseKind::TextAbsolute32,
-                });
-            }
-            for (i, _imp) in imports.iter().enumerate() {
-                let slot_va = la_va + (i as u64) * 8;
-                rebase_targets.push(RebaseTarget {
-                    segment_index: data_seg_index,
-                    offset: slot_va - data_vmaddr_start,
-                    kind: RebaseKind::Pointer,
-                });
-            }
-
-            // Non-lazy binds: dyld_stub_binder's GOT slot (data imports are
-            // rejected by the layout stage; this slot is the writer's own).
-            nonlazy_binds.push(BindTarget {
-                segment_index: data_seg_index,
-                offset: got_va - data_vmaddr_start,
-                bind_type: BIND_TYPE_POINTER,
-                ordinal: LIBSYSTEM_ORDINAL,
-                symbol: DYLD_STUB_BINDER.to_string(),
-                addend: 0,
-            });
         }
 
+        let mut nonlazy_binds: Vec<BindTarget> = Vec::new();
+
         // Layout-recorded data binds (TLV descriptor thunks bound to
-        // `__tlv_bootstrap`). These live in `__DATA` and must be emitted even
-        // when there are no function imports to synthesize stubs for.
+        // `__tlv_bootstrap`). These live in a fixup-writable segment and must
+        // be emitted even when there are no function imports to synthesize
+        // stubs for.
+        //
+        // Map an address dyld must write to its `(segment index, offset within
+        // that segment)` pair. `__TEXT` is deliberately not an option: it is
+        // mapped `r-x` with `maxprot r-x`, so dyld cannot gain write access to
+        // apply the fixup and the process dies with SIGBUS while launching.
+        let locate_fixup = |va: u64, what: &str| -> LinkResult<(u8, u64)> {
+            if has_data_const
+                && va >= data_const_vmaddr_start
+                && va < data_const_vmaddr_start + data_const_vmsize
+            {
+                return Ok((data_const_seg_index, va - data_const_vmaddr_start));
+            }
+            if va >= data_vmaddr_start && va < data_vmaddr_start + data_vmsize {
+                return Ok((data_seg_index, va - data_vmaddr_start));
+            }
+            Err(LinkError::new(
+                ErrorCode::InvalidSection,
+                format!(
+                    "cannot {what} address 0x{va:x}: a dyld fixup target must live in \
+                     `__DATA_CONST` or `__DATA` (`__TEXT` is mapped `r-x` with \
+                     `maxprot r-x`, so dyld cannot write the link-time pointer there)",
+                ),
+            ))
+        };
+        // One eager bind per imported function: dyld writes the resolved
+        // address into the import's `__got` slot at load time, before any
+        // code runs, so the proxy stubs never need a binding trampoline.
+        if got_section.is_some() {
+            for imp in imports {
+                let (segment_index, offset) = locate_fixup(imp.got_slot_va, "bind")?;
+                nonlazy_binds.push(BindTarget {
+                    segment_index,
+                    offset,
+                    bind_type: BIND_TYPE_POINTER,
+                    ordinal: LIBSYSTEM_ORDINAL,
+                    symbol: imp.bind_name.clone(),
+                    addend: 0,
+                });
+            }
+        }
+
         if has_dynamic {
             if let Some(info) = dynamic {
                 for b in &info.binds {
-                    if b.va < data_vmaddr_start || b.va >= data_vmaddr_start + data_vmsize {
-                        return Err(LinkError::new(
-                            ErrorCode::InvalidSection,
-                            format!(
-                                "cannot bind address 0x{:x} (`{}`): a data bind target must live \
-                                 in the `__DATA` segment",
-                                b.va, b.symbol
-                            ),
-                        ));
-                    }
+                    let (segment_index, offset) = locate_fixup(b.va, "bind")?;
                     nonlazy_binds.push(BindTarget {
-                        segment_index: data_seg_index,
-                        offset: b.va - data_vmaddr_start,
+                        segment_index,
+                        offset,
                         bind_type: BIND_TYPE_POINTER,
                         ordinal: LIBSYSTEM_ORDINAL,
                         symbol: b.symbol.clone(),
@@ -914,25 +895,10 @@ impl MachOWriter {
         if has_dynamic {
             if let Some(info) = dynamic {
                 for &va in &info.rebases {
-                    let (seg_index, seg_base) =
-                        if va >= text_vmaddr && va < text_vmaddr + text_vmsize {
-                            (text_seg_index, text_vmaddr)
-                        } else if va >= data_vmaddr_start && va < data_vmaddr_start + data_vmsize {
-                            (data_seg_index, data_vmaddr_start)
-                        } else {
-                            return Err(LinkError::new(
-                                ErrorCode::InvalidSection,
-                                format!(
-                                    "cannot rebase address 0x{:x}: it lies outside every \
-                                     mapped segment (a link-time absolute pointer must live in \
-                                     __TEXT or __DATA)",
-                                    va
-                                ),
-                            ));
-                        };
+                    let (segment_index, offset) = locate_fixup(va, "rebase")?;
                     rebase_targets.push(RebaseTarget {
-                        segment_index: seg_index,
-                        offset: va - seg_base,
+                        segment_index,
+                        offset,
                         kind: RebaseKind::Pointer,
                     });
                 }
@@ -967,21 +933,36 @@ impl MachOWriter {
                 input_sec_to_out.insert((f_idx, s_idx), out_idx);
             }
         }
-        let is_text_flags: Vec<bool> = merged_sections
+        // `n_sect` is the 1-based index of the section in the load-command
+        // section table, so it has to be counted in the same segment order the
+        // commands are emitted in and with the same partition rule.
+        let placements: Vec<Placement> = merged_sections
             .iter()
-            .map(|sec| sec.is_executable() || (!sec.is_writable() && sec.kind != SectionKind::Bss))
+            .map(|sec| placement_of(sec, rodata_in_data_const))
             .collect();
-        let text_count = is_text_flags.iter().filter(|t| **t).count();
+        let text_count = placements.iter().filter(|p| **p == Placement::Text).count();
+        let data_const_count = placements
+            .iter()
+            .filter(|p| **p == Placement::DataConst)
+            .count();
         let mut n_sect_for: Vec<u8> = Vec::with_capacity(merged_sections.len());
         let mut text_seen = 0usize;
+        let mut data_const_seen = 0usize;
         let mut data_seen = 0usize;
-        for is_text in is_text_flags {
-            if is_text {
-                text_seen += 1;
-                n_sect_for.push(text_seen as u8);
-            } else {
-                data_seen += 1;
-                n_sect_for.push((text_count + data_seen) as u8);
+        for placement in placements {
+            match placement {
+                Placement::Text => {
+                    text_seen += 1;
+                    n_sect_for.push(text_seen as u8);
+                }
+                Placement::DataConst => {
+                    data_const_seen += 1;
+                    n_sect_for.push((text_count + data_const_seen) as u8);
+                }
+                Placement::Data => {
+                    data_seen += 1;
+                    n_sect_for.push((text_count + data_const_count + data_seen) as u8);
+                }
             }
         }
         let output_section_number = |sym: &Symbol| -> Option<u8> {
@@ -1026,12 +1007,11 @@ impl MachOWriter {
             extdef_syms.retain(|sym| !import_names.contains(sym.name.as_str()));
         }
 
-        // Synthetic undefined entries: the lazy-binding GOT anchor and one
-        // per import. Two-level namespace: the library ordinal lives in the
-        // high byte of n_desc (libSystem is ordinal 1, the first LOAD_DYLIB).
+        // Synthetic undefined entries: one per eagerly bound import.
+        // Two-level namespace: the library ordinal lives in the high byte of
+        // n_desc (libSystem is ordinal 1, the first LOAD_DYLIB).
         let mut synthetic_undefs: Vec<(String, u16)> = Vec::new();
-        if has_stub_sections {
-            synthetic_undefs.push((DYLD_STUB_BINDER.to_string(), 0x0100));
+        if got_section.is_some() {
             for imp in imports {
                 synthetic_undefs.push((imp.bind_name.clone(), 0x0100));
             }
@@ -1095,13 +1075,10 @@ impl MachOWriter {
             encode_sym(&sym, N_UNDF | N_EXT, *n_desc);
         }
 
-        // Indirect symbol table: one entry per `__got` slot followed by one
-        // per `__la_symbol_ptr` slot, in section order, each the symtab
-        // index of the symbol the slot binds.
-        if has_stub_sections {
-            let binder_index = iundefsym + (undef_syms.len() as u32) + 0;
-            let first_import_index = binder_index + 1;
-            indirect_symbols.push(binder_index);
+        // Indirect symbol table: one entry per `__got` slot, in section
+        // order, each the symtab index of the symbol the slot binds.
+        if got_section.is_some() {
+            let first_import_index = iundefsym + (undef_syms.len() as u32);
             for i in 0..imports.len() as u32 {
                 indirect_symbols.push(first_import_index + i);
             }
@@ -1120,10 +1097,17 @@ impl MachOWriter {
             (off, bytes.len() as u32)
         };
         if has_dynamic {
-            (dyld_rebase_off, dyld_rebase_size) = push_blob(&rebase_bytes);
-            (dyld_bind_off, dyld_bind_size) = push_blob(&bind_bytes);
-            (dyld_lazy_off, dyld_lazy_size) = push_blob(&lazy_bind_bytes);
-            (dyld_export_off, dyld_export_size) = push_blob(&export_bytes);
+            // An unused stream is encoded as offset 0 / size 0; dyld ignores
+            // the offset once the size is zero.
+            if !rebase_bytes.is_empty() {
+                (dyld_rebase_off, dyld_rebase_size) = push_blob(&rebase_bytes);
+            }
+            if !bind_bytes.is_empty() {
+                (dyld_bind_off, dyld_bind_size) = push_blob(&bind_bytes);
+            }
+            if !export_bytes.is_empty() {
+                (dyld_export_off, dyld_export_size) = push_blob(&export_bytes);
+            }
         }
 
         let indirectsymoff = if indirect_symbols.is_empty() {
@@ -1239,8 +1223,7 @@ impl MachOWriter {
             cmd_buf.extend_from_slice(&align_pow2.to_le_bytes());
             cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // reloff
             cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // nreloc
-            let is_code =
-                name.contains("text") || name == STUB_HELPER_SECTION || name.contains("code");
+            let is_code = name.contains("text") || name.contains("code");
             let section_flags = if is_code {
                 S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS
             } else {
@@ -1250,6 +1233,41 @@ impl MachOWriter {
             cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // reserved1
             cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // reserved2
             cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // reserved3
+        }
+
+        // LC_SEGMENT_64: __DATA_CONST
+        //
+        // Read-only data of a dyld image. It is `rw-` only for the moment
+        // dyld applies the slide and the binds; the program itself never
+        // writes it. It has to be its own segment because __TEXT's `maxprot`
+        // is `r-x`, which would make those fixups fault.
+        if has_data_const {
+            let mut dc_name = [0u8; 16];
+            dc_name[0..DATA_CONST_SEGMENT.len()].copy_from_slice(DATA_CONST_SEGMENT.as_bytes());
+            cmd_buf.extend_from_slice(&LC_SEGMENT_64.to_le_bytes());
+            cmd_buf.extend_from_slice(&(cmd_data_const_sz as u32).to_le_bytes());
+            cmd_buf.extend_from_slice(&dc_name);
+            cmd_buf.extend_from_slice(&data_const_vmaddr_start.to_le_bytes());
+            cmd_buf.extend_from_slice(&data_const_vmsize.to_le_bytes());
+            cmd_buf.extend_from_slice(&data_const_file_offset_start.to_le_bytes());
+            cmd_buf.extend_from_slice(&data_const_filesize.to_le_bytes());
+            cmd_buf.extend_from_slice(&(VM_PROT_READ | VM_PROT_WRITE).to_le_bytes());
+            cmd_buf.extend_from_slice(&(VM_PROT_READ | VM_PROT_WRITE).to_le_bytes());
+            cmd_buf.extend_from_slice(&(data_const_sec_records.len() as u32).to_le_bytes());
+            cmd_buf.extend_from_slice(&0u32.to_le_bytes());
+
+            for (name, va, sz, off, align) in &data_const_sec_records {
+                push_data_section_record(
+                    &mut cmd_buf,
+                    &dc_name,
+                    name,
+                    *va,
+                    *sz,
+                    *off,
+                    *align,
+                    false,
+                );
+            }
         }
 
         // LC_SEGMENT_64: __DATA
@@ -1268,48 +1286,19 @@ impl MachOWriter {
         cmd_buf.extend_from_slice(&0u32.to_le_bytes());
 
         for (name, va, sz, off, align) in &data_sec_records {
-            let mut sname = [0u8; 16];
-            let name_bytes = name.as_bytes();
-            sname[0..name_bytes.len().min(16)]
-                .copy_from_slice(&name_bytes[0..name_bytes.len().min(16)]);
-            cmd_buf.extend_from_slice(&sname);
-            cmd_buf.extend_from_slice(&data_name);
-            cmd_buf.extend_from_slice(&va.to_le_bytes());
-            cmd_buf.extend_from_slice(&sz.to_le_bytes());
-            cmd_buf.extend_from_slice(&off.to_le_bytes());
-            let align_pow2 = if *align > 1 {
-                (*align as f64).log2().round() as u32
-            } else {
-                0
-            };
-            cmd_buf.extend_from_slice(&align_pow2.to_le_bytes());
-            // Section flags carry the dyld section TYPE (low byte) plus the
-            // indirect-symbol-table start (reserved1) for pointer sections:
-            // dyld uses both to interpret the slots it binds.
             let is_bss = merged_sections
                 .iter()
                 .any(|s| s.name == *name && s.kind == SectionKind::Bss);
-            let (section_flags, reserved1) = if *name == GOT_SECTION {
-                (S_NON_LAZY_SYMBOL_POINTERS, 0u32)
-            } else if *name == LA_SYMBOL_PTR_SECTION {
-                (S_LAZY_SYMBOL_POINTERS, 1u32)
-            } else if *name == TLV_VARS_SECTION {
-                (S_THREAD_LOCAL_VARIABLES, 0u32)
-            } else if *name == THREAD_DATA_SECTION {
-                (S_THREAD_LOCAL_REGULAR, 0u32)
-            } else if *name == THREAD_BSS_SECTION {
-                (S_THREAD_LOCAL_ZEROFILL, 0u32)
-            } else if is_bss {
-                (S_ZEROFILL, 0u32)
-            } else {
-                (S_REGULAR, 0u32)
-            };
-            cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // reloff
-            cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // nreloc
-            cmd_buf.extend_from_slice(&section_flags.to_le_bytes());
-            cmd_buf.extend_from_slice(&reserved1.to_le_bytes());
-            cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // reserved2
-            cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // reserved3
+            push_data_section_record(
+                &mut cmd_buf,
+                &data_name,
+                name,
+                *va,
+                *sz,
+                *off,
+                *align,
+                is_bss,
+            );
         }
 
         // LC_SEGMENT_64: __LINKEDIT

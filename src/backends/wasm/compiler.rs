@@ -158,17 +158,11 @@ fn gen_expr_f64(
                 out.extend(&(*off as f64).to_bits().to_le_bytes());
                 Ok(Some("string".into()))
             } else {
-                if let Some((fidx, _, ret_type)) = ctx.funcs.get(name) {
-                    if let Some(rt) = ret_type {
-                        out.push(0x10);
-                        write_u32_leb(*fidx, out);
-                        if *rt == 0x7F {
-                            out.push(0xB7);
-                        }
-                        Ok(None)
-                    } else {
-                        Err("call to void function in expression".into())
-                    }
+                if let Some((fidx, _, _)) = ctx.funcs.get(name) {
+                    // Function reference passed as a value (e.g. callback or func pointer)
+                    out.push(0x44); // f64.const
+                    out.extend(&(*fidx as f64).to_bits().to_le_bytes());
+                    Ok(Some("fn".into()))
                 } else {
                     Err(format!("unknown variable in f64 expr: {}", name))
                 }
@@ -266,7 +260,7 @@ fn gen_expr_f64(
             gen_expr_f64(r, out, ctx)?;
             match op {
                 TokenKind::Minus => {
-                    out.push(0xA1);
+                    out.push(0x9F); // f64.neg
                     Ok(None)
                 }
                 _ => Err("unsupported unary op in wasm MVP".into()),
@@ -418,6 +412,8 @@ fn gen_expr_f64(
                                     out.push(0x6A);
                                 }
                                 out.push(0x2B); // f64.load
+                                out.push(0x03); // align 2^3 = 8
+                                out.push(0x00); // offset 0
                                 return Ok(Some("f64".into()));
                             } else {
                                 if offset > 0 {
@@ -426,6 +422,8 @@ fn gen_expr_f64(
                                     out.push(0x6A);
                                 }
                                 out.push(0x28); // i32.load
+                                out.push(0x02); // align 2^2 = 4
+                                out.push(0x00); // offset 0
                                 out.push(0xB7); // f64.convert
                                 return Ok(None);
                             }
@@ -482,12 +480,18 @@ fn gen_expr_f64(
                         if let Some(fi) = layout.find_field(field) {
                             if fi.type_name == "f64" || fi.type_name == "number" {
                                 out.push(0x2B); // f64.load
+                                out.push(0x03); // align 2^3 = 8
+                                out.push(0x00); // offset 0
                             } else {
                                 out.push(0x28); // i32.load
+                                out.push(0x02); // align 2^2 = 4
+                                out.push(0x00); // offset 0
                                 out.push(0xB7); // f64.convert
                             }
                         } else {
                             out.push(0x2B); // f64.load (default)
+                            out.push(0x03); // align 2^3 = 8
+                            out.push(0x00); // offset 0
                         }
                     }
                 }
@@ -506,6 +510,16 @@ fn gen_expr_f64(
             Ok(None)
         }
         ExprKind::Grouping(inner) => gen_expr_f64(inner, out, ctx),
+        ExprKind::Conditional(cond, then_branch, else_branch) => {
+            gen_cond_i32(cond, out, ctx)?;
+            out.push(0x04); // if
+            out.push(0x7C); // block type: f64
+            let ty_then = gen_expr_f64(then_branch, out, ctx)?;
+            out.push(0x05); // else
+            let _ty_else = gen_expr_f64(else_branch, out, ctx)?;
+            out.push(0x0B); // end
+            Ok(ty_then)
+        }
         _ => Err(format!("unsupported expression in wasm MVP: {:?}", e.kind)),
     }
 }
@@ -552,6 +566,11 @@ fn gen_expr_i32(
                 out.push(0xAA); // i32.trunc_f64_s
                 let t = ctx.locals_types.get(name).cloned();
                 Ok(t)
+            } else if let Some((fidx, _, _)) = ctx.funcs.get(name) {
+                // Function reference passed as a value (e.g. function pointer / index)
+                out.push(0x41); // i32.const
+                write_i32_leb(*fidx as i32, out);
+                Ok(Some("fn".into()))
             } else {
                 Err(format!("unknown i32 variable: {}", name))
             }
@@ -770,7 +789,7 @@ fn gen_expr_i32(
                 out.push(0x41);
                 write_u32_leb(layout.get_final_size() as u32, out);
                 out.push(0x10);
-                write_u32_leb(3, out); // alloc
+                write_u32_leb(2, out); // alloc (import index 2: env.alloc)
 
                 if !ctx.locals_i32.contains_key("__scratch") {
                     return Err("Internal error: __scratch local not found".into());
@@ -798,9 +817,13 @@ fn gen_expr_i32(
                             if fi.type_name == "f64" || fi.type_name == "number" {
                                 gen_expr_f64(fexpr, out, ctx)?;
                                 out.push(0x39); // f64.store
+                                out.push(0x03); // align 2^3 = 8
+                                out.push(0x00); // offset 0
                             } else {
                                 gen_expr_i32(fexpr, out, ctx)?;
                                 out.push(0x36); // i32.store
+                                out.push(0x02); // align 2^2 = 4
+                                out.push(0x00); // offset 0
                             }
                         }
                     }
@@ -823,11 +846,15 @@ fn gen_expr_i32(
                         if let Some(fi) = layout.find_field(field) {
                             if fi.type_name == "f64" || fi.type_name == "number" {
                                 out.push(0x2B); // f64.load
+                                out.push(0x03); // align 2^3 = 8
+                                out.push(0x00); // offset 0
                                 out.push(0xAA); // i32.trunc_f64_s
                                 return Ok(Some(fi.type_name.clone()));
                             }
                         }
                         out.push(0x28); // i32.load
+                        out.push(0x02); // align 2^2 = 4
+                        out.push(0x00); // offset 0
                         if let Some(fi) = layout.find_field(field) {
                             return Ok(Some(fi.type_name.clone()));
                         }
@@ -879,6 +906,8 @@ fn gen_expr_i32(
                             out.push(0x6A);
                         }
                         out.push(0x28); // i32.load
+                        out.push(0x02); // align 2^2 = 4
+                        out.push(0x00); // offset 0
                     }
                 }
             }
@@ -910,6 +939,16 @@ fn gen_expr_i32(
             Ok(elem_ty)
         }
         ExprKind::Grouping(inner) => gen_expr_i32(inner, out, ctx),
+        ExprKind::Conditional(cond, then_branch, else_branch) => {
+            gen_cond_i32(cond, out, ctx)?;
+            out.push(0x04); // if
+            out.push(0x7F); // block type: i32
+            let ty_then = gen_expr_i32(then_branch, out, ctx)?;
+            out.push(0x05); // else
+            let _ty_else = gen_expr_i32(else_branch, out, ctx)?;
+            out.push(0x0B); // end
+            Ok(ty_then)
+        }
         _ => Err(format!("unsupported i32 expression: {:?}", e.kind)),
     }
 }
@@ -917,6 +956,39 @@ fn gen_expr_i32(
 fn gen_cond_i32(e: &Expr, out: &mut Vec<u8>, ctx: &mut CompilerContext) -> Result<(), String> {
     if let ExprKind::Grouping(inner) = &e.kind {
         return gen_cond_i32(inner, out, ctx);
+    }
+    if let ExprKind::Call(callee, args, _) = &e.kind {
+        if let ExprKind::Variable(name) = &callee.kind {
+            if let Some((fidx, params, ret_type)) = ctx.funcs.get(name) {
+                for (i, a) in args.iter().enumerate() {
+                    if let Some(pt) = params.get(i) {
+                        if *pt == 0x7C {
+                            gen_expr_f64(a, out, ctx)?;
+                        } else {
+                            gen_expr_i32(a, out, ctx)?;
+                        }
+                    } else {
+                        gen_expr_i32(a, out, ctx)?;
+                    }
+                }
+                out.push(0x10);
+                write_u32_leb(*fidx, out);
+                match ret_type {
+                    Some(0x7F) => return Ok(()),
+                    Some(0x7C) => {
+                        out.push(0x44);
+                        out.extend(&0f64.to_bits().to_le_bytes());
+                        out.push(0x62); // f64.ne -> i32
+                        return Ok(());
+                    }
+                    _ => {
+                        out.push(0x41);
+                        write_i32_leb(1, out);
+                        return Ok(());
+                    }
+                }
+            }
+        }
     }
     if let ExprKind::Variable(name) = &e.kind {
         if let Some(idx) = ctx.locals_i32.get(name) {
@@ -1916,10 +1988,18 @@ fn gen_stmt(
                                     }
                                     out.push(0x1A);
                                 } else {
-                                    if let Some((fidx, _, _)) = ctx.funcs.get(name) {
+                                    if let Some((fidx, params, _)) = ctx.funcs.get(name) {
                                         if let ExprKind::Call(_, args, _) = &e.kind {
-                                            for a in args {
-                                                gen_expr_f64(a, out, ctx)?;
+                                            for (i, a) in args.iter().enumerate() {
+                                                if let Some(pt) = params.get(i) {
+                                                    if *pt == 0x7F {
+                                                        gen_expr_i32(a, out, ctx)?;
+                                                    } else {
+                                                        gen_expr_f64(a, out, ctx)?;
+                                                    }
+                                                } else {
+                                                    gen_expr_f64(a, out, ctx)?;
+                                                }
                                             }
                                         }
                                         out.push(0x10);
@@ -2171,6 +2251,24 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
         }
     }
 
+    let mut func_defs: Vec<crate::parsing::ast::Function> = Vec::new();
+    for s in &prog {
+        if let StmtKind::Function(f, _) = &s.kind {
+            let mut f = f.clone();
+            if f.ret_type.is_none() && f.body.iter().any(has_value_return) {
+                f.ret_type = Some("number".into());
+            }
+            func_defs.push(f);
+        }
+    }
+
+    let is_i32_type = |ty: &str| -> bool {
+        matches!(
+            ty,
+            "int" | "i32" | "i16" | "i8" | "u32" | "u16" | "u8" | "bool" | "string" | "String"
+        ) || struct_layouts.contains_key(ty)
+    };
+
     let mut locals_map_f64: FastMap<String, u32> = FastMap::default();
     let mut locals_map_i32: FastMap<String, u32> = FastMap::default();
     let mut local_count_f64: u32 = 0;
@@ -2179,8 +2277,28 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
     for s in &prog {
         if let StmtKind::Let(name, init, _ann, ..) = &s.kind {
             if init.is_some() {
-                if let Some(tn) = _ann {
-                    if tn.to_lowercase() == "int" {
+                let inferred_struct_or_i32 = if let Some(init_expr) = init {
+                    match &init_expr.kind {
+                        ExprKind::StructLiteral(sname, ..) => Some(sname.clone()),
+                        ExprKind::Call(callee, ..) => {
+                            if let ExprKind::Variable(fn_name) = &callee.kind {
+                                func_defs
+                                    .iter()
+                                    .find(|fd| &fd.name == fn_name)
+                                    .and_then(|fd| fd.ret_type.clone())
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+
+                let effective_type = _ann.clone().or(inferred_struct_or_i32);
+                if let Some(tn) = effective_type {
+                    if is_i32_type(&tn) {
                         if !locals_map_i32.contains_key(name) {
                             locals_map_i32.insert(name.clone(), local_count_i32);
                             local_count_i32 += 1;
@@ -2221,17 +2339,6 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
         }
     }
 
-    let mut func_defs: Vec<crate::parsing::ast::Function> = Vec::new();
-    for s in &prog {
-        if let StmtKind::Function(f, _) = &s.kind {
-            let mut f = f.clone();
-            if f.ret_type.is_none() && f.body.iter().any(has_value_return) {
-                f.ret_type = Some("number".into());
-            }
-            func_defs.push(f);
-        }
-    }
-
     let mut func_types: Vec<(Vec<u8>, Option<u8>)> = Vec::new();
     func_types.push((vec![0x7C], None));
     func_types.push((vec![0x7F, 0x7F], None));
@@ -2245,6 +2352,13 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
         func_type_map.insert((t.0.clone(), t.1), i as u32);
     }
 
+    let is_i32_type = |ty: &str| -> bool {
+        matches!(
+            ty,
+            "int" | "i32" | "i16" | "i8" | "u32" | "u16" | "u8" | "bool" | "string" | "String"
+        ) || struct_layouts.contains_key(ty)
+    };
+
     let mut funcs_index_map: FastMap<String, (u32, Vec<u8>, Option<u8>)> = FastMap::default();
     // Declare every signature before compiling any body. Imported private
     // helpers and recursive calls can refer to a later function.
@@ -2253,14 +2367,12 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
             .params
             .iter()
             .map(|p| match p.2.as_deref() {
-                Some("int" | "bool") => 0x7F,
-                Some(ty) if struct_layouts.contains_key(ty) => 0x7F,
+                Some(ty) if is_i32_type(ty) => 0x7F,
                 _ => 0x7C,
             })
             .collect();
         let ret = match f.ret_type.as_deref() {
-            Some("int" | "bool") => Some(0x7F),
-            Some(ty) if struct_layouts.contains_key(ty) => Some(0x7F),
+            Some(ty) if is_i32_type(ty) => Some(0x7F),
             Some(_) => Some(0x7C),
             None if f.body.last().is_some_and(|s| {
                 matches!(&s.kind,
@@ -2338,7 +2450,7 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
         let mut params: Vec<u8> = Vec::new();
         for p in &f.params {
             if let Some(tn) = &p.2 {
-                if tn == "int" || tn == "bool" || struct_layouts.contains_key(tn) {
+                if is_i32_type(tn) {
                     params.push(0x7F);
                 } else {
                     params.push(0x7C);
@@ -2348,12 +2460,10 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
             }
         }
         let mut ret_byte: Option<u8> = None;
-        if f.ret_type.as_deref() == Some("int")
-            || f.ret_type.as_deref() == Some("bool")
-            || f.ret_type
-                .as_ref()
-                .map(|rt| struct_layouts.contains_key(rt))
-                .unwrap_or(false)
+        if f.ret_type
+            .as_deref()
+            .map(|rt| is_i32_type(rt))
+            .unwrap_or(false)
         {
             ret_byte = Some(0x7F);
         } else if f.ret_type.is_some() {
@@ -2394,7 +2504,7 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
         for (idx, p) in f.params.iter().enumerate() {
             let t = p.2.clone().unwrap_or("number".to_string());
             f_locals_types.insert(p.0.clone(), t.clone());
-            if t == "int" || t == "bool" || struct_layouts.contains_key(&t) {
+            if is_i32_type(&t) {
                 f_locals_i32.insert(p.0.clone(), idx as u32);
             } else {
                 f_locals_f64.insert(p.0.clone(), idx as u32);
@@ -2425,7 +2535,7 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
                 let effective_type = _ann.clone().or(inferred_struct_or_i32);
                 if let Some(tn) = effective_type {
                     f_locals_types.insert(name.clone(), tn.clone());
-                    if tn == "int" || tn == "bool" || struct_layouts.contains_key(&tn) {
+                    if is_i32_type(&tn) {
                         if !f_locals_i32.contains_key(name) {
                             f_locals_i32.insert(name.clone(), f_local_count_i32 + pcount);
                             f_local_count_i32 += 1;

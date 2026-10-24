@@ -763,9 +763,15 @@ pub(super) fn lower_expr(
                     return Ok(result);
                 }
 
-                // Check if this is a decorated function - if so, use call_indirect
-                // because the function is stored as a variable containing a lambda
-                if ctx.decorated_fn_names.contains(name) {
+                // Check if this is a variable (parameter, local variable, or decorated function)
+                // rather than a statically declared function. If so, use call_indirect
+                // because the function is stored in a variable containing a function reference/lambda.
+                let is_var = ctx.decorated_fn_names.contains(name)
+                    || func.params.iter().any(|(p, _)| p == name)
+                    || func.get_var(name).is_some()
+                    || ctx.var_types.contains_key(name);
+
+                if is_var {
                     let callee_val = func.alloc_value();
                     func.push_to_block(
                         ctx.current_block,

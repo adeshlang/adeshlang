@@ -158,33 +158,16 @@ impl InterpreterTestExecutor {
 
     /// Execute test function with Bytecode VM in-process.
     fn run_test_bytecode(&self, test_name: &str) -> Result<Duration, String> {
-        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let start = Instant::now();
         let driver_src = self.build_driver_source(test_name);
-        let tmp_dir = std::env::temp_dir();
-        let tmp_name = format!(
-            "adesh_bc_{}_{}_{}.adeshbc",
-            sanitize_name(test_name),
-            std::process::id(),
-            count
-        );
-        let tmp_path = tmp_dir.join(&tmp_name);
-
-        let res = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-            crate::execution::bytecode::compile_to_file_v2(&driver_src, &tmp_path)
-                .map_err(|e| format!("Bytecode compile error: {}", e))?;
-            let vm_res = crate::execution::vm::run_file_with_args(&tmp_path, &[])
-                .map_err(|e| format!("VM error: {}", e));
-            let _ = std::fs::remove_file(&tmp_path);
-            vm_res
-        }));
-
-        match res {
-            Ok(Ok(())) => Ok(start.elapsed()),
-            Ok(Err(e)) => Err(e),
-            Err(panic_info) => Err(extract_panic_message(panic_info)),
-        }
+        let mut args = crate::cli::ParsedArgs::default();
+        args.config.quiet = true;
+        crate::cli::backends::run_with_bytecode(
+            &std::path::PathBuf::from(&self.file_path),
+            &driver_src,
+            &args,
+        )?;
+        Ok(start.elapsed())
     }
 
     // ── AOT Backend (in-process Cranelift compilation & execution) ───────────

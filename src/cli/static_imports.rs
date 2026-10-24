@@ -313,6 +313,40 @@ impl Linker {
     }
 
     fn ty(&mut self, id: usize, ty: &mut String) -> Result<(), String> {
+        let trimmed = ty.trim().to_string();
+        if trimmed.ends_with('?') {
+            let mut inner = trimmed[..trimmed.len() - 1].to_string();
+            self.ty(id, &mut inner)?;
+            *ty = format!("{}?", inner);
+            return Ok(());
+        }
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            let inner_str = &trimmed[1..trimmed.len() - 1];
+            if let Some((elem, size)) = inner_str.split_once(';') {
+                let mut elem_ty = elem.trim().to_string();
+                self.ty(id, &mut elem_ty)?;
+                *ty = format!("[{}; {}]", elem_ty, size.trim());
+            } else {
+                let mut elem_ty = inner_str.trim().to_string();
+                self.ty(id, &mut elem_ty)?;
+                *ty = format!("[{}]", elem_ty);
+            }
+            return Ok(());
+        }
+        if let Some(open) = trimmed.find('<') {
+            if trimmed.ends_with('>') {
+                let base = &trimmed[..open];
+                let inner = &trimmed[open + 1..trimmed.len() - 1];
+                let mut resolved_args = Vec::new();
+                for arg in inner.split(',') {
+                    let mut arg_ty = arg.trim().to_string();
+                    self.ty(id, &mut arg_ty)?;
+                    resolved_args.push(arg_ty);
+                }
+                *ty = format!("{}<{}>", base, resolved_args.join(", "));
+                return Ok(());
+            }
+        }
         if let Some(expr) = self.resolve(id, ty, &Default::default())? {
             if let ExprKind::Variable(name) = expr.kind {
                 *ty = name;

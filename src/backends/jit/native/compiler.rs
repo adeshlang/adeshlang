@@ -1389,6 +1389,18 @@ impl NativeJitCompiler {
                                         }
                                     });
                                 }
+                                if field_ty == AotValueType::F64 || field_ty == AotValueType::F32 {
+                                    let slot = builder.create_sized_stack_slot(
+                                        cranelift_codegen::ir::StackSlotData::new(
+                                            cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                                            8,
+                                            8,
+                                        ),
+                                    );
+                                    builder.ins().stack_store(value_handle, slot, 0);
+                                    let f64_val = builder.ins().stack_load(types::F64, slot, 0);
+                                    value_map.insert(*dst, f64_val);
+                                }
                                 value_types.insert(*dst, field_ty);
                             } else {
                                 let zero = builder.ins().iconst(types::I64, 0);

@@ -512,8 +512,8 @@ impl Linker {
                     && matches!(route, crate::os_router::SymbolRoute::DllImport { .. });
 
                 // Mach-O is always dynamic (macOS has no static libSystem):
-                // routed symbols become lazy-bound imports reached through
-                // `__la_symbol_ptr` slots the layout stage reserves.
+                // routed symbols become eagerly bound imports reached through
+                // the `__got` slots the layout stage reserves.
                 let importable_macho =
                     is_macho && matches!(route, crate::os_router::SymbolRoute::DllImport { .. });
 
@@ -584,31 +584,43 @@ impl Linker {
                         (b, vec![r])
                     }
                 } else if importable_macho {
-                    // Mach-O lazy proxy stub:
-                    // The layout stage registers the slot VA under this
-                    // exact symbol name; the writer patches the slot to
-                    // the stub-helper entry and dyld rewrites it on first
-                    // call.
+                    // Mach-O import proxy stub. The import's `__got` slot is
+                    // bound eagerly by dyld at load, so the stub only has to
+                    // load it and branch through the real address.
+                    //
+                    // The layout stage registers the slot VA under the symbol
+                    // name built here; the two arm64 relocations below split
+                    // it into the page (`adrp`) and the scaled 12-bit offset
+                    // inside that page (`ldr x16, [x16, #imm]`).
                     let raw = name
                         .strip_prefix("__imp_")
                         .or_else(|| name.strip_prefix("_imp_"))
                         .unwrap_or(name);
+                    let slot_symbol = format!("__got_{}", raw);
                     if ctx.config.target.arch == crate::target::Arch::AArch64 {
                         let b = vec![
-                            0x90, 0x00, 0x00, 0x90, // adrp x16, 0
-                            0x10, 0x02, 0x40, 0xF9, // ldr x16, [x16]
+                            0x90, 0x00, 0x00, 0x90, // adrp x16, <page of slot>
+                            0x10, 0x02, 0x40, 0xF9, // ldr x16, [x16, #<slot&0xFFF>]
                             0x00, 0x02, 0x1F, 0xD6, // br x16
                             0x1F, 0x20, 0x03, 0xD5, // nop
                         ];
-                        let r = crate::relocation::Relocation {
+                        let adrp = crate::relocation::Relocation {
                             offset: start_off,
-                            symbol_name: format!("__la_symbol_ptr_{}", raw),
+                            symbol_name: slot_symbol.clone(),
                             symbol_index: None,
                             file_index: None,
-                            kind: crate::relocation::RelocationKind::PcRelative32,
+                            kind: crate::relocation::RelocationKind::AArch64Adrp,
                             addend: 0,
                         };
-                        (b, vec![r])
+                        let ldr = crate::relocation::Relocation {
+                            offset: start_off + 4,
+                            symbol_name: slot_symbol,
+                            symbol_index: None,
+                            file_index: None,
+                            kind: crate::relocation::RelocationKind::AArch64LdSt64Lo12,
+                            addend: 0,
+                        };
+                        (b, vec![adrp, ldr])
                     } else {
                         let b = vec![
                             0xFF, 0x25, 0x00, 0x00, 0x00, 0x00, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
@@ -616,7 +628,7 @@ impl Linker {
                         ];
                         let r = crate::relocation::Relocation {
                             offset: start_off + 2,
-                            symbol_name: format!("__la_symbol_ptr_{}", raw),
+                            symbol_name: slot_symbol,
                             symbol_index: None,
                             file_index: None,
                             kind: crate::relocation::RelocationKind::PcRelative32,
