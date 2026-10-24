@@ -450,7 +450,7 @@ impl RuntimeValue {
             RuntimeValue::Tuple(tup) => 24 + tup.iter().map(|v| v.size_of_value()).sum::<usize>(),
             RuntimeValue::Set(set) => 24 + set.iter().map(|v| v.size_of_value()).sum::<usize>(),
             RuntimeValue::Object(obj) => {
-                32 + obj
+                48 + obj
                     .iter()
                     .map(|(k, v)| k.len() + v.size_of_value())
                     .sum::<usize>()
@@ -1325,7 +1325,11 @@ pub extern "C" fn aot_get_field_str(obj_handle: u64, field_ptr: *const c_char) -
         match resolved {
             RuntimeValue::Object(obj) => {
                 let val = obj.get(field_name).cloned().unwrap_or(RuntimeValue::Null);
-                runtime_value_to_raw_or_handle(val)
+                if matches!(val, RuntimeValue::Bool(_)) {
+                    aot_store_value(val)
+                } else {
+                    runtime_value_to_raw_or_handle(val)
+                }
             }
             RuntimeValue::Array(arr) => {
                 let val = match field_name {

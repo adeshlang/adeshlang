@@ -15,6 +15,8 @@ use super::hir::{
 
 thread_local! {
     pub(crate) static KNOWN_STRUCTS: RefCell<HashMap<String, Vec<(String, String)>>> = RefCell::new(HashMap::new());
+    pub(crate) static KNOWN_TYPE_ALIASES: RefCell<HashMap<String, (Vec<(String, bool, String)>, Vec<(String, Expr)>)>> = RefCell::new(HashMap::new());
+    pub(crate) static KNOWN_FN_PARAMS: RefCell<HashMap<String, Vec<(String, Option<Expr>)>>> = RefCell::new(HashMap::new());
 }
 
 fn collect_struct_decls(stmts: &[Stmt], map: &mut HashMap<String, Vec<(String, String)>>) {
@@ -31,6 +33,36 @@ fn collect_struct_decls(stmts: &[Stmt], map: &mut HashMap<String, Vec<(String, S
     }
 }
 
+fn collect_type_alias_and_fn_decls(
+    stmts: &[Stmt],
+    type_aliases: &mut HashMap<String, (Vec<(String, bool, String)>, Vec<(String, Expr)>)>,
+    fn_params: &mut HashMap<String, Vec<(String, Option<Expr>)>>,
+) {
+    for stmt in stmts {
+        match &stmt.kind {
+            StmtKind::TypeAlias(decl, _) => {
+                type_aliases.insert(
+                    decl.name.clone(),
+                    (decl.fields.clone(), decl.defaults.clone()),
+                );
+            }
+            StmtKind::Function(f, _) => {
+                let params = f
+                    .params
+                    .iter()
+                    .map(|(n, def, _)| (n.clone(), def.clone()))
+                    .collect();
+                fn_params.insert(f.name.clone(), params);
+                collect_type_alias_and_fn_decls(&f.body, type_aliases, fn_params);
+            }
+            StmtKind::Block(inner) => {
+                collect_type_alias_and_fn_decls(inner, type_aliases, fn_params);
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Transform an AST program into an HIR module
 ///
 /// # Parameters
@@ -41,6 +73,16 @@ pub fn ast_to_hir(stmts: &[Stmt], include_tests: bool) -> Result<HirModule, Stri
     collect_struct_decls(stmts, &mut structs);
     KNOWN_STRUCTS.with(|cell| {
         *cell.borrow_mut() = structs;
+    });
+
+    let mut type_aliases = HashMap::new();
+    let mut fn_params = HashMap::new();
+    collect_type_alias_and_fn_decls(stmts, &mut type_aliases, &mut fn_params);
+    KNOWN_TYPE_ALIASES.with(|cell| {
+        *cell.borrow_mut() = type_aliases;
+    });
+    KNOWN_FN_PARAMS.with(|cell| {
+        *cell.borrow_mut() = fn_params;
     });
 
     let mut module = HirModule::new();
@@ -109,7 +151,32 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
             }))
         }
         StmtKind::Let(name, init, ty_ann, _export, is_const, _is_readonly) => {
-            let init_expr = init.as_ref().map(|e| lower_expr(e)).transpose()?;
+            let mut init_expr = init.as_ref().map(|e| lower_expr(e)).transpose()?;
+            // If the variable has a type alias annotation and the initializer is an ObjectLiteral,
+            // populate any missing default fields and optional null fields defined on the type alias.
+            if let Some(ann) = ty_ann {
+                let base_type = if let Some(idx) = ann.find('<') {
+                    &ann[..idx]
+                } else {
+                    ann.as_str()
+                };
+                let alias_info =
+                    KNOWN_TYPE_ALIASES.with(|cell| cell.borrow().get(base_type).cloned());
+                if let Some((fields, defaults)) = alias_info {
+                    if let Some(HirExpr::ObjectLiteral(ref mut obj_fields)) = init_expr {
+                        for (def_name, def_expr) in defaults {
+                            if !obj_fields.iter().any(|(k, _)| k == &def_name) {
+                                obj_fields.push((def_name, lower_expr(&def_expr)?));
+                            }
+                        }
+                        for (fname, optional, _) in fields {
+                            if optional && !obj_fields.iter().any(|(k, _)| k == &fname) {
+                                obj_fields.push((fname, HirExpr::Literal(HirLiteral::Null)));
+                            }
+                        }
+                    }
+                }
+            }
             let ty = ty_ann.as_ref().map(|t| type_from_annotation(t));
             Ok(LoweredStmt::Stmt(HirStmt::Let {
                 name: name.clone(),
@@ -732,8 +799,30 @@ fn lower_expr(expr: &Expr) -> Result<HirExpr, String> {
                     let hir_ptr = lower_expr(&args[0])?;
                     return Ok(HirExpr::Free(Box::new(hir_ptr)));
                 }
+
+                // If calling a known function with default parameter values, pad missing arguments
+                let fn_params_opt =
+                    KNOWN_FN_PARAMS.with(|cell| cell.borrow().get(fn_name).cloned());
+                let final_args: Vec<Expr> = if let Some(params) = fn_params_opt {
+                    if args.len() < params.len() {
+                        let mut padded = args.clone();
+                        for i in args.len()..params.len() {
+                            if let Some(ref def_expr) = params[i].1 {
+                                padded.push(def_expr.clone());
+                            } else {
+                                break;
+                            }
+                        }
+                        padded
+                    } else {
+                        args.clone()
+                    }
+                } else {
+                    args.clone()
+                };
+
                 let hir_callee = lower_expr(callee)?;
-                let hir_args: Result<Vec<_>, _> = args.iter().map(lower_expr).collect();
+                let hir_args: Result<Vec<_>, _> = final_args.iter().map(lower_expr).collect();
                 Ok(HirExpr::Call(
                     Box::new(hir_callee),
                     hir_args?,
@@ -1065,7 +1154,7 @@ fn token_to_unaryop(tok: &TokenKind) -> Result<UnaryOp, String> {
     }
 }
 
-fn type_from_annotation(ann: &str) -> HirType {
+pub(crate) fn type_from_annotation(ann: &str) -> HirType {
     let mut ann = ann.trim();
     if let Some(stripped) = ann.strip_suffix("readonly") {
         ann = stripped.trim();

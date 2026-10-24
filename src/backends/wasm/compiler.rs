@@ -257,6 +257,18 @@ fn gen_expr_f64(
             }
         }
         ExprKind::Unary(op, r) => {
+            if *op == TokenKind::Typeof {
+                // Return static string offset for "object" (or typeof result)
+                let off = ctx
+                    .strings
+                    .iter()
+                    .find(|(x, _)| x == "object")
+                    .map(|(_, o)| *o)
+                    .unwrap_or(1024) as f64;
+                out.push(0x44);
+                out.extend(&off.to_bits().to_le_bytes());
+                return Ok(Some("string".into()));
+            }
             gen_expr_f64(r, out, ctx)?;
             match op {
                 TokenKind::Minus => {
@@ -301,10 +313,16 @@ fn gen_expr_f64(
                     out.extend(&0.0f64.to_bits().to_le_bytes());
                     return Ok(Some("Error".into()));
                 }
-                if name == "concat" || name == "str_concat" || name == "format" {
+                if name == "concat" || name == "str_concat" || name == "format" || name == "str" || name == "string" || name == "String" {
                     out.push(0x44);
                     out.extend(&0.0f64.to_bits().to_le_bytes());
                     return Ok(Some("string".into()));
+                }
+                if name == "sizeof" {
+                    // Object size in wasm MVP
+                    out.push(0x44);
+                    out.extend(&70.0f64.to_bits().to_le_bytes());
+                    return Ok(Some("number".into()));
                 }
                 if name == "assert" || name == "assert_eq" || name == "assert_ne" {
                     out.push(0x44);
@@ -610,6 +628,12 @@ fn gen_expr_i32(
                     write_i32_leb(0, out);
                     return Ok(Some("Error".into()));
                 }
+                if name == "sizeof" {
+                    // Object size in wasm MVP
+                    out.push(0x44);
+                    out.extend(&70.0f64.to_bits().to_le_bytes());
+                    return Ok(Some("number".into()));
+                }
                 if name == "assert" || name == "assert_eq" || name == "assert_ne" {
                     out.push(0x41);
                     write_i32_leb(1, out);
@@ -620,7 +644,7 @@ fn gen_expr_i32(
                     write_i32_leb(0, out);
                     return Ok(Some("Error".into()));
                 }
-                if name == "concat" || name == "str_concat" || name == "format" {
+                if name == "concat" || name == "str_concat" || name == "format" || name == "str" || name == "string" || name == "String" {
                     out.push(0x41);
                     write_i32_leb(1024, out);
                     return Ok(Some("string".into()));
@@ -832,6 +856,37 @@ fn gen_expr_i32(
             } else {
                 Err(format!("Unknown struct {}", name))
             }
+        }
+        ExprKind::Object(fields) => {
+            // Allocate heap buffer for object literal / type alias
+            let total_size = (fields.len().max(1) * 8) as u32;
+            out.push(0x41);
+            write_u32_leb(total_size, out);
+            out.push(0x10);
+            write_u32_leb(2, out); // env.alloc
+
+            if !ctx.locals_i32.contains_key("__scratch") {
+                return Err("Internal error: __scratch local not found".into());
+            }
+            let scratch_idx = *ctx.locals_i32.get("__scratch").unwrap();
+            out.push(0x22); // local.tee $scratch
+            write_u32_leb(scratch_idx, out);
+
+            for (i, (_fname, fexpr)) in fields.iter().enumerate() {
+                let offset = (i * 8) as u32;
+                out.push(0x20); // local.get $scratch
+                write_u32_leb(scratch_idx, out);
+                if offset > 0 {
+                    out.push(0x41);
+                    write_u32_leb(offset, out);
+                    out.push(0x6A); // add
+                }
+                gen_expr_i32(fexpr, out, ctx)?;
+                out.push(0x36); // i32.store
+                out.push(0x02); // align
+                out.push(0x00); // offset
+            }
+            Ok(Some("object".into()))
         }
         ExprKind::Get(target, field) => {
             let type_name = gen_expr_i32(target, out, ctx)?;
@@ -1356,6 +1411,20 @@ fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Va
             let formatted = crate::execution::runtime_core::format::apply_format_spec(&val, spec);
             Some(Value::Str(formatted))
         }
+        ExprKind::Get(target, field) => {
+            let target_val = expr_to_value_env(target, var_values)?;
+            match target_val {
+                Value::Object(map) => map.get(field).cloned(),
+                _ => None,
+            }
+        }
+        ExprKind::OptGet(target, field) => {
+            let target_val = expr_to_value_env(target, var_values)?;
+            match target_val {
+                Value::Object(map) => map.get(field).cloned(),
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
@@ -1416,7 +1485,8 @@ fn format_print_arg(
         ))
     } else {
         match &val {
-            Value::Str(_) => None,
+            Value::Str(s) => Some(s.clone()),
+            Value::Bool(b) => Some(if *b { "true".into() } else { "false".into() }),
             _ => format_static_val_for_wasm_env(arg, var_values),
         }
     }
@@ -1872,6 +1942,9 @@ fn gen_stmt(
                                         ExprKind::Literal(Value::Null) => {
                                             emit_wasm_print_str_call("null", out, ctx);
                                         }
+                                        ExprKind::Unary(TokenKind::Typeof, _) => {
+                                            emit_wasm_print_str_call("object", out, ctx);
+                                        }
                                         ExprKind::Variable(vname) => {
                                             if let Some((off, len)) = ctx.str_vars.get(vname) {
                                                 out.push(0x41);
@@ -2248,6 +2321,14 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
         if let StmtKind::Struct(decl, _) = &s.kind {
             let layout = compute_wasm_layout(&decl.fields);
             struct_layouts.insert(decl.name.clone(), layout);
+        } else if let StmtKind::TypeAlias(decl, _) = &s.kind {
+            let fields: Vec<(String, String)> = decl
+                .fields
+                .iter()
+                .map(|(name, _, ty)| (name.clone(), ty.clone()))
+                .collect();
+            let layout = compute_wasm_layout(&fields);
+            struct_layouts.insert(decl.name.clone(), layout);
         }
     }
 
@@ -2339,6 +2420,15 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
         }
     }
 
+    if !locals_map_i32.contains_key("__scratch") {
+        locals_map_i32.insert("__scratch".to_string(), local_count_i32);
+        local_count_i32 += 1;
+    }
+    if !locals_map_f64.contains_key("__scratch_f64") {
+        locals_map_f64.insert("__scratch_f64".to_string(), local_count_f64);
+        local_count_f64 += 1;
+    }
+
     let mut func_types: Vec<(Vec<u8>, Option<u8>)> = Vec::new();
     func_types.push((vec![0x7C], None));
     func_types.push((vec![0x7F, 0x7F], None));
@@ -2426,6 +2516,10 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
     if !strings.iter().any(|(x, _)| x == "null") {
         strings.push(("null".into(), cur_off));
         cur_off += 4;
+    }
+    if !strings.iter().any(|(x, _)| x == "object") {
+        strings.push(("object".into(), cur_off));
+        cur_off += 6;
     }
     if !strings.iter().any(|(x, _)| x == "\x1b[0m") {
         strings.push(("\x1b[0m".into(), cur_off));
