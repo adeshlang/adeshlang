@@ -1,0 +1,131 @@
+name: macOS AOT debug
+
+# On-demand only. Builds the toolchain on an Apple Silicon runner and runs the
+# AOT print regressions with tracing, then samples any executable that hangs.
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_INCREMENTAL: "0"
+  RUSTC_WRAPPER: "sccache"
+  SCCACHE_GHA_ENABLED: "true"
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: macos-aot-debug-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  aot-print-regressions:
+    name: AOT print regressions (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.8
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: macos-aot-debug
+          cache-on-failure: "true"
+
+      - name: Build compiler, runtime, and test harness
+        run: |
+          cargo build --lib --bin adesh
+          cargo build -p adesh-runtime
+          cargo build --tests
+
+      # --nocapture surfaces the [day1-trace] compile/run dumps, including the
+      # partial stdout/stderr of a program that times out.
+      - name: Run AOT print regressions with tracing
+        shell: bash
+        run: |
+          set +e
+          failed=0
+          cargo test --test day1_regressions regression_aot_pretty_print \
+            -- --nocapture --test-threads=1 || failed=1
+          cargo test --test day1_regressions regression_print_compact_options_parity_njit_aot \
+            -- --nocapture --test-threads=1 || failed=1
+          exit "$failed"
+
+      # A hanging binary produces no crash report, so run it under `sample`
+      # instead of lldb (which would block on the same hang).
+      - name: Collect hang/crash diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          set -u
+
+          echo "== host =="
+          uname -a || true
+          echo "pagesize: $(getconf PAGESIZE 2>/dev/null || echo unknown)"
+
+          tmp="${TMPDIR:-/tmp}"
+          echo "== temp dir: $tmp =="
+          ls -la "$tmp" | grep -i adesh || true
+
+          shopt -s nullglob
+          for bin in \
+            "$tmp"/adesh_day1_aot_pretty_* \
+            "$tmp"/adesh_day1_aot_type_ranges_* \
+            "$tmp"/adesh_day1_print_compact_*; do
+            [ -f "$bin" ] || continue
+            echo "================ BINARY: $bin ================"
+            file "$bin" || true
+            echo "---- codesign ----"
+            codesign -dvvv "$bin" 2>&1 | head -n 40 || true
+            echo "---- otool -hv ----"
+            otool -hv "$bin" || true
+            echo "---- otool -l ----"
+            otool -l "$bin" | sed -n '1,200p' || true
+            echo "---- dyld_info -rebase -bind ----"
+            xcrun dyld_info -rebase -bind "$bin" 2>&1 | head -n 160 || true
+
+            echo "---- run + sample ----"
+            out_file="$(mktemp)"
+            err_file="$(mktemp)"
+            "$bin" >"$out_file" 2>"$err_file" &
+            pid=$!
+            sleep 3
+            if kill -0 "$pid" 2>/dev/null; then
+              echo "still running after 3s; sampling pid $pid"
+              ps -o pid,stat,etime,command -p "$pid" || true
+              sample "$pid" 2 1 || true
+              kill -9 "$pid" 2>/dev/null || true
+            else
+              wait "$pid"
+              echo "exited with status $?"
+            fi
+            echo "---- stdout ----"
+            head -c 4000 "$out_file" || true
+            echo "---- stderr ----"
+            head -c 4000 "$err_file" || true
+            rm -f "$out_file" "$err_file"
+          done
+
+          echo "== crash reports =="
+          reports_dir="$HOME/Library/Logs/DiagnosticReports"
+          if [ -d "$reports_dir" ]; then
+            ls -t "$reports_dir"/*.ips 2>/dev/null | head -n 2 | while IFS= read -r rep; do
+              echo "------ $rep ------"
+              head -c 40000 "$rep" || true
+              echo
+            done
+          else
+            echo "no crash report directory"
+          fi
+
+      - name: Display sccache stats
+        if: always()
+        run: sccache --show-stats

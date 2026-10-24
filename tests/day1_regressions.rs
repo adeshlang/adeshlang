@@ -131,15 +131,33 @@ fn run_command_with_timeout(exe: &PathBuf, args: &[String], timeout: Duration) -
                 if start.elapsed() > timeout {
                     let _ = child.kill();
                     let _ = child.wait();
+
+                    let mut stdout = String::new();
+                    let mut stderr = String::new();
+                    if let Some(mut out) = child.stdout.take() {
+                        let _ = out.read_to_string(&mut stdout);
+                    }
+                    if let Some(mut err) = child.stderr.take() {
+                        let _ = err.read_to_string(&mut stderr);
+                    }
+
                     panic!(
-                        "adeshlang command timed out after {:?}: {:?}",
-                        timeout, args
+                        "command timed out after {:?}: {:?}\nstdout so far:\n{}\nstderr so far:\n{}",
+                        timeout, args, stdout, stderr
                     );
                 }
                 thread::sleep(Duration::from_millis(20));
             }
         }
     }
+}
+
+/// Prints the full result of an AOT compile/run step so CI logs show it.
+fn trace_cmd(tag: &str, result: &CmdResult) {
+    eprintln!(
+        "[day1-trace] {tag}: status={:?}\n[day1-trace] {tag} stdout:\n{}\n[day1-trace] {tag} stderr:\n{}",
+        result.status, result.stdout, result.stderr
+    );
 }
 
 #[test]
@@ -301,6 +319,7 @@ fn main() {
         exe_path.to_string_lossy().to_string(),
     ];
     let compile_result = run_adesh_with_timeout(&compile_args, Duration::from_secs(120));
+    trace_cmd("compile", &compile_result);
     assert!(
         compile_result.status.success(),
         "AOT compile failed\nstdout:\n{}\nstderr:\n{}",
@@ -308,7 +327,12 @@ fn main() {
         compile_result.stderr
     );
 
+    eprintln!(
+        "[day1-trace] running AOT executable: {}",
+        exe_path.display()
+    );
     let run_result = run_command_with_timeout(&exe_path, &[], Duration::from_secs(20));
+    trace_cmd("run", &run_result);
     assert!(
         run_result.status.success(),
         "AOT executable failed (status: {:?})\nstdout:\n{}\nstderr:\n{}",
@@ -382,6 +406,7 @@ fn main() {
         exe_path.to_string_lossy().to_string(),
     ];
     let compile_result = run_adesh_with_timeout(&compile_args, Duration::from_secs(120));
+    trace_cmd("compile", &compile_result);
     assert!(
         compile_result.status.success(),
         "AOT compile failed\nstdout:\n{}\nstderr:\n{}",
@@ -389,7 +414,12 @@ fn main() {
         compile_result.stderr
     );
 
+    eprintln!(
+        "[day1-trace] running AOT executable: {}",
+        exe_path.display()
+    );
     let run_result = run_command_with_timeout(&exe_path, &[], Duration::from_secs(20));
+    trace_cmd("run", &run_result);
     assert!(
         run_result.status.success(),
         "AOT executable failed\nstdout:\n{}\nstderr:\n{}",
@@ -445,6 +475,7 @@ fn regression_print_compact_options_parity_njit_aot() {
         ]
     };
     let njit_result = run_adesh_with_timeout(&reference_args, Duration::from_secs(60));
+    trace_cmd("reference-run", &njit_result);
     assert!(
         njit_result.status.success(),
         "reference backend run failed\nstdout:\n{}\nstderr:\n{}",
@@ -470,6 +501,7 @@ fn regression_print_compact_options_parity_njit_aot() {
         exe_path.to_string_lossy().to_string(),
     ];
     let compile_result = run_adesh_with_timeout(&compile_args, Duration::from_secs(120));
+    trace_cmd("compile", &compile_result);
     assert!(
         compile_result.status.success(),
         "AOT compile failed\nstdout:\n{}\nstderr:\n{}",
@@ -477,7 +509,13 @@ fn regression_print_compact_options_parity_njit_aot() {
         compile_result.stderr
     );
 
+    eprintln!(
+        "[day1-trace] source: {}\n[day1-trace] running AOT executable: {}",
+        src_path.display(),
+        exe_path.display()
+    );
     let run_aot_result = run_command_with_timeout(&exe_path, &[], Duration::from_secs(20));
+    trace_cmd("aot-run", &run_aot_result);
     assert!(
         run_aot_result.status.success(),
         "AOT executable failed\nstdout:\n{}\nstderr:\n{}",
