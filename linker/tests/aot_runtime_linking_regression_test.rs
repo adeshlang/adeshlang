@@ -295,13 +295,28 @@ fn test_macho_system_and_runtime_symbol_resolution() {
     );
     assert_eq!(objects.len(), 2, "rt.o should be extracted");
 
-    // Check system symbol classification for _NSGetArgc
+    // Check system symbol classification for _NSGetArgc. The linker's
+    // internal name has already had Mach-O's ABI underscore stripped, so the
+    // bind name dyld resolves must have it restored: the libSystem export is
+    // `__NSGetArgc`, not `_NSGetArgc`.
     let route = OsApiRouter::classify("_NSGetArgc", &target);
-    assert!(matches!(
+    assert_eq!(
         route,
         SymbolRoute::DllImport {
             dll: "/usr/lib/libSystem.B.dylib",
-            ..
+            name: "__NSGetArgc".to_string(),
+            is_data: false,
         }
-    ));
+    );
+
+    // A logical C name with no leading underscore gains exactly one.
+    let route = OsApiRouter::classify("puts", &target);
+    assert_eq!(
+        route,
+        SymbolRoute::DllImport {
+            dll: "/usr/lib/libSystem.B.dylib",
+            name: "_puts".to_string(),
+            is_data: false,
+        }
+    );
 }

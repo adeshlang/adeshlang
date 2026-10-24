@@ -161,6 +161,7 @@ cp "$root/LICENSE" "$stage/THIRD_PARTY_LICENSES/AdeshLang-LICENSE"
 if [[ -d "$root/THIRD_PARTY_LICENSES" ]]; then
   cp -a "$root/THIRD_PARTY_LICENSES/." "$stage/licenses/"
   cp -a "$root/THIRD_PARTY_LICENSES/." "$stage/THIRD_PARTY_LICENSES/"
+fi
 if [[ -d "$root/src/stdlib" ]]; then
   cp -a "$root/src/stdlib/." "$stage/std/"
 fi

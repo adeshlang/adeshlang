@@ -136,24 +136,35 @@ pub fn generate_adhoc_signature(binary: &[u8], identifier: &str) -> Vec<u8> {
     sb_buf
 }
 
+/// Size of the blob [`generate_adhoc_signature`] returns for a binary of
+/// `binary_len` bytes.
+///
+/// The size is a pure function of the covered length and the identifier, so
+/// a caller can patch `LC_CODE_SIGNATURE`'s `dataoff`/`datasize` (and the
+/// header's `ncmds`/`sizeofcmds`) *before* the pages are hashed. Hashing
+/// before patching would leave page 0's slot covering bytes that no longer
+/// match the final file, and the kernel rejects such an image.
+fn adhoc_signature_size(binary_len: usize, identifier: &str) -> usize {
+    let n_code_slots = binary_len.div_ceil(PAGE_SIZE);
+    // SuperBlob header (magic, length, count) + one index entry +
+    // CodeDirectory (48-byte header + NUL-terminated identifier + slots).
+    let cd_length = 48 + identifier.len() + 1 + n_code_slots * SHA256_HASH_LEN as usize;
+    12 + 8 + cd_length
+}
+
 /// Post-process a fully encoded Mach-O binary to embed an ad-hoc code
 /// signature, satisfying XNU's requirement for ARM64 / macOS 11+ executables.
 ///
 /// The approach:
 /// 1. Align the binary to 16 bytes.
 /// 2. Record `sig_offset` = current end.
-/// 3. Generate the signature blob covering `binary[0..sig_offset]`.
-/// 4. Find LC_CODE_SIGNATURE in the existing load commands and patch its
+/// 3. Find LC_CODE_SIGNATURE in the existing load commands and patch its
 ///    `dataoff`/`datasize` fields; OR if no such command exists, scan for
-///    8+ bytes of zero padding after the last real load command (the header
-///    area always has room because we pre-reserve nothing — dyld accepts a
-///    binary whose sizeofcmds doesn't cover LC_CODE_SIGNATURE as long as the
-///    header magic, ncmds and the signature region are valid).
-///
-/// Because the encoder doesn't pre-reserve LC_CODE_SIGNATURE, this function
-/// locates free space in the header page (bytes between end-of-load-commands
-/// and the first section payload) and writes the 16-byte command there,
-/// incrementing `ncmds` and `sizeofcmds` in the Mach-O header.
+///    8+ bytes of zero padding after the last real load command and write a
+///    new command there, incrementing `ncmds`/`sizeofcmds`.
+/// 4. Hash `bytes[0..sig_offset]` — *after* all header patching, so the
+///    page-0 slot matches the image the loader actually maps — and append
+///    the signature blob.
 ///
 /// Returns the patched binary with the signature appended.
 pub fn apply_to_macho_bytes(bytes: &mut Vec<u8>, identifier: &str) -> Result<(), String> {
@@ -162,10 +173,7 @@ pub fn apply_to_macho_bytes(bytes: &mut Vec<u8>, identifier: &str) -> Result<(),
         bytes.push(0);
     }
     let sig_offset = bytes.len() as u32;
-
-    // Generate signature over everything up to sig_offset.
-    let sig_blob = generate_adhoc_signature(&bytes[..sig_offset as usize], identifier);
-    let sig_size = sig_blob.len() as u32;
+    let sig_size = adhoc_signature_size(sig_offset as usize, identifier) as u32;
 
     // Validate minimal Mach-O header (magic + cputype + cpusubtype + filetype
     // + ncmds + sizeofcmds + flags + reserved = 32 bytes).
@@ -242,6 +250,11 @@ pub fn apply_to_macho_bytes(bytes: &mut Vec<u8>, identifier: &str) -> Result<(),
         bytes[sizeofcmds_off..sizeofcmds_off + 4].copy_from_slice(&sizeofcmds.to_le_bytes());
     }
 
+    // Hash only now: every byte the loader will map, including the patched
+    // LC_CODE_SIGNATURE (and, on the insert path, the bumped ncmds/sizeofcmds
+    // and the command itself) must be covered by the page slots.
+    let sig_blob = generate_adhoc_signature(&bytes[..sig_offset as usize], identifier);
+    debug_assert_eq!(sig_blob.len(), sig_size as usize);
     bytes.extend_from_slice(&sig_blob);
     Ok(())
 }
@@ -249,6 +262,54 @@ pub fn apply_to_macho_bytes(bytes: &mut Vec<u8>, identifier: &str) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
+
+    #[test]
+    fn test_signature_covers_patched_header() {
+        // One 16-byte load command, no section payload: apply_to_macho_bytes
+        // takes the insert path and rewrites page 0 (new LC, ncmds,
+        // sizeofcmds) after the caller's encoder finished.
+        let mut image = vec![0u8; PAGE_SIZE];
+        image[0..4].copy_from_slice(&0xFEED_FACFu32.to_le_bytes());
+        image[16..20].copy_from_slice(&1u32.to_le_bytes());
+        image[20..24].copy_from_slice(&16u32.to_le_bytes());
+        image[32..36].copy_from_slice(&1u32.to_le_bytes());
+        image[36..40].copy_from_slice(&16u32.to_le_bytes());
+
+        apply_to_macho_bytes(&mut image, "test").unwrap();
+
+        assert_eq!(u32::from_le_bytes(image[16..20].try_into().unwrap()), 2);
+        assert_eq!(u32::from_le_bytes(image[20..24].try_into().unwrap()), 32);
+        assert_eq!(
+            u32::from_le_bytes(image[48..52].try_into().unwrap()),
+            LC_CODE_SIGNATURE
+        );
+        let sig_off = u32::from_le_bytes(image[56..60].try_into().unwrap()) as usize;
+        let sig_size = u32::from_le_bytes(image[60..64].try_into().unwrap()) as usize;
+        assert_eq!(sig_off, PAGE_SIZE);
+        assert_eq!(sig_size, image.len() - sig_off);
+
+        let superblob = &image[sig_off..];
+        assert_eq!(
+            u32::from_be_bytes(superblob[0..4].try_into().unwrap()),
+            CSMAGIC_EMBEDDED_SIGNATURE
+        );
+        let cd_off = u32::from_be_bytes(superblob[16..20].try_into().unwrap()) as usize;
+        let cd = &superblob[cd_off..];
+        assert_eq!(
+            u32::from_be_bytes(cd[0..4].try_into().unwrap()),
+            CSMAGIC_CODEDIRECTORY
+        );
+        let hash_off = u32::from_be_bytes(cd[16..20].try_into().unwrap()) as usize;
+        let n_slots = u32::from_be_bytes(cd[28..32].try_into().unwrap());
+        let code_limit = u32::from_be_bytes(cd[32..36].try_into().unwrap()) as usize;
+        assert_eq!(code_limit, PAGE_SIZE);
+        assert_eq!(n_slots, 1);
+
+        // Slot 0 must hash the final page 0, LC_CODE_SIGNATURE included.
+        let page0 = Sha256::digest(&image[..PAGE_SIZE]);
+        assert_eq!(&cd[hash_off..hash_off + 32], page0.as_slice());
+    }
 
     #[test]
     fn test_apply_to_macho_bytes_invalid_magic_fails() {

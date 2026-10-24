@@ -139,9 +139,14 @@ jobs:
 
           # --------------------------------------------------------------------
           # macOS Intel x86_64
+          #
+          # macos-13 was retired on 2025-12-04. macos-15-intel is GitHub's
+          # designated last x86_64 macOS image (supported until 2027-08), so
+          # this job keeps building natively instead of cross-compiling from
+          # the arm64 macos-15 runner.
           # --------------------------------------------------------------------
           - platform: macos-x86_64
-            runner: macos-13
+            runner: macos-15-intel
             os: macos
             arch: x86_64
             target: x86_64-apple-darwin

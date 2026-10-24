@@ -1699,11 +1699,15 @@ impl OsApiRouter {
             return SymbolRoute::Undefined;
         }
 
-        let name = if sym_name.starts_with('_') {
-            sym_name.to_string()
-        } else {
-            format!("_{}", sym_name)
-        };
+        // Linker-internal symbol names are *logical* C names: the Mach-O
+        // object reader strips the ABI underscore from every external symbol
+        // (`_puts` -> `puts`, `__NSGetArgc` -> `_NSGetArgc`). The bind name
+        // dyld looks up in the dylib's export trie must carry exactly that
+        // one underscore back, so prepend it unconditionally. A conditional
+        // "add `_` unless one is already there" rule turns the libSystem
+        // export `__NSGetArgc` into `_NSGetArgc`, which dyld reports as
+        // `Symbol not found`.
+        let name = format!("_{}", sym_name);
         SymbolRoute::DllImport {
             dll: "/usr/lib/libSystem.B.dylib",
             name,

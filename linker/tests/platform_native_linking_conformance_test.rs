@@ -141,11 +141,12 @@ fn test_posix_libc_symbol_classification_macos_macho() {
         }
     }
 
-    // macOS error handling
+    // A logical C name that itself starts with `_` still gains Mach-O's ABI
+    // underscore: the C function `__error` is exported as `___error`.
     match OsApiRouter::classify("__error", &target) {
         SymbolRoute::DllImport { dll, name, .. } => {
             assert_eq!(dll, "/usr/lib/libSystem.B.dylib");
-            assert_eq!(name, "__error");
+            assert_eq!(name, "___error");
         }
         other => panic!("expected libSystem import for __error, got {:?}", other),
     }

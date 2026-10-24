@@ -522,6 +522,66 @@ fn test_macho_eager_binding_structure_end_to_end() {
     assert!(linkedit.fileoff > data.fileoff);
 }
 
+/// A logical C name that itself starts with `_` must still gain Mach-O's ABI
+/// underscore. Rust's `std` reaches `_NSGetArgc` through the object symbol
+/// `__NSGetArgc`; the reader normalizes that to the logical `_NSGetArgc`, and
+/// a bind stream that keeps the single underscore makes dyld abort at launch
+/// with `Symbol not found: _NSGetArgc` (libSystem exports `__NSGetArgc`).
+#[test]
+fn test_macho_import_restores_abi_underscore() {
+    let dir = tempdir().unwrap();
+    let out = dir.path().join("prog");
+    let target = Target::from_triple("x86_64-darwin").unwrap();
+    let obj_path = dir.path().join("main.o");
+
+    let mut obj = ObjectFile::new(obj_path.clone(), target.clone(), 0);
+    let mut text = Section::new_code(
+        ".text",
+        vec![0xE8, 0x00, 0x00, 0x00, 0x00, 0xC3], // call rel32; ret
+        16,
+    );
+    text.relocations.push(Relocation::new(
+        1,
+        "_NSGetArgc",
+        RelocationKind::PcRelative32,
+        -4,
+    ));
+    obj.add_section(text);
+    obj.add_symbol(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        6,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_undefined("_NSGetArgc", 0));
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    let config = LinkConfig::new(out.clone(), target);
+    Linker::link(&[obj_path], config).expect("link failed");
+    let bytes = std::fs::read(&out).unwrap();
+    let image = parse_macho(&bytes);
+
+    let info = image.dyld_info.clone().expect("LC_DYLD_INFO_ONLY required");
+    let bind_bytes = &bytes[info.bind_off as usize..(info.bind_off + info.bind_size) as usize];
+    let bind = decode_bind_stream_for_test(bind_bytes);
+    assert_eq!(bind.len(), 1);
+    assert_eq!(bind[0].4, "__NSGetArgc", "dyld must be told the ABI name");
+
+    let symtab = image.symtab.clone().expect("LC_SYMTAB required");
+    let names: Vec<String> = (0..symtab.nsyms as usize)
+        .map(|i| read_nlist(&bytes, &symtab, i).0)
+        .collect();
+    assert!(
+        names.iter().any(|n| n == "__NSGetArgc"),
+        "undefined symtab entry must carry the ABI name, got {:?}",
+        names
+    );
+    assert!(!names.iter().any(|n| n == "_NSGetArgc"));
+}
+
 /// arm64 eager binding: the proxy stub must be a real
 /// `adrp x16, page(slot)` / `ldr x16, [x16, #slot&0xfff]` / `br x16`
 /// sequence. macOS CI runs on arm64, so a wrong encodable here is a
