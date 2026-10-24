@@ -135,6 +135,57 @@ jobs:
           cargo test -p adesh-linker --test macho_dyld_binding_test
           cargo test --tests
 
+      # Temporary: dump everything needed to diagnose AOT executable crashes
+      # on Apple Silicon (signal, faulting instruction, dyld fixups, signature).
+      - name: Collect macOS AOT crash diagnostics
+        if: failure() && matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          set -u
+
+          echo "== host =="
+          uname -a || true
+          echo "pagesize: $(getconf PAGESIZE 2>/dev/null || echo unknown)"
+
+          tmp="${TMPDIR:-/tmp}"
+          echo "== temp dir: $tmp =="
+          ls -la "$tmp" | grep -i adesh || true
+
+          while IFS= read -r -d '' bin; do
+            echo "================ BINARY: $bin ================"
+            file "$bin" || true
+            echo "---- codesign ----"
+            codesign -dvvv "$bin" 2>&1 | head -n 40 || true
+            echo "---- otool -hv ----"
+            otool -hv "$bin" || true
+            echo "---- otool -l ----"
+            otool -l "$bin" | sed -n '1,200p' || true
+            echo "---- dyld_info -rebase -bind ----"
+            xcrun dyld_info -rebase -bind "$bin" 2>&1 | head -n 160 || true
+            echo "---- lldb ----"
+            xcrun lldb -b \
+              -o "settings set target.process.stop-on-sharedlibrary-events false" \
+              -o "run" \
+              -o "bt all" \
+              -o "register read pc sp lr x0 x1 x16 x17" \
+              -o "disassemble -s \$pc -c 8" \
+              -o "thread list" \
+              -o "quit" \
+              -- "$bin" 2>&1 | tail -n 200 || true
+          done < <(find "$tmp" -maxdepth 1 -name 'adesh_day1_aot_*' -type f -print0 2>/dev/null)
+
+          echo "== crash reports =="
+          reports_dir="$HOME/Library/Logs/DiagnosticReports"
+          if [ -d "$reports_dir" ]; then
+            ls -t "$reports_dir"/*.ips 2>/dev/null | head -n 2 | while IFS= read -r rep; do
+              echo "------ $rep ------"
+              head -c 40000 "$rep" || true
+              echo
+            done
+          else
+            echo "no crash report directory"
+          fi
+
       # Windows: the Linux ELF execution suites run through WSL when the
       # runner provides it (GitHub windows-* images ship WSL/Ubuntu with
       # glibc); they SKIP loudly when no WSL distro is present instead of
