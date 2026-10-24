@@ -106,7 +106,7 @@ impl MachOWriter {
         install_name: Option<&str>,
         dynamic: Option<&MachODynamicInfo>,
     ) -> LinkResult<()> {
-        let mut bytes = Self::encode_macho_with_dynamic(
+        let bytes = Self::encode_macho_with_dynamic(
             target,
             entry_va,
             merged_sections,
@@ -116,23 +116,6 @@ impl MachOWriter {
             install_name,
             dynamic,
         )?;
-
-        // Apple Silicon (ARM64) and macOS 11+ require every executable to be
-        // signed with at least an ad-hoc code signature to be launched by XNU.
-        // Apply our built-in pure-Rust signer instead of shelling out to the
-        // external `codesign` tool, enabling cross-compilation.
-        if !is_shared && (target.arch == crate::target::Arch::AArch64) {
-            let ident = path.file_name().and_then(|n| n.to_str()).unwrap_or("a.out");
-            crate::macho::codesign::apply_to_macho_bytes(&mut bytes, ident).map_err(|e| {
-                LinkError::new(
-                    ErrorCode::SecurityViolation,
-                    format!(
-                        "failed to ad-hoc code sign Mach-O executable for AArch64: {}",
-                        e
-                    ),
-                )
-            })?;
-        }
 
         fs::write(path, &bytes)?;
 
@@ -262,6 +245,7 @@ impl MachOWriter {
         let cmd_symtab_sz = 24usize;
         let cmd_dysymtab_sz = 80usize;
         let cmd_dyld_info_sz = if has_dynamic { 48usize } else { 0usize };
+        let cmd_code_signature_sz = if !is_shared { 16usize } else { 0usize };
 
         // Dylib dependencies: always load /usr/lib/libSystem.B.dylib, plus any user libraries
         let mut dylib_commands: Vec<(String, Vec<u8>)> = Vec::new();
@@ -326,6 +310,9 @@ impl MachOWriter {
         if has_dynamic {
             ncmds += 1; // LC_DYLD_INFO_ONLY
         }
+        if !is_shared {
+            ncmds += 1; // LC_CODE_SIGNATURE
+        }
 
         let sizeofcmds = (cmd_pagezero_sz
             + cmd_text_sz
@@ -338,7 +325,8 @@ impl MachOWriter {
             + cmd_main_sz
             + cmd_symtab_sz
             + cmd_dysymtab_sz
-            + cmd_dyld_info_sz) as u32;
+            + cmd_dyld_info_sz
+            + cmd_code_signature_sz) as u32;
 
         let headers_size = 32 + (sizeofcmds as usize);
         let text_file_offset_start = 0u64; // __TEXT starts at file offset 0 including headers
@@ -810,6 +798,16 @@ impl MachOWriter {
                 output.resize(end, 0);
             }
             output[stub_helper_file_off as usize..end].copy_from_slice(&stub_helper_bytes);
+            let stub_helper_end_va = stub_helper_va + stub_helper_bytes.len() as u64;
+            if stub_helper_end_va > data_vmaddr_start {
+                return Err(LinkError::new(
+                    ErrorCode::InvalidSection,
+                    format!(
+                        "__stub_helper end 0x{:x} exceeds __DATA start 0x{:x}",
+                        stub_helper_end_va, data_vmaddr_start
+                    ),
+                ));
+            }
             text_sec_records.push((
                 STUB_HELPER_SECTION.to_string(),
                 stub_helper_va,
@@ -817,8 +815,7 @@ impl MachOWriter {
                 stub_helper_file_off as u32,
                 16,
             ));
-            text_va_end = text_va_end.max(stub_helper_va + stub_helper_bytes.len() as u64);
-            text_vmsize = align_to(text_va_end - text_vmaddr, target.page_size);
+            text_vmsize = data_vmaddr_start - text_vmaddr;
             text_filesize = text_vmsize.min(data_file_offset_start);
 
             // Write the __got slot (zero: dyld fills it from the non-lazy
@@ -1452,7 +1449,26 @@ impl MachOWriter {
         cmd_buf.extend_from_slice(&dysym.locreloff.to_le_bytes());
         cmd_buf.extend_from_slice(&dysym.nlocrel.to_le_bytes());
 
+        // LC_CODE_SIGNATURE (executables only, patched below by apply_to_macho_bytes)
+        if !is_shared {
+            cmd_buf.extend_from_slice(&crate::macho::codesign::LC_CODE_SIGNATURE.to_le_bytes());
+            cmd_buf.extend_from_slice(&16u32.to_le_bytes()); // cmdsize = 16
+            cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // dataoff (patched by apply_to_macho_bytes)
+            cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // datasize (patched by apply_to_macho_bytes)
+        }
+
         output[32..32 + cmd_buf.len()].copy_from_slice(&cmd_buf);
+
+        // macOS 11+ and Apple Silicon require every executable binary to be
+        // ad-hoc code signed; apply pure-Rust signer to output.
+        if !is_shared {
+            crate::macho::codesign::apply_to_macho_bytes(&mut output, "a.out").map_err(|e| {
+                LinkError::new(
+                    ErrorCode::SecurityViolation,
+                    format!("failed to ad-hoc code sign Mach-O executable: {}", e),
+                )
+            })?;
+        }
 
         Ok(output)
     }

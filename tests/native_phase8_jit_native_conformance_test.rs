@@ -371,17 +371,22 @@ fn test_jit_native_double_free_is_loud() {
 }
 
 #[test]
-fn test_jit_native_import_fails_loudly_not_silently() {
-    // Imported modules are not linked into the native JIT's compile unit.
-    // Using one must fail loudly with a clear error — previously the import
-    // silently resolved to null and the program printed x = 0, exit 0.
-    let tag = unique_tag("njit_import");
+fn test_jit_native_import_valid() {
+    // Valid static imports execute natively in --njit and return expected results.
+    let tag = unique_tag("njit_import_valid");
     let src = std::env::temp_dir().join(format!("{}.adesh", tag));
     let helper = std::env::temp_dir().join(format!("{}_helper.adesh", tag));
 
-    std::fs::write(&helper, "fn helper_value(): int {\n    return 7;\n}\n").expect("write helper");
+    std::fs::write(
+        &helper,
+        "export fn helper_value(): int {\n    return 7;\n}\n",
+    )
+    .expect("write helper");
 
-    let import_line = format!("import \"{}\";", helper.to_string_lossy());
+    let import_line = format!(
+        "import {{ helper_value }} from \"{}\";",
+        helper.to_string_lossy()
+    );
     let program = format!(
         "{}\nunsafe {{\n    let buf = alloc(16);\n    buf[0] = helper_value() * 6;\n    println(\"x =\", buf[0]);\n    free(buf);\n}}\n",
         import_line
@@ -389,21 +394,92 @@ fn test_jit_native_import_fails_loudly_not_silently() {
     std::fs::write(&src, program).expect("write src");
 
     let exe = resolve_adesh_exe();
+    let (njit_out, njit_code) = run_backend(&exe, &["--quiet", "--njit"], &src);
+    assert_eq!(
+        njit_code, 0,
+        "Native JIT must execute valid static import, got code {}: {}",
+        njit_code, njit_out
+    );
+    assert!(
+        njit_out.contains("x = 42"),
+        "Native JIT valid import output missing 'x = 42', got:\n{}",
+        njit_out
+    );
 
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&helper);
+}
+
+#[test]
+fn test_jit_native_import_missing_export_fails_loudly() {
+    // Importing a non-existent export must fail loudly with exit code != 0.
+    let tag = unique_tag("njit_import_missing");
+    let src = std::env::temp_dir().join(format!("{}.adesh", tag));
+    let helper = std::env::temp_dir().join(format!("{}_helper.adesh", tag));
+
+    std::fs::write(
+        &helper,
+        "export fn helper_value(): int {\n    return 7;\n}\n",
+    )
+    .expect("write helper");
+
+    let import_line = format!(
+        "import {{ missing_fn }} from \"{}\";",
+        helper.to_string_lossy()
+    );
+    let program = format!(
+        "{}\nfn main() {{\n    println(\"x =\", missing_fn());\n}}\n",
+        import_line
+    );
+    std::fs::write(&src, program).expect("write src");
+
+    let exe = resolve_adesh_exe();
     let (njit_out, njit_code) = run_backend(&exe, &["--quiet", "--njit"], &src);
     assert_ne!(
         njit_code, 0,
-        "Native JIT must fail loudly on imported module use, got: {}",
+        "Native JIT must fail on missing export, got exit 0: {}",
         njit_out
     );
     assert!(
-        njit_out.contains("not supported by --jit-native"),
-        "Import failure must name the unsupported feature, got:\n{}",
+        njit_out.contains("does not export 'missing_fn'"),
+        "Import failure must identify missing export, got:\n{}",
+        njit_out
+    );
+
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&helper);
+}
+
+#[test]
+fn test_jit_native_import_unsupported_feature_fails_loudly() {
+    // Importing unsupported features (e.g. mutable module variables)
+    // must fail loudly with a clear diagnostic naming the unsupported feature.
+    let tag = unique_tag("njit_import_unsupported");
+    let src = std::env::temp_dir().join(format!("{}.adesh", tag));
+    let helper = std::env::temp_dir().join(format!("{}_helper.adesh", tag));
+
+    std::fs::write(&helper, "export let counter = 0;\n").expect("write helper");
+
+    let import_line = format!(
+        "import {{ counter }} from \"{}\";",
+        helper.to_string_lossy()
+    );
+    let program = format!(
+        "{}\nfn main() {{\n    println(\"c =\", counter);\n}}\n",
+        import_line
+    );
+    std::fs::write(&src, program).expect("write src");
+
+    let exe = resolve_adesh_exe();
+    let (njit_out, njit_code) = run_backend(&exe, &["--quiet", "--njit"], &src);
+    assert_ne!(
+        njit_code, 0,
+        "Native JIT must fail on unsupported import feature, got exit 0: {}",
         njit_out
     );
     assert!(
-        !njit_out.contains("x = 0"),
-        "Imported function must not silently evaluate to 0, got:\n{}",
+        njit_out.contains("mutable module variable"),
+        "Import failure must identify unsupported feature, got:\n{}",
         njit_out
     );
 
