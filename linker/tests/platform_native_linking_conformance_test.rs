@@ -419,3 +419,111 @@ fn test_macho_aarch64_executable_structural_conformance() {
     let filetype = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
     assert_eq!(filetype, 2, "filetype must be MH_EXECUTE (2)");
 }
+
+/// AArch64 `BL` relocations must be patched at the instruction that emitted
+/// them, not at the start of `.text`: a zero-offset relocation overwrites the
+/// function prologue and crashes the process at its entry point.
+#[test]
+fn test_macho_aarch64_call26_relocation_patches_the_call_site() {
+    let dir = tempdir().unwrap();
+    let out_macho = dir.path().join("test_macho_arm64_call");
+    let target = Target::from_triple("aarch64-darwin").unwrap();
+    let obj_path = dir.path().join("call_arm64.o");
+
+    let mut text = Vec::new();
+    // helper: STP x29, x30, [SP, #-16]!; MOV x29, SP; RET
+    text.extend_from_slice(&0xA9BF7BFDu32.to_le_bytes());
+    text.extend_from_slice(&0x910003FDu32.to_le_bytes());
+    text.extend_from_slice(&0xD65F03C0u32.to_le_bytes());
+    // +0x0c: pad to the next 4-byte function start
+    text.extend_from_slice(&0xD503201Fu32.to_le_bytes());
+    // main at 0x10: STP; MOV x29, SP
+    let main_offset = text.len() as u64;
+    text.extend_from_slice(&0xA9BF7BFDu32.to_le_bytes());
+    text.extend_from_slice(&0x910003FDu32.to_le_bytes());
+    // +0x18: BL #0 (relocated to helper)
+    let call_offset = text.len() as u64;
+    text.extend_from_slice(&0x94000000u32.to_le_bytes());
+    text.extend_from_slice(&0xD65F03C0u32.to_le_bytes());
+
+    let mut obj = ObjectFile::new(obj_path.clone(), target.clone(), 0);
+    let mut code_sec = Section::new_code(".text", text, 16);
+    code_sec.relocations.push(Relocation::new(
+        call_offset,
+        "helper",
+        RelocationKind::AArch64Call26,
+        0,
+    ));
+    obj.add_section(code_sec);
+    obj.add_symbol(Symbol::new_defined(
+        "helper",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        12,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        main_offset,
+        12,
+        0,
+    ));
+
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+    let link_config = LinkConfig::new(out_macho.clone(), target);
+    let res = Linker::link(&[obj_path], link_config);
+    assert!(res.is_ok(), "linking Mach-O AArch64 failed: {:?}", res);
+
+    let bytes = std::fs::read(&out_macho).expect("failed to read generated Mach-O AArch64");
+
+    // Locate the __TEXT segment's .text section in the load commands.
+    let ncmds = u32::from_le_bytes(bytes[16..20].try_into().unwrap()) as usize;
+    let mut cursor = 32usize;
+    let mut text_file_offset = None;
+    for _ in 0..ncmds {
+        let cmd = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
+        let cmdsize =
+            u32::from_le_bytes(bytes[cursor + 4..cursor + 8].try_into().unwrap()) as usize;
+        if cmd == 0x19 {
+            let nsects =
+                u32::from_le_bytes(bytes[cursor + 64..cursor + 68].try_into().unwrap()) as usize;
+            for s in 0..nsects {
+                let sec = cursor + 72 + s * 80;
+                let name = &bytes[sec..sec + 16];
+                if name.starts_with(b".text") || name.starts_with(b"__text") {
+                    text_file_offset = Some(u32::from_le_bytes(
+                        bytes[sec + 48..sec + 52].try_into().unwrap(),
+                    ) as usize);
+                }
+            }
+        }
+        cursor += cmdsize;
+    }
+    let text_file_offset = text_file_offset.expect(".text section not found");
+
+    let word_at = |off: u64| -> u32 {
+        let p = text_file_offset + off as usize;
+        u32::from_le_bytes(bytes[p..p + 4].try_into().unwrap())
+    };
+
+    // The entry prologue must survive: this is the instruction a zero-offset
+    // relocation used to overwrite.
+    assert_eq!(
+        word_at(0),
+        0xA9BF7BFD,
+        "helper prologue must not be clobbered by a call relocation"
+    );
+
+    // text_va + 0x18 calls text_va + 0x0: disp = -0x18 -> imm26 = 0x3FFF_FFA.
+    assert_eq!(
+        word_at(call_offset),
+        0x94000000 | 0x03FF_FFFA,
+        "BL at .text+0x{:x} must encode the displacement to helper",
+        call_offset
+    );
+}

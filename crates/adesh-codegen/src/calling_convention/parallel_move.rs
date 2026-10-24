@@ -66,6 +66,26 @@ impl ParallelMoveResolver {
         resolver
     }
 
+    /// Initializes a resolver with AAPCS64 default scratch and reserved
+    /// registers.
+    ///
+    /// Scratch pool: X16/IP0 (16), X17/IP1 (17), X9, X10.
+    /// Reserved: SP (31), FP (29), LR (30).
+    pub fn for_aarch64() -> Self {
+        let mut resolver = Self::new("aarch64");
+        resolver.scratch_pool = vec![
+            PhysicalRegister(16), // IP0
+            PhysicalRegister(17), // IP1
+            PhysicalRegister(9),
+            PhysicalRegister(10),
+        ];
+        resolver.reserved_registers.insert(PhysicalRegister(31)); // SP
+        resolver.reserved_registers.insert(PhysicalRegister(29)); // FP
+        resolver.reserved_registers.insert(PhysicalRegister(30)); // LR
+        resolver.default_stack_base = PhysicalRegister(31);
+        resolver
+    }
+
     /// Sets custom scratch register pool.
     pub fn with_scratch_pool(mut self, pool: Vec<PhysicalRegister>) -> Self {
         self.scratch_pool = pool;
@@ -292,6 +312,32 @@ impl ParallelMoveResolver {
 
         // 2. Try fallback registers matching requested class
         if class == RegisterClass::Float {
+            // AArch64 SIMD registers live at ids 32..63, which
+            // `PhysicalRegister::class` reports as GPR, so the generic XMM
+            // fallback below would pick integer registers.
+            if self.arch == "aarch64" {
+                for &cand in &[
+                    PhysicalRegister(62), // V30
+                    PhysicalRegister(63), // V31
+                    PhysicalRegister(46), // V14
+                    PhysicalRegister(47), // V15
+                ] {
+                    if Some(cand) == exclude {
+                        continue;
+                    }
+                    if !used_in_pending.contains(&cand)
+                        && !self.reserved_registers.contains(&cand)
+                        && !self.live_registers.contains(&cand)
+                    {
+                        return Ok(cand);
+                    }
+                }
+                return Err(CodegenError::new(
+                    self.arch,
+                    "ParallelMoveResolver failed: no available Float scratch register to break cycle"
+                        .to_string(),
+                ));
+            }
             let fp_fallback = [
                 PhysicalRegister::xmm(15),
                 PhysicalRegister::xmm(14),

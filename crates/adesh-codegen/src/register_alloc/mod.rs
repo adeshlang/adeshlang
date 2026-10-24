@@ -60,6 +60,12 @@ pub trait RegisterFile: Send + Sync {
             RegisterClass::Float => (PhysicalRegister::xmm(15), PhysicalRegister::xmm(14)),
         }
     }
+
+    /// Register that spilled-value addresses are based on when a
+    /// `ParallelMove` operand refers to a stack slot. Defaults to x86-64 RBP.
+    fn frame_pointer(&self) -> PhysicalRegister {
+        PhysicalRegister(5)
+    }
 }
 
 /// Segment of a live range defined as a half-open interval `[start, end)`.
@@ -706,6 +712,7 @@ pub struct SpillRewriter<'a> {
     vreg_map: &'a HashMap<VirtualRegister, PhysicalRegister>,
     spill_map: &'a HashMap<VirtualRegister, i32>,
     spill_size_map: &'a HashMap<VirtualRegister, u8>,
+    frame_pointer: PhysicalRegister,
 }
 
 impl<'a> SpillRewriter<'a> {
@@ -720,6 +727,7 @@ impl<'a> SpillRewriter<'a> {
             vreg_map,
             spill_map,
             spill_size_map,
+            frame_pointer: reg_file.frame_pointer(),
         }
     }
 
@@ -1240,7 +1248,7 @@ impl<'a> SpillRewriter<'a> {
                             m.dst = MoveLocation::PhysicalRegister(p);
                         } else if let Some(&slot) = self.spill_map.get(&v) {
                             m.dst = MoveLocation::StackSlot {
-                                base: PhysicalRegister(5),
+                                base: self.frame_pointer,
                                 offset: slot,
                             };
                         }
@@ -1250,7 +1258,7 @@ impl<'a> SpillRewriter<'a> {
                             m.src = MoveLocation::PhysicalRegister(p);
                         } else if let Some(&slot) = self.spill_map.get(&v) {
                             m.src = MoveLocation::StackSlot {
-                                base: PhysicalRegister(5),
+                                base: self.frame_pointer,
                                 offset: slot,
                             };
                         }

@@ -1599,6 +1599,14 @@ impl<'a> FunctionLoweringContext<'a> {
         format!("{}_{}", prefix, self.label_counter)
     }
 
+    /// Register to adjust for outgoing stack arguments.
+    fn stack_pointer_reg(&self) -> PhysicalRegister {
+        match self.target.architecture {
+            Architecture::AArch64 => PhysicalRegister(31), // SP
+            _ => PhysicalRegister(4),                      // RSP
+        }
+    }
+
     pub fn alloc_stack_slot(&mut self, size: i32) -> i32 {
         let slot = self.current_stack_offset;
         self.current_stack_offset += size;
@@ -1630,17 +1638,14 @@ impl<'a> FunctionLoweringContext<'a> {
             self.module.imports.push(symbol.to_string());
         }
 
-        let (moves, total) = resolve_call_arguments(
-            self.call_conv.as_ref(),
-            args,
-            PhysicalRegister(4), // RSP
-        )
-        .expect("call argument resolution");
+        let stack_base = self.stack_pointer_reg();
+        let (moves, total) = resolve_call_arguments(self.call_conv.as_ref(), args, stack_base)
+            .expect("call argument resolution");
 
         if total > 0 {
             // Reserve outgoing argument area
             self.emit(MachineInstruction::Sub {
-                dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(4))), // RSP
+                dst: MachineOperand::Register(MachineRegister::Physical(stack_base)),
                 src: MachineOperand::Immediate(total as i64),
             });
         }
@@ -1657,7 +1662,7 @@ impl<'a> FunctionLoweringContext<'a> {
 
         if total > 0 {
             self.emit(MachineInstruction::Add {
-                dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(4))), // RSP
+                dst: MachineOperand::Register(MachineRegister::Physical(stack_base)),
                 src: MachineOperand::Immediate(total as i64),
             });
         }
@@ -2100,16 +2105,13 @@ impl<'a> FunctionLoweringContext<'a> {
             size: 8,
         });
 
-        let (moves, total) = resolve_call_arguments(
-            self.call_conv.as_ref(),
-            args,
-            PhysicalRegister(4), // RSP
-        )
-        .expect("indirect call argument resolution");
+        let stack_base = self.stack_pointer_reg();
+        let (moves, total) = resolve_call_arguments(self.call_conv.as_ref(), args, stack_base)
+            .expect("indirect call argument resolution");
 
         if total > 0 {
             self.emit(MachineInstruction::Sub {
-                dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(4))), // RSP
+                dst: MachineOperand::Register(MachineRegister::Physical(stack_base)),
                 src: MachineOperand::Immediate(total as i64),
             });
         }
@@ -2131,7 +2133,7 @@ impl<'a> FunctionLoweringContext<'a> {
 
         if total > 0 {
             self.emit(MachineInstruction::Add {
-                dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(4))), // RSP
+                dst: MachineOperand::Register(MachineRegister::Physical(stack_base)),
                 src: MachineOperand::Immediate(total as i64),
             });
         }
@@ -3485,9 +3487,9 @@ impl<'a> FunctionLoweringContext<'a> {
             typed_args.push((value, RegisterClass::Gpr));
         }
 
-        let (moves, _) =
-            resolve_call_arguments(self.call_conv.as_ref(), &typed_args, PhysicalRegister(4))
-                .expect("scalar tail-call argument classification is infallible");
+        let stack_base = self.stack_pointer_reg();
+        let (moves, _) = resolve_call_arguments(self.call_conv.as_ref(), &typed_args, stack_base)
+            .expect("scalar tail-call argument classification is infallible");
         for inst in moves {
             self.emit(inst);
         }
