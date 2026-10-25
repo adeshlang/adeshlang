@@ -89,8 +89,8 @@ jobs:
             otool -hv "$bin" || true
             echo "---- otool -l ----"
             otool -l "$bin" | sed -n '1,200p' || true
-            echo "---- dyld_info -rebase -bind ----"
-            xcrun dyld_info -rebase -bind "$bin" 2>&1 | head -n 160 || true
+            echo "---- dyld_info -fixups ----"
+            xcrun dyld_info -fixups "$bin" 2>&1 | head -n 160 || true
 
             echo "---- run + sample ----"
             out_file="$(mktemp)"
