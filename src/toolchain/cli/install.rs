@@ -184,7 +184,7 @@ pub fn execute_install_command(args: &[String]) {
 
     // Alternative channel: the system package manager.
     if options.use_system_packages {
-        println!("AdeshLang Toolchain Installer (system packages)");
+        println!("Adesh Toolchain Installer (system packages)");
         println!("────────────────────────────────────────────");
         println!("  Platform   : {platform}");
         if let Err(e) = install_via_system_packages() {
@@ -214,7 +214,7 @@ pub fn execute_install_command(args: &[String]) {
             std::process::exit(2);
         }
     };
-    println!("AdeshLang Toolchain Installer");
+    println!("Adesh Toolchain Installer");
     println!("────────────────────────────────────────────");
     println!("  Platform   : {platform}");
     println!("  Components : {}", components.join(", "));
@@ -401,9 +401,9 @@ pub fn execute_install_command(args: &[String]) {
 }
 
 /// Run an upstream installer executable silently (NSIS-style `/S`), redirecting
-/// it into the AdeshLang-managed toolchain directory (`<home>\toolchain\llvm`)
+/// it into the Adesh-managed toolchain directory (`<home>\toolchain\llvm`)
 /// instead of the machine-wide `C:\Program Files\LLVM`. That keeps the whole
-/// toolchain inside the AdeshLang installation, removable with a single
+/// toolchain inside the Adesh installation, removable with a single
 /// uninstall.
 fn run_upstream_installer(installer: &Path, target_dir: &Path) -> Result<(), String> {
     if !cfg!(windows) {

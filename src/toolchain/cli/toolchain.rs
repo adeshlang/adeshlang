@@ -43,7 +43,7 @@ pub fn execute_toolchain_command_with_preference(
     let subcommand = args.first().map(String::as_str).unwrap_or("current");
     match subcommand {
         "list" => {
-            println!("AdeshLang Toolchains");
+            println!("Adesh Toolchains");
             println!("============================================================");
             println!("1. Native Adesh Toolchain (Built-in, Zero-Dependency) [ACTIVE]");
             println!("   • Codegen Engine: adesh-codegen v0.1.0");
@@ -136,7 +136,7 @@ pub fn execute_toolchain_command_with_preference(
         "update" => {
             println!(
                 "Adesh Native Toolchain is always bundled with the compiler binary.\n\
-                 • To update AdeshLang: Run 'adesh update' or install the latest release."
+                 • To update Adesh: Run 'adesh update' or install the latest release."
             );
         }
         "install" => {

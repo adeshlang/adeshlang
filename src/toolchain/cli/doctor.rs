@@ -12,14 +12,14 @@ pub fn execute_doctor_command() {
     let bold = "\x1b[1m";
     let reset = "\x1b[0m";
 
-    println!("\n{}AdeshLang System Health Doctor{}", bold, reset);
+    println!("\n{}Adesh System Health Doctor{}", bold, reset);
     println!("────────────────────────────────────────────");
 
     let mut issues = 0;
 
     // 1. Version Check
     println!(
-        "  {}✓{} AdeshLang Version : {}v{}{}",
+        "  {}✓{} Adesh Version : {}v{}{}",
         green,
         reset,
         bold,
@@ -361,12 +361,12 @@ pub fn execute_doctor_command() {
     println!("────────────────────────────────────────────");
     if issues == 0 {
         println!(
-            "{}✓ AdeshLang installation is healthy and ready to compile!{}\n",
+            "{}✓ Adesh installation is healthy and ready to compile!{}\n",
             green, reset
         );
     } else {
         println!(
-            "{}✗ Found {} issue(s) in AdeshLang setup. Run `adl repair` to fix.{}\n",
+            "{}✗ Found {} issue(s) in Adesh setup. Run `adl repair` to fix.{}\n",
             red, issues, reset
         );
     }

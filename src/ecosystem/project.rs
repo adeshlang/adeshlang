@@ -354,7 +354,7 @@ adl_modules/
         if !readme_path.exists() {
             let readme_content = format!(
                 "# {name}\n\n\
-A modern AdeshLang project managed with ADL (AdeshLang Package Manager).\n\n\
+A modern Adesh project managed with ADL (Adesh Package Manager).\n\n\
 ## 🚀 Quick Start\n\n\
 ### Run the project\n\
 ```bash\n\
@@ -588,7 +588,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
 
 fn default_app_source(name: &str) -> String {
     format!(
-        "// Welcome to your AdeshLang project: {name}!\n\
+        "// Welcome to your Adesh project: {name}!\n\
 //\n\
 // 🚀 Useful commands:\n\
 //   adl run              Run this project\n\
@@ -596,7 +596,7 @@ fn default_app_source(name: &str) -> String {
 //   adl test             Run project tests\n\
 //   adl add <pkg> <ver>  Add a package dependency\n\n\
 fn greet(name: String): String {{\n\
-    return \"Hello, \" + name + \"! Welcome to AdeshLang.\";\n\
+    return \"Hello, \" + name + \"! Welcome to Adesh.\";\n\
 }}\n\n\
 fn calculate_fibonacci(n: i64): i64 {{\n\
     if n <= 1 {{\n\
@@ -622,7 +622,7 @@ fn main(): void {{\n\
 
 fn default_library_source(name: &str) -> String {
     format!(
-        "// AdeshLang Library Module: {name}\n\
+        "// Adesh Library Module: {name}\n\
 //\n\
 // 🚀 Useful commands:\n\
 //   adl build --lib      Compile this library\n\

@@ -1,7 +1,7 @@
 //! Build MLIR from the upstream LLVM source when prebuilt binaries lack the
 //! GPU dialect plugins (NVVM for CUDA, ROCDL for ROCm).
 //!
-//! The GPU pipeline lowers AdeshLang IR to MLIR with the `gpu` dialect and
+//! The GPU pipeline lowers Adesh IR to MLIR with the `gpu` dialect and
 //! needs `mlir-opt`/`mlir-translate` that register NVVM/ROCDL translations.
 //! Official LLVM release binaries usually do not include them, so
 //! `adesh toolchain install --build-mlir-source` builds `mlir-opt`,

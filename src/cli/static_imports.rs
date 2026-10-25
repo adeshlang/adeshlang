@@ -342,6 +342,12 @@ impl Linker {
         if let Some(open) = trimmed.find('<') {
             if trimmed.ends_with('>') {
                 let base = &trimmed[..open];
+                let mut resolved_base = base.trim().to_string();
+                if let Some(expr) = self.resolve(id, &resolved_base, &Default::default())? {
+                    if let ExprKind::Variable(name) = expr.kind {
+                        resolved_base = name;
+                    }
+                }
                 let inner = &trimmed[open + 1..trimmed.len() - 1];
                 let mut resolved_args = Vec::new();
                 for arg in inner.split(',') {
@@ -349,7 +355,7 @@ impl Linker {
                     self.ty(id, &mut arg_ty)?;
                     resolved_args.push(arg_ty);
                 }
-                *ty = format!("{}<{}>", base, resolved_args.join(", "));
+                *ty = format!("{}<{}>", resolved_base, resolved_args.join(", "));
                 return Ok(());
             }
         }

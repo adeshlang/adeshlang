@@ -39,7 +39,7 @@ pub fn run_cli(args: &[String]) -> Result<(), String> {
 pub fn print_help() {
     println!(
         r#"Adesh Runtime Observatory (ARO) CLI v{}
-Cross-platform production monitor and diagnostic tool for AdeshLang.
+Cross-platform production monitor and diagnostic tool for Adesh.
 
 USAGE:
     aro <COMMAND> [OPTIONS]
@@ -471,7 +471,7 @@ fn cmd_doctor(_args: &[String]) -> Result<(), String> {
 fn cmd_version() -> Result<(), String> {
     println!("Adesh Runtime Observatory (ARO) v{}", PROTOCOL_VERSION);
     println!("Protocol Schema Version: {}", PROTOCOL_VERSION);
-    println!("Ecosystem: AdeshLang v0.3.0");
+    println!("Ecosystem: Adesh v0.3.0");
     Ok(())
 }
 

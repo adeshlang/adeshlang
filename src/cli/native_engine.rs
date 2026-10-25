@@ -1,4 +1,4 @@
-//! Native AI Runtime and Fallback Engine for AdeshLang
+//! Native AI Runtime and Fallback Engine for Adesh
 //!
 //! Provides zero-dependency native execution, GGUF model loading,
 //! and automatic multi-tier fallback (GGUF -> Python/CUDA -> Rule-based AST fallback).
@@ -81,7 +81,7 @@ impl NativeAIEngine {
     /// Returns comprehensive engine status and available execution tiers
     pub fn get_status_report(&self) -> String {
         let mut report = String::new();
-        report.push_str("================ AdeshLang Native AI Runtime ================\n");
+        report.push_str("================ Adesh Native AI Runtime ================\n");
 
         let gguf_path = self.find_local_gguf();
         if let Some(ref p) = gguf_path {
@@ -152,7 +152,7 @@ fn main() {
         }
 
         format!(
-            "// AdeshLang AI Synthesizer\n// Prompt: {}\nfn run(): void {{\n    print(\"Hello from AdeshLang AI!\");\n}}",
+            "// Adesh AI Synthesizer\n// Prompt: {}\nfn run(): void {{\n    print(\"Hello from Adesh AI!\");\n}}",
             prompt
         )
     }

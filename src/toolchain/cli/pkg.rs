@@ -1,4 +1,4 @@
-//! AdeshLang package manager command implementation (`adl pkg`)
+//! Adesh package manager command implementation (`adl pkg`)
 
 use std::fs;
 use std::path::PathBuf;
@@ -10,7 +10,7 @@ pub fn execute_pkg_command(args: &[String]) {
     let reset = "\x1b[0m";
 
     if args.is_empty() {
-        println!("{}AdeshLang Package Manager (`adl pkg`){}", bold, reset);
+        println!("{}Adesh Package Manager (`adl pkg`){}", bold, reset);
         println!("Usage:");
         println!(
             "  adl pkg init [name]     Initialize a new package manifest in current directory"
@@ -67,7 +67,7 @@ pub fn execute_pkg_command(args: &[String]) {
         }
         "list" => {
             println!(
-                "{}Installed AdeshLang Packages in {}:{}",
+                "{}Installed Adesh Packages in {}:{}",
                 bold,
                 pkg_root.display(),
                 reset

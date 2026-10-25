@@ -1,4 +1,4 @@
-//! Incremental Component Update System for AdeshLang.
+//! Incremental Component Update System for Adesh.
 //!
 //! Provides:
 //! - Component-level delta updates (compiler, stdlib, runtime, AI models)
@@ -60,7 +60,7 @@ pub fn execute_update_command(args: &[String]) {
         "{}",
         "──────────────────────────────────────────────────────".cyan()
     );
-    println!("{}", "  AdeshLang Update Manager".bold().green());
+    println!("{}", "  Adesh Update Manager".bold().green());
     println!(
         "{}",
         "──────────────────────────────────────────────────────".cyan()
@@ -87,7 +87,7 @@ pub fn execute_update_command(args: &[String]) {
     };
 
     if !check_res.is_update_available {
-        println!("{}", "✓ AdeshLang is already up to date.".bold().green());
+        println!("{}", "✓ Adesh is already up to date.".bold().green());
         return;
     }
 
@@ -134,7 +134,7 @@ pub fn execute_update_command(args: &[String]) {
         Ok(()) => {
             println!();
             println!(
-                "{} AdeshLang updated successfully to v{}!",
+                "{} Adesh updated successfully to v{}!",
                 "✓".bold().green(),
                 check_res.latest_version.bold().green()
             );
@@ -163,7 +163,7 @@ pub fn execute_rollback_command(_args: &[String]) {
         "{}",
         "──────────────────────────────────────────────────────".cyan()
     );
-    println!("{}", "  AdeshLang Rollback Manager".bold().yellow());
+    println!("{}", "  Adesh Rollback Manager".bold().yellow());
     println!(
         "{}",
         "──────────────────────────────────────────────────────".cyan()
@@ -203,7 +203,7 @@ pub fn execute_ai_update_command(_args: &[String]) {
         "{}",
         "──────────────────────────────────────────────────────".cyan()
     );
-    println!("{}", "  AdeshLang AI Model Updater".bold().magenta());
+    println!("{}", "  Adesh AI Model Updater".bold().magenta());
     println!(
         "{}",
         "──────────────────────────────────────────────────────".cyan()
@@ -304,7 +304,7 @@ pub fn execute_ai_setup_command(args: &[String]) {
     );
     println!(
         "{}",
-        "  AdeshLang AI Model Downloader & Setup".bold().magenta()
+        "  Adesh AI Model Downloader & Setup".bold().magenta()
     );
     println!(
         "{}",
@@ -395,7 +395,7 @@ pub fn execute_ai_setup_command(args: &[String]) {
             println!("{}", "VALID".bold().green());
             println!(
                 "\n{}",
-                "✓ AdeshLang AI model is already installed and verified!"
+                "✓ Adesh AI model is already installed and verified!"
                     .bold()
                     .green()
             );
@@ -417,7 +417,7 @@ pub fn execute_ai_setup_command(args: &[String]) {
                     println!("{}", "PASS".bold().green());
                     println!(
                         "\n{}",
-                        "✓ AdeshLang AI model installed successfully!"
+                        "✓ Adesh AI model installed successfully!"
                             .bold()
                             .green()
                     );

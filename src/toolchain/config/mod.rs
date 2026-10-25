@@ -1,6 +1,6 @@
 //! CLI Runtime Configuration
 //!
-//! Defines all configurable aspects of the AdeshLang runtime execution.
+//! Defines all configurable aspects of the Adesh runtime execution.
 
 use std::time::Duration;
 
@@ -622,8 +622,8 @@ impl RuntimeConfig {
 
 /// Configuration file format (TOML-like)
 pub const DEFAULT_CONFIG: &str = r#"
-# AdeshLang Runtime Configuration
-# This file configures the default behavior of the AdeshLang runtime.
+# Adesh Runtime Configuration
+# This file configures the default behavior of the Adesh runtime.
 
 [execution]
 # Execution backend: interpreter, jit, mixed, safe, bytecode

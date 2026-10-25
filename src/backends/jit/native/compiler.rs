@@ -1205,8 +1205,20 @@ impl NativeJitCompiler {
                                     (value_map.get(&obj_id), value_map.get(&field_id))
                                 {
                                     let const_bool = const_bools.get(&val_id).copied();
+                                    let is_const_null = const_nulls.contains(&val_id);
                                     let is_const_string = const_strings.contains_key(&val_id);
                                     let new_handle = match val_type {
+                                        _ if is_const_null => {
+                                            let null_handle = builder.ins().iconst(types::I64, 0);
+                                            Self::call_runtime_fn_3(
+                                                builder,
+                                                module,
+                                                "jit_object_set_handle",
+                                                obj_handle,
+                                                field_ptr,
+                                                null_handle,
+                                            )?
+                                        }
                                         _ if is_const_string => {
                                             if let Some(&val) = value_map.get(&val_id) {
                                                 Self::call_runtime_fn_3(
@@ -2271,6 +2283,33 @@ impl NativeJitCompiler {
                         value_types.insert(*dst, AotValueType::Handle);
                     }
                     // Type conversion builtins - just pass through the value
+                    "str" | "string" | "String" => {
+                        let arg_id = args.get(0).copied();
+                        if let Some(aid) = arg_id {
+                            if let Some(arg_val) = value_map.get(&aid).copied() {
+                                let arg_type = value_types.get(&aid).cloned().unwrap_or(AotValueType::Int);
+                                let (arg_enc, type_tag) = Self::encode_typed_arg(builder, arg_val, &arg_type);
+                                let tag_val = builder.ins().iconst(types::I64, type_tag);
+                                let res = Self::call_runtime_fn_2(
+                                    builder,
+                                    module,
+                                    "jit_to_string_typed",
+                                    arg_enc,
+                                    tag_val,
+                                )?;
+                                value_map.insert(*dst, res);
+                                value_types.insert(*dst, AotValueType::Handle);
+                            } else {
+                                let zero = builder.ins().iconst(types::I64, 0);
+                                value_map.insert(*dst, zero);
+                                value_types.insert(*dst, AotValueType::Handle);
+                            }
+                        } else {
+                            let zero = builder.ins().iconst(types::I64, 0);
+                            value_map.insert(*dst, zero);
+                            value_types.insert(*dst, AotValueType::Handle);
+                        }
+                    }
                     "i8" | "i16" | "i32" | "i64" | "i128" | "u8" | "u16" | "u32" | "u64"
                     | "u128" | "f32" | "f64" | "bool" => {
                         // Type conversion/cast: just use the input value
@@ -3316,6 +3355,21 @@ impl NativeJitCompiler {
                         let handle = Self::call_runtime_fn_1(builder, module, "jit_pop", arr)?;
                         value_map.insert(*dst, handle);
                         value_types.insert(*dst, AotValueType::Handle);
+                    }
+                    "is_null" => {
+                        let arg_val = args
+                            .get(0)
+                            .and_then(|id| value_map.get(id))
+                            .copied()
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let is_null_val = Self::call_runtime_fn_1(
+                            builder,
+                            module,
+                            "jit_is_null",
+                            arg_val,
+                        )?;
+                        value_map.insert(*dst, is_null_val);
+                        value_types.insert(*dst, AotValueType::Bool);
                     }
                     _ => {
                         // Fallback to jit_call_builtin

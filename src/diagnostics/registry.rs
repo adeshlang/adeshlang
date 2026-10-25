@@ -1,6 +1,6 @@
-//! AdeshLang Authoritative Diagnostic Registry
+//! Adesh Authoritative Diagnostic Registry
 //!
-//! Canonical, machine-readable registry of diagnostic error codes used by AdeshLang.
+//! Canonical, machine-readable registry of diagnostic error codes used by Adesh.
 //! Maps verified Rust-equivalent errors to official Rust E#### numbers and allocates
 //! the distinct `AD####` namespace for Adesh-specific compiler/runtime/linker diagnostics.
 
@@ -116,7 +116,7 @@ pub static DIAGNOSTIC_REGISTRY: &[DiagnosticInfo] = &[
         phase: DiagnosticPhase::TypeCheck,
         compatibility: RustCompatibility::Equivalent,
         short_description: "A type does not implement the required trait or capability (such as Send or Sync).",
-        detailed_explanation: "In AdeshLang, passing values across thread boundaries or executing parallel operations requires the types to implement concurrency safety traits like Send or Sync.",
+        detailed_explanation: "In Adesh, passing values across thread boundaries or executing parallel operations requires the types to implement concurrency safety traits like Send or Sync.",
         common_causes: &[
             "Passing an un-synchronized mutable reference across a spawned thread boundary.",
             "Attempting to share non-thread-safe state across concurrent tasks.",
@@ -142,7 +142,7 @@ pub static DIAGNOSTIC_REGISTRY: &[DiagnosticInfo] = &[
         phase: DiagnosticPhase::TypeCheck,
         compatibility: RustCompatibility::Equivalent,
         short_description: "An expression's type does not match the expected type in its context.",
-        detailed_explanation: "AdeshLang is statically typed. An assignment, function argument, or return statement must provide a value whose type conforms to the declared or inferred target type.",
+        detailed_explanation: "Adesh is statically typed. An assignment, function argument, or return statement must provide a value whose type conforms to the declared or inferred target type.",
         common_causes: &[
             "Assigning a string or float value to an integer variable.",
             "Returning a value of type A when the function signature specifies type B.",
@@ -166,7 +166,7 @@ pub static DIAGNOSTIC_REGISTRY: &[DiagnosticInfo] = &[
         phase: DiagnosticPhase::Ownership,
         compatibility: RustCompatibility::Equivalent,
         short_description: "A variable is read or used before it is guaranteed to have been assigned a value.",
-        detailed_explanation: "AdeshLang requires all variables to be definitely initialized before they can be read. Reading uninitialized memory is unsafe.",
+        detailed_explanation: "Adesh requires all variables to be definitely initialized before they can be read. Reading uninitialized memory is unsafe.",
         common_causes: &[
             "Declaring a variable with `let x: int;` and using it without assignment.",
             "Initializing a variable only inside one branch of an `if` statement.",
@@ -188,7 +188,7 @@ pub static DIAGNOSTIC_REGISTRY: &[DiagnosticInfo] = &[
         phase: DiagnosticPhase::Ownership,
         compatibility: RustCompatibility::Equivalent,
         short_description: "A variable was accessed after its ownership was transferred (moved).",
-        detailed_explanation: "In AdeshLang, ownership is exclusive by default. When an owning handle is assigned to another variable or passed by value, ownership moves and the original identifier cannot be used again.",
+        detailed_explanation: "In Adesh, ownership is exclusive by default. When an owning handle is assigned to another variable or passed by value, ownership moves and the original identifier cannot be used again.",
         common_causes: &[
             "Using a variable after assigning it to another variable: `let y = x; print(x);`.",
             "Passing a variable by value to a function that takes ownership, then using it again.",
@@ -245,7 +245,7 @@ pub static DIAGNOSTIC_REGISTRY: &[DiagnosticInfo] = &[
         ],
         suggested_fixes: &[
             "Keep the resource alive until after its last use before freeing.",
-            "Rely on AdeshLang RAII scopes (`region` or automatic block drops) instead of manual free.",
+            "Rely on Adesh RAII scopes (`region` or automatic block drops) instead of manual free.",
         ],
         bad_example: Some("let ptr = alloc(32);\nfree(ptr);\nlet val = *ptr; // error[E0416]"),
         good_example: Some("let ptr = alloc(32);\nlet val = *ptr;\nfree(ptr);"),
@@ -287,7 +287,7 @@ pub static DIAGNOSTIC_REGISTRY: &[DiagnosticInfo] = &[
         phase: DiagnosticPhase::Semantic,
         compatibility: RustCompatibility::Equivalent,
         short_description: "A name is already defined in the current scope.",
-        detailed_explanation: "AdeshLang does not allow declaring two functions, types, or variables with the identical name in the same lexical scope.",
+        detailed_explanation: "Adesh does not allow declaring two functions, types, or variables with the identical name in the same lexical scope.",
         common_causes: &[
             "Declaring two functions with the same name in the same file.",
             "Declaring two classes or structs with the same name.",
@@ -310,7 +310,7 @@ pub static DIAGNOSTIC_REGISTRY: &[DiagnosticInfo] = &[
         phase: DiagnosticPhase::Ownership,
         compatibility: RustCompatibility::Equivalent,
         short_description: "Multiple exclusive (mutable) borrows of the same variable overlap.",
-        detailed_explanation: "To eliminate data races and iterator invalidation, AdeshLang allows only one active exclusive borrow (`&mut`) of a given value at any single point in time.",
+        detailed_explanation: "To eliminate data races and iterator invalidation, Adesh allows only one active exclusive borrow (`&mut`) of a given value at any single point in time.",
         common_causes: &[
             "Taking two mutable references to the same object simultaneously.",
             "Calling a method requiring mutable access while holding a mutable borrow.",
@@ -334,7 +334,7 @@ pub static DIAGNOSTIC_REGISTRY: &[DiagnosticInfo] = &[
         phase: DiagnosticPhase::Ownership,
         compatibility: RustCompatibility::Equivalent,
         short_description: "Cannot take an exclusive borrow of a variable while shared borrows remain active.",
-        detailed_explanation: "AdeshLang enforces the aliasing XOR mutability invariant: you can have either any number of immutable borrows (`&T`) or exactly one mutable borrow (`&mut T`), but never both at once.",
+        detailed_explanation: "Adesh enforces the aliasing XOR mutability invariant: you can have either any number of immutable borrows (`&T`) or exactly one mutable borrow (`&mut T`), but never both at once.",
         common_causes: &[
             "Mutating an object or taking `&mut` while an immutable reference is still being read.",
             "Passing an object by mutable reference to a function while reading from it in another argument.",
@@ -505,7 +505,7 @@ pub static DIAGNOSTIC_REGISTRY: &[DiagnosticInfo] = &[
         phase: DiagnosticPhase::Lexer,
         compatibility: RustCompatibility::AdeshSpecific,
         short_description: "The lexer encountered an unexpected character or invalid string escape sequence.",
-        detailed_explanation: "AdeshLang source files must contain valid UTF-8 characters and supported operator tokens. String escape sequences must follow Adesh syntax (e.g. \\n, \\t, \\xHH, \\u{HHHH}).",
+        detailed_explanation: "Adesh source files must contain valid UTF-8 characters and supported operator tokens. String escape sequences must follow Adesh syntax (e.g. \\n, \\t, \\xHH, \\u{HHHH}).",
         common_causes: &[
             "Typing non-ASCII symbols or non-operator symbols outside strings.",
             "Invalid hex or unicode escape sequence inside a string literal.",
@@ -527,7 +527,7 @@ pub static DIAGNOSTIC_REGISTRY: &[DiagnosticInfo] = &[
         phase: DiagnosticPhase::Parser,
         compatibility: RustCompatibility::AdeshSpecific,
         short_description: "The parser encountered a token that violates the Adesh grammar.",
-        detailed_explanation: "AdeshLang statements and expressions must adhere to the formal language grammar. This error indicates unexpected, missing, or malformed tokens.",
+        detailed_explanation: "Adesh statements and expressions must adhere to the formal language grammar. This error indicates unexpected, missing, or malformed tokens.",
         common_causes: &[
             "Missing closing parenthesis `)`, bracket `]`, or brace `}`.",
             "Missing expression after an assignment `=` operator.",
@@ -571,7 +571,7 @@ pub static DIAGNOSTIC_REGISTRY: &[DiagnosticInfo] = &[
         phase: DiagnosticPhase::Ownership,
         compatibility: RustCompatibility::AdeshSpecific,
         short_description: "Dynamic heap allocation (`alloc`) is prohibited when embedded mode is enabled.",
-        detailed_explanation: "When running or compiling with `--embedded`, AdeshLang disables dynamic heap allocations and ARC to ensure deterministic zero-allocation guarantees for bare-metal and microcontroller targets.",
+        detailed_explanation: "When running or compiling with `--embedded`, Adesh disables dynamic heap allocations and ARC to ensure deterministic zero-allocation guarantees for bare-metal and microcontroller targets.",
         common_causes: &[
             "Calling `alloc(bytes)` in an embedded configuration.",
             "Using heap-allocated collections like dynamic strings or resizing arrays in embedded mode.",
@@ -675,7 +675,7 @@ pub fn explain_code(code: &str) -> Result<String, String> {
         "Compatibility: {}\n\n",
         match diag.compatibility {
             RustCompatibility::Equivalent => "Rust-equivalent (verified semantic mapping)",
-            RustCompatibility::AdeshSpecific => "AdeshLang-specific (distinct namespace)",
+            RustCompatibility::AdeshSpecific => "Adesh-specific (distinct namespace)",
         }
     ));
 
@@ -733,7 +733,7 @@ pub fn explain_code(code: &str) -> Result<String, String> {
 /// List all registered diagnostic codes in tabular format.
 pub fn list_diagnostics() -> String {
     let mut out = String::new();
-    out.push_str("AdeshLang Registered Diagnostic Codes:\n");
+    out.push_str("Adesh Registered Diagnostic Codes:\n");
     out.push_str(&format!(
         "{:<8} | {:<9} | {:<10} | {:<16} | {}\n",
         "Code", "Severity", "Phase", "Compatibility", "Title"

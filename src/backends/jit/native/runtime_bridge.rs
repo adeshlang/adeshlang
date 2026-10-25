@@ -80,11 +80,7 @@ pub fn runtime_value_to_raw_or_handle(val: RuntimeValue) -> u64 {
         RuntimeValue::U16(u) => u as u64,
         RuntimeValue::U8(u) => u as u64,
         RuntimeValue::Bool(b) => {
-            if b {
-                1
-            } else {
-                0
-            }
+            store_value(RuntimeValue::Bool(b))
         }
         RuntimeValue::Char(c) => c as u64,
         RuntimeValue::Float(f) | RuntimeValue::F64(f) => f.to_bits(),
@@ -206,6 +202,9 @@ fn intern_cstr(s: &str) -> *const c_char {
 /// Return type name for a runtime value handle or pointer
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_typeof(handle_or_ptr: u64) -> *const c_char {
+    if handle_or_ptr == 0 {
+        return intern_cstr("null");
+    }
     if handle_or_ptr >= HANDLE_TAG {
         if let Some(val) = get_value(handle_or_ptr) {
             let ty_val = crate::backends::common::builtins::conversion::runtime_type(&[val]);
@@ -3005,6 +3004,34 @@ pub extern "C" fn jit_assert_eq(l_val: u64, l_tag: i64, r_val: u64, r_tag: i64) 
                 (l_val as i64) == (r_val as i64)
             }
         }
+        (4, 2) => {
+            if r_val == 0 {
+                // r_val is null pointer (tag 2 Ptr/String)
+                jit_is_null(l_val) != 0
+            } else if let Some(s) = get_string_val(r_val) {
+                if let Some(lv) = get_value(l_val) {
+                    value_to_simple_string(&lv) == s
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        }
+        (2, 4) => {
+            if l_val == 0 {
+                // l_val is null pointer (tag 2 Ptr/String)
+                jit_is_null(r_val) != 0
+            } else if let Some(s) = get_string_val(l_val) {
+                if let Some(rv) = get_value(r_val) {
+                    value_to_simple_string(&rv) == s
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        }
         _ => {
             let ls = get_string_val_typed(l_val, l_tag);
             let rs = get_string_val_typed(r_val, r_tag);
@@ -3023,6 +3050,20 @@ pub extern "C" fn jit_assert_eq(l_val: u64, l_tag: i64, r_val: u64, r_tag: i64) 
         });
     }
     store_value(RuntimeValue::Null)
+}
+
+/// Check if a value is null (0 or Null handle)
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_is_null(val: u64) -> i64 {
+    if val == 0 {
+        return 1;
+    }
+    if val >= HANDLE_TAG {
+        if let Some(RuntimeValue::Null) = get_value(val) {
+            return 1;
+        }
+    }
+    0
 }
 
 /// Assert that left != right, setting CURRENT_EXCEPTION on failure
@@ -3061,6 +3102,34 @@ pub extern "C" fn jit_assert_ne(l_val: u64, l_tag: i64, r_val: u64, r_tag: i64) 
                 v.as_int() == Some(l_val as i64)
             } else {
                 (l_val as i64) == (r_val as i64)
+            }
+        }
+        (4, 2) => {
+            if r_val == 0 {
+                // r_val is null pointer (tag 2 Ptr/String)
+                jit_is_null(l_val) != 0
+            } else if let Some(s) = get_string_val(r_val) {
+                if let Some(lv) = get_value(l_val) {
+                    value_to_simple_string(&lv) == s
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        }
+        (2, 4) => {
+            if l_val == 0 {
+                // l_val is null pointer (tag 2 Ptr/String)
+                jit_is_null(r_val) != 0
+            } else if let Some(s) = get_string_val(l_val) {
+                if let Some(rv) = get_value(r_val) {
+                    value_to_simple_string(&rv) == s
+                } else {
+                    false
+                }
+            } else {
+                false
             }
         }
         _ => {
@@ -3790,11 +3859,7 @@ pub extern "C" fn jit_call_method(
     }
     match res {
         RuntimeValue::Bool(b) => {
-            if b {
-                1
-            } else {
-                0
-            }
+            store_value(RuntimeValue::Bool(b))
         }
         RuntimeValue::Int(i) => i as u64,
         RuntimeValue::Null => 0,
@@ -4061,6 +4126,7 @@ pub fn get_runtime_symbols() -> Vec<(&'static str, *const u8)> {
         ("jit_pop", jit_pop as *const u8),
         // Unified method & builtin dispatch
         ("jit_call_method", jit_call_method as *const u8),
+        ("jit_is_null", jit_is_null as *const u8),
         ("jit_call_builtin", jit_call_builtin as *const u8),
     ]
 }

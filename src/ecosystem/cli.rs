@@ -167,7 +167,7 @@ pub fn dispatch(options: CliOptions) -> Result<(), String> {
             let is_new = matches!(options.command, AdlCommand::New);
             if is_new {
                 println!(
-                    "✨ Created new AdeshLang project '{}' in {}",
+                    "✨ Created new Adesh project '{}' in {}",
                     name,
                     layout.root.display()
                 );
@@ -177,7 +177,7 @@ pub fn dispatch(options: CliOptions) -> Result<(), String> {
                 println!("  adl build   # or: adesh build src/main.adesh");
             } else {
                 println!(
-                    "✨ Initialized AdeshLang project in {}",
+                    "✨ Initialized Adesh project in {}",
                     layout.root.display()
                 );
                 println!("\nNext steps:");
@@ -804,9 +804,9 @@ fn print_help() {
     let c_gray = if colors { "\x1b[90m" } else { "" };
     let c_white = if colors { "\x1b[1;37m" } else { "" };
 
-    println!("{c_bold}{c_cyan}📦 ADL — AdeshLang Package Manager & Toolchain (v0.3.0){c_reset}");
+    println!("{c_bold}{c_cyan}📦 ADL — Adesh Package Manager & Toolchain (v0.3.0){c_reset}");
     println!(
-        "{c_gray}Official package manager, dependency resolver, and build orchestrator for AdeshLang.{c_reset}\n"
+        "{c_gray}Official package manager, dependency resolver, and build orchestrator for Adesh.{c_reset}\n"
     );
 
     println!("{c_bold}{c_cyan}USAGE:{c_reset}");
@@ -822,11 +822,11 @@ fn print_help() {
             &[
                 (
                     "new <name>",
-                    "Create a new AdeshLang project with boilerplate layout",
+                    "Create a new Adesh project with boilerplate layout",
                 ),
                 (
                     "init [dir]",
-                    "Initialize an AdeshLang project in existing directory",
+                    "Initialize an Adesh project in existing directory",
                 ),
             ],
         ),

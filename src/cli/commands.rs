@@ -5,9 +5,22 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+/// Print the compact global help message to stderr.
+pub fn usage_global() {
+    eprintln!("{}", crate::cli::help_message());
+}
+
+/// Print the detailed help page for one command, falling back to global help.
+pub fn usage_for(command: &str) {
+    match crate::cli::help_for_command(command, None) {
+        Some(text) => eprintln!("{}", text),
+        None => usage_global(),
+    }
+}
+
 /// Print usage/help message
 pub fn usage() {
-    eprintln!("{}", crate::cli::help_message());
+    usage_global();
 }
 
 /// Initialize a new project directory using the ADL ecosystem layout
@@ -28,7 +41,7 @@ pub fn cmd_init(dir: &str) -> std::io::Result<()> {
     }
 
     println!(
-        "Initialized modern AdeshLang project in: {}",
+        "Initialized modern Adesh project in: {}",
         root.display()
     );
     println!("\nNext steps:");
@@ -178,7 +191,7 @@ fn resolve_python_binary() -> Option<PathBuf> {
     None
 }
 
-/// Execute AdeshLang AI commands (`adesh ai info|status|setup|train|evaluate|generate|explain|fix|chat`)
+/// Execute Adesh AI commands (`adesh ai info|status|setup|train|evaluate|generate|explain|fix|chat`)
 pub fn execute_ai_command(args: &[String]) {
     let native_engine = crate::cli::native_engine::NativeAIEngine::new();
 
@@ -243,7 +256,7 @@ pub fn execute_ai_command(args: &[String]) {
             }
             Err(err) => {
                 eprintln!("Notice: Failed to spawn Python ({})", err);
-                eprintln!("Falling back to Native AdeshLang AI In-Process Runtime...\n");
+                eprintln!("Falling back to Native Adesh AI In-Process Runtime...\n");
 
                 if args.first().map(|s| s.as_str()) == Some("generate") {
                     let prompt = args.get(1).cloned().unwrap_or_default();

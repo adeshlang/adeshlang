@@ -1,4 +1,4 @@
-//! Deterministic discovery of the compiler toolchain used by installed AdeshLang.
+//! Deterministic discovery of the compiler toolchain used by installed Adesh.
 
 use std::env;
 use std::fmt;
@@ -323,7 +323,7 @@ pub fn resolve(preference: Option<ToolchainPreference>) -> Result<ToolchainPaths
     }
 
     Err(ToolchainError(
-        "No AdeshLang toolchain found. Install it with `adesh toolchain install`, or set ADESH_TOOLCHAIN to an existing LLVM tree.".to_string(),
+        "No Adesh toolchain found. Install it with `adesh toolchain install`, or set ADESH_TOOLCHAIN to an existing LLVM tree.".to_string(),
     ))
 }
 

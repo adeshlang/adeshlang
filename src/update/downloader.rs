@@ -144,7 +144,7 @@ fn fetch_https_text(url: &str) -> Result<String, String> {
     let req = format!(
         "GET {path} HTTP/1.1\r\n\
          Host: {host}\r\n\
-         User-Agent: AdeshLang-Updater/{}\r\n\
+         User-Agent: Adesh-Updater/{}\r\n\
          Accept: application/json, text/plain\r\n\
          Connection: close\r\n\r\n",
         env!("CARGO_PKG_VERSION")
@@ -185,7 +185,7 @@ fn fetch_http_text(url: &str) -> Result<String, String> {
     let req = format!(
         "GET {path} HTTP/1.1\r\n\
          Host: {host}\r\n\
-         User-Agent: AdeshLang-Updater/{}\r\n\
+         User-Agent: Adesh-Updater/{}\r\n\
          Accept: application/json, text/plain\r\n\
          Connection: close\r\n\r\n",
         env!("CARGO_PKG_VERSION")
@@ -255,7 +255,7 @@ fn download_https_file(url: &str, dest: &Path, expected_size: Option<u64>) -> Re
     let req = format!(
         "GET {path} HTTP/1.1\r\n\
          Host: {host}\r\n\
-         User-Agent: AdeshLang-Updater/{}\r\n\
+         User-Agent: Adesh-Updater/{}\r\n\
          Connection: close\r\n\r\n",
         env!("CARGO_PKG_VERSION")
     );
@@ -290,7 +290,7 @@ fn download_http_file(url: &str, dest: &Path, expected_size: Option<u64>) -> Res
     let req = format!(
         "GET {path} HTTP/1.1\r\n\
          Host: {host}\r\n\
-         User-Agent: AdeshLang-Updater/{}\r\n\
+         User-Agent: Adesh-Updater/{}\r\n\
          Connection: close\r\n\r\n",
         env!("CARGO_PKG_VERSION")
     );

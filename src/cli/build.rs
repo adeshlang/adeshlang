@@ -509,12 +509,29 @@ pub fn parse_build_args(
             "--wasm" | "--emit-wasm" => config.emit = EmitType::Wasm,
 
             // Emit type explicit
+            "--emit" => {
+                let Some(emit_str) = args.get(i + 1) else {
+                    return Err("--emit requires an output type".to_string());
+                };
+                config.emit = EmitType::from_str(emit_str)
+                    .ok_or_else(|| format!("Unknown emit type: {}", emit_str))?;
+                if matches!(config.emit, EmitType::StaticLib | EmitType::SharedLib) {
+                    config.library_mode = true;
+                }
+                i += 1;
+            }
             _ if arg.starts_with("--emit=") => {
                 let emit_str = &arg[7..];
                 config.emit = EmitType::from_str(emit_str)
                     .ok_or_else(|| format!("Unknown emit type: {}", emit_str))?;
                 if matches!(config.emit, EmitType::StaticLib | EmitType::SharedLib) {
                     config.library_mode = true;
+                }
+            }
+            "--library-mode" | "--lib-mode" => {
+                config.library_mode = true;
+                if matches!(config.emit, EmitType::Executable) {
+                    config.emit = EmitType::StaticLib;
                 }
             }
 
@@ -531,6 +548,8 @@ pub fn parse_build_args(
 
             // LTO optimization
             "--lto" | "--enable-lto" => config.lto = true,
+            // Dead-code elimination is always performed by codegen/adeshlink.
+            "--enable-dce" | "--dce" => {}
             _ if arg.starts_with("--pgo=") => {
                 use adesh_codegen::opt::pgo::{PgoConfig, PgoMode};
                 let value = &arg["--pgo=".len()..];
@@ -1536,7 +1555,8 @@ pub fn build_help_message() -> String {
 
 {}OUTPUT OPTIONS:{}
     -o, --output <FILE>     Output file path (auto-inferred if not specified)
-    --emit=<TYPE>           Output type: exe, obj, adob, lib, dylib, asm
+    --emit=<TYPE>, --emit <TYPE>  Output type: exe, obj, adob, lib, dylib, asm
+    --library-mode          Build as a library (no main function required)
     --emit-adob, --adob     Emit native ADOB (Adesh Native Object Binary) file
     --lib, --static         Build as static library
     --shared, --dylib       Build as shared library
@@ -1579,6 +1599,7 @@ pub fn build_help_message() -> String {
 {}GENERAL:{}
     -v, --verbose           Verbose output
     -q, --quiet             Suppress progress output
+    --run                   Build, then execute the binary immediately
     --dry-run               Show what would be done without building
     --check                 Check compilation without generating output
     -h, --help              Show this help

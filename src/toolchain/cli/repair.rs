@@ -12,7 +12,7 @@ pub fn execute_repair_command() {
     let bold = "\x1b[1m";
     let reset = "\x1b[0m";
 
-    println!("\n{}AdeshLang Installation Auto-Repair Tool{}", bold, reset);
+    println!("\n{}Adesh Installation Auto-Repair Tool{}", bold, reset);
     println!("────────────────────────────────────────────");
 
     // 1. Resolve or create configuration directories

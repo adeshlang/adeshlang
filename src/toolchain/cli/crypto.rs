@@ -6,7 +6,7 @@ use std::fs;
 
 pub fn execute_crypto_cli(args: &[String]) {
     if args.is_empty() {
-        println!("AdeshLang Safe Cryptography CLI Utility");
+        println!("Adesh Safe Cryptography CLI Utility");
         println!("Usage:");
         println!("  adl crypto sha256 <filepath>          Compute SHA-256 hash of a file");
         println!("  adl crypto random <num_bytes>         Generate secure random hex bytes");

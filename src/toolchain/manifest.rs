@@ -4,7 +4,7 @@
 //! Toolchain artifacts come from their **original upstream sources** (the
 //! LLVM project's official GitHub releases), not from Adesh-hosted mirrors.
 //! The manifest pins the exact URLs and SHA-256 checksums so installs stay
-//! deterministic. The manifest itself is published with AdeshLang releases
+//! deterministic. The manifest itself is published with Adesh releases
 //! ([`manifest_url`], derived from [`OFFICIAL_REPO`]).
 //!
 //! The manifest is consumed from (in priority order):
@@ -42,7 +42,7 @@ use std::collections::BTreeMap;
 use std::env;
 use std::path::Path;
 
-/// Canonical GitHub repository (`owner/name`) that hosts AdeshLang releases.
+/// Canonical GitHub repository (`owner/name`) that hosts Adesh releases.
 ///
 /// This is the single source of truth for the project's official location.
 /// When the repository migrates from a personal account to the official

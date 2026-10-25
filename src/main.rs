@@ -5,12 +5,15 @@
 #![allow(clippy::manual_strip)]
 #![allow(clippy::len_zero)]
 
-use adeshlang::cli::{ExecutionBackend, MemoryStats, ParsedArgs, help_message, version_message};
+use adeshlang::cli::{
+    ExecutionBackend, MemoryStats, ParsedArgs, help_for_command, help_message, is_known_command,
+    unknown_command_message, version_message,
+};
 use adeshlang::execution::runtime::Interpreter;
 /**
- * AdeshLang - A statically-typed, multi-backend programming language
+ * Adesh - A statically-typed, multi-backend programming language
  *
- * This is the main entry point for the AdeshLang CLI (run/repl/compile/tools).
+ * This is the main entry point for the Adesh CLI (run/repl/compile/tools).
  *
  * Supported commands (see `adesh --help` for full details):
  *  - adesh run <file.adesh>
@@ -70,6 +73,25 @@ mod cli_impl {
     pub use adeshlang::cli::validation::*;
 }
 
+/// True when `-h` or `--help` appears before the `--` separator.
+fn help_requested(args: &[String]) -> bool {
+    args.iter()
+        .skip(1)
+        .take_while(|arg| arg.as_str() != "--")
+        .any(|arg| arg == "-h" || arg == "--help")
+}
+
+/// Print help for one command or topic; report unknown names with suggestions.
+fn print_help_command(command: &str) {
+    match help_for_command(command, None) {
+        Some(text) => println!("{}", text),
+        None => {
+            eprintln!("{}", unknown_command_message(command));
+            std::process::exit(1);
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
 
@@ -83,14 +105,54 @@ fn main() {
         }
     };
 
-    // Handle help/version
-    if parsed.show_help {
-        println!("{}", help_message());
+    // Distributed help: `adesh --help` shows the command index and
+    // `adesh <command> --help` shows that command's detailed page.
+    let wants_help = parsed.show_help || help_requested(&args);
+
+    // `adesh help [COMMAND|TOPIC]`
+    if parsed.command == "help" {
+        match parsed.input_file.as_deref() {
+            Some(topic) => print_help_command(topic),
+            None if wants_help => {
+                println!("{}", help_for_command("help", None).unwrap_or_default());
+            }
+            None => println!("{}", help_message()),
+        }
         return;
     }
+
+    // `adesh version`
+    if parsed.command == "version" {
+        println!("{}", version_message());
+        return;
+    }
+
+    if wants_help {
+        if parsed.command.is_empty() {
+            println!("{}", help_message());
+        } else {
+            print_help_command(&parsed.command);
+        }
+        return;
+    }
+
     if parsed.show_version {
         println!("{}", version_message());
         return;
+    }
+
+    // `adesh language` is a reference topic rather than a runnable command.
+    if parsed.command == "language" {
+        println!(
+            "{}",
+            help_for_command("language", None).unwrap_or_else(help_message)
+        );
+        return;
+    }
+
+    if !parsed.command.is_empty() && !is_known_command(&parsed.command) {
+        eprintln!("{}", unknown_command_message(&parsed.command));
+        std::process::exit(1);
     }
 
     // Handle --explain
@@ -332,16 +394,46 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                         }
                     } else {
                         eprintln!("Error: No input file specified");
-                        cli_impl::usage();
+                        cli_impl::usage_for(&parsed.command);
                         return;
                     }
                 } else {
                     eprintln!("Error: No input file specified");
-                    cli_impl::usage();
+                    cli_impl::usage_for(&parsed.command);
                     return;
                 };
 
                 let orig_path = PathBuf::from(&input_path);
+                let orig_path = if orig_path.is_dir() && parsed.config.run_tests {
+                    let main_in_dir = orig_path.join("main.adesh");
+                    let tests_in_dir = orig_path.join("tests.adesh");
+                    let main_test_in_dir = orig_path.join("main.test.adesh");
+                    if main_in_dir.exists() {
+                        main_in_dir
+                    } else if tests_in_dir.exists() {
+                        tests_in_dir
+                    } else if main_test_in_dir.exists() {
+                        main_test_in_dir
+                    } else if let Ok(entries) = std::fs::read_dir(&orig_path) {
+                        let mut found = None;
+                        for entry in entries.flatten() {
+                            let p = entry.path();
+                            if p.extension().map_or(false, |ext| ext == "adesh") {
+                                found = Some(p);
+                                break;
+                            }
+                        }
+                        if let Some(f) = found {
+                            f
+                        } else {
+                            orig_path
+                        }
+                    } else {
+                        orig_path
+                    }
+                } else {
+                    orig_path
+                };
                 match cli_impl::resolve_input_path(&orig_path) {
                     Ok(pair) => pair,
                     Err(msg) => {
@@ -543,7 +635,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
         "run-interpret" => {
             // Legacy command - always use interpreter
             if parsed.input_file.is_none() {
-                cli_impl::usage();
+                cli_impl::usage_for(&parsed.command);
                 return;
             }
             let input_path = parsed.input_file.clone().unwrap();
@@ -590,7 +682,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             // Direct JIT command
             if parsed.input_file.is_none() {
                 eprintln!("Error: No input file specified");
-                cli_impl::usage();
+                cli_impl::usage_for(&parsed.command);
                 return;
             }
             let input_path = parsed.input_file.clone().unwrap();
@@ -631,7 +723,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
         }
         "run-bc" => {
             if parsed.input_file.is_none() {
-                cli_impl::usage();
+                cli_impl::usage_for(&parsed.command);
                 return;
             }
             let file = PathBuf::from(parsed.input_file.unwrap());
@@ -646,7 +738,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
         }
         "compile" => {
             if parsed.input_file.is_none() || parsed.output_file.is_none() {
-                cli_impl::usage();
+                cli_impl::usage_for(&parsed.command);
                 return;
             }
             let in_path = PathBuf::from(parsed.input_file.unwrap());
@@ -686,7 +778,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
         }
         "compile-wasm" => {
             if parsed.input_file.is_none() || parsed.output_file.is_none() {
-                cli_impl::usage();
+                cli_impl::usage_for(&parsed.command);
                 return;
             }
             let in_path = PathBuf::from(parsed.input_file.unwrap());
@@ -736,7 +828,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
         }
         "compile-native" => {
             if parsed.input_file.is_none() || parsed.output_file.is_none() {
-                cli_impl::usage();
+                cli_impl::usage_for(&parsed.command);
                 return;
             }
             let in_path = PathBuf::from(parsed.input_file.unwrap());
@@ -778,7 +870,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
         "compile-aot" => {
             if parsed.input_file.is_none() || parsed.output_file.is_none() {
                 eprintln!("Error: compile-aot requires input and output files");
-                cli_impl::usage();
+                cli_impl::usage_for(&parsed.command);
                 return;
             }
             let in_path = PathBuf::from(parsed.input_file.unwrap());
@@ -1032,7 +1124,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
         }
         "compile-wasm-js" => {
             if parsed.input_file.is_none() || parsed.output_file.is_none() {
-                cli_impl::usage();
+                cli_impl::usage_for(&parsed.command);
                 return;
             }
             let in_path = PathBuf::from(parsed.input_file.unwrap());
@@ -1087,7 +1179,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
         }
         "compile-native-rust" => {
             if parsed.input_file.is_none() || parsed.output_file.is_none() {
-                cli_impl::usage();
+                cli_impl::usage_for(&parsed.command);
                 return;
             }
             let in_path = PathBuf::from(parsed.input_file.unwrap());
@@ -1119,7 +1211,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
         }
         "disassemble" => {
             if parsed.input_file.is_none() {
-                cli_impl::usage();
+                cli_impl::usage_for(&parsed.command);
                 return;
             }
             let file = PathBuf::from(parsed.input_file.unwrap());
@@ -1165,7 +1257,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             } else if PathBuf::from("src/lib.adesh").exists() {
                 PathBuf::from("src/lib.adesh")
             } else {
-                cli_impl::usage();
+                cli_impl::usage_for(&parsed.command);
                 return;
             };
             let out_dir = if let Some(ref op) = parsed.output_file {
@@ -1184,7 +1276,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
         "format" | "fmt" => {
             if parsed.input_file.is_none() {
                 eprintln!("Error: No input file specified");
-                cli_impl::usage();
+                cli_impl::usage_for(&parsed.command);
                 return;
             }
 
@@ -1249,7 +1341,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
         "check" => {
             if parsed.input_file.is_none() {
                 eprintln!("Error: No input file specified");
-                cli_impl::usage();
+                cli_impl::usage_for(&parsed.command);
                 return;
             }
             let input_path = parsed.input_file.clone().unwrap();
@@ -1717,7 +1809,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             std::process::exit(0);
         }
         "self-test" => {
-            println!("Running AdeshLang Phase 9 Compiler Ecosystem Self-Test...");
+            println!("Running Adesh Phase 9 Compiler Ecosystem Self-Test...");
             let target = adesh_codegen::TargetSpec::host();
             println!(
                 "  [1/6] TargetSpec Host: {:?} ({:?}) ✓",
@@ -1925,9 +2017,9 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             std::process::exit(0);
         }
         "" => {
-            cli_impl::usage();
+            cli_impl::usage_for(&parsed.command);
         }
-        _ => cli_impl::usage(),
+        _ => cli_impl::usage_for(&parsed.command),
     }
 }
 
@@ -1982,7 +2074,7 @@ fn run_gpu_check(args: &[String]) {
     }
 
     // Human-readable grouped output
-    println!("AdeshLang GPU Device Compatibility Check");
+    println!("Adesh GPU Device Compatibility Check");
     println!("========================================");
     println!();
     if external_linker {

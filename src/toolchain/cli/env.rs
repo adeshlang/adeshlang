@@ -37,7 +37,7 @@ pub fn execute_env_command_with_format(json: bool, shell: bool) {
     }
     if shell {
         let Some(home) = home else {
-            eprintln!("Unable to determine AdeshLang installation home");
+            eprintln!("Unable to determine Adesh installation home");
             return;
         };
         let bin = bin_directory()
@@ -67,7 +67,7 @@ pub fn execute_env_command_with_format(json: bool, shell: bool) {
     let bold = "\x1b[1m";
     let reset = "\x1b[0m";
 
-    println!("{}AdeshLang Environment Info{}", bold, reset);
+    println!("{}Adesh Environment Info{}", bold, reset);
     println!("────────────────────────────────────────────");
 
     let host_triple = if cfg!(target_arch = "wasm32") {
@@ -86,7 +86,7 @@ pub fn execute_env_command_with_format(json: bool, shell: bool) {
     // Version
     println!(
         "  {:18} {}v{} ({}){}",
-        "AdeshLang Version:",
+        "Adesh Version:",
         green,
         env!("CARGO_PKG_VERSION"),
         host_triple,

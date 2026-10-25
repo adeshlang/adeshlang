@@ -1,7 +1,7 @@
 //! System-wide exposure of the toolchain.
 //!
 //! `adesh toolchain install --system` places the installed toolchain on the
-//! system PATH and exports the AdeshLang environment variables so that the
+//! system PATH and exports the Adesh environment variables so that the
 //! clang/lld/llc/mlir executables are usable by every user and every program,
 //! not only by `adesh` itself.
 //!
@@ -40,7 +40,7 @@ fn exe(name: &str) -> String {
     }
 }
 
-/// Locate the active LLVM toolchain root: the AdeshLang-bundled
+/// Locate the active LLVM toolchain root: the Adesh-bundled
 /// `<home>/toolchain/llvm` when present, otherwise the standard location
 /// used by the upstream LLVM installer (Windows).
 pub fn active_toolchain_root(home: &Path) -> std::path::PathBuf {
@@ -60,7 +60,7 @@ pub fn active_toolchain_root(home: &Path) -> std::path::PathBuf {
     bundled
 }
 
-/// AdeshLang environment variables derived from the installation home.
+/// Adesh environment variables derived from the installation home.
 pub fn env_pairs(home: &Path) -> Vec<(String, String)> {
     let toolchain = active_toolchain_root(home);
     let bin = toolchain.join("bin");
@@ -151,7 +151,7 @@ fn write_profile_file(path: &Path, content: &str) -> Result<(), String> {
 #[cfg(unix)]
 fn profile_script(home: &Path) -> String {
     let mut script = String::from(
-        "# AdeshLang environment (managed by `adesh toolchain expose`; safe to remove)\n",
+        "# Adesh environment (managed by `adesh toolchain expose`; safe to remove)\n",
     );
     for (key, value) in env_pairs(home) {
         script.push_str(&format!("export {key}='{value}'\n"));
@@ -340,7 +340,7 @@ pub fn expose(home: &Path, scope: Scope) -> Result<(), String> {
     };
     let key = open_key(root, scope)?;
 
-    // 1. AdeshLang variables (plain REG_SZ).
+    // 1. Adesh variables (plain REG_SZ).
     for (name, value) in env_pairs(home) {
         write_string(key, &name, &value, false)?;
     }
@@ -373,7 +373,7 @@ pub fn expose(home: &Path, scope: Scope) -> Result<(), String> {
     broadcast_change();
 
     println!(
-        "  ✓ Registered AdeshLang environment variables and PATH entries in the {} environment",
+        "  ✓ Registered Adesh environment variables and PATH entries in the {} environment",
         scope.as_str()
     );
     if changed {

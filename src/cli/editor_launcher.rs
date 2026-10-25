@@ -103,7 +103,7 @@ pub fn execute_editor_command(args: &[String]) {
             eprintln!("Expected:");
             eprintln!("  adesh-editor");
             eprintln!();
-            eprintln!("Please ensure AdeshLang TUI Editor is installed and available in PATH,");
+            eprintln!("Please ensure Adesh TUI Editor is installed and available in PATH,");
             eprintln!("or build it with: cargo build --package adesh-editor");
             std::process::exit(1);
         }
