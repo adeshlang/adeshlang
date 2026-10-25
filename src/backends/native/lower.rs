@@ -5733,7 +5733,7 @@ impl<'a> FunctionLoweringContext<'a> {
                             }
                         }
 
-                        // Simple literals, booleans, numbers, strings, and scalars
+                        // Simple literals, booleans, numbers, and scalars (excluding dynamic strings which can be handles)
                         // stay on the compact native-output ABI without heap/handle overhead.
                         let has_opts = matches!(args.last(), Some(HirExpr::ObjectLiteral(_)));
                         let can_print_without_handles = !has_opts
@@ -5758,7 +5758,6 @@ impl<'a> FunctionLoweringContext<'a> {
                                             | HirType::F32
                                             | HirType::Bool
                                             | HirType::Char
-                                            | HirType::String
                                             | HirType::Null
                                     )
                                 )

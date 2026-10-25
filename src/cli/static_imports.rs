@@ -284,6 +284,12 @@ impl Linker {
                         }
                     }
                 }
+                StmtKind::TypeAlias(d, _) => {
+                    d.name = linked_name.clone();
+                    for (_, _, ty) in &mut d.fields {
+                        self.ty(id, ty)?;
+                    }
+                }
                 _ => return Err(format!("unsupported native import declaration '{name}'")),
             }
             self.declarations.push(stmt);

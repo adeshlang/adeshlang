@@ -5494,6 +5494,54 @@ pub(crate) fn handle_call_builtin(
             ctx.value_types.insert(*dst, AotValueType::Handle);
             ctx.runtime_handle_values.insert(*dst);
         }
+        "str" | "string" | "String" => {
+            if !args.is_empty() {
+                let arg_id = args[0];
+                let arg_val = ctx
+                    .value_map
+                    .get(&arg_id)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+
+                let to_i64 = |builder: &mut FunctionBuilder, v: Value| -> Value {
+                    let vt = builder.func.dfg.value_type(v);
+                    if vt == types::I64 {
+                        v
+                    } else if vt.is_int() {
+                        builder.ins().uextend(types::I64, v)
+                    } else if vt == types::F64 {
+                        builder.ins().bitcast(types::I64, MemFlags::new(), v)
+                    } else if vt == types::F32 {
+                        let f64v = builder.ins().fpromote(types::F64, v);
+                        builder.ins().bitcast(types::I64, MemFlags::new(), f64v)
+                    } else {
+                        builder.ins().iconst(types::I64, 0)
+                    }
+                };
+
+                let str_res = if let Some(AotValueType::String) = ctx.value_types.get(&arg_id) {
+                    to_i64(builder, arg_val)
+                } else {
+                    let mut sig = module.make_signature();
+                    sig.params.push(AbiParam::new(types::I64));
+                    sig.returns.push(AbiParam::new(types::I64));
+                    let func = module
+                        .declare_function("adesh_value_to_string", Linkage::Import, &sig)
+                        .expect("Failed to declare adesh_value_to_string");
+                    let func_ref = module.declare_func_in_func(func, builder.func);
+                    let vi64 = to_i64(builder, arg_val);
+                    let call = builder.ins().call(func_ref, &[vi64]);
+                    builder.inst_results(call)[0]
+                };
+
+                ctx.value_map.insert(*dst, str_res);
+                ctx.value_types.insert(*dst, AotValueType::String);
+            } else {
+                let v = builder.ins().iconst(types::I64, 0);
+                ctx.value_map.insert(*dst, v);
+                ctx.value_types.insert(*dst, AotValueType::String);
+            }
+        }
         "str_concat" | "concat" => {
             // str_concat(left, right) -> string (concatenate two values as strings)
             if args.len() >= 2 {

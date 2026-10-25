@@ -426,7 +426,12 @@ fn gen_expr_f64(
         ExprKind::Get(target, field) => {
             let type_name = gen_expr_i32(target, out, ctx)?;
             if let Some(tn) = type_name {
-                if let Some(layout) = ctx.struct_layouts.get(&tn) {
+                let base_name = if let Some(idx) = tn.find('<') {
+                    &tn[..idx]
+                } else {
+                    &tn[..]
+                };
+                if let Some(layout) = ctx.struct_layouts.get(base_name) {
                     if let Some(offset) = layout.get_field_offset(field) {
                         if let Some(fi) = layout.find_field(field) {
                             if fi.type_name == "f64" || fi.type_name == "number" {
@@ -903,7 +908,12 @@ fn gen_expr_i32(
         ExprKind::Get(target, field) => {
             let type_name = gen_expr_i32(target, out, ctx)?;
             if let Some(tn) = type_name {
-                if let Some(layout) = ctx.struct_layouts.get(&tn) {
+                let base_name = if let Some(idx) = tn.find('<') {
+                    &tn[..idx]
+                } else {
+                    &tn[..]
+                };
+                if let Some(layout) = ctx.struct_layouts.get(base_name) {
                     if let Some(offset) = layout.get_field_offset(field) {
                         if offset > 0 {
                             out.push(0x41);
@@ -1277,6 +1287,14 @@ fn format_static_val_for_wasm_env(e: &Expr, var_values: &FastMap<String, Value>)
             Some(crate::execution::runtime_core::format::apply_format_spec(
                 &val, spec,
             ))
+        }
+        ExprKind::Get(target, field) => {
+            let val = expr_to_value_env(e, var_values)?;
+            Some(crate::execution::runtime_core::format::fmt(&val))
+        }
+        ExprKind::OptGet(target, field) => {
+            let val = expr_to_value_env(e, var_values)?;
+            Some(crate::execution::runtime_core::format::fmt(&val))
         }
         ExprKind::Literal(Value::Str(s)) => Some(s.clone()),
         ExprKind::Literal(v) => Some(crate::execution::runtime_core::format::fmt(v)),
@@ -2326,9 +2344,10 @@ pub fn compile_to_file_with_base(src: &str, out: &Path, base: &Path) -> Result<(
 }
 
 pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), LangError> {
-    let prog = crate::parsing::ast_optimizer::optimize_program(&prog);
+    let mut prog = crate::parsing::ast_optimizer::optimize_program(&prog);
 
     let mut struct_layouts: FastMap<String, FieldLayout> = FastMap::default();
+    let mut type_alias_defs: FastMap<String, (Vec<(String, bool, String)>, Vec<(String, Expr)>)> = FastMap::default();
     for s in &prog {
         if let StmtKind::Struct(decl, _) = &s.kind {
             let layout = compute_wasm_layout(&decl.fields);
@@ -2341,7 +2360,108 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
                 .collect();
             let layout = compute_wasm_layout(&fields);
             struct_layouts.insert(decl.name.clone(), layout);
+            type_alias_defs.insert(decl.name.clone(), (decl.fields.clone(), decl.defaults.clone()));
         }
+    }
+
+    // Apply type alias default values into object initializers in prog
+    for s in &mut prog {
+        if let StmtKind::Let(_, Some(init), Some(ann), ..) = &mut s.kind {
+            let base_name = if let Some(idx) = ann.find('<') {
+                &ann[..idx]
+            } else {
+                ann.as_str()
+            };
+            if let Some((fields_schema, defaults)) = type_alias_defs.get(base_name) {
+                if let ExprKind::Object(entries) = &mut init.kind {
+                    for (field_name, is_opt, _ty) in fields_schema {
+                        if !entries.iter().any(|(f, _)| f == field_name) {
+                            if let Some((_, def_expr)) = defaults.iter().find(|(f, _)| f == field_name) {
+                                entries.push((field_name.clone(), def_expr.clone()));
+                            } else if *is_opt {
+                                entries.push((
+                                    field_name.clone(),
+                                    Expr {
+                                        kind: ExprKind::Literal(Value::Null),
+                                        span: init.span.clone(),
+                                    },
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Collect declared functions and their parameter default values
+    let mut fn_param_defaults: FastMap<String, Vec<(String, Option<Expr>)>> = FastMap::default();
+    for s in &prog {
+        if let StmtKind::Function(f, _) = &s.kind {
+            let params = f
+                .params
+                .iter()
+                .map(|(n, def, _)| (n.clone(), def.clone()))
+                .collect();
+            fn_param_defaults.insert(f.name.clone(), params);
+        }
+    }
+
+    // Helper closure to pad function call arguments with defaults
+    fn pad_call_expr(e: &mut Expr, fn_param_defaults: &FastMap<String, Vec<(String, Option<Expr>)>>) {
+        match &mut e.kind {
+            ExprKind::Call(callee, args, _) => {
+                pad_call_expr(callee, fn_param_defaults);
+                for a in args.iter_mut() {
+                    pad_call_expr(a, fn_param_defaults);
+                }
+                if let ExprKind::Variable(fn_name) = &callee.kind {
+                    if let Some(params) = fn_param_defaults.get(fn_name) {
+                        if args.len() < params.len() {
+                            for i in args.len()..params.len() {
+                                if let Some(ref def_expr) = params[i].1 {
+                                    args.push(def_expr.clone());
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            ExprKind::Binary(_, _, r) | ExprKind::Logical(_, _, r) => {
+                // recursive for children if needed
+                pad_call_expr(r, fn_param_defaults);
+            }
+            ExprKind::Unary(_, inner) | ExprKind::Grouping(inner) => {
+                pad_call_expr(inner, fn_param_defaults);
+            }
+            _ => {}
+        }
+    }
+
+    fn pad_stmt(s: &mut Stmt, fn_param_defaults: &FastMap<String, Vec<(String, Option<Expr>)>>) {
+        match &mut s.kind {
+            StmtKind::ExprStmt(e) => pad_call_expr(e, fn_param_defaults),
+            StmtKind::Let(_, Some(init), ..) => pad_call_expr(init, fn_param_defaults),
+            StmtKind::Function(f, _) => {
+                let mut body_vec = (*f.body).clone();
+                for st in &mut body_vec {
+                    pad_stmt(st, fn_param_defaults);
+                }
+                f.body = std::sync::Arc::new(body_vec);
+            }
+            StmtKind::Block(stmts) => {
+                for st in stmts {
+                    pad_stmt(st, fn_param_defaults);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for s in &mut prog {
+        pad_stmt(s, &fn_param_defaults);
     }
 
     let mut func_defs: Vec<crate::parsing::ast::Function> = Vec::new();
@@ -2356,10 +2476,15 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
     }
 
     let is_i32_type = |ty: &str| -> bool {
+        let base = if let Some(idx) = ty.find('<') {
+            &ty[..idx]
+        } else {
+            ty
+        };
         matches!(
-            ty,
+            base,
             "int" | "i32" | "i16" | "i8" | "u32" | "u16" | "u8" | "bool" | "string" | "String"
-        ) || struct_layouts.contains_key(ty)
+        ) || struct_layouts.contains_key(base)
     };
 
     let mut locals_map_f64: FastMap<String, u32> = FastMap::default();
@@ -2455,10 +2580,15 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
     }
 
     let is_i32_type = |ty: &str| -> bool {
+        let base = if let Some(idx) = ty.find('<') {
+            &ty[..idx]
+        } else {
+            ty
+        };
         matches!(
-            ty,
+            base,
             "int" | "i32" | "i16" | "i8" | "u32" | "u16" | "u8" | "bool" | "string" | "String"
-        ) || struct_layouts.contains_key(ty)
+        ) || struct_layouts.contains_key(base)
     };
 
     let mut funcs_index_map: FastMap<String, (u32, Vec<u8>, Option<u8>)> = FastMap::default();
