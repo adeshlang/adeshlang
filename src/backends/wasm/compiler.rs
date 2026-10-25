@@ -313,7 +313,13 @@ fn gen_expr_f64(
                     out.extend(&0.0f64.to_bits().to_le_bytes());
                     return Ok(Some("Error".into()));
                 }
-                if name == "concat" || name == "str_concat" || name == "format" || name == "str" || name == "string" || name == "String" {
+                if name == "concat"
+                    || name == "str_concat"
+                    || name == "format"
+                    || name == "str"
+                    || name == "string"
+                    || name == "String"
+                {
                     out.push(0x44);
                     out.extend(&0.0f64.to_bits().to_le_bytes());
                     return Ok(Some("string".into()));
@@ -644,7 +650,13 @@ fn gen_expr_i32(
                     write_i32_leb(0, out);
                     return Ok(Some("Error".into()));
                 }
-                if name == "concat" || name == "str_concat" || name == "format" || name == "str" || name == "string" || name == "String" {
+                if name == "concat"
+                    || name == "str_concat"
+                    || name == "format"
+                    || name == "str"
+                    || name == "string"
+                    || name == "String"
+                {
                     out.push(0x41);
                     write_i32_leb(1024, out);
                     return Ok(Some("string".into()));

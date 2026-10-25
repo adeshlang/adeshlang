@@ -649,6 +649,30 @@ impl CodegenBackend for AArch64Backend {
                             }
                         } else if let (Some(d_reg), MachineOperand::Immediate(val)) = (d, src) {
                             Self::emit_mov_imm64(&mut code, d_reg, *val as u64);
+                        } else if let (Some(d_reg), MachineOperand::Symbol(sym)) = (d, src) {
+                            // Materialize symbol address using ADRP + ADD (PAGE21 + PAGEOFF12) relocations
+                            // ADRP Xd, symbol@PAGE
+                            relocations.push(AdobRelocation::new(
+                                code.len() as u64,
+                                0,
+                                sym.clone(),
+                                RelocationKind::AArch64_AdrPage21,
+                                0,
+                            ));
+                            code.extend_from_slice(&0x90000000u32.to_le_bytes()); // ADRP Xd, #0
+                            let adrp_idx = code.len() - 4;
+                            code[adrp_idx] |= d_reg & 0x1F;
+
+                            // ADD Xd, Xd, symbol@PAGEOFF
+                            relocations.push(AdobRelocation::new(
+                                code.len() as u64,
+                                0,
+                                sym.clone(),
+                                RelocationKind::AArch64_AddAbsLo12,
+                                0,
+                            ));
+                            let ins = 0x91000000u32 | ((d_reg as u32) << 5) | (d_reg as u32);
+                            code.extend_from_slice(&ins.to_le_bytes());
                         } else if let (Some(d_reg), Some(_)) = (d, Self::slot_operand(src)) {
                             Self::emit_stack_load(&mut code, d_reg, src, total_alloc);
                         } else if let (Some(_), Some(s_reg)) = (Self::slot_operand(dst), s) {

@@ -1607,6 +1607,14 @@ impl<'a> FunctionLoweringContext<'a> {
         }
     }
 
+    /// Register representing the frame pointer base for local stack slots.
+    fn frame_pointer_reg(&self) -> PhysicalRegister {
+        match self.target.architecture {
+            Architecture::AArch64 => PhysicalRegister(29), // X29 (FP)
+            _ => PhysicalRegister(5),                      // RBP
+        }
+    }
+
     pub fn alloc_stack_slot(&mut self, size: i32) -> i32 {
         let slot = self.current_stack_offset;
         self.current_stack_offset += size;
@@ -3779,13 +3787,14 @@ impl<'a> FunctionLoweringContext<'a> {
                 let size = count.max(2) * 8;
                 let slot = self.alloc_stack_slot(size);
                 let base_off = -(slot + size);
+                let fp_reg = self.frame_pointer_reg();
 
                 for (i, (k_h, v_h)) in pairs.iter().enumerate() {
                     let k_off = base_off + (i as i32 * 16);
                     let v_off = base_off + (i as i32 * 16 + 8);
                     self.emit(MachineInstruction::Store {
                         dst: MachineOperand::Memory {
-                            base: MachineRegister::Physical(PhysicalRegister(5)), // RBP
+                            base: MachineRegister::Physical(fp_reg),
                             offset: k_off,
                             index: None,
                         },
@@ -3794,7 +3803,7 @@ impl<'a> FunctionLoweringContext<'a> {
                     });
                     self.emit(MachineInstruction::Store {
                         dst: MachineOperand::Memory {
-                            base: MachineRegister::Physical(PhysicalRegister(5)), // RBP
+                            base: MachineRegister::Physical(fp_reg),
                             offset: v_off,
                             index: None,
                         },
@@ -3806,7 +3815,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 let ptr_reg = self.func.alloc_vreg();
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(ptr_reg)),
-                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(5))), // RBP
+                    src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
                 });
                 self.emit(MachineInstruction::Sub {
                     dst: MachineOperand::Register(MachineRegister::Virtual(ptr_reg)),
@@ -3847,12 +3856,13 @@ impl<'a> FunctionLoweringContext<'a> {
                 let size = count.max(1) * 8;
                 let slot = self.alloc_stack_slot(size);
                 let base_off = -(slot + size);
+                let fp_reg = self.frame_pointer_reg();
 
                 for (i, h) in handles.iter().enumerate() {
                     let off = base_off + (i as i32 * 8);
                     self.emit(MachineInstruction::Store {
                         dst: MachineOperand::Memory {
-                            base: MachineRegister::Physical(PhysicalRegister(5)), // RBP
+                            base: MachineRegister::Physical(fp_reg),
                             offset: off,
                             index: None,
                         },
@@ -3864,7 +3874,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 let ptr_reg = self.func.alloc_vreg();
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(ptr_reg)),
-                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(5))), // RBP
+                    src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
                 });
                 self.emit(MachineInstruction::Sub {
                     dst: MachineOperand::Register(MachineRegister::Virtual(ptr_reg)),
@@ -3897,12 +3907,13 @@ impl<'a> FunctionLoweringContext<'a> {
                 let size = count.max(1) * 8;
                 let slot = self.alloc_stack_slot(size);
                 let base_off = -(slot + size);
+                let fp_reg = self.frame_pointer_reg();
 
                 for (i, h) in handles.iter().enumerate() {
                     let off = base_off + (i as i32 * 8);
                     self.emit(MachineInstruction::Store {
                         dst: MachineOperand::Memory {
-                            base: MachineRegister::Physical(PhysicalRegister(5)),
+                            base: MachineRegister::Physical(fp_reg),
                             offset: off,
                             index: None,
                         },
@@ -3914,7 +3925,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 let ptr_reg = self.func.alloc_vreg();
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(ptr_reg)),
-                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(5))),
+                    src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
                 });
                 self.emit(MachineInstruction::Sub {
                     dst: MachineOperand::Register(MachineRegister::Virtual(ptr_reg)),
@@ -3947,12 +3958,13 @@ impl<'a> FunctionLoweringContext<'a> {
                 let size = count.max(1) * 8;
                 let slot = self.alloc_stack_slot(size);
                 let base_off = -(slot + size);
+                let fp_reg = self.frame_pointer_reg();
 
                 for (i, h) in handles.iter().enumerate() {
                     let off = base_off + (i as i32 * 8);
                     self.emit(MachineInstruction::Store {
                         dst: MachineOperand::Memory {
-                            base: MachineRegister::Physical(PhysicalRegister(5)),
+                            base: MachineRegister::Physical(fp_reg),
                             offset: off,
                             index: None,
                         },
@@ -3964,7 +3976,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 let ptr_reg = self.func.alloc_vreg();
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(ptr_reg)),
-                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(5))),
+                    src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
                 });
                 self.emit(MachineInstruction::Sub {
                     dst: MachineOperand::Register(MachineRegister::Virtual(ptr_reg)),
@@ -4170,12 +4182,13 @@ impl<'a> FunctionLoweringContext<'a> {
                         let size = count.max(1) * 8;
                         let slot = self.alloc_stack_slot(size);
                         let base_off = -(slot + size);
+                        let fp_reg = self.frame_pointer_reg();
 
                         for (i, h) in handles.iter().enumerate() {
                             let off = base_off + (i as i32 * 8);
                             self.emit(MachineInstruction::Store {
                                 dst: MachineOperand::Memory {
-                                    base: MachineRegister::Physical(PhysicalRegister(5)),
+                                    base: MachineRegister::Physical(fp_reg),
                                     offset: off,
                                     index: None,
                                 },
@@ -4187,9 +4200,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         let ptr_reg = self.func.alloc_vreg();
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(ptr_reg)),
-                            src: MachineOperand::Register(MachineRegister::Physical(
-                                PhysicalRegister(5),
-                            )),
+                            src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
                         });
                         self.emit(MachineInstruction::Sub {
                             dst: MachineOperand::Register(MachineRegister::Virtual(ptr_reg)),
@@ -4274,12 +4285,13 @@ impl<'a> FunctionLoweringContext<'a> {
                 let size = count.max(1) * 8;
                 let slot = self.alloc_stack_slot(size);
                 let base_off = -(slot + size);
+                let fp_reg = self.frame_pointer_reg();
 
                 for (i, h) in handles.iter().enumerate() {
                     let off = base_off + (i as i32 * 8);
                     self.emit(MachineInstruction::Store {
                         dst: MachineOperand::Memory {
-                            base: MachineRegister::Physical(PhysicalRegister(5)),
+                            base: MachineRegister::Physical(fp_reg),
                             offset: off,
                             index: None,
                         },
@@ -4291,7 +4303,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 let ptr_reg = self.func.alloc_vreg();
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(ptr_reg)),
-                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(5))),
+                    src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
                 });
                 self.emit(MachineInstruction::Sub {
                     dst: MachineOperand::Register(MachineRegister::Virtual(ptr_reg)),
@@ -4391,7 +4403,9 @@ impl<'a> FunctionLoweringContext<'a> {
                                 lambda_ctx.emit(MachineInstruction::Load {
                                     dst: MachineOperand::StackSlot(off),
                                     src: MachineOperand::Memory {
-                                        base: MachineRegister::Physical(PhysicalRegister(5)),
+                                        base: MachineRegister::Physical(
+                                            lambda_ctx.frame_pointer_reg(),
+                                        ),
                                         offset: stack_arg.offset,
                                         index: None,
                                     },
@@ -5820,12 +5834,13 @@ impl<'a> FunctionLoweringContext<'a> {
                         let size = count.max(1) * 8;
                         let slot = self.alloc_stack_slot(size);
                         let base_off = -(slot + size);
+                        let fp_reg = self.frame_pointer_reg();
 
                         for (i, h) in arg_handles.iter().enumerate() {
                             let off = base_off + (i as i32 * 8);
                             self.emit(MachineInstruction::Store {
                                 dst: MachineOperand::Memory {
-                                    base: MachineRegister::Physical(PhysicalRegister(5)), // RBP
+                                    base: MachineRegister::Physical(fp_reg),
                                     offset: off,
                                     index: None,
                                 },
@@ -5837,9 +5852,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         let ptr_reg = self.func.alloc_vreg();
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(ptr_reg)),
-                            src: MachineOperand::Register(MachineRegister::Physical(
-                                PhysicalRegister(5),
-                            )), // RBP
+                            src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
                         });
                         self.emit(MachineInstruction::Sub {
                             dst: MachineOperand::Register(MachineRegister::Virtual(ptr_reg)),
@@ -5899,11 +5912,10 @@ impl<'a> FunctionLoweringContext<'a> {
                     let buf_size = ret_abi.size_in_bytes().max(8) as i32;
                     let sret_slot = self.alloc_stack_slot(buf_size);
                     let sret_ptr_reg = self.func.alloc_vreg();
+                    let fp_reg = self.frame_pointer_reg();
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(sret_ptr_reg)),
-                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
-                            5,
-                        ))), // RBP
+                        src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
                     });
                     self.emit(MachineInstruction::Sub {
                         dst: MachineOperand::Register(MachineRegister::Virtual(sret_ptr_reg)),
@@ -6090,14 +6102,13 @@ impl<'a> FunctionLoweringContext<'a> {
             }
             HirExpr::Borrow(inner, _) | HirExpr::BorrowImmut(inner) | HirExpr::BorrowMut(inner) => {
                 let out_reg = self.func.alloc_vreg();
+                let fp_reg = self.frame_pointer_reg();
                 if let HirExpr::LoadVar(name) = &**inner {
                     let slot_opt = self.local_vars.get(name).map(|(s, _)| *s);
                     if let Some(slot) = slot_opt {
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                            src: MachineOperand::Register(MachineRegister::Physical(
-                                PhysicalRegister(5),
-                            )), // RBP
+                            src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
                         });
                         self.emit(MachineInstruction::Add {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -6115,7 +6126,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 });
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(5))), // RBP
+                    src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
                 });
                 self.emit(MachineInstruction::Add {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -6721,7 +6732,7 @@ fn lower_hir_function_inner(
                     ctx.emit(MachineInstruction::Load {
                         dst: MachineOperand::StackSlot(off),
                         src: MachineOperand::Memory {
-                            base: MachineRegister::Physical(PhysicalRegister(5)), // RBP
+                            base: MachineRegister::Physical(ctx.frame_pointer_reg()),
                             offset: stack_arg.offset,
                             index: None,
                         },
@@ -6750,7 +6761,7 @@ fn lower_hir_function_inner(
                     ctx.emit(MachineInstruction::Load {
                         dst: MachineOperand::StackSlot(off),
                         src: MachineOperand::Memory {
-                            base: MachineRegister::Physical(PhysicalRegister(5)), // RBP
+                            base: MachineRegister::Physical(ctx.frame_pointer_reg()),
                             offset: stack_arg.offset,
                             index: None,
                         },
@@ -7197,4 +7208,31 @@ pub fn lower_hir_module_with_base(
 
     into_result(diagnostics)?;
     Ok(module)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use adesh_object::{Architecture, TargetDescriptor};
+
+    #[test]
+    fn test_aarch64_lowering_uses_x29_frame_pointer() {
+        let target = TargetDescriptor::from_triple("aarch64-apple-darwin").expect("valid triple");
+        assert_eq!(target.architecture, Architecture::AArch64);
+
+        let mut func = MachineFunction::new("test_aarch64_fp");
+        let mut module = NativeModule::new("test_mod");
+        let ctx = FunctionLoweringContext::new(&mut func, &mut module, &target);
+
+        // Frame pointer on AArch64 must be PhysicalRegister(29) (X29)
+        assert_eq!(ctx.frame_pointer_reg(), PhysicalRegister(29));
+
+        // On x86-64, frame pointer must be PhysicalRegister(5) (RBP)
+        let x86_target =
+            TargetDescriptor::from_triple("x86_64-unknown-linux-gnu").expect("valid triple");
+        let mut x86_func = MachineFunction::new("test_x86_fp");
+        let mut x86_module = NativeModule::new("test_x86_mod");
+        let x86_ctx = FunctionLoweringContext::new(&mut x86_func, &mut x86_module, &x86_target);
+        assert_eq!(x86_ctx.frame_pointer_reg(), PhysicalRegister(5));
+    }
 }
