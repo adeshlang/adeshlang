@@ -4403,7 +4403,9 @@ impl<'a> FunctionLoweringContext<'a> {
                                 lambda_ctx.emit(MachineInstruction::Load {
                                     dst: MachineOperand::StackSlot(off),
                                     src: MachineOperand::Memory {
-                                        base: MachineRegister::Physical(PhysicalRegister(5)),
+                                        base: MachineRegister::Physical(
+                                            lambda_ctx.frame_pointer_reg(),
+                                        ),
                                         offset: stack_arg.offset,
                                         index: None,
                                     },
@@ -5910,11 +5912,10 @@ impl<'a> FunctionLoweringContext<'a> {
                     let buf_size = ret_abi.size_in_bytes().max(8) as i32;
                     let sret_slot = self.alloc_stack_slot(buf_size);
                     let sret_ptr_reg = self.func.alloc_vreg();
+                    let fp_reg = self.frame_pointer_reg();
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(sret_ptr_reg)),
-                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
-                            5,
-                        ))), // RBP
+                        src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
                     });
                     self.emit(MachineInstruction::Sub {
                         dst: MachineOperand::Register(MachineRegister::Virtual(sret_ptr_reg)),
