@@ -176,10 +176,7 @@ pub fn dispatch(options: CliOptions) -> Result<(), String> {
                 println!("  adl run     # or: adesh run src/main.adesh");
                 println!("  adl build   # or: adesh build src/main.adesh");
             } else {
-                println!(
-                    "✨ Initialized Adesh project in {}",
-                    layout.root.display()
-                );
+                println!("✨ Initialized Adesh project in {}", layout.root.display());
                 println!("\nNext steps:");
                 println!("  adl run     # or: adesh run src/main.adesh");
                 println!("  adl build   # or: adesh build src/main.adesh");

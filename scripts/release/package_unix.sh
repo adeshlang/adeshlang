@@ -29,11 +29,16 @@ if [[ -z "$target" ]]; then
 fi
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+libc_suffix="gnu"
+if [[ "$target" == *"musl"* ]]; then
+  libc_suffix="musl"
+fi
+
 if [[ "$os" == "linux" ]]; then
   # Keep a package-friendly staging path; the archive gets a release-specific
   # top-level directory below.
-  stage="$root/dist/linux-$arch"
-  archive_stage="$root/dist/AdeshLang-$version-$arch-$os-gnu"
+  stage="$root/dist/linux-$arch-$libc_suffix"
+  archive_stage="$root/dist/AdeshLang-$version-$arch-$os-$libc_suffix"
 else
   # macOS packaging (build-pkg.sh, build-dmg.sh) expects dist/macos-<arch>;
   # the release archive gets the versioned top-level directory below.
@@ -270,7 +275,7 @@ if [[ "$archive_stage" != "$stage" ]]; then
 fi
 
 if [[ "$os" == "linux" ]]; then
-  archive="$root/dist/AdeshLang-$version-$arch-$os-gnu.tar.xz"
+  archive="$root/dist/AdeshLang-$version-$arch-$os-$libc_suffix.tar.xz"
 else
   archive="$root/dist/AdeshLang-$version-$os-$arch.tar.xz"
 fi
@@ -282,17 +287,19 @@ if [[ "$os" == "linux" ]]; then
     cp "$root/installer/linux/install.sh" "$root/dist/install-linux.sh"
     chmod +x "$root/dist/install-linux.sh"
   fi
-  if command -v dpkg-deb >/dev/null 2>&1; then
-    deb_arch="amd64"
-    [[ "$arch" == "aarch64" ]] && deb_arch="arm64"
-    bash "$root/installer/linux/deb/build-deb.sh" "$deb_arch" "$version"
-  else
-    echo "Warning: dpkg-deb not found; skipping Debian package build." >&2
-  fi
-  if command -v rpmbuild >/dev/null 2>&1; then
-    bash "$root/installer/linux/rpm/build-rpm.sh" "$arch" "$version"
-  else
-    echo "Warning: rpmbuild not found; skipping RPM package build." >&2
+  if [[ "$libc_suffix" == "gnu" ]]; then
+    if command -v dpkg-deb >/dev/null 2>&1; then
+      deb_arch="amd64"
+      [[ "$arch" == "aarch64" ]] && deb_arch="arm64"
+      bash "$root/installer/linux/deb/build-deb.sh" "$deb_arch" "$version"
+    else
+      echo "Warning: dpkg-deb not found; skipping Debian package build." >&2
+    fi
+    if command -v rpmbuild >/dev/null 2>&1; then
+      bash "$root/installer/linux/rpm/build-rpm.sh" "$arch" "$version"
+    else
+      echo "Warning: rpmbuild not found; skipping RPM package build." >&2
+    fi
   fi
 elif [[ "$os" == "macos" ]]; then
   if [[ -f "$root/installer/macos/install.sh" ]]; then

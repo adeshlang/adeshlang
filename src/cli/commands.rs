@@ -40,10 +40,7 @@ pub fn cmd_init(dir: &str) -> std::io::Result<()> {
         return Err(std::io::Error::new(std::io::ErrorKind::Other, e));
     }
 
-    println!(
-        "Initialized modern Adesh project in: {}",
-        root.display()
-    );
+    println!("Initialized modern Adesh project in: {}", root.display());
     println!("\nNext steps:");
     println!("  cd {}", dir);
     println!("  adl run     # or: adesh run src/main.adesh");

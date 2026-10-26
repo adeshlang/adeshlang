@@ -2347,7 +2347,8 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
     let mut prog = crate::parsing::ast_optimizer::optimize_program(&prog);
 
     let mut struct_layouts: FastMap<String, FieldLayout> = FastMap::default();
-    let mut type_alias_defs: FastMap<String, (Vec<(String, bool, String)>, Vec<(String, Expr)>)> = FastMap::default();
+    let mut type_alias_defs: FastMap<String, (Vec<(String, bool, String)>, Vec<(String, Expr)>)> =
+        FastMap::default();
     for s in &prog {
         if let StmtKind::Struct(decl, _) = &s.kind {
             let layout = compute_wasm_layout(&decl.fields);
@@ -2360,7 +2361,10 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
                 .collect();
             let layout = compute_wasm_layout(&fields);
             struct_layouts.insert(decl.name.clone(), layout);
-            type_alias_defs.insert(decl.name.clone(), (decl.fields.clone(), decl.defaults.clone()));
+            type_alias_defs.insert(
+                decl.name.clone(),
+                (decl.fields.clone(), decl.defaults.clone()),
+            );
         }
     }
 
@@ -2376,7 +2380,9 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
                 if let ExprKind::Object(entries) = &mut init.kind {
                     for (field_name, is_opt, _ty) in fields_schema {
                         if !entries.iter().any(|(f, _)| f == field_name) {
-                            if let Some((_, def_expr)) = defaults.iter().find(|(f, _)| f == field_name) {
+                            if let Some((_, def_expr)) =
+                                defaults.iter().find(|(f, _)| f == field_name)
+                            {
                                 entries.push((field_name.clone(), def_expr.clone()));
                             } else if *is_opt {
                                 entries.push((
@@ -2408,7 +2414,10 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
     }
 
     // Helper closure to pad function call arguments with defaults
-    fn pad_call_expr(e: &mut Expr, fn_param_defaults: &FastMap<String, Vec<(String, Option<Expr>)>>) {
+    fn pad_call_expr(
+        e: &mut Expr,
+        fn_param_defaults: &FastMap<String, Vec<(String, Option<Expr>)>>,
+    ) {
         match &mut e.kind {
             ExprKind::Call(callee, args, _) => {
                 pad_call_expr(callee, fn_param_defaults);

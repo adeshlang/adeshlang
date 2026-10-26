@@ -2287,8 +2287,10 @@ impl NativeJitCompiler {
                         let arg_id = args.get(0).copied();
                         if let Some(aid) = arg_id {
                             if let Some(arg_val) = value_map.get(&aid).copied() {
-                                let arg_type = value_types.get(&aid).cloned().unwrap_or(AotValueType::Int);
-                                let (arg_enc, type_tag) = Self::encode_typed_arg(builder, arg_val, &arg_type);
+                                let arg_type =
+                                    value_types.get(&aid).cloned().unwrap_or(AotValueType::Int);
+                                let (arg_enc, type_tag) =
+                                    Self::encode_typed_arg(builder, arg_val, &arg_type);
                                 let tag_val = builder.ins().iconst(types::I64, type_tag);
                                 let res = Self::call_runtime_fn_2(
                                     builder,
@@ -3362,12 +3364,8 @@ impl NativeJitCompiler {
                             .and_then(|id| value_map.get(id))
                             .copied()
                             .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-                        let is_null_val = Self::call_runtime_fn_1(
-                            builder,
-                            module,
-                            "jit_is_null",
-                            arg_val,
-                        )?;
+                        let is_null_val =
+                            Self::call_runtime_fn_1(builder, module, "jit_is_null", arg_val)?;
                         value_map.insert(*dst, is_null_val);
                         value_types.insert(*dst, AotValueType::Bool);
                     }

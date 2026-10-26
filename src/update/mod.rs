@@ -302,10 +302,7 @@ pub fn execute_ai_setup_command(args: &[String]) {
         "{}",
         "──────────────────────────────────────────────────────".cyan()
     );
-    println!(
-        "{}",
-        "  Adesh AI Model Downloader & Setup".bold().magenta()
-    );
+    println!("{}", "  Adesh AI Model Downloader & Setup".bold().magenta());
     println!(
         "{}",
         "──────────────────────────────────────────────────────".cyan()
@@ -417,9 +414,7 @@ pub fn execute_ai_setup_command(args: &[String]) {
                     println!("{}", "PASS".bold().green());
                     println!(
                         "\n{}",
-                        "✓ Adesh AI model installed successfully!"
-                            .bold()
-                            .green()
+                        "✓ Adesh AI model installed successfully!".bold().green()
                     );
                     println!("You can now run commands like:");
                     println!("  adesh ai generate \"Create a binary search function\"");

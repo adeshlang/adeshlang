@@ -150,9 +150,8 @@ fn write_profile_file(path: &Path, content: &str) -> Result<(), String> {
 
 #[cfg(unix)]
 fn profile_script(home: &Path) -> String {
-    let mut script = String::from(
-        "# Adesh environment (managed by `adesh toolchain expose`; safe to remove)\n",
-    );
+    let mut script =
+        String::from("# Adesh environment (managed by `adesh toolchain expose`; safe to remove)\n");
     for (key, value) in env_pairs(home) {
         script.push_str(&format!("export {key}='{value}'\n"));
     }

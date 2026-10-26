@@ -632,7 +632,16 @@ pub fn run_with_interpreter(
     match res {
         Ok(handle) => match handle.join() {
             Ok(result) => result.map_err(|e| e.to_string()),
-            Err(_) => Err("thread panicked".to_string()),
+            Err(p) => {
+                let msg = if let Some(s) = p.downcast_ref::<&str>() {
+                    s.to_string()
+                } else if let Some(s) = p.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "thread panicked with unknown payload".to_string()
+                };
+                Err(format!("thread panicked: {}", msg))
+            }
         },
         Err(_) => Err("failed to spawn thread".to_string()),
     }

@@ -1115,7 +1115,11 @@ Compiles source to <OUT_DIR>/<stem>.wasm and <OUT_DIR>/<stem>.js.
 
 EXAMPLES:
     adesh compile-wasm-js program.adesh dist/wasm"#;
-    page("compile-wasm-js", "compile WASM and JS into a directory", body)
+    page(
+        "compile-wasm-js",
+        "compile WASM and JS into a directory",
+        body,
+    )
 }
 
 fn compile_native_help() -> String {
@@ -1129,7 +1133,11 @@ EXAMPLES:
     adesh compile-native program.adesh app.exe
 
 For the full option set use `adesh build --help`."#;
-    page("compile-native", "compile to a native object/executable", body)
+    page(
+        "compile-native",
+        "compile to a native object/executable",
+        body,
+    )
 }
 
 fn compile_native_rust_help() -> String {
@@ -1241,7 +1249,11 @@ EXAMPLES:
     adesh compile-aot math.adesh math.o -c --emit-header math.h
     adesh compile-aot string.adesh string.o -c --emit-header string.h
     gcc app.c math.o string.o -o app.exe"#;
-    page("compile-aot", "compile a native executable (power-user AOT)", body)
+    page(
+        "compile-aot",
+        "compile a native executable (power-user AOT)",
+        body,
+    )
 }
 
 fn disassemble_help() -> String {
@@ -1427,7 +1439,11 @@ EXAMPLES:
     adesh gpu-check --external-linker
 "#
     );
-    page("gpu-check", "probe GPU devices and the native toolchain", &body)
+    page(
+        "gpu-check",
+        "probe GPU devices and the native toolchain",
+        &body,
+    )
 }
 
 fn adob_help() -> String {

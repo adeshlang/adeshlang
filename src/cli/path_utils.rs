@@ -35,41 +35,30 @@ pub fn find_file_recursive(start: &Path, target: &str) -> Option<PathBuf> {
     None
 }
 
-/// Resolve input path: try the original path first, otherwise attempt to
-/// find a matching file by searching the current working directory
-/// recursively. Returns (resolved_path, source_contents) or Err(message).
+/// Resolve input path: check if the specified file exists (either directly
+/// or by appending `.adesh`).
+/// Does NOT search parent drives/directories recursively. Returns (resolved_path, source_contents)
+/// or Err(message) immediately.
 pub fn resolve_input_path(orig_path: &PathBuf) -> Result<(PathBuf, String), String> {
-    if let Ok(s) = fs::read_to_string(&orig_path) {
-        return Ok((orig_path.clone(), s));
-    }
-
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let target = orig_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| format!("invalid path: {}", orig_path.display()))?;
-
-    // Try recursive search from CWD
-    if let Some(found) = find_file_recursive(&cwd, target) {
-        if let Ok(s) = fs::read_to_string(&found) {
-            return Ok((found, s));
+    if orig_path.is_file() {
+        if let Ok(s) = fs::read_to_string(orig_path) {
+            return Ok((orig_path.clone(), s));
         }
     }
 
-    // As a fallback, try searching from the project root (parent dirs)
-    let mut probe = cwd.as_path();
-    while let Some(parent) = probe.parent() {
-        if let Some(found) = find_file_recursive(parent, target) {
-            if let Ok(s) = fs::read_to_string(&found) {
-                return Ok((found, s));
+    // If path doesn't have an extension, try appending .adesh
+    if orig_path.extension().is_none() {
+        let mut with_adesh = orig_path.clone();
+        with_adesh.set_extension("adesh");
+        if with_adesh.is_file() {
+            if let Ok(s) = fs::read_to_string(&with_adesh) {
+                return Ok((with_adesh, s));
             }
         }
-        probe = parent;
     }
 
     Err(format!(
-        "failed to read file '{}'. Searched current directory and subdirectories for '{}'",
-        orig_path.display(),
-        target
+        "error: file not found: '{}'",
+        orig_path.display()
     ))
 }

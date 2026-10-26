@@ -79,9 +79,7 @@ pub fn runtime_value_to_raw_or_handle(val: RuntimeValue) -> u64 {
         RuntimeValue::U32(u) => u as u64,
         RuntimeValue::U16(u) => u as u64,
         RuntimeValue::U8(u) => u as u64,
-        RuntimeValue::Bool(b) => {
-            store_value(RuntimeValue::Bool(b))
-        }
+        RuntimeValue::Bool(b) => store_value(RuntimeValue::Bool(b)),
         RuntimeValue::Char(c) => c as u64,
         RuntimeValue::Float(f) | RuntimeValue::F64(f) => f.to_bits(),
         RuntimeValue::F32(f) => f.to_bits() as u64,
@@ -728,6 +726,9 @@ pub unsafe extern "C" fn jit_object_set_handle(
         val
     } else if let Some(s) = get_string_val(value_handle) {
         RuntimeValue::String(s)
+    } else if value_handle != 0 && value_handle < 0x10000 {
+        // Raw primitive value (e.g., an unboxed integer passed through generic parameter)
+        RuntimeValue::Int(value_handle as i64)
     } else {
         RuntimeValue::Null
     };
@@ -3858,9 +3859,7 @@ pub extern "C" fn jit_call_method(
         update_value(obj_handle, res.clone());
     }
     match res {
-        RuntimeValue::Bool(b) => {
-            store_value(RuntimeValue::Bool(b))
-        }
+        RuntimeValue::Bool(b) => store_value(RuntimeValue::Bool(b)),
         RuntimeValue::Int(i) => i as u64,
         RuntimeValue::Null => 0,
         other => store_value(other),

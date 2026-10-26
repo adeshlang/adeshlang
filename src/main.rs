@@ -423,11 +423,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                                 break;
                             }
                         }
-                        if let Some(f) = found {
-                            f
-                        } else {
-                            orig_path
-                        }
+                        if let Some(f) = found { f } else { orig_path }
                     } else {
                         orig_path
                     }

@@ -30,7 +30,7 @@ jobs:
       fail-fast: false
       matrix:
         os:
-          - ubuntu-latest
+          - ubuntu-22.04
           - windows-latest
           - macos-latest
 
@@ -81,12 +81,17 @@ jobs:
       # adesh-linker crate) runs here too; Mach-O EXECUTION verification
       # does not exist yet and is tracked as pending in TARGET_MATRIX.md.
       - name: Test integration suites (Linux, ELF execution)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-22.04'
         run: |
           cargo test --tests
           cargo test --test native_phase3_linux_e2e_test
           cargo test --test native_phase8_dynamic_elf_test
           cargo test --test native_phase8_tls_ehframe_test
+
+      - name: Verify GLIBC compatibility gate on built binary (GLIBC 2.35)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          python3 scripts/ci/check_glibc_compatibility.py 2.35 target/debug/adesh target/debug/libadesh_runtime.a
 
       # macOS: the full integration set. Native JIT tests compile out on
       # Apple Silicon because Cranelift PLT support is x86-64-only; AOT
