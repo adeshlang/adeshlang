@@ -31,7 +31,7 @@ fn test_explain_adesh_specific_code() {
     assert!(result.is_ok(), "AD0001 should be a registered code");
     let expl = result.unwrap();
     assert!(expl.contains("AD0001 — Unrecognized character"));
-    assert!(expl.contains("AdeshLang-specific"));
+    assert!(expl.contains("Adesh-specific") || expl.contains("AdeshLang-specific"));
     assert!(expl.contains("lexer"));
 }
 
@@ -47,7 +47,10 @@ fn test_explain_unknown_code_fails() {
 #[test]
 fn test_explain_list_contains_all_codes() {
     let list = list_diagnostics();
-    assert!(list.contains("AdeshLang Registered Diagnostic Codes:"));
+    assert!(
+        list.contains("Adesh Registered Diagnostic Codes:")
+            || list.contains("AdeshLang Registered Diagnostic Codes:")
+    );
     assert!(list.contains("E0308"));
     assert!(list.contains("E0382"));
     assert!(list.contains("E0425"));

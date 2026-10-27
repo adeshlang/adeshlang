@@ -1288,11 +1288,11 @@ fn format_static_val_for_wasm_env(e: &Expr, var_values: &FastMap<String, Value>)
                 &val, spec,
             ))
         }
-        ExprKind::Get(target, field) => {
+        ExprKind::Get(_target, _field) => {
             let val = expr_to_value_env(e, var_values)?;
             Some(crate::execution::runtime_core::format::fmt(&val))
         }
-        ExprKind::OptGet(target, field) => {
+        ExprKind::OptGet(_target, _field) => {
             let val = expr_to_value_env(e, var_values)?;
             Some(crate::execution::runtime_core::format::fmt(&val))
         }

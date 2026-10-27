@@ -57,8 +57,5 @@ pub fn resolve_input_path(orig_path: &PathBuf) -> Result<(PathBuf, String), Stri
         }
     }
 
-    Err(format!(
-        "error: file not found: '{}'",
-        orig_path.display()
-    ))
+    Err(format!("error: file not found: '{}'", orig_path.display()))
 }
