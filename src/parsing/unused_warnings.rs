@@ -179,6 +179,33 @@ impl<'a> UnusedWarningPass<'a> {
         src: &'a str,
         config: &RuntimeConfig,
     ) -> Vec<String> {
+        let file_prefix = match file {
+            Some(f) => f.to_string(),
+            None => "".to_string(),
+        };
+
+        Self::collect_warnings(stmts, src, config)
+            .into_iter()
+            .map(|(w, line, col)| {
+                let warning_tag = "warning".yellow().bold();
+                if file_prefix.is_empty() {
+                    format!("{}:{}:{}: {}", warning_tag, line, col, w)
+                } else {
+                    let location_tag = format!("{}:{}:{}", file_prefix, line, col).cyan();
+                    format!("{}: {}: {}", warning_tag, location_tag, w)
+                }
+            })
+            .collect()
+    }
+
+    /// Structured entrypoint: returns `(message, line, col)` tuples without
+    /// terminal formatting, suitable for IDEs and structured consumers
+    /// (e.g. the WebAssembly editor diagnostics API).
+    pub fn collect_warnings(
+        stmts: &[Stmt],
+        src: &'a str,
+        config: &RuntimeConfig,
+    ) -> Vec<(String, usize, usize)> {
         if config.disable_warnings
             || std::env::var("ADESHLANG_DISABLE_WARNINGS").is_ok()
             || std::env::var("ADESHLANG_NO_WARNINGS").is_ok()
@@ -189,25 +216,11 @@ impl<'a> UnusedWarningPass<'a> {
         let mut pass = Self::new(src);
         pass.analyze_ast(stmts);
 
-        let file_prefix = match file {
-            Some(f) => f.to_string(),
-            None => "".to_string(),
-        };
-
         let warnings = std::mem::take(&mut pass.warnings);
 
         warnings
             .into_iter()
             .filter(|(_, line, _)| !pass.is_suppressed(*line))
-            .map(|(w, line, col)| {
-                let warning_tag = "warning".yellow().bold();
-                if file_prefix.is_empty() {
-                    format!("{}:{}:{}: {}", warning_tag, line, col, w)
-                } else {
-                    let location_tag = format!("{}:{}:{}", file_prefix, line, col).cyan();
-                    format!("{}: {}: {}", warning_tag, location_tag, w)
-                }
-            })
             .collect()
     }
 

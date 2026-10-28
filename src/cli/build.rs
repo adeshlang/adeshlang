@@ -1305,6 +1305,7 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
                     crate::backends::aot::cranelift_impl::linking::get_static_runtime_lib(&triple)?;
                 let link_res =
                     adesh_linker::Linker::link(&[temp_adob.clone(), runtime], link_config);
+                #[cfg(feature = "monitor")]
                 if let Ok(session_id) = std::env::var("ADESH_OBSERVATORY_SESSION") {
                     let success = link_res.is_ok();
                     let error_message = link_res.as_ref().err().map(ToString::to_string);
@@ -1349,6 +1350,7 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
                 config.emit,
                 EmitType::Wasm | EmitType::Adob | EmitType::Assembly
             ) {
+                #[cfg(feature = "monitor")]
                 if let Ok(session_id) = std::env::var("ADESH_OBSERVATORY_SESSION") {
                     let output_size_bytes =
                         fs::metadata(&output).ok().map(|metadata| metadata.len());

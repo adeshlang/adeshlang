@@ -132,11 +132,17 @@ pub fn dispatch(options: CliOptions) -> Result<(), String> {
 
     match options.command {
         AdlCommand::Ai => {
+            #[cfg(not(target_arch = "wasm32"))]
             crate::cli::commands::execute_ai_command(&options.args);
+            #[cfg(target_arch = "wasm32")]
+            println!("`adl ai` is not available in WebAssembly builds.");
             return Ok(());
         }
         AdlCommand::Repair => {
+            #[cfg(not(target_arch = "wasm32"))]
             crate::cli::repair::execute_repair_command();
+            #[cfg(target_arch = "wasm32")]
+            println!("`adl repair` is not available in WebAssembly builds.");
             return Ok(());
         }
         AdlCommand::Doctor => {
@@ -148,7 +154,10 @@ pub fn dispatch(options: CliOptions) -> Result<(), String> {
                     options.dry_run,
                 );
             }
+            #[cfg(not(target_arch = "wasm32"))]
             crate::cli::doctor::execute_doctor_command();
+            #[cfg(target_arch = "wasm32")]
+            println!("`adl doctor` is not available in WebAssembly builds.");
             return Ok(());
         }
         AdlCommand::New | AdlCommand::Init => {

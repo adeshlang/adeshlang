@@ -31,7 +31,9 @@ pub fn check_ownership_and_parse_in(
     let clean_src = super::directives::strip_compile_directive(src);
     let file_owned = file.map(|f| f.to_string());
 
+    #[cfg(feature = "monitor")]
     let session_id = std::env::var("ADESH_OBSERVATORY_SESSION").ok();
+    #[cfg(feature = "monitor")]
     let tele_client = session_id.map(adesh_monitor_core::ipc::TelemetryClient::new);
 
     // Stage: Lex & Parse
@@ -43,6 +45,7 @@ pub fn check_ownership_and_parse_in(
     let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
     let mut parser = Parser::new(tokens, file_owned.clone());
     let mut ast = parser.parse_program().map_err(|e| e.to_string())?;
+    #[cfg(feature = "monitor")]
     if let Some(ref tc) = tele_client {
         tc.emit(adesh_monitor_protocol::EventPayload::CompilerStage(
             adesh_monitor_protocol::CompilerStageEvent {
@@ -88,6 +91,7 @@ pub fn check_ownership_and_parse_in(
     }
     let t_dec_start = std::time::Instant::now();
     execute_compile_time_phases(&mut ast)?;
+    #[cfg(feature = "monitor")]
     if let Some(ref tc) = tele_client {
         tc.emit(adesh_monitor_protocol::EventPayload::CompilerStage(
             adesh_monitor_protocol::CompilerStageEvent {
@@ -123,6 +127,7 @@ pub fn check_ownership_and_parse_in(
     }
     let t_raii_start = std::time::Instant::now();
     ast = crate::memory::raii::transform_ast_with_raii(ast);
+    #[cfg(feature = "monitor")]
     if let Some(ref tc) = tele_client {
         tc.emit(adesh_monitor_protocol::EventPayload::CompilerStage(
             adesh_monitor_protocol::CompilerStageEvent {
@@ -139,6 +144,7 @@ pub fn check_ownership_and_parse_in(
     // Lower to HIR (include tests so test functions called by user code or test runners are retained)
     let t_hir_start = std::time::Instant::now();
     let hir = ast_to_hir(&ast, true)?;
+    #[cfg(feature = "monitor")]
     if let Some(ref tc) = tele_client {
         tc.emit(adesh_monitor_protocol::EventPayload::CompilerStage(
             adesh_monitor_protocol::CompilerStageEvent {
@@ -164,6 +170,7 @@ pub fn check_ownership_and_parse_in(
 
     let t_safety_start = std::time::Instant::now();
     check_memory_safety_compile_time_in(&hir, file)?;
+    #[cfg(feature = "monitor")]
     if let Some(ref tc) = tele_client {
         tc.emit(adesh_monitor_protocol::EventPayload::CompilerStage(
             adesh_monitor_protocol::CompilerStageEvent {

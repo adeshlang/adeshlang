@@ -32,6 +32,29 @@ pub fn list_registered_external_toolchains() -> Vec<(String, PathBuf)> {
     results
 }
 
+/// Dispatch `toolchain install` flows. The installer downloads native
+/// archives over TLS and runs OS installers, so it is native-only; the
+/// WebAssembly editor build ships a clear error instead.
+#[cfg(not(target_arch = "wasm32"))]
+fn dispatch_external_install(args: &[String]) {
+    super::install::execute_external_install_command(args);
+}
+
+#[cfg(target_arch = "wasm32")]
+fn dispatch_external_install(_args: &[String]) {
+    println!("Toolchain installation is not available in WebAssembly builds.");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn dispatch_expose(args: &[String]) {
+    super::install::execute_expose_command(args);
+}
+
+#[cfg(target_arch = "wasm32")]
+fn dispatch_expose(_args: &[String]) {
+    println!("Exposing toolchain artifacts is not available in WebAssembly builds.");
+}
+
 pub fn execute_toolchain_command(args: &[String]) {
     execute_toolchain_command_with_preference(args, None);
 }
@@ -146,7 +169,7 @@ pub fn execute_toolchain_command_with_preference(
                     .filter(|a| *a != "--external" && *a != "-e")
                     .cloned()
                     .collect();
-                super::install::execute_external_install_command(&filtered);
+                dispatch_external_install(&filtered);
             } else {
                 println!("Notice: Adesh utilizes its built-in Native Toolchain by default.");
                 println!(
@@ -162,7 +185,7 @@ pub fn execute_toolchain_command_with_preference(
             let next_cmd = args.get(1).map(String::as_str).unwrap_or("install");
             if next_cmd == "install" {
                 let remaining = if args.len() > 2 { &args[2..] } else { &[] };
-                super::install::execute_external_install_command(remaining);
+                dispatch_external_install(remaining);
             } else if next_cmd == "list" {
                 let registered = list_registered_external_toolchains();
                 if registered.is_empty() {
@@ -182,7 +205,7 @@ pub fn execute_toolchain_command_with_preference(
             let next_cmd = args.get(1).map(String::as_str).unwrap_or("install");
             if next_cmd == "install" {
                 let remaining = if args.len() > 2 { &args[2..] } else { &[] };
-                super::install::execute_external_install_command(remaining);
+                dispatch_external_install(remaining);
             } else if next_cmd == "list" {
                 let registered = list_registered_external_toolchains();
                 if registered.is_empty() {
@@ -198,7 +221,7 @@ pub fn execute_toolchain_command_with_preference(
                 println!("       adesh toolchain external list");
             }
         }
-        "expose" => super::install::execute_expose_command(&args[1..]),
+        "expose" => dispatch_expose(&args[1..]),
         "help" | "--help" | "-h" => {
             println!("Adesh Toolchain Manager");
             println!("============================================================");

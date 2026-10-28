@@ -990,7 +990,16 @@ SPEED GUIDE:
     # Build and run, debug builds
     adesh build program.adesh -o app --run
     adesh build program.adesh --debug -o app.exe"#;
-    format!("{}\n{}", crate::cli::build::build_help_message(), extra)
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        format!("{}\n{}", crate::cli::build::build_help_message(), extra)
+    }
+    // The native build help text lives in the CLI module, which is not
+    // compiled into WebAssembly builds; the examples above still show.
+    #[cfg(target_arch = "wasm32")]
+    {
+        extra.to_string()
+    }
 }
 
 fn check_help() -> String {

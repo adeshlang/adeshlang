@@ -50,8 +50,19 @@ crate-type = ["rlib", "cdylib"]
 path = "src/lib.rs"
 
 [features]
-default = ["mimalloc"]
+default = ["mimalloc", "monitor"]
 mimalloc = ["dep:mimalloc"]
+# Adesh Observatory (ARO) integration: native-only monitoring/telemetry.
+# Pulled in by the CLI; disabled for WebAssembly builds (SQLite, terminal
+# backends and OS metric providers do not exist in the browser sandbox).
+monitor = [
+    "dep:adesh-monitor-protocol",
+    "dep:adesh-monitor-platform",
+    "dep:adesh-monitor-core",
+    "dep:adesh-monitor-cli",
+    "dep:adesh-monitor-tui",
+    "adesh-linker/monitor",
+]
 # Allow HTTP requests to localhost/internal network addresses (disabled by default for SSRF protection)
 allow_internal_network = []
 print-bench = []
@@ -60,13 +71,13 @@ print-bench = []
 adesh-format = { path = "crates/adesh-format" }
 adesh-object = { path = "crates/adesh-object" }
 adesh-codegen = { path = "crates/adesh-codegen" }
-adesh-linker = { path = "linker" }
+adesh-linker = { path = "linker", default-features = false }
 adesh-runtime = { path = "crates/adesh-runtime" }
-adesh-monitor-protocol = { path = "crates/adesh-monitor-protocol" }
-adesh-monitor-platform = { path = "crates/adesh-monitor-platform" }
-adesh-monitor-core = { path = "crates/adesh-monitor-core" }
-adesh-monitor-cli = { path = "crates/adesh-monitor-cli" }
-adesh-monitor-tui = { path = "crates/adesh-monitor-tui" }
+adesh-monitor-protocol = { path = "crates/adesh-monitor-protocol", optional = true }
+adesh-monitor-platform = { path = "crates/adesh-monitor-platform", optional = true }
+adesh-monitor-core = { path = "crates/adesh-monitor-core", optional = true }
+adesh-monitor-cli = { path = "crates/adesh-monitor-cli", optional = true }
+adesh-monitor-tui = { path = "crates/adesh-monitor-tui", optional = true }
 colored = "2.0"
 regex = "1.9"
 num-bigint = "0.4"
@@ -76,7 +87,10 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
 rand = "0.8"
-chrono = "0.4"
+# `wasmbind` (chrono's default) and uuid's `js` feature pull wasm-bindgen JS
+# glue into WebAssembly builds; the browser runtime uses a glue-free C-ABI
+# loader, so keep those features off.
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 chrono-tz = "0.9"
 once_cell = "1"
 unicode-width = "0.2"
@@ -108,13 +122,15 @@ subtle = "2.5"
 zeroize = { version = "1.7", features = ["zeroize_derive"] }
 hex = "0.4"
 base64 = "0.22"
-uuid = { version = "1.10", features = ["v4", "v7", "serde", "js"] }
 x509-parser = "0.16"
 pem = "3.0"
 der = "0.7"
 jsonwebtoken = { version = "10.4", features = ["rust_crypto"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# `uuid` v4/v7 need an RNG backend that wasm32-unknown-unknown cannot supply
+# without wasm-bindgen glue; its only use (ARO session IDs) is native-only.
+uuid = { version = "1.10", features = ["v4", "v7", "serde"] }
 # Compression dependencies
 flate2 = "1.0"
 brotli = "7.0"
@@ -161,7 +177,10 @@ wasmtime = "36.0.7"
 libffi = "5.2"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { version = "0.2", features = ["js"] }
+# `js` would pull wasm-bindgen JS glue (incompatible with the glue-free C-ABI
+# web loader); `custom` keeps the browser build self-contained with the
+# deterministic entropy shim registered in crates/adesh-wasm.
+getrandom = { version = "0.2", features = ["custom"] }
 
 [dev-dependencies]
 adesh-format = { path = "crates/adesh-format" }

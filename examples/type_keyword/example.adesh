@@ -1,0 +1,13 @@
+type Port = u16;
+
+type Service = {
+  name: string,
+  port: Port,
+}
+
+let api: Service = {
+  name: "edge-api",
+  port: 8080,
+};
+
+print("service:", api.name, "→", api.port);

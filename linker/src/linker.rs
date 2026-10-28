@@ -1227,6 +1227,7 @@ impl Linker {
         let elapsed = (elapsed_micros / 1000) as u128;
 
         // Emit real Linker Diagnostics telemetry to ARO Observatory
+        #[cfg(feature = "monitor")]
         if let Ok(session_id) = std::env::var("ADESH_OBSERVATORY_SESSION") {
             let output_size_bytes = std::fs::metadata(&ctx.config.output_path)
                 .ok()

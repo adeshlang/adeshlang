@@ -2325,22 +2325,41 @@ pub fn compile_to_file(src: &str, out: &Path) -> Result<(), LangError> {
 }
 
 pub fn compile_to_file_with_base(src: &str, out: &Path, base: &Path) -> Result<(), LangError> {
-    let body_src = if src
-        .lines()
-        .next()
-        .map(|l| l.trim_start().starts_with("@compile"))
-        .unwrap_or(false)
+    // The file-based Adesh→WASM compiler drives the CLI parsing/import-linking
+    // pipeline and writes artifacts to disk; it is only reachable through the
+    // native CLI. Inside a browser build there is no CLI module and no real
+    // filesystem, so surface a clear error instead.
+    #[cfg(not(target_arch = "wasm32"))]
     {
-        src.lines().skip(1).collect::<Vec<&str>>().join("\n")
-    } else {
-        src.to_string()
-    };
+        let body_src = if src
+            .lines()
+            .next()
+            .map(|l| l.trim_start().starts_with("@compile"))
+            .unwrap_or(false)
+        {
+            src.lines().skip(1).collect::<Vec<&str>>().join("\n")
+        } else {
+            src.to_string()
+        };
 
-    let (prog, _) = crate::cli::parsing::check_ownership_and_parse(&body_src, &Default::default())
-        .map_err(|e| LangError::new(ErrorKind::User, e, 0, 0, "".into()))?;
-    let prog = crate::cli::static_imports::link_ast(prog, base)
-        .map_err(|e| LangError::new(ErrorKind::User, e, 0, 0, "".into()))?;
-    compile_ast_to_file(prog, out)
+        let (prog, _) = crate::cli::parsing::check_ownership_and_parse(&body_src, &Default::default())
+            .map_err(|e| LangError::new(ErrorKind::User, e, 0, 0, "".into()))?;
+        let prog = crate::cli::static_imports::link_ast(prog, base)
+            .map_err(|e| LangError::new(ErrorKind::User, e, 0, 0, "".into()))?;
+        compile_ast_to_file(prog, out)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = (src, out, base);
+        Err(LangError::new(
+            ErrorKind::User,
+            "Adesh-to-WASM file compilation requires the native CLI".to_string(),
+            0,
+            0,
+            "".into(),
+        ))
+    }
 }
 
 pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), LangError> {

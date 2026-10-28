@@ -200,12 +200,14 @@ pub fn execute_ai_command(args: &[String]) {
     }
 
     // Check if AI model update is requested
+    #[cfg(not(target_arch = "wasm32"))]
     if args.first().map(|s| s.as_str()) == Some("update") {
         crate::update::execute_ai_update_command(&args[1..]);
         return;
     }
 
     // Check if AI model setup/download is requested
+    #[cfg(not(target_arch = "wasm32"))]
     if args.first().map(|s| s.as_str()) == Some("setup")
         || args.first().map(|s| s.as_str()) == Some("download")
     {

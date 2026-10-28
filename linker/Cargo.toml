@@ -12,18 +12,25 @@ autobins = false
 name = "adesh_linker"
 path = "src/lib.rs"
 
+[features]
+default = ["monitor"]
+# ARO observatory telemetry: native-only (SQLite-backed collector, OS IPC).
+monitor = ["dep:adesh-monitor-protocol", "dep:adesh-monitor-core"]
+
 [[bin]]
 name = "adeshlink"
 path = "src/main.rs"
+required-features = ["monitor"]
 
 [[bin]]
 name = "gen_windows_exe"
 path = "src/bin/gen_windows_exe.rs"
+required-features = ["monitor"]
 
 [dependencies]
 adesh-object = { path = "../crates/adesh-object" }
-adesh-monitor-protocol = { path = "../crates/adesh-monitor-protocol" }
-adesh-monitor-core = { path = "../crates/adesh-monitor-core" }
+adesh-monitor-protocol = { path = "../crates/adesh-monitor-protocol", optional = true }
+adesh-monitor-core = { path = "../crates/adesh-monitor-core", optional = true }
 sha2 = { version = "0.10", default-features = false }
 
 [dev-dependencies]

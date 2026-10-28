@@ -20,6 +20,7 @@ pub mod sanitizer_rt;
 pub mod stream_io;
 pub mod sys_io;
 pub mod threading;
+pub mod wasm_alloc;
 
 pub use abi::*;
 pub use abi_v1::*;
@@ -2473,7 +2474,7 @@ pub extern "C" fn adesh_rt_alloc_tracked(size: i64, _metadata_ptr: i64) -> i64 {
         if size == 0 {
             return 0;
         }
-        let ptr = unsafe { libc::malloc(size) };
+        let ptr = unsafe { crate::wasm_alloc::raw_malloc(size) };
         if ptr.is_null() {
             return 0;
         }
@@ -2497,7 +2498,7 @@ pub extern "C" fn adesh_rt_free_tracked(ptr: i64, _metadata_ptr: i64) -> i64 {
         let tracked = lock_tracked_allocations().remove(&(ptr as usize));
         if tracked.is_some() {
             unsafe {
-                libc::free(ptr as *mut libc::c_void);
+                crate::wasm_alloc::raw_free(ptr as *mut core::ffi::c_void);
             }
         }
     }
@@ -2537,7 +2538,7 @@ pub extern "C" fn adesh_rt_scope_exit(scope_id: i64) -> i64 {
     };
     for (ptr, _size) in to_free {
         unsafe {
-            libc::free(ptr as *mut libc::c_void);
+            crate::wasm_alloc::raw_free(ptr as *mut core::ffi::c_void);
         }
     }
     0

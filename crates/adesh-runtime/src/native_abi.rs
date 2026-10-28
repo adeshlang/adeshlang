@@ -144,7 +144,7 @@ pub extern "C" fn aot_string_concat_cstr(left: u64, right: u64) -> *mut std::os:
     };
     let bytes = c_str.as_bytes_with_nul();
     unsafe {
-        let ptr = libc::malloc(bytes.len()) as *mut std::os::raw::c_char;
+        let ptr = crate::wasm_alloc::raw_malloc(bytes.len()) as *mut std::os::raw::c_char;
         if !ptr.is_null() {
             std::ptr::copy_nonoverlapping(
                 bytes.as_ptr() as *const std::os::raw::c_char,
@@ -256,7 +256,7 @@ pub extern "C" fn aot_format_value_str(
     };
     let bytes = c_str.as_bytes_with_nul();
     unsafe {
-        let ptr = libc::malloc(bytes.len()) as *mut core::ffi::c_char;
+        let ptr = crate::wasm_alloc::raw_malloc(bytes.len()) as *mut core::ffi::c_char;
         if !ptr.is_null() {
             std::ptr::copy_nonoverlapping(
                 bytes.as_ptr() as *const core::ffi::c_char,
@@ -452,14 +452,14 @@ pub extern "C" fn aot_alloc(size: i64) -> *mut core::ffi::c_void {
     if size <= 0 {
         return core::ptr::null_mut();
     }
-    unsafe { libc::malloc(size as usize) as *mut core::ffi::c_void }
+    unsafe { crate::wasm_alloc::raw_malloc(size as usize) }
 }
 
 /// Free a pointer previously returned by `aot_alloc`.
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_free(ptr: *mut core::ffi::c_void) {
     if !ptr.is_null() {
-        unsafe { libc::free(ptr as *mut core::ffi::c_void) }
+        unsafe { crate::wasm_alloc::raw_free(ptr) }
     }
 }
 

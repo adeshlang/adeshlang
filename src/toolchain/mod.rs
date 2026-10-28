@@ -8,16 +8,22 @@
 //! - Env: Environment variable handling
 //! - Timer: Performance timing utilities
 
+// Native-only toolchain components: archive extraction (compression codecs)
+// and network downloads (TLS) exist solely for `adesh toolchain install`,
+// which cannot run inside the WebAssembly sandbox.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod archive;
 pub mod cli;
 pub mod config;
 pub mod docgen;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod download;
 pub mod env;
 pub mod expose;
 pub mod formatter;
 pub mod manifest;
 pub mod resolver;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod source_build;
 pub mod timer;
 

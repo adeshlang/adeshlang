@@ -25,16 +25,22 @@ impl NativeBacktrace {
     pub fn capture() -> Self {
         let mut frames = Vec::new();
 
-        // Capture top-level caller activation frames
+        // Capture top-level caller activation frames. The synthetic
+        // instruction pointers below are 64-bit native stack addresses; mask
+        // them down so the literal stays in range on 32-bit targets (wasm32).
+        let synthetic_ip = |offset: usize| -> usize {
+            (0x7FFF_0000_1000u64.wrapping_add(offset as u64) & usize::MAX as u64) as usize
+        };
+
         frames.push(BacktraceFrame {
-            instruction_pointer: 0x7FFF_0000_1000,
+            instruction_pointer: synthetic_ip(0),
             symbol_name: Some("adesh_runtime::backtrace::NativeBacktrace::capture".to_string()),
             file_name: Some("crates/adesh-runtime/src/backtrace.rs".to_string()),
-            line_number: Some(25),
+            line_number: Some(34),
         });
 
         frames.push(BacktraceFrame {
-            instruction_pointer: 0x7FFF_0000_10A0,
+            instruction_pointer: synthetic_ip(0xA0),
             symbol_name: Some("main".to_string()),
             file_name: Some("src/main.adesh".to_string()),
             line_number: Some(10),

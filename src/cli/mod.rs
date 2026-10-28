@@ -29,6 +29,8 @@ pub mod import_linking;
 pub mod ir_utils;
 pub mod memory_stats;
 pub mod native_engine;
+// ARO observatory integration is native-only (SQLite/terminal/OS metrics).
+#[cfg(feature = "monitor")]
 pub mod observatory;
 pub mod parsing;
 pub mod path_utils;

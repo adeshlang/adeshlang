@@ -130,6 +130,9 @@ pub mod testing;
 pub mod toolchain;
 pub mod types;
 pub mod typesystem;
+// Self-update / network downloader subsystem: native-only (TLS + OS process
+// replacement). The WebAssembly editor build never ships it.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod update;
 pub mod utils;
 

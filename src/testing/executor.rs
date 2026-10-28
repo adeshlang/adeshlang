@@ -75,6 +75,7 @@ impl InterpreterTestExecutor {
     // ── JIT Backend (in-process) ─────────────────────────────────────────────
 
     /// Execute test function with JIT compiler in-process.
+    #[cfg(not(target_arch = "wasm32"))]
     fn run_test_jit(&self, test_name: &str) -> Result<Duration, String> {
         let start = Instant::now();
         let driver_src = self.build_driver_source(test_name);
@@ -92,9 +93,10 @@ impl InterpreterTestExecutor {
         }
     }
 
-    // ── Native JIT Backend (in-process) ──────────────────────────────────────
+    // ── Native JIT Backend (in-process Cranelift machine code) ───────────────
 
     /// Execute test function with Native JIT (Cranelift machine code) in-process.
+    #[cfg(not(target_arch = "wasm32"))]
     fn run_test_native_jit(&self, test_name: &str) -> Result<Duration, String> {
         let start = Instant::now();
         let driver_src = self.build_driver_source(test_name);
@@ -119,6 +121,7 @@ impl InterpreterTestExecutor {
     // ── Adaptive JIT (in-process) ────────────────────────────────────────────
 
     /// Execute test function with Adaptive JIT in-process.
+    #[cfg(not(target_arch = "wasm32"))]
     fn run_test_adaptive_jit(&self, test_name: &str) -> Result<Duration, String> {
         let start = Instant::now();
         let driver_src = self.build_driver_source(test_name);
@@ -138,6 +141,7 @@ impl InterpreterTestExecutor {
     // ── Tiered JIT (in-process) ──────────────────────────────────────────────
 
     /// Execute test function with Tiered JIT in-process.
+    #[cfg(not(target_arch = "wasm32"))]
     fn run_test_tiered_jit(&self, test_name: &str) -> Result<Duration, String> {
         let start = Instant::now();
         let driver_src = self.build_driver_source(test_name);
@@ -157,6 +161,7 @@ impl InterpreterTestExecutor {
     // ── Bytecode VM (in-process) ─────────────────────────────────────────────
 
     /// Execute test function with Bytecode VM in-process.
+    #[cfg(not(target_arch = "wasm32"))]
     fn run_test_bytecode(&self, test_name: &str) -> Result<Duration, String> {
         let start = Instant::now();
         let driver_src = self.build_driver_source(test_name);
@@ -173,6 +178,7 @@ impl InterpreterTestExecutor {
     // ── AOT Backend (in-process Cranelift compilation & execution) ───────────
 
     /// Execute test function with AOT Cranelift backend.
+    #[cfg(not(target_arch = "wasm32"))]
     fn run_test_aot(&self, test_name: &str) -> Result<Duration, String> {
         use crate::backends::aot::cranelift::{AotOptions, aot_compile_with_options};
         use std::process::Command;
@@ -219,6 +225,7 @@ impl InterpreterTestExecutor {
     // ── WASM Backend (in-process compile + wasm execution) ───────────────────
 
     /// Execute test function with WebAssembly backend.
+    #[cfg(not(target_arch = "wasm32"))]
     fn run_test_wasm(&self, test_name: &str) -> Result<Duration, String> {
         let start = Instant::now();
         let driver_src = self.build_driver_source(test_name);
@@ -273,6 +280,43 @@ impl InterpreterTestExecutor {
         out.push_str("    __adesh_test_driver__();\n");
         out.push_str("}\n");
         out
+    }
+
+    // ── Native-machine-code backends (unavailable in WebAssembly builds) ────
+
+    #[cfg(target_arch = "wasm32")]
+    fn run_test_jit(&self, _test_name: &str) -> Result<Duration, String> {
+        Err("JIT backend is not available in WebAssembly builds".to_string())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn run_test_native_jit(&self, _test_name: &str) -> Result<Duration, String> {
+        Err("Native JIT backend is not available in WebAssembly builds".to_string())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn run_test_adaptive_jit(&self, _test_name: &str) -> Result<Duration, String> {
+        Err("Adaptive JIT backend is not available in WebAssembly builds".to_string())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn run_test_tiered_jit(&self, _test_name: &str) -> Result<Duration, String> {
+        Err("Tiered JIT backend is not available in WebAssembly builds".to_string())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn run_test_aot(&self, _test_name: &str) -> Result<Duration, String> {
+        Err("AOT backend is not available in WebAssembly builds".to_string())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn run_test_bytecode(&self, _test_name: &str) -> Result<Duration, String> {
+        Err("Bytecode VM backend is not available in WebAssembly builds".to_string())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn run_test_wasm(&self, _test_name: &str) -> Result<Duration, String> {
+        Err("WASM file backend requires the native CLI and is unavailable in WebAssembly builds".to_string())
     }
 }
 
