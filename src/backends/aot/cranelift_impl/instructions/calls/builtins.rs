@@ -2102,7 +2102,7 @@ pub(crate) fn handle_call_builtin(
                 ctx.value_types.insert(*dst, AotValueType::Int);
             }
         }
-        "str_passthrough" => {
+        "str" => {
             // str() conversion - for now just pass through
             if !args.is_empty() {
                 let val = ctx
