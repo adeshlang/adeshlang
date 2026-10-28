@@ -118,7 +118,6 @@ TIER 1 — SUPPORTED & PRODUCTION VERIFIED (End-to-End Native Toolchain & Tested
   * aarch64-linux       (Linux ARM64, System V ABI)
   * aarch64-macos       (macOS Apple Silicon, Mach-O 64-bit, LC_MAIN)
   * x86_64-macos        (macOS Intel 64-bit, Mach-O)
-  * wasm32-wasi         (WebAssembly Core 2.0 / WASI Preview 1)
   * i686-windows        (Windows PE32 x86)
   * i686-linux          (Linux ELF32 x86)
 
@@ -132,6 +131,8 @@ TIER 2 — EXPERIMENTAL (Native Codegen & Object Linking Validated):
   * qpu-quantum         (QIR / OpenQASM 3.0 Hybrid Classical-Quantum)
 
 TIER 3 — DECLARED (Binary Format Header & Relocation Specifications Ready):
+  * wasm32-wasi         (WebAssembly: writer not implemented, links fail with LNK017)
+  * wasm32-none         (WebAssembly: same)
   * s390x-linux         (IBM z/Architecture Big-Endian ELF64)
   * mips64-linux        (MIPS 64-bit N64 ABI)
   * loong64-linux       (LoongArch 64-bit ELF)

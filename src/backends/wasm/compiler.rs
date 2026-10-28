@@ -27,12 +27,7 @@ struct CompilerContext<'a> {
 fn compute_wasm_layout(fields: &[(String, String)]) -> FieldLayout {
     let mut layout = FieldLayout::new();
     for (name, type_name) in fields {
-        let (size, align) = match type_name.as_str() {
-            "i32" | "int" => (4, 4),
-            "f64" | "number" => (8, 8),
-            "bool" => (1, 1),
-            _ => (4, 4), // Pointers (Structs, Strings)
-        };
+        let (size, align) = (8, 8);
         layout.add_field(
             name.clone(),
             size,
@@ -832,10 +827,15 @@ fn gen_expr_i32(
                 out.push(0x10);
                 write_u32_leb(2, out); // alloc (import index 2: env.alloc)
 
-                if !ctx.locals_i32.contains_key("__scratch") {
-                    return Err("Internal error: __scratch local not found".into());
+                if !ctx.locals_i32.contains_key("__scratch")
+                    || !ctx.locals_i32.contains_key("__scratch_val")
+                    || !ctx.locals_f64.contains_key("__scratch_f64")
+                {
+                    return Err("Internal error: __scratch locals not found".into());
                 }
                 let scratch_idx = *ctx.locals_i32.get("__scratch").unwrap();
+                let scratch_val_idx = *ctx.locals_i32.get("__scratch_val").unwrap();
+                let scratch_f64_idx = *ctx.locals_f64.get("__scratch_f64").unwrap();
 
                 out.push(0x22); // local.tee $scratch
                 write_u32_leb(scratch_idx, out);
@@ -844,24 +844,46 @@ fn gen_expr_i32(
                 // For each field
                 for (fname, fexpr) in fields {
                     if let Some(offset) = layout.get_field_offset(fname) {
-                        // Prepare store: ptr + offset, value
-                        out.push(0x20); // local.get $scratch
-                        write_u32_leb(scratch_idx, out);
-                        if offset > 0 {
-                            out.push(0x41);
-                            write_u32_leb(offset as u32, out);
-                            out.push(0x6A); // add
-                        }
-
-                        // Generate value
                         if let Some(fi) = layout.find_field(fname) {
                             if fi.type_name == "f64" || fi.type_name == "number" {
+                                out.push(0x20); // local.get $scratch
+                                write_u32_leb(scratch_idx, out);
                                 gen_expr_f64(fexpr, out, ctx)?;
+                                out.push(0x21); // local.set $scratch_f64
+                                write_u32_leb(scratch_f64_idx, out);
+                                out.push(0x21); // local.set $scratch
+                                write_u32_leb(scratch_idx, out);
+
+                                out.push(0x20); // local.get $scratch
+                                write_u32_leb(scratch_idx, out);
+                                if offset > 0 {
+                                    out.push(0x41);
+                                    write_u32_leb(offset as u32, out);
+                                    out.push(0x6A); // add
+                                }
+                                out.push(0x20); // local.get $scratch_f64
+                                write_u32_leb(scratch_f64_idx, out);
                                 out.push(0x39); // f64.store
                                 out.push(0x03); // align 2^3 = 8
                                 out.push(0x00); // offset 0
                             } else {
+                                out.push(0x20); // local.get $scratch
+                                write_u32_leb(scratch_idx, out);
                                 gen_expr_i32(fexpr, out, ctx)?;
+                                out.push(0x21); // local.set $scratch_val
+                                write_u32_leb(scratch_val_idx, out);
+                                out.push(0x21); // local.set $scratch
+                                write_u32_leb(scratch_idx, out);
+
+                                out.push(0x20); // local.get $scratch
+                                write_u32_leb(scratch_idx, out);
+                                if offset > 0 {
+                                    out.push(0x41);
+                                    write_u32_leb(offset as u32, out);
+                                    out.push(0x6A); // add
+                                }
+                                out.push(0x20); // local.get $scratch_val
+                                write_u32_leb(scratch_val_idx, out);
                                 out.push(0x36); // i32.store
                                 out.push(0x02); // align 2^2 = 4
                                 out.push(0x00); // offset 0
@@ -882,15 +904,30 @@ fn gen_expr_i32(
             out.push(0x10);
             write_u32_leb(2, out); // env.alloc
 
-            if !ctx.locals_i32.contains_key("__scratch") {
-                return Err("Internal error: __scratch local not found".into());
+            if !ctx.locals_i32.contains_key("__scratch") || !ctx.locals_i32.contains_key("__scratch_val") {
+                return Err("Internal error: __scratch locals not found".into());
             }
             let scratch_idx = *ctx.locals_i32.get("__scratch").unwrap();
+            let scratch_val_idx = *ctx.locals_i32.get("__scratch_val").unwrap();
             out.push(0x22); // local.tee $scratch
             write_u32_leb(scratch_idx, out);
 
             for (i, (_fname, fexpr)) in fields.iter().enumerate() {
                 let offset = (i * 8) as u32;
+                // Preserve current outer scratch pointer on WASM operand stack
+                out.push(0x20); // local.get $scratch
+                write_u32_leb(scratch_idx, out);
+
+                // Generate value into scratch_val
+                gen_expr_i32(fexpr, out, ctx)?;
+                out.push(0x21); // local.set $scratch_val
+                write_u32_leb(scratch_val_idx, out);
+
+                // Restore outer scratch pointer from stack
+                out.push(0x21); // local.set $scratch
+                write_u32_leb(scratch_idx, out);
+
+                // Now store value at outer_scratch + offset
                 out.push(0x20); // local.get $scratch
                 write_u32_leb(scratch_idx, out);
                 if offset > 0 {
@@ -898,7 +935,8 @@ fn gen_expr_i32(
                     write_u32_leb(offset, out);
                     out.push(0x6A); // add
                 }
-                gen_expr_i32(fexpr, out, ctx)?;
+                out.push(0x20); // local.get $scratch_val
+                write_u32_leb(scratch_val_idx, out);
                 out.push(0x36); // i32.store
                 out.push(0x02); // align
                 out.push(0x00); // offset
@@ -1704,6 +1742,72 @@ fn collect_all_wasm_strings_stmt(
     }
 }
 
+fn emit_wasm_print_arg(
+    arg: &Expr,
+    pretty_opt: Option<&crate::execution::runtime_core::pretty_print::PrettyPrintOptions>,
+    out: &mut Vec<u8>,
+    ctx: &mut CompilerContext,
+) -> Result<(), String> {
+    if let Some(formatted) = format_print_arg(arg, pretty_opt, ctx.var_values) {
+        emit_wasm_print_str_call(&formatted, out, ctx);
+        return Ok(());
+    }
+    match &arg.kind {
+        ExprKind::Literal(Value::Str(st)) => {
+            emit_wasm_print_str_call(st, out, ctx);
+        }
+        ExprKind::Literal(Value::Bool(b)) => {
+            emit_wasm_print_str_call(if *b { "true" } else { "false" }, out, ctx);
+        }
+        ExprKind::Literal(Value::Null) => {
+            emit_wasm_print_str_call("null", out, ctx);
+        }
+        ExprKind::Unary(TokenKind::Typeof, _) => {
+            emit_wasm_print_str_call("object", out, ctx);
+        }
+        ExprKind::Call(callee, args, _) => {
+            if let ExprKind::Variable(name) = &callee.kind {
+                if name == "concat" || name == "str_concat" {
+                    for sub_arg in args {
+                        emit_wasm_print_arg(sub_arg, pretty_opt, out, ctx)?;
+                    }
+                    return Ok(());
+                }
+            }
+            gen_expr_f64(arg, out, ctx)?;
+            out.push(0x10);
+            write_u32_leb(0, out);
+        }
+        ExprKind::Variable(vname) => {
+            if let Some((off, len)) = ctx.str_vars.get(vname) {
+                out.push(0x41);
+                write_i32_leb(*off as i32, out);
+                out.push(0x41);
+                write_i32_leb(*len as i32, out);
+                out.push(0x10);
+                write_u32_leb(1, out);
+            } else if let Some((off, len)) = ctx.complex_vars.get(vname) {
+                out.push(0x41);
+                write_i32_leb(*off as i32, out);
+                out.push(0x41);
+                write_i32_leb(*len as i32, out);
+                out.push(0x10);
+                write_u32_leb(1, out);
+            } else {
+                gen_expr_f64(arg, out, ctx)?;
+                out.push(0x10);
+                write_u32_leb(0, out);
+            }
+        }
+        _ => {
+            gen_expr_f64(arg, out, ctx)?;
+            out.push(0x10);
+            write_u32_leb(0, out);
+        }
+    }
+    Ok(())
+}
+
 fn gen_stmt(
     s: &Stmt,
     out: &mut Vec<u8>,
@@ -1953,58 +2057,7 @@ fn gen_stmt(
                                 if has_style {
                                     emit_wasm_print_str_call(&ansi_prefix, out, ctx);
                                 }
-                                if let Some(formatted) =
-                                    format_print_arg(arg, pretty_opt.as_ref(), ctx.var_values)
-                                {
-                                    emit_wasm_print_str_call(&formatted, out, ctx);
-                                } else {
-                                    match &arg.kind {
-                                        ExprKind::Literal(Value::Str(st)) => {
-                                            emit_wasm_print_str_call(st, out, ctx);
-                                        }
-                                        ExprKind::Literal(Value::Bool(b)) => {
-                                            emit_wasm_print_str_call(
-                                                if *b { "true" } else { "false" },
-                                                out,
-                                                ctx,
-                                            );
-                                        }
-                                        ExprKind::Literal(Value::Null) => {
-                                            emit_wasm_print_str_call("null", out, ctx);
-                                        }
-                                        ExprKind::Unary(TokenKind::Typeof, _) => {
-                                            emit_wasm_print_str_call("object", out, ctx);
-                                        }
-                                        ExprKind::Variable(vname) => {
-                                            if let Some((off, len)) = ctx.str_vars.get(vname) {
-                                                out.push(0x41);
-                                                write_i32_leb(*off as i32, out);
-                                                out.push(0x41);
-                                                write_i32_leb(*len as i32, out);
-                                                out.push(0x10);
-                                                write_u32_leb(1, out);
-                                            } else if let Some((off, len)) =
-                                                ctx.complex_vars.get(vname)
-                                            {
-                                                out.push(0x41);
-                                                write_i32_leb(*off as i32, out);
-                                                out.push(0x41);
-                                                write_i32_leb(*len as i32, out);
-                                                out.push(0x10);
-                                                write_u32_leb(1, out);
-                                            } else {
-                                                gen_expr_f64(arg, out, ctx)?;
-                                                out.push(0x10);
-                                                write_u32_leb(0, out);
-                                            }
-                                        }
-                                        _ => {
-                                            gen_expr_f64(arg, out, ctx)?;
-                                            out.push(0x10);
-                                            write_u32_leb(0, out);
-                                        }
-                                    }
-                                }
+                                emit_wasm_print_arg(arg, pretty_opt.as_ref(), out, ctx)?;
                                 if has_style {
                                     emit_wasm_print_str_call("\x1b[0m", out, ctx);
                                 }
@@ -2503,11 +2556,52 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
         }
     }
 
+    let resolve_wasm_type = |ty: &str| -> String {
+        let mut cur = ty.to_string();
+        for _ in 0..10 {
+            let base = if let Some(idx) = cur.find('<') {
+                cur[..idx].to_string()
+            } else {
+                cur.clone()
+            };
+            if base.contains('.') {
+                let parts: Vec<&str> = base.split('.').collect();
+                let mut cur_target: Option<String> = None;
+                for (i, &part) in parts.iter().enumerate() {
+                    if i == 0 {
+                        cur_target = Some(part.to_string());
+                    } else if let Some(parent) = cur_target {
+                        let next = if let Some((fields, _)) = type_alias_defs.get(&parent) {
+                            fields.iter().find(|(f, _, _)| f == part).map(|(_, _, fty)| fty.clone())
+                        } else {
+                            None
+                        };
+                        cur_target = next;
+                    } else {
+                        break;
+                    }
+                }
+                if let Some(target) = cur_target {
+                    cur = target;
+                    continue;
+                }
+            } else if let Some((fields, _)) = type_alias_defs.get(&base) {
+                if fields.len() == 1 && fields[0].0 == "__alias_target__" {
+                    cur = fields[0].2.clone();
+                    continue;
+                }
+            }
+            break;
+        }
+        cur
+    };
+
     let is_i32_type = |ty: &str| -> bool {
-        let base = if let Some(idx) = ty.find('<') {
-            &ty[..idx]
+        let resolved = resolve_wasm_type(ty);
+        let base = if let Some(idx) = resolved.find('<') {
+            &resolved[..idx]
         } else {
-            ty
+            &resolved[..]
         };
         matches!(
             base,
@@ -2589,6 +2683,10 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
         locals_map_i32.insert("__scratch".to_string(), local_count_i32);
         local_count_i32 += 1;
     }
+    if !locals_map_i32.contains_key("__scratch_val") {
+        locals_map_i32.insert("__scratch_val".to_string(), local_count_i32);
+        local_count_i32 += 1;
+    }
     if !locals_map_f64.contains_key("__scratch_f64") {
         locals_map_f64.insert("__scratch_f64".to_string(), local_count_f64);
         local_count_f64 += 1;
@@ -2607,11 +2705,52 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
         func_type_map.insert((t.0.clone(), t.1), i as u32);
     }
 
+    let resolve_wasm_type = |ty: &str| -> String {
+        let mut cur = ty.to_string();
+        for _ in 0..10 {
+            let base = if let Some(idx) = cur.find('<') {
+                cur[..idx].to_string()
+            } else {
+                cur.clone()
+            };
+            if base.contains('.') {
+                let parts: Vec<&str> = base.split('.').collect();
+                let mut cur_target: Option<String> = None;
+                for (i, &part) in parts.iter().enumerate() {
+                    if i == 0 {
+                        cur_target = Some(part.to_string());
+                    } else if let Some(parent) = cur_target {
+                        let next = if let Some((fields, _)) = type_alias_defs.get(&parent) {
+                            fields.iter().find(|(f, _, _)| f == part).map(|(_, _, fty)| fty.clone())
+                        } else {
+                            None
+                        };
+                        cur_target = next;
+                    } else {
+                        break;
+                    }
+                }
+                if let Some(target) = cur_target {
+                    cur = target;
+                    continue;
+                }
+            } else if let Some((fields, _)) = type_alias_defs.get(&base) {
+                if fields.len() == 1 && fields[0].0 == "__alias_target__" {
+                    cur = fields[0].2.clone();
+                    continue;
+                }
+            }
+            break;
+        }
+        cur
+    };
+
     let is_i32_type = |ty: &str| -> bool {
-        let base = if let Some(idx) = ty.find('<') {
-            &ty[..idx]
+        let resolved = resolve_wasm_type(ty);
+        let base = if let Some(idx) = resolved.find('<') {
+            &resolved[..idx]
         } else {
-            ty
+            &resolved[..]
         };
         matches!(
             base,
@@ -2844,6 +2983,8 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
             }
         }
         f_locals_i32.insert("__scratch".to_string(), f_local_count_i32 + pcount);
+        f_local_count_i32 += 1;
+        f_locals_i32.insert("__scratch_val".to_string(), f_local_count_i32 + pcount);
         f_local_count_i32 += 1;
 
         f_locals_f64.insert("__scratch_f64".to_string(), f_local_count_f64 + pcount);

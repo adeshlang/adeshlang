@@ -87,10 +87,11 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
 rand = "0.8"
-# `wasmbind` (chrono's default) and uuid's `js` feature pull wasm-bindgen JS
-# glue into WebAssembly builds; the browser runtime uses a glue-free C-ABI
-# loader, so keep those features off.
-chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+# `wasmbind` (chrono's default) pulls wasm-bindgen JS glue into WebAssembly
+# builds via iana-time-zone; the browser runtime uses a glue-free C-ABI
+# loader, so wasm builds get chrono without the wall-clock feature and the
+# epoch fallbacks in `utils::clock`.
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 chrono-tz = "0.9"
 once_cell = "1"
 unicode-width = "0.2"
@@ -125,12 +126,17 @@ base64 = "0.22"
 x509-parser = "0.16"
 pem = "3.0"
 der = "0.7"
-jsonwebtoken = { version = "10.4", features = ["rust_crypto"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # `uuid` v4/v7 need an RNG backend that wasm32-unknown-unknown cannot supply
 # without wasm-bindgen glue; its only use (ARO session IDs) is native-only.
 uuid = { version = "1.10", features = ["v4", "v7", "serde"] }
+# Wall-clock timezone support (iana-time-zone requires the wasm-bindgen glue
+# on wasm32); browser builds use the epoch fallbacks in `utils::clock`.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# `jsonwebtoken` pulls the wasm-bindgen JS clock on wasm32; the JWT/JWK
+# builtins are native-only (see runtime/stdlib_src/crypto/jwt_jwk.rs).
+jsonwebtoken = { version = "10.4", features = ["rust_crypto"] }
 # Compression dependencies
 flate2 = "1.0"
 brotli = "7.0"

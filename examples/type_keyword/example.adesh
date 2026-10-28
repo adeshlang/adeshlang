@@ -10,4 +10,6 @@ let api: Service = {
   port: 8080,
 };
 
+let port: Service.port = api.port;
+print("port:", port);
 print("service:", api.name, "→", api.port);

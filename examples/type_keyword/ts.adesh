@@ -9,4 +9,4 @@ print("User name:", u.name);
 print("User age:", u.age);
 let bad:User = { age: 30 };
 print(u);
-print("Bad user name:", bad.name, "age:", bad.age);
+print("Bad user name:", bad.name?, "age:", bad.age);

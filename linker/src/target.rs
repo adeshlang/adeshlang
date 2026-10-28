@@ -571,7 +571,11 @@ impl Target {
                 TargetTier::Tier1Supported
             }
             (Arch::X86, Os::Linux | Os::Windows) => TargetTier::Tier1Supported,
-            (Arch::Wasm32, Os::Wasi | Os::None) => TargetTier::Tier1Supported,
+
+            // The WASM linker writer is not implemented (see
+            // `wasm::writer`), so no tier above Tier 3 is defensible here even
+            // though the compiler backend does produce runnable modules.
+            (Arch::Wasm32, Os::Wasi | Os::None) => TargetTier::Tier3Declared,
 
             (Arch::Riscv64 | Arch::Riscv32, Os::Linux | Os::None) => TargetTier::Tier2Experimental,
             (Arch::Ppc64le, Os::Linux) => TargetTier::Tier2Experimental,

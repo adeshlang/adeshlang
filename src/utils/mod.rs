@@ -10,6 +10,7 @@
 //! - `memory`: memory model infrastructure (smart pointers, allocators, SSO/SAO)
 
 // Modules that remain in utils
+pub mod clock;
 pub mod collections;
 pub mod interner;
 pub mod memory;

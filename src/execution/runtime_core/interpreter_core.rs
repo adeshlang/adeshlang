@@ -1334,7 +1334,7 @@ impl Interpreter {
                                         secs, nanos,
                                     )
                                     .unwrap_or(chrono::DateTime::<chrono::Utc>::UNIX_EPOCH);
-                                    let dt = utc.with_timezone(&chrono::Local);
+                                    let dt = crate::utils::clock::utc_to_local(&utc);
                                     Ok(Value::Number(dt.year() as f64))
                                 },
                             ))));
@@ -1350,7 +1350,7 @@ impl Interpreter {
                                         secs, nanos,
                                     )
                                     .unwrap_or(chrono::DateTime::<chrono::Utc>::UNIX_EPOCH);
-                                    let dt = utc.with_timezone(&chrono::Local);
+                                    let dt = crate::utils::clock::utc_to_local(&utc);
                                     Ok(Value::Number(dt.month0() as f64))
                                 },
                             ))));
@@ -1366,7 +1366,7 @@ impl Interpreter {
                                         secs, nanos,
                                     )
                                     .unwrap_or(chrono::DateTime::<chrono::Utc>::UNIX_EPOCH);
-                                    let dt = utc.with_timezone(&chrono::Local);
+                                    let dt = crate::utils::clock::utc_to_local(&utc);
                                     Ok(Value::Number(dt.day() as f64))
                                 },
                             ))));
@@ -1382,7 +1382,7 @@ impl Interpreter {
                                         secs, nanos,
                                     )
                                     .unwrap_or(chrono::DateTime::<chrono::Utc>::UNIX_EPOCH);
-                                    let dt = utc.with_timezone(&chrono::Local);
+                                    let dt = crate::utils::clock::utc_to_local(&utc);
                                     Ok(Value::Number(dt.hour() as f64))
                                 },
                             ))));
@@ -1398,7 +1398,7 @@ impl Interpreter {
                                         secs, nanos,
                                     )
                                     .unwrap_or(chrono::DateTime::<chrono::Utc>::UNIX_EPOCH);
-                                    let dt = utc.with_timezone(&chrono::Local);
+                                    let dt = crate::utils::clock::utc_to_local(&utc);
                                     Ok(Value::Number(dt.minute() as f64))
                                 },
                             ))));
@@ -1414,7 +1414,7 @@ impl Interpreter {
                                         secs, nanos,
                                     )
                                     .unwrap_or(chrono::DateTime::<chrono::Utc>::UNIX_EPOCH);
-                                    let dt = utc.with_timezone(&chrono::Local);
+                                    let dt = crate::utils::clock::utc_to_local(&utc);
                                     Ok(Value::Number(dt.second() as f64))
                                 },
                             ))));
@@ -1550,7 +1550,7 @@ impl Interpreter {
                                         secs, nanos,
                                     )
                                     .unwrap_or(chrono::DateTime::<chrono::Utc>::UNIX_EPOCH);
-                                    let dt = utc.with_timezone(&chrono::Local);
+                                    let dt = crate::utils::clock::utc_to_local(&utc);
                                     Ok(Value::Number(dt.weekday().num_days_from_sunday() as f64))
                                 },
                             ))));
@@ -1566,7 +1566,7 @@ impl Interpreter {
                                         secs, nanos,
                                     )
                                     .unwrap_or(chrono::DateTime::<chrono::Utc>::UNIX_EPOCH);
-                                    let dt = utc.with_timezone(&chrono::Local);
+                                    let dt = crate::utils::clock::utc_to_local(&utc);
                                     Ok(Value::Str(dt.format("%c").to_string()))
                                 },
                             ))));
@@ -1582,7 +1582,7 @@ impl Interpreter {
                                         secs, nanos,
                                     )
                                     .unwrap_or(chrono::DateTime::<chrono::Utc>::UNIX_EPOCH);
-                                    let dt = utc.with_timezone(&chrono::Local);
+                                    let dt = crate::utils::clock::utc_to_local(&utc);
                                     Ok(Value::Str(dt.format("%x").to_string()))
                                 },
                             ))));
@@ -1598,7 +1598,7 @@ impl Interpreter {
                                         secs, nanos,
                                     )
                                     .unwrap_or(chrono::DateTime::<chrono::Utc>::UNIX_EPOCH);
-                                    let dt = utc.with_timezone(&chrono::Local);
+                                    let dt = crate::utils::clock::utc_to_local(&utc);
                                     Ok(Value::Str(dt.format("%X").to_string()))
                                 },
                             ))));
@@ -1614,7 +1614,7 @@ impl Interpreter {
                                         secs, nanos,
                                     )
                                     .unwrap_or(chrono::DateTime::<chrono::Utc>::UNIX_EPOCH);
-                                    let dt = utc.with_timezone(&chrono::Local);
+                                    let dt = crate::utils::clock::utc_to_local(&utc);
                                     let off_secs = dt.offset().local_minus_utc();
                                     Ok(Value::Number(off_secs as f64 / 60.0))
                                 },
@@ -6570,12 +6570,24 @@ impl Interpreter {
                     }
                     if init.is_some() && !self.ann_matches_value(Some(env), &Some(ann.clone()), &v)
                     {
-                        return Err(RunErr::Msg(err(format!(
-                            "annotated variable '{}' expected {}, found {}",
-                            name,
-                            ann,
-                            fmt(&v)
-                        ))));
+                        let detail = type_helpers::type_mismatch_reason(
+                            &self.envs,
+                            self.global,
+                            Some(env),
+                            &ann,
+                            &v,
+                        );
+                        let msg = match detail {
+                            Some(reason) => format!(
+                                "annotated variable '{}' expected {}: {}",
+                                name, ann, reason
+                            ),
+                            None => format!(
+                                "annotated variable '{}' expected {}, found {}",
+                                name, ann, fmt(&v)
+                            ),
+                        };
+                        return Err(RunErr::Msg(err(msg)));
                     }
                 } else {
                     // No type annotation - use smart inference for numeric types
@@ -9096,7 +9108,7 @@ impl Interpreter {
                     ));
                 }
 
-                let src = std::fs::read_to_string(&full)
+                let src = crate::execution::runtime_core::vfs::read_source(&full)
                     .map_err(|e| err(format!("Cannot read {}: {}", full, e)))?;
                 let mut lex = Lexer::new(&src);
                 let toks = lex.tokenize().map_err(|e| RunErr::Msg(err(e)))?;
@@ -9785,7 +9797,7 @@ impl Interpreter {
                         ));
                     }
                 } else {
-                    let src = std::fs::read_to_string(&full)
+                    let src = crate::execution::runtime_core::vfs::read_source(&full)
                         .map_err(|e| err(format!("Cannot read {}: {}", full, e)))?;
                     let mut lex = Lexer::new(&src);
                     let toks = lex.tokenize().map_err(|e| err(e))?;
@@ -10486,7 +10498,7 @@ impl Interpreter {
                     if let Some(v) = loader.cache.get(&full) {
                         v.clone()
                     } else {
-                        let src = std::fs::read_to_string(&full)
+                        let src = crate::execution::runtime_core::vfs::read_source(&full)
                             .map_err(|e| err(format!("Cannot read {}: {}", full, e)))?;
                         let mut lex = Lexer::new(&src);
                         let toks = lex.tokenize().map_err(|e| err(e))?;
@@ -12014,85 +12026,86 @@ impl Interpreter {
                     Value::Array(a) => {
                         let mut n = num(iv)?;
                         if (n - n.trunc()).abs() > 1e-12 {
-                            return Err(err("index must be an integer"));
+                            return Err(err_with_span("index must be an integer", &e.span));
                         }
                         if n < 0.0 {
                             n = a.len() as f64 + n;
                         }
                         if n < 0.0 {
-                            return Err(err("index out of bounds"));
+                            return Err(err_with_span("index out of bounds", &e.span));
                         }
                         let i = n as usize;
-                        a.get(i).cloned().ok_or_else(|| err("index out of bounds"))
+                        a.get(i).cloned().ok_or_else(|| err_with_span("index out of bounds", &e.span))
                     }
                     Value::DynArray(da) => {
                         let mut n = num(iv)?;
                         if (n - n.trunc()).abs() > 1e-12 {
-                            return Err(err("index must be an integer"));
+                            return Err(err_with_span("index must be an integer", &e.span));
                         }
                         if n < 0.0 {
                             n = da.data.len() as f64 + n;
                         }
                         if n < 0.0 {
-                            return Err(err("index out of bounds"));
+                            return Err(err_with_span("index out of bounds", &e.span));
                         }
                         let i = n as usize;
                         da.data
                             .get(i)
                             .cloned()
-                            .ok_or_else(|| err("index out of bounds"))
+                            .ok_or_else(|| err_with_span("index out of bounds", &e.span))
                     }
                     Value::RawArray(_, a) => {
                         let mut n = num(iv)?;
                         if (n - n.trunc()).abs() > 1e-12 {
-                            return Err(err("index must be an integer"));
+                            return Err(err_with_span("index must be an integer", &e.span));
                         }
                         if n < 0.0 {
                             n = a.len() as f64 + n;
                         }
                         if n < 0.0 {
-                            return Err(err("index out of bounds"));
+                            return Err(err_with_span("index out of bounds", &e.span));
                         }
                         let i = n as usize;
-                        a.get(i).cloned().ok_or_else(|| err("index out of bounds"))
+                        a.get(i).cloned().ok_or_else(|| err_with_span("index out of bounds", &e.span))
                     }
                     Value::Tuple(t) => {
                         let mut n = num(iv)?;
                         if (n - n.trunc()).abs() > 1e-12 {
-                            return Err(err("index must be an integer"));
+                            return Err(err_with_span("index must be an integer", &e.span));
                         }
                         if n < 0.0 {
                             n = t.len() as f64 + n;
                         }
                         if n < 0.0 {
-                            return Err(err("index out of bounds"));
+                            return Err(err_with_span("index out of bounds", &e.span));
                         }
                         let i = n as usize;
-                        t.get(i).cloned().ok_or_else(|| err("index out of bounds"))
+                        t.get(i).cloned().ok_or_else(|| err_with_span("index out of bounds", &e.span))
                     }
                     Value::Str(s) => {
                         let mut n = crate::execution::runtime::ops::num(iv)?;
                         if (n - n.trunc()).abs() > 1e-12 {
-                            return Err(err("index must be an integer"));
+                            return Err(err_with_span("index must be an integer", &e.span));
                         }
                         let char_count = s.chars().count();
                         if n < 0.0 {
                             n = char_count as f64 + n;
                         }
                         if n < 0.0 {
-                            return Err(err("index out of bounds"));
+                            return Err(err_with_span("index out of bounds", &e.span));
                         }
                         let i = n as usize;
                         if let Some(ch) = s.chars().nth(i) {
                             Ok(Value::Char(ch))
                         } else {
-                            Err(err("index out of bounds"))
+                            Err(err_with_span("index out of bounds", &e.span))
                         }
                     }
                     Value::Object(m) => match iv {
                         Value::Str(k) => Ok(m.get(&k).cloned().unwrap_or(Value::Null)),
-                        _ => Err(err(
+                        _ => Err(err_with_span(
                             "indexing supports array[number], string[number], tuple[number], object[string], instance[string]",
+                            &e.span,
                         )),
                     },
                     Value::Instance(i) => {
@@ -12157,8 +12170,9 @@ impl Interpreter {
                             Ok(Value::Array(bytes.into_iter().map(Value::U8).collect()))
                         }
                     }
-                    _ => Err(err(
+                    _ => Err(err_with_span(
                         "indexing supports array[number], string[number], tuple[number], object[string], instance[string]",
+                        &e.span,
                     )),
                 }
             }
@@ -13518,7 +13532,7 @@ impl Interpreter {
                                             }
                                             let i = n as usize;
                                             if i >= out.len() {
-                                                return Err(err("index out of bounds"));
+                                                return Err(err_with_span("index out of bounds", &e.span));
                                             }
                                             i
                                         }
@@ -13598,7 +13612,7 @@ impl Interpreter {
                                 };
                                 let mut out = a.clone();
                                 if idx >= out.len() {
-                                    return Err(err("index out of bounds"));
+                                    return Err(err_with_span("index out of bounds", &e.span));
                                 }
                                 out[idx] = av[1].clone();
                                 Ok(Value::Array(out))
@@ -13969,7 +13983,7 @@ impl Interpreter {
                                 };
                                 let mut new_data = da.data.clone();
                                 if idx >= new_data.len() {
-                                    return Err(err("index out of bounds"));
+                                    return Err(err_with_span("index out of bounds", &e.span));
                                 }
                                 new_data[idx] = av[1].clone();
                                 Ok(Value::DynArray(Box::new(
@@ -14028,7 +14042,7 @@ impl Interpreter {
                                     _ => return Err(err("set_index index must be number")),
                                 };
                                 if idx >= a.len() {
-                                    return Err(err("index out of bounds"));
+                                    return Err(err_with_span("index out of bounds", &e.span));
                                 }
                                 let mut out = a.clone();
                                 out[idx] = av[1].clone();
@@ -15345,7 +15359,7 @@ impl Interpreter {
                         }
                         (Value::Array(a), Value::Number(n)) => {
                             if (n - n.trunc()).abs() > 1e-12 {
-                                return Err(err("index must be integer"));
+                                return Err(err_with_span("index must be integer", &e.span));
                             }
                             let i = n as usize;
                             a.get(i).cloned().unwrap_or(Value::Null)
@@ -15874,7 +15888,7 @@ impl Interpreter {
                             (Value::DynArray(da), idxv) => {
                                 let n = crate::execution::runtime::ops::num(idxv)?;
                                 if (n - n.trunc()).abs() > 1e-12 {
-                                    return Err(err("index must be integer"));
+                                    return Err(err_with_span("index must be integer", &e.span));
                                 }
                                 let i = n as usize;
                                 da.data.get(i).cloned().unwrap_or(Value::Null)
@@ -15882,7 +15896,7 @@ impl Interpreter {
                             (Value::RawArray(_, a), idxv) => {
                                 let n = crate::execution::runtime::ops::num(idxv)?;
                                 if (n - n.trunc()).abs() > 1e-12 {
-                                    return Err(err("index must be integer"));
+                                    return Err(err_with_span("index must be integer", &e.span));
                                 }
                                 let i = n as usize;
                                 a.get(i).cloned().unwrap_or(Value::Null)
@@ -15890,7 +15904,7 @@ impl Interpreter {
                             (Value::Array(a), idxv) => {
                                 let n = crate::execution::runtime::ops::num(idxv)?;
                                 if (n - n.trunc()).abs() > 1e-12 {
-                                    return Err(err("index must be integer"));
+                                    return Err(err_with_span("index must be integer", &e.span));
                                 }
                                 let i = n as usize;
                                 a.get(i).cloned().unwrap_or(Value::Null)
@@ -19298,13 +19312,35 @@ impl ExecLegacy {
                     }
                 }
                 // enforce annotation on initializer if present
-                if init.is_some() && type_ann.is_some() && !ann_matches_value(type_ann, &val) {
-                    return Err(err(format!(
-                        "annotated variable '{}' expected {}, found {}",
-                        name,
-                        type_ann.as_ref().unwrap(),
-                        fmt(&val)
-                    )));
+                if init.is_some() && type_ann.is_some() {
+                    let ann_str = type_ann.as_ref().unwrap();
+                    let matches = type_helpers::ann_matches_value(
+                        &self.envs,
+                        0,
+                        Some(self.current),
+                        type_ann,
+                        &val,
+                    );
+                    if !matches {
+                        let detail = type_helpers::type_mismatch_reason(
+                            &self.envs,
+                            0,
+                            Some(self.current),
+                            ann_str,
+                            &val,
+                        );
+                        let msg = match detail {
+                            Some(reason) => format!(
+                                "annotated variable '{}' expected {}: {}",
+                                name, ann_str, reason
+                            ),
+                            None => format!(
+                                "annotated variable '{}' expected {}, found {}",
+                                name, ann_str, fmt(&val)
+                            ),
+                        };
+                        return Err(err(msg));
+                    }
                 }
                 // No type annotation - use smart inference for numeric types
                 if type_ann.is_none() {
@@ -20061,7 +20097,7 @@ impl ExecLegacy {
                             (Value::DynArray(da), idxv) => {
                                 let n = crate::execution::runtime::ops::num(idxv)?;
                                 if (n - n.trunc()).abs() > 1e-12 {
-                                    return Err(err("index must be integer"));
+                                    return Err(err_with_span("index must be integer", &e.span));
                                 }
                                 let i = n as usize;
                                 da.data.get(i).cloned().unwrap_or(Value::Null)
@@ -20069,7 +20105,7 @@ impl ExecLegacy {
                             (Value::RawArray(_, a), idxv) => {
                                 let n = crate::execution::runtime::ops::num(idxv)?;
                                 if (n - n.trunc()).abs() > 1e-12 {
-                                    return Err(err("index must be integer"));
+                                    return Err(err_with_span("index must be integer", &e.span));
                                 }
                                 let i = n as usize;
                                 a.get(i).cloned().unwrap_or(Value::Null)
@@ -20077,7 +20113,7 @@ impl ExecLegacy {
                             (Value::Array(a), idxv) => {
                                 let n = crate::execution::runtime::ops::num(idxv)?;
                                 if (n - n.trunc()).abs() > 1e-12 {
-                                    return Err(err("index must be integer"));
+                                    return Err(err_with_span("index must be integer", &e.span));
                                 }
                                 let i = n as usize;
                                 a.get(i).cloned().unwrap_or(Value::Null)
@@ -20201,85 +20237,86 @@ impl ExecLegacy {
                     Value::Array(a) => {
                         let mut n = crate::execution::runtime::ops::num(iv)?;
                         if (n - n.trunc()).abs() > 1e-12 {
-                            return Err(err("index must be an integer"));
+                            return Err(err_with_span("index must be an integer", &e.span));
                         }
                         if n < 0.0 {
                             n = a.len() as f64 + n;
                         }
                         if n < 0.0 {
-                            return Err(err("index out of bounds"));
+                            return Err(err_with_span("index out of bounds", &e.span));
                         }
                         let i = n as usize;
-                        a.get(i).cloned().ok_or_else(|| err("index out of bounds"))
+                        a.get(i).cloned().ok_or_else(|| err_with_span("index out of bounds", &e.span))
                     }
                     Value::DynArray(da) => {
                         let mut n = crate::execution::runtime::ops::num(iv)?;
                         if (n - n.trunc()).abs() > 1e-12 {
-                            return Err(err("index must be an integer"));
+                            return Err(err_with_span("index must be an integer", &e.span));
                         }
                         if n < 0.0 {
                             n = da.data.len() as f64 + n;
                         }
                         if n < 0.0 {
-                            return Err(err("index out of bounds"));
+                            return Err(err_with_span("index out of bounds", &e.span));
                         }
                         let i = n as usize;
                         da.data
                             .get(i)
                             .cloned()
-                            .ok_or_else(|| err("index out of bounds"))
+                            .ok_or_else(|| err_with_span("index out of bounds", &e.span))
                     }
                     Value::RawArray(_, a) => {
                         let mut n = crate::execution::runtime::ops::num(iv)?;
                         if (n - n.trunc()).abs() > 1e-12 {
-                            return Err(err("index must be an integer"));
+                            return Err(err_with_span("index must be an integer", &e.span));
                         }
                         if n < 0.0 {
                             n = a.len() as f64 + n;
                         }
                         if n < 0.0 {
-                            return Err(err("index out of bounds"));
+                            return Err(err_with_span("index out of bounds", &e.span));
                         }
                         let i = n as usize;
-                        a.get(i).cloned().ok_or_else(|| err("index out of bounds"))
+                        a.get(i).cloned().ok_or_else(|| err_with_span("index out of bounds", &e.span))
                     }
                     Value::Tuple(t) => {
                         let mut n = crate::execution::runtime::ops::num(iv)?;
                         if (n - n.trunc()).abs() > 1e-12 {
-                            return Err(err("index must be an integer"));
+                            return Err(err_with_span("index must be an integer", &e.span));
                         }
                         if n < 0.0 {
                             n = t.len() as f64 + n;
                         }
                         if n < 0.0 {
-                            return Err(err("index out of bounds"));
+                            return Err(err_with_span("index out of bounds", &e.span));
                         }
                         let i = n as usize;
-                        t.get(i).cloned().ok_or_else(|| err("index out of bounds"))
+                        t.get(i).cloned().ok_or_else(|| err_with_span("index out of bounds", &e.span))
                     }
                     Value::Str(s) => {
                         let mut n = crate::execution::runtime::ops::num(iv)?;
                         if (n - n.trunc()).abs() > 1e-12 {
-                            return Err(err("index must be an integer"));
+                            return Err(err_with_span("index must be an integer", &e.span));
                         }
                         let char_count = s.chars().count();
                         if n < 0.0 {
                             n = char_count as f64 + n;
                         }
                         if n < 0.0 {
-                            return Err(err("index out of bounds"));
+                            return Err(err_with_span("index out of bounds", &e.span));
                         }
                         let i = n as usize;
                         if let Some(ch) = s.chars().nth(i) {
                             Ok(Value::Char(ch))
                         } else {
-                            Err(err("index out of bounds"))
+                            Err(err_with_span("index out of bounds", &e.span))
                         }
                     }
                     Value::Object(m) => match iv {
                         Value::Str(k) => Ok(m.get(&k).cloned().unwrap_or(Value::Null)),
-                        _ => Err(err(
+                        _ => Err(err_with_span(
                             "indexing supports array[number], string[number], tuple[number], object[string], instance[string]",
+                            &e.span,
                         )),
                     },
                     Value::Instance(_i) => match iv {
@@ -20287,8 +20324,9 @@ impl ExecLegacy {
                             let o = self.eval_expr(target)?;
                             get_prop(o, &k, self.current_class_context.as_deref())
                         }
-                        _ => Err(err(
+                        _ => Err(err_with_span(
                             "indexing supports array[number], string[number], tuple[number], object[string], instance[string]",
+                            &e.span,
                         )),
                     },
                     Value::U64(ptr_addr) => {
@@ -20331,8 +20369,9 @@ impl ExecLegacy {
                             Ok(Value::Array(bytes.into_iter().map(Value::U8).collect()))
                         }
                     }
-                    _ => Err(err(
+                    _ => Err(err_with_span(
                         "indexing supports array[number], string[number], tuple[number], object[string], instance[string]",
+                        &e.span,
                     )),
                 }
             }

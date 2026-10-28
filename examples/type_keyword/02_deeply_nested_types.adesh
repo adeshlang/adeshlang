@@ -1,0 +1,128 @@
+// ─────────────────────────────────────────────────────────────
+// AdeshLang: Deeply Nested Type Hierarchies & Dotted Member Types
+// ─────────────────────────────────────────────────────────────
+// Demonstrates multi-level nested type aliases and arbitrary depth dotted
+// member access types (analogous to TypeScript's `Type['a']['b']['c']`).
+//
+// Can be executed via:
+//   1. Direct run: `adesh run examples/type_keyword/02_deeply_nested_types.adesh`
+//   2. Test runner: `adesh test examples/type_keyword/02_deeply_nested_types.adesh`
+
+type PoolLimit = u8;
+type Port = u16;
+
+type PoolConfig = {
+    min_connections: PoolLimit,
+    max_connections: PoolLimit,
+    idle_timeout_ms: u32,
+};
+
+type DBConfig = {
+    host: string,
+    port: Port,
+    pool: PoolConfig,
+};
+
+type AppConfig = {
+    app_id: string,
+    db: DBConfig,
+    is_production: bool,
+};
+
+// Function taking deeply nested dotted types
+fn tune_pool_size(
+    min_c: AppConfig.db.pool.min_connections,
+    max_c: AppConfig.db.pool.max_connections
+): PoolConfig {
+    return {
+        min_connections: min_c,
+        max_connections: max_c,
+        idle_timeout_ms: 30000,
+    };
+}
+
+// Function accepting AppConfig and returning nested field
+fn extract_pool_max(cfg: AppConfig): AppConfig.db.pool.max_connections {
+    return cfg.db.pool.max_connections;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Suite Declarations (for `adesh test`)
+// ─────────────────────────────────────────────────────────────
+
+test fn test_deep_nested_config_construction() {
+    let pool = tune_pool_size(5, 50);
+    assert_eq(pool.min_connections, 5);
+    assert_eq(pool.max_connections, 50);
+    assert_eq(pool.idle_timeout_ms, 30000);
+}
+
+test fn test_deep_dotted_member_type_extraction() {
+    let app: AppConfig = {
+        app_id: "order-management",
+        db: {
+            host: "postgres-cluster.internal",
+            port: 5432,
+            pool: {
+                min_connections: 10,
+                max_connections: 64,
+                idle_timeout_ms: 15000,
+            },
+        },
+        is_production: true,
+    };
+
+    let p: AppConfig.db.port = app.db.port;
+    assert_eq(p, 5432);
+
+    let max_conn: AppConfig.db.pool.max_connections = app.db.pool.max_connections;
+    assert_eq(max_conn, 64);
+
+    let retrieved_max = extract_pool_max(app);
+    assert_eq(retrieved_max, 64);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Standalone Direct Runner (for `adesh run`)
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests(): i32 {
+    test_deep_nested_config_construction();
+    test_deep_dotted_member_type_extraction();
+    return 2;
+}
+
+fn main() {
+    print("=== [AdeshLang] 02: Deeply Nested Types Example ===");
+    let app: AppConfig = {
+        app_id: "analytics-pipeline",
+        db: {
+            host: "analytics-db.local",
+            port: 5432,
+            pool: {
+                min_connections: 4,
+                max_connections: 32,
+                idle_timeout_ms: 60000,
+            },
+        },
+        is_production: true,
+    };
+
+    let direct_port: AppConfig.db.port = app.db.port;
+    let pool_limit: AppConfig.db.pool.max_connections = app.db.pool.max_connections;
+    let extracted_limit = extract_pool_max(app);
+
+    print(`Application ID   : ${app.app_id}`);
+    print(`DB Endpoint      : ${app.db.host}:${direct_port}`);
+    print(`Pool Min / Max   : ${app.db.pool.min_connections} / ${pool_limit}`);
+    print(`Extracted Max    : ${extracted_limit}`);
+    print(`Is Production    : ${app.is_production}`);
+
+    // Self-verifying assertions
+    assert_eq(direct_port, 5432);
+    assert_eq(pool_limit, 32);
+    assert_eq(extracted_limit, 32);
+
+    let count = run_tests();
+    print(`✓ Executed ${count} inline unit tests successfully!`);
+}

@@ -2775,6 +2775,8 @@ fn get_string_val_typed(val: u64, type_tag: i64) -> String {
                 value_to_simple_string(&v)
             } else if let Some(s) = get_string_val(val) {
                 s
+            } else if val < HANDLE_TAG {
+                format!("{}", val as i64)
             } else {
                 format!("<handle:{}>", val)
             }

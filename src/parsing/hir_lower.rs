@@ -1298,7 +1298,46 @@ pub(crate) fn type_from_annotation(ann: &str) -> HirType {
             HirType::Promise(Box::new(type_from_annotation(inner)))
         }
         _ if ann_lower.starts_with("array<") && ann.ends_with('>') => HirType::Unknown,
+        _ if ann.contains('.') => {
+            let parts: Vec<&str> = ann.split('.').collect();
+            let mut cur_target: Option<String> = None;
+            for (i, &part) in parts.iter().enumerate() {
+                if i == 0 {
+                    cur_target = Some(part.to_string());
+                } else if let Some(parent) = cur_target {
+                    let next = KNOWN_TYPE_ALIASES.with(|cell| {
+                        if let Some((fields, _)) = cell.borrow().get(&parent) {
+                            for (fname, _, ftype) in fields {
+                                if fname == part {
+                                    return Some(ftype.clone());
+                                }
+                            }
+                        }
+                        None
+                    });
+                    cur_target = next;
+                } else {
+                    break;
+                }
+            }
+            if let Some(target) = cur_target {
+                return type_from_annotation(&target);
+            }
+            HirType::Class(ann.to_string())
+        }
         _ => {
+            // Check if this is a scalar type alias (e.g. type Port = u8;)
+            let scalar_target = KNOWN_TYPE_ALIASES.with(|cell| {
+                if let Some((fields, _)) = cell.borrow().get(ann) {
+                    if fields.len() == 1 && fields[0].0 == "__alias_target__" {
+                        return Some(fields[0].2.clone());
+                    }
+                }
+                None
+            });
+            if let Some(target) = scalar_target {
+                return type_from_annotation(&target);
+            }
             // Preserve named user types (struct/class/interface) as class-like references.
             // Keeping this as Unknown loses type intent and degrades backend lowering.
             HirType::Class(ann.to_string())

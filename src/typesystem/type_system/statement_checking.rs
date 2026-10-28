@@ -160,12 +160,80 @@ pub(crate) fn expr_matches_expected_type(expr: &Expr, inferred: &Ty, expected: &
             (source, Ty::Union(targets)) => targets
                 .iter()
                 .any(|t| is_compatible(source, t, is_concrete_int, is_ptr)),
+            (
+                Ty::Record {
+                    required: sreq,
+                    optional: sopt,
+                },
+                Ty::Record {
+                    required: treq,
+                    optional: topt,
+                },
+            ) => {
+                for (k, t_ty) in treq {
+                    let mut found = None;
+                    for (sk, st) in sreq {
+                        if sk == k {
+                            found = Some(st);
+                            break;
+                        }
+                    }
+                    if found.is_none() {
+                        for (sk, st) in sopt {
+                            if sk == k {
+                                found = Some(st);
+                                break;
+                            }
+                        }
+                    }
+                    if let Some(st) = found {
+                        if !is_compatible(st, t_ty, is_concrete_int, is_ptr) {
+                            return false;
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+                for (k, t_ty) in topt {
+                    if let Some((_, st)) = sreq.iter().chain(sopt.iter()).find(|(sk, _)| sk == k) {
+                        if !is_compatible(st, t_ty, is_concrete_int, is_ptr) {
+                            return false;
+                        }
+                    }
+                }
+                true
+            }
             _ => is_subtype(inf, exp),
         }
     }
 
     if let Some(fits) = literal_numeric_fits_expected(expr, expected) {
         return fits;
+    }
+
+    // When assigning an object literal to a record/struct type, validate each field expression
+    // against the expected field type (e.g. checking numeric literal bounds like u8 range 0..255).
+    if let Ty::Record { required, optional } = expected {
+        if let ExprKind::Object(kv) = &expr.kind {
+            for (req_name, req_ty) in required {
+                if let Some((_, field_expr)) = kv.iter().find(|(k, _)| k == req_name) {
+                    if let Some(fits) = literal_numeric_fits_expected(field_expr, req_ty) {
+                        if !fits {
+                            return false;
+                        }
+                    }
+                }
+            }
+            for (opt_name, opt_ty) in optional {
+                if let Some((_, field_expr)) = kv.iter().find(|(k, _)| k == opt_name) {
+                    if let Some(fits) = literal_numeric_fits_expected(field_expr, opt_ty) {
+                        if !fits {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     if is_compatible(inferred, expected, &is_concrete_int, &is_ptr) {
@@ -224,6 +292,31 @@ pub(crate) fn expr_matches_expected_type(expr: &Expr, inferred: &Ty, expected: &
 
     if let Some(fits) = literal_numeric_fits_expected(expr, expected) {
         return fits;
+    }
+
+    // When assigning an object literal to a record/struct type, validate each field expression
+    // against the expected field type (e.g. checking numeric literal bounds like u8 range 0..255).
+    if let Ty::Record { required, optional } = expected {
+        if let ExprKind::Object(kv) = &expr.kind {
+            for (req_name, req_ty) in required {
+                if let Some((_, field_expr)) = kv.iter().find(|(k, _)| k == req_name) {
+                    if let Some(fits) = literal_numeric_fits_expected(field_expr, req_ty) {
+                        if !fits {
+                            return false;
+                        }
+                    }
+                }
+            }
+            for (opt_name, opt_ty) in optional {
+                if let Some((_, field_expr)) = kv.iter().find(|(k, _)| k == opt_name) {
+                    if let Some(fits) = literal_numeric_fits_expected(field_expr, opt_ty) {
+                        if !fits {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     false
@@ -394,14 +487,34 @@ pub(crate) fn check_stmt_types_collecting(
                     Ok(inferred) => {
                         if let Some(d) = &declared {
                             if *d != Ty::Any && !expr_matches_expected_type(e, &inferred, d) {
-                                record_stmt_error(
-                                    errors,
-                                    s,
+                                let mut field_range_err: Option<String> = None;
+                                if let Ty::Record { required, optional } = d {
+                                    if let ExprKind::Object(kv) = &e.kind {
+                                        for (req_name, req_ty) in required.iter().chain(optional.iter()) {
+                                            if let Some((_, field_expr)) = kv.iter().find(|(k, _)| k == req_name) {
+                                                if let Some(false) = literal_numeric_fits_expected(field_expr, req_ty) {
+                                                    let val_str = match &field_expr.kind {
+                                                        ExprKind::Literal(Value::Number(n)) => format!("{}", n),
+                                                        ExprKind::Literal(Value::BigInt(bi)) => format!("{}", bi),
+                                                        _ => "value".to_string(),
+                                                    };
+                                                    field_range_err = Some(format!(
+                                                        "type mismatch for '{}': field '{}' value {} is out of range for {}",
+                                                        name, req_name, val_str, req_ty
+                                                    ));
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                let err_msg = field_range_err.unwrap_or_else(|| {
                                     format!(
                                         "type mismatch for '{}': declared {}, found {}",
                                         name, d, inferred
-                                    ),
-                                );
+                                    )
+                                });
+                                record_stmt_error(errors, s, err_msg);
                             }
                             if let Some(scope) = env.last_mut() {
                                 scope.insert(name.clone(), d.clone());

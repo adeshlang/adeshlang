@@ -260,14 +260,57 @@ pub(crate) fn handle_tail_call(
                 None
             }
         };
+        let expected_ret_ty = builder
+            .func
+            .signature
+            .returns
+            .get(0)
+            .map(|abi| abi.value_type)
+            .unwrap_or(types::I64);
+
         if let Some(res) = result {
-            builder.ins().return_(&[res]);
+            let actual_ty = builder.func.dfg.value_type(res);
+            let adapted = if actual_ty == expected_ret_ty {
+                res
+            } else if expected_ret_ty.is_int() && actual_ty.is_int() {
+                if actual_ty.bits() > expected_ret_ty.bits() {
+                    builder.ins().ireduce(expected_ret_ty, res)
+                } else {
+                    builder.ins().sextend(expected_ret_ty, res)
+                }
+            } else {
+                res
+            };
+            builder.ins().return_(&[adapted]);
         } else {
-            let zero = builder.ins().iconst(types::I64, 0);
+            let zero = if expected_ret_ty.is_int() {
+                builder.ins().iconst(expected_ret_ty, 0)
+            } else if expected_ret_ty == types::F32 {
+                builder.ins().f32const(0.0)
+            } else if expected_ret_ty == types::F64 {
+                builder.ins().f64const(0.0)
+            } else {
+                builder.ins().iconst(types::I64, 0)
+            };
             builder.ins().return_(&[zero]);
         }
     } else {
-        let zero = builder.ins().iconst(types::I64, 0);
+        let expected_ret_ty = builder
+            .func
+            .signature
+            .returns
+            .get(0)
+            .map(|abi| abi.value_type)
+            .unwrap_or(types::I64);
+        let zero = if expected_ret_ty.is_int() {
+            builder.ins().iconst(expected_ret_ty, 0)
+        } else if expected_ret_ty == types::F32 {
+            builder.ins().f32const(0.0)
+        } else if expected_ret_ty == types::F64 {
+            builder.ins().f64const(0.0)
+        } else {
+            builder.ins().iconst(types::I64, 0)
+        };
         builder.ins().return_(&[zero]);
     }
     Ok(())

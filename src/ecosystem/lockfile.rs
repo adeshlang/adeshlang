@@ -1,5 +1,5 @@
 use crate::ecosystem::version::{SemVer, VersionReq};
-use chrono::{SecondsFormat, Utc};
+use chrono::SecondsFormat;
 use std::collections::BTreeMap;
 use std::fmt::{self, Display};
 
@@ -42,7 +42,7 @@ impl LockFile {
     pub fn new(package_id: impl Into<String>) -> Self {
         Self {
             lock_version: "1".to_string(),
-            generated_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+            generated_at: crate::utils::clock::utc_now().to_rfc3339_opts(SecondsFormat::Secs, true),
             compiler_version: env!("CARGO_PKG_VERSION").to_string(),
             adl_version: env!("CARGO_PKG_VERSION").to_string(),
             package_id: package_id.into(),

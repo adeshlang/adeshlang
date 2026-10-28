@@ -221,6 +221,49 @@ pub(crate) fn resolve_type_name(
     if let Some(t) = aliases.get(ls) {
         return Some(t.clone());
     }
+    // support dot-qualified type access, e.g. Service.port or App.Database.port
+    if ls.contains('.') {
+        let parts: Vec<&str> = ls.split('.').collect();
+        if let Some(mut current_ty) = resolve_type_name(parts[0], aliases, generic_aliases, type_params) {
+            let mut ok = true;
+            for &part in &parts[1..] {
+                if let Ty::GenericParam(ref name) = current_ty {
+                    if let Some(resolved) = aliases.get(name) {
+                        current_ty = resolved.clone();
+                    }
+                }
+                match current_ty {
+                    Ty::Record { ref required, ref optional } => {
+                        if let Some((_, fty)) = required.iter().chain(optional.iter()).find(|(f, _)| f == part) {
+                            current_ty = fty.clone();
+                        } else {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    _ => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if ok {
+                if let Ty::GenericParam(ref name) = current_ty {
+                    if let Some(resolved) = aliases.get(name) {
+                        current_ty = resolved.clone();
+                    }
+                }
+                return Some(current_ty);
+            }
+        }
+        if let Some(ta) = generic_aliases.get(parts[0]) {
+            if parts.len() == 2 {
+                if let Some((_, _, fty_str)) = ta.fields.iter().find(|(f, _, _)| f == parts[1]) {
+                    return resolve_type_name(fty_str, aliases, generic_aliases, type_params);
+                }
+            }
+        }
+    }
     // try to parse as name with type args or union, e.g. Foo<int,string> or int | string
     if let Some(parsed) = type_from_name(ls) {
         let resolved = resolve_type(parsed, aliases, generic_aliases, type_params);

@@ -1420,7 +1420,10 @@ impl Formatter {
             ExprKind::Range(start, end, inclusive) => {
                 self.format_expr(start);
                 if *inclusive {
-                    self.output.push_str("..=");
+                    // The parser reads inclusive ranges as `...`
+                    // (TokenKind::DotDotDot); emitting `..=` would produce
+                    // code that cannot round-trip through the parser.
+                    self.output.push_str("...");
                 } else {
                     self.output.push_str("..");
                 }

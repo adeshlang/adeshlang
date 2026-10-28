@@ -531,6 +531,11 @@ impl<'a> UnusedWarningPass<'a> {
                 self.scan_expr(left);
                 self.scan_expr(right);
             }
+            ExprKind::Range(start, end, _) => {
+                // Both bounds are real uses: `for i in 0...limit`.
+                self.scan_expr(start);
+                self.scan_expr(end);
+            }
             ExprKind::Call(func, args, _)
             | ExprKind::OptCall(func, args, _)
             | ExprKind::New(func, args) => {

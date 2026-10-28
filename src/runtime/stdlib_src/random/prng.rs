@@ -18,11 +18,9 @@ pub fn splitmix64(state: &mut u64) -> u64 {
 
 /// Helper to produce a high-quality entropy seed from system time, atomic counter, and thread id.
 pub fn auto_seed() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(123456789);
+    // `utils::clock::epoch_nanos` is a deterministic zero on wasm32 (no clock
+    // exists there); the atomic counter still differentiates successive draws.
+    let nanos = crate::utils::clock::epoch_nanos() as u64;
     let counter = GLOBAL_COUNTER.fetch_add(1, Ordering::Relaxed);
     let thread_id = format!("{:?}", std::thread::current().id());
     let mut hash: u64 = 0xcbf29ce484222325;

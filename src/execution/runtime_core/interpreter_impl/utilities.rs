@@ -135,6 +135,10 @@ pub fn find_file_recursive(start: &Path, target: &str) -> Option<PathBuf> {
 /// Handles relative paths, adds .adesh extension if needed, and searches
 /// parent directories recursively to find the module file.
 pub fn resolve_path(path: &str, module_id: &str) -> String {
+    // Embedder-registered virtual modules (browser workspace) win over disk.
+    if let Some(v) = crate::execution::runtime_core::vfs::resolve_virtual(path, module_id) {
+        return v;
+    }
     use std::path::{Path, PathBuf};
     let base = Path::new(module_id).parent().unwrap_or(Path::new("."));
 

@@ -6,6 +6,9 @@ pub mod constant_time;
 pub mod encoding;
 pub mod hash;
 pub mod hmac_hkdf;
+// JWT/JWK support needs `jsonwebtoken`, which requires the wasm-bindgen JS
+// clock on WebAssembly; browser builds stay glue-free and skip it.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod jwt_jwk;
 pub mod key_exchange;
 pub mod merkle_file;

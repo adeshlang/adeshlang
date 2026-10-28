@@ -52,15 +52,93 @@ pub fn check_module_in(src: &str, file: Option<&str>) -> Result<(), LangError> {
         collect_custom_types_names(s, &mut aliases);
     }
 
+    let empty_type_params: FastMap<String, Ty> = FastMap::default();
     // generic aliases (keep AST so we can instantiate with concrete type args)
     let mut generic_aliases: FastMap<String, TypeAliasDecl> = FastMap::default();
+
+    // Collect non-generic type aliases with multi-pass resolution for forward references
+    let mut pending_aliases: Vec<(&TypeAliasDecl, &Span)> = Vec::new();
     for s in &prog {
         if let StmtKind::TypeAlias(ta, _exp) = &s.kind {
             if ta.type_params.is_empty() {
+                pending_aliases.push((ta, &s.span));
+            } else {
+                generic_aliases.insert(ta.name.clone(), ta.clone());
+            }
+        }
+    }
+
+    // Iterative resolution (up to 10 passes or fixed-point)
+    for _ in 0..10 {
+        let mut progress = false;
+        for (ta, _) in &pending_aliases {
+            // Check if scalar alias: type Port = u8;
+            if ta.fields.len() == 1 && ta.fields[0].0 == "__alias_target__" {
+                let fty = &ta.fields[0].2;
+                if let Some(target_ty) = resolve_type_name(fty, &aliases, &generic_aliases, &empty_type_params)
+                    .or_else(|| type_from_name(fty))
+                {
+                    if !matches!(target_ty, Ty::GenericParam(_)) {
+                        if aliases.get(&ta.name) != Some(&target_ty) {
+                            aliases.insert(ta.name.clone(), target_ty);
+                            progress = true;
+                        }
+                    }
+                }
+            } else {
+                // Record/struct alias: type Service = { name: string, port: Port }
+                let mut req: Vec<(String, Ty)> = Vec::new();
+                let mut opt: Vec<(String, Ty)> = Vec::new();
+                let mut all_resolved = true;
+                for (fname, optional, fty) in &ta.fields {
+                    let ft = resolve_type_name(fty, &aliases, &generic_aliases, &empty_type_params)
+                        .or_else(|| type_from_name(fty));
+                    if let Some(ft) = ft {
+                        if matches!(ft, Ty::GenericParam(ref p) if !aliases.contains_key(p)) {
+                            all_resolved = false;
+                        }
+                        if *optional {
+                            opt.push((fname.clone(), ft));
+                        } else {
+                            req.push((fname.clone(), ft));
+                        }
+                    } else {
+                        all_resolved = false;
+                    }
+                }
+                if all_resolved {
+                    let rec = Ty::Record {
+                        required: req,
+                        optional: opt,
+                    };
+                    if aliases.get(&ta.name) != Some(&rec) {
+                        aliases.insert(ta.name.clone(), rec);
+                        progress = true;
+                    }
+                }
+            }
+        }
+        if !progress {
+            break;
+        }
+    }
+
+    // Final pass to store remaining aliases and record diagnostics for unknown types
+    for (ta, span) in &pending_aliases {
+        if !aliases.contains_key(&ta.name) {
+            if ta.fields.len() == 1 && ta.fields[0].0 == "__alias_target__" {
+                let fty = &ta.fields[0].2;
+                let target_ty = resolve_type_name(fty, &aliases, &generic_aliases, &empty_type_params)
+                    .or_else(|| type_from_name(fty))
+                    .unwrap_or(Ty::Any);
+                aliases.insert(ta.name.clone(), target_ty);
+            } else {
                 let mut req: Vec<(String, Ty)> = Vec::new();
                 let mut opt: Vec<(String, Ty)> = Vec::new();
                 for (fname, optional, fty) in &ta.fields {
-                    if let Some(ft) = type_from_name(fty) {
+                    let ft = resolve_type_name(fty, &aliases, &generic_aliases, &empty_type_params)
+                        .or_else(|| type_from_name(fty));
+                    if let Some(ft) = ft {
                         if *optional {
                             opt.push((fname.clone(), ft));
                         } else {
@@ -71,9 +149,9 @@ pub fn check_module_in(src: &str, file: Option<&str>) -> Result<(), LangError> {
                             LangError::new(
                                 ErrorKind::Type,
                                 format!("unknown type '{}' in alias {}", fty, ta.name),
-                                s.span.line,
-                                s.span.col,
-                                s.span.line_text.clone(),
+                                span.line,
+                                span.col,
+                                span.line_text.clone(),
                             )
                             .with_file_opt(file.map(|f| f.to_string()))
                             .with_auto_hints(),
@@ -87,8 +165,6 @@ pub fn check_module_in(src: &str, file: Option<&str>) -> Result<(), LangError> {
                         optional: opt,
                     },
                 );
-            } else {
-                generic_aliases.insert(ta.name.clone(), ta.clone());
             }
         }
     }
@@ -129,7 +205,6 @@ pub fn check_module_in(src: &str, file: Option<&str>) -> Result<(), LangError> {
         }
     }
 
-    let empty_type_params: FastMap<String, Ty> = FastMap::default();
     let mut all_structs = Vec::new();
     collect_structs_recursive(&prog, &mut all_structs);
     for (sd, span) in all_structs {

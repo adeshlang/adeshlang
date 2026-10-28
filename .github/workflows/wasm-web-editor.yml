@@ -1,0 +1,122 @@
+# ==============================================================================
+# Web Editor WASM Build (on demand)
+# ==============================================================================
+#
+# Builds the AdeshLang engine for wasm32-unknown-unknown in release mode and
+# deploys it to the web editor:
+#   1. cargo build --release -p adesh-wasm --target wasm32-unknown-unknown
+#   2. Copies target/wasm32-unknown-unknown/release/adesh_wasm.wasm to
+#      web_editor/public/adesh_wasm.wasm
+#   3. Always uploads the binary as a workflow artifact.
+#   4. Optionally (push_web_editor input) commits and pushes it to the
+#      standalone web editor repository (adeshlang/web-editor), which is kept
+#      as a nested git repo outside this repository's tree.
+#
+# Run it from the Actions tab: Actions -> Web Editor WASM Build -> Run workflow.
+
+name: Web Editor WASM Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      push_web_editor:
+        description: "Commit the built wasm to adeshlang/web-editor (requires the WEB_EDITOR_TOKEN secret, a PAT with repo scope)"
+        required: false
+        type: boolean
+        default: false
+
+env:
+  CARGO_INCREMENTAL: "0"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build & deploy adesh_wasm.wasm
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: wasm-web-editor
+          cache-all-crates: "true"
+          cache-on-failure: "true"
+          cache-targets: "true"
+
+      - name: Build release wasm
+        run: |
+          set -euo pipefail
+          cargo build --release -p adesh-wasm --target wasm32-unknown-unknown
+
+      - name: Verify artifact
+        run: |
+          set -euo pipefail
+          artifact="target/wasm32-unknown-unknown/release/adesh_wasm.wasm"
+          test -f "$artifact"
+          size="$(stat -c%s "$artifact")"
+          echo "Built $artifact ($size bytes)"
+          # Sanity: wasm magic (\0asm) and version 1.
+          magic="$(head -c 4 "$artifact" | xxd -p)"
+          if [ "$magic" != "0061736d" ]; then
+            echo "::error::Unexpected file header: $magic"
+            exit 1
+          fi
+          if [ "$size" -lt 1000000 ]; then
+            echo "::error::Artifact suspiciously small ($size bytes); build likely failed."
+            exit 1
+          fi
+
+      - name: Upload wasm artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: adesh_wasm
+          path: target/wasm32-unknown-unknown/release/adesh_wasm.wasm
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Deploy to web editor repository
+        if: ${{ inputs.push_web_editor }}
+        env:
+          WEB_EDITOR_TOKEN: ${{ secrets.WEB_EDITOR_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$WEB_EDITOR_TOKEN" ]; then
+            echo "::error::push_web_editor is enabled but the WEB_EDITOR_TOKEN secret is not set."
+            echo "::error::Add a fine-grained PAT with contents:write on adeshlang/web-editor."
+            exit 1
+          fi
+
+          git clone \
+            "https://x-access-token:${WEB_EDITOR_TOKEN}@github.com/adeshlang/web-editor.git" \
+            web-editor-repo
+
+          install -D -m 644 \
+            target/wasm32-unknown-unknown/release/adesh_wasm.wasm \
+            web-editor-repo/public/adesh_wasm.wasm
+
+          git -C web-editor-repo config user.name "github-actions[bot]"
+          git -C web-editor-repo config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git -C web-editor-repo add public/adesh_wasm.wasm
+          if git -C web-editor-repo diff --staged --quiet; then
+            echo "Web editor wasm already up to date."
+            exit 0
+          fi
+
+          git -C web-editor-repo commit \
+            -m "chore: deploy adesh_wasm.wasm from ${GITHUB_SHA::7}" \
+            -m "Built by the Web Editor WASM Build workflow ($GITHUB_WORKFLOW_URL)."
+          git -C web-editor-repo push origin HEAD:main
+          echo "Deployed adesh_wasm.wasm to adeshlang/web-editor."

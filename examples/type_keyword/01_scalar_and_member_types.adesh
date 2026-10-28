@@ -1,0 +1,117 @@
+// ─────────────────────────────────────────────────────────────
+// AdeshLang: TypeScript-Inspired Scalar Aliases & Member Types
+// ─────────────────────────────────────────────────────────────
+// Demonstrates branded/constrained scalar aliases and dotted member
+// access types (analogous to TypeScript's indexed access types `Type['field']`).
+//
+// Can be executed via:
+//   1. Direct run: `adesh run examples/type_keyword/01_scalar_and_member_types.adesh`
+//   2. Test runner: `adesh test examples/type_keyword/01_scalar_and_member_types.adesh`
+
+type Port = u16;
+type TimeoutMs = u32;
+type MaxRetries = u8;
+type Host = string;
+
+type Endpoint = {
+    host: Host,
+    port: Port,
+    timeout: TimeoutMs,
+};
+
+type RetryPolicy = {
+    max_retries: MaxRetries,
+    backoff_factor: u16,
+};
+
+type ServiceClient = {
+    name: string,
+    endpoint: Endpoint,
+    policy: RetryPolicy,
+    active: bool,
+};
+
+// Function taking member access types as parameter types
+fn create_client(
+    name: string,
+    host: Endpoint.host,
+    port: Endpoint.port,
+    retries: RetryPolicy.max_retries
+): ServiceClient {
+    return {
+        name: name,
+        endpoint: {
+            host: host,
+            port: port,
+            timeout: 5000,
+        },
+        policy: {
+            max_retries: retries,
+            backoff_factor: 2,
+        },
+        active: true,
+    };
+}
+
+// Function returning a member access type
+fn get_client_port(client: ServiceClient): Endpoint.port {
+    return client.endpoint.port;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Suite Declarations (for `adesh test`)
+// ─────────────────────────────────────────────────────────────
+
+test fn test_scalar_bounds_and_client_creation() {
+    let client = create_client("payments-gateway", "127.0.0.1", 8443, 3);
+    assert_eq(client.name, "payments-gateway");
+    assert_eq(client.endpoint.host, "127.0.0.1");
+    assert_eq(client.endpoint.port, 8443);
+    assert_eq(client.policy.max_retries, 3);
+    assert_eq(client.active, true);
+}
+
+test fn test_member_type_variable_binding() {
+    let client = create_client("auth-service", "auth.internal", 9000, 5);
+    let p: Endpoint.port = client.endpoint.port;
+    assert_eq(p, 9000);
+
+    let retries: RetryPolicy.max_retries = client.policy.max_retries;
+    assert_eq(retries, 5);
+
+    let extracted: Port = get_client_port(client);
+    assert_eq(extracted, 9000);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Standalone Direct Runner (for `adesh run`)
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests(): i32 {
+    test_scalar_bounds_and_client_creation();
+    test_member_type_variable_binding();
+    return 2;
+}
+
+fn main() {
+    print("=== [AdeshLang] 01: Scalar & Member Types Example ===");
+    let client = create_client("api-edge", "api.company.com", 443, 5);
+    let bound_port: Endpoint.port = client.endpoint.port;
+    let extracted_port = get_client_port(client);
+
+    print(`Service Name    : ${client.name}`);
+    print(`Endpoint        : ${client.endpoint.host}:${client.endpoint.port}`);
+    print(`Timeout         : ${client.endpoint.timeout}ms`);
+    print(`Max Retries     : ${client.policy.max_retries}`);
+    print(`Bound Port      : ${bound_port}`);
+    print(`Extracted Port  : ${extracted_port}`);
+    print(`Active Status   : ${client.active}`);
+
+    // Self-verifying assertions during direct run
+    assert_eq(bound_port, 443);
+    assert_eq(extracted_port, 443);
+    assert_eq(client.policy.max_retries, 5);
+
+    let test_count = run_tests();
+    print(`✓ Executed ${test_count} inline unit tests successfully!`);
+}

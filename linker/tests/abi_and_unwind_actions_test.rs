@@ -100,8 +100,10 @@ fn test_target_maturity_tier_classification() {
     let mac_arm64 = Target::from_triple("aarch64-macos").unwrap();
     assert_eq!(mac_arm64.tier(), TargetTier::Tier1Supported);
 
+    // The WASM linker writer is a stub, so the triple is declared only: the
+    // runnable modules come from the compiler backend, not from the linker.
     let wasm_wasi = Target::from_triple("wasm32-wasi").unwrap();
-    assert_eq!(wasm_wasi.tier(), TargetTier::Tier1Supported);
+    assert_eq!(wasm_wasi.tier(), TargetTier::Tier3Declared);
 
     // Tier 2 Targets
     let riscv = Target::from_triple("riscv64-linux").unwrap();

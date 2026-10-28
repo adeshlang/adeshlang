@@ -21,6 +21,12 @@ The Adesh Linker uses a comprehensive, decoupled Target Model representing hardw
 | `wasm32-none` | WASM32 | None | WASM | 32-bit | 65536 bytes (64KB)|
 | `wasm64` | WASM64 | None | WASM | 64-bit | 65536 bytes (64KB)|
 
+The three WASM triples above are parseable and **not linkable**: the writer
+returns `LNK017 UnsupportedFormat` (see [docs/wasm.md](wasm.md)), so their tier
+is `Tier3Declared` in `linker/src/target.rs`. "Supported Target Triples" means
+recognised by the target model, not verified end-to-end — consult
+`TARGET_MATRIX.md` for the execution status of each row.
+
 ---
 
 ## 2. ABI & Relocation Model

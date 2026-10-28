@@ -219,7 +219,7 @@ fn test_link_macho_darwin_executable() {
 }
 
 #[test]
-fn test_link_wasm_module() {
+fn test_link_wasm_module_is_not_implemented() {
     let dir = tempdir().unwrap();
     let target = Target::from_triple("wasm32-wasi").unwrap();
 
@@ -240,12 +240,13 @@ fn test_link_wasm_module() {
 
     let out_path = dir.path().join("app.wasm");
     let config = LinkConfig::new(out_path.clone(), target);
-    let res = Linker::link(&[obj_path], config);
-    assert!(res.is_ok(), "WASM linking failed: {:?}", res.err());
-    assert!(out_path.exists());
-
-    let bytes = std::fs::read(&out_path).unwrap();
-    assert_eq!(&bytes[0..4], b"\0asm");
+    let err = Linker::link(&[obj_path], config)
+        .expect_err("the wasm writer is a stub: linking must fail rather than emit bytes");
+    assert_eq!(err.code, adesh_linker::error::ErrorCode::UnsupportedFormat);
+    assert!(
+        !out_path.exists(),
+        "the stub writer previously produced a `\0asm` module that nothing ever ran"
+    );
 }
 
 #[test]

@@ -10,6 +10,7 @@ pub mod flow;
 pub mod format;
 pub mod ops;
 pub mod pretty_print;
+pub mod vfs;
 
 // Interpreter submodules
 mod interpreter;

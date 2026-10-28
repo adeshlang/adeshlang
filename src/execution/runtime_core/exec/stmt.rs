@@ -15,6 +15,7 @@ use super::core::Exec;
 use crate::execution::runtime_core::flow::ExecFlow;
 use crate::execution::runtime_core::format::fmt;
 use crate::execution::runtime_core::ops::{equals, num};
+use crate::execution::runtime_core::interpreter_impl::type_helpers;
 use crate::execution::runtime_core::{
     ann_matches_value, call_user, call_user_with_this, coerce_to_fixed_width, err,
 };
@@ -286,13 +287,38 @@ impl Exec {
                         Err(e) => return Err(err(format!("Type error for '{}': {}", name, e))),
                     }
                 }
-                if type_ann.is_some() && !ann_matches_value(type_ann, &val) {
-                    return Err(err(format!(
-                        "annotated variable '{}' expected {}, found {}",
-                        name,
-                        type_ann.as_ref().unwrap(),
-                        fmt(&val)
-                    )));
+                // Use env-aware type check so named type aliases (type Foo = {...}) are resolved.
+                // global is always index 0 for Exec instances; current is the active scope.
+                let ann_str = type_ann.as_ref().unwrap().as_str();
+                let env_aware_ok = type_helpers::ann_matches_value(
+                    &self.envs,
+                    0,
+                    Some(self.current),
+                    type_ann,
+                    &val,
+                );
+                // Also try the stateless check for builtin types that don't need env lookup.
+                let stateless_ok = ann_matches_value(type_ann, &val);
+                if !(env_aware_ok && stateless_ok) {
+                    // Generate a detailed error message
+                    let detail = type_helpers::type_mismatch_reason(
+                        &self.envs,
+                        0,
+                        Some(self.current),
+                        ann_str,
+                        &val,
+                    );
+                    let msg = match detail {
+                        Some(reason) => format!(
+                            "annotated variable '{}' expected {}: {}",
+                            name, ann_str, reason
+                        ),
+                        None => format!(
+                            "annotated variable '{}' expected {}, found {}",
+                            name, ann_str, fmt(&val)
+                        ),
+                    };
+                    return Err(err(msg));
                 }
                 self.envs[self.current].values.insert(name.clone(), val);
                 self.envs[self.current]

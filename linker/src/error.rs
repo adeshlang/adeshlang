@@ -40,6 +40,8 @@ pub enum ErrorCode {
     IoError,
     /// LNK016: Memory region or target address space exhausted.
     MemoryExhausted,
+    /// LNK017: Output format is not implemented by this linker.
+    UnsupportedFormat,
 }
 
 impl ErrorCode {
@@ -61,6 +63,7 @@ impl ErrorCode {
             ErrorCode::MetadataMismatch => "LNK014",
             ErrorCode::IoError => "LNK015",
             ErrorCode::MemoryExhausted => "LNK016",
+            ErrorCode::UnsupportedFormat => "LNK017",
         }
     }
 
@@ -82,6 +85,7 @@ impl ErrorCode {
             ErrorCode::MetadataMismatch => "Adesh metadata mismatch",
             ErrorCode::IoError => "I/O error",
             ErrorCode::MemoryExhausted => "memory region exhausted",
+            ErrorCode::UnsupportedFormat => "output format not implemented",
         }
     }
 }

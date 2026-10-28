@@ -2361,9 +2361,10 @@ pub(crate) fn handle_call_builtin(
                     | AotValueType::I64
                     | AotValueType::I128
                     | AotValueType::Int => {
-                        if target_type.bits() < 64 {
+                        let actual_bits = builder.func.dfg.value_type(val).bits();
+                        if actual_bits > target_type.bits() {
                             builder.ins().ireduce(target_type, val)
-                        } else if target_type.bits() > 64 {
+                        } else if actual_bits < target_type.bits() {
                             builder.ins().uextend(target_type, val)
                         } else {
                             val
@@ -2440,9 +2441,10 @@ pub(crate) fn handle_call_builtin(
                     | AotValueType::I64
                     | AotValueType::I128
                     | AotValueType::Int => {
-                        if target_type.bits() < 64 {
+                        let actual_bits = builder.func.dfg.value_type(val).bits();
+                        if actual_bits > target_type.bits() {
                             builder.ins().ireduce(target_type, val)
-                        } else if target_type.bits() > 64 {
+                        } else if actual_bits < target_type.bits() {
                             builder.ins().sextend(target_type, val)
                         } else {
                             val
@@ -4037,11 +4039,23 @@ pub(crate) fn handle_call_builtin(
                                 let dst_elem_ptr = builder.ins().iadd(array_ptr, dst_off_val);
                                 match elem_size {
                                     1 => {
-                                        let v8 = builder.ins().ireduce(types::I8, elem_val);
+                                        let actual_bits = builder.func.dfg.value_type(elem_val).bits();
+                                        let v8 = if actual_bits > 8 {
+                                            builder.ins().ireduce(types::I8, elem_val)
+                                        } else {
+                                            elem_val
+                                        };
                                         builder.ins().store(MemFlags::new(), v8, dst_elem_ptr, 0);
                                     }
                                     2 => {
-                                        let v16 = builder.ins().ireduce(types::I16, elem_val);
+                                        let actual_bits = builder.func.dfg.value_type(elem_val).bits();
+                                        let v16 = if actual_bits > 16 {
+                                            builder.ins().ireduce(types::I16, elem_val)
+                                        } else if actual_bits < 16 {
+                                            builder.ins().uextend(types::I16, elem_val)
+                                        } else {
+                                            elem_val
+                                        };
                                         builder.ins().store(MemFlags::new(), v16, dst_elem_ptr, 0);
                                     }
                                     4 => {
@@ -4055,7 +4069,14 @@ pub(crate) fn handle_call_builtin(
                                                 0,
                                             );
                                         } else {
-                                            let i32v = builder.ins().ireduce(types::I32, elem_val);
+                                            let actual_bits = builder.func.dfg.value_type(elem_val).bits();
+                                            let i32v = if actual_bits > 32 {
+                                                builder.ins().ireduce(types::I32, elem_val)
+                                            } else if actual_bits < 32 {
+                                                builder.ins().uextend(types::I32, elem_val)
+                                            } else {
+                                                elem_val
+                                            };
                                             builder.ins().store(
                                                 MemFlags::new(),
                                                 i32v,

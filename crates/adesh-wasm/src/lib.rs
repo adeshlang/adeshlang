@@ -72,20 +72,34 @@ pub struct FormatResult {
     pub error: Option<String>,
 }
 
-// Memory Allocation API for JS <-> WASM boundary
+// Memory Allocation API for JS <-> WASM boundary.
+//
+// The pair must be layout-sound: `alloc` and `free` are called with the very
+// same `size` from JS, so the dealloc layout always matches the alloc layout.
+// (A previous implementation used `Vec::with_capacity`, whose real allocation
+// can be larger than requested, producing a layout mismatch on free that
+// corrupted the wasm allocator and trapped with spurious
+// "memory access out of bounds" errors.)
 #[unsafe(no_mangle)]
-pub extern "C" fn adesh_wasm_alloc(size: usize) -> *mut u8 {
-    let mut buf = Vec::with_capacity(size);
-    let ptr = buf.as_mut_ptr();
-    std::mem::forget(buf);
-    ptr
+pub unsafe extern "C" fn adesh_wasm_alloc(size: usize) -> *mut u8 {
+    unsafe {
+        if size == 0 {
+            return std::ptr::null_mut();
+        }
+        match std::alloc::Layout::from_size_align(size, 8) {
+            Ok(layout) => std::alloc::alloc(layout),
+            Err(_) => std::ptr::null_mut(),
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn adesh_wasm_free(ptr: *mut u8, size: usize) {
     if !ptr.is_null() && size > 0 {
         unsafe {
-            drop(Vec::from_raw_parts(ptr, 0, size));
+            if let Ok(layout) = std::alloc::Layout::from_size_align(size, 8) {
+                std::alloc::dealloc(ptr, layout);
+            }
         }
     }
 }
@@ -114,6 +128,86 @@ pub extern "C" fn adesh_wasm_init() {
 pub extern "C" fn adesh_wasm_version() -> *mut c_char {
     let ver = env!("CARGO_PKG_VERSION");
     string_to_c_ptr(ver.to_string())
+}
+
+// ----------------------------------------------------------------------------
+// Virtual module store (browser workspace)
+//
+// wasm32 has no filesystem, so `import "..."` statements could never resolve.
+// The embedder registers every workspace file here before run/check; the
+// interpreter resolves imports from this store before touching the disk.
+// ----------------------------------------------------------------------------
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn adesh_wasm_set_module(
+    path_ptr: *const u8,
+    path_len: usize,
+    src_ptr: *const u8,
+    src_len: usize,
+) {
+    if path_ptr.is_null() || src_ptr.is_null() {
+        return;
+    }
+    unsafe {
+        let path_slice = std::slice::from_raw_parts(path_ptr, path_len);
+        let src_slice = std::slice::from_raw_parts(src_ptr, src_len);
+        if let (Ok(path), Ok(src)) = (
+            std::str::from_utf8(path_slice),
+            std::str::from_utf8(src_slice),
+        ) {
+            adeshlang::execution::runtime_core::vfs::register(path, src.to_string());
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn adesh_wasm_clear_modules() {
+    adeshlang::execution::runtime_core::vfs::clear();
+}
+
+
+// ----------------------------------------------------------------------------
+// Memory statistics
+// ----------------------------------------------------------------------------
+
+/// Shadow-stack reservation, kept in sync with the linker flag
+/// `-zstack-size=16777216` in `.cargo/config.toml`. The wasm32 stack lives at
+/// the bottom of linear memory ([0, stack)), static data follows it
+/// ([stack, __data_end)), and the dlmalloc heap grows upward from
+/// `__heap_base`. wasm-ld lays the regions out in exactly this order.
+const WASM_STACK_SIZE: usize = 16 * 1024 * 1024;
+
+unsafe extern "C" {
+    #[link_name = "__data_end"]
+    static DATA_END: u8;
+    #[link_name = "__heap_base"]
+    static HEAP_BASE: u8;
+}
+
+#[derive(Serialize)]
+#[allow(non_snake_case)]
+struct MemStats {
+    /// Reserved interpreter shadow stack (lower 16 MiB of linear memory).
+    stackSizeBytes: usize,
+    /// Static data segment (engine code tables, stdlib sources, ...).
+    dataSizeBytes: usize,
+    /// Byte offset where the heap starts; the JS side derives live heap usage
+    /// as `memory.buffer.byteLength - heapBaseBytes`.
+    heapBaseBytes: usize,
+}
+
+/// Break the linear-memory layout into its parts so the UI can report the
+/// *actual* heap a program allocated instead of the full reservation.
+#[unsafe(no_mangle)]
+pub extern "C" fn adesh_wasm_mem_stats() -> *mut c_char {
+    let data_end = unsafe { std::ptr::addr_of!(DATA_END) as usize };
+    let heap_base = unsafe { std::ptr::addr_of!(HEAP_BASE) as usize };
+    let stats = MemStats {
+        stackSizeBytes: WASM_STACK_SIZE,
+        dataSizeBytes: data_end.saturating_sub(WASM_STACK_SIZE),
+        heapBaseBytes: heap_base,
+    };
+    string_to_c_ptr(serde_json::to_string(&stats).unwrap_or_default())
 }
 
 // ----------------------------------------------------------------------------
@@ -273,6 +367,45 @@ fn render_diagnostics(diagnostics: &[Diagnostic]) -> String {
     out
 }
 
+/// Structured view of an interpreter runtime error string.
+///
+/// The interpreter returns `Err(String)`; errors constructed with
+/// `err_with_span` embed a rendered `LangError` (kind label, `-->` position,
+/// source snippet, caret), while older call sites embed `[at file:line:col]`
+/// markers or no position at all. This parser recovers the best position and
+/// a clean one-line message from every variant.
+struct RuntimeParse {
+    kind: String,
+    message: String,
+    line: Option<usize>,
+    col: Option<usize>,
+    hint: Option<String>,
+}
+
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            // Skip ESC [ ... letter sequences
+            if chars.next() == Some('[') {
+                for c2 in chars.by_ref() {
+                    if c2.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn parse_usize(s: &str) -> Option<usize> {
+    s.trim().parse::<usize>().ok().filter(|&n| n > 0)
+}
+
 /// Parse `[at <file>:<line>:<col>]` context markers embedded by the
 /// interpreter in runtime error strings, returning the first match.
 fn runtime_error_position(stderr: &str) -> Option<(usize, usize)> {
@@ -295,6 +428,95 @@ fn runtime_error_position(stderr: &str) -> Option<(usize, usize)> {
         search = &rest[end..];
     }
     None
+}
+
+fn parse_runtime_error(raw: &str) -> RuntimeParse {
+    let text = strip_ansi(raw);
+
+    // Position from a rendered LangError's `-->` marker:
+    //   "--> line 3 col 11" | "--> main.adesh:3:11" | "--> main.adesh:3"
+    let mut line = None;
+    let mut col = None;
+    if let Some(marker) = text.find("--> ") {
+        let marker_line: &str = text[marker + 4..].lines().next().unwrap_or("");
+        let loc = marker_line.split_whitespace().last().unwrap_or("");
+        let nums: Vec<&str> = loc.rsplitn(3, ':').collect();
+        match nums.len() {
+            3 => {
+                col = parse_usize(nums[0]);
+                line = parse_usize(nums[1]);
+            }
+            2 => {
+                if let Some(n) = parse_usize(nums[0]) {
+                    line = Some(n);
+                } else {
+                    line = parse_usize(nums[1]);
+                }
+            }
+            _ => {}
+        }
+        if line.is_none() {
+            // "--> line 3 col 11"
+            let words: Vec<&str> = marker_line.split_whitespace().collect();
+            let mut it = words.iter();
+            while let Some(w) = it.next() {
+                if w == &"line" {
+                    line = parse_usize(it.next().copied().unwrap_or(""));
+                } else if w == &"col" {
+                    col = parse_usize(it.next().copied().unwrap_or(""));
+                }
+            }
+        }
+    }
+
+    // Fall back to `[at file:line:col]` markers from the interpreter's
+    // run-module context when no rendered position exists.
+    if line.is_none() {
+        if let Some((l, c)) = runtime_error_position(&text) {
+            line = Some(l);
+            col = Some(c);
+        }
+    }
+
+    // Headline: the first line of the rendered error ("KindLabel: message"),
+    // or the message minus any `[at ...]` marker.
+    let mut message = text
+        .lines()
+        .find(|l| !l.trim().is_empty() && !l.trim_start().starts_with("-->"))
+        .unwrap_or("runtime error")
+        .trim()
+        .to_string();
+    if let Some(at) = message.find("[at ") {
+        let trimmed = message[..at].trim_end();
+        if !trimmed.is_empty() {
+            message = trimmed.to_string();
+        }
+    }
+
+    // Split a recognized kind label off the headline.
+    let mut kind = "RuntimeError".to_string();
+    for label in ["RuntimeError", "TypeError", "ParseError", "LexicalError", "CompileError"] {
+        let prefix = format!("{}: ", label);
+        if let Some(rest) = message.strip_prefix(&prefix) {
+            kind = label.to_string();
+            message = rest.to_string();
+            break;
+        }
+    }
+
+    // Hint: the rendered error may carry `help: ...` lines.
+    let hint = text
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("help: "))
+        .map(|h| h.to_string());
+
+    RuntimeParse {
+        kind,
+        message,
+        line,
+        col,
+        hint,
+    }
 }
 
 fn extract_source_line(code: &str, line: usize) -> String {
@@ -407,6 +629,7 @@ pub unsafe extern "C" fn adesh_wasm_run(
 
     // 1. Static analysis first (same as the native CLI): refuse to execute
     //    programs that do not type-check, and surface every diagnostic.
+    #[cfg(not(target_arch = "wasm32"))]
     let start = Instant::now();
     let (has_errors, diagnostics) = collect_all_diagnostics(code, file_name);
     if has_errors {
@@ -416,7 +639,12 @@ pub unsafe extern "C" fn adesh_wasm_run(
             stderr: render_diagnostics(&diagnostics),
             result: None,
             error: Some("Program contains errors".to_string()),
+            #[cfg(not(target_arch = "wasm32"))]
             duration_ms: start.elapsed().as_secs_f64() * 1000.0,
+            // wasm32-unknown-unknown has no clock: the JS caller measures
+            // wall-clock duration itself.
+            #[cfg(target_arch = "wasm32")]
+            duration_ms: 0.0,
             diagnostics,
         };
         return string_to_c_ptr(serde_json::to_string(&res).unwrap_or_default());
@@ -432,8 +660,10 @@ pub unsafe extern "C" fn adesh_wasm_run(
     // Flush any pending stdout
     stdio::flush_all();
     let stdout = std::mem::take(&mut stdio::finish_output_capture());
-    let elapsed = start.elapsed();
-    let duration_ms = elapsed.as_secs_f64() * 1000.0;
+    #[cfg(not(target_arch = "wasm32"))]
+    let duration_ms = start.elapsed().as_secs_f64() * 1000.0;
+    #[cfg(target_arch = "wasm32")]
+    let duration_ms = 0.0;
 
     let response = match exec_res {
         Ok(()) => RunResult {
@@ -446,22 +676,24 @@ pub unsafe extern "C" fn adesh_wasm_run(
             diagnostics, // warnings (if any) carried alongside a clean run
         },
         Err(err) => {
-            // Position the runtime error using the interpreter's
-            // `[at file:line:col]` context marker when present.
-            let (line, col) = runtime_error_position(&err).unwrap_or((1, 1));
+            // Recover position, kind, and a clean one-line message from the
+            // interpreter's rendered runtime error.
+            let parsed = parse_runtime_error(&err);
+            let line = parsed.line.unwrap_or(1);
+            let col = parsed.col.unwrap_or(1);
             let mut runtime_diagnostics = diagnostics; // keep warnings
             runtime_diagnostics.push(Diagnostic {
                 severity: "error".to_string(),
-                kind: "RuntimeError".to_string(),
-                message: err.clone(),
+                kind: parsed.kind.clone(),
+                message: parsed.message.clone(),
                 line,
                 column: col,
                 end_line: line,
-                end_column: col,
+                end_column: col + 1,
                 source_line: extract_source_line(code, line),
                 file: Some(file_name.to_string()),
                 code: None,
-                hint: None,
+                hint: parsed.hint,
             });
             RunResult {
                 ok: false,

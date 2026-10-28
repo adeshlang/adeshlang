@@ -57,16 +57,25 @@ static NEXT_PTR_ID: AtomicU64 = AtomicU64::new(1);
 
 // Per-process secret to obfuscate pointer handles so they cannot be guessed.
 // Handle exposed to users = raw_id ^ POINTER_SECRET.
+// wasm32-unknown-unknown has no clock (`SystemTime::now` panics there), so
+// browser builds use a fixed compile-time seed.
 static POINTER_SECRET: Lazy<u64> = Lazy::new(|| {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0);
-    let seed = nanos ^ 0xA5A5_A5A5_A5A5_A5A5u64;
-    if seed == 0 {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        let seed = nanos ^ 0xA5A5_A5A5_A5A5_A5A5u64;
+        if seed == 0 {
+            0x1F42_7D38_4A93_BC27u64
+        } else {
+            seed
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
         0x1F42_7D38_4A93_BC27u64
-    } else {
-        seed
     }
 });
 

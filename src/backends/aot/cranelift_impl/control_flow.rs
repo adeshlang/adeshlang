@@ -92,12 +92,14 @@ pub(crate) fn lower_control_flow_instruction(
                 }
             } else {
                 // No return value provided, use zero/default for expected type
-                match expected_ty {
-                    t if t == types::I8 => builder.ins().iconst(types::I8, 0),
-                    t if t == types::I64 => builder.ins().iconst(types::I64, 0),
-                    t if t == types::F64 => builder.ins().f64const(0.0),
-                    t if t == types::F32 => builder.ins().f32const(0.0),
-                    _ => builder.ins().iconst(types::I64, 0),
+                if expected_ty.is_int() {
+                    builder.ins().iconst(expected_ty, 0)
+                } else if expected_ty == types::F32 {
+                    builder.ins().f32const(0.0)
+                } else if expected_ty == types::F64 {
+                    builder.ins().f64const(0.0)
+                } else {
+                    builder.ins().iconst(types::I64, 0)
                 }
             };
             builder.ins().return_(&[ret_val]);

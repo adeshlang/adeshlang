@@ -8,6 +8,10 @@ use crate::runtime::stdlib_src::crypto::hash::{
     HashAlgo, constant_time_compare, hash_bytes, hash_file,
 };
 use crate::runtime::stdlib_src::crypto::hmac_hkdf::{hkdf_sha256_derive, hmac_sha256, hmac_verify};
+// JWT/JWK builtins require `jsonwebtoken`, whose WebAssembly build pulls the
+// wasm-bindgen JS glue (JS `Date` clock). The browser runtime stays glue-free,
+// so JWT builtins are native-only.
+#[cfg(not(target_arch = "wasm32"))]
 use crate::runtime::stdlib_src::crypto::jwt_jwk::{
     compute_jwk_thumbprint, sign_jwt_hs256, verify_jwt_hs256,
 };
@@ -171,18 +175,21 @@ pub fn register_all(registry: &mut BuiltinRegistry) {
         "Parse X.509 PEM Certificate",
         builtin_parse_cert,
     );
+    #[cfg(not(target_arch = "wasm32"))]
     registry.register(
         "Crypto.signJwt",
         "crypto",
         "Sign JWT with HS256",
         builtin_sign_jwt,
     );
+    #[cfg(not(target_arch = "wasm32"))]
     registry.register(
         "Crypto.verifyJwt",
         "crypto",
         "Safely verify JWT with algorithm whitelist",
         builtin_verify_jwt,
     );
+    #[cfg(not(target_arch = "wasm32"))]
     registry.register(
         "Crypto.jwkThumbprint",
         "crypto",
@@ -563,6 +570,7 @@ fn builtin_parse_cert(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Val
     Ok(Value::Object(Arc::new(obj)))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn builtin_sign_jwt(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, String> {
     let claims_str = args
         .get(0)
@@ -578,6 +586,7 @@ fn builtin_sign_jwt(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value
     Ok(Value::Str(token))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn builtin_verify_jwt(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, String> {
     let token = args
         .get(0)
@@ -591,6 +600,7 @@ fn builtin_verify_jwt(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Val
     Ok(Value::Str(claims.to_string()))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn builtin_jwk_thumbprint(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, String> {
     let jwk_str = args
         .get(0)
@@ -854,14 +864,17 @@ pub fn build_crypto_module_object() -> Value {
             builtin_generate_self_signed_cert,
         ))),
     );
+    #[cfg(not(target_arch = "wasm32"))]
     map.insert(
         "signJwt".to_string(),
         Value::Function(crate::parsing::ast::NativeFn(Arc::new(builtin_sign_jwt))),
     );
+    #[cfg(not(target_arch = "wasm32"))]
     map.insert(
         "verifyJwt".to_string(),
         Value::Function(crate::parsing::ast::NativeFn(Arc::new(builtin_verify_jwt))),
     );
+    #[cfg(not(target_arch = "wasm32"))]
     map.insert(
         "jwkThumbprint".to_string(),
         Value::Function(crate::parsing::ast::NativeFn(Arc::new(

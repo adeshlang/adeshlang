@@ -4,4 +4,13 @@ mobile = "ndk -t arm64-v8a -t x86_64 -o ./mobile/flutter/android/app/src/main/jn
 build-mobile = "ndk -t arm64-v8a -t x86_64 -o ./mobile/flutter/android/app/src/main/jniLibs --manifest-path ./mobile/bridge/Cargo.toml build --release"
 build-bridge = "ndk -t arm64-v8a -t x86_64 -o ./mobile/flutter/android/app/src/main/jniLibs --manifest-path ./mobile/bridge/Cargo.toml build --release"
 
+# The AdeshLang interpreter evaluates expressions through deeply recursive
+# functions; unoptimized (debug) frames alone can measure hundreds of KB.
+# The wasm32-unknown-unknown linker default stack (1 MiB) is exhausted after a
+# handful of nested evals, wrapping the stack pointer below zero and trapping
+# with spurious "memory access out of bounds" errors. Give the wasm shadow
+# stack room for both debug testing and deep user-program recursion.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=-zstack-size=16777216"]
+
 

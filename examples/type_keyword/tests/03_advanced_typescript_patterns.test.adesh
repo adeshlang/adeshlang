@@ -1,0 +1,192 @@
+// ─────────────────────────────────────────────────────────────
+// AdeshLang: Advanced TypeScript Patterns & Edge Cases Test Suite
+// ─────────────────────────────────────────────────────────────
+// Covers:
+//   1. Scalar fixed-width boundary constraints (u8, u16, i8, i16).
+//   2. Multi-level chained scalar aliases.
+//   3. Dotted member access types in variables, params, and returns.
+//   4. Deep 3-level dotted type resolution.
+//   5. Generic utility type compositions.
+//   6. Type introspection (typeof, sizeof).
+//
+// Can be executed via:
+//   - Direct run: `adesh run examples/type_keyword/tests/03_advanced_typescript_patterns.test.adesh`
+//   - Test runner: `adesh test examples/type_keyword/tests/03_advanced_typescript_patterns.test.adesh`
+//   - Main harness: `adesh run examples/type_keyword/tests/main.adesh`
+
+// ─────────────────────────────────────────────────────────────
+// Type Declarations
+// ─────────────────────────────────────────────────────────────
+
+type RawU8 = u8;
+type Byte = RawU8;
+type Octet = Byte;
+
+type Port = u16;
+type MaxConn = u32;
+
+type ShortInt = i16;
+type SignedByte = i8;
+
+type ServerSpec = {
+    host: string,
+    port: Port,
+    max_connections: MaxConn,
+};
+
+type Level3 = {
+    depth: u8,
+    name: string,
+};
+
+type Level2 = {
+    sub: Level3,
+};
+
+type Level1 = {
+    middle: Level2,
+};
+
+type Result<T> = {
+    ok: bool,
+    data: T,
+    error?: string,
+};
+
+type Meta<T> = {
+    id: u64,
+    item: T,
+};
+
+// ─────────────────────────────────────────────────────────────
+// Helper Functions
+// ─────────────────────────────────────────────────────────────
+
+fn get_server_port(spec: ServerSpec): ServerSpec.port {
+    return spec.port;
+}
+
+fn check_port_bound(p: ServerSpec.port): bool {
+    return p > 1024;
+}
+
+fn create_level_tree(d: Level1.middle.sub.depth, n: string): Level1 {
+    return {
+        middle: {
+            sub: {
+                depth: d,
+                name: n,
+            },
+        },
+    };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test Cases (for `adesh test`)
+// ─────────────────────────────────────────────────────────────
+
+export test fn test_scalar_fixed_width_boundaries() {
+    let u8_min: Byte = 0;
+    let u8_max: Byte = 255;
+    assert_eq(u8_min, 0);
+    assert_eq(u8_max, 255);
+
+    let u16_min: Port = 0;
+    let u16_max: Port = 65535;
+    assert_eq(u16_min, 0);
+    assert_eq(u16_max, 65535);
+
+    let i8_min: SignedByte = -128;
+    let i8_max: SignedByte = 127;
+    assert_eq(i8_min, -128);
+    assert_eq(i8_max, 127);
+
+    let i16_min: ShortInt = -32768;
+    let i16_max: ShortInt = 32767;
+    assert_eq(i16_min, -32768);
+    assert_eq(i16_max, 32767);
+}
+
+export test fn test_chained_scalar_aliases() {
+    let raw_val: RawU8 = 200;
+    let b: Byte = 200;
+    let oct: Octet = 200;
+
+    assert_eq(raw_val, 200);
+    assert_eq(b, 200);
+    assert_eq(oct, 200);
+}
+
+export test fn test_dotted_member_types_direct_and_func() {
+    let spec: ServerSpec = {
+        host: "cluster.internal",
+        port: 8080,
+        max_connections: 10000,
+    };
+
+    let p: ServerSpec.port = spec.port;
+    assert_eq(p, 8080);
+
+    let is_bound = check_port_bound(spec.port);
+    assert_eq(is_bound, true);
+
+    let returned_port = get_server_port(spec);
+    assert_eq(returned_port, 8080);
+}
+
+export test fn test_deep_three_level_dotted_type() {
+    let tree = create_level_tree(3, "root_node");
+    assert_eq(tree.middle.sub.depth, 3);
+    assert_eq(tree.middle.sub.name, "root_node");
+
+    let extracted_depth: Level1.middle.sub.depth = tree.middle.sub.depth;
+    assert_eq(extracted_depth, 3);
+}
+
+export test fn test_generic_utility_type_composition() {
+    let res: Result<string> = {
+        ok: true,
+        data: "operation_success",
+    };
+    assert_eq(res.ok, true);
+    assert_eq(res.data, "operation_success");
+    assert_eq(res.error, null);
+
+    let meta: Meta<Result<string>> = {
+        id: 1001,
+        item: res,
+    };
+    assert_eq(meta.id, 1001);
+    assert_eq(meta.item.ok, true);
+    assert_eq(meta.item.data, "operation_success");
+}
+
+export test fn test_alias_introspection() {
+    let spec: ServerSpec = {
+        host: "localhost",
+        port: 3000,
+        max_connections: 500,
+    };
+    assert_eq(typeof spec, "object");
+    assert(sizeof(spec) > 0, "ServerSpec should have non-zero size");
+}
+
+// ─────────────────────────────────────────────────────────────
+// Programmatic Test Suite Runner (for main.adesh integration)
+// ─────────────────────────────────────────────────────────────
+
+export fn run_tests(): i32 {
+    test_scalar_fixed_width_boundaries();
+    test_chained_scalar_aliases();
+    test_dotted_member_types_direct_and_func();
+    test_deep_three_level_dotted_type();
+    test_generic_utility_type_composition();
+    test_alias_introspection();
+    return 6;
+}
+
+fn main() {
+    print("Running 03_advanced_typescript_patterns tests...");
+    let count = run_tests();
+    print(`Passed ${count} tests in 03_advanced_typescript_patterns.test.adesh`);
+}

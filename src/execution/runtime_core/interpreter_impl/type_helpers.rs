@@ -382,6 +382,37 @@ pub fn ann_matches_value(
         _ => {}
     }
 
+    // Support dot-qualified type access, e.g. Service.port or App.database.port
+    if let Some((parent_name, rest_path)) = base.split_once('.') {
+        let (field_name, remainder) = rest_path.split_once('.').map(|(f, r)| (f, Some(r))).unwrap_or((rest_path, None));
+        let mut c = start_env.or(Some(global));
+        while let Some(id) = c {
+            if let Some(val) = envs[id].values.get(parent_name) {
+                if let Value::Object(map) = val {
+                    if map.get("__type_alias__").is_some() {
+                        if let Some(Value::Str(field_type_str)) = map.get(field_name) {
+                            let (field_opt, clean_tname) = if field_type_str.starts_with('?') {
+                                (true, &field_type_str[1..])
+                            } else {
+                                (false, field_type_str.as_str())
+                            };
+                            let mut next_ann = if let Some(rem) = remainder {
+                                format!("{}.{}", clean_tname, rem)
+                            } else {
+                                clean_tname.to_string()
+                            };
+                            if nullable || field_opt {
+                                next_ann.push('?');
+                            }
+                            return ann_matches_value(envs, global, Some(id), &Some(next_ann), v);
+                        }
+                    }
+                }
+            }
+            c = envs[id].enclosing;
+        }
+    }
+
     // Extract potential generic arguments from the type annotation (e.g., Box<Int>)
     let (alias_name, type_args) = if let Some(idx) = base.find('<') {
         if base.ends_with('>') {
@@ -403,7 +434,13 @@ pub fn ann_matches_value(
             if let Value::Object(map) = val {
                 // check marker
                 if map.get("__type_alias__").is_some() {
-                    // value must be an object
+                    // Check if this is a scalar alias (type Foo = SomeType).
+                    // Scalar aliases are stored with a single "__alias_target__" field.
+                    if let Some(Value::Str(target_type)) = map.get("__alias_target__") {
+                        let target_opt = Some(target_type.clone());
+                        return ann_matches_value(envs, global, Some(id), &target_opt, v);
+                    }
+                    // Struct-style alias: value must be an object
                     if let Value::Object(obj_map) = v {
                         // Extract type params mapping for generics substitution
                         let mut subs = rustc_hash::FxHashMap::default();
@@ -467,4 +504,225 @@ pub fn ann_matches_value(
 
     // Unknown annotation: be permissive
     true
+}
+
+/// Returns a human-readable description of why `v` does not satisfy the annotation `ann`.
+///
+/// Returns `None` if the value *does* satisfy the annotation (i.e. there is no error).
+/// Returns `Some(reason)` with a detailed message when the value fails the check.
+///
+/// Used by statement execution to produce precise error messages like:
+///   "expected Service: field 'port' has type Port (u8), but 8080 is out of range for u8 (0..255)"
+pub fn type_mismatch_reason(
+    envs: &[Env],
+    global: usize,
+    start_env: Option<usize>,
+    ann: &str,
+    v: &Value,
+) -> Option<String> {
+    // If it matches, no error.
+    let ann_opt = Some(ann.to_string());
+    if ann_matches_value(envs, global, start_env, &ann_opt, v) {
+        return None;
+    }
+
+    let nullable = ann.ends_with('?');
+    let base = if nullable { &ann[..ann.len() - 1] } else { ann };
+
+    // Extract generic name part
+    let alias_name = if let Some(idx) = base.find('<') {
+        &base[..idx]
+    } else {
+        base
+    };
+
+    // Try to resolve as a type alias in the env chain
+    let mut c = start_env.or(Some(global));
+    while let Some(id) = c {
+        if let Some(alias_val) = envs[id].values.get(alias_name) {
+            if let Value::Object(map) = alias_val {
+                if map.get("__type_alias__").is_some() {
+                    // Scalar alias
+                    if let Some(Value::Str(target_type)) = map.get("__alias_target__") {
+                        let inner = type_mismatch_reason(
+                            envs,
+                            global,
+                            Some(id),
+                            target_type,
+                            v,
+                        );
+                        return Some(inner.unwrap_or_else(|| {
+                            format!("expected {} ({}), found {}", alias_name, target_type, format_value_for_error(v))
+                        }));
+                    }
+
+                    // Struct alias: check each field
+                    if let Value::Object(obj_map) = v {
+                        for (k, tv) in map.iter() {
+                            if k == "__type_alias__"
+                                || k == "__type_params__"
+                                || k == "__defaults__"
+                            {
+                                continue;
+                            }
+                            if let Value::Str(type_str) = tv {
+                                let (opt, tname) = if type_str.starts_with('?') {
+                                    (true, &type_str[1..])
+                                } else {
+                                    (false, type_str.as_str())
+                                };
+                                if let Some(field_val) = obj_map.get(k) {
+                                    let field_ann = Some(tname.to_string());
+                                    if !ann_matches_value(
+                                        envs,
+                                        global,
+                                        Some(id),
+                                        &field_ann,
+                                        field_val,
+                                    ) {
+                                        let inner_reason = type_mismatch_reason(
+                                            envs,
+                                            global,
+                                            Some(id),
+                                            tname,
+                                            field_val,
+                                        );
+                                        let detail = inner_reason.unwrap_or_else(|| {
+                                            format!(
+                                                "expected {}, found {}",
+                                                tname,
+                                                format_value_for_error(field_val)
+                                            )
+                                        });
+                                        return Some(format!(
+                                            "field '{}' type mismatch: {}",
+                                            k, detail
+                                        ));
+                                    }
+                                } else if !opt {
+                                    return Some(format!(
+                                        "missing required field '{}' (type {})",
+                                        k, tname
+                                    ));
+                                }
+                            }
+                        }
+                        // All fields passed — shouldn't reach here if ann_matches_value returned false
+                        return None;
+                    } else {
+                        return Some(format!(
+                            "expected a {} object, found {}",
+                            alias_name,
+                            format_value_for_error(v)
+                        ));
+                    }
+                }
+            }
+        }
+        c = envs[id].enclosing;
+    }
+
+    // Check numeric range constraints for fixed-width types
+    let lowered_base = base.to_lowercase();
+    match lowered_base.as_str() {
+        "u8" => {
+            if let Some(n) = get_numeric_value(v) {
+                if n.fract().abs() >= 1e-12 {
+                    return Some(format!("expected u8 (integer), found float {}", n));
+                }
+                if n < 0.0 || n > u8::MAX as f64 {
+                    return Some(format!("value {} is out of range for u8 (0..{})", n as i64, u8::MAX));
+                }
+            }
+        }
+        "u16" => {
+            if let Some(n) = get_numeric_value(v) {
+                if n.fract().abs() >= 1e-12 {
+                    return Some(format!("expected u16 (integer), found float {}", n));
+                }
+                if n < 0.0 || n > u16::MAX as f64 {
+                    return Some(format!("value {} is out of range for u16 (0..{})", n as i64, u16::MAX));
+                }
+            }
+        }
+        "u32" => {
+            if let Some(n) = get_numeric_value(v) {
+                if n.fract().abs() >= 1e-12 {
+                    return Some(format!("expected u32 (integer), found float {}", n));
+                }
+                if n < 0.0 || n > u32::MAX as f64 {
+                    return Some(format!("value {} is out of range for u32 (0..{})", n as i64, u32::MAX));
+                }
+            }
+        }
+        "i8" => {
+            if let Some(n) = get_numeric_value(v) {
+                if n.fract().abs() >= 1e-12 {
+                    return Some(format!("expected i8 (integer), found float {}", n));
+                }
+                if n < i8::MIN as f64 || n > i8::MAX as f64 {
+                    return Some(format!("value {} is out of range for i8 ({}..{})", n as i64, i8::MIN, i8::MAX));
+                }
+            }
+        }
+        "i16" => {
+            if let Some(n) = get_numeric_value(v) {
+                if n.fract().abs() >= 1e-12 {
+                    return Some(format!("expected i16 (integer), found float {}", n));
+                }
+                if n < i16::MIN as f64 || n > i16::MAX as f64 {
+                    return Some(format!("value {} is out of range for i16 ({}..{})", n as i64, i16::MIN, i16::MAX));
+                }
+            }
+        }
+        "i32" => {
+            if let Some(n) = get_numeric_value(v) {
+                if n.fract().abs() >= 1e-12 {
+                    return Some(format!("expected i32 (integer), found float {}", n));
+                }
+                if n < i32::MIN as f64 || n > i32::MAX as f64 {
+                    return Some(format!("value {} is out of range for i32 ({}..{})", n as i64, i32::MIN, i32::MAX));
+                }
+            }
+        }
+        _ => {}
+    }
+
+    // Builtin type mismatch — produce a concise message
+    Some(format!(
+        "expected {}, found {}",
+        ann,
+        format_value_for_error(v)
+    ))
+}
+
+/// Formats a value for use in error messages (compact, human-readable).
+fn format_value_for_error(v: &Value) -> String {
+    match v {
+        Value::Number(n) => {
+            if n.fract().abs() < 1e-12 {
+                format!("{} (number)", *n as i64)
+            } else {
+                format!("{} (float)", n)
+            }
+        }
+        Value::U8(n)   => format!("{} (u8)",  n),
+        Value::U16(n)  => format!("{} (u16)", n),
+        Value::U32(n)  => format!("{} (u32)", n),
+        Value::U64(n)  => format!("{} (u64)", n),
+        Value::U128(n) => format!("{} (u128)", n),
+        Value::I8(n)   => format!("{} (i8)",  n),
+        Value::I16(n)  => format!("{} (i16)", n),
+        Value::I32(n)  => format!("{} (i32)", n),
+        Value::I64(n)  => format!("{} (i64)", n),
+        Value::I128(n) => format!("{} (i128)", n),
+        Value::F32(n)  => format!("{} (f32)", n),
+        Value::F64(n)  => format!("{} (f64)", n),
+        Value::Str(s)  => format!("\"{}\" (string)", s),
+        Value::Bool(b) => format!("{} (bool)", b),
+        Value::Null    => "null".to_string(),
+        Value::Object(_) => "object".to_string(),
+        Value::Array(_)  => "array".to_string(),
+        _ => "value".to_string(),
+    }
 }

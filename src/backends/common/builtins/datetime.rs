@@ -18,12 +18,7 @@ use super::RuntimeValue;
 
 /// Returns the current time as milliseconds since Unix epoch
 pub(crate) fn runtime_date_now(_args: &[RuntimeValue]) -> RuntimeValue {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
-    RuntimeValue::Int(now)
+    RuntimeValue::Int(crate::utils::clock::epoch_millis() as i64)
 }
 
 /// Parses an ISO 8601 date string and returns milliseconds since epoch
@@ -89,12 +84,12 @@ pub(crate) fn runtime_date_get_time(args: &[RuntimeValue]) -> RuntimeValue {
 
 /// Converts date to a string representation in local time
 pub(crate) fn runtime_date_to_string(args: &[RuntimeValue]) -> RuntimeValue {
-    use chrono::{Local, TimeZone, Utc};
+    use chrono::{TimeZone, Utc};
     if let Some(ms) = get_date_ts(args) {
         let secs = ms / 1000;
         let nanos = ((ms % 1000) * 1_000_000) as u32;
         if let Some(utc) = Utc.timestamp_opt(secs, nanos).single() {
-            let local = utc.with_timezone(&Local);
+            let local = crate::utils::clock::utc_to_local(&utc);
             return RuntimeValue::String(local.format("%c").to_string());
         }
     }
@@ -107,12 +102,12 @@ pub(crate) fn runtime_date_to_string(args: &[RuntimeValue]) -> RuntimeValue {
 
 /// Returns the year of the date in local time
 pub(crate) fn runtime_date_get_full_year(args: &[RuntimeValue]) -> RuntimeValue {
-    use chrono::{Datelike, Local, TimeZone, Utc};
+    use chrono::{Datelike, TimeZone, Utc};
     if let Some(ms) = get_date_ts(args) {
         let secs = ms / 1000;
         let nanos = ((ms % 1000) * 1_000_000) as u32;
         if let Some(utc) = Utc.timestamp_opt(secs, nanos).single() {
-            let local = utc.with_timezone(&Local);
+            let local = crate::utils::clock::utc_to_local(&utc);
             return RuntimeValue::Int(local.year() as i64);
         }
     }
@@ -121,12 +116,12 @@ pub(crate) fn runtime_date_get_full_year(args: &[RuntimeValue]) -> RuntimeValue 
 
 /// Returns the month (0-11) of the date in local time
 pub(crate) fn runtime_date_get_month(args: &[RuntimeValue]) -> RuntimeValue {
-    use chrono::{Datelike, Local, TimeZone, Utc};
+    use chrono::{Datelike, TimeZone, Utc};
     if let Some(ms) = get_date_ts(args) {
         let secs = ms / 1000;
         let nanos = ((ms % 1000) * 1_000_000) as u32;
         if let Some(utc) = Utc.timestamp_opt(secs, nanos).single() {
-            let local = utc.with_timezone(&Local);
+            let local = crate::utils::clock::utc_to_local(&utc);
             return RuntimeValue::Int(local.month0() as i64);
         }
     }
@@ -135,12 +130,12 @@ pub(crate) fn runtime_date_get_month(args: &[RuntimeValue]) -> RuntimeValue {
 
 /// Returns the day of the month (1-31) in local time
 pub(crate) fn runtime_date_get_date(args: &[RuntimeValue]) -> RuntimeValue {
-    use chrono::{Datelike, Local, TimeZone, Utc};
+    use chrono::{Datelike, TimeZone, Utc};
     if let Some(ms) = get_date_ts(args) {
         let secs = ms / 1000;
         let nanos = ((ms % 1000) * 1_000_000) as u32;
         if let Some(utc) = Utc.timestamp_opt(secs, nanos).single() {
-            let local = utc.with_timezone(&Local);
+            let local = crate::utils::clock::utc_to_local(&utc);
             return RuntimeValue::Int(local.day() as i64);
         }
     }
@@ -149,12 +144,12 @@ pub(crate) fn runtime_date_get_date(args: &[RuntimeValue]) -> RuntimeValue {
 
 /// Returns the hours (0-23) in local time
 pub(crate) fn runtime_date_get_hours(args: &[RuntimeValue]) -> RuntimeValue {
-    use chrono::{Local, TimeZone, Timelike, Utc};
+    use chrono::{TimeZone, Timelike, Utc};
     if let Some(ms) = get_date_ts(args) {
         let secs = ms / 1000;
         let nanos = ((ms % 1000) * 1_000_000) as u32;
         if let Some(utc) = Utc.timestamp_opt(secs, nanos).single() {
-            let local = utc.with_timezone(&Local);
+            let local = crate::utils::clock::utc_to_local(&utc);
             return RuntimeValue::Int(local.hour() as i64);
         }
     }
@@ -163,12 +158,12 @@ pub(crate) fn runtime_date_get_hours(args: &[RuntimeValue]) -> RuntimeValue {
 
 /// Returns the minutes (0-59) in local time
 pub(crate) fn runtime_date_get_minutes(args: &[RuntimeValue]) -> RuntimeValue {
-    use chrono::{Local, TimeZone, Timelike, Utc};
+    use chrono::{TimeZone, Timelike, Utc};
     if let Some(ms) = get_date_ts(args) {
         let secs = ms / 1000;
         let nanos = ((ms % 1000) * 1_000_000) as u32;
         if let Some(utc) = Utc.timestamp_opt(secs, nanos).single() {
-            let local = utc.with_timezone(&Local);
+            let local = crate::utils::clock::utc_to_local(&utc);
             return RuntimeValue::Int(local.minute() as i64);
         }
     }
@@ -177,12 +172,12 @@ pub(crate) fn runtime_date_get_minutes(args: &[RuntimeValue]) -> RuntimeValue {
 
 /// Returns the seconds (0-59) in local time
 pub(crate) fn runtime_date_get_seconds(args: &[RuntimeValue]) -> RuntimeValue {
-    use chrono::{Local, TimeZone, Timelike, Utc};
+    use chrono::{TimeZone, Timelike, Utc};
     if let Some(ms) = get_date_ts(args) {
         let secs = ms / 1000;
         let nanos = ((ms % 1000) * 1_000_000) as u32;
         if let Some(utc) = Utc.timestamp_opt(secs, nanos).single() {
-            let local = utc.with_timezone(&Local);
+            let local = crate::utils::clock::utc_to_local(&utc);
             return RuntimeValue::Int(local.second() as i64);
         }
     }
@@ -200,12 +195,12 @@ pub(crate) fn runtime_date_get_milliseconds(args: &[RuntimeValue]) -> RuntimeVal
 
 /// Returns the day of the week (0=Sunday, 6=Saturday) in local time
 pub(crate) fn runtime_date_get_day(args: &[RuntimeValue]) -> RuntimeValue {
-    use chrono::{Datelike, Local, TimeZone, Utc};
+    use chrono::{Datelike, TimeZone, Utc};
     if let Some(ms) = get_date_ts(args) {
         let secs = ms / 1000;
         let nanos = ((ms % 1000) * 1_000_000) as u32;
         if let Some(utc) = Utc.timestamp_opt(secs, nanos).single() {
-            let local = utc.with_timezone(&Local);
+            let local = crate::utils::clock::utc_to_local(&utc);
             return RuntimeValue::Int(local.weekday().num_days_from_sunday() as i64);
         }
     }
@@ -309,12 +304,12 @@ pub(crate) fn runtime_date_get_utc_milliseconds(args: &[RuntimeValue]) -> Runtim
 
 /// Returns the timezone offset in minutes
 pub(crate) fn runtime_date_get_timezone_offset(args: &[RuntimeValue]) -> RuntimeValue {
-    use chrono::{Local, TimeZone, Utc};
+    use chrono::{TimeZone, Utc};
     if let Some(ms) = get_date_ts(args) {
         let secs = ms / 1000;
         let nanos = ((ms % 1000) * 1_000_000) as u32;
         if let Some(utc) = Utc.timestamp_opt(secs, nanos).single() {
-            let local = utc.with_timezone(&Local);
+            let local = crate::utils::clock::utc_to_local(&utc);
             let offset_secs = local.offset().local_minus_utc();
             // Return offset in minutes (JS convention)
             return RuntimeValue::Float(offset_secs as f64 / 60.0);
@@ -325,12 +320,12 @@ pub(crate) fn runtime_date_get_timezone_offset(args: &[RuntimeValue]) -> Runtime
 
 /// Converts date to a locale-specific string representation
 pub(crate) fn runtime_date_to_locale_string(args: &[RuntimeValue]) -> RuntimeValue {
-    use chrono::{Local, TimeZone, Utc};
+    use chrono::{TimeZone, Utc};
     if let Some(ms) = get_date_ts(args) {
         let secs = ms / 1000;
         let nanos = ((ms % 1000) * 1_000_000) as u32;
         if let Some(utc) = Utc.timestamp_opt(secs, nanos).single() {
-            let local = utc.with_timezone(&Local);
+            let local = crate::utils::clock::utc_to_local(&utc);
             return RuntimeValue::String(local.format("%c").to_string());
         }
     }
@@ -339,12 +334,12 @@ pub(crate) fn runtime_date_to_locale_string(args: &[RuntimeValue]) -> RuntimeVal
 
 /// Converts date portion to a locale-specific string
 pub(crate) fn runtime_date_to_locale_date_string(args: &[RuntimeValue]) -> RuntimeValue {
-    use chrono::{Local, TimeZone, Utc};
+    use chrono::{TimeZone, Utc};
     if let Some(ms) = get_date_ts(args) {
         let secs = ms / 1000;
         let nanos = ((ms % 1000) * 1_000_000) as u32;
         if let Some(utc) = Utc.timestamp_opt(secs, nanos).single() {
-            let local = utc.with_timezone(&Local);
+            let local = crate::utils::clock::utc_to_local(&utc);
             return RuntimeValue::String(local.format("%x").to_string());
         }
     }
@@ -353,12 +348,12 @@ pub(crate) fn runtime_date_to_locale_date_string(args: &[RuntimeValue]) -> Runti
 
 /// Converts time portion to a locale-specific string
 pub(crate) fn runtime_date_to_locale_time_string(args: &[RuntimeValue]) -> RuntimeValue {
-    use chrono::{Local, TimeZone, Utc};
+    use chrono::{TimeZone, Utc};
     if let Some(ms) = get_date_ts(args) {
         let secs = ms / 1000;
         let nanos = ((ms % 1000) * 1_000_000) as u32;
         if let Some(utc) = Utc.timestamp_opt(secs, nanos).single() {
-            let local = utc.with_timezone(&Local);
+            let local = crate::utils::clock::utc_to_local(&utc);
             return RuntimeValue::String(local.format("%X").to_string());
         }
     }
@@ -410,11 +405,8 @@ pub(crate) fn runtime_time_local_offset_secs(args: &[RuntimeValue]) -> RuntimeVa
         return RuntimeValue::Null;
     }
     let epoch_sec = args[0].as_int().unwrap_or(0);
-    use chrono::{Local, Offset, TimeZone};
-    let local_time = Local
-        .timestamp_opt(epoch_sec, 0)
-        .single()
-        .unwrap_or_else(|| Local.timestamp_opt(0, 0).unwrap());
+    use chrono::{Offset, TimeZone, Utc};
+    let local_time = crate::utils::clock::utc_to_local(&Utc.timestamp_opt(epoch_sec, 0).single().unwrap());
     let offset_secs = local_time.offset().fix().local_minus_utc();
     RuntimeValue::Int(offset_secs as i64)
 }

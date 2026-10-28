@@ -183,7 +183,7 @@ pub fn register(registry: &mut BuiltinRegistry) {
         "system",
         "Current local ISO date time string",
         |_env: &mut dyn BuiltinEnv, _args: Vec<Value>| {
-            let now = chrono::Local::now();
+            let now = crate::utils::clock::local_now();
             Ok(Value::Str(now.format("%Y-%m-%d %H:%M:%S").to_string()))
         },
     );
@@ -231,10 +231,7 @@ fn value_to_i128(v: &Value) -> Option<i128> {
 
 fn builtin_date(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, String> {
     let ts_ms: i128 = if args.is_empty() {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|_| "system time error".to_string())?;
-        now.as_millis() as i128
+        crate::utils::clock::epoch_millis() as i128
     } else {
         value_to_i128(&args[0]).ok_or_else(|| "Date(ms) expects number or bigint".to_string())?
     };
@@ -246,67 +243,76 @@ fn builtin_date(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, St
     Ok(Value::Object(m.into()))
 }
 
-static START: Lazy<Instant> = Lazy::new(|| Instant::now());
+#[cfg(not(target_arch = "wasm32"))]
+static START: Lazy<Instant> = Lazy::new(Instant::now);
+
+/// Monotonic elapsed time since process start. wasm32-unknown-unknown has no
+/// clock (std `Instant` panics there and the glue-free browser runtime has no
+/// time import), so browser builds deterministically report zero.
+#[cfg(not(target_arch = "wasm32"))]
+fn monotonic_elapsed_nanos() -> u128 {
+    START.elapsed().as_nanos()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn monotonic_elapsed_nanos() -> u128 {
+    0
+}
 
 fn builtin_clock(_env: &mut dyn BuiltinEnv, _args: Vec<Value>) -> Result<Value, String> {
-    let secs = START.elapsed().as_secs_f64();
+    let secs = monotonic_elapsed_nanos() as f64 / 1_000_000_000.0;
     Ok(Value::Number(secs))
 }
 
 /// High-resolution time in nanoseconds (monotonic clock)
 fn builtin_time_now(_env: &mut dyn BuiltinEnv, _args: Vec<Value>) -> Result<Value, String> {
-    let nanos = START.elapsed().as_nanos();
+    let nanos = monotonic_elapsed_nanos();
     // Return as BigInt for full precision
     Ok(Value::BigInt(num_bigint::BigInt::from(nanos)))
 }
 
 /// High-resolution time in milliseconds (monotonic clock)
 fn builtin_time_now_ms(_env: &mut dyn BuiltinEnv, _args: Vec<Value>) -> Result<Value, String> {
-    let millis = START.elapsed().as_millis() as f64;
+    let millis = monotonic_elapsed_nanos() as f64 / 1_000_000.0;
     Ok(Value::Number(millis))
 }
 
 /// High-resolution time in microseconds (monotonic clock)
 fn builtin_time_now_us(_env: &mut dyn BuiltinEnv, _args: Vec<Value>) -> Result<Value, String> {
-    let micros = START.elapsed().as_micros() as f64;
+    let micros = monotonic_elapsed_nanos() as f64 / 1_000.0;
     Ok(Value::Number(micros))
 }
 
 /// High-resolution time in seconds with fractional precision (monotonic clock)
 fn builtin_time_now_secs(_env: &mut dyn BuiltinEnv, _args: Vec<Value>) -> Result<Value, String> {
-    let secs = START.elapsed().as_secs_f64();
+    let secs = monotonic_elapsed_nanos() as f64 / 1_000_000_000.0;
     Ok(Value::Number(secs))
 }
 
 /// Unix epoch timestamp in milliseconds
 fn builtin_time_epoch(_env: &mut dyn BuiltinEnv, _args: Vec<Value>) -> Result<Value, String> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| "system time error".to_string())?;
-    Ok(Value::Number(now.as_millis() as f64))
+    Ok(Value::Number(crate::utils::clock::epoch_millis() as f64))
 }
 
 /// Unix epoch timestamp in nanoseconds
 fn builtin_time_epoch_nanos(_env: &mut dyn BuiltinEnv, _args: Vec<Value>) -> Result<Value, String> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| "system time error".to_string())?;
     // Return as BigInt for full precision
-    Ok(Value::BigInt(num_bigint::BigInt::from(now.as_nanos())))
+    Ok(Value::BigInt(num_bigint::BigInt::from(
+        crate::utils::clock::epoch_nanos(),
+    )))
 }
 
 fn builtin_time_system_now(_env: &mut dyn BuiltinEnv, _args: Vec<Value>) -> Result<Value, String> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| "system time error".to_string())?;
-    Ok(Value::BigInt(num_bigint::BigInt::from(now.as_nanos())))
+    Ok(Value::BigInt(num_bigint::BigInt::from(
+        crate::utils::clock::epoch_nanos(),
+    )))
 }
 
 fn builtin_time_monotonic_now(
     _env: &mut dyn BuiltinEnv,
     _args: Vec<Value>,
 ) -> Result<Value, String> {
-    let nanos = START.elapsed().as_nanos();
+    let nanos = monotonic_elapsed_nanos();
     Ok(Value::BigInt(num_bigint::BigInt::from(nanos)))
 }
 
@@ -317,7 +323,12 @@ fn builtin_time_sleep_nanos(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Resu
     let nanos = value_to_i64(&args[0])
         .map(|n| n as u64)
         .ok_or_else(|| "time.sleepNanos expects number or bigint".to_string())?;
+    // wasm32-unknown-unknown has no blocking sleep; a browser sleep is a
+    // deterministic no-op rather than a panic.
+    #[cfg(not(target_arch = "wasm32"))]
     std::thread::sleep(std::time::Duration::from_nanos(nanos));
+    #[cfg(target_arch = "wasm32")]
+    let _ = nanos;
     Ok(Value::Null)
 }
 
@@ -330,11 +341,9 @@ fn builtin_time_local_offset_secs(
     }
     let epoch_sec = value_to_i64(&args[0])
         .ok_or_else(|| "time.localOffsetSecs expects number or bigint".to_string())?;
-    use chrono::{Local, Offset, TimeZone};
-    let local_time = Local
-        .timestamp_opt(epoch_sec, 0)
-        .single()
-        .unwrap_or_else(|| Local.timestamp_opt(0, 0).unwrap());
+    use chrono::{Offset, TimeZone, Utc};
+    let utc = Utc.timestamp_opt(epoch_sec, 0).single().unwrap();
+    let local_time = crate::utils::clock::utc_to_local(&utc);
     let offset_secs = local_time.offset().fix().local_minus_utc();
     Ok(Value::Number(offset_secs as f64))
 }
