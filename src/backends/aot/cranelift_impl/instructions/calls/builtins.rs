@@ -5494,7 +5494,7 @@ pub(crate) fn handle_call_builtin(
             ctx.value_types.insert(*dst, AotValueType::Handle);
             ctx.runtime_handle_values.insert(*dst);
         }
-        "str" | "string" | "String" => {
+        "string" | "String" => {
             if !args.is_empty() {
                 let arg_id = args[0];
                 let arg_val = ctx

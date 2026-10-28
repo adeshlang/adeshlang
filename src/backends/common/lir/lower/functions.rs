@@ -460,6 +460,11 @@ pub(super) fn lower_hir_function(
         func.set_var(name.clone(), param_val);
     }
 
+    let mut enum_map = super::core::default_enum_variants();
+    for (k, v) in &lir.enum_variants {
+        enum_map.insert(k.clone(), v.clone());
+    }
+
     // Set up context for lowering
     let mut ctx = LowerCtx {
         current_block: entry_block,
@@ -467,6 +472,7 @@ pub(super) fn lower_hir_function(
         loop_cond: None,
         catch_block: None,
         decorated_fn_names: HashSet::new(),
+        enum_variants: enum_map,
         value_types: std::collections::HashMap::new(),
         var_types: std::collections::HashMap::new(),
         ptr_elem_sizes: std::collections::HashMap::new(),

@@ -1054,6 +1054,7 @@ pub(super) fn lower_stmt(
                 loop_cond: None,
                 catch_block: None,
                 decorated_fn_names: HashSet::new(),
+                enum_variants: ctx.enum_variants.clone(),
                 value_types: std::collections::HashMap::new(),
                 var_types: std::collections::HashMap::new(),
                 ptr_elem_sizes: std::collections::HashMap::new(),

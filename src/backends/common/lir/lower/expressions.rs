@@ -11,6 +11,110 @@ use super::types::elem_size_from_hir_type;
 use crate::parsing::hir::{BinOp, HirExpr, HirLiteral, HirType, UnaryOp};
 use std::collections::HashSet;
 
+pub(super) fn unwrap_hir_expr(expr: &HirExpr) -> &HirExpr {
+    match expr {
+        HirExpr::Share(e) | HirExpr::Downgrade(e) | HirExpr::Move(e) | HirExpr::NonNull(e) => {
+            unwrap_hir_expr(e)
+        }
+        other => other,
+    }
+}
+
+fn lower_enum_construct(
+    lir: &mut LirModule,
+    func: &mut LirFunction,
+    ctx: &mut LowerCtx,
+    enum_name: &str,
+    variant_name: &str,
+    args: &[HirExpr],
+) -> Result<ValueId, String> {
+    let result = func.alloc_value();
+    func.push_to_block(
+        ctx.current_block,
+        LirInst::CallBuiltin(result, "make_object".to_string(), vec![]),
+    );
+
+    let tag_key = func.alloc_value();
+    func.push_to_block(
+        ctx.current_block,
+        LirInst::ConstString(tag_key, "tag".to_string()),
+    );
+    let tag_val = func.alloc_value();
+    func.push_to_block(
+        ctx.current_block,
+        LirInst::ConstString(tag_val, variant_name.to_string()),
+    );
+    let obj1 = func.alloc_value();
+    func.push_to_block(
+        ctx.current_block,
+        LirInst::CallBuiltin(
+            obj1,
+            "set_field".to_string(),
+            vec![result, tag_key, tag_val],
+        ),
+    );
+
+    let mut current_obj = obj1;
+    if !enum_name.is_empty() {
+        let enum_key = func.alloc_value();
+        func.push_to_block(
+            ctx.current_block,
+            LirInst::ConstString(enum_key, "__enum".to_string()),
+        );
+        let enum_val = func.alloc_value();
+        func.push_to_block(
+            ctx.current_block,
+            LirInst::ConstString(enum_val, enum_name.to_string()),
+        );
+        let obj2 = func.alloc_value();
+        func.push_to_block(
+            ctx.current_block,
+            LirInst::CallBuiltin(
+                obj2,
+                "set_field".to_string(),
+                vec![current_obj, enum_key, enum_val],
+            ),
+        );
+        current_obj = obj2;
+    }
+
+    if !args.is_empty() {
+        let val_key = func.alloc_value();
+        func.push_to_block(
+            ctx.current_block,
+            LirInst::ConstString(val_key, "value".to_string()),
+        );
+
+        let payload_val = if args.len() == 1 {
+            lower_expr(lir, func, ctx, &args[0])?
+        } else {
+            let mut elem_vals = Vec::new();
+            for a in args {
+                elem_vals.push(lower_expr(lir, func, ctx, a)?);
+            }
+            let arr_val = func.alloc_value();
+            func.push_to_block(
+                ctx.current_block,
+                LirInst::CallBuiltin(arr_val, "make_array".to_string(), elem_vals),
+            );
+            arr_val
+        };
+
+        let obj3 = func.alloc_value();
+        func.push_to_block(
+            ctx.current_block,
+            LirInst::CallBuiltin(
+                obj3,
+                "set_field".to_string(),
+                vec![current_obj, val_key, payload_val],
+            ),
+        );
+        current_obj = obj3;
+    }
+
+    Ok(current_obj)
+}
+
 /// Get the return type of a known builtin function
 /// Used for type inference when lowering expressions
 fn builtin_return_type(name: &str) -> LirType {
@@ -240,6 +344,9 @@ pub(super) fn lower_expr(
         }
 
         HirExpr::LoadVar(name) => {
+            if let Some((e_name, v_name)) = ctx.enum_variants.get(name).cloned() {
+                return lower_enum_construct(lir, func, ctx, &e_name, &v_name, &[]);
+            }
             // Always emit LoadVar to ensure we get the latest value (important for loops)
             let val = func.alloc_value();
             func.push_to_block(ctx.current_block, LirInst::LoadVar(val, name.clone()));
@@ -535,7 +642,19 @@ pub(super) fn lower_expr(
         HirExpr::Call(callee, args, type_args) => {
             let result = func.alloc_value();
 
-            if let HirExpr::LoadVar(name) = callee.as_ref() {
+            if let HirExpr::MemberAccess(target, method) = unwrap_hir_expr(callee.as_ref()) {
+                if let HirExpr::LoadVar(name) = unwrap_hir_expr(target) {
+                    let qualified = format!("{}::{}", name, method);
+                    if let Some((e_name, v_name)) = ctx.enum_variants.get(&qualified).cloned() {
+                        return lower_enum_construct(lir, func, ctx, &e_name, &v_name, args);
+                    }
+                }
+            }
+
+            if let HirExpr::LoadVar(name) = unwrap_hir_expr(callee.as_ref()) {
+                if let Some((e_name, v_name)) = ctx.enum_variants.get(name).cloned() {
+                    return lower_enum_construct(lir, func, ctx, &e_name, &v_name, args);
+                }
                 // Special handling for Promise(executor)
                 if name == "Promise" && args.len() == 1 {
                     if let HirExpr::Lambda(params, body, _is_async) = &args[0] {
@@ -588,6 +707,7 @@ pub(super) fn lower_expr(
                             loop_cond: None,
                             catch_block: None,
                             decorated_fn_names: HashSet::new(),
+                            enum_variants: ctx.enum_variants.clone(),
                             value_types: std::collections::HashMap::new(),
                             var_types: std::collections::HashMap::new(),
                             ptr_elem_sizes: std::collections::HashMap::new(),
@@ -1042,6 +1162,12 @@ pub(super) fn lower_expr(
         }
 
         HirExpr::MemberAccess(target, field) => {
+            if let HirExpr::LoadVar(name) = unwrap_hir_expr(target) {
+                let qualified = format!("{}::{}", name, field);
+                if let Some((e_name, v_name)) = ctx.enum_variants.get(&qualified).cloned() {
+                    return lower_enum_construct(lir, func, ctx, &e_name, &v_name, &[]);
+                }
+            }
             // Check if this is a namespace member access (e.g., Math.PI, Date.now)
             if let Some(ns_prefix) = resolve_namespace_prefix(target, &lir.imports) {
                 let builtin_name = format!("{}.{}", ns_prefix, field);
@@ -1237,6 +1363,7 @@ pub(super) fn lower_expr(
                 loop_cond: None,
                 catch_block: None,
                 decorated_fn_names: HashSet::new(),
+                enum_variants: ctx.enum_variants.clone(),
                 value_types: std::collections::HashMap::new(),
                 var_types: std::collections::HashMap::new(),
                 ptr_elem_sizes: std::collections::HashMap::new(),
@@ -1278,6 +1405,15 @@ pub(super) fn lower_expr(
 
         // Handle new HIR expressions
         HirExpr::MethodCall(obj, method, args) => {
+            if let HirExpr::LoadVar(name) = unwrap_hir_expr(obj) {
+                let qualified = format!("{}::{}", name, method);
+                if let Some((e_name, v_name)) = ctx.enum_variants.get(&qualified).cloned() {
+                    return lower_enum_construct(lir, func, ctx, &e_name, &v_name, args);
+                }
+                if let Some((e_name, v_name)) = ctx.enum_variants.get(method).cloned() {
+                    return lower_enum_construct(lir, func, ctx, &e_name, &v_name, args);
+                }
+            }
             if method == "mock" {
                 let is_ns = match obj.as_ref() {
                     HirExpr::LoadVar(v) => v == "input" || v == "Input",
