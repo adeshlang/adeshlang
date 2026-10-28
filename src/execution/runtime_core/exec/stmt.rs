@@ -114,6 +114,32 @@ impl Exec {
                 }
                 Ok(ExecFlow::Next)
             }
+            StmtKind::TypeAlias(ta, _is_export) => {
+                let mut map = HashMap::default();
+                map.insert("__type_alias__".into(), Value::Bool(true));
+                if !ta.type_params.is_empty() {
+                    let tparams = ta
+                        .type_params
+                        .iter()
+                        .map(|tp| Value::Str(tp.clone()))
+                        .collect();
+                    map.insert("__type_params__".into(), Value::Array(tparams));
+                }
+                let mut defaults_map = HashMap::default();
+                for (fname, _is_opt, ftype) in &ta.fields {
+                    map.insert(fname.clone(), Value::Str(ftype.clone()));
+                }
+                for (fname, def_expr) in &ta.defaults {
+                    let val = self.eval_expr(def_expr)?;
+                    defaults_map.insert(fname.clone(), val);
+                }
+                map.insert("__defaults__".into(), Value::Object(defaults_map.into()));
+                let alias_val = Value::Object(map.into());
+                self.envs[self.current]
+                    .values
+                    .insert(ta.name.clone(), alias_val);
+                Ok(ExecFlow::Next)
+            }
             StmtKind::ShareDeclaration(decl, _is_export) => {
                 let val = self.eval_expr(&decl.expr)?;
                 let shared_val = Value::Share(crate::memory::arc::allocate_share(val));

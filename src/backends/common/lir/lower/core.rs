@@ -30,6 +30,7 @@ pub(super) struct LowerCtx {
     pub(super) loop_cond: Option<BlockId>, // Loop condition block for `continue`
     pub(super) catch_block: Option<BlockId>, // For try/catch exception handling
     pub(super) decorated_fn_names: HashSet<String>, // Names of decorated functions (use call_indirect)
+    pub(super) enum_variants: std::collections::HashMap<String, (String, String)>,
     pub(super) value_types: std::collections::HashMap<ValueId, LirType>, // Track the type of each value
     pub(super) var_types: std::collections::HashMap<String, LirType>, // Track the type of each variable by name
     pub(super) ptr_elem_sizes: std::collections::HashMap<ValueId, i64>, // Track pointer element sizes by value
@@ -42,6 +43,63 @@ pub(super) struct LowerCtx {
     /// Records `defer_scopes.len()` at each loop body entry, so `break`/`continue`
     /// know how many scopes to unwind (emit defers) before jumping.
     pub(super) loop_defer_depths: Vec<usize>,
+}
+
+pub(super) fn default_enum_variants() -> std::collections::HashMap<String, (String, String)> {
+    let mut map = std::collections::HashMap::new();
+    map.insert(
+        "None".to_string(),
+        ("Option".to_string(), "None".to_string()),
+    );
+    map.insert(
+        "Option::None".to_string(),
+        ("Option".to_string(), "None".to_string()),
+    );
+    map.insert(
+        "Some".to_string(),
+        ("Option".to_string(), "Some".to_string()),
+    );
+    map.insert(
+        "Option::Some".to_string(),
+        ("Option".to_string(), "Some".to_string()),
+    );
+    map.insert("Ok".to_string(), ("Result".to_string(), "Ok".to_string()));
+    map.insert(
+        "Result::Ok".to_string(),
+        ("Result".to_string(), "Ok".to_string()),
+    );
+    map.insert("Err".to_string(), ("Result".to_string(), "Err".to_string()));
+    map.insert(
+        "Result::Err".to_string(),
+        ("Result".to_string(), "Err".to_string()),
+    );
+    map
+}
+
+pub(super) fn collect_enum_variants(
+    hir: &HirModule,
+) -> std::collections::HashMap<String, (String, String)> {
+    let mut map = default_enum_variants();
+    for e in &hir.enums {
+        for (var_name, _) in &e.variants {
+            let qualified = format!("{}::{}", e.name, var_name);
+            map.insert(qualified, (e.name.clone(), var_name.clone()));
+            map.insert(var_name.clone(), (e.name.clone(), var_name.clone()));
+        }
+    }
+    fn scan_stmts(
+        stmts: &[HirStmt],
+        map: &mut std::collections::HashMap<String, (String, String)>,
+    ) {
+        for s in stmts {
+            match s {
+                HirStmt::Block(inner) => scan_stmts(inner, map),
+                _ => {}
+            }
+        }
+    }
+    scan_stmts(&hir.statements, &mut map);
+    map
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +138,11 @@ pub fn hir_to_lir(hir: &HirModule) -> Result<LirModule, String> {
 
     for class in &hir.classes {
         lir.globals.insert(class.name.clone(), LirType::Ptr);
+    }
+
+    let collected_enums = collect_enum_variants(hir);
+    for (k, v) in collected_enums {
+        lir.enum_variants.insert(k, v);
     }
 
     let drop_plans = plan_function_drops(hir);
@@ -155,12 +218,18 @@ fn lower_main(
     let decorated_fn_names: HashSet<String> =
         decorated_functions.iter().map(|f| f.name.clone()).collect();
 
+    let mut enum_map = default_enum_variants();
+    for (k, v) in &lir.enum_variants {
+        enum_map.insert(k.clone(), v.clone());
+    }
+
     let mut ctx = LowerCtx {
         current_block: entry_block,
         loop_exit: None,
         loop_cond: None,
         catch_block: None,
         decorated_fn_names,
+        enum_variants: enum_map,
         value_types: std::collections::HashMap::new(),
         var_types: std::collections::HashMap::new(),
         ptr_elem_sizes: std::collections::HashMap::new(),
