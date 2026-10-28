@@ -335,6 +335,54 @@ pub unsafe extern "C" fn aot_make_object(args_ptr: *const u64, arg_count: usize)
 }
 
 /// Set an object field and return a new object handle.
+pub extern "C" fn aot_set_field_str(
+    obj_handle: u64,
+    field_ptr: *const std::ffi::c_char,
+    val_handle: u64,
+) -> u64 {
+    if field_ptr.is_null() {
+        return 0;
+    }
+    let field_name = match unsafe { std::ffi::CStr::from_ptr(field_ptr).to_str() } {
+        Ok(s) => s.to_string(),
+        Err(_) => return 0,
+    };
+    let value = aot_get_value(val_handle).unwrap_or(RuntimeValue::Null);
+
+    match aot_get_value(obj_handle) {
+        Some(RuntimeValue::Object(mut obj)) => {
+            obj.insert(field_name, value);
+            aot_store_value(RuntimeValue::Object(obj))
+        }
+        _ => 0,
+    }
+}
+
+pub extern "C" fn aot_get_field_str(obj_handle: u64, field_ptr: *const std::ffi::c_char) -> u64 {
+    if field_ptr.is_null() {
+        return aot_store_value(RuntimeValue::Null);
+    }
+    let field_name = match unsafe { std::ffi::CStr::from_ptr(field_ptr).to_str() } {
+        Ok(s) => s,
+        Err(_) => return aot_store_value(RuntimeValue::Null),
+    };
+
+    let resolved = aot_get_value(obj_handle).unwrap_or(RuntimeValue::Null);
+    match resolved {
+        RuntimeValue::Object(obj) => {
+            let val = obj.get(field_name).cloned().unwrap_or(RuntimeValue::Null);
+            aot_store_value(val)
+        }
+        _ => aot_store_value(RuntimeValue::Null),
+    }
+}
+
+pub extern "C" fn aot_value_eq(h1: u64, h2: u64) -> i64 {
+    let v1 = aot_get_value(h1);
+    let v2 = aot_get_value(h2);
+    if v1 == v2 { 1 } else { 0 }
+}
+
 /// Expects handles: object, field-name string, value.
 pub extern "C" fn aot_set_field(obj_handle: u64, field_handle: u64, val_handle: u64) -> u64 {
     let field_name = match aot_get_value(field_handle) {

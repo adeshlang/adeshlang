@@ -334,6 +334,7 @@ pub struct LirModule {
     pub exports: ModuleExports,
     /// Imported modules (alias -> module path)
     pub imports: FastMap<String, String>,
+    pub enum_variants: FastMap<String, (String, String)>,
 }
 
 impl LirModule {
@@ -344,6 +345,7 @@ impl LirModule {
             string_pool: Vec::new(),
             exports: ModuleExports::new(),
             imports: FastMap::default(),
+            enum_variants: FastMap::default(),
         }
     }
 

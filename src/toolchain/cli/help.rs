@@ -13,6 +13,7 @@ const BOLD: &str = "\x1b[1m";
 const CYAN: &str = "\x1b[36m";
 const GREEN: &str = "\x1b[32m";
 const YELLOW: &str = "\x1b[33m";
+#[allow(dead_code)]
 const BLUE: &str = "\x1b[34m";
 const DIM: &str = "\x1b[2m";
 const RED_BOLD: &str = "\x1b[1;31m";
