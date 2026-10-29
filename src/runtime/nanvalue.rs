@@ -51,7 +51,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::RwLock;
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 // ============================================
 // CONSTANTS
@@ -209,15 +209,20 @@ struct Shard {
     free_list: Mutex<Vec<FreeEntry>>,
 }
 
+const MAX_DIRECT_CHUNKS: usize = 4096;
+
 /// Global object registry using a chunked-slab design.
 ///
 /// - **Chunks** hold atomic (generation, refcount) state words, indexed by
 ///   `index / CHUNK_SIZE` (chunk) and `index % CHUNK_SIZE` (offset).
+/// - **chunk_ptrs** provides lock-free pointer lookups for up to 16.7M slots.
 /// - **Shards** hold the actual `Arc<HeapValue>` values and free lists, indexed
 ///   by `index % SHARD_COUNT`.
 /// - Clone/drop access only the chunk state (lock-free CAS).
 /// - `as_heap`/`from_heap`/cleanup access the shard's value HashMap (RwLock).
 struct ObjectRegistry {
+    /// Lock-free direct atomic pointers to chunks (first 4096 chunks = 16.7M objects)
+    chunk_ptrs: [AtomicPtr<Chunk>; MAX_DIRECT_CHUNKS],
     /// Global chunks — indexed by `index / CHUNK_SIZE`.
     /// Each `Box<Chunk>` has a stable heap address; once pushed, never removed.
     chunks: RwLock<Vec<Box<Chunk>>>,
@@ -234,9 +239,15 @@ static REGISTRY: Lazy<ObjectRegistry> = Lazy::new(|| {
         values: RwLock::new(HashMap::new()),
         free_list: Mutex::new(Vec::new()),
     });
+    let chunk_ptrs =
+        std::array::from_fn(|_| AtomicPtr::new(std::ptr::null_mut()));
     // Pre-allocate the first chunk so the common case never needs the write lock.
-    let chunks = vec![Chunk::new()];
+    let initial_chunk = Chunk::new();
+    let initial_ptr = &*initial_chunk as *const Chunk as *mut Chunk;
+    chunk_ptrs[0].store(initial_ptr, Ordering::Release);
+    let chunks = vec![initial_chunk];
     ObjectRegistry {
+        chunk_ptrs,
         chunks: RwLock::new(chunks),
         shards,
         next_id: AtomicU32::new(1), // 0 is reserved as "null/empty"
@@ -247,29 +258,56 @@ static REGISTRY: Lazy<ObjectRegistry> = Lazy::new(|| {
 impl ObjectRegistry {
     /// Get a raw pointer to the chunk containing `index`.
     ///
-    /// Takes a brief read lock on the chunks Vec, then returns a raw pointer.
-    /// The pointer remains valid after the lock is released because chunks
-    /// are heap-allocated and never freed.
+    /// Fast path: Lock-free atomic load from `chunk_ptrs` for the first 16.7 million objects.
+    /// Eliminates `RwLock` read contention on every single retain, release, and dereference.
+    #[inline(always)]
     fn get_chunk(&self, index: u32) -> Option<*const Chunk> {
         let chunk_idx = (index as usize) / CHUNK_SIZE;
+        if chunk_idx < MAX_DIRECT_CHUNKS {
+            let ptr = self.chunk_ptrs[chunk_idx].load(Ordering::Acquire);
+            if !ptr.is_null() {
+                return Some(ptr as *const Chunk);
+            }
+        }
         let chunks = self.chunks.read().unwrap();
-        chunks.get(chunk_idx).map(|c| &**c as *const Chunk)
+        chunks.get(chunk_idx).map(|c| {
+            let p = &**c as *const Chunk as *mut Chunk;
+            if chunk_idx < MAX_DIRECT_CHUNKS {
+                self.chunk_ptrs[chunk_idx].store(p, Ordering::Release);
+            }
+            p as *const Chunk
+        })
     }
 
     /// Ensure the chunk for `index` exists, allocating if necessary.
     fn ensure_chunk(&self, index: u32) {
         let chunk_idx = (index as usize) / CHUNK_SIZE;
-        // Fast path: chunk already exists (read lock only).
+        // Fast path: chunk already exists (lock-free check).
+        if chunk_idx < MAX_DIRECT_CHUNKS
+            && !self.chunk_ptrs[chunk_idx].load(Ordering::Acquire).is_null()
+        {
+            return;
+        }
         {
             let chunks = self.chunks.read().unwrap();
             if chunk_idx < chunks.len() {
+                if chunk_idx < MAX_DIRECT_CHUNKS {
+                    let p = &*chunks[chunk_idx] as *const Chunk as *mut Chunk;
+                    self.chunk_ptrs[chunk_idx].store(p, Ordering::Release);
+                }
                 return;
             }
         }
         // Slow path: allocate new chunk(s) under write lock.
         let mut chunks = self.chunks.write().unwrap();
         while chunks.len() <= chunk_idx {
-            chunks.push(Chunk::new());
+            let new_c = Chunk::new();
+            let idx = chunks.len();
+            let raw_p = &*new_c as *const Chunk as *mut Chunk;
+            chunks.push(new_c);
+            if idx < MAX_DIRECT_CHUNKS {
+                self.chunk_ptrs[idx].store(raw_p, Ordering::Release);
+            }
         }
     }
 

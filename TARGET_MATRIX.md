@@ -22,8 +22,8 @@ bytes that nothing runs is **emission-tested**, not support. Tier labels in
 | `x86_64-apple-darwin` | Mach-O 64 | **Native** — x86-64 subset | **Native Mach-O** — x86_64 SIGNED/BRANCH/GOT/TLV relocations, libSystem routing, runtime archive symbol lookup | **Indirect only** — `tests/static_imports_test.rs` `--aot` path executes Mach-O binaries on macOS CI; no dedicated link-and-run or bind/rebase runtime assertion | Dedicated macOS execution test; runtime verification of `__stubs`/lazy binding |
 | `riscv64gc-unknown-linux-gnu` | ELF64 | **Implemented, not reachable** — RV64GC LP64D, scalar FP, atomics, vector encodings, RVC alignment; loud on unsupported instructions, but real source builds stop at `unsupported machine instruction ParallelMove` | **Native ELF** — CALL/JAL/BRANCH/HI20/LO12_I/LO12_S/PCREL_HI20/PCREL_LO12, `_start` synthesis, PLT/GOT; static structure tested | **None** | Implement `ParallelMove` and the rest of lowering needed by real programs; qemu-riscv64 execution CI; target runtime archive |
 | `riscv32imac-unknown-none-elf` | ELF32 | **Not implemented** — the RV backend explicitly refuses RV32 ("only implements RV64 … refusing to emit RV32-invalid code") | Linker routes the target through the **RV64** `_start` stub (wrong for RV32) | **None** | Either implement ILP32 lowering + a real RV32 entry, or stop advertising the target |
-| `wasm32-unknown-wasi` | WASM binary | **Real compiler backend** — emits `env.print_f64`, `env.print_str`, `env.alloc`, `env.concat2`, `env.file_write_str`; exports `main`/`malloc`/`memory`; executed via a generated Node loader | **Linker writer is not implemented** — as of this change it returns `LNK017 UnsupportedFormat` instead of emitting a stub module (hardcoded `() -> i64` type, one function, no import section, relocations never applied). Note: `adesh build --target wasm32-*` does **not** route through it (`src/cli/build.rs:1044` sends wasm to the compiler backend; the older `WasmWriter::encode_binary` call at `src/cli/build.rs:1151` is unreachable because the `is_wasm` branch returns first). The linker path is reachable only via `adeshlink --target wasm32-*` / `--format wasm`. | **Compiler path verified** (`tests/static_imports_test.rs`); **linker path fails loudly, nothing to verify** | Implement the real writer (imports, memory layout, data segments, relocations, function table) — see `NEXT_IMPLEMENTATION_PLAN.md` Phase 17 option B. **The import namespace is `env.*`, not `wasi_snapshot_preview1`** — the `wasi` in the triple overstates what the *compiler* emits |
-| `wasm32-unknown-unknown` | WASM binary | **Real compiler backend** — same as above | **Linker writer returns the same `LNK017` not-implemented error** | **Compiler path verified** via Node loader | Same as `wasm32-unknown-wasi`, minus the WASI naming question |
+| `wasm32-unknown-wasi` | WASM binary | **Real compiler backend** — emits `env.print_f64`, `env.print_str`, `env.alloc`, `env.concat2`, `env.file_write_str`; exports `main`/`malloc`/`memory`; executed via a generated Node loader | **Linker cross-links objects** — type/import/function/table/memory/global/export/data-count/code/data are emitted from a link plan; function/global/data `R_WASM_*` fixups are patched in place; a call or data reference another input defines binds to that definition and its phantom `env` import is dropped, while duplicate strong definitions, signature mismatches and undefined data addresses are loud errors; object export sections are parsed and the entry is exported (no start section, matching `wasm-ld`). Defined tables/globals and table-index relocations remain errors. Note: `adesh build --target wasm32-*` still routes through the compiler backend; the linker path is reachable only via `adeshlink --target wasm32-*` / `--format wasm`. | **Execution-verified on two engines in CI** — real clang objects link and run with asserted output one at a time (`linker/tests/wasm_hello_world_test.rs`) and two at a time (`linker/tests/wasm_cross_object_test.rs`, `linker/tests/wasm_pure_module_test.rs`) under V8, and all of them under Cranelift (`tests/wasm_wasmtime_execution_test.rs`, using the workspace's `wasmtime` 36 dependency and its own `fd_write` host); every suite is run by the ubuntu CI job; compiler path verified via Node loader (`tests/static_imports_test.rs`) | Function tables/indirect calls; WASI Preview 1 host functions. **The import namespace is `env.*`, not `wasi_snapshot_preview1`** — the `wasi` in the triple overstates what the *compiler* emits |
+| `wasm32-unknown-unknown` | WASM binary | **Real compiler backend** — same as above | **Same linker** — relocations applied, cross-object references resolved, entry exported; table cases loud | **Execution-verified on two engines** (`linker/tests/wasm_hello_world_test.rs`, `wasm_cross_object_test.rs` and `wasm_pure_module_test.rs` under V8, `tests/wasm_wasmtime_execution_test.rs` under wasmtime/Cranelift); two objects that call only each other produce a module with an empty import section that both engines instantiate with no host; compiler path verified via Node loader | Same as `wasm32-unknown-wasi`, minus the WASI naming question |
 | `thumbv7em-none-eabihf` | ELF32 | **Proof-of-concept** — 146-line Thumb-2 ALU subset only | Embedded library modules (linkscripts, IVT, crt0, flash/HEX/SREC writers) are unit-level only; no end-to-end firmware link | **None** | Either build an end-to-end firmware link + qemu/hardware test, or mark the target unsupported |
 | `nvptx64-nvidia-cuda` | ADOB kernel package | **None** — source text re-embedded | Container packaging only | **None** | Unchanged scaffolding |
 | `amdgcn-amd-amdhsa` | ADOB kernel package | **None** — source text re-embedded | Container packaging only | **None** | Unchanged scaffolding |
@@ -43,7 +43,7 @@ bytes that nothing runs is **emission-tested**, not support. Tier labels in
 | `x86_64-apple-darwin` | Dedicated execution test (today only indirect via static-import AOT) | High |
 | `riscv64gc-unknown-linux-gnu` | `ParallelMove`/lowering gaps block real source builds; no execution test | High |
 | `riscv32imac-unknown-none-elf` | Codegen refuses RV32; RV64 entry stub | High — advertised but not functional |
-| `wasm32-unknown-wasi` / `-unknown-unknown` | Linker writer not implemented (now fails with `LNK017`); `wasi` naming does not match the compiler's emitted `env.*` ABI | High |
+| `wasm32-unknown-wasi` / `-unknown-unknown` | Defined tables/globals and table-index relocations unsupported (no indirect calls); `wasi` naming does not match the compiler's emitted `env.*` ABI. Multi-object linking and execution on two engines in CI are **done** | Medium |
 | `thumbv7em-none-eabihf` | No end-to-end firmware link or execution | Medium (PoC) |
 | GPU / quantum | Unchanged scaffolding | — |
 
@@ -66,10 +66,11 @@ The phase-by-phase execution plan for these items is
    at link on undefined `aot_*` symbols.
 4. **RISC-V lowering completion** — start with `ParallelMove`; then add
    qemu-riscv64 execution to CI.
-5. **WASM unification** — choose compiler-direct or a real linker writer
-   (imports, memory layout, data segments, relocations, function table), then
-   add a wasmtime execution test for linker output. If `wasm32-unknown-wasi`
-   stays, emit real `wasi_snapshot_preview1` imports.
+5. **WASM linker coverage** — execution is now verified on two engines in CI
+   (V8 through Node, Cranelift through the workspace `wasmtime` dependency) and
+   multi-object links resolve cross-object calls and data, so the remaining gap
+   is function tables and indirect calls. If `wasm32-unknown-wasi` stays, emit
+   real `wasi_snapshot_preview1` imports.
 6. **Source-level ABI surface** — `extern`, variadic functions, aggregate
    parameters, atomics, and TLS syntax, so the Phase 2 MachineIR/FFI features
    become reachable from Adesh source.
@@ -79,9 +80,11 @@ The phase-by-phase execution plan for these items is
    is not in the Windows job and 3 of its tests fail there because generated
    import statements embed unescaped Windows paths (OS error 123). Fix the
    escaping, then add the suite to Windows CI.
-9. **Realign target tiers** — `linker/src/target.rs` marks all
-   x86-64/AArch64/WASM targets `Tier1Supported`; verification does not support
-   that. Reconcile the tier labels with execution evidence.
+9. **Realign target tiers** — `linker/src/target.rs` marks the x86-64 and
+   AArch64 targets `Tier1Supported`; verification does not support that.
+   `wasm32-wasi`/`wasm32-none` were realigned to `Tier2Experimental` once CI
+   began executing their linked modules on two engines; reconcile the remaining
+   tier labels with execution evidence the same way.
 
 ## Corrections applied to CURRENT_STATE.md (2026-10-24)
 

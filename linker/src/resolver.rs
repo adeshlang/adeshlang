@@ -237,9 +237,56 @@ impl SymbolResolver {
         // 3. Classify remaining undefined symbols using the OS API Router.
         //    The router checks the actual target platform and routes each symbol to the
         //    correct system DLL, intrinsic generator, or marks it as a hard undefined error.
+        //
+        //    WASM is different: an object's undefined function/global/table
+        //    symbols are the host imports it declared in its import section, and
+        //    the module writer emits them as such. They are resolved here so the
+        //    OS router never sees them. Undefined *data* symbols are excluded
+        //    (the reader does not mark them imported): they can only be
+        //    satisfied by a definition in another input.
+        let wasm_imports: HashMap<String, SymbolType> =
+            if target.format == crate::target::ObjectFormat::Wasm {
+                objects
+                    .iter()
+                    .flat_map(|object| object.symbols.iter())
+                    .filter(|symbol| symbol.is_imported)
+                    .map(|symbol| (symbol.name.clone(), symbol.sym_type))
+                    .collect()
+            } else {
+                HashMap::new()
+            };
         let remaining_undef: Vec<String> = self.undefined.iter().cloned().collect();
         for undef in remaining_undef {
             use crate::os_router::{OsApiRouter, SymbolRoute};
+
+            if let Some(sym_type) = wasm_imports.get(&undef).copied() {
+                self.undefined.remove(&undef);
+                self.table.insert(
+                    undef.clone(),
+                    ResolvedSymbol {
+                        symbol: Symbol {
+                            name: undef,
+                            binding: SymbolBinding::Global,
+                            visibility: SymbolVisibility::Default,
+                            sym_type,
+                            section_index: None,
+                            value: 0,
+                            size: 0,
+                            is_defined: true,
+                            is_imported: true,
+                            is_exported: false,
+                            file_index: Some(0),
+                            alias_of: None,
+                            comdat_group: None,
+                            version: None,
+                        },
+                        defined_in_file_index: 0,
+                        defined_in_sec_index: None,
+                        references: Vec::new(),
+                    },
+                );
+                continue;
+            }
 
             // An undefined symbol with an empty name carries no identity: no
             // other object can ever define it, so it must not fail the link.

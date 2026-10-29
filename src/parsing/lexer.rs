@@ -25,6 +25,9 @@ pub struct Lexer<'a> {
     start: usize,
     current: usize,
     line: usize,
+    line_start: usize,
+    cached_line: usize,
+    cached_line_text: String,
     /// Optional source file path for clickable diagnostics
     file: Option<String>,
     pub errors: Vec<LangError>,
@@ -43,6 +46,9 @@ impl<'a> Lexer<'a> {
             start,
             current: start,
             line: 1,
+            line_start: start,
+            cached_line: 0,
+            cached_line_text: String::new(),
             file: None,
             errors: Vec::new(),
         }
@@ -156,26 +162,36 @@ impl<'a> Lexer<'a> {
         true
     }
 
-    fn make(&self, k: TokenKind) -> Token {
-        let lex = String::from_utf8(self.src[self.start..self.current].to_vec()).unwrap();
+    #[inline]
+    fn bump_line(&mut self) {
+        self.line += 1;
+        self.line_start = self.current;
+    }
+
+    fn make(&mut self, k: TokenKind) -> Token {
+        let lex = String::from_utf8_lossy(&self.src[self.start..self.current]).into_owned();
         self.build_token(k, lex)
     }
 
-    fn make_error(&self, msg: &str) -> LangError {
+    fn make_error(&mut self, msg: &str) -> LangError {
         // compute a best-effort column and the full line text
-        let last_nl = self.src[..self.start].iter().rposition(|&b| b == b'\n');
-        let line_start = match last_nl {
-            Some(p) => p + 1,
-            None => 0,
+        let line_start = if self.line_start <= self.start {
+            self.line_start
+        } else {
+            self.src[..self.start].iter().rposition(|&b| b == b'\n').map_or(0, |p| p + 1)
         };
-        let col = self.start - line_start + 1; // 1-based
-        let next_nl = self.src[self.current..].iter().position(|&b| b == b'\n');
-        let line_end = match next_nl {
-            Some(p) => self.current + p,
-            None => self.src.len(),
-        };
-        let line_text =
-            String::from_utf8(self.src[line_start..line_end].to_vec()).unwrap_or_default();
+        let col = self.start.saturating_sub(line_start) + 1; // 1-based
+        if self.cached_line != self.line || self.cached_line_text.is_empty() {
+            let next_nl = self.src[line_start..].iter().position(|&b| b == b'\n');
+            let line_end = match next_nl {
+                Some(p) => line_start + p,
+                None => self.src.len(),
+            };
+            self.cached_line_text =
+                String::from_utf8_lossy(&self.src[line_start..line_end]).into_owned();
+            self.cached_line = self.line;
+        }
+        let line_text = self.cached_line_text.clone();
         let mut err = LangError::new(
             ErrorKind::Lexical,
             msg.to_string(),
@@ -191,26 +207,29 @@ impl<'a> Lexer<'a> {
         err
     }
 
-    fn build_token(&self, k: TokenKind, lexeme: String) -> Token {
-        // compute column and the full line text for nicer diagnostics
-        let last_nl = self.src[..self.start].iter().rposition(|&b| b == b'\n');
-        let line_start = match last_nl {
-            Some(p) => p + 1,
-            None => 0,
+    fn build_token(&mut self, k: TokenKind, lexeme: String) -> Token {
+        let line_start = if self.line_start <= self.start {
+            self.line_start
+        } else {
+            self.src[..self.start].iter().rposition(|&b| b == b'\n').map_or(0, |p| p + 1)
         };
-        let col = self.start - line_start + 1; // 1-based
-        let next_nl = self.src[self.current..].iter().position(|&b| b == b'\n');
-        let line_end = match next_nl {
-            Some(p) => self.current + p,
-            None => self.src.len(),
-        };
-        let line_text = String::from_utf8(self.src[line_start..line_end].to_vec()).unwrap();
+        let col = self.start.saturating_sub(line_start) + 1; // 1-based
+        if self.cached_line != self.line || self.cached_line_text.is_empty() {
+            let next_nl = self.src[line_start..].iter().position(|&b| b == b'\n');
+            let line_end = match next_nl {
+                Some(p) => line_start + p,
+                None => self.src.len(),
+            };
+            self.cached_line_text =
+                String::from_utf8_lossy(&self.src[line_start..line_end]).into_owned();
+            self.cached_line = self.line;
+        }
         Token {
             kind: k,
             lexeme,
             line: self.line,
             col,
-            line_text,
+            line_text: self.cached_line_text.clone(),
         }
     }
 
@@ -297,7 +316,7 @@ impl<'a> Lexer<'a> {
                             return Err(self.make_error("Unterminated block comment"));
                         }
                         if self.peek() == b'\n' {
-                            self.line += 1;
+                            self.bump_line();
                         }
                         if self.peek() == b'*' && self.peek2() == b'/' {
                             self.adv();
@@ -451,7 +470,7 @@ impl<'a> Lexer<'a> {
             }
             ' ' | '\r' | '\t' => Ok(None),
             '\n' => {
-                self.line += 1;
+                self.bump_line();
                 Ok(None)
             }
             '"' => self.string(),
@@ -564,7 +583,7 @@ impl<'a> Lexer<'a> {
                     out.push(ch);
                     self.current += ch.len_utf8();
                     if ch == '\n' {
-                        self.line += 1;
+                        self.bump_line();
                     }
                 } else {
                     return Err(self.make_error("Invalid UTF-8 in string"));
@@ -606,7 +625,7 @@ impl<'a> Lexer<'a> {
             } else {
                 let c = self.adv();
                 if c == b'\n' {
-                    self.line += 1;
+                    self.bump_line();
                 }
                 out.push(c as char);
             }
@@ -712,7 +731,7 @@ impl<'a> Lexer<'a> {
                     out.push(ch);
                     self.current += ch.len_utf8();
                     if ch == '\n' {
-                        self.line += 1;
+                        self.bump_line();
                     }
                 } else {
                     return Err(self.make_error("Invalid UTF-8 in template"));

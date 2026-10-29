@@ -117,6 +117,6 @@ jobs:
 
           git -C web-editor-repo commit \
             -m "chore: deploy adesh_wasm.wasm from ${GITHUB_SHA::7}" \
-            -m "Built by the Web Editor WASM Build workflow ($GITHUB_WORKFLOW_URL)."
+            -m "Built by the Web Editor WASM Build workflow: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           git -C web-editor-repo push origin HEAD:main
           echo "Deployed adesh_wasm.wasm to adeshlang/web-editor."

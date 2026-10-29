@@ -331,9 +331,6 @@ pub fn all_execution_backends() -> Vec<ExecutionBackend> {
         ExecutionBackend::Jit,
         ExecutionBackend::NativeJit,
         ExecutionBackend::Bytecode,
-        ExecutionBackend::Mixed,
-        ExecutionBackend::AdaptiveJit,
-        ExecutionBackend::TieredJit,
         ExecutionBackend::Aot,
         ExecutionBackend::Wasm,
     ]

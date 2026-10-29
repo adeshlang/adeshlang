@@ -256,6 +256,9 @@ fn watchdog_loop() {
 /// Stop the watchdog so a finished program can exit immediately.
 pub fn disarm_watchdog() {
     let st = watchdog_state();
+    if !st.started.load(Ordering::Acquire) {
+        return;
+    }
     st.disarmed.store(true, Ordering::Release);
     if let Ok(mut dl) = st.deadline.lock() {
         *dl = None;

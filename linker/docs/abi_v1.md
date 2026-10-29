@@ -77,13 +77,23 @@ CI** (revised 2026-10-05; matches `TARGET_MATRIX.md` and
 
 ### Tier 1 — Execution-Verified
 *Produced binaries are executed by tests in CI with asserted exit codes and output.*
-- `x86_64-windows` (PE32+; currently the only execution-verified target)
+- `x86_64-windows` (PE32+; the only target whose produced binaries are run with
+  asserted exit codes across a full program — WASM is executed in CI too, but
+  only for small clang programs, see Tier 2)
 
 ### Tier 2 — Emission-Validated
-*Artifacts are emitted and structurally validated (headers, sections, relocations, reader round-trips); binaries are never executed.*
+*Artifacts are emitted and structurally validated (headers, sections, relocations, reader round-trips); execution coverage is partial and never proves the full ABI.*
 - `x86_64-linux` (ELF64 static; `ET_DYN` object emission exists but has no
   GOT/PLT; not run-tested)
-- `wasm32-wasi` (compiler backend path only; the linker's WASM writer is a stub)
+- `wasm32-wasi` / `wasm32-none` (compiler backend path, plus a linker that
+  applies index/data-address relocations to clang objects; CI links one- and
+  two-object programs and executes the results on two engines with asserted
+  output — V8 through `linker/tests/wasm_hello_world_test.rs`,
+  `linker/tests/wasm_cross_object_test.rs` and
+  `linker/tests/wasm_pure_module_test.rs`, Cranelift through
+  `tests/wasm_wasmtime_execution_test.rs`. Two objects that call only each other
+  produce a module with an empty import section. Not Tier 1 because function
+  tables and indirect calls are still refused.)
 - `riscv64-linux`, `riscv32-none` (proof-of-concept codegen: Nop/Return/Add/Sub)
 - `armv7-*` / `thumbv7em` bare-metal (minimal Thumb-2 ALU)
 

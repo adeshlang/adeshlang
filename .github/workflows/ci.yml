@@ -93,6 +93,26 @@ jobs:
         run: |
           python3 scripts/ci/check_glibc_compatibility.py 2.35 target/debug/adesh target/debug/libadesh_runtime.a
 
+      # WASM: link real clang objects, including multi-object links, and EXECUTE
+      # the modules on two engines. The adesh-linker suites are not covered by
+      # the root-level `cargo test --tests` above, so they run by name here. Node
+      # (V8) is preinstalled on the runner; the wasmtime run uses the workspace's
+      # own wasmtime 36 dependency (Cranelift) and supplies the
+      # `wasi_snapshot_preview1.fd_write` host itself, because wasmtime 33+
+      # dropped WASI preview1 and no runner-installed CLI would provide it.
+      - name: Test WASM linker suites (Node + wasmtime execution)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          cargo test -p adesh-linker --test wasm_object_reader_test
+          cargo test -p adesh-linker --test wasm_link_info_test
+          cargo test -p adesh-linker --test wasm_unlinkable_input_test
+          cargo test -p adesh-linker --test wasm_writer_test
+          cargo test -p adesh-linker --test wasm_relocations_test
+          cargo test -p adesh-linker --test wasm_hello_world_test
+          cargo test -p adesh-linker --test wasm_cross_object_test
+          cargo test -p adesh-linker --test wasm_pure_module_test
+          cargo test --test wasm_wasmtime_execution_test
+
       # macOS: the full integration set. Native JIT tests compile out on
       # Apple Silicon because Cranelift PLT support is x86-64-only; AOT
       # coverage remains enabled and exercises the target Mach-O runtime

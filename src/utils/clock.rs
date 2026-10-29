@@ -6,7 +6,7 @@
 //! loader. Sandboxed WebAssembly also has no real system clock, so these
 //! helpers return the Unix epoch there. Native builds behave normally.
 
-use chrono::{DateTime, FixedOffset, TimeZone, Utc};
+use chrono::{DateTime, FixedOffset, Utc};
 
 /// Nanoseconds since the Unix epoch. Deterministic zero in browser builds:
 /// wasm32-unknown-unknown has no wall clock (`SystemTime::now` panics there).

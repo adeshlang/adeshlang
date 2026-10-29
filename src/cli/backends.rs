@@ -115,13 +115,13 @@ pub fn load_import_exports(
     Ok(exports)
 }
 
-fn ensure_type_check(body: &str, file: Option<&str>) -> Result<(), String> {
-    crate::types::type_system::check_module_in(body, file)
-        .map_err(|e| format!("type error: {}", e))?;
+fn ensure_type_check(body: &str, file: Option<&str>) -> Result<Vec<crate::parsing::ast::Stmt>, String> {
     let runtime_cfg = crate::toolchain::config::RuntimeConfig::default();
-    crate::cli::parsing::check_ownership_and_parse_in(body, &runtime_cfg, file)
+    let (ast, _hir) = crate::cli::parsing::check_ownership_and_parse_in(body, &runtime_cfg, file)
         .map_err(|e| format!("ownership/memory safety error: {}", e))?;
-    Ok(())
+    crate::types::type_system::check_ast(&ast, file)
+        .map_err(|e| format!("type error: {}", e))?;
+    Ok(ast)
 }
 
 /// Run program with JIT backend
@@ -382,7 +382,7 @@ pub fn run_with_interpreter(
     }
 
     let body = super::directives::strip_compile_directive(src);
-    ensure_type_check(&body, Some(&path.to_string_lossy()))?;
+    let parsed_ast = ensure_type_check(&body, Some(&path.to_string_lossy()))?;
     let run_path = path.clone();
     let run_src = body.clone();
     let collect_memory = parsed.config.show_memory;
@@ -404,7 +404,6 @@ pub fn run_with_interpreter(
     let test_backends_cfg = parsed.config.test_backends.clone();
     let test_threads_cfg = parsed.config.test_threads;
     let test_serial_cfg = parsed.config.test_serial;
-    let stack_size_cfg = parsed.config.stack_size;
 
     // Set program args
     crate::execution::runtime::set_program_args(
@@ -412,20 +411,16 @@ pub fn run_with_interpreter(
         Some(run_path.to_string_lossy().to_string()),
     );
 
-    let res = std::thread::Builder::new()
-        .stack_size(stack_size_cfg) // Use configured stack size (default: 32MB, auto-scales to 1GB)
-        .spawn(move || {
-            let mut interp = Interpreter::new();
-            let mut ldr = ModuleLoader::new(
-                run_path
-                    .parent()
-                    .unwrap_or_else(|| std::path::Path::new(".")),
-            );
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut interp = Interpreter::new();
+        let mut ldr = ModuleLoader::new(
+            run_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new(".")),
+        );
 
             // Run tests if --test flag is set
             if run_tests {
-                use crate::parsing::lexer::Lexer;
-                use crate::parsing::parser::Parser;
                 use crate::testing::{
                     TestRunOptions,
                     build_per_backend_summaries,
@@ -441,17 +436,7 @@ pub fn run_with_interpreter(
                 use crate::toolchain::config::TestOutputFormat;
                 use std::collections::BTreeSet;
 
-                let mut lexer = Lexer::new(&run_src);
-                let tokens = match lexer.tokenize() {
-                    Ok(t) => t,
-                    Err(e) => return Err(format!("Lexer error: {}", e)),
-                };
-
-                let mut parser = Parser::new(tokens, Some(run_path.to_string_lossy().to_string()));
-                let ast = match parser.parse_program() {
-                    Ok(a) => a,
-                    Err(e) => return Err(format!("Parse error: {}", e)),
-                };
+                let ast = &parsed_ast;
 
                 let mut include_tags = BTreeSet::new();
                 for tag in &include_tags_cfg {
@@ -609,8 +594,8 @@ pub fn run_with_interpreter(
                 Ok(stats)
             } else {
                 // Normal execution
-                match interp.run_module(
-                    &run_src,
+                match interp.run_module_ast(
+                    &parsed_ast,
                     &mut ldr,
                     Some(run_path.to_string_lossy().to_string()),
                 ) {
@@ -627,23 +612,20 @@ pub fn run_with_interpreter(
                     Err(e) => Err(e),
                 }
             }
-        });
+        }));
 
     match res {
-        Ok(handle) => match handle.join() {
-            Ok(result) => result.map_err(|e| e.to_string()),
-            Err(p) => {
-                let msg = if let Some(s) = p.downcast_ref::<&str>() {
-                    s.to_string()
-                } else if let Some(s) = p.downcast_ref::<String>() {
-                    s.clone()
-                } else {
-                    "thread panicked with unknown payload".to_string()
-                };
-                Err(format!("thread panicked: {}", msg))
-            }
-        },
-        Err(_) => Err("failed to spawn thread".to_string()),
+        Ok(result) => result.map_err(|e| e.to_string()),
+        Err(p) => {
+            let msg = if let Some(s) = p.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = p.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "interpreter panicked with unknown payload".to_string()
+            };
+            Err(format!("Runtime panic: {}", msg))
+        }
     }
 }
 

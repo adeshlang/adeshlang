@@ -1418,7 +1418,10 @@ impl NativeJitCompiler {
                                                         _ => {
                                                             let mut resolved = ty_str.as_str();
                                                             while let Some((next_fields, _)) = aliases.get(resolved) {
-                                                                if next_fields.len() == 1 && next_fields[0].0.is_empty() {
+                                                                if next_fields.len() == 1
+                                                                    && (next_fields[0].0 == "__alias_target__"
+                                                                        || next_fields[0].0.is_empty())
+                                                                {
                                                                     resolved = &next_fields[0].2;
                                                                 } else {
                                                                     break;

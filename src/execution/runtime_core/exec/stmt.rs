@@ -40,6 +40,39 @@ pub fn is_copy_value(v: &Value) -> bool {
     }
 }
 
+/// Helper: given a type annotation string (e.g. "Service" or "Service?"), resolve the named
+/// type alias in the environment chain and return its base name. Used to tag object values
+/// with `__type__` so `typeof` reports the alias name instead of the generic "object".
+fn resolve_alias_name_for_object(
+    ann: &str,
+    envs: &[crate::execution::runtime_core::interpreter::Env],
+    global: usize,
+    start_env: Option<usize>,
+) -> Option<String> {
+    let nullable = ann.ends_with('?');
+    let base = if nullable { &ann[..ann.len() - 1] } else { ann };
+    let alias_name = if let Some(idx) = base.find('<') {
+        &base[..idx]
+    } else {
+        base
+    };
+
+    let mut c = start_env.or(Some(global));
+    while let Some(id) = c {
+        if let Some(val) = envs[id].values.get(alias_name) {
+            if let Value::Object(map) = val {
+                if map.get("__type_alias__").is_some()
+                    && map.get("__alias_target__").is_none()
+                {
+                    return Some(alias_name.to_string());
+                }
+            }
+        }
+        c = envs[id].enclosing;
+    }
+    None
+}
+
 impl Exec {
     pub(in crate::execution::runtime_core) fn exec_stmt(
         &mut self,
@@ -118,6 +151,9 @@ impl Exec {
             StmtKind::TypeAlias(ta, _is_export) => {
                 let mut map = HashMap::default();
                 map.insert("__type_alias__".into(), Value::Bool(true));
+                // Tag the alias definition with its own name so `typeof(AliasName)`
+                // reports the type name instead of the generic "object".
+                map.insert("__type__".into(), Value::Str(ta.name.clone()));
                 if !ta.type_params.is_empty() {
                     let tparams = ta
                         .type_params
@@ -289,37 +325,54 @@ impl Exec {
                 }
                 // Use env-aware type check so named type aliases (type Foo = {...}) are resolved.
                 // global is always index 0 for Exec instances; current is the active scope.
-                let ann_str = type_ann.as_ref().unwrap().as_str();
-                let env_aware_ok = type_helpers::ann_matches_value(
-                    &self.envs,
-                    0,
-                    Some(self.current),
-                    type_ann,
-                    &val,
-                );
-                // Also try the stateless check for builtin types that don't need env lookup.
-                let stateless_ok = ann_matches_value(type_ann, &val);
-                if !(env_aware_ok && stateless_ok) {
-                    // Generate a detailed error message
-                    let detail = type_helpers::type_mismatch_reason(
+                // Only applies when the variable carries a type annotation.
+                if let Some(ann_str) = type_ann.as_deref() {
+                    let env_aware_ok = type_helpers::ann_matches_value(
                         &self.envs,
                         0,
                         Some(self.current),
-                        ann_str,
+                        type_ann,
                         &val,
                     );
-                    let msg = match detail {
-                        Some(reason) => format!(
-                            "annotated variable '{}' expected {}: {}",
-                            name, ann_str, reason
-                        ),
-                        None => format!(
-                            "annotated variable '{}' expected {}, found {}",
-                            name, ann_str, fmt(&val)
-                        ),
-                    };
-                    return Err(err(msg));
+                    // Also try the stateless check for builtin types that don't need env lookup.
+                    let stateless_ok = ann_matches_value(type_ann, &val);
+                    if !(env_aware_ok && stateless_ok) {
+                        // Generate a detailed error message
+                        let detail = type_helpers::type_mismatch_reason(
+                            &self.envs,
+                            0,
+                            Some(self.current),
+                            ann_str,
+                            &val,
+                        );
+                        let msg = match detail {
+                            Some(reason) => format!(
+                                "annotated variable '{}' expected {}: {}",
+                                name, ann_str, reason
+                            ),
+                            None => format!(
+                                "annotated variable '{}' expected {}, found {}",
+                                name, ann_str, fmt(&val)
+                            ),
+                        };
+                        return Err(err(msg));
+                    }
+
+                    // Tag object values with their named type alias so `typeof` reports
+                    // the alias name (e.g. "Service") instead of the generic "object".
+                    if let Value::Object(obj_map) = &val {
+                        if let Some(alias_name) =
+                            resolve_alias_name_for_object(ann_str, &self.envs, 0, Some(self.current))
+                        {
+                            if obj_map.get("__type__").is_none() {
+                                let mut mut_map = (**obj_map).clone();
+                                mut_map.insert("__type__".into(), Value::Str(alias_name));
+                                val = Value::Object(std::sync::Arc::new(mut_map));
+                            }
+                        }
+                    }
                 }
+
                 self.envs[self.current].values.insert(name.clone(), val);
                 self.envs[self.current]
                     .consts

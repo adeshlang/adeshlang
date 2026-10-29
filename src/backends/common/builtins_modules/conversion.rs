@@ -591,6 +591,11 @@ pub(crate) fn runtime_type(args: &[RuntimeValue]) -> RuntimeValue {
             return RuntimeValue::String(format!("[{}]", inner));
         }
         RuntimeValue::Object(obj) => {
+            // If the object carries a type alias tag (set at `let x: Alias = {...}`),
+            // report the named type instead of generic "object".
+            if let Some(RuntimeValue::String(type_name)) = obj.get("__type__") {
+                return RuntimeValue::String(type_name.clone());
+            }
             // Check if this is a class instance with __class__
             if let Some(RuntimeValue::String(class_name)) = obj.get("__class__") {
                 return RuntimeValue::String(class_name.clone());

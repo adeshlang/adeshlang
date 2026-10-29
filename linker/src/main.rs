@@ -126,13 +126,16 @@ TIER 2 — EXPERIMENTAL (Native Codegen & Object Linking Validated):
   * riscv32-none        (RISC-V 32-bit Embedded)
   * ppc64le-linux       (PowerPC 64-bit Little-Endian ELFv2)
   * armv7-linux-gnueabihf (32-bit ARM Hard-Float ELF)
+  * wasm32-wasi         (WebAssembly: modules built from clang objects, relocations
+                         applied, cross-object calls resolved; function tables and
+                         indirect calls fail loudly, LNK008 / LNK017)
+  * wasm32-none         (WebAssembly: same, and a link whose inputs reference only
+                         each other imports nothing)
   * nvptx64-cuda        (NVIDIA CUDA PTX / CUBIN Fatbin)
   * amdgcn-rocm         (AMD ROCm HSACO Code Objects)
   * qpu-quantum         (QIR / OpenQASM 3.0 Hybrid Classical-Quantum)
 
 TIER 3 — DECLARED (Binary Format Header & Relocation Specifications Ready):
-  * wasm32-wasi         (WebAssembly: writer not implemented, links fail with LNK017)
-  * wasm32-none         (WebAssembly: same)
   * s390x-linux         (IBM z/Architecture Big-Endian ELF64)
   * mips64-linux        (MIPS 64-bit N64 ABI)
   * loong64-linux       (LoongArch 64-bit ELF)

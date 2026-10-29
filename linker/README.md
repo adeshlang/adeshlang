@@ -10,7 +10,7 @@ Inspired by the philosophy of Go's `cmd/link`, `adeshlink` is a standalone compi
 
 - **Zero External Toolchain Dependencies**: Self-contained ELF, PE/COFF and Mach-O binary parsers, writers, relocation engines, and layout generators implemented entirely in Rust.
 - **Multi-Format & Multi-Architecture**:
-  - **Formats**: ELF32/ELF64, PE32/PE32+ (COFF), Mach-O 64-bit, and Static Archives (`.a` / `.lib`). WASM is parsed but **not** written — see [docs/wasm.md](docs/wasm.md).
+  - **Formats**: ELF32/ELF64, PE32/PE32+ (COFF), Mach-O 64-bit, Static Archives (`.a` / `.lib`), and WebAssembly relocatable objects (`.o` → `.wasm`) — see [docs/wasm.md](docs/wasm.md).
   - **Architectures**: x86_64, AArch64, ARM, RISC-V 64/32, WASM32/WASM64, x86.
 - **Cross-Linking by Default**: Target architecture is fully decoupled from the host operating system. Compile on Windows, link for Linux x86_64 or macOS ARM64 seamlessly.
 - **Advanced Optimization & Dead-Code Elimination**:
@@ -62,8 +62,14 @@ adeshlink --target x86_64-linux main.o runtime.o -o app
 # Link PE32+ executable for Windows x86_64
 adeshlink --target x86_64-windows main.obj runtime.lib -o app.exe
 
-# WebAssembly is not linkable here: `adeshlink --target wasm32-*` fails with
-# LNK017. Produce .wasm with the compiler's WASM backend instead.
+# WebAssembly: link clang relocatable objects into a runnable module.
+# Index and data relocations are applied, calls and data references resolve
+# across objects, and the entry becomes an export. CI executes the linked
+# modules on two engines (Node/V8 and wasmtime). Objects that reference only
+# each other produce a module with an empty import section, which runs in a
+# bare engine with no host functions at all.
+adeshlink --target wasm32-wasi hello.o -o hello.wasm
+adeshlink --target wasm32-wasi add.o twice.o -o add.wasm
 
 # Dead code elimination & ICF
 adeshlink --gc-sections --icf=safe main.o libfoo.a -o app

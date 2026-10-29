@@ -18,5 +18,5 @@ pub(crate) mod statement_checking;
 mod tests;
 
 // Re-export public API to maintain backward compatibility
-pub use entry::{check_module, check_module_in};
+pub use entry::{check_ast, check_module, check_module_in};
 pub use resolution::type_from_name;

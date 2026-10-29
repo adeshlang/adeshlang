@@ -1,45 +1,53 @@
 //! Automatic Reference Counting (ARC) Runtime
 //!
 //! Thread-safe reference counting for heap-allocated objects.
-//! Each allocation has a 16-byte header containing the reference count
-//! and an optional destructor function pointer.
+//! Each allocation has an aligned header containing reference count,
+//! optional destructor function pointer, object size, alignment, and
+//! base allocation pointer for safe deallocation.
 //!
 //! Memory Layout:
 //! ```text
-//! [ref_count: usize (8 bytes)][drop_fn: *mut u8 (8 bytes)][object data...]
-//!  ^                          ^                           ^
-//!  header (16 bytes total)                                user pointer (returned to user)
+//! [alloc_ptr ... optional padding] [ArcHeader (48B)] [user data (aligned to `align`)...]
+//!                                  ^                 ^
+//!                                  header_ptr        user_ptr (returned to user)
 //! ```
 //!
 //! When the last strong reference is released, the destructor (if set)
-//! is called *before* the memory is deallocated. This allows user-defined
-//! cleanup (closing file handles, freeing nested allocations, etc.).
+//! is called *before* the memory is deallocated.
 
 use std::alloc::{Layout, alloc, dealloc};
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Size of the ARC header: ref_count (8) + drop_fn pointer (8) = 16 bytes
-const HEADER_SIZE: usize = 16;
-
-/// Offset of the reference count within the header
-const REFCOUNT_OFFSET: usize = 0;
-
-/// Offset of the drop function pointer within the header
-const DROPFN_OFFSET: usize = 8;
-
 /// Minimum alignment for ARC allocations
-const MIN_ALIGN: usize = 8;
+pub const MIN_ALIGN: usize = 8;
+
+/// ARC Allocation Header
+/// Stored immediately preceding user memory.
+#[repr(C)]
+pub struct ArcHeader {
+    /// Atomic reference count (strong references)
+    pub ref_count: AtomicUsize,
+    /// User destructor function pointer (null if none)
+    pub drop_fn: *mut u8,
+    /// Size of the user data (excluding header and padding)
+    pub size: usize,
+    /// Alignment of user data
+    pub align: usize,
+    /// Base address of the underlying system allocation
+    pub alloc_ptr: *mut u8,
+    /// Total bytes allocated from the system allocator
+    pub alloc_size: usize,
+}
+
+/// Size of the ARC header in bytes
+pub const HEADER_SIZE: usize = std::mem::size_of::<ArcHeader>();
 
 /// Type of the destructor function called when an ARC object is freed.
 ///
 /// # Arguments
 /// * `ptr` - Pointer to the object data (not the header)
 /// * `size` - Size of the object data (excluding header)
-///
-/// The destructor must not free the object itself (the ARC runtime handles
-/// deallocation after the destructor returns). It should only release any
-/// resources owned by the object (nested allocations, file handles, etc.).
 pub type ArcDropFn = unsafe extern "C" fn(ptr: *mut u8, size: usize);
 
 /// Allocate memory with ARC header (no destructor)
@@ -49,7 +57,7 @@ pub type ArcDropFn = unsafe extern "C" fn(ptr: *mut u8, size: usize);
 /// * `align` - Alignment requirement (minimum 8 bytes)
 ///
 /// # Returns
-/// Pointer to the object data (not the header)
+/// Pointer to the object data (guaranteed aligned to `align`)
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn arc_alloc(size: usize, align: usize) -> *mut u8 {
     unsafe { arc_alloc_with_drop(size, align, None) }
@@ -63,7 +71,7 @@ pub unsafe extern "C" fn arc_alloc(size: usize, align: usize) -> *mut u8 {
 /// * `drop_fn` - Optional destructor function pointer
 ///
 /// # Returns
-/// Pointer to the object data (not the header)
+/// Pointer to the object data (guaranteed aligned to `align`)
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn arc_alloc_with_drop(
     size: usize,
@@ -71,31 +79,70 @@ pub unsafe extern "C" fn arc_alloc_with_drop(
     drop_fn: Option<ArcDropFn>,
 ) -> *mut u8 {
     unsafe {
-        let align = align.max(MIN_ALIGN);
-        let total_size = HEADER_SIZE + size;
+        let align = align.max(MIN_ALIGN).next_power_of_two();
+        let alloc_align = align.max(std::mem::align_of::<ArcHeader>());
+        let max_padding = align.saturating_sub(1);
+        let total_size = match HEADER_SIZE.checked_add(max_padding).and_then(|s| s.checked_add(size)) {
+            Some(t) => t,
+            None => return ptr::null_mut(),
+        };
 
-        // Create layout for allocation (header + data)
-        let layout = match Layout::from_size_align(total_size, align) {
+        // Create layout for base allocation
+        let layout = match Layout::from_size_align(total_size, alloc_align) {
             Ok(layout) => layout,
             Err(_) => return ptr::null_mut(),
         };
 
         // Allocate memory
-        let ptr = alloc(layout);
-        if ptr.is_null() {
+        let base_ptr = alloc(layout);
+        if base_ptr.is_null() {
             return ptr::null_mut();
         }
 
-        // Initialize reference count to 1
-        let ref_count_ptr = ptr.add(REFCOUNT_OFFSET) as *mut AtomicUsize;
-        (*ref_count_ptr).store(1, Ordering::Relaxed);
+        // Calculate user pointer aligned to `align`
+        let min_user_addr = (base_ptr as usize).checked_add(HEADER_SIZE);
+        let min_user_addr = match min_user_addr {
+            Some(a) => a,
+            None => {
+                dealloc(base_ptr, layout);
+                return ptr::null_mut();
+            }
+        };
 
-        // Store destructor function pointer (null if none)
-        let drop_fn_ptr = ptr.add(DROPFN_OFFSET) as *mut *mut u8;
-        (*drop_fn_ptr) = drop_fn.map(|f| f as *mut u8).unwrap_or(ptr::null_mut());
+        let user_addr = (min_user_addr + align - 1) & !(align - 1);
+        let user_ptr = user_addr as *mut u8;
 
-        // Return pointer to data (after header)
-        ptr.add(HEADER_SIZE)
+        // Header sits immediately before user_ptr
+        let header_ptr = user_ptr.sub(HEADER_SIZE) as *mut ArcHeader;
+        debug_assert!(
+            header_ptr as usize >= base_ptr as usize,
+            "header_ptr must be within allocated block"
+        );
+        debug_assert_eq!(
+            (header_ptr as usize) % std::mem::align_of::<ArcHeader>(),
+            0,
+            "header_ptr must satisfy ArcHeader alignment"
+        );
+        debug_assert_eq!(
+            (user_ptr as usize) % align,
+            0,
+            "user_ptr must satisfy requested alignment"
+        );
+
+        // Initialize header
+        ptr::write(
+            header_ptr,
+            ArcHeader {
+                ref_count: AtomicUsize::new(1),
+                drop_fn: drop_fn.map(|f| f as *mut u8).unwrap_or(ptr::null_mut()),
+                size,
+                align,
+                alloc_ptr: base_ptr,
+                alloc_size: total_size,
+            },
+        );
+
+        user_ptr
     }
 }
 
@@ -110,16 +157,12 @@ pub unsafe extern "C" fn arc_retain(ptr: *mut u8) {
             return;
         }
 
-        // Get pointer to reference count (before data)
-        let ref_count_ptr = ptr.sub(HEADER_SIZE).add(REFCOUNT_OFFSET) as *mut AtomicUsize;
-
-        // Atomic increment with overflow protection
-        let old_count = (*ref_count_ptr).fetch_add(1, Ordering::Relaxed);
+        let header_ptr = ptr.sub(HEADER_SIZE) as *mut ArcHeader;
+        let old_count = (*header_ptr).ref_count.fetch_add(1, Ordering::Relaxed);
         if old_count >= (usize::MAX / 2) {
             panic!("arc_retain: reference count overflow");
         }
 
-        // Sanity check: reference count should never be zero when retaining
         debug_assert!(old_count > 0, "arc_retain called on deallocated object");
     }
 }
@@ -128,30 +171,21 @@ pub unsafe extern "C" fn arc_retain(ptr: *mut u8) {
 ///
 /// When the reference count reaches zero:
 /// 1. The destructor (if registered) is called with the object pointer and size
-/// 2. The memory is deallocated
+/// 2. The memory is deallocated using metadata stored in the header
 ///
 /// # Arguments
-/// * `ptr` - Pointer to the object data (not the header)
-/// * `size` - Size of the object data (for deallocation and destructor)
-/// * `align` - Alignment of the object (for deallocation)
-///
-/// # Safety
-/// If reference count reaches zero, the destructor runs and memory is deallocated.
+/// * `ptr` - Pointer to the object data
+/// * `_size` - Ignored (retrieved directly from the header for memory safety)
+/// * `_align` - Ignored (retrieved directly from the header for memory safety)
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn arc_release(ptr: *mut u8, size: usize, align: usize) {
+pub unsafe extern "C" fn arc_release(ptr: *mut u8, _size: usize, _align: usize) {
     unsafe {
         if ptr.is_null() {
             return;
         }
 
-        let align = align.max(MIN_ALIGN);
-
-        // Get pointer to reference count
-        let header_ptr = ptr.sub(HEADER_SIZE);
-        let ref_count_ptr = header_ptr.add(REFCOUNT_OFFSET) as *mut AtomicUsize;
-
-        // Atomic decrement
-        let old_count = (*ref_count_ptr).fetch_sub(1, Ordering::Release);
+        let header_ptr = ptr.sub(HEADER_SIZE) as *mut ArcHeader;
+        let old_count = (*header_ptr).ref_count.fetch_sub(1, Ordering::Release);
 
         debug_assert!(
             old_count > 0,
@@ -160,22 +194,35 @@ pub unsafe extern "C" fn arc_release(ptr: *mut u8, size: usize, align: usize) {
 
         // If this was the last reference, call destructor and deallocate
         if old_count == 1 {
-            // Acquire fence to synchronize with other threads
+            // Acquire fence to synchronize with all other releasing threads
             std::sync::atomic::fence(Ordering::Acquire);
 
+            // Read metadata safely from header
+            let drop_fn_raw = (*header_ptr).drop_fn;
+            let actual_size = (*header_ptr).size;
+            let alloc_ptr = (*header_ptr).alloc_ptr;
+            let alloc_size = (*header_ptr).alloc_size;
+            let alloc_align = (*header_ptr).align.max(std::mem::align_of::<ArcHeader>());
+
             // Call user-defined destructor if registered
-            let drop_fn_ptr = header_ptr.add(DROPFN_OFFSET) as *mut *mut u8;
-            let drop_fn_raw = *drop_fn_ptr;
             if !drop_fn_raw.is_null() {
                 let drop_fn: ArcDropFn = std::mem::transmute(drop_fn_raw);
-                drop_fn(ptr, size);
+                drop_fn(ptr, actual_size);
             }
 
-            // Deallocate the entire allocation (header + data)
-            let total_size = HEADER_SIZE + size;
-            let layout = Layout::from_size_align_unchecked(total_size, align);
-            dealloc(header_ptr, layout);
+            // Deallocate using the exact base allocation layout
+            if let Ok(layout) = Layout::from_size_align(alloc_size, alloc_align) {
+                dealloc(alloc_ptr, layout);
+            }
         }
+    }
+}
+
+/// Decrement reference count without requiring dummy size/align arguments
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn arc_release_ptr(ptr: *mut u8) {
+    unsafe {
+        arc_release(ptr, 0, 0);
     }
 }
 
@@ -193,8 +240,8 @@ pub unsafe extern "C" fn arc_get_count(ptr: *mut u8) -> usize {
             return 0;
         }
 
-        let ref_count_ptr = ptr.sub(HEADER_SIZE).add(REFCOUNT_OFFSET) as *mut AtomicUsize;
-        (*ref_count_ptr).load(Ordering::Relaxed)
+        let header_ptr = ptr.sub(HEADER_SIZE) as *mut ArcHeader;
+        (*header_ptr).ref_count.load(Ordering::Relaxed)
     }
 }
 
@@ -216,18 +263,6 @@ pub unsafe extern "C" fn arc_clone(ptr: *mut u8) -> *mut u8 {
 }
 
 /// Set or clear the destructor for an existing ARC object.
-///
-/// This allows attaching a drop function after allocation, which is useful
-/// for types where the destructor is determined after construction (e.g.,
-/// trait objects or dynamically dispatched cleanup).
-///
-/// # Arguments
-/// * `ptr` - Pointer to the object data (not the header)
-/// * `drop_fn` - The destructor to set, or None to clear
-///
-/// # Safety
-/// The caller must ensure `ptr` is a valid ARC allocation and that no
-/// other thread is concurrently releasing the same pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn arc_set_drop_fn(ptr: *mut u8, drop_fn: Option<ArcDropFn>) {
     unsafe {
@@ -235,8 +270,8 @@ pub unsafe extern "C" fn arc_set_drop_fn(ptr: *mut u8, drop_fn: Option<ArcDropFn
             return;
         }
 
-        let drop_fn_ptr = ptr.sub(HEADER_SIZE).add(DROPFN_OFFSET) as *mut *mut u8;
-        (*drop_fn_ptr) = drop_fn.map(|f| f as *mut u8).unwrap_or(ptr::null_mut());
+        let header_ptr = ptr.sub(HEADER_SIZE) as *mut ArcHeader;
+        (*header_ptr).drop_fn = drop_fn.map(|f| f as *mut u8).unwrap_or(ptr::null_mut());
     }
 }
 
@@ -371,6 +406,30 @@ mod tests {
             let ptr = arc_alloc(48, 8);
             arc_release(ptr, 48, 8);
             // No crash = success
+        }
+    }
+
+    #[test]
+    fn test_arc_alignment_high() {
+        unsafe {
+            // Test 16-byte, 32-byte (AVX), and 64-byte (cache line) alignments
+            for &align in &[16, 32, 64] {
+                let ptr = arc_alloc(128, align);
+                assert!(!ptr.is_null());
+                assert_eq!((ptr as usize) % align, 0, "ptr must be aligned to {}", align);
+                arc_release_ptr(ptr);
+            }
+        }
+    }
+
+    #[test]
+    fn test_arc_release_ptr_and_mismatched_caller_params() {
+        unsafe {
+            // arc_release should read true size from header and ignore caller mismatches
+            let ptr = arc_alloc(100, 32);
+            assert_eq!((ptr as usize) % 32, 0);
+            // Pass deliberately wrong size and align
+            arc_release(ptr, 99999, 128);
         }
     }
 }

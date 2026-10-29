@@ -71,6 +71,36 @@ pub(in crate::execution::runtime_core) fn err_with_span_file_help<
     }
 }
 
+/// Create a styled, registry-linked type-check error (code `E0308`).
+///
+/// Renders through `LangError` so the message comes out as a full adesh error
+/// table: a colored `error[E0308]` header, the clickable `--> file:line:col`
+/// location, the source line with a caret underline, a `help:` note, and the
+/// `adesh --explain E0308` pointer into the diagnostic registry.
+pub(in crate::execution::runtime_core) fn err_styled_type<M: Into<String>, H: Into<String>>(
+    message: M,
+    span: &crate::parsing::ast::Span,
+    file: &str,
+    help: H,
+) -> String {
+    use crate::parsing::error::{ErrorKind, LangError};
+    if span.line == 0 {
+        // No usable location: still emit the code-linked header.
+        return format!("error[E0308]: {}", message.into());
+    }
+    let error = LangError::new(
+        ErrorKind::Type,
+        message.into(),
+        span.line,
+        span.col,
+        span.line_text.clone(),
+    )
+    .with_file(file.to_string())
+    .with_help(help.into())
+    .with_code("E0308");
+    format!("{}", error)
+}
+
 /// Create a UserFn with all required fields.
 ///
 /// Provides a convenient way to construct user functions with default values

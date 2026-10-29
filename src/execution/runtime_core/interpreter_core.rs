@@ -32,6 +32,37 @@ use num_traits::ToPrimitive;
 use rustc_hash::FxHashMap as HashMap;
 use std::any::Any;
 
+/// Helper: given a type annotation string (e.g. "Service" or "Service?"), resolve the named
+/// type alias in the environment chain and return its base name. Used to tag object values
+/// with `__type__` so `typeof` reports the alias name instead of the generic "object".
+fn resolve_alias_name_for_object(
+    ann: &str,
+    envs: &[crate::execution::runtime_core::interpreter::Env],
+    global: usize,
+    start_env: Option<usize>,
+) -> Option<String> {
+    let nullable = ann.ends_with('?');
+    let base = if nullable { &ann[..ann.len() - 1] } else { ann };
+    let alias_name = if let Some(idx) = base.find('<') {
+        &base[..idx]
+    } else {
+        base
+    };
+
+    let mut c = start_env.or(Some(global));
+    while let Some(id) = c {
+        if let Some(val) = envs[id].values.get(alias_name) {
+            if let Value::Object(map) = val {
+                if map.get("__type_alias__").is_some() && map.get("__alias_target__").is_none() {
+                    return Some(alias_name.to_string());
+                }
+            }
+        }
+        c = envs[id].enclosing;
+    }
+    None
+}
+
 fn cast_value(val: Value, target_ty: &str) -> Value {
     let target = target_ty.trim();
     if target.starts_with('[') && target.ends_with(']') {
@@ -115,8 +146,9 @@ use super::interpreter::{
     ModuleLoader, PROGRAM_ARGS, PROMISE_COUNTER, ProgramMemoryStats, PromiseEntry, PromiseState,
     RUNTIME_ENV, RunErr, ThenHandler, UNSAFE_DEPTH, VariableMemoryInfo, ann_matches_value,
     arc_manager, coerce_and_apply_defaults, coerce_to_fixed_width, create_user_class,
-    create_user_fn, err, err_with_span, find_method_in_class_chain, find_method_with_visibility,
-    format_input_type_error, get_prop, in_unsafe_context, infer_numeric_type, is_copy_value,
+    create_user_fn, err, err_styled_type, err_with_span, find_method_in_class_chain,
+    find_method_with_visibility, format_input_type_error, get_prop, in_unsafe_context,
+    infer_numeric_type, is_copy_value,
     is_field_accessible, is_method_accessible, new_instance, select_best_overload, set_prop,
     sizeof_value, value_type_name, wrap_foreign_function,
 };
@@ -3545,7 +3577,15 @@ impl Interpreter {
                 Value::DynArray(da) => return Ok(Value::Str(format!("[{}]", da.concrete_type))),
                 Value::Tuple(_) => "tuple",
                 Value::Set(_) => "set",
-                Value::Object(_) => "object",
+                Value::Object(obj) => {
+                    // If the object carries a type alias tag (set at `let x: Alias = {...}`),
+                    // report the named type instead of generic "object".
+                    if let Some(Value::Str(type_name)) = obj.get("__type__") {
+                        type_name.as_str()
+                    } else {
+                        "object"
+                    }
+                }
                 Value::LazyRange(..) => "range",
                 Value::Class(c) => &c.name,
                 Value::Instance(i) => &i.class.name,
@@ -5851,14 +5891,23 @@ impl Interpreter {
         let tokens = lex.tokenize().map_err(|e| e.to_string())?;
         let mut p = Parser::new(tokens, id.clone());
         let program = p.parse_program().map_err(|e| e.to_string())?;
+        self.run_module_ast(&program, loader, id)
+    }
 
+    /// Execute an already-parsed AST directly, eliminating redundant lexing and parsing.
+    pub fn run_module_ast(
+        &mut self,
+        program: &Vec<Stmt>,
+        loader: &mut ModuleLoader,
+        id: Option<String>,
+    ) -> Result<(), String> {
         // set current module so throws can attach file info
         let module_id = id.unwrap_or("<module>".into());
         self.current_module = Some(module_id.clone());
         // Pre-register functions and certain exported entities so we can call user's main() first
         // Set flag to skip decorator application during pre-registration to avoid duplicate application
         self.in_pre_registration = true;
-        for s in &program {
+        for s in program {
             match &s.kind {
                 StmtKind::Function(_, _)
                 | StmtKind::ExportDefaultFunction(_)
@@ -5885,7 +5934,7 @@ impl Interpreter {
         // main() will be called by exec_block() if it exists - no need to call it here
         // This prevents double execution (exec_block already calls main when parent == global)
 
-        let res = self.exec_block(&program, self.global, loader, module_id.clone());
+        let res = self.exec_block(program, self.global, loader, module_id.clone());
         let pending = self.pending_throw.take();
         self.current_module = None;
         if let Some(le) = pending {
@@ -6131,12 +6180,19 @@ impl Interpreter {
                         let type_ann = type_anns.as_ref().and_then(|t| t.get(i).cloned());
                         if let Some(ref ann) = type_ann {
                             if !ann_matches_value(&type_ann, &val) {
-                                return Err(RunErr::Msg(err(format!(
+                                let msg = format!(
                                     "annotated variable '{}' expected {}, found {}",
                                     rest_name,
                                     ann,
                                     fmt(&val)
-                                ))));
+                                );
+                                let help = "ensure the value's type matches the annotation; use an explicit conversion if needed";
+                                return Err(RunErr::Msg(err_styled_type(
+                                    &msg,
+                                    &s.span,
+                                    module_id,
+                                    help,
+                                )));
                             }
                         }
 
@@ -6163,12 +6219,16 @@ impl Interpreter {
                             }
                         }
                         if !ann_matches_value(&type_ann, &val) {
-                            return Err(RunErr::Msg(err(format!(
+                            let msg = format!(
                                 "annotated variable '{}' expected {}, found {}",
                                 name,
                                 ann,
                                 fmt(&val)
-                            ))));
+                            );
+                            let help = "ensure the value's type matches the annotation; use an explicit conversion if needed";
+                            return Err(RunErr::Msg(err_styled_type(
+                                &msg, &s.span, module_id, help
+                            )));
                         }
                     }
 
@@ -6577,7 +6637,7 @@ impl Interpreter {
                             &ann,
                             &v,
                         );
-                        let msg = match detail {
+                        let msg = match detail.as_deref() {
                             Some(reason) => format!(
                                 "annotated variable '{}' expected {}: {}",
                                 name, ann, reason
@@ -6587,12 +6647,60 @@ impl Interpreter {
                                 name, ann, fmt(&v)
                             ),
                         };
-                        return Err(RunErr::Msg(err(msg)));
+                        // Pick the most precise source location for the failure:
+                        // the offending field's value expression when the reason names
+                        // a field, the object literal for missing fields, and the
+                        // statement span otherwise.
+                        let mut err_span = s.span.clone();
+                        if let Some(reason) = detail.as_deref() {
+                            if let Some(e) = init {
+                                if let ExprKind::Object(kv) = &e.kind {
+                                    // First '...' segment of the reason names the field.
+                                    let named_field = reason.split('\'').nth(1);
+                                    if reason.starts_with("missing required field") {
+                                        err_span = e.span.clone();
+                                    } else if let Some(field) = named_field {
+                                        if let Some((_, val_expr)) =
+                                            kv.iter().find(|(k, _)| k == field)
+                                        {
+                                            err_span = val_expr.span.clone();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        let help = if msg.contains("unexpected extra field") {
+                            "remove the extra field from the object literal, or declare it in the type alias".to_string()
+                        } else if msg.contains("missing required field") {
+                            "add the missing field to the object literal, or mark it optional with `?` in the type alias".to_string()
+                        } else {
+                            "ensure the value's type matches the annotation; use an explicit conversion if needed".to_string()
+                        };
+                        return Err(RunErr::Msg(err_styled_type(
+                            &msg, &err_span, module_id, help,
+                        )));
                     }
                 } else {
                     // No type annotation - use smart inference for numeric types
                     v = infer_numeric_type(v);
                 }
+
+                // Tag object values with their named type alias so `typeof` reports
+                // the alias name (e.g. "Service") instead of the generic "object".
+                if let Some(ann) = &type_ann {
+                    if let Value::Object(obj_map) = &v {
+                        if let Some(alias_name) =
+                            resolve_alias_name_for_object(ann, &self.envs, self.global, Some(env))
+                        {
+                            if obj_map.get("__type__").is_none() {
+                                let mut mut_map = (**obj_map).clone();
+                                mut_map.insert("__type__".into(), Value::Str(alias_name));
+                                v = Value::Object(std::sync::Arc::new(mut_map));
+                            }
+                        }
+                    }
+                }
+
                 self.define_at_const(
                     env,
                     name.clone(),
@@ -10980,6 +11088,9 @@ impl Interpreter {
                     obj.insert(fname.clone(), Value::Str(s));
                 }
                 obj.insert("__type_alias__".into(), Value::Str("1".into()));
+                // Tag the alias definition with its own name so `typeof(AliasName)`
+                // reports the type name instead of the generic "object".
+                obj.insert("__type__".into(), Value::Str(ta.name.clone()));
 
                 // Store generic type parameters
                 if !ta.type_params.is_empty() {
@@ -11392,7 +11503,16 @@ impl Interpreter {
                             }
                             Value::Tuple(_) => "tuple",
                             Value::Set(_) => "set",
-                            Value::Object(_) => "object",
+                            Value::Object(obj) => {
+                                // If the object carries a type tag (set at `let x: Alias = {...}`
+                                // or on the alias definition itself), report the named type
+                                // instead of the generic "object".
+                                if let Some(Value::Str(type_name)) = obj.get("__type__") {
+                                    type_name.as_str()
+                                } else {
+                                    "object"
+                                }
+                            }
                             Value::Class(c) => &c.name,
                             Value::Instance(i) => &i.class.name,
                             Value::BoundMethod(_, _) => "function",
@@ -15507,6 +15627,29 @@ impl Interpreter {
             }
             ExprKind::Get(obj, key) => {
                 let o = self.eval_expr(obj, env, loader)?;
+                // Type-alias field access: reading a field off a type alias definition
+                // (e.g. `Service.port`) yields the field's declared type name as a
+                // string. If that string names another type alias in scope, return the
+                // alias object itself so `typeof(Service.port)` reports the named type
+                // (e.g. "Port") instead of the generic "string".
+                if let Value::Object(map) = &o {
+                    if map.get("__type_alias__").is_some() {
+                        if let Some(Value::Str(field_type)) = map.get(key) {
+                            let target = field_type.trim_start_matches('?');
+                            let mut c = Some(env);
+                            while let Some(id) = c {
+                                if let Some(alias_val) = self.envs[id].values.get(target) {
+                                    if let Value::Object(alias_map) = &alias_val {
+                                        if alias_map.get("__type_alias__").is_some() {
+                                            return Ok(alias_val.clone());
+                                        }
+                                    }
+                                }
+                                c = self.envs[id].enclosing;
+                            }
+                        }
+                    }
+                }
                 self.get_prop(o, key)
             }
             ExprKind::Set(obj, key, v) => {

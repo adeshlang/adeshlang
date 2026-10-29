@@ -1149,65 +1149,13 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
                     .map_err(|e| format!("Assembly generation error: {}", e))?;
                 fs::write(&output, asm).map_err(|e| format!("Failed to write Assembly file: {}", e))
             } else if is_wasm && config.emit != EmitType::Adob {
-                let lowered = backend
-                    .lower_module(&module)
-                    .map_err(|e| format!("Codegen lower error: {}", e))?;
-                let adob = backend
-                    .emit_object(&lowered)
-                    .map_err(|e| format!("ADOB emit error: {}", e))?;
-
-                use adesh_linker::section::{MergedSection, Section, SectionKind};
-                use adesh_linker::symbol::{Symbol, SymbolBinding, SymbolType};
-
-                let mut merged_secs = Vec::new();
-                for (idx, sec) in adob.sections.iter().enumerate() {
-                    let mut merged = MergedSection::new(
-                        sec.name.clone(),
-                        if sec.kind == adesh_object::SectionKind::Text {
-                            SectionKind::Text
-                        } else {
-                            SectionKind::Data
-                        },
-                        sec.flags,
-                        sec.alignment,
-                    );
-                    let local_sec =
-                        Section::new_data(sec.name.clone(), sec.data.clone(), false, sec.alignment);
-                    merged.append_section(&local_sec, 0, idx);
-                    merged_secs.push(merged);
-                }
-
-                let symbols: Vec<Symbol> = adob
-                    .symbols
-                    .iter()
-                    .map(|s| Symbol {
-                        name: s.name.clone(),
-                        binding: match s.binding {
-                            adesh_object::SymbolBinding::Global => SymbolBinding::Global,
-                            adesh_object::SymbolBinding::Local => SymbolBinding::Local,
-                            adesh_object::SymbolBinding::Weak => SymbolBinding::Weak,
-                            _ => SymbolBinding::Global,
-                        },
-                        visibility: adesh_linker::symbol::SymbolVisibility::Default,
-                        sym_type: SymbolType::Function,
-                        section_index: s.section_index.map(|idx| idx as usize),
-                        value: s.value,
-                        size: s.size,
-                        is_defined: s.is_defined,
-                        is_imported: !s.is_defined || s.kind == adesh_object::SymbolKind::Import,
-                        is_exported: adob.exports.contains(&s.name) || s.is_defined,
-                        file_index: Some(0),
-                        alias_of: None,
-                        comdat_group: None,
-                        version: None,
-                    })
-                    .collect();
-
-                let wasm_bytes =
-                    adesh_linker::wasm::WasmWriter::encode_binary(&merged_secs, &symbols)
-                        .map_err(|e| format!("Failed to link WebAssembly binary: {}", e))?;
-                fs::write(&output, wasm_bytes)
-                    .map_err(|e| format!("Failed to write WASM file: {}", e))
+                // Unreachable: `is_wasm` is dispatched to the WASM backend
+                // before this closure runs. Kept as a loud error so a future
+                // caller cannot mistake an ADOB (no `linking` section, no
+                // object-local type/import tables) for a linkable WASM object.
+                Err("Failed to link WebAssembly binary: the ADOB path has no relocatable-WASM \
+                     facts (types, imports, body boundaries), so it cannot produce a module"
+                    .to_string())
             } else if config.emit == EmitType::Adob || config.emit == EmitType::Object {
                 let adob = if config.lto {
                     emit_adob_via_driver(&module)?

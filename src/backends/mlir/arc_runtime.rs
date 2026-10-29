@@ -14,6 +14,7 @@ pub fn generate_arc_runtime_decls() -> String {
 
     // arc_release: Atomically decrement reference count and free if zero
     decls.push_str("  func.func private @arc_release(!llvm.ptr)\n");
+    decls.push_str("  func.func private @arc_release_ptr(!llvm.ptr)\n");
 
     // arc_clone: Clone with reference count increment
     decls.push_str("  func.func private @arc_clone(!llvm.ptr) -> !llvm.ptr\n");

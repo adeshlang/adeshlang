@@ -80,11 +80,19 @@ pub enum RelocationKind {
     /// RISC-V 12-bit PC-relative lower immediate for stores (S-type)
     RiscvPcrelLo12S,
 
-    /// WebAssembly relocations
+    /// WebAssembly relocations. Index kinds patch a padded LEB128 placeholder;
+    /// the `...I32` kinds patch a fixed little-endian 32-bit word instead.
     WasmFunctionIndex,
     WasmTypeIndex,
     WasmGlobalIndex,
+    /// `R_WASM_GLOBAL_INDEX_I32`: a global index stored as a fixed `i32`.
+    WasmGlobalIndexI32,
+    /// `R_WASM_MEMORY_ADDR_LEB`: a linear-memory address as an unsigned LEB.
     WasmMemoryOffset32,
+    /// `R_WASM_MEMORY_ADDR_SLEB`: a linear-memory address as a signed LEB.
+    WasmMemoryOffsetSleb,
+    /// `R_WASM_MEMORY_ADDR_I32`: a linear-memory address as a fixed `i32`.
+    WasmMemoryOffsetI32,
 }
 
 impl RelocationKind {
@@ -115,7 +123,10 @@ impl RelocationKind {
             | RelocationKind::WasmFunctionIndex
             | RelocationKind::WasmTypeIndex
             | RelocationKind::WasmGlobalIndex
+            | RelocationKind::WasmGlobalIndexI32
             | RelocationKind::WasmMemoryOffset32
+            | RelocationKind::WasmMemoryOffsetSleb
+            | RelocationKind::WasmMemoryOffsetI32
             | RelocationKind::TlsGeneralDynamic
             | RelocationKind::TlsInitialExec
             | RelocationKind::TlsLocalExec
@@ -160,7 +171,10 @@ impl RelocationKind {
             RelocationKind::WasmFunctionIndex => "WASM_FUNC_INDEX",
             RelocationKind::WasmTypeIndex => "WASM_TYPE_INDEX",
             RelocationKind::WasmGlobalIndex => "WASM_GLOBAL_INDEX",
+            RelocationKind::WasmGlobalIndexI32 => "WASM_GLOBAL_INDEX_I32",
             RelocationKind::WasmMemoryOffset32 => "WASM_MEMORY_ADDR",
+            RelocationKind::WasmMemoryOffsetSleb => "WASM_MEMORY_ADDR_SLEB",
+            RelocationKind::WasmMemoryOffsetI32 => "WASM_MEMORY_ADDR_I32",
         }
     }
 }
@@ -644,9 +658,24 @@ impl RelocationHandler for DefaultRelocationHandler {
             RelocationKind::WasmFunctionIndex
             | RelocationKind::WasmTypeIndex
             | RelocationKind::WasmGlobalIndex
-            | RelocationKind::WasmMemoryOffset32 => {
-                let val = ((symbol_va as i64).wrapping_add(addend)) as u32;
-                target_slice.copy_from_slice(&val.to_le_bytes());
+            | RelocationKind::WasmGlobalIndexI32
+            | RelocationKind::WasmMemoryOffset32
+            | RelocationKind::WasmMemoryOffsetSleb
+            | RelocationKind::WasmMemoryOffsetI32 => {
+                // WASM fields are padded LEB128 placeholders or fixed i32s in
+                // section payloads, and their values are index-space numbers,
+                // not virtual addresses. The generic layout engine has neither
+                // the plan's index maps nor the encoding, so applying one here
+                // would corrupt the module.
+                return Err(LinkError::new(
+                    ErrorCode::UnsupportedRelocation,
+                    format!(
+                        "WebAssembly relocation `{}` against `{}` reached the generic \
+                         relocation engine; WASM relocations are applied by the module writer",
+                        reloc.kind.name(),
+                        reloc.symbol_name
+                    ),
+                ));
             }
             RelocationKind::Got64 => {
                 let val = (symbol_va as i64).wrapping_add(addend) as u64;

@@ -426,7 +426,16 @@ fn gen_expr_f64(
                 } else {
                     &tn[..]
                 };
-                if let Some(layout) = ctx.struct_layouts.get(base_name) {
+                let mut layout_opt = ctx.struct_layouts.get(base_name);
+                if layout_opt.is_none() {
+                    for l in ctx.struct_layouts.values() {
+                        if l.get_field_offset(field).is_some() {
+                            layout_opt = Some(l);
+                            break;
+                        }
+                    }
+                }
+                if let Some(layout) = layout_opt {
                     if let Some(offset) = layout.get_field_offset(field) {
                         if let Some(fi) = layout.find_field(field) {
                             if fi.type_name == "f64" || fi.type_name == "number" {
@@ -494,7 +503,21 @@ fn gen_expr_f64(
             write_u32_leb(scratch_idx, out);
 
             if let Some(tn) = type_name {
-                if let Some(layout) = ctx.struct_layouts.get(&tn) {
+                let base_name = if let Some(idx) = tn.find('<') {
+                    &tn[..idx]
+                } else {
+                    &tn[..]
+                };
+                let mut layout_opt = ctx.struct_layouts.get(base_name);
+                if layout_opt.is_none() {
+                    for l in ctx.struct_layouts.values() {
+                        if l.get_field_offset(field).is_some() {
+                            layout_opt = Some(l);
+                            break;
+                        }
+                    }
+                }
+                if let Some(layout) = layout_opt {
                     if let Some(offset) = layout.get_field_offset(field) {
                         if offset > 0 {
                             out.push(0x41);
@@ -951,7 +974,16 @@ fn gen_expr_i32(
                 } else {
                     &tn[..]
                 };
-                if let Some(layout) = ctx.struct_layouts.get(base_name) {
+                let mut layout_opt = ctx.struct_layouts.get(base_name);
+                if layout_opt.is_none() {
+                    for l in ctx.struct_layouts.values() {
+                        if l.get_field_offset(field).is_some() {
+                            layout_opt = Some(l);
+                            break;
+                        }
+                    }
+                }
+                if let Some(layout) = layout_opt {
                     if let Some(offset) = layout.get_field_offset(field) {
                         if offset > 0 {
                             out.push(0x41);
@@ -1737,6 +1769,14 @@ fn collect_all_wasm_strings_stmt(
         StmtKind::ForIn { iter, body, .. } => {
             collect_all_wasm_strings_expr(iter, strings, cur_off, var_values);
             collect_all_wasm_strings_stmt(body, strings, cur_off, var_values);
+        }
+        StmtKind::TryCatch {
+            try_block,
+            catch_block,
+            ..
+        } => {
+            collect_all_wasm_strings_stmt(try_block, strings, cur_off, var_values);
+            collect_all_wasm_strings_stmt(catch_block, strings, cur_off, var_values);
         }
         _ => {}
     }
@@ -2614,69 +2654,113 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
     let mut local_count_f64: u32 = 0;
     let mut local_count_i32: u32 = 0;
 
-    for s in &prog {
-        if let StmtKind::Let(name, init, _ann, ..) = &s.kind {
-            if init.is_some() {
-                let inferred_struct_or_i32 = if let Some(init_expr) = init {
-                    match &init_expr.kind {
-                        ExprKind::StructLiteral(sname, ..) => Some(sname.clone()),
-                        ExprKind::Call(callee, ..) => {
-                            if let ExprKind::Variable(fn_name) = &callee.kind {
-                                func_defs
-                                    .iter()
-                                    .find(|fd| &fd.name == fn_name)
-                                    .and_then(|fd| fd.ret_type.clone())
-                            } else {
-                                None
+    fn collect_top_locals(
+        s: &Stmt,
+        func_defs: &[crate::parsing::ast::Function],
+        locals_map_i32: &mut FastMap<String, u32>,
+        locals_map_f64: &mut FastMap<String, u32>,
+        local_count_i32: &mut u32,
+        local_count_f64: &mut u32,
+        is_i32_type: &impl Fn(&str) -> bool,
+    ) {
+        match &s.kind {
+            StmtKind::Let(name, init, _ann, ..) => {
+                if init.is_some() {
+                    let inferred_struct_or_i32 = if let Some(init_expr) = init {
+                        match &init_expr.kind {
+                            ExprKind::StructLiteral(sname, ..) => Some(sname.clone()),
+                            ExprKind::Call(callee, ..) => {
+                                if let ExprKind::Variable(fn_name) = &callee.kind {
+                                    func_defs
+                                        .iter()
+                                        .find(|fd| &fd.name == fn_name)
+                                        .and_then(|fd| fd.ret_type.clone())
+                                } else {
+                                    None
+                                }
                             }
+                            _ => None,
                         }
-                        _ => None,
-                    }
-                } else {
-                    None
-                };
+                    } else {
+                        None
+                    };
 
-                let effective_type = _ann.clone().or(inferred_struct_or_i32);
-                if let Some(tn) = effective_type {
-                    if is_i32_type(&tn) {
-                        if !locals_map_i32.contains_key(name) {
-                            locals_map_i32.insert(name.clone(), local_count_i32);
-                            local_count_i32 += 1;
+                    let effective_type = _ann.clone().or(inferred_struct_or_i32);
+                    if let Some(tn) = effective_type {
+                        if is_i32_type(&tn) {
+                            if !locals_map_i32.contains_key(name) {
+                                locals_map_i32.insert(name.clone(), *local_count_i32);
+                                *local_count_i32 += 1;
+                            }
+                        } else {
+                            if !locals_map_f64.contains_key(name) {
+                                locals_map_f64.insert(name.clone(), *local_count_f64);
+                                *local_count_f64 += 1;
+                            }
                         }
                     } else {
                         if !locals_map_f64.contains_key(name) {
-                            locals_map_f64.insert(name.clone(), local_count_f64);
-                            local_count_f64 += 1;
+                            locals_map_f64.insert(name.clone(), *local_count_f64);
+                            *local_count_f64 += 1;
                         }
-                    }
-                } else {
-                    if !locals_map_f64.contains_key(name) {
-                        locals_map_f64.insert(name.clone(), local_count_f64);
-                        local_count_f64 += 1;
                     }
                 }
             }
-        } else if let StmtKind::ShareDeclaration(decl, _) = &s.kind {
-            if !locals_map_f64.contains_key(&decl.name) {
-                locals_map_f64.insert(decl.name.clone(), local_count_f64);
-                local_count_f64 += 1;
+            StmtKind::ShareDeclaration(decl, _) => {
+                if !locals_map_f64.contains_key(&decl.name) {
+                    locals_map_f64.insert(decl.name.clone(), *local_count_f64);
+                    *local_count_f64 += 1;
+                }
             }
-        } else if let StmtKind::StrongDeclaration(decl, _) = &s.kind {
-            if !locals_map_f64.contains_key(&decl.name) {
-                locals_map_f64.insert(decl.name.clone(), local_count_f64);
-                local_count_f64 += 1;
+            StmtKind::StrongDeclaration(decl, _) => {
+                if !locals_map_f64.contains_key(&decl.name) {
+                    locals_map_f64.insert(decl.name.clone(), *local_count_f64);
+                    *local_count_f64 += 1;
+                }
             }
-        } else if let StmtKind::WeakDeclaration(decl, _) = &s.kind {
-            if !locals_map_f64.contains_key(&decl.name) {
-                locals_map_f64.insert(decl.name.clone(), local_count_f64);
-                local_count_f64 += 1;
+            StmtKind::WeakDeclaration(decl, _) => {
+                if !locals_map_f64.contains_key(&decl.name) {
+                    locals_map_f64.insert(decl.name.clone(), *local_count_f64);
+                    *local_count_f64 += 1;
+                }
             }
-        } else if let StmtKind::ForIn { name, .. } = &s.kind {
-            if !locals_map_i32.contains_key(name) && !locals_map_f64.contains_key(name) {
-                locals_map_i32.insert(name.clone(), local_count_i32);
-                local_count_i32 += 1;
+            StmtKind::ForIn { name, body, .. } => {
+                if !locals_map_i32.contains_key(name) && !locals_map_f64.contains_key(name) {
+                    locals_map_i32.insert(name.clone(), *local_count_i32);
+                    *local_count_i32 += 1;
+                }
+                collect_top_locals(body, func_defs, locals_map_i32, locals_map_f64, local_count_i32, local_count_f64, is_i32_type);
             }
+            StmtKind::TryCatch { try_block, err_name, catch_block } => {
+                if !err_name.is_empty() {
+                    if !locals_map_i32.contains_key(err_name) && !locals_map_f64.contains_key(err_name) {
+                        locals_map_i32.insert(err_name.clone(), *local_count_i32);
+                        *local_count_i32 += 1;
+                    }
+                }
+                collect_top_locals(try_block, func_defs, locals_map_i32, locals_map_f64, local_count_i32, local_count_f64, is_i32_type);
+                collect_top_locals(catch_block, func_defs, locals_map_i32, locals_map_f64, local_count_i32, local_count_f64, is_i32_type);
+            }
+            StmtKind::Block(stmts) => {
+                for st in stmts {
+                    collect_top_locals(st, func_defs, locals_map_i32, locals_map_f64, local_count_i32, local_count_f64, is_i32_type);
+                }
+            }
+            StmtKind::If { then_branch, else_branch, .. } => {
+                collect_top_locals(then_branch, func_defs, locals_map_i32, locals_map_f64, local_count_i32, local_count_f64, is_i32_type);
+                if let Some(eb) = else_branch {
+                    collect_top_locals(eb, func_defs, locals_map_i32, locals_map_f64, local_count_i32, local_count_f64, is_i32_type);
+                }
+            }
+            StmtKind::While { body, .. } | StmtKind::UnsafeBlock(body) | StmtKind::Region { body, .. } => {
+                collect_top_locals(body, func_defs, locals_map_i32, locals_map_f64, local_count_i32, local_count_f64, is_i32_type);
+            }
+            _ => {}
         }
+    }
+
+    for s in &prog {
+        collect_top_locals(s, &func_defs, &mut locals_map_i32, &mut locals_map_f64, &mut local_count_i32, &mut local_count_f64, &is_i32_type);
     }
 
     if !locals_map_i32.contains_key("__scratch") {
@@ -2914,73 +2998,121 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
             }
         }
         let pcount = f.params.len() as u32;
-        for s in f.body.iter() {
-            if let StmtKind::Let(name, _init, _ann, ..) = &s.kind {
-                let inferred_struct_or_i32 = if let Some(init_expr) = _init {
-                    match &init_expr.kind {
-                        ExprKind::StructLiteral(sname, ..) => Some(sname.clone()),
-                        ExprKind::Call(callee, ..) => {
-                            if let ExprKind::Variable(fn_name) = &callee.kind {
-                                func_defs
-                                    .iter()
-                                    .find(|fd| &fd.name == fn_name)
-                                    .and_then(|fd| fd.ret_type.clone())
-                            } else {
-                                None
-                            }
-                        }
-                        _ => None,
-                    }
-                } else {
-                    None
-                };
 
-                let effective_type = _ann.clone().or(inferred_struct_or_i32);
-                if let Some(tn) = effective_type {
-                    f_locals_types.insert(name.clone(), tn.clone());
-                    if is_i32_type(&tn) {
-                        if !f_locals_i32.contains_key(name) {
-                            f_locals_i32.insert(name.clone(), f_local_count_i32 + pcount);
-                            f_local_count_i32 += 1;
+        fn collect_fn_locals(
+            s: &Stmt,
+            func_defs: &[crate::parsing::ast::Function],
+            f_locals_types: &mut FastMap<String, String>,
+            f_locals_i32: &mut FastMap<String, u32>,
+            f_locals_f64: &mut FastMap<String, u32>,
+            f_local_count_i32: &mut u32,
+            f_local_count_f64: &mut u32,
+            pcount: u32,
+            is_i32_type: &impl Fn(&str) -> bool,
+        ) {
+            match &s.kind {
+                StmtKind::Let(name, _init, _ann, ..) => {
+                    let inferred_struct_or_i32 = if let Some(init_expr) = _init {
+                        match &init_expr.kind {
+                            ExprKind::StructLiteral(sname, ..) => Some(sname.clone()),
+                            ExprKind::Call(callee, ..) => {
+                                if let ExprKind::Variable(fn_name) = &callee.kind {
+                                    func_defs
+                                        .iter()
+                                        .find(|fd| &fd.name == fn_name)
+                                        .and_then(|fd| fd.ret_type.clone())
+                                } else {
+                                    None
+                                }
+                            }
+                            _ => None,
                         }
                     } else {
+                        None
+                    };
+
+                    let effective_type = _ann.clone().or(inferred_struct_or_i32);
+                    if let Some(tn) = effective_type {
+                        f_locals_types.insert(name.clone(), tn.clone());
+                        if is_i32_type(&tn) {
+                            if !f_locals_i32.contains_key(name) {
+                                f_locals_i32.insert(name.clone(), *f_local_count_i32 + pcount);
+                                *f_local_count_i32 += 1;
+                            }
+                        } else {
+                            if !f_locals_f64.contains_key(name) {
+                                f_locals_f64.insert(name.clone(), *f_local_count_f64 + pcount);
+                                *f_local_count_f64 += 1;
+                            }
+                        }
+                    } else {
+                        f_locals_types.insert(name.clone(), "number".into());
                         if !f_locals_f64.contains_key(name) {
-                            f_locals_f64.insert(name.clone(), f_local_count_f64 + pcount);
-                            f_local_count_f64 += 1;
+                            f_locals_f64.insert(name.clone(), *f_local_count_f64 + pcount);
+                            *f_local_count_f64 += 1;
                         }
                     }
-                } else {
-                    f_locals_types.insert(name.clone(), "number".into());
-                    if !f_locals_f64.contains_key(name) {
-                        f_locals_f64.insert(name.clone(), f_local_count_f64 + pcount);
-                        f_local_count_f64 += 1;
+                }
+                StmtKind::ShareDeclaration(decl, _) => {
+                    f_locals_types.insert(decl.name.clone(), "strong".into());
+                    if !f_locals_f64.contains_key(&decl.name) {
+                        f_locals_f64.insert(decl.name.clone(), *f_local_count_f64 + pcount);
+                        *f_local_count_f64 += 1;
                     }
                 }
-            } else if let StmtKind::ShareDeclaration(decl, _) = &s.kind {
-                f_locals_types.insert(decl.name.clone(), "strong".into());
-                if !f_locals_f64.contains_key(&decl.name) {
-                    f_locals_f64.insert(decl.name.clone(), f_local_count_f64 + pcount);
-                    f_local_count_f64 += 1;
+                StmtKind::StrongDeclaration(decl, _) => {
+                    f_locals_types.insert(decl.name.clone(), "strong".into());
+                    if !f_locals_f64.contains_key(&decl.name) {
+                        f_locals_f64.insert(decl.name.clone(), *f_local_count_f64 + pcount);
+                        *f_local_count_f64 += 1;
+                    }
                 }
-            } else if let StmtKind::StrongDeclaration(decl, _) = &s.kind {
-                f_locals_types.insert(decl.name.clone(), "strong".into());
-                if !f_locals_f64.contains_key(&decl.name) {
-                    f_locals_f64.insert(decl.name.clone(), f_local_count_f64 + pcount);
-                    f_local_count_f64 += 1;
+                StmtKind::WeakDeclaration(decl, _) => {
+                    f_locals_types.insert(decl.name.clone(), "weak".into());
+                    if !f_locals_f64.contains_key(&decl.name) {
+                        f_locals_f64.insert(decl.name.clone(), *f_local_count_f64 + pcount);
+                        *f_local_count_f64 += 1;
+                    }
                 }
-            } else if let StmtKind::WeakDeclaration(decl, _) = &s.kind {
-                f_locals_types.insert(decl.name.clone(), "weak".into());
-                if !f_locals_f64.contains_key(&decl.name) {
-                    f_locals_f64.insert(decl.name.clone(), f_local_count_f64 + pcount);
-                    f_local_count_f64 += 1;
+                StmtKind::ForIn { name, body, .. } => {
+                    f_locals_types.insert(name.clone(), "int".into());
+                    if !f_locals_i32.contains_key(name) && !f_locals_f64.contains_key(name) {
+                        f_locals_i32.insert(name.clone(), *f_local_count_i32 + pcount);
+                        *f_local_count_i32 += 1;
+                    }
+                    collect_fn_locals(body, func_defs, f_locals_types, f_locals_i32, f_locals_f64, f_local_count_i32, f_local_count_f64, pcount, is_i32_type);
                 }
-            } else if let StmtKind::ForIn { name, .. } = &s.kind {
-                f_locals_types.insert(name.clone(), "int".into());
-                if !f_locals_i32.contains_key(name) && !f_locals_f64.contains_key(name) {
-                    f_locals_i32.insert(name.clone(), f_local_count_i32 + pcount);
-                    f_local_count_i32 += 1;
+                StmtKind::TryCatch { try_block, err_name, catch_block } => {
+                    if !err_name.is_empty() {
+                        f_locals_types.insert(err_name.clone(), "string".into());
+                        if !f_locals_i32.contains_key(err_name) && !f_locals_f64.contains_key(err_name) {
+                            f_locals_i32.insert(err_name.clone(), *f_local_count_i32 + pcount);
+                            *f_local_count_i32 += 1;
+                        }
+                    }
+                    collect_fn_locals(try_block, func_defs, f_locals_types, f_locals_i32, f_locals_f64, f_local_count_i32, f_local_count_f64, pcount, is_i32_type);
+                    collect_fn_locals(catch_block, func_defs, f_locals_types, f_locals_i32, f_locals_f64, f_local_count_i32, f_local_count_f64, pcount, is_i32_type);
                 }
+                StmtKind::Block(stmts) => {
+                    for st in stmts {
+                        collect_fn_locals(st, func_defs, f_locals_types, f_locals_i32, f_locals_f64, f_local_count_i32, f_local_count_f64, pcount, is_i32_type);
+                    }
+                }
+                StmtKind::If { then_branch, else_branch, .. } => {
+                    collect_fn_locals(then_branch, func_defs, f_locals_types, f_locals_i32, f_locals_f64, f_local_count_i32, f_local_count_f64, pcount, is_i32_type);
+                    if let Some(eb) = else_branch {
+                        collect_fn_locals(eb, func_defs, f_locals_types, f_locals_i32, f_locals_f64, f_local_count_i32, f_local_count_f64, pcount, is_i32_type);
+                    }
+                }
+                StmtKind::While { body, .. } | StmtKind::UnsafeBlock(body) | StmtKind::Region { body, .. } => {
+                    collect_fn_locals(body, func_defs, f_locals_types, f_locals_i32, f_locals_f64, f_local_count_i32, f_local_count_f64, pcount, is_i32_type);
+                }
+                _ => {}
             }
+        }
+
+        for s in f.body.iter() {
+            collect_fn_locals(s, &func_defs, &mut f_locals_types, &mut f_locals_i32, &mut f_locals_f64, &mut f_local_count_i32, &mut f_local_count_f64, pcount, &is_i32_type);
         }
         f_locals_i32.insert("__scratch".to_string(), f_local_count_i32 + pcount);
         f_local_count_i32 += 1;

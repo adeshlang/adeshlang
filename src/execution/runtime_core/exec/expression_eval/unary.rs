@@ -98,7 +98,15 @@ impl Exec {
                     }
                     Value::Tuple(_) => "tuple",
                     Value::Set(_) => "set",
-                    Value::Object(_) => "object",
+                    Value::Object(obj) => {
+                        // If the object carries a type alias tag (set at `let x: Alias = {...}`),
+                        // report the named type instead of generic "object".
+                        if let Some(Value::Str(type_name)) = obj.get("__type__") {
+                            type_name.as_str()
+                        } else {
+                            "object"
+                        }
+                    }
                     Value::Class(c) => &c.name,
                     Value::Instance(i) => &i.class.name,
                     Value::BoundMethod(_, _) => "function",

@@ -33,6 +33,19 @@ pub fn check_module_in(src: &str, file: Option<&str>) -> Result<(), LangError> {
         diag_bag.add(err);
     }
 
+    check_ast_with_diagnostics(&prog, file, diag_bag)
+}
+
+/// Type-check an already-parsed AST directly without re-lexing or re-parsing.
+pub fn check_ast(prog: &[Stmt], file: Option<&str>) -> Result<(), LangError> {
+    check_ast_with_diagnostics(prog, file, DiagnosticBag::new())
+}
+
+pub fn check_ast_with_diagnostics(
+    prog: &[Stmt],
+    file: Option<&str>,
+    mut diag_bag: DiagnosticBag,
+) -> Result<(), LangError> {
     // collect signatures: map name -> parameter annotation strings (Option<String> per param)
     let mut fns: FastMap<String, Vec<Option<String>>> = FastMap::default();
     // function generic type parameter names: name -> Vec<type_param_names>
@@ -40,7 +53,7 @@ pub fn check_module_in(src: &str, file: Option<&str>) -> Result<(), LangError> {
     // function/method return type annotations: name -> Option<String>
     let mut fns_ret_types: FastMap<String, Option<String>> = FastMap::default();
 
-    for s in &prog {
+    for s in prog {
         collect_sigs(s, &mut fns, &mut fns_type_params, &mut fns_ret_types);
     }
 
@@ -48,7 +61,7 @@ pub fn check_module_in(src: &str, file: Option<&str>) -> Result<(), LangError> {
     let mut aliases: FastMap<String, Ty> = FastMap::default();
 
     // collect class, interface, and enum names as Ty::Any first
-    for s in &prog {
+    for s in prog {
         collect_custom_types_names(s, &mut aliases);
     }
 
@@ -58,7 +71,7 @@ pub fn check_module_in(src: &str, file: Option<&str>) -> Result<(), LangError> {
 
     // Collect non-generic type aliases with multi-pass resolution for forward references
     let mut pending_aliases: Vec<(&TypeAliasDecl, &Span)> = Vec::new();
-    for s in &prog {
+    for s in prog {
         if let StmtKind::TypeAlias(ta, _exp) = &s.kind {
             if ta.type_params.is_empty() {
                 pending_aliases.push((ta, &s.span));
@@ -239,7 +252,7 @@ pub fn check_module_in(src: &str, file: Option<&str>) -> Result<(), LangError> {
 
     let mut env: Vec<FastMap<String, Ty>> = vec![FastMap::default()];
     let mut stmt_errors = Vec::new();
-    for s in &prog {
+    for s in prog {
         check_stmt_types_collecting(
             s,
             &mut env,

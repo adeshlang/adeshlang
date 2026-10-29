@@ -351,8 +351,12 @@ struct Slab {
     base: NonNull<u8>,
     /// Size of the slab in bytes
     size: usize,
-    /// Object size for this slab
+    /// Object size requested for this slab
     object_size: usize,
+    /// Effective slot stride (always >= size_of::<usize>() to prevent free-list link overruns)
+    slot_size: usize,
+    /// Alignment of the slab buffer
+    align: usize,
     /// Free list head (index into slab)
     free_head: Option<usize>,
     /// Number of allocated objects
@@ -383,11 +387,15 @@ impl Slab {
             ));
         }
 
-        let size = object_size
-            .checked_mul(capacity)
-            .ok_or_else(|| size_overflow_error(object_size))?;
+        // Slot stride must be at least pointer-sized to store the free list index without buffer overrun
+        let slot_size = object_size.max(std::mem::size_of::<usize>());
+        let align = slot_size.min(16).max(8).next_power_of_two();
 
-        let layout = Layout::from_size_align(size, 8).map_err(|_| size_overflow_error(size))?;
+        let size = slot_size
+            .checked_mul(capacity)
+            .ok_or_else(|| size_overflow_error(slot_size))?;
+
+        let layout = Layout::from_size_align(size, align).map_err(|_| size_overflow_error(size))?;
 
         let base = unsafe {
             let ptr = alloc_zeroed(layout);
@@ -402,21 +410,23 @@ impl Slab {
             base,
             size,
             object_size,
+            slot_size,
+            align,
             free_head: Some(0),
             allocated: 0,
             capacity,
         };
 
-        // Link all objects in free list
+        // Link all objects in free list safely using slot_size stride
         for i in 0..capacity - 1 {
             unsafe {
-                let ptr = slab.base.as_ptr().add(i * object_size);
+                let ptr = slab.base.as_ptr().add(i * slot_size);
                 *(ptr as *mut usize) = i + 1;
             }
         }
         // Last object points to nothing
         unsafe {
-            let ptr = slab.base.as_ptr().add((capacity - 1) * object_size);
+            let ptr = slab.base.as_ptr().add((capacity - 1) * slot_size);
             *(ptr as *mut usize) = usize::MAX;
         }
 
@@ -426,7 +436,7 @@ impl Slab {
     /// Allocate an object from this slab
     fn alloc(&mut self) -> Option<NonNull<u8>> {
         if let Some(idx) = self.free_head {
-            let ptr = unsafe { self.base.as_ptr().add(idx * self.object_size) };
+            let ptr = unsafe { self.base.as_ptr().add(idx * self.slot_size) };
             // Read next free index
             let next = unsafe { *(ptr as *const usize) };
             self.free_head = if next == usize::MAX { None } else { Some(next) };
@@ -442,11 +452,11 @@ impl Slab {
         assert!(self.contains(ptr), "Pointer does not belong to this slab");
         let offset = unsafe { ptr.as_ptr().offset_from(self.base.as_ptr()) } as usize;
         assert_eq!(
-            offset % self.object_size,
+            offset % self.slot_size,
             0,
-            "Pointer is not aligned to object size"
+            "Pointer is not aligned to slab slot stride"
         );
-        let idx = offset / self.object_size;
+        let idx = offset / self.slot_size;
         assert!(idx < self.capacity, "Index out of bounds");
 
         // Add to free list
@@ -479,9 +489,10 @@ impl Slab {
 
 impl Drop for Slab {
     fn drop(&mut self) {
-        unsafe {
-            let layout = Layout::from_size_align_unchecked(self.size, 8);
-            dealloc(self.base.as_ptr(), layout);
+        if let Ok(layout) = Layout::from_size_align(self.size, self.align) {
+            unsafe {
+                dealloc(self.base.as_ptr(), layout);
+            }
         }
     }
 }
@@ -1135,5 +1146,23 @@ mod tests {
         assert_eq!("static".parse::<AllocMode>().unwrap(), AllocMode::Static);
         assert_eq!("dynamic".parse::<AllocMode>().unwrap(), AllocMode::Dynamic);
         assert_eq!("hybrid".parse::<AllocMode>().unwrap(), AllocMode::Hybrid);
+    }
+
+    #[test]
+    fn test_small_object_slab_no_overrun() {
+        // Test sub-8-byte sizes: 1, 2, 4 bytes
+        for &size in &[1, 2, 4] {
+            let mut slab = Slab::new(size, 8).expect("Small slab creation should succeed");
+            let mut ptrs = Vec::new();
+            for _ in 0..8 {
+                let p = slab.alloc().expect("alloc should succeed");
+                ptrs.push(p);
+            }
+            assert!(slab.alloc().is_none());
+            for p in ptrs {
+                slab.free(p);
+            }
+            assert_eq!(slab.allocated, 0);
+        }
     }
 }

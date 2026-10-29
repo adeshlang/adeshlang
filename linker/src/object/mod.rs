@@ -31,6 +31,10 @@ pub struct ObjectFile {
     pub is_archive_member: bool,
     pub archive_name: Option<String>,
     pub file_index: usize,
+    /// Type/import/body-layout facts a WASM object declared, captured by the
+    /// reader. The module writer re-emits those tables, so it cannot rebuild
+    /// them from merged section bytes.
+    pub wasm: Option<crate::wasm::object_info::WasmObjectInfo>,
 }
 
 impl ObjectFile {
@@ -44,6 +48,7 @@ impl ObjectFile {
             is_archive_member: false,
             archive_name: None,
             file_index,
+            wasm: None,
         }
     }
 

@@ -13,3 +13,8 @@ let api: Service = {
 let port: Service.port = api.port;
 print("port:", port);
 print("service:", api.name, "→", api.port);
+print("Type of Port:", typeof(Port));
+print("Type of Service:", typeof(Service));
+print("Type of Service.name:", typeof(Service.name));
+print("Type of api", typeof(api));
+print("Type of Service.port:", typeof(Service.port));

@@ -335,6 +335,30 @@ pub unsafe extern "C" fn aot_make_object(args_ptr: *const u64, arg_count: usize)
 }
 
 /// Set an object field and return a new object handle.
+pub fn runtime_value_to_raw_or_handle(val: RuntimeValue) -> u64 {
+    match val {
+        RuntimeValue::Int(i) | RuntimeValue::I64(i) => i as u64,
+        RuntimeValue::I32(i) => i as i64 as u64,
+        RuntimeValue::I16(i) => i as i64 as u64,
+        RuntimeValue::I8(i) => i as i64 as u64,
+        RuntimeValue::U64(u) => u,
+        RuntimeValue::U32(u) => u as u64,
+        RuntimeValue::U16(u) => u as u64,
+        RuntimeValue::U8(u) => u as u64,
+        RuntimeValue::Bool(b) => {
+            if b {
+                1
+            } else {
+                0
+            }
+        }
+        RuntimeValue::Char(c) => c as u64,
+        RuntimeValue::Float(f) | RuntimeValue::F64(f) => f.to_bits(),
+        RuntimeValue::F32(f) => f.to_bits() as u64,
+        _ => aot_store_value(val),
+    }
+}
+
 pub extern "C" fn aot_set_field_str(
     obj_handle: u64,
     field_ptr: *const std::ffi::c_char,
@@ -371,7 +395,7 @@ pub extern "C" fn aot_get_field_str(obj_handle: u64, field_ptr: *const std::ffi:
     match resolved {
         RuntimeValue::Object(obj) => {
             let val = obj.get(field_name).cloned().unwrap_or(RuntimeValue::Null);
-            aot_store_value(val)
+            runtime_value_to_raw_or_handle(val)
         }
         _ => aot_store_value(RuntimeValue::Null),
     }
@@ -413,7 +437,7 @@ pub extern "C" fn aot_get_field(obj_handle: u64, field_handle: u64) -> u64 {
     match resolved_obj {
         Some(RuntimeValue::Object(obj)) => {
             let value = obj.get(&field_name).cloned().unwrap_or(RuntimeValue::Null);
-            aot_store_value(value)
+            runtime_value_to_raw_or_handle(value)
         }
         Some(RuntimeValue::Array(arr)) => {
             let value = match field_name.as_str() {

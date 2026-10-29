@@ -76,14 +76,35 @@ impl<T> RuntimeMutex<T> {
     }
 
     pub fn lock(&self) -> RuntimeMutexGuard<'_, T> {
+        let mut spins = 0u32;
         while self
             .locked
             .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_err()
         {
-            std::hint::spin_loop();
+            if spins < 32 {
+                std::hint::spin_loop();
+                spins += 1;
+            } else if spins < 64 {
+                std::thread::yield_now();
+                spins += 1;
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
         }
         RuntimeMutexGuard { mutex: self }
+    }
+
+    pub fn try_lock(&self) -> Option<RuntimeMutexGuard<'_, T>> {
+        if self
+            .locked
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            Some(RuntimeMutexGuard { mutex: self })
+        } else {
+            None
+        }
     }
 }
 
@@ -145,7 +166,7 @@ pub enum RuntimeValue {
     BTreeMap(std::collections::BTreeMap<String, RuntimeValue>),
     BinaryHeap(std::collections::BinaryHeap<OrderedValue>),
     PriorityQueue(std::collections::BinaryHeap<PriorityItem>),
-    BitSet(Vec<bool>),
+    BitSet(RuntimeBitSet),
     RingBuffer {
         buffer: Vec<RuntimeValue>,
         head: usize,
@@ -153,6 +174,89 @@ pub enum RuntimeValue {
         count: usize,
         cap: usize,
     },
+}
+
+/// Compact word-packed bitset representation.
+/// Reduces memory usage by 87.5% compared to `Vec<bool>` (1 bit per entry vs 1 byte),
+/// and utilizes hardware `POPCNT` for single-cycle population count.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RuntimeBitSet {
+    pub words: Vec<u64>,
+    pub len: usize,
+}
+
+impl RuntimeBitSet {
+    pub fn new(len: usize) -> Self {
+        let num_words = (len + 63) / 64;
+        Self {
+            words: vec![0u64; num_words],
+            len,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn get(&self, idx: usize) -> bool {
+        if idx >= self.len {
+            return false;
+        }
+        let word_idx = idx / 64;
+        let bit_idx = idx % 64;
+        (self.words[word_idx] & (1u64 << bit_idx)) != 0
+    }
+
+    pub fn set(&mut self, idx: usize) {
+        if idx >= self.len {
+            self.resize(idx + 1);
+        }
+        let word_idx = idx / 64;
+        let bit_idx = idx % 64;
+        self.words[word_idx] |= 1u64 << bit_idx;
+    }
+
+    pub fn clear_bit(&mut self, idx: usize) {
+        if idx < self.len {
+            let word_idx = idx / 64;
+            let bit_idx = idx % 64;
+            self.words[word_idx] &= !(1u64 << bit_idx);
+        }
+    }
+
+    pub fn clear_all(&mut self) {
+        self.words.fill(0);
+    }
+
+    pub fn toggle(&mut self, idx: usize) {
+        if idx >= self.len {
+            self.resize(idx + 1);
+        }
+        let word_idx = idx / 64;
+        let bit_idx = idx % 64;
+        self.words[word_idx] ^= 1u64 << bit_idx;
+    }
+
+    pub fn count_ones(&self) -> usize {
+        self.words.iter().map(|w| w.count_ones() as usize).sum()
+    }
+
+    pub fn resize(&mut self, new_len: usize) {
+        let num_words = (new_len + 63) / 64;
+        self.words.resize(num_words, 0);
+        if new_len < self.len && new_len % 64 != 0 {
+            let rem = new_len % 64;
+            let mask = (1u64 << rem) - 1;
+            if let Some(last) = self.words.last_mut() {
+                *last &= mask;
+            }
+        }
+        self.len = new_len;
+    }
 }
 
 impl PartialEq for RuntimeValue {
@@ -184,6 +288,88 @@ impl PartialEq for RuntimeValue {
     }
 }
 
+/// Zero-allocation structural total comparison between two runtime values.
+/// Eliminates string conversion fallback and cloning.
+pub fn cmp_runtime_value(a: &RuntimeValue, b: &RuntimeValue) -> std::cmp::Ordering {
+    match (a, b) {
+        (RuntimeValue::Null, RuntimeValue::Null) => std::cmp::Ordering::Equal,
+        (RuntimeValue::Bool(x), RuntimeValue::Bool(y)) => x.cmp(y),
+        (RuntimeValue::Int(x), RuntimeValue::Int(y)) => x.cmp(y),
+        (RuntimeValue::Float(x), RuntimeValue::Float(y)) => x.total_cmp(y),
+        (RuntimeValue::Char(x), RuntimeValue::Char(y)) => x.cmp(y),
+        (RuntimeValue::String(x), RuntimeValue::String(y)) => x.cmp(y),
+        (RuntimeValue::U8(x), RuntimeValue::U8(y)) => x.cmp(y),
+        (RuntimeValue::U16(x), RuntimeValue::U16(y)) => x.cmp(y),
+        (RuntimeValue::U32(x), RuntimeValue::U32(y)) => x.cmp(y),
+        (RuntimeValue::U64(x), RuntimeValue::U64(y)) => x.cmp(y),
+        (RuntimeValue::U128(x), RuntimeValue::U128(y)) => x.cmp(y),
+        (RuntimeValue::I8(x), RuntimeValue::I8(y)) => x.cmp(y),
+        (RuntimeValue::I16(x), RuntimeValue::I16(y)) => x.cmp(y),
+        (RuntimeValue::I32(x), RuntimeValue::I32(y)) => x.cmp(y),
+        (RuntimeValue::I64(x), RuntimeValue::I64(y)) => x.cmp(y),
+        (RuntimeValue::I128(x), RuntimeValue::I128(y)) => x.cmp(y),
+        (RuntimeValue::F32(x), RuntimeValue::F32(y)) => x.total_cmp(y),
+        (RuntimeValue::F64(x), RuntimeValue::F64(y)) => x.total_cmp(y),
+        (RuntimeValue::Ref(x), RuntimeValue::Ref(y)) => cmp_runtime_value(x, y),
+        (RuntimeValue::Array(x), RuntimeValue::Array(y))
+        | (RuntimeValue::Tuple(x), RuntimeValue::Tuple(y)) => {
+            for (xi, yi) in x.iter().zip(y.iter()) {
+                let c = cmp_runtime_value(xi, yi);
+                if c != std::cmp::Ordering::Equal {
+                    return c;
+                }
+            }
+            x.len().cmp(&y.len())
+        }
+        _ => {
+            if let (Some(x), Some(y)) = (a.as_i64(), b.as_i64()) {
+                return x.cmp(&y);
+            }
+            if let (Some(x), Some(y)) = (a.as_f64(), b.as_f64()) {
+                return x.total_cmp(&y);
+            }
+            variant_index(a).cmp(&variant_index(b))
+        }
+    }
+}
+
+#[inline(always)]
+fn variant_index(v: &RuntimeValue) -> u8 {
+    match v {
+        RuntimeValue::Null => 0,
+        RuntimeValue::Bool(_) => 1,
+        RuntimeValue::Int(_) => 2,
+        RuntimeValue::Float(_) => 3,
+        RuntimeValue::Char(_) => 4,
+        RuntimeValue::String(_) => 5,
+        RuntimeValue::U8(_) => 6,
+        RuntimeValue::U16(_) => 7,
+        RuntimeValue::U32(_) => 8,
+        RuntimeValue::U64(_) => 9,
+        RuntimeValue::U128(_) => 10,
+        RuntimeValue::I8(_) => 11,
+        RuntimeValue::I16(_) => 12,
+        RuntimeValue::I32(_) => 13,
+        RuntimeValue::I64(_) => 14,
+        RuntimeValue::I128(_) => 15,
+        RuntimeValue::F32(_) => 16,
+        RuntimeValue::F64(_) => 17,
+        RuntimeValue::Array(_) => 18,
+        RuntimeValue::Tuple(_) => 19,
+        RuntimeValue::Set(_) => 20,
+        RuntimeValue::Object(_) => 21,
+        RuntimeValue::Function(_) => 22,
+        RuntimeValue::VecDeque(_) => 23,
+        RuntimeValue::HashSet(_) => 24,
+        RuntimeValue::BTreeMap(_) => 25,
+        RuntimeValue::BinaryHeap(_) => 26,
+        RuntimeValue::PriorityQueue(_) => 27,
+        RuntimeValue::BitSet(_) => 28,
+        RuntimeValue::RingBuffer { .. } => 29,
+        RuntimeValue::Ref(_) => 30,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct OrderedValue(pub RuntimeValue);
 
@@ -202,22 +388,9 @@ impl PartialOrd for OrderedValue {
 }
 
 impl Ord for OrderedValue {
+    #[inline]
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match (&self.0, &other.0) {
-            (RuntimeValue::Int(a), RuntimeValue::Int(b)) => a.cmp(b),
-            (RuntimeValue::Float(a), RuntimeValue::Float(b)) => {
-                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-            }
-            (RuntimeValue::String(a), RuntimeValue::String(b)) => a.cmp(b),
-            _ => {
-                let na = self.0.as_i64();
-                let nb = other.0.as_i64();
-                match (na, nb) {
-                    (Some(a), Some(b)) => a.cmp(&b),
-                    _ => self.0.as_string().cmp(&other.0.as_string()),
-                }
-            }
-        }
+        cmp_runtime_value(&self.0, &other.0)
     }
 }
 
@@ -467,7 +640,7 @@ impl RuntimeValue {
             }
             RuntimeValue::BinaryHeap(h) => 24 + h.len() * 8,
             RuntimeValue::PriorityQueue(pq) => 24 + pq.len() * 16,
-            RuntimeValue::BitSet(bs) => 24 + (bs.len() + 7) / 8,
+            RuntimeValue::BitSet(bs) => 24 + bs.words.len() * 8,
             RuntimeValue::RingBuffer { cap, .. } => 32 + cap * 8,
         }
     }
@@ -596,6 +769,9 @@ pub fn aot_update_value(handle: u64, value: RuntimeValue) {
 }
 
 pub fn aot_get_value(handle: u64) -> Option<RuntimeValue> {
+    if handle == 0 {
+        return Some(RuntimeValue::Null);
+    }
     if handle < HANDLE_TAG {
         return None;
     }
@@ -622,19 +798,6 @@ pub fn get_string_val(handle: u64) -> Option<String> {
 pub fn unpack_aot_arg(raw: u64) -> RuntimeValue {
     if let Some(v) = aot_get_value(raw) {
         return v;
-    }
-    if raw > 0x10000 && raw < HANDLE_TAG {
-        unsafe {
-            let ptr = raw as *const std::os::raw::c_char;
-            if let Ok(s) = std::ffi::CStr::from_ptr(ptr).to_str() {
-                if !s.is_empty()
-                    && s.chars()
-                        .all(|c| !c.is_control() || c == '\n' || c == '\t' || c == '\r')
-                {
-                    return RuntimeValue::String(s.to_string());
-                }
-            }
-        }
     }
     RuntimeValue::Int(raw as i64)
 }
@@ -2945,7 +3108,7 @@ fn aot_collections_new_impl(type_name_handle: u64, args_ptr: *const u64, args_co
         "PriorityQueue" => aot_store_value(RuntimeValue::PriorityQueue(
             std::collections::BinaryHeap::new(),
         )),
-        "BitSet" => aot_store_value(RuntimeValue::BitSet(vec![false; 64])),
+        "BitSet" => aot_store_value(RuntimeValue::BitSet(RuntimeBitSet::new(64))),
         "RingBuffer" => {
             // Clamp the requested capacity (see MAX_RING_BUFFER_CAP).
             let cap = args
@@ -2978,8 +3141,7 @@ pub unsafe extern "C" fn aot_call_method(
     // byte slicing, transmuted callback calls). The known paths are made
     // total inside the impl; the guard is the belt-and-braces backstop.
     ffi_guard(0, || {
-        let h = aot_call_method_impl(target_handle, method_name_handle, args_ptr, args_count);
-        unsafe { aot_unbox(h) }
+        aot_call_method_impl(target_handle, method_name_handle, args_ptr, args_count)
     })
 }
 
@@ -3248,56 +3410,40 @@ fn aot_call_method_impl(
             "len" | "length" => aot_store_value(RuntimeValue::Int(pq.len() as i64)),
             _ => aot_store_value(RuntimeValue::Null),
         },
-        RuntimeValue::BitSet(mut bits) => match method_name.as_str() {
+        RuntimeValue::BitSet(mut bs) => match method_name.as_str() {
             "set" => {
                 let idx = args.get(0).and_then(|i| i.as_usize()).unwrap_or(0);
-                if idx >= bits.len() {
-                    // Audit fix: `idx + 64` overflows (and then panics, on
-                    // the add or on `bits[idx]`) when idx is huge (e.g. a
-                    // negative index argument). Clamp instead.
-                    if idx < MAX_BITSET_BITS {
-                        bits.resize((idx + 64).min(MAX_BITSET_BITS), false);
-                        bits[idx] = true;
-                    }
-                } else {
-                    bits[idx] = true;
+                if idx < MAX_BITSET_BITS {
+                    bs.set(idx);
                 }
-                aot_update_value(target_handle, RuntimeValue::BitSet(bits));
+                aot_update_value(target_handle, RuntimeValue::BitSet(bs));
                 aot_store_value(RuntimeValue::Null)
             }
             "clear" => {
                 if let Some(idx_v) = args.get(0) {
                     let idx = idx_v.as_usize().unwrap_or(0);
-                    if idx < bits.len() {
-                        bits[idx] = false;
-                    }
+                    bs.clear_bit(idx);
                 } else {
-                    bits.clear();
+                    bs.clear_all();
                 }
-                aot_update_value(target_handle, RuntimeValue::BitSet(bits));
+                aot_update_value(target_handle, RuntimeValue::BitSet(bs));
                 aot_store_value(RuntimeValue::Null)
             }
             "test" | "get" => {
                 let idx = args.get(0).and_then(|i| i.as_usize()).unwrap_or(0);
-                let b = bits.get(idx).copied().unwrap_or(false);
+                let b = bs.get(idx);
                 aot_store_value(RuntimeValue::Bool(b))
             }
             "toggle" => {
                 let idx = args.get(0).and_then(|i| i.as_usize()).unwrap_or(0);
-                if idx >= bits.len() {
-                    // Audit fix: same overflow clamp as "set" above.
-                    if idx < MAX_BITSET_BITS {
-                        bits.resize((idx + 64).min(MAX_BITSET_BITS), false);
-                        bits[idx] = !bits[idx];
-                    }
-                } else {
-                    bits[idx] = !bits[idx];
+                if idx < MAX_BITSET_BITS {
+                    bs.toggle(idx);
                 }
-                aot_update_value(target_handle, RuntimeValue::BitSet(bits));
+                aot_update_value(target_handle, RuntimeValue::BitSet(bs));
                 aot_store_value(RuntimeValue::Null)
             }
             "count" => {
-                let cnt = bits.iter().filter(|&&b| b).count() as i64;
+                let cnt = bs.count_ones() as i64;
                 aot_store_value(RuntimeValue::Int(cnt))
             }
             _ => aot_store_value(RuntimeValue::Null),
@@ -3458,7 +3604,7 @@ fn aot_call_method_impl(
                 aot_store_value(RuntimeValue::Array(arr))
             }
             "sort" => {
-                arr.sort_by(|a, b| OrderedValue(a.clone()).cmp(&OrderedValue(b.clone())));
+                arr.sort_by(cmp_runtime_value);
                 aot_update_value(target_handle, RuntimeValue::Array(arr.clone()));
                 aot_store_value(RuntimeValue::Array(arr))
             }
@@ -4106,5 +4252,54 @@ mod audit_tests {
             aot_free_handle(field);
             aot_free_handle(value);
         });
+    }
+
+    #[test]
+    fn test_runtime_bitset_word_packing_and_popcnt() {
+        let mut bs = RuntimeBitSet::new(128);
+        assert_eq!(bs.len(), 128);
+        assert_eq!(bs.words.len(), 2);
+        assert_eq!(bs.count_ones(), 0);
+
+        bs.set(0);
+        bs.set(63);
+        bs.set(64);
+        bs.set(127);
+        assert_eq!(bs.count_ones(), 4);
+        assert!(bs.get(0));
+        assert!(bs.get(63));
+        assert!(bs.get(64));
+        assert!(bs.get(127));
+        assert!(!bs.get(1));
+        assert!(!bs.get(62));
+
+        bs.toggle(0);
+        assert!(!bs.get(0));
+        assert_eq!(bs.count_ones(), 3);
+
+        bs.clear_bit(63);
+        assert!(!bs.get(63));
+        assert_eq!(bs.count_ones(), 2);
+
+        bs.clear_all();
+        assert_eq!(bs.count_ones(), 0);
+        assert!(!bs.get(64));
+    }
+
+    #[test]
+    fn test_cmp_runtime_value_zero_allocation() {
+        let v_int = RuntimeValue::Int(42);
+        let v_float = RuntimeValue::Float(42.0);
+        let v_i32 = RuntimeValue::I32(42);
+        let v_str1 = RuntimeValue::String("apple".to_string());
+        let v_str2 = RuntimeValue::String("banana".to_string());
+
+        assert_eq!(cmp_runtime_value(&v_int, &v_i32), std::cmp::Ordering::Equal);
+        assert_eq!(cmp_runtime_value(&v_int, &v_float), std::cmp::Ordering::Equal);
+        assert_eq!(cmp_runtime_value(&v_str1, &v_str2), std::cmp::Ordering::Less);
+
+        let arr1 = RuntimeValue::Array(vec![RuntimeValue::Int(1), RuntimeValue::Int(2)]);
+        let arr2 = RuntimeValue::Array(vec![RuntimeValue::Int(1), RuntimeValue::Int(3)]);
+        assert_eq!(cmp_runtime_value(&arr1, &arr2), std::cmp::Ordering::Less);
     }
 }

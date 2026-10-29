@@ -74,7 +74,18 @@ fn builtin_type(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, St
         Value::DynArray(da) => return Ok(Value::Str(format!("[{}]", da.concrete_type))),
         Value::Tuple(_) => "tuple",
         Value::Set(_) => "set",
-        Value::Object(_) => "object",
+        Value::Object(obj) => {
+            // If the object carries a type tag (set at `let x: Alias = {...}` or on
+            // the alias definition itself), report the named type instead of the
+            // generic "object".
+            if let Some(Value::Str(type_name)) = obj.get("__type__") {
+                type_name.as_str()
+            } else if let Some(Value::Str(class_name)) = obj.get("__class__") {
+                class_name.as_str()
+            } else {
+                "object"
+            }
+        }
         Value::Class(c) => &c.name,
         Value::Instance(i) => &i.class.name,
         Value::BoundMethod(_, _) => "function",

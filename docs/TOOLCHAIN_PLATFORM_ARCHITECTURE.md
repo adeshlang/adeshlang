@@ -30,7 +30,7 @@ The Adesh ecosystem is divided into three cleanly decoupled pillars:
    ├── Machine Code Encoders:       │   ├── Windows PE32+ (execution-tested)
    │   ├── x86_64 (substantial)     │   ├── Linux ELF64 (emits; not run-tested)
    │   ├── AArch64 (PoC: 4 ops)     │   ├── macOS Mach-O (skeletal)
-   │   └── RISC-V (PoC: 4 ops)      │   └── WebAssembly (writer is a stub)
+   │   └── RISC-V (PoC: 4 ops)      │   └── WebAssembly (links + Node-e2e)
    └── Native Object Writer (.o)    ├── Dead Code Elimination (GC)
                                     └── Identical Code Folding (ICF)
 ```
@@ -48,7 +48,7 @@ encoders, and quantum QPU provider dispatch.
 | **Linux x86_64** | Native x86-64 (same subset) | ELF64 static (`ET_EXEC`) | Structure/magic-byte checks only | **Tier 2 — Emits; not run-tested** |
 | **Linux AArch64** | PoC (Nop/Return/Add/Sub) | ELF64 static | Structure checks only | **Tier 3 — Proof-of-concept** |
 | **macOS (AArch64 / x86_64)** | PoC / native subset | Mach-O 64 (no dyld info/exports trie) | Structure checks only; cannot bind system libraries | **Tier 3 — Artifact emission** |
-| **WebAssembly** | WASM opcodes (compiler backend) | Linker writer is a stub | Compiler output runs via Wasmtime/Node | **Tier 2 via compiler backend** |
+| **WebAssembly** | WASM opcodes (compiler backend) | Linker emits modules from one or more clang objects, applies index/data relocations and resolves cross-object calls and data; entry exported | Compiler output runs via Wasmtime/Node; linked clang objects run in CI on two engines (V8 through Node, Cranelift through the workspace `wasmtime` dependency) with asserted stdout, including a two-object module that imports nothing | **Tier 2 — links and executes in CI on two engines; function tables and indirect calls still refused** |
 | **ARM Cortex-M (M0-M7)** | Minimal Thumb-2 ALU | Linker script, IVT, HEX/BIN | Structure checks only | **Tier 3 — Proof-of-concept** |
 | **RISC-V (RV32/64)** | PoC (4 ops) | Trap vector, `crt0`, SREC | Structure checks only | **Tier 3 — Proof-of-concept** |
 | **GPU (CUDA / ROCm / Vulkan)** | Source re-embedding only | Custom container packaging (not driver-loadable formats) | Structure checks only; no driver calls | **Scaffolding (parked)** |

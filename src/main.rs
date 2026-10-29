@@ -484,25 +484,29 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                 );
             }
 
-            // Perform mandatory static type checking
-            if let Err(e) =
-                adeshlang::types::type_system::check_module_in(&src, Some(&path.to_string_lossy()))
-            {
-                eprintln!("{}", e);
-                std::process::exit(1);
-            }
-
-            // Parse and run compile-time ownership memory safety checks
-            if let Err(e) = cli_impl::check_ownership_and_parse_in(
+            // Parse ONCE and perform mandatory compile-time ownership & memory safety checks
+            let (validated_ast, _hir) = match cli_impl::check_ownership_and_parse_in(
                 &src,
                 &parsed.config,
                 Some(&path.to_string_lossy()),
             ) {
-                if e.starts_with("error[") || e.starts_with("Compile-time") || e.contains('\n') {
-                    eprintln!("{}", e);
-                } else {
-                    eprintln!("error: {}", e);
+                Ok(res) => res,
+                Err(e) => {
+                    if e.starts_with("error[") || e.starts_with("Compile-time") || e.contains('\n') {
+                        eprintln!("{}", e);
+                    } else {
+                        eprintln!("error: {}", e);
+                    }
+                    std::process::exit(1);
                 }
+            };
+
+            // Perform mandatory static type checking directly on the parsed AST (0 re-parsing!)
+            if let Err(e) = adeshlang::types::type_system::check_ast(
+                &validated_ast,
+                Some(&path.to_string_lossy()),
+            ) {
+                eprintln!("{}", e);
                 std::process::exit(1);
             }
 

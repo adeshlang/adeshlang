@@ -55,7 +55,7 @@ These are non-negotiable and apply to each phase's exit criteria.
 | AArch64 / x86-64 macOS | Mach-O emission, dyld bind/rebase, TLV emission, codesign structure | any dyld execution; TLV at runtime; dylib loading |
 | RISC-V 64 | codegen and structural ELF; loud errors | source-level lowering (`ParallelMove`); execution |
 | RISC-V 32 | target declared | codegen refuses RV32; linker uses RV64 `_start` |
-| WASM | compiler backend via Node loader | linker writer; WASI ABI; wasmtime execution |
+| WASM | compiler backend via Node loader; linker applies relocations, resolves cross-object calls and data, and CI executes its linked clang objects on two engines (Node + wasmtime) | WASI ABI; function tables and indirect calls |
 | Embedded ARM | Thumb-2 ALU subset | end-to-end firmware link/execution |
 | GPU / quantum | containers and simulator | ISA generation, launch runtime, language construct |
 
@@ -349,23 +349,49 @@ One working WASM path, with an ABI that matches the target name.
    - **A (recommended short term):** make the compiler backend the canonical
      `adesh build --target wasm32-*` path and make `adeshlink --wasm` a loud
      "not implemented" error; or
-   - **B:** implement a real `linker/src/wasm/writer.rs` (import section,
-     function/type tables, memory layout, data segments with applied
-     relocations, exports, start function) and route builds through it.
+   - **B (in progress):** implement a real `linker/src/wasm/writer.rs` (import
+     section, function/type tables, memory layout, data segments with applied
+     relocations, exports, entry as an export) and route builds through it.
+     *Done so far:* object reader (relocations, `linking` symbols, link facts,
+     export section), `WasmLinkInfo` (type/import/function/data/export
+     numbering, memory and stack placement), the module writer, and
+     `linker/src/wasm/relocations.rs`, which patches function/global/data-address
+     fixups in place. Two real clang hello-world objects link and are executed
+     on two engines (V8 through Node, Cranelift through the workspace's
+     `wasmtime` dependency) with asserted stdout, in CI. Cross-object
+     references now resolve too: `WasmDefinitions` collects the functions and
+     data every input defines, so a reference to a name another input defines
+     becomes a call or a segment address instead of a host import — a two-object
+     link can import nothing at all. Duplicate strong definitions are `LNK002`,
+     a call-site signature that disagrees with the definition is `LNK007`, and an
+     address of data no input defines is `LNK001`. *Remaining:* defined
+     tables/globals/element segments (`LNK017`) and table-, table-address- and
+     type-index relocations (`LNK008`, already at object read), which keep
+     indirect calls out.
 2. **WASI preview1:** implement `fd_write`, `proc_exit`, `args_get`,
    `environ_get`, `clock_time_get`, and `random_get`; map the current
    `print_*` imports onto `fd_write`. Emit `env.*` imports only under an
    explicit non-WASI target.
-3. **Execution tests:** run produced modules under wasmtime (WASI) and Node
-   (web/env path), asserting stdout and exit codes. Add a wasmtime job to CI.
+3. **Execution tests:** both engines run in the ubuntu CI job —
+   `linker/tests/wasm_hello_world_test.rs` under Node and
+   `tests/wasm_wasmtime_execution_test.rs` under wasmtime, sharing the same
+   clang fixtures. The wasmtime suite drives the workspace's `wasmtime` 36
+   library and provides the `wasi_snapshot_preview1.fd_write` host in-test,
+   because wasmtime 33+ dropped WASI preview1 and no runner-installed CLI can
+   execute these modules. *Remaining:* assert an exit code (the host currently
+   has no `proc_exit`) and cover table programs as they land. Cross-object
+   programs are covered — a two-object module that imports nothing runs on both
+   engines.
 4. **Target naming:** ensure `wasm32-unknown-wasi` emits WASI imports; if the
    compiler path cannot, rename the target or document the divergence.
 
 ### Exit criteria
 - [ ] `adesh build --target wasm32-unknown-wasi` produces a module that runs
       in wasmtime with real WASI imports and correct output.
-- [ ] No executable build silently routes through the stub writer.
-- [ ] WASM row in `TARGET_MATRIX.md` = execution-verified.
+- [ ] No executable build silently routes through the linker's WASM path while
+      it lacks table/indirect-call support.
+- [x] WASM row in `TARGET_MATRIX.md` = execution-verified under Node and
+      wasmtime (done — both engines, in the ubuntu CI job).
 
 ---
 
@@ -530,7 +556,7 @@ Stop advertising unfinished targets and lock the release gate.
 | Unwinding requires host libgcc/libunwind ABI details | Phase 19 slips | Start with a single-frame throw, expand to multi-frame; keep `.eh_frame` decoder tests as the invariant |
 | Source ABI design becomes a language debate | Phase 18 slips | Timebox a design review; ship `extern "C"` + variadics first, aggregates second |
 | RV32/RV64 stub is forgotten | Silent wrong output | Phase 11 moves the rejection to target validation; Phase 15 makes the final decision |
-| WASM writer scope explodes | Phase 17 slips | Prefer compiler-direct path (Option A); treat the linker writer as a separate, opt-in project |
+| Table/indirect-call WASM support explodes | Phase 17 slips | Keep the linker path opt-in (`adeshlink --target wasm32-*`); the compiler-direct path stays canonical until the linker clears the gap |
 | Documentation drifts again | Loss of credibility | Phase DoD includes doc updates; Phase 21 adds a doc-consistency check |
 
 ---

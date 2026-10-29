@@ -65,39 +65,49 @@ impl RefCount {
         RefCount {
             strong: AtomicUsize::new(1),
             weak: AtomicUsize::new(0),
-            id: REF_COUNT_ID.fetch_add(1, Ordering::SeqCst),
+            id: REF_COUNT_ID.fetch_add(1, Ordering::Relaxed),
         }
     }
 
-    /// Increment strong reference count
+    /// Increment strong reference count with Relaxed ordering.
     #[inline]
     pub fn inc_strong(&self) -> usize {
-        self.strong.fetch_add(1, Ordering::SeqCst) + 1
+        self.strong.fetch_add(1, Ordering::Relaxed) + 1
     }
 
-    /// Decrement strong reference count, returns true if count reached 0
+    /// Decrement strong reference count, returns true if count reached 0.
+    /// Uses Release ordering on fetch_sub and an Acquire fence on drop
+    /// to eliminate pipeline serialization barriers.
     #[inline]
     pub fn dec_strong(&self) -> bool {
-        let prev = self.strong.fetch_sub(1, Ordering::SeqCst);
-        prev == 1
+        if self.strong.fetch_sub(1, Ordering::Release) == 1 {
+            std::sync::atomic::fence(Ordering::Acquire);
+            true
+        } else {
+            false
+        }
     }
 
     /// Get current strong reference count
     #[inline]
     pub fn strong_count(&self) -> usize {
-        self.strong.load(Ordering::SeqCst)
+        self.strong.load(Ordering::Relaxed)
     }
 
     /// Increment weak reference count
     #[inline]
     pub fn inc_weak(&self) -> usize {
-        self.weak.fetch_add(1, Ordering::SeqCst) + 1
+        self.weak.fetch_add(1, Ordering::Relaxed) + 1
     }
 
     /// Decrement weak reference count
     #[inline]
     pub fn dec_weak(&self) -> usize {
-        self.weak.fetch_sub(1, Ordering::SeqCst) - 1
+        let prev = self.weak.fetch_sub(1, Ordering::Release);
+        if prev == 1 {
+            std::sync::atomic::fence(Ordering::Acquire);
+        }
+        prev.saturating_sub(1)
     }
 
     /// Get unique ID for this reference

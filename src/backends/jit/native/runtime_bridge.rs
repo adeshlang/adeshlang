@@ -79,7 +79,13 @@ pub fn runtime_value_to_raw_or_handle(val: RuntimeValue) -> u64 {
         RuntimeValue::U32(u) => u as u64,
         RuntimeValue::U16(u) => u as u64,
         RuntimeValue::U8(u) => u as u64,
-        RuntimeValue::Bool(b) => store_value(RuntimeValue::Bool(b)),
+        RuntimeValue::Bool(b) => {
+            if b {
+                1
+            } else {
+                0
+            }
+        }
         RuntimeValue::Char(c) => c as u64,
         RuntimeValue::Float(f) | RuntimeValue::F64(f) => f.to_bits(),
         RuntimeValue::F32(f) => f.to_bits() as u64,
@@ -3861,7 +3867,13 @@ pub extern "C" fn jit_call_method(
         update_value(obj_handle, res.clone());
     }
     match res {
-        RuntimeValue::Bool(b) => store_value(RuntimeValue::Bool(b)),
+        RuntimeValue::Bool(b) => {
+            if b {
+                1
+            } else {
+                0
+            }
+        }
         RuntimeValue::Int(i) => i as u64,
         RuntimeValue::Null => 0,
         other => store_value(other),

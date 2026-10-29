@@ -21,10 +21,6 @@ pub fn check_ownership_and_parse_in(
     config: &RuntimeConfig,
     file: Option<&str>,
 ) -> Result<(Vec<Stmt>, HirModule), String> {
-    use crate::parsing::compile_time_memory_safety::check_memory_safety_compile_time_in;
-    use crate::parsing::decorator_compile::execute_compile_time_phases;
-    use crate::parsing::hir_lower::ast_to_hir;
-    use crate::parsing::hir_passes::run_safety_passes_with_location;
     use crate::parsing::lexer::Lexer;
     use crate::parsing::parser::Parser;
 
@@ -44,7 +40,7 @@ pub fn check_ownership_and_parse_in(
     }
     let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
     let mut parser = Parser::new(tokens, file_owned.clone());
-    let mut ast = parser.parse_program().map_err(|e| e.to_string())?;
+    let ast = parser.parse_program().map_err(|e| e.to_string())?;
     #[cfg(feature = "monitor")]
     if let Some(ref tc) = tele_client {
         tc.emit(adesh_monitor_protocol::EventPayload::CompilerStage(
@@ -84,6 +80,28 @@ pub fn check_ownership_and_parse_in(
             },
         ));
     }
+
+    check_ownership_on_ast(ast, config, file, Some(&clean_src))
+}
+
+/// Run memory safety, compile-time decorators, RAII transformation, and borrow-checking on an existing AST without re-parsing.
+pub fn check_ownership_on_ast(
+    mut ast: Vec<Stmt>,
+    config: &RuntimeConfig,
+    file: Option<&str>,
+    clean_src: Option<&str>,
+) -> Result<(Vec<Stmt>, HirModule), String> {
+    use crate::parsing::compile_time_memory_safety::check_memory_safety_compile_time_in;
+    use crate::parsing::decorator_compile::execute_compile_time_phases;
+    use crate::parsing::hir_lower::ast_to_hir;
+    use crate::parsing::hir_passes::run_safety_passes_with_location;
+
+    let file_owned = file.map(|f| f.to_string());
+
+    #[cfg(feature = "monitor")]
+    let session_id = std::env::var("ADESH_OBSERVATORY_SESSION").ok();
+    #[cfg(feature = "monitor")]
+    let tele_client = session_id.map(adesh_monitor_core::ipc::TelemetryClient::new);
 
     // Execute decorator compile-time phases (typecheck, compile)
     if config.verbose {
@@ -189,8 +207,9 @@ pub fn check_ownership_and_parse_in(
     }
 
     // Run unused warnings check with line and column precision
+    let src_ref = clean_src.unwrap_or("");
     let unused_warnings = crate::parsing::unused_warnings::UnusedWarningPass::check_ast(
-        &ast, file, &clean_src, config,
+        &ast, file, src_ref, config,
     );
     for warning in unused_warnings {
         eprintln!("{}", warning);
@@ -203,7 +222,7 @@ pub fn check_ownership_and_parse_in(
             config.check_ownership,
             config.check_moves,
             file,
-            Some(&clean_src),
+            clean_src,
         )?;
 
         if config.verbose {

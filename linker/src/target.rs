@@ -572,12 +572,13 @@ impl Target {
             }
             (Arch::X86, Os::Linux | Os::Windows) => TargetTier::Tier1Supported,
 
-            // The WASM linker writer is not implemented (see
-            // `wasm::writer`), so no tier above Tier 3 is defensible here even
-            // though the compiler backend does produce runnable modules.
-            (Arch::Wasm32, Os::Wasi | Os::None) => TargetTier::Tier3Declared,
-
             (Arch::Riscv64 | Arch::Riscv32, Os::Linux | Os::None) => TargetTier::Tier2Experimental,
+            // The linker emits and relocates real clang objects, binds calls and
+            // data references across them, and CI executes the resulting modules
+            // under both V8 (Node) and Cranelift (wasmtime). Function tables and
+            // indirect calls are still refused, which keeps this experimental
+            // rather than supported.
+            (Arch::Wasm32, Os::Wasi | Os::None) => TargetTier::Tier2Experimental,
             (Arch::Ppc64le, Os::Linux) => TargetTier::Tier2Experimental,
             (Arch::Arm, Os::Linux | Os::Android) => TargetTier::Tier2Experimental,
             (Arch::NvidiaPtx, _) => TargetTier::Tier2Experimental,

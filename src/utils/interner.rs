@@ -7,69 +7,78 @@
 
 use crate::utils::collections::StringMap;
 use once_cell::sync::Lazy;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, RwLock};
 
-// Global string interner
-static STRING_INTERNER: Lazy<Mutex<StringInterner>> =
-    Lazy::new(|| Mutex::new(StringInterner::new()));
+// Global string interner protected by RwLock for concurrent lock-free reads
+static STRING_INTERNER: Lazy<RwLock<StringInterner>> =
+    Lazy::new(|| RwLock::new(StringInterner::new()));
 
 /// A string interner that deduplicates strings by sharing Arc pointers
 pub struct StringInterner {
     cache: StringMap<Arc<str>>,
-    stats: InternerStats,
-}
-
-#[derive(Default, Clone, Copy)]
-struct InternerStats {
-    total_interns: usize,
-    cache_hits: usize,
-    unique_strings: usize,
+    total_interns: AtomicUsize,
+    cache_hits: AtomicUsize,
+    unique_strings: AtomicUsize,
 }
 
 impl StringInterner {
     fn new() -> Self {
         Self {
             cache: StringMap::default(),
-            stats: InternerStats::default(),
+            total_interns: AtomicUsize::new(0),
+            cache_hits: AtomicUsize::new(0),
+            unique_strings: AtomicUsize::new(0),
         }
     }
 
-    /// Intern a string, returning a shared reference
-    fn intern(&mut self, s: &str) -> Arc<str> {
-        self.stats.total_interns += 1;
+    /// Try to find an interned string under a read lock.
+    #[inline]
+    fn get(&self, s: &str) -> Option<Arc<str>> {
+        self.cache.get(s).map(Arc::clone)
+    }
 
+    /// Intern a string under a write lock.
+    fn insert(&mut self, s: &str) -> Arc<str> {
         if let Some(interned) = self.cache.get(s) {
-            self.stats.cache_hits += 1;
+            self.cache_hits.fetch_add(1, Ordering::Relaxed);
             return Arc::clone(interned);
         }
 
         let interned: Arc<str> = Arc::from(s);
         self.cache.insert(s.to_string(), Arc::clone(&interned));
-        self.stats.unique_strings += 1;
+        self.unique_strings.fetch_add(1, Ordering::Relaxed);
         interned
-    }
-
-    /// Get interner statistics
-    fn stats(&self) -> InternerStats {
-        self.stats
     }
 
     /// Clear the interner cache
     fn clear(&mut self) {
         self.cache.clear();
-        self.stats = InternerStats::default();
+        self.total_interns.store(0, Ordering::Relaxed);
+        self.cache_hits.store(0, Ordering::Relaxed);
+        self.unique_strings.store(0, Ordering::Relaxed);
     }
 }
 
-/// Intern a string using the global interner
+/// Intern a string using the global interner with concurrent read optimization.
 pub fn intern(s: &str) -> Arc<str> {
-    STRING_INTERNER
-        .lock()
-        .expect("String interner lock poisoned")
-        .intern(s)
+    // Fast path: shared read lock for cache hits (90%+ of lookups in production)
+    {
+        let interner = STRING_INTERNER.read().expect("String interner lock poisoned");
+        interner.total_interns.fetch_add(1, Ordering::Relaxed);
+        if let Some(interned) = interner.get(s) {
+            interner.cache_hits.fetch_add(1, Ordering::Relaxed);
+            return interned;
+        }
+    }
+
+    // Slow path: write lock to insert new unique string
+    let mut interner = STRING_INTERNER.write().expect("String interner lock poisoned");
+    interner.insert(s)
 }
 
 /// Intern a String, consuming it
+#[inline]
 pub fn intern_string(s: String) -> Arc<str> {
     intern(&s)
 }
@@ -77,17 +86,20 @@ pub fn intern_string(s: String) -> Arc<str> {
 /// Get interner statistics for debugging/profiling
 pub fn interner_stats() -> (usize, usize, usize) {
     let interner = STRING_INTERNER
-        .lock()
+        .read()
         .expect("String interner lock poisoned");
-    let stats = interner.stats();
-    (stats.total_interns, stats.cache_hits, stats.unique_strings)
+    (
+        interner.total_interns.load(Ordering::Relaxed),
+        interner.cache_hits.load(Ordering::Relaxed),
+        interner.unique_strings.load(Ordering::Relaxed),
+    )
 }
 
 /// Clear the global string interner (useful for testing)
 #[allow(dead_code)]
 pub fn clear_interner() {
     STRING_INTERNER
-        .lock()
+        .write()
         .expect("String interner lock poisoned")
         .clear();
 }

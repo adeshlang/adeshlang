@@ -43,7 +43,9 @@ pub(super) use class_access::{
     CONSTRUCTOR_SLOT, find_method_in_class_chain, find_method_with_visibility, is_field_accessible,
     is_method_accessible,
 };
-pub(super) use construction_helpers::{create_user_class, create_user_fn, err, err_with_span};
+pub(super) use construction_helpers::{
+    create_user_class, create_user_fn, err, err_styled_type, err_with_span,
+};
 pub(super) use env::Env;
 pub use globals::INPUT_PLAYBACK;
 pub(super) use globals::{INPUT_RECORD, PROGRAM_ARGS, PROMISE_COUNTER, RUNTIME_ENV};

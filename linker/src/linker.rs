@@ -234,6 +234,7 @@ impl Linker {
         let is_pe = ctx.config.target.format == ObjectFormat::Pe;
         let is_elf = ctx.config.target.format == ObjectFormat::Elf;
         let is_macho = ctx.config.target.format == ObjectFormat::MachO;
+        let is_wasm = ctx.config.target.format == ObjectFormat::Wasm;
 
         // Determine actual Adesh program entry symbol
         let program_entry_symbol = if ctx.resolver.table.contains_key("main") {
@@ -294,6 +295,9 @@ impl Linker {
         for (name, resolved) in &ctx.resolver.table {
             if !ctx.resolver.weak_undefined_symbols.contains(name)
                 && resolved.symbol.section_index.is_none()
+                // WASM host imports are satisfied by the module writer (import
+                // section), not by a synthesized stub or PLT entry.
+                && !(is_wasm && resolved.symbol.is_imported)
                 && !missing_symbols.contains(name)
             {
                 missing_symbols.push(name.clone());
@@ -875,7 +879,10 @@ impl Linker {
             }
         }
 
-        let removed_sections = if ctx.config.gc_sections {
+        // WASM has no dead-code elimination here: the function index space must
+        // contain every declared body, and the module writer re-emits all of
+        // them from the parsed objects rather than from merged sections.
+        let removed_sections = if ctx.config.gc_sections && !is_wasm {
             GarbageCollector::collect_dead_sections(
                 &mut ctx.objects,
                 &roots,
@@ -886,18 +893,29 @@ impl Linker {
         };
 
         // 6. Optimization: Identical Code Folding (--icf)
-        let folded_sections =
-            IcfEngine::fold_sections(&mut ctx.objects, ctx.config.icf, ctx.config.print_icf);
+        let folded_sections = if is_wasm {
+            0
+        } else {
+            IcfEngine::fold_sections(&mut ctx.objects, ctx.config.icf, ctx.config.print_icf)
+        };
 
-        // 7. Memory Layout, Virtual Address Assignment & Relocations
-        ctx.layout.layout_and_relocate(
-            &ctx.objects,
-            &ctx.resolver,
-            &ctx.config.target,
-            ctx.config.effective_entry(),
-            elf_dynamic_mode,
-            ctx.config.pie || ctx.config.shared,
-        )?;
+        // 7. Memory Layout, Virtual Address Assignment & Relocations.
+        //
+        // WASM has no virtual addresses; its "addresses" are index-space
+        // numbers and linear-memory offsets, which `WasmLinkInfo` assigns and
+        // `wasm::apply_relocations` patches directly into the object payloads.
+        // Running the generic layout engine would merge the payloads into an
+        // image the module writer cannot use.
+        if !is_wasm {
+            ctx.layout.layout_and_relocate(
+                &ctx.objects,
+                &ctx.resolver,
+                &ctx.config.target,
+                ctx.config.effective_entry(),
+                elf_dynamic_mode,
+                ctx.config.pie || ctx.config.shared,
+            )?;
+        }
 
         // Surface non-fatal relocation issues (weak/internal symbols that could
         // not be resolved and were routed to trap stubs or NULL).
@@ -1136,11 +1154,25 @@ impl Linker {
                 )?;
             }
             ObjectFormat::Wasm => {
+                // The plan is built from the input objects, not the merged
+                // sections: merging keeps concatenated CODE payloads and folds
+                // the type/function tables into `.rodata`, which the module
+                // writer cannot re-emit.
+                let wasm_info = crate::wasm::WasmLinkInfo::build(
+                    &ctx.objects,
+                    Some(ctx.config.effective_entry()),
+                    &ctx.config.exports,
+                    ctx.config.export_all,
+                )?;
+                // Rewrite the object-local placeholders (function/global
+                // indices, data addresses) to the plan's final numbers before
+                // the writer copies the payloads verbatim.
+                crate::wasm::apply_relocations(&mut ctx.objects, &wasm_info)?;
                 WasmWriter::write_binary(
                     &ctx.config.output_path,
                     &ctx.config.target,
-                    &ctx.layout.merged_sections,
-                    emit_symbols,
+                    &ctx.objects,
+                    &wasm_info,
                 )?;
             }
             ObjectFormat::Xcoff => {

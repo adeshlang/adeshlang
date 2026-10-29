@@ -100,12 +100,14 @@ fn test_target_maturity_tier_classification() {
     let mac_arm64 = Target::from_triple("aarch64-macos").unwrap();
     assert_eq!(mac_arm64.tier(), TargetTier::Tier1Supported);
 
-    // The WASM linker writer is a stub, so the triple is declared only: the
-    // runnable modules come from the compiler backend, not from the linker.
-    let wasm_wasi = Target::from_triple("wasm32-wasi").unwrap();
-    assert_eq!(wasm_wasi.tier(), TargetTier::Tier3Declared);
-
     // Tier 2 Targets
+    // The linker emits and relocates real clang objects, resolves cross-object
+    // calls, and CI executes the modules on two engines (V8 through Node,
+    // Cranelift through wasmtime). Function tables and indirect calls are still
+    // refused, so not Tier 1.
+    let wasm_wasi = Target::from_triple("wasm32-wasi").unwrap();
+    assert_eq!(wasm_wasi.tier(), TargetTier::Tier2Experimental);
+
     let riscv = Target::from_triple("riscv64-linux").unwrap();
     assert_eq!(riscv.tier(), TargetTier::Tier2Experimental);
 

@@ -2380,7 +2380,30 @@ pub(crate) fn handle_call_builtin(
                             i64_val
                         }
                     }
-                    _ => builder.ins().iconst(target_type, 0),
+                    _ => {
+                        let actual_ty = builder.func.dfg.value_type(val);
+                        if actual_ty.is_int() {
+                            let actual_bits = actual_ty.bits();
+                            if actual_bits > target_type.bits() {
+                                builder.ins().ireduce(target_type, val)
+                            } else if actual_bits < target_type.bits() {
+                                builder.ins().uextend(target_type, val)
+                            } else {
+                                val
+                            }
+                        } else if actual_ty.is_float() {
+                            let i64_val = builder.ins().fcvt_to_uint(types::I64, val);
+                            if target_type.bits() < 64 {
+                                builder.ins().ireduce(target_type, i64_val)
+                            } else if target_type.bits() > 64 {
+                                builder.ins().uextend(target_type, i64_val)
+                            } else {
+                                i64_val
+                            }
+                        } else {
+                            builder.ins().iconst(target_type, 0)
+                        }
+                    }
                 };
                 ctx.value_map.insert(*dst, int_val);
                 ctx.value_types.insert(*dst, aot_type);
@@ -2460,7 +2483,30 @@ pub(crate) fn handle_call_builtin(
                             i64_val
                         }
                     }
-                    _ => builder.ins().iconst(target_type, 0),
+                    _ => {
+                        let actual_ty = builder.func.dfg.value_type(val);
+                        if actual_ty.is_int() {
+                            let actual_bits = actual_ty.bits();
+                            if actual_bits > target_type.bits() {
+                                builder.ins().ireduce(target_type, val)
+                            } else if actual_bits < target_type.bits() {
+                                builder.ins().sextend(target_type, val)
+                            } else {
+                                val
+                            }
+                        } else if actual_ty.is_float() {
+                            let i64_val = builder.ins().fcvt_to_sint(types::I64, val);
+                            if target_type.bits() < 64 {
+                                builder.ins().ireduce(target_type, i64_val)
+                            } else if target_type.bits() > 64 {
+                                builder.ins().sextend(target_type, i64_val)
+                            } else {
+                                i64_val
+                            }
+                        } else {
+                            builder.ins().iconst(target_type, 0)
+                        }
+                    }
                 };
                 ctx.value_map.insert(*dst, int_val);
                 ctx.value_types.insert(*dst, aot_type);
@@ -5198,6 +5244,57 @@ pub(crate) fn handle_call_builtin(
                                         "u8" => AotValueType::U8,
                                         "string" => AotValueType::String,
                                         _ => AotValueType::Handle,
+                                    };
+                                    break;
+                                }
+                            }
+                        });
+                    }
+                    if field_ty == AotValueType::Handle {
+                        crate::parsing::hir_lower::KNOWN_TYPE_ALIASES.with(|cell| {
+                            let aliases = cell.borrow();
+                            for (fields, _) in aliases.values() {
+                                if let Some((_, _, ty_str)) =
+                                    fields.iter().find(|(name, _, _)| name == field_name)
+                                {
+                                    let ty_lower = ty_str.to_ascii_lowercase();
+                                    field_ty = match ty_lower.as_str() {
+                                        "f64" | "float" => AotValueType::F64,
+                                        "f32" => AotValueType::F32,
+                                        "bool" => AotValueType::Bool,
+                                        "i32" => AotValueType::I32,
+                                        "i16" => AotValueType::I16,
+                                        "i8" => AotValueType::I8,
+                                        "u32" => AotValueType::U32,
+                                        "u16" => AotValueType::U16,
+                                        "u8" => AotValueType::U8,
+                                        "string" => AotValueType::String,
+                                        _ => {
+                                            let mut resolved = ty_str.as_str();
+                                            while let Some((next_fields, _)) = aliases.get(resolved) {
+                                                if next_fields.len() == 1
+                                                    && (next_fields[0].0 == "__alias_target__"
+                                                        || next_fields[0].0.is_empty())
+                                                {
+                                                    resolved = &next_fields[0].2;
+                                                } else {
+                                                    break;
+                                                }
+                                            }
+                                            match resolved.to_ascii_lowercase().as_str() {
+                                                "f64" | "float" => AotValueType::F64,
+                                                "f32" => AotValueType::F32,
+                                                "bool" => AotValueType::Bool,
+                                                "i32" => AotValueType::I32,
+                                                "i16" => AotValueType::I16,
+                                                "i8" => AotValueType::I8,
+                                                "u32" => AotValueType::U32,
+                                                "u16" => AotValueType::U16,
+                                                "u8" => AotValueType::U8,
+                                                "string" => AotValueType::String,
+                                                _ => AotValueType::Handle,
+                                            }
+                                        }
                                     };
                                     break;
                                 }

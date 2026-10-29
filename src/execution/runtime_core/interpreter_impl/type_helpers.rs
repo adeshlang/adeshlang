@@ -456,6 +456,7 @@ pub fn ann_matches_value(
 
                         for (k, tv) in map.iter() {
                             if k == "__type_alias__"
+                                || k == "__type__"
                                 || k == "__type_params__"
                                 || k == "__defaults__"
                             {
@@ -490,6 +491,23 @@ pub fn ann_matches_value(
                                         return false;
                                     }
                                 }
+                            }
+                        }
+
+                        // Strict: reject extra fields not declared in the alias
+                        for field_name in obj_map.keys() {
+                            if field_name == "__type__"
+                                || field_name == "__type_alias__"
+                                || field_name == "__type_params__"
+                                || field_name == "__defaults__"
+                            {
+                                continue;
+                            }
+                            let is_declared = map
+                                .iter()
+                                .any(|(mk, _)| mk == field_name);
+                            if !is_declared {
+                                return false;
                             }
                         }
                         return true;
@@ -560,6 +578,7 @@ pub fn type_mismatch_reason(
                     if let Value::Object(obj_map) = v {
                         for (k, tv) in map.iter() {
                             if k == "__type_alias__"
+                                || k == "__type__"
                                 || k == "__type_params__"
                                 || k == "__defaults__"
                             {
@@ -605,6 +624,26 @@ pub fn type_mismatch_reason(
                                         k, tname
                                     ));
                                 }
+                            }
+                        }
+
+                        // Strict: report extra fields not declared in the alias
+                        for field_name in obj_map.keys() {
+                            if field_name == "__type__"
+                                || field_name == "__type_alias__"
+                                || field_name == "__type_params__"
+                                || field_name == "__defaults__"
+                            {
+                                continue;
+                            }
+                            let is_declared = map
+                                .iter()
+                                .any(|(mk, _)| mk == field_name);
+                            if !is_declared {
+                                return Some(format!(
+                                    "unexpected extra field '{}' on type '{}'",
+                                    field_name, alias_name
+                                ));
                             }
                         }
                         // All fields passed — shouldn't reach here if ann_matches_value returned false

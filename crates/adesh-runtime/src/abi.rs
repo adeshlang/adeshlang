@@ -140,32 +140,54 @@ impl<T> AdeshSlice<T> {
 }
 
 /// Standard Resizable Dynamic Array Layout.
-/// [ data (8B) | len (8B) | cap (8B) | elem_size (8B) ] = 32 Bytes
+/// [ data (8B) | len (8B) | cap (8B) | elem_size (8B) | elem_align (8B) | elem_drop (8B) ] = 48 Bytes
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub struct AdeshArray {
     pub data: *mut u8,
     pub len: usize,
     pub cap: usize,
     pub elem_size: usize,
+    pub elem_align: usize,
+    pub elem_drop: AdeshDropFn,
 }
+
+impl PartialEq for AdeshArray {
+    fn eq(&self, other: &Self) -> bool {
+        self.data == other.data
+            && self.len == other.len
+            && self.cap == other.cap
+            && self.elem_size == other.elem_size
+            && self.elem_align == other.elem_align
+            && self.elem_drop.map(|f| f as usize) == other.elem_drop.map(|f| f as usize)
+    }
+}
+
+impl Eq for AdeshArray {}
 
 impl AdeshArray {
     pub fn new(elem_size: usize, initial_cap: usize) -> Self {
+        let align = elem_size.min(16).max(8).next_power_of_two();
+        Self::new_with_drop(elem_size, initial_cap, align, None)
+    }
+
+    pub fn new_with_drop(
+        elem_size: usize,
+        initial_cap: usize,
+        elem_align: usize,
+        elem_drop: AdeshDropFn,
+    ) -> Self {
         let cap = if initial_cap == 0 { 4 } else { initial_cap };
-        // Audit fix: the old code computed `elem_size * cap` (overflowing
-        // multiplication) and used a bare `.unwrap()` on the layout — both
-        // panic paths reachable from the `adesh_arr_new` C export. On any
-        // invalid size, return a degenerate (empty, null) array instead;
-        // `push` reports failure on such an array rather than touching
-        // undefined behavior.
+        let align = elem_align.max(8).next_power_of_two();
         let total = elem_size.saturating_mul(cap);
-        let Ok(layout) = Layout::from_size_align(total, 8) else {
+        let Ok(layout) = Layout::from_size_align(total, align) else {
             return Self {
                 data: null_mut(),
                 len: 0,
                 cap: 0,
                 elem_size,
+                elem_align: align,
+                elem_drop,
             };
         };
         // SAFETY: layout was just validated.
@@ -175,17 +197,21 @@ impl AdeshArray {
             len: 0,
             cap: if data.is_null() { 0 } else { cap },
             elem_size,
+            elem_align: align,
+            elem_drop,
         }
+    }
+
+    pub fn set_elem_drop(&mut self, drop_fn: AdeshDropFn) {
+        self.elem_drop = drop_fn;
     }
 
     pub fn push(&mut self, elem_bytes: *const u8) -> bool {
         if self.elem_size == 0 || elem_bytes.is_null() {
             return false;
         }
+        let align = if self.elem_align == 0 { 8 } else { self.elem_align };
         if self.len >= self.cap {
-            // Audit fix: `realloc` with a null pointer is undefined
-            // behavior, and the size multiplications below could overflow
-            // into wrapped layouts. Bail out with `false` instead.
             if self.data.is_null() {
                 return false;
             }
@@ -197,7 +223,7 @@ impl AdeshArray {
             let Some(old_total) = self.elem_size.checked_mul(self.cap) else {
                 return false;
             };
-            let Ok(old_layout) = Layout::from_size_align(old_total, 8) else {
+            let Ok(old_layout) = Layout::from_size_align(old_total, align) else {
                 return false;
             };
             let Some(new_size) = self.elem_size.checked_mul(new_cap) else {
@@ -230,7 +256,17 @@ impl AdeshArray {
 
     pub fn free(&mut self) {
         if !self.data.is_null() && self.cap > 0 && self.elem_size > 0 {
-            if let Ok(layout) = Layout::from_size_align(self.elem_size * self.cap, 8) {
+            // Drop any contained elements if a destructor callback is set
+            if let Some(drop_fn) = self.elem_drop {
+                for i in 0..self.len {
+                    unsafe {
+                        let elem_ptr = self.data.add(i * self.elem_size);
+                        drop_fn(elem_ptr as *mut ());
+                    }
+                }
+            }
+            let align = if self.elem_align == 0 { 8 } else { self.elem_align };
+            if let Ok(layout) = Layout::from_size_align(self.elem_size * self.cap, align) {
                 unsafe { dealloc(self.data, layout) };
             }
             self.data = null_mut();
@@ -455,6 +491,23 @@ pub extern "C" fn adesh_arr_free(arr: *mut AdeshArray) {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn adesh_arr_new_with_drop(
+    elem_size: usize,
+    initial_cap: usize,
+    elem_align: usize,
+    drop_fn: AdeshDropFn,
+) -> AdeshArray {
+    AdeshArray::new_with_drop(elem_size, initial_cap, elem_align, drop_fn)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn adesh_arr_set_drop(arr: *mut AdeshArray, drop_fn: AdeshDropFn) {
+    if !arr.is_null() {
+        unsafe { (*arr).set_elem_drop(drop_fn) };
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn adesh_mem_alloc(size: usize, align: usize) -> *mut u8 {
     let effective_align = if align == 0 { 8 } else { align };
     if let Ok(layout) = Layout::from_size_align(size, effective_align) {
@@ -592,6 +645,36 @@ mod tests {
         }
 
         arr.free();
+    }
+
+    static DROP_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    unsafe extern "C" fn count_elem_drop(elem_ptr: *mut ()) {
+        let val = unsafe { *(elem_ptr as *const i64) };
+        if val > 0 {
+            DROP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn test_adesh_array_drop_callback() {
+        DROP_COUNTER.store(0, std::sync::atomic::Ordering::SeqCst);
+        let mut arr = AdeshArray::new_with_drop(
+            std::mem::size_of::<i64>(),
+            2,
+            8,
+            Some(count_elem_drop),
+        );
+        let v1: i64 = 10;
+        let v2: i64 = 20;
+        let v3: i64 = 30;
+        arr.push(&v1 as *const i64 as *const u8);
+        arr.push(&v2 as *const i64 as *const u8);
+        arr.push(&v3 as *const i64 as *const u8);
+
+        assert_eq!(DROP_COUNTER.load(std::sync::atomic::Ordering::SeqCst), 0);
+        arr.free();
+        assert_eq!(DROP_COUNTER.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 
     #[test]
