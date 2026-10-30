@@ -104,6 +104,28 @@ pub fn encode_import_section() -> Vec<u8> {
     sec
 }
 
+/// Import section for a module that runs on a WASI Preview 1 host.
+///
+/// `fd_write` is the only host function the compiler needs: the in-module
+/// adapters below turn it into `write`, `alloc` and float formatting.
+pub fn encode_wasi_import_section() -> Vec<u8> {
+    let mut payload = Vec::new();
+    write_u32_leb(1, &mut payload);
+    let module = b"wasi_snapshot_preview1";
+    let name = b"fd_write";
+    write_u32_leb(module.len() as u32, &mut payload);
+    payload.extend(module);
+    write_u32_leb(name.len() as u32, &mut payload);
+    payload.extend(name);
+    payload.push(0x00); // function
+    write_u32_leb(4, &mut payload); // (i32,i32,i32,i32)->i32
+    let mut sec = Vec::new();
+    sec.push(0x02);
+    write_u32_leb(payload.len() as u32, &mut sec);
+    sec.extend(payload);
+    sec
+}
+
 pub fn encode_function_section(func_types: &[u32]) -> Vec<u8> {
     let mut payload = Vec::new();
     write_u32_leb(func_types.len() as u32, &mut payload);
@@ -117,7 +139,7 @@ pub fn encode_function_section(func_types: &[u32]) -> Vec<u8> {
     sec
 }
 
-pub fn encode_export_section(func_index: u32, export_memory: bool) -> Vec<u8> {
+pub fn encode_export_section(main_index: u32, malloc_index: u32, export_memory: bool) -> Vec<u8> {
     let mut payload = Vec::new();
     // Exports: main, malloc, [memory]
     let count = if export_memory { 3 } else { 2 };
@@ -128,14 +150,14 @@ pub fn encode_export_section(func_index: u32, export_memory: bool) -> Vec<u8> {
     write_u32_leb(name.len() as u32, &mut payload);
     payload.extend(name);
     payload.push(0x00); // func kind
-    write_u32_leb(func_index, &mut payload);
+    write_u32_leb(main_index, &mut payload);
 
-    // export function "malloc" (aliases import #2 'alloc')
+    // export function "malloc" (the allocator behind the ABI's `alloc`)
     let mname = b"malloc";
     write_u32_leb(mname.len() as u32, &mut payload);
     payload.extend(mname);
     payload.push(0x00); // func kind
-    write_u32_leb(2, &mut payload); // Index 2 is 'alloc' import
+    write_u32_leb(malloc_index, &mut payload);
 
     if export_memory {
         let mem_name = b"memory";
@@ -151,14 +173,21 @@ pub fn encode_export_section(func_index: u32, export_memory: bool) -> Vec<u8> {
     sec
 }
 
-pub fn encode_code_section(funcs: &[(u32, u32, Vec<u8>)]) -> Vec<u8> {
+/// Encode a code section.
+///
+/// Each entry is `(i32_locals, i64_locals, f64_locals, body)`. Locals are
+/// declared in that order, so local indices continue after the parameters.
+pub fn encode_code_section(funcs: &[(u32, u32, u32, Vec<u8>)]) -> Vec<u8> {
     let mut payload = Vec::new();
     write_u32_leb(funcs.len() as u32, &mut payload);
-    for (local_i32_count, local_f64_count, body) in funcs {
+    for (local_i32_count, local_i64_count, local_f64_count, body) in funcs {
         let mut func = Vec::new();
         let mut group_count = 0u32;
         let mut locals = Vec::new();
         if *local_i32_count > 0 {
+            group_count += 1;
+        }
+        if *local_i64_count > 0 {
             group_count += 1;
         }
         if *local_f64_count > 0 {
@@ -171,6 +200,10 @@ pub fn encode_code_section(funcs: &[(u32, u32, Vec<u8>)]) -> Vec<u8> {
             if *local_i32_count > 0 {
                 write_u32_leb(*local_i32_count, &mut locals);
                 locals.push(0x7F);
+            }
+            if *local_i64_count > 0 {
+                write_u32_leb(*local_i64_count, &mut locals);
+                locals.push(0x7E);
             }
             if *local_f64_count > 0 {
                 write_u32_leb(*local_f64_count, &mut locals);
@@ -199,6 +232,22 @@ pub fn encode_memory_section(min_pages: u32) -> Vec<u8> {
     write_u32_leb(min_pages, &mut payload);
     let mut sec = Vec::new();
     sec.push(0x05);
+    write_u32_leb(payload.len() as u32, &mut sec);
+    sec.extend(payload);
+    sec
+}
+
+/// One mutable `i32` global holding the bump allocator's next free byte.
+pub fn encode_global_section(heap_start: u32) -> Vec<u8> {
+    let mut payload = Vec::new();
+    write_u32_leb(1, &mut payload);
+    payload.push(0x7F); // i32
+    payload.push(0x01); // mutable
+    payload.push(0x41); // i32.const
+    write_i32_leb(heap_start as i32, &mut payload);
+    payload.push(0x0B); // end
+    let mut sec = Vec::new();
+    sec.push(0x06);
     write_u32_leb(payload.len() as u32, &mut sec);
     sec.extend(payload);
     sec

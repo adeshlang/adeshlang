@@ -1,4 +1,5 @@
 use super::encoder::*;
+use super::wasi::{self, WasiAbi, WasiLiterals};
 use crate::parsing::ast::{Expr, ExprKind, Stmt, StmtKind, TokenKind, Value};
 use crate::parsing::error::{ErrorKind, LangError};
 use crate::types::field_layout::FieldLayout;
@@ -7,6 +8,17 @@ use crate::utils::collections::FastMap;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
+
+/// Host ABI a module is compiled against.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum WasmAbi {
+    /// `env.*` imports (`print_f64`, `print_str`, `alloc`, `concat2`,
+    /// `file_write_str`) served by a generated Node loader.
+    Env,
+    /// A single `wasi_snapshot_preview1.fd_write` import plus in-module
+    /// adapters, so the module runs on any WASI Preview 1 host.
+    WasiPreview1,
+}
 
 struct CompilerContext<'a> {
     locals_f64: &'a FastMap<String, u32>,
@@ -22,6 +34,15 @@ struct CompilerContext<'a> {
     defer_scopes: Vec<Vec<Stmt>>,
     /// Records `defer_scopes.len()` at each loop body entry for break/continue.
     loop_defer_depths: Vec<usize>,
+    /// Function index that prints one f64.
+    print_f64_idx: u32,
+    /// Function index that writes `(ptr, len)` bytes to stdout.
+    print_str_idx: u32,
+    /// Function index of the `(size) -> ptr` allocator.
+    alloc_idx: u32,
+    /// Function index for `(path_ptr, path_len, ptr, len)` file writes.
+    /// `None` under WASI, where `print(..., { file: ... })` is rejected.
+    file_write_idx: Option<u32>,
 }
 
 fn compute_wasm_layout(fields: &[(String, String)]) -> FieldLayout {
@@ -848,7 +869,7 @@ fn gen_expr_i32(
                 out.push(0x41);
                 write_u32_leb(layout.get_final_size() as u32, out);
                 out.push(0x10);
-                write_u32_leb(2, out); // alloc (import index 2: env.alloc)
+                write_u32_leb(ctx.alloc_idx, out);
 
                 if !ctx.locals_i32.contains_key("__scratch")
                     || !ctx.locals_i32.contains_key("__scratch_val")
@@ -925,9 +946,11 @@ fn gen_expr_i32(
             out.push(0x41);
             write_u32_leb(total_size, out);
             out.push(0x10);
-            write_u32_leb(2, out); // env.alloc
+            write_u32_leb(ctx.alloc_idx, out);
 
-            if !ctx.locals_i32.contains_key("__scratch") || !ctx.locals_i32.contains_key("__scratch_val") {
+            if !ctx.locals_i32.contains_key("__scratch")
+                || !ctx.locals_i32.contains_key("__scratch_val")
+            {
                 return Err("Internal error: __scratch locals not found".into());
             }
             let scratch_idx = *ctx.locals_i32.get("__scratch").unwrap();
@@ -1230,7 +1253,7 @@ fn emit_wasm_print_str_call(s: &str, out: &mut Vec<u8>, ctx: &CompilerContext) {
     out.push(0x41);
     write_i32_leb(s.len() as i32, out);
     out.push(0x10);
-    write_u32_leb(1, out);
+    write_u32_leb(ctx.print_str_idx, out);
 }
 
 fn emit_wasm_file_write_str_call(
@@ -1263,7 +1286,11 @@ fn emit_wasm_file_write_str_call(
     out.push(0x41);
     write_i32_leb(s.len() as i32, out);
     out.push(0x10);
-    write_u32_leb(4, out);
+    write_u32_leb(
+        ctx.file_write_idx
+            .expect("file writes are rejected before emission under WASI"),
+        out,
+    );
 }
 
 fn add_wasm_string(st: &str, strings: &mut Vec<(String, u32)>, cur_off: &mut u32) {
@@ -1816,7 +1843,7 @@ fn emit_wasm_print_arg(
             }
             gen_expr_f64(arg, out, ctx)?;
             out.push(0x10);
-            write_u32_leb(0, out);
+            write_u32_leb(ctx.print_f64_idx, out);
         }
         ExprKind::Variable(vname) => {
             if let Some((off, len)) = ctx.str_vars.get(vname) {
@@ -1825,24 +1852,24 @@ fn emit_wasm_print_arg(
                 out.push(0x41);
                 write_i32_leb(*len as i32, out);
                 out.push(0x10);
-                write_u32_leb(1, out);
+                write_u32_leb(ctx.print_str_idx, out);
             } else if let Some((off, len)) = ctx.complex_vars.get(vname) {
                 out.push(0x41);
                 write_i32_leb(*off as i32, out);
                 out.push(0x41);
                 write_i32_leb(*len as i32, out);
                 out.push(0x10);
-                write_u32_leb(1, out);
+                write_u32_leb(ctx.print_str_idx, out);
             } else {
                 gen_expr_f64(arg, out, ctx)?;
                 out.push(0x10);
-                write_u32_leb(0, out);
+                write_u32_leb(ctx.print_f64_idx, out);
             }
         }
         _ => {
             gen_expr_f64(arg, out, ctx)?;
             out.push(0x10);
-            write_u32_leb(0, out);
+            write_u32_leb(ctx.print_f64_idx, out);
         }
     }
     Ok(())
@@ -2007,6 +2034,13 @@ fn gen_stmt(
                             }
                         }
 
+                        if file_opt.is_some() && ctx.file_write_idx.is_none() {
+                            return Err(
+                                "print(..., { file: ... }) cannot run under the WASI Preview 1 ABI:                                  the compiler emits only wasi_snapshot_preview1.fd_write, which cannot                                  open files. Drop the `file` option or build for a non-WASI target."
+                                    .to_string(),
+                            );
+                        }
+
                         let total_items = non_opt_args.len();
                         if let Some(file_path) = file_opt.as_deref() {
                             for (i, arg) in non_opt_args.iter().enumerate() {
@@ -2057,7 +2091,12 @@ fn gen_stmt(
                                                 out.push(0x41);
                                                 write_i32_leb(*len as i32, out);
                                                 out.push(0x10);
-                                                write_u32_leb(4, out);
+                                                write_u32_leb(
+                                                    ctx.file_write_idx.expect(
+                                                        "file writes are rejected before emission under WASI",
+                                                    ),
+                                                    out,
+                                                );
                                             } else if let Some((off, len)) =
                                                 ctx.complex_vars.get(vname)
                                             {
@@ -2076,7 +2115,12 @@ fn gen_stmt(
                                                 out.push(0x41);
                                                 write_i32_leb(*len as i32, out);
                                                 out.push(0x10);
-                                                write_u32_leb(4, out);
+                                                write_u32_leb(
+                                                    ctx.file_write_idx.expect(
+                                                        "file writes are rejected before emission under WASI",
+                                                    ),
+                                                    out,
+                                                );
                                             }
                                         }
                                         _ => {}
@@ -2414,10 +2458,20 @@ fn gen_stmt(
 }
 
 pub fn compile_to_file(src: &str, out: &Path) -> Result<(), LangError> {
-    compile_to_file_with_base(src, out, Path::new("."))
+    compile_to_file_with_base_and_abi(src, out, Path::new("."), WasmAbi::Env)
 }
 
 pub fn compile_to_file_with_base(src: &str, out: &Path, base: &Path) -> Result<(), LangError> {
+    compile_to_file_with_base_and_abi(src, out, base, WasmAbi::Env)
+}
+
+/// Compile `src` against an explicit host ABI.
+pub fn compile_to_file_with_base_and_abi(
+    src: &str,
+    out: &Path,
+    base: &Path,
+    abi: WasmAbi,
+) -> Result<(), LangError> {
     // The file-based Adesh→WASM compiler drives the CLI parsing/import-linking
     // pipeline and writes artifacts to disk; it is only reachable through the
     // native CLI. Inside a browser build there is no CLI module and no real
@@ -2435,16 +2489,17 @@ pub fn compile_to_file_with_base(src: &str, out: &Path, base: &Path) -> Result<(
             src.to_string()
         };
 
-        let (prog, _) = crate::cli::parsing::check_ownership_and_parse(&body_src, &Default::default())
-            .map_err(|e| LangError::new(ErrorKind::User, e, 0, 0, "".into()))?;
+        let (prog, _) =
+            crate::cli::parsing::check_ownership_and_parse(&body_src, &Default::default())
+                .map_err(|e| LangError::new(ErrorKind::User, e, 0, 0, "".into()))?;
         let prog = crate::cli::static_imports::link_ast(prog, base)
             .map_err(|e| LangError::new(ErrorKind::User, e, 0, 0, "".into()))?;
-        compile_ast_to_file(prog, out)
+        compile_ast_to_file_with_abi(prog, out, abi)
     }
 
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = (src, out, base);
+        let _ = (src, out, base, abi);
         Err(LangError::new(
             ErrorKind::User,
             "Adesh-to-WASM file compilation requires the native CLI".to_string(),
@@ -2455,7 +2510,22 @@ pub fn compile_to_file_with_base(src: &str, out: &Path, base: &Path) -> Result<(
     }
 }
 
-pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), LangError> {
+pub(crate) fn compile_ast_to_file_with_abi(
+    prog: Vec<Stmt>,
+    out: &Path,
+    abi: WasmAbi,
+) -> Result<(), LangError> {
+    let wasi_abi = WasiAbi::default();
+    let (print_f64_idx, print_str_idx, alloc_idx, file_write_idx, func_base) = match abi {
+        WasmAbi::Env => (0, 1, 2, Some(4), 5),
+        WasmAbi::WasiPreview1 => (
+            wasi_abi.print_f64,
+            wasi_abi.write,
+            wasi_abi.alloc,
+            None,
+            wasi_abi.func_base,
+        ),
+    };
     let mut prog = crate::parsing::ast_optimizer::optimize_program(&prog);
 
     let mut struct_layouts: FastMap<String, FieldLayout> = FastMap::default();
@@ -2612,7 +2682,10 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
                         cur_target = Some(part.to_string());
                     } else if let Some(parent) = cur_target {
                         let next = if let Some((fields, _)) = type_alias_defs.get(&parent) {
-                            fields.iter().find(|(f, _, _)| f == part).map(|(_, _, fty)| fty.clone())
+                            fields
+                                .iter()
+                                .find(|(f, _, _)| f == part)
+                                .map(|(_, _, fty)| fty.clone())
                         } else {
                             None
                         };
@@ -2729,38 +2802,114 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
                     locals_map_i32.insert(name.clone(), *local_count_i32);
                     *local_count_i32 += 1;
                 }
-                collect_top_locals(body, func_defs, locals_map_i32, locals_map_f64, local_count_i32, local_count_f64, is_i32_type);
+                collect_top_locals(
+                    body,
+                    func_defs,
+                    locals_map_i32,
+                    locals_map_f64,
+                    local_count_i32,
+                    local_count_f64,
+                    is_i32_type,
+                );
             }
-            StmtKind::TryCatch { try_block, err_name, catch_block } => {
+            StmtKind::TryCatch {
+                try_block,
+                err_name,
+                catch_block,
+            } => {
                 if !err_name.is_empty() {
-                    if !locals_map_i32.contains_key(err_name) && !locals_map_f64.contains_key(err_name) {
+                    if !locals_map_i32.contains_key(err_name)
+                        && !locals_map_f64.contains_key(err_name)
+                    {
                         locals_map_i32.insert(err_name.clone(), *local_count_i32);
                         *local_count_i32 += 1;
                     }
                 }
-                collect_top_locals(try_block, func_defs, locals_map_i32, locals_map_f64, local_count_i32, local_count_f64, is_i32_type);
-                collect_top_locals(catch_block, func_defs, locals_map_i32, locals_map_f64, local_count_i32, local_count_f64, is_i32_type);
+                collect_top_locals(
+                    try_block,
+                    func_defs,
+                    locals_map_i32,
+                    locals_map_f64,
+                    local_count_i32,
+                    local_count_f64,
+                    is_i32_type,
+                );
+                collect_top_locals(
+                    catch_block,
+                    func_defs,
+                    locals_map_i32,
+                    locals_map_f64,
+                    local_count_i32,
+                    local_count_f64,
+                    is_i32_type,
+                );
             }
             StmtKind::Block(stmts) => {
                 for st in stmts {
-                    collect_top_locals(st, func_defs, locals_map_i32, locals_map_f64, local_count_i32, local_count_f64, is_i32_type);
+                    collect_top_locals(
+                        st,
+                        func_defs,
+                        locals_map_i32,
+                        locals_map_f64,
+                        local_count_i32,
+                        local_count_f64,
+                        is_i32_type,
+                    );
                 }
             }
-            StmtKind::If { then_branch, else_branch, .. } => {
-                collect_top_locals(then_branch, func_defs, locals_map_i32, locals_map_f64, local_count_i32, local_count_f64, is_i32_type);
+            StmtKind::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                collect_top_locals(
+                    then_branch,
+                    func_defs,
+                    locals_map_i32,
+                    locals_map_f64,
+                    local_count_i32,
+                    local_count_f64,
+                    is_i32_type,
+                );
                 if let Some(eb) = else_branch {
-                    collect_top_locals(eb, func_defs, locals_map_i32, locals_map_f64, local_count_i32, local_count_f64, is_i32_type);
+                    collect_top_locals(
+                        eb,
+                        func_defs,
+                        locals_map_i32,
+                        locals_map_f64,
+                        local_count_i32,
+                        local_count_f64,
+                        is_i32_type,
+                    );
                 }
             }
-            StmtKind::While { body, .. } | StmtKind::UnsafeBlock(body) | StmtKind::Region { body, .. } => {
-                collect_top_locals(body, func_defs, locals_map_i32, locals_map_f64, local_count_i32, local_count_f64, is_i32_type);
+            StmtKind::While { body, .. }
+            | StmtKind::UnsafeBlock(body)
+            | StmtKind::Region { body, .. } => {
+                collect_top_locals(
+                    body,
+                    func_defs,
+                    locals_map_i32,
+                    locals_map_f64,
+                    local_count_i32,
+                    local_count_f64,
+                    is_i32_type,
+                );
             }
             _ => {}
         }
     }
 
     for s in &prog {
-        collect_top_locals(s, &func_defs, &mut locals_map_i32, &mut locals_map_f64, &mut local_count_i32, &mut local_count_f64, &is_i32_type);
+        collect_top_locals(
+            s,
+            &func_defs,
+            &mut locals_map_i32,
+            &mut locals_map_f64,
+            &mut local_count_i32,
+            &mut local_count_f64,
+            &is_i32_type,
+        );
     }
 
     if !locals_map_i32.contains_key("__scratch") {
@@ -2775,6 +2924,11 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
         locals_map_f64.insert("__scratch_f64".to_string(), local_count_f64);
         local_count_f64 += 1;
     }
+    // The main wrapper declares i32 locals before f64 locals, so every f64
+    // local sits local_count_i32 slots past its f64-only index.
+    for val in locals_map_f64.values_mut() {
+        *val += local_count_i32;
+    }
 
     let mut func_types: Vec<(Vec<u8>, Option<u8>)> = Vec::new();
     func_types.push((vec![0x7C], None));
@@ -2784,6 +2938,8 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
     func_types.push((vec![0x7F, 0x7F, 0x7F, 0x7F], Some(0x7F)));
     func_types.push((vec![0x7F, 0x7F], Some(0x7F)));
     func_types.push((vec![0x7F, 0x7F, 0x7F, 0x7F], None));
+    // 7: (i64)->(), used by the WASI integer/fraction printers
+    func_types.push((vec![0x7E], None));
     let mut func_type_map: FastMap<(Vec<u8>, Option<u8>), u32> = FastMap::default();
     for (i, t) in func_types.iter().enumerate() {
         func_type_map.insert((t.0.clone(), t.1), i as u32);
@@ -2805,7 +2961,10 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
                         cur_target = Some(part.to_string());
                     } else if let Some(parent) = cur_target {
                         let next = if let Some((fields, _)) = type_alias_defs.get(&parent) {
-                            fields.iter().find(|(f, _, _)| f == part).map(|(_, _, fty)| fty.clone())
+                            fields
+                                .iter()
+                                .find(|(f, _, _)| f == part)
+                                .map(|(_, _, fty)| fty.clone())
                         } else {
                             None
                         };
@@ -2866,10 +3025,10 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
             }
             None => None,
         };
-        funcs_index_map.insert(f.name.clone(), (5 + i as u32, params, ret));
+        funcs_index_map.insert(f.name.clone(), (func_base + i as u32, params, ret));
     }
     let mut function_section_types: Vec<u32> = Vec::new();
-    let mut code_funcs: Vec<(u32, u32, Vec<u8>)> = Vec::new();
+    let mut code_funcs: Vec<(u32, u32, u32, Vec<u8>)> = Vec::new();
 
     let mut var_values: FastMap<String, Value> = FastMap::default();
     for s in &prog {
@@ -2913,6 +3072,14 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
     if !strings.iter().any(|(x, _)| x == "object") {
         strings.push(("object".into(), cur_off));
         cur_off += 6;
+    }
+    if abi == WasmAbi::WasiPreview1 {
+        for literal in ["NaN", "Infinity", "-Infinity", "-", "."] {
+            if !strings.iter().any(|(x, _)| x == literal) {
+                strings.push((literal.to_string(), cur_off));
+                cur_off += literal.len() as u32;
+            }
+        }
     }
     if !strings.iter().any(|(x, _)| x == "\x1b[0m") {
         strings.push(("\x1b[0m".into(), cur_off));
@@ -2980,7 +3147,10 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
             ix
         };
         function_section_types.push(tindex);
-        funcs_index_map.insert(f.name.clone(), (5 + i as u32, params.clone(), ret_byte));
+        funcs_index_map.insert(
+            f.name.clone(),
+            (func_base + i as u32, params.clone(), ret_byte),
+        );
 
         let mut f_locals_f64: FastMap<String, u32> = FastMap::default();
         let mut f_locals_i32: FastMap<String, u32> = FastMap::default();
@@ -3080,39 +3250,131 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
                         f_locals_i32.insert(name.clone(), *f_local_count_i32 + pcount);
                         *f_local_count_i32 += 1;
                     }
-                    collect_fn_locals(body, func_defs, f_locals_types, f_locals_i32, f_locals_f64, f_local_count_i32, f_local_count_f64, pcount, is_i32_type);
+                    collect_fn_locals(
+                        body,
+                        func_defs,
+                        f_locals_types,
+                        f_locals_i32,
+                        f_locals_f64,
+                        f_local_count_i32,
+                        f_local_count_f64,
+                        pcount,
+                        is_i32_type,
+                    );
                 }
-                StmtKind::TryCatch { try_block, err_name, catch_block } => {
+                StmtKind::TryCatch {
+                    try_block,
+                    err_name,
+                    catch_block,
+                } => {
                     if !err_name.is_empty() {
                         f_locals_types.insert(err_name.clone(), "string".into());
-                        if !f_locals_i32.contains_key(err_name) && !f_locals_f64.contains_key(err_name) {
+                        if !f_locals_i32.contains_key(err_name)
+                            && !f_locals_f64.contains_key(err_name)
+                        {
                             f_locals_i32.insert(err_name.clone(), *f_local_count_i32 + pcount);
                             *f_local_count_i32 += 1;
                         }
                     }
-                    collect_fn_locals(try_block, func_defs, f_locals_types, f_locals_i32, f_locals_f64, f_local_count_i32, f_local_count_f64, pcount, is_i32_type);
-                    collect_fn_locals(catch_block, func_defs, f_locals_types, f_locals_i32, f_locals_f64, f_local_count_i32, f_local_count_f64, pcount, is_i32_type);
+                    collect_fn_locals(
+                        try_block,
+                        func_defs,
+                        f_locals_types,
+                        f_locals_i32,
+                        f_locals_f64,
+                        f_local_count_i32,
+                        f_local_count_f64,
+                        pcount,
+                        is_i32_type,
+                    );
+                    collect_fn_locals(
+                        catch_block,
+                        func_defs,
+                        f_locals_types,
+                        f_locals_i32,
+                        f_locals_f64,
+                        f_local_count_i32,
+                        f_local_count_f64,
+                        pcount,
+                        is_i32_type,
+                    );
                 }
                 StmtKind::Block(stmts) => {
                     for st in stmts {
-                        collect_fn_locals(st, func_defs, f_locals_types, f_locals_i32, f_locals_f64, f_local_count_i32, f_local_count_f64, pcount, is_i32_type);
+                        collect_fn_locals(
+                            st,
+                            func_defs,
+                            f_locals_types,
+                            f_locals_i32,
+                            f_locals_f64,
+                            f_local_count_i32,
+                            f_local_count_f64,
+                            pcount,
+                            is_i32_type,
+                        );
                     }
                 }
-                StmtKind::If { then_branch, else_branch, .. } => {
-                    collect_fn_locals(then_branch, func_defs, f_locals_types, f_locals_i32, f_locals_f64, f_local_count_i32, f_local_count_f64, pcount, is_i32_type);
+                StmtKind::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    collect_fn_locals(
+                        then_branch,
+                        func_defs,
+                        f_locals_types,
+                        f_locals_i32,
+                        f_locals_f64,
+                        f_local_count_i32,
+                        f_local_count_f64,
+                        pcount,
+                        is_i32_type,
+                    );
                     if let Some(eb) = else_branch {
-                        collect_fn_locals(eb, func_defs, f_locals_types, f_locals_i32, f_locals_f64, f_local_count_i32, f_local_count_f64, pcount, is_i32_type);
+                        collect_fn_locals(
+                            eb,
+                            func_defs,
+                            f_locals_types,
+                            f_locals_i32,
+                            f_locals_f64,
+                            f_local_count_i32,
+                            f_local_count_f64,
+                            pcount,
+                            is_i32_type,
+                        );
                     }
                 }
-                StmtKind::While { body, .. } | StmtKind::UnsafeBlock(body) | StmtKind::Region { body, .. } => {
-                    collect_fn_locals(body, func_defs, f_locals_types, f_locals_i32, f_locals_f64, f_local_count_i32, f_local_count_f64, pcount, is_i32_type);
+                StmtKind::While { body, .. }
+                | StmtKind::UnsafeBlock(body)
+                | StmtKind::Region { body, .. } => {
+                    collect_fn_locals(
+                        body,
+                        func_defs,
+                        f_locals_types,
+                        f_locals_i32,
+                        f_locals_f64,
+                        f_local_count_i32,
+                        f_local_count_f64,
+                        pcount,
+                        is_i32_type,
+                    );
                 }
                 _ => {}
             }
         }
 
         for s in f.body.iter() {
-            collect_fn_locals(s, &func_defs, &mut f_locals_types, &mut f_locals_i32, &mut f_locals_f64, &mut f_local_count_i32, &mut f_local_count_f64, pcount, &is_i32_type);
+            collect_fn_locals(
+                s,
+                &func_defs,
+                &mut f_locals_types,
+                &mut f_locals_i32,
+                &mut f_locals_f64,
+                &mut f_local_count_i32,
+                &mut f_local_count_f64,
+                pcount,
+                &is_i32_type,
+            );
         }
         f_locals_i32.insert("__scratch".to_string(), f_local_count_i32 + pcount);
         f_local_count_i32 += 1;
@@ -3140,6 +3402,10 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
             locals_types: &mut f_locals_types,
             defer_scopes: vec![Vec::new()],
             loop_defer_depths: Vec::new(),
+            print_f64_idx,
+            print_str_idx,
+            alloc_idx,
+            file_write_idx,
         };
 
         let mut fbody: Vec<u8> = Vec::new();
@@ -3165,7 +3431,7 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
             }
             fbody.push(0x0F);
         }
-        code_funcs.push((f_local_count_i32, f_local_count_f64, fbody));
+        code_funcs.push((f_local_count_i32, 0, f_local_count_f64, fbody));
     }
 
     let mut main_body: Vec<u8> = Vec::new();
@@ -3182,6 +3448,10 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
         locals_types: &mut main_types,
         defer_scopes: vec![Vec::new()],
         loop_defer_depths: Vec::new(),
+        print_f64_idx,
+        print_str_idx,
+        alloc_idx,
+        file_write_idx,
     };
     for s in &prog {
         match &s.kind {
@@ -3198,19 +3468,63 @@ pub(crate) fn compile_ast_to_file(prog: Vec<Stmt>, out: &Path) -> Result<(), Lan
         }
     }
 
+    // The heap starts after the emitted string data, and linear memory must be
+    // large enough to hold that data before the allocator ever bumps.
+    let data_end = strings
+        .iter()
+        .map(|(s, off)| off + s.len() as u32)
+        .max()
+        .unwrap_or(1024);
+    let heap_start = (data_end.max(2048) + 7) & !7;
+    let memory_pages = heap_start.div_ceil(65536).max(1);
+    let wasi_lits = match abi {
+        WasmAbi::Env => None,
+        WasmAbi::WasiPreview1 => {
+            let find = |literal: &str| {
+                strings
+                    .iter()
+                    .find(|(s, _)| s == literal)
+                    .map(|(s, off)| (*off, s.len() as u32))
+                    .expect("WASI literal is collected before module assembly")
+            };
+            Some(WasiLiterals {
+                nan: find("NaN"),
+                infinity: find("Infinity"),
+                neg_infinity: find("-Infinity"),
+                minus: find("-"),
+                dot: find("."),
+            })
+        }
+    };
+
     let mut bytes: Vec<u8> = Vec::new();
     bytes.extend(&[0x00, 0x61, 0x73, 0x6D]);
     bytes.extend(&[0x01, 0x00, 0x00, 0x00]);
     bytes.extend(encode_type_section(&func_types));
-    bytes.extend(encode_import_section());
-    let mut all_func_types = function_section_types.clone();
+    match abi {
+        WasmAbi::Env => bytes.extend(encode_import_section()),
+        WasmAbi::WasiPreview1 => bytes.extend(encode_wasi_import_section()),
+    }
+    let mut all_func_types = Vec::new();
+    if abi == WasmAbi::WasiPreview1 {
+        all_func_types.extend(wasi_abi.function_types());
+    }
+    all_func_types.extend(function_section_types.iter().copied());
     all_func_types.push(2);
     bytes.extend(encode_function_section(&all_func_types));
-    bytes.extend(encode_memory_section(1));
-    let main_index = 5 + function_section_types.len() as u32;
-    bytes.extend(encode_export_section(main_index, true));
-    code_funcs.push((local_count_i32, local_count_f64, main_body));
-    bytes.extend(encode_code_section(&code_funcs));
+    bytes.extend(encode_memory_section(memory_pages));
+    if abi == WasmAbi::WasiPreview1 {
+        bytes.extend(encode_global_section(heap_start));
+    }
+    let main_index = func_base + function_section_types.len() as u32;
+    bytes.extend(encode_export_section(main_index, 2, true));
+    let mut all_code: Vec<(u32, u32, u32, Vec<u8>)> = Vec::new();
+    if let Some(lits) = wasi_lits {
+        all_code.extend(wasi::adapter_bodies(wasi_abi, lits));
+    }
+    all_code.extend(code_funcs);
+    all_code.push((local_count_i32, 0, local_count_f64, main_body));
+    bytes.extend(encode_code_section(&all_code));
     if !strings.is_empty() {
         let mut segs: Vec<(u32, Vec<u8>)> = Vec::new();
         for (s, off) in &strings {

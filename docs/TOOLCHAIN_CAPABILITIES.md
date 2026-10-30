@@ -25,7 +25,7 @@ cross-module IR optimization).
 | **AArch64 / x86_64 macOS** | **PoC (4 ops)** | **v1.0** | **Native Mach-O (skeletal)** | **Native** | **Partial** | **Strip only** | **GC/ICF only** | **Artifact emission only; cannot bind external libraries** |
 | **RISC-V 64 Linux** | **PoC (4 ops)** | **v1.0** | **Native ELF (static)** | **Native** | **RV regs only** | **Strip only** | **GC/ICF only** | **Proof-of-concept** |
 | **RISC-V 32 Embedded** | **PoC (4 ops)** | **v1.0** | **Native ELF (static)** | **Bare-metal** | **Partial** | **Strip only** | **GC/ICF only** | **Proof-of-concept** |
-| **WASM (WASI / Web)** | **Native (compiler backend)** | **v1.0** | **Stub writer** | **WASI** | **WASM** | **None** | **None** | **Compiler path works; linker path is a stub** |
+| **WASM (WASI / Web)** | **Native (compiler backend)** | **v1.0** | **Real writer (relocations, cross-object and indirect calls)** | **WASI (in-test host)** | **WASI Preview 1 `fd_write` / `env.*` for non-WASI targets** | **None** | **None** | **Compiler path executed under wasmtime; linker output executed on two engines in CI** |
 | **ARM Cortex-M (Thumb-2)** | **PoC** | **v1.0** | **Native ELF (static)** | **Embedded** | **Partial** | **Strip only** | **GC/ICF only** | **Proof-of-concept** |
 | **GPU (CUDA / ROCm)** | **Source re-embedding only** | **ADOB packaging** | **Packager** | **Driver (external)** | **N/A** | **None** | **N/A** | **Scaffolding (container packaging; no device ISA, no driver calls)** |
 | **NPU / TPU** | **Weight packaging only** | **ADOB packaging** | **Packager** | **External** | **N/A** | **None** | **N/A** | **Scaffolding (no Apple ANE implementation exists)** |

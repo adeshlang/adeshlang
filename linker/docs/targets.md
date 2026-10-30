@@ -22,17 +22,22 @@ The Adesh Linker uses a comprehensive, decoupled Target Model representing hardw
 | `wasm64` | WASM64 | None | WASM | 64-bit | 65536 bytes (64KB)|
 
 The three WASM triples above are parseable, and the `wasm32` ones link real
-clang relocatable objects — singly and in pairs — applying function/global/data
-relocations and resolving calls and data references across objects, into a
-module the suite executes on two engines: V8 through Node and Cranelift through
-the workspace's `wasmtime` dependency, including a CI step that runs the WASM
-linker suites (see [docs/wasm.md](wasm.md)). `wasm32-wasi` and `wasm32-none` are
+clang relocatable objects — singly and in pairs — applying
+function/global/data/table relocations, resolving calls, indirect calls and data
+references across objects, into a module the suite executes on two engines: V8
+through Node and Cranelift through the workspace's `wasmtime` dependency,
+including a CI step that runs the WASM linker suites (see
+[docs/wasm.md](wasm.md)). `wasm32-wasi` and `wasm32-none` are
 `Tier2Experimental` in `linker/src/target.rs`: emission and relocation are
-verified end-to-end, but function tables and indirect calls are still refused,
-which keeps them short of `Tier1Supported`. `wasm64` has no linker path at all
-and stays `Tier3Declared`. "Supported Target Triples" means recognised by the
-target model, not verified end-to-end — consult `TARGET_MATRIX.md` for the
-execution status of each row.
+verified end-to-end, but a linked program that writes to stdout still needs a
+WASI preview1 host supplied to it, which keeps them short of `Tier1Supported`.
+(Source-level `adesh build --target wasm32-*-wasi` output is a separate path:
+the compiler backend emits a real `wasi_snapshot_preview1.fd_write` import and
+`tests/wasm_wasi_compiler_test.rs` runs it under wasmtime; this linker supplies
+no host.) `wasm64` has no
+linker path at all and stays `Tier3Declared`. "Supported Target Triples" means
+recognised by the target model, not verified end-to-end — consult
+`TARGET_MATRIX.md` for the execution status of each row.
 
 ---
 

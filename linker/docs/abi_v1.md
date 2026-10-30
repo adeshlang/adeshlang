@@ -85,15 +85,20 @@ CI** (revised 2026-10-05; matches `TARGET_MATRIX.md` and
 *Artifacts are emitted and structurally validated (headers, sections, relocations, reader round-trips); execution coverage is partial and never proves the full ABI.*
 - `x86_64-linux` (ELF64 static; `ET_DYN` object emission exists but has no
   GOT/PLT; not run-tested)
-- `wasm32-wasi` / `wasm32-none` (compiler backend path, plus a linker that
-  applies index/data-address relocations to clang objects; CI links one- and
-  two-object programs and executes the results on two engines with asserted
-  output — V8 through `linker/tests/wasm_hello_world_test.rs`,
-  `linker/tests/wasm_cross_object_test.rs` and
-  `linker/tests/wasm_pure_module_test.rs`, Cranelift through
-  `tests/wasm_wasmtime_execution_test.rs`. Two objects that call only each other
-  produce a module with an empty import section. Not Tier 1 because function
-  tables and indirect calls are still refused.)
+- `wasm32-wasi` / `wasm32-none` (compiler backend path: `-wasi` targets emit
+  `wasi_snapshot_preview1.fd_write` and execute under wasmtime in
+  `tests/wasm_wasi_compiler_test.rs`, while non-WASI targets keep `env.*` plus a
+  Node loader; plus a linker that
+  applies index/data-address/table-index relocations to clang objects, defines
+  the function table for `call_indirect`; CI links one- and two-object programs
+  and executes the results on two engines with asserted output — V8 through
+  `linker/tests/wasm_hello_world_test.rs`,
+  `linker/tests/wasm_cross_object_test.rs`,
+  `linker/tests/wasm_pure_module_test.rs` and `linker/tests/wasm_table_test.rs`,
+  Cranelift through `tests/wasm_wasmtime_execution_test.rs`. Two objects that
+  call only each other produce a module with an empty import section. Not Tier 1
+  because the linker supplies no WASI preview1 host, so its stdout programs need
+  one supplied.)
 - `riscv64-linux`, `riscv32-none` (proof-of-concept codegen: Nop/Return/Add/Sub)
 - `armv7-*` / `thumbv7em` bare-metal (minimal Thumb-2 ALU)
 

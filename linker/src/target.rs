@@ -574,10 +574,11 @@ impl Target {
 
             (Arch::Riscv64 | Arch::Riscv32, Os::Linux | Os::None) => TargetTier::Tier2Experimental,
             // The linker emits and relocates real clang objects, binds calls and
-            // data references across them, and CI executes the resulting modules
-            // under both V8 (Node) and Cranelift (wasmtime). Function tables and
-            // indirect calls are still refused, which keeps this experimental
-            // rather than supported.
+            // data references across them, and defines the function table that
+            // makes `call_indirect` link; CI executes the resulting modules
+            // under both V8 (Node) and Cranelift (wasmtime). A program that
+            // writes to stdout still needs a WASI host, which keeps this
+            // experimental rather than supported.
             (Arch::Wasm32, Os::Wasi | Os::None) => TargetTier::Tier2Experimental,
             (Arch::Ppc64le, Os::Linux) => TargetTier::Tier2Experimental,
             (Arch::Arm, Os::Linux | Os::Android) => TargetTier::Tier2Experimental,

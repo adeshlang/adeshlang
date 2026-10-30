@@ -55,7 +55,7 @@ These are non-negotiable and apply to each phase's exit criteria.
 | AArch64 / x86-64 macOS | Mach-O emission, dyld bind/rebase, TLV emission, codesign structure | any dyld execution; TLV at runtime; dylib loading |
 | RISC-V 64 | codegen and structural ELF; loud errors | source-level lowering (`ParallelMove`); execution |
 | RISC-V 32 | target declared | codegen refuses RV32; linker uses RV64 `_start` |
-| WASM | compiler backend via Node loader; linker applies relocations, resolves cross-object calls and data, and CI executes its linked clang objects on two engines (Node + wasmtime) | WASI ABI; function tables and indirect calls |
+| WASM | compiler emits `wasi_snapshot_preview1.fd_write` for `-wasi` triples (asserted under wasmtime) and `env.*` + a Node loader otherwise; linker applies relocations, resolves cross-object and indirect calls through a table it defines, and CI executes its linked clang objects on two engines (Node + wasmtime) | linker-side WASI runtime; `proc_exit`/`args_get`/`environ_get`/`clock_time_get`/`random_get` |
 | Embedded ARM | Thumb-2 ALU subset | end-to-end firmware link/execution |
 | GPU / quantum | containers and simulator | ISA generation, launch runtime, language construct |
 
@@ -364,14 +364,24 @@ One working WASM path, with an ABI that matches the target name.
      becomes a call or a segment address instead of a host import — a two-object
      link can import nothing at all. Duplicate strong definitions are `LNK002`,
      a call-site signature that disagrees with the definition is `LNK007`, and an
-     address of data no input defines is `LNK001`. *Remaining:* defined
-     tables/globals/element segments (`LNK017`) and table-, table-address- and
-     type-index relocations (`LNK008`, already at object read), which keep
-     indirect calls out.
-2. **WASI preview1:** implement `fd_write`, `proc_exit`, `args_get`,
-   `environ_get`, `clock_time_get`, and `random_get`; map the current
-   `print_*` imports onto `fd_write`. Emit `env.*` imports only under an
-   explicit non-WASI target.
+     address of data no input defines is `LNK001`. Function pointers now link
+     too: the plan defines one `funcref` table, re-bases every input's element
+     entries into it (slot 0 reserved for a null trap), and binds
+     table-index/table-number/type-index relocations, so `call_indirect` runs
+     hostlessly in V8 and Cranelift — for an indirect call inside one object,
+     function pointers stored in data, and a cross-object callee.
+     *Remaining:* defined tables/globals and non-MVP element segments
+     (`LNK017`); the link emits a single table.
+2. **WASI preview1:** *Done for `fd_write`.* `-wasi` targets emit exactly one
+   import, `wasi_snapshot_preview1.fd_write`, and carry their own write/alloc/
+   print adapters (`src/backends/wasm/wasi.rs`), a `__heap` global and
+   on-demand `memory.grow`; `print_*` go through `fd_write`, and
+   `print(..., { file: ... })` is a loud compile error because Preview 1's
+   `fd_write` cannot open files. `tests/wasm_wasi_compiler_test.rs` builds
+   through the real CLI and executes under wasmtime with asserted stdout;
+   `env.*` imports remain only for explicit non-WASI wasm targets.
+   *Remaining:* `proc_exit`, `args_get`, `environ_get`, `clock_time_get`, and
+   `random_get` (no language construct emits them yet).
 3. **Execution tests:** both engines run in the ubuntu CI job —
    `linker/tests/wasm_hello_world_test.rs` under Node and
    `tests/wasm_wasmtime_execution_test.rs` under wasmtime, sharing the same
@@ -379,17 +389,22 @@ One working WASM path, with an ABI that matches the target name.
    library and provides the `wasi_snapshot_preview1.fd_write` host in-test,
    because wasmtime 33+ dropped WASI preview1 and no runner-installed CLI can
    execute these modules. *Remaining:* assert an exit code (the host currently
-   has no `proc_exit`) and cover table programs as they land. Cross-object
-   programs are covered — a two-object module that imports nothing runs on both
-   engines.
-4. **Target naming:** ensure `wasm32-unknown-wasi` emits WASI imports; if the
-   compiler path cannot, rename the target or document the divergence.
+   has no `proc_exit`). Cross-object programs and table programs are covered — a
+   two-object module that imports nothing, an indirect call, and function
+   pointers stored in data all run on both engines.
+4. **Target naming:** *Done.* `adesh build --target wasm32-*-wasi` emits WASI
+   imports; `--emit=wasm` and `wasm32-unknown-unknown` keep `env.*` plus the
+   generated Node loader. `tests/wasm_wasi_compiler_test.rs` asserts both
+   import surfaces.
 
 ### Exit criteria
-- [ ] `adesh build --target wasm32-unknown-wasi` produces a module that runs
-      in wasmtime with real WASI imports and correct output.
-- [ ] No executable build silently routes through the linker's WASM path while
-      it lacks table/indirect-call support.
+- [x] `adesh build --target wasm32-unknown-wasi` produces a module that runs
+      in wasmtime with real WASI imports and correct output
+      (`tests/wasm_wasi_compiler_test.rs`: one import, `fd_write`, asserted
+      stdout including floats and a heap-allocating struct access).
+- [x] No executable build silently routes through the linker's WASM path while
+      it lacks table/indirect-call support (the linker now links tables and
+      indirect calls; the remaining WASI runtime gap is item 2's remainder).
 - [x] WASM row in `TARGET_MATRIX.md` = execution-verified under Node and
       wasmtime (done — both engines, in the ubuntu CI job).
 
@@ -556,7 +571,7 @@ Stop advertising unfinished targets and lock the release gate.
 | Unwinding requires host libgcc/libunwind ABI details | Phase 19 slips | Start with a single-frame throw, expand to multi-frame; keep `.eh_frame` decoder tests as the invariant |
 | Source ABI design becomes a language debate | Phase 18 slips | Timebox a design review; ship `extern "C"` + variadics first, aggregates second |
 | RV32/RV64 stub is forgotten | Silent wrong output | Phase 11 moves the rejection to target validation; Phase 15 makes the final decision |
-| Table/indirect-call WASM support explodes | Phase 17 slips | Keep the linker path opt-in (`adeshlink --target wasm32-*`); the compiler-direct path stays canonical until the linker clears the gap |
+| WASI Preview 1 runtime diverges from the compiler's ABI | Phase 17 slips | The compiler's `-wasi` path is pinned by an import-surface + stdout test; keep the linker path opt-in (`adeshlink --target wasm32-*`) until it supplies its own WASI host |
 | Documentation drifts again | Loss of credibility | Phase DoD includes doc updates; Phase 21 adds a doc-consistency check |
 
 ---

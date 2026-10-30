@@ -128,6 +128,22 @@ impl WasmWriter {
             emit_section(&mut module, 7, payload);
         }
 
+        if !info.table_entries.is_empty() {
+            let mut payload = Vec::new();
+            encode_u32_leb128(1, &mut payload);
+            // One active segment for table 0, starting at slot 1: slot 0 stays
+            // uninitialised so calling a null function pointer traps.
+            payload.push(0x00);
+            payload.push(0x41);
+            payload.push(0x01);
+            payload.push(0x0B);
+            encode_u32_leb128(info.table_entries.len() as u32, &mut payload);
+            for entry in &info.table_entries {
+                encode_u32_leb128(*entry, &mut payload);
+            }
+            emit_section(&mut module, 9, payload);
+        }
+
         if info.data_count_required {
             let mut payload = Vec::new();
             encode_u32_leb128(info.data_segments.len() as u32, &mut payload);

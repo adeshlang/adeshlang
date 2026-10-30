@@ -29,14 +29,19 @@ GPU/NPU drivers are called anywhere in the toolchain. See
   libraries**: no dyld info / chained fixups / exports trie exists, so
   external symbols cannot bind.
 - **WebAssembly Core 2.0 / WASI Preview 1:** the *compiler backend* emits
-  real, runnable WASM (host imports, data segments, runs via
-  Wasmtime/Node). The *linker* emits modules from clang relocatable objects,
-  applies function/global/data-address relocations, resolves calls and data
-  references across objects, and CI executes its output on two engines
-  (Node/V8 and wasmtime/Cranelift). Two objects that call only each other link
-  to a module with an empty import section, so it runs in a bare engine with no
-  host at all. It does not yet provide WASI Preview 1 host functions or function
-  tables for indirect calls.
+  real, runnable WASM: for `wasm32-*-wasi` targets its only import is
+  `wasi_snapshot_preview1.fd_write` — the write/alloc/print adapters are
+  compiled into the module, with a `__heap` global and on-demand
+  `memory.grow` — and non-WASI targets keep `env.*` imports served by a
+  generated Node loader. Both surfaces are execution-tested. The *linker*
+  emits modules from clang relocatable objects, applies
+  function/global/data-address/table relocations, resolves calls and data
+  references across objects, and defines the function table that makes
+  `call_indirect` link; CI executes its output on two engines (Node/V8 and
+  wasmtime/Cranelift). Two objects that call only each other link to a module
+  with an empty import section, so it runs in a bare engine with no host at
+  all. The linker does not yet provide WASI Preview 1 host functions of its
+  own.
 
 ### 2. MLIR & Polyhedral Dialects
 - **Dialect Support:** MLIR **text** is generated from Adesh IR and

@@ -13,8 +13,8 @@ use crate::section::{Section, SectionKind, flags};
 use crate::symbol::{Symbol, SymbolBinding, SymbolType, SymbolVisibility};
 use crate::target::{Arch, Endianness, ObjectFormat, Os, PointerWidth, Target};
 use crate::wasm::object_info::{
-    WasmDataSegmentInfo, WasmExportKind, WasmFuncType, WasmImportDesc, WasmObjectExport,
-    WasmObjectInfo,
+    WasmDataSegmentInfo, WasmElementSegment, WasmExportKind, WasmFuncType, WasmImportDesc,
+    WasmObjectExport, WasmObjectInfo,
 };
 use crate::wasm::reloc;
 use std::path::Path;
@@ -597,6 +597,83 @@ fn skip_const_expr(data: &[u8], offset: &mut usize) -> LinkResult<()> {
     }
 }
 
+/// Element segment facts: which table offset a segment initializes and which
+/// functions it places there, named by this object's function index space
+/// (imported functions first, then its own bodies).
+///
+/// Only the MVP encoding — flags 0, the active segment for table 0 — is
+/// accepted, which is what clang emits for address-taken functions. Passive,
+/// declarative and typed segments would change how the table is built, so they
+/// are refused rather than approximated.
+fn parse_element_segments(data: &[u8]) -> LinkResult<Vec<WasmElementSegment>> {
+    let mut offset = 0;
+    let count = decode_u32_leb128(data, &mut offset)?;
+    let mut segments = Vec::with_capacity(count as usize);
+
+    for index in 0..count {
+        let flags = decode_u32_leb128(data, &mut offset)?;
+        if flags != 0 {
+            return Err(LinkError::new(
+                ErrorCode::UnsupportedFormat,
+                format!(
+                    "WASM element segment {} uses flags {}, which the linker cannot emit",
+                    index, flags
+                ),
+            )
+            .with_suggestion(
+                "only active segments for table 0 are supported; that is what clang emits for \
+                 address-taken functions",
+            ));
+        }
+        let opcode = read_u8(data, &mut offset)?;
+        if opcode != 0x41 {
+            return Err(LinkError::new(
+                ErrorCode::UnsupportedFormat,
+                format!(
+                    "WASM element segment {} starts at opcode 0x{:02x}, not an `i32.const` table \
+                     offset",
+                    index, opcode
+                ),
+            ));
+        }
+        let table_offset = decode_i64_leb128(data, &mut offset)?;
+        let table_offset = u32::try_from(table_offset)
+            .ok()
+            .filter(|offset| *offset <= i32::MAX as u32)
+            .ok_or_else(|| {
+                LinkError::new(
+                    ErrorCode::InvalidObject,
+                    format!(
+                        "WASM element segment {} places functions at table offset {}, which is not \
+                         a non-negative 32-bit index",
+                        index, table_offset
+                    ),
+                )
+            })?;
+        if read_u8(data, &mut offset)? != 0x0B {
+            return Err(LinkError::new(
+                ErrorCode::InvalidObject,
+                format!(
+                    "WASM element segment {} has no `end` after its table offset",
+                    index
+                ),
+            ));
+        }
+
+        let entries = decode_u32_leb128(data, &mut offset)?;
+        let mut functions = Vec::with_capacity(entries as usize);
+        for _ in 0..entries {
+            functions.push(decode_u32_leb128(data, &mut offset)?);
+        }
+        segments.push(WasmElementSegment {
+            table_offset,
+            functions,
+        });
+    }
+
+    Ok(segments)
+}
+
 /// Export section entries. The indices are object-local and the linker
 /// renumbers them; only the names survive unchanged.
 fn parse_exports(data: &[u8]) -> LinkResult<Vec<WasmObjectExport>> {
@@ -704,8 +781,8 @@ fn parse_relocations(
                 format!("WASM relocation type {} is not implemented", ty),
             )
             .with_suggestion(
-                "Only function/table index, type index, global index and 32-bit memory \
-                 address relocations are supported today.",
+                "supported relocation types are function index, table index, table number, type \
+                 index, global index and 32-bit memory address",
             )
         })?;
         let addend = if reloc::has_addend(ty) {
@@ -868,6 +945,10 @@ impl WasmReader {
             Some(section) => parse_exports(section.data)?,
             None => Vec::new(),
         };
+        let element_segments = match raw.iter().find(|section| section.id == WASM_SEC_ELEMENT) {
+            Some(section) => parse_element_segments(section.data)?,
+            None => Vec::new(),
+        };
         let body_offsets: Vec<u64> = function_ranges.iter().map(|(start, _)| *start).collect();
         let body_ends: Vec<u64> = function_ranges.iter().map(|(_, end)| *end).collect();
 
@@ -955,6 +1036,7 @@ impl WasmReader {
             body_ends,
             data_segments: segment_offsets,
             exports,
+            element_segments,
         });
 
         object.validate()?;

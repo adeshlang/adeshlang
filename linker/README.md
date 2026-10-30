@@ -63,8 +63,9 @@ adeshlink --target x86_64-linux main.o runtime.o -o app
 adeshlink --target x86_64-windows main.obj runtime.lib -o app.exe
 
 # WebAssembly: link clang relocatable objects into a runnable module.
-# Index and data relocations are applied, calls and data references resolve
-# across objects, and the entry becomes an export. CI executes the linked
+# Function, data, table and type relocations are applied, calls and data
+# references resolve across objects, indirect calls dispatch through a table
+# the linker defines, and the entry becomes an export. CI executes the linked
 # modules on two engines (Node/V8 and wasmtime). Objects that reference only
 # each other produce a module with an empty import section, which runs in a
 # bare engine with no host functions at all.

@@ -451,3 +451,77 @@ fn truncated_section_payload_is_rejected() {
     let error = read(&bytes).expect_err("truncated object is rejected");
     assert!(error.message.contains("truncated"), "{}", error.message);
 }
+
+/// A relocatable object that defines one function and places it in the table.
+/// `flags` and `opcode` are parameters so the reader's rejection of anything
+/// but the MVP encoding can be pinned.
+fn object_with_element(flags: u32, opcode: u8) -> Vec<u8> {
+    let mut bytes = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+
+    // type: () -> ()
+    bytes.extend(section(1, &[0x01, 0x60, 0x00, 0x00]));
+    // function: one function, type 0
+    bytes.extend(section(3, &[0x01, 0x00]));
+    // element: one active segment for table 0, `i32.const 1`, one entry
+    let mut element = vec![0x01];
+    element.extend(uleb(flags));
+    element.push(opcode);
+    element.push(0x01);
+    element.push(0x0B);
+    element.extend(uleb(1));
+    element.extend(uleb(0));
+    bytes.extend(section(9, &element));
+    // code: one empty body
+    bytes.extend(section(10, &[0x01, 0x02, 0x00, 0x0B]));
+
+    // linking, symbol table: one defined function `f` at index 0
+    let mut symbols = vec![0x01];
+    symbols.extend([0x00, 0x00, 0x00]);
+    symbols.extend(name("f"));
+    let mut symtab = vec![0x08];
+    symtab.extend(uleb(symbols.len() as u32));
+    symtab.extend(symbols);
+    let mut linking = vec![0x02];
+    linking.extend(symtab);
+    bytes.extend(custom("linking", &linking));
+
+    bytes
+}
+
+#[test]
+fn element_segments_are_kept_with_the_objects_function_indices() {
+    let object = read(&object_with_element(0, 0x41)).expect("hand-built object parses");
+    let info = object.wasm.as_ref().expect("link facts");
+
+    assert_eq!(info.element_segments.len(), 1);
+    assert_eq!(info.element_segments[0].table_offset, 1);
+    assert_eq!(
+        info.element_segments[0].functions,
+        vec![0],
+        "entries use the object's own function index space (imports first)"
+    );
+}
+
+#[test]
+fn non_mvp_element_encodings_are_loud_errors() {
+    // Flags 1 is a passive segment; the linker has nowhere to put it.
+    let passive = read(&object_with_element(1, 0x41)).expect_err("passive segment is refused");
+    assert_eq!(
+        passive.code,
+        adesh_linker::error::ErrorCode::UnsupportedFormat
+    );
+    assert!(passive.message.contains("flags 1"), "{}", passive.message);
+
+    // `global.get` as the offset expression also has no representation here.
+    let global_offset =
+        read(&object_with_element(0, 0x23)).expect_err("non-i32.const offset is refused");
+    assert_eq!(
+        global_offset.code,
+        adesh_linker::error::ErrorCode::UnsupportedFormat
+    );
+    assert!(
+        global_offset.message.contains("0x23"),
+        "{}",
+        global_offset.message
+    );
+}

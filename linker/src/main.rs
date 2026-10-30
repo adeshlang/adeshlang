@@ -127,8 +127,9 @@ TIER 2 — EXPERIMENTAL (Native Codegen & Object Linking Validated):
   * ppc64le-linux       (PowerPC 64-bit Little-Endian ELFv2)
   * armv7-linux-gnueabihf (32-bit ARM Hard-Float ELF)
   * wasm32-wasi         (WebAssembly: modules built from clang objects, relocations
-                         applied, cross-object calls resolved; function tables and
-                         indirect calls fail loudly, LNK008 / LNK017)
+                         applied, cross-object calls and call_indirect resolved
+                         through a linker-defined table; only WASI host functions
+                         are imported)
   * wasm32-none         (WebAssembly: same, and a link whose inputs reference only
                          each other imports nothing)
   * nvptx64-cuda        (NVIDIA CUDA PTX / CUBIN Fatbin)

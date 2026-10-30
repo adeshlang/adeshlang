@@ -320,6 +320,99 @@ fn function_signature(
     })
 }
 
+/// Place every address-taken function into the module's one table.
+///
+/// Each object lays out its own element segment for a table of its own, and an
+/// entry naming a function of another object appears as the object's import
+/// index. The plan re-bases all of them into one numbering — slot 0 stays free
+/// so calling a null function pointer traps — and resolves a cross-object entry
+/// through the name its import declares.
+fn build_table_entries(
+    objects: &[ObjectFile],
+    infos: &[&crate::wasm::object_info::WasmObjectInfo],
+    functions: &[WasmFunctionPlan],
+    definitions: &WasmDefinitions,
+    import_count: usize,
+) -> LinkResult<Vec<u32>> {
+    let mut entries: Vec<u32> = Vec::new();
+
+    for (object_index, (object, info)) in objects.iter().zip(infos).enumerate() {
+        let function_imports: Vec<&WasmImportDesc> = info
+            .imports
+            .iter()
+            .filter(|import| matches!(import, WasmImportDesc::Function { .. }))
+            .collect();
+
+        for segment in &info.element_segments {
+            for &local in &segment.functions {
+                let (definition_object, body_offset) = if (local as usize) < function_imports.len()
+                {
+                    let WasmImportDesc::Function { name, .. } = function_imports[local as usize]
+                    else {
+                        unreachable!("filtered to function imports above");
+                    };
+                    let definition = definitions.functions.get(name.as_str()).ok_or_else(|| {
+                        LinkError::new(
+                            ErrorCode::UndefinedSymbol,
+                            format!(
+                                "WASM object `{}` puts `{}` in the function table, but \
+                                             no input defines it",
+                                object.path.display(),
+                                name
+                            ),
+                        )
+                        .with_suggestion(
+                            "the table can only hold functions the link defines; a \
+                                         host function has no body to place",
+                        )
+                    })?;
+                    (definition.object_index, definition.body_offset)
+                } else {
+                    let body_index = local as usize - function_imports.len();
+                    let body_offset = *info.body_offsets.get(body_index).ok_or_else(|| {
+                        LinkError::new(
+                            ErrorCode::InvalidObject,
+                            format!(
+                                "WASM object `{}` puts function {} in the table, but \
+                                         defines {} bodies and imports {} functions",
+                                object.path.display(),
+                                local,
+                                info.body_offsets.len(),
+                                function_imports.len()
+                            ),
+                        )
+                    })?;
+                    (object_index, body_offset)
+                };
+
+                let index = functions
+                    .iter()
+                    .position(|function| {
+                        function.object_index == definition_object
+                            && function.body_offset == body_offset
+                    })
+                    .map(|position| position as u32 + import_count as u32)
+                    .ok_or_else(|| {
+                        LinkError::new(
+                            ErrorCode::InvalidObject,
+                            format!(
+                                "a function table entry in `{}` names a body the link plan does \
+                                 not contain",
+                                object.path.display()
+                            ),
+                        )
+                    })?;
+
+                if !entries.contains(&index) {
+                    entries.push(index);
+                }
+            }
+        }
+    }
+
+    Ok(entries)
+}
+
 /// Everything the writer and the relocation stage must agree on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WasmLinkInfo {
@@ -335,6 +428,9 @@ pub struct WasmLinkInfo {
     pub exports: Vec<WasmExportPlan>,
     /// Minimum size of the function table. Zero means no table is emitted.
     pub table_min: u32,
+    /// Functions in table-slot order. Slot 0 is left free so a null function
+    /// pointer traps, so entry `i` belongs in slot `i + 1`.
+    pub table_entries: Vec<u32>,
     /// Lowest linear-memory offset holding static data.
     pub data_start: u64,
     /// One past the last static-data byte.
@@ -495,7 +591,11 @@ impl WasmLinkInfo {
         // imports the table, or code that takes a function's address. The
         // latter carries a relocation, which the guard above rejects, so only
         // the import case remains.
-        let table_min = if table_min == 0
+        // A table is defined only when something needs one: an object that
+        // imports the table, or code that takes a function's address. The
+        // latter carries a relocation, which the guard above rejects, so only
+        // the import case remains.
+        let mut table_min = if table_min == 0
             && objects
                 .iter()
                 .any(|object| object.symbols.iter().any(|s| s.name == TABLE_SYMBOL))
@@ -567,6 +667,12 @@ impl WasmLinkInfo {
             }
         }
 
+        let table_entries =
+            build_table_entries(objects, &infos, &functions, &definitions, imports.len())?;
+        if !table_entries.is_empty() {
+            table_min = table_min.max(table_entries.len() as u32 + 1);
+        }
+
         let mut data_segments = Vec::new();
         let mut cursor = DATA_BASE;
         for (object_index, (object, info)) in objects.iter().zip(&infos).enumerate() {
@@ -621,6 +727,7 @@ impl WasmLinkInfo {
             data_segments,
             exports: Vec::new(),
             table_min,
+            table_entries,
             data_start,
             data_end,
             stack_top,
@@ -734,6 +841,38 @@ impl WasmLinkInfo {
         0
     }
 
+    /// Table slot of the body that starts at `body_offset` in `object_index`'s
+    /// code section, or `None` when no input takes its address.
+    pub fn table_slot(&self, object_index: usize, body_offset: u64) -> Option<u32> {
+        self.table_slot_of_function(self.defined_function_index(object_index, body_offset)?)
+    }
+
+    /// Table slot a reference to `name` resolves to. Slot 0 is never assigned:
+    /// it stays a trap for a null function pointer.
+    pub fn table_slot_for_name(&self, name: &str) -> Option<u32> {
+        let definition = self.definitions.functions.get(name)?;
+        self.table_slot(definition.object_index, definition.body_offset)
+    }
+
+    /// Slot holding the function at final index `index`.
+    pub fn table_slot_of_function(&self, index: u32) -> Option<u32> {
+        self.table_entries
+            .iter()
+            .position(|entry| *entry == index)
+            .map(|position| position as u32 + 1)
+    }
+
+    /// Final type index of the function at final index `index`.
+    pub fn function_type_index(&self, index: u32) -> Option<u32> {
+        if let Some(import) = self.imports.get(index as usize) {
+            Some(import.type_index)
+        } else {
+            self.functions
+                .get(index as usize - self.imports.len())
+                .map(|function| function.type_index)
+        }
+    }
+
     /// Final linear-memory address of a data symbol at `section_offset` within
     /// `object_index`'s `.data` section payload.
     pub fn data_address(&self, object_index: usize, section_offset: u64) -> Option<u32> {
@@ -801,7 +940,6 @@ fn reject_unsupported_sections(object: &ObjectFile) -> LinkResult<()> {
     const UNSUPPORTED: &[(&str, &str)] = &[
         (".wasm.global", "defined globals"),
         (".wasm.table", "defined tables"),
-        (".wasm.element", "element segments"),
         (".wasm.start", "start sections"),
     ];
 

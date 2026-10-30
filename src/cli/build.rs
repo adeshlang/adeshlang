@@ -1042,7 +1042,19 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
     }
 
     let compile_result = if is_wasm {
-        crate::backends::wasm::compiler::compile_ast_to_file(linked_ast, &output)
+        // A WASI target gets a real `wasi_snapshot_preview1` import set; every
+        // other wasm target keeps the `env.*` ABI served by the Node loader.
+        let wasm_abi = if config
+            .target
+            .as_ref()
+            .map(|t| t.contains("wasi"))
+            .unwrap_or(false)
+        {
+            crate::backends::wasm::WasmAbi::WasiPreview1
+        } else {
+            crate::backends::wasm::WasmAbi::Env
+        };
+        crate::backends::wasm::compiler::compile_ast_to_file_with_abi(linked_ast, &output, wasm_abi)
             .map_err(|e| e.to_string())
     } else if config.emit == EmitType::Adob
         || config.emit == EmitType::Assembly
@@ -1153,9 +1165,11 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
                 // before this closure runs. Kept as a loud error so a future
                 // caller cannot mistake an ADOB (no `linking` section, no
                 // object-local type/import tables) for a linkable WASM object.
-                Err("Failed to link WebAssembly binary: the ADOB path has no relocatable-WASM \
+                Err(
+                    "Failed to link WebAssembly binary: the ADOB path has no relocatable-WASM \
                      facts (types, imports, body boundaries), so it cannot produce a module"
-                    .to_string())
+                        .to_string(),
+                )
             } else if config.emit == EmitType::Adob || config.emit == EmitType::Object {
                 let adob = if config.lto {
                     emit_adob_via_driver(&module)?

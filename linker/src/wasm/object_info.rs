@@ -101,6 +101,14 @@ pub struct WasmObjectExport {
     pub index: u32,
 }
 
+/// One active element segment: functions placed into the table from `offset`
+/// on, named by this object's function index space (imports first).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WasmElementSegment {
+    pub table_offset: u32,
+    pub functions: Vec<u32>,
+}
+
 /// What a relocatable object declares, beyond its raw section bytes.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WasmObjectInfo {
@@ -119,6 +127,8 @@ pub struct WasmObjectInfo {
     pub data_segments: Vec<WasmDataSegmentInfo>,
     /// Export section entries, in section order.
     pub exports: Vec<WasmObjectExport>,
+    /// Active element segments, in section order.
+    pub element_segments: Vec<WasmElementSegment>,
 }
 
 impl WasmObjectInfo {

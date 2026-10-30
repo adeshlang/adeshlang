@@ -8,7 +8,9 @@
 //! preview1, so no shipped wasmtime provides it; the module under test only
 //! needs it, and the handler reads the real iovec out of the module's exported
 //! memory. The hostless tests need nothing at all, which is what a two-object
-//! link is expected to produce.
+//! link is expected to produce — including the ones that call through the
+//! function table, since the linker defines the table and its element segment
+//! rather than importing them.
 
 use std::path::Path;
 
@@ -19,9 +21,10 @@ use wasmtime::{Caller, Engine, Extern, Instance, Linker, Memory, Module, Store};
 mod fixtures;
 
 use fixtures::{
-    DATA_OWNER_OBJECT_HEX, DATA_USER_OBJECT_HEX, EXPORTED_OBJECT_HEX, PLAIN_OBJECT_HEX,
-    PURE_CALLEE_OBJECT_HEX, PURE_CALLER_OBJECT_HEX, WASI_ENTRY_OBJECT_HEX, WASI_GREET_OBJECT_HEX,
-    link_object, link_objects,
+    DATA_OWNER_OBJECT_HEX, DATA_USER_OBJECT_HEX, EXPORTED_OBJECT_HEX, INDIRECT_CALL_OBJECT_HEX,
+    PLAIN_OBJECT_HEX, PURE_CALLEE_OBJECT_HEX, PURE_CALLER_OBJECT_HEX, TABLE_CALLEE_OBJECT_HEX,
+    TABLE_CALLER_OBJECT_HEX, WASI_ENTRY_OBJECT_HEX, WASI_GREET_OBJECT_HEX, link_object,
+    link_objects,
 };
 
 /// Linear-memory file descriptor stdout is written to.
@@ -186,6 +189,59 @@ fn a_self_contained_module_runs_under_wasmtime_with_no_host() {
         values
     });
     assert_eq!(observed, [62, 7, -5, 2001]);
+}
+
+/// An object that takes two of its own functions' addresses: the linker has to
+/// define the table and element segment, so nothing is imported.
+#[test]
+fn an_indirect_call_runs_under_wasmtime() {
+    let dir = tempdir().expect("temp dir");
+    let module = link_object(dir.path(), "indirect", INDIRECT_CALL_OBJECT_HEX);
+
+    let observed = with_hostless_module(&module, |store, instance| {
+        let apply = instance
+            .get_typed_func::<(i32, i32), i32>(&mut *store, "apply")
+            .expect("the linker exported `apply`");
+        [(0, 7), (1, 3), (0, -4), (1, 10)]
+            .into_iter()
+            .map(|(which, value)| {
+                apply
+                    .call(&mut *store, (which, value))
+                    .expect("`apply` runs to completion")
+            })
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(observed, [49, 27, 16, 1000]);
+}
+
+/// The table entry names a function in the other object, so this pins the
+/// name-based resolution through the element segment as well.
+#[test]
+fn a_cross_object_indirect_call_runs_under_wasmtime() {
+    let dir = tempdir().expect("temp dir");
+    let module = link_objects(
+        dir.path(),
+        "table",
+        &[
+            ("caller", TABLE_CALLER_OBJECT_HEX),
+            ("fns", TABLE_CALLEE_OBJECT_HEX),
+        ],
+    );
+
+    let observed = with_hostless_module(&module, |store, instance| {
+        let apply = instance
+            .get_typed_func::<(i32, i32), i32>(&mut *store, "apply")
+            .expect("the linker exported `apply`");
+        [(0, 9), (1, 2), (1, 5)]
+            .into_iter()
+            .map(|(which, value)| {
+                apply
+                    .call(&mut *store, (which, value))
+                    .expect("`apply` runs to completion")
+            })
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(observed, [81, 8, 125]);
 }
 
 #[test]

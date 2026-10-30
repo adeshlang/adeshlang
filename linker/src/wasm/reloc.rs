@@ -39,18 +39,21 @@ pub const R_WASM_MEMORY_ADDR_LOCREL_I32: u8 = 23;
 ///
 /// Each type maps onto a kind that preserves its on-disk encoding: LEB types
 /// patch a padded LEB128 placeholder, while `I32` types patch a fixed 32-bit
-/// word. Table-index types are *not* function indices — a table slot only
-/// exists relative to an element segment, which this linker does not emit — so
-/// they are unimplemented rather than approximated.
+/// word. Table-index types are *not* function indices: they name a slot in the
+/// output element segment, which the plan assigns once every input's
+/// address-taken functions are known.
 pub fn relocation_kind(ty: u8) -> Option<RelocationKind> {
     match ty {
         R_WASM_FUNCTION_INDEX_LEB => Some(RelocationKind::WasmFunctionIndex),
+        R_WASM_TABLE_INDEX_SLEB => Some(RelocationKind::WasmTableIndexSleb),
+        R_WASM_TABLE_INDEX_I32 => Some(RelocationKind::WasmTableIndexI32),
         R_WASM_MEMORY_ADDR_LEB => Some(RelocationKind::WasmMemoryOffset32),
         R_WASM_MEMORY_ADDR_SLEB => Some(RelocationKind::WasmMemoryOffsetSleb),
         R_WASM_MEMORY_ADDR_I32 => Some(RelocationKind::WasmMemoryOffsetI32),
         R_WASM_TYPE_INDEX_LEB => Some(RelocationKind::WasmTypeIndex),
         R_WASM_GLOBAL_INDEX_LEB => Some(RelocationKind::WasmGlobalIndex),
         R_WASM_GLOBAL_INDEX_I32 => Some(RelocationKind::WasmGlobalIndexI32),
+        R_WASM_TABLE_NUMBER_LEB => Some(RelocationKind::WasmTableNumber),
         _ => None,
     }
 }

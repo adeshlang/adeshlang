@@ -15,7 +15,7 @@ use crate::object::ObjectFile;
 use crate::relocation::{Relocation, RelocationKind};
 use crate::section::SectionKind;
 use crate::symbol::Symbol;
-use crate::wasm::link_info::{STACK_POINTER_SYMBOL, WasmLinkInfo};
+use crate::wasm::link_info::{STACK_POINTER_SYMBOL, TABLE_SYMBOL, WasmLinkInfo};
 use crate::wasm::object_info::{WasmImportDesc, WasmObjectInfo};
 use std::path::Path;
 
@@ -175,17 +175,66 @@ fn resolve_value(
                 )
             })
         }
-        RelocationKind::WasmTypeIndex => Err(LinkError::new(
-            ErrorCode::UnsupportedRelocation,
-            format!(
-                "WASM relocation in `{}` references a type index, which this linker does not \
-                 renumber",
-                path.display()
-            ),
-        )
-        .with_suggestion(
-            "indirect calls whose signature table must be rewritten are not supported yet",
-        )),
+        RelocationKind::WasmTypeIndex => {
+            // `call_indirect`'s type immediate must be the signature of the
+            // function the relocation names; the plan interned that signature
+            // when it emitted the body or the import.
+            let function =
+                resolve_function_index(object_index, path, facts, info, relocation, symbol)?;
+            info.function_type_index(function as u32)
+                .map(|index| index as u64)
+                .ok_or_else(|| {
+                    LinkError::new(
+                        ErrorCode::InvalidObject,
+                        format!(
+                            "WASM type-index relocation in `{}` names function `{}`, which the \
+                             link plan does not define or import",
+                            path.display(),
+                            symbol.name
+                        ),
+                    )
+                })
+        }
+        RelocationKind::WasmTableIndexSleb | RelocationKind::WasmTableIndexI32 => {
+            // A table-index value is a slot in the output element segment, not
+            // a function index: the two numbering spaces are independent.
+            let slot = if symbol.is_defined {
+                info.table_slot(object_index, symbol.value)
+            } else {
+                info.table_slot_for_name(&symbol.name)
+            };
+            slot.map(|slot| slot as u64).ok_or_else(|| {
+                LinkError::new(
+                    ErrorCode::UndefinedSymbol,
+                    format!(
+                        "WASM object `{}` takes the address of `{}`, but no input places it in \
+                         the function table",
+                        path.display(),
+                        symbol.name
+                    ),
+                )
+                .with_suggestion(
+                    "a function whose address is taken must appear in an element segment; a \
+                     function that is only called directly has no table slot",
+                )
+            })
+        }
+        RelocationKind::WasmTableNumber => {
+            if symbol.name != TABLE_SYMBOL {
+                return Err(LinkError::new(
+                    ErrorCode::UnsupportedRelocation,
+                    format!(
+                        "WASM object `{}` names table `{}`, but the linker emits a single table, \
+                         `{}`",
+                        path.display(),
+                        symbol.name,
+                        TABLE_SYMBOL
+                    ),
+                ));
+            }
+            // The module defines one table, and it is index 0.
+            Ok(0)
+        }
         _ => Err(LinkError::new(
             ErrorCode::UnsupportedRelocation,
             format!(
@@ -287,7 +336,9 @@ fn resolve_function_index(
 fn patch(data: &mut [u8], relocation: &Relocation, value: u64) -> LinkResult<()> {
     let offset = relocation.offset as usize;
     match relocation.kind {
-        RelocationKind::WasmGlobalIndexI32 | RelocationKind::WasmMemoryOffsetI32 => {
+        RelocationKind::WasmGlobalIndexI32
+        | RelocationKind::WasmMemoryOffsetI32
+        | RelocationKind::WasmTableIndexI32 => {
             let len = data.len();
             let field = data
                 .get_mut(offset..offset + 4)
@@ -296,7 +347,7 @@ fn patch(data: &mut [u8], relocation: &Relocation, value: u64) -> LinkResult<()>
             field.copy_from_slice(&value.to_le_bytes());
             Ok(())
         }
-        RelocationKind::WasmMemoryOffsetSleb => {
+        RelocationKind::WasmMemoryOffsetSleb | RelocationKind::WasmTableIndexSleb => {
             let width = leb_width(data, offset)?;
             let encoded =
                 encode_sleb(value as i64, width).ok_or_else(|| field_overflow(value, width))?;

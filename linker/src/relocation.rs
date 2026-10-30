@@ -93,6 +93,13 @@ pub enum RelocationKind {
     WasmMemoryOffsetSleb,
     /// `R_WASM_MEMORY_ADDR_I32`: a linear-memory address as a fixed `i32`.
     WasmMemoryOffsetI32,
+    /// `R_WASM_TABLE_INDEX_SLEB`: a slot in the function table as a signed LEB.
+    WasmTableIndexSleb,
+    /// `R_WASM_TABLE_INDEX_I32`: a slot in the function table as a fixed `i32`.
+    WasmTableIndexI32,
+    /// `R_WASM_TABLE_NUMBER_LEB`: the index of the function table itself, as
+    /// `call_indirect` and `table.get` name it.
+    WasmTableNumber,
 }
 
 impl RelocationKind {
@@ -127,6 +134,9 @@ impl RelocationKind {
             | RelocationKind::WasmMemoryOffset32
             | RelocationKind::WasmMemoryOffsetSleb
             | RelocationKind::WasmMemoryOffsetI32
+            | RelocationKind::WasmTableIndexSleb
+            | RelocationKind::WasmTableIndexI32
+            | RelocationKind::WasmTableNumber
             | RelocationKind::TlsGeneralDynamic
             | RelocationKind::TlsInitialExec
             | RelocationKind::TlsLocalExec
@@ -175,6 +185,9 @@ impl RelocationKind {
             RelocationKind::WasmMemoryOffset32 => "WASM_MEMORY_ADDR",
             RelocationKind::WasmMemoryOffsetSleb => "WASM_MEMORY_ADDR_SLEB",
             RelocationKind::WasmMemoryOffsetI32 => "WASM_MEMORY_ADDR_I32",
+            RelocationKind::WasmTableIndexSleb => "WASM_TABLE_INDEX_SLEB",
+            RelocationKind::WasmTableIndexI32 => "WASM_TABLE_INDEX_I32",
+            RelocationKind::WasmTableNumber => "WASM_TABLE_NUMBER",
         }
     }
 }
@@ -661,7 +674,10 @@ impl RelocationHandler for DefaultRelocationHandler {
             | RelocationKind::WasmGlobalIndexI32
             | RelocationKind::WasmMemoryOffset32
             | RelocationKind::WasmMemoryOffsetSleb
-            | RelocationKind::WasmMemoryOffsetI32 => {
+            | RelocationKind::WasmMemoryOffsetI32
+            | RelocationKind::WasmTableIndexSleb
+            | RelocationKind::WasmTableIndexI32
+            | RelocationKind::WasmTableNumber => {
                 // WASM fields are padded LEB128 placeholders or fixed i32s in
                 // section payloads, and their values are index-space numbers,
                 // not virtual addresses. The generic layout engine has neither

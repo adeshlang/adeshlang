@@ -32,9 +32,15 @@ is ever called. See `CURRENT_STATE.md` (canonical) for details.
   layouts. **Not functional for programs that link system libraries**: no
   dyld info / chained fixups / exports trie exists, so external symbols
   cannot bind.
-- **WebAssembly Core 2.0 / WASI Preview 1:** the *linker's* WASM writer is a
-  single-function stub. Real, runnable WASM comes from the compiler
-  backend (`src/backends/wasm`), not from `adeshlink`.
+- **WebAssembly Core 2.0 / WASI Preview 1:** the *linker's* WASM writer emits
+  type/import/function/table/memory/global/export/element/data/code sections
+  from a link plan built out of clang objects, applies `R_WASM_*`
+  relocations, resolves cross-object calls, data and indirect calls through a
+  table it defines, and CI executes its output on two engines with asserted
+  stdout. The *compiler* backend is what `adesh build --target wasm32-*` uses:
+  it emits `wasi_snapshot_preview1.fd_write` for `-wasi` triples (executed
+  under wasmtime by `tests/wasm_wasi_compiler_test.rs`) and `env.*` imports
+  plus a generated Node loader for other wasm targets.
 
 ## 2. MLIR & Polyhedral Dialect Layer
 

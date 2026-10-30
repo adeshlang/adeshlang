@@ -102,9 +102,9 @@ fn test_target_maturity_tier_classification() {
 
     // Tier 2 Targets
     // The linker emits and relocates real clang objects, resolves cross-object
-    // calls, and CI executes the modules on two engines (V8 through Node,
-    // Cranelift through wasmtime). Function tables and indirect calls are still
-    // refused, so not Tier 1.
+    // calls and indirect calls through a table it defines, and CI executes the
+    // modules on two engines (V8 through Node, Cranelift through wasmtime). A
+    // program that writes to stdout still needs a WASI host, so not Tier 1.
     let wasm_wasi = Target::from_triple("wasm32-wasi").unwrap();
     assert_eq!(wasm_wasi.tier(), TargetTier::Tier2Experimental);
 

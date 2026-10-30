@@ -271,6 +271,7 @@ fn writer_emits_host_imports_and_shifts_function_indices() {
         body_ends: vec![2],
         data_segments: Vec::new(),
         exports: Vec::new(),
+        element_segments: Vec::new(),
     });
     let mut start = Symbol::new_defined(
         "_start",

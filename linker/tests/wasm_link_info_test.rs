@@ -14,7 +14,7 @@ use adesh_linker::wasm::link_info::{
     WasmLinkInfo,
 };
 use adesh_linker::wasm::object_info::{
-    WasmDataSegmentInfo, WasmFuncType, WasmImportDesc, WasmObjectInfo,
+    WasmDataSegmentInfo, WasmElementSegment, WasmFuncType, WasmImportDesc, WasmObjectInfo,
 };
 use std::path::PathBuf;
 
@@ -218,6 +218,19 @@ impl ObjectBuilder {
         self
     }
 
+    fn add_element_segment(&mut self, functions: &[u32]) -> &mut Self {
+        self.object
+            .wasm
+            .as_mut()
+            .expect("wasm info")
+            .element_segments
+            .push(WasmElementSegment {
+                table_offset: 1,
+                functions: functions.to_vec(),
+            });
+        self
+    }
+
     fn add_section(&mut self, section: Section) -> &mut Self {
         self.object.add_section(section);
         self
@@ -360,6 +373,58 @@ fn a_cross_object_reference_becomes_a_call_not_a_host_import() {
         info.functions[1].linkable, true,
         "the name is what the other object binds to"
     );
+}
+
+#[test]
+fn address_taken_functions_fill_the_table_from_slot_one() {
+    let mut builder = ObjectBuilder::new(0);
+    builder.add_function(Some("sq"), &i32_to_i32(), &body_i32(1));
+    builder.add_function(Some("cu"), &i32_to_i32(), &body_i32(2));
+    builder.add_element_segment(&[1, 0]);
+
+    let info = WasmLinkInfo::build(&[builder.finish()], None, &[], false).expect("plan builds");
+
+    assert_eq!(
+        info.table_entries,
+        vec![1, 0],
+        "element order is table-slot order, and the entries are final function indices"
+    );
+    assert_eq!(info.table_min, 3, "slot 0 stays free for a null pointer");
+    assert_eq!(info.table_slot_for_name("cu"), Some(1));
+    assert_eq!(info.table_slot_for_name("sq"), Some(2));
+    assert_eq!(info.table_slot_of_function(0), Some(2));
+}
+
+#[test]
+fn a_table_entry_naming_a_host_function_is_undefined() {
+    let mut builder = ObjectBuilder::new(0);
+    builder.add_import("wasi_snapshot_preview1", "fd_write", &i32_to_i32());
+    builder.add_function(Some("main"), &unit_to_i32(), &body_i32(1));
+    builder.add_element_segment(&[0]);
+
+    let error = WasmLinkInfo::build(&[builder.finish()], None, &[], false)
+        .expect_err("a host function has no body to put in the table");
+
+    assert_eq!(error.code, ErrorCode::UndefinedSymbol);
+    assert!(error.message.contains("fd_write"), "{}", error.message);
+}
+
+#[test]
+fn a_cross_object_table_entry_binds_to_the_definition() {
+    let mut caller = ObjectBuilder::new(0);
+    caller.add_function(Some("apply"), &unit_to_i32(), &body_i32(1));
+    caller.add_import("env", "sq", &i32_to_i32());
+    caller.add_element_segment(&[0]);
+    let mut callee = ObjectBuilder::new(1);
+    callee.add_function(Some("sq"), &i32_to_i32(), &body_i32(2));
+
+    let info = WasmLinkInfo::build(&[caller.finish(), callee.finish()], None, &[], false)
+        .expect("the entry names a definition, so the table can hold it");
+
+    assert!(info.imports.is_empty(), "`env.sq` resolves inside the link");
+    let sq = info.function_index("sq").expect("`sq` is defined");
+    assert_eq!(info.table_entries, vec![sq]);
+    assert_eq!(info.table_slot_for_name("sq"), Some(1));
 }
 
 #[test]
