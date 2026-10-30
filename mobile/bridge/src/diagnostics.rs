@@ -85,13 +85,12 @@ pub fn parse_diagnostic_from_error(error_msg: &str) -> Diagnostic {
         }
     } else if lower.contains(':') {
         let parts: Vec<&str> = lower.split(':').collect();
-        if parts.len() >= 3 {
-            if let Ok(l) = parts[1].trim().parse::<usize>() {
-                if let Ok(c) = parts[2].trim().parse::<usize>() {
-                    line = l;
-                    column = c;
-                }
-            }
+        if parts.len() >= 3
+            && let Ok(l) = parts[1].trim().parse::<usize>()
+            && let Ok(c) = parts[2].trim().parse::<usize>()
+        {
+            line = l;
+            column = c;
         }
     }
 

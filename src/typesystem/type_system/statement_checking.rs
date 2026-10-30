@@ -490,12 +490,22 @@ pub(crate) fn check_stmt_types_collecting(
                                 let mut field_range_err: Option<String> = None;
                                 if let Ty::Record { required, optional } = d {
                                     if let ExprKind::Object(kv) = &e.kind {
-                                        for (req_name, req_ty) in required.iter().chain(optional.iter()) {
-                                            if let Some((_, field_expr)) = kv.iter().find(|(k, _)| k == req_name) {
-                                                if let Some(false) = literal_numeric_fits_expected(field_expr, req_ty) {
+                                        for (req_name, req_ty) in
+                                            required.iter().chain(optional.iter())
+                                        {
+                                            if let Some((_, field_expr)) =
+                                                kv.iter().find(|(k, _)| k == req_name)
+                                            {
+                                                if let Some(false) = literal_numeric_fits_expected(
+                                                    field_expr, req_ty,
+                                                ) {
                                                     let val_str = match &field_expr.kind {
-                                                        ExprKind::Literal(Value::Number(n)) => format!("{}", n),
-                                                        ExprKind::Literal(Value::BigInt(bi)) => format!("{}", bi),
+                                                        ExprKind::Literal(Value::Number(n)) => {
+                                                            format!("{}", n)
+                                                        }
+                                                        ExprKind::Literal(Value::BigInt(bi)) => {
+                                                            format!("{}", bi)
+                                                        }
                                                         _ => "value".to_string(),
                                                     };
                                                     field_range_err = Some(format!(

@@ -148,9 +148,8 @@ use super::interpreter::{
     arc_manager, coerce_and_apply_defaults, coerce_to_fixed_width, create_user_class,
     create_user_fn, err, err_styled_type, err_with_span, find_method_in_class_chain,
     find_method_with_visibility, format_input_type_error, get_prop, in_unsafe_context,
-    infer_numeric_type, is_copy_value,
-    is_field_accessible, is_method_accessible, new_instance, select_best_overload, set_prop,
-    sizeof_value, value_type_name, wrap_foreign_function,
+    infer_numeric_type, is_copy_value, is_field_accessible, is_method_accessible, new_instance,
+    select_best_overload, set_prop, sizeof_value, value_type_name, wrap_foreign_function,
 };
 
 // Import utility functions from interpreter_impl modules
@@ -6188,10 +6187,7 @@ impl Interpreter {
                                 );
                                 let help = "ensure the value's type matches the annotation; use an explicit conversion if needed";
                                 return Err(RunErr::Msg(err_styled_type(
-                                    &msg,
-                                    &s.span,
-                                    module_id,
-                                    help,
+                                    &msg, &s.span, module_id, help,
                                 )));
                             }
                         }
@@ -6227,7 +6223,7 @@ impl Interpreter {
                             );
                             let help = "ensure the value's type matches the annotation; use an explicit conversion if needed";
                             return Err(RunErr::Msg(err_styled_type(
-                                &msg, &s.span, module_id, help
+                                &msg, &s.span, module_id, help,
                             )));
                         }
                     }
@@ -6644,7 +6640,9 @@ impl Interpreter {
                             ),
                             None => format!(
                                 "annotated variable '{}' expected {}, found {}",
-                                name, ann, fmt(&v)
+                                name,
+                                ann,
+                                fmt(&v)
                             ),
                         };
                         // Pick the most precise source location for the failure:
@@ -12155,7 +12153,9 @@ impl Interpreter {
                             return Err(err_with_span("index out of bounds", &e.span));
                         }
                         let i = n as usize;
-                        a.get(i).cloned().ok_or_else(|| err_with_span("index out of bounds", &e.span))
+                        a.get(i)
+                            .cloned()
+                            .ok_or_else(|| err_with_span("index out of bounds", &e.span))
                     }
                     Value::DynArray(da) => {
                         let mut n = num(iv)?;
@@ -12186,7 +12186,9 @@ impl Interpreter {
                             return Err(err_with_span("index out of bounds", &e.span));
                         }
                         let i = n as usize;
-                        a.get(i).cloned().ok_or_else(|| err_with_span("index out of bounds", &e.span))
+                        a.get(i)
+                            .cloned()
+                            .ok_or_else(|| err_with_span("index out of bounds", &e.span))
                     }
                     Value::Tuple(t) => {
                         let mut n = num(iv)?;
@@ -12200,7 +12202,9 @@ impl Interpreter {
                             return Err(err_with_span("index out of bounds", &e.span));
                         }
                         let i = n as usize;
-                        t.get(i).cloned().ok_or_else(|| err_with_span("index out of bounds", &e.span))
+                        t.get(i)
+                            .cloned()
+                            .ok_or_else(|| err_with_span("index out of bounds", &e.span))
                     }
                     Value::Str(s) => {
                         let mut n = crate::execution::runtime::ops::num(iv)?;
@@ -13652,7 +13656,10 @@ impl Interpreter {
                                             }
                                             let i = n as usize;
                                             if i >= out.len() {
-                                                return Err(err_with_span("index out of bounds", &e.span));
+                                                return Err(err_with_span(
+                                                    "index out of bounds",
+                                                    &e.span,
+                                                ));
                                             }
                                             i
                                         }
@@ -19479,7 +19486,9 @@ impl ExecLegacy {
                             ),
                             None => format!(
                                 "annotated variable '{}' expected {}, found {}",
-                                name, ann_str, fmt(&val)
+                                name,
+                                ann_str,
+                                fmt(&val)
                             ),
                         };
                         return Err(err(msg));
@@ -20389,7 +20398,9 @@ impl ExecLegacy {
                             return Err(err_with_span("index out of bounds", &e.span));
                         }
                         let i = n as usize;
-                        a.get(i).cloned().ok_or_else(|| err_with_span("index out of bounds", &e.span))
+                        a.get(i)
+                            .cloned()
+                            .ok_or_else(|| err_with_span("index out of bounds", &e.span))
                     }
                     Value::DynArray(da) => {
                         let mut n = crate::execution::runtime::ops::num(iv)?;
@@ -20420,7 +20431,9 @@ impl ExecLegacy {
                             return Err(err_with_span("index out of bounds", &e.span));
                         }
                         let i = n as usize;
-                        a.get(i).cloned().ok_or_else(|| err_with_span("index out of bounds", &e.span))
+                        a.get(i)
+                            .cloned()
+                            .ok_or_else(|| err_with_span("index out of bounds", &e.span))
                     }
                     Value::Tuple(t) => {
                         let mut n = crate::execution::runtime::ops::num(iv)?;
@@ -20434,7 +20447,9 @@ impl ExecLegacy {
                             return Err(err_with_span("index out of bounds", &e.span));
                         }
                         let i = n as usize;
-                        t.get(i).cloned().ok_or_else(|| err_with_span("index out of bounds", &e.span))
+                        t.get(i)
+                            .cloned()
+                            .ok_or_else(|| err_with_span("index out of bounds", &e.span))
                     }
                     Value::Str(s) => {
                         let mut n = crate::execution::runtime::ops::num(iv)?;

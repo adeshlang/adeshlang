@@ -239,8 +239,7 @@ static REGISTRY: Lazy<ObjectRegistry> = Lazy::new(|| {
         values: RwLock::new(HashMap::new()),
         free_list: Mutex::new(Vec::new()),
     });
-    let chunk_ptrs =
-        std::array::from_fn(|_| AtomicPtr::new(std::ptr::null_mut()));
+    let chunk_ptrs = std::array::from_fn(|_| AtomicPtr::new(std::ptr::null_mut()));
     // Pre-allocate the first chunk so the common case never needs the write lock.
     let initial_chunk = Chunk::new();
     let initial_ptr = &*initial_chunk as *const Chunk as *mut Chunk;

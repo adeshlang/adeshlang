@@ -209,14 +209,14 @@ impl FormatSpec {
         let type_spec: String = chars[idx..].iter().collect();
 
         let mut final_type_spec = type_spec.clone();
-        if let Some(paren_start) = type_spec.find('(') {
-            if let Some(paren_end) = type_spec[paren_start + 1..].find(')') {
-                let inner = &type_spec[paren_start + 1..paren_start + 1 + paren_end];
-                if inner.chars().all(|c| c.is_ascii_digit()) && !inner.is_empty() {
-                    let prec: usize = inner.parse().unwrap();
-                    precision = Some(prec);
-                    final_type_spec = type_spec[..paren_start].to_string();
-                }
+        if let Some(paren_start) = type_spec.find('(')
+            && let Some(paren_end) = type_spec[paren_start + 1..].find(')')
+        {
+            let inner = &type_spec[paren_start + 1..paren_start + 1 + paren_end];
+            if inner.chars().all(|c| c.is_ascii_digit()) && !inner.is_empty() {
+                let prec: usize = inner.parse().unwrap();
+                precision = Some(prec);
+                final_type_spec = type_spec[..paren_start].to_string();
             }
         }
 
@@ -361,11 +361,11 @@ impl FormatValue {
         // format as float or grouped integer as appropriate.
         match ts {
             "" | "s" => {
-                if spec.precision.is_some() || spec.grouping != '\0' {
-                    if let Some(f) = self.to_f64() {
-                        let p = spec.precision.unwrap_or(2);
-                        return Ok(format_float(f, p, spec));
-                    }
+                if (spec.precision.is_some() || spec.grouping != '\0')
+                    && let Some(f) = self.to_f64()
+                {
+                    let p = spec.precision.unwrap_or(2);
+                    return Ok(format_float(f, p, spec));
                 }
                 Ok(self.default_string())
             }
@@ -451,18 +451,15 @@ impl FormatValue {
                 let mut spec_with_sep = spec.clone();
                 spec_with_sep.grouping = sep;
 
-                if let Some(n) = self.to_i128() {
-                    if spec.precision.is_none()
-                        && match self {
-                            FormatValue::Int(_) | FormatValue::UInt(_) | FormatValue::BigInt(_) => {
-                                true
-                            }
-                            FormatValue::Number(f) => f.fract() == 0.0,
-                            _ => false,
-                        }
-                    {
-                        return Ok(format_int(n, &spec_with_sep));
+                if let Some(n) = self.to_i128()
+                    && spec.precision.is_none()
+                    && match self {
+                        FormatValue::Int(_) | FormatValue::UInt(_) | FormatValue::BigInt(_) => true,
+                        FormatValue::Number(f) => f.fract() == 0.0,
+                        _ => false,
                     }
+                {
+                    return Ok(format_int(n, &spec_with_sep));
                 }
 
                 let f = self.to_f64().ok_or_else(|| {
@@ -578,7 +575,7 @@ fn format_int_digits(n: u128, grouping: char) -> String {
     let mut result = String::new();
     let len = digits.len();
     for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (len - i) % 3 == 0 {
+        if i > 0 && (len - i).is_multiple_of(3) {
             result.push(grouping);
         }
         result.push(c);
@@ -766,7 +763,7 @@ fn format_json(v: &FormatValue) -> String {
         FormatValue::BigInt(bi) => bi.to_string(),
         FormatValue::UInt(u) => u.to_string(),
         FormatValue::Array(items) => {
-            let parts: Vec<String> = items.iter().map(|v| format_json(v)).collect();
+            let parts: Vec<String> = items.iter().map(format_json).collect();
             format!("[{}]", parts.join(", "))
         }
         FormatValue::Object(entries) => {
@@ -783,7 +780,7 @@ fn format_json(v: &FormatValue) -> String {
             format!("{{{}}}", parts.join(", "))
         }
         FormatValue::Tuple(items) => {
-            let parts: Vec<String> = items.iter().map(|v| format_json(v)).collect();
+            let parts: Vec<String> = items.iter().map(format_json).collect();
             format!("({})", parts.join(", "))
         }
         FormatValue::Char(c) => serde_json::to_string(&JsonValue::String(c.to_string()))
@@ -806,7 +803,7 @@ fn format_debug(v: &FormatValue) -> String {
         FormatValue::UInt(u) => format!("{u:?}"),
         FormatValue::BigInt(bi) => format!("{bi:?}"),
         FormatValue::Array(items) => {
-            let parts: Vec<String> = items.iter().map(|v| format_debug(v)).collect();
+            let parts: Vec<String> = items.iter().map(format_debug).collect();
             format!("[{}]", parts.join(", "))
         }
         FormatValue::Object(entries) => {
@@ -817,7 +814,7 @@ fn format_debug(v: &FormatValue) -> String {
             format!("{{{}}}", parts.join(", "))
         }
         FormatValue::Tuple(items) => {
-            let parts: Vec<String> = items.iter().map(|v| format_debug(v)).collect();
+            let parts: Vec<String> = items.iter().map(format_debug).collect();
             format!("({})", parts.join(", "))
         }
         FormatValue::Other(s) => format!("{s:?}"),
@@ -993,7 +990,7 @@ mod tests {
 
     #[test]
     fn format_float() {
-        let v = FormatValue::Number(3.14159);
+        let v = FormatValue::Number(std::f64::consts::PI);
         let spec = FormatSpec::parse("float(2)").unwrap();
         assert_eq!(v.render(&spec).unwrap(), "3.14");
     }

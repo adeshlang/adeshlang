@@ -14,8 +14,8 @@ use crate::utils::memory::OwnershipTracker;
 use super::core::Exec;
 use crate::execution::runtime_core::flow::ExecFlow;
 use crate::execution::runtime_core::format::fmt;
-use crate::execution::runtime_core::ops::{equals, num};
 use crate::execution::runtime_core::interpreter_impl::type_helpers;
+use crate::execution::runtime_core::ops::{equals, num};
 use crate::execution::runtime_core::{
     ann_matches_value, call_user, call_user_with_this, coerce_to_fixed_width, err,
 };
@@ -61,9 +61,7 @@ fn resolve_alias_name_for_object(
     while let Some(id) = c {
         if let Some(val) = envs[id].values.get(alias_name) {
             if let Value::Object(map) = val {
-                if map.get("__type_alias__").is_some()
-                    && map.get("__alias_target__").is_none()
-                {
+                if map.get("__type_alias__").is_some() && map.get("__alias_target__").is_none() {
                     return Some(alias_name.to_string());
                 }
             }
@@ -352,7 +350,9 @@ impl Exec {
                             ),
                             None => format!(
                                 "annotated variable '{}' expected {}, found {}",
-                                name, ann_str, fmt(&val)
+                                name,
+                                ann_str,
+                                fmt(&val)
                             ),
                         };
                         return Err(err(msg));
@@ -361,9 +361,12 @@ impl Exec {
                     // Tag object values with their named type alias so `typeof` reports
                     // the alias name (e.g. "Service") instead of the generic "object".
                     if let Value::Object(obj_map) = &val {
-                        if let Some(alias_name) =
-                            resolve_alias_name_for_object(ann_str, &self.envs, 0, Some(self.current))
-                        {
+                        if let Some(alias_name) = resolve_alias_name_for_object(
+                            ann_str,
+                            &self.envs,
+                            0,
+                            Some(self.current),
+                        ) {
                             if obj_map.get("__type__").is_none() {
                                 let mut mut_map = (**obj_map).clone();
                                 mut_map.insert("__type__".into(), Value::Str(alias_name));

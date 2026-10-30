@@ -406,7 +406,8 @@ pub(crate) fn runtime_time_local_offset_secs(args: &[RuntimeValue]) -> RuntimeVa
     }
     let epoch_sec = args[0].as_int().unwrap_or(0);
     use chrono::{Offset, TimeZone, Utc};
-    let local_time = crate::utils::clock::utc_to_local(&Utc.timestamp_opt(epoch_sec, 0).single().unwrap());
+    let local_time =
+        crate::utils::clock::utc_to_local(&Utc.timestamp_opt(epoch_sec, 0).single().unwrap());
     let offset_secs = local_time.offset().fix().local_minus_utc();
     RuntimeValue::Int(offset_secs as i64)
 }

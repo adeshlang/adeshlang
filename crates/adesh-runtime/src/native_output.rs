@@ -45,11 +45,7 @@ mod native_stubs {
     }
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn aot_panic_at(
-        _message: *const c_char,
-        _file: *const c_char,
-        _line: u32,
-    ) -> ! {
+    pub extern "C" fn aot_panic_at(_message: *const c_char, _file: *const c_char, _line: u32) -> ! {
         panic!("aot_panic_at is not available in WebAssembly builds")
     }
 

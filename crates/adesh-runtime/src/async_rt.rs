@@ -74,7 +74,7 @@ impl AsyncExecutor {
             match task {
                 Some(t) => {
                     executed += 1;
-                    if let Poll::Pending = t.poll(&mut cx) {
+                    if t.poll(&mut cx).is_pending() {
                         // Re-queue task if still pending
                         self.ready_queue.lock().unwrap().push_back(t);
                     }

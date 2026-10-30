@@ -170,16 +170,8 @@ fn escapes_untrusted_comments_code_titles_and_links() {
     assert!(html.contains("href=\"https://example.com\""));
     assert!(html.contains("&lt;script&gt;"));
     assert!(html.contains("&lt;img"));
-    assert!(
-        markup::inline("[bad](JaVaScRiPt:alert)", &[])
-            .find("<a ")
-            .is_none()
-    );
-    assert!(
-        markup::inline("[bad](//example.com)", &[])
-            .find("<a ")
-            .is_none()
-    );
+    assert!(!markup::inline("[bad](JaVaScRiPt:alert)", &[]).contains("<a "));
+    assert!(!markup::inline("[bad](//example.com)", &[]).contains("<a "));
     assert!(render::html("<script>", &[], &[]).contains("&lt;script&gt;"));
 }
 

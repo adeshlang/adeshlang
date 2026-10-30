@@ -115,12 +115,14 @@ pub fn load_import_exports(
     Ok(exports)
 }
 
-fn ensure_type_check(body: &str, file: Option<&str>) -> Result<Vec<crate::parsing::ast::Stmt>, String> {
+fn ensure_type_check(
+    body: &str,
+    file: Option<&str>,
+) -> Result<Vec<crate::parsing::ast::Stmt>, String> {
     let runtime_cfg = crate::toolchain::config::RuntimeConfig::default();
     let (ast, _hir) = crate::cli::parsing::check_ownership_and_parse_in(body, &runtime_cfg, file)
         .map_err(|e| format!("ownership/memory safety error: {}", e))?;
-    crate::types::type_system::check_ast(&ast, file)
-        .map_err(|e| format!("type error: {}", e))?;
+    crate::types::type_system::check_ast(&ast, file).map_err(|e| format!("type error: {}", e))?;
     Ok(ast)
 }
 
@@ -419,93 +421,89 @@ pub fn run_with_interpreter(
                 .unwrap_or_else(|| std::path::Path::new(".")),
         );
 
-            // Run tests if --test flag is set
-            if run_tests {
-                use crate::testing::{
-                    TestRunOptions,
-                    build_per_backend_summaries,
-                    executor::InterpreterTestExecutor,
-                    format_test_summary,
-                    render_backend_matrix_ascii,
-                    render_multi_backend_header,
-                    render_multi_backend_report,
-                    render_result_line,
-                    run_tests,
-                    to_json_report,
-                };
-                use crate::toolchain::config::TestOutputFormat;
-                use std::collections::BTreeSet;
+        // Run tests if --test flag is set
+        if run_tests {
+            use crate::testing::{
+                TestRunOptions, build_per_backend_summaries, executor::InterpreterTestExecutor,
+                format_test_summary, render_backend_matrix_ascii, render_multi_backend_header,
+                render_multi_backend_report, render_result_line, run_tests, to_json_report,
+            };
+            use crate::toolchain::config::TestOutputFormat;
+            use std::collections::BTreeSet;
 
-                let ast = &parsed_ast;
+            let ast = &parsed_ast;
 
-                let mut include_tags = BTreeSet::new();
-                for tag in &include_tags_cfg {
-                    include_tags.insert(tag.clone());
-                }
+            let mut include_tags = BTreeSet::new();
+            for tag in &include_tags_cfg {
+                include_tags.insert(tag.clone());
+            }
 
-                // Determine which backends to test against:
-                // Priority: test_backends (from --runtimes) > backend_check (all) > single backend
-                let backends_to_run: Vec<crate::toolchain::config::ExecutionBackend> =
-                    if !test_backends_cfg.is_empty() {
-                        // --runtimes=jit,njit,aot,...
-                        test_backends_cfg.clone()
-                    } else if backend_check_cfg {
-                        // --backend-check: all known backends
-                        crate::testing::all_execution_backends()
-                    } else {
-                        // Single backend (default or --jit / --vm / etc.)
-                        vec![selected_backend]
-                    };
-
-                let is_multi = backends_to_run.len() > 1;
-
-                // Print multi-backend header
-                if is_multi && !no_color_cfg {
-                    print!("{}", render_multi_backend_header(&backends_to_run, no_color_cfg));
-                }
-
-                // Build test options
-                let opts = TestRunOptions {
-                    fail_fast: fail_fast_cfg,
-                    include_tags,
-                    test_name: test_name_cfg.clone(),
-                    backend_check: backend_check_cfg,
-                    test_backends: backends_to_run.clone(),
-                    json_format: matches!(test_output_format_cfg, TestOutputFormat::Json),
-                    no_color: no_color_cfg,
-                    quiet: quiet_cfg,
-                    nocapture: nocapture_cfg,
-                    exact_match: test_exact_cfg,
-                    skip_filter: test_skip_cfg,
-                    list_only: test_list_cfg,
-                    run_ignored_only: test_ignored_cfg,
-                    include_ignored: test_include_ignored_cfg,
-                    test_threads: test_threads_cfg,
-                    serial: test_serial_cfg,
-                    base_file: Some(run_path.clone()),
-                    ..TestRunOptions::default()
+            // Determine which backends to test against:
+            // Priority: test_backends (from --runtimes) > backend_check (all) > single backend
+            let backends_to_run: Vec<crate::toolchain::config::ExecutionBackend> =
+                if !test_backends_cfg.is_empty() {
+                    // --runtimes=jit,njit,aot,...
+                    test_backends_cfg.clone()
+                } else if backend_check_cfg {
+                    // --backend-check: all known backends
+                    crate::testing::all_execution_backends()
+                } else {
+                    // Single backend (default or --jit / --vm / etc.)
+                    vec![selected_backend]
                 };
 
-                // Use the real InterpreterTestExecutor (which delegates to each backend)
-                let mut executor = InterpreterTestExecutor::new(
-                    run_src.clone(),
-                    run_path.to_string_lossy().to_string(),
+            let is_multi = backends_to_run.len() > 1;
+
+            // Print multi-backend header
+            if is_multi && !no_color_cfg {
+                print!(
+                    "{}",
+                    render_multi_backend_header(&backends_to_run, no_color_cfg)
                 );
+            }
 
-                // run_tests iterates `backends_to_run` when backend_check=true
-                // We pass the first backend as `selected_backend` for the single-run path
-                let primary_backend = backends_to_run[0];
-                let (results, summary, _legacy_matrix) =
-                    run_tests(&ast, &mut executor, &opts, primary_backend);
+            // Build test options
+            let opts = TestRunOptions {
+                fail_fast: fail_fast_cfg,
+                include_tags,
+                test_name: test_name_cfg.clone(),
+                backend_check: backend_check_cfg,
+                test_backends: backends_to_run.clone(),
+                json_format: matches!(test_output_format_cfg, TestOutputFormat::Json),
+                no_color: no_color_cfg,
+                quiet: quiet_cfg,
+                nocapture: nocapture_cfg,
+                exact_match: test_exact_cfg,
+                skip_filter: test_skip_cfg,
+                list_only: test_list_cfg,
+                run_ignored_only: test_ignored_cfg,
+                include_ignored: test_include_ignored_cfg,
+                test_threads: test_threads_cfg,
+                serial: test_serial_cfg,
+                base_file: Some(run_path.clone()),
+                ..TestRunOptions::default()
+            };
 
-                // ── Render output ─────────────────────────────────────────────
-                if matches!(test_output_format_cfg, TestOutputFormat::Json) {
-                    // Build per-backend summaries for JSON output too
-                    let per_backend = build_per_backend_summaries(&results, &backends_to_run);
-                    // Encode per-backend summaries into JSON alongside existing report
-                    let json_base = to_json_report(&results, &summary, _legacy_matrix.as_ref());
-                    // Inject per-backend summaries
-                    let per_backend_json = per_backend
+            // Use the real InterpreterTestExecutor (which delegates to each backend)
+            let mut executor = InterpreterTestExecutor::new(
+                run_src.clone(),
+                run_path.to_string_lossy().to_string(),
+            );
+
+            // run_tests iterates `backends_to_run` when backend_check=true
+            // We pass the first backend as `selected_backend` for the single-run path
+            let primary_backend = backends_to_run[0];
+            let (results, summary, _legacy_matrix) =
+                run_tests(&ast, &mut executor, &opts, primary_backend);
+
+            // ── Render output ─────────────────────────────────────────────
+            if matches!(test_output_format_cfg, TestOutputFormat::Json) {
+                // Build per-backend summaries for JSON output too
+                let per_backend = build_per_backend_summaries(&results, &backends_to_run);
+                // Encode per-backend summaries into JSON alongside existing report
+                let json_base = to_json_report(&results, &summary, _legacy_matrix.as_ref());
+                // Inject per-backend summaries
+                let per_backend_json = per_backend
                         .iter()
                         .map(|s| {
                             format!(
@@ -516,103 +514,106 @@ pub fn run_with_interpreter(
                         })
                         .collect::<Vec<_>>()
                         .join(",\n");
-                    // Merge: insert before the last closing brace
-                    let merged = if json_base.ends_with("\n}") {
-                        format!(
-                            "{},\n  \"per_backend\": [\n{}\n  ]\n}}",
-                            &json_base[..json_base.len() - 2],
-                            per_backend_json
-                        )
-                    } else {
-                        json_base
-                    };
-                    println!("{}", merged);
-                } else if is_multi {
-                    // Rich multi-backend grid report
-                    let per_backend = build_per_backend_summaries(&results, &backends_to_run);
-                    print!("{}", render_multi_backend_report(
+                // Merge: insert before the last closing brace
+                let merged = if json_base.ends_with("\n}") {
+                    format!(
+                        "{},\n  \"per_backend\": [\n{}\n  ]\n}}",
+                        &json_base[..json_base.len() - 2],
+                        per_backend_json
+                    )
+                } else {
+                    json_base
+                };
+                println!("{}", merged);
+            } else if is_multi {
+                // Rich multi-backend grid report
+                let per_backend = build_per_backend_summaries(&results, &backends_to_run);
+                print!(
+                    "{}",
+                    render_multi_backend_report(
                         &results,
                         &backends_to_run,
                         &per_backend,
                         no_color_cfg,
-                    ));
-                } else {
-                    // Single-backend: classic per-test line output
-                    for result in &results {
-                        let backend_result = result.backend_results.get(&primary_backend);
-                        let msg = backend_result.and_then(|r| r.message.as_deref());
-                        let duration = backend_result.map(|r| r.duration);
-                        let output = backend_result.map(|r| r.output.clone()).unwrap_or_default();
+                    )
+                );
+            } else {
+                // Single-backend: classic per-test line output
+                for result in &results {
+                    let backend_result = result.backend_results.get(&primary_backend);
+                    let msg = backend_result.and_then(|r| r.message.as_deref());
+                    let duration = backend_result.map(|r| r.duration);
+                    let output = backend_result.map(|r| r.output.clone()).unwrap_or_default();
 
-                        println!(
-                            "{}",
-                            render_result_line(
-                                &result.name,
-                                result.effective_status,
-                                no_color_cfg,
-                                msg,
-                                duration,
-                                if output.is_empty() {
-                                    None
-                                } else {
-                                    Some(output.as_str())
-                                }
-                            )
-                        );
-
-                        let show_output = matches!(
+                    println!(
+                        "{}",
+                        render_result_line(
+                            &result.name,
                             result.effective_status,
-                            crate::testing::TestStatus::Fail
-                                | crate::testing::TestStatus::Panic
-                                | crate::testing::TestStatus::Timeout
-                        ) || (nocapture_cfg && !quiet_cfg);
-                        if show_output && !output.is_empty() {
-                            for line in output.lines() {
-                                println!("    {}", line);
+                            no_color_cfg,
+                            msg,
+                            duration,
+                            if output.is_empty() {
+                                None
+                            } else {
+                                Some(output.as_str())
                             }
+                        )
+                    );
+
+                    let show_output = matches!(
+                        result.effective_status,
+                        crate::testing::TestStatus::Fail
+                            | crate::testing::TestStatus::Panic
+                            | crate::testing::TestStatus::Timeout
+                    ) || (nocapture_cfg && !quiet_cfg);
+                    if show_output && !output.is_empty() {
+                        for line in output.lines() {
+                            println!("    {}", line);
                         }
                     }
-
-                    if let Some(m) = _legacy_matrix.as_ref() {
-                        println!("{}", render_backend_matrix_ascii(m));
-                    }
-                    println!("{}", format_test_summary(&summary, no_color_cfg));
                 }
 
-                if !summary.is_success() {
-                    return Err(format!(
-                        "Tests failed: {} failed, {} panic, {} timeout",
-                        summary.failed, summary.panics, summary.timeout
-                    ));
+                if let Some(m) = _legacy_matrix.as_ref() {
+                    println!("{}", render_backend_matrix_ascii(m));
                 }
-
-                let stats = if collect_memory {
-                    Some(interp.get_memory_stats())
-                } else {
-                    None
-                };
-                Ok(stats)
-            } else {
-                // Normal execution
-                match interp.run_module_ast(
-                    &parsed_ast,
-                    &mut ldr,
-                    Some(run_path.to_string_lossy().to_string()),
-                ) {
-                    Ok(()) => {
-                        interp.run_event_loop_until_idle();
-                        // Collect memory stats if requested
-                        let stats = if collect_memory {
-                            Some(interp.get_memory_stats())
-                        } else {
-                            None
-                        };
-                        Ok(stats)
-                    }
-                    Err(e) => Err(e),
-                }
+                println!("{}", format_test_summary(&summary, no_color_cfg));
             }
-        }));
+
+            if !summary.is_success() {
+                return Err(format!(
+                    "Tests failed: {} failed, {} panic, {} timeout",
+                    summary.failed, summary.panics, summary.timeout
+                ));
+            }
+
+            let stats = if collect_memory {
+                Some(interp.get_memory_stats())
+            } else {
+                None
+            };
+            Ok(stats)
+        } else {
+            // Normal execution
+            match interp.run_module_ast(
+                &parsed_ast,
+                &mut ldr,
+                Some(run_path.to_string_lossy().to_string()),
+            ) {
+                Ok(()) => {
+                    interp.run_event_loop_until_idle();
+                    // Collect memory stats if requested
+                    let stats = if collect_memory {
+                        Some(interp.get_memory_stats())
+                    } else {
+                        None
+                    };
+                    Ok(stats)
+                }
+                Err(e) => Err(e),
+            }
+        }
+    }));
 
     match res {
         Ok(result) => result.map_err(|e| e.to_string()),

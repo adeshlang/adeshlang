@@ -96,12 +96,11 @@ fn to_wsl_path(path: &Path) -> String {
         .args(["wslpath", "-a", "-u"])
         .arg(&win_path)
         .output()
+        && output.status.success()
     {
-        if output.status.success() {
-            let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !s.is_empty() {
-                return s;
-            }
+        let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !s.is_empty() {
+            return s;
         }
     }
     for drive in ["d", "D", "c", "C"] {

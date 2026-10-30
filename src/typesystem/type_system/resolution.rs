@@ -224,7 +224,9 @@ pub(crate) fn resolve_type_name(
     // support dot-qualified type access, e.g. Service.port or App.Database.port
     if ls.contains('.') {
         let parts: Vec<&str> = ls.split('.').collect();
-        if let Some(mut current_ty) = resolve_type_name(parts[0], aliases, generic_aliases, type_params) {
+        if let Some(mut current_ty) =
+            resolve_type_name(parts[0], aliases, generic_aliases, type_params)
+        {
             let mut ok = true;
             for &part in &parts[1..] {
                 if let Ty::GenericParam(ref name) = current_ty {
@@ -233,8 +235,15 @@ pub(crate) fn resolve_type_name(
                     }
                 }
                 match current_ty {
-                    Ty::Record { ref required, ref optional } => {
-                        if let Some((_, fty)) = required.iter().chain(optional.iter()).find(|(f, _)| f == part) {
+                    Ty::Record {
+                        ref required,
+                        ref optional,
+                    } => {
+                        if let Some((_, fty)) = required
+                            .iter()
+                            .chain(optional.iter())
+                            .find(|(f, _)| f == part)
+                        {
                             current_ty = fty.clone();
                         } else {
                             ok = false;

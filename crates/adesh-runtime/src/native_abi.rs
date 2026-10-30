@@ -195,10 +195,10 @@ fn get_runtime_value_or_cstr(handle: u64) -> RuntimeValue {
     } else if handle > 0x10000 {
         unsafe {
             let ptr = handle as *const core::ffi::c_char;
-            if !ptr.is_null() {
-                if let Ok(s) = core::ffi::CStr::from_ptr(ptr).to_str() {
-                    return RuntimeValue::String(s.to_string());
-                }
+            if !ptr.is_null()
+                && let Ok(s) = core::ffi::CStr::from_ptr(ptr).to_str()
+            {
+                return RuntimeValue::String(s.to_string());
             }
         }
         unpack_aot_arg(handle)

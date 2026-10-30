@@ -4085,7 +4085,8 @@ pub(crate) fn handle_call_builtin(
                                 let dst_elem_ptr = builder.ins().iadd(array_ptr, dst_off_val);
                                 match elem_size {
                                     1 => {
-                                        let actual_bits = builder.func.dfg.value_type(elem_val).bits();
+                                        let actual_bits =
+                                            builder.func.dfg.value_type(elem_val).bits();
                                         let v8 = if actual_bits > 8 {
                                             builder.ins().ireduce(types::I8, elem_val)
                                         } else {
@@ -4094,7 +4095,8 @@ pub(crate) fn handle_call_builtin(
                                         builder.ins().store(MemFlags::new(), v8, dst_elem_ptr, 0);
                                     }
                                     2 => {
-                                        let actual_bits = builder.func.dfg.value_type(elem_val).bits();
+                                        let actual_bits =
+                                            builder.func.dfg.value_type(elem_val).bits();
                                         let v16 = if actual_bits > 16 {
                                             builder.ins().ireduce(types::I16, elem_val)
                                         } else if actual_bits < 16 {
@@ -4115,7 +4117,8 @@ pub(crate) fn handle_call_builtin(
                                                 0,
                                             );
                                         } else {
-                                            let actual_bits = builder.func.dfg.value_type(elem_val).bits();
+                                            let actual_bits =
+                                                builder.func.dfg.value_type(elem_val).bits();
                                             let i32v = if actual_bits > 32 {
                                                 builder.ins().ireduce(types::I32, elem_val)
                                             } else if actual_bits < 32 {
@@ -5271,7 +5274,8 @@ pub(crate) fn handle_call_builtin(
                                         "string" => AotValueType::String,
                                         _ => {
                                             let mut resolved = ty_str.as_str();
-                                            while let Some((next_fields, _)) = aliases.get(resolved) {
+                                            while let Some((next_fields, _)) = aliases.get(resolved)
+                                            {
                                                 if next_fields.len() == 1
                                                     && (next_fields[0].0 == "__alias_target__"
                                                         || next_fields[0].0.is_empty())

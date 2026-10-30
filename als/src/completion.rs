@@ -297,8 +297,7 @@ fn resolve_receiver_type(index: &SemanticIndex, receiver: &str) -> Option<Ty> {
     }
 
     // Function call: "func_name()" — resolve return type
-    if receiver.ends_with("()") {
-        let func_name = &receiver[..receiver.len() - 2];
+    if let Some(func_name) = receiver.strip_suffix("()") {
         if let Some(sym) = index.find_declaration(func_name) {
             if let Some(ret) = &sym.return_type {
                 return index.resolve_type(ret);
@@ -361,7 +360,7 @@ fn candidate_to_completion_item(candidate: CompletionCandidate) -> CompletionIte
     let insert_text_format = if candidate
         .insert_text
         .as_ref()
-        .map_or(false, |t| t.contains("$0"))
+        .is_some_and(|t| t.contains("$0"))
     {
         Some(InsertTextFormat::SNIPPET)
     } else {

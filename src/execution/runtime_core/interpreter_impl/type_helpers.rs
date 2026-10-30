@@ -384,7 +384,10 @@ pub fn ann_matches_value(
 
     // Support dot-qualified type access, e.g. Service.port or App.database.port
     if let Some((parent_name, rest_path)) = base.split_once('.') {
-        let (field_name, remainder) = rest_path.split_once('.').map(|(f, r)| (f, Some(r))).unwrap_or((rest_path, None));
+        let (field_name, remainder) = rest_path
+            .split_once('.')
+            .map(|(f, r)| (f, Some(r)))
+            .unwrap_or((rest_path, None));
         let mut c = start_env.or(Some(global));
         while let Some(id) = c {
             if let Some(val) = envs[id].values.get(parent_name) {
@@ -503,9 +506,7 @@ pub fn ann_matches_value(
                             {
                                 continue;
                             }
-                            let is_declared = map
-                                .iter()
-                                .any(|(mk, _)| mk == field_name);
+                            let is_declared = map.iter().any(|(mk, _)| mk == field_name);
                             if !is_declared {
                                 return false;
                             }
@@ -562,15 +563,14 @@ pub fn type_mismatch_reason(
                 if map.get("__type_alias__").is_some() {
                     // Scalar alias
                     if let Some(Value::Str(target_type)) = map.get("__alias_target__") {
-                        let inner = type_mismatch_reason(
-                            envs,
-                            global,
-                            Some(id),
-                            target_type,
-                            v,
-                        );
+                        let inner = type_mismatch_reason(envs, global, Some(id), target_type, v);
                         return Some(inner.unwrap_or_else(|| {
-                            format!("expected {} ({}), found {}", alias_name, target_type, format_value_for_error(v))
+                            format!(
+                                "expected {} ({}), found {}",
+                                alias_name,
+                                target_type,
+                                format_value_for_error(v)
+                            )
                         }));
                     }
 
@@ -636,9 +636,7 @@ pub fn type_mismatch_reason(
                             {
                                 continue;
                             }
-                            let is_declared = map
-                                .iter()
-                                .any(|(mk, _)| mk == field_name);
+                            let is_declared = map.iter().any(|(mk, _)| mk == field_name);
                             if !is_declared {
                                 return Some(format!(
                                     "unexpected extra field '{}' on type '{}'",
@@ -670,7 +668,11 @@ pub fn type_mismatch_reason(
                     return Some(format!("expected u8 (integer), found float {}", n));
                 }
                 if n < 0.0 || n > u8::MAX as f64 {
-                    return Some(format!("value {} is out of range for u8 (0..{})", n as i64, u8::MAX));
+                    return Some(format!(
+                        "value {} is out of range for u8 (0..{})",
+                        n as i64,
+                        u8::MAX
+                    ));
                 }
             }
         }
@@ -680,7 +682,11 @@ pub fn type_mismatch_reason(
                     return Some(format!("expected u16 (integer), found float {}", n));
                 }
                 if n < 0.0 || n > u16::MAX as f64 {
-                    return Some(format!("value {} is out of range for u16 (0..{})", n as i64, u16::MAX));
+                    return Some(format!(
+                        "value {} is out of range for u16 (0..{})",
+                        n as i64,
+                        u16::MAX
+                    ));
                 }
             }
         }
@@ -690,7 +696,11 @@ pub fn type_mismatch_reason(
                     return Some(format!("expected u32 (integer), found float {}", n));
                 }
                 if n < 0.0 || n > u32::MAX as f64 {
-                    return Some(format!("value {} is out of range for u32 (0..{})", n as i64, u32::MAX));
+                    return Some(format!(
+                        "value {} is out of range for u32 (0..{})",
+                        n as i64,
+                        u32::MAX
+                    ));
                 }
             }
         }
@@ -700,7 +710,12 @@ pub fn type_mismatch_reason(
                     return Some(format!("expected i8 (integer), found float {}", n));
                 }
                 if n < i8::MIN as f64 || n > i8::MAX as f64 {
-                    return Some(format!("value {} is out of range for i8 ({}..{})", n as i64, i8::MIN, i8::MAX));
+                    return Some(format!(
+                        "value {} is out of range for i8 ({}..{})",
+                        n as i64,
+                        i8::MIN,
+                        i8::MAX
+                    ));
                 }
             }
         }
@@ -710,7 +725,12 @@ pub fn type_mismatch_reason(
                     return Some(format!("expected i16 (integer), found float {}", n));
                 }
                 if n < i16::MIN as f64 || n > i16::MAX as f64 {
-                    return Some(format!("value {} is out of range for i16 ({}..{})", n as i64, i16::MIN, i16::MAX));
+                    return Some(format!(
+                        "value {} is out of range for i16 ({}..{})",
+                        n as i64,
+                        i16::MIN,
+                        i16::MAX
+                    ));
                 }
             }
         }
@@ -720,7 +740,12 @@ pub fn type_mismatch_reason(
                     return Some(format!("expected i32 (integer), found float {}", n));
                 }
                 if n < i32::MIN as f64 || n > i32::MAX as f64 {
-                    return Some(format!("value {} is out of range for i32 ({}..{})", n as i64, i32::MIN, i32::MAX));
+                    return Some(format!(
+                        "value {} is out of range for i32 ({}..{})",
+                        n as i64,
+                        i32::MIN,
+                        i32::MAX
+                    ));
                 }
             }
         }
@@ -745,23 +770,23 @@ fn format_value_for_error(v: &Value) -> String {
                 format!("{} (float)", n)
             }
         }
-        Value::U8(n)   => format!("{} (u8)",  n),
-        Value::U16(n)  => format!("{} (u16)", n),
-        Value::U32(n)  => format!("{} (u32)", n),
-        Value::U64(n)  => format!("{} (u64)", n),
+        Value::U8(n) => format!("{} (u8)", n),
+        Value::U16(n) => format!("{} (u16)", n),
+        Value::U32(n) => format!("{} (u32)", n),
+        Value::U64(n) => format!("{} (u64)", n),
         Value::U128(n) => format!("{} (u128)", n),
-        Value::I8(n)   => format!("{} (i8)",  n),
-        Value::I16(n)  => format!("{} (i16)", n),
-        Value::I32(n)  => format!("{} (i32)", n),
-        Value::I64(n)  => format!("{} (i64)", n),
+        Value::I8(n) => format!("{} (i8)", n),
+        Value::I16(n) => format!("{} (i16)", n),
+        Value::I32(n) => format!("{} (i32)", n),
+        Value::I64(n) => format!("{} (i64)", n),
         Value::I128(n) => format!("{} (i128)", n),
-        Value::F32(n)  => format!("{} (f32)", n),
-        Value::F64(n)  => format!("{} (f64)", n),
-        Value::Str(s)  => format!("\"{}\" (string)", s),
+        Value::F32(n) => format!("{} (f32)", n),
+        Value::F64(n) => format!("{} (f64)", n),
+        Value::Str(s) => format!("\"{}\" (string)", s),
         Value::Bool(b) => format!("{} (bool)", b),
-        Value::Null    => "null".to_string(),
+        Value::Null => "null".to_string(),
         Value::Object(_) => "object".to_string(),
-        Value::Array(_)  => "array".to_string(),
+        Value::Array(_) => "array".to_string(),
         _ => "value".to_string(),
     }
 }

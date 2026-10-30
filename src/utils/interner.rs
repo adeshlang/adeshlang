@@ -64,7 +64,9 @@ impl StringInterner {
 pub fn intern(s: &str) -> Arc<str> {
     // Fast path: shared read lock for cache hits (90%+ of lookups in production)
     {
-        let interner = STRING_INTERNER.read().expect("String interner lock poisoned");
+        let interner = STRING_INTERNER
+            .read()
+            .expect("String interner lock poisoned");
         interner.total_interns.fetch_add(1, Ordering::Relaxed);
         if let Some(interned) = interner.get(s) {
             interner.cache_hits.fetch_add(1, Ordering::Relaxed);
@@ -73,7 +75,9 @@ pub fn intern(s: &str) -> Arc<str> {
     }
 
     // Slow path: write lock to insert new unique string
-    let mut interner = STRING_INTERNER.write().expect("String interner lock poisoned");
+    let mut interner = STRING_INTERNER
+        .write()
+        .expect("String interner lock poisoned");
     interner.insert(s)
 }
 

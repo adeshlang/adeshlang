@@ -2,6 +2,9 @@
 //!
 //! Tests for union types, nullable types, visibility, and type narrowing.
 
+// 3.14 is test data for float formatting, not a mathematical constant.
+#![allow(clippy::approx_constant)]
+
 #[cfg(test)]
 mod tests {
     use adeshlang::parsing::ast::{TokenKind, Value};

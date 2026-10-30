@@ -210,7 +210,11 @@ impl AdeshArray {
         if self.elem_size == 0 || elem_bytes.is_null() {
             return false;
         }
-        let align = if self.elem_align == 0 { 8 } else { self.elem_align };
+        let align = if self.elem_align == 0 {
+            8
+        } else {
+            self.elem_align
+        };
         if self.len >= self.cap {
             if self.data.is_null() {
                 return false;
@@ -265,7 +269,11 @@ impl AdeshArray {
                     }
                 }
             }
-            let align = if self.elem_align == 0 { 8 } else { self.elem_align };
+            let align = if self.elem_align == 0 {
+                8
+            } else {
+                self.elem_align
+            };
             if let Ok(layout) = Layout::from_size_align(self.elem_size * self.cap, align) {
                 unsafe { dealloc(self.data, layout) };
             }
@@ -394,11 +402,11 @@ impl AdeshClosure {
     }
 
     pub fn drop_env(&mut self) {
-        if let Some(drop) = self.drop_fn {
-            if !self.env_ptr.is_null() {
-                unsafe { drop(self.env_ptr) };
-                self.env_ptr = null_mut();
-            }
+        if let Some(drop) = self.drop_fn
+            && !self.env_ptr.is_null()
+        {
+            unsafe { drop(self.env_ptr) };
+            self.env_ptr = null_mut();
         }
     }
 }
@@ -659,12 +667,8 @@ mod tests {
     #[test]
     fn test_adesh_array_drop_callback() {
         DROP_COUNTER.store(0, std::sync::atomic::Ordering::SeqCst);
-        let mut arr = AdeshArray::new_with_drop(
-            std::mem::size_of::<i64>(),
-            2,
-            8,
-            Some(count_elem_drop),
-        );
+        let mut arr =
+            AdeshArray::new_with_drop(std::mem::size_of::<i64>(), 2, 8, Some(count_elem_drop));
         let v1: i64 = 10;
         let v2: i64 = 20;
         let v3: i64 = 30;

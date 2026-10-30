@@ -12,11 +12,11 @@ use adesh_object::PointerWidth;
 fn test_cross_platform_target_specs() {
     let win = TargetSpec::windows_x64();
     assert_eq!(win.descriptor.pointer_width, PointerWidth::U64);
-    assert_eq!(win.is_windows(), true);
+    assert!(win.is_windows());
 
     let linux = TargetSpec::linux_x64();
     assert_eq!(linux.descriptor.pointer_width, PointerWidth::U64);
-    assert_eq!(linux.is_windows(), false);
+    assert!(!linux.is_windows());
 
     let macos = TargetSpec::macos_arm64();
     assert_eq!(macos.descriptor.pointer_width, PointerWidth::U64);

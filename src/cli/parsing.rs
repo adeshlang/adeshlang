@@ -208,9 +208,8 @@ pub fn check_ownership_on_ast(
 
     // Run unused warnings check with line and column precision
     let src_ref = clean_src.unwrap_or("");
-    let unused_warnings = crate::parsing::unused_warnings::UnusedWarningPass::check_ast(
-        &ast, file, src_ref, config,
-    );
+    let unused_warnings =
+        crate::parsing::unused_warnings::UnusedWarningPass::check_ast(&ast, file, src_ref, config);
     for warning in unused_warnings {
         eprintln!("{}", warning);
     }

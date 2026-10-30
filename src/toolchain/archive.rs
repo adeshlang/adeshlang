@@ -39,9 +39,7 @@ pub fn sha256_matches(actual: &str, expected: &str) -> bool {
     actual
         .bytes()
         .zip(expected.bytes())
-        .fold(true, |acc, (a, b)| {
-            acc & (a.to_ascii_lowercase() == b.to_ascii_lowercase())
-        })
+        .fold(true, |acc, (a, b)| acc & a.eq_ignore_ascii_case(&b))
 }
 
 /// Reject absolute paths and `..` traversal inside archives.

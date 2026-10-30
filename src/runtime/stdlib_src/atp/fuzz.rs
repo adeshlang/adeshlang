@@ -37,7 +37,7 @@ mod targets {
         for ft in 0u8..=255u8 {
             for extra in 0usize..32 {
                 let mut data = vec![ft];
-                data.extend(std::iter::repeat(0xAB).take(extra));
+                data.extend(std::iter::repeat_n(0xAB, extra));
                 let _ = Frame::decode_all(&data);
             }
         }

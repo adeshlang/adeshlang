@@ -40,10 +40,10 @@ pub fn arg_to_string(raw: u64) -> String {
 
 /// Helper to extract usize integer value from a raw word or handle.
 pub fn extract_usize_arg(arg: u64) -> usize {
-    if let Some(val) = aot_get_value(arg) {
-        if let Some(u) = val.as_usize() {
-            return u;
-        }
+    if let Some(val) = aot_get_value(arg)
+        && let Some(u) = val.as_usize()
+    {
+        return u;
     }
     arg as usize
 }
@@ -134,12 +134,10 @@ pub fn bytes_to_runtime_array(bytes: &[u8]) -> u64 {
 pub extern "C" fn io_stdin_readline() -> u64 {
     let mut input = String::new();
     let stdin = std::io::stdin();
-    if stdin.read_line(&mut input).is_ok() {
-        if input.ends_with('\n') {
+    if stdin.read_line(&mut input).is_ok() && input.ends_with('\n') {
+        input.pop();
+        if input.ends_with('\r') {
             input.pop();
-            if input.ends_with('\r') {
-                input.pop();
-            }
         }
     }
     aot_store_value(RuntimeValue::String(input))

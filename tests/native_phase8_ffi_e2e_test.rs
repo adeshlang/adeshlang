@@ -600,7 +600,7 @@ fn test_native_variadic_execution_e2e() {
             dst: MachineOperand::Register(MachineRegister::Virtual(elem_reg)),
             src: MachineOperand::Memory {
                 base: MachineRegister::Physical(PhysicalRegister(5)),
-                offset: 16 + (i as i32 * 8),
+                offset: 16 + (i * 8),
                 index: None,
             },
             size: 8,

@@ -187,7 +187,7 @@ pub struct RuntimeBitSet {
 
 impl RuntimeBitSet {
     pub fn new(len: usize) -> Self {
-        let num_words = (len + 63) / 64;
+        let num_words = len.div_ceil(64);
         Self {
             words: vec![0u64; num_words],
             len,
@@ -246,9 +246,9 @@ impl RuntimeBitSet {
     }
 
     pub fn resize(&mut self, new_len: usize) {
-        let num_words = (new_len + 63) / 64;
+        let num_words = new_len.div_ceil(64);
         self.words.resize(num_words, 0);
-        if new_len < self.len && new_len % 64 != 0 {
+        if new_len < self.len && !new_len.is_multiple_of(64) {
             let rem = new_len % 64;
             let mask = (1u64 << rem) - 1;
             if let Some(last) = self.words.last_mut() {
@@ -1112,9 +1112,9 @@ fn pretty_print_inner(
             }
         }
         RuntimeValue::Tuple(tup) => {
-            let _ = write!(
+            let _ = writeln!(
                 output,
-                "{}({}\n",
+                "{}({}",
                 options.colors.bracket, options.colors.reset
             );
             let new_indent = current_indent + 1;
@@ -1147,9 +1147,9 @@ fn pretty_print_inner(
             }
         }
         RuntimeValue::Set(set) => {
-            let _ = write!(
+            let _ = writeln!(
                 output,
-                "{}{{{}\n",
+                "{}{{{}",
                 options.colors.bracket, options.colors.reset
             );
             let new_indent = current_indent + 1;
@@ -1275,9 +1275,9 @@ fn print_array_impl(
     depth: usize,
     current_indent: usize,
 ) {
-    let _ = write!(
+    let _ = writeln!(
         output,
-        "{}[{}\n",
+        "{}[{}",
         options.colors.bracket, options.colors.reset
     );
 
@@ -1327,9 +1327,9 @@ fn print_object_impl(
     depth: usize,
     current_indent: usize,
 ) {
-    let _ = write!(
+    let _ = writeln!(
         output,
-        "{}{{{}\n",
+        "{}{{{}",
         options.colors.bracket, options.colors.reset
     );
 
@@ -1398,7 +1398,7 @@ pub unsafe extern "C" fn aot_make_object(args_ptr: *const u64, arg_count: usize)
         if arg_count == 0 {
             return aot_store_value(RuntimeValue::Object(BTreeMap::new()));
         }
-        if args_ptr.is_null() || arg_count % 2 != 0 || !valid_aot_arg_count(arg_count) {
+        if args_ptr.is_null() || !arg_count.is_multiple_of(2) || !valid_aot_arg_count(arg_count) {
             return 0;
         }
 
@@ -1952,25 +1952,22 @@ fn aot_print_with_options_impl(
     let mut has_options = false;
 
     let mut check_opts_handle = options_handle;
-    if check_opts_handle == 0 || aot_get_value(check_opts_handle).is_none() {
-        if let Some(&last_h) = handles.last() {
-            if let Some(RuntimeValue::Object(ref obj)) = aot_get_value(last_h) {
-                if obj.contains_key("pretty")
-                    || obj.contains_key("sep")
-                    || obj.contains_key("end")
-                    || obj.contains_key("file")
-                    || obj.contains_key("color")
-                    || obj.contains_key("background")
-                    || obj.contains_key("underline")
-                    || obj.contains_key("bold")
-                    || obj.contains_key("italic")
-                    || obj.contains_key("strikethrough")
-                    || obj.contains_key("flush")
-                {
-                    check_opts_handle = last_h;
-                }
-            }
-        }
+    if (check_opts_handle == 0 || aot_get_value(check_opts_handle).is_none())
+        && let Some(&last_h) = handles.last()
+        && let Some(RuntimeValue::Object(ref obj)) = aot_get_value(last_h)
+        && (obj.contains_key("pretty")
+            || obj.contains_key("sep")
+            || obj.contains_key("end")
+            || obj.contains_key("file")
+            || obj.contains_key("color")
+            || obj.contains_key("background")
+            || obj.contains_key("underline")
+            || obj.contains_key("bold")
+            || obj.contains_key("italic")
+            || obj.contains_key("strikethrough")
+            || obj.contains_key("flush"))
+    {
+        check_opts_handle = last_h;
     }
 
     if let Some(RuntimeValue::Object(ref opts_obj)) = aot_get_value(check_opts_handle) {
@@ -2085,15 +2082,15 @@ fn aot_print_with_options_impl(
     if strikethrough {
         codes.push("9".to_string());
     }
-    if let Some(ref hex) = color {
-        if let Some((r, g, b)) = parse_hex_color(hex) {
-            codes.push(format!("38;2;{};{};{}", r, g, b));
-        }
+    if let Some(ref hex) = color
+        && let Some((r, g, b)) = parse_hex_color(hex)
+    {
+        codes.push(format!("38;2;{};{};{}", r, g, b));
     }
-    if let Some(ref hex) = background {
-        if let Some((r, g, b)) = parse_hex_color(hex) {
-            codes.push(format!("48;2;{};{};{}", r, g, b));
-        }
+    if let Some(ref hex) = background
+        && let Some((r, g, b)) = parse_hex_color(hex)
+    {
+        codes.push(format!("48;2;{};{};{}", r, g, b));
     }
 
     if !codes.is_empty() {
@@ -2178,11 +2175,11 @@ pub extern "C" fn aot_len(handle: u64) -> i64 {
     if handle < HANDLE_TAG && handle > 0x10000 {
         unsafe {
             let p_len = *(handle as *const i64);
-            if p_len >= 0 && p_len < 1_000_000 {
+            if (0..1_000_000).contains(&p_len) {
                 return p_len;
             }
             let p_len32 = *(handle as *const i32);
-            if p_len32 >= 0 && p_len32 < 1_000_000 {
+            if (0..1_000_000).contains(&p_len32) {
                 return p_len32 as i64;
             }
         }
@@ -2196,11 +2193,11 @@ pub extern "C" fn aot_len(handle: u64) -> i64 {
         RuntimeValue::Int(p) | RuntimeValue::I64(p) if p > 0x10000 && (p as u64) < HANDLE_TAG => {
             unsafe {
                 let p_len = *(p as *const i64);
-                if p_len >= 0 && p_len < 1_000_000 {
+                if (0..1_000_000).contains(&p_len) {
                     return p_len;
                 }
                 let p_len32 = *(p as *const i32);
-                if p_len32 >= 0 && p_len32 < 1_000_000 {
+                if (0..1_000_000).contains(&p_len32) {
                     return p_len32 as i64;
                 }
             }
@@ -2277,11 +2274,11 @@ fn aot_get_index_impl(container_handle: u64, index_handle: u64) -> u64 {
     if container_handle < HANDLE_TAG && container_handle > 0x10000 {
         unsafe {
             let p_len = *(container_handle as *const i64);
-            let (len, data_offset) = if p_len >= 0 && p_len < 1_000_000 {
+            let (len, data_offset) = if (0..1_000_000).contains(&p_len) {
                 (p_len as usize, 24u64)
             } else {
                 let p_len32 = *(container_handle as *const i32);
-                if p_len32 >= 0 && p_len32 < 1_000_000 {
+                if (0..1_000_000).contains(&p_len32) {
                     (p_len32 as usize, 16u64)
                 } else {
                     (0, 24u64)
@@ -2302,11 +2299,11 @@ fn aot_get_index_impl(container_handle: u64, index_handle: u64) -> u64 {
     match container {
         RuntimeValue::Int(p) | RuntimeValue::I64(p) if p > 0x10000 && (p as u64) < HANDLE_TAG => unsafe {
             let p_len = *(p as *const i64);
-            let (len, data_offset) = if p_len >= 0 && p_len < 1_000_000 {
+            let (len, data_offset) = if (0..1_000_000).contains(&p_len) {
                 (p_len as usize, 24u64)
             } else {
                 let p_len32 = *(p as *const i32);
-                if p_len32 >= 0 && p_len32 < 1_000_000 {
+                if (0..1_000_000).contains(&p_len32) {
                     (p_len32 as usize, 16u64)
                 } else {
                     (0, 24u64)
@@ -3112,7 +3109,7 @@ fn aot_collections_new_impl(type_name_handle: u64, args_ptr: *const u64, args_co
         "RingBuffer" => {
             // Clamp the requested capacity (see MAX_RING_BUFFER_CAP).
             let cap = args
-                .get(0)
+                .first()
                 .and_then(|v| v.as_usize())
                 .unwrap_or(16)
                 .clamp(0, MAX_RING_BUFFER_CAP);
@@ -3201,11 +3198,11 @@ fn aot_call_method_impl(
         if method_name == "len" || method_name == "length" {
             unsafe {
                 let p_len = *(p as *const i64);
-                if p_len >= 0 && p_len < 1_000_000 {
+                if (0..1_000_000).contains(&p_len) {
                     return aot_store_value(RuntimeValue::Int(p_len));
                 }
                 let p_len32 = *(p as *const i32);
-                if p_len32 >= 0 && p_len32 < 1_000_000 {
+                if (0..1_000_000).contains(&p_len32) {
                     return aot_store_value(RuntimeValue::Int(p_len32 as i64));
                 }
             }
@@ -3213,11 +3210,11 @@ fn aot_call_method_impl(
             let idx = args.first().and_then(|i| i.as_usize()).unwrap_or(0);
             unsafe {
                 let p_len = *(p as *const i64);
-                let (len, data_offset) = if p_len >= 0 && p_len < 1_000_000 {
+                let (len, data_offset) = if (0..1_000_000).contains(&p_len) {
                     (p_len as usize, 24u64)
                 } else {
                     let p_len32 = *(p as *const i32);
-                    if p_len32 >= 0 && p_len32 < 1_000_000 {
+                    if (0..1_000_000).contains(&p_len32) {
                         (p_len32 as usize, 16u64)
                     } else {
                         (0, 24u64)
@@ -3234,14 +3231,14 @@ fn aot_call_method_impl(
     match target_val {
         RuntimeValue::VecDeque(mut deque) => match method_name.as_str() {
             "pushBack" => {
-                if let Some(arg0) = args.get(0) {
+                if let Some(arg0) = args.first() {
                     deque.push_back(arg0.clone());
                 }
                 aot_update_value(target_handle, RuntimeValue::VecDeque(deque));
                 aot_store_value(RuntimeValue::Null)
             }
             "pushFront" => {
-                if let Some(arg0) = args.get(0) {
+                if let Some(arg0) = args.first() {
                     deque.push_front(arg0.clone());
                 }
                 aot_update_value(target_handle, RuntimeValue::VecDeque(deque));
@@ -3265,7 +3262,7 @@ fn aot_call_method_impl(
                 aot_store_value(RuntimeValue::Null)
             }
             "get" => {
-                let idx = args.get(0).and_then(|i| i.as_usize()).unwrap_or(0);
+                let idx = args.first().and_then(|i| i.as_usize()).unwrap_or(0);
                 let res = deque.get(idx).cloned().unwrap_or(RuntimeValue::Null);
                 aot_store_value(res)
             }
@@ -3273,7 +3270,7 @@ fn aot_call_method_impl(
         },
         RuntimeValue::HashSet(mut set) => match method_name.as_str() {
             "insert" | "add" => {
-                let inserted = if let Some(arg0) = args.get(0) {
+                let inserted = if let Some(arg0) = args.first() {
                     set.insert(arg0.as_string())
                 } else {
                     false
@@ -3282,7 +3279,7 @@ fn aot_call_method_impl(
                 aot_store_value(RuntimeValue::Bool(inserted))
             }
             "contains" | "has" => {
-                let has = if let Some(arg0) = args.get(0) {
+                let has = if let Some(arg0) = args.first() {
                     set.contains(&arg0.as_string())
                 } else {
                     false
@@ -3290,7 +3287,7 @@ fn aot_call_method_impl(
                 aot_store_value(RuntimeValue::Bool(has))
             }
             "remove" | "delete" => {
-                let removed = if let Some(arg0) = args.get(0) {
+                let removed = if let Some(arg0) = args.first() {
                     set.remove(&arg0.as_string())
                 } else {
                     false
@@ -3308,14 +3305,14 @@ fn aot_call_method_impl(
         },
         RuntimeValue::BTreeMap(mut map) => match method_name.as_str() {
             "insert" | "set" => {
-                if let (Some(k), Some(v)) = (args.get(0), args.get(1)) {
+                if let (Some(k), Some(v)) = (args.first(), args.get(1)) {
                     map.insert(k.as_string(), v.clone());
                 }
                 aot_update_value(target_handle, RuntimeValue::BTreeMap(map));
                 aot_store_value(RuntimeValue::Null)
             }
             "get" => {
-                let val = if let Some(k) = args.get(0) {
+                let val = if let Some(k) = args.first() {
                     map.get(&k.as_string())
                         .cloned()
                         .unwrap_or(RuntimeValue::Null)
@@ -3325,7 +3322,7 @@ fn aot_call_method_impl(
                 aot_store_value(val)
             }
             "remove" | "delete" => {
-                let val = if let Some(k) = args.get(0) {
+                let val = if let Some(k) = args.first() {
                     map.remove(&k.as_string()).unwrap_or(RuntimeValue::Null)
                 } else {
                     RuntimeValue::Null
@@ -3334,7 +3331,7 @@ fn aot_call_method_impl(
                 aot_store_value(val)
             }
             "contains" | "containsKey" | "has" => {
-                let has = if let Some(k) = args.get(0) {
+                let has = if let Some(k) = args.first() {
                     map.contains_key(&k.as_string())
                 } else {
                     false
@@ -3362,7 +3359,7 @@ fn aot_call_method_impl(
         },
         RuntimeValue::BinaryHeap(mut heap) => match method_name.as_str() {
             "push" | "insert" => {
-                if let Some(arg0) = args.get(0) {
+                if let Some(arg0) = args.first() {
                     heap.push(OrderedValue(arg0.clone()));
                 }
                 aot_update_value(target_handle, RuntimeValue::BinaryHeap(heap));
@@ -3385,7 +3382,7 @@ fn aot_call_method_impl(
         },
         RuntimeValue::PriorityQueue(mut pq) => match method_name.as_str() {
             "push" => {
-                if let Some(item) = args.get(0) {
+                if let Some(item) = args.first() {
                     let prio = args.get(1).and_then(|p| p.as_i64()).unwrap_or(0);
                     pq.push(PriorityItem {
                         item: item.clone(),
@@ -3412,7 +3409,7 @@ fn aot_call_method_impl(
         },
         RuntimeValue::BitSet(mut bs) => match method_name.as_str() {
             "set" => {
-                let idx = args.get(0).and_then(|i| i.as_usize()).unwrap_or(0);
+                let idx = args.first().and_then(|i| i.as_usize()).unwrap_or(0);
                 if idx < MAX_BITSET_BITS {
                     bs.set(idx);
                 }
@@ -3420,7 +3417,7 @@ fn aot_call_method_impl(
                 aot_store_value(RuntimeValue::Null)
             }
             "clear" => {
-                if let Some(idx_v) = args.get(0) {
+                if let Some(idx_v) = args.first() {
                     let idx = idx_v.as_usize().unwrap_or(0);
                     bs.clear_bit(idx);
                 } else {
@@ -3430,12 +3427,12 @@ fn aot_call_method_impl(
                 aot_store_value(RuntimeValue::Null)
             }
             "test" | "get" => {
-                let idx = args.get(0).and_then(|i| i.as_usize()).unwrap_or(0);
+                let idx = args.first().and_then(|i| i.as_usize()).unwrap_or(0);
                 let b = bs.get(idx);
                 aot_store_value(RuntimeValue::Bool(b))
             }
             "toggle" => {
-                let idx = args.get(0).and_then(|i| i.as_usize()).unwrap_or(0);
+                let idx = args.first().and_then(|i| i.as_usize()).unwrap_or(0);
                 if idx < MAX_BITSET_BITS {
                     bs.toggle(idx);
                 }
@@ -3456,7 +3453,7 @@ fn aot_call_method_impl(
             cap,
         } => match method_name.as_str() {
             "push" => {
-                if let Some(arg0) = args.get(0) {
+                if let Some(arg0) = args.first() {
                     // Audit fix: a zero-capacity ring used to panic here
                     // (integer division by zero in `% cap` and an index out
                     // of bounds on `buffer[tail]`). The guards keep every
@@ -3525,21 +3522,21 @@ fn aot_call_method_impl(
         },
         RuntimeValue::Array(mut arr) => match method_name.as_str() {
             "append" | "push" => {
-                if let Some(arg0) = args.get(0) {
+                if let Some(arg0) = args.first() {
                     arr.push(arg0.clone());
                 }
                 aot_update_value(target_handle, RuntimeValue::Array(arr.clone()));
                 aot_store_value(RuntimeValue::Array(arr))
             }
             "extend" => {
-                if let Some(RuntimeValue::Array(other)) = args.get(0) {
+                if let Some(RuntimeValue::Array(other)) = args.first() {
                     arr.extend(other.clone());
                 }
                 aot_update_value(target_handle, RuntimeValue::Array(arr.clone()));
                 aot_store_value(RuntimeValue::Array(arr))
             }
             "insert" => {
-                if let (Some(idx_val), Some(item)) = (args.get(0), args.get(1)) {
+                if let (Some(idx_val), Some(item)) = (args.first(), args.get(1)) {
                     let idx = idx_val.as_usize().unwrap_or(0).min(arr.len());
                     arr.insert(idx, item.clone());
                 }
@@ -3547,16 +3544,16 @@ fn aot_call_method_impl(
                 aot_store_value(RuntimeValue::Array(arr))
             }
             "remove" => {
-                if let Some(item_val) = args.get(0) {
-                    if let Some(pos) = arr.iter().position(|x| x == item_val) {
-                        arr.remove(pos);
-                    }
+                if let Some(item_val) = args.first()
+                    && let Some(pos) = arr.iter().position(|x| x == item_val)
+                {
+                    arr.remove(pos);
                 }
                 aot_update_value(target_handle, RuntimeValue::Array(arr.clone()));
                 aot_store_value(RuntimeValue::Array(arr))
             }
             "set_index" => {
-                if let (Some(idx_val), Some(item)) = (args.get(0), args.get(1)) {
+                if let (Some(idx_val), Some(item)) = (args.first(), args.get(1)) {
                     let idx = idx_val.as_usize().unwrap_or(0);
                     if idx < arr.len() {
                         arr[idx] = item.clone();
@@ -3566,7 +3563,7 @@ fn aot_call_method_impl(
                 aot_store_value(RuntimeValue::Array(arr))
             }
             "pop" => {
-                if let Some(idx_val) = args.get(0) {
+                if let Some(idx_val) = args.first() {
                     let idx = idx_val.as_usize().unwrap_or(0);
                     if idx < arr.len() {
                         arr.remove(idx);
@@ -3578,7 +3575,7 @@ fn aot_call_method_impl(
                 aot_store_value(RuntimeValue::Array(arr))
             }
             "count" => {
-                let target_item = args.get(0);
+                let target_item = args.first();
                 let cnt = if let Some(t) = target_item {
                     arr.iter().filter(|x| *x == t).count()
                 } else {
@@ -3587,7 +3584,7 @@ fn aot_call_method_impl(
                 aot_store_value(RuntimeValue::Int(cnt as i64))
             }
             "index" => {
-                let target_item = args.get(0);
+                let target_item = args.first();
                 let pos = if let Some(t) = target_item {
                     arr.iter()
                         .position(|x| x == t)
@@ -3614,76 +3611,71 @@ fn aot_call_method_impl(
                 aot_store_value(RuntimeValue::Array(arr))
             }
             "map" => {
-                if let Some(fn_val) = args.get(0) {
-                    if let Some(fp) = fn_val.as_fn_ptr() {
-                        let f =
-                            unsafe { std::mem::transmute::<usize, extern "C" fn(i64) -> u64>(fp) };
-                        let mut new_arr = Vec::with_capacity(arr.len());
-                        for item in &arr {
-                            let in_h = aot_store_value(item.clone());
-                            let arg_val = item.as_i64().unwrap_or(in_h as i64);
-                            let out_h = f(arg_val);
-                            let out_val =
-                                aot_get_value(out_h).unwrap_or_else(|| unpack_aot_arg(out_h));
-                            new_arr.push(out_val);
-                        }
-                        return aot_store_value(RuntimeValue::Array(new_arr));
+                if let Some(fn_val) = args.first()
+                    && let Some(fp) = fn_val.as_fn_ptr()
+                {
+                    let f = unsafe { std::mem::transmute::<usize, extern "C" fn(i64) -> u64>(fp) };
+                    let mut new_arr = Vec::with_capacity(arr.len());
+                    for item in &arr {
+                        let in_h = aot_store_value(item.clone());
+                        let arg_val = item.as_i64().unwrap_or(in_h as i64);
+                        let out_h = f(arg_val);
+                        let out_val = aot_get_value(out_h).unwrap_or_else(|| unpack_aot_arg(out_h));
+                        new_arr.push(out_val);
                     }
+                    return aot_store_value(RuntimeValue::Array(new_arr));
                 }
                 aot_store_value(RuntimeValue::Array(arr))
             }
             "filter" => {
-                if let Some(fn_val) = args.get(0) {
-                    if let Some(fp) = fn_val.as_fn_ptr() {
-                        let f =
-                            unsafe { std::mem::transmute::<usize, extern "C" fn(i64) -> u64>(fp) };
-                        let mut new_arr = Vec::new();
-                        for item in &arr {
-                            let in_h = aot_store_value(item.clone());
-                            let arg_val = item.as_i64().unwrap_or(in_h as i64);
-                            let out_h = f(arg_val);
-                            let out_val =
-                                aot_get_value(out_h).unwrap_or_else(|| unpack_aot_arg(out_h));
-                            if out_val.is_truthy() {
-                                new_arr.push(item.clone());
-                            }
+                if let Some(fn_val) = args.first()
+                    && let Some(fp) = fn_val.as_fn_ptr()
+                {
+                    let f = unsafe { std::mem::transmute::<usize, extern "C" fn(i64) -> u64>(fp) };
+                    let mut new_arr = Vec::new();
+                    for item in &arr {
+                        let in_h = aot_store_value(item.clone());
+                        let arg_val = item.as_i64().unwrap_or(in_h as i64);
+                        let out_h = f(arg_val);
+                        let out_val = aot_get_value(out_h).unwrap_or_else(|| unpack_aot_arg(out_h));
+                        if out_val.is_truthy() {
+                            new_arr.push(item.clone());
                         }
-                        return aot_store_value(RuntimeValue::Array(new_arr));
                     }
+                    return aot_store_value(RuntimeValue::Array(new_arr));
                 }
                 aot_store_value(RuntimeValue::Array(arr))
             }
             "reduce" => {
-                if let Some(fn_val) = args.get(0) {
-                    if let Some(fp) = fn_val.as_fn_ptr() {
-                        let f = unsafe {
-                            std::mem::transmute::<usize, extern "C" fn(i64, i64) -> u64>(fp)
-                        };
-                        let has_init = args.len() > 1;
-                        let mut acc = if has_init {
-                            args[1].clone()
-                        } else if !arr.is_empty() {
-                            arr[0].clone()
-                        } else {
-                            RuntimeValue::Null
-                        };
-                        let start_idx = if has_init { 0 } else { 1 };
-                        for item in arr.iter().skip(start_idx) {
-                            let acc_h = aot_store_value(acc.clone());
-                            let item_h = aot_store_value(item.clone());
-                            let acc_arg = acc.as_i64().unwrap_or(acc_h as i64);
-                            let item_arg = item.as_i64().unwrap_or(item_h as i64);
-                            let out_h = f(acc_arg, item_arg);
-                            acc = aot_get_value(out_h).unwrap_or_else(|| unpack_aot_arg(out_h));
-                        }
-                        return aot_store_value(acc);
+                if let Some(fn_val) = args.first()
+                    && let Some(fp) = fn_val.as_fn_ptr()
+                {
+                    let f =
+                        unsafe { std::mem::transmute::<usize, extern "C" fn(i64, i64) -> u64>(fp) };
+                    let has_init = args.len() > 1;
+                    let mut acc = if has_init {
+                        args[1].clone()
+                    } else if !arr.is_empty() {
+                        arr[0].clone()
+                    } else {
+                        RuntimeValue::Null
+                    };
+                    let start_idx = if has_init { 0 } else { 1 };
+                    for item in arr.iter().skip(start_idx) {
+                        let acc_h = aot_store_value(acc.clone());
+                        let item_h = aot_store_value(item.clone());
+                        let acc_arg = acc.as_i64().unwrap_or(acc_h as i64);
+                        let item_arg = item.as_i64().unwrap_or(item_h as i64);
+                        let out_h = f(acc_arg, item_arg);
+                        acc = aot_get_value(out_h).unwrap_or_else(|| unpack_aot_arg(out_h));
                     }
+                    return aot_store_value(acc);
                 }
                 aot_store_value(RuntimeValue::Null)
             }
             "len" | "length" => aot_store_value(RuntimeValue::Int(arr.len() as i64)),
             "join" => {
-                let sep = args.get(0).map(|s| s.as_string()).unwrap_or_default();
+                let sep = args.first().map(|s| s.as_string()).unwrap_or_default();
                 let str_items: Vec<String> = arr.iter().map(|x| x.as_string()).collect();
                 aot_store_value(RuntimeValue::String(str_items.join(&sep)))
             }
@@ -3692,7 +3684,7 @@ fn aot_call_method_impl(
         RuntimeValue::Set(set) => match method_name.as_str() {
             "union" => {
                 let mut union_items = set.clone();
-                if let Some(RuntimeValue::Set(other)) = args.get(0) {
+                if let Some(RuntimeValue::Set(other)) = args.first() {
                     for item in other {
                         if !union_items.contains(item) {
                             union_items.push(item.clone());
@@ -3703,7 +3695,7 @@ fn aot_call_method_impl(
             }
             "intersection" => {
                 let mut inter_items = Vec::new();
-                if let Some(RuntimeValue::Set(other)) = args.get(0) {
+                if let Some(RuntimeValue::Set(other)) = args.first() {
                     for item in &set {
                         if other.contains(item) {
                             inter_items.push(item.clone());
@@ -3717,7 +3709,7 @@ fn aot_call_method_impl(
         },
         RuntimeValue::Object(mut map) => match method_name.as_str() {
             "get" => {
-                let val = if let Some(k) = args.get(0) {
+                let val = if let Some(k) = args.first() {
                     map.get(&k.as_string())
                         .cloned()
                         .unwrap_or(RuntimeValue::Null)
@@ -3727,14 +3719,14 @@ fn aot_call_method_impl(
                 aot_store_value(val)
             }
             "set" => {
-                if let (Some(k), Some(v)) = (args.get(0), args.get(1)) {
+                if let (Some(k), Some(v)) = (args.first(), args.get(1)) {
                     map.insert(k.as_string(), v.clone());
                 }
                 aot_update_value(target_handle, RuntimeValue::Object(map.clone()));
                 aot_store_value(RuntimeValue::Object(map))
             }
             "has" | "hasOwnProperty" => {
-                let has = if let Some(k) = args.get(0) {
+                let has = if let Some(k) = args.first() {
                     map.contains_key(&k.as_string())
                 } else {
                     false
@@ -3769,7 +3761,7 @@ fn aot_call_method_impl(
             "toUpperCase" => aot_store_value(RuntimeValue::String(s.to_uppercase())),
             "trim" => aot_store_value(RuntimeValue::String(s.trim().to_string())),
             "split" => {
-                let sep = args.get(0).map(|x| x.as_string()).unwrap_or_default();
+                let sep = args.first().map(|x| x.as_string()).unwrap_or_default();
                 let parts = s
                     .split(&sep)
                     .map(|p| RuntimeValue::String(p.to_string()))
@@ -3777,12 +3769,12 @@ fn aot_call_method_impl(
                 aot_store_value(RuntimeValue::Array(parts))
             }
             "replace" => {
-                let from = args.get(0).map(|x| x.as_string()).unwrap_or_default();
+                let from = args.first().map(|x| x.as_string()).unwrap_or_default();
                 let to = args.get(1).map(|x| x.as_string()).unwrap_or_default();
                 aot_store_value(RuntimeValue::String(s.replace(&from, &to)))
             }
             "substring" | "slice" => {
-                let start = args.get(0).and_then(|i| i.as_usize()).unwrap_or(0);
+                let start = args.first().and_then(|i| i.as_usize()).unwrap_or(0);
                 let end = if args.len() > 1 {
                     args[1].as_usize().unwrap_or(s.len())
                 } else {
@@ -3795,25 +3787,25 @@ fn aot_call_method_impl(
                 aot_store_value(RuntimeValue::String(sub.to_string()))
             }
             "contains" | "includes" => {
-                let sub = args.get(0).map(|x| x.as_string()).unwrap_or_default();
+                let sub = args.first().map(|x| x.as_string()).unwrap_or_default();
                 aot_store_value(RuntimeValue::Bool(s.contains(&sub)))
             }
             "indexOf" => {
-                let sub = args.get(0).map(|x| x.as_string()).unwrap_or_default();
+                let sub = args.first().map(|x| x.as_string()).unwrap_or_default();
                 let pos = s.find(&sub).map(|i| i as i64).unwrap_or(-1);
                 aot_store_value(RuntimeValue::Int(pos))
             }
             "startsWith" => {
-                let prefix = args.get(0).map(|x| x.as_string()).unwrap_or_default();
+                let prefix = args.first().map(|x| x.as_string()).unwrap_or_default();
                 aot_store_value(RuntimeValue::Bool(s.starts_with(&prefix)))
             }
             "endsWith" => {
-                let suffix = args.get(0).map(|x| x.as_string()).unwrap_or_default();
+                let suffix = args.first().map(|x| x.as_string()).unwrap_or_default();
                 aot_store_value(RuntimeValue::Bool(s.ends_with(&suffix)))
             }
             "len" | "length" => aot_store_value(RuntimeValue::Int(s.len() as i64)),
             "charAt" => {
-                let idx = args.get(0).and_then(|i| i.as_usize()).unwrap_or(0);
+                let idx = args.first().and_then(|i| i.as_usize()).unwrap_or(0);
                 let ch = s
                     .chars()
                     .nth(idx)
@@ -4188,7 +4180,7 @@ mod audit_tests {
     #[test]
     fn audit_ffi_rejects_impossible_slice_counts() {
         let count = isize::MAX as usize / std::mem::size_of::<u64>() + 1;
-        let invalid_ptr = 1usize as *const u64;
+        let invalid_ptr = std::ptr::dangling::<u64>();
         assert_eq!(unsafe { aot_make_array(invalid_ptr, count) }, 0);
         assert_eq!(unsafe { aot_make_object(invalid_ptr, count) }, 0);
         assert_eq!(unsafe { aot_make_tuple(invalid_ptr, count) }, 0);
@@ -4295,8 +4287,14 @@ mod audit_tests {
         let v_str2 = RuntimeValue::String("banana".to_string());
 
         assert_eq!(cmp_runtime_value(&v_int, &v_i32), std::cmp::Ordering::Equal);
-        assert_eq!(cmp_runtime_value(&v_int, &v_float), std::cmp::Ordering::Equal);
-        assert_eq!(cmp_runtime_value(&v_str1, &v_str2), std::cmp::Ordering::Less);
+        assert_eq!(
+            cmp_runtime_value(&v_int, &v_float),
+            std::cmp::Ordering::Equal
+        );
+        assert_eq!(
+            cmp_runtime_value(&v_str1, &v_str2),
+            std::cmp::Ordering::Less
+        );
 
         let arr1 = RuntimeValue::Array(vec![RuntimeValue::Int(1), RuntimeValue::Int(2)]);
         let arr2 = RuntimeValue::Array(vec![RuntimeValue::Int(1), RuntimeValue::Int(3)]);

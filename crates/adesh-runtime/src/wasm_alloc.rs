@@ -9,7 +9,7 @@
 //! Rust heap in `backends::unsafe_heap`).
 
 #[cfg(target_family = "wasm")]
-use std::alloc::{alloc, dealloc, Layout};
+use std::alloc::{Layout, alloc, dealloc};
 #[cfg(target_family = "wasm")]
 use std::collections::HashMap;
 #[cfg(target_family = "wasm")]

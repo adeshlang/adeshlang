@@ -178,7 +178,10 @@ impl<'a> Lexer<'a> {
         let line_start = if self.line_start <= self.start {
             self.line_start
         } else {
-            self.src[..self.start].iter().rposition(|&b| b == b'\n').map_or(0, |p| p + 1)
+            self.src[..self.start]
+                .iter()
+                .rposition(|&b| b == b'\n')
+                .map_or(0, |p| p + 1)
         };
         let col = self.start.saturating_sub(line_start) + 1; // 1-based
         if self.cached_line != self.line || self.cached_line_text.is_empty() {
@@ -211,7 +214,10 @@ impl<'a> Lexer<'a> {
         let line_start = if self.line_start <= self.start {
             self.line_start
         } else {
-            self.src[..self.start].iter().rposition(|&b| b == b'\n').map_or(0, |p| p + 1)
+            self.src[..self.start]
+                .iter()
+                .rposition(|&b| b == b'\n')
+                .map_or(0, |p| p + 1)
         };
         let col = self.start.saturating_sub(line_start) + 1; // 1-based
         if self.cached_line != self.line || self.cached_line_text.is_empty() {

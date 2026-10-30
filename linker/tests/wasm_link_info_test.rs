@@ -369,8 +369,8 @@ fn a_cross_object_reference_becomes_a_call_not_a_host_import() {
     // shifts it.
     assert_eq!(info.function_count(), 2);
     assert_eq!(info.local_function_index("helper"), Some(1));
-    assert_eq!(
-        info.functions[1].linkable, true,
+    assert!(
+        info.functions[1].linkable,
         "the name is what the other object binds to"
     );
 }

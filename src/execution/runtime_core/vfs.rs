@@ -22,9 +22,7 @@ thread_local! {
 const MODULE_EXTS: [&str; 3] = ["adesh", "adl", "ind"];
 
 fn normalize(key: &str) -> String {
-    key.replace('\\', "/")
-        .trim_start_matches("./")
-        .to_string()
+    key.replace('\\', "/").trim_start_matches("./").to_string()
 }
 
 /// Register (or replace) the source for a module path.

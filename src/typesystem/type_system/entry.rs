@@ -88,8 +88,9 @@ pub fn check_ast_with_diagnostics(
             // Check if scalar alias: type Port = u8;
             if ta.fields.len() == 1 && ta.fields[0].0 == "__alias_target__" {
                 let fty = &ta.fields[0].2;
-                if let Some(target_ty) = resolve_type_name(fty, &aliases, &generic_aliases, &empty_type_params)
-                    .or_else(|| type_from_name(fty))
+                if let Some(target_ty) =
+                    resolve_type_name(fty, &aliases, &generic_aliases, &empty_type_params)
+                        .or_else(|| type_from_name(fty))
                 {
                     if !matches!(target_ty, Ty::GenericParam(_)) {
                         if aliases.get(&ta.name) != Some(&target_ty) {
@@ -141,9 +142,10 @@ pub fn check_ast_with_diagnostics(
         if !aliases.contains_key(&ta.name) {
             if ta.fields.len() == 1 && ta.fields[0].0 == "__alias_target__" {
                 let fty = &ta.fields[0].2;
-                let target_ty = resolve_type_name(fty, &aliases, &generic_aliases, &empty_type_params)
-                    .or_else(|| type_from_name(fty))
-                    .unwrap_or(Ty::Any);
+                let target_ty =
+                    resolve_type_name(fty, &aliases, &generic_aliases, &empty_type_params)
+                        .or_else(|| type_from_name(fty))
+                        .unwrap_or(Ty::Any);
                 aliases.insert(ta.name.clone(), target_ty);
             } else {
                 let mut req: Vec<(String, Ty)> = Vec::new();

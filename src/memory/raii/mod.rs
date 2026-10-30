@@ -125,7 +125,6 @@ fn transform_block_with_raii_internal(
     for stmt in stmts {
         // Check if this is an allocating let statement
         if let StmtKind::Let(name, init, type_ann, ..) = &stmt.kind {
-            let is_ptr_ann = type_ann.as_ref().map_or(false, |ty| ty.starts_with('*'));
             let is_alloc_call = if let Some(init_expr) = init {
                 if let ExprKind::Call(callee, _args, _) = &init_expr.kind {
                     if let ExprKind::Variable(func_name) = &callee.kind {
@@ -140,7 +139,7 @@ fn transform_block_with_raii_internal(
                 false
             };
 
-            if is_alloc_call || (is_ptr_ann && is_alloc_call) {
+            if is_alloc_call {
                 allocated_ptrs.push(AllocatedPointer {
                     var_name: name.clone(),
                     ty: type_ann.clone().unwrap_or_else(|| "*u8".to_string()),

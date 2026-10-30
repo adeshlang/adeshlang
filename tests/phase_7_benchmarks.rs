@@ -2,6 +2,9 @@
 //!
 //! Real-world performance testing across execution backends
 
+// 3.14 is test data for float workloads, not a mathematical constant.
+#![allow(clippy::approx_constant)]
+
 #[cfg(test)]
 mod backend_performance_benchmarks {
     use adeshlang::backends::lowering::*;

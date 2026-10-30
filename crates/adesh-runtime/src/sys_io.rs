@@ -276,8 +276,7 @@ pub extern "C" fn sys_seek(fd: i64, offset: i64, whence: i64) -> i64 {
 /// `sys_socket(domain: i32, sock_type: i32, protocol: i32) -> i64`
 #[unsafe(no_mangle)]
 pub extern "C" fn sys_socket(_domain: i32, _sock_type: i32, _protocol: i32) -> i64 {
-    let fd = NEXT_FD.fetch_add(1, Ordering::SeqCst);
-    fd
+    NEXT_FD.fetch_add(1, Ordering::SeqCst)
 }
 
 /// `sys_bind(fd: i64, addr_ptr: u64, port: u16) -> i64`

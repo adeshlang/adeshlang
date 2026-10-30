@@ -26,8 +26,7 @@ fn test_fuzz_const_eval_division_by_zero() {
 
     let err = eval
         .eval(&div_zero, &env)
-        .err()
-        .expect("must fail on div zero");
+        .expect_err("must fail on div zero");
     assert_eq!(err, ConstEvalError::DivisionByZero);
 }
 
@@ -51,10 +50,7 @@ fn test_fuzz_const_eval_step_limit_exceeded() {
         );
     }
 
-    let err = eval
-        .eval(&tree, &env)
-        .err()
-        .expect("must fail on step limit");
+    let err = eval.eval(&tree, &env).expect_err("must fail on step limit");
     assert!(matches!(err, ConstEvalError::StepLimitExceeded(_)));
 }
 

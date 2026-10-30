@@ -629,7 +629,7 @@ fn collections_vec_new(
         let st_iter = state.clone();
         let iter_fn = Value::Function(NativeFn(Arc::new(move |_env, _args| {
             let guard = st_iter.lock().unwrap();
-            let items: std::vec::Vec<Value> = guard.as_slice().iter().cloned().collect();
+            let items: std::vec::Vec<Value> = guard.as_slice().to_vec();
             Ok(Value::Array(items))
         })));
         methods.insert("iter".to_string(), iter_fn.clone());

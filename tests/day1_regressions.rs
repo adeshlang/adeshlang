@@ -37,19 +37,19 @@ fn resolve_adesh_exe() -> PathBuf {
     }
 
     let deps_dir = path.join("deps");
-    if deps_dir.exists() {
-        if let Ok(entries) = std::fs::read_dir(&deps_dir) {
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if let Some(file_name) = p.file_name().and_then(|f| f.to_str()) {
-                    let is_match = if cfg!(windows) {
-                        file_name.starts_with("adesh-") && file_name.ends_with(".exe")
-                    } else {
-                        file_name.starts_with("adesh-") && !file_name.contains('.')
-                    };
-                    if is_match && p.is_file() {
-                        return p;
-                    }
+    if deps_dir.exists()
+        && let Ok(entries) = std::fs::read_dir(&deps_dir)
+    {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if let Some(file_name) = p.file_name().and_then(|f| f.to_str()) {
+                let is_match = if cfg!(windows) {
+                    file_name.starts_with("adesh-") && file_name.ends_with(".exe")
+                } else {
+                    file_name.starts_with("adesh-") && !file_name.contains('.')
+                };
+                if is_match && p.is_file() {
+                    return p;
                 }
             }
         }

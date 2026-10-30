@@ -392,13 +392,13 @@ impl AdeshLanguageServer {
         let line = doc.get_line(pos.line as usize)?;
         let before_cursor = &line[..(pos.character as usize).min(line.len())];
 
-        let fn_name = before_cursor.rfind('(').and_then(|paren_pos| {
+        let fn_name = before_cursor.rfind('(').map(|paren_pos| {
             let before_paren = &before_cursor[..paren_pos];
             let start = before_paren
                 .rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != '.')
                 .map(|i| i + 1)
                 .unwrap_or(0);
-            Some(before_paren[start..].trim())
+            before_paren[start..].trim()
         });
 
         let signature_help = fn_name.and_then(|name| self.get_signature_for(name));

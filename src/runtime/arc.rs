@@ -82,7 +82,10 @@ pub unsafe extern "C" fn arc_alloc_with_drop(
         let align = align.max(MIN_ALIGN).next_power_of_two();
         let alloc_align = align.max(std::mem::align_of::<ArcHeader>());
         let max_padding = align.saturating_sub(1);
-        let total_size = match HEADER_SIZE.checked_add(max_padding).and_then(|s| s.checked_add(size)) {
+        let total_size = match HEADER_SIZE
+            .checked_add(max_padding)
+            .and_then(|s| s.checked_add(size))
+        {
             Some(t) => t,
             None => return ptr::null_mut(),
         };
@@ -416,7 +419,12 @@ mod tests {
             for &align in &[16, 32, 64] {
                 let ptr = arc_alloc(128, align);
                 assert!(!ptr.is_null());
-                assert_eq!((ptr as usize) % align, 0, "ptr must be aligned to {}", align);
+                assert_eq!(
+                    (ptr as usize) % align,
+                    0,
+                    "ptr must be aligned to {}",
+                    align
+                );
                 arc_release_ptr(ptr);
             }
         }

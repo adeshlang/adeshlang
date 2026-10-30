@@ -2,6 +2,9 @@
 //!
 //! End-to-end GPU backend integration testing
 
+// 3.14 is test data for float handling, not a mathematical constant.
+#![allow(clippy::approx_constant)]
+
 #[cfg(test)]
 mod gpu_integration_tests {
     use adeshlang::backends::mlir::gpu::*;

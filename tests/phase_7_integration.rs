@@ -6,6 +6,9 @@
 //! - 7.3: LLVM Backend
 //! - 7.4: Cross-backend validation
 
+// 3.14 is test data for float workloads, not a mathematical constant.
+#![allow(clippy::approx_constant)]
+
 #[cfg(test)]
 mod tests {
     use adeshlang::backends::llvm::{LLVMBackendConfig, LLVMCodegen};

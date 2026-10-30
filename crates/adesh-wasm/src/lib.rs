@@ -21,14 +21,14 @@ use adeshlang::parsing::error::{DiagnosticSeverity, ErrorKind, LangError};
 use adeshlang::parsing::lexer::Lexer;
 use adeshlang::parsing::parser::Parser;
 use adeshlang::parsing::unused_warnings::UnusedWarningPass;
-use adeshlang::toolchain::formatter::format_source;
 use adeshlang::toolchain::RuntimeConfig;
+use adeshlang::toolchain::formatter::format_source;
 use adeshlang::typesystem::type_system::check_module_in;
 
 #[derive(Serialize, Clone)]
 pub struct Diagnostic {
     pub severity: String, // "error" | "warning" | "info"
-    pub kind: String,    // e.g. "ParseError", "TypeError", "RuntimeError"
+    pub kind: String,     // e.g. "ParseError", "TypeError", "RuntimeError"
     pub message: String,
     pub line: usize,
     pub column: usize,
@@ -165,7 +165,6 @@ pub extern "C" fn adesh_wasm_clear_modules() {
     adeshlang::execution::runtime_core::vfs::clear();
 }
 
-
 // ----------------------------------------------------------------------------
 // Memory statistics
 // ----------------------------------------------------------------------------
@@ -282,9 +281,10 @@ fn lang_error_to_diagnostic(err: &LangError) -> Diagnostic {
         source_line: err.line_text.clone(),
         file: err.file.clone(),
         code: err.code.clone(),
-        hint: err.hint.clone().or_else(|| {
-            err.note.clone().map(|note| format!("note: {}", note))
-        }),
+        hint: err
+            .hint
+            .clone()
+            .or_else(|| err.note.clone().map(|note| format!("note: {}", note))),
     }
 }
 
@@ -353,7 +353,11 @@ fn collect_all_diagnostics(code: &str, file: &str) -> (bool, Vec<Diagnostic>) {
 fn render_diagnostics(diagnostics: &[Diagnostic]) -> String {
     let mut out = String::new();
     for d in diagnostics {
-        let label = if d.severity == "warning" { "warning" } else { "error" };
+        let label = if d.severity == "warning" {
+            "warning"
+        } else {
+            "error"
+        };
         let code = d
             .code
             .as_ref()
@@ -361,7 +365,12 @@ fn render_diagnostics(diagnostics: &[Diagnostic]) -> String {
             .unwrap_or_default();
         out.push_str(&format!(
             "{}{}: {} --> {}:{}:{}\n",
-            label, code, d.message, d.file.as_deref().unwrap_or(""), d.line, d.column
+            label,
+            code,
+            d.message,
+            d.file.as_deref().unwrap_or(""),
+            d.line,
+            d.column
         ));
     }
     out
@@ -420,10 +429,10 @@ fn runtime_error_position(stderr: &str) -> Option<(usize, usize)> {
             if let (Ok(col), Ok(line)) = (parts[0].trim().parse(), parts[1].trim().parse()) {
                 return Some((line, col));
             }
-        } else if parts.len() == 2 {
-            if let Ok(line) = parts[0].trim().parse::<usize>() {
-                return Some((line, 1));
-            }
+        } else if parts.len() == 2
+            && let Ok(line) = parts[0].trim().parse::<usize>()
+        {
+            return Some((line, 1));
         }
         search = &rest[end..];
     }
@@ -471,11 +480,11 @@ fn parse_runtime_error(raw: &str) -> RuntimeParse {
 
     // Fall back to `[at file:line:col]` markers from the interpreter's
     // run-module context when no rendered position exists.
-    if line.is_none() {
-        if let Some((l, c)) = runtime_error_position(&text) {
-            line = Some(l);
-            col = Some(c);
-        }
+    if line.is_none()
+        && let Some((l, c)) = runtime_error_position(&text)
+    {
+        line = Some(l);
+        col = Some(c);
     }
 
     // Headline: the first line of the rendered error ("KindLabel: message"),
@@ -495,7 +504,13 @@ fn parse_runtime_error(raw: &str) -> RuntimeParse {
 
     // Split a recognized kind label off the headline.
     let mut kind = "RuntimeError".to_string();
-    for label in ["RuntimeError", "TypeError", "ParseError", "LexicalError", "CompileError"] {
+    for label in [
+        "RuntimeError",
+        "TypeError",
+        "ParseError",
+        "LexicalError",
+        "CompileError",
+    ] {
         let prefix = format!("{}: ", label);
         if let Some(rest) = message.strip_prefix(&prefix) {
             kind = label.to_string();

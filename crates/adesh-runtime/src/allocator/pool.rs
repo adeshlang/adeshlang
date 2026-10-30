@@ -84,14 +84,15 @@ impl PoolAllocator {
         let end = base.saturating_add(self.chunk_size.saturating_mul(self.capacity));
         let offset = (ptr as usize).wrapping_sub(base);
         let in_range = (ptr as usize) >= base && (ptr as usize) < end;
-        let chunk_aligned = offset % self.chunk_size == 0;
+        let chunk_aligned = offset.is_multiple_of(self.chunk_size);
         if in_range && chunk_aligned {
             let slot = offset / self.chunk_size;
-            if let Some(is_free) = self.free_slots.get_mut(slot) {
-                if !*is_free && self.free_list.len() < self.capacity {
-                    *is_free = true;
-                    self.free_list.push(ptr);
-                }
+            if let Some(is_free) = self.free_slots.get_mut(slot)
+                && !*is_free
+                && self.free_list.len() < self.capacity
+            {
+                *is_free = true;
+                self.free_list.push(ptr);
             }
         }
     }
@@ -128,7 +129,7 @@ mod tests {
 
         pool.free(a);
         pool.free(a);
-        pool.free(1usize as *mut u8);
+        pool.free(std::ptr::dangling_mut::<u8>());
         assert_eq!(pool.available(), 1);
         assert_eq!(pool.alloc(), a);
         assert_eq!(pool.alloc(), std::ptr::null_mut());

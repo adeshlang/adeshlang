@@ -381,7 +381,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                         let mut found = None;
                         for entry in entries.flatten() {
                             let p = entry.path();
-                            if p.extension().map_or(false, |ext| ext == "adesh") {
+                            if p.extension().is_some_and(|ext| ext == "adesh") {
                                 found = Some(p.to_string_lossy().to_string());
                                 break;
                             }
@@ -418,7 +418,7 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                         let mut found = None;
                         for entry in entries.flatten() {
                             let p = entry.path();
-                            if p.extension().map_or(false, |ext| ext == "adesh") {
+                            if p.extension().is_some_and(|ext| ext == "adesh") {
                                 found = Some(p);
                                 break;
                             }
@@ -492,7 +492,8 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             ) {
                 Ok(res) => res,
                 Err(e) => {
-                    if e.starts_with("error[") || e.starts_with("Compile-time") || e.contains('\n') {
+                    if e.starts_with("error[") || e.starts_with("Compile-time") || e.contains('\n')
+                    {
                         eprintln!("{}", e);
                     } else {
                         eprintln!("error: {}", e);

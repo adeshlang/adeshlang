@@ -11,6 +11,8 @@
 //! 8. Callee-saved frame preservation (SysV & Win64 non-volatile registers).
 //! 9. Real native execution on Windows x64 producing exact expected exit codes.
 
+// 3.14159 is test data for float immediates, not a mathematical constant.
+#![allow(clippy::approx_constant)]
 #![allow(dead_code, unused_imports)]
 
 use adesh_codegen::machine_ir::{

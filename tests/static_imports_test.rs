@@ -1,3 +1,6 @@
+// 3.14 is test data for float handling, not a mathematical constant.
+#![allow(clippy::approx_constant)]
+
 use adeshlang::cli::{parsing::check_ownership_and_parse, static_imports::link_ast};
 use adeshlang::parsing::ast::StmtKind;
 use std::path::Path;

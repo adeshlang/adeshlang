@@ -200,9 +200,7 @@ impl std::error::Error for NativeLoweringError {}
 /// `Debug` variant name of a HIR node, without its payload.
 fn hir_variant_name(node: &impl std::fmt::Debug) -> String {
     let s = format!("{:?}", node);
-    let end = s
-        .find(|c: char| c == '(' || c == ' ' || c == '{')
-        .unwrap_or(s.len());
+    let end = s.find(['(', ' ', '{']).unwrap_or(s.len());
     s[..end].to_string()
 }
 

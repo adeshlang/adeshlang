@@ -36,9 +36,14 @@ path = "src/bin/adl.rs"
 
 
 [workspace.lints.clippy]
-correctness = "deny"
-suspicious = "warn"
-perf = "warn"
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+# The runtime's C ABI entry points take raw pointers from generated machine
+# code and are deliberately safe to call from Rust; their pointer contracts
+# are documented per function. The unsafe marking would only inconvenience
+# Rust callers, and C callers cannot express it at all.
+not_unsafe_ptr_arg_deref = "allow"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "warn"

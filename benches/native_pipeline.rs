@@ -289,9 +289,8 @@ fn bench_native_pipeline(c: &mut Criterion) {
 
         group.bench_function(BenchmarkId::new("typecheck", function_count), |b| {
             b.iter(|| {
-                black_box(
-                    check_module(black_box(&source)).expect("benchmark source should typecheck"),
-                )
+                check_module(black_box(&source)).expect("benchmark source should typecheck");
+                black_box(())
             })
         });
 

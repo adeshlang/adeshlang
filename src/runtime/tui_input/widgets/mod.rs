@@ -330,9 +330,7 @@ pub fn prompt_input(prompt: &str, opts: &InputOptions) -> Result<String, String>
                             }
                         }
                         KeyCode::Left => {
-                            if cursor_pos > 0 {
-                                cursor_pos -= 1;
-                            }
+                            cursor_pos = cursor_pos.saturating_sub(1);
                         }
                         KeyCode::Right => {
                             if cursor_pos < text.len() {
@@ -1068,9 +1066,7 @@ pub fn prompt_fuzzy(
                 if let Ok(Some(key)) = poll_key_event(Duration::from_millis(50)) {
                     match key.code {
                         KeyCode::Up => {
-                            if selected_idx > 0 {
-                                selected_idx -= 1;
-                            }
+                            selected_idx = selected_idx.saturating_sub(1);
                         }
                         KeyCode::Down => {
                             if selected_idx + 1 < count {
@@ -1291,9 +1287,7 @@ pub fn prompt_tree(
                 if let Ok(Some(key)) = poll_key_event(Duration::from_millis(50)) {
                     match key.code {
                         KeyCode::Up => {
-                            if current_idx > 0 {
-                                current_idx -= 1;
-                            }
+                            current_idx = current_idx.saturating_sub(1);
                         }
                         KeyCode::Down => {
                             if current_idx + 1 < flat_items.len() {
@@ -1380,7 +1374,7 @@ pub fn prompt_table(
                         ])
                         .split(size);
 
-                    let header_row = Row::new(headers.iter().map(|h| h.clone())).style(
+                    let header_row = Row::new(headers.iter().cloned()).style(
                         Style::default()
                             .fg(Color::Cyan)
                             .add_modifier(Modifier::BOLD),
@@ -1425,9 +1419,7 @@ pub fn prompt_table(
                 if let Ok(Some(key)) = poll_key_event(Duration::from_millis(50)) {
                     match key.code {
                         KeyCode::Up => {
-                            if current_row > 0 {
-                                current_row -= 1;
-                            }
+                            current_row = current_row.saturating_sub(1);
                         }
                         KeyCode::Down => {
                             if current_row + 1 < table_data.len() {
@@ -1435,9 +1427,7 @@ pub fn prompt_table(
                             }
                         }
                         KeyCode::Left => {
-                            if current_col > 0 {
-                                current_col -= 1;
-                            }
+                            current_col = current_col.saturating_sub(1);
                         }
                         KeyCode::Right => {
                             if current_col + 1 < headers.len() {

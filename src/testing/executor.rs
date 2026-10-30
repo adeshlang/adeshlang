@@ -316,7 +316,10 @@ impl InterpreterTestExecutor {
 
     #[cfg(target_arch = "wasm32")]
     fn run_test_wasm(&self, _test_name: &str) -> Result<Duration, String> {
-        Err("WASM file backend requires the native CLI and is unavailable in WebAssembly builds".to_string())
+        Err(
+            "WASM file backend requires the native CLI and is unavailable in WebAssembly builds"
+                .to_string(),
+        )
     }
 }
 

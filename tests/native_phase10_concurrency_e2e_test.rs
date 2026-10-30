@@ -29,7 +29,7 @@ fn test_unbounded_channel_multi_producer() {
     }
 
     let mut received = 0;
-    while let Some(_) = chan.recv() {
+    while chan.recv().is_some() {
         received += 1;
         if received == 100 {
             break;

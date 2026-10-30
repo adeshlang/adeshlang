@@ -1401,47 +1401,67 @@ impl NativeJitCompiler {
                                         }
                                     });
                                     if field_ty == AotValueType::Handle {
-                                        crate::parsing::hir_lower::KNOWN_TYPE_ALIASES.with(|cell| {
-                                            let aliases = cell.borrow();
-                                            for (fields, _) in aliases.values() {
-                                                if let Some((_, _, ty_str)) =
-                                                    fields.iter().find(|(name, _, _)| name == field_name)
-                                                {
-                                                    let ty_lower = ty_str.to_ascii_lowercase();
-                                                    field_ty = match ty_lower.as_str() {
-                                                        "f64" | "float" => AotValueType::F64,
-                                                        "f32" => AotValueType::F32,
-                                                        "bool" => AotValueType::Bool,
-                                                        "i32" | "i16" | "i8" | "u32" | "u16" | "u8"
-                                                        | "i64" | "u64" | "int" => AotValueType::Int,
-                                                        "string" => AotValueType::String,
-                                                        _ => {
-                                                            let mut resolved = ty_str.as_str();
-                                                            while let Some((next_fields, _)) = aliases.get(resolved) {
-                                                                if next_fields.len() == 1
-                                                                    && (next_fields[0].0 == "__alias_target__"
-                                                                        || next_fields[0].0.is_empty())
+                                        crate::parsing::hir_lower::KNOWN_TYPE_ALIASES.with(
+                                            |cell| {
+                                                let aliases = cell.borrow();
+                                                for (fields, _) in aliases.values() {
+                                                    if let Some((_, _, ty_str)) = fields
+                                                        .iter()
+                                                        .find(|(name, _, _)| name == field_name)
+                                                    {
+                                                        let ty_lower = ty_str.to_ascii_lowercase();
+                                                        field_ty = match ty_lower.as_str() {
+                                                            "f64" | "float" => AotValueType::F64,
+                                                            "f32" => AotValueType::F32,
+                                                            "bool" => AotValueType::Bool,
+                                                            "i32" | "i16" | "i8" | "u32"
+                                                            | "u16" | "u8" | "i64" | "u64"
+                                                            | "int" => AotValueType::Int,
+                                                            "string" => AotValueType::String,
+                                                            _ => {
+                                                                let mut resolved = ty_str.as_str();
+                                                                while let Some((next_fields, _)) =
+                                                                    aliases.get(resolved)
                                                                 {
-                                                                    resolved = &next_fields[0].2;
-                                                                } else {
-                                                                    break;
+                                                                    if next_fields.len() == 1
+                                                                        && (next_fields[0].0
+                                                                            == "__alias_target__"
+                                                                            || next_fields[0]
+                                                                                .0
+                                                                                .is_empty())
+                                                                    {
+                                                                        resolved =
+                                                                            &next_fields[0].2;
+                                                                    } else {
+                                                                        break;
+                                                                    }
+                                                                }
+                                                                match resolved
+                                                                    .to_ascii_lowercase()
+                                                                    .as_str()
+                                                                {
+                                                                    "f64" | "float" => {
+                                                                        AotValueType::F64
+                                                                    }
+                                                                    "f32" => AotValueType::F32,
+                                                                    "bool" => AotValueType::Bool,
+                                                                    "i32" | "i16" | "i8"
+                                                                    | "u32" | "u16" | "u8"
+                                                                    | "i64" | "u64" | "int" => {
+                                                                        AotValueType::Int
+                                                                    }
+                                                                    "string" => {
+                                                                        AotValueType::String
+                                                                    }
+                                                                    _ => AotValueType::Handle,
                                                                 }
                                                             }
-                                                            match resolved.to_ascii_lowercase().as_str() {
-                                                                "f64" | "float" => AotValueType::F64,
-                                                                "f32" => AotValueType::F32,
-                                                                "bool" => AotValueType::Bool,
-                                                                "i32" | "i16" | "i8" | "u32" | "u16" | "u8"
-                                                                | "i64" | "u64" | "int" => AotValueType::Int,
-                                                                "string" => AotValueType::String,
-                                                                _ => AotValueType::Handle,
-                                                            }
-                                                        }
-                                                    };
-                                                    break;
+                                                        };
+                                                        break;
+                                                    }
                                                 }
-                                            }
-                                        });
+                                            },
+                                        );
                                     }
                                 }
                                 if field_ty == AotValueType::F64 || field_ty == AotValueType::F32 {
@@ -3415,10 +3435,8 @@ impl NativeJitCompiler {
                     _ => {
                         // Fallback to jit_call_builtin
                         let name_c_str = format!("{}\0", builtin_name);
-                        let name_sym = format!(
-                            "__jit_bname_{}",
-                            builtin_name.replace('.', "_").replace('-', "_")
-                        );
+                        let name_sym =
+                            format!("__jit_bname_{}", builtin_name.replace(['.', '-'], "_"));
                         let name_data_id = module
                             .declare_data(&name_sym, cranelift_module::Linkage::Local, true, false)
                             .map_err(|e| format!("Failed to declare builtin name data: {}", e))?;
