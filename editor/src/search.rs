@@ -2,7 +2,7 @@ use regex::Regex;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SearchState {
     pub query: String,
     pub replace_query: String,
@@ -11,20 +11,6 @@ pub struct SearchState {
     pub use_regex: bool,
     pub matches: Vec<(usize, usize)>, // (line, col)
     pub current_match_index: usize,
-}
-
-impl Default for SearchState {
-    fn default() -> Self {
-        Self {
-            query: String::new(),
-            replace_query: String::new(),
-            is_replace_mode: false,
-            case_sensitive: false,
-            use_regex: false,
-            matches: Vec::new(),
-            current_match_index: 0,
-        }
-    }
 }
 
 impl SearchState {
@@ -178,20 +164,20 @@ pub fn search_workspace(
 
                 if path.is_dir() {
                     dirs_to_visit.push(path);
-                } else if path.is_file() {
-                    if let Ok(content) = fs::read_to_string(&path) {
-                        for (idx, line) in content.lines().enumerate() {
-                            let haystack = if case_sensitive {
-                                line.to_string()
-                            } else {
-                                line.to_lowercase()
-                            };
+                } else if path.is_file()
+                    && let Ok(content) = fs::read_to_string(&path)
+                {
+                    for (idx, line) in content.lines().enumerate() {
+                        let haystack = if case_sensitive {
+                            line.to_string()
+                        } else {
+                            line.to_lowercase()
+                        };
 
-                            if haystack.contains(&q) {
-                                results.push((path.clone(), idx + 1, line.to_string()));
-                                if results.len() >= max_results {
-                                    return results;
-                                }
+                        if haystack.contains(&q) {
+                            results.push((path.clone(), idx + 1, line.to_string()));
+                            if results.len() >= max_results {
+                                return results;
                             }
                         }
                     }

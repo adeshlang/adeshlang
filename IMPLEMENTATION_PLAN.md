@@ -89,13 +89,23 @@ documents (`TARGET_MATRIX.md`, `ARCHITECTURE_GAPS.md`, `TOOLCHAIN_CAPABILITIES.m
 
 ### 1.4 CI state (fix in Phase 0)
 
+> **Superseded snapshot (2026-10-31).** The items below describe CI as the
+> 2026-10-24 audit found it. Since then the ubuntu job runs the ELF execution
+> suites and the WASM suites on two engines, and clippy is no longer silenced
+> workspace-wide. The current, verified gate is `CONTRIBUTING.md` (Code Style &
+> Linting) and `CURRENT_STATE.md` §0.6.
+
 - Phase 5-8 execution suites are **not** OS-gated (only `native_x86_64_e2e_test`,
   `native_semantics_e2e_test`, phase 2/3, and `native_parallel_move_e2e_test` are), while
   Ubuntu runs `cargo test --tests` — Linux CI attempts to execute Windows PEs.
   The comment at `.github/workflows/ci.yml:106-110` falsely claims full gating.
 - Phase 8/9/10 suites appear in no CI step list at all; macOS runs `--lib` only.
 - No CI job on any OS executes an ELF, Mach-O, or WASM produced by `adeshlink`.
+  *ELF and WASM are now executed in the ubuntu job; Mach-O execution verification
+  still does not exist.*
 - Clippy is fully silenced workspace-wide (`Cargo.toml:22-28`).
+  *No longer true — `[workspace.lints.clippy]` denies `correctness`; the remaining
+  silences are the crate-level `#![allow(...)]` blocks listed in `CONTRIBUTING.md`.*
 
 ### 1.5 Dead / unwired code (wire-or-delete in the phase shown)
 

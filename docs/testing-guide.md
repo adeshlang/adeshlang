@@ -101,29 +101,31 @@ adesh test tests/main.adesh --include-ignored
 
 ---
 
-## 4. Multi-Backend Testing & Conformance
+## 4. Multi-Runtime Testing & Conformance
 
-AdeshLang allows verifying identical test behavior across all execution runtimes simultaneously:
+AdeshLang allows verifying identical test behavior across several execution runtimes simultaneously. The four documented runtimes are **Interpreter**, **JIT** (`njit`), **AOT** and **WASM**:
 
 ```bash
-# Run across Interpreter, JIT, and Native JIT
-adesh test --runtimes=interp,jit,njit tests/main.adesh
+# Run across Interpreter, JIT and AOT
+adesh test --runtimes=interpreter,njit,aot tests/main.adesh
 
-# Test across ALL 11 backends (Full Conformance Matrix)
+# Test across the conformance matrix — the six backends returned by
+# all_execution_backends() (src/testing/mod.rs:328-337): Interpreter, Jit,
+# NativeJit, Bytecode, Aot, Wasm. This is NOT all 11 enum variants.
 adesh test --backend-check tests/main.adesh
 ```
 
 ### Supported Backend Names for `--runtimes`:
+Accepted tokens are exactly the strings `ExecutionBackend::from_str` maps (`src/toolchain/config/mod.rs:76-92`); an unknown name prints `Warning: unknown runtime backend '<name>' in --runtimes (ignored)` and the run continues without it.
+
 - `interp` / `interpreter` — Standard Interpreter
 - `jit` — LIR JIT Compiler
-- `njit` / `native-jit` — Cranelift Native JIT Machine Code
+- `njit` / `native-jit` / `jit-native` — Cranelift Native JIT Machine Code
 - `vm` / `bytecode` — Bytecode Virtual Machine
-- `mixed` — Hybrid Interpreter + JIT
-- `adaptive` — Adaptive Speculative JIT
-- `tiered` — Tiered JIT
-- `aot` — Ahead-of-Time Native Cranelift Compiler
-- `wasm` — WebAssembly (Wasmtime)
-- `gpu` — MLIR GPU Backend (debug builds)
+- `aot` / `native` — Ahead-of-Time native compilation; by default this is the **bundled `adesh` codegen** (Machine IR → x86-64 → ADOB → `adeshlink`), selected in `src/main.rs:862,1059`. Pass `--codegen=cranelift` to route AOT through Cranelift and an external linker instead.
+- `wasm` — WebAssembly with the WASI Preview 1 ABI
+
+`mixed` / `hybrid`, `safe`, `adaptive` / `ajit`, `tiered` / `tjit` and `gpu` / `mlir-gpu` also parse, but are outside the four documented runtimes and are not covered by CI. `gpu` exists only in debug builds (`#[cfg(debug_assertions)]`).
 
 ---
 

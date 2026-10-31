@@ -2,9 +2,15 @@
 
 Adesh includes a **self-contained native binary toolchain (`adeshlink`)** that produces native executables, static archives, and container packages for GPU/NPU/TPU/quantum payloads **without external dependencies on LLVM, Clang, GCC, MSVC, or GNU Binutils**.
 
-**Status (2026-10-05):** only the **Windows x86-64 PE path is
-execution-verified** (binaries are produced and run by tests). ELF and
-Mach-O outputs are emitted and structurally validated but never executed.
+**Status (updated 2026-10-31):** the **Windows x86-64 PE path is
+execution-verified** (binaries are produced and run by tests), and so are the
+**Linux x86-64 ELF path** (static executables, `dlopen` of a produced `.so`, and
+TLS local-exec/initial-exec, all executed in the Linux CI job) and the **WASM
+path** (clang-produced objects linked by `adeshlink` and executed on two engines,
+V8 through Node and Cranelift through `wasmtime`, plus the compiler's own
+WASI Preview 1 modules). **Mach-O is the remaining gap**: outputs are emitted with
+a full dyld bind/rebase structure and parse-verified by independent decoders, but
+never executed — there is no dyld acceptance test.
 The accelerator and quantum features below are **container packaging
 scaffolding**: they wrap metadata and caller-supplied or re-embedded
 payloads; no device machine code is generated from Adesh source, and no

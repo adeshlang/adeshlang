@@ -3,6 +3,17 @@
 > Consolidated from 32 markdown files on 2026-08-29.
 > This file merges related root-level .md documents by category.
 
+> **Historical archive — capability claims here are superseded (2026-10-31).** This
+> consolidation preserves documents as they read in August 2026. Backend status has moved
+> since: the self-contained native codegen path (not Cranelift) is the default, the native
+> JIT's conformance suite is 7/10 on Windows and absent from the Windows CI job, the
+> bytecode VM is deprecated, and GPU/quantum paths are container packaging only. Do not
+> treat anything in this file as current status. The canonical sources are
+> [`CURRENT_STATE.md`](../CURRENT_STATE.md) (including its §0.6 workspace format & lint
+> gate), [`RUNTIME_MATRIX.md`](../RUNTIME_MATRIX.md),
+> [`TARGET_MATRIX.md`](../TARGET_MATRIX.md), and
+> [`NEXT_IMPLEMENTATION_PLAN.md`](../NEXT_IMPLEMENTATION_PLAN.md).
+
 ---
 
 

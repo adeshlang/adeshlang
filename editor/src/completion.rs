@@ -66,7 +66,7 @@ pub struct CompletionCandidate {
     pub documentation: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CompletionState {
     pub is_visible: bool,
     pub trigger_col: usize,
@@ -74,19 +74,6 @@ pub struct CompletionState {
     pub candidates: Vec<CompletionCandidate>,
     pub filtered: Vec<CompletionCandidate>,
     pub selected_index: usize,
-}
-
-impl Default for CompletionState {
-    fn default() -> Self {
-        Self {
-            is_visible: false,
-            trigger_col: 0,
-            prefix: String::new(),
-            candidates: Vec::new(),
-            filtered: Vec::new(),
-            selected_index: 0,
-        }
-    }
 }
 
 impl CompletionState {

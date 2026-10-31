@@ -18,42 +18,42 @@
 // Type Declarations
 // ─────────────────────────────────────────────────────────────
 
-type RawU8 = u8;
-type Byte = RawU8;
-type Octet = Byte;
+export type RawU8 = u8;
+export type Byte = RawU8;
+export type Octet = Byte;
 
-type Port = u16;
-type MaxConn = u32;
+export type Port = u16;
+export type MaxConn = u32;
 
-type ShortInt = i16;
-type SignedByte = i8;
+export type ShortInt = i16;
+export type SignedByte = i8;
 
-type ServerSpec = {
+export type ServerSpec = {
     host: string,
     port: Port,
     max_connections: MaxConn,
 };
 
-type Level3 = {
+export type Level3 = {
     depth: u8,
     name: string,
 };
 
-type Level2 = {
+export type Level2 = {
     sub: Level3,
 };
 
-type Level1 = {
+export type Level1 = {
     middle: Level2,
 };
 
-type Result<T> = {
+export type Result<T> = {
     ok: bool,
     data: T,
     error?: string,
 };
 
-type Meta<T> = {
+export type Meta<T> = {
     id: u64,
     item: T,
 };
@@ -167,7 +167,7 @@ export test fn test_alias_introspection() {
         port: 3000,
         max_connections: 500,
     };
-    assert_eq(typeof spec, "object");
+    assert_eq(typeof spec, "ServerSpec");
     assert(sizeof(spec) > 0, "ServerSpec should have non-zero size");
 }
 

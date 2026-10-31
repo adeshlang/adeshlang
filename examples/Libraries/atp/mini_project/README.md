@@ -58,16 +58,16 @@ Autonomous connected vehicles stream high-frequency sensor readings, engine diag
 
 ### Run the Complete Simulation
 ```bash
-cargo run --bin adeshlang -- run examples/Libraries/atp/mini_project/run_demo.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/mini_project/run_demo.adesh
 ```
 
 ### Run Server and Client Separately
 In terminal 1:
 ```bash
-cargo run --bin adeshlang -- run examples/Libraries/atp/mini_project/server.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/mini_project/server.adesh
 ```
 
 In terminal 2:
 ```bash
-cargo run --bin adeshlang -- run examples/Libraries/atp/mini_project/client.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/mini_project/client.adesh
 ```

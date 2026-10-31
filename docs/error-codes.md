@@ -5,7 +5,7 @@ This document provides a canonical, comprehensive index of all diagnostic codes 
 AdeshLang adopts a strict, two-tier error-code design:
 1. **Rust-Compatible Codes (`E0001`–`E9999`)**: Used exclusively when the semantic condition and developer remediation directly correspond to an equivalent Rust compiler error code.
 2. **Adesh-Specific Codes (`AD0001`–`AD9999`)**: Dedicated to Adesh-specific language semantics, novel execution models, embedded modes, and binary packaging.
-3. **Linker Codes (`LNK001`–`LNK016`)**: Dedicated to object-file resolution, relocation, section mapping, and final executable layout.
+3. **Linker Codes (`LNK001`–`LNK017`)**: Dedicated to object-file resolution, relocation, section mapping, and final executable layout.
 
 To inspect any error code directly from the terminal, run:
 ```bash
@@ -47,7 +47,7 @@ adesh --explain list
   - [AD0006: Unsupported relocation type or target relocation overflow](#ad0006)
   - [AD0007: Unhandled runtime trap or virtual machine fault](#ad0007)
 - [Adesh Native Linker Codes](#adesh-native-linker-codes)
-  - [LNK001 – LNK016 Overview](#linker-codes-overview)
+  - [LNK001 – LNK017 Overview](#linker-codes-overview)
 
 ---
 
@@ -680,3 +680,4 @@ The native linker (`adesh-linker`) produces structured `LNK###` errors for binar
 | `LNK014` | MetadataMismatch | Incompatible `.adesh.meta` binary metadata. |
 | `LNK015` | IoError | Failed to read input or write executable binary. |
 | `LNK016` | MemoryExhausted | Target memory region or address space exhausted. |
+| `LNK017` | UnsupportedFormat | Requested output format is not implemented by this linker; on the WASM link path it is raised when an input carries no WASM type/import tables (a plain ADOB object), and no output file is left behind (`linker/src/error.rs`, asserted by `linker/tests/wasm_unlinkable_input_test.rs`). |

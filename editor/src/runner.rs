@@ -80,6 +80,12 @@ pub struct ExecutionOutput {
     pub duration_ms: Option<u128>,
 }
 
+impl Default for ExecutionOutput {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ExecutionOutput {
     pub fn new() -> Self {
         Self {
@@ -112,7 +118,7 @@ pub fn clean_terminal_output(raw: &str) -> Vec<String> {
                             let mut seq = String::new();
                             while let Some(&nc) = chars.peek() {
                                 chars.next();
-                                if (nc >= '@' && nc <= '~')
+                                if ('@'..='~').contains(&nc)
                                     || nc == 'm'
                                     || nc == 'K'
                                     || nc == 'H'
@@ -143,10 +149,10 @@ pub fn clean_terminal_output(raw: &str) -> Vec<String> {
                             chars.next();
                         }
                         _ => {
-                            if let Some(&nc) = chars.peek() {
-                                if nc.is_ascii_alphabetic() {
-                                    chars.next();
-                                }
+                            if let Some(&nc) = chars.peek()
+                                && nc.is_ascii_alphabetic()
+                            {
+                                chars.next();
                             }
                         }
                     }
@@ -170,6 +176,12 @@ pub fn clean_terminal_output(raw: &str) -> Vec<String> {
 pub struct Runner {
     pub output: Arc<Mutex<ExecutionOutput>>,
     stop_flag: Arc<AtomicBool>,
+}
+
+impl Default for Runner {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Runner {
@@ -297,6 +309,12 @@ pub struct Terminal {
     pub history_index: usize,
     pub is_running: bool,
     stop_flag: Arc<AtomicBool>,
+}
+
+impl Default for Terminal {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Terminal {

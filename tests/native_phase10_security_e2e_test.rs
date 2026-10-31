@@ -10,9 +10,11 @@ use adesh_codegen::package_security::{PackageSandboxPermissions, PackageSecurity
 
 #[test]
 fn test_package_sandbox_permission_enforcement() {
-    let mut perms = PackageSandboxPermissions::default();
-    perms.allow_network = false;
-    perms.allow_filesystem_write = false;
+    let perms = PackageSandboxPermissions {
+        allow_network: false,
+        allow_filesystem_write: false,
+        ..Default::default()
+    };
 
     // Disallowed network access
     let net_res = PackageSecurityValidator::check_permission(&perms, "network_connect");

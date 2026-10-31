@@ -37,6 +37,7 @@ pub(crate) fn lower_variable_instruction(
     array_capacity: &mut HashMap<ValueId, i64>,
     var_array_capacity: &mut HashMap<String, i64>,
     var_map: &mut HashMap<String, Variable>,
+    var_cl_types: &mut HashMap<String, Type>,
     next_var_index: &mut usize,
     object_properties: &mut HashMap<ValueId, HashMap<String, (ValueId, AotValueType)>>,
     var_object_properties: &mut HashMap<String, HashMap<String, (ValueId, AotValueType)>>,
@@ -56,7 +57,14 @@ pub(crate) fn lower_variable_instruction(
                 .map(|t| aot_type_to_cranelift(t))
                 .unwrap_or(types::I64);
 
-            let var = get_or_create_var(var_map, next_var_index, name, builder, cranelift_type);
+            let var = get_or_create_var(
+                var_map,
+                var_cl_types,
+                next_var_index,
+                name,
+                builder,
+                cranelift_type,
+            );
             let v = builder.use_var(var);
 
             value_map.insert(*dst, v);
@@ -88,7 +96,7 @@ pub(crate) fn lower_variable_instruction(
         // Store variable
         LirInst::StoreVar(name, src) => {
             // Get the source value
-            let val = value_map
+            let mut val = value_map
                 .get(src)
                 .copied()
                 .ok_or_else(|| format!("Value {} not found for StoreVar", src))?;
@@ -97,7 +105,40 @@ pub(crate) fn lower_variable_instruction(
             let actual_type = builder.func.dfg.value_type(val);
 
             // Get or create variable with the actual value type
-            let var = get_or_create_var(var_map, next_var_index, name, builder, actual_type);
+            let var = get_or_create_var(
+                var_map,
+                var_cl_types,
+                next_var_index,
+                name,
+                builder,
+                actual_type,
+            );
+
+            if let Some(&declared_type) = var_cl_types.get(name) {
+                if actual_type != declared_type {
+                    if actual_type.is_int() && declared_type.is_int() {
+                        if actual_type.bits() > declared_type.bits() {
+                            val = builder.ins().ireduce(declared_type, val);
+                        } else if actual_type.bits() < declared_type.bits() {
+                            let is_unsigned = matches!(
+                                value_types.get(src),
+                                Some(
+                                    AotValueType::U8
+                                        | AotValueType::U16
+                                        | AotValueType::U32
+                                        | AotValueType::U64
+                                        | AotValueType::Bool
+                                )
+                            );
+                            val = if is_unsigned {
+                                builder.ins().uextend(declared_type, val)
+                            } else {
+                                builder.ins().sextend(declared_type, val)
+                            };
+                        }
+                    }
+                }
+            }
 
             // Store value directly - types now guaranteed to match
             builder.def_var(var, val);
@@ -173,6 +214,7 @@ pub(crate) fn lower_variable_instruction(
 /// Helper function to get or create a variable
 fn get_or_create_var(
     var_map: &mut HashMap<String, Variable>,
+    var_cl_types: &mut HashMap<String, Type>,
     next_var_index: &mut usize,
     name: &str,
     builder: &mut FunctionBuilder,
@@ -184,6 +226,7 @@ fn get_or_create_var(
         let var = Variable::new(*next_var_index);
         *next_var_index += 1;
         builder.declare_var(var, cranelift_type);
+        var_cl_types.insert(name.to_string(), cranelift_type);
         var_map.insert(name.to_string(), var);
         var
     }

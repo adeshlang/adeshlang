@@ -50,31 +50,39 @@ fn all_integer_widths_and_randomized_identities() {
                     );
                 }
                 same(
-                    Intrinsic::Count.eval(&[v.clone()]).unwrap(),
+                    Intrinsic::Count.eval(std::slice::from_ref(&v)).unwrap(),
                     Value::U32(x.count_ones()),
                 );
                 same(
-                    Intrinsic::LeadingZeros.eval(&[v.clone()]).unwrap(),
+                    Intrinsic::LeadingZeros
+                        .eval(std::slice::from_ref(&v))
+                        .unwrap(),
                     Value::U32(x.leading_zeros()),
                 );
                 same(
-                    Intrinsic::TrailingZeros.eval(&[v.clone()]).unwrap(),
+                    Intrinsic::TrailingZeros
+                        .eval(std::slice::from_ref(&v))
+                        .unwrap(),
                     Value::U32(x.trailing_zeros()),
                 );
                 same(
-                    Intrinsic::LeadingOnes.eval(&[v.clone()]).unwrap(),
+                    Intrinsic::LeadingOnes
+                        .eval(std::slice::from_ref(&v))
+                        .unwrap(),
                     Value::U32(x.leading_ones()),
                 );
                 same(
-                    Intrinsic::TrailingOnes.eval(&[v.clone()]).unwrap(),
+                    Intrinsic::TrailingOnes
+                        .eval(std::slice::from_ref(&v))
+                        .unwrap(),
                     Value::U32(x.trailing_ones()),
                 );
                 same(
-                    Intrinsic::Reverse.eval(&[v.clone()]).unwrap(),
+                    Intrinsic::Reverse.eval(std::slice::from_ref(&v)).unwrap(),
                     Value::$variant(x.reverse_bits()),
                 );
                 same(
-                    Intrinsic::SwapBytes.eval(&[v.clone()]).unwrap(),
+                    Intrinsic::SwapBytes.eval(std::slice::from_ref(&v)).unwrap(),
                     Value::$variant(x.swap_bytes()),
                 );
                 for invalid in [

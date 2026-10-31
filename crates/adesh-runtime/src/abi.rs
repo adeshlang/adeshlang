@@ -48,6 +48,8 @@ impl AdeshString {
         }
     }
 
+    // Infallible by construction: any UTF-8 input allocates a valid string.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         let bytes = s.as_bytes();
         let len = bytes.len();
@@ -167,7 +169,7 @@ impl Eq for AdeshArray {}
 
 impl AdeshArray {
     pub fn new(elem_size: usize, initial_cap: usize) -> Self {
-        let align = elem_size.min(16).max(8).next_power_of_two();
+        let align = elem_size.clamp(8, 16).next_power_of_two();
         Self::new_with_drop(elem_size, initial_cap, align, None)
     }
 

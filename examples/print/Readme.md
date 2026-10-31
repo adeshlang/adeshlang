@@ -318,10 +318,13 @@ for user in users {
 ## Technical Implementation
 
 ### Backend Compatibility
-- **Interpreter**: Full feature support with buffered I/O
-- **JIT**: Full feature support with runtime optimizations  
-- **AOT**: Full feature support using native C printf
-- **WASM**: Basic support (styling depends on host environment)
+Backend coverage varies; only the interpreter implements the full option set with test coverage. Execution verification per CI (`.github/workflows/ci.yml`):
+- **Interpreter**: Full option support; the reference implementation and the path most heavily asserted by tests
+- **JIT**: Basic printing works; option coverage varies and is not fully asserted in CI
+- **AOT/native**: Basic printing is execution-verified (Windows x86-64 PE e2e suites compare stdout; Linux ELF e2e runs in CI); advanced options may differ
+- **VM**: Basic print executes (v1/v2 writers); print options are not asserted
+- **WASM**: Basic print is execution-verified on Node and wasmtime in CI (styling depends on host environment)
+- **Mach-O**: emitted and structurally validated; no execution test exists yet
 
 ### Memory Safety
 - All print operations are memory-safe
@@ -656,13 +659,13 @@ Pretty print works with all AdeshLang value types:
 
 ### Cross-Mode Compatibility
 
-Pretty print works in **all execution modes**:
+Pretty print is implemented primarily in the interpreter; other backends cover a subset, and option parity across backends is **not asserted by tests**. Execution-verified today: native Windows x86-64 (PE e2e suites), Linux ELF (CI), and WASM (Node + wasmtime CI). Mach-O is emitted and structure-checked but has no execution test.
 
--  **Interpreter**: Full support
--  **JIT**: Full support  
--  **AOT**: Full support
--  **VM**: Full support
--  **WASM**: Full support
+-  **Interpreter**: Full option support (reference path)
+-  **JIT**: Basic printing; option coverage varies, not fully tested
+-  **AOT**: Basic printing (execution-tested on Windows PE / Linux ELF); options vary
+-  **VM**: Basic printing; options not asserted
+-  **WASM**: Basic printing (executed in CI on Node + wasmtime); styling host-dependent
 
 ### Color Scheme Reference
 

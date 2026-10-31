@@ -84,7 +84,7 @@ Edge cases
 
 Further reading
 ---------------
-- `docs/microtasks.md` — deeper view and diagrams illustrating microtask ordering and event-loop interactions.
+- The microtasks deep-dive (formerly `docs/microtasks.md`) is consolidated in the "Source: microtasks.md" section below — deeper view and diagrams illustrating microtask ordering and event-loop interactions.
 - Examples in `examples/` demonstrate typical usage and edge cases.
 
 
@@ -148,12 +148,12 @@ When `Promise(fn(resolve, reject) { ... })` is lowered:
 
 ### Files Modified
 
-- `src/backends/builtins.rs`: Promise runtime, resolve/reject makers, await, sleep
-- `src/backends/lir.rs`: Added `ConstFunc` instruction
-- `src/backends/lir_lower.rs`: Lambda lowering, Promise executor pattern
-- `src/backends/jit.rs`: ConstFunc handling, resolve/reject callback invocation
-- `src/backends/adaptive_jit.rs`: ConstFunc handling
-- `src/backends/tiered_jit.rs`: ConstFunc handling
+- `src/backends/common/builtins/`: Promise runtime, resolve/reject makers, await, sleep
+- `src/backends/common/lir/mod.rs`: Added `ConstFunc` instruction
+- `src/backends/common/lir/lower/`: Lambda lowering, Promise executor pattern
+- `src/backends/jit/`: ConstFunc handling, resolve/reject callback invocation
+- `src/backends/jit/adaptive/`: ConstFunc handling
+- `src/backends/jit/tiered/`: ConstFunc handling
 - `src/main.rs`: Removed interpreter fallback for async
 
 ---
@@ -203,16 +203,12 @@ When `Promise(fn(resolve, reject) { ... })` is lowered:
 - Promise with string operations
 - Sequential promise chain
 
-### async.ind - Interpreter async feature tests
-- 9 test scenarios covering all major async patterns
-- Tests delays, Promise combinators, nested async, timers
-- All tests pass and program exits cleanly
-
-### async_errors.ind - Error handling tests  
-- Promise rejection handling with try/catch
-- Promise.any with all rejections
-- Promise.all fail-fast behavior
-- Async function errors propagation
+### tests/async.rs - Interpreter async feature tests
+(`async.ind` / `async_errors.ind` referenced in earlier reports no longer exist in the repo; the assertions live in `tests/async.rs`.)
+- `promise_then_chaining` - `.then` handler chains via the microtask queue
+- `async_function_returns_promise` - `async fn` call returns a Promise, resolved through `.then`
+- `set_timeout_fires` - `setTimeout` callback fires via the event loop
+- Example programs under `examples/async/` (e.g. `native_async_test.adesh`, `promise_combinators_test.adesh`, `timers_settimeout.adesh`) demonstrate the remaining patterns (combinators, nested async, error handling) but are not wired into CI.
 
 ## Performance Notes
 
@@ -263,7 +259,7 @@ Interpreted: modAdd returned: 42
 JIT:         awaited modAdd result: null
 ```
 
-**Status:** This is a **known limitation** documented in TODO.md line 137:
+**Status:** Known limitation (formerly tracked in `TODO.md`, which no longer exists in the repo):
 > ⚠️ **Async functions in JIT** - `async fn` syntax not fully supported in JIT backend
 
 ### Issue 2: setTimeout Callbacks
@@ -276,10 +272,12 @@ When testing Promise.all with setTimeout:
 - Interpreted mode: Works perfectly
 - JIT mode: Crashes or produces incomplete results
 
-**Status:** This is a **known limitation** documented in TODO.md line 141:
+**Status:** Known limitation (formerly tracked in `TODO.md`, which no longer exists in the repo):
 > ⚠️ **setTimeout callback execution** - Callbacks can't be invoked from timer thread in JIT
 
-### What DOES Work in JIT
+### What DID Work in JIT (per the original report — no longer test-verified)
+
+> **Verification status:** the claims below predate the native-pipeline hardening. Today `tests/native_semantics_e2e_test.rs::test_native_rejects_async` asserts that `async fn` and `await` are **compile errors** in the native backend's lowering diagnostics, and no test in the repo executes async code through the JIT. The JIT still contains async plumbing (`call_async_function` in `src/backends/jit/cranelift/mod.rs`, `LirFunction::new_async` in `src/backends/common/lir/lower/functions.rs`), but per the Documentation Policy it must be treated as **not verified working**. Interpreter async support is the only path asserted by tests (`tests/async.rs`).
 
 ✅ **Basic async functions:**
 ```adesh

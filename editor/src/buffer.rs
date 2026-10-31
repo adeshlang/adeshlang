@@ -1,21 +1,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Cursor {
     pub line: usize,
     pub col: usize,
     pub desired_col: usize,
-}
-
-impl Default for Cursor {
-    fn default() -> Self {
-        Self {
-            line: 0,
-            col: 0,
-            desired_col: 0,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -410,9 +400,7 @@ impl Buffer {
         let chars: Vec<char> = line.chars().collect();
         let mut col = self.cursor.col.min(chars.len());
 
-        if col > 0 {
-            col -= 1;
-        }
+        col = col.saturating_sub(1);
         while col > 0 && chars[col].is_whitespace() {
             col -= 1;
         }
@@ -434,8 +422,8 @@ impl Buffer {
 
         if forward {
             let start = self.cursor.col + 1;
-            for i in start..len {
-                if chars[i] == ch {
+            for (i, &c) in chars.iter().enumerate().skip(start) {
+                if c == ch {
                     self.cursor.col = if till { i.saturating_sub(1) } else { i };
                     self.cursor.desired_col = self.cursor.col;
                     return true;
@@ -513,10 +501,10 @@ impl Buffer {
         };
 
         // Smart Enter between brackets: {|} or (|) or [|]
-        let is_bracket_pair = match (before_ch, after_ch) {
-            (Some('{'), Some('}')) | (Some('('), Some(')')) | (Some('['), Some(']')) => true,
-            _ => false,
-        };
+        let is_bracket_pair = matches!(
+            (before_ch, after_ch),
+            (Some('{'), Some('}')) | (Some('('), Some(')')) | (Some('['), Some(']'))
+        );
 
         let current_part: String = chars[..idx].iter().collect();
         let next_part: String = chars[idx..].iter().collect();
@@ -1080,12 +1068,8 @@ impl Buffer {
                 let line = &self.lines[l];
                 let trimmed_start = line.len() - line.trim_start().len();
                 let after_indent = &line.trim_start();
-                if after_indent.starts_with(comment_str) {
-                    let new_line = format!(
-                        "{}{}",
-                        &line[..trimmed_start],
-                        &after_indent[comment_str.len()..]
-                    );
+                if let Some(rest) = after_indent.strip_prefix(comment_str) {
+                    let new_line = format!("{}{}", &line[..trimmed_start], rest);
                     self.lines[l] = new_line;
                 }
             }
@@ -1399,22 +1383,22 @@ impl Buffer {
 
     pub fn insert_char_auto_close(&mut self, ch: char) {
         // 1. Auto-wrap selection if text is selected
-        if let Some(sel) = self.selection {
-            if let Some(close) = Self::auto_close_pair(ch) {
-                let (sl, sc, el, ec) = sel.normalized();
-                if sl == el {
-                    self.record_snapshot();
-                    let line = &mut self.lines[sl];
-                    let chars: Vec<char> = line.chars().collect();
-                    let before: String = chars[..sc].iter().collect();
-                    let selected: String = chars[sc..ec.min(chars.len())].iter().collect();
-                    let after: String = chars[ec.min(chars.len())..].iter().collect();
-                    *line = format!("{}{}{}{}{}", before, ch, selected, close, after);
-                    self.selection = None;
-                    self.cursor.col = sc + selected.chars().count() + 2;
-                    self.cursor.desired_col = self.cursor.col;
-                    return;
-                }
+        if let Some(sel) = self.selection
+            && let Some(close) = Self::auto_close_pair(ch)
+        {
+            let (sl, sc, el, ec) = sel.normalized();
+            if sl == el {
+                self.record_snapshot();
+                let line = &mut self.lines[sl];
+                let chars: Vec<char> = line.chars().collect();
+                let before: String = chars[..sc].iter().collect();
+                let selected: String = chars[sc..ec.min(chars.len())].iter().collect();
+                let after: String = chars[ec.min(chars.len())..].iter().collect();
+                *line = format!("{}{}{}{}{}", before, ch, selected, close, after);
+                self.selection = None;
+                self.cursor.col = sc + selected.chars().count() + 2;
+                self.cursor.desired_col = self.cursor.col;
+                return;
             }
         }
 
@@ -1439,7 +1423,7 @@ impl Buffer {
             let line = &mut self.lines[self.cursor.line];
             let chars: Vec<char> = line.chars().collect();
             let idx = self.cursor.col.min(chars.len());
-            let mut new_chars: Vec<char> = chars[..idx].iter().cloned().collect();
+            let mut new_chars: Vec<char> = chars[..idx].to_vec();
             new_chars.push(ch);
             new_chars.push(close);
             new_chars.extend(chars[idx..].iter());

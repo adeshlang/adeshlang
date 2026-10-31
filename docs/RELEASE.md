@@ -338,26 +338,30 @@ Watch progress: **Actions → Release → <tag run>**. Total time is roughly
 If Actions is unavailable, build the artifacts per §3–§5 on each OS, then:
 
 ```bash
-gh release create v0.4.0 dist/* \
+gh release create v<version> dist/* \
   --repo adeshlang/adeshlang \
-  --title "AdeshLang v0.4.0" \
+  --title "AdeshLang v<version>" \
   --generate-notes
-sha256sum dist/* > dist/SHA256SUMS.txt && gh release upload v0.4.0 dist/SHA256SUMS.txt --repo adeshlang/adeshlang
+sha256sum dist/* > dist/SHA256SUMS.txt && gh release upload v<version> dist/SHA256SUMS.txt --repo adeshlang/adeshlang
 ```
+
+`<version>` is the version in `Cargo.toml` (currently `0.3.0`); the packaging
+scripts in §3–§5 read it from there, so the artifact file names and the release
+tag must use the same value.
 
 ### 7.5 Post-release verification
 
 ```powershell
 # Windows: fresh-VM checks
-.\AdeshLang-0.4.0-x86_64-windows-setup.exe /SILENT     # then: adesh doctor; adesh ai status
-msiexec /i AdeshLang-0.4.0-x86_64-windows.msi /qn      # silent enterprise path
+.\AdeshLang-<version>-x86_64-windows-setup.exe /SILENT     # then: adesh doctor; adesh ai status
+msiexec /i AdeshLang-<version>-x86_64-windows.msi /qn      # silent enterprise path
 ```
 
 ```bash
 # Linux
-sudo apt install ./adeshlang_0.4.0_amd64.deb && adesh doctor && adesh ai status
+sudo apt install ./adeshlang_<version>_amd64.deb && adesh doctor && adesh ai status
 # macOS
-sudo installer -pkg AdeshLang-0.4.0-arm64-macos.pkg -target / && adesh doctor
+sudo installer -pkg AdeshLang-<version>-arm64-macos.pkg -target / && adesh doctor
 ```
 
 Each check should show the core binaries on PATH, the bundled AI model as

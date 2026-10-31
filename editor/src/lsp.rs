@@ -35,6 +35,12 @@ pub struct LspClient {
     pub active: bool,
 }
 
+impl Default for LspClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LspClient {
     pub fn new() -> Self {
         Self {
@@ -89,167 +95,161 @@ impl LspClient {
                             let _ = reader.read_line(&mut empty_line);
 
                             let mut body_buf = vec![0u8; content_len];
-                            if std::io::Read::read_exact(&mut reader, &mut body_buf).is_ok() {
-                                if let Ok(json_val) = serde_json::from_slice::<Value>(&body_buf) {
-                                    // Diagnostics notification
-                                    if json_val.get("method").and_then(|m| m.as_str())
-                                        == Some("textDocument/publishDiagnostics")
+                            if std::io::Read::read_exact(&mut reader, &mut body_buf).is_ok()
+                                && let Ok(json_val) = serde_json::from_slice::<Value>(&body_buf)
+                            {
+                                // Diagnostics notification
+                                if json_val.get("method").and_then(|m| m.as_str())
+                                    == Some("textDocument/publishDiagnostics")
+                                    && let Some(params) = json_val.get("params")
+                                    && let Some(diags_arr) =
+                                        params.get("diagnostics").and_then(|d| d.as_array())
+                                {
+                                    let mut parsed_list = Vec::new();
+                                    for d in diags_arr {
+                                        let line = d
+                                            .pointer("/range/start/line")
+                                            .and_then(|l| l.as_u64())
+                                            .unwrap_or(0)
+                                            as usize;
+                                        let col = d
+                                            .pointer("/range/start/character")
+                                            .and_then(|c| c.as_u64())
+                                            .unwrap_or(0)
+                                            as usize;
+                                        let msg = d
+                                            .get("message")
+                                            .and_then(|m| m.as_str())
+                                            .unwrap_or("Syntax error")
+                                            .to_string();
+                                        let sev_num =
+                                            d.get("severity").and_then(|s| s.as_u64()).unwrap_or(1);
+                                        let severity = match sev_num {
+                                            2 => DiagnosticSeverity::WARNING,
+                                            3 => DiagnosticSeverity::INFORMATION,
+                                            4 => DiagnosticSeverity::HINT,
+                                            _ => DiagnosticSeverity::ERROR,
+                                        };
+                                        parsed_list.push(LspDiagnostic {
+                                            line,
+                                            col,
+                                            message: msg,
+                                            severity,
+                                        });
+                                    }
+                                    if let Ok(mut diag_lock) = diag_arc.lock() {
+                                        *diag_lock = parsed_list;
+                                    }
+                                }
+
+                                // Completion / Hover / Symbols Response
+                                if let Some(result) = json_val.get("result") {
+                                    if let Some(items) = result
+                                        .get("items")
+                                        .and_then(|i| i.as_array())
+                                        .or_else(|| result.as_array())
                                     {
-                                        if let Some(params) = json_val.get("params") {
-                                            if let Some(diags_arr) =
-                                                params.get("diagnostics").and_then(|d| d.as_array())
+                                        let mut list = Vec::new();
+                                        for item in items {
+                                            if let Some(label) =
+                                                item.get("label").and_then(|l| l.as_str())
                                             {
-                                                let mut parsed_list = Vec::new();
-                                                for d in diags_arr {
-                                                    let line = d
-                                                        .pointer("/range/start/line")
-                                                        .and_then(|l| l.as_u64())
-                                                        .unwrap_or(0)
-                                                        as usize;
-                                                    let col = d
-                                                        .pointer("/range/start/character")
-                                                        .and_then(|c| c.as_u64())
-                                                        .unwrap_or(0)
-                                                        as usize;
-                                                    let msg = d
-                                                        .get("message")
-                                                        .and_then(|m| m.as_str())
-                                                        .unwrap_or("Syntax error")
-                                                        .to_string();
-                                                    let sev_num = d
-                                                        .get("severity")
-                                                        .and_then(|s| s.as_u64())
-                                                        .unwrap_or(1);
-                                                    let severity = match sev_num {
-                                                        2 => DiagnosticSeverity::WARNING,
-                                                        3 => DiagnosticSeverity::INFORMATION,
-                                                        4 => DiagnosticSeverity::HINT,
-                                                        _ => DiagnosticSeverity::ERROR,
-                                                    };
-                                                    parsed_list.push(LspDiagnostic {
-                                                        line,
-                                                        col,
-                                                        message: msg,
-                                                        severity,
-                                                    });
-                                                }
-                                                if let Ok(mut diag_lock) = diag_arc.lock() {
-                                                    *diag_lock = parsed_list;
-                                                }
+                                                let kind_num = item
+                                                    .get("kind")
+                                                    .and_then(|k| k.as_u64())
+                                                    .unwrap_or(1)
+                                                    as u8;
+                                                let kind = match kind_num {
+                                                    2 | 3 => CandidateKind::Function,
+                                                    6 => CandidateKind::Variable,
+                                                    7 => CandidateKind::Struct,
+                                                    13 => CandidateKind::Enum,
+                                                    9 => CandidateKind::Module,
+                                                    15 => CandidateKind::Snippet,
+                                                    14 => CandidateKind::Keyword,
+                                                    _ => CandidateKind::Keyword,
+                                                };
+                                                let detail = item
+                                                    .get("detail")
+                                                    .and_then(|d| d.as_str())
+                                                    .map(ToString::to_string);
+                                                let doc = item.get("documentation").and_then(|d| {
+                                                    if let Some(s) = d.as_str() {
+                                                        Some(s.to_string())
+                                                    } else {
+                                                        d.get("value")
+                                                            .and_then(|v| v.as_str())
+                                                            .map(ToString::to_string)
+                                                    }
+                                                });
+                                                list.push(CompletionCandidate {
+                                                    label: label.to_string(),
+                                                    insert_text: item
+                                                        .get("insertText")
+                                                        .and_then(|it| it.as_str())
+                                                        .map(ToString::to_string),
+                                                    kind,
+                                                    detail,
+                                                    documentation: doc,
+                                                });
                                             }
+                                        }
+                                        if !list.is_empty()
+                                            && let Ok(mut comp_lock) = comp_arc.lock()
+                                        {
+                                            *comp_lock = list;
                                         }
                                     }
 
-                                    // Completion / Hover / Symbols Response
-                                    if let Some(result) = json_val.get("result") {
-                                        if let Some(items) = result
-                                            .get("items")
-                                            .and_then(|i| i.as_array())
-                                            .or_else(|| result.as_array())
+                                    // Hover
+                                    if let Some(contents) = result.get("contents") {
+                                        let text = if let Some(s) = contents.as_str() {
+                                            s.to_string()
+                                        } else if let Some(val) =
+                                            contents.get("value").and_then(|v| v.as_str())
                                         {
-                                            let mut list = Vec::new();
-                                            for item in items {
-                                                if let Some(label) =
-                                                    item.get("label").and_then(|l| l.as_str())
-                                                {
-                                                    let kind_num = item
-                                                        .get("kind")
-                                                        .and_then(|k| k.as_u64())
-                                                        .unwrap_or(1)
-                                                        as u8;
-                                                    let kind = match kind_num {
-                                                        2 | 3 => CandidateKind::Function,
-                                                        6 => CandidateKind::Variable,
-                                                        7 => CandidateKind::Struct,
-                                                        13 => CandidateKind::Enum,
-                                                        9 => CandidateKind::Module,
-                                                        15 => CandidateKind::Snippet,
-                                                        14 => CandidateKind::Keyword,
-                                                        _ => CandidateKind::Keyword,
-                                                    };
-                                                    let detail = item
-                                                        .get("detail")
-                                                        .and_then(|d| d.as_str())
-                                                        .map(ToString::to_string);
-                                                    let doc =
-                                                        item.get("documentation").and_then(|d| {
-                                                            if let Some(s) = d.as_str() {
-                                                                Some(s.to_string())
-                                                            } else {
-                                                                d.get("value")
-                                                                    .and_then(|v| v.as_str())
-                                                                    .map(ToString::to_string)
-                                                            }
-                                                        });
-                                                    list.push(CompletionCandidate {
-                                                        label: label.to_string(),
-                                                        insert_text: item
-                                                            .get("insertText")
-                                                            .and_then(|it| it.as_str())
-                                                            .map(ToString::to_string),
-                                                        kind,
-                                                        detail,
-                                                        documentation: doc,
-                                                    });
-                                                }
-                                            }
-                                            if !list.is_empty() {
-                                                if let Ok(mut comp_lock) = comp_arc.lock() {
-                                                    *comp_lock = list;
-                                                }
-                                            }
+                                            val.to_string()
+                                        } else {
+                                            contents.to_string()
+                                        };
+                                        if let Ok(mut hover_lock) = hover_arc.lock() {
+                                            *hover_lock = Some(text);
                                         }
+                                    }
 
-                                        // Hover
-                                        if let Some(contents) = result.get("contents") {
-                                            let text = if let Some(s) = contents.as_str() {
-                                                s.to_string()
-                                            } else if let Some(val) =
-                                                contents.get("value").and_then(|v| v.as_str())
+                                    // Document Symbols
+                                    if let Some(arr) = result.as_array() {
+                                        let mut sym_list = Vec::new();
+                                        for item in arr {
+                                            if let Some(name) =
+                                                item.get("name").and_then(|n| n.as_str())
                                             {
-                                                val.to_string()
-                                            } else {
-                                                contents.to_string()
-                                            };
-                                            if let Ok(mut hover_lock) = hover_arc.lock() {
-                                                *hover_lock = Some(text);
+                                                let kind_str = item
+                                                    .get("kind")
+                                                    .map(|k| k.to_string())
+                                                    .unwrap_or_else(|| "Symbol".to_string());
+                                                let line = item
+                                                    .pointer("/range/start/line")
+                                                    .and_then(|l| l.as_u64())
+                                                    .unwrap_or(0)
+                                                    as usize;
+                                                let col = item
+                                                    .pointer("/range/start/character")
+                                                    .and_then(|c| c.as_u64())
+                                                    .unwrap_or(0)
+                                                    as usize;
+                                                sym_list.push(DocumentSymbolInfo {
+                                                    name: name.to_string(),
+                                                    kind: kind_str,
+                                                    line,
+                                                    col,
+                                                });
                                             }
                                         }
-
-                                        // Document Symbols
-                                        if let Some(arr) = result.as_array() {
-                                            let mut sym_list = Vec::new();
-                                            for item in arr {
-                                                if let Some(name) =
-                                                    item.get("name").and_then(|n| n.as_str())
-                                                {
-                                                    let kind_str = item
-                                                        .get("kind")
-                                                        .map(|k| k.to_string())
-                                                        .unwrap_or_else(|| "Symbol".to_string());
-                                                    let line = item
-                                                        .pointer("/range/start/line")
-                                                        .and_then(|l| l.as_u64())
-                                                        .unwrap_or(0)
-                                                        as usize;
-                                                    let col = item
-                                                        .pointer("/range/start/character")
-                                                        .and_then(|c| c.as_u64())
-                                                        .unwrap_or(0)
-                                                        as usize;
-                                                    sym_list.push(DocumentSymbolInfo {
-                                                        name: name.to_string(),
-                                                        kind: kind_str,
-                                                        line,
-                                                        col,
-                                                    });
-                                                }
-                                            }
-                                            if !sym_list.is_empty() {
-                                                if let Ok(mut sym_lock) = sym_arc.lock() {
-                                                    *sym_lock = sym_list;
-                                                }
-                                            }
+                                        if !sym_list.is_empty()
+                                            && let Ok(mut sym_lock) = sym_arc.lock()
+                                        {
+                                            *sym_lock = sym_list;
                                         }
                                     }
                                 }
@@ -400,12 +400,12 @@ impl LspClient {
     }
 
     fn write_message(&mut self, content: &str) {
-        if let Some(ref mut child) = self.process {
-            if let Some(ref mut stdin) = child.stdin {
-                let msg = format!("Content-Length: {}\r\n\r\n{}", content.len(), content);
-                let _ = stdin.write_all(msg.as_bytes());
-                let _ = stdin.flush();
-            }
+        if let Some(ref mut child) = self.process
+            && let Some(ref mut stdin) = child.stdin
+        {
+            let msg = format!("Content-Length: {}\r\n\r\n{}", content.len(), content);
+            let _ = stdin.write_all(msg.as_bytes());
+            let _ = stdin.flush();
         }
     }
 

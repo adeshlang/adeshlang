@@ -432,8 +432,8 @@ pub extern "C" fn processSpawn(
             table.insert(pid, Arc::new(Mutex::new(child)));
 
             let obj = make_empty_object();
-            aot_set_field_str(obj, "handle\0".as_ptr() as *const _, pid as u64);
-            aot_set_field_str(obj, "pid\0".as_ptr() as *const _, pid as u64);
+            aot_set_field_str(obj, c"handle".as_ptr() as *const _, pid as u64);
+            aot_set_field_str(obj, c"pid".as_ptr() as *const _, pid as u64);
             obj
         }
         Err(_) => 0,
@@ -447,10 +447,10 @@ pub extern "C" fn processWait(handle_id: u64) -> u64 {
     let code = sys_wait(pid);
 
     let obj = make_empty_object();
-    aot_set_field_str(obj, "code\0".as_ptr() as *const _, code as u64);
+    aot_set_field_str(obj, c"code".as_ptr() as *const _, code as u64);
     aot_set_field_str(
         obj,
-        "success\0".as_ptr() as *const _,
+        c"success".as_ptr() as *const _,
         if code == 0 { 1 } else { 0 },
     );
     obj
@@ -478,10 +478,10 @@ pub extern "C" fn processWaitTimeout(handle_id: u64, timeout_ms: u64) -> u64 {
                         table.remove(&pid);
 
                         let obj = make_empty_object();
-                        aot_set_field_str(obj, "code\0".as_ptr() as *const _, code as u64);
+                        aot_set_field_str(obj, c"code".as_ptr() as *const _, code as u64);
                         aot_set_field_str(
                             obj,
-                            "success\0".as_ptr() as *const _,
+                            c"success".as_ptr() as *const _,
                             if code == 0 { 1 } else { 0 },
                         );
                         return obj;
@@ -499,8 +499,8 @@ pub extern "C" fn processWaitTimeout(handle_id: u64, timeout_ms: u64) -> u64 {
     }
 
     let obj = make_empty_object();
-    aot_set_field_str(obj, "code\0".as_ptr() as *const _, -2i64 as u64);
-    aot_set_field_str(obj, "success\0".as_ptr() as *const _, 0);
+    aot_set_field_str(obj, c"code".as_ptr() as *const _, -2i64 as u64);
+    aot_set_field_str(obj, c"success".as_ptr() as *const _, 0);
     obj
 }
 
@@ -656,16 +656,16 @@ pub extern "C" fn processGetInfo(pid_val: u64) -> u64 {
     };
 
     let obj = make_empty_object();
-    aot_set_field_str(obj, "pid\0".as_ptr() as *const _, pid as u64);
-    aot_set_field_str(obj, "parentId\0".as_ptr() as *const _, 0);
-    aot_set_field_str(obj, "cpuTime\0".as_ptr() as *const _, 0);
-    aot_set_field_str(obj, "memoryUsage\0".as_ptr() as *const _, 0);
-    aot_set_field_str(obj, "startTime\0".as_ptr() as *const _, 0);
+    aot_set_field_str(obj, c"pid".as_ptr() as *const _, pid as u64);
+    aot_set_field_str(obj, c"parentId".as_ptr() as *const _, 0);
+    aot_set_field_str(obj, c"cpuTime".as_ptr() as *const _, 0);
+    aot_set_field_str(obj, c"memoryUsage".as_ptr() as *const _, 0);
+    aot_set_field_str(obj, c"startTime".as_ptr() as *const _, 0);
 
     if let Ok(exe_path) = std::env::current_exe() {
         let exe_str = exe_path.to_string_lossy().to_string();
         let exe_val = make_string_handle(exe_str);
-        aot_set_field_str(obj, "executable\0".as_ptr() as *const _, exe_val);
+        aot_set_field_str(obj, c"executable".as_ptr() as *const _, exe_val);
     }
 
     obj

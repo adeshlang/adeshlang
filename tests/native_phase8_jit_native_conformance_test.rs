@@ -22,7 +22,7 @@
 //! compile on Apple Silicon until that backend support is implemented.
 #![cfg(target_arch = "x86_64")]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -112,7 +112,7 @@ fn unique_tag(prefix: &str) -> String {
     format!("{}_{}", prefix, nanos)
 }
 
-fn run_backend(exe: &PathBuf, backend_args: &[&str], src: &PathBuf) -> (String, i32) {
+fn run_backend(exe: &Path, backend_args: &[&str], src: &Path) -> (String, i32) {
     let mut cmd = Command::new(exe);
     let mut args: Vec<String> = vec!["run".to_string()];
     args.extend(backend_args.iter().map(|s| s.to_string()));

@@ -799,6 +799,14 @@ pub fn unpack_aot_arg(raw: u64) -> RuntimeValue {
     if let Some(v) = aot_get_value(raw) {
         return v;
     }
+    if raw >= 0x10000 {
+        let c_str = unsafe { std::ffi::CStr::from_ptr(raw as *const std::os::raw::c_char) };
+        if let Ok(s) = c_str.to_str() {
+            if s.chars().all(|c| !c.is_control() || c == '\n' || c == '\r' || c == '\t') {
+                return RuntimeValue::String(s.to_string());
+            }
+        }
+    }
     RuntimeValue::Int(raw as i64)
 }
 
@@ -1658,9 +1666,10 @@ pub extern "C" fn aot_wrap_ptr(value: u64) -> u64 {
         if aot_get_value(value).is_some() {
             return value;
         }
-        // An untyped word is not enough to distinguish a pointer from an integer.
-        // Never dereference it speculatively; string pointers use aot_make_string.
-        aot_store_value(RuntimeValue::Int(value as i64))
+        if value < 0x10000 {
+            return aot_store_value(RuntimeValue::Int(value as i64));
+        }
+        unsafe { aot_make_string(value as *const c_char) }
     })
 }
 
@@ -2985,6 +2994,12 @@ pub extern "C" fn aot_throw_exception(val_handle: u64) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_typeof(handle: u64) -> *const c_char {
     let val = aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
+    if let RuntimeValue::Object(map) = &val {
+        if let Some(RuntimeValue::String(ty)) = map.get("__type__") {
+            let c_str = CString::new(ty.as_str()).unwrap_or_default();
+            return c_str.into_raw();
+        }
+    }
     match val.type_name() {
         "u8" => b"u8\0".as_ptr() as *const c_char,
         "u16" => b"u16\0".as_ptr() as *const c_char,
@@ -3021,6 +3036,21 @@ pub extern "C" fn aot_sizeof(handle: u64) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn sizeof(handle: u64) -> i64 {
     aot_sizeof(handle)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_has_key(container_handle: u64, item_handle: u64) -> i64 {
+    crate::native_abi::aot_contains(container_handle, item_handle)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn hasKey(container_handle: u64, item_handle: u64) -> i64 {
+    crate::native_abi::aot_contains(container_handle, item_handle)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn containsKey(container_handle: u64, item_handle: u64) -> i64 {
+    crate::native_abi::aot_contains(container_handle, item_handle)
 }
 
 pub extern "C" fn clock() -> f64 {
@@ -3770,7 +3800,7 @@ fn aot_call_method_impl(
                 aot_update_value(target_handle, RuntimeValue::Object(map.clone()));
                 aot_store_value(RuntimeValue::Object(map))
             }
-            "has" | "hasOwnProperty" => {
+            "has" | "hasOwnProperty" | "hasKey" | "containsKey" => {
                 let has = if let Some(k) = args.first() {
                     map.contains_key(&k.as_string())
                 } else {

@@ -183,7 +183,7 @@ pub fn render_ui(f: &mut Frame, app: &mut App) {
 fn render_menu_bar(f: &mut Frame, app: &mut App, area: Rect) {
     let mut spans = Vec::new();
 
-    for (_idx, (label, tab)) in MenuTab::all().iter().enumerate() {
+    for (label, tab) in MenuTab::all().iter() {
         let is_active = app.active_menu == *tab;
         let style = if is_active {
             Style::default()
@@ -433,15 +433,7 @@ fn render_explorer(f: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(app.theme.fg)
             };
 
-            ListItem::new(format!(
-                "{}{}{} {}{}",
-                indent,
-                icon,
-                if path.is_dir() { "" } else { "" },
-                name,
-                git_badge
-            ))
-            .style(style)
+            ListItem::new(format!("{}{} {}{}", indent, icon, name, git_badge)).style(style)
         })
         .collect();
 
@@ -624,23 +616,23 @@ fn render_single_editor_pane(
         && !app.show_command_line
         && !app.terminal_focused
         && !app.explorer_focused
+        && cursor_line >= scroll_top
+        && cursor_line < scroll_top + view_height
     {
-        if cursor_line >= scroll_top && cursor_line < scroll_top + view_height {
-            let num_width = match app.line_number_mode {
-                LineNumberMode::None => 0,
-                _ => digits + 1,
-            };
-            let gutter_width = 1 + num_width; // 1 for diff marker
-            let cursor_screen_row = (cursor_line - scroll_top) as u16;
-            let cursor_screen_col = cursor_col.saturating_sub(scroll_left) as u16;
-            let cursor_x = area.x + 1 + gutter_width as u16 + cursor_screen_col;
-            let cursor_y = area.y + 1 + cursor_screen_row;
+        let num_width = match app.line_number_mode {
+            LineNumberMode::None => 0,
+            _ => digits + 1,
+        };
+        let gutter_width = 1 + num_width; // 1 for diff marker
+        let cursor_screen_row = (cursor_line - scroll_top) as u16;
+        let cursor_screen_col = cursor_col.saturating_sub(scroll_left) as u16;
+        let cursor_x = area.x + 1 + gutter_width as u16 + cursor_screen_col;
+        let cursor_y = area.y + 1 + cursor_screen_row;
 
-            if cursor_x < area.x + area.width.saturating_sub(1)
-                && cursor_y < area.y + area.height.saturating_sub(1)
-            {
-                f.set_cursor_position((cursor_x, cursor_y));
-            }
+        if cursor_x < area.x + area.width.saturating_sub(1)
+            && cursor_y < area.y + area.height.saturating_sub(1)
+        {
+            f.set_cursor_position((cursor_x, cursor_y));
         }
     }
 }

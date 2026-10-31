@@ -112,6 +112,8 @@ pub struct FunctionCompileContext {
     pub block_map: HashMap<BlockId, Block>,
     /// Map from LIR variable names to Cranelift Variables
     pub var_map: HashMap<String, Variable>,
+    /// Map from variable name to its declared Cranelift Type
+    pub var_cl_types: HashMap<String, Type>,
     /// Map from variable names to their runtime types
     pub var_types: HashMap<String, AotValueType>,
     /// Next variable index for Cranelift Variable allocation
@@ -141,6 +143,8 @@ pub struct FunctionCompileContext {
     pub user_funcs: HashMap<String, FuncId>,
     /// User-defined function return types
     pub user_func_return_types: HashMap<String, crate::backends::common::lir::LirType>,
+    /// Track if a user function returns a string
+    pub user_func_string_returns: HashMap<String, bool>,
     /// Track object literals for print options (ValueId -> properties)
     pub object_properties: HashMap<ValueId, HashMap<String, (ValueId, AotValueType)>>,
     /// Track constant strings by ValueId for option extraction
@@ -178,6 +182,7 @@ impl FunctionCompileContext {
             value_types: HashMap::new(),
             block_map: HashMap::new(),
             var_map: HashMap::new(),
+            var_cl_types: HashMap::new(),
             var_types: HashMap::new(),
             next_var_index: 0,
             string_data: HashMap::new(),
@@ -192,6 +197,7 @@ impl FunctionCompileContext {
             next_array_offset: 0,
             user_funcs: HashMap::new(),
             user_func_return_types: HashMap::new(),
+            user_func_string_returns: HashMap::new(),
             object_properties: HashMap::new(),
             const_strings: HashMap::new(),
             const_bools: HashMap::new(),
@@ -226,6 +232,7 @@ impl FunctionCompileContext {
         } else {
             let var = self.alloc_variable();
             builder.declare_var(var, cranelift_type);
+            self.var_cl_types.insert(name.to_string(), cranelift_type);
             self.var_map.insert(name.to_string(), var);
             var
         }
@@ -388,6 +395,8 @@ impl CraneliftAotCompiler {
             ctx.user_funcs.insert(func.name.clone(), func_id);
             ctx.user_func_return_types
                 .insert(func.name.clone(), func.ret_type);
+            ctx.user_func_string_returns
+                .insert(func.name.clone(), func.is_string_return);
         }
 
         // Second pass: compile all functions
@@ -1404,6 +1413,7 @@ impl CraneliftAotCompiler {
             ctx.string_data = shared_ctx.string_data.clone();
             ctx.user_funcs = shared_ctx.user_funcs.clone();
             ctx.user_func_return_types = shared_ctx.user_func_return_types.clone();
+            ctx.user_func_string_returns = shared_ctx.user_func_string_returns.clone();
             ctx.argc_global = shared_ctx.argc_global;
             ctx.argv_global = shared_ctx.argv_global;
             // Runtime function references declared by
@@ -1498,7 +1508,13 @@ impl CraneliftAotCompiler {
                         LirType::Bool => AotValueType::Bool,
                         LirType::F32 => AotValueType::F32,
                         LirType::F64 => AotValueType::F64,
-                        LirType::Ptr => AotValueType::Ptr,
+                        LirType::Ptr => {
+                            if lir_func.string_params.contains(param_name) {
+                                AotValueType::String
+                            } else {
+                                AotValueType::Ptr
+                            }
+                        }
                         LirType::Void => AotValueType::Int,
                     };
                     ctx.value_types.insert(i as ValueId, aot_type.clone());
@@ -1672,6 +1688,7 @@ impl CraneliftAotCompiler {
             &mut ctx.array_capacity,
             &mut ctx.var_array_capacity,
             &mut ctx.var_map,
+            &mut ctx.var_cl_types,
             &mut ctx.next_var_index,
             &mut ctx.object_properties,
             &mut ctx.var_object_properties,

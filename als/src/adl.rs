@@ -2225,6 +2225,9 @@ pub fn get_adl_semantic_tokens(content: &str) -> SemanticTokens {
     }
 }
 
+// Token emission needs every delta-encoding accumulator at once; bundling them
+// into a struct would add indirection without improving readability.
+#[allow(clippy::too_many_arguments)]
 fn push_token(
     tokens: &mut Vec<SemanticToken>,
     prev_line: &mut u32,

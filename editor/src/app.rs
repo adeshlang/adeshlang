@@ -83,8 +83,8 @@ impl MenuTab {
     pub fn tab_rect(idx: usize) -> (u16, u16) {
         let labels = ["File", "Edit", "View", "Run", "Git", "Adesh", "Info"];
         let mut start: u16 = 0;
-        for i in 0..idx {
-            start += labels[i].len() as u16 + 3;
+        for label in &labels[..idx] {
+            start += label.len() as u16 + 3;
         }
         let width = labels[idx].len() as u16 + 2;
         (start, width)
@@ -623,14 +623,14 @@ impl App {
         let p = path.as_ref().to_path_buf();
 
         for (idx, buf) in self.buffers.iter().enumerate() {
-            if let Some(ref buf_path) = buf.path {
-                if buf_path == &p {
-                    self.active_buffer = idx;
-                    if let Some(pane) = self.split_tree.active_pane_mut() {
-                        pane.buffer_index = idx;
-                    }
-                    return Ok(());
+            if let Some(ref buf_path) = buf.path
+                && buf_path == &p
+            {
+                self.active_buffer = idx;
+                if let Some(pane) = self.split_tree.active_pane_mut() {
+                    pane.buffer_index = idx;
                 }
+                return Ok(());
             }
         }
 
@@ -683,10 +683,10 @@ impl App {
             if self.active_buffer >= self.buffers.len() {
                 self.active_buffer = self.buffers.len() - 1;
             }
-            if let Some(pane) = self.split_tree.active_pane_mut() {
-                if pane.buffer_index >= self.buffers.len() {
-                    pane.buffer_index = self.buffers.len().saturating_sub(1);
-                }
+            if let Some(pane) = self.split_tree.active_pane_mut()
+                && pane.buffer_index >= self.buffers.len()
+            {
+                pane.buffer_index = self.buffers.len().saturating_sub(1);
             }
         }
     }
@@ -720,10 +720,11 @@ impl App {
         if self.last_edit_time.elapsed() >= std::time::Duration::from_millis(1500) {
             let mut saved_any = false;
             for buf in &mut self.buffers {
-                if buf.modified && buf.path.is_some() {
-                    if let Ok(()) = buf.save() {
-                        saved_any = true;
-                    }
+                if buf.modified
+                    && buf.path.is_some()
+                    && let Ok(()) = buf.save()
+                {
+                    saved_any = true;
                 }
             }
             if saved_any {
@@ -1205,21 +1206,19 @@ impl App {
         let buf = self.current_buffer();
         let file_name = buf.file_name();
 
-        if let Some(ref p) = buf.path {
-            if let Some(adesh_exe) = crate::discovery::find_executable("adesh") {
-                if let Ok(output) = std::process::Command::new(&adesh_exe)
-                    .arg("run")
-                    .arg(flag)
-                    .arg(p)
-                    .output()
-                {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    let combined = format!("{}{}", stdout, stderr);
-                    if !combined.trim().is_empty() {
-                        return combined.lines().map(|s| s.to_string()).collect();
-                    }
-                }
+        if let Some(ref p) = buf.path
+            && let Some(adesh_exe) = crate::discovery::find_executable("adesh")
+            && let Ok(output) = std::process::Command::new(&adesh_exe)
+                .arg("run")
+                .arg(flag)
+                .arg(p)
+                .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let combined = format!("{}{}", stdout, stderr);
+            if !combined.trim().is_empty() {
+                return combined.lines().map(|s| s.to_string()).collect();
             }
         }
 

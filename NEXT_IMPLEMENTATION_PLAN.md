@@ -30,6 +30,12 @@ These are non-negotiable and apply to each phase's exit criteria.
 5. **No cross-architecture fallbacks.** A missing target runtime archive or
    sysroot is a loud, actionable error with the exact build command; never fall
    back to a host-arch artifact.
+6. **The workspace gate is part of every phase's DoD.** `cargo fmt --all -- --check`
+   must be clean, and `cargo clippy --workspace --all-targets --all-features` must
+   report no errors (it denies `clippy::correctness`) and no new warnings in the
+   crates a phase touches. See `CURRENT_STATE.md` §0.6 for the measured state and for
+   the crates that currently silence their own lints — a green clippy run there is not
+   evidence of a clean crate.
 
 **Definition of Done for a phase**
 
@@ -51,7 +57,7 @@ These are non-negotiable and apply to each phase's exit criteria.
 | x86-64 Windows | PE executables, imports, TLS, atomics, SEH emission | PE DLL loading; source-level ABI surface; vector ABI |
 | x86-64 Linux (gnu) | static/dynamic ELF, `dlopen` `.so`, TLS LE/IE, `.eh_frame` decode | runtime unwinding; cross-target archives |
 | x86-64 Linux (musl) | TLS local-exec/initial-exec in WSL | dedicated musl CI job |
-| AArch64 Linux | codegen and structural ELF emission | execution; correct relocation offsets; ADRP/ADD_LO12; target runtime archive |
+| AArch64 Linux | codegen (incl. ADRP/ADD_LO12 symbol materialization and call-site relocation offsets, both fixed 2026-10-24/25) and structural ELF emission | execution; GOT-based dynamic symbol addressing; target runtime archive; the NOP fallback for unsupported instructions is still silent |
 | AArch64 / x86-64 macOS | Mach-O emission, dyld bind/rebase, TLV emission, codesign structure | any dyld execution; TLV at runtime; dylib loading |
 | RISC-V 64 | codegen and structural ELF; loud errors | source-level lowering (`ParallelMove`); execution |
 | RISC-V 32 | target declared | codegen refuses RV32; linker uses RV64 `_start` |
@@ -145,7 +151,11 @@ verified reality before adding features.
 - [ ] No backend contains a silent instruction fallback (review gate for
       `NOP fallback` and for `unwrap_or(0)` used as an emit placeholder).
 - [ ] A hello-world AArch64 `--emit=adob` contains no unintended NOPs.
-- [ ] Every call relocation in a multi-call AArch64 object points at its call.
+- [x] Every call relocation in a multi-call AArch64 object points at its call —
+      **done since 2026-10-24/25**: `emit_object` in
+      `crates/adesh-codegen/src/targets/aarch64/mod.rs` bases each relocation on the
+      accumulated `.text` length rather than `index * 8`. The suite named above
+      (`tests/native_phase11_codegen_loudness_test.rs`) still has to land to pin it.
 - [ ] `adesh target list` tiers match `TARGET_MATRIX.md`.
 - [ ] Windows JIT conformance suite runs in CI and passes.
 
@@ -248,6 +258,9 @@ Reach x86-64 feature parity for the supported language subset on AArch64.
 
 1. **Symbol address materialization:** ADRP + ADD_LO12 (and GOT-based variants
    for dynamic links), emitted from the codegen rather than left to the linker.
+   **Partly done (2026-10-31):** ADRP + ADD with `AArch64_AdrPage21` and
+   `AArch64_AddAbsLo12` relocations is emitted from codegen. Still open: the
+   GOT-based variants for dynamic links.
 2. **TLS sequences:** local-exec and initial-exec for ELF AArch64, including
    `TPIDR_EL0` addressing and linker relaxation.
 3. **Lowering gaps:** compile the existing conformance corpus for AArch64 and
@@ -600,3 +613,41 @@ These are acknowledged and must stay clearly labelled as unsupported:
 4. Fix the Windows JIT import-path escaping and add the suite to Windows CI.
 5. Realign `linker/src/target.rs` tiers and the three stale companion docs.
 6. Land `tests/native_phase11_codegen_loudness_test.rs` and wire it into CI.
+
+---
+
+## 8. Open work — workspace format & lint gate (2026-10-31)
+
+The gate itself is described in `CONTRIBUTING.md` and measured in
+`CURRENT_STATE.md` §0.6. Ordered next actions, each with the command that proves it:
+
+1. **Finish the in-flight `typeof` / `__type__` work so the tree formats.**
+   `cargo fmt --all` then `cargo fmt --all -- --check` must exit 0 — as of the
+   2026-11-01 re-measure it fails with **11 diffs in 8 files**:
+   `src/backends/wasm/compiler.rs` (5 sites), `src/backends/aot/cranelift_impl/
+   instructions/calls/mod.rs`, `src/backends/native/lower.rs`,
+   `crates/adesh-runtime/src/lib.rs`, `src/execution/runtime_core/{exec/stmt,
+   interpreter_core}.rs`, and `src/parsing/hir_lower.rs`.
+2. **Clear the 25 remaining `adesh-runtime` warnings.** All of them are in
+   `aot_typeof` in `crates/adesh-runtime/src/lib.rs`: 23 hand-built nul-terminated
+   strings (`b"u8\0".as_ptr() as *const c_char` → `c"u8".as_ptr() …`, the conversion
+   already applied across `sys_io.rs`) and 2 `collapsible_if` (an edition-2024
+   let-chain fixes each without restructuring).
+   Prove: `cargo clippy -p adesh-runtime --lib --all-features`.
+3. **Clear the three stray warnings this round left behind.** An unused
+   `is_export` binding in `src/execution/runtime_core/interpreter_core.rs`, an
+   unused `doc` in `als/src/diagnostics.rs`, and four in
+   `tests/native_phase9_pgo_e2e_test.rs` — two needless `mut` and two struct-update
+   suffixes added to literals that already specify every field, which should simply
+   be reverted.
+4. **Un-silence the linker, then the root crate.** Remove
+   `#![allow(clippy::all)]` from `linker/src/lib.rs` and `linker/src/main.rs`
+   (it suppresses even the denied `correctness` group), then trim the `#![allow(...)]`
+   block in `src/lib.rs` lint by lint. Expect a real batch of findings; do each in its
+   own commit so a regression is attributable.
+5. **Only then raise the CI bar.** Add `-- -D warnings` to the `Run Clippy` step in
+   `.github/workflows/ci.yml` once the workspace is genuinely warning-free, so the
+   gate becomes enforceable instead of aspirational.
+6. **Re-verify and dispatch:** `cargo clippy --workspace --all-targets
+   --all-features -j 2`, then commit, `gh workflow run CI --ref main`, and
+   `gh run watch <id> --exit-status`.

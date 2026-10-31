@@ -49,22 +49,22 @@ It overcomes the fundamental limitations of TCP, UDP, and QUIC:
 
 ```bash
 # 1. Run the Comprehensive Feature Tour
-cargo run --bin adeshlang -- run examples/Libraries/atp/atp_examples.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/atp_examples.adesh
 
 # 2. Run the Real-Time Fleet Telemetry Mini-Project
-cargo run --bin adeshlang -- run examples/Libraries/atp/mini_project/run_demo.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/mini_project/run_demo.adesh
 
 # 3. Production Game Microservice Demo (9 Stdlib Libraries)
-cargo run --bin adeshlang -- run examples/Libraries/atp/atp_production.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/atp_production.adesh
 
 # 4. Feature-Specific Real Working Demos
-cargo run --bin adeshlang -- run examples/Libraries/atp/atp_identity.adesh
-cargo run --bin adeshlang -- run examples/Libraries/atp/atp_loss_recovery.adesh
-cargo run --bin adeshlang -- run examples/Libraries/atp/atp_migration.adesh
-cargo run --bin adeshlang -- run examples/Libraries/atp/atp_priority_streams.adesh
-cargo run --bin adeshlang -- run examples/Libraries/atp/atp_retry_handshake.adesh
-cargo run --bin adeshlang -- run examples/Libraries/atp/atp_server.adesh
-cargo run --bin adeshlang -- run examples/Libraries/atp/atp_client.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/atp_identity.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/atp_loss_recovery.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/atp_migration.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/atp_priority_streams.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/atp_retry_handshake.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/atp_server.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/atp_client.adesh
 ```
 
 ## Testing (CI)

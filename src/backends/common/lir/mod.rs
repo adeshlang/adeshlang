@@ -3,7 +3,7 @@
 //! LIR is an SSA-based, block-structured IR used for JIT and AOT compilation.
 //! It operates on typed values and provides explicit control flow.
 
-use crate::utils::collections::FastMap;
+use crate::utils::collections::{FastMap, FastSet};
 use num_bigint::BigInt;
 
 /// Unique identifier for LIR values
@@ -225,6 +225,8 @@ pub struct LirFunction {
     pub var_map: FastMap<String, ValueId>,
     pub is_async: bool,
     pub is_exported: bool,
+    pub is_string_return: bool,
+    pub string_params: FastSet<String>,
 }
 
 impl LirFunction {
@@ -240,6 +242,8 @@ impl LirFunction {
             var_map: FastMap::default(),
             is_async: false,
             is_exported: false,
+            is_string_return: false,
+            string_params: FastSet::default(),
         };
         // Create entry block
         func.entry_block = func.create_block("entry".to_string());

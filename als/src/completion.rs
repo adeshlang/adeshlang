@@ -324,10 +324,8 @@ fn resolve_receiver_type(index: &SemanticIndex, receiver: &str) -> Option<Ty> {
                     }
                 }
                 // `let arr: [T] = ...` — the annotation resolves to Ty::Array.
-                if let Some(ty) = index.resolve_symbol_type(base) {
-                    if let Ty::Array(elem) = ty {
-                        return Some((*elem).clone());
-                    }
+                if let Some(Ty::Array(elem)) = index.resolve_symbol_type(base) {
+                    return Some((*elem).clone());
                 }
             }
         }

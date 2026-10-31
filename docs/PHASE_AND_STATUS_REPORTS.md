@@ -3,6 +3,16 @@
 > Consolidated from 71 markdown files on 2026-08-29.
 > This file merges related root-level .md documents by category.
 
+> **Historical archive — every status and completion claim here is superseded
+> (2026-10-31).** These are the original phase reports, kept verbatim, and they contain
+> statements that later audits contradicted — including "COMPLETE", "100%", and
+> production-readiness claims for targets that have no execution test. Do not treat
+> anything in this file as current status. The canonical sources are
+> [`CURRENT_STATE.md`](../CURRENT_STATE.md) (including its §0.6 workspace format & lint
+> gate), [`TARGET_MATRIX.md`](../TARGET_MATRIX.md),
+> [`RUNTIME_MATRIX.md`](../RUNTIME_MATRIX.md), and
+> [`NEXT_IMPLEMENTATION_PLAN.md`](../NEXT_IMPLEMENTATION_PLAN.md) for what remains.
+
 ---
 
 

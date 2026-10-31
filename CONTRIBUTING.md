@@ -109,19 +109,28 @@ cargo test --tests
 cargo test --workspace
 ```
 
-The CI pipeline (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on
-Ubuntu, Windows, and macOS and must pass before a pull request can be merged:
+The CI pipeline (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)) has
+a matrix of `ubuntu-22.04`, `windows-latest`, and `macos-latest`. It is
+**manual-only** (`on: workflow_dispatch`) because a full matrix run is expensive;
+start it on `main` with `gh workflow run CI --ref main` and follow it with
+`gh run watch <id> --exit-status`. Its gates are:
 
-- `cargo fmt --all -- --check`
-- `cargo clippy --workspace --all-targets --all-features` (advisory; the
-  workspace currently allows warnings — see `Cargo.toml` lints)
-- `cargo test --lib`
-- `cargo test --tests` (Ubuntu; native tests that link **and execute**
-  produced binaries are gated `#[cfg(all(target_os = "windows",
-  target_arch = "x86_64"))]`, so Ubuntu runs only the portable suites)
-- Named native e2e suites (Windows; these link and execute produced binaries)
+- `Check formatting` — `cargo fmt --all -- --check` (a failure blocks the run)
+- `Run Clippy` — `cargo clippy --workspace --all-targets --all-features`, with
+  no `-D warnings` and no `continue-on-error`. That means a **denied** lint
+  fails the job while an ordinary warning does not — see Code Style & Linting
+  below for what is denied, and keep your own warnings at zero regardless.
+- `Test library` — `cargo test --lib`
+- `Test integration suites` — `cargo test --tests` plus the named native e2e
+  suites. Windows executes the produced PE binaries; Ubuntu executes the
+  produced ELF binaries (Linux e2e, dynamic `dlopen`, TLS) and the WASM suites
+  on two engines; macOS runs the suites where Mach-O is native. Native tests
+  that link **and execute** produced Windows binaries are gated
+  `#[cfg(all(target_os = "windows", target_arch = "x86_64"))]`.
 
-Run all of these locally before pushing to keep CI green.
+Run all of these locally before pushing to keep CI green. On Windows, build
+with `-j 2`: a full-parallelism build intermittently hits `LNK1104` file locks
+during test runs.
 
 ### Adding Tests
 
@@ -138,12 +147,27 @@ Run all of these locally before pushing to keep CI green.
   ```bash
   cargo fmt --all
   ```
-- **Linting:** Clippy is currently advisory (the workspace sets
-  `clippy::all = "allow"`; CI runs it with `continue-on-error`). Do not
-  introduce new warnings:
+- **Linting:** Clippy is enforced, not advisory. `[workspace.lints.clippy]` in
+  [`Cargo.toml`](Cargo.toml) sets `correctness = { level = "deny", priority = -1 }`,
+  `suspicious` and `perf = { level = "warn", priority = -1 }`, and one documented
+  exception, `not_unsafe_ptr_arg_deref = "allow"` (the runtime's C ABI entry points
+  take raw pointers from generated code; their pointer contracts are documented per
+  function). `[workspace.lints.rust]` sets `unsafe_op_in_unsafe_fn = "warn"`. There
+  is no `clippy::all = "allow"` and no `warnings = "allow"`.
   ```bash
   cargo clippy --workspace --all-targets --all-features
   ```
+  Two caveats to know before you trust a green run:
+  - Some crates still silence lints themselves. `src/lib.rs` carries a long
+    `#![allow(...)]` block with per-lint rationale, and `linker/src/lib.rs` and
+    `linker/src/main.rs` each set `#![allow(clippy::all)]`. An in-source attribute
+    overrides the Cargo lint flags, so **a crate that reports no warnings may be
+    silenced rather than verified.** Do not remove those allow blocks casually to
+    "clean up" — each removal surfaces a new set of warnings that has to be fixed
+    in the same change.
+  - `cargo clippy --fix` is all-or-nothing per crate: if one machine-applicable
+    suggestion is wrong, rustfix discards **every** fix for that crate. Repair the
+    offending site by hand first, then re-run `--fix`.
 - **Language sources:** `.adesh` examples should follow the conventions in
   [`docs/`](docs/) and the existing [`examples/`](examples/) code.
 - Keep changes focused; avoid unrelated formatting churn in the same PR.
@@ -172,7 +196,8 @@ Run all of these locally before pushing to keep CI green.
 ### Pull Request Checklist
 
 - [ ] `cargo fmt --all -- --check` passes
-- [ ] `cargo clippy --workspace --all-targets --all-features` reports no new warnings
+- [ ] `cargo clippy --workspace --all-targets --all-features` reports no denied-lint
+      errors and no new warnings in the crates you touched
 - [ ] `cargo test --lib` and `cargo test --tests` pass
 - [ ] New/changed behavior is covered by tests
 - [ ] Documentation in `docs/` updated where relevant

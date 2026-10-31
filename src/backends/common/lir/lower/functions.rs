@@ -446,6 +446,12 @@ pub(super) fn lower_hir_function(
     } else {
         LirFunction::new(hir_func.name.clone(), params.clone(), ret_type)
     };
+    func.is_string_return = matches!(hir_func.ret_type.as_ref(), Some(HirType::String));
+    for (name, ty, _) in &hir_func.params {
+        if matches!(ty.as_ref(), Some(HirType::String)) {
+            func.string_params.insert(name.clone());
+        }
+    }
 
     // Mark function as exported if it's marked as exported in HIR
     if hir_func.is_exported {

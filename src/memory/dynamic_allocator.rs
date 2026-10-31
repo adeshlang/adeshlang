@@ -389,7 +389,7 @@ impl Slab {
 
         // Slot stride must be at least pointer-sized to store the free list index without buffer overrun
         let slot_size = object_size.max(std::mem::size_of::<usize>());
-        let align = slot_size.min(16).max(8).next_power_of_two();
+        let align = slot_size.clamp(8, 16).next_power_of_two();
 
         let size = slot_size
             .checked_mul(capacity)

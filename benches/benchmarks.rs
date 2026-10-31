@@ -16,6 +16,9 @@ use adeshlang::utils::interner::intern;
 // Value operations
 // ============================================
 
+// `Value::Object` stores its map behind an `Arc` by AST design; the bench is
+// single-threaded, so the non-`Send` payload is intentional.
+#[allow(clippy::arc_with_non_send_sync)]
 fn bench_value_clone(c: &mut Criterion) {
     let mut group = c.benchmark_group("value_clone");
 

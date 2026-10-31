@@ -748,6 +748,6 @@ Refer to the main [AdeshLang Warning System Documentation](../warnings.md) for f
 - **File-level directive:** Add `// @allow(warnings)` at the top of your HTTP script.
 - **Line-level directive:** Add `// @allow(unused)` on or above a callback/variable.
 - **Param naming:** Name unused HTTP request parameters `_req` instead of `req`.
-- **CLI flag:** Run `cargo run --bin adeshlang -- run --no-warnings <script.adesh>`.
+- **CLI flag:** Run `cargo run --bin adesh -- run --no-warnings <script.adesh>`.
 - **Env var:** Set `ADESHLANG_DISABLE_WARNINGS=1`.
 

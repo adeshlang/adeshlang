@@ -336,9 +336,11 @@ let failure: Result<i32, string> = Err("error")
 
 ### Type Bounds
 
+**Note:** Trait bounds on generic parameters are not accepted by the current parser. `src/parsing/parser/functions.rs` reads a generic parameter list as bare identifiers only (`<T, U>`), so the `:` in `fn max<T: Ord>(...)` fails to parse. Declare type parameters without bounds.
+
 ```adesh
-// Generic function with constraints
-fn max<T: Ord>(a: T, b: T) -> T {
+// Generic function (bare type parameters only)
+fn max<T>(a: T, b: T) -> T {
     if a > b { a } else { b }
 }
 
@@ -379,11 +381,17 @@ impl Drawable for Rectangle {
 }
 ```
 
-### Using Trait Bounds
+### Using Trait Bounds (not accepted yet)
 
 ```adesh
-fn print_comparable<T: Comparable>(item: T) {
-    // Use item as Comparable
+// Not parsed today: trait bounds on type parameters are rejected
+// fn print_comparable<T: Comparable>(item: T) {
+//     // Use item as Comparable
+// }
+
+// Supported form: bare type parameter, no bound
+fn print_value<T>(item: T) {
+    print(item)
 }
 ```
 
@@ -876,11 +884,11 @@ let x: Option<i32> = None
 ### Constraint Solving
 
 ```adesh
-fn max<T: Ord>(a: T, b: T) -> T {
+fn max<T>(a: T, b: T) -> T {
     if a > b { a } else { b }
 }
 
-// Compiler solves: T must be Ord
+// Compiler solves: T from the arguments
 // From arguments [1, 2]: T = i32
 let result = max(1, 2)  // i32
 
@@ -1330,13 +1338,14 @@ fn pair<T, U>(a: T, b: U) -> (T, U) {
     return (a, b)
 }
 
-// With type bounds
-fn maximum<T: Ord>(a: T, b: T) -> T {
+// With type bounds — not supported yet; the parser accepts bare
+// type parameters only (see Type Bounds above)
+fn maximum<T>(a: T, b: T) -> T {
     if a > b { a } else { b }
 }
 
-// Multiple bounds
-fn process<T: Ord + Clone>(value: T) -> Array<T> {
+// Multiple type parameters in one list
+fn process<T>(value: T) -> Array<T> {
     let result: Array<T> = [value, value]
     return result
 }
@@ -1528,18 +1537,16 @@ fn parse_int(s: String) -> Result<i32, String>
 fn parse_int(s: String) -> i32  // Returns 0 on error?
 ```
 
-### 5. Generic Type Bounds
+### 5. Generic Type Bounds (not accepted yet)
 
 ```adesh
-// Good: Clear constraints
-fn max<T: Ord>(a: T, b: T) -> T {
+// Good: declare type parameters bare
+fn max<T>(a: T, b: T) -> T {
     if a > b { a } else { b }
 }
 
-// With multiple bounds
-fn process<T: Ord + Clone>(value: T) -> Array<T> {
-    // ...
-}
+// Not valid: bound lists are rejected by the parser
+// fn process<T: Ord + Clone>(value: T) -> Array<T> { ... }
 ```
 
 ## Common Patterns
@@ -3002,7 +3009,7 @@ let permissions: u16 = 0o755u16;  // Unix file permissions
 Add tests under `tests/types/`:
 
 * `numeric_overflow_u8_fail.adesh` — assignment `let a: u8 = 256` should fail at compile-time.
-* `numeric_ok_bounds.adesh` — assignments at bounds succeed.
+* In-bounds assignments are covered today by `tests/types/type_layout_tests.rs` (`test_primitive_sizes` asserts the `u8`..`u128` widths); no `.adesh` test for them exists yet.
 * `numeric_literal_suffixes.adesh` — `10u8` parsed as u8.
 * `numeric_type_promotion.adesh` — arithmetic promotion rules verified.
 * `numeric_bit_ops.adesh` — verify bitwise ops for signed/unsigned.

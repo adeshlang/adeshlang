@@ -95,6 +95,12 @@ pub struct PaletteState {
     pub filtered_items: Vec<CommandItem>,
 }
 
+impl Default for PaletteState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PaletteState {
     pub fn new() -> Self {
         let all = CommandItem::all();

@@ -1026,6 +1026,12 @@ pub(super) fn lower_stmt(
             } else {
                 LirFunction::new(name.clone(), lir_params.clone(), fn_ret_type)
             };
+            nested_func.is_string_return = matches!(ret_type.as_ref(), Some(HirType::String));
+            for (pname, pty, _) in params.iter() {
+                if matches!(pty.as_ref(), Some(HirType::String)) {
+                    nested_func.string_params.insert(pname.clone());
+                }
+            }
             let entry_block = nested_func.entry_block;
 
             // Set up captured variable mappings

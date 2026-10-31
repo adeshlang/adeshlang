@@ -515,9 +515,7 @@ pub fn highlight_line<'a>(
                 || (word.starts_with(char::is_uppercase) && !word.contains('_'))
             {
                 style_type
-            } else if BUILTINS.contains(word.as_str()) {
-                style_func
-            } else if i < len && chars[i] == '(' {
+            } else if BUILTINS.contains(word.as_str()) || (i < len && chars[i] == '(') {
                 style_func
             } else {
                 style_fg
@@ -539,8 +537,8 @@ pub fn highlight_line<'a>(
                 let color = theme.rainbow_brackets[bracket_depth % theme.rainbow_brackets.len()];
                 if matches!(ch, '(' | '[' | '{') {
                     bracket_depth += 1;
-                } else if bracket_depth > 0 {
-                    bracket_depth -= 1;
+                } else {
+                    bracket_depth = bracket_depth.saturating_sub(1);
                 }
                 Style::default().fg(color).add_modifier(Modifier::BOLD)
             } else {
@@ -592,7 +590,7 @@ pub fn parse_ansi_to_line(raw: &str) -> Line<'static> {
                     let mut seq = String::new();
                     while let Some(&nc) = chars.peek() {
                         chars.next();
-                        if (nc >= 'a' && nc <= 'z') || (nc >= 'A' && nc <= 'Z') {
+                        if nc.is_ascii_alphabetic() {
                             if nc == 'm' {
                                 // SGR style code
                                 if !current_text.is_empty() {

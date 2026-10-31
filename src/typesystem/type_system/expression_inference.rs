@@ -222,7 +222,7 @@ pub(crate) fn infer_expr_type(
             )?;
             let mut final_ty = rt;
             if let Some(dt) = lookup_var(env, name.as_str()) {
-                if dt != Ty::Any && dt != Ty::Unknown {
+                if dt != Ty::Any && dt != Ty::Unknown && dt != Ty::Null {
                     if !expr_matches_expected_type(rhs, &final_ty, &dt) {
                         return Err(format!(
                             "type mismatch assigning to '{}': expected {}, found {}",
@@ -263,7 +263,11 @@ pub(crate) fn infer_expr_type(
                 ExprKind::Variable(name) => {
                     let mut final_ty = rt.clone();
                     if let Some(dt) = lookup_var(env, name) {
-                        if dt != Ty::Any && dt != Ty::Unknown {
+                        if dt != Ty::Any
+                            && dt != Ty::Unknown
+                            && dt != Ty::Null
+                            && *_op != crate::parsing::ast::TokenKind::NullCoalesceEqual
+                        {
                             if !expr_matches_expected_type(rhs, &rt, &dt) {
                                 return Err(format!(
                                     "type mismatch assigning to '{}': expected {}, found {}",

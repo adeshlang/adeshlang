@@ -150,7 +150,13 @@ pub(crate) fn handle_call(
                 crate::backends::common::lir::LirType::U16 => AotValueType::U16,
                 crate::backends::common::lir::LirType::U32 => AotValueType::U32,
                 crate::backends::common::lir::LirType::U64 => AotValueType::U64,
-                crate::backends::common::lir::LirType::Ptr => AotValueType::Handle,
+                crate::backends::common::lir::LirType::Ptr => {
+                    if ctx.user_func_string_returns.get(func_name).copied().unwrap_or(false) {
+                        AotValueType::String
+                    } else {
+                        AotValueType::Handle
+                    }
+                }
                 _ => AotValueType::Int,
             };
             ctx.value_types.insert(*dst, aot_val_ty);

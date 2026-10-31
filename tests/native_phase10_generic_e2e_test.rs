@@ -14,8 +14,10 @@ use std::collections::HashMap;
 
 #[test]
 fn test_generic_monomorphization_and_deduplication() {
-    let mut limits = GenericLimits::default();
-    limits.max_specializations_per_function = 10;
+    let limits = GenericLimits {
+        max_specializations_per_function: 10,
+        ..Default::default()
+    };
     let mut engine = SpecializationEngineV2::new(limits);
 
     let func = GenericFunctionDef {

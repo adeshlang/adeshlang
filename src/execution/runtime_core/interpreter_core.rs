@@ -49,6 +49,14 @@ fn resolve_alias_name_for_object(
         base
     };
 
+    if crate::parsing::hir_lower::KNOWN_TYPE_ALIASES.with(|cell| {
+        let map = cell.borrow();
+        map.contains_key(alias_name)
+            || map.contains_key(crate::parsing::hir_lower::clean_type_name(alias_name))
+    }) {
+        return Some(crate::parsing::hir_lower::clean_type_name(alias_name).to_string());
+    }
+
     let mut c = start_env.or(Some(global));
     while let Some(id) = c {
         if let Some(val) = envs[id].values.get(alias_name) {
@@ -60,6 +68,40 @@ fn resolve_alias_name_for_object(
         }
         c = envs[id].enclosing;
     }
+
+    // Fallback: search all environments (e.g. imported modules)
+    for env in envs {
+        if let Some(val) = env.values.get(alias_name) {
+            if let Value::Object(map) = val {
+                if map.get("__type_alias__").is_some() && map.get("__alias_target__").is_none() {
+                    return Some(alias_name.to_string());
+                }
+            }
+        }
+        if let Some(val) = env.exports.get(alias_name) {
+            if let Value::Object(map) = val {
+                if map.get("__type_alias__").is_some() && map.get("__alias_target__").is_none() {
+                    return Some(alias_name.to_string());
+                }
+            }
+        }
+    }
+
+    // Also check if any exported object has the alias as a field (e.g., adv_tests.ServerSpec)
+    for env in envs {
+        for val in env.values.values().chain(env.exports.values()) {
+            if let Value::Object(mod_map) = val {
+                if let Some(val) = mod_map.get(alias_name) {
+                    if let Value::Object(map) = val {
+                        if map.get("__type_alias__").is_some() && map.get("__alias_target__").is_none() {
+                            return Some(alias_name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     None
 }
 
@@ -8909,6 +8951,7 @@ impl Interpreter {
                             | StmtKind::Struct(_, _)
                             | StmtKind::Enum(_, _)
                             | StmtKind::Interface(_, _)
+                            | StmtKind::TypeAlias(..)
                             | StmtKind::ExternFunction(_)
                             | StmtKind::ExternBlock { .. }
                             | StmtKind::Extend(..) => {
@@ -9035,6 +9078,7 @@ impl Interpreter {
                             | StmtKind::Struct(_, _)
                             | StmtKind::Enum(_, _)
                             | StmtKind::Interface(_, _)
+                            | StmtKind::TypeAlias(..)
                             | StmtKind::ExternFunction(_)
                             | StmtKind::ExternBlock { .. }
                             | StmtKind::Extend(..) => {
@@ -9112,6 +9156,7 @@ impl Interpreter {
                             | StmtKind::Struct(_, _)
                             | StmtKind::Enum(_, _)
                             | StmtKind::Interface(_, _)
+                            | StmtKind::TypeAlias(..)
                             | StmtKind::ExternFunction(_)
                             | StmtKind::ExternBlock { .. }
                             | StmtKind::Extend(..) => {
@@ -9231,6 +9276,7 @@ impl Interpreter {
                         | StmtKind::Struct(_, _)
                         | StmtKind::Enum(_, _)
                         | StmtKind::Interface(_, _)
+                        | StmtKind::TypeAlias(..)
                         | StmtKind::ExternFunction(_)
                         | StmtKind::ExternBlock { .. }
                         | StmtKind::Extend(..) => {
@@ -9612,6 +9658,7 @@ impl Interpreter {
                             | StmtKind::Struct(_, _)
                             | StmtKind::Enum(_, _)
                             | StmtKind::Interface(_, _)
+                            | StmtKind::TypeAlias(..)
                             | StmtKind::ExternFunction(_)
                             | StmtKind::ExternBlock { .. }
                             | StmtKind::Extend(..) => {
@@ -9738,6 +9785,7 @@ impl Interpreter {
                             | StmtKind::Struct(_, _)
                             | StmtKind::Enum(_, _)
                             | StmtKind::Interface(_, _)
+                            | StmtKind::TypeAlias(..)
                             | StmtKind::ExternFunction(_)
                             | StmtKind::ExternBlock { .. }
                             | StmtKind::Extend(..) => {
@@ -9815,6 +9863,7 @@ impl Interpreter {
                             | StmtKind::Struct(_, _)
                             | StmtKind::Enum(_, _)
                             | StmtKind::Interface(_, _)
+                            | StmtKind::TypeAlias(..)
                             | StmtKind::ExternFunction(_)
                             | StmtKind::ExternBlock { .. }
                             | StmtKind::Extend(..) => {
@@ -9993,6 +10042,7 @@ impl Interpreter {
                             | StmtKind::Struct(_, _)
                             | StmtKind::Enum(_, _)
                             | StmtKind::Interface(_, _)
+                            | StmtKind::TypeAlias(..)
                             | StmtKind::Extend(..) => execute = true,
                             StmtKind::Let(_, _, _, is_export, _is_const, _is_readonly) => {
                                 if *is_export {
@@ -10537,6 +10587,7 @@ impl Interpreter {
                                 | StmtKind::Struct(_, _)
                                 | StmtKind::Enum(_, _)
                                 | StmtKind::Interface(_, _)
+                                | StmtKind::TypeAlias(..)
                                 | StmtKind::ExternFunction(_)
                                 | StmtKind::ExternBlock { .. }
                                 | StmtKind::Extend(..) => {
@@ -10619,6 +10670,7 @@ impl Interpreter {
                                 | StmtKind::Struct(_, _)
                                 | StmtKind::Enum(_, _)
                                 | StmtKind::Interface(_, _)
+                                | StmtKind::TypeAlias(..)
                                 | StmtKind::Extend(..) => execute = true,
                                 StmtKind::Let(_, _, _, is_export, _is_const, _is_readonly) => {
                                     if *is_export {
@@ -11115,9 +11167,8 @@ impl Interpreter {
 
                 let v = Value::Object(obj.clone().into());
                 self.define_at(env, ta.name.clone(), v.clone(), None);
-                if *is_export {
-                    self.envs[env].exports.insert(ta.name.clone(), v);
-                }
+                self.define_at(self.global, ta.name.clone(), v.clone(), None);
+                self.envs[env].exports.insert(ta.name.clone(), v);
                 Ok(Flow::Next)
             }
             StmtKind::Jump(expr) => {

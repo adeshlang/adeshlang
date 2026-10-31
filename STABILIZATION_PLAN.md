@@ -5,13 +5,23 @@
 **Target:** Production Language Stability, Sound Memory Management, Unified Multi-Tier IR Pipeline, and Cross-Platform Native Toolchain  
 **Canonical Baseline:** Commit `State` (Toolchain 0.3.0)  
 
+> **Accuracy notice (2026-10-31).** This plan predates the 2026-10-24 native
+> codegen/linker audit, and several of its "COMPLETE (100%)" claims were later
+> contradicted by the evidence in `CURRENT_STATE.md` and `.github/workflows/ci.yml`
+> — specifically the Phase 3 and Phase 5 rows below, and one test name that does not
+> exist. Read this file as the plan it was, not as current status. The canonical
+> status documents are `CURRENT_STATE.md` (with its §0.6 lint gate),
+> `TARGET_MATRIX.md`, and `NEXT_IMPLEMENTATION_PLAN.md`; the Documentation Policy in
+> `CURRENT_STATE.md` requires every capability claim to name the execution test that
+> proves it, and where this plan cannot, the claim is not current.
+
 ---
 
 ## 1. Executive Summary & Guiding Principles
 
 A comprehensive scan of the AdeshLang codebase revealed that while low-level native compilation and linking infrastructure ([`crates/adesh-codegen`](file:///d:/Projects/AdeshLang/crates/adesh-codegen), [`crates/adesh-object`](file:///d:/Projects/AdeshLang/crates/adesh-object), [`linker`](file:///d:/Projects/AdeshLang/linker)) is capable of generating compact (<5 KB) executables, the language remains unstable due to **semantic divergence across backends, unfreed runtime handle leaks, disconnected OOP lowering, and an unwired middle-end IR pipeline**.
 
-Currently, the native backend relies on a monolithic 6,884-line bypass (`src/backends/native/lower.rs`) that attempts to jump directly from high-level `HIR` statements straight to low-level physical/virtual register `Machine IR`. In doing so, it completely bypasses the compiler's middle-end:
+Currently, the native backend relies on a monolithic ~7,200-line bypass (`src/backends/native/lower.rs`) that attempts to jump directly from high-level `HIR` statements straight to low-level physical/virtual register `Machine IR`. In doing so, it completely bypasses the compiler's middle-end:
 * Bypasses **MIR** (`src/ir/mir/`): skipping ownership analysis, borrow checking, automatic drop insertion, ARC insertion, and lifetime inference.
 * Bypasses **VIR** (`src/ir/vir/`): skipping SSA construction (mem2reg, PHI nodes), global value numbering, SCCP, dead code elimination, and auto-vectorization (`src/ir/simd/`).
 
@@ -357,9 +367,9 @@ To prevent circular dependencies and wasted effort, work must proceed in this ex
 |---|---|---|---|
 | **Phase 1** | **Leak-Free Native Correctness** | 10,000-iteration string/array loop shows 0 memory growth; class constructors run and populate fields; enum matching has 0 false collisions. | **COMPLETE (100%)** |
 | **Phase 2** | **Full Pipeline Wiring (`HIR → MIR → VIR → Machine IR`)** | Clean `vir_lower.rs` connects `AST → HIR → MIR → VIR → Machine IR → ADOB → Linker`; MIR drop insertion automatically handles cleanups; VIR SSA optimizations run. | **COMPLETE (100%)** |
-| **Phase 3** | **Unified Language Semantics & Value Types** | Multi-backend Conformance Corpus passes with 100% identical stdout/exit codes on Interpreter, NJIT, and AOT; Bytecode VM deprecated/gated; unboxed structs allocate on stack. | **COMPLETE (100%)** |
+| **Phase 3** | **Unified Language Semantics & Value Types** | Multi-backend Conformance Corpus passes with 100% identical stdout/exit codes on Interpreter, NJIT, and AOT; Bytecode VM deprecated/gated; unboxed structs allocate on stack. | **Not 100%.** The corpus suite (`tests/native_phase7_conformance_corpus_test.rs`) exists, but native-JIT conformance is 7/10 on Windows (three tests embed an unescaped Windows path in generated source) and that suite is not part of the Windows CI job — see `CURRENT_STATE.md` §0. Bytecode is deprecated/gated as described. |
 | **Phase 4** | **Native Standard Library** | Decoupled runtime bindings in `crates/adesh-runtime`, native C ABI exports, process/stream I/O, static archiving with `adeshlink ar`. | **COMPLETE (100%)** |
-| **Phase 5** | **Tier 1 Cross-Platform Linker** | Cross-platform ADOB v3 object format with self-contained linker (`adeshlink`), PE/COFF, ELF, Mach-O writers, and AArch64 hardware conformance. | **COMPLETE (100%)** |
+| **Phase 5** | **Tier 1 Cross-Platform Linker** | Cross-platform ADOB v3 object format with self-contained linker (`adeshlink`), PE/COFF, ELF, Mach-O writers, and AArch64 hardware conformance. | **Partially met; AArch64 hardware conformance was never done.** PE (Windows) and ELF (Linux) paths are executed by CI tests, and Mach-O is emitted and parse-verified but has no execution test. AArch64 has **no** qemu/hardware execution test — `CURRENT_STATE.md` §0 lists it as execution-unverified. |
 
 ---
 
@@ -378,7 +388,7 @@ To prevent circular dependencies and wasted effort, work must proceed in this ex
 | `archive::ar::tests` | Static archive GNU symbol index encoding, parsing, and member roundtrip | `test_archive_gnu_symbol_index_roundtrip` **PASSED** |
 | `archive_test` & `e2e_integration_test` | Archive creation, member padding, duplicate symbol retention, multi-module static archive linking | `test_archive_creation_and_parsing` **PASSED**<br>`test_e2e_multi_module_static_archive_resolution` **PASSED** |
 | `macho::dynamic::tests` | Mach-O LC_DYLD_INFO_ONLY export trie encode & decode round-trip | `test_export_trie_decode_round_trip` **PASSED** |
-| `macho_dyld_binding_test` | Mach-O shared library export trie coverage, alias filtering, PIE rebase, and lazy binding | `test_macho_shared_library_export_trie` **PASSED**<br>`test_macho_lazy_binding_structure_end_to_end` **PASSED**<br>`test_macho_load_command_layout_consistency` **PASSED**<br>`test_macho_pie_absolute_pointer_rebase_without_imports` **PASSED** |
+| `macho_dyld_binding_test` | Mach-O shared library export trie coverage, alias filtering, PIE rebase, and eager binding | `test_macho_shared_library_export_trie` **PASSED**<br>`test_macho_eager_binding_structure_end_to_end` **PASSED**<br>`test_macho_load_command_layout_consistency` **PASSED**<br>`test_macho_pie_absolute_pointer_rebase_without_imports` **PASSED** |
 | `platform_native_linking_conformance_test` | Linux ELF & macOS Mach-O symbol classification, libc routing, static Linux ELF executable headers, 64-bit Mach-O structure | `test_static_linux_elf_executable_generation_and_headers` **PASSED**<br>`test_macho_64bit_executable_structural_conformance` **PASSED**<br>`test_posix_libc_symbol_classification_linux_elf` **PASSED**<br>`test_posix_libc_symbol_classification_macos_macho` **PASSED**<br>`test_runtime_symbols_are_never_routed_as_dynamic_libc_imports` **PASSED** |
 | `aarch64::tests` | AAPCS64 callee-saved register preservation, NEON vector/FP instruction encoding, and branch relocations | `test_aarch64_return_only_function_encodes` **PASSED**<br>`test_aarch64_aapcs64_callee_saved_preservation` **PASSED**<br>`test_aarch64_neon_vector_and_fp_encodes` **PASSED** |
 | `elf::dynamic::tests` | ELF dynamic relocation ABI number mapping & GNU hash table | `dyn_reloc_abi_numbers_are_correct` **PASSED** |

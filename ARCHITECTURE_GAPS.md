@@ -21,10 +21,14 @@
   - Match/pattern lowering still emits per-arm compare chains; the
     `opt/switch_lowering.rs` (jump table) pass exists but is **not wired
     into the native path**.
-  - Silent fallbacks must become structured compile errors (unknown
-    expressions currently lower to `0`; `EnumVariant` patterns always
-    match and bind nothing; imports are dropped; async constructs lower
-    sequentially; lambdas ignore captured environments).
+  - Silent fallbacks must become structured compile errors. **Largely done since
+    this gap was recorded** (see `CURRENT_STATE.md` §2): `src/backends/native/lower.rs`
+    now calls `self.unsupported(...)` for unknown literals, unknown enum variant
+    patterns, `instanceof`, `async fn`, `await`, and async lambdas, and the driver
+    reports them together as "native backend cannot compile this program (N
+    unsupported construct(s))" instead of emitting wrong code. The remaining
+    unknowns are the ones that still need an audit: imports dropped mid-lowering and
+    lambda capture environments (verify against `lower.rs` before claiming either).
   - Defer/panic lowering and runtime C ABI call coverage beyond the
     implemented `aot_*` set; complete composite-type support (today all
     composites are boxed runtime handles, not value types).

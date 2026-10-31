@@ -25,7 +25,7 @@ Adesh LIR (Low-Level IR)
     ↓
 Native Codegen (x86_64, AArch64, RISC-V64)
     ↓
-Adesh Object Format (ADOB v2 / Native Object)
+Adesh Object Format (ADOB v3 / Native Object)
     ↓
 adeshlink (Adesh Native Linker Engine)
     ↓
@@ -39,5 +39,5 @@ Executable / Shared Library / Static Library / WASM / Firmware
 1. **Compiler Frontend:** Parses surface syntax, builds AST, and lowers to HIR.
 2. **Analysis Passes:** Performs compile-time ownership, borrow checking, and type inference.
 3. **Native Codegen:** Generates machine code and relocatable objects directly.
-4. **adeshlink Engine:** Resolves symbols, computes relocations, garbage-collects dead sections (`--enable-dce`), folds identical functions (ICF), and emits final native binaries (ELF, PE, Mach-O, WASM, ADOB v2).
+4. **adeshlink Engine:** Resolves symbols, computes relocations, garbage-collects dead sections (`--enable-dce`), folds identical functions (ICF), and emits final native binaries (ELF, PE, Mach-O, WASM, ADOB v3; the ADOB encoder writes version 3 and the reader accepts v2 and v3 — `linker/src/object/adob.rs`).
 5. **Runtime System:** Self-contained runtime library (`ADESH_RUNTIME_ABI_V1`) providing allocation, panic unwinding, and FFI interop.

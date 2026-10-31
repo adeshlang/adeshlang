@@ -48,20 +48,20 @@ It overcomes the fundamental limitations of TCP, UDP, and QUIC:
 
 ```bash
 # Run the comprehensive examples
-cargo run --bin adeshlang -- run examples/Libraries/atp/atp_examples.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/atp_examples.adesh
 
 # Run the server (in one terminal)
-cargo run --bin adeshlang -- run examples/Libraries/atp/atp_server.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/atp_server.adesh
 
 # Run the client (in another terminal)
-cargo run --bin adeshlang -- run examples/Libraries/atp/atp_client.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/atp_client.adesh
 
 # Feature-specific examples
-cargo run --bin adeshlang -- run examples/Libraries/atp/atp_identity.adesh
-cargo run --bin adeshlang -- run examples/Libraries/atp/atp_migration.adesh
-cargo run --bin adeshlang -- run examples/Libraries/atp/atp_retry_handshake.adesh
-cargo run --bin adeshlang -- run examples/Libraries/atp/atp_priority_streams.adesh
-cargo run --bin adeshlang -- run examples/Libraries/atp/atp_loss_recovery.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/atp_identity.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/atp_migration.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/atp_retry_handshake.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/atp_priority_streams.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/atp_loss_recovery.adesh
 ```
 
 ## Testing (CI)

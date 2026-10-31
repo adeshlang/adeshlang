@@ -49,9 +49,9 @@ import { utf8Encode, utf8Decode, base64Encode, hexEncode } from Encoding;
 Run any example script using the `adeshlang` CLI binary:
 
 ```bash
-cargo run --bin adeshlang -- run examples/libraries/encoding/basic_utf8.adesh
-cargo run --bin adeshlang -- run examples/libraries/encoding/realworld_network_packet.adesh
-cargo run --bin adeshlang -- run examples/libraries/encoding/realworld_file_transcode.adesh
+cargo run --bin adesh -- run examples/libraries/encoding/basic_utf8.adesh
+cargo run --bin adesh -- run examples/libraries/encoding/realworld_network_packet.adesh
+cargo run --bin adesh -- run examples/libraries/encoding/realworld_file_transcode.adesh
 ```
 
 ---

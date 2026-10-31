@@ -35,8 +35,10 @@ fn test_linker_abi_compatibility_verification() {
     assert!(res.is_ok());
 
     // Mismatched pointer width must return LinkError
-    let mut header_mismatch = AdeshAbiHeader::default();
-    header_mismatch.pointer_width = 32;
+    let header_mismatch = AdeshAbiHeader {
+        pointer_width: 32,
+        ..Default::default()
+    };
 
     let mismatch_res = verify_abi_compatibility(&header_a, &header_mismatch);
     assert!(mismatch_res.is_err());

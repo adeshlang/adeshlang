@@ -897,8 +897,7 @@ pub fn render_multi_backend_report(
         .map(|r| r.name.replace("__", "::").len())
         .max()
         .unwrap_or(20)
-        .max(20)
-        .min(50);
+        .clamp(20, 50);
     let cell_w: usize = 8; // fixed cell width
 
     // Header row

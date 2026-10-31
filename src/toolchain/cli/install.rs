@@ -8,6 +8,7 @@
 //!      executables (Windows NSIS) are run silently.
 //!   2. `--use-system-packages`: the system package manager (apt/dnf/pacman/
 //!      brew/winget), used as a fallback when downloads are unavailable.
+//!
 //! GPU support: when prebuilt MLIR tools lack the NVVM/ROCDL dialects,
 //! `--build-mlir-source` builds them from the pinned upstream source.
 

@@ -57,6 +57,14 @@ fn resolve_alias_name_for_object(
         base
     };
 
+    if crate::parsing::hir_lower::KNOWN_TYPE_ALIASES.with(|cell| {
+        let map = cell.borrow();
+        map.contains_key(alias_name)
+            || map.contains_key(crate::parsing::hir_lower::clean_type_name(alias_name))
+    }) {
+        return Some(crate::parsing::hir_lower::clean_type_name(alias_name).to_string());
+    }
+
     let mut c = start_env.or(Some(global));
     while let Some(id) = c {
         if let Some(val) = envs[id].values.get(alias_name) {
@@ -68,6 +76,40 @@ fn resolve_alias_name_for_object(
         }
         c = envs[id].enclosing;
     }
+
+    // Fallback: search all environments (e.g. imported modules)
+    for env in envs {
+        if let Some(val) = env.values.get(alias_name) {
+            if let Value::Object(map) = val {
+                if map.get("__type_alias__").is_some() && map.get("__alias_target__").is_none() {
+                    return Some(alias_name.to_string());
+                }
+            }
+        }
+        if let Some(val) = env.exports.get(alias_name) {
+            if let Value::Object(map) = val {
+                if map.get("__type_alias__").is_some() && map.get("__alias_target__").is_none() {
+                    return Some(alias_name.to_string());
+                }
+            }
+        }
+    }
+
+    // Also check if any exported object has the alias as a field (e.g., adv_tests.ServerSpec)
+    for env in envs {
+        for val in env.values.values().chain(env.exports.values()) {
+            if let Value::Object(mod_map) = val {
+                if let Some(val) = mod_map.get(alias_name) {
+                    if let Value::Object(map) = val {
+                        if map.get("__type_alias__").is_some() && map.get("__alias_target__").is_none() {
+                            return Some(alias_name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     None
 }
 

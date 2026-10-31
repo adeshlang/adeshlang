@@ -104,7 +104,7 @@ fn test_win64_struct_by_value_classification() {
     );
 
     // s12 > 8 bytes: indirect by reference
-    let locs_large = classify_win64_arguments(&[s12.clone()]);
+    let locs_large = classify_win64_arguments(std::slice::from_ref(&s12));
     assert_eq!(
         locs_large[0],
         ArgumentLocation::IndirectByReference(PhysicalRegister(1))
@@ -143,7 +143,7 @@ fn test_sysv_struct_by_value_classification() {
     };
     let classes_s8 = classify_eightbytes(&s8);
     assert_eq!(classes_s8, vec![EightbyteClass::Integer]);
-    let locs_s8 = classify_sysv_arguments(&[s8.clone()]);
+    let locs_s8 = classify_sysv_arguments(std::slice::from_ref(&s8));
     assert_eq!(locs_s8[0], ArgumentLocation::Register(PhysicalRegister(7))); // RDI
 
     // 2-eightbyte struct (f64, f64) -> Sse, Sse in XMM0, XMM1

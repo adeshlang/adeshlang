@@ -128,8 +128,8 @@ impl DomainTypeKind {
                 }
             }
             DomainTypeKind::ETag => {
-                if !(val.starts_with('"') && val.ends_with('"'))
-                    && !(val.starts_with("W/\"") && val.ends_with('"'))
+                if !(val.starts_with('"') && val.ends_with('"')
+                    || val.starts_with("W/\"") && val.ends_with('"'))
                 {
                     return Err(format!(
                         "Invalid ETag format (must be quoted or weak-quoted): '{}'",

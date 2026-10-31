@@ -48,7 +48,7 @@ export fn membership_fee(age: u8 = 18, is_member: bool = false): i32 {
     return fee;
 }
 
-export fn greet_summary(name: String, age: u8 = 18, is_member: bool = false): string {
+export fn greet_summary(name: string, age: u8 = 18, is_member: bool = false): string {
     return name + "/" + str(age) + "/" + str(is_member);
 }
 

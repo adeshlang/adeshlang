@@ -79,16 +79,16 @@ fn myFunction(x) { return x * x; }
 
 ### Implementation
 
-**Location**: `src/stdlib/decorators/mod.rs`
+**Location**: `src/runtime/stdlib_src/decorators/mod.rs`
 
 **Architecture**:
-- Registered in stdlib alongside core functions
+- Registered in stdlib alongside core functions (`register_all` in `src/runtime/stdlib_src/mod.rs`)
 - Native Rust implementations
 - Use `public_call_user` for user function invocation
 - Arc/Mutex for shared state (memoization cache)
 
 **Integration**:
-- Added to `src/stdlib/mod.rs`
+- Added to `src/runtime/stdlib_src/mod.rs`
 - Registered via `decorators::register_all()`
 - Available as global functions
 - Applied during `StmtKind::Function` execution
@@ -113,15 +113,15 @@ fn myFunction(x) { return x * x; }
 ## Files Created/Modified
 
 ### New Files
-- `src/stdlib/decorators/mod.rs` - Built-in decorators implementation
-- `docs/DECORATOR_ENHANCEMENTS.md` - Feature design document
-- `docs/DECORATOR_IMPLEMENTATION_SUMMARY.md` - Implementation summary
+- `src/runtime/stdlib_src/decorators/mod.rs` - Built-in decorators implementation (registers `memoize`, `trace`, `deprecated`, `timeout`, `retry`, `benchmark`, ...)
+- `docs/DECORATOR_ENHANCEMENTS.md` - Feature design document (since consolidated into this guide)
+- `docs/DECORATOR_IMPLEMENTATION_SUMMARY.md` - Implementation summary (since consolidated into this guide)
 - `examples/decorators/demo_working.adesh` - Working demonstration
 - `examples/decorators/test_builtin_simple.adesh` - Simple tests
 - `examples/decorators/builtin_decorators.adesh` - Comprehensive examples
 
 ### Modified Files
-- `src/stdlib/mod.rs` - Added decorators module registration
+- `src/runtime/stdlib_src/mod.rs` - Added decorators module registration
 
 ## Testing
 
@@ -741,7 +741,7 @@ fn myFunction() { }
 
 ## Technical Implementation
 
-**Location**: `src/stdlib/decorators/mod.rs`
+**Location**: `src/runtime/stdlib_src/decorators/mod.rs`
 
 **Integration**:
 - Registered in stdlib alongside `print`, `map`, etc.
@@ -1396,7 +1396,7 @@ Instead of wrapper-of-wrapper-of-wrapper, generates:
 
 ### Depth Limiting
 ```rust
-const MAX_DECORATOR_DEPTH: usize = 100;
+const MAX_DECORATOR_DEPTH: usize = 10000;
 ```
 - Prevents infinite recursion
 - Cycle detection in pipeline builder
@@ -1571,7 +1571,7 @@ fn expensive_computation(n: Int) -> Int {
 2. **Pipeline Infrastructure**
    - ✅ `PipelineBuilder` with stage flattening
    - ✅ Pipeline hash calculation
-   - ✅ Depth validation (MAX 100)
+   - ✅ Depth validation (MAX 10000, `src/parsing/decorator_pipeline.rs`)
    - ✅ Cycle detection framework
 
 3. **Documentation**
@@ -1582,35 +1582,34 @@ fn expensive_computation(n: Int) -> Int {
 ### ⚙️ In Progress
 
 1. **Interpreter Integration**
-   - ⚙️ Basic decorator handler (backward compatible)
-   - ❌ **BLOCKER**: Hanging bug with 20+ decorators
-   - ⚙️ Pipeline-based execution (not yet wired)
+   - ✅ Decorator runtime phases execute in the interpreter (`DecoratorPhase::Runtime` selection in `src/execution/runtime_core/interpreter_core.rs`)
+   - ✅ 20+ decorator hang regression test (`test_multiple_decorators_no_hang` in `tests/decorator_tests.rs`)
+
+### ✅ Completed Since This Report Was Written
+
+1. **Compile-Time Phase Execution**
+   - ✅ `compile` phase executed during compilation (`execute_compile_phase` in `src/parsing/decorator_compile.rs`, wired from `src/cli/parsing.rs` and every native/JIT/AOT entry: `src/backends/native/lower.rs`, `src/backends/jit/**`, `src/backends/aot/cranelift/mod.rs`)
+   - ✅ `typecheck` phase executed during type checking (`execute_typecheck_phase` in `src/parsing/decorator_compile.rs`)
+   - ✅ Decorator metadata (tested by `test_decorator_metadata` in `tests/decorator_tests.rs`)
 
 ### ❌ Not Yet Implemented
 
-1. **Compile-Time Phase Execution**
-   - ❌ Execute `compile` phase during compilation
-   - ❌ Execute `typecheck` phase during type checking
-   - ❌ Metadata injection system
-
-2. **Runtime Optimization**
+1. **Runtime Optimization**
    - ❌ Fusion optimizer
    - ❌ Pipeline caching
    - ❌ O(1) stage dispatch
 
-3. **Backend Support**
-   - ❌ VM bytecode: CALL_DECORATED instruction
+2. **Backend Support**
+   - ❌ VM bytecode: `CallDecorated` opcode decodes but only prints a "not yet implemented" warning (`src/execution/vm/v1_stack.rs`)
    - ❌ JIT: Trampoline stubs
    - ❌ AOT: Static fusion
    - ❌ WASM: Compile-time resolution
 
-4. **Testing**
-   - ❌ Unit tests for pipeline construction
-   - ❌ Stress test (currently hangs at 20+ decorators)
+3. **Testing**
    - ❌ Cross-backend consistency
    - ❌ Performance benchmarks
 
-5. **Security**
+4. **Security**
    - ❌ CodeQL scan
    - ❌ Security validation
 

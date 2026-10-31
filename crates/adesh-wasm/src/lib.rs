@@ -211,8 +211,8 @@ struct MemStats {
 /// *actual* heap a program allocated instead of the full reservation.
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_wasm_mem_stats() -> *mut c_char {
-    let data_end = unsafe { std::ptr::addr_of!(DATA_END) as usize };
-    let heap_base = unsafe { std::ptr::addr_of!(HEAP_BASE) as usize };
+    let data_end = std::ptr::addr_of!(DATA_END) as usize;
+    let heap_base = std::ptr::addr_of!(HEAP_BASE) as usize;
     let stats = MemStats {
         stackSizeBytes: WASM_STACK_SIZE,
         dataSizeBytes: data_end.saturating_sub(WASM_STACK_SIZE),

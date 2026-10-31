@@ -117,9 +117,9 @@ This directory contains a complete, numbered suite of 20 `.adesh` example script
 To run any example script with the AdeshLang runtime:
 
 ```bash
-cargo run --bin adeshlang -- run examples/crypto/01_hashing_basic.adesh
-cargo run --bin adeshlang -- run examples/crypto/05_argon2id_password_hashing.adesh
-cargo run --bin adeshlang -- run examples/crypto/07_aead_aes_gcm_seal.adesh
-cargo run --bin adeshlang -- run examples/crypto/10_ed25519_signatures.adesh
-cargo run --bin adeshlang -- run examples/crypto/15_jwt_safe_verification.adesh
+cargo run --bin adesh -- run examples/crypto/01_hashing_basic.adesh
+cargo run --bin adesh -- run examples/crypto/05_argon2id_password_hashing.adesh
+cargo run --bin adesh -- run examples/crypto/07_aead_aes_gcm_seal.adesh
+cargo run --bin adesh -- run examples/crypto/10_ed25519_signatures.adesh
+cargo run --bin adesh -- run examples/crypto/15_jwt_safe_verification.adesh
 ```

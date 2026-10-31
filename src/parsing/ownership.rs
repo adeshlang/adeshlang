@@ -498,6 +498,7 @@ fn check_stmt_ownership(
 
         HirStmt::TryCatch {
             try_block,
+            error_name,
             catch_block,
             ..
         } => {
@@ -506,6 +507,7 @@ fn check_stmt_ownership(
             ctx.exit_scope();
 
             ctx.enter_scope();
+            ctx.register_owned(error_name.clone());
             check_stmt_ownership(catch_block, ctx, errors);
             ctx.exit_scope();
         }
@@ -808,6 +810,7 @@ fn check_stmt_moves(stmt: &HirStmt, ctx: &mut OwnershipContext, errors: &mut Vec
 
         HirStmt::TryCatch {
             try_block,
+            error_name,
             catch_block,
             ..
         } => {
@@ -815,6 +818,7 @@ fn check_stmt_moves(stmt: &HirStmt, ctx: &mut OwnershipContext, errors: &mut Vec
             check_stmt_moves(try_block, ctx, errors);
             ctx.exit_scope();
             ctx.enter_scope();
+            ctx.register_owned(error_name.clone());
             check_stmt_moves(catch_block, ctx, errors);
             ctx.exit_scope();
         }

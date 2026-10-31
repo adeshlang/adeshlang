@@ -1717,16 +1717,16 @@ Application
 
 ```bash
 # Comprehensive examples
-cargo run --bin adeshlang -- run examples/Libraries/atp/atp_examples.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/atp_examples.adesh
 
 # Server
-cargo run --bin adeshlang -- run examples/Libraries/atp/atp_server.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/atp_server.adesh
 
 # Client
-cargo run --bin adeshlang -- run examples/Libraries/atp/atp_client.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/atp_client.adesh
 
 # Production example (integrates ATP + JSON + Crypto + Compression + Encoding + Collections + Env + Time + fs)
-cargo run --bin adeshlang -- run examples/Libraries/atp/atp_production.adesh
+cargo run --bin adesh -- run examples/Libraries/atp/atp_production.adesh
 ```
 
 ### Quick Start

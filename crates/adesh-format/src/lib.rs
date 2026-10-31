@@ -718,10 +718,9 @@ fn currency_info(code: &str) -> (&'static str, usize, bool) {
 
 /// Add grouping separators to a numeric string (thousands grouping).
 fn add_grouping(num_str: &str, sep: char) -> String {
-    let (neg, digits) = if num_str.starts_with('-') {
-        (true, &num_str[1..])
-    } else {
-        (false, num_str)
+    let (neg, digits) = match num_str.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, num_str),
     };
     let (int_part, frac_part) = match digits.find('.') {
         Some(dot) => (&digits[..dot], &digits[dot..]),

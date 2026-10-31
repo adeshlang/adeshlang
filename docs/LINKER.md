@@ -1,6 +1,12 @@
 # Adesh Native Linker (`adeshlink`)
 
-`adeshlink` is a high-performance, self-contained, multi-format, zero-dependency native binary linker built into the Adesh toolchain. It requires **no external dependencies** (no LLVM, Clang, GCC, MSVC, or GNU binutils) to produce native platform binaries across Windows (PE32+), Linux (ELF64), macOS (Mach-O 64), WebAssembly (WASM), and Bare-Metal / Embedded MCUs.
+**Status: PARTIAL.** Windows PE32+ and Linux ELF64 are execution-tested. Mach-O 64 and the bare-metal path are emission/structure-tested only — see the format notes below before treating a listed target as runnable.
+
+`adeshlink` is a high-performance, self-contained, multi-format, zero-dependency native binary linker built into the Adesh toolchain. It requires **no external dependencies** (no LLVM, Clang, GCC, MSVC, or GNU binutils) to link objects and produce binaries across Windows (PE32+), Linux (ELF64), macOS (Mach-O 64), WebAssembly (WASM), and Bare-Metal / Embedded MCUs. Verification is uneven across those formats, so a listed output format means "implemented", not "production-ready":
+
+- **macOS (Mach-O 64)** — headers, segment load commands and dyld binding structures are written and then decoded back by independent test readers (`linker/tests/macho_dyld_binding_test.rs`). Nothing runs under dyld: `TARGET_MATRIX.md` records **no execution verification** for `aarch64-apple-darwin` and only indirect coverage for `x86_64-apple-darwin`.
+- **Bare-Metal / Embedded** — the embedded modules (`linker/src/embedded/ivt.rs`, `linker/src/embedded/flash.rs: linkscripts, IVT, crt0, flash/HEX/SREC writers`) are exercised at unit level only; there is no end-to-end firmware link test, and `riscv32imac-unknown-none-elf` is still routed through the RV64 `_start` stub (`TARGET_MATRIX.md`).
+- **WebAssembly** — the linker's WASM writer links multi-object programs, but executable builds go through the compiler's WASM backend instead; see the WASM guides.
 
 ---
 

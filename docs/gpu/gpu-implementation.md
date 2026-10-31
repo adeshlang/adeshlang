@@ -719,9 +719,11 @@ This system significantly enhances memory safety by catching borrow violations t
 
 ## Introduction
 
-AdeshLang provides first-class support for GPU programming through its MLIR-based compilation pipeline. You can write GPU kernels that compile to CUDA (NVIDIA), ROCm (AMD), or OneAPI (Intel) without changing your source code.
+> **Verification status (Documentation Policy):** GPU support is **experimental scaffolding, not an executable device-code path**. What is real and asserted in tests: VIR→MLIR GPU-dialect text lowering (`src/backends/mlir/gpu.rs`), kernel config/memory-space/optimization-context unit tests (`tests/gpu_validation.rs`, `tests/gpu_integration_e2e.rs`), and container writers (CUDA fatbin, SPIR-V, HSACO, MetalLib, TPU bundle, QIR) that wrap caller-supplied payloads in `linker/src/accelerators` / `linker/src/quantum` (asserted by `linker/tests/accelerator_mlir_embedded_quantum_test.rs`). What does **not** exist: any GPU driver binding (no `cudaMalloc`/`cuLaunchKernel`/HIP/OpenCL call anywhere in `src/`, `crates/`, `linker/`), device-machine-code generation from Adesh source, or any CI job that runs GPU code. `adesh run --gpu` (a debug-build-only flag, `#[cfg(debug_assertions)]` in `src/toolchain/cli/args.rs`) emits MLIR artifacts and then executes the program through the **interpreter fallback** (`src/cli/backends.rs`, "GPU MLIR artifacts written. Executing via interpreter fallback."). The `--cuda`/`--rocm`/`--oneapi` flags shown below are **not implemented** — the real selector is `--gpu-target <cuda|rocm|vulkan|metal|auto>`. The "first-class support" framing below is the original (pre-audit) report text and should be read as a design description.
 
-### Supported Platforms
+GPU programming is a target capability of AdeshLang's MLIR-based compilation pipeline: the design goal is that GPU kernels compile to CUDA (NVIDIA), ROCm (AMD), or OneAPI (Intel) without changing source code. Today the pipeline stops at MLIR artifact emission; end-to-end device execution is not implemented.
+
+### Supported Platforms (design targets — none execution-verified)
 
 - **CUDA**: NVIDIA GPUs (Compute Capability 3.5+)
 - **ROCm**: AMD GPUs (GFX8+)
@@ -752,19 +754,16 @@ AdeshLang Source (.adesh)
 ### Command-Line Usage
 
 ```bash
-# Compile and run on GPU (auto-detect backend)
+# Compile and run on GPU (auto-detect backend) — debug builds only; falls back to
+# interpreter execution after writing MLIR artifacts
 adesh run --gpu myscript.adesh
 
-# Specify CUDA backend explicitly
-adesh run --gpu --cuda myscript.adesh
+# Select the GPU target (the real flag; --cuda/--rocm/--oneapi are NOT implemented)
+adesh run --gpu --gpu-target cuda myscript.adesh
 
-# Specify ROCm backend
-adesh run --gpu --rocm myscript.adesh
-
-# Specify OneAPI backend
-adesh run --gpu --oneapi myscript.adesh
-
-# AOT compilation to binary
+# AOT compilation to a GPU binary: unimplemented — the experimental GPU path
+# is a run-mode artifact writer only (src/main.rs dispatches ExecutionBackend::Gpu
+# to the MLIR-GPU runner)
 adesh build --gpu --output gpu_program myscript.adesh
 ```
 

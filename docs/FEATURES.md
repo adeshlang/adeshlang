@@ -3,6 +3,16 @@
 > Consolidated from 23 markdown files on 2026-08-29.
 > This file merges related root-level .md documents by category.
 
+> **Historical archive — capability claims here are superseded (2026-10-31).** This
+> consolidation preserves documents as they read in August 2026, including claims that
+> later audits contradicted ("production-ready", "100% memory safety proven at compile
+> time", and absolute per-target support levels). Do not treat anything in this file as
+> current status. The canonical sources are
+> [`CURRENT_STATE.md`](../CURRENT_STATE.md) (including its §0.6 workspace format & lint
+> gate), [`TARGET_MATRIX.md`](../TARGET_MATRIX.md),
+> [`RUNTIME_MATRIX.md`](../RUNTIME_MATRIX.md), and
+> [`NEXT_IMPLEMENTATION_PLAN.md`](../NEXT_IMPLEMENTATION_PLAN.md).
+
 ---
 
 

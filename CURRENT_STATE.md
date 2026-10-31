@@ -1,6 +1,8 @@
 # Adesh Native Production Toolchain — Current State
 
 **Generated:** 2026-10-24 (native codegen + linker audit revision)
+**Last updated:** 2026-10-31 (§0.6 workspace format & lint gate; AArch64 defect
+status corrected in §0 and §0.5 after re-reading the codegen source)
 **Toolchain Version:** 0.3.0
 **Target:** Production-Grade Self-Contained Native Toolchain
 **Companion per-target document:** `TARGET_MATRIX.md` (same audit date) — the two
@@ -16,7 +18,7 @@ files must agree; any contradiction between them is a bug in the documentation.
 | Native linker engine | **Implemented, actively maturing** — parse → GC → ICF → resolve → layout → relocate; indexed GNU/COFF archives use lazy member resolution with fallback scanning. |
 | Windows PE generation | **Significantly implemented** — real PE32+ with imports/IAT/TLS/base-reloc/ASLR; tests execute produced binaries, including a real `msvcrt!puts` import. |
 | x86-64 native codegen | **Substantial for its tested subset** — integer GPR operations, scalar SSE2 encodings, XMM allocation, branches/calls, stack arguments, parallel moves, Win64 shadow space, full-width locked atomics, and Win64 TLS access sequences. Vector calling-convention support remains incomplete. |
-| AArch64 codegen | **Implemented, not execution-verified, and currently unsafe** — Full AAPCS64 register allocation, callee-saved preservation (X19..X28, D8..D15), 64-bit immediate materialization, arithmetic, comparisons/branches, scalar FP, NEON vectors, atomics, and ADOB/ELF object emission. **Two audited correctness defects (2026-10-24):** unsupported `MachineInstruction` variants fall through to a NOP (`crates/adesh-codegen/src/targets/aarch64/mod.rs:850`) instead of failing loudly, and emitted call relocations use an approximate function offset (`:919`), so every call relocation in a single-function object lands at offset 0. Only `AArch64_Call26` is emitted — no ADRP/ADD_LO12 symbol materialization. Source builds also fail at link because no `aarch64` target runtime archive is resolved. No qemu/hardware execution test exists. |
+| AArch64 codegen | **Implemented, not execution-verified, and still unsafe on unsupported instructions** — Full AAPCS64 register allocation, callee-saved preservation (X19..X28, D8..D15), 64-bit immediate materialization, arithmetic, comparisons/branches, scalar FP, NEON vectors, atomics, ADRP+ADD symbol materialization, and ADOB/ELF object emission. **Status of the 2026-10-24 audit defects:** the approximate call-relocation offset is **fixed** (`emit_object` accumulates `text_bytes.len()` per function and adds it to each relocation), and ADRP/ADD page+pageoff symbol materialization **is now emitted** (`RelocationKind::AArch64_AdrPage21` + `AArch64_AddAbsLo12`). **Still open:** unsupported `MachineInstruction` variants fall through to a `NOP` (`crates/adesh-codegen/src/targets/aarch64/mod.rs`, the `_ =>` arm of the encoder) instead of failing loudly. Source builds also fail at link because no `aarch64` target runtime archive is resolved. No qemu/hardware execution test exists. |
 | RISC-V codegen | **Implemented backend, not reachable from source** — RV64GC (LP64D), scalar FP, atomics, vector encodings, and RVC alignment; unsupported instructions fail loudly. Real source builds currently stop at codegen with `unsupported machine instruction ParallelMove`. RV32 is explicitly refused ("only implements RV64 … refusing to emit RV32-invalid code"), and the linker still routes `riscv32imac` through the RV64 `_start` stub. No execution test. |
 | ELF generation | **Static and dynamic x86-64 executables execution-tested; TLS execution-verified** — AOT executables dynamically import libc and libgcc (`libc.so.6`, `libgcc_s.so.1`). ELF dynamic links emit PLT/JUMP_SLOT imports, local GOTPCREL slots, and COPY relocations for supported imported data objects such as `environ`; fixed-base `ET_EXEC` does not emit PIE-only `RELATIVE` relocations. Locally defined general-/local-dynamic TLS sequences are relaxed to initial-/local-exec forms; unsupported shapes remain loud errors. A glibc-target AOT print repro was linked and executed in Ubuntu 24.04. **Shared-library loading is execution-verified**: `tests/native_phase8_dynamic_elf_test.rs` builds `libadd42.so` (`ET_DYN` + `DT_SONAME` + exported dynsym) and drives it from a PIE caller through `dlopen`/`dlsym` with an asserted result. Static `ET_EXEC` with native Linux `_start` synthesis (argc/argv/envp + `exit` syscall 60) runs on Linux CI and WSL with asserted exit codes. TLS: merged `.tls` block (initialized sections first, zero-fill after), `PT_TLS`, `.tdata` (PROGBITS) / `.tbss` (NOBITS) section-header split, static local-exec relocation (`%fs:(off − memsz)`), and dynamic initial-exec (GOT slot + `R_X86_64_TPOFF64` resolved by the real loader) — **executed against a real musl `ld.so` in WSL with asserted exit codes** (`tests/native_phase8_tls_ehframe_test.rs`). `.eh_frame`/`.eh_frame_hdr` synthesis with `PT_GNU_EH_FRAME` (see DWARF row). |
 | Mach-O generation | **Artifact emission, libSystem routing, and dyld binding structure implemented; execution pending** — emits 64-bit Mach-O executables and dylibs with `LC_LOAD_DYLIB`, `LC_SYMTAB`, partitioned `LC_DYSYMTAB`, and `LC_DYLD_INFO_ONLY` (bind/rebase opcode streams and an exports trie), an indirect symbol table, and synthesized `__stubs`/`__got`/lazy-pointer/helper sections forming a full call → stub → lazy-pointer → binder chain — all **verified by independent parse-back decoders** (`linker/tests/macho_dyld_binding_test.rs`). Both x86-64 and AArch64 images are supported; relocations include x86-64 SIGNED/BRANCH/GOT/TLV and ARM64 BRANCH26/PAGE21/PAGEOFF12/TLVP/ADDEND. TLS is emitted as `__thread_data`/`__thread_bss` plus a `__thread_vars` TLV descriptor table bound through `__tlv_bootstrap`. Chained fixups are not emitted. No macOS execution test exists yet: dyld execution verification is pending, covered structurally on the macOS CI runner which runs the conformance suite on the only host where Mach-O is native. |
@@ -24,8 +26,8 @@ files must agree; any contradiction between them is a bug in the documentation.
 | Static libraries | **Implemented** — Target-aware GNU/COFF indexed archives resolve members lazily without host triple leakage; archives without a usable index fall back to scanning. The archive writer emits a real GNU `/` symbol index (big-endian offsets + string pool) and the reader consumes it directly. Thin archives are not supported. |
 | Shared libraries | **Artifact emission for all three formats; ELF loading execution-verified** — `--shared` produces PE DLLs (with export tables), ELF `.so` (`ET_DYN` + `DT_SONAME` + exported dynsym + synthesized `.got`/`.dynamic`), and Mach-O `.dylib` (`MH_DYLIB` + export trie + dyld bind info). ELF `.so` is loaded with `dlopen`, resolved with `dlsym`, and called in `tests/native_phase8_dynamic_elf_test.rs`. PE DLL and Mach-O `.dylib` loading are emission-tested only. |
 | TLS generation | **Implemented for Win64 (codegen) and ELF (linker), both execution-verified at their level** — Win64: PE TLS directory/`_tls_index` synthesis plus real thread-pointer access sequences (`gs:[0x58]` + SECREL relocations), execution-tested via MachineIR (`tests/native_phase2_abi_tls_test.rs`). ELF: `PT_TLS` with `.tdata`/`.tbss` split; static local-exec (`%fs:(off − memsz)`, verified by executing a binary that sets the thread pointer via `arch_prctl(ARCH_SET_FS)` and reads/updates its counter through `%fs`) and dynamic initial-exec (GOT slot + `R_X86_64_TPOFF64`, verified against a real musl `ld.so` in WSL) — `tests/native_phase8_tls_ehframe_test.rs`. General-dynamic is rejected loudly. Mach-O emits TLV sections (`__thread_data`/`__thread_bss` plus `__thread_vars` descriptors) but has no execution test. No Adesh source syntax emits TLS accesses yet — the executed tests drive the linker with hand-built ADOB objects. |
-| Native JIT (`--jit-native` / `--njit`) | **Functional for the tested subset; imports handled by the shared static pre-link** — raw-pointer and array-indexing semantics now match the interpreter. Static imports are resolved and tree-shaken before codegen by the same path used by AOT/WASM (`src/cli/import_linking.rs`, `tests/static_imports_test.rs`); a module import that still reaches the native JIT compiler errors loudly (`src/backends/jit/native/compiler.rs:3872`). Conformance is **not** yet systematically asserted in CI: `tests/native_phase8_jit_native_conformance_test.rs` is 7/10 on Windows because three tests embed an unescaped Windows path in generated Adesh source, and the suite is not part of the Windows CI job. |
-| Full ABI aggregates/variadic | **Implemented at the codegen/FFI level** — shared SysV eightbyte + Win64 by-value classifier, sret for large aggregates, struct-by-value (1/2/4/8-byte) in registers and on the stack, Win64 shadow spill and SysV register-save-area/`va_list` variadic helpers; execution-tested via MachineIR/FFI suites. Not yet reachable from Adesh source syntax (no `extern` declarations, variadic functions, or aggregate value types in the front end). |
+| Native JIT (`--jit-native` / `--njit`) | **Functional for the tested subset; imports handled by the shared static pre-link** — raw-pointer and array-indexing semantics now match the interpreter. Static imports are resolved and tree-shaken before codegen by the same path used by AOT/WASM (`src/cli/import_linking.rs`, `tests/static_imports_test.rs`); a module import that still reaches the native JIT compiler errors loudly (`"import of module '…' is not supported by --jit-native"` in `src/backends/jit/native/compiler.rs`). Conformance is **not** yet systematically asserted in CI: `tests/native_phase8_jit_native_conformance_test.rs` is 7/10 on Windows because three tests embed an unescaped Windows path in generated Adesh source, and the suite is not part of the Windows CI job. |
+| Full ABI aggregates/variadic | **Implemented at the codegen/FFI level** — shared SysV eightbyte + Win64 by-value classifier, sret for large aggregates, struct-by-value (1/2/4/8-byte) in registers and on the stack, Win64 shadow spill and SysV register-save-area/`va_list` variadic helpers; execution-tested via MachineIR/FFI suites. Reachability from source is split by backend: `extern "C"`/`extern` blocks **do parse** (`src/parsing/parser/extern_ffi.rs`, `TokenKind` for `extern` in `src/parsing/lexer.rs`) and **the interpreter binds them through libffi** (`StmtKind::ExternFunction` / `StmtKind::ExternBlock` in `src/execution/runtime_core/interpreter_core.rs` via `register_extern_function` + `wrap_foreign_function`), but HIR lowering discards those declarations (`src/parsing/hir_lower.rs`, the arm that lowers `ExternFunction`/`ExternBlock` to an empty block), so the native-JIT and AOT paths never see them. Variadic functions and aggregate value types remain unreachable from Adesh source syntax in every backend. |
 | DWARF / CodeView / SEH / eh_frame | **Implemented** — Windows SEH `.pdata`/`.xdata` `UNWIND_INFO` and opcode encoding wired to PE Optional Header exception directory; DWARF 5 `.debug_line` state machine program and compilation unit headers implemented; ELF `.eh_frame` (one CIE matching the real emitted prologue `push rbp; mov rbp, rsp`, one FDE per sized function symbol, no FDE for size-0 functions — never fabricated) plus `.eh_frame_hdr` binary-search table and `PT_GNU_EH_FRAME`, decode-verified by an independent byte-level decoder in tests. No runtime unwinder test exists yet: frame data is verified to describe the real code ranges, not yet to unwind a crash. |
 | Link-time optimization (`--lto`) | **Implemented at two levels** — the CLI routes native emission through `CompilerDriver` with `enable_lto`, where `LtoEngine` performs global dead-function elimination and inlining over the module set (the CLI currently passes a single module, so cross-module inlining has nothing to act on); the linker then applies section GC, ICF (`IcfMode::All`), and symbol stripping. |
 | Build time & binary size | **Optimized** — standalone C runtime print/abort; Windows PE hello-world reduced to 4,096 bytes (string) and 5,120 bytes (numeric), well below <40 KB target; `-Os`/`-Oz` flags implemented; Criterion benchmark harness across 10-10K LOC. |
@@ -216,15 +218,16 @@ Execution-verified changes in this revision:
   resolve from the Rust runtime static library. Native-JIT tests are gated
   off on non-x86-64 hosts because Cranelift PLT support is x86-64-only;
   interpreter and AOT regression coverage remains enabled on Apple Silicon.
-- **OS-specific CI jobs** (`.github/workflows/ci.yml`): Linux runs the
+- **OS-specific CI jobs** (`.github/workflows/ci.yml`), started **manually only**
+  (`on: workflow_dispatch`; a full matrix run is expensive, so nothing triggers on
+  push or pull request): Linux runs the
   full integration set including the ELF-execution suites natively
   (static ELFs, dynamic linking against the host loader, TLS local-exec
-  and initial-exec); macOS runs the Mach-O dyld-binding structural
+  and initial-exec) and the WASM suites on two engines; macOS runs the Mach-O dyld-binding structural
   conformance suite plus the full integration set (Windows PE suites
   compile out; Linux ELF execution suites SKIP loudly there); Windows
   runs the PE e2e suites plus the Linux ELF execution suites through WSL
-  when present (loud SKIP otherwise). The CI workflow itself now
-  triggers CI on changes.
+  when present (loud SKIP otherwise).
 - **Language honesty note**: Adesh has no `mut` keyword (variables are
   mutable by default); the parser rejects `mut` with an explicit
   re-write hint rather than accepting or ignoring it
@@ -238,14 +241,16 @@ Windows x86-64 development host. Execution claims below are only those a
 checked-in test asserts; everything else is labelled emission-tested or
 unverified.
 
-Local test results (Windows x86-64, debug build):
+Local test results (Windows x86-64, debug build; recorded in the 2026-10-24 audit and
+not re-run since — the two structural suites have grown since, so the fractions below
+describe that run, not today's suite size):
 
 | Suite | Result |
 | :--- | :--- |
 | `adesh-codegen --lib` | 84 passed |
 | `adesh-linker` library and integration tests | all passed |
-| `linker/tests/macho_dyld_binding_test.rs` | 9/9 structural |
-| `linker/tests/platform_native_linking_conformance_test.rs` | 8/8 structural |
+| `linker/tests/macho_dyld_binding_test.rs` | all passed structurally (10 tests in the file as of 2026-10-31) |
+| `linker/tests/platform_native_linking_conformance_test.rs` | all passed structurally (9 tests in the file as of 2026-10-31) |
 | AArch64-specific suites | 7/7 |
 | RISC-V-specific suites | 5/5 |
 | Cross-target / cross-compile suites | 3/3 and 2/2 |
@@ -254,14 +259,17 @@ Local test results (Windows x86-64, debug build):
 
 Audited defects and gaps:
 
-- **AArch64 silent miscompile** — the instruction encoder's `_ =>` arm at
-  `crates/adesh-codegen/src/targets/aarch64/mod.rs:850` emits a `NOP`. A
-  hello-world `--emit=adob` produced 0xC0 bytes of `.text` containing 7 NOPs.
-- **AArch64 relocation offsets** — `emit_object` computes a per-function
-  `func_offset` as `index * 8` (`:919`), not the real call-site offset. In a
-  single-function object all 7 `AArch64_Call26` relocations were emitted at
-  offset `0x0`. Only `AArch64_Call26` is emitted; ADRP/ADD_LO12 symbol
-  materialization is absent even though the linker resolves those kinds.
+- **AArch64 silent miscompile — STILL OPEN** — the instruction encoder's `_ =>`
+  arm in `crates/adesh-codegen/src/targets/aarch64/mod.rs` emits a `NOP` for
+  unsupported `MachineInstruction` variants. A hello-world `--emit=adob` produced
+  0xC0 bytes of `.text` containing 7 NOPs. (The arm moved as the file grew; cite
+  the `_ =>` fallback in the encoder rather than a line number.)
+- **AArch64 relocation offsets — FIXED (2026-10-24/25)** — `emit_object` no longer
+  derives a per-function `func_offset` as `index * 8`; it accumulates
+  `text_bytes.len()` per function and adds that base to every relocation offset, so
+  call relocations land on their real call sites. ADRP/ADD symbol materialization is
+  also emitted now (`AArch64_AdrPage21` + `AArch64_AddAbsLo12` relocation kinds), so
+  the "only `AArch64_Call26`" limitation recorded by the audit no longer holds.
 - **AArch64 source builds do not link** — no `target/aarch64-*` runtime
   archive is resolved, leaving `aot_make_i64`, `aot_make_string`,
   `aot_print_cstr`, `aot_print_newline`, and `aot_string_concat` undefined.
@@ -328,6 +336,52 @@ executed and asserted in CI. `TARGET_MATRIX.md` uses "emission-tested" for
 those rows and carries the ordered remediation priorities under
 "Next important"; the phase-by-phase execution plan is
 `NEXT_IMPLEMENTATION_PLAN.md` (Phases 11–21).
+
+## 0.6 Workspace Format & Lint Gate (2026-10-31)
+
+Measured on this working tree, uncommitted (Windows x86-64, `-j 2`). **Re-measured 2026-11-01**; the in-flight `typeof`/`__type__` edits grew both counts since the 2026-10-31 pass.
+
+| Check | Command | Result |
+| :--- | :--- | :--- |
+| Formatting | `cargo fmt --all -- --check` | **Failing** — **11 diffs across 8 files**, all inside the in-flight work: `src/backends/wasm/compiler.rs` (5 sites), `src/backends/aot/cranelift_impl/instructions/calls/mod.rs`, `src/backends/native/lower.rs`, `crates/adesh-runtime/src/lib.rs`, `src/execution/runtime_core/exec/stmt.rs`, `src/execution/runtime_core/interpreter_core.rs`, `src/parsing/hir_lower.rs`. `cargo fmt --all` clears them. The workspace was fmt-clean before those edits landed. |
+| Clippy errors | `cargo clippy --workspace --all-targets --all-features` | **Exit 0 — no errors.** `correctness` is denied workspace-wide, so this is a real gate, not a silence. |
+| Clippy warnings | same command | **31 remain** (was 30), in four places (see below). CI does not fail on these: the `Run Clippy` step has no `-D warnings`. |
+
+Where the warnings live:
+
+- `adesh-runtime` — **25** (was 24): 23 `manual_c_str_literals` (still hand-building
+  nul-terminated strings, e.g. `b"u8\0".as_ptr() as *const c_char`, in `aot_typeof`
+  in `crates/adesh-runtime/src/lib.rs`) and 2 `collapsible_if` in the same file
+  (the `__type__` lookups). `crates/adesh-runtime/src/sys_io.rs` was already
+  converted to `c"…"` literals.
+- `adeshlang` (root lib) — **1**: unused variable `is_export` on
+  `StmtKind::TypeAlias(ta, is_export)` in
+  `src/execution/runtime_core/interpreter_core.rs` — part of the in-flight work.
+- `als` — **1**: unused variable `doc` in `als/src/diagnostics.rs`.
+- `tests/native_phase9_pgo_e2e_test.rs` — **4**: 2 needless `mut`, and 2 cases
+  where this pass added struct-update syntax to a literal that already specified
+  every field, so the update is a no-op. Those two are self-inflicted by the lint
+  sweep and should be reverted rather than "fixed" another way.
+
+Cleared to zero warnings in this round: `adesh-editor`, `adesh-format`,
+`adesh-wasm`, `adesh-codegen`, `adesh-object`, `mobile/bridge` (safety docs), plus
+the workspace's `correctness` errors everywhere.
+
+**What "clean" does not mean here.** Two crates silence their own lints, and an
+in-source attribute overrides Cargo's `[lints]` flags, so their zero-warning output
+is not evidence:
+
+- `linker/src/lib.rs` and `linker/src/main.rs` set `#![allow(clippy::all)]`, which
+  suppresses even the denied `correctness` group in the linker.
+- `src/lib.rs` carries a long `#![allow(...)]` block with per-lint rationale
+  (`collapsible_if`, `manual_strip`, `needless_borrow`, `too_many_arguments`, …)
+  covering the root crate's own sources. It does **not** apply to `tests/` or
+  `benches/`, which are separate crates — that is why the test-only fixes in this
+  round were necessary.
+
+Ordered next actions for this gate are recorded in `NEXT_IMPLEMENTATION_PLAN.md` §8.
+Nothing from this round is committed: the tree still holds the `typeof`/`__type__`
+work alongside it, and that work is what currently fails `cargo fmt --all -- --check`.
 
 ## 1. Executive Summary
 
@@ -405,7 +459,7 @@ Real, working subsystems:
 | Architecture | Status | Notes |
 | :--- | :--- | :--- |
 | **x86_64** | **Substantial for its tested subset** | Real REX/ModR/M/SIB encoding, scalar SSE2/XMM paths, branches/calls, stack args + shadow space, parallel moves, callee-saved handling, full-width atomics (8/16/32/64), and Win64 TLS sequences. Vector ABI classification remains incomplete. |
-| **AArch64** | **Implemented; unsafe and unverified** | AAPCS64 register allocation, callee-saved X19-X28/D8-D15, 64-bit immediate materialization, scalar FP, NEON, and atomics. Audited defects: unsupported instructions emit a NOP fallback (`targets/aarch64/mod.rs:850`) and call relocations use an approximate offset (`:919`); only `AArch64_Call26` is emitted, with no ADRP/ADD_LO12 symbol materialization. No target runtime archive and no execution test. |
+| **AArch64** | **Implemented; unsafe on unsupported instructions, and execution-unverified** | AAPCS64 register allocation, callee-saved X19-X28/D8-D15, 64-bit immediate materialization, scalar FP, NEON, atomics, and ADRP+ADD (`AArch64_AdrPage21`/`AArch64_AddAbsLo12`) symbol materialization. The audited relocation defect is fixed: `emit_object` bases each relocation on the accumulated `.text` length instead of `index * 8`. Still open: unsupported instructions emit a NOP fallback (the encoder's `_ =>` arm in `targets/aarch64/mod.rs`). No target runtime archive and no execution test. |
 | **RISC-V** | **Implemented backend; blocked from source** | RV64GC LP64D, scalar FP, atomics, vector encodings, and RVC alignment; unsupported instructions fail loudly. Real source builds stop at `ParallelMove`; RV32 is explicitly refused and the linker still uses an RV64 entry stub for RV32 targets. No execution test. |
 | **WASM** | **Real compiler backend; emits WASI Preview 1 for `-wasi` triples; linker writes, relocates and cross-links modules** | Stack-based opcode stream with SLEB128, locals, and control structures; for `-wasi` triples it imports only `wasi_snapshot_preview1.fd_write` and emits in-module write/alloc/print adapters, a `__heap` global and `memory.grow`, while other wasm targets keep `env.*` imports consumed by a generated Node loader. The linker (separate crate path) emits, relocates and cross-links clang objects, and needs no external toolchain to do it. |
 | **Embedded ARM** | **Proof-of-concept** | Minimal Thumb-2 ALU. |

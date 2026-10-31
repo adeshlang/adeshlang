@@ -11,14 +11,18 @@
 
 # AdeshLang FFI
 
-This document describes the Foreign Function Interface (FFI) support for AdeshLang across all backends (Interpreter, Bytecode VM, JIT/Cranelift, AOT, and WASM).
+This document describes the Foreign Function Interface (FFI) support for AdeshLang.
+
+**Current reach of FFI.** Extern declarations are parsed on every path, but they are only *executed* by the interpreter, which registers each `extern` and calls it through libffi (`register_extern_function` + `wrap_foreign_function`, libffi-backed registry in `src/backends/common/ffi/import.rs`, re-exported as `crate::backends::ffi_import`). HIR lowering discards `StmtKind::ExternFunction` / `StmtKind::ExternBlock` — the arm in `src/parsing/hir_lower.rs` lowers them to an empty block — so the JIT/AOT/native backends never see an extern. The bytecode emitters likewise skip extern statements ("handled at runtime", `src/execution/bytecode/bytecode_old.rs`), so the VM path does not register them either. The per-backend breakdown is in "Runtime behavior" below.
 
 ## Syntax
 
-- Single import:
-  - extern "C" fn strlen(s: string) -> u64
-- Block import:
+- Single import (the trailing semicolon is required — `extern_decl` in `src/parsing/parser/extern_ffi.rs` consumes it):
+  - extern "C" fn strlen(s: string) -> u64;
+- Block import (semicolons inside the braces are optional):
   - extern "C" { fn printf(fmt: string) -> i32 }
+- The ABI string is mandatory: `extern` without a following string literal is a parse error ("Expect string literal (ABI) after 'extern'").
+- Return type uses `->`; an extern without a return type is treated as `void`.
 - ABI examples: "C", "Rust", "Go", "Windows", "SysV", "Wasm".
 - Types: i8/i16/i32/i64/i128, u8/u16/u32/u64/u128, f32/f64, bool, string, void, ptr<T>, void*, arrays, tuples.
 
@@ -39,44 +43,48 @@ This document describes the Foreign Function Interface (FFI) support for AdeshLa
 - char[] → string
 - WASM imports allow i32, i64, f32, f64.
 
-## Header imports (@cImport)
-- Syntax: @cImport("path/to/header.h")
-- Parses the header and emits equivalent `extern "C" { ... }` declarations using the type mapping above.
+## Header imports ($cImport)
+- Syntax: $cImport("path/to/header.h")
+- The lexer produces a dedicated `TokenKind::CImport` for `$cImport` (see `src/parsing/lexer.rs`); `src/parsing/parser/declarations.rs` then reads the string path. There is no `@cImport` form.
+- Parses the header and emits equivalent `extern "C" { ... }` declarations using the type mapping above (`parse_c_header` in `src/backends/common/ffi/c_header_parser.rs`).
 
 ## WASM imports
 - Import from a compiled wasm module: extern "Wasm" { fn add(a: i32, b: i32) -> i32 }
 - Types limited to i32, i64, f32, f64; strings/pointers rely on linear memory offsets.
+- The `Wasm` ABI is recognised by the FFI registry (`AbiType::Wasm` in `src/backends/common/ffi/import.rs`); the `--wasm-module` flag below is parsed but no module loader consumes it yet, so host-module imports are not wired up.
 
 ## Runtime behavior
-- Interpreter/VM: uses libffi to marshal values, with a CALL_FFI opcode stub.
-- JIT/Cranelift: declares externs and binds function addresses before finalization.
-- AOT: emits unresolved externs for the system linker to resolve, honoring -L/-l flags.
-- WASM backend: binds host imports from wasm modules where supported.
+- Interpreter: registers each extern when its statement executes and calls it through libffi, marshalling Adesh values at the boundary (`StmtKind::ExternFunction` / `StmtKind::ExternBlock` / `StmtKind::HeaderImport` handling in `src/execution/runtime_core/interpreter_core.rs`).
+- Bytecode VM: the v1 stack VM has a `CallFfi` dispatch that resolves a symbol and calls it via the same registry (`src/execution/vm/v1_stack.rs`), but no emitter produces that opcode — the `CALL_FFI` text only appears in the legacy disassembler in `src/execution/bytecode/bytecode_old.rs`, and the v1/v2 emitters drop extern statements — so externs do not run under the VM today.
+- JIT/Cranelift: the front pass expands `$cImport` headers into extern statements (`expand_header_imports` in `src/backends/jit/cranelift/cranelift_impl/types.rs`), but externs are not lowered or compiled, so nothing binds a foreign address.
+- AOT: same picture — `expand_header_imports_aot` in `src/backends/aot/cranelift_impl/helpers.rs` expands headers, then HIR lowering discards the externs, so no unresolved extern is emitted for the system linker. The `-L`/`-l` flags drive the linker, not Adesh `extern` declarations.
+- WASM backend: compiles to WASI/`env` host imports described in the WASM guides; it does not consume Adesh extern declarations.
 
 ## CLI flags
-- --import <header>    : add a header import (equivalent to @cImport)
-- --wasm <module>      : load a wasm module for imports
-- -L <path>            : add a library search path
-- -l <lib>             : link/load a library by name
+- --import <header>    : parsed into the config as a header import, but nothing reads it back yet — use `$cImport(...)` in the source
+- --wasm-module <file> : parsed into the config; no module loader consumes it yet
+- --wasm               : selects the WebAssembly backend (it does not take a module argument)
+- -L <path>            : add a library search path (applied to the FFI registry by `apply_ffi_cli_config` in `src/cli/config.rs`)
+- -l <lib>             : link/load a library by name (same path as `-L`)
 - --ffi-debug          : verbose FFI resolution and call logging
 
 ## Examples
 
 ### libc
-extern "C" fn strlen(s: string) -> u64
-extern "C" fn getenv(name: string) -> string
+extern "C" fn strlen(s: string) -> u64;
+extern "C" fn getenv(name: string) -> string;
 
 ### math
 extern "C" { fn add(a: i32, b: i32) -> i32; fn mul(a: i64, b: i64) -> i64; }
 
 ### Rust
-extern "C" fn hash(ptr: ptr<u8>, len: i32) -> u64
+extern "C" fn hash(ptr: ptr<u8>, len: i32) -> u64;
 
 ### Go
-extern "C" fn go_process(x: i32) -> i32
+extern "C" fn go_process(x: i32) -> i32;
 
 ### WASM
-extern "Wasm" fn wasm_add(a: i32, b: i32) -> i32
+extern "Wasm" fn wasm_add(a: i32, b: i32) -> i32;
 
 ## Troubleshooting
 - Unknown symbol: ensure -L/-l are set and the symbol name matches the export.

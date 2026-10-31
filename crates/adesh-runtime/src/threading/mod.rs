@@ -299,6 +299,9 @@ impl AdeshThread {
         }
     }
 
+    // A panic in the spawned closure is the only failure mode, so `()` is the
+    // complete error value.
+    #[allow(clippy::result_unit_err)]
     pub fn join(mut self) -> Result<(), ()> {
         if let Some(h) = self.handle.take() {
             h.join().map_err(|_| ())

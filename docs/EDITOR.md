@@ -260,7 +260,7 @@ Press `:` in Normal mode to open the command bar at the bottom of the screen. Ty
 | `:goto N`     | Go to line N                    |
 | `:theme <name>` | Switch theme                 |
 | `:theme`      | Open theme selector            |
-| `:set <opt>=<val>` | Set an option             |
+| `:set <opt>=<val>` | *(Not implemented — see [Set Options](#set-options))* |
 | `:backend <name>` | Change execution backend   |
 | `:explorer`   | Toggle file explorer            |
 | `:output`     | Toggle output panel             |
@@ -271,7 +271,13 @@ Press `:` in Normal mode to open the command bar at the bottom of the screen. Ty
 
 ### Set Options
 
-Use `:set <option>=<value>` to change settings live.
+`:set <option>=<value>` is planned but **not implemented**: the command bar has
+no `set` handler, so `:set tab_width=2` replies `Unknown command: :set`. Until it
+lands, change these settings in the editor configuration file (see
+[Configuration](#configuration)) or with the individual commands and keybindings
+listed in this document.
+
+The table below documents the intended `:set` options.
 
 | Option             | Values                          |
 |--------------------|---------------------------------|

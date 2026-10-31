@@ -32,8 +32,18 @@ impl AllocStats {
 }
 
 /// Standard interface for custom memory allocators in Adesh runtime.
+///
+/// # Safety
+/// Implementors must return pointers valid for the requested `Layout` and must
+/// only free memory they allocated themselves.
 pub unsafe trait Allocator {
+    /// # Safety
+    /// `layout` must be a valid allocation request; the result must be
+    /// released through `deallocate` with the same layout.
     unsafe fn allocate(&self, layout: Layout) -> *mut u8;
+    /// # Safety
+    /// `ptr` must come from `allocate` on this allocator with the same
+    /// `layout`, and must not be freed twice.
     unsafe fn deallocate(&self, ptr: *mut u8, layout: Layout);
 }
 

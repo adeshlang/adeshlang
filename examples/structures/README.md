@@ -14,7 +14,7 @@ Welcome to the AdeshLang Structures Examples directory. This comprehensive colle
 
 1. **For Beginners**: Start with `basic_struct.adesh`
    ```bash
-   cargo run --bin adeshlang -- run examples/structures/basic_struct.adesh
+   cargo run --bin adesh -- run examples/structures/basic_struct.adesh
    ```
 
 2. **For Learning**: Follow the examples in order
@@ -127,18 +127,18 @@ print(person.age);     // 25
 # Run all examples in order
 for file in basic_struct struct_fields nested_struct mixed_types struct_functions struct_collections ecommerce_example
 do
-  cargo run --bin adeshlang -- run examples/structures/${file}.adesh
+  cargo run --bin adesh -- run examples/structures/${file}.adesh
 done
 ```
 
 ### Single Example
 ```bash
-cargo run --bin adeshlang -- run examples/structures/basic_struct.adesh
+cargo run --bin adesh -- run examples/structures/basic_struct.adesh
 ```
 
 ### With Output Capture
 ```bash
-cargo run --bin adeshlang -- run examples/structures/ecommerce_example.adesh 2>&1 | grep -E "===|Order|Product"
+cargo run --bin adesh -- run examples/structures/ecommerce_example.adesh 2>&1 | grep -E "===|Order|Product"
 ```
 
 ## 📊 Implementation Status

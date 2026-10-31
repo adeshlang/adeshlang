@@ -2189,8 +2189,16 @@ impl NativeJitCompiler {
 
                             let type_name = if const_nulls.contains(&arg_id) {
                                 "null".to_string()
-                            } else if object_properties.contains_key(&arg_id) {
-                                "object".to_string()
+                            } else if let Some(props) = object_properties.get(&arg_id) {
+                                if let Some((type_val_id, _)) = props.get("__type__") {
+                                    if let Some(s) = const_strings.get(type_val_id) {
+                                        s.clone()
+                                    } else {
+                                        "object".to_string()
+                                    }
+                                } else {
+                                    "object".to_string()
+                                }
                             } else {
                                 match value_types.get(&arg_id) {
                                     Some(AotValueType::Array(elem_type, _)) => {

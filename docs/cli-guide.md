@@ -32,6 +32,7 @@ Complete reference for the AdeshLang command-line interface.
   - [docs](#docs)
   - [init](#init)
   - [Legacy Commands](#legacy-commands)
+  - [Other Accepted Commands](#other-accepted-commands)
 - [Execution Backends](#execution-backends)
 - [Options](#options)
   - [Optimization Levels](#optimization-levels)
@@ -50,7 +51,7 @@ Complete reference for the AdeshLang command-line interface.
 
 AdeshLang (also known as `adesh`) is a statically-typed, high-performance interpreted language with multiple execution backends including JIT compilation, bytecode VM, and direct interpretation.
 
-**Binary Name:** `adesh` (or `adeshlang`)
+**Binary Name:** `adesh` (the `adl` package manager ships alongside it)
 
 **Basic Syntax:**
 ```bash
@@ -67,11 +68,11 @@ After building the project with Cargo:
 cargo build --release
 ```
 
-The binary will be located at `target/release/adeshlang` (or `adeshlang.exe` on Wadeshows).
+The binaries will be located at `target/release/adesh` (or `adesh.exe` on Wadeshows), next to the `adl` package manager (`target/release/adl`).
 
 Add it to your PATH or create an alias:
 ```bash
-Set-Alias -Name adesh -Value "target/release/adeshland.exe"
+Set-Alias -Name adesh -Value "target/release/adesh.exe"
 ```
 
 ---
@@ -154,7 +155,7 @@ adesh run --test <file.adesh> [filter] [options]
 
 **Features & Capabilities:**
 - **Cargo-grade test runner**: Substring matching by default, `--exact` matching, `--skip` filtering, `--list` discovery, `--ignored`, and `--include-ignored`.
-- **Multi-backend test execution**: Run tests across multiple backends simultaneously via `--runtimes=interp,jit,njit,vm,aot,wasm` or `--backend-check` (all 11 backends).
+- **Multi-backend test execution**: Run tests across multiple backends simultaneously via `--runtimes=interp,jit,njit,vm,aot,wasm` or `--backend-check` (all backends returned by `all_execution_backends()` in `src/testing/mod.rs` — six: Interpreter, JIT, Native JIT, Bytecode, AOT, WASM).
 - **Parallel Multi-threading**: Lightning-fast concurrent test execution across CPU cores using Rayon (`--test-threads <N>`, `-j <N>`, `--parallel`).
 - **Sequential Execution**: Run tests step-by-step one-by-one with `--serial` / `--sequential` / `--one-by-one` / `--test-threads=1`.
 - **Module Test Discovery & Namespacing**: Discovers and namespaces tests imported via `import "./sub.test.adesh" as sub_mod;` (`sub_mod::test_case`).
@@ -175,7 +176,7 @@ adesh run --test <file.adesh> [filter] [options]
 | `--serial`, `--one-by-one` | Execute tests sequentially one-by-one |
 | `--parallel` | Run tests with full multi-threaded parallelism (default) |
 | `--runtimes=<list>` | Comma-separated list of backends (e.g. `--runtimes=interp,jit,njit`) |
-| `--backend-check` | Run tests across all 11 backends with full matrix report |
+| `--backend-check` | Run tests across the six backends listed above with full matrix report |
 | `--fail-fast` | Stop immediately on the first FAIL/PANIC/TIMEOUT |
 | `--quiet`, `-q` | Suppress passing-test output (still shows failures and summary) |
 | `--nocapture` | Print standard output from all tests (even passing ones) |
@@ -239,6 +240,7 @@ adesh build run [OPTIONS] <file.adesh> [-- <ARGS>...]
 | `--shared`, `--dylib` | Emit shared dynamic library (`.dll` / `.so`) |
 | `-c, --compile-only` | Compile only to object file |
 | `--codegen=<adesh\|cranelift>` | Code generation backend (default: `adesh`) |
+| `--external-linker` | Delegate the final link to an external LLVM toolchain (clang + lld); requires `--codegen=cranelift` and an external LLVM install (aliases: `--external-toolchain`, `--use-llvm`) |
 | `--deterministic` | Ensure reproducible, bit-for-bit identical binary output |
 | `--strip`, `-s` | Strip symbol table and debug sections |
 | `-O0` .. `-O3`, `--release` | Optimization level (default: `-O3`) |
@@ -305,8 +307,16 @@ adesh toolchain <subcommand>
 | `list` | List installed toolchain targets |
 | `install <target>` | Install a target cross-compilation toolchain |
 | `--external install [name]` | Probe and register host external compilers/linkers into Adesh |
-| `uninstall <target>` | Remove an installed toolchain |
+| `uninstall <target>` | **Not implemented** — there is no `uninstall` arm; see note below |
 | `update [target]` | Update toolchains to latest release |
+
+> **Note:** `adesh toolchain uninstall <target>` does nothing useful. The dispatch
+> in `src/toolchain/cli/toolchain.rs` ends with a catch-all arm
+> (`"current" | "status" | _`) that prints the active toolchain status, so any
+> unrecognized subcommand — `uninstall` included — silently shows the status
+> report instead of an error. The recognized subcommands are `list`, `check`,
+> `info`, `path`, `update`, `install`, `--external`, `external`, `expose`, and
+> `help`.
 
 **Examples:**
 ```bash
@@ -471,7 +481,7 @@ adesh compile-native program.adesh program
 adesh compile-native program.adesh program.exe
 ```
 
-**Note:** This uses LLVM backend for native code generation.
+**Note:** This uses the bundled native codegen backend (`codegen_backend = "adesh"` in `src/main.rs`) and the built-in `adeshlink` linker — no LLVM, Clang, or MSVC is required. External LLVM is only used when you explicitly opt in with `--external-linker` on the `build`/`compile-aot` path (which requires `--codegen=cranelift`).
 
 ---
 
@@ -659,40 +669,56 @@ adesh init .
 **Generated Structure:**
 ```
 my-project/
-├── main.adesh      # Main program file
-└── utils.adesh     # Utility module
+├── src/
+│   └── main.adesh   # Main program file
+├── adesh.adl        # Project manifest (name, version, dependencies)
+├── README.md        # Quick-start notes (adl run / adl build / adl add)
+├── .gitignore       # Ignores target/, .adl/, adl_modules/ and build artifacts
+└── .adl/            # ADL working directories (packages, cache, registry, git,
+                     #   downloads, artifacts, bin)
 ```
 
-**main.adesh Template:**
-```javascript
-import "./utils.adesh" as u;
+`adesh init` goes through `cmd_init` in `src/cli/commands.rs`, which calls
+`ProjectLayout::create_template` with the `App` template (`src/ecosystem/project.rs`).
+The project name is the directory name, or `my_app` when initializing `.`. A
+`Library` template writes `src/lib.adesh` instead of `src/main.adesh`.
 
-export let PI = 3.14159;
+**src/main.adesh Template:**
+```adesh
+// Welcome to your Adesh project: <project-name>!
+//
+// Useful commands:
+//   adl run              Run this project
+//   adl build            Compile to native binary
+//   adl test             Run project tests
+//   adl add <pkg> <ver>  Add a package dependency
 
-fn double(x){ return x * 2; }
-export fn timesTwo(x){ return double(x); }
-
-class Counter {
-  fn init(n){ this.n = n; }
-  fn inc(){ this.n = this.n + 1; }
-  fn value(){ return this.n; }
+fn greet(name: String): String {
+    return "Hello, " + name + "! Welcome to Adesh.";
 }
 
-let c = new Counter(5);
-c.inc();
-print(c.value());
-
-let xs = [1,2,3,4];
-let ys = map(xs, fn(x){ return x*10; });
-print(ys);
-
-try {
-  throw Error("Custom error message");
-} catch(e) {
-  print("Caught: " + e);
+fn calculate_fibonacci(n: i64): i64 {
+    if n <= 1 {
+        return n;
+    }
+    return calculate_fibonacci(n - 1) + calculate_fibonacci(n - 2);
 }
 
-print(u.utilAdd(10, 22));
+fn main(): void {
+    let app_title: String = "<project-name>";
+    print("Initializing project:", app_title);
+    print(greet("Developer"));
+
+    // Type-safe collections and transformations
+    let numbers: [i64] = [1, 2, 3, 4, 5];
+    let squares: [i64] = map(numbers, fn(x: i64): i64 {
+        return x * x;
+    });
+
+    print("Numbers:", numbers);
+    print("Squares:", squares);
+    print("Fibonacci(10):", calculate_fibonacci(10));
+}
 ```
 
 ---
@@ -720,6 +746,35 @@ Execute a pre-compiled bytecode file directly.
 ```bash
 adesh run-bc program.adeshbc
 ```
+
+---
+
+### Other Accepted Commands
+
+These are dispatched by the CLI (`src/main.rs`, `src/toolchain/cli/args.rs`) but
+had no section in this guide:
+
+| Command / flag | What it does |
+|---|---|
+| `adesh new [dir]` | Project scaffold using the same template as `init` (directory defaults to `my_app`) |
+| `adesh check <file>` | Type and ownership check without running; also validates `.adl` manifests and `*.lock.adl` lock files |
+| `adesh lint <file>` | Semantic-index, type and ownership diagnostics, no execution |
+| `adesh clean` | Deletes `.o`/`.obj`/`.a`/`.lib`/`.so`/`.dll`/`.dylib` artifacts in the current directory |
+| `adesh bench [file]` | Times a single interpreter run of the file |
+| `adesh link <in>... -o <out>` | Links object/ADOB inputs through `adeshlink` (output defaults to `a.out`) |
+| `adesh inspect <file>` / `adesh objdump <file>` | Dumps an ADOB/object file |
+| `adesh size` / `symbols` / `relocations` / `sections` / `map <file>` | Per-aspect analysis of a `.adob` / object input |
+| `adesh pgo merge <profiles...> -o <out.json>` | Merges PGO profile files — `merge` is the only subcommand; anything else prints usage |
+| `adesh target list` / `adesh target info <triple>` | Lists supported cross-compilation targets / describes one |
+| `adesh editor [file]` | Launches the Adesh editor (see `docs/EDITOR.md`) |
+| `adesh ai <subcommand>` | Bundled AI assistant commands (see the Windows distribution section below) |
+| `adesh crypto <subcommand>` | Cryptography utility CLI |
+| `adesh self-test` | Runs the compiler-ecosystem self-check |
+| `adesh bugreport` | Writes `adesh_bugreport.json` |
+| `adesh server` | Reports the persistent compiler daemon state (warms the module cache, then exits) |
+| `adesh -e "<code>"` / `--eval "<code>"` | Evaluates a code string; implies the `run` command |
+| `adesh --explain [code]` | Explains a compiler diagnostic code (`list` when given no argument) |
+| `adesh build --external-linker` | Delegates the final link to external LLVM (also `--external-toolchain`, `--use-llvm`); see the `build` options table |
 
 ---
 
@@ -838,6 +893,12 @@ adesh run --safe program.adesh
 ### --bytecode (VM)
 
 Execute using bytecode virtual machine.
+
+> **Deprecated:** the bytecode VM backend is deprecated. Selecting `--bytecode`
+> (or `--bc` / `--vm`) prints `Warning: Bytecode VM backend is deprecated. Native
+> Toolchain and Interpreter are the standard backends.` from the flag parser in
+> `src/toolchain/cli/args.rs`. Prefer the interpreter or the native toolchain
+> (`adesh build`) for new work.
 
 **Characteristics:**
 - ✅ Compact bytecode format
@@ -981,7 +1042,15 @@ adesh run --jit --opt O2 program.adesh
 
 Configure garbage collection behavior.
 
-#### --gc arc
+> **Not implemented — proposed design only.** There is no `--gc` flag. The CLI
+> flag parser (`src/toolchain/cli/args.rs`) has no `--gc` arm, and its catch-all
+> for arguments starting with `-` pushes them into the positional input list, so
+> `adesh run --gc arc program.adesh` does not select a GC mode (it takes `--gc`
+> as an input path). GC mode is not selectable from the CLI today. The sections
+> below are carried over from the pre-implementation design documents and are
+> kept for reference.
+
+#### --gc arc (proposed — not implemented)
 Use only reference counting (Arc/Rc), no tracing GC.
 
 ```bash
@@ -998,7 +1067,7 @@ adesh run --gc arc program.adesh
 
 ---
 
-#### --gc hybrid (Default)
+#### --gc hybrid (proposed — not implemented)
 Hybrid reference counting + mark-sweep for cycle detection.
 
 ```bash
@@ -1015,7 +1084,7 @@ adesh run --gc hybrid program.adesh
 
 ---
 
-#### --gc full
+#### --gc full (proposed — not implemented)
 Full compacting garbage collector.
 
 ```bash
@@ -1032,7 +1101,7 @@ adesh run --gc full program.adesh
 
 ---
 
-#### --gc manual
+#### --gc manual (proposed — not implemented)
 No automatic garbage collection.
 
 ```bash
@@ -1468,7 +1537,7 @@ adesh run --jit -O3 hello.adesh
 
 ```bash
 # Maximum performance
-adesh run --jit -O3 --gc arc compute.adesh
+adesh run --jit -O3 compute.adesh
 
 # Profile execution time
 adesh run --jit -O3 --profile compute.adesh
@@ -1531,8 +1600,8 @@ rustc program.rs -o program
 # JIT with verbose output and profiling
 adesh run --jit -O3 --verbose --profile --dump-lir program.adesh
 
-# Safe mode with full GC
-adesh run --safe --gc full --debug program.adesh
+# Safe mode (no JIT, full safety checks)
+adesh run --safe --debug program.adesh
 
 # Bytecode with timing
 adesh run --bytecode --profile program.adesh
@@ -1557,20 +1626,25 @@ Configure AdeshLang behavior through environment variables:
 export NO_COLOR=1
 adesh run program.adesh
 
-# Set default stack size (bytes)
-export ADESH_STACK_SIZE=33554432  # 32MB
-adesh run program.adesh
+# Stack size is a CLI flag, not an environment variable: ADESH_STACK_SIZE is
+# never read by the compiler. Use --stack-size (alias --stack), which accepts
+# plain byte counts and size suffixes such as 32M / 128MB.
+adesh run --stack-size 32M program.adesh
 ```
 
 ---
 
 ### Configuration File
 
-AdeshLang supports a configuration file for persistent settings.
+**Not implemented:** AdeshLang does not read a project configuration file. No
+`.adeshconfig.toml` loader exists anywhere in `src/` or `crates/` (the file name
+does not appear in the codebase), and `src/cli/config.rs` only applies FFI
+settings taken from the CLI. The location and template below are pre-implementation
+design material, kept for reference.
 
-**Location:** `.adeshconfig.toml` (project root)
+**Proposed Location:** `.adeshconfig.toml` (project root) — never read today
 
-**Template:**
+**Template (proposed — not implemented):**
 ```toml
 # AdeshLang Runtime Configuration
 
@@ -1600,17 +1674,21 @@ dump_bytecode = false
 
 **Usage:**
 ```bash
-# Uses settings from .adeshconfig.toml
-adesh run program.adesh
-
-# Command-line flags override config file
+# Only command-line flags and @compile directives are honoured
 adesh run --jit -O3 program.adesh
 ```
 
-**Priority:**
+**Priority (implemented):**
 ```
-Command-line flags > @compile directive > Config file > Defaults
+@compile directive (backend) > command-line flags > default (interpreter)
 ```
+
+The `@compile` directive is applied after CLI parsing in `src/main.rs` (via
+`detect_compile_directive` in `src/cli/directives.rs`), so it overrides an
+explicit backend flag — see the `@compile Directive` section under Source
+Directives above. Every other setting
+(optimization level, stack/heap size, IO, IR dumps) comes only from
+command-line flags; there is no config-file tier.
 
 ---
 
@@ -1651,10 +1729,14 @@ Command-line flags > @compile directive > Config file > Defaults
 
 ### GC Modes
 
-| Flag | Mode |
+> **Not implemented:** `--gc` is not a CLI flag. The rows below are the proposed
+> design from [Memory & Garbage Collection](#memory--garbage-collection); today
+> the parser treats them as a positional input path.
+
+| Flag (proposed) | Mode |
 |------|------|
 | `--gc arc` | Reference counting only |
-| `--gc hybrid` | Hybrid (default) |
+| `--gc hybrid` | Hybrid |
 | `--gc full` | Full compacting GC |
 | `--gc manual` | No GC |
 
@@ -1824,7 +1906,7 @@ print(fib(40));  // Computes quickly with caching
 
 ### Platform-Specific Notes
 
-- **Native compilation**: `adesh build` uses the bundled native toolchain (no LLVM, MSVC, or GCC required). The legacy `compile-native` command is an unimplemented placeholder; use `adesh build` (or `compile-aot`) for native executables, or `compile-native-rust` to transpile to Rust source. The Cranelift AOT path can optionally delegate its final link to external LLVM with `--codegen=cranelift --external-linker`.
+- **Native compilation**: `adesh build` uses the bundled native toolchain (no LLVM, MSVC, or GCC required). The legacy `compile-native` command is implemented (see `compile-native` in `src/main.rs`: type check + ownership check, then the same native `adesh` codegen path as `build`) — `adesh compile-native <in> <out>` is equivalent to `adesh build <in> -o <out>`; use `compile-native-rust` to transpile to Rust source instead. The Cranelift AOT path can optionally delegate its final link to external LLVM with `--codegen=cranelift --external-linker`.
 - **WebAssembly**: Some language features may not be available in WASM output.
 
 ### Workarounds
@@ -2018,8 +2100,16 @@ let result = compiled.execute([input_tensor]);
 
 # AdeshLang CLI AOT Redesign - Design Document
 
+> **Superseded — pre-implementation design document.** This section is the
+> original proposal, kept for historical context. The redesign has since shipped,
+> but not exactly as proposed: `adesh build` defaults to `-O3` with the native
+> `adesh` codegen backend (not `-O2` / Cranelift AOT), and `--emit` accepts only
+> `exe`, `obj`, `adob`, `lib`, `dylib`, `asm` and `wasm` — the `llvm-ir` and
+> `mir` values below were never implemented. Check anything you rely on against
+> `src/cli/build.rs` or `adesh build --help` before using it.
+
 **Date:** February 3, 2026  
-**Status:** Implementation Ready  
+**Status:** Superseded (shipped with different defaults — see note above)  
 **Author:** AdeshLang Team  
 
 ---
@@ -2055,8 +2145,8 @@ adesh build <file.adesh> -o <output> [options]
 **Defaults:**
 - Output format: Native executable
 - Output name: `<file>` (no extension on Unix, `.exe` on Windows)
-- Optimization: `-O2`
-- Backend: AOT (Cranelift)
+- Optimization: `-O3` in the shipped CLI — this proposal specified `-O2`, but `AotBuildConfig::default()` in `src/cli/build.rs` sets `opt_level: 3`
+- Backend: the native `adesh` codegen backend with the built-in `adeshlink` linker (`codegen_backend: "adesh"` in `src/cli/build.rs`) — this proposal specified AOT/Cranelift
 
 ### `adesh compile-aot` (Existing - Unchanged)
 
@@ -2102,8 +2192,17 @@ The `--emit=<type>` flag provides explicit output type control:
 | `lib` | Static library | `.a` / `.lib` |
 | `dylib` | Shared library | `.so` / `.dll` / `.dylib` |
 | `asm` | Assembly | `.s` / `.asm` |
-| `llvm-ir` | LLVM IR (future) | `.ll` |
-| `mir` | Machine IR | `.mir` |
+
+**Not supported (proposed only):** these two values from the proposal were never
+implemented. `EmitType::from_str` in `src/cli/build.rs` accepts only
+`exe`/`executable`/`bin`, `obj`/`object`/`o`, `adob`, `lib`/`static`/`staticlib`/`a`,
+`dylib`/`shared`/`sharedlib`/`so`/`dll`, `asm`/`assembly`/`s` and `wasm`/`wat`;
+anything else fails the build with `Unknown emit type: <value>`.
+
+| Value | Description | File Extension |
+|-------|-------------|----------------|
+| `llvm-ir` | LLVM IR — not implemented | `.ll` |
+| `mir` | Machine IR — not implemented | `.mir` |
 
 ---
 

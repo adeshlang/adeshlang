@@ -2,12 +2,18 @@ use super::encoder::*;
 use super::wasi::{self, WasiAbi, WasiLiterals};
 use crate::parsing::ast::{Expr, ExprKind, Stmt, StmtKind, TokenKind, Value};
 use crate::parsing::error::{ErrorKind, LangError};
+use crate::parsing::hir_lower::clean_type_name;
 use crate::types::field_layout::FieldLayout;
 use crate::types::visibility::Visibility;
 use crate::utils::collections::FastMap;
+use std::cell::RefCell;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
+
+thread_local! {
+    static WASM_VAR_TYPES: RefCell<FastMap<String, String>> = RefCell::new(FastMap::default());
+}
 
 /// Host ABI a module is compiled against.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -274,11 +280,12 @@ fn gen_expr_f64(
         }
         ExprKind::Unary(op, r) => {
             if *op == TokenKind::Typeof {
-                // Return static string offset for "object" (or typeof result)
+                let type_name = resolve_wasm_type_name_expr(r, ctx.var_values)
+                    .unwrap_or_else(|| "object".to_string());
                 let off = ctx
                     .strings
                     .iter()
-                    .find(|(x, _)| x == "object")
+                    .find(|(x, _)| x == &type_name)
                     .map(|(_, o)| *o)
                     .unwrap_or(1024) as f64;
                 out.push(0x44);
@@ -340,11 +347,52 @@ fn gen_expr_f64(
                     out.extend(&0.0f64.to_bits().to_le_bytes());
                     return Ok(Some("string".into()));
                 }
-                if name == "sizeof" {
-                    // Object size in wasm MVP
+                if name == "sizeof" || name == "sizeOf" {
+                    let sz = if let Some(arg) = args.first() {
+                        calculate_wasm_sizeof(arg, ctx.var_values) as f64
+                    } else {
+                        0.0
+                    };
                     out.push(0x44);
-                    out.extend(&70.0f64.to_bits().to_le_bytes());
+                    out.extend(&sz.to_bits().to_le_bytes());
                     return Ok(Some("number".into()));
+                }
+                if name == "hasKey" || name == "containsKey" {
+                    let exists = if args.len() >= 2 {
+                        let target = expr_to_value_env(&args[0], ctx.var_values);
+                        let key = expr_to_value_env(&args[1], ctx.var_values);
+                        if let (Some(Value::Object(map)), Some(k)) = (target, key) {
+                            let key_str = match k {
+                                Value::Str(s) => s,
+                                Value::Number(n) => {
+                                    if n.fract() == 0.0 {
+                                        (n as i64).to_string()
+                                    } else {
+                                        n.to_string()
+                                    }
+                                }
+                                Value::Char(c) => c.to_string(),
+                                Value::U8(n) => n.to_string(),
+                                Value::U16(n) => n.to_string(),
+                                Value::U32(n) => n.to_string(),
+                                Value::U64(n) => n.to_string(),
+                                Value::I8(n) => n.to_string(),
+                                Value::I16(n) => n.to_string(),
+                                Value::I32(n) => n.to_string(),
+                                Value::I64(n) => n.to_string(),
+                                other => crate::execution::runtime_core::format::fmt(&other),
+                            };
+                            map.contains_key(&key_str)
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    let result: f64 = if exists { 1.0 } else { 0.0 };
+                    out.push(0x44);
+                    out.extend(&result.to_bits().to_le_bytes());
+                    return Ok(Some("bool".into()));
                 }
                 if name == "assert" || name == "assert_eq" || name == "assert_ne" {
                     out.push(0x44);
@@ -375,11 +423,31 @@ fn gen_expr_f64(
                         out.extend(&0.0f64.to_bits().to_le_bytes());
                         Ok(None)
                     }
+                } else if name == "type" || name == "typeof" {
+                    out.push(0x44);
+                    out.extend(&0.0f64.to_bits().to_le_bytes());
+                    Ok(None)
                 } else {
                     Err(format!("unknown callee in f64 expr: {}", name))
                 }
             } else if let ExprKind::Get(target, method) = &callee.kind {
                 match method.as_str() {
+                    "hasKey" | "containsKey" => {
+                        let target_val = expr_to_value_env(target, ctx.var_values);
+                        let key = args.first().and_then(|a| expr_to_value_env(a, ctx.var_values));
+                        let result: f64 = if let (Some(Value::Object(map)), Some(k)) = (target_val, key) {
+                            let key_str = match k {
+                                Value::Str(s) => s,
+                                other => crate::execution::runtime_core::format::fmt(&other),
+                            };
+                            if map.contains_key(&key_str) { 1.0 } else { 0.0 }
+                        } else {
+                            0.0
+                        };
+                        out.push(0x44);
+                        out.extend(&result.to_bits().to_le_bytes());
+                        Ok(None)
+                    }
                     "includes" | "contains" => {
                         let s_target = format_static_val_for_wasm_env(target, ctx.var_values);
                         let s_arg = args
@@ -678,11 +746,52 @@ fn gen_expr_i32(
                     write_i32_leb(0, out);
                     return Ok(Some("Error".into()));
                 }
-                if name == "sizeof" {
-                    // Object size in wasm MVP
-                    out.push(0x44);
-                    out.extend(&70.0f64.to_bits().to_le_bytes());
+                if name == "sizeof" || name == "sizeOf" {
+                    let sz = if let Some(arg) = args.first() {
+                        calculate_wasm_sizeof(arg, ctx.var_values) as i32
+                    } else {
+                        0
+                    };
+                    out.push(0x41);
+                    write_i32_leb(sz, out);
                     return Ok(Some("number".into()));
+                }
+                if name == "hasKey" || name == "containsKey" {
+                    let exists = if args.len() >= 2 {
+                        let target = expr_to_value_env(&args[0], ctx.var_values);
+                        let key = expr_to_value_env(&args[1], ctx.var_values);
+                        if let (Some(Value::Object(map)), Some(k)) = (target, key) {
+                            let key_str = match k {
+                                Value::Str(s) => s,
+                                Value::Number(n) => {
+                                    if n.fract() == 0.0 {
+                                        (n as i64).to_string()
+                                    } else {
+                                        n.to_string()
+                                    }
+                                }
+                                Value::Char(c) => c.to_string(),
+                                Value::U8(n) => n.to_string(),
+                                Value::U16(n) => n.to_string(),
+                                Value::U32(n) => n.to_string(),
+                                Value::U64(n) => n.to_string(),
+                                Value::I8(n) => n.to_string(),
+                                Value::I16(n) => n.to_string(),
+                                Value::I32(n) => n.to_string(),
+                                Value::I64(n) => n.to_string(),
+                                other => crate::execution::runtime_core::format::fmt(&other),
+                            };
+                            map.contains_key(&key_str)
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    let result: i32 = if exists { 1 } else { 0 };
+                    out.push(0x41);
+                    write_i32_leb(result, out);
+                    return Ok(Some("bool".into()));
                 }
                 if name == "assert" || name == "assert_eq" || name == "assert_ne" {
                     out.push(0x41);
@@ -732,11 +841,31 @@ fn gen_expr_i32(
                             Ok(None)
                         }
                     }
+                } else if name == "type" || name == "typeof" {
+                    out.push(0x41);
+                    write_i32_leb(0, out);
+                    Ok(Some("string".to_string()))
                 } else {
                     Err(format!("unknown callee in f64 expr: {}", name))
                 }
             } else if let ExprKind::Get(target, method) = &callee.kind {
                 match method.as_str() {
+                    "hasKey" | "containsKey" => {
+                        let target_val = expr_to_value_env(target, ctx.var_values);
+                        let key = args.first().and_then(|a| expr_to_value_env(a, ctx.var_values));
+                        let result: i32 = if let (Some(Value::Object(map)), Some(k)) = (target_val, key) {
+                            let key_str = match k {
+                                Value::Str(s) => s,
+                                other => crate::execution::runtime_core::format::fmt(&other),
+                            };
+                            if map.contains_key(&key_str) { 1 } else { 0 }
+                        } else {
+                            0
+                        };
+                        out.push(0x41);
+                        write_i32_leb(result, out);
+                        Ok(None)
+                    }
                     "includes" | "contains" => {
                         let s_target = format_static_val_for_wasm_env(target, ctx.var_values);
                         let s_arg = args
@@ -1361,6 +1490,13 @@ fn format_static_val_for_wasm_env(e: &Expr, var_values: &FastMap<String, Value>)
                     return Some(msg);
                 }
             }
+            if let Some(val) = expr_to_value_env(e, var_values) {
+                return match val {
+                    Value::Str(s) => Some(s),
+                    Value::Bool(b) => Some(if b { "true".into() } else { "false".into() }),
+                    other => Some(crate::execution::runtime_core::format::fmt(&other)),
+                };
+            }
             None
         }
         ExprKind::New(target, args) => {
@@ -1399,6 +1535,203 @@ fn format_static_val_for_wasm_env(e: &Expr, var_values: &FastMap<String, Value>)
     }
 }
 
+fn wasm_value_type_name(val: &Value) -> String {
+    match val {
+        Value::Null => "null".to_string(),
+        Value::Bool(_) => "boolean".to_string(),
+        Value::Number(n) => {
+            if n.fract().abs() < 1e-12 {
+                let i = *n as i128;
+                if i >= 0 {
+                    if i <= u8::MAX as i128 {
+                        "u8".to_string()
+                    } else if i <= u16::MAX as i128 {
+                        "u16".to_string()
+                    } else if i <= u32::MAX as i128 {
+                        "u32".to_string()
+                    } else if i <= u64::MAX as i128 {
+                        "u64".to_string()
+                    } else {
+                        "u128".to_string()
+                    }
+                } else if i >= i8::MIN as i128 && i <= i8::MAX as i128 {
+                    "i8".to_string()
+                } else if i >= i16::MIN as i128 && i <= i16::MAX as i128 {
+                    "i16".to_string()
+                } else if i >= i32::MIN as i128 && i <= i32::MAX as i128 {
+                    "i32".to_string()
+                } else if i >= i64::MIN as i128 && i <= i64::MAX as i128 {
+                    "i64".to_string()
+                } else {
+                    "i128".to_string()
+                }
+            } else {
+                "f64".to_string()
+            }
+        }
+        Value::U8(_) => "u8".to_string(),
+        Value::U16(_) => "u16".to_string(),
+        Value::U32(_) => "u32".to_string(),
+        Value::U64(_) => "u64".to_string(),
+        Value::U128(_) => "u128".to_string(),
+        Value::I8(_) => "i8".to_string(),
+        Value::I16(_) => "i16".to_string(),
+        Value::I32(_) => "i32".to_string(),
+        Value::I64(_) => "i64".to_string(),
+        Value::I128(_) => "i128".to_string(),
+        Value::F32(_) => "f32".to_string(),
+        Value::F64(_) => "f64".to_string(),
+        Value::Char(_) => "char".to_string(),
+        Value::Str(_) => "string".to_string(),
+        Value::Array(_) => "array".to_string(),
+        Value::Tuple(_) => "tuple".to_string(),
+        Value::Set(_) => "set".to_string(),
+        Value::Object(map) => {
+            if let Some(Value::Str(t)) = map.get("__type__") {
+                return clean_type_name(t).to_string();
+            }
+            "object".to_string()
+        }
+        _ => "unknown".to_string(),
+    }
+}
+
+fn wasm_value_sizeof(val: &Value) -> usize {
+    match val {
+        Value::Null => 0,
+        Value::Bool(_) | Value::U8(_) | Value::I8(_) => 1,
+        Value::U16(_) | Value::I16(_) => 2,
+        Value::U32(_) | Value::I32(_) | Value::F32(_) | Value::Char(_) => 4,
+        Value::U64(_) | Value::I64(_) | Value::F64(_) => 8,
+        Value::U128(_) | Value::I128(_) => 16,
+        Value::Number(n) => {
+            if n.fract().abs() < 1e-12 {
+                let i = *n as i128;
+                if i >= 0 {
+                    if i <= 255 {
+                        1
+                    } else if i <= 65535 {
+                        2
+                    } else if i <= u32::MAX as i128 {
+                        4
+                    } else {
+                        8
+                    }
+                } else if i >= -128 && i <= 127 {
+                    1
+                } else if i >= -32768 && i <= 32767 {
+                    2
+                } else if i >= i32::MIN as i128 && i <= i32::MAX as i128 {
+                    4
+                } else {
+                    8
+                }
+            } else {
+                8
+            }
+        }
+        Value::Str(s) => s.len(),
+        Value::Array(arr) => 24 + arr.iter().map(wasm_value_sizeof).sum::<usize>(),
+        Value::Tuple(tup) => 24 + tup.iter().map(wasm_value_sizeof).sum::<usize>(),
+        Value::Set(set) => 24 + set.iter().map(wasm_value_sizeof).sum::<usize>(),
+        Value::Object(obj) => {
+            48 + obj.iter().map(|(k, v)| k.len() + wasm_value_sizeof(v)).sum::<usize>()
+        }
+        _ => 8,
+    }
+}
+
+fn calculate_wasm_sizeof(arg: &Expr, var_values: &FastMap<String, Value>) -> usize {
+    if let ExprKind::Variable(vname) = &arg.kind {
+        if let Some(vt) = WASM_VAR_TYPES.with(|cell| cell.borrow().get(vname).cloned()) {
+            match vt.as_str() {
+                "u8" | "i8" | "bool" | "boolean" => return 1,
+                "u16" | "i16" => return 2,
+                "u32" | "i32" | "f32" | "char" => return 4,
+                "u64" | "i64" | "f64" => return 8,
+                "u128" | "i128" => return 16,
+                _ => {}
+            }
+        }
+    }
+    if let Some(val) = expr_to_value_env(arg, var_values) {
+        return wasm_value_sizeof(&val);
+    }
+    if let Some(t) = resolve_wasm_type_name_expr(arg, var_values) {
+        match t.as_str() {
+            "u8" | "i8" | "bool" | "boolean" => 1,
+            "u16" | "i16" => 2,
+            "u32" | "i32" | "f32" | "char" => 4,
+            "u64" | "i64" | "f64" => 8,
+            "u128" | "i128" => 16,
+            _ => 8,
+        }
+    } else {
+        8
+    }
+}
+
+fn resolve_wasm_type_name_expr(arg: &Expr, var_values: &FastMap<String, Value>) -> Option<String> {
+    match &arg.kind {
+        ExprKind::Variable(name) => {
+            let clean = clean_type_name(name);
+            if crate::parsing::hir_lower::KNOWN_TYPE_ALIASES
+                .with(|cell| {
+                    let map = cell.borrow();
+                    map.contains_key(name) || map.contains_key(clean)
+                })
+            {
+                return Some(clean.to_string());
+            }
+            if let Some(vt) = WASM_VAR_TYPES.with(|cell| {
+                let map = cell.borrow();
+                map.get(name).cloned().or_else(|| map.get(clean).cloned())
+            }) {
+                return Some(clean_type_name(&vt).to_string());
+            }
+            if let Some(val) = var_values.get(name) {
+                return Some(wasm_value_type_name(val));
+            }
+            None
+        }
+        ExprKind::Get(target, field) => {
+            if let ExprKind::Variable(tname) = &target.kind {
+                let resolved = crate::parsing::hir_lower::KNOWN_TYPE_ALIASES.with(|cell| {
+                    let map = cell.borrow();
+                    let entry = map.get(tname).or_else(|| map.get(clean_type_name(tname)));
+                    if let Some((fields, _)) = entry {
+                        for (fname, _, ftype) in fields {
+                            if fname == field {
+                                return Some(ftype.clone());
+                            }
+                        }
+                    }
+                    None
+                });
+                if let Some(target_type) = resolved {
+                    let clean = clean_type_name(target_type.trim_start_matches('?'));
+                    return Some(clean.to_string());
+                }
+            }
+            if let Some(target_val) = expr_to_value_env(target, var_values) {
+                if let Value::Object(map) = target_val {
+                    if let Some(field_val) = map.get(field) {
+                        return Some(wasm_value_type_name(field_val));
+                    }
+                }
+            }
+            None
+        }
+        _ => {
+            if let Some(val) = expr_to_value_env(arg, var_values) {
+                Some(wasm_value_type_name(&val))
+            } else {
+                None
+            }
+        }
+    }
+}
+
 #[allow(dead_code)]
 fn expr_to_value(e: &Expr) -> Option<Value> {
     expr_to_value_env(e, &FastMap::default())
@@ -1407,10 +1740,25 @@ fn expr_to_value(e: &Expr) -> Option<Value> {
 fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Value> {
     match &e.kind {
         ExprKind::Literal(v) => Some(v.clone()),
-        ExprKind::Variable(name) => var_values.get(name).cloned(),
+        ExprKind::Variable(name) => {
+            if let Some(v) = var_values.get(name) {
+                Some(v.clone())
+            } else if crate::parsing::hir_lower::KNOWN_TYPE_ALIASES
+                .with(|cell| cell.borrow().contains_key(name))
+            {
+                Some(Value::Str(name.clone()))
+            } else {
+                None
+            }
+        }
         ExprKind::Grouping(inner) => expr_to_value_env(inner, var_values),
         ExprKind::Cast(inner, _) => expr_to_value_env(inner, var_values),
         ExprKind::Unary(op, inner) => {
+            if *op == TokenKind::Typeof {
+                if let Some(t) = resolve_wasm_type_name_expr(inner, var_values) {
+                    return Some(Value::Str(t));
+                }
+            }
             let val = expr_to_value_env(inner, var_values)?;
             match op {
                 TokenKind::Minus => match val {
@@ -1486,6 +1834,11 @@ fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Va
         }
         ExprKind::Call(callee, args, _) => {
             if let ExprKind::Variable(name) = &callee.kind {
+                if (name == "type" || name == "typeof") && args.len() == 1 {
+                    if let Some(t) = resolve_wasm_type_name_expr(&args[0], var_values) {
+                        return Some(Value::Str(t));
+                    }
+                }
                 if name == "concat" || name == "str_concat" {
                     let mut s = String::new();
                     for a in args {
@@ -1509,6 +1862,51 @@ fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Va
                         })
                         .unwrap_or_else(|| "Error".to_string());
                     return Some(Value::Str(msg));
+                }
+                if (name == "sizeof" || name == "sizeOf") && args.len() == 1 {
+                    let sz = calculate_wasm_sizeof(&args[0], var_values);
+                    return Some(Value::Number(sz as f64));
+                }
+                if (name == "hasKey" || name == "containsKey") && args.len() >= 2 {
+                    let target = expr_to_value_env(&args[0], var_values);
+                    let key = expr_to_value_env(&args[1], var_values);
+                    if let (Some(Value::Object(map)), Some(k)) = (target, key) {
+                        let key_str = match k {
+                            Value::Str(s) => s,
+                            Value::Number(n) => {
+                                if n.fract() == 0.0 {
+                                    (n as i64).to_string()
+                                } else {
+                                    n.to_string()
+                                }
+                            }
+                            Value::Char(c) => c.to_string(),
+                            Value::U8(n) => n.to_string(),
+                            Value::U16(n) => n.to_string(),
+                            Value::U32(n) => n.to_string(),
+                            Value::U64(n) => n.to_string(),
+                            Value::I8(n) => n.to_string(),
+                            Value::I16(n) => n.to_string(),
+                            Value::I32(n) => n.to_string(),
+                            Value::I64(n) => n.to_string(),
+                            other => crate::execution::runtime_core::format::fmt(&other),
+                        };
+                        return Some(Value::Bool(map.contains_key(&key_str)));
+                    }
+                    return Some(Value::Bool(false));
+                }
+            } else if let ExprKind::Get(target, method) = &callee.kind {
+                if (method == "hasKey" || method == "containsKey") && !args.is_empty() {
+                    let target = expr_to_value_env(target, var_values);
+                    let key = expr_to_value_env(&args[0], var_values);
+                    if let (Some(Value::Object(map)), Some(k)) = (target, key) {
+                        let key_str = match k {
+                            Value::Str(s) => s,
+                            other => crate::execution::runtime_core::format::fmt(&other),
+                        };
+                        return Some(Value::Bool(map.contains_key(&key_str)));
+                    }
+                    return Some(Value::Bool(false));
                 }
             }
             None
@@ -1539,6 +1937,23 @@ fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Va
             Some(Value::Str(formatted))
         }
         ExprKind::Get(target, field) => {
+            if let ExprKind::Variable(tname) = &target.kind {
+                let resolved = crate::parsing::hir_lower::KNOWN_TYPE_ALIASES.with(|cell| {
+                    let map = cell.borrow();
+                    if let Some((fields, _)) = map.get(tname) {
+                        for (fname, _, ftype) in fields {
+                            if fname == field {
+                                return Some(ftype.clone());
+                            }
+                        }
+                    }
+                    None
+                });
+                if let Some(target_type) = resolved {
+                    let clean = target_type.trim_start_matches('?').to_string();
+                    return Some(Value::Str(clean));
+                }
+            }
             let target_val = expr_to_value_env(target, var_values)?;
             match target_val {
                 Value::Object(map) => map.get(field).cloned(),
@@ -1687,6 +2102,15 @@ fn collect_all_wasm_strings_expr(
                 collect_all_wasm_strings_expr(arg, strings, cur_off, var_values);
             }
             if let ExprKind::Variable(name) = &callee.kind {
+                if (name == "type" || name == "typeof") && args.len() == 1 {
+                    if let Some(t) = resolve_wasm_type_name_expr(&args[0], var_values) {
+                        add_wasm_string(&t, strings, cur_off);
+                    }
+                }
+                if name == "hasKey" || name == "containsKey" {
+                    add_wasm_string("true", strings, cur_off);
+                    add_wasm_string("false", strings, cur_off);
+                }
                 if name == "concat" {
                     if let Some(fmt) = format_static_val_for_wasm_env(e, var_values) {
                         add_wasm_string(&fmt, strings, cur_off);
@@ -1743,7 +2167,14 @@ fn collect_all_wasm_strings_expr(
             collect_all_wasm_strings_expr(l, strings, cur_off, var_values);
             collect_all_wasm_strings_expr(r, strings, cur_off, var_values);
         }
-        ExprKind::Unary(_, inner) => {
+        ExprKind::Unary(op, inner) => {
+            if *op == TokenKind::Typeof {
+                if let Some(t) = resolve_wasm_type_name_expr(inner, var_values) {
+                    add_wasm_string(&t, strings, cur_off);
+                } else {
+                    add_wasm_string("object", strings, cur_off);
+                }
+            }
             collect_all_wasm_strings_expr(inner, strings, cur_off, var_values)
         }
         ExprKind::Assign(_, r) => collect_all_wasm_strings_expr(r, strings, cur_off, var_values),
@@ -1829,15 +2260,58 @@ fn emit_wasm_print_arg(
         ExprKind::Literal(Value::Null) => {
             emit_wasm_print_str_call("null", out, ctx);
         }
-        ExprKind::Unary(TokenKind::Typeof, _) => {
+        ExprKind::Unary(TokenKind::Typeof, inner) => {
+            if let Some(t) = resolve_wasm_type_name_expr(inner, ctx.var_values) {
+                emit_wasm_print_str_call(&t, out, ctx);
+                return Ok(());
+            }
             emit_wasm_print_str_call("object", out, ctx);
         }
         ExprKind::Call(callee, args, _) => {
             if let ExprKind::Variable(name) = &callee.kind {
+                if (name == "type" || name == "typeof") && args.len() == 1 {
+                    if let Some(t) = resolve_wasm_type_name_expr(&args[0], ctx.var_values) {
+                        emit_wasm_print_str_call(&t, out, ctx);
+                        return Ok(());
+                    }
+                }
                 if name == "concat" || name == "str_concat" {
                     for sub_arg in args {
                         emit_wasm_print_arg(sub_arg, pretty_opt, out, ctx)?;
                     }
+                    return Ok(());
+                }
+                if (name == "hasKey" || name == "containsKey") && args.len() >= 2 {
+                    let exists = if let (Some(Value::Object(map)), Some(k)) = (
+                        expr_to_value_env(&args[0], ctx.var_values),
+                        expr_to_value_env(&args[1], ctx.var_values),
+                    ) {
+                        let key_str = match k {
+                            Value::Str(s) => s,
+                            other => crate::execution::runtime_core::format::fmt(&other),
+                        };
+                        map.contains_key(&key_str)
+                    } else {
+                        false
+                    };
+                    emit_wasm_print_str_call(if exists { "true" } else { "false" }, out, ctx);
+                    return Ok(());
+                }
+            } else if let ExprKind::Get(target, method) = &callee.kind {
+                if (method == "hasKey" || method == "containsKey") && !args.is_empty() {
+                    let exists = if let (Some(Value::Object(map)), Some(k)) = (
+                        expr_to_value_env(target, ctx.var_values),
+                        expr_to_value_env(&args[0], ctx.var_values),
+                    ) {
+                        let key_str = match k {
+                            Value::Str(s) => s,
+                            other => crate::execution::runtime_core::format::fmt(&other),
+                        };
+                        map.contains_key(&key_str)
+                    } else {
+                        false
+                    };
+                    emit_wasm_print_str_call(if exists { "true" } else { "false" }, out, ctx);
                     return Ok(());
                 }
             }
@@ -2510,6 +2984,95 @@ pub fn compile_to_file_with_base_and_abi(
     }
 }
 
+fn apply_type_alias_defaults_to_stmt(
+    s: &mut Stmt,
+    type_alias_defs: &FastMap<String, (Vec<(String, bool, String)>, Vec<(String, Expr)>)>,
+    var_types: &mut FastMap<String, String>,
+) {
+    match &mut s.kind {
+        StmtKind::Let(name, init_opt, ann_opt, ..) => {
+            if let Some(ann) = ann_opt {
+                let base_name = if let Some(idx) = ann.find('<') {
+                    &ann[..idx]
+                } else {
+                    ann.as_str()
+                };
+                let clean_base = clean_type_name(base_name);
+                var_types.insert(name.clone(), clean_base.to_string());
+                if let Some(init) = init_opt {
+                    let lookup = type_alias_defs
+                        .get(base_name)
+                        .or_else(|| type_alias_defs.get(clean_base));
+                    if let Some((fields_schema, defaults)) = lookup {
+                        if let ExprKind::Object(entries) = &mut init.kind {
+                            for (field_name, is_opt, _ty) in fields_schema {
+                                if !entries.iter().any(|(f, _)| f == field_name) {
+                                    if let Some((_, def_expr)) =
+                                        defaults.iter().find(|(f, _)| f == field_name)
+                                    {
+                                        entries.push((field_name.clone(), def_expr.clone()));
+                                    } else if *is_opt {
+                                        entries.push((
+                                            field_name.clone(),
+                                            Expr {
+                                                kind: ExprKind::Literal(Value::Null),
+                                                span: init.span.clone(),
+                                            },
+                                        ));
+                                    }
+                                }
+                            }
+                            if !entries.iter().any(|(f, _)| f == "__type__") {
+                                entries.push((
+                                    "__type__".to_string(),
+                                    Expr {
+                                        kind: ExprKind::Literal(Value::Str(clean_base.to_string())),
+                                        span: init.span.clone(),
+                                    },
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        StmtKind::Function(f, _) => {
+            let body_vec: &mut Vec<Stmt> = std::sync::Arc::make_mut(&mut f.body);
+            apply_type_alias_defaults_to_stmts(body_vec, type_alias_defs, var_types);
+        }
+        StmtKind::Block(inner) => {
+            apply_type_alias_defaults_to_stmts(inner, type_alias_defs, var_types);
+        }
+        StmtKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            apply_type_alias_defaults_to_stmt(then_branch, type_alias_defs, var_types);
+            if let Some(eb) = else_branch {
+                apply_type_alias_defaults_to_stmt(eb, type_alias_defs, var_types);
+            }
+        }
+        StmtKind::While { body, .. } => {
+            apply_type_alias_defaults_to_stmt(body, type_alias_defs, var_types);
+        }
+        StmtKind::ForIn { body, .. } => {
+            apply_type_alias_defaults_to_stmt(body, type_alias_defs, var_types);
+        }
+        _ => {}
+    }
+}
+
+fn apply_type_alias_defaults_to_stmts(
+    stmts: &mut [Stmt],
+    type_alias_defs: &FastMap<String, (Vec<(String, bool, String)>, Vec<(String, Expr)>)>,
+    var_types: &mut FastMap<String, String>,
+) {
+    for s in stmts {
+        apply_type_alias_defaults_to_stmt(s, type_alias_defs, var_types);
+    }
+}
+
 pub(crate) fn compile_ast_to_file_with_abi(
     prog: Vec<Stmt>,
     out: &Path,
@@ -2542,45 +3105,35 @@ pub(crate) fn compile_ast_to_file_with_abi(
                 .map(|(name, _, ty)| (name.clone(), ty.clone()))
                 .collect();
             let layout = compute_wasm_layout(&fields);
-            struct_layouts.insert(decl.name.clone(), layout);
+            let clean_name = clean_type_name(&decl.name).to_string();
+            struct_layouts.insert(decl.name.clone(), layout.clone());
             type_alias_defs.insert(
                 decl.name.clone(),
                 (decl.fields.clone(), decl.defaults.clone()),
             );
-        }
-    }
-
-    // Apply type alias default values into object initializers in prog
-    for s in &mut prog {
-        if let StmtKind::Let(_, Some(init), Some(ann), ..) = &mut s.kind {
-            let base_name = if let Some(idx) = ann.find('<') {
-                &ann[..idx]
-            } else {
-                ann.as_str()
-            };
-            if let Some((fields_schema, defaults)) = type_alias_defs.get(base_name) {
-                if let ExprKind::Object(entries) = &mut init.kind {
-                    for (field_name, is_opt, _ty) in fields_schema {
-                        if !entries.iter().any(|(f, _)| f == field_name) {
-                            if let Some((_, def_expr)) =
-                                defaults.iter().find(|(f, _)| f == field_name)
-                            {
-                                entries.push((field_name.clone(), def_expr.clone()));
-                            } else if *is_opt {
-                                entries.push((
-                                    field_name.clone(),
-                                    Expr {
-                                        kind: ExprKind::Literal(Value::Null),
-                                        span: init.span.clone(),
-                                    },
-                                ));
-                            }
-                        }
-                    }
-                }
+            if clean_name != decl.name {
+                struct_layouts.insert(clean_name.clone(), layout);
+                type_alias_defs.insert(
+                    clean_name,
+                    (decl.fields.clone(), decl.defaults.clone()),
+                );
             }
         }
     }
+
+    let mut aliases_for_hir = std::collections::HashMap::new();
+    for (k, v) in &type_alias_defs {
+        aliases_for_hir.insert(k.clone(), v.clone());
+    }
+    crate::parsing::hir_lower::KNOWN_TYPE_ALIASES.with(|cell| {
+        *cell.borrow_mut() = aliases_for_hir;
+    });
+
+    let mut var_types = FastMap::default();
+    apply_type_alias_defaults_to_stmts(&mut prog, &type_alias_defs, &mut var_types);
+    WASM_VAR_TYPES.with(|cell| {
+        *cell.borrow_mut() = var_types;
+    });
 
     // Collect declared functions and their parameter default values
     let mut fn_param_defaults: FastMap<String, Vec<(String, Option<Expr>)>> = FastMap::default();

@@ -51,6 +51,6 @@ let restored = JSON.parseBytes(bytes);
 ## Running Examples
 
 ```sh
-cargo run --bin adeshlang -- examples/Libraries/json/basics.adesh
-cargo run --bin adeshlang -- examples/Libraries/json/all.adesh
+cargo run --bin adesh -- run examples/Libraries/json/basics.adesh
+cargo run --bin adesh -- run examples/Libraries/json/all.adesh
 ```

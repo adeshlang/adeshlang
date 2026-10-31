@@ -627,14 +627,14 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         if app.count_prefix.is_none() && c.is_ascii_digit() && c != '0' {
             app.count_prefix = Some((c as usize) - ('0' as usize));
             return;
-        } else if let Some(p) = app.count_prefix {
-            if c.is_ascii_digit() {
-                app.count_prefix = Some(
-                    p.saturating_mul(10)
-                        .saturating_add((c as usize) - ('0' as usize)),
-                );
-                return;
-            }
+        } else if let Some(p) = app.count_prefix
+            && c.is_ascii_digit()
+        {
+            app.count_prefix = Some(
+                p.saturating_mul(10)
+                    .saturating_add((c as usize) - ('0' as usize)),
+            );
+            return;
         }
     }
 
@@ -1305,10 +1305,10 @@ async fn handle_modal_input(app: &mut App, key: KeyEvent) {
                 KeyCode::Enter => {
                     let name = app.prompt_input.trim().to_string();
                     app.modal = Modal::None;
-                    if !name.is_empty() {
-                        if let Ok(p) = app.explorer.create_file(&name) {
-                            let _ = app.open_file(&p);
-                        }
+                    if !name.is_empty()
+                        && let Ok(p) = app.explorer.create_file(&name)
+                    {
+                        let _ = app.open_file(&p);
                     }
                 }
                 KeyCode::Backspace => {
@@ -1328,10 +1328,10 @@ async fn handle_modal_input(app: &mut App, key: KeyEvent) {
                 KeyCode::Enter => {
                     let name = app.prompt_input.trim().to_string();
                     app.modal = Modal::None;
-                    if !name.is_empty() {
-                        if let Ok(_p) = app.explorer.create_dir(&name) {
-                            app.toast(&format!("Created directory: {}", name), "SUCCESS");
-                        }
+                    if !name.is_empty()
+                        && let Ok(_p) = app.explorer.create_dir(&name)
+                    {
+                        app.toast(&format!("Created directory: {}", name), "SUCCESS");
                     }
                 }
                 KeyCode::Backspace => {
@@ -1351,16 +1351,16 @@ async fn handle_modal_input(app: &mut App, key: KeyEvent) {
                 KeyCode::Enter => {
                     let name = app.prompt_input.trim().to_string();
                     app.modal = Modal::None;
-                    if !name.is_empty() {
-                        if let Ok(new_path) = app.explorer.rename_file(&name) {
-                            app.toast(
-                                &format!(
-                                    "Renamed to: {}",
-                                    new_path.file_name().unwrap_or_default().to_string_lossy()
-                                ),
-                                "SUCCESS",
-                            );
-                        }
+                    if !name.is_empty()
+                        && let Ok(new_path) = app.explorer.rename_file(&name)
+                    {
+                        app.toast(
+                            &format!(
+                                "Renamed to: {}",
+                                new_path.file_name().unwrap_or_default().to_string_lossy()
+                            ),
+                            "SUCCESS",
+                        );
                     }
                 }
                 KeyCode::Backspace => {
@@ -1686,16 +1686,15 @@ async fn handle_explorer_input(app: &mut App, key: KeyEvent) {
                         .unwrap_or(false)
                 {
                     app.explorer.toggle_expand();
-                } else if let Some(parent) = path.parent() {
-                    if let Some(pos) = app
+                } else if let Some(parent) = path.parent()
+                    && let Some(pos) = app
                         .explorer
                         .flat_nodes
                         .iter()
                         .position(|(p, _)| p == parent)
-                    {
-                        app.explorer.selected_index = pos;
-                        app.explorer.adjust_scroll();
-                    }
+                {
+                    app.explorer.selected_index = pos;
+                    app.explorer.adjust_scroll();
                 }
             }
         }
@@ -1766,7 +1765,6 @@ pub async fn handle_mouse_event(app: &mut App, mouse: MouseEvent) {
                         y: mouse.row.min(22),
                         selected_index: 0,
                     });
-                    return;
                 }
             }
         }
@@ -1807,21 +1805,20 @@ pub async fn handle_mouse_event(app: &mut App, mouse: MouseEvent) {
             // 3. If a top dropdown menu is currently open:
             if app.active_menu != MenuTab::None {
                 // Check if clicked inside dropdown box
-                if let Some((dx, dy, dw, dh)) = app.menu_dropdown_rect {
-                    if mouse.column >= dx
-                        && mouse.column < dx + dw
-                        && mouse.row > dy
-                        && mouse.row < dy + dh - 1
-                    {
-                        let item_idx = (mouse.row - (dy + 1)) as usize;
-                        let items = app.active_menu.items();
-                        if item_idx < items.len() {
-                            let tab = app.active_menu;
-                            app.active_menu = MenuTab::None;
-                            app.menu_dropdown_rect = None;
-                            app.execute_menu_item(tab, item_idx);
-                            return;
-                        }
+                if let Some((dx, dy, dw, dh)) = app.menu_dropdown_rect
+                    && mouse.column >= dx
+                    && mouse.column < dx + dw
+                    && mouse.row > dy
+                    && mouse.row < dy + dh - 1
+                {
+                    let item_idx = (mouse.row - (dy + 1)) as usize;
+                    let items = app.active_menu.items();
+                    if item_idx < items.len() {
+                        let tab = app.active_menu;
+                        app.active_menu = MenuTab::None;
+                        app.menu_dropdown_rect = None;
+                        app.execute_menu_item(tab, item_idx);
+                        return;
                     }
                 }
 
@@ -1936,7 +1933,6 @@ pub async fn handle_mouse_event(app: &mut App, mouse: MouseEvent) {
                             }
                         }
                     }
-                    return;
                 } else {
                     app.explorer_focused = false;
 
@@ -2058,17 +2054,16 @@ pub async fn handle_mouse_event(app: &mut App, mouse: MouseEvent) {
                     }
                 }
 
-                if let Some((dx, dy, dw, dh)) = app.menu_dropdown_rect {
-                    if mouse.column >= dx
-                        && mouse.column < dx + dw
-                        && mouse.row > dy
-                        && mouse.row < dy + dh - 1
-                    {
-                        let item_idx = (mouse.row - (dy + 1)) as usize;
-                        let items = app.active_menu.items();
-                        if item_idx < items.len() {
-                            app.menu_selected = item_idx;
-                        }
+                if let Some((dx, dy, dw, dh)) = app.menu_dropdown_rect
+                    && mouse.column >= dx
+                    && mouse.column < dx + dw
+                    && mouse.row > dy
+                    && mouse.row < dy + dh - 1
+                {
+                    let item_idx = (mouse.row - (dy + 1)) as usize;
+                    let items = app.active_menu.items();
+                    if item_idx < items.len() {
+                        app.menu_selected = item_idx;
                     }
                 }
             }
@@ -2095,19 +2090,18 @@ pub async fn handle_mouse_event(app: &mut App, mouse: MouseEvent) {
                 app.text_viewer_scroll = app.text_viewer_scroll.saturating_add(3);
                 return;
             }
-            if let Some(bottom_rect) = app.bottom_panel_rect {
-                if mouse.row >= bottom_rect.y
-                    && mouse.row < bottom_rect.y + bottom_rect.height
-                    && mouse.column >= bottom_rect.x
-                    && mouse.column < bottom_rect.x + bottom_rect.width
-                {
-                    if app.show_output {
-                        app.output_scroll = app.output_scroll.saturating_sub(3);
-                        return;
-                    } else if app.show_terminal {
-                        app.terminal_scroll = app.terminal_scroll.saturating_sub(3);
-                        return;
-                    }
+            if let Some(bottom_rect) = app.bottom_panel_rect
+                && mouse.row >= bottom_rect.y
+                && mouse.row < bottom_rect.y + bottom_rect.height
+                && mouse.column >= bottom_rect.x
+                && mouse.column < bottom_rect.x + bottom_rect.width
+            {
+                if app.show_output {
+                    app.output_scroll = app.output_scroll.saturating_sub(3);
+                    return;
+                } else if app.show_terminal {
+                    app.terminal_scroll = app.terminal_scroll.saturating_sub(3);
+                    return;
                 }
             }
             if app.show_explorer && mouse.column < 28 {
@@ -2121,19 +2115,18 @@ pub async fn handle_mouse_event(app: &mut App, mouse: MouseEvent) {
                 app.text_viewer_scroll = app.text_viewer_scroll.saturating_sub(3);
                 return;
             }
-            if let Some(bottom_rect) = app.bottom_panel_rect {
-                if mouse.row >= bottom_rect.y
-                    && mouse.row < bottom_rect.y + bottom_rect.height
-                    && mouse.column >= bottom_rect.x
-                    && mouse.column < bottom_rect.x + bottom_rect.width
-                {
-                    if app.show_output {
-                        app.output_scroll = app.output_scroll.saturating_add(3);
-                        return;
-                    } else if app.show_terminal {
-                        app.terminal_scroll = app.terminal_scroll.saturating_add(3);
-                        return;
-                    }
+            if let Some(bottom_rect) = app.bottom_panel_rect
+                && mouse.row >= bottom_rect.y
+                && mouse.row < bottom_rect.y + bottom_rect.height
+                && mouse.column >= bottom_rect.x
+                && mouse.column < bottom_rect.x + bottom_rect.width
+            {
+                if app.show_output {
+                    app.output_scroll = app.output_scroll.saturating_add(3);
+                    return;
+                } else if app.show_terminal {
+                    app.terminal_scroll = app.terminal_scroll.saturating_add(3);
+                    return;
                 }
             }
             if app.show_explorer && mouse.column < 28 {
@@ -2148,10 +2141,12 @@ pub async fn handle_mouse_event(app: &mut App, mouse: MouseEvent) {
             app.mouse_drag_start = None;
             let is_visual = app.mode == Mode::Visual;
             let buf = app.current_buffer_mut();
-            if let Some(sel) = buf.selection {
-                if sel.start_line == sel.end_line && sel.start_col == sel.end_col && !is_visual {
-                    buf.selection = None;
-                }
+            if let Some(sel) = buf.selection
+                && sel.start_line == sel.end_line
+                && sel.start_col == sel.end_col
+                && !is_visual
+            {
+                buf.selection = None;
             }
         }
         _ => {}

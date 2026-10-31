@@ -33,6 +33,20 @@ fn collect_struct_decls(stmts: &[Stmt], map: &mut HashMap<String, Vec<(String, S
     }
 }
 
+pub(crate) fn clean_type_name(name: &str) -> &str {
+    if let Some(pos) = name.rfind("__module_") {
+        if let Some(rest) = name[pos..].strip_prefix("__module_") {
+            if let Some(under_idx) = rest.find('_') {
+                return &rest[under_idx + 1..];
+            }
+        }
+    }
+    if let Some(pos) = name.rfind("::") {
+        return &name[pos + 2..];
+    }
+    name
+}
+
 fn collect_type_alias_and_fn_decls(
     stmts: &[Stmt],
     type_aliases: &mut HashMap<String, (Vec<(String, bool, String)>, Vec<(String, Expr)>)>,
@@ -41,10 +55,16 @@ fn collect_type_alias_and_fn_decls(
     for stmt in stmts {
         match &stmt.kind {
             StmtKind::TypeAlias(decl, _) => {
+                let clean = clean_type_name(&decl.name).to_string();
                 type_aliases.insert(
                     decl.name.clone(),
                     (decl.fields.clone(), decl.defaults.clone()),
                 );
+                if clean != decl.name {
+                    type_aliases
+                        .entry(clean)
+                        .or_insert_with(|| (decl.fields.clone(), decl.defaults.clone()));
+                }
             }
             StmtKind::Function(f, _) => {
                 let params = f
@@ -160,8 +180,12 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                 } else {
                     ann.as_str()
                 };
-                let alias_info =
-                    KNOWN_TYPE_ALIASES.with(|cell| cell.borrow().get(base_type).cloned());
+                let alias_info = KNOWN_TYPE_ALIASES.with(|cell| {
+                    let map = cell.borrow();
+                    map.get(base_type)
+                        .cloned()
+                        .or_else(|| map.get(clean_type_name(base_type)).cloned())
+                });
                 if let Some((fields, defaults)) = alias_info {
                     if let Some(HirExpr::ObjectLiteral(ref mut obj_fields)) = init_expr {
                         for (def_name, def_expr) in defaults {
@@ -173,6 +197,13 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                             if optional && !obj_fields.iter().any(|(k, _)| k == &fname) {
                                 obj_fields.push((fname, HirExpr::Literal(HirLiteral::Null)));
                             }
+                        }
+                        if !obj_fields.iter().any(|(k, _)| k == "__type__") {
+                            let clean_name = clean_type_name(base_type);
+                            obj_fields.push((
+                                "__type__".to_string(),
+                                HirExpr::Literal(HirLiteral::String(clean_name.to_string())),
+                            ));
                         }
                     }
                 }
@@ -651,11 +682,57 @@ fn lower_function_with_export(func: &Function, is_exported: bool) -> Result<HirF
     })
 }
 
+fn resolve_hir_typeof(arg: &Expr) -> Option<HirExpr> {
+    match &arg.kind {
+        ExprKind::Variable(name) => {
+            let clean = clean_type_name(name);
+            if KNOWN_TYPE_ALIASES.with(|cell| {
+                let map = cell.borrow();
+                map.contains_key(name) || map.contains_key(clean)
+            }) {
+                return Some(HirExpr::Literal(HirLiteral::String(clean.to_string())));
+            }
+            None
+        }
+        ExprKind::Get(target, field) => {
+            if let ExprKind::Variable(tname) = &target.kind {
+                let resolved = KNOWN_TYPE_ALIASES.with(|cell| {
+                    let map = cell.borrow();
+                    let entry = map.get(tname).or_else(|| map.get(clean_type_name(tname)));
+                    if let Some((fields, _)) = entry {
+                        for (fname, _, ftype) in fields {
+                            if fname == field {
+                                return Some(ftype.clone());
+                            }
+                        }
+                    }
+                    None
+                });
+                if let Some(target_type) = resolved {
+                    let clean = clean_type_name(target_type.trim_start_matches('?'));
+                    return Some(HirExpr::Literal(HirLiteral::String(clean.to_string())));
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
 fn lower_expr(expr: &Expr) -> Result<HirExpr, String> {
     match &expr.kind {
         ExprKind::Literal(val) => Ok(HirExpr::Literal(value_to_hir_literal(val))),
 
-        ExprKind::Variable(name) => Ok(HirExpr::LoadVar(name.clone())),
+        ExprKind::Variable(name) => {
+            let clean = clean_type_name(name);
+            if KNOWN_TYPE_ALIASES.with(|cell| {
+                let map = cell.borrow();
+                map.contains_key(name) || map.contains_key(clean)
+            }) {
+                return Ok(HirExpr::Literal(HirLiteral::String(clean.to_string())));
+            }
+            Ok(HirExpr::LoadVar(name.clone()))
+        }
 
         ExprKind::Assign(name, value) => {
             let hir_value = lower_expr(value)?;
@@ -706,6 +783,12 @@ fn lower_expr(expr: &Expr) -> Result<HirExpr, String> {
         }
 
         ExprKind::Unary(op, operand) => {
+            if *op == TokenKind::Typeof {
+                if let Some(hir_type_str) = resolve_hir_typeof(operand) {
+                    return Ok(hir_type_str);
+                }
+            }
+
             // Special case: fold unary minus on numeric literals into signed literals
             if *op == TokenKind::Minus {
                 if let ExprKind::Literal(val) = &operand.kind {
@@ -779,6 +862,15 @@ fn lower_expr(expr: &Expr) -> Result<HirExpr, String> {
         ExprKind::Grouping(inner) => lower_expr(inner),
 
         ExprKind::Call(callee, args, type_args) => {
+            // Check if this is a typeof / type builtin call
+            if let ExprKind::Variable(fn_name) = &callee.kind {
+                if (fn_name == "type" || fn_name == "typeof") && args.len() == 1 {
+                    if let Some(hir_type_str) = resolve_hir_typeof(&args[0]) {
+                        return Ok(hir_type_str);
+                    }
+                }
+            }
+
             // Check if this is a method call
             if let ExprKind::Get(obj, method_name) = &callee.kind {
                 let hir_obj = lower_expr(obj)?;
@@ -877,6 +969,23 @@ fn lower_expr(expr: &Expr) -> Result<HirExpr, String> {
         }
 
         ExprKind::Get(target, field) => {
+            if let ExprKind::Variable(tname) = &target.kind {
+                let resolved = KNOWN_TYPE_ALIASES.with(|cell| {
+                    let map = cell.borrow();
+                    if let Some((fields, _)) = map.get(tname) {
+                        for (fname, _, ftype) in fields {
+                            if fname == field {
+                                return Some(ftype.clone());
+                            }
+                        }
+                    }
+                    None
+                });
+                if let Some(target_type) = resolved {
+                    let clean = target_type.trim_start_matches('?').to_string();
+                    return Ok(HirExpr::Literal(HirLiteral::String(clean)));
+                }
+            }
             let hir_target = lower_expr(target)?;
             Ok(HirExpr::MemberAccess(Box::new(hir_target), field.clone()))
         }
@@ -1180,8 +1289,8 @@ pub(crate) fn type_from_annotation(ann: &str) -> HirType {
         "i32" => HirType::I32,
         "i64" => HirType::I64,
         "i128" => HirType::I128,
-        "bool" | "boolean" => HirType::Bool,
-        "string" | "str" => HirType::String,
+        "bool" | "boolean" | "Boolean" => HirType::Bool,
+        "string" | "str" | "String" => HirType::String,
         "char" => HirType::Char,
         "null" | "void" => HirType::Null,
         "any" => HirType::Any,
@@ -1306,7 +1415,9 @@ pub(crate) fn type_from_annotation(ann: &str) -> HirType {
                     cur_target = Some(part.to_string());
                 } else if let Some(parent) = cur_target {
                     let next = KNOWN_TYPE_ALIASES.with(|cell| {
-                        if let Some((fields, _)) = cell.borrow().get(&parent) {
+                        let map = cell.borrow();
+                        let entry = map.get(&parent).or_else(|| map.get(clean_type_name(&parent)));
+                        if let Some((fields, _)) = entry {
                             for (fname, _, ftype) in fields {
                                 if fname == part {
                                     return Some(ftype.clone());
@@ -1328,7 +1439,9 @@ pub(crate) fn type_from_annotation(ann: &str) -> HirType {
         _ => {
             // Check if this is a scalar type alias (e.g. type Port = u8;)
             let scalar_target = KNOWN_TYPE_ALIASES.with(|cell| {
-                if let Some((fields, _)) = cell.borrow().get(ann) {
+                let map = cell.borrow();
+                let entry = map.get(ann).or_else(|| map.get(clean_type_name(ann)));
+                if let Some((fields, _)) = entry {
                     if fields.len() == 1 && fields[0].0 == "__alias_target__" {
                         return Some(fields[0].2.clone());
                     }

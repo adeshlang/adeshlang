@@ -51,6 +51,8 @@ pub(super) struct FunctionCompileContext {
     pub(super) user_funcs: HashMap<String, FuncId>,
     /// User-defined function return types
     pub(super) user_func_return_types: HashMap<String, crate::backends::common::lir::LirType>,
+    /// Track if a user function returns a string
+    pub(super) user_func_string_returns: HashMap<String, bool>,
     /// Track object literals for print options (ValueId -> properties)
     pub(super) object_properties: HashMap<ValueId, HashMap<String, (ValueId, AotValueType)>>,
     /// Track constant strings by ValueId for option extraction
@@ -103,6 +105,7 @@ impl FunctionCompileContext {
             next_array_offset: 0,
             user_funcs: HashMap::new(),
             user_func_return_types: HashMap::new(),
+            user_func_string_returns: HashMap::new(),
             object_properties: HashMap::new(),
             const_strings: HashMap::new(),
             const_bools: HashMap::new(),

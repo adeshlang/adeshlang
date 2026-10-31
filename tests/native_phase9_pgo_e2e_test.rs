@@ -18,16 +18,20 @@ fn test_pgo_multi_profile_merging() {
     let mut prof1 = ProfileData::new();
     let mut f1 = FunctionProfile::new("compute_sum");
     f1.entry_count = 100;
-    let mut b1 = BlockProfile::default();
-    b1.execution_count = 100;
+    let mut b1 = BlockProfile {
+        execution_count: 100,
+        ..Default::default()
+    };
     f1.block_profiles.insert("entry".to_string(), b1);
     prof1.functions.insert("compute_sum".to_string(), f1);
 
     let mut prof2 = ProfileData::new();
     let mut f2 = FunctionProfile::new("compute_sum");
     f2.entry_count = 250;
-    let mut b2 = BlockProfile::default();
-    b2.execution_count = 250;
+    let mut b2 = BlockProfile {
+        execution_count: 250,
+        ..Default::default()
+    };
     f2.block_profiles.insert("entry".to_string(), b2);
     prof2.functions.insert("compute_sum".to_string(), f2);
 

@@ -315,11 +315,11 @@ Located in `examples/defer/`:
 ### Running Tests
 
 ```bash
-cargo run --bin adeshlang run examples/defer/basic_defer.adesh
-cargo run --bin adeshlang run examples/defer/nested_scopes.adesh
-cargo run --bin adeshlang run examples/defer/early_return.adesh
-cargo run --bin adeshlang run examples/defer/resource_cleanup.adesh
-cargo run --bin adeshlang run examples/defer/loop_control.adesh
+cargo run --bin adesh -- run examples/defer/basic_defer.adesh
+cargo run --bin adesh -- run examples/defer/nested_scopes.adesh
+cargo run --bin adesh -- run examples/defer/early_return.adesh
+cargo run --bin adesh -- run examples/defer/resource_cleanup.adesh
+cargo run --bin adesh -- run examples/defer/loop_control.adesh
 ```
 
 ## Restrictions and Future Work

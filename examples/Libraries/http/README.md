@@ -6,13 +6,13 @@ Production-grade HTTP library for AdeshLang with HTTP/1.1, HTTP/2, HTTP/3 suppor
 
 ```sh
 # Start a server (stays alive until Ctrl+C)
-cargo run --bin adeshlang -- run examples/Libraries/http/index.adesh
+cargo run --bin adesh -- run examples/Libraries/http/index.adesh
 
 # Run all client demos (requires internet)
-cargo run --bin adeshlang -- run examples/Libraries/http/client.adesh
+cargo run --bin adesh -- run examples/Libraries/http/client.adesh
 
 # Advanced features demo
-cargo run --bin adeshlang -- run examples/Libraries/http/advanced.adesh
+cargo run --bin adesh -- run examples/Libraries/http/advanced.adesh
 ```
 
 ---

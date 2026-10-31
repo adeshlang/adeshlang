@@ -179,7 +179,7 @@ pub enum SymbolKind {
 }
 
 impl SymbolKind {
-    pub fn to_lsp_kind(&self) -> lsp_types::SymbolKind {
+    pub fn to_lsp_kind(self) -> lsp_types::SymbolKind {
         match self {
             SymbolKind::Function => lsp_types::SymbolKind::FUNCTION,
             SymbolKind::Class => lsp_types::SymbolKind::CLASS,

@@ -1,6 +1,8 @@
 # status-and-roadmap.md
 
 > Consolidated from 4 documentation files on 2026-08-29.
+>
+> **Canonical status:** for current implementation state and per-target verification level, [CURRENT_STATE.md](../CURRENT_STATE.md) and [TARGET_MATRIX.md](../TARGET_MATRIX.md) are the source of truth. This document is a consolidated historical snapshot; paths and line references below have been repointed to the current module layout where they drifted.
 
 ---
 
@@ -11,7 +13,7 @@
 
 # AdeshLang — Current Codebase State & Next Focus
 
-**Last Updated:** 2026-01-14  
+**Last Updated:** 2026-01-14 (historical snapshot; see the canonical files noted at the top of this document)  
 **Crate Version (Cargo.toml):** v0.3.0
 
 This document is a source-oriented snapshot of what exists today under `src/`, how the pieces connect, what’s already implemented, and what to focus on next.
@@ -24,7 +26,7 @@ This document is a source-oriented snapshot of what exists today under `src/`, h
 
 **Source text**
 → Lexer ([lexer.rs](../src/parsing/lexer.rs))  
-→ Parser ([parser.rs](../src/parsing/parser.rs))  
+→ Parser ([parser/](../src/parsing/parser/))  
 → AST + small AST optimizations ([ast.rs](../src/parsing/ast.rs), [ast_optimizer.rs](../src/parsing/ast_optimizer.rs))  
 → AST → HIR lowering ([hir_lower.rs](../src/parsing/hir_lower.rs))  
 → HIR passes + analyses ([hir_passes.rs](../src/parsing/hir_passes.rs))
@@ -38,8 +40,8 @@ All execution modes run compile-time memory-safety validation before executing:
 ### 3) Execution backends
 
 After HIR + safety validation, the CLI selects a backend:
-- Interpreter runtime: [execution/runtime](../src/execution/runtime/mod.rs)
-- Bytecode compiler + VM: [execution/bytecode.rs](../src/execution/bytecode.rs), [execution/vm.rs](../src/execution/vm.rs)
+- Interpreter runtime: [execution/runtime_core](../src/execution/runtime_core/)
+- Bytecode compiler + VM: [execution/bytecode](../src/execution/bytecode/), [execution/vm](../src/execution/vm/)
 - JIT + tiered/adaptive + AOT + WASM integration points: [backends](../src/backends/mod.rs)
 
 The main entrypoint wires this together and enforces the safety gate:
@@ -56,41 +58,41 @@ The main entrypoint wires this together and enforces the safety gate:
 - Compile-time safety: ownership + borrows + lifetimes + interprocedural + escape analysis + unsafe tracking ([unified_safety_pass.rs](../src/parsing/unified_safety_pass.rs))
 - CFG borrow subsystem (more advanced move/borrow modeling): [parsing/cfg_borrow](../src/parsing/cfg_borrow/mod.rs)
 
-### `src/types/` — Type model, layout, and safeguards
-- Core type model + gradual typing mechanisms: [typechecker.rs](../src/types/typechecker.rs)
-- Annotation/name-based type mapping used by some paths: [type_system.rs](../src/types/type_system.rs)
-- Type layout: [type_layout.rs](../src/types/type_layout.rs)
-- Concurrency traits / stdlib guards / safe references: [traits.rs](../src/types/traits.rs), [stdlib_safeguards.rs](../src/types/stdlib_safeguards.rs), [safe_references.rs](../src/types/safe_references.rs)
-- Array type system utilities: [array_types.rs](../src/types/array_types.rs)
+### `src/typesystem/` — Type model, layout, and safeguards
+- Core type model + gradual typing mechanisms: [checker](../src/typesystem/checker/)
+- Annotation/name-based type mapping used by some paths: [type_system](../src/typesystem/type_system/)
+- Type layout: [layouts](../src/typesystem/layouts/)
+- Concurrency traits / stdlib guards / safe references: [traits](../src/typesystem/traits/), [safeguards](../src/typesystem/safeguards/), [references](../src/typesystem/references/)
+- Array type system utilities: [array_types.rs](../src/typesystem/array_types.rs)
 
 ### `src/execution/` — Interpreter, bytecode compiler, VM
-- Interpreter runtime: environments, builtins, async microtasks/timers, module loader ([execution/runtime/mod.rs](../src/execution/runtime/mod.rs))
-- Bytecode formats + compiler/disassembler: [execution/bytecode.rs](../src/execution/bytecode.rs)
-- VM runners: [execution/vm.rs](../src/execution/vm.rs)
-- Specialized array operations: [execution/array_ops.rs](../src/execution/array_ops.rs)
+- Interpreter runtime: environments, builtins, async microtasks/timers, module loader ([execution/runtime_core](../src/execution/runtime_core/))
+- Bytecode formats + compiler/disassembler: [execution/bytecode](../src/execution/bytecode/)
+- VM runners: [execution/vm](../src/execution/vm/)
+- Specialized array operations: [bytecode/array_ops](../src/execution/bytecode/array_ops.rs)
 
 ### `src/backends/` — JIT/AOT/WASM/FFI infrastructure
-- LIR (SSA-style) + lowering from HIR: [lir.rs](../src/backends/lir.rs), [lir_lower.rs](../src/backends/lir_lower.rs)
-- JIT + optimization scaffolding: [jit.rs](../src/backends/jit.rs), [jit_opt.rs](../src/backends/jit_opt.rs), [jit_array_ops.rs](../src/backends/jit_array_ops.rs)
-- Tiered/adaptive JIT shells: [tiered_jit.rs](../src/backends/tiered_jit.rs), [adaptive_jit.rs](../src/backends/adaptive_jit.rs)
-- AOT via Cranelift: [cranelift_aot.rs](../src/backends/cranelift_aot.rs), with RAII/memory helpers ([aot_memory.rs](../src/backends/aot_memory.rs))
-- FFI: import/generator/header parsing/linking: [ffi_import.rs](../src/backends/ffi_import.rs), [ffi_generator.rs](../src/backends/ffi_generator.rs), [c_header_parser.rs](../src/backends/c_header_parser.rs), [linker_driver.rs](../src/backends/linker_driver.rs)
-- WASM integration point: [wasm.rs](../src/backends/wasm.rs), [wasm_linker.rs](../src/backends/wasm_linker.rs)
+- LIR (SSA-style) + lowering from HIR: [common/lir](../src/backends/common/lir/), [common/lir/lower](../src/backends/common/lir/lower/)
+- JIT + optimization scaffolding: [jit](../src/backends/jit/), [jit/optimizations](../src/backends/jit/optimizations/), [jit/array_ops](../src/backends/jit/array_ops/)
+- Tiered/adaptive JIT shells: [jit/tiered](../src/backends/jit/tiered/), [jit/adaptive](../src/backends/jit/adaptive/)
+- AOT via Cranelift: [aot/cranelift](../src/backends/aot/cranelift/), with RAII/memory helpers ([aot/memory](../src/backends/aot/memory/))
+- FFI: import/generator/header parsing/linking: [common/ffi/import.rs](../src/backends/common/ffi/import.rs), [common/ffi/generator.rs](../src/backends/common/ffi/generator.rs), [common/ffi/c_header_parser.rs](../src/backends/common/ffi/c_header_parser.rs), [aot/linker](../src/backends/aot/linker/)
+- WASM integration point: [wasm](../src/backends/wasm/), [wasm_backend/linker.rs](../src/backends/wasm_backend/linker.rs)
 
 ### `src/memory/` — Allocation and policy
-- Memory policy / embedded restrictions: [policy.rs](../src/memory/policy.rs)
+- Memory policy / embedded restrictions: [policies](../src/memory/policies/)
 - Dynamic allocator + strategies: [dynamic_allocator.rs](../src/memory/dynamic_allocator.rs)
-- ARC manager + concurrency + cycle detection: [arc_manager.rs](../src/memory/arc_manager.rs), [concurrency.rs](../src/memory/concurrency.rs), [cycle_detect.rs](../src/memory/cycle_detect.rs)
-- RAII transform layer: [raii.rs](../src/memory/raii.rs)
+- ARC manager + concurrency + cycle detection: [arc](../src/memory/arc/), [concurrency](../src/memory/concurrency/), [cycle](../src/memory/cycle/)
+- RAII transform layer: [raii](../src/memory/raii/)
 
-### `src/stdlib/` — Builtins and modules
-- Registry + module wiring: [stdlib/mod.rs](../src/stdlib/mod.rs), [registry.rs](../src/stdlib/registry.rs)
-- Core/operators/print/types: [core/mod.rs](../src/stdlib/core/mod.rs)
-- JSON, IO/FS, system args/time, async runtime, concurrency: [stdlib](../src/stdlib/mod.rs)
-- Built-in decorators: [decorators/mod.rs](../src/stdlib/decorators/mod.rs)
+### `src/stdlib/` + `src/runtime/stdlib_src/` — Builtins and modules
+- Registry + module wiring: [stdlib/mod.rs](../src/stdlib/mod.rs), [runtime/stdlib_src/registry.rs](../src/runtime/stdlib_src/registry.rs)
+- Core/operators/print/types: [stdlib/adesh_core](../src/stdlib/adesh_core/)
+- JSON, IO/FS, system args/time, async runtime, concurrency: [runtime/stdlib_src](../src/runtime/stdlib_src/)
+- Built-in decorators: [runtime/stdlib_src/decorators/mod.rs](../src/runtime/stdlib_src/decorators/mod.rs)
 
-### `src/utils/` — Tooling helpers
-- Doc generator (HTML from Adesh doc comments): [docgen.rs](../src/utils/docgen.rs)
+### `src/toolchain/` + `src/utils/` — Tooling helpers
+- Doc generator (HTML from Adesh doc comments): [toolchain/docgen](../src/toolchain/docgen/)
 - Formatter + interner + env + timer + collections: [utils/mod.rs](../src/utils/mod.rs)
 
 ---
@@ -100,24 +102,24 @@ The main entrypoint wires this together and enforces the safety gate:
 ### Language + runtime capabilities (visible in code + examples)
 - Multi-backend execution: interpreter, bytecode VM, JIT (plus tiered/adaptive shells), AOT (Cranelift), WASM integration points ([main.rs](../src/main.rs), [backends/mod.rs](../src/backends/mod.rs))
 - Compile-time memory safety enforcement across backends via unified gate ([unified_safety_pass.rs](../src/parsing/unified_safety_pass.rs))
-- Async runtime primitives in interpreter/stdlib: microtask queue + timers + Promise-like behavior ([execution/runtime/mod.rs](../src/execution/runtime/mod.rs), [stdlib/async_runtime/mod.rs](../src/stdlib/async_runtime/mod.rs))
+- Async runtime primitives in interpreter/stdlib: microtask queue + timers + Promise-like behavior ([execution/runtime_core](../src/execution/runtime_core/), [runtime/stdlib_src/async_runtime/mod.rs](../src/runtime/stdlib_src/async_runtime/mod.rs))
 - Decorator pipeline infrastructure: parsing + registry + compilation hooks ([parsing/decorator_pipeline.rs](../src/parsing/decorator_pipeline.rs))
-- FFI toolchain: import + dynamic loading + header parsing + linker driver ([backends/ffi_import.rs](../src/backends/ffi_import.rs), [backends/c_header_parser.rs](../src/backends/c_header_parser.rs))
-- Doc generation: `adesh docs` generates HTML by scanning doc comments in `.adesh` sources ([utils/docgen.rs](../src/utils/docgen.rs))
+- FFI toolchain: import + dynamic loading + header parsing + linker driver ([backends/common/ffi/import.rs](../src/backends/common/ffi/import.rs), [backends/common/ffi/c_header_parser.rs](../src/backends/common/ffi/c_header_parser.rs))
+- Doc generation: `adesh docs` generates HTML by scanning doc comments in `.adesh` sources ([toolchain/docgen](../src/toolchain/docgen/))
 
 ### Safety & memory model
 - Ownership/borrowing/lifetime validation as compile-time passes (centralized in parsing) ([parsing/mod.rs](../src/parsing/mod.rs))
-- Memory policy controls and allocator strategies (dynamic allocator + embedded restrictions) ([memory/policy.rs](../src/memory/policy.rs), [memory/dynamic_allocator.rs](../src/memory/dynamic_allocator.rs))
-- ARC manager + cycle detection utilities ([memory/arc_manager.rs](../src/memory/arc_manager.rs), [memory/cycle_detect.rs](../src/memory/cycle_detect.rs))
+- Memory policy controls and allocator strategies (dynamic allocator + embedded restrictions) ([memory/policies](../src/memory/policies/), [memory/dynamic_allocator.rs](../src/memory/dynamic_allocator.rs))
+- ARC manager + cycle detection utilities ([memory/arc](../src/memory/arc/), [memory/cycle](../src/memory/cycle/))
 
 ---
 
 ## Known Gaps / “Sharp Edges” (Worth Focusing On)
 
 These are high-impact areas that show up as explicit TODOs in higher-level docs and as partial/stub behavior in execution paths:
-- Interpreter method-call surface vs backend parity (docs repeatedly call out “interpreter method syntax”) (see runtime + builtins: [execution/runtime](../src/execution/runtime/mod.rs))
-- Bytecode VM feature parity with interpreter/JIT (some opcodes/features can be wired but are not complete across both VM versions) ([execution/vm.rs](../src/execution/vm.rs))
-- WASM backend appears as an integration point; end-to-end “ship a wasm artifact” path needs tightening ([backends/wasm.rs](../src/backends/wasm.rs), [backends/wasm_linker.rs](../src/backends/wasm_linker.rs))
+- Interpreter method-call surface vs backend parity (docs repeatedly call out “interpreter method syntax”) (see runtime + builtins: [execution/runtime_core](../src/execution/runtime_core/))
+- Bytecode VM feature parity with interpreter/JIT (some opcodes/features can be wired but are not complete across both VM versions) ([execution/vm](../src/execution/vm/))
+- WASM backend appears as an integration point; end-to-end “ship a wasm artifact” path needs tightening ([backends/wasm](../src/backends/wasm/), [backends/wasm_backend/linker.rs](../src/backends/wasm_backend/linker.rs))
 - Docs drift: many top-level docs reference v0.2.x while Cargo.toml is v0.3.0
 
 ---
@@ -129,7 +131,7 @@ These are high-impact areas that show up as explicit TODOs in higher-level docs 
 - Add a minimal conformance suite: same program runs with `--interpreter` and `--bytecode` and `--jit` and compares output.
 
 ### 2) Documentation hygiene + single source of truth
-- Promote this document + [DOCUMENTATION_INDEX.md](../DOCUMENTATION_INDEX.md) as the entry.
+- Promote this document + [CURRENT_STATE.md](../CURRENT_STATE.md) / [TARGET_MATRIX.md](../TARGET_MATRIX.md) as the entry. (`DOCUMENTATION_INDEX.md` referenced here previously does not exist in the repo.)
 - Mark older “Jan 1, 2026” status docs as historical snapshots and point to current state.
 
 ### 3) Strengthen safety and diagnostics UX
@@ -185,7 +187,7 @@ These are high-impact areas that show up as explicit TODOs in higher-level docs 
 ### 2. CLI Improvements ✅
 
 #### Help System Enhancement
-**File**: `src/cli/args.rs`
+**File**: `src/toolchain/cli/args.rs`
 
 **Changes**:
 - ✅ Expanded help message from ~2,500 to ~8,500 characters
@@ -213,7 +215,7 @@ These are high-impact areas that show up as explicit TODOs in higher-level docs 
 ```
 
 #### Version Update
-**File**: `src/cli/args.rs`
+**File**: `src/toolchain/cli/args.rs`
 
 **Changes**:
 - ✅ Updated from v0.1.0 to v0.2.0
@@ -456,7 +458,7 @@ These are high-impact areas that show up as explicit TODOs in higher-level docs 
 5. `docs_ENHANCEMENT_SUMMARY.md` - This file
 
 ### Modified Files
-1. `src/cli/args.rs`
+1. `src/toolchain/cli/args.rs`
    - help_message(): Expanded from ~2,500 to ~8,500 characters
    - version_message(): Updated to v0.2.0 with feature highlights
    - Added new command: `check <file>`
@@ -616,22 +618,22 @@ The language is now positioned as a serious alternative to Rust for developers s
 
 ## Current Status
 - Parser/AST: Rich AST with values and declarations (`src/parsing/ast.rs`).
-- CLI: Argument parsing and help/version messages (`src/cli/args.rs`, `src/main.rs`).
-- Interpreter: Full-featured runtime with envs, functions, classes, promises (`src/execution/runtime/exec.rs`).
-- Bytecode v1: Simple stack machine (legacy) with small instruction set (`src/execution/bytecode.rs`).
-- Bytecode v2: Register VM with constants, globals, arithmetic, comparisons, jumps, calls/returns (`src/execution/bytecode.rs`).
-- VM (v2): Executes v2 bytecode; frame management, call stack, branching, printing (`src/execution/vm.rs`).
+- CLI: Argument parsing and help/version messages (`src/toolchain/cli/args.rs`, `src/main.rs`).
+- Interpreter: Full-featured runtime with envs, functions, classes, promises (`src/execution/runtime_core/`).
+- Bytecode v1: Simple stack machine (legacy) with small instruction set (`src/execution/bytecode/`).
+- Bytecode v2: Register VM with constants, globals, arithmetic, comparisons, jumps, calls/returns (`src/execution/bytecode/`).
+- VM (v2): Executes v2 bytecode; frame management, call stack, branching, printing (`src/execution/vm/`).
 
 ## VM (v2) Highlights
-- Call mechanics: `dst, abs, argc, [args...]`; creates a new frame, copies args to registers `0..argc`, saves caller frame, jumps to callee offset (`src/execution/vm.rs:533–553`).
-- Return mechanics: reads `src`, restores caller frame, writes return to caller `dst`, resumes at saved `pc` (`src/execution/vm.rs:554–561`).
-- Control flow: `Jump`, `JumpIfTrue`, `JumpIfFalse`, `JumpAbs` for structured branching (`src/execution/vm.rs:390–427`).
-- Comparisons: `CmpLT/LE/GT/GE/EQ/NE` produce numeric booleans (`1.0/0.0`) (`src/execution/vm.rs:500–532`).
+- Call mechanics: `dst, abs, argc, [args...]`; creates a new frame, copies args to registers `0..argc`, saves caller frame, jumps to callee offset (`src/execution/vm/v2_register.rs`; line numbers below refer to the pre-restructure files).
+- Return mechanics: reads `src`, restores caller frame, writes return to caller `dst`, resumes at saved `pc`.
+- Control flow: `Jump`, `JumpIfTrue`, `JumpIfFalse`, `JumpAbs` for structured branching.
+- Comparisons: `CmpLT/LE/GT/GE/EQ/NE` produce numeric booleans (`1.0/0.0`).
 
 ## Compiler (v2) Highlights
-- Function emission: records function offset; parameters mapped to registers `0..arity` (`src/execution/bytecode.rs:596–606`).
-- Call emission: named functions via `fun_offsets`; builtin `print` and `clock` handled specially (`src/execution/bytecode.rs:672–686`).
-- Tail-call optimization (self): `return f(...)` with same `f` moves args into `0..arity` then `JumpAbs` to function offset (`src/execution/bytecode.rs:576–587`).
+- Function emission: records function offset; parameters mapped to registers `0..arity` (`src/execution/bytecode/bytecode_old.rs`).
+- Call emission: named functions via `fun_offsets`; builtin `print` and `clock` handled specially.
+- Tail-call optimization (self): `return f(...)` with same `f` moves args into `0..arity` then `JumpAbs` to function offset.
 
 ## Tooling and CLI
 - Compile to bytecode v2: `adesh compile <in.adesh> <out.bin>`.
@@ -639,7 +641,7 @@ The language is now positioned as a serious alternative to Rust for developers s
 - Backend selection: `--interpreter`, `--jit`, `--mixed`, `--safe`, `--bytecode`.
 
 ## Testing & Verification
-- VM includes basic tests for v1 flow (`src/execution/vm.rs` test module); v2 end-to-end verified via CLI compile+run for arithmetic and recursion.
+- VM includes basic tests for v1 flow (`src/execution/vm/mod.rs` test module); v2 end-to-end verified via CLI compile+run for arithmetic and recursion.
 - Next: add unit tests targeting v2 Call/Return, branching, and comparisons.
 
 ## Roadmap
@@ -705,7 +707,7 @@ Disassembly is written to `output.txt`.
 
 ### Modified Files
 
-#### 1. `src/execution/bytecode.rs`
+#### 1. `src/execution/bytecode/bytecode_old.rs`
 - **Old Function**: `disassemble_file(path: &Path) -> Result<(), LangError>`
   - Only printed to stdout via `println!`
   
@@ -736,7 +738,7 @@ Disassembly is written to `output.txt`.
  *  - adesh disassemble <out.bin> [--write [file]]: Disassemble a bytecode file
 ```
 
-#### 3. `src/cli/args.rs`
+#### 3. `src/toolchain/cli/args.rs`
 **Updated help message** (function starting at line 244):
 - Added "disassemble <file>" to COMMANDS section
 - Added new "DISASSEMBLER OPTIONS" section with flag documentation

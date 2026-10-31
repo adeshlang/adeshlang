@@ -3,17 +3,12 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum LineNumberMode {
+    #[default]
     Absolute,
     Relative,
     None,
-}
-
-impl Default for LineNumberMode {
-    fn default() -> Self {
-        LineNumberMode::Absolute
-    }
 }
 
 impl LineNumberMode {
@@ -33,6 +28,8 @@ impl LineNumberMode {
         }
     }
 
+    // Infallible parser: unknown names fall back to `Absolute`.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "relative" | "rel" => LineNumberMode::Relative,
@@ -118,26 +115,22 @@ impl Default for EditorConfig {
 
 impl EditorConfig {
     pub fn load() -> Self {
-        if let Some(config_path) = Self::config_file_path() {
-            if config_path.is_file() {
-                if let Ok(content) = fs::read_to_string(&config_path) {
-                    if let Ok(cfg) = toml::from_str(&content) {
-                        return cfg;
-                    }
-                }
-            }
+        if let Some(config_path) = Self::config_file_path()
+            && config_path.is_file()
+            && let Ok(content) = fs::read_to_string(&config_path)
+            && let Ok(cfg) = toml::from_str(&content)
+        {
+            return cfg;
         }
         Self::default()
     }
 
     pub fn config_file_path() -> Option<PathBuf> {
-        if let Some(config_dir) = dirs::config_dir() {
-            Some(config_dir.join("adesh").join("editor.toml"))
-        } else if let Some(home) = dirs::home_dir() {
-            Some(home.join(".config").join("adesh").join("editor.toml"))
-        } else {
-            None
-        }
+        dirs::config_dir()
+            .map(|config_dir| config_dir.join("adesh").join("editor.toml"))
+            .or_else(|| {
+                dirs::home_dir().map(|home| home.join(".config").join("adesh").join("editor.toml"))
+            })
     }
 }
 

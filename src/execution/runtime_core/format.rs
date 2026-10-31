@@ -285,6 +285,7 @@ pub fn fmt(v: &Value) -> String {
 /// - `oct` - Format as octal
 /// - `currency(CODE)` - Format as currency with given code (USD, EUR, INR, etc.)
 /// - Combinations like `>12+currency(INR)` or `0>12currency(USD)`
+///
 /// Apply a format specifier to a value via unified `adesh_format` engine.
 pub fn apply_format_spec(v: &Value, spec: &str) -> String {
     let fmt_val = ast_value_to_format_value(v);

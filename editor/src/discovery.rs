@@ -23,33 +23,33 @@ pub fn find_executable(binary_basename: &str) -> Option<PathBuf> {
         _ => "",
     };
 
-    if !env_var_name.is_empty() {
-        if let Ok(env_path) = env::var(env_var_name) {
-            let p = PathBuf::from(&env_path);
-            if p.is_file() {
-                return Some(p);
-            }
+    if !env_var_name.is_empty()
+        && let Ok(env_path) = env::var(env_var_name)
+    {
+        let p = PathBuf::from(&env_path);
+        if p.is_file() {
+            return Some(p);
         }
     }
 
     // 2. Directory of current executable
-    if let Ok(current_exe) = env::current_exe() {
-        if let Some(exe_dir) = current_exe.parent() {
-            let candidate = exe_dir.join(&exe_name);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
+    if let Ok(current_exe) = env::current_exe()
+        && let Some(exe_dir) = current_exe.parent()
+    {
+        let candidate = exe_dir.join(&exe_name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
 
-            // Sibling target/release or target/debug
-            if let Some(parent) = exe_dir.parent() {
-                let debug_cand = parent.join("debug").join(&exe_name);
-                if debug_cand.is_file() {
-                    return Some(debug_cand);
-                }
-                let release_cand = parent.join("release").join(&exe_name);
-                if release_cand.is_file() {
-                    return Some(release_cand);
-                }
+        // Sibling target/release or target/debug
+        if let Some(parent) = exe_dir.parent() {
+            let debug_cand = parent.join("debug").join(&exe_name);
+            if debug_cand.is_file() {
+                return Some(debug_cand);
+            }
+            let release_cand = parent.join("release").join(&exe_name);
+            if release_cand.is_file() {
+                return Some(release_cand);
             }
         }
     }

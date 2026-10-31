@@ -5,6 +5,7 @@ print("=== Numeric Literals ===");
 let bin1 = 0b1010;
 let hex1 = 0xFF;
 let dec1 = 1_000_000;
+
 print(bin1);
 print(hex1);
 print(dec1);

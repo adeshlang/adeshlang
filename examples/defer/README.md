@@ -27,13 +27,13 @@ Common pattern: using defer for automatic resource cleanup (file handles, locks,
 
 ```bash
 # Run with interpreter
-cargo run --bin adeshlang examples/defer/basic_defer.adesh
+cargo run --bin adesh -- run examples/defer/basic_defer.adesh
 
 # Run with JIT (when supported)
-cargo run --bin adeshlang --jit examples/defer/basic_defer.adesh
+cargo run --bin adesh -- run --jit examples/defer/basic_defer.adesh
 
 # Run with AOT (when supported)
-cargo run --bin adeshlang --aot examples/defer/basic_defer.adesh
+cargo run --bin adesh -- run --aot examples/defer/basic_defer.adesh
 ```
 
 ## Defer Guarantees

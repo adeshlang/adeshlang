@@ -159,12 +159,12 @@ impl FileExplorer {
             None => return,
         };
         let show_hidden = self.show_hidden;
-        if let Some(node) = self.root_node.find_mut(&path) {
-            if node.is_dir {
-                node.expanded = !node.expanded;
-                if node.expanded {
-                    Self::load_children(node, show_hidden);
-                }
+        if let Some(node) = self.root_node.find_mut(&path)
+            && node.is_dir
+        {
+            node.expanded = !node.expanded;
+            if node.expanded {
+                Self::load_children(node, show_hidden);
             }
         }
         self.rebuild_flat_list();
@@ -176,12 +176,12 @@ impl FileExplorer {
             None => return,
         };
         let show_hidden = self.show_hidden;
-        if let Some(node) = self.root_node.find_mut(&path) {
-            if node.is_dir {
-                node.expanded = !node.expanded;
-                if node.expanded {
-                    Self::load_children(node, show_hidden);
-                }
+        if let Some(node) = self.root_node.find_mut(&path)
+            && node.is_dir
+        {
+            node.expanded = !node.expanded;
+            if node.expanded {
+                Self::load_children(node, show_hidden);
             }
         }
         self.rebuild_flat_list();

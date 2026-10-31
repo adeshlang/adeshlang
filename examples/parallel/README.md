@@ -345,7 +345,7 @@ num_workers()        // core count
 All examples are runnable with:
 
 ```bash
-cargo run --bin adeshlang -- run examples/<path>.adesh
+cargo run --bin adesh -- run examples/<path>.adesh
 ```
 
 | Example | Path | Demonstrates |

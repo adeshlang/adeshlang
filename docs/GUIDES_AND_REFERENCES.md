@@ -3,6 +3,16 @@
 > Consolidated from 7 markdown files on 2026-08-29.
 > This file merges related root-level .md documents by category.
 
+> **Historical archive — capability claims here are superseded (2026-10-31).** This
+> consolidation preserves documents as they read in August 2026, including tooling claims
+> that later work contradicted (a workspace that "allows all clippy lints", CI that "runs on
+> every push", and absolute support levels). Do not treat anything in this file as current
+> status. The canonical sources are
+> [`CONTRIBUTING.md`](../CONTRIBUTING.md) for the format & lint gate,
+> [`CURRENT_STATE.md`](../CURRENT_STATE.md) (including its §0.6),
+> [`TARGET_MATRIX.md`](../TARGET_MATRIX.md), and
+> [`NEXT_IMPLEMENTATION_PLAN.md`](../NEXT_IMPLEMENTATION_PLAN.md).
+
 ---
 
 

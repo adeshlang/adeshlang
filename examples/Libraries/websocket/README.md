@@ -10,70 +10,70 @@ Run any example script using the AdeshLang CLI runner:
 
 ```sh
 # Example 01: Basic Client Connection & Echo Protocol
-cargo run --bin adeshlang -- run examples/Libraries/websocket/01_basic_client.adesh
+cargo run --bin adesh -- run examples/Libraries/websocket/01_basic_client.adesh
 
 # Example 02: High-Performance Concurrent Echo Server
-cargo run --bin adeshlang -- run examples/Libraries/websocket/02_basic_server.adesh
+cargo run --bin adesh -- run examples/Libraries/websocket/02_basic_server.adesh
 
 # Example 03: Secure WSS Client Connection over TLS
-cargo run --bin adeshlang -- run examples/Libraries/websocket/03_secure_wss.adesh
+cargo run --bin adesh -- run examples/Libraries/websocket/03_secure_wss.adesh
 
 # Example 04: Heartbeats, Backpressure & Protocol Edge Cases
-cargo run --bin adeshlang -- run examples/Libraries/websocket/04_heartbeat_and_edge_cases.adesh
+cargo run --bin adesh -- run examples/Libraries/websocket/04_heartbeat_and_edge_cases.adesh
 
 # Example 05: Real-Time Chat Room Broadcast Server
-cargo run --bin adeshlang -- run examples/Libraries/websocket/05_room_broadcast_server.adesh
+cargo run --bin adesh -- run examples/Libraries/websocket/05_room_broadcast_server.adesh
 
 # Example 06: Production-Grade Secure WSS Server & Client
-cargo run --bin adeshlang -- run examples/Libraries/websocket/06_wss_tls_server_and_client.adesh
+cargo run --bin adesh -- run examples/Libraries/websocket/06_wss_tls_server_and_client.adesh
 
 # Example 07: Low-Level Net & TLS Custom Transport Integration
-cargo run --bin adeshlang -- run examples/Libraries/websocket/07_lowlevel_net_tls_transport.adesh
+cargo run --bin adesh -- run examples/Libraries/websocket/07_lowlevel_net_tls_transport.adesh
 
 # Example 08: Production-Grade Secure WSS Listening Server
-cargo run --bin adeshlang -- run examples/Libraries/websocket/08_wss_listening_echo_server.adesh
+cargo run --bin adesh -- run examples/Libraries/websocket/08_wss_listening_echo_server.adesh
 
 # Example 09: End-to-End Secure WSS Interactive Messaging Demo
-cargo run --bin adeshlang -- run examples/Libraries/websocket/09_wss_full_duplex_demo.adesh
+cargo run --bin adesh -- run examples/Libraries/websocket/09_wss_full_duplex_demo.adesh
 
 # Example 10: Message Fragmentation State Machine
-cargo run --bin adeshlang -- run examples/Libraries/websocket/10_fragmented_messages.adesh
+cargo run --bin adesh -- run examples/Libraries/websocket/10_fragmented_messages.adesh
 
 # Example 11: Invalid Frames & Protocol Error Handlers
-cargo run --bin adeshlang -- run examples/Libraries/websocket/11_invalid_frames.adesh
+cargo run --bin adesh -- run examples/Libraries/websocket/11_invalid_frames.adesh
 
 # Example 12: Subprotocol Negotiation
-cargo run --bin adeshlang -- run examples/Libraries/websocket/12_subprotocols.adesh
+cargo run --bin adesh -- run examples/Libraries/websocket/12_subprotocols.adesh
 
 # Example 13: Origin Security Validation Policy
-cargo run --bin adeshlang -- run examples/Libraries/websocket/13_origin_validation.adesh
+cargo run --bin adesh -- run examples/Libraries/websocket/13_origin_validation.adesh
 
 # Example 14: Concurrent Multi-Client Performance
-cargo run --bin adeshlang -- run examples/Libraries/websocket/14_concurrent_clients.adesh
+cargo run --bin adesh -- run examples/Libraries/websocket/14_concurrent_clients.adesh
 
 # Example 15: Outbound Backpressure & Buffer Configuration
-cargo run --bin adeshlang -- run examples/Libraries/websocket/15_backpressure.adesh
+cargo run --bin adesh -- run examples/Libraries/websocket/15_backpressure.adesh
 
 # Example 16: Server Lifecycle & Graceful Shutdown
-cargo run --bin adeshlang -- run examples/Libraries/websocket/16_graceful_shutdown.adesh
+cargo run --bin adesh -- run examples/Libraries/websocket/16_graceful_shutdown.adesh
 
 # Example 17: Heartbeat Keepalive Manager
-cargo run --bin adeshlang -- run examples/Libraries/websocket/17_heartbeat.adesh
+cargo run --bin adesh -- run examples/Libraries/websocket/17_heartbeat.adesh
 
 # Example 18: High-Throughput & Large Payload Streaming
-cargo run --bin adeshlang -- run examples/Libraries/websocket/18_large_messages.adesh
+cargo run --bin adesh -- run examples/Libraries/websocket/18_large_messages.adesh
 
 # Example 19: Dual-Stack IPv4/IPv6 Addressing
-cargo run --bin adeshlang -- run examples/Libraries/websocket/19_ipv6.adesh
+cargo run --bin adesh -- run examples/Libraries/websocket/19_ipv6.adesh
 
 # Example 20: Production TLS/WSS Enterprise Security
-cargo run --bin adeshlang -- run examples/Libraries/websocket/20_proxy_wss.adesh
+cargo run --bin adesh -- run examples/Libraries/websocket/20_proxy_wss.adesh
 
 # Example 21: Real-Time Room & Broadcast System
-cargo run --bin adeshlang -- run examples/Libraries/websocket/21_rooms.adesh
+cargo run --bin adesh -- run examples/Libraries/websocket/21_rooms.adesh
 
 # Example 22: Permessage-Deflate Extension Architecture
-cargo run --bin adeshlang -- run examples/Libraries/websocket/22_permessage_deflate.adesh
+cargo run --bin adesh -- run examples/Libraries/websocket/22_permessage_deflate.adesh
 ```
 
 ---

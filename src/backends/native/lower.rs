@@ -378,7 +378,7 @@ fn infer_hir_expr_type(expr: &HirExpr) -> Option<HirType> {
                 if matches!(fn_name.as_str(), "f32") {
                     return Some(HirType::F32);
                 }
-                if matches!(fn_name.as_str(), "bool" | "Boolean") {
+                if matches!(fn_name.as_str(), "bool" | "Boolean" | "hasKey" | "containsKey") {
                     return Some(HirType::Bool);
                 }
                 if matches!(
@@ -5420,6 +5420,25 @@ impl<'a> FunctionLoweringContext<'a> {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Immediate(0),
                         });
+                        return out_reg;
+                    }
+                    if fn_name == "hasKey" || fn_name == "containsKey" {
+                        if args.len() >= 2 {
+                            let obj_h = self.lower_to_handle(&args[0]);
+                            let key_h = self.lower_to_handle(&args[1]);
+                            self.emit_call_with_args("aot_contains", &[obj_h, key_h]);
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Physical(
+                                    PhysicalRegister(0),
+                                )),
+                            });
+                        } else {
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Immediate(0),
+                            });
+                        }
                         return out_reg;
                     }
                     if (fn_name == "sizeof" || fn_name == "sizeOf") && !args.is_empty() {

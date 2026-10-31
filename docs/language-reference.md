@@ -9,6 +9,14 @@
 
 ## Source: language.md
 
+> **Historical note.** This section was consolidated from the early single-file
+> layout of the compiler. The paths it names (`src/ast.rs`, `src/parser.rs`,
+> `src/runtime.rs`, `src/wasm.rs`, `src/error.rs`, `src/bytecode.rs`,
+> `src/vm.rs`, `src/type_system.rs`) no longer exist: the code now lives under
+> `src/parsing/`, `src/execution/`, `src/backends/` and `src/typesystem/`. The
+> citations below have been repointed to the current modules; where a whole
+> paragraph describes the superseded layout, it is marked as historical.
+
 # AdeshLang: Language Guide and Specification
 
 ## Overview
@@ -16,7 +24,7 @@
 AdeshLang is a multi-paradigm language blending familiar constructs from JavaScript/TypeScript, Python, Dart, and Rust while emphasizing performance and portability. It runs in two modes:
 
 - Interpreter: fast iteration with rich runtime features
-- Compiler: portable bytecode (`.indbc`) executed on a VM, and WebAssembly (`.wasm`) for the web and host embedding
+- Compiler: portable bytecode (emitted by `adesh compile <in.adesh> <out.bin>`) executed on a VM, WebAssembly (`.wasm`) for the web and host embedding, and native AOT objects
 
 Design goals:
 - Dual compatibility with interpretation and compilation
@@ -36,37 +44,37 @@ Design goals:
 
 ## Types
 
-Built-in runtime values (see `src/ast.rs:82`):
+Built-in runtime values (see the `Value` enum in `src/parsing/ast.rs`):
 - `Number` (f64), `Bool`, `Str`, `Null`
 - Collections: `Array`, `Tuple`, `Object`, `Set`
 - Higher-level: `Function`, `UserFunction`, `Class`, `Instance`, `Struct`, `Enum`, `Interface`
 - Async: `Promise` (internal id routed through the interpreter microtasks)
 
 Type annotations (parser/runtime support):
-- Variables and parameters can declare optional type annotations (see `src/parser.rs:97`, `src/parser.rs:136`)
-- Runtime respects simple annotation strings for guards (see `src/runtime.rs:1663`)
-- Type checking is conservative but present (`src/type_system.rs:96`, `src/typechecker.rs:1`)
+- Variables and parameters can declare optional type annotations (`let_decl` in `src/parsing/parser/declarations.rs`, `fn_decl` in `src/parsing/parser/functions.rs`)
+- Runtime respects simple annotation strings for guards (`src/execution/runtime_core/interpreter_core.rs`, the annotation-enforcement path)
+- Type checking is conservative but present (`src/typesystem/checker/`, `src/typesystem/type_system/`)
 
 ## Variables
 
 - Declarations: `let name = expr;` or `const NAME = expr;`
 - Optional type annotation: `let x: Number = 10;`
-- Exported bindings: `export let foo = 1;` (see `src/ast.rs:36`)
+- Exported bindings: `export let foo = 1;` (the `StmtKind` variants carry an export flag — see `src/parsing/ast.rs`)
 
 ## Functions
 
 - Declaration: `fn add(a, b){ return a + b; }`
 - Async function: `async fn work(){ ... }`
-- Optional return type: `fn f(a): Number { ... }`
+- Optional return type: `fn f(a): Number { ... }` (both `: Type` and `-> Type` are accepted by `fn_decl` in `src/parsing/parser/functions.rs`)
 - Function literals: `fn(x){ ... }` used inline
 - Arrow functions are parsed and supported syntactically
 
-WASM backend currently supports numeric functions and returns; return inference applies when the last statement is a numeric expression (see `src/wasm.rs:335`).
+The WASM backend currently supports numeric functions and returns; return inference applies when the last statement is a numeric expression (`src/backends/wasm/compiler.rs`).
 
 ## Classes and Interfaces
 
-- Classes: methods, optional `extends`, `implements`, and `abstract` marker (see `src/ast.rs:70`)
-- `new ClassName(args)` creates instances (see `src/ast.rs:22`)
+- Classes: methods, optional `extends`, `implements`, and `abstract` marker (`ClassDecl` in `src/parsing/ast.rs`)
+- `new ClassName(args)` creates instances (`ExprKind::New` in `src/parsing/ast.rs`)
 - **Visibility modifiers** (`public`, `private`, `protected`) are fully enforced at runtime:
   - `public` (default): accessible anywhere
   - `protected`: accessible in class and subclasses
@@ -81,14 +89,14 @@ WASM backend currently supports numeric functions and returns; return inference 
 
 ## Structs and Enums
 
-- `struct` with named fields (see `src/ast.rs:77`)
-- `enum` with variants (see `src/ast.rs:80`)
+- `struct` with named fields (`StructDecl` in `src/parsing/ast.rs`)
+- `enum` with variants (`EnumDecl` in `src/parsing/ast.rs`)
 
 ## Modules
 
 - Import: `import "./utils.adesh" as u;`
 - Export: on declarations (functions, classes, variables)
-- Module loader resolves relative paths; simple exports/imports supported at runtime (`src/runtime.rs:1`)
+- Module loader resolves relative paths; simple exports/imports supported at runtime (`StmtKind::Import` handling in `src/execution/runtime_core/interpreter_core.rs`, path resolution in `src/execution/runtime_core/vfs.rs`)
 
 ## Expressions and Collections
 
@@ -108,47 +116,51 @@ WASM backend currently supports numeric functions and returns; return inference 
 - `for (name in iter) { ... }`
 - `break`, `continue`, `return`
 
-WASM supports `if/else` and `while` with numeric conditions compiled to integer truthiness (`src/wasm.rs:274`, `src/wasm.rs:286`).
+WASM supports `if/else` and `while` with numeric conditions compiled to integer truthiness (`src/backends/wasm/compiler.rs`).
 
 ## Errors
 
 - `throw Error("message")`; `try { ... } catch(e) { ... }`
-- Rich diagnostics include file/line/col and caret (`src/error.rs:1`)
+- Rich diagnostics include file/line/col and caret (`LangError` in `src/parsing/error.rs`)
 
 ## Async and Concurrency
 
-- Promises and microtasks engine; timers integrated with the interpreter (`src/runtime.rs:1`)
+- Promises and microtasks engine; timers integrated with the interpreter (`src/execution/runtime_core/interpreter_core.rs`)
 - Builtins:
-  - `sleep(ms)` returns a Promise and integrates with timers (`src/runtime.rs:390`)
-  - `makeChannel()` returns an object with `send(v)` and `recv()`; `recv()` returns a Promise and resolves when data arrives (see `src/runtime.rs:348`)
+  - `sleep(ms)` returns a Promise and integrates with timers (`define_builtin("sleep", ...)` in `src/execution/runtime_core/interpreter_core.rs`)
+  - `makeChannel()` returns an object with `send(v)` and `recv()`; `recv()` returns a Promise and resolves when data arrives (`define_builtin("makeChannel", ...)` in the same file)
 
 Structured concurrency patterns build atop promises and channels; `async/await` is parsed and supported in the interpreter semantics.
 
 ## Dual Execution: Interpreter and Compile
 
-- Interpreter path is default: `cargo run -- run path/to/file.adesh`
+- Interpreter path is default: `adesh run path/to/file.adesh` (or `cargo run -- run path/to/file.adesh`)
 - Compile bytecode when directive present:
   - `@compile` → emits portable bytecode and runs via VM
   - `@compile wasm` → emits WebAssembly
-- Directive detection and stripping: `src/main.rs:196`, `src/main.rs:213`
+  - `@compile jit` / `@compile aot` / `@compile mixed` select the other backends
+- Directive detection: `detect_compile_directive` in `src/cli/directives.rs`, applied in `src/main.rs`
 
 ## Bytecode and VM
 
-- Bytecode emitter compiles AST to `.indbc` and supports constants, globals, calls, prints, arithmetic (`src/bytecode.rs:1`)
-- VM executes bytecode using a stack machine (`src/vm.rs:1`)
-- Disassembler shows opcodes and constants (CLI `disassemble`)
+- Bytecode emitter compiles AST to the `Adesh-BC` container (v1 stack format, `Adesh-BC2` for the v2 register format) and supports constants, globals, calls, prints, arithmetic (`src/execution/bytecode/`); `adesh compile <in.adesh> <out.bin>` chooses the output name
+- VM executes bytecode on two machines: v1 is a stack machine, v2 a register machine (`src/execution/vm/v1_stack.rs`, `src/execution/vm/v2_register.rs`)
+- Disassembler shows opcodes and constants (CLI `adesh disassemble <out.bin>`)
 
 ## WebAssembly Backend
 
-Current features (see `src/wasm.rs:1`):
+Current features (`src/backends/wasm/`) — the import surface depends on the target triple:
+
+Non-WASI targets (`--emit=wasm`, `wasm32-unknown-unknown`) use:
 - Imports layout under module `env`:
   - `print_f64(f64) -> ()` (type index 0)
   - `print_str(i32, i32) -> ()` (type index 1)
   - `alloc(i32) -> i32` (type index 3) for future dynamic strings
+  - `concat2` and `file_write_str` for string concatenation and file output
 - Exports:
   - `main` function
   - `memory` for host access
-- Data segments for string literals starting at offset 1024 (`src/wasm.rs:121`)
+- Data segments for string literals starting at offset 1024 (`src/backends/wasm/compiler.rs`)
 - Numeric expressions and printing; string literal printing via pointer/length
 - Locals and assignments for numeric variables
 - Functions:
@@ -157,31 +169,39 @@ Current features (see `src/wasm.rs:1`):
   - Return inference when last statement is a numeric expression
 - Control flow: `if/else`, `while` compiled with block/loop constructs
 
-CLI command to compile WebAssembly: `ind compile-wasm <in.adesh> <out.wasm>` (`src/main.rs:156`)
+`-wasi` triples (`--target wasm32-*-wasi`) are a narrower profile, not the same feature set: the module imports exactly one host function, `wasi_snapshot_preview1.fd_write`, and defines its own write/alloc/print adapters plus a mutable `__heap` global and on-demand `memory.grow` (`src/backends/wasm/wasi.rs`). Because there is no file host import on that path, `print(..., { file: ... })` is a loud compile error for WASI targets.
+
+CLI command to compile WebAssembly: `adesh compile-wasm <in.adesh> <out.wasm>` (`src/main.rs`)
 
 ### Host Binding Notes
 
-Host must supply imports:
+For non-WASI targets the host must supply the `env.*` imports:
 - `env.print_f64`: print a `f64` value
 - `env.print_str`: print a string from memory using `(ptr, len)`
 - `env.alloc`: allocate memory and return a pointer
+
+The compiler emits a Node loader that serves them. On `-wasi` triples the only
+host import is `wasi_snapshot_preview1.fd_write`, which a bare WASI runtime
+provides.
 
 Memory is exported as `memory` and can be read/written from the host. String literals are embedded into memory via the data section.
 
 ## CLI
 
-Commands (see `src/main.rs:17` for usage banner):
-- `ind run <file.ind>` — interpret or compile/run depending on `@compile`
-- `ind repl` — interactive REPL
-- `ind init <dir>` — project scaffolding (creates `main.ind`, `utils.ind`) (`src/main.rs:21`)
-- `ind compile <in.ind> <out.bin>` — emit `.indbc`
-- `ind compile-wasm <in.ind> <out.wasm>` — emit `.wasm`
-- `ind disassemble <out.bin>` — disassemble bytecode
+Commands (see the usage banner in `src/main.rs`, and `adesh --help`):
+- `adesh run <file.adesh>` — interpret or compile/run depending on `@compile`
+- `adesh repl` — interactive REPL
+- `adesh init <dir>` — project scaffolding (creates a modern project layout with `src/main.adesh`; see `cmd_init` in `src/cli/commands.rs` and `create_template` in `src/ecosystem/project.rs`)
+- `adesh compile <in.adesh> <out.bin>` — emit bytecode
+- `adesh compile-wasm <in.adesh> <out.wasm>` — emit `.wasm`
+- `adesh disassemble <out.bin>` — disassemble bytecode
+
+The `adl` alias binary (`src/bin/adl.rs`) is also installed for project workflows.
 
 ## Examples and Tests
 
 - Examples cover features, classes, async/promises, modules, and WASM demos under `examples/`
-- Rust unit tests validate lexer, parser, runtime, type system, and WASM header correctness (`src/wasm.rs:438`)
+- Rust unit tests validate lexer, parser, runtime, type system, and WASM header correctness (`src/backends/wasm/` has the wasm conformance tests)
 - Python integration test invokes compiled binary for end-to-end checks (`tests/test.py`)
 
 ## Roadmap
@@ -662,13 +682,13 @@ The type system prevents data races at compile time:
 
 ```adesh
 // Shared immutable access is safe
-let data = vec![1, 2, 3];
-let handle1 = spawn(|| read_data(&data));
-let handle2 = spawn(|| read_data(&data));
+let data = [1, 2, 3];
+let handle1 = thread.spawn(fn() { read_data(&data); });
+let handle2 = thread.spawn(fn() { read_data(&data); });
 
-// Exclusive mutable access
-let mut data = vec![1, 2, 3];
-// let handle = spawn(|| data.push(4));  // ERROR: would cause data race
+// Adesh has no `mut` keyword — bindings are mutable by default, so
+// a writer racing these readers is what the check has to catch
+// let handle = thread.spawn(fn() { data.push(4); });  // ERROR: would cause data race
 ```
 
 ### Message Passing
@@ -1298,8 +1318,12 @@ print(identity<string>("hi")); // "hi"
 
 ### Generic with Constraints
 
+The parser's generic parameter list takes bare identifiers only — trait bounds
+such as `T: Ord` are rejected (`src/parsing/parser/functions.rs`). Declare the
+type parameter without a bound; the arguments fix the concrete type.
+
 ```adesh
-fn max<T: Ord>(a: T, b: T): T {
+fn max<T>(a: T, b: T): T {
     if a > b {
         return a;
     }
@@ -2380,10 +2404,10 @@ You can pass warning suppression flags to the `adesh` / `adeshlang` CLI executab
 
 ```powershell
 # Run a script with all warnings disabled
-cargo run --bin adeshlang -- run --no-warnings examples/Libraries/http/master_http_showcase.adesh
+cargo run --bin adesh -- run --no-warnings examples/Libraries/http/master_http_showcase.adesh
 
 # Using -Wallow flag
-cargo run --bin adeshlang -- run -Wallow main.adesh
+cargo run --bin adesh -- run -Wallow main.adesh
 ```
 
 ---
@@ -2399,14 +2423,14 @@ You can disable warnings globally across scripts, test suites, or CI/CD pipeline
 
 ```powershell
 $env:ADESHLANG_DISABLE_WARNINGS = "1"
-cargo run --bin adeshlang -- run main.adesh
+cargo run --bin adesh -- run main.adesh
 ```
 
 ### Bash / Linux / macOS Example
 
 ```bash
 export ADESHLANG_DISABLE_WARNINGS=1
-cargo run --bin adeshlang -- run main.adesh
+cargo run --bin adesh -- run main.adesh
 ```
 
 ---

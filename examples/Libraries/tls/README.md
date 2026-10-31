@@ -173,8 +173,8 @@ The directory includes self-contained test certificates for local development an
 Run any example script using the AdeshLang CLI runner:
 
 ```bash
-cargo run --bin adeshlang -- run "examples/Libraries/tls/tls_examples.adesh"
-cargo run --bin adeshlang -- run "examples/Libraries/tls/tls_type_annotation.adesh"
-cargo run --bin adeshlang -- run "examples/Libraries/tls/typed_tls_client.adesh"
-cargo run --bin adeshlang -- run "examples/Libraries/tls/tls_server_listener.adesh"
+cargo run --bin adesh -- run "examples/Libraries/tls/tls_examples.adesh"
+cargo run --bin adesh -- run "examples/Libraries/tls/tls_type_annotation.adesh"
+cargo run --bin adesh -- run "examples/Libraries/tls/typed_tls_client.adesh"
+cargo run --bin adesh -- run "examples/Libraries/tls/tls_server_listener.adesh"
 ```

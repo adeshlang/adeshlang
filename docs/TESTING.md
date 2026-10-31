@@ -14,9 +14,16 @@
 
 This guide helps you test all ALS (Adesh Language Server) features across different editors.
 
-## Test File
+## Test Entry Points
 
-Use `als_test.adesh` in the repository root for comprehensive feature testing.
+There is no `als_test.adesh` in this repository. Use these instead.
+
+Automated:
+- `cd als && cargo test` — the language server's own unit tests (`#[cfg(test)] mod tests` in `als/src/adl.rs`, `completion.rs`, `document.rs`, `formatting.rs`, `hover.rs`)
+- `cargo test --test lsp` — workspace LSP/semantic integration tests (`tests/lsp/main.rs`: go-to-definition, hover, workspace symbols, signature help, diagnostics)
+- `cargo test --test native_phase10_lsp_e2e_test` — end-to-end ALS wiring (`tests/native_phase10_lsp_e2e_test.rs`)
+
+Manual (editor-driven): open a feature-rich source file such as `examples/all_in_one.adesh` and work through the checklist below; it exercises functions, control flow, strings and `print`, so completion and hover have something to resolve.
 
 ## Quick Start
 
@@ -45,7 +52,7 @@ npm run compile
 **Option A: Development Mode**
 1. Open `als-vscode` folder in VS Code
 2. Press `F5` to launch Extension Development Host
-3. Open `als_test.adesh` in the new window
+3. Open `examples/all_in_one.adesh` in the new window
 4. Test features below
 
 **Option B: Install Extension**
@@ -63,7 +70,7 @@ require('als').setup()
 
 Open test file:
 ```bash
-nvim als_test.adesh
+nvim examples/all_in_one.adesh
 ```
 
 ### 4. Test in Helix
@@ -72,7 +79,7 @@ Configure `~/.config/helix/languages.toml` (see als-helix/languages.toml)
 
 Open test file:
 ```bash
-hx als_test.adesh
+hx examples/all_in_one.adesh
 ```
 
 ## Feature Testing Checklist

@@ -73,7 +73,7 @@ impl SplitTree {
         Self::find_in_node(&self.root, id)
     }
 
-    fn find_in_node<'a>(node: &'a SplitNode, id: usize) -> Option<&'a PaneState> {
+    fn find_in_node(node: &SplitNode, id: usize) -> Option<&PaneState> {
         match node {
             SplitNode::Leaf(pane) => {
                 if pane.id == id {
@@ -97,7 +97,7 @@ impl SplitTree {
         Self::find_in_node_mut(&mut self.root, id)
     }
 
-    fn find_in_node_mut<'a>(node: &'a mut SplitNode, id: usize) -> Option<&'a mut PaneState> {
+    fn find_in_node_mut(node: &mut SplitNode, id: usize) -> Option<&mut PaneState> {
         match node {
             SplitNode::Leaf(pane) => {
                 if pane.id == id {
@@ -255,11 +255,11 @@ impl SplitTree {
             } => {
                 let mut remove_idx = None;
                 for (i, child) in children.iter().enumerate() {
-                    if let SplitNode::Leaf(p) = child {
-                        if p.id == target_id {
-                            remove_idx = Some(i);
-                            break;
-                        }
+                    if let SplitNode::Leaf(p) = child
+                        && p.id == target_id
+                    {
+                        remove_idx = Some(i);
+                        break;
                     }
                 }
 

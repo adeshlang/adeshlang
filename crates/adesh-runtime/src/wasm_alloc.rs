@@ -31,7 +31,7 @@ pub unsafe fn raw_malloc(size: usize) -> *mut core::ffi::c_void {
 
     #[cfg(not(target_family = "wasm"))]
     {
-        unsafe { libc::malloc(size) as *mut core::ffi::c_void }
+        unsafe { libc::malloc(size) }
     }
 
     #[cfg(target_family = "wasm")]

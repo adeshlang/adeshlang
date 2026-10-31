@@ -49,9 +49,11 @@ fn emit_link_and_run(native_mod: &NativeModule, opt_level: OptLevel, test_name: 
 
 #[test]
 fn test_debug_info_construction_and_line_records() {
-    let mut debug = DebugInfo::default();
-    debug.producer = "adeshc 0.3.0 (phase 8)".to_string();
-    debug.language = "Adesh".to_string();
+    let mut debug = DebugInfo {
+        producer: "adeshc 0.3.0 (phase 8)".to_string(),
+        language: "Adesh".to_string(),
+        ..Default::default()
+    };
 
     debug.source_files.push(DebugSourceFile {
         file_id: 1,

@@ -183,13 +183,13 @@ fn check_unreachable_code_semantic(index: &SemanticIndex, _doc: &Document) -> Ve
     let mut diagnostics = Vec::new();
 
     for stmt in &index.statements {
-        check_unreachable_in_stmt(stmt, &mut diagnostics, &index.source);
+        check_unreachable_in_stmt(stmt, &mut diagnostics);
     }
 
     diagnostics
 }
 
-fn check_unreachable_in_stmt(stmt: &Stmt, diagnostics: &mut Vec<Diagnostic>, source: &str) {
+fn check_unreachable_in_stmt(stmt: &Stmt, diagnostics: &mut Vec<Diagnostic>) {
     match &stmt.kind {
         StmtKind::Block(stmts) => {
             let mut found_terminator = false;
@@ -219,12 +219,12 @@ fn check_unreachable_in_stmt(stmt: &Stmt, diagnostics: &mut Vec<Diagnostic>, sou
                 if is_terminator(s) {
                     found_terminator = true;
                 }
-                check_unreachable_in_stmt(s, diagnostics, source);
+                check_unreachable_in_stmt(s, diagnostics);
             }
         }
         StmtKind::Function(func, _) => {
             for s in func.body.iter() {
-                check_unreachable_in_stmt(s, diagnostics, source);
+                check_unreachable_in_stmt(s, diagnostics);
             }
         }
         StmtKind::If {
@@ -232,20 +232,20 @@ fn check_unreachable_in_stmt(stmt: &Stmt, diagnostics: &mut Vec<Diagnostic>, sou
             else_branch,
             ..
         } => {
-            check_unreachable_in_stmt(then_branch, diagnostics, source);
+            check_unreachable_in_stmt(then_branch, diagnostics);
             if let Some(e) = else_branch {
-                check_unreachable_in_stmt(e, diagnostics, source);
+                check_unreachable_in_stmt(e, diagnostics);
             }
         }
-        StmtKind::While { body, .. } => check_unreachable_in_stmt(body, diagnostics, source),
-        StmtKind::ForIn { body, .. } => check_unreachable_in_stmt(body, diagnostics, source),
+        StmtKind::While { body, .. } => check_unreachable_in_stmt(body, diagnostics),
+        StmtKind::ForIn { body, .. } => check_unreachable_in_stmt(body, diagnostics),
         StmtKind::TryCatch {
             try_block,
             catch_block,
             ..
         } => {
-            check_unreachable_in_stmt(try_block, diagnostics, source);
-            check_unreachable_in_stmt(catch_block, diagnostics, source);
+            check_unreachable_in_stmt(try_block, diagnostics);
+            check_unreachable_in_stmt(catch_block, diagnostics);
         }
         _ => {}
     }
@@ -323,7 +323,7 @@ fn check_unreachable_code(result: &AnalysisResult, doc: &Document) -> Vec<Diagno
     let mut diagnostics = Vec::new();
 
     for stmt in &result.statements {
-        check_unreachable_in_stmt(stmt, &mut diagnostics, &doc.content);
+        check_unreachable_in_stmt(stmt, &mut diagnostics);
     }
 
     diagnostics
